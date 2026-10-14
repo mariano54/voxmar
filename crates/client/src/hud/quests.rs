@@ -1072,21 +1072,46 @@ fn spawn_tracker(mut commands: Commands) {
 #[derive(Default)]
 struct Finished(Vec<(String, f32)>);
 
-/// Unpins a quest once it has shown done on screen for a moment.
+/// Unpins a quest once it has shown done on screen for a moment, and pins what follows it
+/// (`follow_ons`) where the tracker's data asks.
 fn retire(time: Res<Time>, player: Res<LocalPlayer>, launch: Res<Launch>, tracker: Query<&Visibility, With<Tracker>>, mut settings: ResMut<Settings>, mut finished: Local<Finished>) {
     let shown = tracker.iter().any(|v| *v != Visibility::Hidden);
     let done = |name: &str| state(&player, name).is_some_and(|s| s.done);
-    let gone = finished.tick(&settings.pinned_quests, done, shown, time.delta_secs(), launch.content.quests.tracker().done_stays);
+    let content = &launch.content;
+    let gone = finished.tick(&settings.pinned_quests, done, shown, time.delta_secs(), content.quests.tracker().done_stays);
     if !gone.is_empty() {
         settings.pinned_quests.retain(|p| !gone.contains(p));
+        if content.quests.tracker().follow_on {
+            let next = follow_ons(content, &settings.pinned_quests, &gone, &done);
+            settings.pinned_quests.extend(next);
+        }
         settings.save();
     }
 }
 
+/// What to pin after the quests `gone` drop off done, beside those still `pinned`, as far
+/// as the tracker has room: the open quests that come after one of them, in the book's
+/// order; opening none, and leaving nothing pinned, the first open quest of the age the
+/// first of them is in, so the next step is always on screen.
+pub(crate) fn follow_ons(content: &Content, pinned: &[String], gone: &[String], done: &dyn Fn(&str) -> bool) -> Vec<String> {
+    let room = content.quests.tracker().pins.saturating_sub(pinned.len());
+    let open = |quest: &&QuestDef| !done(&quest.name) && content.quests.open(quest, done) && !pinned.contains(&quest.name);
+    let mut next: Vec<String> = content.quests.iter().filter(open).filter(|quest| before(content, quest).iter().any(|first| gone.contains(&first.name))).map(|quest| quest.name.clone()).take(room).collect();
+    if next.is_empty()
+        && pinned.is_empty()
+        && let Some(age) = gone.first().and_then(|name| content.quests.get(name)).map(|quest| quest.age.clone())
+    {
+        next.extend(content.quests.iter().filter(open).find(|quest| quest.age == age).map(|quest| quest.name.clone()));
+    }
+    next
+}
+
 impl Finished {
     /// Counts `seconds` for each pinned quest done, while the tracker is `shown`: those
-    /// shown done longer than `stays`, which then drop off.
+    /// shown done longer than `stays`, which then drop off. One unpinned meanwhile (its ×)
+    /// is forgotten, so it never drops off and pins what follows it.
     fn tick(&mut self, pinned: &[String], done: impl Fn(&str) -> bool, shown: bool, seconds: f32, stays: f32) -> Vec<String> {
+        self.0.retain(|(n, _)| pinned.contains(n));
         for name in pinned {
             if done(name) && !self.0.iter().any(|(n, _)| n == name) {
                 self.0.push((name.clone(), 0.0));
@@ -1254,6 +1279,52 @@ mod tests {
         assert_eq!(pins.len(), most - 1);
     }
 
+    /// A pinned quest that drops off done leaves what it opens pinned, within the tracker's
+    /// room, never a quest done or one still waiting on another; opening nothing, and with
+    /// nothing else pinned, the next open quest of its age.
+    #[test]
+    fn what_a_done_quest_opens_is_pinned_in_its_place() {
+        let content = content();
+        let room = content.quests.tracker().pins;
+        // Some quest whose follower waits on it alone.
+        let (first, follower) = content
+            .quests
+            .iter()
+            .find_map(|quest| (quest.after.len() == 1 && !quest.after[0].contains('|')).then(|| (quest.after[0].clone(), quest.name.clone())))
+            .and_then(|(after, name)| content.quests.get(&after).map(|q| (q.name.clone(), name)))
+            .expect("a quest after one other");
+        // Done: the first and everything before it.
+        let mut finished = vec![first.clone()];
+        let mut i = 0;
+        while i < finished.len() {
+            let quest = content.quests.get(&finished[i]).unwrap();
+            for b in before(&content, quest) {
+                if !finished.contains(&b.name) {
+                    finished.push(b.name.clone());
+                }
+            }
+            i += 1;
+        }
+        let done = |name: &str| finished.iter().any(|f| f == name);
+        let next = follow_ons(&content, &[], std::slice::from_ref(&first), &done);
+        assert!(next.contains(&follower), "{follower} follows {first}: {next:?}");
+        assert!(next.len() <= room);
+        for name in &next {
+            let quest = content.quests.get(name).unwrap();
+            assert!(!done(name) && content.quests.open(quest, &done), "{name} is open");
+        }
+        // A full tracker takes none.
+        let full: Vec<String> = (0..room).map(|i| format!("base:pinned_{i}")).collect();
+        assert!(follow_ons(&content, &full, std::slice::from_ref(&first), &done).is_empty());
+        // Opening nothing new: the age's next open quest, only with nothing else pinned.
+        let last = content.quests.iter().find(|q| content.quests.iter().all(|other| !before(&content, other).iter().any(|b| b.name == q.name))).expect("a quest nothing follows");
+        let none = |name: &str| name == last.name;
+        let fallback = follow_ons(&content, &[], std::slice::from_ref(&last.name), &none);
+        assert_eq!(fallback.len(), 1, "{fallback:?}");
+        assert_eq!(content.quests.get(&fallback[0]).unwrap().age, last.age);
+        assert!(follow_ons(&content, &["base:other".to_owned()], std::slice::from_ref(&last.name), &none).is_empty());
+    }
+
     #[test]
     fn lines_are_cut_to_the_well() {
         let view = Rect::new(0.0, 0.0, 100.0, 50.0);
@@ -1291,6 +1362,13 @@ mod tests {
         }
         assert_eq!(finished.tick(&pinned, done, true, 0.5, 5.0), vec!["base:a".to_owned()]);
         assert!(finished.0.is_empty());
+        // Done, then unpinned by its × before its time: it never drops off as done.
+        assert!(finished.tick(&pinned, done, true, 0.5, 5.0).is_empty());
+        let left = vec!["base:b".to_owned()];
+        for _ in 0..20 {
+            assert!(finished.tick(&left, done, true, 0.5, 5.0).is_empty());
+        }
+        assert!(finished.0.is_empty());
     }
 
     /// No two quests of a web stand in one place, and a quest from another chapter that
@@ -1323,6 +1401,6 @@ mod tests {
         for age in chapters(&content) {
             assert!(ja.find(&format!("quest.age.{age}")).is_some(), "no Japanese name for the {age} chapter");
         }
-        assert_eq!(content.quests.tracker(), voxmar_engine::quest::Tracker { pins: 3, done_stays: 5.0, backing_alpha: 0.5 });
+        assert_eq!(content.quests.tracker(), voxmar_engine::quest::Tracker { pins: 3, done_stays: 5.0, backing_alpha: 0.5, follow_on: true });
     }
 }

@@ -149,6 +149,8 @@ pub struct TrackerPatch {
     pub done_stays: Option<f32>,
     #[serde(default)]
     pub backing_alpha: Option<f32>,
+    #[serde(default)]
+    pub follow_on: Option<bool>,
 }
 
 /// How the interface follows pinned quests on screen.
@@ -160,11 +162,14 @@ pub struct Tracker {
     pub done_stays: f32,
     /// How opaque the backing behind each pinned quest is, 0 to 1.
     pub backing_alpha: f32,
+    /// Whether a pinned quest that drops off done leaves the quests it opens pinned in its
+    /// place, so what to do next is always on screen.
+    pub follow_on: bool,
 }
 
 impl Default for Tracker {
     fn default() -> Self {
-        Self { pins: 3, done_stays: 5.0, backing_alpha: 0.5 }
+        Self { pins: 3, done_stays: 5.0, backing_alpha: 0.5, follow_on: true }
     }
 }
 
@@ -304,6 +309,7 @@ impl QuestRegistry {
             tracker.pins = patch.pins.unwrap_or(tracker.pins);
             tracker.done_stays = patch.done_stays.unwrap_or(tracker.done_stays);
             tracker.backing_alpha = patch.backing_alpha.unwrap_or(tracker.backing_alpha);
+            tracker.follow_on = patch.follow_on.unwrap_or(tracker.follow_on);
         }
         if tracker.pins == 0 || !(tracker.done_stays >= 0.0) || !(0.0..=1.0).contains(&tracker.backing_alpha) {
             return Err(RegistryError(format!("quests.ron: the tracker needs a pin or more, a stay of 0 s or more and a backing from 0 to 1, not {tracker:?}")));
@@ -730,8 +736,8 @@ mod tests {
     #[test]
     fn a_later_package_changes_the_tracker_field_by_field() {
         let core = QuestRegistry::read("core", "(tracker: (pins: 2, done_stays: 3.0, backing_alpha: 0.4))").unwrap();
-        let mod_ = QuestRegistry::read("mod", "(tracker: (pins: 5))").unwrap();
-        assert_eq!(QuestRegistry::new(vec![core, mod_]).unwrap().tracker(), Tracker { pins: 5, done_stays: 3.0, backing_alpha: 0.4 });
+        let mod_ = QuestRegistry::read("mod", "(tracker: (pins: 5, follow_on: false))").unwrap();
+        assert_eq!(QuestRegistry::new(vec![core, mod_]).unwrap().tracker(), Tracker { pins: 5, done_stays: 3.0, backing_alpha: 0.4, follow_on: false });
         assert_eq!(registry().tracker(), Tracker::default());
         let none = QuestRegistry::read("core", "(tracker: (pins: 0))").unwrap();
         assert!(QuestRegistry::new(vec![none]).is_err());
