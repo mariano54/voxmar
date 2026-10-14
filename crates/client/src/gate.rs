@@ -2443,7 +2443,10 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if gate.server_now - gate.kiln_asked >= 3.0 {
                 gate.kiln_asked = gate.server_now;
                 let actions = world.resource::<crate::Actions>().0.clone();
-                world.resource::<Net>().propose(actions.expect("base:light"), voxmar_engine::action::ActionTarget::Block { block: kiln, face: voxmar_engine::coords::Face::NegY });
+                // With the player's input first (the coal just selected), as the machines'
+                // use goes: sent alone, the first ask can reach the server with the slot held
+                // before, be refused, and leave the lighting to the next, three seconds on.
+                world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("base:light"), voxmar_engine::action::ActionTarget::Block { block: kiln, face: voxmar_engine::coords::Face::NegY });
             }
             // Quests are checked once a second of the server's time, which a loaded machine
             // stretches: the wait is by its clock.
@@ -9252,7 +9255,8 @@ fn bronze(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         if gate.server_now - gate.kiln_asked >= 3.0 {
             gate.kiln_asked = gate.server_now;
             let actions = world.resource::<crate::Actions>().0.clone();
-            world.resource::<Net>().propose(actions.expect("base:cook"), voxmar_engine::action::ActionTarget::Block { block: kiln, face: voxmar_engine::coords::Face::NegY });
+            // The copper just selected goes first, as for the kiln's lighting.
+            world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("base:cook"), voxmar_engine::action::ActionTarget::Block { block: kiln, face: voxmar_engine::coords::Face::NegY });
         }
     }
 }
