@@ -681,6 +681,9 @@ struct Gate {
     sweep: Sweep,
     /// The weapon step's first swing, watched in the hand.
     swing_watch: SwingWatch,
+    /// When the music step checked the now-playing line, while it is watched fading out
+    /// beside the steps after it ([`music_fades`]).
+    music_fade: Option<f32>,
     /// The player's states the server had sent when the wear step clicked.
     worn_states: u32,
     /// The Defence level before the wear step raised it, to put back after.
@@ -815,6 +818,7 @@ impl Gate {
             feel: FeelRun::default(),
             sweep: Sweep::default(),
             swing_watch: SwingWatch::default(),
+            music_fade: None,
             worn_states: 0,
             worn_defence: 1,
             overlay_counted: (0.0, 0.0),
@@ -1310,6 +1314,7 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
 }
 
 fn step(world: &mut World, gate: &mut Gate, now: f32) {
+    music_fades(world, gate, now);
     let since = now - gate.since;
     let in_phase = now - gate.phase_since;
     let feet = gate.feet;
@@ -3357,6 +3362,20 @@ const SCREEN_WAIT: f32 = 10.0;
 const OVERLAY_TIMED: f32 = 2.0;
 const OVERLAY_FRAMES: usize = 60;
 
+/// The now-playing line the music step checked fades out by itself: watched every frame
+/// from then on, beside the overlay step (which leaves it alone), rather than waited out
+/// on its own. The weather step's first shot waits for it, so no shot has it in.
+fn music_fades(world: &mut World, gate: &mut Gate, now: f32) {
+    let Some(since) = gate.music_fade else { return };
+    if crate::music::now_playing_shown(world).is_none() {
+        gate.check("music: now playing fades", Ok(format!("gone {:.1} s after it was checked", now - since)));
+        gate.music_fade = None;
+    } else if now - since > SCREEN_WAIT {
+        gate.check("music: now playing fades", Err("still shown 10 s after it was checked".into()));
+        gate.music_fade = None;
+    }
+}
+
 /// F3 opens the debug overlay and closes it again, and while it is open its text changes
 /// only a few times a second: an overlay that rewrote its text every frame had UI layout
 /// redone every frame, 10 to 25 ms of Mariano's slow frames. That is judged by counting
@@ -3751,22 +3770,15 @@ fn music(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     _ => Err(format!("the line reads {line:?}, not a title and a category's name")),
                 };
                 gate.check("music: now playing", result);
-                gate.advance(now);
+                // The line fades out by itself, watched while the steps after go on.
+                gate.music_fade = Some(now);
+                gate.next(Step::Overlay, now);
             } else if in_phase > SCREEN_WAIT {
                 gate.check("music: now playing", Err("no track was named within 10 s of turning the music back on with M".into()));
                 gate.next(Step::Overlay, now);
             }
         }
-        _ => {
-            // The line fades out by itself.
-            if crate::music::now_playing_shown(world).is_none() {
-                gate.check("music: now playing fades", Ok(format!("gone {in_phase:.1} s after it was checked")));
-                gate.next(Step::Overlay, now);
-            } else if in_phase > SCREEN_WAIT {
-                gate.check("music: now playing fades", Err("still shown 10 s after it was checked".into()));
-                gate.next(Step::Overlay, now);
-            }
-        }
+        _ => {}
     }
 
     /// Esc, then on to the phase waiting for the menu to close.
@@ -6079,6 +6091,10 @@ fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 return;
             }
             look(world, 0.0, 5.0);
+            // Not with the music step's now-playing line still fading (`music_fades`).
+            if gate.music_fade.is_some() {
+                return;
+            }
             if gate.shot(world, "clear").is_some() {
                 world.resource::<Net>().command(&format!("weather {} 120", kinds[0].0));
                 gate.advance(now);
