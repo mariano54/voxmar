@@ -1,0 +1,5 @@
+// What base gives the interface (core's interface.ron says what each field is; crates/client/src/hud/inventory.rs).
+(
+    // The item whose icon marks the way home at the top of the screen (hud/home.rs).
+    home_icon: "base:hearthstone",
+)

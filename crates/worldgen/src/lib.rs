@@ -542,6 +542,45 @@ impl Overworld {
         self.settlements.apply(self, sample, x, z)
     }
 
+    /// The ground at the `size`×`size` positions `step` blocks apart from `origin`, row by
+    /// row: the same as [`Overworld::geo`] at each, finding the rivers near them once a
+    /// tile of positions (a few regions at most, which `Rivers::grid` shares), the tiles
+    /// side by side.
+    pub(crate) fn geo_grid(&self, origin: IVec2, step: i32, size: i32) -> Vec<GeoSample> {
+        // Tiles of about 64 positions a side, as even as the size allows.
+        let count = (size + 63) / 64;
+        let tile = (size + count - 1) / count.max(1);
+        let one = |t: i32| {
+            let from = origin + IVec2::new(t % count, t / count) * tile * step;
+            let land = self.land();
+            let mut samples = {
+                let _stage = stage::enter(Stage::Rivers);
+                self.rivers.grid_with_crags(self.stages(), from, step, tile)
+            };
+            let _stage = stage::enter(Stage::Trails);
+            for (i, sample) in samples.iter_mut().enumerate() {
+                let (x, z) = (from.x + i as i32 % tile * step, from.y + i as i32 / tile * step);
+                *sample = self.settlements.apply(self, self.trails.apply(&land, *sample, x, z), x, z);
+            }
+            samples
+        };
+        // Side by side in tests (rayon is only a test dependency here); the same tiles either way.
+        #[cfg(test)]
+        let tiles: Vec<Vec<GeoSample>> = {
+            use rayon::prelude::*;
+            (0..count * count).into_par_iter().map(one).collect()
+        };
+        #[cfg(not(test))]
+        let tiles: Vec<Vec<GeoSample>> = (0..count * count).map(one).collect();
+        // Cropped to the grid where the last tiles run past it.
+        (0..size * size)
+            .map(|i| {
+                let (i, j) = (i % size, i / size);
+                tiles[((j / tile) * count + i / tile) as usize][((j % tile) * tile + i % tile) as usize]
+            })
+            .collect()
+    }
+
     /// The ground over the `size`×`size` positions from (x, z), row by row.
     pub(crate) fn geo_area(&self, x: i32, z: i32, size: i32) -> Vec<GeoSample> {
         let land = self.land();
@@ -3030,6 +3069,29 @@ mod tests {
             println!("  hill:  {}", pose(mid, high, crown - Vec3::Y * 4.0));
             let far = crown + back * 70.0 + Vec3::Y * 45.0;
             println!("  far:   {}", pose(mid, far, crown + back * 10.0 - Vec3::Y * 10.0));
+        }
+    }
+
+    /// The ground sampled a grid at a time (`geo_grid`, which `water_sights` reads) is the
+    /// ground at each of its positions, across tiles cropped at the grid's edge: around the
+    /// water and crags near spawn on two seeds.
+    #[test]
+    fn a_grid_of_ground_is_the_ground_at_each_position() {
+        let registry = registry();
+        for seed in [1, 5] {
+            let world = Overworld::new(seed, registry.clone());
+            let spawn = world.spawn_point();
+            let sights = world.water_sights(IVec2::new(spawn.x, spawn.z), 300);
+            let mut origins = vec![IVec2::new(spawn.x, spawn.z) - 150];
+            origins.extend(sights.iter().map(|&(_, at)| IVec2::new(at.x, at.z) - 100));
+            for origin in origins {
+                let (step, size) = (2, 101);
+                let grid = world.geo_grid(origin, step, size);
+                for (i, sample) in grid.iter().enumerate() {
+                    let (x, z) = (origin.x + i as i32 % size * step, origin.y + i as i32 / size * step);
+                    assert_eq!(*sample, world.geo(x, z), "seed {seed}: the grid from {origin} at {x} {z}");
+                }
+            }
         }
     }
 
