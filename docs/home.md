@@ -153,6 +153,20 @@ All of it is data. Multipliers stack with food buffs; xp stops at `MAX_XP_BOOST`
 Home tiers use `heal`, `warmth` and `xp` only: a location effect that changed maximum health
 would cost health every time the player stepped out.
 
+## Smoke over home
+
+The Homestead Hearth's chimney smokes from its top while the hearthstone stands below it, a
+thick column seen from 96 blocks, so a player out at dusk sees where home is from across a
+valley. It is data on the chimney block (blocks_tools.ron): a smoke emission with
+`range: Some(96.0)` (how far off it is seen, up to 128, against the 24 every other block's
+particles keep) and `over: Some(("hearth", 3))` (given off only with a `hearth` block up to
+3 below and one across, and only from the top of a stack, with open air above). A mod's
+stove pipe or a forge's flue can do the same. The client searches farther only for chunks
+whose palette holds such a block, and counts nearness as a share of each emission's range,
+so a far chimney takes its place among the nearest torches
+(`a_chimney_smokes_over_a_hearth_from_afar`). The gate's Cook step sets a hearthstone and a
+chimney beside its campfire and counts the chimney's puffs ("chimney smoke").
+
 ## Quest hooks (written, in base/quests.ron)
 
 `Built("home_camp", 1)` and the other steps are real goals (a step is tallied as

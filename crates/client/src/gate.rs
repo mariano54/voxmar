@@ -7796,6 +7796,8 @@ fn combat_hud(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 /// burnt. Waited for by the server's clock.
 fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let fire = gate.feet + IVec3::new(0, 0, 14);
+    let hearth = fire + IVec3::new(3, 0, 0);
+    let chimney = [hearth + IVec3::new(-1, 1, -1), hearth + IVec3::new(-1, 2, -1)];
     match gate.phase {
         0 => {
             let net = world.resource::<Net>();
@@ -7921,6 +7923,41 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 Err(format!("only {count} particles rose from it in {FIRE_WATCH} s, under {FIRE_PARTICLES} (still a campfire: {is_fire}; {why})"))
             };
             gate.check("campfire smoke", result);
+            let net = world.resource::<Net>();
+            for (at, block) in [(hearth, "hearthstone"), (chimney[0], "chimney"), (chimney[1], "chimney")] {
+                net.command(&format!("setblock {} {} {} {block}", at.x, at.y, at.z));
+            }
+            gate.advance(now);
+        }
+        // A hearthstone beside it, with a chimney two tall at its corner: the chimney's top
+        // smokes (`over` the hearth), as home does from across a valley.
+        7 => {
+            let placed = {
+                let client = world.resource::<ClientWorld>();
+                client.registry.id("base:chimney").is_some_and(|c| client.block(chimney[1]) == Some(c))
+            };
+            if placed {
+                world.resource_mut::<crate::emitters::Emitters>().watch(chimney[1]);
+                gate.advance(now);
+            } else if in_phase > 5.0 {
+                gate.check("chimney smoke", Err(format!("the chimney was not on the client {in_phase:.1} s after it was placed")));
+                gate.phase = 8;
+            }
+        }
+        8 if in_phase > FIRE_WATCH => {
+            let amount = world.resource::<crate::render::particles::Particles>().amount;
+            let mut emitters = world.resource_mut::<crate::emitters::Emitters>();
+            let (count, why) = (emitters.watched, emitters.why_quiet(chimney[1], amount));
+            emitters.watch = None;
+            gate.check("chimney smoke", if count >= CHIMNEY_PARTICLES {
+                Ok(format!("{count} puffs rose from the chimney's top over the hearthstone in {FIRE_WATCH} s"))
+            } else {
+                Err(format!("only {count} puffs rose from the chimney's top over a hearthstone in {FIRE_WATCH} s, under {CHIMNEY_PARTICLES} ({why})"))
+            });
+            let net = world.resource::<Net>();
+            for at in [hearth, chimney[0], chimney[1]] {
+                net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
+            }
             gate.next(Step::Tame, now);
         }
         _ => {}
@@ -7934,6 +7971,10 @@ const FIRE_WATCH: f32 = 1.5;
 /// sparks come at about ten a second, about fifteen in that time at any frame rate, so
 /// fewer than this means the fire gives off (almost) nothing.
 const FIRE_PARTICLES: u32 = 4;
+
+/// Puffs a chimney's top over a hearth must give off in `FIRE_WATCH` seconds: about three
+/// a second, so none means it gives off nothing.
+const CHIMNEY_PARTICLES: u32 = 1;
 
 /// A junglefowl on the pad, wheat in hand: right clicks feed it until it trusts the
 /// player and is theirs (kept, with them as its owner).
