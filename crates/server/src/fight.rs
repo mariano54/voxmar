@@ -394,17 +394,20 @@ impl Server {
             }
         }
         // Players' swings. One at the air counts as off the beat: it earns no pip and spends
-        // no flourish. A shot needs a clear line as well as reach: one into a wall is at the air.
+        // no flourish. A shot needs something to shoot and a clear line as well as reach: one
+        // into a wall, or with the last stone gone while it wound up, is at the air.
         let mut landing = Vec::new();
         let (world, blocks, combat) = (&self.world, &self.content.blocks, &self.content.combat);
         let solid = |cell: voxmar_engine::glam::IVec3| world.block(cell).is_some_and(|b| blocks.info(b).solid);
         for (&player, fighter) in &mut self.fights.fighters {
             if let Some(swing) = fighter.rhythm.landed(now) {
                 let Some(aim) = fighter.aim.take() else { continue };
-                let eye = self.players.get(&player).map(|p| p.eye());
-                let shoots = !combat.ammo(&aim.weapon).is_empty();
-                let in_reach = eye.zip(self.creatures.reach_box(aim.creature, feel.reach_lag)).is_some_and(|(eye, aabb)| {
-                    eye.distance(eye.clamp(aabb.min, aabb.max)) <= aim.weapon.reach + feel.reach_slack && (!shoots || clear_shot(eye, &aabb, solid))
+                let p = self.players.get(&player);
+                let eye = p.map(|p| p.eye());
+                let ammo = combat.ammo(&aim.weapon);
+                let loaded = ammo.is_empty() || p.is_some_and(|p| (0..voxmar_engine::inventory::SLOTS).any(|slot| p.inventory.get(slot).is_some_and(|stack| ammo.contains(&stack.item))));
+                let in_reach = loaded && eye.zip(self.creatures.reach_box(aim.creature, feel.reach_lag)).is_some_and(|(eye, aabb)| {
+                    eye.distance(eye.clamp(aabb.min, aabb.max)) <= aim.weapon.reach + feel.reach_slack && (ammo.is_empty() || clear_shot(eye, &aabb, solid))
                 });
                 let on_beat = in_reach && (swing.on_beat || aim.riposte || aim.counter);
                 let kind = fighter.rhythm.blow(&Swing { on_beat, ..swing }, now, &feel);
@@ -451,10 +454,12 @@ impl Server {
     fn land_swing(&mut self, player: PlayerId, aim: Aim, strength: f32, on_beat: bool, kind: Blow, in_reach: bool) {
         let feel = self.content.combat.feel;
         let weapon = aim.weapon;
-        // A shot takes one of what the weapon shoots, hit or miss; with none left it is no shot.
+        // A shot takes one of what the weapon shoots, hit or miss; with none left (gone while
+        // it wound up) it is answered as a miss at the air, and the player told why.
         match self.ammo_slot(player, &weapon) {
             Some(None) => {
                 self.no_ammo(player, &weapon);
+                self.struck(player, aim.creature, 0, false, Blow::Plain);
                 return;
             }
             Some(Some(slot)) => {
