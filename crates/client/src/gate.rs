@@ -341,6 +341,7 @@ enum Step {
     Cook,
     /// A drying rack stood by the campfire, raw rabbit in hand: a right click hangs it, the
     /// rack the server sends back is the hung one, and chat says where it stands makes it quicker.
+    /// Then an earth clamp in its place, clay in hand: a right click sets it smouldering.
     Dry,
     /// A junglefowl fed wheat by right clicks comes to trust the player and is theirs.
     Tame,
@@ -5388,20 +5389,30 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.advance(now);
         }
         12 => {
-            // It stays its while, counted from when it was pinned done, then goes.
-            let stays = world.resource::<Launch>().content.quests.tracker().done_stays;
+            // It stays its while, counted from when it was pinned done, then goes, and what
+            // it opens is pinned in its place (`follow_ons`), or nothing where the data says.
+            let content = world.resource::<Launch>().content.clone();
+            let stays = content.quests.tracker().done_stays;
             let since = now - gate.quest_pinned;
-            let pinned = !world.resource::<crate::settings::Settings>().pinned_quests.is_empty();
+            let pins = world.resource::<crate::settings::Settings>().pinned_quests.clone();
+            let still = pins.iter().any(|p| p == DONE_QUEST);
             let lines = tracker_lines(world);
-            if lines.is_none() && since < stays - 1.0 {
+            if !still && since < stays - 1.0 {
                 return quit(world, gate, "quests: retired", format!("done, it dropped off after only {since:.1} s of {stays} s"));
             }
-            if (pinned || lines.is_some()) && since < stays + 3.0 {
+            let follows = {
+                let player = world.resource::<LocalPlayer>();
+                let done = |name: &str| player.quests.iter().any(|q| q.name == name && q.done);
+                if content.quests.tracker().follow_on { crate::hud::quests::follow_ons(&content, &[], &[DONE_QUEST.to_owned()], &done) } else { Vec::new() }
+            };
+            // The tracker shows what follows once it is drawn again, or goes.
+            let settled = !still && pins == follows && lines.is_some() == !follows.is_empty();
+            if !settled && since < stays + 3.0 {
                 return;
             }
             gate.check(
                 "quests: retired",
-                if pinned || lines.is_some() { Err(format!("{since:.1} s after it was pinned done, still pinned: {pinned}; the tracker reads {lines:?}")) } else { Ok(format!("done, it stayed and dropped off by {since:.1} s ({stays} s asked), and the tracker went")) },
+                if settled { Ok(format!("done, it stayed and dropped off by {since:.1} s ({stays} s asked), and {follows:?} followed it")) } else { Err(format!("{since:.1} s after it was pinned done, pinned {pins:?}, not {follows:?}; the tracker reads {lines:?}")) },
             );
             world.resource_mut::<crate::settings::Settings>().pinned_quests.clear();
             gate.advance(now);
@@ -8052,7 +8063,9 @@ fn slow_try(gate: &mut Gate, late: f32, blocking: bool, windup: f32, perfect: f3
     gate.feel.slowest = gate.feel.slowest.max(late);
     if gate.feel.slow >= FEEL_TRIES {
         let detail = format!("{} answers came on frames up to {:.2} s late or long, past a {windup} s wind-up, so none says whether the game judges the moment", gate.feel.slow, gate.feel.slowest);
-        gate.known(if blocking { "perfect block" } else { "dodge" }, Err(detail), "frames slower than a wind-up, as on a loaded machine");
+        // A block already found leaves only the counter owed, so that is what goes unjudged.
+        let name = if blocking && gate.feel.found.is_some() { "counter" } else if blocking { "perfect block" } else { "dodge" };
+        gate.known(name, Err(detail), "frames slower than a wind-up, as on a loaded machine");
         gate.feel.slow = 0;
         gate.feel.slowest = 0.0;
         if blocking {
@@ -9197,8 +9210,9 @@ const MEAT_SHOWS: f32 = 0.08;
 /// once the renderer has it), raw rabbit selected: right clicks on it hang the rabbit
 /// (`base:use_station`), so the server sends the hung rack back, and once the renderer has
 /// that too (shot `rack`) the meat must show in the middle of the shot. Then the rack goes,
-/// letting the rabbit fall as a broken rack does. Then a cooking pot against the fire, water
-/// near, is set simmering with wheat (shot `pot`).
+/// letting the rabbit fall as a broken rack does, and an earth clamp loaded with clay in its
+/// place smoulders (shot `clamp`, once drawn) until it goes too. Then a cooking pot against the
+/// fire, water near, is set simmering with wheat (shot `pot`).
 fn dry(world: &mut World, gate: &mut Gate, now: f32) {
     let rack = gate.feet + IVec3::new(0, 0, 14) + RACK_FROM_FIRE;
     let waited = gate.server_in_phase() > DRY_WAIT;
@@ -9269,12 +9283,51 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
                     }
                 };
                 gate.check("drying rack", result);
+                // The rack goes, and an earth clamp stands in its place with clay to load it.
+                let net = world.resource::<Net>();
+                net.command(&format!("setblock {} {} {} air", rack.x, rack.y, rack.z));
+                net.command(&format!("setblock {} {} {} earth_clamp", rack.x, rack.y, rack.z));
+                net.command("give clay 16");
+                gate.advance(now);
+            }
+        }
+        4 => {
+            let client = world.resource::<ClientWorld>();
+            let stood = client.registry.id("base:earth_clamp").is_some_and(|c| client.block(rack) == Some(c));
+            if stood && select(world, "base:clay") {
+                gate.advance(now);
+            } else if waited {
+                gate.check("earth clamp", Err(format!("the clamp ({stood}) or clay in hand never came in {DRY_WAIT} server seconds")));
+                world.resource::<Net>().command(&format!("setblock {} {} {} air", rack.x, rack.y, rack.z));
+                to_phase(gate, 7, now);
+            }
+        }
+        5 => {
+            aim_at(world, rack.as_vec3() + Vec3::new(0.5, 0.5, 0.5));
+            let client = world.resource::<ClientWorld>();
+            let lit = client.registry.id("base:earth_clamp_lit").is_some_and(|c| client.block(rack) == Some(c));
+            if lit {
+                mouse(world, MouseButton::Right, false);
+                gate.advance(now);
+            } else if waited {
+                mouse(world, MouseButton::Right, false);
+                gate.check("earth clamp", Err(format!("right clicks with clay in hand never lit the clamp in {DRY_WAIT} server seconds")));
+                world.resource::<Net>().command(&format!("setblock {} {} {} air", rack.x, rack.y, rack.z));
+                to_phase(gate, 7, now);
+            } else {
+                mouse(world, MouseButton::Right, ((now - gate.since) * 2.0).fract() < 0.2);
+            }
+        }
+        6 => {
+            aim_at(world, rack.as_vec3() + Vec3::new(0.5, 0.5, 0.5));
+            if (drawn(world, rack) || waited) && gate.shot(world, "clamp").is_some() {
+                gate.check("earth clamp", Ok("clay loaded into an earth clamp: the server sent back the smouldering clamp".into()));
                 world.resource::<Net>().command(&format!("setblock {} {} {} air", rack.x, rack.y, rack.z));
                 gate.advance(now);
             }
         }
         // A cooking pot beside the campfire, water sunk in the ground near it, wheat in hand.
-        4 => {
+        7 => {
             let pot = rack + POT_FROM_RACK;
             let water = pot + POT_WATER;
             let ground = {
@@ -9291,7 +9344,7 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
             gate.advance(now);
         }
         // Right clicks put the wheat on to simmer: the server sends back the simmering pot.
-        5 => {
+        8 => {
             let pot = rack + POT_FROM_RACK;
             aim_at(world, pot.as_vec3() + Vec3::new(0.5, 0.5, 0.5));
             let (stood, simmering) = {
@@ -9315,7 +9368,7 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
                 mouse(world, MouseButton::Right, ((now - gate.since) * 2.0).fract() < 0.2);
             }
         }
-        6 => {
+        9 => {
             let pot = rack + POT_FROM_RACK;
             let water = pot + POT_WATER;
             let ground = gate.pot_ground.take().unwrap_or_else(|| "stone".to_owned());
