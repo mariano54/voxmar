@@ -505,6 +505,7 @@
     "multiblock.fuel_or": " or ",
     "multiblock.fuel_stack": "{count} {item}",
     "multiblock.cold": "The {structure} is cold. {fuel}",
+    "cooking.needs": "This takes {items}.",
     "tag.edible": "food",
     "quest.goal.built": "Build the {item}",
     "quest.goal.step": "Reach {step}",

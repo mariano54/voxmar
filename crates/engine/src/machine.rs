@@ -837,7 +837,8 @@ mod tests {
             conversions.push((inputs, vec![(recipe.output, recipe.count as f32)]));
         }
         for (input, recipe) in content.cooking.iter() {
-            conversions.push((vec![(vec![input], 1.0)], vec![(recipe.output, 1.0)]));
+            let inputs = recipe.ingredients(input).into_iter().map(|(item, n)| (vec![item], n as f32)).collect();
+            conversions.push((inputs, vec![(recipe.output, recipe.def.count as f32)]));
         }
         // Worth in ingots, raised until nothing changes: a loop that gains never settles.
         let ingot = |b: BlockId| blocks.def(b).name.ends_with("_ingot");
@@ -899,7 +900,7 @@ mod tests {
         let ingot = |b: BlockId| blocks.def(b).name.ends_with("_ingot");
         // The most a hand smelt of one of `item` pays: at a station, or in the grid.
         let hand = |item: BlockId| {
-            let station = content.cooking.iter().filter(|(input, r)| *input == item && ingot(r.output)).map(|(_, r)| r.def.xp);
+            let station = content.cooking.iter().filter(|(input, r)| *input == item && ingot(r.output)).map(|(_, r)| r.def.xp / r.def.count as f32);
             let grid = content.recipes.iter().filter(|r| ingot(r.output) && r.alternatives().into_iter().flatten().any(|a| a.contains(&item))).map(|r| r.xp / r.count as f32);
             station.chain(grid).fold(0.0f32, f32::max)
         };
