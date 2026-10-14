@@ -7082,7 +7082,7 @@ fn held(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     // (Looked for once a shot's wait is nearly over, when the views of those sent away are gone.)
     if (2..=5).contains(&gate.phase) && in_phase > 0.5 && gate.held_cleared < HELD_CLEARS && let Some(near) = wild_near(world, HELD_CLEAR) {
         gate.held_cleared += 1;
-        info!("gate: held: {near} near the sky shots; sending the wild creatures away and taking them again");
+        info!("gate: held: {near} before the sky shots; sending the wild creatures away and taking them again");
         world.resource::<Net>().command("creatures disperse");
         empty_hand(world);
         gate.forget(&HELD_SKY);
@@ -7219,22 +7219,32 @@ fn held(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 const HELD_SEEN: f32 = 1.0;
 const HELD_ELSEWHERE: f32 = 0.5;
 /// Blocks round the player within which a wild creature may walk into the held step's
-/// shots, and the times the step sends them away and begins those shots again.
+/// shots, and the times the step sends them away and begins those shots again. Only one
+/// before the eye counts: within the angle of the look that the server keeps births out
+/// of (`spawn_unseen_angle`, wider than the view). Sending the wild away makes room near
+/// the player, so births follow within seconds, 20 to 40 blocks off and out of sight:
+/// counted too, they retook the shots every run.
 const HELD_CLEAR: f32 = 32.0;
 const HELD_CLEARS: u32 = 3;
 /// The sky shots a retake takes again.
 const HELD_SKY: [&str; 4] = ["held-empty", "held-sword", "held-block", "held-empty-after"];
 
-/// The nearest wild creature shown within `reach` of the player (none kept by anyone, and
-/// no villager: what `/creatures disperse` sends away), by name and distance.
+/// The nearest wild creature shown within `reach` of the player and before their eye (none
+/// kept by anyone, and no villager: what `/creatures disperse` sends away), by name and
+/// distance.
 fn wild_near(world: &World, reach: f32) -> Option<String> {
-    let at = world.resource::<LocalPlayer>().position;
+    let player = world.resource::<LocalPlayer>();
+    let (at, eye, look) = (player.position, player.eye(), player.look_direction());
     let launch = world.resource::<Launch>();
+    // An angle of 0 lets births come in sight: then any counts.
+    let angle = launch.content.creatures.limits().spawn_unseen_angle;
+    let cos = if angle == 0.0 { -1.0 } else { angle.to_radians().cos() };
     let villager = |v: &voxmar_protocol::CreatureView| launch.content.creatures.get(v.species).def.kind == voxmar_engine::creature::Kind::Villager;
+    let before = |v: &voxmar_protocol::CreatureView| look.dot((v.position + Vec3::Y * 0.5 - eye).normalize_or_zero()) >= cos;
     world
         .resource::<crate::creatures::Creatures>()
         .views()
-        .filter(|v| !v.kept && v.owner.is_none() && !villager(v))
+        .filter(|v| !v.kept && v.owner.is_none() && !villager(v) && before(v))
         .map(|v| (v.position.distance(at), v.species))
         .filter(|&(d, _)| d < reach)
         .min_by(|a, b| a.0.total_cmp(&b.0))
