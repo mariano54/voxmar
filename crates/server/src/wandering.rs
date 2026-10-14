@@ -700,7 +700,7 @@ impl Server {
         let combat = self.combat_level(player);
         let recent = self.wandering.recent.get(&player);
         // The player's home, surveyed once and only if a kind asks how far it has come.
-        let anchor = p.home.or(p.bed).map(|h| h.floor().as_ivec3());
+        let anchor = p.home_spot(&self.lit).map(|h| h.floor().as_ivec3());
         let survey = std::cell::OnceCell::new();
         let home_is = |step: voxmar_engine::effect::EffectId| {
             let Some(anchor) = anchor else { return false };

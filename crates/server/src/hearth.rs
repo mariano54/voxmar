@@ -113,9 +113,12 @@ impl Server {
     /// the piece back cannot resurrect a paid charge, even between simulation ticks.
     pub(crate) fn fire_changed(&mut self, changed: IVec3) {
         let (structures, world, tick) = (&self.content.multiblocks, &self.world, self.tick);
+        // Every block change comes here (snow settling too): a fire whose core is beyond any
+        // structure's reach of the change is kept without looking its structure up.
+        let reach = structures.reach();
         let before = self.lit.len();
-        self.lit.retain(|&core, fire| fire.until > tick && structures.get(&fire.structure)
-            .is_some_and(|m| !m.includes(core, changed) || m.stands(core, |p| world.block(p))));
+        self.lit.retain(|&core, fire| fire.until > tick && ((changed - core).abs().max_element() > reach || structures.get(&fire.structure)
+            .is_some_and(|m| !m.includes(core, changed) || m.stands(core, |p| world.block(p)))));
         if self.lit.len() != before {
             self.send_fires();
         }
@@ -234,15 +237,26 @@ mod tests {
         for y in 1..=2 { server.set_block(core + IVec3::new(-1, y, -1), chimney); }
         let bed = core + IVec3::new(5, 0, 0);
         server.players.get_mut(&1).unwrap().bed = Some(bed.as_vec3() + Vec3::new(0.5, 1.0, 0.5));
-        let home = |server: &Server| server.players[&1].home_block(|core| server.lit.contains_key(&core));
+        let home = |server: &Server| server.players[&1].home_block(&server.lit);
         assert_eq!(home(&server), Some(bed), "with no hearth lit, home is the bed");
         server.light(1, core);
         assert_eq!(home(&server), Some(core), "the lit hearth is home");
         server.set_block(core + IVec3::new(1, 0, 1), BlockId::AIR);
-        assert_eq!(home(&server), Some(bed), "a broken hearth is still home");
+        assert_eq!(home(&server), Some(bed), "a broken hearth is no home");
+        // Respawn, home effects and stores and wanderers all agree: the bed.
+        let waking = server.players[&1].home_spot(&server.lit).unwrap();
+        server.players.get_mut(&1).unwrap().position = waking;
+        assert_eq!(server.at_home(1), Some(bed + IVec3::Y), "home effects stay at the broken hearth");
+        assert_eq!(server.home_holding(1, waking), Some(bed + IVec3::Y), "home stores stay at the broken hearth");
         server.set_block(core + IVec3::new(1, 0, 1), stone);
         server.light(1, core);
         assert_eq!(home(&server), Some(core), "the hearth lit again is home again");
+        // A save from before hearths kept their fire: its hearth is home until it is lit
+        // again for them, even while its land is not loaded yet.
+        server.set_block(core + IVec3::new(1, 0, 1), BlockId::AIR);
+        server.set_block(core + IVec3::new(1, 0, 1), stone);
+        server.players.get_mut(&1).unwrap().kindled = false;
+        assert_eq!(home(&server), Some(core), "an old save's hearth is not home before it is kindled");
     }
 
     /// A hearth is cold until lit: then it burns, and players are told, until a piece of it

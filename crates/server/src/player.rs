@@ -141,16 +141,17 @@ pub struct Player {
 }
 
 impl Player {
-    /// The home block as `Vitals::home` tells it: the lit hearth, else the bed last slept
-    /// in, stored as the point a block above where the player stands on waking.
-    /// Where home is: the hearth they made home while it burns (`lit` says, by its core),
-    /// else the bed they last slept in. A hearth broken or gone cold is no home.
-    pub fn home_spot(&self, lit: impl Fn(voxmar_engine::glam::IVec3) -> bool) -> Option<Vec3> {
-        self.home.filter(|&at| lit((at - Vec3::new(0.5, 1.0, 0.5)).round().as_ivec3())).or(self.bed)
+    /// Where home is, the point a block above where the player stands on waking: the
+    /// hearth they made home while it burns (in `lit`, by its core), else the bed they last
+    /// slept in. A hearth broken or gone cold is no home; one from a save made before
+    /// hearths kept their fire is home until it is lit again for them (`kindle_home`).
+    /// Respawn, `/home`, the HUD, home effects and stores and wanderers all ask here.
+    pub fn home_spot(&self, lit: &rustc_hash::FxHashMap<voxmar_engine::glam::IVec3, crate::hearth::Lit>) -> Option<Vec3> {
+        self.home.filter(|&at| !self.kindled || lit.contains_key(&(at - Vec3::new(0.5, 1.0, 0.5)).round().as_ivec3())).or(self.bed)
     }
 
-    /// The block home stands on (`home_spot`).
-    pub fn home_block(&self, lit: impl Fn(voxmar_engine::glam::IVec3) -> bool) -> Option<voxmar_engine::glam::IVec3> {
+    /// The block home stands on (`home_spot`), as `Vitals::home` tells it.
+    pub fn home_block(&self, lit: &rustc_hash::FxHashMap<voxmar_engine::glam::IVec3, crate::hearth::Lit>) -> Option<voxmar_engine::glam::IVec3> {
         self.home_spot(lit).map(|at| (at - Vec3::Y).floor().as_ivec3())
     }
 
@@ -547,7 +548,7 @@ impl Server {
                 player.home = saved.home.map(Vec3::from_array);
                 player.bed = saved.bed.map(Vec3::from_array);
                 player.kindled = saved.kindled;
-                if let Some(home) = player.home.or(player.bed) {
+                if let Some(home) = player.home_spot(&self.lit) {
                     player.position = home;
                 }
                 player.inventory = saved.inventory;

@@ -529,7 +529,8 @@ struct Gate {
     chimney_owed: f32,
     /// What the dry step's pot water replaced, put back after.
     pot_ground: Option<String>,
-    /// Raw rabbit carried as the dry step hangs the rack, so its readout can count what hung.
+    /// Raw small game carried as the dry step hangs the rack, so its readout can count what
+    /// hung.
     rack_rabbits: u32,
     /// The creature the combat-marks step tells its blows at, when (game time) it last told
     /// them, and how many runs it has told.
