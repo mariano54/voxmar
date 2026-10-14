@@ -51,7 +51,7 @@ impl Plugin for InventoryPlugin {
             .add_systems(PostStartup, spawn)
             .add_systems(
                 Update,
-                ((toggle, fit_grid, fit_store, click, craft, number_keys, preview).chain().in_set(InventorySystems).after(super::screens::ScreenSystems), (follow_pointer, tooltip, tap, hover_item, show_worn_glyphs).after(InventorySystems))
+                ((toggle, fit_grid, fit_store, click, craft, number_keys, put_away, preview).chain().in_set(InventorySystems).after(super::screens::ScreenSystems), (follow_pointer, tooltip, tap, hover_item, show_worn_glyphs).after(InventorySystems))
                     .run_if(in_state(Screen::InGame)),
             )
             .add_systems(OnExit(Screen::InGame), |mut gesture: ResMut<Gesture>, mut tips: Query<&mut Visibility, With<Tooltip>>| {
@@ -290,6 +290,8 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
             });
             card.spawn(grid(0.0)).with_children(|grid| (HOTBAR_SLOTS..SLOTS).for_each(|slot| spawn_slot(grid, slot)));
             card.spawn(grid(5.0 * PX)).with_children(|grid| (0..HOTBAR_SLOTS).for_each(|slot| spawn_slot(grid, slot)));
+            // What the pack can make, ready first.
+            super::makeable::spawn(card, font, HOTBAR_SLOTS);
             spawn_legend(card, font);
         });
         super::screens::spawn_hotkeys(root, super::screens::GameScreen::Inventory);
@@ -717,6 +719,18 @@ fn number_keys(
         (None, None) => return,
     };
     send(&net, &actions, inventory, action);
+}
+
+/// The put away key (H): at home, the server puts each stack off the hotbar into the home's
+/// store already holding its item (`base:put_away`). Walking about or with the inventory
+/// open; not while typing in the chat or with a menu up.
+fn put_away(ui: Res<UiState>, keys: Res<ButtonInput<KeyCode>>, settings: Res<Settings>, net: Res<Net>, actions: Res<Actions>, player: Res<LocalPlayer>) {
+    if !keys.just_pressed(settings.put_away_key.0) || ui.console_open || ui.menu_open || player.dead || !(ui.cursor_locked || ui.inventory_open) {
+        return;
+    }
+    if let Some(action) = actions.named("base:put_away") {
+        net.propose_from(&player, action, ActionTarget::None);
+    }
 }
 
 /// What the screen shows: the inventory, with a drag over several slots already spread.

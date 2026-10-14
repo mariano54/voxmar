@@ -398,12 +398,17 @@ enum Step {
     /// hotbar names it once the screen is shut, and its quick key turns it off again.
     Prayers,
     /// A sleeping bag with a torch beside it, slept in, is a camp: the Camp chip comes on, the
-    /// chat says so with what to add next, and the sleep is a rest. At home, Lay on a
-    /// recipe fills the crafting grid from a barrel there.
+    /// chat says so with what to add next, and the sleep is a rest. At home, what a barrel
+    /// there holds counts in the Can Make list, the put away key moves planks from the pack
+    /// into it, and Lay on a recipe fills the crafting grid from it.
     Home,
     /// A wooden door placed before the player goes in whole, both halves facing them, and a
     /// right click on it opens it and another shuts it, as the server turns it.
     Door,
+    /// With a log in the pack, the inventory's Can Make list shows planks ready, the ready
+    /// ones first; a click on them lays the log in the grid, as the server does it; pointed
+    /// at, a stone pickaxe says what it still wants.
+    Makeable,
     /// Ten twine crafted finish a quest; the quest key opens the book on a quest worth
     /// reading, W held with it open does not walk, Esc shuts it and W walks again; a quest pinned counts
     /// torches crafted for it as the server counts them, and a quest done reads so, then
@@ -863,6 +868,17 @@ impl Gate {
         } else if now - self.tap_at >= TAP_EVERY {
             mouse(world, MouseButton::Right, true);
             self.tapped = true;
+            self.tap_at = now;
+            self.taps += 1;
+        }
+    }
+
+    /// A left click on the screen's `cell`, held out like `tap`: given to the UI once each
+    /// half second of game time and counted in `taps`, so `waited_out` gives up only on a
+    /// server that was asked.
+    fn click(&mut self, world: &mut World, cell: Entity, now: f32) {
+        if now - self.tap_at >= TAP_EVERY {
+            world.resource_mut::<UiClicks>().next = Some((cell, MouseButton::Left));
             self.tap_at = now;
             self.taps += 1;
         }
@@ -1546,6 +1562,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Prayers => prayers(world, gate, now, in_phase),
         Step::Home => home(world, gate, now),
         Step::Door => door(world, gate, now),
+        Step::Makeable => makeable(world, gate, now, in_phase),
         Step::Quests => quests(world, gate, now, in_phase),
         Step::Catalogue => catalogue(world, gate, now, in_phase),
         Step::Screenshot => screenshot(world, gate, now, in_phase),
@@ -4775,14 +4792,19 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
             let player = world.resource::<LocalPlayer>();
             let stored: u32 = player.inventory.store.as_ref().map_or(0, |s| s.slots.iter().flatten().filter(|x| Some(x.item) == planks).map(|x| x.count as u32).sum());
             let (held, slot) = holding(world, "base:oak_planks");
-            if stored == LAY_PLANKS && held == 0 {
-                // The crafting table's recipe in the viewer, over the open inventory.
-                let table = world.resource::<ClientWorld>().registry.id("base:crafting_table");
-                // Opened as a click in it does: a trail with the viewer shut reads as Esc.
-                if let Some(table) = table {
-                    world.resource_mut::<crate::hud::recipes::RecipeViewer>().open(table, false);
-                    world.resource_mut::<UiState>().recipes_open = true;
-                }
+            // The pack holds none, so the Can Make list has the crafting table ready from
+            // what the home's barrel holds, as the server counts it for laying.
+            let table = world.resource::<ClientWorld>().registry.id("base:crafting_table");
+            let ready = world.resource::<crate::hud::makeable::Drawn>().0.iter().any(|m| Some(m.output) == table && m.reach == crate::hud::makeable::Reach::Ready);
+            if stored == LAY_PLANKS && held == 0 && !ready && waited > 10.0 {
+                let counted = world.resource::<LocalPlayer>().vitals.home_stores.iter().filter(|&&(item, _)| Some(item) == planks).map(|&(_, n)| n).sum::<u32>();
+                gate.check("home: can make", Err(format!("{waited:.1} server s on, the barrel holds {stored} planks and the pack none, but the Can Make list has no crafting table ready (the home's stores counted {counted} planks)")));
+                lay_done(world, barrel);
+                leave(world, gate);
+            } else if stored == LAY_PLANKS && held == 0 && ready {
+                gate.check("home: can make", Ok(format!("with {stored} planks in the home barrel and none in the pack, Can Make shows the crafting table ready")));
+                // More planks carried home, to be put away.
+                world.resource::<Net>().command(&format!("give oak_planks {PUT_PLANKS}"));
                 gate.advance(now);
             } else if waited > 10.0 {
                 let open = player.inventory.store.is_some();
@@ -4806,8 +4828,46 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
                 gate.machines_asked = gate.server_now;
             }
         }
-        // Lay pressed: the table's planks come out of the barrel into the grid.
+        // The planks carried home, moved off the hotbar into the pack, go into the barrel
+        // already holding planks when the put away key is pressed.
         7 => {
+            let put_away = world.resource::<crate::settings::Settings>().put_away_key.0;
+            key(world, put_away, false);
+            let planks = world.resource::<ClientWorld>().registry.id("base:oak_planks");
+            let player = world.resource::<LocalPlayer>();
+            let stored: u32 = player.inventory.store.as_ref().map_or(0, |s| s.slots.iter().flatten().filter(|x| Some(x.item) == planks).map(|x| x.count as u32).sum());
+            let free = (voxmar_engine::inventory::HOTBAR_SLOTS..voxmar_engine::inventory::SLOTS).find(|&slot| player.inventory.slots[slot].is_none());
+            let (held, slot) = holding(world, "base:oak_planks");
+            if stored == LAY_PLANKS + PUT_PLANKS && held == 0 {
+                gate.check("home: put away", Ok(format!("{PUT_PLANKS} planks carried in the pack went into the home barrel at the put away key; it holds {stored}")));
+                // The crafting table's recipe in the viewer, over the open inventory.
+                // Opened as a click in it does: a trail with the viewer shut reads as Esc.
+                if let Some(table) = world.resource::<ClientWorld>().registry.id("base:crafting_table") {
+                    world.resource_mut::<crate::hud::recipes::RecipeViewer>().open(table, false);
+                    world.resource_mut::<UiState>().recipes_open = true;
+                }
+                gate.advance(now);
+            } else if waited > 10.0 {
+                gate.check("home: put away", Err(format!("{waited:.1} server s on, the barrel holds {stored} planks (wanted {}), the pack {held} (first in slot {slot:?})", LAY_PLANKS + PUT_PLANKS)));
+                lay_done(world, barrel);
+                leave(world, gate);
+            } else if gate.server_now - gate.machines_asked >= 1.0 {
+                match slot {
+                    // On the hotbar it stays put: moved into the pack first, as a drag would.
+                    Some(slot) if slot < voxmar_engine::inventory::HOTBAR_SLOTS => {
+                        if let Some(to) = free {
+                            let actions = world.resource::<crate::Actions>().0.clone();
+                            world.resource::<Net>().propose(actions.expect("core:transfer"), voxmar_engine::action::ActionTarget::Slots { from: slot as u8, to: to as u8, count: held as u8 });
+                        }
+                    }
+                    Some(_) => key(world, put_away, true),
+                    None => {}
+                }
+                gate.machines_asked = gate.server_now;
+            }
+        }
+        // Lay pressed: the table's planks come out of the barrel into the grid.
+        8 => {
             let button = world.query::<(Entity, &crate::hud::recipes::LayButton, &InheritedVisibility)>().iter(world).find(|(_, lay, visible)| visible.get() && world.resource::<ClientWorld>().registry.id("base:crafting_table") == Some(lay.output)).map(|(entity, ..)| entity);
             if let Some(button) = button {
                 // The table's recipe drawn, with its Lay button, before it is pressed.
@@ -4853,6 +4913,105 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
     }
 }
 
+/// The Can Make list under the inventory's slots, played: a log shows planks ready, ready
+/// ones first; clicking them lays the log in the grid (the server's `core:lay`); pointed at,
+/// the stone pickaxe's line says what stands in its way, in the list's own words.
+fn makeable(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    use crate::hud::makeable::{Drawn, MakeCell, Reach};
+    let waited = gate.server_in_phase();
+    let leave = |world: &mut World, gate: &mut Gate| {
+        world.resource_mut::<UiState>().inventory_open = false;
+        gate.next(Step::Quests, now);
+    };
+    let ids = {
+        let registry = &world.resource::<ClientWorld>().registry;
+        ["base:oak_log", "base:oak_planks", "base:stone_pickaxe"].map(|name| registry.id(name))
+    };
+    let [Some(log), Some(planks), Some(pickaxe)] = ids else {
+        gate.check("make: list", Err("the content lacks the oak log, its planks or the stone pickaxe".into()));
+        return leave(world, gate);
+    };
+    let cell_of = |world: &mut World, item: BlockId| {
+        let drawn = world.resource::<Drawn>().0.clone();
+        world.query::<(Entity, &MakeCell)>().iter(world).find(|(_, cell)| drawn.get(cell.0).is_some_and(|m| m.output == item)).map(|(entity, _)| entity)
+    };
+    match gate.phase {
+        0 => {
+            let net = world.resource::<Net>();
+            net.command("give oak_log 1");
+            net.command("give cobblestone 3");
+            let mut ui = world.resource_mut::<UiState>();
+            (ui.recipes_open, ui.quests_open, ui.menu_open, ui.character_open) = (false, false, false, false);
+            ui.inventory_open = true;
+            gate.advance(now);
+        }
+        // Planks ready, and every ready one before any that is not. The list is drawn from
+        // what the server gave, so giving up wants its seconds and the client's both.
+        1 => {
+            let drawn = world.resource::<Drawn>().0.clone();
+            let ready = drawn.iter().find(|m| m.output == planks).is_some_and(|m| m.reach == Reach::Ready);
+            let cell = cell_of(world, planks);
+            match cell {
+                Some(_) if ready && holding(world, "base:oak_log").0 >= 1 => {
+                    let first_not = drawn.iter().position(|m| m.reach != Reach::Ready).unwrap_or(drawn.len());
+                    let order = drawn[first_not..].iter().all(|m| m.reach != Reach::Ready);
+                    gate.check("make: list", if order { Ok(format!("a log in the pack shows planks ready; {first_not} of {} ready, all first", drawn.len())) } else { Err(format!("a ready one comes after one not ready: {:?}", drawn.iter().map(|m| m.reach.rank()).collect::<Vec<_>>())) });
+                    gate.count_before = world.resource::<LocalPlayer>().inventory.craft.iter().flatten().filter(|s| s.item == log).map(|s| s.count as u32).sum();
+                    gate.advance(now);
+                }
+                _ if waited > QUEST_WAIT && in_phase > QUEST_WAIT => {
+                    let shown: Vec<String> = drawn.iter().take(6).map(|m| format!("{:?} {:?}", m.output, m.reach)).collect();
+                    gate.check("make: list", Err(format!("{waited:.1} server s on, {} logs held, planks ready {ready}, a cell for them {}; the list starts {shown:?}", holding(world, "base:oak_log").0, cell.is_some())));
+                    leave(world, gate);
+                }
+                _ => {}
+            }
+        }
+        // Clicked, the planks have the server lay the log in the grid.
+        2 => {
+            let laid: u32 = world.resource::<LocalPlayer>().inventory.craft.iter().flatten().filter(|s| s.item == log).map(|s| s.count as u32).sum();
+            if laid > gate.count_before {
+                gate.check("make: lay", Ok(format!("a click on the planks laid {} log in the grid", laid - gate.count_before)));
+                gate.advance(now);
+            } else if gate.waited_out(QUEST_WAIT) {
+                gate.check("make: lay", Err(format!("{waited:.1} server s and {} clicks on the planks on, the grid holds {laid} logs, as before", gate.taps)));
+                leave(world, gate);
+            } else if let Some(cell) = cell_of(world, planks) {
+                gate.click(world, cell, now);
+            }
+        }
+        // Pointed at, the stone pickaxe says what it still wants.
+        _ => {
+            let Some(cell) = cell_of(world, pickaxe) else {
+                if in_phase > 2.0 {
+                    gate.check("make: wants", Err(format!("{in_phase:.1} s on, with three cobblestone the stone pickaxe is not on the list")));
+                    leave(world, gate);
+                }
+                return;
+            };
+            world.resource_mut::<UiClicks>().hover = Some(cell);
+            if in_phase < 0.3 {
+                return;
+            }
+            let reach = world.resource::<Drawn>().0.iter().find(|m| m.output == pickaxe).map(|m| m.reach.clone());
+            let wanted = reach.map(|reach| crate::hud::makeable::words(world.resource::<Locale>(), &world.resource::<Launch>().content, pickaxe, &reach)).unwrap_or_default();
+            let line = world.query_filtered::<&Text, With<crate::hud::makeable::MakeLine>>().iter(world).next().map(|t| t.0.clone()).unwrap_or_default();
+            if line != wanted {
+                if in_phase > 2.0 {
+                    gate.check("make: wants", Err(format!("pointed at, the stone pickaxe's line reads {line:?}, not {wanted:?}")));
+                    leave(world, gate);
+                }
+                return;
+            }
+            if gate.shot(world, "makeable").is_none() {
+                return;
+            }
+            gate.check("make: wants", Ok(format!("pointed at, the stone pickaxe reads {line:?}")));
+            leave(world, gate);
+        }
+    }
+}
+
 /// The door step's two cells, as the client has them: (shut, open) when both halves are
 /// a door's, shut or open alike.
 fn door_cells(world: &World, at: IVec3) -> Option<(bool, bool)> {
@@ -4876,7 +5035,7 @@ fn door(world: &mut World, gate: &mut Gate, now: f32) {
         let net = world.resource::<Net>();
         net.command(&format!("fill {} {} {} {} {} {} air", at.x, at.y, at.z, at.x, at.y + 1, at.z));
         net.command("clear wooden_door");
-        gate.next(Step::Quests, now);
+        gate.next(Step::Makeable, now);
     };
     let use_door = |world: &mut World| {
         let actions = world.resource::<crate::Actions>().0.clone();
@@ -5017,6 +5176,8 @@ const WINDOW_LIFT: f64 = 15.0;
 
 /// How many planks the home barrel holds for the table laid from it.
 const LAY_PLANKS: u32 = 4;
+/// The planks carried home and put away into the barrel with the put away key.
+const PUT_PLANKS: u32 = 6;
 
 /// After the lay: the viewer and inventory shut (the grid goes back to the pack), the
 /// barrel gone, and the planks the session carries before it given back.

@@ -204,6 +204,70 @@ step puts four planks in a barrel beside the bag, shoots the table's recipe with
 button ("home-lay-recipe"), presses it, and shoots the grid laid from the barrel
 ("home-lay"; check "home: lay").
 
+**Stores count everywhere a home crafts (Oct 14).** The eleventh pass carries the same rule
+to the rest of the home, so the barrel is a larder from the first night:
+
+- **Always on, not a tier perk.** The rule holds wherever the player stands in their own home,
+  at any home step from a bed and a torch up. Tying it to a tier would hide it until the
+  home is Homely, when the first days are already over; the tiers instead grow how much the
+  stores hold (Room to store). Only the player's own home counts. A guest crafts from
+  their own pack, since a friend's barrel is not theirs to empty.
+- **The home bounds** are the box `/home` counts: `home_reach` across, `home_up` and
+  `home_down`, around the lit hearth, else the bed last slept in. The player must stand
+  in it, and a station must stand in it too.
+- **Which stations count.** Crafting (the 2×2 grid and the crafting table) already lays from
+  the stores. Home stations (stations.ron) now count too: loading one tops the load up to
+  what it `holds`, with more of what is in hand. It takes from the hand first, then the
+  rest of the pack, then the stores, nearest first. Like crafting, it never reaches into a
+  pouch. This is data per station, `from_stores` (true unless said otherwise). The drying
+  rack and the cooking pot take from the stores. The compost heap does not, because grain
+  and seed kept in a barrel are for eating and sowing, and a heap that ate them would
+  punish keeping a larder. The chat line says how many came from the stores
+  (`station.loaded_from_stores`, en and ja). Cooking at a fire (cooking.ron) and machines
+  are left out. A fire cooks the one item in hand and a machine takes items into its own
+  slots, so there is no load to top up.
+- **What the player sees.** The Can Make list under the inventory, and what the recipe
+  viewer says a recipe still wants, count the home's stores while the player stands in
+  their home. The server sends the tally with the vitals (`Vitals::home_stores`, protocol
+  43). It is recounted on the once-a-second survival pass, which already surveys the same
+  box, and resent only when it changes. With four planks in the barrel and none in the
+  pack, the crafting table shows as ready.
+- **Tests.** `at_home_a_rack_tops_its_load_up_from_the_stores`,
+  `a_compost_heap_leaves_the_stores_alone` and `the_home_stores_are_counted_only_at_home`
+  (server/src/laying.rs); `the_home_stores_count_toward_what_can_be_made`
+  (client/src/hud/makeable.rs). In the gate's Home step, before Lay, the check
+  "home: can make" asks that the Can Make list has the crafting table ready from the
+  barrel's planks alone.
+
+**Putting things away (Oct 14).** The twelfth pass is the counterpart: one key empties the
+pack into the stores, so a home stays useful without sorting by hand.
+
+- **The key is H** ("home"), the `base:put_away` action, bound in the settings as the
+  "Put away key". It works when walking about and with the inventory open, and does
+  nothing while the chat is open. Every other free letter was a weaker mnemonic, and F, M
+  and the prayer keys X V B N G are taken.
+- **What moves.** Every stack in the pack's 27 main slots whose item already has a stack in
+  one of the home's stores goes there. It fills that item's stacks in the stores first,
+  then empty slots in a store that already holds the item, nearest store first. A store
+  with no stack of the item is never started on, so the barrel of planks stays the
+  barrel of planks. Whatever does not fit stays in the pack.
+- **What stays.** The hotbar is skipped: what is in hand is what the player chose to carry.
+  The pouches, the crafting grid and the pointer are skipped too, and so is any store
+  that is full or does not take the item (`Machine::bin_takes`).
+- **Which stores count.** Those in the home box (the same `home_stores` that Lay and the
+  stations draw from, nearest first), and only while the player stands in their own home.
+  `from_stores` belongs to stations and does not apply. A guest puts nothing into a
+  friend's stores.
+- **What the player hears and reads.** A lid lifted (the `base:open_store` sound, softer). The
+  chat says how many stacks went in (`store.put_away`). It says when nothing matched
+  (`store.put_away.none`), and when the player is not at home (`store.put_away.away`).
+  All three are in en and ja. There is no protocol change: the action rides
+  `ActionTarget::None`, and the inventory and any open store are resent as usual.
+- **Tests.** `put_away` tests in server/src/stores.rs (matched stacks move, the hotbar
+  stays, a full store keeps the rest in the pack, away from home nothing moves). In the
+  gate's Home step, after Lay, check "home: put away": planks carried in the pack go into
+  the barrel when H is pressed.
+
 ## A well by the field
 
 Crops grow best with water within four blocks, and rice not at all without it, so a home
