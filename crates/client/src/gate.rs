@@ -6709,15 +6709,42 @@ fn creatures(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     },
                 );
                 gate.check("creature voices", crate::creature_sounds::loaded(world));
-                // The one pointed at shows its level and health over it.
+                gate.advance(now);
+            }
+        }
+        3 => {
+            // The one pointed at shows its level and health over it: judged on a frame the
+            // crosshair rested on a creature as drawn when the label was laid out (the camera
+            // as the last frame aimed it, the creatures where this frame draws them). A frame
+            // that drew the snail off the crosshair, as a long one does when it has walked
+            // from where the server last put it, says nothing of the label. Aimed at the snail
+            // as drawn until one does, for `CREATURE_LEVEL_FRAMES` frames and as many server
+            // seconds at least.
+            let pointed = crate::hud::levels::pointed(world.resource(), world.resource(), world.resource(), world.resource(), world.resource()).is_some();
+            if pointed {
                 let shown = world.query_filtered::<&Visibility, With<crate::hud::levels::LevelLabel>>().iter(world).any(|v| *v != Visibility::Hidden);
                 gate.check("creature level", if shown { Ok("the creature pointed at shows its level and health over it".into()) } else { Err("the creature pointed at shows no level over it".into()) });
                 gate.next(Step::Strike, now);
+                return;
+            }
+            gate.settled += 1;
+            if gate.settled > CREATURE_LEVEL_FRAMES && gate.server_in_phase() > CREATURE_LEVEL_FRAMES as f32 {
+                gate.check("creature level", Err(format!("the crosshair, aimed at the snail as drawn, rested on no creature in {} frames", gate.settled)));
+                gate.next(Step::Strike, now);
+                return;
+            }
+            let drawn = snail(world).and_then(|view| world.resource::<crate::creatures::Creatures>().centre(world.resource::<Launch>(), view.id));
+            if let Some((centre, _)) = drawn {
+                aim_at(world, centre);
             }
         }
         _ => {}
     }
 }
+
+/// Frames, and server seconds, the creature-level check aims at the snail as drawn for a
+/// frame with the crosshair on a creature before failing.
+const CREATURE_LEVEL_FRAMES: u32 = 10;
 
 /// The lumen snail summoned in [`creatures`], struck until it dies; its slime must drop
 /// and be picked up.
@@ -7295,11 +7322,15 @@ fn end_weapon(world: &mut World, gate: &mut Gate, now: f32) {
 fn feel_press(world: &mut World) {
     let Some(mut gate) = world.remove_resource::<Gate>() else { return };
     if gate.step == Step::Feel && matches!(gate.phase, 2 | 4) {
+        gate.feel.frame();
         let fighting = world.resource::<crate::fight::Fighting>();
         let new = (fighting.hurt_count - gate.feel.hurts) as usize;
         let received = gate.feel.bear.is_some_and(|bear| fighting.hurt.iter().rev().take(new).any(|h| h.0 == bear));
         let dodge_key = world.resource::<Settings>().dodge_key.0;
         gate.feel.answer(world, gate.phase == 2, dodge_key, received);
+    } else {
+        // Frames outside the tries (the counter, the sweep) are not theirs.
+        gate.feel.frame_at = None;
     }
     world.insert_resource(gate);
 }
@@ -7458,9 +7489,41 @@ struct FeelRun {
     /// frame at or after the moment tried (`feel`).
     chances: u32,
     unanswerable: u32,
+    /// When the last frame began, by the wall's clock and by how long our threads had waited
+    /// for a core (`slow_frames::waited_for_cores`); the frame before it, in wall seconds and
+    /// seconds waited; and the longest so of this wind-up's frames, from the one it showed in
+    /// (`starved`).
+    frame_at: Option<(Instant, Option<std::time::Duration>)>,
+    last_frame: (f32, f32),
+    longest: (f32, f32),
 }
 
 impl FeelRun {
+    /// Times the frame just ended (`feel_press`, at the start of the next): its wall seconds
+    /// and the seconds our threads waited for a core in them, kept as this wind-up's longest
+    /// once it has been seen.
+    fn frame(&mut self) {
+        let now = (Instant::now(), crate::slow_frames::waited_for_cores());
+        let Some((then, waited_then)) = self.frame_at.replace(now) else { return };
+        let wall = now.0.saturating_duration_since(then).as_secs_f32();
+        let waited = waited_then.zip(now.1).map_or(0.0, |(then, now)| now.saturating_sub(then).as_secs_f32());
+        self.last_frame = (wall, waited);
+        if self.seen.is_some() && wall > self.longest.0 {
+            self.longest = self.last_frame;
+        }
+    }
+
+    /// Whether this wind-up's longest frame was slow only for waiting for a core: longer than
+    /// `FEEL_SLOW_FRAME` by the wall's clock, and no longer once the seconds our threads
+    /// waited for a core in it are taken off, on a machine `crowded` with more work than it
+    /// has cores. Our own work in a frame (drawing, the world, the fight) is all that is
+    /// left, and it is held to the same quarter second; waiting is summed over all our
+    /// threads, which on a calm machine barely wait, so there it never excuses.
+    fn starved(&self, crowded: bool) -> bool {
+        let (wall, waited) = self.longest;
+        crowded && wall > FEEL_SLOW_FRAME && wall - waited.min(wall) <= FEEL_SLOW_FRAME
+    }
+
     /// Whether this wind-up's result came before the client could answer it, with `answered`
     /// whether a press went: none did, and its moment passed between two frames with the
     /// result heard in the later (`held`), or no frame came at all between the wind-up
@@ -7481,6 +7544,8 @@ impl FeelRun {
             self.seen = Some(Instant::now());
             self.calm = false;
             self.chances = 0;
+            // The pose came in during the frame just timed.
+            self.longest = self.last_frame;
             return true;
         }
         false
@@ -7584,8 +7649,9 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let net = world.resource::<Net>();
             net.command("gamemode survival");
             net.command(&format!("skill attack {WEAPON_LEVEL}"));
-            // Room for the blows that come while the answer's moment is found.
+            // Room for the blows that come while the answer's moment is found, filled.
             net.command("skill hitpoints 60");
+            net.command("heal");
             if item_count(world, WEAPON) == 0 {
                 world.resource::<Net>().command(&format!("give {} 1", WEAPON.trim_start_matches("base:")));
             }
@@ -7639,6 +7705,12 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let new = (fighting.hurt_count - gate.feel.hurts) as usize;
             gate.feel.hurts = fighting.hurt_count;
             let ours = fighting.hurt.iter().rev().take(new).find(|h| h.0 == view.id).copied();
+            // Healed after each of its blows: every try, judged or set aside, starts from
+            // full health, so however many a slow machine sets aside the player never dies
+            // of them. What is judged is how a blow was met, never the health left.
+            if ours.is_some() {
+                world.resource::<Net>().command("heal");
+            }
             let distance = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz());
             let fixed_camera = gate.feel.facing_camera.filter(|_| !gate.shots.lock().expect("gate shots").contains_key("windup-facing"));
             key(world, KeyCode::KeyW, fixed_camera.is_none() && distance > 2.0 && gate.feel.seen.is_none());
@@ -7735,29 +7807,27 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             // machine): no press could have answered it, so the try says nothing of the
             // moment. It is set aside and the search stays; unlike a late frame it never
             // excuses the step, which `FEEL_LIMIT` still bounds.
+            // Such a try is excused as a late frame's is when its longest frame was slow only
+            // for waiting on a core (`FeelRun::starved`): the machine's work, not ours.
             if !passed && gate.feel.could_not_answer(answered) {
                 gate.feel.outcomes.pop();
-                gate.feel.unanswerable += 1;
                 let why = if gate.feel.held { "the moment passed between two frames" } else { "no frame came between the wind-up showing and the blow landing" };
-                info!("gate: combat try set aside phase {} try {} bear {}: {defended:?} came before it could be answered ({why}), frame {:.3}s, {} set aside", gate.phase, gate.feel.tries + 1, view.id, world.resource::<Time>().delta_secs(), gate.feel.unanswerable);
+                let (wall, waited) = gate.feel.longest;
+                let load = crate::slow_frames::load_average();
+                let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+                if gate.feel.starved(load.is_some_and(|load| load > cores as f64)) {
+                    info!("gate: combat try set aside phase {} try {} bear {}: {defended:?} came before it could be answered ({why}), on a {wall:.3}s frame of which our threads waited {waited:.3}s for a core, load {:.0} over {cores} cores", gate.phase, gate.feel.tries + 1, view.id, load.unwrap_or(0.0));
+                    slow_try(gate, wall, blocking, windup, perfect, now);
+                    return;
+                }
+                gate.feel.unanswerable += 1;
+                info!("gate: combat try set aside phase {} try {} bear {}: {defended:?} came before it could be answered ({why}), frame {:.3}s, longest {wall:.3}s with {waited:.3}s waiting for a core, {} set aside", gate.phase, gate.feel.tries + 1, view.id, world.resource::<Time>().delta_secs(), gate.feel.unanswerable);
                 return;
             }
             let late = std::mem::take(&mut gate.feel.late);
             if !passed && answered && late > FEEL_SLOW_FRAME {
                 gate.feel.outcomes.pop();
-                gate.feel.slow += 1;
-                gate.feel.slowest = gate.feel.slowest.max(late);
-                if gate.feel.slow >= FEEL_TRIES {
-                    let detail = format!("{} answers came {:.2} s late at most, past a {windup} s wind-up, so none says whether the game judges the moment", gate.feel.slow, gate.feel.slowest);
-                    gate.known(if blocking { "perfect block" } else { "dodge" }, Err(detail), "frames slower than a wind-up, as on a loaded machine");
-                    gate.feel.slow = 0;
-                    gate.feel.slowest = 0.0;
-                    if blocking {
-                        to_dodge(gate, windup, perfect, now);
-                    } else {
-                        clear_feel(gate, now);
-                    }
-                }
+                slow_try(gate, late, blocking, windup, perfect, now);
                 return;
             }
             if passed {
@@ -7857,6 +7927,25 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
         }
         _ => end_feel(world, gate, now),
+    }
+}
+
+/// A try set aside for a frame too slow to say anything of the moment, `late` seconds late
+/// (or that long, for one no frame could answer): enough of them and the check is KNOWN,
+/// the machine too slow to judge it.
+fn slow_try(gate: &mut Gate, late: f32, blocking: bool, windup: f32, perfect: f32, now: f32) {
+    gate.feel.slow += 1;
+    gate.feel.slowest = gate.feel.slowest.max(late);
+    if gate.feel.slow >= FEEL_TRIES {
+        let detail = format!("{} answers came on frames up to {:.2} s late or long, past a {windup} s wind-up, so none says whether the game judges the moment", gate.feel.slow, gate.feel.slowest);
+        gate.known(if blocking { "perfect block" } else { "dodge" }, Err(detail), "frames slower than a wind-up, as on a loaded machine");
+        gate.feel.slow = 0;
+        gate.feel.slowest = 0.0;
+        if blocking {
+            to_dodge(gate, windup, perfect, now);
+        } else {
+            clear_feel(gate, now);
+        }
     }
 }
 
@@ -11019,6 +11108,44 @@ mod tests {
         let mut feel = FeelRun { chances: 3, calm: true, ..default() };
         assert!(feel.observe(true, false));
         assert_eq!(feel.chances, 0);
+    }
+
+    #[test]
+    fn a_try_no_frame_could_answer_is_excused_only_for_waiting_on_a_core() {
+        // A frame of 0.9 s, past the 0.7 s wind-up: 0.8 s of it our threads waited for a
+        // core, so our own part was 0.1 s, within the quarter second.
+        let starved = FeelRun { longest: (0.9, 0.8), ..default() };
+        assert!(starved.starved(true));
+        // On a machine with cores to spare the waiting is never the machine's.
+        assert!(!starved.starved(false));
+        // Our own part over the quarter second: the frame was ours, and is not excused.
+        assert!(!FeelRun { longest: (0.9, 0.6), ..default() }.starved(true));
+        // Unknown waiting (none told) is none.
+        assert!(!FeelRun { longest: (0.9, 0.0), ..default() }.starved(true));
+        // A frame within the quarter second was never slow: what made it unanswerable is not
+        // the frames, and it is not excused however long anything waited.
+        assert!(!FeelRun { longest: (0.2, 0.2), ..default() }.starved(true));
+        // Waiting summed over threads can pass the frame's length: our part is then none.
+        assert!(FeelRun { longest: (0.9, 3.0), ..default() }.starved(true));
+    }
+
+    #[test]
+    fn a_wind_ups_longest_frame_counts_from_the_one_it_showed_in() {
+        let mut feel = FeelRun { calm: true, ..default() };
+        feel.frame();
+        // Before any wind-up, frames are timed but none kept.
+        feel.frame_at = feel.frame_at.map(|(at, waited)| (at - std::time::Duration::from_millis(500), waited));
+        feel.frame();
+        assert!(feel.last_frame.0 >= 0.5 && feel.longest == (0.0, 0.0));
+        // The frame the pose came in during is the try's first.
+        assert!(feel.observe(true, false));
+        assert_eq!(feel.longest, feel.last_frame);
+        // A shorter frame after it leaves the longest; a longer one takes its place.
+        feel.frame();
+        assert!(feel.longest.0 >= 0.5);
+        feel.frame_at = feel.frame_at.map(|(at, waited)| (at - std::time::Duration::from_millis(900), waited));
+        feel.frame();
+        assert!(feel.longest.0 >= 0.9);
     }
 
     #[test]

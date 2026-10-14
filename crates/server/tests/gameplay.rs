@@ -711,6 +711,9 @@ fn falling_hurts() {
     let height = fall_from_open_sky(&mut client);
     let expected = 20 - (height - 3) as u8;
     assert_eq!(client.health, expected, "a {height} block fall should cost {} health", height - 3);
+    // An admin heals to full at once.
+    assert_eq!(client.ok("/heal"), "You are at full health.");
+    client.pump_until(|c| c.health == 20);
 }
 
 /// Falls from as high as the open sky above spawn allows, so the player lands hurt, and
