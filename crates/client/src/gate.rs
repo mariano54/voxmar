@@ -6383,6 +6383,9 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     return;
                 }
                 gate.check("quests: current", Ok(format!("Current Quest turned the book back to {picked:?}, picked and inside the well")));
+                let pins = world.resource::<crate::settings::Settings>().pinned_quests.len();
+                let tracker = tracker_lines(world);
+                gate.check("quests: tracker behind book", if tracker.is_none() { Ok(format!("with the book open the tracker is hidden ({pins} pinned)")) } else { Err(format!("with the book open the tracker shows {tracker:?}")) });
             } else if in_phase < 2.0 {
                 return;
             } else {
