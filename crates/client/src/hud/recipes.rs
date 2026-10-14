@@ -393,8 +393,14 @@ fn draw(
                     && let Method::Craft { variants, first, .. } = &entry.method
                 {
                     let lay = LayButton { output: entry.output, first: *first as u16, ways: variants.len().min(u8::MAX as usize) as u8 };
-                    card.spawn(Node { width: Val::Px(36.0 * PX), ..default() }).with_children(|cell| {
-                        spawn_button(cell, font, "recipes.lay", ButtonStyle::Secondary, lay);
+                    // As wide as its word needs in every language, never squeezed by the
+                    // words beside it.
+                    card.spawn(Node { min_width: Val::Px(36.0 * PX), flex_shrink: 0.0, ..default() }).with_children(|cell| {
+                        let button = spawn_button(cell, font, "recipes.lay", ButtonStyle::Secondary, lay);
+                        cell.commands().entity(button).entry::<Node>().and_modify(|mut node| {
+                            node.flex_basis = Val::Auto;
+                            node.padding = UiRect::horizontal(Val::Px(space::INNER));
+                        });
                     });
                 }
             });
