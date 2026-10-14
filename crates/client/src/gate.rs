@@ -324,6 +324,10 @@ enum Step {
     /// rack the server sends back is the hung one, and chat says where it stands makes it quicker.
     /// Then an earth clamp in its place, clay in hand: a right click sets it smouldering.
     Dry,
+    /// A snare set by the trail with a rabbit summoned into it springs (the server's word:
+    /// the sprung block); a right click takes the catch, raw rabbit to hand, and the snare
+    /// is set again.
+    Snare,
     /// A junglefowl fed wheat by right clicks comes to trust the player and is theirs.
     Tame,
     /// `/wander start tinker_camp` brings a travelling party: its trader and hound reach the
@@ -370,6 +374,10 @@ enum Step {
     /// An effect that comes on pops up with its name, and the first look at the inventory
     /// brings its tip.
     Tips,
+    /// A tenth level reached pops its banner up at the top of the screen, saying it is a
+    /// milestone, the skill and the level, and throws motes around the player; a quest
+    /// finished with a level shows first, the level cutting in after the quest's turn.
+    Celebrate,
     /// The name of what the crosshair rests on shows at the top left: a block close by, a
     /// creature further than a blow reaches, and not through a wall.
     Look,
@@ -1487,6 +1495,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::CombatHud => combat_hud(world, gate, now, in_phase),
         Step::Cook => cook(world, gate, now, in_phase),
         Step::Dry => dry(world, gate, now),
+        Step::Snare => snare(world, gate, now),
         Step::Tame => tame(world, gate, now, in_phase),
         Step::Party => party(world, gate, now),
         Step::Gorge => gorge(world, gate, now, in_phase),
@@ -1501,6 +1510,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Identity => identity(world, gate, now),
         Step::Effects => effects(world, gate, now, in_phase),
         Step::Tips => tips(world, gate, now, in_phase),
+        Step::Celebrate => celebrate(world, gate, now, in_phase),
         Step::Look => look_name(world, gate, now, in_phase),
         Step::Guides => guides(world, gate, now, in_phase),
         Step::Journal => journal(world, gate, now, in_phase),
@@ -4384,6 +4394,75 @@ fn tips(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let again = showing(world).filter(|name| *name == "inventory");
             gate.check("tips: once", if again.is_none() { Ok("seen once, it does not come back".into()) } else { Err("the inventory tip came back".into()) });
             world.resource_mut::<UiState>().inventory_open = false;
+            gate.next(Step::Celebrate, now);
+        }
+        _ => {}
+    }
+}
+
+/// A tenth Mining level, as the server would say it, pops the milestone banner (its
+/// words checked) and throws motes; then a quest and a level asked together show in turn.
+fn celebrate(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    use crate::hud::celebrate::{BannerText, Celebrations, Stage};
+    let launch = world.resource::<Launch>().clone();
+    let skills = &launch.content.skills;
+    let Some(skill) = skills.named("core", "mining").or_else(|| skills.ids().next()) else {
+        gate.check("celebrate", Err("no skill in the content".into()));
+        gate.next(Step::Look, now);
+        return;
+    };
+    let banner = |world: &mut World| world.query::<(&BannerText, &Text)>().iter(world).map(|(line, text)| (*line, text.0.clone())).collect::<Vec<_>>();
+    let shown = |world: &mut World| world.resource::<Stage>().showing_level();
+    match gate.phase {
+        0 => {
+            *world.resource_mut::<Stage>() = Stage::default();
+            let every = world.resource::<Celebrations>().milestone_every.max(1);
+            world.resource_mut::<crate::hud::skills::SkillToasts>().level_up(skill, every);
+            gate.advance(now);
+        }
+        // Drawn the frame after it is asked for; the motes' bursts all thrown within a second.
+        1 if in_phase > 1.0 => {
+            let locale = world.resource::<Locale>().clone();
+            let every = world.resource::<Celebrations>().milestone_every.max(1);
+            let wanted = [locale.get("celebrate.milestone").to_owned(), locale.skill(skills.get(skill)), locale.format("skills.level_up", &[("level", &every)])];
+            let lines = banner(world);
+            let missing: Vec<_> = wanted.iter().filter(|w| !lines.iter().any(|(_, text)| text == *w)).collect();
+            let thrown = world.resource::<Stage>().thrown;
+            let amount = world.resource::<crate::render::particles::Particles>().amount;
+            gate.check(
+                "celebrate: milestone",
+                if !missing.is_empty() {
+                    Err(format!("the banner lacks {missing:?} (it reads {lines:?})"))
+                } else if amount > 0.0 && thrown == 0 {
+                    Err("no motes were thrown".into())
+                } else {
+                    Ok(format!("the banner reads {wanted:?}, {thrown} motes thrown"))
+                },
+            );
+            // A quest finished by reaching a level: the quest first.
+            let quest = launch.content.quests.iter().next().map(|q| q.name.clone()).unwrap_or_default();
+            *world.resource_mut::<Stage>() = Stage::default();
+            world.resource_mut::<Stage>().ask_quest(quest);
+            world.resource_mut::<crate::hud::skills::SkillToasts>().level_up(skill, 3);
+            gate.advance(now);
+        }
+        2 if in_phase > 0.3 => {
+            let first = shown(world);
+            if first.is_some() {
+                gate.check("celebrate: in turn", Err(format!("the level showed at once, over the quest ({first:?})")));
+                gate.next(Step::Look, now);
+                return;
+            }
+            gate.advance(now);
+        }
+        3 => {
+            let hold = world.resource::<Celebrations>().quest.hold;
+            let level = shown(world);
+            if level.is_none() && in_phase < hold + 1.0 {
+                return;
+            }
+            gate.check("celebrate: in turn", match level { Some(3) => Ok(format!("the quest showed first, the level after its turn ({hold} s)")), other => Err(format!("after the quest came {other:?}, not level 3")) });
+            *world.resource_mut::<Stage>() = Stage::default();
             gate.next(Step::Look, now);
         }
         _ => {}
@@ -5706,7 +5785,7 @@ fn show_view(world: &mut World, view: Option<View>, now: f32) {
             let mut toasts = world.resource_mut::<crate::hud::skills::SkillToasts>();
             toasts.gained(skill, 12_345, now);
             toasts.refused(needs, now);
-            toasts.level_up(skill, 99, now);
+            toasts.level_up(skill, 90);
         }
     }
 }
@@ -8709,7 +8788,7 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
                 gate.advance(now);
             } else if waited {
                 gate.check("drying rack", Err(format!("the rack ({stood}) or raw rabbit in hand never came in {DRY_WAIT} server seconds")));
-                gate.next(Step::Tame, now);
+                gate.next(Step::Snare, now);
             }
         }
         2 => {
@@ -8722,7 +8801,7 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
             } else if gate.waited_out(DRY_WAIT) {
                 mouse(world, MouseButton::Right, false);
                 gate.check("drying rack", Err(format!("right clicks with raw rabbit in hand never hung the rack in {DRY_WAIT} server seconds")));
-                gate.next(Step::Tame, now);
+                gate.next(Step::Snare, now);
             } else {
                 gate.tap(world, true, now);
             }
@@ -8852,9 +8931,69 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
             net.command(&format!("setblock {} {} {} air", pot.x, pot.y, pot.z));
             net.command(&format!("setblock {} {} {} {ground}", water.x, water.y, water.z));
             net.command("clear wheat");
-            gate.next(Step::Tame, now);
+            gate.next(Step::Snare, now);
         }
         _ => {}
+    }
+}
+
+/// Where the snare step sets its snare, from where the dry step's rack stood.
+const SNARE_FROM_RACK: IVec3 = IVec3::new(3, 0, 0);
+
+fn snare(world: &mut World, gate: &mut Gate, now: f32) {
+    let snare = gate.feet + IVec3::new(0, 0, 14) + RACK_FROM_FIRE + SNARE_FROM_RACK;
+    let waited = gate.server_in_phase() > DRY_WAIT;
+    let client = world.resource::<ClientWorld>();
+    let is = |name: &str| client.registry.id(name).is_some_and(|b| client.block(snare) == Some(b));
+    let (set, sprung) = (is("base:snare"), is("base:snare_sprung"));
+    let rabbit = client.registry.id("base:raw_rabbit");
+    let carried = world.resource::<LocalPlayer>().inventory.slots.iter().flatten().filter(|s| Some(s.item) == rabbit).map(|s| s.count as u32).sum::<u32>();
+    let end = |world: &mut World, gate: &mut Gate| {
+        gate.tap(world, false, now);
+        world.resource::<Net>().command(&format!("setblock {} {} {} air", snare.x, snare.y, snare.z));
+        gate.next(Step::Tame, now);
+    };
+    match gate.phase {
+        0 => {
+            let net = world.resource::<Net>();
+            net.command("clear raw_rabbit");
+            net.command(&format!("setblock {} {} {} snare", snare.x, snare.y, snare.z));
+            net.command(&format!("tp {} {} {}", snare.x as f32 + 0.5, snare.y, snare.z as f32 - 2.5));
+            gate.advance(now);
+        }
+        1 => {
+            // Set, by the server's word: a rabbit is put in it.
+            if set {
+                world.resource::<Net>().command(&format!("summon rabbit 1 {} {} {}", snare.x as f32 + 0.5, snare.y, snare.z as f32 + 0.5));
+                gate.advance(now);
+            } else if waited {
+                gate.check("snare", Err(format!("the snare never stood in {DRY_WAIT} server seconds")));
+                end(world, gate);
+            }
+        }
+        2 => {
+            aim_at(world, snare.as_vec3() + Vec3::new(0.5, 0.3, 0.5));
+            if sprung && drawn(world, snare) && gate.shot(world, "snare_sprung").is_some() {
+                gate.check("snare", Ok("a rabbit summoned into a set snare was caught: the server sprang it".to_owned()));
+                gate.advance(now);
+            } else if waited {
+                gate.check("snare", Err(format!("a rabbit in the snare never sprang it in {DRY_WAIT} server seconds")));
+                end(world, gate);
+            }
+        }
+        _ => {
+            // Right clicks on the sprung snare, until the server answers one.
+            aim_at(world, snare.as_vec3() + Vec3::new(0.5, 0.3, 0.5));
+            if set && carried > 0 {
+                gate.check("snare taken", Ok(format!("a right click took {carried} raw rabbit from the snare, set again ({} clicks)", gate.taps)));
+                end(world, gate);
+            } else if gate.waited_out(DRY_WAIT) {
+                gate.check("snare taken", Err(format!("{} right clicks on the sprung snare: set again {set}, raw rabbit carried {carried}", gate.taps)));
+                end(world, gate);
+            } else {
+                gate.tap(world, true, now);
+            }
+        }
     }
 }
 

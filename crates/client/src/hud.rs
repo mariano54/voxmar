@@ -1,6 +1,7 @@
 //! Heads-up display: crosshair, hotbar, health, the held item's name, debug overlay, the
 //! inventory screen and the console, all in the interface's pixel look (`crate::ui`).
 
+pub mod celebrate;
 pub mod character;
 pub mod combat;
 pub mod console;
@@ -45,7 +46,7 @@ pub struct HudPlugin;
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((console::ConsolePlugin, inventory::InventoryPlugin, skills::SkillHudPlugin, screens::ScreensPlugin, character::CharacterPlugin, target::TargetPlugin, recipes::RecipesPlugin, death::DeathPlugin, effects::EffectsPlugin, creative::CreativePlugin))
-            .add_plugins((tips::TipsPlugin, journal::JournalPlugin, levels::LevelsPlugin, quests::QuestsPlugin, combat::CombatHudPlugin, prayers::PrayersPlugin, home::HomePlugin))
+            .add_plugins((tips::TipsPlugin, journal::JournalPlugin, levels::LevelsPlugin, quests::QuestsPlugin, combat::CombatHudPlugin, prayers::PrayersPlugin, home::HomePlugin, celebrate::CelebratePlugin))
             .add_systems(PostStartup, spawn_hud)
             .add_systems(
                 Update,

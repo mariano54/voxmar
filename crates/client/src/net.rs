@@ -296,7 +296,7 @@ pub(crate) fn receive(
                     for id in registry.ids() {
                         let level = registry.level(skills.xp(id));
                         if level > registry.level(player.skills.xp(id)) {
-                            toasts.level_up(id, level, time.elapsed_secs());
+                            toasts.level_up(id, level);
                         }
                     }
                 }
