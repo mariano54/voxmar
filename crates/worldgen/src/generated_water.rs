@@ -49,7 +49,8 @@ fn generated_water_does_not_move() {
             found.extend(sights.iter().map(|&(kind, _)| kind));
             places.extend(sights.into_iter().map(|(_, at)| IVec2::new(at.x, at.z)));
         }
-        let counts: Vec<(usize, usize, usize)> = places.par_iter().map(|&place| check_area(&registry, &generator, seed, place)).collect();
+        let columns = generate_around(&generator, &places);
+        let counts: Vec<(usize, usize, usize)> = places.par_iter().map(|&place| check_area(&registry, &columns, seed, place)).collect();
         (found, counts)
     };
     // The first seeds side by side, the rest one at a time and only while needed, all
@@ -98,8 +99,9 @@ fn tarns_do_not_move() {
             .map(|(pit, _, _, _)| pit)
             .take(2)
             .collect();
+        let columns = generate_around(&generator, &found);
         for &pit in &found {
-            let fluids = check_area(&registry, &generator, seed, pit).0;
+            let fluids = check_area(&registry, &columns, seed, pit).0;
             assert!(fluids > 0, "seed {seed}: no water around the tarn at {pit}");
         }
         found.len()
@@ -107,12 +109,16 @@ fn tarns_do_not_move() {
     assert!(tarns >= 4, "only {tarns} tarns found around alpine meadows");
 }
 
-/// Generates the area around `place` and checks that none of its water would move: none is
-/// scheduled when its columns load, and ticking any of it would change nothing. Counts its
-/// fluid cells as `count_fluid` does.
-fn check_area(registry: &BlockRegistry, generator: &Overworld, seed: u64, place: IVec2) -> (usize, usize, usize) {
-    let first = ColumnPos::of_block(IVec3::new(place.x, 0, place.y)).offset(-SIDE / 2, -SIDE / 2);
-    let world = generate(generator, first);
+/// Checks that none of the water in the area around `place` (its columns from `columns`)
+/// would move: none is scheduled when its columns load, and ticking any of it would change
+/// nothing. Counts its fluid cells as `count_fluid` does.
+fn check_area(registry: &BlockRegistry, columns: &Columns, seed: u64, place: IVec2) -> (usize, usize, usize) {
+    let first = area_from(place);
+    let mut world = VoxelWorld::default();
+    for i in 0..SIDE * SIDE {
+        let pos = first.offset(i % SIDE, i / SIDE);
+        world.insert(pos, columns[&pos].clone());
+    }
     let mut fluids = Fluids::default();
     for dz in 0..SIDE {
         for dx in 0..SIDE {
@@ -159,6 +165,26 @@ fn count_fluid(registry: &BlockRegistry, world: &VoxelWorld, pos: ColumnPos) -> 
     (all, pouring, pinned)
 }
 
+/// Generated columns, by place.
+type Columns = std::collections::HashMap<ColumnPos, Arc<Column>>;
+
+/// The first column of the `SIDE` × `SIDE` area around `place`.
+fn area_from(place: IVec2) -> ColumnPos {
+    ColumnPos::of_block(IVec3::new(place.x, 0, place.y)).offset(-SIDE / 2, -SIDE / 2)
+}
+
+/// The columns of the areas around `places`, each generated once however many areas it lies
+/// in (places near each other share some), side by side on the test threads' pool.
+fn generate_around(generator: &Overworld, places: &[IVec2]) -> Columns {
+    let mut positions: Vec<ColumnPos> = places.iter().flat_map(|&place| {
+        let first = area_from(place);
+        (0..SIDE * SIDE).map(move |i| first.offset(i % SIDE, i / SIDE))
+    }).collect();
+    positions.sort_by_key(|p| (p.0.x, p.0.y));
+    positions.dedup();
+    positions.into_par_iter().map(|pos| (pos, Arc::new(generator.generate(pos)))).collect()
+}
+
 /// A `SIDE` × `SIDE` area of columns from `first`, generated on the test threads' pool.
 fn generate(generator: &Overworld, first: ColumnPos) -> VoxelWorld {
     let positions: Vec<ColumnPos> = (0..SIDE * SIDE).map(|i| first.offset(i % SIDE, i / SIDE)).collect();
@@ -187,8 +213,9 @@ fn water_still_settles_at_the_next_version() {
         if seed == 5 {
             places.push(IVec2::new(851, 1030));
         }
+        let columns = generate_around(&generator, &places);
         places.par_iter().map(|&place| {
-            let fluids = check_area(&registry, &generator, seed, place).0;
+            let fluids = check_area(&registry, &columns, seed, place).0;
             assert!(!(seed == 5 && place == IVec2::new(851, 1030)) || fluids > 0, "no water at seed 5's old waterfall spot");
             fluids
         }).sum::<usize>()
