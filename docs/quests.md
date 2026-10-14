@@ -73,9 +73,15 @@ played by the client as the server's states change (not for the states a session
 with). A skill's new level rings too, and every tenth level a grander tune. They are
 recordings the base package's `sounds.ron` lists (`quest_done`, `quest_claim`, `level_up`,
 `level_milestone`), our own, composed by `tools/generate_jingles.py`; a later package that
-lists any for an event replaces them. Two tunes never start over each other: a quest
-finished by reaching a level chimes first, then the level rings (`ui/sound.rs`). They
-follow the sound volume, not the choice of click sounds.
+lists any for an event replaces them. They follow the sound volume, not the choice of click
+sounds.
+
+A quest finished and a level reached are each a moment (`hud/celebrate.rs`): a banner pops
+in at the top of the screen (the quest and where to claim it, or the skill, its level and
+what that opens), motes burst around the player, and the jingle plays as it shows. A
+milestone level (every tenth) is grander. All of it is `core/celebrations.ron`. Moments
+take turns: a quest finished by reaching a level shows first, and the level cuts in once
+the quest has held for its `hold`.
 
 The Nomad and Farm chapters (ages 1 and 2) have the quests the game can already do:
 Nomad runs from the first campfire to the lit Homestead Hearth, Farm from the first harvest
