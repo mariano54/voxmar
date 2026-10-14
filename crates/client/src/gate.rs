@@ -417,6 +417,9 @@ enum Step {
     /// The way home at dusk: past the home's box, the hearth mark sits within a few degrees
     /// of where home lies; back inside the home, it is gone.
     WayHome,
+    /// A hen kept at that home lays into a barrel there, not onto the ground, and the chat
+    /// says so.
+    Nest,
     /// A wooden door placed before the player goes in whole, both halves facing them, and a
     /// right click on it opens it and another shuts it, as the server turns it.
     Door,
@@ -542,6 +545,8 @@ struct Gate {
     /// canvas stood in the window.
     web_scroll: Vec2,
     web_canvas: Vec2,
+    /// The quest a lane's header was pressed to bring into view.
+    web_head: Option<String>,
     /// Where the player died in the workshop, the most items carried since waking, and when
     /// (in server seconds) that last went up.
     fell: Vec3,
@@ -765,6 +770,7 @@ impl Gate {
             quest_pinned: 0.0,
             web_scroll: Vec2::ZERO,
             web_canvas: Vec2::ZERO,
+            web_head: None,
             fell: Vec3::ZERO,
             gathered: (0, 0.0),
             kiln: IVec3::ZERO,
@@ -1328,6 +1334,8 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         Step::Party => 60.0,
         // The effects are judged once a second by the server, and a rest is a sleep away.
         Step::Home => 70.0,
+        // The barrel opened, then a server pass for the egg and a second for the chat.
+        Step::Nest => 45.0,
         // A rack hung, then a pot set simmering, each answer waited on.
         Step::Dry => 5.0 * DRY_WAIT + STEP_LIMIT,
         // The refusal waited on, then a well set down by the plot.
@@ -1611,6 +1619,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Prayers => prayers(world, gate, now, in_phase),
         Step::Home => home(world, gate, now),
         Step::WayHome => way_home(world, gate, now, in_phase),
+        Step::Nest => nest(world, gate, now),
         Step::Door => door(world, gate, now, in_phase),
         Step::Makeable => makeable(world, gate, now, in_phase),
         Step::Quests => quests(world, gate, now, in_phase),
@@ -3413,8 +3422,10 @@ fn swim(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 /// cores a shot alone can take seconds.
 const SCREEN_WAIT: f32 = 10.0;
 
-/// How long PostUpdate is timed with the debug overlay closed and then open, in seconds
-/// (after a moment to settle), and the least number of frames each.
+/// How long PostUpdate is timed with the debug overlay open, in seconds (after a moment to
+/// settle), and the least number of frames timed open and closed. Its text's rewrites are
+/// counted over the open time, which must be long enough that the rate a second is judged
+/// fairly; closed, the frames are only timed for the comparison, so the least will do.
 const OVERLAY_TIMED: f32 = 2.0;
 const OVERLAY_FRAMES: usize = 60;
 
@@ -3441,7 +3452,7 @@ fn music_fades(world: &mut World, gate: &mut Gate, now: f32) {
 fn overlay(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let shown = world.resource::<Settings>().debug_overlay;
     let ms = world.resource::<PostUpdateTime>().ms;
-    let timed = |gate: &Gate, i: usize| in_phase > OVERLAY_TIMED + 0.5 && gate.overlay_ms[i].len() >= OVERLAY_FRAMES;
+    let timed = |gate: &Gate, i: usize| (i == 0 || in_phase > OVERLAY_TIMED + 0.5) && gate.overlay_ms[i].len() >= OVERLAY_FRAMES;
     match gate.phase {
         0 => {
             if shown {
@@ -4688,7 +4699,8 @@ fn celebrate(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.advance(now);
         }
         // Drawn the frame after it is asked for; the motes' bursts all thrown within a second.
-        1 if in_phase > 1.0 => {
+        // Judged as soon as both show, or at that second.
+        1 => {
             let locale = world.resource::<Locale>().clone();
             let every = world.resource::<Celebrations>().milestone_every.max(1);
             let wanted = [locale.get("celebrate.milestone").to_owned(), locale.skill(skills.get(skill)), locale.format("skills.level_up", &[("level", &every)])];
@@ -4696,6 +4708,9 @@ fn celebrate(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let missing: Vec<_> = wanted.iter().filter(|w| !lines.iter().any(|(_, text)| text == *w)).collect();
             let thrown = world.resource::<Stage>().thrown;
             let amount = world.resource::<crate::render::particles::Particles>().amount;
+            if in_phase <= 1.0 && !(missing.is_empty() && (amount <= 0.0 || thrown > 0)) {
+                return;
+            }
             gate.check(
                 "celebrate: milestone",
                 if !missing.is_empty() {
@@ -5360,18 +5375,16 @@ fn way_home(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let waited = gate.server_in_phase();
     let leave = |world: &mut World, gate: &mut Gate| {
         let net = world.resource::<Net>();
+        // The camp stays home for the nest step, which takes it down.
         if let Some(home) = home {
             let pad = home + IVec3::new(WAY_OUT, -1, 0);
             net.command(&format!("setblock {} {} {} air", pad.x, pad.y, pad.z));
-            for at in [home, home + IVec3::X] {
-                net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
-            }
         }
         // The time it was, once it was moved.
         if gate.phase > 0 {
             net.command(&format!("time set {}", gate.way_time));
         }
-        gate.next(Step::Door, now);
+        gate.next(Step::Nest, now);
     };
     let Some(home) = home else {
         gate.check("way home", Err("no home after the Home step: the server named none".into()));
@@ -5441,6 +5454,81 @@ fn way_home(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 leave(world, gate);
             } else if waited > QUEST_WAIT && in_phase > QUEST_WAIT {
                 gate.check("way home: inside", Err(format!("{waited:.1} server s and {in_phase:.1} game s on: back in the camp {}, the mark still shown at {:?}", at(inside), mark.map(|m| m.0))));
+                leave(world, gate);
+            }
+        }
+    }
+}
+
+/// A junglefowl summoned at the Home step's bag, tamed and with an egg due, lays it into a
+/// barrel in that home (`Product::nests`), seen in the barrel's open screen (shot
+/// `home-nest`), and the chat tells the keeper; then the bag, torch, barrel and hen go.
+fn nest(world: &mut World, gate: &mut Gate, now: f32) {
+    let Some(bag) = world.resource::<LocalPlayer>().vitals.home else {
+        gate.check("home: nest", Err("no home after the Home step to keep a hen at: the server named none".into()));
+        gate.next(Step::Door, now);
+        return;
+    };
+    // Where the Home step stood, two blocks west of the bag.
+    let stand = bag - IVec3::new(2, 0, 0);
+    let (torch, barrel, hen) = (bag + IVec3::X, stand + IVec3::new(0, 0, 2), stand + IVec3::new(0, 0, -3));
+    let waited = gate.server_in_phase();
+    let leave = |world: &mut World, gate: &mut Gate| {
+        world.resource_mut::<UiState>().inventory_open = false;
+        let net = world.resource::<Net>();
+        net.command("creatures remove junglefowl");
+        for at in [bag, torch, barrel] {
+            net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
+        }
+        net.command("clear egg");
+        gate.next(Step::Door, now);
+    };
+    let eggs = |world: &World| {
+        let egg = world.resource::<ClientWorld>().registry.id("base:egg");
+        world.resource::<LocalPlayer>().inventory.store.as_ref().map_or(0, |s| s.slots.iter().flatten().filter(|x| Some(x.item) == egg).map(|x| x.count as u32).sum::<u32>())
+    };
+    match gate.phase {
+        0 => {
+            let net = world.resource::<Net>();
+            // Back where the Home step stood, whatever the way home step left.
+            net.command(&format!("tp {} {} {}", stand.x as f32 + 0.5, stand.y, stand.z as f32 + 0.5));
+            net.command(&format!("setblock {} {} {} barrel", barrel.x, barrel.y, barrel.z));
+            net.command(&format!("summon junglefowl 1 {} {} {}", hen.x, hen.y, hen.z));
+            net.command("creatures tame junglefowl");
+            net.command("creatures hold junglefowl");
+            gate.machines_asked = f32::MIN;
+            gate.advance(now);
+        }
+        // The barrel opened, empty, and only then an egg made due, so it is laid with the
+        // screen watching.
+        1 => {
+            if world.resource::<LocalPlayer>().inventory.store.is_some() {
+                world.resource::<Net>().command("creatures hasten junglefowl");
+                gate.advance(now);
+            } else if waited > 10.0 {
+                gate.check("home: nest", Err(format!("{waited:.1} server s on, the nest barrel at {barrel} did not open")));
+                leave(world, gate);
+            } else if gate.server_now - gate.machines_asked >= 1.0 {
+                if world.resource::<ClientWorld>().registry.id("base:barrel").is_some_and(|b| world.resource::<ClientWorld>().block(barrel) == Some(b)) {
+                    world.resource_mut::<LocalPlayer>().store_asked = true;
+                    let actions = world.resource::<crate::Actions>().0.clone();
+                    world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("base:open_store"), voxmar_engine::action::ActionTarget::Block { block: barrel, face: voxmar_engine::coords::Face::PosY });
+                }
+                gate.machines_asked = gate.server_now;
+            }
+        }
+        _ => {
+            let laid = eggs(world);
+            let told = world.resource::<crate::hud::console::Console>().since(gate.phase_since).any(|l| l.contains("laid into your home's stores"));
+            if laid > 0 && told {
+                if gate.shot(world, "home-nest").is_none() {
+                    return;
+                }
+                gate.check("home: nest", Ok(format!("a hen kept at home laid {laid} egg into the barrel there (shot home-nest), and the chat said so")));
+                leave(world, gate);
+            } else if waited > 15.0 {
+                let open = world.resource::<LocalPlayer>().inventory.store.is_some();
+                gate.check("home: nest", Err(format!("{waited:.1} server s after the hen's egg was made due: {laid} eggs in the barrel (open {open}), told {told}")));
                 leave(world, gate);
             }
         }
@@ -6090,8 +6178,49 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.advance(now);
         }
         19 => {
-            if gate.shot(world, "quests-dragged").is_none() {
+            if gate.shot(world, "quests-dragged").is_some() {
+                gate.advance(now);
+            }
+        }
+        // A path's lane header pressed, the lowest one that would move the canvas, brings
+        // the canvas to that path's next quest and picks it. Only the client moves, so the
+        // wait is the game's seconds, not the server's.
+        20 => {
+            let scroll = world.query_filtered::<&ScrollPosition, With<crate::hud::quests::Web>>().iter(world).next().map_or(Vec2::ZERO, |s| s.0);
+            let heads: Vec<(Entity, Option<String>, Vec2)> = world.query::<(Entity, &crate::hud::quests::LaneHead)>().iter(world).map(|(e, h)| (e, h.head.clone(), h.at)).collect();
+            // A web that fits its well never moves, so there any header whose head is not
+            // the quest picked will do: it must still pick its head, inside the well.
+            let picked = world.resource::<crate::hud::quests::QuestView>().picked.clone();
+            let moving = heads.iter().rev().find(|(_, head, at)| head.is_some() && at.distance(scroll) > 1.0);
+            let Some((header, head, at)) = moving.or_else(|| heads.iter().rev().find(|(_, head, _)| head.is_some() && *head != picked)).cloned() else {
+                return quit(world, gate, "quests: path", format!("{} lane headers, none with a quest away from the canvas at {scroll} or other than {picked:?}", heads.len()));
+            };
+            gate.web_head = head;
+            gate.web_scroll = at;
+            world.resource_mut::<UiClicks>().next = Some((header, MouseButton::Left));
+            gate.advance(now);
+        }
+        21 => {
+            let picked = world.resource::<crate::hud::quests::QuestView>().picked.clone();
+            let scroll = world.query_filtered::<&ScrollPosition, With<crate::hud::quests::Web>>().iter(world).next().map_or(Vec2::ZERO, |s| s.0);
+            let (well, max) = world
+                .query_filtered::<(&ComputedNode, &bevy::ui::UiGlobalTransform), With<crate::hud::quests::Web>>()
+                .iter(world)
+                .next()
+                .map_or((None, Vec2::ZERO), |(c, at)| (Some(Rect::from_center_size(at.translation, c.size())), (c.content_size() - c.size()).max(Vec2::ZERO) * c.inverse_scale_factor()));
+            // Where the header asked for, as far as the canvas moves.
+            let wanted = gate.web_scroll.clamp(Vec2::ZERO, max);
+            let node = world.query::<(&crate::hud::quests::QuestNode, &bevy::ui::UiGlobalTransform)>().iter(world).find(|(n, _)| Some(&n.0) == gate.web_head.as_ref()).map(|(_, at)| at.translation);
+            let shown = matches!((well, node), (Some(well), Some(node)) if well.contains(node));
+            if picked == gate.web_head && scroll.distance(wanted) < 1.0 && shown {
+                if gate.shot(world, "quests-path").is_none() {
+                    return;
+                }
+                gate.check("quests: path", Ok(format!("a lane header brought the canvas to {scroll} and picked {picked:?}, inside the well")));
+            } else if in_phase < 2.0 {
                 return;
+            } else {
+                gate.check("quests: path", Err(format!("2 s after a lane header was pressed for {:?} (canvas wanted at {wanted}): picked {picked:?}, canvas at {scroll}, the quest at {node:?} in the well {well:?}", gate.web_head)));
             }
             world.resource_mut::<UiState>().quests_open = false;
             gate.next(Step::Catalogue, now);
@@ -7087,7 +7216,7 @@ fn held(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     // (Looked for once a shot's wait is nearly over, when the views of those sent away are gone.)
     if (2..=5).contains(&gate.phase) && in_phase > 0.5 && gate.held_cleared < HELD_CLEARS && let Some(near) = wild_near(world, HELD_CLEAR) {
         gate.held_cleared += 1;
-        info!("gate: held: {near} near the sky shots; sending the wild creatures away and taking them again");
+        info!("gate: held: {near} before the sky shots; sending the wild creatures away and taking them again");
         world.resource::<Net>().command("creatures disperse");
         empty_hand(world);
         gate.forget(&HELD_SKY);
@@ -7224,22 +7353,32 @@ fn held(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 const HELD_SEEN: f32 = 1.0;
 const HELD_ELSEWHERE: f32 = 0.5;
 /// Blocks round the player within which a wild creature may walk into the held step's
-/// shots, and the times the step sends them away and begins those shots again.
+/// shots, and the times the step sends them away and begins those shots again. Only one
+/// before the eye counts: within the angle of the look that the server keeps births out
+/// of (`spawn_unseen_angle`, wider than the view). Sending the wild away makes room near
+/// the player, so births follow within seconds, 20 to 40 blocks off and out of sight:
+/// counted too, they retook the shots every run.
 const HELD_CLEAR: f32 = 32.0;
 const HELD_CLEARS: u32 = 3;
 /// The sky shots a retake takes again.
 const HELD_SKY: [&str; 4] = ["held-empty", "held-sword", "held-block", "held-empty-after"];
 
-/// The nearest wild creature shown within `reach` of the player (none kept by anyone, and
-/// no villager: what `/creatures disperse` sends away), by name and distance.
+/// The nearest wild creature shown within `reach` of the player and before their eye (none
+/// kept by anyone, and no villager: what `/creatures disperse` sends away), by name and
+/// distance.
 fn wild_near(world: &World, reach: f32) -> Option<String> {
-    let at = world.resource::<LocalPlayer>().position;
+    let player = world.resource::<LocalPlayer>();
+    let (at, eye, look) = (player.position, player.eye(), player.look_direction());
     let launch = world.resource::<Launch>();
+    // An angle of 0 lets births come in sight: then any counts.
+    let angle = launch.content.creatures.limits().spawn_unseen_angle;
+    let cos = if angle == 0.0 { -1.0 } else { angle.to_radians().cos() };
     let villager = |v: &voxmar_protocol::CreatureView| launch.content.creatures.get(v.species).def.kind == voxmar_engine::creature::Kind::Villager;
+    let before = |v: &voxmar_protocol::CreatureView| look.dot((v.position + Vec3::Y * 0.5 - eye).normalize_or_zero()) >= cos;
     world
         .resource::<crate::creatures::Creatures>()
         .views()
-        .filter(|v| !v.kept && v.owner.is_none() && !villager(v))
+        .filter(|v| !v.kept && v.owner.is_none() && !villager(v) && before(v))
         .map(|v| (v.position.distance(at), v.species))
         .filter(|&(d, _)| d < reach)
         .min_by(|a, b| a.0.total_cmp(&b.0))

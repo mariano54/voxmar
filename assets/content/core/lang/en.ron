@@ -307,6 +307,7 @@
     "craft.lay.room": "No room in the pack for what the grid holds.",
     "craft.lay.cannot": "You cannot make it here yet.",
     "craft.lay.short": "Not enough to lay it: {items}.",
+    "home.nested": "Your animals laid into your home's stores: {items}.",
     "recipes.lay": "Lay",
     "recipes.hint": "Click an item for its recipes, right-click for its uses.",
     "recipes.none.recipes": "Nothing makes {item}; find it in the world.",

@@ -57,6 +57,8 @@ pub struct Content {
     pub machines: Arc<crate::machine::MachineRegistry>,
     /// The quest book.
     pub quests: Arc<crate::quest::QuestRegistry>,
+    /// The quest book's lanes, one per age and branch (`quest_paths.ron`).
+    pub quest_paths: Arc<crate::quest_path::QuestPaths>,
     /// What it takes to study and master the journal's entries.
     pub journal: Arc<crate::journal::JournalRules>,
     /// Which wild plants come back where they were picked, and how soon.
@@ -237,6 +239,7 @@ impl Content {
         let mut machines = Vec::new();
         let mut processes = Vec::new();
         let mut quests = Vec::new();
+        let mut quest_paths = Vec::new();
         let mut wandering = Vec::new();
         let mut wander_rules = Setting::<crate::wander::Rules>::default();
         let mut shapes = Vec::new();
@@ -308,6 +311,10 @@ impl Content {
                     }
                     "quests.ron" => {
                         quests.push(crate::quest::QuestRegistry::read(package, &source)?);
+                        files.push(ContentFile { package: package.clone(), name, source });
+                    }
+                    crate::quest_path::QuestPaths::FILE => {
+                        quest_paths.push((package.clone(), crate::quest_path::QuestPaths::read(package, &source)?));
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
                     // `multiblocks.ron`, and `multiblocks_<topic>.ron` for a system's own (machines).
@@ -457,6 +464,7 @@ impl Content {
         let wandering = crate::wander::WanderRegistry::new(wandering, wander_rules.value, &creatures, &blocks, &skills, &effects, &cooking, &weather)?;
         let mut quests = crate::quest::QuestRegistry::new(quests)?;
         quests.resolve(&crate::quest::Named { blocks: &blocks, skills: &skills, creatures: &creatures, fishing: &fishing, multiblocks: &multiblocks, steps: &effects.steps(), events: &wandering.iter().map(|(_, e)| e.def.name.clone()).collect::<Vec<_>>(), prayers: &prayers.all().map(|(_, p)| p.name.clone()).collect::<Vec<_>>(), effects: &effects.ids().map(|id| effects.get(id).name.clone()).collect::<Vec<_>>() })?;
+        let quest_paths = crate::quest_path::QuestPaths::new(quest_paths, &quests, &blocks)?;
         // An effect that waits on a quest nobody can finish would never come on.
         if let Some(quest) = effects.quests().iter().find(|quest| quests.get(quest).is_none()) {
             return Err(RegistryError(format!("effects.ron: an effect waits for the quest `{quest}`, which no package has")));
@@ -511,6 +519,7 @@ impl Content {
             multiblocks: Arc::new(multiblocks),
             machines: Arc::new(machines),
             quests: Arc::new(quests),
+            quest_paths: Arc::new(quest_paths),
             journal: Arc::new(crate::journal::JournalRules::merge(journal, &mut notes)),
             refusals: Arc::new(refusals),
             files: Arc::new(files),

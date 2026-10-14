@@ -294,6 +294,7 @@
     "craft.lay.room": "作業枠の中身を戻す空きが荷物にない。",
     "craft.lay.cannot": "ここではまだ作れない。",
     "craft.lay.short": "並べるには足りない: {items}。",
+    "home.nested": "飼っている動物が家の収納に産んだ: {items}。",
     "recipes.lay": "並べる",
     "recipes.hint": "クリックでレシピ、右クリックで用途を表示。",
     "recipes.none.recipes": "{item}を作るレシピはありません。世界で探しましょう。",
