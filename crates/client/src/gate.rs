@@ -398,8 +398,8 @@ enum Step {
     Prayers,
     /// A sleeping bag with a torch beside it, slept in, is a camp: the Camp chip comes on, the
     /// chat says so with what to add next, and the sleep is a rest. At home, what a barrel
-    /// there holds counts in the Can Make list, and Lay on a recipe fills the crafting grid
-    /// from it.
+    /// there holds counts in the Can Make list, the put away key moves planks from the pack
+    /// into it, and Lay on a recipe fills the crafting grid from it.
     Home,
     /// A wooden door placed before the player goes in whole, both halves facing them, and a
     /// right click on it opens it and another shuts it, as the server turns it.
@@ -4802,12 +4802,8 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
                 leave(world, gate);
             } else if stored == LAY_PLANKS && held == 0 && ready {
                 gate.check("home: can make", Ok(format!("with {stored} planks in the home barrel and none in the pack, Can Make shows the crafting table ready")));
-                // The crafting table's recipe in the viewer, over the open inventory.
-                // Opened as a click in it does: a trail with the viewer shut reads as Esc.
-                if let Some(table) = table {
-                    world.resource_mut::<crate::hud::recipes::RecipeViewer>().open(table, false);
-                    world.resource_mut::<UiState>().recipes_open = true;
-                }
+                // More planks carried home, to be put away.
+                world.resource::<Net>().command(&format!("give oak_planks {PUT_PLANKS}"));
                 gate.advance(now);
             } else if waited > 10.0 {
                 let open = player.inventory.store.is_some();
@@ -4831,8 +4827,46 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
                 gate.machines_asked = gate.server_now;
             }
         }
-        // Lay pressed: the table's planks come out of the barrel into the grid.
+        // The planks carried home, moved off the hotbar into the pack, go into the barrel
+        // already holding planks when the put away key is pressed.
         7 => {
+            let put_away = world.resource::<crate::settings::Settings>().put_away_key.0;
+            key(world, put_away, false);
+            let planks = world.resource::<ClientWorld>().registry.id("base:oak_planks");
+            let player = world.resource::<LocalPlayer>();
+            let stored: u32 = player.inventory.store.as_ref().map_or(0, |s| s.slots.iter().flatten().filter(|x| Some(x.item) == planks).map(|x| x.count as u32).sum());
+            let free = (voxmar_engine::inventory::HOTBAR_SLOTS..voxmar_engine::inventory::SLOTS).find(|&slot| player.inventory.slots[slot].is_none());
+            let (held, slot) = holding(world, "base:oak_planks");
+            if stored == LAY_PLANKS + PUT_PLANKS && held == 0 {
+                gate.check("home: put away", Ok(format!("{PUT_PLANKS} planks carried in the pack went into the home barrel at the put away key; it holds {stored}")));
+                // The crafting table's recipe in the viewer, over the open inventory.
+                // Opened as a click in it does: a trail with the viewer shut reads as Esc.
+                if let Some(table) = world.resource::<ClientWorld>().registry.id("base:crafting_table") {
+                    world.resource_mut::<crate::hud::recipes::RecipeViewer>().open(table, false);
+                    world.resource_mut::<UiState>().recipes_open = true;
+                }
+                gate.advance(now);
+            } else if waited > 10.0 {
+                gate.check("home: put away", Err(format!("{waited:.1} server s on, the barrel holds {stored} planks (wanted {}), the pack {held} (first in slot {slot:?})", LAY_PLANKS + PUT_PLANKS)));
+                lay_done(world, barrel);
+                leave(world, gate);
+            } else if gate.server_now - gate.machines_asked >= 1.0 {
+                match slot {
+                    // On the hotbar it stays put: moved into the pack first, as a drag would.
+                    Some(slot) if slot < voxmar_engine::inventory::HOTBAR_SLOTS => {
+                        if let Some(to) = free {
+                            let actions = world.resource::<crate::Actions>().0.clone();
+                            world.resource::<Net>().propose(actions.expect("core:transfer"), voxmar_engine::action::ActionTarget::Slots { from: slot as u8, to: to as u8, count: held as u8 });
+                        }
+                    }
+                    Some(_) => key(world, put_away, true),
+                    None => {}
+                }
+                gate.machines_asked = gate.server_now;
+            }
+        }
+        // Lay pressed: the table's planks come out of the barrel into the grid.
+        8 => {
             let button = world.query::<(Entity, &crate::hud::recipes::LayButton, &InheritedVisibility)>().iter(world).find(|(_, lay, visible)| visible.get() && world.resource::<ClientWorld>().registry.id("base:crafting_table") == Some(lay.output)).map(|(entity, ..)| entity);
             if let Some(button) = button {
                 // The table's recipe drawn, with its Lay button, before it is pressed.
@@ -5141,6 +5175,8 @@ const WINDOW_LIFT: f64 = 15.0;
 
 /// How many planks the home barrel holds for the table laid from it.
 const LAY_PLANKS: u32 = 4;
+/// The planks carried home and put away into the barrel with the put away key.
+const PUT_PLANKS: u32 = 6;
 
 /// After the lay: the viewer and inventory shut (the grid goes back to the pack), the
 /// barrel gone, and the planks the session carries before it given back.
