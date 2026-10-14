@@ -111,7 +111,6 @@
         (template: "drop", name: "gold_coin", tags: ["currency", "coin"], all: (color: (230, 190, 60))),
         // Flint: one gravel in eight breaks to it (tools.ron); arrowheads and spear points.
         (template: "drop", name: "flint", tags: ["flint", "sharp"], all: (color: (60, 60, 66))),
-        (template: "drop", name: "bronze_blend", tags: ["alloy_blend", "metal:bronze"], all: (color: (190, 140, 80))),
         (template: "drop", name: "bronze_ingot", tags: ["ingot", "metal:bronze"], all: (color: (200, 140, 70))),
         (template: "drop", name: "charcoal", tags: ["charcoal", "coal", "fuel"], all: (color: (40, 36, 34))),
         (template: "drop", name: "twine", tags: ["twine", "fibre"], all: (color: (210, 190, 140))),
@@ -122,4 +121,9 @@
         (template: "drop", name: "taming_treat", tags: ["taming_treat", "trust:2"], all: (color: (200, 140, 80))),
         (template: "drop", name: "seed_mix", tags: ["breeding_feed"], all: (color: (170, 140, 70))),
     ],
+    // Bronze is made in one step at the crucible now; a blend an older save holds comes
+    // back as the bronze it would have smelted into (Oct 14).
+    renamed: {
+        "bronze_blend": "bronze_ingot",
+    },
 )
