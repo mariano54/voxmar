@@ -4183,7 +4183,7 @@ fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 gate.advance(now);
             } else {
                 // A fresh press each time: a held button mines on, it does not ask again.
-                mouse(world, MouseButton::Left, gate.frames % 2 == 0);
+                mouse(world, MouseButton::Left, gate.frames.is_multiple_of(2));
             }
         }
         _ => {
