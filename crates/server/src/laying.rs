@@ -64,9 +64,11 @@ impl Server {
         let laid = (1..=count.max(1)).rev().find_map(|times| {
             usable.iter().find_map(|recipe| {
                 let grid = recipe.lay(times, &have, max_stack)?;
-                // The grid it lays must make it.
+                // The grid it lays must make it, or, by a block it is made near, the same thing
+                // better (a plain way laid by a chopping block makes its six planks).
                 let items = grid.map(|cell| cell.map(|(item, _)| item));
-                recipes.find_near(&items, near).is_some_and(|found| std::ptr::eq(found, *recipe)).then_some(grid)
+                let makes = |found: &Recipe| std::ptr::eq(found, *recipe) || (recipe.near.is_none() && found.near.is_some() && found.output == recipe.output && allowed(found));
+                recipes.find_near(&items, near).is_some_and(makes).then_some(grid)
             })
         });
         let Some(grid) = laid else {
@@ -356,6 +358,10 @@ mod tests {
         let action = server.content.actions.expect("core:lay");
         server.propose(1, action, ActionTarget::Recipe { first, ways: 1, count: 1 }, Instant::now());
         assert_eq!(grid(&server), vec![(log, 1)]);
+        // The plain way laid by one lays too (and makes the six).
+        server.players.get_mut(&1).unwrap().inventory.craft = [None; GRID];
+        lay(&mut server, "base:oak_planks", 1);
+        assert_eq!(grid(&server), vec![(log, 1)], "the plain way, laid by a chopping block");
         server.players.get_mut(&1).unwrap().inventory.craft = [None; GRID];
         server.players.get_mut(&1).unwrap().inventory.slots[1] = Some(ItemStack { item: log, count: 2 });
         server.set_block(block, BlockId::AIR);
