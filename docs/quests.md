@@ -302,14 +302,15 @@ Each new feature has a quest that teaches it, in two parts the book counts one b
 | Old Tusk | Nomad, hunter; Hide and Seek and Raise Your Guard | a flint spear made; Old Tusk killed |
 | Light in the Window | Farm, home; A Homely Home | two hide windows made; two set down |
 | A Trough for the Pen | Farm, husbandry; Hens in a Row | a feed trough set down; eight items put in it |
+| A Full Granary | Farm, farming; A Well by the Field | 64 wheat plants harvested; 32 wheat kept |
 
 Twine and Thong also takes ten twine carried, since a knife cuts twine from tall grass, and
-its text and A Sharp Edge's say so. Four goals came with them, each reading a tally:
+its text and A Sharp Edge's say so. First Harvest says a stone hoe reaps the ripe crops around the one cut, and A Full Granary is the harvest that pays for it. Four goals came with them, each reading a tally:
 `Placed(block, n)` (a block set from the hand, by the item: `placed`), `Stocked(store, n)`
 (items an open store gained, by its block: `stocked`, in `push_store`; taking out stocks
 nothing), `CraftNear(item, near, n)` (made by a recipe with `near`, by that tag:
 `crafted_near:TAG`, beside `crafted`) and `Trapped(creature, n)` (a catch taken from a
-sprung trap: `trapped`). Nomad has 63 quests, Farm 97.
+sprung trap: `trapped`). Nomad has 63 quests, Farm 98.
 
 ## Readable to a newcomer (Oct 13)
 
