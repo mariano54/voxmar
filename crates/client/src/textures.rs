@@ -712,6 +712,24 @@ mod tests {
         assert!(refused.is_empty(), "{}", refused.join("\n"));
     }
 
+    /// The home's steps and its rest each have an icon of their own in the default pack, ten
+    /// texels across, so the HUD's chips tell Camp from Cosy (the plain buff icon did not).
+    #[test]
+    fn the_homes_steps_and_rest_have_their_own_icons() {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets").canonicalize().expect("assets");
+        let content = voxmar_server::load_content(&assets).expect("content");
+        let mut pack = Pack::open(&assets.join("packs").join("default")).expect("default pack");
+        let mut drawn = Vec::new();
+        for name in ["camp", "hearthside", "snug", "homely", "cosy", "heart_of_the_home", "rested", "well_rested", "deep_rest"] {
+            let id = content.effects.id(&format!("base:{name}")).unwrap_or_else(|| panic!("no effect {name}"));
+            let icon = &content.effects.get(id).icon;
+            let image = pack.read(&format!("ui/effect/{icon}")).unwrap_or_else(|| panic!("{name} has no icon of its own"));
+            assert_eq!((image.width, image.height), (10, 10), "{name}");
+            assert!(!drawn.contains(&image.pixels), "{name} looks like another step");
+            drawn.push(image.pixels);
+        }
+    }
+
     /// A block's fixed tint multiplies its texels' colours by the colour (white leaves them,
     /// black blackens them) and never touches their transparency.
     #[test]
