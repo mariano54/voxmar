@@ -204,6 +204,27 @@ pub struct SavedPlayer {
     pub prayer_points: Option<f32>,
 }
 
+/// Tallies quests count (`kind:name`, or `kind:station:name`) under the names items have
+/// now: what an older save counted as cooked rabbit counts as cooked small game, added to
+/// any it already had, so a quest half done keeps its progress.
+fn renamed_tallies(tallies: Vec<(String, u32)>, registry: &BlockRegistry) -> Vec<(String, u32)> {
+    let mut merged: Vec<(String, u32)> = Vec::with_capacity(tallies.len());
+    for (key, count) in tallies {
+        // The item's name is the key's last two parts (`base:cooked_rabbit`).
+        let name_at = key.rmatch_indices(':').nth(1).map_or(0, |(i, _)| i + 1);
+        let (prefix, name) = key.split_at(name_at);
+        let key = match registry.id(name) {
+            None if !prefix.is_empty() => registry.saved_id(name).map_or(key.clone(), |id| format!("{prefix}{}", registry.def(id).name)),
+            _ => key.clone(),
+        };
+        match merged.iter_mut().find(|(have, _)| *have == key) {
+            Some((_, n)) => *n = n.saturating_add(count),
+            None => merged.push((key, count)),
+        }
+    }
+    merged
+}
+
 /// A player file. Items are stored by name, like column blocks.
 #[derive(Serialize, Deserialize)]
 struct PlayerFile {
@@ -523,7 +544,7 @@ impl WorldSave {
         }
         let health = Health { current: file.health.current.min(file.health.max), max: file.health.max };
         let yaw = if file.yaw.is_finite() { file.yaw } else { 0.0 };
-        Ok(Some(SavedPlayer { position, yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills, effects: file.effects, home: file.home, bed: file.bed, journal: merge_journal(file.journal, registry), quests_claimed: file.quests_claimed.unwrap_or_else(|| file.quests.clone()), quests: file.quests, tallies: file.tallies, prayer_points: file.prayer_points }))
+        Ok(Some(SavedPlayer { position, yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills, effects: file.effects, home: file.home, bed: file.bed, journal: merge_journal(file.journal, registry), quests_claimed: file.quests_claimed.unwrap_or_else(|| file.quests.clone()), quests: file.quests, tallies: renamed_tallies(file.tallies, registry), prayer_points: file.prayer_points }))
     }
 
     /// Moves the file of the player called `name` aside, as unreadable (`set_aside`).
@@ -1224,6 +1245,11 @@ mod tests {
         assert_eq!(blocks.saved_id("base:raw_chicken"), Some(raw), "and a column's block names");
         assert_eq!(blocks.id("base:raw_rabbit"), None, "the old names are no items now");
         assert_eq!(blocks.item_named("base:bronze_blend"), Some(blocks.expect("base:bronze_ingot")), "a blend is the bronze it smelted into");
+        // What quests counted under the old names counts under the new one.
+        let tallies = vec![("cooked:base:cooked_rabbit".into(), 2), ("cooked:base:cooked_chicken".into(), 1), ("cooked_at:campfire:base:cooked_rabbit".into(), 3), ("lit:base:crucible_kiln".into(), 1)];
+        let mut tallies = renamed_tallies(tallies, &blocks);
+        tallies.sort();
+        assert_eq!(tallies, [("cooked:base:cooked_small_game".to_owned(), 3), ("cooked_at:campfire:base:cooked_small_game".to_owned(), 3), ("lit:base:crucible_kiln".to_owned(), 1)]);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
