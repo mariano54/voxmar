@@ -1252,6 +1252,7 @@ mod tests {
         assert_eq!(blocks.saved_id("base:raw_chicken"), Some(raw), "and a column's block names");
         assert_eq!(blocks.id("base:raw_rabbit"), None, "the old names are no items now");
         assert_eq!(blocks.item_named("base:cooked_shrimp"), Some(blocks.expect("base:cooked_minnow")), "shrimp are minnows now");
+        assert_eq!(blocks.item_named("base:raw_frog"), Some(blocks.expect("base:raw_small_game")), "frog is small game now");
         assert_eq!(blocks.item_named("base:bronze_blend"), Some(blocks.expect("base:bronze_ingot")), "a blend is the bronze it smelted into");
         // What quests counted under the old names counts under the new one.
         let tallies = vec![("cooked:base:cooked_rabbit".into(), 2), ("cooked:base:cooked_chicken".into(), 1), ("cooked_at:campfire:base:cooked_rabbit".into(), 3), ("lit:base:crucible_kiln".into(), 1)];

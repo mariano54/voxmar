@@ -49,7 +49,6 @@
     ],
     families: [
         (template: "drop", name: "cooked_small_game", tags: ["meat", "cooked", "edible", "heal:4", "flavour:savoury"], all: (color: (160, 90, 50))),
-        (template: "drop", name: "cooked_frog", tags: ["meat", "cooked", "edible", "heal:4", "flavour:savoury"], all: (color: (200, 150, 100))),
         (template: "drop", name: "cooked_crab", tags: ["meat", "cooked", "edible", "heal:4", "flavour:savoury", "seafood"], all: (color: (230, 110, 60))),
         (template: "drop", name: "cooked_duck", tags: ["meat", "cooked", "edible", "heal:4", "flavour:savoury"], all: (color: (150, 80, 40), rarity: Uncommon)),
         (template: "drop", name: "cooked_mutton", tags: ["meat", "cooked", "edible", "heal:4", "flavour:savoury"], all: (color: (140, 70, 40))),
@@ -100,13 +99,15 @@
         (template: "drop", name: "pail", tags: ["pail", "tool"], all: (color: (150, 110, 70))),
         (template: "drop", name: "burnt_food", tags: ["burnt", "compost", "bait"], all: (color: (40, 34, 30))),
     ],
-    // Rabbit and chicken were one meat in all but name (the same Cooking level, experience
-    // and healing), so they are one now (items law, Oct 14).
+    // Rabbit, chicken and frog were one meat in all but name (Cooking 1, healing 4; frog
+    // only taught less), so they are one now (items law, Oct 14).
     renamed: {
         "raw_rabbit": "raw_small_game",
         "raw_chicken": "raw_small_game",
         "cooked_rabbit": "cooked_small_game",
         "cooked_chicken": "cooked_small_game",
+        "raw_frog": "raw_small_game",
+        "cooked_frog": "cooked_small_game",
         // Shrimp cooked, healed and taught as minnows did; minnows bite in any water now.
         "raw_shrimp": "raw_minnow",
         "cooked_shrimp": "cooked_minnow",
