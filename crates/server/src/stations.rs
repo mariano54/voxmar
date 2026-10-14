@@ -183,6 +183,10 @@ impl Server {
         player.changed(traits::INVENTORY);
         let from_stores = self.take_from_stores(&stores, stack.item, left as u32);
         debug_assert_eq!(from_stores, left as u32, "counted as there");
+        // A store the loader has open shows what was taken with the same update.
+        if from_stores > 0 {
+            self.pull_store(agent);
+        }
         self.stations.loads.insert(pos, Load { item: stack.item, count, due: self.tick + ticks.max(1) });
         self.set_block(pos, station.working);
         let mut words = Words::key("station.loaded").with("count", Words::text(count)).with("item", Words::Block(self.content.blocks.def(stack.item).name.clone())).with("minutes", Words::text(self.minutes_left(self.tick + ticks.max(1))));
