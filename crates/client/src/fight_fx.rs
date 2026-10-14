@@ -287,7 +287,18 @@ struct Queued(Vec<(String, f32, f32, bool)>);
 /// its blow, and whose wind-up they tell: one whose wind-up ended first (the creature died,
 /// went, or struck sooner) is dropped.
 #[derive(Resource, Default, Debug)]
-pub struct Pending(pub Vec<(f32, String, u32)>);
+pub struct Pending(pub Vec<Cue>);
+
+/// A tell's sound waiting: when it plays (app seconds), what, whose wind-up it tells, how
+/// loud (quieter further off), and whether the music dips under it.
+#[derive(Debug, Clone)]
+pub struct Cue {
+    pub due: f32,
+    pub sound: String,
+    pub id: u32,
+    pub gain: f32,
+    pub ducks: bool,
+}
 
 /// A ring on the ground telling how far a boss's blow reaches: whose, when its wind-up
 /// began, how long it lasts, how far it reaches, and whether this is the filling disc
@@ -301,6 +312,13 @@ pub struct Marker {
     pub fill: bool,
     alpha: f32,
 }
+
+/// The least wind-up a creature's blow may have (seconds): time to see it coming and
+/// answer it.
+pub const READABLE: f32 = 0.3;
+
+/// Blocks within which a tell is heard at its full loudness.
+const TOLD_NEAR: f32 = 6.0;
 
 /// Seconds a tell's ring stays after the blow lands.
 const MARKER_AFTER: f32 = 0.12;
@@ -368,9 +386,9 @@ fn play(mut commands: Commands, mut queued: ResMut<Queued>, bank: Option<ResMut<
     }
 }
 
-/// Tells each boss wind-up begun: its sound timed so its loudest lands with the blow (the
-/// music dipping under it), and a ring on the ground for a blow that reaches further than
-/// the body shows.
+/// Tells each wind-up begun: its sound timed so its loudest lands with the blow (a boss's
+/// with the music dipping under it), quieter further off, and a ring on the ground for a
+/// blow that reaches further than the body shows.
 #[allow(clippy::too_many_arguments)]
 fn tell(
     mut commands: Commands,
@@ -382,16 +400,19 @@ fn tell(
     mut heard: ResMut<Heard>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    player: Res<LocalPlayer>,
 ) {
     let now = time.elapsed_secs();
     let told = std::mem::take(&mut creatures.told);
     let Some(look) = look else { return };
     for told in told {
-        let Some(tell) = look.tells.get(&told.key) else { continue };
-        *heard.asked.entry(tell.sound.clone()).or_default() += 1;
-        pending.0.push((now + (told.windup - tell.peak).max(0.0), tell.sound.clone(), told.id));
-        let Some(marker) = tell.marker else { continue };
+        let Some(tell) = look.tell_for(&told.key, told.style) else { continue };
         let Some((_, at, _)) = creatures.body(told.id) else { continue };
+        // Heard as well as a blow near at hand, fainter further off.
+        let gain = (TOLD_NEAR / at.distance(player.position).max(TOLD_NEAR)).sqrt();
+        *heard.asked.entry(tell.sound.clone()).or_default() += 1;
+        pending.0.push(Cue { due: now + (told.windup - tell.peak).max(0.0), sound: tell.sound.clone(), id: told.id, gain, ducks: tell.ducks });
+        let Some(marker) = tell.marker else { continue };
         heard.markers += 1;
         let colour = |alpha: f32| StandardMaterial { base_color: marker.colour.color().with_alpha(alpha), unlit: true, alpha_mode: AlphaMode::Blend, cull_mode: None, ..default() };
         let ring = meshes.add(annulus(told.reach, (told.reach - marker.width).max(0.0)));
@@ -407,11 +428,11 @@ fn tell(
             ));
         }
     }
-    pending.0.retain(|&(_, _, id)| creatures.winding(id));
-    let (due, waiting): (Vec<_>, Vec<_>) = pending.0.drain(..).partition(|(at, ..)| *at <= now);
+    pending.0.retain(|cue| creatures.winding(cue.id));
+    let (due, waiting): (Vec<_>, Vec<_>) = pending.0.drain(..).partition(|cue| cue.due <= now);
     pending.0 = waiting;
-    for (_, sound, _) in due {
-        queued.0.push((sound, 1.0, 1.0, true));
+    for cue in due {
+        queued.0.push((cue.sound, cue.gain, 1.0, cue.ducks));
     }
 }
 
@@ -789,13 +810,25 @@ mod tests {
         crate::mix::tests::all([crate::mix::tests::within(Category::Combat, heard)]);
     }
 
-    /// Every boss blow in the content has a tell, and each tell's sound is at its loudest
-    /// when it says (`peak`), so played that long before the blow it lands with it.
+    /// Every creature blow in the content has a tell (a boss's its own), each winds up long
+    /// enough to be read and answered, and each tell's sound is at its loudest when it says
+    /// (`peak`), no later than its blow lands, so played that long before the blow it
+    /// lands with it.
     #[test]
-    fn every_boss_blow_is_told_and_its_sound_peaks_with_the_blow() {
+    fn every_blow_is_told_and_its_sound_peaks_with_the_blow() {
         let look = look();
         let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
-        assert_eq!(look.untold(&content.creatures), Vec::<String>::new(), "boss blows with no tell");
+        assert_eq!(look.untold(&content.creatures), Vec::<String>::new(), "blows with no tell");
+        for (_, creature) in content.creatures.iter() {
+            let name = creature.def.name.rsplit(':').next().unwrap();
+            let blows = creature.def.attack.iter().map(|a| (name.to_owned(), a)).chain(creature.def.moves.iter().map(|m| (format!("{name}.{}", m.name), &m.attack)));
+            for (key, attack) in blows {
+                let windup = attack.windup.unwrap_or(content.combat.feel.creature_windup);
+                assert!(windup >= READABLE, "{key} winds up {windup} s, under the {READABLE} s a blow needs to be read");
+                let tell = look.tell_for(&key, attack.style).unwrap();
+                assert!(tell.peak <= windup + 1e-3, "{key}'s tell {} is loudest {} s in, after its blow lands at {windup} s", tell.sound, tell.peak);
+            }
+        }
         let window = (0.05 * crate::sfx::RATE as f32) as usize; // the loudness window (`sfx::loudness`)
         for (name, tell) in &look.tells {
             for take in sound::render(&look.sounds[&tell.sound], 3) {

@@ -349,6 +349,12 @@ enum Step {
     /// `Shots::step`), so nothing waits on the server or the machine. Shot mid-flinch with
     /// the arrow in flight across the view.
     RangedFeel,
+    /// Every creature's blow told (`fight_fx`'s tells): a wolf this side alone winds up in
+    /// reach and coils, its snarl waiting to land with the blow without dipping the music,
+    /// while the player swings at it (`Gate::swing`); then a creature with no tell of its own,
+    /// first seen already winding up, coils and is told by its style's. Each frame a fixed
+    /// step of their time (`Creatures::watch_step`). Shot with the wolf coiled.
+    FirstFights,
     /// Raw rabbit used on a campfire comes back cooked (or burnt) into the inventory, and
     /// smoke and embers rise from the fire.
     Cook,
@@ -1538,6 +1544,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::CreatureTurn => creature_motion(world, gate, 3),
         Step::BossTells => boss_tells(world, gate),
         Step::RangedFeel => ranged_feel(world, gate),
+        Step::FirstFights => first_fights(world, gate),
         Step::Cook => cook(world, gate, now, in_phase),
         Step::Dry => dry(world, gate, now),
         Step::Tame => tame(world, gate, now, in_phase),
@@ -8794,7 +8801,7 @@ fn boss_tells(world: &mut World, gate: &mut Gate) {
         2 => {
             let before = |name: &str| gate.feel_asked.get(name).copied().unwrap_or(0);
             let grew = asked(world, "tell.grasp") > before("tell.grasp");
-            let waiting = world.resource::<Pending>().0.iter().find(|(_, name, _)| name == "tell.grasp").map(|(due, ..)| due - now);
+            let waiting = world.resource::<Pending>().0.iter().find(|cue| cue.sound == "tell.grasp").map(|cue| cue.due - now);
             let shown = rings(world);
             let ring = shown.iter().find(|m| !m.fill);
             let result = if !grew {
@@ -8860,12 +8867,12 @@ fn ranged_feel(world: &mut World, gate: &mut Gate) {
     let launch = world.resource::<Launch>();
     let Some(species) = launch.content.creatures.find(PUPPET_SPECIES) else {
         gate.check("ranged feel", Err(format!("no {PUPPET_SPECIES} in the content")));
-        gate.next(Step::Cook, now);
+        gate.next(Step::FirstFights, now);
         return;
     };
     let Some(shot) = world.resource::<crate::fight_fx::FightLook>().shots.get(MARK_CLASS).cloned() else {
         gate.check("ranged feel", Err(format!("no shot for the {MARK_CLASS}")));
-        gate.next(Step::Cook, now);
+        gate.next(Step::FirstFights, now);
         return;
     };
     let def = &launch.content.creatures.get(species).def;
@@ -8883,7 +8890,7 @@ fn ranged_feel(world: &mut World, gate: &mut Gate) {
         creatures.receive(vec![], vec![voxmar_protocol::CreatureGone { id: MARK, died: false }]);
         (creatures.watch, creatures.watch_step) = (None, None);
         world.resource_mut::<Shots>().step = None;
-        gate.next(Step::Cook, now);
+        gate.next(Step::FirstFights, now);
     };
     let frames = gate.puppet.1;
     match gate.phase {
@@ -9005,6 +9012,132 @@ fn ranged_feel(world: &mut World, gate: &mut Gate) {
             };
             gate.check("ranged feel: death", result);
             done(world, gate, now);
+        }
+        _ => {}
+    }
+}
+
+/// The wolf the FirstFights step winds up, and the creature with no tell of its own after
+/// it, ids the server never gives.
+const FIGHTER: u32 = u32::MAX - 10;
+const FIGHTER_SPECIES: &str = "wolf";
+const FALLBACK: u32 = u32::MAX - 11;
+
+/// The FirstFights step (see [`Step::FirstFights`]).
+fn first_fights(world: &mut World, gate: &mut Gate) {
+    use crate::creatures::Creatures;
+    use crate::fight_fx::{FightLook, Heard, Pending};
+    use voxmar_engine::creature::brain::Pose;
+    let now = world.resource::<Time>().elapsed_secs();
+    let launch = world.resource::<Launch>();
+    let look = world.resource::<FightLook>();
+    // The wolf, and the first creature that strikes with no tell of its own: its style's.
+    let wolf = launch.content.creatures.find(FIGHTER_SPECIES);
+    let plain = launch.content.creatures.iter().find(|(_, c)| {
+        let name = c.def.name.rsplit(':').next().unwrap_or(&c.def.name);
+        !c.def.boss && c.def.attack.is_some() && !look.tells.contains_key(name)
+    });
+    let (Some(wolf), Some((plain, plain_creature))) = (wolf, plain) else {
+        gate.check("first fights", Err(format!("no {FIGHTER_SPECIES}, or every striking creature has its own tell")));
+        gate.next(Step::Cook, now);
+        return;
+    };
+    let plain_style = plain_creature.def.attack.map(|a| a.style).unwrap_or(voxmar_engine::combat::Style::Crush);
+    let plain_tell = look.tell_for("", plain_style).map(|t| t.sound.clone()).unwrap_or_default();
+    let wolf_tell = look.tells.get(FIGHTER_SPECIES).map(|t| (t.sound.clone(), t.ducks));
+    let health = |species| launch.content.creatures.get(species).def.health;
+    let (wolf_health, plain_health) = (health(wolf), health(plain));
+    let at = gate.feet.as_vec3() + Vec3::new(0.0, 0.0, 2.2);
+    let view = |id: u32, species, pose: Pose, health| voxmar_protocol::CreatureView {
+        id,
+        species,
+        position: at,
+        velocity: Vec3::ZERO,
+        yaw: std::f32::consts::PI,
+        pose,
+        tell: 0,
+        health,
+        scale: 1.0,
+        seed: 9,
+        kept: false,
+        owner: None,
+        young: false,
+        ready: false,
+        trust: 0,
+        genes: [0; voxmar_engine::genes::MOST],
+    };
+    let asked = |world: &World, name: &str| world.resource::<Heard>().asked.get(name).copied().unwrap_or(0);
+    let before = |gate: &Gate, name: &str| gate.feel_asked.get(name).copied().unwrap_or(0);
+    aim_at(world, at + Vec3::Y * 0.4);
+    match gate.phase {
+        // The wolf stands in reach, each frame a fixed step of its time.
+        0 => {
+            let mut creatures = world.resource_mut::<Creatures>();
+            creatures.receive(vec![view(FIGHTER, wolf, Pose::Idle, wolf_health)], vec![]);
+            (creatures.watch, creatures.watch_step) = (Some(FIGHTER), Some(PUPPET_STEP));
+            gate.advance(now);
+        }
+        // It winds up, and the player swings at it as it does.
+        1 => {
+            gate.feel_asked = world.resource::<Heard>().asked.clone();
+            world.resource_mut::<Creatures>().receive(vec![view(FIGHTER, wolf, Pose::Attacking, wolf_health)], vec![]);
+            gate.advance(now);
+        }
+        // The frame after: coiling, its snarl waiting to land with the blow, the music left
+        // alone; the swing goes out at it.
+        2 => {
+            gate.swing(world, now);
+            if gate.swings == 0 {
+                return;
+            }
+            let Some((sound, ducks)) = wolf_tell.clone() else {
+                gate.check("first fights: wolf", Err("the wolf has no tell of its own".into()));
+                gate.advance(now);
+                return;
+            };
+            let winding = world.resource::<Creatures>().winding(FIGHTER);
+            let cue = world.resource::<Pending>().0.iter().find(|c| c.id == FIGHTER).map(|c| (c.due - now, c.ducks));
+            let result = if !winding {
+                Err("the wolf shows no wind-up".into())
+            } else if asked(world, &sound) <= before(gate, &sound) {
+                Err(format!("the wolf's wind-up asked for no {sound}"))
+            } else if ducks || cue.is_some_and(|(_, ducks)| ducks) {
+                Err("the wolf's snarl dips the music, as only a boss's may".into())
+            } else {
+                Ok(format!("the wolf coils with {sound}, its loudest {:.2} s on as the blow lands, the music left alone", cue.map_or(0.0, |(wait, _)| wait.max(0.0))))
+            };
+            gate.check("first fights: wolf", result);
+            gate.advance(now);
+        }
+        3 => {
+            gate.swing(world, now);
+            if gate.shot(world, "first-fights").is_some() {
+                mouse(world, MouseButton::Left, false);
+                let swung = world.resource::<Heard>().asked.iter().any(|(name, &n)| name.starts_with("swing") && n > before(gate, name));
+                gate.check("first fights: swing", if swung { Ok("the swing at the winding wolf whooshed".into()) } else { Err("the swing at the wolf asked for no sound".into()) });
+                // The wolf goes; a creature with no tell of its own is first seen already
+                // winding up (come into view mid-blow).
+                gate.feel_asked = world.resource::<Heard>().asked.clone();
+                let mut creatures = world.resource_mut::<Creatures>();
+                creatures.receive(vec![view(FALLBACK, plain, Pose::Attacking, plain_health)], vec![voxmar_protocol::CreatureGone { id: FIGHTER, died: false }]);
+                creatures.watch = Some(FALLBACK);
+                gate.advance(now);
+            }
+        }
+        4 => {
+            let name = &world.resource::<Launch>().content.creatures.get(plain).def.name;
+            let result = if !world.resource::<Creatures>().winding(FALLBACK) {
+                Err(format!("{name}, first seen winding up, shows no wind-up"))
+            } else if asked(world, &plain_tell) <= before(gate, &plain_tell) {
+                Err(format!("{name}, with no tell of its own, asked for no {plain_tell} ({plain_style:?})"))
+            } else {
+                Ok(format!("{name}, first seen mid-wind-up, coils and is told by its style's {plain_tell}"))
+            };
+            gate.check("first fights: style tell", result);
+            let mut creatures = world.resource_mut::<Creatures>();
+            creatures.receive(vec![], vec![voxmar_protocol::CreatureGone { id: FALLBACK, died: false }]);
+            (creatures.watch, creatures.watch_step) = (None, None);
+            gate.next(Step::Cook, now);
         }
         _ => {}
     }

@@ -203,6 +203,9 @@ pub struct Told {
     pub key: String,
     pub windup: f32,
     pub reach: f32,
+    /// The style its blow is struck in, whose tell any creature without one of its own
+    /// gives.
+    pub style: voxmar_engine::combat::Style,
 }
 
 /// How the watched creature (`Creatures::watch`) was drawn moving, for the gate: how far
@@ -1574,15 +1577,12 @@ pub fn aim(
     }
 }
 
-/// A wind-up begun: the coil starts (its end is the blow), and a boss's is told by sound
-/// and, for a far reach, a ring on the ground (`fight_fx`).
+/// A wind-up begun: the coil starts (its end is the blow), and it is told by sound and,
+/// for a boss's far reach, a ring on the ground (`fight_fx`).
 fn wind_up(shown: &mut Shown, view: &voxmar_protocol::CreatureView, registry: &creature::CreatureRegistry, creature_windup: f32, told: &mut Vec<Told>) {
     (shown.coiling, shown.striking, shown.coil_struck) = (Some(0.0), None, false);
     shown.move_shown = if view.tell == voxmar_protocol::REARING { 0 } else { view.tell };
     let species = registry.get(view.species);
-    if !species.def.boss {
-        return;
-    }
     let name = species.def.name.rsplit(':').next().unwrap_or(&species.def.name);
     let (key, attack) = match shown.move_shown {
         0 => (name.to_owned(), species.def.attack.as_ref()),
@@ -1593,7 +1593,7 @@ fn wind_up(shown: &mut Shown, view: &voxmar_protocol::CreatureView, registry: &c
     };
     if let Some(attack) = attack {
         let windup = attack.windup.unwrap_or(creature_windup);
-        told.push(Told { id: view.id, key, windup, reach: species.reach * view.scale + attack.reach });
+        told.push(Told { id: view.id, key, windup, reach: species.reach * view.scale + attack.reach, style: attack.style });
     }
 }
 

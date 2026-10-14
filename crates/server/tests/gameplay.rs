@@ -68,6 +68,8 @@ struct Client {
     hurt: Vec<(u16, voxmar_engine::combat::Defended)>,
     hurt_by: Vec<(u32, u16)>,
     hurt_at: Vec<Instant>,
+    /// Each time a creature was seen begin a wind-up (its attack pose coming on).
+    wound_at: Vec<(u32, Instant)>,
     journal: voxmar_engine::journal::Journal,
     quests: Vec<voxmar_engine::quest::QuestState>,
     /// The server, for the first player to join it (dropping it stops the server).
@@ -252,6 +254,7 @@ impl Client {
             hurt: Vec::new(),
             hurt_by: Vec::new(),
             hurt_at: Vec::new(),
+            wound_at: Default::default(),
             journal: Default::default(),
             quests: Vec::new(),
             _server: server,
@@ -367,6 +370,11 @@ impl Client {
             }
             ServerMessage::Creatures { changed, gone } => {
                 for view in changed {
+                    let attacking = |v: &voxmar_protocol::CreatureView| v.pose == voxmar_engine::creature::brain::Pose::Attacking;
+                    if attacking(&view) && self.creatures.get(&view.id).is_none_or(|was| !attacking(was)) {
+                        self.wound_at.push((view.id, Instant::now()));
+                    }
+
                     self.creatures.insert(view.id, view);
                 }
                 for gone in gone {
@@ -7750,4 +7758,80 @@ fn finish(mut f: Fresh) {
         let m = f.marks.iter().find(|m| m.name == name).unwrap_or_else(|| panic!("{name} was never reached"));
         assert!(m.at <= budget, "{name} took {:.1} server seconds, over its budget of {budget}", m.at);
     }
+}
+
+/// The first fights of the Nomad age as a new player meets them, measured: a bot with a
+/// stone sword at Attack 5 stands up to each creature, facing it and swinging on the
+/// sword's cooldown, never guarding or dodging, until it dies. For each: how long the kill
+/// took, how many blows came back and how hard, and how long before each blow landed its
+/// wind-up was seen (the pose coming on), the time there is to read it and answer. Run by
+/// hand (`--ignored --nocapture`); it fights on the clock, so a loaded machine stretches it.
+#[test]
+#[ignore = "a measurement, printed: run by hand"]
+fn first_fights_measured() {
+    real_time("combat is judged on the clock: the wind-ups read are seconds between messages");
+    let mut lines = Vec::new();
+    let only = std::env::var("FIGHT_ONLY").ok();
+    for name in ["wild_boar", "badger", "fox", "aurochs", "wolf", "brown_bear"].into_iter().filter(|n| only.as_deref().is_none_or(|o| o == *n)) {
+        let mut client = Client::join();
+        client.ok("/gamemode survival");
+        // Enough health to see the fight through: what came back is counted, not survived.
+        client.ok("/skill hitpoints 60");
+        let species = client.content.creatures.find(name).unwrap();
+        let attack = client.content.creatures.get(species).def.attack;
+        let (id, _) = beside(&mut client, name);
+        let sword = client.content.blocks.id("base:stone_sword").unwrap();
+        client.ok("/clear");
+        client.ok("/skill attack 5");
+        client.ok("/give stone_sword 1");
+        client.pump_until(|c| (0..voxmar_engine::inventory::HOTBAR_SLOTS).any(|s| c.inventory.get(s).is_some_and(|s| s.item == sword)));
+        let slot = (0..voxmar_engine::inventory::HOTBAR_SLOTS).find(|&s| client.inventory.get(s).is_some_and(|s| s.item == sword)).unwrap();
+        let start = Instant::now();
+        let (before, mut swung) = (client.hurt.len(), 0u32);
+        let mut reads: Vec<f32> = Vec::new();
+        let mut unread = 0;
+        let mut next_swing = Instant::now();
+        let mut read_from = client.wound_at.iter().rev().find(|(by, _)| *by == id).map(|&(_, at)| at);
+        while client.creatures.contains_key(&id) && start.elapsed() < Duration::from_secs(90) {
+            face(&mut client, id, slot, false);
+            if Instant::now() >= next_swing {
+                client.propose("core:attack", ActionTarget::Creature(id));
+                swung += 1;
+                next_swing += Duration::from_millis(600);
+            }
+            let heard = client.hurt.len();
+            let look_again = Instant::now() + Duration::from_millis(50);
+            client.pump_until(|_| Instant::now() >= look_again);
+            // Each blow read from the wind-up seen last before it, if one was seen since the
+            // blow before.
+            for i in heard..client.hurt.len() {
+                if client.hurt_by[i].0 != id {
+                    continue;
+                }
+                let last = client.wound_at.iter().rev().find(|&&(by, at)| by == id && at <= client.hurt_at[i]).map(|&(_, at)| at);
+                match last.filter(|&at| Some(at) != read_from) {
+                    Some(at) => {
+                        reads.push((client.hurt_at[i] - at).as_secs_f32());
+                        read_from = Some(at);
+                    }
+                    None => unread += 1,
+                }
+            }
+        }
+        let killed = !client.creatures.contains_key(&id);
+        let blows: Vec<u16> = client.hurt_by[before..].iter().filter(|(by, _)| *by == id).map(|&(_, d)| d).collect();
+        let readable = reads.iter().filter(|&&r| r >= 0.3).count();
+        let line = format!(
+            "{name:<11} windup {:<5} killed {killed:<5} in {:>5.1} s, {swung:>3} swings; {:>2} blows back for {:>2} damage; {readable}/{} read for 0.3 s or more (shortest {:.2} s, {unread} unseen)",
+            attack.map_or("none".into(), |a| format!("{:.2}", a.windup.unwrap_or(client.content.combat.feel.creature_windup))),
+            start.elapsed().as_secs_f32(),
+            blows.len(),
+            blows.iter().map(|&d| u32::from(d)).sum::<u32>(),
+            blows.len(),
+            reads.iter().copied().fold(f32::INFINITY, f32::min),
+        );
+        eprintln!("first fights: {line}");
+        lines.push(line);
+    }
+    eprintln!("\nfirst fights:\n{}", lines.join("\n"));
 }
