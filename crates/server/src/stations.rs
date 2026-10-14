@@ -362,7 +362,7 @@ mod tests {
     fn a_rack_left_alone_is_done_when_its_owner_comes_back() {
         let mut server = fixture(1);
         server.set_block(AT, block(&server, "base:drying_rack"));
-        hold(&mut server, "base:raw_rabbit", 3);
+        hold(&mut server, "base:raw_small_game", 3);
         server.use_station(1, AT);
         server.tick += 60 * MINUTE;
         server.use_station(1, AT);

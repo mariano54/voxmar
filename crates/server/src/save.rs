@@ -404,7 +404,7 @@ impl WorldSave {
             .blocks
             .iter()
             .map(|(id, name)| {
-                let current = registry.id(name).unwrap_or_else(|| {
+                let current = registry.saved_id(name).unwrap_or_else(|| {
                     tracing::warn!("{}: unknown block `{name}` becomes air", path.display());
                     BlockId::AIR
                 });
@@ -1199,6 +1199,30 @@ mod tests {
         assert_eq!(loaded.inventory.slots.iter().flatten().find(|s| s.item == herbs).map(|s| s.count), Some(7));
         assert_eq!(loaded.inventory.slots.iter().flatten().find(|s| s.item == registry.expect("base:cobblestone")).map(|s| s.count), Some(5));
         assert_eq!(loaded.inventory.pouched, vec![(herbs, 10)]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// An older save's raw and cooked rabbit and chicken (merged into small game, Oct 14)
+    /// come back as small game, in its slots, pouches, dropped items and drying racks, so
+    /// nothing a player held is lost.
+    #[test]
+    fn renamed_items_in_an_older_save_come_back_under_their_new_name() {
+        let dir = temp_dir("renamed");
+        let save = WorldSave::new(&dir);
+        let blocks = crate::test_content().blocks;
+        std::fs::create_dir_all(dir.join("players")).unwrap();
+        let file = r#"(position: (0.5, 80.0, 0.5), yaw: 0.0, flying: false, health: (current: 20, max: 20),
+            inventory: [Some(("base:raw_rabbit", 3)), Some(("base:raw_chicken", 2)), Some(("base:cooked_chicken", 4)), None],
+            pouched: [("base:raw_rabbit", 5), ("base:raw_chicken", 6)])"#;
+        std::fs::write(dir.join("players/hunter.ron"), file).unwrap();
+        let loaded = save.read_player("hunter", &blocks).unwrap().unwrap();
+        let (raw, cooked) = (blocks.expect("base:raw_small_game"), blocks.expect("base:cooked_small_game"));
+        let slots: Vec<(BlockId, u8)> = loaded.inventory.slots.iter().flatten().map(|s| (s.item, s.count)).collect();
+        assert_eq!(slots, [(raw, 3), (raw, 2), (cooked, 4)]);
+        assert_eq!(loaded.inventory.pouched, [(raw, 11)], "pouched rabbit and chicken add up");
+        assert_eq!(blocks.item_named("base:cooked_rabbit"), Some(cooked), "dropped items and station loads resolve the same way");
+        assert_eq!(blocks.saved_id("base:raw_chicken"), Some(raw), "and a column's block names");
+        assert_eq!(blocks.id("base:raw_rabbit"), None, "the old names are no items now");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
