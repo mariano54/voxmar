@@ -120,6 +120,12 @@ impl RecipeBook {
         self.entries.push(entry);
     }
 
+    /// Every entry, in the order the content gives them (crafting, then cooking, then
+    /// creatures).
+    pub fn entries(&self) -> &[Entry] {
+        &self.entries
+    }
+
     /// Every way to get `item`.
     pub fn making(&self, item: BlockId) -> Vec<&Entry> {
         self.makes.get(&item).map_or_else(Vec::new, |found| found.iter().map(|&i| &self.entries[i]).collect())
