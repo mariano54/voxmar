@@ -6967,6 +6967,7 @@ fn a_fresh_survival_player_reaches_each_nomad_milestone() {
 }
 
 /// What the first days leave standing on the plot, which the Farm age comes back to.
+#[derive(Clone)]
 struct Site {
     table: IVec3,
     /// The campfire First Night set down, and the pit kiln.
@@ -6975,6 +6976,8 @@ struct Site {
     /// The ponds' clay and the banks it is dug from.
     bed: Vec<IVec3>,
     banks: Vec<Vec3>,
+    /// The earth clamp, once An Earth Clamp has the player make one.
+    clamp: Option<IVec3>,
 }
 
 /// The Nomad age's main line, played with legitimate actions only, and the Farm age's first
@@ -7111,7 +7114,7 @@ fn the_first_days(f: &mut Fresh) -> Site {
         f.cook(kiln, clay, fired);
     }
     f.mark("fire_the_clay");
-    Site { table, fire, kiln, bed, banks }
+    Site { table, fire, kiln, bed, banks, clamp: None }
 }
 
 /// The quests a new player follows from nothing to the lit Crucible Kiln, in the order the
@@ -7153,7 +7156,9 @@ impl Fresh {
             }
         }
         self.c.fill(o, v(18, 0, 7), v(19, 0, 11), "copper_ore");
-        let probes = [(v(27, -1, 11), "base:water"), (v(15, 3, -9), "base:oak_log"), (v(19, 0, 11), "base:copper_ore")];
+        // A low bank of dirt, eight blocks, for the earth clamp.
+        self.c.fill(o, v(24, 0, -4), v(27, 0, -3), "dirt");
+        let probes = [(v(27, -1, 11), "base:water"), (v(15, 3, -9), "base:oak_log"), (v(19, 0, 11), "base:copper_ore"), (v(27, 0, -3), "base:dirt")];
         self.c.pump_until(|c| probes.iter().all(|&(at, name)| c.world.block(o + at) == c.content.blocks.id(name)));
     }
 
@@ -7171,6 +7176,21 @@ impl Fresh {
     fn fire_clay(&mut self, site: &Site, need: u32) {
         let (clay, fired) = ("base:clay", "base:fired_clay");
         while self.have(fired) < need {
+            if let Some(clamp) = site.clamp {
+                // An empty clamp is loaded first: clay dug for it and for the hands.
+                let empty = self.c.world.block(clamp) == self.c.content.blocks.id("base:earth_clamp");
+                // Not for the last few: a load not taken before the line goes on is wasted.
+                let worth = need - self.have(fired) >= 16;
+                if empty && worth && self.have(clay) < 16 {
+                    // The ponds hold a little over what the line fires: no more than is wanted.
+                    let more = 16 + (need - self.have(fired) - 16).min(16);
+                    self.gather_from("base:stone_shovel", &site.banks, site.bed.clone(), clay, more);
+                }
+                self.tend_clamp(clamp, worth.then_some(clay));
+                if self.have(fired) >= need {
+                    break;
+                }
+            }
             if self.have(clay) == 0 {
                 let more = (need - self.have(fired)).min(32);
                 self.gather_from("base:stone_shovel", &site.banks, site.bed.clone(), clay, more);
@@ -7207,6 +7227,32 @@ impl Fresh {
         assert!(empty(&self.c) >= free, "only {} slots empty after throwing away the spare", empty(&self.c));
         self.c.tp(back);
         self.at = back;
+    }
+
+    /// Tends the earth clamp at `clamp` (stations.ron) on the way past: takes what it made
+    /// once it shows cooled, and loads it, empty, with `load` when sixteen are in hand (and a
+    /// load is still worth it). It smoulders a minute with nobody by it, so the player goes on
+    /// meanwhile.
+    fn tend_clamp(&mut self, clamp: IVec3, load: Option<&str>) {
+        let at = |c: &Client| c.world.block(clamp).map(|b| c.content.blocks.def(b).name.clone()).unwrap_or_default();
+        let here = at(&self.c);
+        let cooled = here == "base:earth_clamp_cooled";
+        let load = load.filter(|item| (cooled || here == "base:earth_clamp") && self.have(item) >= 16);
+        if !cooled && load.is_none() {
+            return;
+        }
+        if across(self.at, Self::middle(clamp)) > 3.5 {
+            self.walk_toward(Self::middle(clamp), 3.0);
+        }
+        if cooled {
+            self.propose("base:use_station", ActionTarget::Block { block: clamp, face: Face::PosY });
+            self.wait(5.0, "taking what the clamp made", |c| at(c) == "base:earth_clamp");
+        }
+        if let Some(load) = load {
+            self.hold(load);
+            self.propose("base:use_station", ActionTarget::Block { block: clamp, face: Face::PosY });
+            self.wait(5.0, &format!("loading the clamp with {load}"), |c| at(c) == "base:earth_clamp_lit");
+        }
     }
 
     /// Burns logs down at the campfire until `need` charcoal are in hand.
@@ -7270,7 +7316,23 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     // sixteen (three more), and a log for sticks: twenty-four is a few to spare.
     let trunks: Vec<IVec3> = [-7, -9].into_iter().flat_map(|z| [1, 3, 5, 7, 11, 13, 15].into_iter().flat_map(move |x| (0..4).map(move |y| o + IVec3::new(x, y, z)))).collect();
     f.gather("base:stone_axe", trunks, log, 24);
-    f.burn_charcoal(&site, 16);
+    // An Earth Clamp: eight dirt dug from a bank of it on the farm plot round a log at the table
+    // (Construction 3), set down by the kiln and loaded with sixteen logs. It chars them
+    // while clay is fired by hand toward A Kiln Load; Charcoal is done when it is taken.
+    let ground: Vec<IVec3> = (24..=27).flat_map(|x| (-4..=-3).map(move |z| o + IVec3::new(x, 0, z))).collect();
+    f.gather("base:stone_shovel", ground, "base:dirt", 8);
+    f.at_table(site.table);
+    f.craft(&[(0, "base:dirt", 1), (1, "base:dirt", 1), (2, "base:dirt", 1), (3, "base:dirt", 1), (4, log, 1), (5, "base:dirt", 1), (6, "base:dirt", 1), (7, "base:dirt", 1), (8, "base:dirt", 1)], "base:earth_clamp", 1);
+    f.walk_toward(Fresh::middle(f.rel(4, 0, 1)), 2.0);
+    let clamp = f.place("base:earth_clamp", f.rel(4, -1, 1));
+    site.clamp = Some(clamp);
+    f.mark("earth_clamp");
+    f.tend_clamp(clamp, Some(log));
+    while f.have(charcoal) < 16 {
+        let more = f.have(fired) + 1;
+        f.fire_clay(&Site { clamp: None, ..site.clone() }, more);
+        f.tend_clamp(clamp, Some(log));
+    }
     f.mark("charcoal");
     f.make_room(8);
 

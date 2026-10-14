@@ -251,6 +251,43 @@ The bot's timeline after this (three runs, Oct 13), against the one above:
 | Brick by Brick | 478 | 439 to 449 |
 | Crucible Kiln lit | 489 | 450 to 459 |
 
+### Pacing pass with everything landed (Oct 14)
+
+On main cc0ccf78 (storage, stations, chests, bees, the Rootmother, ranged, the teaching
+quests all landed), the bot's line was unchanged by any of them: none of them sits on the
+main line, so they are side content a player picks up in the waits. Medians of five runs
+on main, then twelve with the earth clamp (docs/stations.md); "at fire" is the server
+seconds the bot stood at a fire or kiln in that phase.
+
+| Milestone | Main | At fire | With the clamp | At fire |
+|---|---|---|---|---|
+| Homestead Hearth lit | 107 | 0 | 109 | 0 |
+| Fire the Clay | 167 | 35 | 171 | 35 |
+| The Potter | 176 | 6 | 185 | 6 |
+| An Earth Clamp made | | | 206 (196 to 219) | 0 |
+| Charcoal | 226 | 35 | 272 | 48 |
+| Red Metal | 236 | 0 | 283 | 0 |
+| A Kiln Load | 341 | 68 | 317 | 17 |
+| Brick by Brick | 440 | 80 | 397 | 55 |
+| Crucible Kiln lit | 450 (430 to 478) | 230 in all | 408 (396 to 438) | 167 in all |
+
+The stall: from Fire the Clay to Brick by Brick, half the line (230 of 450 s) was standing
+at a fire with one clay or log in hand, and from Red Metal to Brick by Brick (204 s) nothing
+new came but the brick recipe. Nothing in it was a quick upgrade or a new thing to learn.
+
+What filled it: the earth clamp, a home station of eight dirt round a log (Construction 3),
+named by a new quest, An Earth Clamp (after The Potter), and by Charcoal's and Brick by
+Brick's text. It fires sixteen clay (never cracked) or chars sixteen logs in a minute with
+nobody by it, and quests count what it gives as cooked. It is slower than the hand, so it
+is no replacement: the player keeps it smouldering while they fire by hand, dig and mine.
+The line is 42 s shorter, 63 s less of it is spent at a fire, and the longest stretch with
+nothing new (Red Metal to Brick by Brick) is 114 s instead of 204. Charcoal comes later (the
+clamp's minute is spent firing clay toward A Kiln Load, which then comes sooner).
+
+Still long, and left: Fire the Clay (about 60 s, 35 of it firing, before the clamp is known)
+and punching the first logs. The clamp could open with A Pit Kiln to cover Fire the Clay
+too; that is the next step if the first Farm minutes read as slow in play.
+
 ## Measured pacing
 
 Run it with `cargo test -p voxmar_server --test gameplay a_fresh_survival -- --ignored --nocapture`

@@ -315,6 +315,7 @@ enum Step {
     Cook,
     /// A drying rack stood by the campfire, raw rabbit in hand: a right click hangs it, the
     /// rack the server sends back is the hung one, and chat says where it stands makes it quicker.
+    /// Then an earth clamp in its place, clay in hand: a right click sets it smouldering.
     Dry,
     /// A junglefowl fed wheat by right clicks comes to trust the player and is theirs.
     Tame,
@@ -7994,7 +7995,8 @@ const DRY_WAIT: f32 = 10.0;
 
 /// A drying rack by the campfire, raw rabbit selected: right clicks on it hang the rabbit
 /// (`base:use_station`), so the server sends the hung rack back (shot `rack`). Then the rack
-/// goes, letting the rabbit fall as a broken rack does.
+/// goes, letting the rabbit fall as a broken rack does, and an earth clamp loaded with clay
+/// in its place smoulders (shot `clamp`) until it goes too.
 fn dry(world: &mut World, gate: &mut Gate, now: f32) {
     let rack = gate.feet + IVec3::new(0, 0, 14) + RACK_FROM_FIRE;
     let waited = gate.server_in_phase() > DRY_WAIT;
@@ -8043,6 +8045,43 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
             if gate.shot(world, "rack").is_some() {
                 let result = if said { Ok("raw rabbit hung on a rack by the fire: the server sent back the hung rack, quicker for the fire".into()) } else { Err(format!("the rack hung, but chat never said \"{faster}\" in {DRY_WAIT} server seconds, with a campfire two blocks off")) };
                 gate.check("drying rack", result);
+                // The rack goes, and an earth clamp stands in its place with clay to load it.
+                let net = world.resource::<Net>();
+                net.command(&format!("setblock {} {} {} air", rack.x, rack.y, rack.z));
+                net.command(&format!("setblock {} {} {} earth_clamp", rack.x, rack.y, rack.z));
+                net.command("give clay 16");
+                gate.advance(now);
+            }
+        }
+        4 => {
+            let client = world.resource::<ClientWorld>();
+            let stood = client.registry.id("base:earth_clamp").is_some_and(|c| client.block(rack) == Some(c));
+            if stood && select(world, "base:clay") {
+                gate.advance(now);
+            } else if waited {
+                gate.check("earth clamp", Err(format!("the clamp ({stood}) or clay in hand never came in {DRY_WAIT} server seconds")));
+                gate.next(Step::Tame, now);
+            }
+        }
+        5 => {
+            aim_at(world, rack.as_vec3() + Vec3::new(0.5, 0.5, 0.5));
+            let client = world.resource::<ClientWorld>();
+            let lit = client.registry.id("base:earth_clamp_lit").is_some_and(|c| client.block(rack) == Some(c));
+            if lit {
+                mouse(world, MouseButton::Right, false);
+                gate.advance(now);
+            } else if waited {
+                mouse(world, MouseButton::Right, false);
+                gate.check("earth clamp", Err(format!("right clicks with clay in hand never lit the clamp in {DRY_WAIT} server seconds")));
+                gate.next(Step::Tame, now);
+            } else {
+                mouse(world, MouseButton::Right, ((now - gate.since) * 2.0).fract() < 0.2);
+            }
+        }
+        6 => {
+            aim_at(world, rack.as_vec3() + Vec3::new(0.5, 0.5, 0.5));
+            if gate.shot(world, "clamp").is_some() {
+                gate.check("earth clamp", Ok("clay loaded into an earth clamp: the server sent back the smouldering clamp".into()));
                 world.resource::<Net>().command(&format!("setblock {} {} {} air", rack.x, rack.y, rack.z));
                 gate.next(Step::Tame, now);
             }
