@@ -366,6 +366,10 @@ enum Step {
     /// Over a log in the inventory, the uses key shows what it goes into (planks, a
     /// campfire); clicking planks shows their recipe, and Back returns.
     Recipes,
+    /// A chopping block set by the fire draws; with the inventory open the client knows it
+    /// is within reach, so a log in the grid shows six planks, not four, and crafted, the
+    /// server gives six.
+    Chop,
     /// A survival player's inventory search finds the stone pickaxe by "pick"; its recipe
     /// opened in the viewer finishes the "Look It Up" quest; the quest book's page for the
     /// pickaxe shows its recipe inline, an item clicked there opens the viewer, and Back
@@ -1560,6 +1564,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Settlements => settlements(world, gate, now, in_phase),
         Step::Ore => ore(world, gate, now, in_phase),
         Step::Recipes => recipes(world, gate, now, in_phase),
+        Step::Chop => chop(world, gate, now),
         Step::LookUp => look_up(world, gate, now, in_phase),
         Step::Refusal => refusal(world, gate, now, in_phase),
         Step::Merged => merged(world, gate, now, in_phase),
@@ -3808,7 +3813,7 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let blocks = world.resource::<Launch>().content.blocks.clone();
     let (Some(log), Some(planks), Some(campfire)) = (blocks.id("base:oak_log"), blocks.id("base:oak_planks"), blocks.id("base:campfire")) else {
         gate.check("recipes", Err("no oak log, planks or campfire in the content".into()));
-        gate.next(Step::LookUp, now);
+        gate.next(Step::Chop, now);
         return;
     };
     let uses_key = world.resource::<crate::settings::Settings>().uses_key.0;
@@ -3833,7 +3838,7 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.advance(now);
             } else if in_phase > 2.0 {
                 gate.check("recipes: uses", Err(format!("U over an oak log: viewer open {open}, listing {outputs:?}")));
-                gate.next(Step::LookUp, now);
+                gate.next(Step::Chop, now);
             }
         }
         2 => {
@@ -3848,7 +3853,7 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     gate.advance(now);
                 } else if in_phase > 2.0 {
                     gate.check("recipes: ingredient tooltip", Err("the log has no visible recipe cell to hover".into()));
-                    gate.next(Step::LookUp, now);
+                    gate.next(Step::Chop, now);
                 }
             }
         }
@@ -3867,7 +3872,7 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.advance(now);
             } else if in_phase > 2.0 {
                 gate.check("recipes: ingredient tooltip", Err(format!("hovering the recipe ingredient drew no visible {name} tooltip")));
-                gate.next(Step::LookUp, now);
+                gate.next(Step::Chop, now);
             } else if let Some(cell) = world.query::<(Entity, &crate::hud::recipes::ViewerItem, &InheritedVisibility)>().iter(world).find(|(_, item, visible)| item.0 == log && visible.get()).map(|(entity, ..)| entity) {
                 world.resource_mut::<UiClicks>().hover = Some(cell);
             }
@@ -3902,7 +3907,107 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let mut ui = world.resource_mut::<UiState>();
             (ui.recipes_open, ui.inventory_open) = (false, false);
             world.resource_mut::<HoveredItem>().0 = None;
-            gate.next(Step::LookUp, now);
+            gate.next(Step::Chop, now);
+        }
+    }
+}
+
+/// Where the chop step sets its chopping block: across the campfire from the drying rack.
+const CHOP_FROM_FIRE: IVec3 = IVec3::new(-2, 0, 0);
+
+/// Server seconds the chop step waits on each answer.
+const CHOP_WAIT: f32 = 10.0;
+
+/// A chopping block by the campfire, seen from two and a half blocks (shot
+/// `chopping_block`); then, the inventory open, the client finds it within reach and an oak
+/// log laid in the grid makes six planks there, as the server crafts them.
+fn chop(world: &mut World, gate: &mut Gate, now: f32) {
+    let block = gate.feet + IVec3::new(0, 0, 14) + CHOP_FROM_FIRE;
+    let waited = gate.server_in_phase() > CHOP_WAIT;
+    // What the client itself does (drawing, finding the block near) is given up only once
+    // its own seconds have passed too: frames starved behind a running server had no time.
+    let outwaited = waited && now - gate.phase_since > CHOP_WAIT;
+    let content = world.resource::<Launch>().content.clone();
+    let (log, planks) = (content.blocks.id("base:oak_log"), content.blocks.id("base:oak_planks"));
+    let carried = |world: &World, item: Option<BlockId>| world.resource::<LocalPlayer>().inventory.slots.iter().flatten().filter(|s| Some(s.item) == item).map(|s| s.count as u32).sum::<u32>();
+    let end = |world: &mut World, gate: &mut Gate| {
+        world.resource_mut::<UiState>().inventory_open = false;
+        let net = world.resource::<Net>();
+        net.command(&format!("setblock {} {} {} air", block.x, block.y, block.z));
+        net.command("clear oak_log");
+        net.command("clear oak_planks");
+        gate.next(Step::LookUp, now);
+    };
+    match gate.phase {
+        0 => {
+            let net = world.resource::<Net>();
+            net.command("clear oak_log");
+            net.command("clear oak_planks");
+            net.command("give oak_log 2");
+            net.command(&format!("setblock {} {} {} chopping_block", block.x, block.y, block.z));
+            net.command(&format!("tp {} {} {}", block.x as f32 + 0.5, block.y, block.z as f32 - 2.5));
+            gate.advance(now);
+        }
+        1 => {
+            aim_at(world, block.as_vec3() + Vec3::new(0.5, 0.5, 0.5));
+            let client = world.resource::<ClientWorld>();
+            let stood = client.registry.id("base:chopping_block").is_some_and(|b| client.block(block) == Some(b));
+            let there = world.resource::<LocalPlayer>().position.distance(Vec3::new(block.x as f32 + 0.5, block.y as f32, block.z as f32 - 2.5)) < 0.5;
+            if stood && there && carried(world, log) == 2 && drawn(world, block) && gate.shot(world, "chopping_block").is_some() {
+                world.resource_mut::<UiState>().inventory_open = true;
+                gate.advance(now);
+            } else if outwaited {
+                gate.check("chopping block", Err(format!("the chopping block ({stood}), the spot ({there}) or two oak logs never came, or it never drew, in {CHOP_WAIT} seconds")));
+                end(world, gate);
+            }
+        }
+        2 => {
+            // Within reach, by the client's own look (`NearTags`, kept while the inventory
+            // is open): a log is laid in the grid.
+            let near = world.resource::<crate::hud::inventory::NearTags>().has("chopping_block");
+            if near {
+                let from = world.resource::<LocalPlayer>().inventory.slots.iter().position(|s| s.is_some_and(|s| Some(s.item) == log));
+                if let Some(from) = from {
+                    let actions = world.resource::<crate::Actions>().0.clone();
+                    let target = voxmar_engine::action::ActionTarget::Slots { from: from as u8, to: voxmar_engine::inventory::CRAFT as u8, count: 1 };
+                    world.resource::<Net>().propose(actions.expect("core:transfer"), target);
+                    gate.advance(now);
+                }
+            } else if outwaited {
+                gate.check("chopping block", Err(format!("with the inventory open the client never found the chopping block within reach in {CHOP_WAIT} seconds")));
+                end(world, gate);
+            }
+        }
+        3 => {
+            // The grid shows what the near recipe makes; crafted, the server gives it.
+            let player = world.resource::<LocalPlayer>();
+            let grid = player.inventory.grid();
+            if grid.iter().flatten().count() == 1 && grid.contains(&log) {
+                let near = world.resource::<crate::hud::inventory::NearTags>();
+                let made = content.recipes.find_near(&grid, |tag| near.has(tag)).map(|r| (r.output, r.count));
+                if made == planks.map(|p| (p, 6)) {
+                    let actions = world.resource::<crate::Actions>().0.clone();
+                    world.resource::<Net>().propose(actions.expect("core:craft"), voxmar_engine::action::ActionTarget::Slot(0));
+                    gate.advance(now);
+                } else {
+                    gate.check("chopping block", Err(format!("an oak log in the grid by a chopping block shows {made:?}, not six oak planks")));
+                    end(world, gate);
+                }
+            } else if waited {
+                gate.check("chopping block", Err(format!("an oak log never reached the crafting grid in {CHOP_WAIT} server seconds")));
+                end(world, gate);
+            }
+        }
+        _ => {
+            let split = carried(world, planks);
+            let empty = world.resource::<LocalPlayer>().inventory.grid().iter().all(Option::is_none);
+            if split == 6 && empty {
+                gate.check("chopping block", Ok("set by the fire it draws; the client found it within reach, and a log split there gave six planks, as the grid showed".to_owned()));
+                end(world, gate);
+            } else if waited {
+                gate.check("chopping block", Err(format!("a log crafted by a chopping block gave {split} oak planks (grid emptied {empty}), not six, in {CHOP_WAIT} server seconds")));
+                end(world, gate);
+            }
         }
     }
 }

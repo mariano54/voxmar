@@ -48,10 +48,11 @@ impl Plugin for InventoryPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ShownInventory>()
             .init_resource::<Gesture>()
+            .init_resource::<NearTags>()
             .add_systems(PostStartup, spawn)
             .add_systems(
                 Update,
-                ((toggle, fit_grid, fit_store, click, craft, number_keys, preview).chain().in_set(InventorySystems).after(super::screens::ScreenSystems), (follow_pointer, tooltip, tap, hover_item, show_worn_glyphs).after(InventorySystems))
+                ((toggle, fit_grid, fit_store, click, find_near, craft, number_keys, preview).chain().in_set(InventorySystems).after(super::screens::ScreenSystems), (follow_pointer, tooltip, tap, hover_item, show_worn_glyphs).after(InventorySystems))
                     .run_if(in_state(Screen::InGame)),
             )
             .add_systems(OnExit(Screen::InGame), |mut gesture: ResMut<Gesture>, mut tips: Query<&mut Visibility, With<Tooltip>>| {
@@ -60,6 +61,28 @@ impl Plugin for InventoryPlugin {
                     *tip = Visibility::Hidden;
                 }
             });
+    }
+}
+
+/// The tags recipes are made near (a chopping block's) that some block within the player's
+/// reach has, as the server judges it: kept while the inventory is open.
+#[derive(Resource, Default)]
+pub(crate) struct NearTags(pub Vec<String>);
+
+impl NearTags {
+    pub(crate) fn has(&self, tag: &str) -> bool {
+        self.0.iter().any(|t| t == tag)
+    }
+}
+
+fn find_near(ui: Res<UiState>, world: Res<ClientWorld>, player: Res<LocalPlayer>, launch: Res<Launch>, mut near: ResMut<NearTags>) {
+    if !ui.inventory_open {
+        return;
+    }
+    let tags = launch.content.recipes.near_tags();
+    let found = voxmar_engine::craft::tags_near(&tags, &launch.content.blocks, player.eye(), |pos| world.block(pos));
+    if near.0 != found {
+        near.0 = found;
     }
 }
 
@@ -384,6 +407,7 @@ fn craft(
     net: Res<Net>,
     actions: Res<Actions>,
     mut player: ResMut<LocalPlayer>,
+    near: Res<NearTags>,
     output: Query<&RelativeCursorPosition, With<OutputSlot>>,
     mut icon: Query<(&mut ImageNode, &mut Visibility), With<OutputIcon>>,
     mut count: Query<&mut Text, (With<OutputCount>, Without<CraftName>, Without<CraftHint>)>,
@@ -406,7 +430,8 @@ fn craft(
         })
     };
     let allowed = |r: &voxmar_engine::craft::Recipe| (at_table || !r.needs_table()) && short(r).is_none();
-    let found = recipes.find(&player.inventory.grid());
+    let near = |tag: &str| near.has(tag);
+    let found = recipes.find_near(&player.inventory.grid(), near);
     let lacking = found.and_then(|r| short(r).map(|skill| (skill, r.level)));
     let made = found.filter(|r| allowed(r)).map(|r| (r.output, r.count));
     let filled = player.inventory.grid().iter().any(Option::is_some);
@@ -453,7 +478,7 @@ fn craft(
     let all = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
     let Some(craft) = actions.named("core:craft") else { return };
     let mut inventory = player.inventory.clone();
-    if craft_grid(&mut inventory, &recipes, allowed, all) > 0 {
+    if craft_grid(&mut inventory, &recipes, allowed, near, all) > 0 {
         player.inventory = inventory;
         // Heard as crafting (`sounds.ron`), not as a click.
         net.propose(craft, ActionTarget::Slot(if all { 0 } else { 1 }));
@@ -461,11 +486,11 @@ fn craft(
 }
 
 /// Crafts what `inventory`'s grid makes (all it can if `all`), as the server will: only a
-/// recipe `allowed`, and crafting all only while the grid still makes the recipe it made
-/// first. Returns how many were made.
-fn craft_grid(inventory: &mut Inventory, recipes: &voxmar_engine::craft::RecipeRegistry, allowed: impl Fn(&voxmar_engine::craft::Recipe) -> bool, all: bool) -> u32 {
-    let first = recipes.find(&inventory.grid()).filter(|r| allowed(r));
-    inventory.craft(recipes.while_making(first), all)
+/// recipe `allowed`, one made near a block only `near` it, and crafting all only while the
+/// grid still makes the recipe it made first. Returns how many were made.
+fn craft_grid(inventory: &mut Inventory, recipes: &voxmar_engine::craft::RecipeRegistry, allowed: impl Fn(&voxmar_engine::craft::Recipe) -> bool, near: impl Fn(&str) -> bool + Copy, all: bool) -> u32 {
+    let first = recipes.find_near(&inventory.grid(), near).filter(|r| allowed(r));
+    inventory.craft(recipes.while_making(first, near), all)
 }
 
 /// The crafting grid's square, and each of its cells by number (`craft::GRID`).
@@ -1064,12 +1089,13 @@ fn hover_item(
     mut over: ResMut<super::recipes::HoveredItem>,
     window: Query<&Window, With<PrimaryWindow>>,
     catalogue: Res<super::creative::Catalogue>,
+    near: Res<NearTags>,
 ) {
     // Without a pointer (no window: `--gate`, `--capture`) nothing is under it to change.
     if ui.recipes_open || window.single().ok().and_then(Window::cursor_position).is_none() {
         return;
     }
-    let made = || output.iter().any(RelativeCursorPosition::cursor_over).then(|| launch.content.recipes.find(&player.inventory.grid()).map(|r| r.output)).flatten();
+    let made = || output.iter().any(RelativeCursorPosition::cursor_over).then(|| launch.content.recipes.find_near(&player.inventory.grid(), |tag| near.has(tag)).map(|r| r.output)).flatten();
     let item = if ui.inventory_open { hovered(&slots).and_then(|slot| player.inventory.get(slot)).map(|stack| stack.item).or_else(made).or(catalogue.hovered) } else { None };
     if over.0 != item {
         over.0 = item;
@@ -1320,7 +1346,7 @@ mod tests {
         }
         let before = wait_for(&|i| i.grid().iter().flatten().count() == 4 && i.get(0).is_none());
         let mut predicted = before.clone();
-        let made = craft_grid(&mut predicted, &content.recipes, |r: &voxmar_engine::craft::Recipe| !r.needs_table(), true);
+        let made = craft_grid(&mut predicted, &content.recipes, |r: &voxmar_engine::craft::Recipe| !r.needs_table(), |_| false, true);
         net.propose(content.actions.expect("core:craft"), ActionTarget::Slot(0));
         let crafted = wait_for(&|i| *i != before);
         assert_eq!(made, 1, "one table");
