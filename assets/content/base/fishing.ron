@@ -18,8 +18,8 @@
     outlevelled: 15.0,
     water: (frozen: -3.0, cold: 4.0, cool: 10.0, temperate: 17.0, warm: 22.0),
     catches: [
-        (item: "raw_shrimp", level: 1, xp: 10.0, weight: 6.0),
-        (item: "raw_minnow", level: 1, xp: 10.0, weight: 6.0, water: Fresh),
+        // Shrimp were minnows in all but name and water, so minnows bite anywhere now (Oct 14).
+        (item: "raw_minnow", level: 1, xp: 10.0, weight: 6.0),
         (item: "raw_sardine", level: 5, xp: 13.0, weight: 5.0, water: Salt),
         (item: "raw_perch", level: 10, xp: 18.0, weight: 4.0, water: Fresh),
         (item: "raw_trout", level: 15, xp: 25.0, weight: 4.0, water: Fresh, biomes: ["cold", "cool", "frozen", "mountain", "conifer"]),
