@@ -2,9 +2,9 @@
 //! grid is filled with what a recipe for an item takes, `count` sets of it, from the pack
 //! (its pouches too) and, while the player stands in their home (`home_reach`), from the
 //! stores in it: a home's barrels and cupboards are a larder and a woodshed to craft from.
-//! What the grid held goes back into the pack first. A recipe that needs a table, or a
-//! level the player lacks, is passed over; with nothing to lay from, the player is told
-//! what is short.
+//! What the grid held goes back into the pack first. A recipe that needs a table, a level
+//! the player lacks, or a block they are not near, is passed over; with nothing to lay
+//! from, the player is told what is short.
 
 use rustc_hash::FxHashMap;
 use voxmar_engine::block::BlockId;
@@ -27,6 +27,8 @@ impl Server {
             return;
         }
         let allowed = self.allowed_recipes(agent);
+        let near = self.near_tags(agent);
+        let near = |tag: &str| near.iter().any(|t| t == tag);
         let stores = self.home_stores(agent);
         let Some(player) = self.players.get(&agent) else { return };
         // What the grid and the pointer hold goes back into the pack first.
@@ -62,9 +64,11 @@ impl Server {
         let laid = (1..=count.max(1)).rev().find_map(|times| {
             usable.iter().find_map(|recipe| {
                 let grid = recipe.lay(times, &have, max_stack)?;
-                // The grid it lays must make it.
+                // The grid it lays must make it, or, by a block it is made near, the same thing
+                // better (a plain way laid by a chopping block makes its six planks).
                 let items = grid.map(|cell| cell.map(|(item, _)| item));
-                recipes.find(&items).is_some_and(|found| std::ptr::eq(found, *recipe)).then_some(grid)
+                let makes = |found: &Recipe| std::ptr::eq(found, *recipe) || (recipe.near.is_none() && found.near.is_some() && found.output == recipe.output && allowed(found));
+                recipes.find_near(&items, near).is_some_and(makes).then_some(grid)
             })
         });
         let Some(grid) = laid else {
@@ -134,10 +138,11 @@ impl Server {
         }
     }
 
-    /// Which recipes `agent` may craft where they are: a table's within reach of one, and
-    /// those whose level they have.
+    /// Which recipes `agent` may craft where they are: a table's within reach of one, one
+    /// made near a block within reach of such a block, and those whose level they have.
     pub(crate) fn allowed_recipes(&self, agent: PlayerId) -> impl Fn(&Recipe) -> bool + use<> {
         let at_table = self.at_table(agent);
+        let near = self.near_tags(agent);
         let (skills, effects, blocks) = (self.content.skills.clone(), self.content.effects.clone(), self.content.blocks.clone());
         let player = self.players.get(&agent);
         let levels: FxHashMap<_, (u8, u8)> = player.map(|player| {
@@ -146,6 +151,7 @@ impl Server {
         let inventory = player.map(|p| p.inventory.clone()).unwrap_or_default();
         move |r: &Recipe| {
             (at_table || !r.needs_table())
+                && r.near.as_deref().is_none_or(|tag| near.iter().any(|t| t == tag))
                 && r.skill.is_none_or(|s| levels.get(&s).is_some_and(|&(own, boosted)| voxmar_engine::level::meets_recipe(r, own, boosted, &inventory, &blocks)))
         }
     }
@@ -328,5 +334,47 @@ mod tests {
         lay(&mut server, "base:crafting_table", 1);
         assert_eq!(grid(&server), vec![(planks, 1); 4]);
         assert_eq!(laid(&server), 1, "only a lay that took from a store counts");
+    }
+    /// A log split near a chopping block gives six planks, away from one the grid's four;
+    /// the way made near one lays only near one.
+    #[test]
+    fn a_chopping_block_splits_a_log_into_two_more_planks() {
+        let mut server = fixture();
+        let (log, planks) = (id(&server, "base:oak_log"), id(&server, "base:oak_planks"));
+        let craft = server.content.actions.expect("core:craft");
+        let carried = |server: &Server| server.players[&1].inventory.slots.iter().flatten().filter(|s| s.item == planks).map(|s| s.count as u32).sum::<u32>();
+        let split = |server: &mut Server| {
+            server.players.get_mut(&1).unwrap().inventory.craft[0] = Some(ItemStack { item: log, count: 1 });
+            server.propose(1, craft, ActionTarget::Slot(0), Instant::now());
+        };
+        split(&mut server);
+        assert_eq!(carried(&server), 4, "the grid's own, away from a chopping block");
+        let block = IVec3::new(10, FLOOR + 1, 8);
+        server.set_block(block, id(&server, "base:chopping_block"));
+        split(&mut server);
+        assert_eq!(carried(&server), 10, "two more by one");
+        // Its way in the recipe book lays only near one.
+        let book = voxmar_engine::recipe_book::RecipeBook::new(&server.content);
+        let first = book
+            .making(planks)
+            .iter()
+            .find_map(|entry| match &entry.method {
+                voxmar_engine::recipe_book::Method::Craft { first, near: Some(_), .. } => Some(*first as u16),
+                _ => None,
+            })
+            .expect("a way near a chopping block");
+        server.players.get_mut(&1).unwrap().inventory.slots[1] = Some(ItemStack { item: log, count: 2 });
+        let action = server.content.actions.expect("core:lay");
+        server.propose(1, action, ActionTarget::Recipe { first, ways: 1, count: 1 }, Instant::now());
+        assert_eq!(grid(&server), vec![(log, 1)]);
+        // The plain way laid by one lays too (and makes the six).
+        server.players.get_mut(&1).unwrap().inventory.craft = [None; GRID];
+        lay(&mut server, "base:oak_planks", 1);
+        assert_eq!(grid(&server), vec![(log, 1)], "the plain way, laid by a chopping block");
+        server.players.get_mut(&1).unwrap().inventory.craft = [None; GRID];
+        server.players.get_mut(&1).unwrap().inventory.slots[1] = Some(ItemStack { item: log, count: 2 });
+        server.set_block(block, BlockId::AIR);
+        server.propose(1, action, ActionTarget::Recipe { first, ways: 1, count: 1 }, Instant::now());
+        assert!(grid(&server).is_empty(), "not near one");
     }
 }
