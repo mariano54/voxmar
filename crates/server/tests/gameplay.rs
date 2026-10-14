@@ -4273,6 +4273,17 @@ fn a_shot_by_a_bees_nest_stirs_the_bees_unless_smoke_calms_them() {
     client.pump_until(|c| c.blows == 2);
     client.wait_server(1);
     assert!(!stung(&client), "smoked bees stay calm: {:?}", client.chat);
+    // A smoked nest on the bear's other side, met first in the search, and the first nest's
+    // campfire moved off: the unsmoked nest's bees are stirred though the smoked one's stay calm.
+    let other = at.floor().as_ivec3() + IVec3::new(0, 0, -2);
+    client.ok(&format!("/setblock {} {} {} bee_nest", other.x, other.y, other.z));
+    client.ok(&format!("/setblock {} {} {} air", nest.x + 1, nest.y, nest.z));
+    client.ok(&format!("/setblock {} {} {} campfire", other.x, other.y, other.z - 3));
+    client.chat.clear();
+    client.propose("core:attack", ActionTarget::Creature(id));
+    client.pump_until(|c| c.blows == 3);
+    client.wait_server(1);
+    assert!(stung(&client), "an unsmoked nest beside a smoked one stirs: {:?}", client.chat);
 }
 
 /// Whether a dodge proposed now is taken: a second one at once must then be refused by its
