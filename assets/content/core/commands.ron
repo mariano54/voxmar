@@ -80,6 +80,13 @@
             run: Kill,
         ),
         (
+            name: "heal",
+            usage: "",
+            help: "Heals you to full health at once.",
+            permission: Admin,
+            run: Heal,
+        ),
+        (
             name: "op",
             usage: "<player>",
             help: "Makes an online player an admin until they leave or /deop. Names are not checked, so admins named when the server starts count only when playing on its own machine (a tunnel that forwards players from elsewhere makes everyone look local); the server's admin token counts from anywhere.",

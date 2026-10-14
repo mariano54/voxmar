@@ -31,6 +31,8 @@
     "command.core.help.help.summary": ("Lists the commands you can use, or explains one.", "使えるコマンドを一覧します。"),
     "command.core.kill.help": ("Kills you, as a fall or a wolf would: you keep your three most valuable items and the rest lies where you fell.", "落下やオオカミにやられたときと同じように死にます。価値の高いアイテム3つは手元に残り、ほかは倒れた場所に落ちます。"),
     "command.core.kill.help.summary": ("Kills you, as a fall or a wolf would: you keep your three most valuable items and the rest lies where you fell.", "死にます。"),
+    "command.core.heal.help": ("Heals you to full health at once.", "体力をすぐに全快させます。"),
+    "command.core.heal.help.summary": ("Heals you to full health at once.", "体力を全快させます。"),
     "command.core.list.help": ("Lists who is online.", "オンラインの人を一覧します。"),
     "command.core.list.help.summary": ("Lists who is online.", "オンラインの人を一覧します。"),
     "command.core.locate.help": ("Finds the nearest place of a biome, of a river running deep in a gorge, or of a hamlet or village (of one size, if you say), within 4000 blocks unless you say (up to 10000), or the nearest sample of ore on the ground over a vein (of an ore such as iron, if you name one), within 1000.", "いちばん近いバイオーム、峡谷の深くを流れる川、小村か村 (大きさを指定すればその大きさのもの) を探します。範囲は指定がなければ4000ブロック (最大10000)。ore なら、鉱脈の上の地面にあるいちばん近い鉱石のかけらを1000ブロック以内で探します (iron などの鉱石の名前も指定できます)。"),

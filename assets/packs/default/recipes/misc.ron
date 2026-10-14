@@ -38,6 +38,31 @@
                 "................",
             ]),
         ]),
+        // A window before glass: oiled hide stretched in a stick frame with a cross of sticks,
+        // amber and a little blotchy. Its pane is bright enough to glow by a lit room's light
+        // through it (`lit_through`); the frame stays dark.
+        "block/hide_window": (palettes: {"pane": ["#a8743a", "#bf8a4c", "#d29e5e", "#e2b474"], "frame": ["#4e3420", "#6a4a2c", "#86603a"]}, layers: [
+            Paint(palette: "pane", base: 0.6, shade: [Noise(cells: (4, 4), octaves: 2, amount: 0.45), Noise(cells: (16, 16), amount: 0.25)]),
+            Paint(palette: "frame", base: 0.5, shade: [Border(width: 1, amount: 0.35, sides: (1.0, 0.0, 0.0, 1.0)), Border(width: 1, amount: -0.35, sides: (0.0, 1.0, 1.0, 0.0)), Noise(cells: (16, 16), amount: 0.3)], mask: [Border(width: 2, amount: 1.0)], above: 0.5),
+            Grid(legend: {'f': "#6a4a2c", 'h': "#86603a", 'd': "#4e3420"}, rows: [
+                "................",
+                "................",
+                ".......hf.......",
+                ".......hf.......",
+                ".......hf.......",
+                ".......hf.......",
+                ".......hf.......",
+                "..hhhhhhfhhhhh..",
+                "..ffffffdfffff..",
+                ".......hf.......",
+                ".......hf.......",
+                ".......hf.......",
+                ".......hf.......",
+                ".......hf.......",
+                "................",
+                "................",
+            ]),
+        ]),
         // Old glass, from abandoned windows: a weathered lead frame round a cloudy, faintly
         // green pane, uneven in thickness, with a crack across one corner.
         "block/old_glass": (size: (32, 32), palettes: {"frame": ["#4a4e4c", "#6a706c", "#8c928c"], "pane": ["#b8c8b080", "#c8d6c090", "#d6e2cc98", "#e2ecdaa0"]}, layers: [
