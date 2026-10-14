@@ -9730,22 +9730,29 @@ fn combat_feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let reads = &creatures.reads;
             let slid = reads.iter().find(|r| r.slid > r.planted);
             let shallow = reads.iter().find(|r| r.coiled < STRIKE_COILED);
-            let stood: Vec<f32> = reads.iter().filter_map(|r| r.recovered).collect();
+            let stood = &creatures.recoveries;
             let result = if strikes == 0 {
                 Err("no creature was seen to strike in the fights".into())
+            } else if reads.is_empty() {
+                Err(format!("{strikes} strikes seen and none of their wind-ups written down"))
             } else if let Some(read) = slid {
-                Err(format!("a creature slid {:.2} blocks as it wound up, where planted it would have moved {:.2} at most", read.slid, read.planted))
+                Err(format!("a {} ({}) slid {:.2} blocks as it wound up, where planted it would have moved {:.2} at most", read.who, read.style, read.slid, read.planted))
             } else if let Some(read) = shallow {
-                Err(format!("a creature struck coiled only {:.2} deep ({STRIKE_COILED} wanted)", read.coiled))
+                let by = if read.by_word { "the server's word" } else { "its own time" };
+                Err(format!(
+                    "a {} struck ({}) coiled only {:.2} deep ({STRIKE_COILED} wanted), struck by {by} {:.3} s into a {:.3} s wind-up",
+                    read.who, read.style, read.coiled, read.reached, read.windup
+                ))
             } else if let Some(most) = stood.iter().copied().find(|&most| most < STRIKE_RECOVERED) {
                 Err(format!("a creature stood out its recovery showing only {most:.2} of its recover stance ({STRIKE_RECOVERED} wanted)"))
             } else if deaths > 0 && poofs == 0 {
                 Err(format!("{deaths} creatures died in view and none went up in smoke"))
             } else {
                 let deepest = reads.iter().map(|r| r.coiled).fold(0.0, f32::max);
+                let least = reads.iter().min_by(|a, b| a.coiled.total_cmp(&b.coiled)).map_or(String::new(), |r| format!("{:.2} ({} {})", r.coiled, r.who, r.style));
                 let most = reads.iter().map(|r| r.slid).fold(0.0, f32::max);
                 Ok(format!(
-                    "{strikes} strikes snapped out of their wind-ups ({} read: coiled up to {deepest:.2} deep, slid at most {most:.2} blocks coiling; {} stood out their recovery), {poofs} of {deaths} fallen gone in smoke",
+                    "{strikes} strikes snapped out of their wind-ups ({} read: coiled {least} up to {deepest:.2} deep, slid at most {most:.2} blocks coiling; {} stood out their recovery), {poofs} of {deaths} fallen gone in smoke",
                     reads.len(),
                     stood.len()
                 ))
