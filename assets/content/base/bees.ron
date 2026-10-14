@@ -20,7 +20,9 @@
     // `pollinate` times as fast. A campfire or torch (`smoke` tags) within `smoke_reach`
     // calms them, or one in hand; one within `scorch_reach` of a kept hive drives its
     // bees off. Creatures within `creature_reach` are stung, but for people; a bear eats a
-    // full hive's honey. Bees never take a player's or creature's last health.
+    // full hive's honey. A shot that lands within `shot_reach` of a nest or hive (tagged
+    // `bees`) stirs them, and unless smoked they sting the shooter. Bees never take a
+    // player's or creature's last health.
     hive: Some((
         empty: "skep", busy: "bee_skep", full: "honey_skep",
         minutes: 20.0, forage_reach: 6, forage_height: 3,
@@ -31,5 +33,6 @@
         rain: 0.1, dusk: 0.25,
         sting: 2, stung: "stung", stung_seconds: 60.0,
         creature_reach: 2.5, creature_sting: 1, unstung: ["villager"], raiders: ["brown_bear"],
+        shot_reach: 3.0,
     )),
 )

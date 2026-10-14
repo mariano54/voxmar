@@ -9,7 +9,7 @@ use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use voxmar_engine::coords::ColumnPos;
 use voxmar_engine::dropped;
-use voxmar_engine::glam::{IVec3, Vec2};
+use voxmar_engine::glam::{IVec3, Vec2, Vec3};
 use voxmar_engine::inventory::ItemStack;
 use voxmar_engine::lang::Words;
 use voxmar_engine::schedule::Tier;
@@ -162,6 +162,26 @@ impl Server {
         }
         player.give_effects(&[(effect, seconds)]);
         player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: Words::key("bees.stung") });
+    }
+
+    /// A shot that landed at `at` (hit or miss) stirs bees within `shot_reach` of it: unless
+    /// smoke calms them, they sting `shooter`.
+    pub(crate) fn stir_bees(&mut self, shooter: PlayerId, at: Vec3) {
+        let Some(hive) = &self.content.bees.hive else { return };
+        let reach = hive.def.shot_reach;
+        if reach <= 0.0 {
+            return;
+        }
+        let (blocks, r, centre) = (&self.content.blocks, reach.ceil() as i32, at.floor().as_ivec3());
+        let near = (-r..=r)
+            .flat_map(|dy| (-r..=r).flat_map(move |dz| (-r..=r).map(move |dx| centre + IVec3::new(dx, dy, dz))))
+            .filter(|cell| (cell.as_vec3() + Vec3::splat(0.5)).distance(at) <= reach)
+            .find(|&cell| self.block(cell).is_some_and(|b| blocks.def(b).has_tag(&hive.def.bees)));
+        if let Some(cell) = near
+            && !self.smoked(cell, Some(shooter))
+        {
+            self.sting(shooter);
+        }
     }
 
     /// How much faster a crop at `pos` grows for the bees near it: `pollinate` within

@@ -489,6 +489,10 @@ impl Server {
         }
         let stroke = Stroke::of(kind, strength, on_beat, aim.counter, aim.riposte, falling, &feel);
         let at = self.creatures.live.get(&aim.creature).map(|c| c.body.position);
+        // A shot that lands near bees stirs them, hit or miss.
+        if let (Some(_), Some(at)) = (shot, at) {
+            self.stir_bees(player, at);
+        }
         let Some(damage) = self.land_blow(player, aim.creature, &weapon, stroke) else { return };
         // A shot that hit may be left lying by the target, to be picked up again.
         if let (Some(item), Some(at), true) = (shot, at, damage > 0)

@@ -103,6 +103,17 @@ pub struct HiveDef {
     pub unstung: Vec<String>,
     #[serde(default)]
     pub raiders: Vec<String>,
+    /// A shot (a sling stone, an arrow) that lands within `shot_reach` of a block tagged
+    /// `bees` (a wild nest, a kept hive) stirs them: unless smoke calms them, they sting
+    /// the shooter. 0 leaves shots alone.
+    #[serde(default)]
+    pub shot_reach: f32,
+    #[serde(default = "bees_tag")]
+    pub bees: String,
+}
+
+fn bees_tag() -> String {
+    "bees".to_owned()
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -231,6 +242,9 @@ impl Bees {
             let positive = [def.minutes, def.nectar_full, def.pollinate, def.survey_seconds, def.creature_reach, def.stung_seconds];
             if positive.iter().any(|v| !v.is_finite() || *v <= 0.0) || def.forage_reach < 0 || def.forage_height < 0 || def.smoke_reach < 0 || def.scorch_reach < 0 {
                 return Err(RegistryError("bees.ron: the hive's times, reaches and paces must be above 0".to_owned()));
+            }
+            if !(def.shot_reach.is_finite() && (0.0..=16.0).contains(&def.shot_reach)) || (def.shot_reach > 0.0 && !blocks.ids().any(|id| blocks.def(id).has_tag(&def.bees))) {
+                return Err(RegistryError(format!("bees.ron: shots stir bees within 0 to 16 blocks, of blocks tagged `{}`, which some block must be", def.bees)));
             }
             if def.scorch_reach > def.smoke_reach {
                 return Err(RegistryError("bees.ron: a fire that drives the bees off must be near enough to smoke them".to_owned()));
