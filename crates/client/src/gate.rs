@@ -376,6 +376,10 @@ enum Step {
     /// A wooden door placed before the player goes in whole, both halves facing them, and a
     /// right click on it opens it and another shuts it, as the server turns it.
     Door,
+    /// With a log in the pack, the inventory's Can Make list shows planks ready, the ready
+    /// ones first; a click on them lays the log in the grid, as the server does it; pointed
+    /// at, a stone pickaxe says what it still wants.
+    Makeable,
     /// Ten twine crafted finish a quest; the quest key opens the book on a quest worth
     /// reading, W held with it open does not walk, Esc shuts it and W walks again; a quest pinned counts
     /// torches crafted for it as the server counts them, and a quest done reads so, then
@@ -1391,6 +1395,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Prayers => prayers(world, gate, now, in_phase),
         Step::Home => home(world, gate, now),
         Step::Door => door(world, gate, now),
+        Step::Makeable => makeable(world, gate, now, in_phase),
         Step::Quests => quests(world, gate, now, in_phase),
         Step::Catalogue => catalogue(world, gate, now, in_phase),
         Step::Screenshot => screenshot(world, gate, now, in_phase),
@@ -4618,6 +4623,103 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
     }
 }
 
+/// The Can Make list under the inventory's slots, played: a log shows planks ready, ready
+/// ones first; clicking them lays the log in the grid (the server's `core:lay`); pointed at,
+/// the stone pickaxe's line says what stands in its way, in the list's own words.
+fn makeable(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    use crate::hud::makeable::{Drawn, MakeCell, Reach};
+    let waited = gate.server_in_phase();
+    let leave = |world: &mut World, gate: &mut Gate| {
+        world.resource_mut::<UiState>().inventory_open = false;
+        gate.next(Step::Quests, now);
+    };
+    let ids = {
+        let registry = &world.resource::<ClientWorld>().registry;
+        ["base:oak_log", "base:oak_planks", "base:stone_pickaxe"].map(|name| registry.id(name))
+    };
+    let [Some(log), Some(planks), Some(pickaxe)] = ids else {
+        gate.check("make: list", Err("the content lacks the oak log, its planks or the stone pickaxe".into()));
+        return leave(world, gate);
+    };
+    let cell_of = |world: &mut World, item: BlockId| {
+        let drawn = world.resource::<Drawn>().0.clone();
+        world.query::<(Entity, &MakeCell)>().iter(world).find(|(_, cell)| drawn.get(cell.0).is_some_and(|m| m.output == item)).map(|(entity, _)| entity)
+    };
+    match gate.phase {
+        0 => {
+            let net = world.resource::<Net>();
+            net.command("give oak_log 1");
+            net.command("give cobblestone 3");
+            let mut ui = world.resource_mut::<UiState>();
+            (ui.recipes_open, ui.quests_open, ui.menu_open, ui.character_open) = (false, false, false, false);
+            ui.inventory_open = true;
+            gate.advance(now);
+        }
+        // Planks ready, and every ready one before any that is not.
+        1 => {
+            let drawn = world.resource::<Drawn>().0.clone();
+            let ready = drawn.iter().find(|m| m.output == planks).is_some_and(|m| m.reach == Reach::Ready);
+            let cell = cell_of(world, planks);
+            match cell {
+                Some(cell) if ready && holding(world, "base:oak_log").0 >= 1 => {
+                    let first_not = drawn.iter().position(|m| m.reach != Reach::Ready).unwrap_or(drawn.len());
+                    let order = drawn[first_not..].iter().all(|m| m.reach != Reach::Ready);
+                    gate.check("make: list", if order { Ok(format!("a log in the pack shows planks ready; {first_not} of {} ready, all first", drawn.len())) } else { Err(format!("a ready one comes after one not ready: {:?}", drawn.iter().map(|m| m.reach.rank()).collect::<Vec<_>>())) });
+                    gate.count_before = world.resource::<LocalPlayer>().inventory.craft.iter().flatten().filter(|s| s.item == log).map(|s| s.count as u32).sum();
+                    world.resource_mut::<UiClicks>().next = Some((cell, MouseButton::Left));
+                    gate.advance(now);
+                }
+                _ if waited > QUEST_WAIT => {
+                    let shown: Vec<String> = drawn.iter().take(6).map(|m| format!("{:?} {:?}", m.output, m.reach)).collect();
+                    gate.check("make: list", Err(format!("{waited:.1} server s on, {} logs held, planks ready {ready}, a cell for them {}; the list starts {shown:?}", holding(world, "base:oak_log").0, cell.is_some())));
+                    leave(world, gate);
+                }
+                _ => {}
+            }
+        }
+        // The server lays the log in the grid.
+        2 => {
+            let laid: u32 = world.resource::<LocalPlayer>().inventory.craft.iter().flatten().filter(|s| s.item == log).map(|s| s.count as u32).sum();
+            if laid > gate.count_before {
+                gate.check("make: lay", Ok(format!("a click on the planks laid {} log in the grid", laid - gate.count_before)));
+                gate.advance(now);
+            } else if waited > QUEST_WAIT {
+                gate.check("make: lay", Err(format!("{waited:.1} server s after the click the grid holds {laid} logs, as before")));
+                leave(world, gate);
+            }
+        }
+        // Pointed at, the stone pickaxe says what it still wants.
+        _ => {
+            let Some(cell) = cell_of(world, pickaxe) else {
+                if waited > QUEST_WAIT {
+                    gate.check("make: wants", Err(format!("{waited:.1} server s on, with three cobblestone the stone pickaxe is not on the list")));
+                    leave(world, gate);
+                }
+                return;
+            };
+            world.resource_mut::<UiClicks>().hover = Some(cell);
+            if in_phase < 0.3 {
+                return;
+            }
+            let reach = world.resource::<Drawn>().0.iter().find(|m| m.output == pickaxe).map(|m| m.reach.clone());
+            let wanted = reach.map(|reach| crate::hud::makeable::words(world.resource::<Locale>(), &world.resource::<Launch>().content, pickaxe, &reach)).unwrap_or_default();
+            let line = world.query_filtered::<&Text, With<crate::hud::makeable::MakeLine>>().iter(world).next().map(|t| t.0.clone()).unwrap_or_default();
+            if line != wanted {
+                if in_phase > 2.0 {
+                    gate.check("make: wants", Err(format!("pointed at, the stone pickaxe's line reads {line:?}, not {wanted:?}")));
+                    leave(world, gate);
+                }
+                return;
+            }
+            if gate.shot(world, "makeable").is_none() {
+                return;
+            }
+            gate.check("make: wants", Ok(format!("pointed at, the stone pickaxe reads {line:?}")));
+            leave(world, gate);
+        }
+    }
+}
+
 /// The door step's two cells, as the client has them: (shut, open) when both halves are
 /// a door's, shut or open alike.
 fn door_cells(world: &World, at: IVec3) -> Option<(bool, bool)> {
@@ -4638,7 +4740,7 @@ fn door(world: &mut World, gate: &mut Gate, now: f32) {
         let net = world.resource::<Net>();
         net.command(&format!("fill {} {} {} {} {} {} air", at.x, at.y, at.z, at.x, at.y + 1, at.z));
         net.command("clear wooden_door");
-        gate.next(Step::Quests, now);
+        gate.next(Step::Makeable, now);
     };
     let use_door = |world: &mut World| {
         let actions = world.resource::<crate::Actions>().0.clone();

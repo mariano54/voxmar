@@ -158,6 +158,24 @@ impl Recipe {
         Some(grid)
     }
 
+    /// What `have` (counts by item) lacks for one set, by item and how many: each cell takes
+    /// one of the first of its alternatives there is any left of, and a cell that finds
+    /// none counts its first alternative short. Empty when one set is there to lay.
+    pub fn short(&self, have: &FxHashMap<BlockId, u32>) -> Vec<(BlockId, u32)> {
+        let mut needed: Vec<(BlockId, u32)> = Vec::new();
+        let mut left = have.clone();
+        for accepts in self.alternatives().into_iter().flatten() {
+            match accepts.iter().find(|item| left.get(item).copied().unwrap_or(0) > 0) {
+                Some(item) => *left.get_mut(item).expect("found with some left") -= 1,
+                None => match needed.iter_mut().find(|(item, _)| *item == accepts[0]) {
+                    Some((_, n)) => *n += 1,
+                    None => needed.push((accepts[0], 1)),
+                },
+            }
+        }
+        needed
+    }
+
     fn matches(&self, grid: &[Option<BlockId>; GRID]) -> bool {
         match &self.pattern {
             Some(pattern) => shape_of(grid).is_some_and(|shape| {
