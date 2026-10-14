@@ -8367,7 +8367,8 @@ fn end_boss(world: &mut World, gate: &mut Gate, now: f32) {
 const SMOKE_ITEM: &str = "base:torch";
 const SMOKY: &str = "base:smoky";
 
-/// A torch held a moment: the Smoky chip shows, with its time; then the hand is emptied.
+/// A torch held a moment: the Smoky chip shows, with its time; then the hand is emptied
+/// (the torch taken back when the hotbar has no free slot).
 fn smoke(world: &mut World, gate: &mut Gate, now: f32) {
     let Some(smoky) = world.resource::<Launch>().content.effects.find(SMOKY) else {
         gate.check("smoky chip", Err(format!("no `{SMOKY}` in the content")));
@@ -8400,6 +8401,17 @@ fn smoke(world: &mut World, gate: &mut Gate, now: f32) {
                 gate.advance(now);
             } else if waited {
                 gate.check("smoky chip", Err(format!("with a torch in hand for {BOSS_WAIT} server seconds: chip {chip}, timed {timed}")));
+                gate.advance(now);
+            }
+        }
+        // The hand emptied: onto a free hotbar slot, or, with none free, the torch taken
+        // back, which frees its own (waiting out the hotbar cost the step ten seconds).
+        3 => {
+            if empty_hand(world) {
+                world.resource::<Net>().command("effect clear");
+                gate.next(Step::Wear, now);
+            } else {
+                world.resource::<Net>().command(&format!("clear {}", SMOKE_ITEM.trim_start_matches("base:")));
                 gate.advance(now);
             }
         }
