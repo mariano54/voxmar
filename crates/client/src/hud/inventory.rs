@@ -302,7 +302,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
         position_type: PositionType::Absolute,
         flex_direction: FlexDirection::Column,
         row_gap: Val::Px(PX),
-        max_width: Val::Px(180.0 * PX),
+        max_width: Val::Px(TIP_WIDTH),
         padding: UiRect::axes(Val::Px(space::GAP), Val::Px(space::INNER)),
         ..default()
     };
@@ -867,10 +867,19 @@ pub fn origins_and_uses(locale: &Locale, content: &voxmar_engine::content::Conte
             from.push(name);
         }
     };
+    // A crop's stages are one harvest, not a block each ("Wheat Crop 0", "Wheat Crop 1").
+    let staged: std::collections::HashSet<_> = content.crops.iter().flat_map(|(_, crop)| crop.stages.iter().copied()).collect();
+    let mut harvested = content.crops.iter().any(|(_, crop)| crop.harvest.iter().any(|(got, _)| *got == item));
     for id in blocks.ids() {
         let info = blocks.info(id);
-        if info.drops == item && info.drop_count > 0 && blocks.item_of(id) != item && !blocks.merged_away(id) {
-            add(locale.block(blocks.def(id)));
+        if info.drops == item && info.drop_count > 0 && blocks.item_of(id) != item && blocks.listed(id) {
+            if staged.contains(&id) {
+                harvested = true;
+            } else if !book.making(id).iter().any(|entry| matches!(entry.method, Method::Craft { .. })) {
+                // What is crafted (a stool, a loom) gives its stuff back when broken, but
+                // is no place to find it.
+                add(locale.block(blocks.def(id)));
+            }
         }
     }
     for entry in book.making(item) {
@@ -878,7 +887,7 @@ pub fn origins_and_uses(locale: &Locale, content: &voxmar_engine::content::Conte
             add(locale.creature(&content.creatures.get(*creature).def));
         }
     }
-    if content.crops.iter().any(|(_, crop)| crop.harvest.iter().any(|(got, _)| *got == item)) {
+    if harvested {
         add(locale.get("tooltip.from.harvest").to_owned());
     }
     for entry in book.making(item) {
@@ -1119,6 +1128,9 @@ fn tooltip(
         };
         let key = voxmar_engine::combat::Slot::ALL[slot - WORN].key();
         let name = locale.get_or(&format!("item.slot.{key}"), key).to_owned();
+        if node.width != Val::Auto {
+            node.width = Val::Auto;
+        }
         commands.entity(entity).despawn_children().with_children(|lines| {
             lines.spawn(shadowed(&font.0, name, BODY, TEXT));
             lines.spawn(text(&font.0, locale.get("item.slot.empty").to_owned(), BODY, MUTED));
@@ -1145,6 +1157,11 @@ fn tooltip(
             [Some(japanese.block(def)), japanese.block_reading(def)].into_iter().flatten().collect()
         };
         let in_japanese = locale.code() == "ja";
+        // Where it comes from and what it goes into, before the rest.
+        let book = viewer.book().map(|book| origins_and_uses(&locale, &launch.content, book, item)).unwrap_or_default();
+        // Those lines wrap, and wrapped text in a box sized to fit it is laid out a line
+        // short: a tooltip with them is as wide as a tooltip gets.
+        node.width = if book.is_empty() { Val::Auto } else { Val::Px(TIP_WIDTH) };
         commands.entity(entity).despawn_children().with_children(|lines| {
             if in_japanese {
                 for line in &readings {
@@ -1157,8 +1174,6 @@ fn tooltip(
                     lines.spawn(text(&font.0, line, BODY, SOFT));
                 }
             }
-            // Where it comes from and what it goes into, before the rest.
-            let book = viewer.book().map(|book| origins_and_uses(&locale, &launch.content, book, item)).unwrap_or_default();
             let lines_after = seed_line(&locale, &launch.content, &player, item)
                 .into_iter()
                 .chain(weapon_lines(&locale, &launch.content, &player, item))
@@ -1177,6 +1192,9 @@ fn tooltip(
     visibility.set_if_neq(Visibility::Inherited);
     place_tip(&mut node, computed, window.single().ok(), scale.0, forced.as_ref().map(|f| f.0), &places);
 }
+
+/// The widest a tooltip gets, in interface points.
+const TIP_WIDTH: f32 = 180.0 * PX;
 
 /// Puts the tooltip up and to the right of the pointer, kept on screen; without a pointer,
 /// beside the slot a screenshot names. The pointer is in the window's points, the
@@ -1276,6 +1294,18 @@ mod tests {
             assert!(cobble[0].contains(&name(&locale, "base:stone")), "{code}: cobblestone comes from stone: {cobble:?}");
             assert!(minnow[0].contains(locale.get("tooltip.from.fishing")), "{code}: {minnow:?}");
             assert!(minnow[1].contains(&name(&locale, "base:jerky")), "{code}: a minnow dries to jerky on the rack: {minnow:?}");
+            // Planks come from crafting, not from the stools and looms they make.
+            let planks = lines("base:oak_planks");
+            assert!(!planks[0].contains(&name(&locale, "base:oak_chair")), "{code}: {planks:?}");
+            // A crop's stages read as one harvest.
+            for (_, crop) in content.crops.iter() {
+                let Some(seed) = crop.seed else { continue };
+                let lines = origins_and_uses(&locale, &content, &book, seed);
+                for stage in &crop.stages {
+                    let stage = locale.block(content.blocks.def(*stage));
+                    assert!(!lines.iter().any(|line| line.contains(&stage)), "{code}: {lines:?} names the crop stage {stage}");
+                }
+            }
         }
     }
 
