@@ -6344,7 +6344,7 @@ fn sling(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 info!("gate: sling in hand, bear {bear:?} in sight, {stones} cobblestone, Ranged {}", skill_level(world, "core:ranged").0);
                 world.resource::<Net>().command(&format!("creatures hold {}", BEAR.trim_start_matches("base:")));
                 let xp = skill_level(world, "core:ranged").1;
-                gate.sling = SlingRun { before: std::mem::take(&mut gate.sling.before), bear, landed, blows, xp, stones, ..default() };
+                gate.sling = SlingRun { before: std::mem::take(&mut gate.sling.before), wall: gate.sling.wall, bear, landed, blows, xp, stones, ..default() };
                 gate.advance(now);
             } else if gate.server_in_phase().min(now - gate.phase_since) > 10.0 {
                 let held = holding(world, SLING).1;
