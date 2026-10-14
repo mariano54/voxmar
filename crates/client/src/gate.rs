@@ -528,6 +528,8 @@ struct Gate {
     machines_stage: u8,
     machines_since: f32,
     machines_asked: f32,
+    /// Where the Tame step set its feed trough.
+    trough: Option<IVec3>,
     /// Whether the player has been seen holding what this machine stage puts in.
     machines_seen: bool,
     /// When the aurochs at the treadwheel was last told to hold still, by the server's clock.
@@ -718,6 +720,7 @@ impl Gate {
             machines_stage: 0,
             machines_since: 0.0,
             machines_asked: f32::MIN,
+            trough: None,
             machines_seen: false,
             machines_held: f32::MIN,
             highest: f32::MIN,
@@ -1260,6 +1263,8 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         Step::Dry => 5.0 * DRY_WAIT + STEP_LIMIT,
         // The refusal waited on, then a well set down by the plot.
         Step::Refusal => UNANSWERED + 3.0 * REFUSAL_WAIT + STEP_LIMIT,
+        // Taming, then a feed trough opened, waited on up to `TROUGH_WAIT`.
+        Step::Tame => STEP_LIMIT + TROUGH_WAIT,
         // A fresh area around the settlement to generate: up to `SETTLEMENT_LOAD` of the
         // server's seconds.
         Step::Settlements => SETTLEMENT_LOAD + SETTLEMENT_PEOPLE + STEP_LIMIT,
@@ -9327,7 +9332,8 @@ const CHIMNEY_OWED: f32 = 20.0;
 const CHIMNEY_WAIT: f32 = 12.0;
 
 /// A junglefowl on the pad, wheat in hand: right clicks feed it until it trusts the
-/// player and is theirs (kept, with them as its owner).
+/// player and is theirs (kept, with them as its owner); then a feed trough set before the
+/// player opens into its slots (shot `trough`).
 fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let pad = gate.feet + IVec3::new(0, 0, 14);
     let Some(species) = world.resource::<Launch>().content.creatures.find("base:junglefowl") else { return };
@@ -9482,7 +9488,11 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 key(world, KeyCode::ShiftLeft, false);
                 key(world, KeyCode::KeyW, false);
                 gate.check("release", Ok(format!("the junglefowl went wild again after {in_phase:.1}s")));
-                gate.next(Step::Party, now);
+                // Then a feed trough for the pen, two blocks before the player.
+                let at = world.resource::<LocalPlayer>().position.floor().as_ivec3() + IVec3::new(0, 0, -2);
+                gate.trough = Some(at);
+                world.resource::<Net>().command(&format!("fill {} {} {} {} {} {} feed_trough", at.x, at.y, at.z, at.x, at.y, at.z));
+                gate.advance(now);
             } else if gate.waited_out(8.0) {
                 mouse(world, MouseButton::Right, false);
                 key(world, KeyCode::ShiftLeft, false);
@@ -9499,9 +9509,58 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.tap(world, aimed, now);
             }
         }
-        _ => {}
+        // A feed trough opens into its nine slots, the server's word of it (shot `trough`).
+        _ => {
+            let Some(at) = gate.trough else {
+                gate.next(Step::Party, now);
+                return;
+            };
+            aim_at(world, at.as_vec3() + Vec3::new(0.5, 0.4, 0.5));
+            let trough = {
+                let client = world.resource::<ClientWorld>();
+                client.block(at).is_some_and(|b| client.registry.def(b).name == "base:feed_trough")
+            };
+            let slots = world.resource::<LocalPlayer>().inventory.store.as_ref().map(|s| s.slots.len());
+            let done = |world: &mut World, gate: &mut Gate| {
+                world.resource_mut::<UiState>().inventory_open = false;
+                world.resource::<Net>().command(&format!("fill {} {} {} {} {} {} air", at.x, at.y, at.z, at.x, at.y, at.z));
+                gate.trough = None;
+                gate.next(Step::Party, now);
+            };
+            match slots {
+                Some(n) if trough => {
+                    world.resource_mut::<UiState>().inventory_open = true;
+                    if gate.server_in_phase() < 1.0 || gate.shot(world, "trough").is_none() {
+                        return;
+                    }
+                    let judged = if n == TROUGH_SLOTS { Ok(format!("a feed trough opened into its {n} slots")) } else { Err(format!("a feed trough opened into {n} slots, not {TROUGH_SLOTS}")) };
+                    gate.check("trough: opens", judged);
+                    done(world, gate);
+                }
+                // Each ask counts as a tap, so a client starved of frames is not judged by
+                // the server's clock alone.
+                _ if gate.waited_out(TROUGH_WAIT) => {
+                    gate.check("trough: opens", Err(format!("{TROUGH_WAIT} server s after setting a trough: there {trough}, its store {slots:?}")));
+                    done(world, gate);
+                }
+                // Whatever is in hand: a store opens to anything but a machine.
+                _ if trough && gate.server_now - gate.machines_asked >= 2.0 => {
+                    world.resource_mut::<LocalPlayer>().store_asked = true;
+                    let actions = world.resource::<crate::Actions>().0.clone();
+                    world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("base:open_store"), voxmar_engine::action::ActionTarget::Block { block: at, face: voxmar_engine::coords::Face::PosY });
+                    gate.machines_asked = gate.server_now;
+                    gate.taps += 1;
+                }
+                _ => {}
+            }
+        }
     }
 }
+
+/// The slots a feed trough opens into (machines.ron).
+const TROUGH_SLOTS: usize = 9;
+/// Longest the Tame step waits for its trough to open, in the server's seconds.
+const TROUGH_WAIT: f32 = 10.0;
 
 /// A tinker's camp started on the pad's far side: its trader and hound must reach the client
 /// and draw, a right click on the trader gets a greeting, four hides held out are swapped

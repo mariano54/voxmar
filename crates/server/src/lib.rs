@@ -34,6 +34,7 @@ mod stations;
 mod traps;
 mod stores;
 mod treasure;
+mod troughs;
 pub mod save;
 mod villagers;
 mod wandering;
