@@ -229,7 +229,7 @@ over its budget is listed in `[[allow]]` with its own `seconds` and the reason. 
 slowest tests every time. It fails on a test over its budget and on a binary over the suite
 budget; with `--strict`, run on the Linux box the budgets were set on, also on an allowance a
 test no longer needs (it ran back under the default), so the list only shrinks as tests get
-cheaper (a faster machine would find many unneeded, so the gate only notes them). The scale is the machine's slowdown against the Linux box the budgets were set on (`tools/gate`: 5 on the Mac, whose gate runs the tests at nice 19 (nice 10 when measured) and utility QoS beside the session, mostly on its efficiency cores, measured 3 to 8 times slower on a calm day; `VOXMAR_TEST_SLOWDOWN` for another machine); past the core count, the load averaged while the tests ran, the gate lists the times and does not judge them (what else the machine runs must never block a landing; a calm machine holds the budgets). A new test over the default is made cheaper first;
+cheaper (a faster machine would find many unneeded, so the gate only notes them). The scale is the machine's slowdown against the Linux box the budgets were set on (`tools/gate`: 5 on the Mac, whose gate ran the tests at nice 10 and utility QoS beside the session when measured, mostly on its efficiency cores, 3 to 8 times slower on a calm day (nice 19 now, without the QoS); `VOXMAR_TEST_SLOWDOWN` for another machine); past the core count, the load averaged while the tests ran, the gate lists the times and does not judge them (what else the machine runs must never block a landing; a calm machine holds the budgets). A new test over the default is made cheaper first;
 an entry is the last resort, with a reason a reader can check.
 
 How the tests are kept cheap:
@@ -340,8 +340,9 @@ running: on 2026-10-06 that turned the play binary and a thread's build into six
   nothing while he is not playing, since PLAYING stops every job and is written only when
   he plays. Timing runs (`VOXMAR_TIMING=1`) and the benchmark's timed runs
   (`VOXMAR_FOREGROUND=1`) run as his game does, and a timing run takes no slot. So does
-  the gate's played session, whose checks time the game's frames: its tests beside it are
-  clamped to utility QoS (`nice 19`) by `tools/gate` itself.
+  the gate's played session, whose checks time the game's frames: its tests beside it run
+  at `nice 19` (`tools/gate`), with no QoS clamp, which kept them to the efficiency cores
+  (the worldgen tests alone 115 s there against 33 s without it, T7b).
 - Everything memcap runs is muted (`VOXMAR_MUTE=1`): no run of ours ever plays a sound.
 - While `~/Projects/voxmar-wt/QUIET` exists (and is younger than 20 minutes), nothing new
   starts and running builds pause; tests and game runs, which finish within a minute or

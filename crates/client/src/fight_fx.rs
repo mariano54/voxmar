@@ -107,9 +107,11 @@ pub fn flinch_weight(t: f32, seconds: f32) -> f32 {
 }
 
 /// A creature's strike stance: coiled `coil` of the way through its wind-up, or `striking`
-/// seconds into its strike (snapping from the coil to the strike, then settling back).
+/// seconds into its strike (snapping from the coil to the strike, then settling back, into
+/// its recover stance if it has one, held until `recovery` seconds after the blow and eased
+/// out by then, so the next wind-up starts from standing).
 /// The second value is whether the strike is over (or there is none).
-pub fn strike_stance(strike: &StrikeLook, coil: Option<f32>, striking: Option<f32>) -> (Stance, bool) {
+pub fn strike_stance(strike: &StrikeLook, coil: Option<f32>, striking: Option<f32>, recovery: f32) -> (Stance, bool) {
     let ease = |x: f32| {
         let x = x.clamp(0.0, 1.0);
         x * x * (3.0 - 2.0 * x)
@@ -119,16 +121,41 @@ pub fn strike_stance(strike: &StrikeLook, coil: Option<f32>, striking: Option<f3
             let p = 1.0 - (1.0 - s / strike.snap).powi(3);
             return (strike.coil.scaled(1.0 - p).plus(strike.strike.scaled(p)), false);
         }
-        let settled = (s - strike.snap) / strike.settle;
-        if settled < 1.0 {
-            return (strike.strike.scaled(1.0 - ease(settled)), false);
+        let after = s - strike.snap;
+        let settled = strike.strike.scaled(1.0 - ease(after / strike.settle));
+        if strike.recover == Stance::default() {
+            return if after < strike.settle { (settled, false) } else { (Stance::default(), true) };
         }
-        return (Stance::default(), true);
+        // Into the recover stance and out of it again, each over `settle`, or over half of
+        // what the recovery leaves if that is shorter.
+        let room = (recovery - strike.snap).max(strike.settle);
+        let ramp = strike.settle.min(room * 0.5);
+        if after >= room {
+            return (Stance::default(), true);
+        }
+        let held = ease(after / ramp).min(ease((room - after) / ramp));
+        return (settled.plus(strike.recover.scaled(held)), false);
     }
     match coil {
         Some(c) => (strike.coil.scaled(ease(c)), true),
         None => (Stance::default(), true),
     }
+}
+
+/// How much of a creature's recover stance shows `striking` seconds into its strike (0 to
+/// 1), for the gate to see that it stood its recovery out.
+pub fn recover_share(strike: &StrikeLook, striking: f32, recovery: f32) -> f32 {
+    if strike.recover == Stance::default() || striking < strike.snap {
+        return 0.0;
+    }
+    let (stance, _) = strike_stance(&StrikeLook { strike: Stance::default(), ..*strike }, None, Some(striking), recovery);
+    (stance.size() / strike.recover.size().max(1e-4)).min(1.0)
+}
+
+/// How deep a creature's coil shows `coil` of the way through its wind-up (0 to 1).
+pub fn coil_share(strike: &StrikeLook, coil: f32) -> f32 {
+    let (stance, _) = strike_stance(strike, Some(coil), None, 0.0);
+    (stance.size() / strike.coil.size().max(1e-4)).min(1.0)
 }
 
 /// The sounds of a blow of the player's the server answered, by name and loudness: a hit by
@@ -857,22 +884,35 @@ mod tests {
         assert_eq!(flinch_weight(0.2, 0.2), 0.0);
     }
 
+    /// The core recovery after a creature's blow (`combat.ron`'s `creature_recovery`).
+    const RECOVERY: f32 = 0.6;
+
     #[test]
     fn a_strike_coils_snaps_and_settles() {
         let look = look();
         for style in [Style::Stab, Style::Slash, Style::Crush, Style::Ranged, Style::Magic] {
             let strike = look.strike(style);
             // Coiling deepens through the wind-up.
-            let (half, _) = strike_stance(&strike, Some(0.5), None);
-            let (full, _) = strike_stance(&strike, Some(1.0), None);
+            let (half, _) = strike_stance(&strike, Some(0.5), None, RECOVERY);
+            let (full, _) = strike_stance(&strike, Some(1.0), None, RECOVERY);
             assert!(full.lean.abs() >= half.lean.abs() && (full.lean - strike.coil.lean).abs() < 1e-4, "{style:?}");
             // It snaps from the coil to the strike, leaning forward, and settles to nothing.
-            let (start, over) = strike_stance(&strike, None, Some(0.0));
+            let (start, over) = strike_stance(&strike, None, Some(0.0), RECOVERY);
             assert!(!over && (start.lean - strike.coil.lean).abs() < 1e-4, "{style:?} starts its strike from its coil");
-            let (snapped, _) = strike_stance(&strike, None, Some(strike.snap));
+            let (snapped, _) = strike_stance(&strike, None, Some(strike.snap), RECOVERY);
             assert!(snapped.lean > 0.0 && (snapped.lean - strike.strike.lean).abs() < 1e-4, "{style:?} strikes forward");
-            let (_, over) = strike_stance(&strike, None, Some(strike.snap + strike.settle + 0.01));
+            // It stands in its recover stance through the recovery, and is back to standing
+            // by its end, so the next wind-up starts from standing.
+            let room = (RECOVERY - strike.snap).max(strike.settle);
+            let (_, over) = strike_stance(&strike, None, Some(strike.snap + room + 0.01), RECOVERY);
             assert!(over, "{style:?}'s strike ends");
+            let (end, _) = strike_stance(&strike, None, Some(strike.snap + room - 0.001), RECOVERY);
+            assert!(end.lean.abs() + end.nod.abs() + end.crouch.abs() < 0.02, "{style:?} eases out of its recovery: {end:?}");
+            assert!(strike.recover != Stance::default(), "{style:?} shows its recovery");
+            let middle = strike.snap + room * 0.5;
+            assert!(recover_share(&strike, middle, RECOVERY) > 0.95, "{style:?} stands in its recover stance halfway through");
+            // Its feet plant to coil and the lunge darts.
+            assert!(strike.plant < 0.5 && strike.dart > 1.5, "{style:?}");
             // Every strike lunges forward from a coil drawn back.
             assert!(strike.coil.lean < 0.0 && strike.strike.lean > 0.0, "{style:?}");
         }

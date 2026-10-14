@@ -379,6 +379,10 @@ enum Step {
     /// Over a log in the inventory, the uses key shows what it goes into (planks, a
     /// campfire); clicking planks shows their recipe, and Back returns.
     Recipes,
+    /// A chopping block set by the fire draws; with the inventory open the client knows it
+    /// is within reach, so a log in the grid shows six planks, not four, and crafted, the
+    /// server gives six.
+    Chop,
     /// A survival player's inventory search finds the stone pickaxe by "pick"; its recipe
     /// opened in the viewer finishes the "Look It Up" quest; the quest book's page for the
     /// pickaxe shows its recipe inline, an item clicked there opens the viewer, and Back
@@ -420,6 +424,9 @@ enum Step {
     /// chat says so with what to add next, and the sleep is a rest. At home, Lay on a
     /// recipe fills the crafting grid from a barrel there.
     Home,
+    /// The way home at dusk: past the home's box, the hearth mark sits within a few degrees
+    /// of where home lies; back inside the home, it is gone.
+    WayHome,
     /// A wooden door placed before the player goes in whole, both halves facing them, and a
     /// right click on it opens it and another shuts it, as the server turns it.
     Door,
@@ -511,12 +518,14 @@ struct Gate {
     dug: Vec<(IVec3, BlockId)>,
     /// How many of an item the inventory held before a step that changes it.
     count_before: u32,
+    /// The time of day before the way home step set dusk, set back after it.
+    way_time: u64,
     /// The window step's lit pane, kept to judge against it snuffed.
     window_lit: Option<[f64; 3]>,
     natural_before: Vec<u32>,
     natural_home: Vec3,
-    /// The way home's hiding distance, while the Home step shows the mark close up.
-    home_hidden_within: Option<f32>,
+    /// The way home's numbers, while the Home step shows the mark close up at any hour.
+    home_style: Option<crate::hud::inventory::InterfaceStyle>,
     /// Puffs the watched chimney owed so far (its rate times the seconds watched).
     chimney_owed: f32,
     /// What the dry step's pot water replaced, put back after.
@@ -548,6 +557,9 @@ struct Gate {
     shapes_row: IVec3,
     /// Times the held step sent wild creatures away and began its shots of the sky again.
     held_cleared: u32,
+    /// The weather step's snow left for the depths step to clear with its fog: the sky's
+    /// clearing is judged once, as the fog lifts at its end (`depths`).
+    weather_clear_owed: bool,
     /// When (server seconds) the kiln was last asked to light.
     kiln_asked: f32,
     /// When the lit kiln's bronze smelt began, in server and game seconds (0 before).
@@ -742,10 +754,11 @@ impl Gate {
             digging: None,
             dug: Vec::new(),
             count_before: 0,
+            way_time: 0,
             window_lit: None,
             natural_before: Vec::new(),
             natural_home: Vec3::ZERO,
-            home_hidden_within: None,
+            home_style: None,
             chimney_owed: 0.0,
             pot_ground: None,
             marked: None,
@@ -762,6 +775,7 @@ impl Gate {
             kiln_since: 0.0,
             shapes_row: IVec3::ZERO,
             held_cleared: 0,
+            weather_clear_owed: false,
             kiln_asked: f32::MIN,
             bronze_since: (0.0, 0.0),
             machines_stage: 0,
@@ -1575,6 +1589,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Settlements => settlements(world, gate, now, in_phase),
         Step::Ore => ore(world, gate, now, in_phase),
         Step::Recipes => recipes(world, gate, now, in_phase),
+        Step::Chop => chop(world, gate, now),
         Step::LookUp => look_up(world, gate, now, in_phase),
         Step::Refusal => refusal(world, gate, now, in_phase),
         Step::Merged => merged(world, gate, now, in_phase),
@@ -1587,6 +1602,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Journal => journal(world, gate, now, in_phase),
         Step::Prayers => prayers(world, gate, now, in_phase),
         Step::Home => home(world, gate, now),
+        Step::WayHome => way_home(world, gate, now, in_phase),
         Step::Door => door(world, gate, now, in_phase),
         Step::Quests => quests(world, gate, now, in_phase),
         Step::Catalogue => catalogue(world, gate, now, in_phase),
@@ -2313,8 +2329,10 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.check("workshop: seed pouch", Ok(format!("50 seeds given went into the pouch ({pouched} there)")));
                 let net = world.resource::<Net>();
                 net.command("clear seed_pouch");
-                net.command("give fishing_rod 1");
-                net.command("skill fishing 80");
+                // The best rod at the top level lands about 0.85 of casts (0.6 with the
+                // first rod at 80), so a catch mostly takes one cast rather than two.
+                net.command("give fine_rod 1");
+                net.command("skill fishing 99");
                 gate.advance(now);
             } else if gate.server_in_phase() > WORKSHOP_WAIT {
                 fail(world, gate, "seed pouch", format!("50 seeds given with a seed pouch carried, the pouch holds {pouched}"));
@@ -2326,7 +2344,7 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 let (player, client) = (world.resource::<LocalPlayer>(), world.resource::<ClientWorld>());
                 player.inventory.slots.iter().flatten().find(|s| client.registry.def(s.item).has_tag("fish")).map(|s| client.registry.def(s.item).name.clone())
             };
-            if !select(world, "base:fishing_rod") {
+            if !select(world, "base:fine_rod") {
                 if gate.server_in_phase() > WORKSHOP_WAIT {
                     fail(world, gate, "fishing", "the rod never came".into());
                 }
@@ -2353,7 +2371,7 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.advance(now);
             } else if gate.server_in_phase() > 40.0 {
                 mouse(world, MouseButton::Right, false);
-                fail(world, gate, "fishing", "40 server seconds of casting into the pool at Fishing 80 caught nothing".into());
+                fail(world, gate, "fishing", "40 server seconds of casting into the pool at Fishing 99 with a fine rod caught nothing".into());
             }
         }
         12 => {
@@ -2469,7 +2487,10 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if gate.server_now - gate.kiln_asked >= 3.0 {
                 gate.kiln_asked = gate.server_now;
                 let actions = world.resource::<crate::Actions>().0.clone();
-                world.resource::<Net>().propose(actions.expect("base:light"), voxmar_engine::action::ActionTarget::Block { block: kiln, face: voxmar_engine::coords::Face::NegY });
+                // With the player's input first (the coal just selected), as the machines'
+                // use goes: sent alone, the first ask can reach the server with the slot held
+                // before, be refused, and leave the lighting to the next, three seconds on.
+                world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("base:light"), voxmar_engine::action::ActionTarget::Block { block: kiln, face: voxmar_engine::coords::Face::NegY });
             }
             // Quests are checked once a second of the server's time, which a loaded machine
             // stretches: the wait is by its clock.
@@ -3309,7 +3330,7 @@ fn end_workshop(world: &mut World, gate: &mut Gate, now: f32) {
     mouse(world, MouseButton::Right, false);
     world.resource_mut::<UiState>().inventory_open = false;
     let net = world.resource::<Net>();
-    for tool in ["stone_pickaxe", "wooden_hoe", "crafting_table", "stick", "bread", "fishing_rod"] {
+    for tool in ["stone_pickaxe", "wooden_hoe", "crafting_table", "stick", "bread", "fine_rod"] {
         net.command(&format!("clear {tool}"));
     }
     let feet = gate.feet;
@@ -3822,7 +3843,7 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let blocks = world.resource::<Launch>().content.blocks.clone();
     let (Some(log), Some(planks), Some(campfire)) = (blocks.id("base:oak_log"), blocks.id("base:oak_planks"), blocks.id("base:campfire")) else {
         gate.check("recipes", Err("no oak log, planks or campfire in the content".into()));
-        gate.next(Step::LookUp, now);
+        gate.next(Step::Chop, now);
         return;
     };
     let uses_key = world.resource::<crate::settings::Settings>().uses_key.0;
@@ -3847,7 +3868,7 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.advance(now);
             } else if in_phase > 2.0 {
                 gate.check("recipes: uses", Err(format!("U over an oak log: viewer open {open}, listing {outputs:?}")));
-                gate.next(Step::LookUp, now);
+                gate.next(Step::Chop, now);
             }
         }
         2 => {
@@ -3862,7 +3883,7 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     gate.advance(now);
                 } else if in_phase > 2.0 {
                     gate.check("recipes: ingredient tooltip", Err("the log has no visible recipe cell to hover".into()));
-                    gate.next(Step::LookUp, now);
+                    gate.next(Step::Chop, now);
                 }
             }
         }
@@ -3881,7 +3902,7 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.advance(now);
             } else if in_phase > 2.0 {
                 gate.check("recipes: ingredient tooltip", Err(format!("hovering the recipe ingredient drew no visible {name} tooltip")));
-                gate.next(Step::LookUp, now);
+                gate.next(Step::Chop, now);
             } else if let Some(cell) = world.query::<(Entity, &crate::hud::recipes::ViewerItem, &InheritedVisibility)>().iter(world).find(|(_, item, visible)| item.0 == log && visible.get()).map(|(entity, ..)| entity) {
                 world.resource_mut::<UiClicks>().hover = Some(cell);
             }
@@ -3916,7 +3937,107 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let mut ui = world.resource_mut::<UiState>();
             (ui.recipes_open, ui.inventory_open) = (false, false);
             world.resource_mut::<HoveredItem>().0 = None;
-            gate.next(Step::LookUp, now);
+            gate.next(Step::Chop, now);
+        }
+    }
+}
+
+/// Where the chop step sets its chopping block: across the campfire from the drying rack.
+const CHOP_FROM_FIRE: IVec3 = IVec3::new(-2, 0, 0);
+
+/// Server seconds the chop step waits on each answer.
+const CHOP_WAIT: f32 = 10.0;
+
+/// A chopping block by the campfire, seen from two and a half blocks (shot
+/// `chopping_block`); then, the inventory open, the client finds it within reach and an oak
+/// log laid in the grid makes six planks there, as the server crafts them.
+fn chop(world: &mut World, gate: &mut Gate, now: f32) {
+    let block = gate.feet + IVec3::new(0, 0, 14) + CHOP_FROM_FIRE;
+    let waited = gate.server_in_phase() > CHOP_WAIT;
+    // What the client itself does (drawing, finding the block near) is given up only once
+    // its own seconds have passed too: frames starved behind a running server had no time.
+    let outwaited = waited && now - gate.phase_since > CHOP_WAIT;
+    let content = world.resource::<Launch>().content.clone();
+    let (log, planks) = (content.blocks.id("base:oak_log"), content.blocks.id("base:oak_planks"));
+    let carried = |world: &World, item: Option<BlockId>| world.resource::<LocalPlayer>().inventory.slots.iter().flatten().filter(|s| Some(s.item) == item).map(|s| s.count as u32).sum::<u32>();
+    let end = |world: &mut World, gate: &mut Gate| {
+        world.resource_mut::<UiState>().inventory_open = false;
+        let net = world.resource::<Net>();
+        net.command(&format!("setblock {} {} {} air", block.x, block.y, block.z));
+        net.command("clear oak_log");
+        net.command("clear oak_planks");
+        gate.next(Step::LookUp, now);
+    };
+    match gate.phase {
+        0 => {
+            let net = world.resource::<Net>();
+            net.command("clear oak_log");
+            net.command("clear oak_planks");
+            net.command("give oak_log 2");
+            net.command(&format!("setblock {} {} {} chopping_block", block.x, block.y, block.z));
+            net.command(&format!("tp {} {} {}", block.x as f32 + 0.5, block.y, block.z as f32 - 2.5));
+            gate.advance(now);
+        }
+        1 => {
+            aim_at(world, block.as_vec3() + Vec3::new(0.5, 0.5, 0.5));
+            let client = world.resource::<ClientWorld>();
+            let stood = client.registry.id("base:chopping_block").is_some_and(|b| client.block(block) == Some(b));
+            let there = world.resource::<LocalPlayer>().position.distance(Vec3::new(block.x as f32 + 0.5, block.y as f32, block.z as f32 - 2.5)) < 0.5;
+            if stood && there && carried(world, log) == 2 && drawn(world, block) && gate.shot(world, "chopping_block").is_some() {
+                world.resource_mut::<UiState>().inventory_open = true;
+                gate.advance(now);
+            } else if outwaited {
+                gate.check("chopping block", Err(format!("the chopping block ({stood}), the spot ({there}) or two oak logs never came, or it never drew, in {CHOP_WAIT} seconds")));
+                end(world, gate);
+            }
+        }
+        2 => {
+            // Within reach, by the client's own look (`NearTags`, kept while the inventory
+            // is open): a log is laid in the grid.
+            let near = world.resource::<crate::hud::inventory::NearTags>().has("chopping_block");
+            if near {
+                let from = world.resource::<LocalPlayer>().inventory.slots.iter().position(|s| s.is_some_and(|s| Some(s.item) == log));
+                if let Some(from) = from {
+                    let actions = world.resource::<crate::Actions>().0.clone();
+                    let target = voxmar_engine::action::ActionTarget::Slots { from: from as u8, to: voxmar_engine::inventory::CRAFT as u8, count: 1 };
+                    world.resource::<Net>().propose(actions.expect("core:transfer"), target);
+                    gate.advance(now);
+                }
+            } else if outwaited {
+                gate.check("chopping block", Err(format!("with the inventory open the client never found the chopping block within reach in {CHOP_WAIT} seconds")));
+                end(world, gate);
+            }
+        }
+        3 => {
+            // The grid shows what the near recipe makes; crafted, the server gives it.
+            let player = world.resource::<LocalPlayer>();
+            let grid = player.inventory.grid();
+            if grid.iter().flatten().count() == 1 && grid.contains(&log) {
+                let near = world.resource::<crate::hud::inventory::NearTags>();
+                let made = content.recipes.find_near(&grid, |tag| near.has(tag)).map(|r| (r.output, r.count));
+                if made == planks.map(|p| (p, 6)) {
+                    let actions = world.resource::<crate::Actions>().0.clone();
+                    world.resource::<Net>().propose(actions.expect("core:craft"), voxmar_engine::action::ActionTarget::Slot(0));
+                    gate.advance(now);
+                } else {
+                    gate.check("chopping block", Err(format!("an oak log in the grid by a chopping block shows {made:?}, not six oak planks")));
+                    end(world, gate);
+                }
+            } else if waited {
+                gate.check("chopping block", Err(format!("an oak log never reached the crafting grid in {CHOP_WAIT} server seconds")));
+                end(world, gate);
+            }
+        }
+        _ => {
+            let split = carried(world, planks);
+            let empty = world.resource::<LocalPlayer>().inventory.grid().iter().all(Option::is_none);
+            if split == 6 && empty {
+                gate.check("chopping block", Ok("set by the fire it draws; the client found it within reach, and a log split there gave six planks, as the grid showed".to_owned()));
+                end(world, gate);
+            } else if waited {
+                gate.check("chopping block", Err(format!("a log crafted by a chopping block gave {split} oak planks (grid emptied {empty}), not six, in {CHOP_WAIT} server seconds")));
+                end(world, gate);
+            }
         }
     }
 }
@@ -4828,14 +4949,19 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
     let (bag, torch, barrel) = (stand + IVec3::new(2, 0, 0), stand + IVec3::new(3, 0, 0), stand + IVec3::new(-2, 0, 0));
     let waited = gate.server_in_phase();
     let leave = |world: &mut World, gate: &mut Gate| {
-        let net = world.resource::<Net>();
-        for at in [bag, torch] {
-            net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
+        world.resource::<Net>().command("effect clear");
+        if let Some(style) = gate.home_style.take() {
+            *world.resource_mut::<crate::hud::inventory::InterfaceStyle>() = style;
         }
-        net.command("effect clear");
-        let style = &mut world.resource_mut::<crate::hud::inventory::InterfaceStyle>();
-        style.home_hidden_within = gate.home_hidden_within.take().unwrap_or(style.home_hidden_within);
-        gate.next(Step::Door, now);
+        // The camp stays home for the way home step, which takes it down; one the server
+        // never named home that step cannot find, so it goes here.
+        if world.resource::<LocalPlayer>().vitals.home != Some(bag) {
+            let net = world.resource::<Net>();
+            for at in [bag, torch] {
+                net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
+            }
+        }
+        gate.next(Step::WayHome, now);
     };
     match gate.phase {
         0 => {
@@ -4891,9 +5017,10 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
                     ["base:camp", "base:rested"].map(|name| effects.id(name).map(|id| images.effect(id)))
                 };
                 gate.check("home: icons", if icons[0].is_some() && icons[0] != icons[1] { Ok("the Camp and Rested chips each show an icon of their own".into()) } else { Err(format!("the Camp and Rested chips share an icon: {icons:?}")) });
+                // Shown however near and at any hour, for the mark's own checks.
                 let mut style = world.resource_mut::<crate::hud::inventory::InterfaceStyle>();
-                gate.home_hidden_within = Some(style.home_hidden_within);
-                style.home_hidden_within = 0.0;
+                gate.home_style = Some(style.clone());
+                (style.home_hidden_within, style.home_shown_beyond) = (0.0, 0.0);
                 gate.advance(now);
             } else if waited > 30.0 {
                 gate.check("home: camp", Err(format!("{waited:.1} server s after sleeping at a bag with a torch beside it: Camp chip {camp}, Rested chip {rested}, Camp line with Next {announced}, sleep line {slept}")));
@@ -4922,8 +5049,9 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
             let edge = world.query::<&crate::hud::home::HomeMark>().iter(world).find_map(|m| m.edge);
             if edge.is_some() {
                 gate.check("home: behind", Ok(format!("turned away from home, the mark waited at the {} edge", if edge == Some(-1.0) { "left" } else { "right" })));
-                let mut style = world.resource_mut::<crate::hud::inventory::InterfaceStyle>();
-                style.home_hidden_within = gate.home_hidden_within.take().unwrap_or(style.home_hidden_within);
+                if let Some(style) = gate.home_style.take() {
+                    *world.resource_mut::<crate::hud::inventory::InterfaceStyle>() = style;
+                }
                 gate.advance(now);
             } else if waited > 5.0 {
                 let yaw = world.resource::<LocalPlayer>().yaw;
@@ -5030,6 +5158,110 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
         }
     }
 }
+
+/// The way home, played at dusk: from a pad `WAY_OUT` blocks east of home (past the home's
+/// box, short of how far it shows by day) the hearth mark, faded in, sits within
+/// `WAY_DEGREES` of where home lies with home off to one side of the view; back by the camp
+/// it fades out. The camp (bag and torch, two and three blocks east of where the Home step
+/// stood) comes down after, and the time of day goes back.
+fn way_home(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    let home = world.resource::<LocalPlayer>().vitals.home;
+    let waited = gate.server_in_phase();
+    let leave = |world: &mut World, gate: &mut Gate| {
+        let net = world.resource::<Net>();
+        if let Some(home) = home {
+            let pad = home + IVec3::new(WAY_OUT, -1, 0);
+            net.command(&format!("setblock {} {} {} air", pad.x, pad.y, pad.z));
+            for at in [home, home + IVec3::X] {
+                net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
+            }
+        }
+        // The time it was, once it was moved.
+        if gate.phase > 0 {
+            net.command(&format!("time set {}", gate.way_time));
+        }
+        gate.next(Step::Door, now);
+    };
+    let Some(home) = home else {
+        gate.check("way home", Err("no home after the Home step: the server named none".into()));
+        return leave(world, gate);
+    };
+    let mark = world.query::<&crate::hud::home::HomeMark>().iter(world).next().map(|m| (m.shown, m.x, m.fov));
+    let shown = world.query_filtered::<&Visibility, With<crate::hud::home::HomeMark>>().iter(world).any(|v| *v != Visibility::Hidden);
+    let feet = world.resource::<LocalPlayer>().position;
+    let out = home + IVec3::new(WAY_OUT, 0, 0);
+    // Back where the Home step stood, two blocks west of the bag.
+    let inside = home - IVec3::new(2, 0, 0);
+    let at = |cell: IVec3| (feet - cell.as_vec3() - Vec3::new(0.5, 0.0, 0.5)).with_y(0.0).length() < 1.0;
+    match gate.phase {
+        0 => {
+            gate.way_time = world.resource::<crate::render::DayCycle>().ticks.max(0.0) as u64 % voxmar_protocol::TICKS_PER_DAY;
+            let net = world.resource::<Net>();
+            net.command("time set dusk");
+            net.command(&format!("fill {} {} {} {} {} {} air", out.x, out.y, out.z, out.x, out.y + 1, out.z));
+            net.command(&format!("setblock {} {} {} stone", out.x, out.y - 1, out.z));
+            net.command(&format!("tp {} {} {}", out.x as f32 + 0.5, out.y, out.z as f32 + 0.5));
+            gate.advance(now);
+        }
+        // Out on the pad at dusk, the mark faded in; home put `WAY_ASIDE` degrees to one side
+        // of the view, so the mark sits off the middle.
+        1 => {
+            let dusk = {
+                let style = world.resource::<crate::hud::inventory::InterfaceStyle>();
+                let tick = world.resource::<crate::render::DayCycle>().ticks.max(0.0) as u64 % voxmar_protocol::TICKS_PER_DAY;
+                crate::hud::home::wanted(style, Vec2::new((WAY_OUT as f32) - 0.5, 0.0), tick)
+            };
+            if at(out) && dusk && mark.is_some_and(|(faded, ..)| faded >= 1.0) {
+                let eye = world.resource::<LocalPlayer>().eye();
+                let to = home.as_vec3() + Vec3::new(0.5, 0.0, 0.5) - eye;
+                let turned = Quat::from_rotation_y(WAY_ASIDE.to_radians()) * to.with_y(0.0);
+                aim_at(world, eye + turned);
+                gate.advance(now);
+            } else if waited > QUEST_WAIT && in_phase > QUEST_WAIT {
+                gate.check("way home: dusk", Err(format!("{waited:.1} server s and {in_phase:.1} game s on: on the pad {}, dusk by the client's clock {dusk}, the mark faded to {:?}", at(out), mark.map(|m| m.0))));
+                leave(world, gate);
+            }
+        }
+        // Where the mark sits says the bearing it draws; it must be home's, within a few
+        // degrees. Given the frames to lay out.
+        2 => {
+            if in_phase < 0.3 {
+                return;
+            }
+            let player = world.resource::<LocalPlayer>();
+            let (from, yaw) = (player.position, player.yaw);
+            let truth = crate::hud::home::bearing(from, yaw, home.as_vec3() + Vec3::new(0.5, 0.0, 0.5));
+            let drawn = mark.map(|(_, x, fov)| (x * (fov * 0.5).tan()).atan());
+            let off = drawn.map(|drawn| (drawn - truth).abs().to_degrees());
+            if shown && off.is_some_and(|off| off <= WAY_DEGREES) {
+                gate.check("way home: dusk", Ok(format!("at dusk {WAY_OUT} blocks out, the hearth mark showed home {:.1}° from the middle of the view, {:.1}° off its true bearing", truth.to_degrees(), off.unwrap_or_default())));
+                let net = world.resource::<Net>();
+                net.command(&format!("tp {} {} {}", inside.x as f32 + 0.5, inside.y, inside.z as f32 + 0.5));
+                gate.advance(now);
+            } else if in_phase > 2.0 {
+                gate.check("way home: dusk", Err(format!("the mark (shown {shown}) drew home at {:?}°, its true bearing {:.1}°", drawn.map(f32::to_degrees), truth.to_degrees())));
+                leave(world, gate);
+            }
+        }
+        // Back in the camp, it fades out.
+        _ => {
+            if at(inside) && !shown {
+                gate.check("way home: inside", Ok("back inside the home at dusk, the mark faded out".into()));
+                leave(world, gate);
+            } else if waited > QUEST_WAIT && in_phase > QUEST_WAIT {
+                gate.check("way home: inside", Err(format!("{waited:.1} server s and {in_phase:.1} game s on: back in the camp {}, the mark still shown at {:?}", at(inside), mark.map(|m| m.0))));
+                leave(world, gate);
+            }
+        }
+    }
+}
+
+/// How far east of home the way home step stands, past the home's box and short of where
+/// the mark shows by day.
+const WAY_OUT: i32 = 20;
+/// How far to one side of the view home is put, and how near the mark must draw it.
+const WAY_ASIDE: f32 = 20.0;
+const WAY_DEGREES: f32 = 3.0;
 
 /// The door step's two cells, as the client has them: (shut, open) when both halves are
 /// a door's, shut or open alike.
@@ -6226,11 +6458,20 @@ fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 Err(format!("it barely shows: the view changed by {change:.1} levels"))
             };
             gate.check(&format!("weather: {kind}"), result);
-            let next = kinds.get(phase as usize).map_or_else(|| "weather clear 600".to_owned(), |(kind, ..)| format!("weather {kind} 120"));
-            world.resource::<Net>().command(&next);
-            gate.advance(now);
+            match kinds.get(phase as usize) {
+                Some((kind, ..)) => {
+                    world.resource::<Net>().command(&format!("weather {kind} 120"));
+                    gate.advance(now);
+                }
+                // The depths step brings its fog straight over the snow and clears both at
+                // its end: one clearing waited for, not two back to back.
+                None => {
+                    gate.weather_clear_owed = true;
+                    gate.next(Step::Depths, now);
+                }
+            }
         }
-        3 if shown.precipitation < 0.05 && shown.cover < 0.2 => {
+        3 if sky_clear(&shown) => {
             eased(gate);
             gate.next(Step::Depths, now);
         }
@@ -6303,6 +6544,7 @@ fn depths(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if !open_scene_pose(world, gate) {
                 if gate.server_in_phase() > 15.0 {
                     gate.check("depths: pose", Err(unsettled(world, gate)));
+                    clear_owed(world, gate);
                     gate.next(Step::Sky, now);
                 }
                 return;
@@ -6469,6 +6711,7 @@ fn depths(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if !open_scene_pose(world, gate) {
                 if gate.server_in_phase() > 15.0 {
                     gate.check("depths: back", Err(unsettled(world, gate)));
+                    clear_owed(world, gate);
                     gate.next(Step::Sky, now);
                 }
                 return;
@@ -6476,15 +6719,44 @@ fn depths(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.phase = 9;
             gate.advance(now);
         }
-        // The fog lifts before the sky is judged.
+        // The fog lifts before the sky is judged, and the weather step's snow has gone with it.
         _ => {
-            if shown.fog < 0.02 && shown.ground_fog < 0.02 {
+            let lifted = shown.fog < 0.02 && shown.ground_fog < 0.02;
+            let cleared = !gate.weather_clear_owed || sky_clear(&shown);
+            if lifted && cleared {
+                if gate.weather_clear_owed {
+                    gate.weather_clear_owed = false;
+                    eased(gate);
+                }
                 gate.next(Step::Sky, now);
             } else if gate.server_in_phase() > 20.0 {
-                gate.check("depths: clear", Err(format!("the fog did not lift: {}", shown.summary())));
+                if !lifted {
+                    gate.check("depths: clear", Err(format!("the fog did not lift: {}", shown.summary())));
+                }
+                if !cleared {
+                    gate.check("weather: clear", Err(format!("the sky did not clear: {}", shown.summary())));
+                }
+                if std::mem::take(&mut gate.weather_clear_owed) {
+                    eased(gate);
+                }
                 gate.next(Step::Sky, now);
             }
         }
+    }
+}
+
+/// Whether the sky has cleared: no rain or snow to speak of, and little cloud.
+fn sky_clear(shown: &voxmar_engine::weather::Weather) -> bool {
+    shown.precipitation < 0.05 && shown.cover < 0.2
+}
+
+/// A depths step ended before its last phase clears the sky for the weather step: cleared
+/// now, its clearing unjudged (a failure, as the step's own is).
+fn clear_owed(world: &mut World, gate: &mut Gate) {
+    if std::mem::take(&mut gate.weather_clear_owed) {
+        world.resource::<Net>().command("weather clear 600");
+        gate.check("weather: clear", Err("the depths step ended before the sky could clear after the snow".into()));
+        eased(gate);
     }
 }
 
@@ -9145,15 +9417,32 @@ fn combat_feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 Ok(format!("sounds asked for, the creature jolted, {bursts} bursts of sparks, the hand knocked back {:.3}, the view turned {:.2} degrees, the edges reddened", -hand.z, turned.length().to_degrees()))
             };
             gate.check("combat feel: blows", result);
-            // What the fights before showed: creatures coiling into strikes, and the fallen
-            // going up in smoke as they vanish.
+            // What the fights before showed: creatures planting and coiling deep into their
+            // strikes, standing out their recovery, and the fallen going up in smoke as they
+            // vanish.
             let (strikes, deaths, poofs) = (creatures.strikes, creatures.deaths, heard.poofs);
+            let reads = &creatures.reads;
+            let slid = reads.iter().find(|r| r.slid > r.planted);
+            let shallow = reads.iter().find(|r| r.coiled < STRIKE_COILED);
+            let stood: Vec<f32> = reads.iter().filter_map(|r| r.recovered).collect();
             let result = if strikes == 0 {
                 Err("no creature was seen to strike in the fights".into())
+            } else if let Some(read) = slid {
+                Err(format!("a creature slid {:.2} blocks as it wound up, where planted it would have moved {:.2} at most", read.slid, read.planted))
+            } else if let Some(read) = shallow {
+                Err(format!("a creature struck coiled only {:.2} deep ({STRIKE_COILED} wanted)", read.coiled))
+            } else if let Some(most) = stood.iter().copied().find(|&most| most < STRIKE_RECOVERED) {
+                Err(format!("a creature stood out its recovery showing only {most:.2} of its recover stance ({STRIKE_RECOVERED} wanted)"))
             } else if deaths > 0 && poofs == 0 {
                 Err(format!("{deaths} creatures died in view and none went up in smoke"))
             } else {
-                Ok(format!("{strikes} strikes snapped out of their wind-ups, {poofs} of {deaths} fallen gone in smoke"))
+                let deepest = reads.iter().map(|r| r.coiled).fold(0.0, f32::max);
+                let most = reads.iter().map(|r| r.slid).fold(0.0, f32::max);
+                Ok(format!(
+                    "{strikes} strikes snapped out of their wind-ups ({} read: coiled up to {deepest:.2} deep, slid at most {most:.2} blocks coiling; {} stood out their recovery), {poofs} of {deaths} fallen gone in smoke",
+                    reads.len(),
+                    stood.len()
+                ))
             };
             gate.check("combat feel: fights", result);
             gate.advance(now);
@@ -9165,6 +9454,13 @@ fn combat_feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         }
     }
 }
+
+/// How deep (of its coil in `combat_fx.ron`) a creature seen to strike must have coiled
+/// first, short of the whole for a server's word that comes a little early; and how much of
+/// its recover stance one that stood out its recovery must have shown, short of the whole
+/// for a slow machine's frames.
+const STRIKE_COILED: f32 = 0.6;
+const STRIKE_RECOVERED: f32 = 0.5;
 
 /// The deer the creature motion steps walk, an id the server never gives, and its species.
 const PUPPET: u32 = u32::MAX - 7;
@@ -9625,7 +9921,8 @@ fn bronze(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         if gate.server_now - gate.kiln_asked >= 3.0 {
             gate.kiln_asked = gate.server_now;
             let actions = world.resource::<crate::Actions>().0.clone();
-            world.resource::<Net>().propose(actions.expect("base:cook"), voxmar_engine::action::ActionTarget::Block { block: kiln, face: voxmar_engine::coords::Face::NegY });
+            // The copper just selected goes first, as for the kiln's lighting.
+            world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("base:cook"), voxmar_engine::action::ActionTarget::Block { block: kiln, face: voxmar_engine::coords::Face::NegY });
         }
     }
 }

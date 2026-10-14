@@ -142,7 +142,7 @@ impl Server {
     /// Whether water lies within `reach` blocks of `at` across and a few up and down.
     fn water_near(&self, at: Vec3, reach: i32) -> bool {
         let centre = at.floor().as_ivec3();
-        (-3..=1).any(|dy| (-reach..=reach).any(|dz| (-reach..=reach).any(|dx| self.is_water(centre + IVec3::new(dx, dy, dz)))))
+        self.any_water((-3..=1).flat_map(|dy| (-reach..=reach).flat_map(move |dz| (-reach..=reach).map(move |dx| centre + IVec3::new(dx, dy, dz)))))
     }
 
     /// What a kept animal puts into work, a treadwheel's or gin's share (0.5 to 1.2 of a
