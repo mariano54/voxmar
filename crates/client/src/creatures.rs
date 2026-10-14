@@ -194,6 +194,17 @@ struct SpeciesBody {
     dims: [u32; 3],
 }
 
+/// A boss's wind-up begun: which creature, its blow's name (`rootmother.grasp`, or its
+/// name alone for its plain attack), seconds until the blow, and how far from its middle
+/// the blow reaches (blocks).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Told {
+    pub id: u32,
+    pub key: String,
+    pub windup: f32,
+    pub reach: f32,
+}
+
 /// How the watched creature (`Creatures::watch`) was drawn moving, for the gate: how far
 /// its feet slid while they were down (blocks, every foot added up, over `planted` foot
 /// frames), how far its body went (over `frames`), the fastest it turned (radians a
@@ -338,6 +349,8 @@ pub struct Creatures {
     /// Blows creatures were seen to strike since joining (their wind-up ended in a snap),
     /// for the gate.
     pub strikes: u32,
+    /// Bosses' wind-ups begun this frame, for `fight_fx` to tell.
+    pub told: Vec<Told>,
     /// The creature whose stride the gate watches, and what it saw; and the step of game
     /// time it is drawn on each frame, whatever the frame took, so a slow machine sees as
     /// many poses in a stride as a fast one (the gate moves it that far a frame).
@@ -862,6 +875,23 @@ fn show(
             if attacking(view.pose) && !attacking(shown.view.pose) {
                 (shown.coiling, shown.striking, shown.coil_struck) = (Some(0.0), None, false);
                 shown.move_shown = if view.tell == voxmar_protocol::REARING { 0 } else { view.tell };
+                // A boss's wind-up is told by sound and, for a far reach, a ring on the
+                // ground (`fight_fx`).
+                let species = registry.get(view.species);
+                if species.def.boss {
+                    let name = species.def.name.rsplit(':').next().unwrap_or(&species.def.name);
+                    let (key, attack) = match shown.move_shown {
+                        0 => (name.to_owned(), species.def.attack.as_ref()),
+                        index => match species.def.moves.get(index as usize - 1) {
+                            Some(m) => (format!("{name}.{}", m.name), Some(&m.attack)),
+                            None => (name.to_owned(), species.def.attack.as_ref()),
+                        },
+                    };
+                    if let Some(attack) = attack {
+                        let windup = attack.windup.unwrap_or(launch.content.combat.feel.creature_windup);
+                        creatures.told.push(Told { id: view.id, key, windup, reach: species.reach * view.scale + attack.reach });
+                    }
+                }
             } else if !attacking(view.pose) && attacking(shown.view.pose) {
                 if !shown.coil_struck && shown.coiling.is_some() && shown.dying.is_none() {
                     shown.striking = Some(0.0);

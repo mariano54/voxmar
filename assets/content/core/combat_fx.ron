@@ -160,9 +160,9 @@
             Tone(from: 523, to: 784, seconds: 0.22, gain: 0.12),
         ]),
         // A blow that missed, either way: air.
-        "miss": (gain: 0.2, layers: [Sweep(from: 700, to: 1800, seconds: 0.16, gain: 1.0)]),
+        "miss": (gain: 0.26, layers: [Sweep(from: 700, to: 1800, seconds: 0.16, gain: 1.0)]),
         // Bleeding: a soft drip.
-        "bleed": (gain: 0.22, variants: 3, layers: [Tone(from: 1100, to: 520, seconds: 0.05, gain: 1.0)]),
+        "bleed": (gain: 0.35, variants: 3, layers: [Tone(from: 1100, to: 520, seconds: 0.05, gain: 1.0)]),
         // Hurt: a dull blow to the body, muffled.
         "hurt": (gain: 0.7, drive: 1.6, room: 0.1, layers: [
             Tone(from: 120, to: 46, seconds: 0.18, gain: 1.0),
@@ -184,6 +184,62 @@
             Noise(low: 3000, high: 6800, attack: 0.0005, seconds: 0.05, gain: 0.4),
         ]),
         "dodge": (gain: 0.3, layers: [Sweep(from: 300, to: 1300, seconds: 0.22, gain: 0.8), Noise(low: 150, high: 500, attack: 0.01, seconds: 0.08, gain: 0.3)]),
-        "guard": (gain: 0.16, variants: 3, layers: [Noise(low: 900, high: 3200, attack: 0.012, seconds: 0.08, gain: 1.0)]),
+        "guard": (gain: 0.45, variants: 3, layers: [Noise(low: 900, high: 3200, attack: 0.012, seconds: 0.08, gain: 1.0)]),
+        // Bosses' wind-ups (`tells`), each swelling to its loudest as the blow lands. A
+        // blow to block winds up with a creak and cracks like a whip; a blow to dodge
+        // groans up from under the ground and lands with a thud; a volley rattles.
+        "tell.lash": (gain: 0.5, room: 0.18, variants: 3, layers: [
+            Crackle(low: 260, high: 1300, grains: 12, seconds: 0.42, gain: 0.5),
+            Noise(low: 220, high: 900, attack: 0.36, seconds: 0.5, gain: 0.7),
+            Later(at: 0.38, layer: Sweep(from: 320, to: 1900, seconds: 0.2, gain: 1.0)),
+        ]),
+        "tell.thrash": (gain: 0.5, room: 0.16, variants: 3, layers: [
+            Crackle(low: 300, high: 1500, grains: 10, seconds: 0.3, gain: 0.5),
+            Noise(low: 240, high: 1000, attack: 0.24, seconds: 0.34, gain: 0.7),
+            Later(at: 0.26, layer: Sweep(from: 380, to: 2200, seconds: 0.16, gain: 1.0)),
+        ]),
+        "tell.grasp": (gain: 0.62, drive: 1.4, variants: 3, layers: [
+            Crackle(low: 180, high: 900, grains: 18, seconds: 0.55, gain: 0.45),
+            Noise(low: 50, high: 320, attack: 0.64, seconds: 0.82, gain: 1.0),
+            Later(at: 0.66, layer: Tone(from: 90, to: 38, seconds: 0.18, gain: 0.9)),
+        ]),
+        "tell.volley": (gain: 0.6, room: 0.2, variants: 3, layers: [
+            Crackle(low: 1400, high: 5200, grains: 30, seconds: 0.5, gain: 0.7),
+            Noise(low: 900, high: 3800, attack: 0.46, seconds: 0.6, gain: 0.6),
+            Later(at: 0.5, layer: Click(gain: 0.8)),
+        ]),
+        // A beast's: a snort and a hoof's scrape before a gore; before a charge, hooves
+        // pawing the ground and a rising snort.
+        "tell.gore": (gain: 0.55, room: 0.12, variants: 3, layers: [
+            Noise(low: 300, high: 1600, attack: 0.04, seconds: 0.18, gain: 0.7),
+            Noise(low: 120, high: 600, attack: 0.3, seconds: 0.42, gain: 0.8),
+            Later(at: 0.34, layer: Tone(from: 140, to: 60, seconds: 0.14, gain: 0.8)),
+        ]),
+        "tell.charge": (gain: 0.6, drive: 1.3, variants: 3, layers: [
+            Crackle(low: 300, high: 1800, grains: 16, seconds: 0.5, gain: 0.6),
+            Noise(low: 90, high: 700, attack: 0.6, seconds: 0.8, gain: 1.0),
+            Later(at: 0.62, layer: Tone(from: 120, to: 50, seconds: 0.22, gain: 0.9)),
+        ]),
+    },
+    // How a boss's wind-up is told beyond its stance, by its name and its move's (its name
+    // alone for its plain attack); every boss blow must have one. Its `sound` is played so
+    // its loudest moment (`peak` seconds in) lands with the blow, and the music dips under
+    // it. A blow whose reach the body cannot show draws a `marker`: a ring on the ground as
+    // far as it reaches, filling in as the wind-up runs out, in `colour` up to `alpha`,
+    // `width` blocks wide. The Rootmother's lash and thrash are blocked (the swipe shows
+    // them); her grasp goes through a guard and reaches far, so its ring says how far to
+    // dodge; her volley's rearing shows it.
+    tells: {
+        "rootmother": (sound: "tell.lash", peak: 0.4),
+        "rootmother.lash": (sound: "tell.lash", peak: 0.4),
+        "rootmother.thrash": (sound: "tell.thrash", peak: 0.28),
+        "rootmother.grasp": (sound: "tell.grasp", peak: 0.68, marker: (colour: (226, 70, 34), alpha: 0.55, width: 0.22)),
+        "rootmother.volley": (sound: "tell.volley", peak: 0.5),
+        // Old Tusk (the Nomad age's boss): his gore is blocked, his charge dodged; his
+        // lowered head shows which.
+        "old_tusk": (sound: "tell.gore", peak: 0.36),
+        "old_tusk.gore": (sound: "tell.gore", peak: 0.36),
+        "old_tusk.charge": (sound: "tell.charge", peak: 0.66),
+        "old_tusk.frenzy": (sound: "tell.charge", peak: 0.66),
     },
 )
