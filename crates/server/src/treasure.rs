@@ -5,7 +5,7 @@
 //! always held the same.
 
 use voxmar_engine::dropped;
-use voxmar_engine::glam::IVec3;
+use voxmar_engine::glam::{IVec3, Vec3};
 use voxmar_engine::inventory::ItemStack;
 use voxmar_engine::lang::Words;
 use voxmar_engine::traits;
@@ -51,7 +51,29 @@ impl Server {
         let key = if Treasure::try_pick(pick, chest.age) == Try::Lucky { "treasure.lucky" } else { "treasure.opened" };
         tell(player, Words::key(key));
         tracing::debug!("player {agent} opens the {} at {pos}", self.content.blocks.def(block).name);
+        // Quests count the chests opened (`Opened`).
+        let name = self.content.blocks.def(block).name.clone();
+        self.tally(agent, "opened", &name, 1);
         self.open_chest(pos, &chest);
+        self.wake_beside(pos, &chest);
+    }
+
+    /// Wakes what slept beside the chest at `pos` as it opened (`wakes`), each on its chance,
+    /// over the chest, where the floor it was left on has room.
+    fn wake_beside(&mut self, pos: IVec3, chest: &Chest) {
+        for (i, &(species, (low, high), chance)) in chest.wakes.iter().enumerate() {
+            let roll = random3(self.tick, pos, 0x3a4e ^ i as u32);
+            if roll[0] >= chance {
+                continue;
+            }
+            let count = low + ((roll[1] * f32::from(high - low + 1)) as u8).min(high - low);
+            for n in 0..count {
+                let at = pos.as_vec3() + Vec3::new(0.5, 1.0, 0.5);
+                if self.spawn_creature(species, at, 0x3a4e_0000 ^ ((i as u64) << 8) ^ u64::from(n)).is_some() {
+                    tracing::debug!("a {} wakes beside the chest at {pos}", self.content.creatures.get(species).def.name);
+                }
+            }
+        }
     }
 
     /// Turns the locked chest at `pos` into the block it opens to, filled from its table.
@@ -102,5 +124,56 @@ mod tests {
             let found: Vec<_> = server.factory.get(pos).unwrap().1.bin.iter().flatten().map(|s| (s.item, s.count)).collect();
             assert_eq!(found, expected, "launch seed {launch} changed a saved world's chest");
         }
+    }
+
+    /// Opening a Nomad chest left under rock sometimes wakes a flight of cave bats over it:
+    /// on the chest's chance, as many as its count, never when the lock holds.
+    #[test]
+    fn a_chest_may_wake_what_slept_beside_it_as_its_lock_gives() {
+        let mut server = crate::test_server();
+        let (client, connection) = voxmar_protocol::local_pair();
+        std::mem::forget(client);
+        let at = server.spawn;
+        let mut player = crate::player::Player::new(1, connection, at, 2, server.tick, server.survival.max_health, &server.config.limits);
+        player.joined = true;
+        server.players.insert(1, player);
+        let blocks = server.content.blocks.clone();
+        let (chest, pick) = (blocks.expect("base:nomad_treasure_chest"), blocks.expect("base:bone_lockpick"));
+        let bat = server.content.creatures.find("cave_bat").unwrap();
+        let (low, high) = server.content.treasure.chest(chest).unwrap().wakes[0].1;
+        let (mut woke, mut quiet) = (0, 0);
+        for n in 0..40 {
+            server.creatures.live.clear();
+            let pos = at.floor().as_ivec3() + IVec3::new(3 + n % 8, 0, 3 + n / 8);
+            server.set_block(pos, chest);
+            server.tick += 7;
+            let player = server.players.get_mut(&1).unwrap();
+            player.inventory.clear(|_| true);
+            player.inventory.add(pick, 1);
+            player.selected = 0;
+            server.pick_lock(1, pos);
+            assert_ne!(server.block(pos), Some(chest), "a bone pick opens a Nomad chest");
+            let near: Vec<_> = server.creatures.live.values().filter(|c| c.species == bat).map(|c| c.body.position).collect();
+            assert_eq!(near.len(), server.creatures.live.len(), "only what the chest wakes");
+            assert!(near.iter().all(|p| p.distance(pos.as_vec3() + Vec3::new(0.5, 1.0, 0.5)) < 1.0), "over the chest: {near:?}");
+            match near.len() as u8 {
+                0 => quiet += 1,
+                n => {
+                    assert!((low..=high).contains(&n), "{n} bats, not {low}..={high}");
+                    woke += 1;
+                }
+            }
+        }
+        assert!(woke > 4 && quiet > 4, "on its chance: {woke} woke, {quiet} quiet");
+        // A pick too crude to try opens nothing and wakes nothing.
+        server.creatures.live.clear();
+        let iron = at.floor().as_ivec3() + IVec3::new(-3, 0, -3);
+        server.set_block(iron, blocks.expect("base:iron_treasure_chest"));
+        let player = server.players.get_mut(&1).unwrap();
+        player.inventory.clear(|_| true);
+        player.inventory.add(pick, 1);
+        player.selected = 0;
+        server.pick_lock(1, iron);
+        assert!(server.creatures.live.is_empty());
     }
 }

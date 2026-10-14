@@ -36,6 +36,7 @@ pub use parallel::set_helper_limit;
 #[cfg(test)]
 mod perf;
 mod rarity;
+mod hoards;
 mod ores;
 mod rng;
 mod rocks;

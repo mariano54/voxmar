@@ -2,8 +2,9 @@
 
 Part of P61 (repairs, locks, relics and gliders). The code is `crates/engine/src/treasure.rs`
 (the rules and the tables) and `crates/server/src/treasure.rs` (picking a lock). The data is
-`assets/content/base/treasure.ron` (picks, chests and tables), `blocks_treasure.ron` (the
-chest blocks and the lockpicks) and `recipes_treasure.ron` (making lockpicks).
+`assets/content/base/treasure.ron` (picks, chests and tables), `blocks.ron` (the chest
+blocks, with the land's), `blocks_treasure.ron` (the lockpicks), `recipes_treasure.ron`
+(making lockpicks) and `hoards.ron` (where the land keeps chests).
 
 ## The rules it keeps
 
@@ -49,11 +50,46 @@ level, so found picks never form a ladder through the ages.
 
 ## Placing chests
 
-Worldgen places the blocks (ruins, villages, caves): a chest block is all it needs. A mod
-adds an age's chest with a block tagged `locked` (hardness below 0), a `chests` entry and a
-table, and its pick with a `picks` entry.
+Worldgen leaves chests on floors under rock (`crates/worldgen/src/hoards.rs`, data
+`hoards.ron`): the floor of a cave or a ledge under an overhang, with room over it and rock
+within a few blocks above, never in the open, under water or where a settlement stands.
+
+- **A wide grid.** One square of `spacing` blocks (128) holds `slots` tries (3), each at
+  its own spot. A try looks for its floor in the columns of blocks within six of its spot,
+  nearest first, and leaves at most one chest.
+- **The land picks the age.** The land's level (biomes, 1 to 10) at the spot picks among
+  the hoards for that level, in file order, each on its `chance`. Nomad chests lie on the
+  gentle land near where the world began (levels 1 to 3), a few blocks under a ledge or
+  deeper in a shallow cave; Farm chests further out (levels 2 to 5) and deeper (10 to 48
+  blocks under the surface), and rarer.
+- Everything is a pure function of the world's seed, the square and the column's own
+  blocks, so a chest is the same whichever column is made first.
+
+A mod adds an age's chest with a block tagged `locked` (hardness below 0), a `chests` entry
+and a table, its pick with a `picks` entry, and where the land keeps it with a `hoards`
+entry. The registry refuses a hoard whose block is not locked, levels outside 1 to 10, a
+depth or roof that cannot be, or a chance outside (0, 1].
+
+## What finding one does
+
+- **It may wake what slept beside it.** A chest's `wakes` (treasure.ron) are creatures that
+  may come up over it as its lock gives: two to four cave bats from a Nomad chest, one or
+  two cave crawlers from a Farm chest, each four times in ten. Never when the lock holds.
+- **Wanderers know where.** The cartographer marks a locked chest within 128 blocks, once;
+  the fortune teller's cards may tell of one.
+- **Quests count it.** `Opened(chest, n)` counts locks picked open, by chest, tag or `any`.
+  Under Lock and Key (Nomad) sends a new player to make a bone pick and open their first
+  chest, and says where they lie; Deeper Down (Farm) sends them further and deeper for a
+  Farm chest.
 
 ## Tests
+
+- `hoards::tests::chests_lie_under_rock_rarer_further_out_and_far_apart` makes the tries
+  over a hundred squares near spawn: every chest stands under rock, Nomad chests outnumber
+  Farm ones, both are found, and the land stays uncrowded.
+- `treasure::tests::a_chest_may_wake_what_slept_beside_it_as_its_lock_gives` (server) and
+  `treasure::tests::what_a_chest_wakes_is_a_real_creature_a_few_at_a_time` (engine).
+- `wandering::tests::a_cartographer_marks_a_locked_chest_nearby_once`.
 
 - `treasure::tests::the_games_chests_hold_nothing_rarer_than_one_in_400_and_never_two_pieces_of_gear`
   opens ten thousand of each of the game's chests.

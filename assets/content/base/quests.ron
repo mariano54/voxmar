@@ -295,6 +295,13 @@
             rewards: [Xp("engineering", 12.0), Item("bread", 4)],
         ),
         (
+            name: "under_lock_and_key", age: "nomad", branch: "explore", title: "Under Lock and Key",
+            why: "Locked chests lie where the land hides them: on the floor of a shallow cave, or on a ledge under an overhang of rock, never out in the open or under water. Those near where you began are Nomad chests. A bone lockpick opens one: a bone on a twine grip, Crafting 5. Make one, find a chest and pick its lock.",
+            tasks: [[Craft("bone_lockpick", 1), Opened("nomad_treasure_chest", 1)]],
+            after: ["twine_and_thong", "small_game"],
+            rewards: [Xp("crafting", 40.0), Item("bone_lockpick", 2)],
+        ),
+        (
             name: "stockpile", age: "nomad", branch: "start", title: "Stockpile",
             why: "A home runs on common stock. Carry thirty-two logs and sixty-four cobblestone and nothing you want to build is a trip away. Woods give the logs fastest, and stone lies a few blocks under the dirt almost anywhere.",
             tasks: [[Have("tag:log", 32), Have("cobblestone", 64)]],
@@ -562,6 +569,13 @@
             tasks: [[Visit(12)]],
             after: ["homestead_hearth"],
             rewards: [Xp("farming", 150.0), Xp("mining", 150.0), Xp("fishing", 150.0)],
+        ),
+        (
+            name: "deeper_down", age: "farm", branch: "explore", title: "Deeper Down",
+            why: "Farm chests lie further from where you began, on wilder land, and deeper: on cave floors ten blocks and more under the ground. A bone lockpick still opens one, as a pick of the age before always does. Find one and open it.",
+            tasks: [[Opened("farm_treasure_chest", 1)]],
+            after: ["homestead_hearth"],
+            rewards: [Xp("mining", 150.0)],
         ),
         (
             name: "field_guide", age: "farm", branch: "explore", title: "Field Guide",

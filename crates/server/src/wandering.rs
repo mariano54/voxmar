@@ -3839,6 +3839,37 @@ mod tests {
         assert!(said.iter().any(|(key, _)| key == "wander.point"), "a near one is pointed to: {said:?}");
     }
 
+    /// The cartographer marks a locked chest left under rock nearby, true to where it is,
+    /// once; where none lies near, the line is not said.
+    #[test]
+    fn a_cartographer_marks_a_locked_chest_nearby_once() {
+        let mut server = fixture();
+        let id = start(&mut server, "cartographer", (110, 128));
+        let mapper = members_of(&server, id, 0)[0];
+        let at = server.creatures.live[&mapper].body.position;
+        // A chest 40 blocks east of the cartographer, under a stone roof.
+        let chest = IVec3::new(at.x as i32 + 40, 200, at.z as i32);
+        place(&mut server, "base:nomad_treasure_chest", chest);
+        place(&mut server, "base:stone", chest + IVec3::new(0, 3, 0));
+        let client = listen(&mut server);
+        assert!(server.meet(1, mapper));
+        let said = told(&client);
+        let point = said.iter().find(|(key, _)| key == "wander.point").unwrap_or_else(|| panic!("a direction is given: {said:?}"));
+        let arg = |name: &str| point.1.iter().find(|(n, _)| n == name).map(|(_, w)| w.clone());
+        assert_eq!(arg("dir"), Some(Words::key("compass.east")));
+        assert_eq!(arg("thing"), Some(Words::Block("base:nomad_treasure_chest".into())));
+        let says_chest = |said: &[(String, Vec<(String, Words)>)]| said.iter().any(|(key, args)| key == "wander.said" && args.iter().any(|(_, w)| *w == Words::key("wander.base.cartographer.chest")));
+        assert!(says_chest(&said), "{said:?}");
+        // Once to each player.
+        assert!(server.meet(1, mapper));
+        assert!(!says_chest(&told(&client)));
+        // Opened, it is a plain chest: nothing locked to point to.
+        server.world.set_block(chest, server.content.blocks.expect("base:chest"));
+        let locked = voxmar_engine::wander::Want::Tag("locked".into());
+        server.hand_out(1, mapper, &[ResolvedReward::Point(locked, 128.0)]);
+        assert!(told(&client).iter().any(|(key, _)| key == "wander.point_none"));
+    }
+
     #[test]
     fn eight_berries_buy_a_loaf_from_the_pickers() {
         let mut server = fixture();

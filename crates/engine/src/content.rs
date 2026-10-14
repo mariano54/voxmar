@@ -428,7 +428,7 @@ impl Content {
                 }
             }
         }
-        let treasure = crate::treasure::Treasure::new(treasure, &blocks, &value, &limits, &mut notes)?;
+        let treasure = crate::treasure::Treasure::new(treasure, &blocks, &|name| creatures.find(name), &value, &limits, &mut notes)?;
         // An opened chest becomes a bin with room for all it can give.
         for (block, chest) in treasure.chests() {
             let room = machines.get(chest.opens_to).map_or(0, |m| m.bin_slots());
@@ -921,7 +921,7 @@ mod tests {
                             }
                         }
                         Goal::Visit(_) | Goal::LookUp(_) => {}
-                        Goal::Catch(..) | Goal::Pick(..) | Goal::Tame(..) | Goal::Kill(..) | Goal::Discover(..) | Goal::Kinds(..) | Goal::Thriving(..) | Goal::Met(..) | Goal::Prayed(..) | Goal::Offered(..) => panic!("{}: the walk doesn't model {goal:?} yet", quest.name),
+                        Goal::Catch(..) | Goal::Pick(..) | Goal::Tame(..) | Goal::Kill(..) | Goal::Discover(..) | Goal::Kinds(..) | Goal::Thriving(..) | Goal::Met(..) | Goal::Prayed(..) | Goal::Offered(..) | Goal::Opened(..) => panic!("{}: the walk doesn't model {goal:?} yet", quest.name),
                     }
                 }
                 if route.walls.len() == walk.walls.len() {
