@@ -126,13 +126,16 @@ struct Music {
     started: Option<(usize, Duration)>,
     /// The track playing (or being read).
     current: Option<usize>,
-    /// The species that are bosses, and the blocks of bosses' rooms.
-    bosses: Vec<CreatureId>,
-    room_blocks: Vec<BlockId>,
-    /// Whether a boss's room was near when last looked, and when that was.
-    room: (bool, Option<Duration>),
-    /// Whether the player was in a boss fight when last scheduled.
+    /// The species that are bosses, and the blocks of bosses' rooms, each with its boss's
+    /// music tags (the creature's `music`).
+    bosses: Vec<(CreatureId, Vec<String>)>,
+    room_blocks: Vec<(BlockId, Vec<String>)>,
+    /// The music tags of the boss whose room was near when last looked, and when that was.
+    room: (Option<Vec<String>>, Option<Duration>),
+    /// Whether the player was in a boss fight when last scheduled, and that boss's music
+    /// tags.
     fighting: bool,
+    fight_music: Vec<String>,
 }
 
 impl Music {
@@ -227,13 +230,25 @@ fn load_tracks(mut commands: Commands, assets: Res<AssetServer>, settings: Res<S
         }));
     }
     let content = launch.as_ref().map(|launch| &launch.content);
-    let bosses = content.map(|content| content.creatures.iter().filter(|(_, c)| c.def.boss).map(|(id, _)| id).collect()).unwrap_or_default();
+    let bosses = content.map(|content| content.creatures.iter().filter(|(_, c)| c.def.boss).map(|(id, c)| (id, c.def.music.clone())).collect()).unwrap_or_default();
     let room_blocks = content
         .map(|content| {
-            rules.boss.rooms.iter().filter_map(|name| content.blocks.id(name).or_else(|| {
-                warn!("music: no block {name} for a boss's room");
-                None
-            })).collect()
+            rules
+                .boss
+                .rooms
+                .iter()
+                .filter_map(|room| {
+                    let block = content.blocks.id(&room.block).or_else(|| {
+                        warn!("music: no block {} for a boss's room", room.block);
+                        None
+                    })?;
+                    let boss = content.creatures.find(&room.boss).or_else(|| {
+                        warn!("music: no creature {} for the room of {}", room.boss, room.block);
+                        None
+                    })?;
+                    Some((block, content.creatures.get(boss).def.music.clone()))
+                })
+                .collect()
         })
         .unwrap_or_default();
     info!("{} music tracks ({})", tracks.len(), counts.join(", "));
@@ -261,8 +276,9 @@ fn load_tracks(mut commands: Commands, assets: Res<AssetServer>, settings: Res<S
         current: None,
         bosses,
         room_blocks,
-        room: (false, None),
+        room: (None, None),
         fighting: false,
+        fight_music: Vec::new(),
     });
 }
 
@@ -363,22 +379,17 @@ fn random_in(time: &Time, salt: u64, (low, high): (f32, f32)) -> f32 {
     low + (high - low) * (mixed as f32 / (1u64 << 24) as f32)
 }
 
-/// The track to play next where the player is, among those whose category is on: Voxmar's
+/// The track to play next where the player is (`biome`: the tags of where they stand, or in
+/// a boss fight the boss's music tags), among those whose category is on: Voxmar's
 /// own `own_share` of the time when borrowed tracks suit too, then by weight, passing over
 /// the ones played lately while others suit. `rolls` are two numbers in 0..1.
 fn pick(tracks: &[Track], context: Context, biome: &[String], settings: &Settings, recent: &VecDeque<usize>, own_share: f32, rolls: [f32; 2]) -> Option<usize> {
-    let suits = |context: Context, anywhere: bool| -> Vec<usize> {
-        (0..tracks.len())
-            .filter(|&i| tracks[i].contexts.contains(&context) && tracks[i].on(settings) && (anywhere || tracks[i].plays_in(biome)))
-            .collect()
+    let suits = |context: Context| -> Vec<usize> {
+        (0..tracks.len()).filter(|&i| tracks[i].contexts.contains(&context) && tracks[i].on(settings) && tracks[i].plays_in(biome)).collect()
     };
-    let mut suiting = suits(context, false);
+    let mut suiting = suits(context);
     if suiting.is_empty() && context == Context::Underground {
-        suiting = suits(Context::Game, false);
-    }
-    // A boss fight where no boss track belongs takes one from anywhere.
-    if suiting.is_empty() && context == Context::Boss {
-        suiting = suits(Context::Boss, true);
+        suiting = suits(Context::Game);
     }
     let (own, borrowed): (Vec<usize>, Vec<usize>) = suiting.into_iter().partition(|&i| tracks[i].own());
     let mut group = match (own.is_empty(), borrowed.is_empty()) {
@@ -412,35 +423,42 @@ fn pick(tracks: &[Track], context: Context, biome: &[String], settings: &Setting
     group.last().copied()
 }
 
-/// Whether the music counts the player in a boss fight, and whether the track playing (or
-/// being read) is a boss's; none when no music runs. For the gate.
-pub(crate) fn boss_music(world: &World) -> Option<(bool, bool)> {
+/// What the music makes of a boss fight, for the gate: whether it counts the player in
+/// one, and the track playing (or being read), if it is a boss's, with whether it is one
+/// of this boss's (its tags among the boss's `music`, or none); none when no music runs.
+pub(crate) fn boss_music(world: &World) -> Option<(bool, Option<(String, bool)>)> {
     let music = world.get_resource::<Music>()?;
-    let track = music.current.is_some_and(|index| music.tracks[index].contexts.contains(&Context::Boss));
-    Some((music.fighting, track))
+    let track = music.current.map(|index| &music.tracks[index]).filter(|track| track.contexts.contains(&Context::Boss));
+    Some((music.fighting, track.map(|track| (track.name.clone(), track.plays_in(&music.fight_music)))))
 }
 
-/// Whether the player is in a boss fight: a boss alive near, or a block of a boss's room
-/// (looked for once a second).
-fn in_boss_fight(music: &mut Music, time: &Time, feet: Vec3, creatures: Option<&Creatures>, world: Option<&ClientWorld>) -> bool {
+/// The music tags of the boss the player is fighting, if they are in a boss fight: the
+/// nearest boss alive near, else the boss whose room's block is near (looked for once a
+/// second).
+fn in_boss_fight(music: &mut Music, time: &Time, feet: Vec3, creatures: Option<&Creatures>, world: Option<&ClientWorld>) -> Option<Vec<String>> {
     let boss = music.rules.boss.clone();
-    let near = creatures.is_some_and(|creatures| {
-        creatures.living().any(|(_, species, at)| music.bosses.contains(&species) && at.distance(feet) <= boss.within)
+    let near = creatures.and_then(|creatures| {
+        creatures
+            .living()
+            .filter_map(|(_, species, at)| music.bosses.iter().find(|(id, _)| *id == species).map(|(_, tags)| (at.distance(feet), tags)))
+            .filter(|(distance, _)| *distance <= boss.within)
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, tags)| tags.clone())
     });
-    if near {
-        return true;
+    if near.is_some() {
+        return near;
     }
-    let (Some(world), false) = (world, music.room_blocks.is_empty()) else { return false };
+    let (Some(world), false) = (world, music.room_blocks.is_empty()) else { return None };
     let due = music.room.1.is_none_or(|at| time.elapsed() >= at + Duration::from_secs(1));
     if due {
         let centre = feet.floor().as_ivec3();
         let reach = boss.room_reach.max(0);
-        let mut found = false;
+        let mut found = None;
         'look: for dy in -reach..=reach {
             for dz in -reach..=reach {
                 for dx in -reach..=reach {
-                    if world.block(centre + IVec3::new(dx, dy, dz)).is_some_and(|block| music.room_blocks.contains(&block)) {
-                        found = true;
+                    if let Some((_, tags)) = world.block(centre + IVec3::new(dx, dy, dz)).and_then(|block| music.room_blocks.iter().find(|(b, _)| *b == block)) {
+                        found = Some(tags.clone());
                         break 'look;
                     }
                 }
@@ -448,7 +466,7 @@ fn in_boss_fight(music: &mut Music, time: &Time, feet: Vec3, creatures: Option<&
         }
         music.room = (found, Some(time.elapsed()));
     }
-    music.room.0
+    music.room.0.clone()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -468,7 +486,13 @@ fn schedule_music(
     if !(player.joined || in_menu) || music.tracks.is_empty() || !music.enabled || settings.music_volume == 0 {
         return;
     }
-    let boss = !in_menu && in_boss_fight(&mut music, &time, player.position, creatures.as_deref(), world.as_deref());
+    let fight = if in_menu { None } else { in_boss_fight(&mut music, &time, player.position, creatures.as_deref(), world.as_deref()) };
+    let boss = fight.is_some();
+    // A boss's music is its own wherever it is met: its tags choose the track, not the
+    // biome's.
+    if let Some(tags) = fight {
+        music.fight_music = tags;
+    }
     let underground = &music.rules.underground;
     let context = match &surroundings {
         _ if in_menu => Context::Menu,
@@ -505,7 +529,7 @@ fn schedule_music(
     if time.elapsed() < next_at {
         return;
     }
-    let biome = surroundings.as_ref().map_or(&[][..], |around| around.biome.as_slice());
+    let biome = if boss { music.fight_music.as_slice() } else { surroundings.as_ref().map_or(&[][..], |around| around.biome.as_slice()) };
     let rolls = [random_in(&time, 1, (0.0, 1.0)), random_in(&time, 2, (0.0, 1.0))];
     let Some(index) = pick(&music.tracks, context, biome, &settings, &music.recent, music.rules.own_share, rolls) else {
         // Nothing suits here; look again after a gap.
@@ -751,8 +775,8 @@ mod tests {
         assert_eq!(pick(&tracks, Game, &[], &all_off, &none, 0.25, [0.5, 0.5]), None);
     }
 
-    /// A track for some biomes plays only in them; a boss's only in a boss fight, its own
-    /// biome's first, else any boss's.
+    /// A track for some biomes plays only in them; a boss's only in a boss fight, and only
+    /// for a boss whose music names its tags (or, untagged, for every boss).
     #[test]
     fn biomes_and_boss_fights_choose_among_tracks() {
         use Context::*;
@@ -773,11 +797,48 @@ mod tests {
             assert_eq!(pick(&tracks, Game, &desert, &all, &none, 0.0, [0.5, roll]), Some(0));
             // Boss tracks never play outside a fight, and calm ones never in one.
             assert!(pick(&tracks, Game, &forest, &all, &none, 0.0, [0.5, roll]).is_some_and(|i| i < 2));
-            assert_eq!(pick(&tracks, Boss, &forest, &all, &none, 0.0, [0.5, roll]), Some(2));
-            // A desert boss has no track of its own biome: any boss's plays.
-            assert!(pick(&tracks, Boss, &desert, &all, &none, 0.0, [0.5, roll]).is_some_and(|i| i >= 2));
+            // In a fight the boss's music tags choose: a forest boss's track for a forest
+            // boss, wherever the fight is.
+            assert_eq!(pick(&tracks, Boss, &["forest".to_owned()], &all, &none, 0.0, [0.5, roll]), Some(2));
+            // A desert boss has no track of its own: never another's, only the untagged
+            // boss tracks, every boss's, if there are any.
+            assert_eq!(pick(&tracks, Boss, &desert, &all, &none, 0.0, [0.5, roll]), None);
+            let with_any = [place(&[Menu, Game], &[]), place(&[Game], &["forest"]), place(&[Boss], &["forest"]), place(&[Boss], &["frozen", "cold"]), place(&[Boss], &[])];
+            assert_eq!(pick(&with_any, Boss, &desert, &all, &none, 0.0, [0.5, roll]), Some(4));
         }
         assert_eq!(pick(&tracks[..2], Boss, &forest, &all, &none, 0.0, [0.5, 0.5]), None);
+    }
+
+    /// Every boss has a fight track of its own among Voxmar's tracks: one whose rule is a
+    /// boss track's with a tag of the boss's `music`, or an untagged boss track.
+    #[test]
+    fn every_boss_has_a_fight_track_of_its_own() {
+        fn files(dir: &std::path::Path, under: &std::path::Path, into: &mut Vec<String>) {
+            for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    files(&path, under, into);
+                } else if path.extension().is_some_and(|e| e == "mp3" || e == "ogg") {
+                    into.push(path.strip_prefix(under).unwrap().to_string_lossy().replace('\\', "/"));
+                }
+            }
+        }
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+        let content = voxmar_server::load_content(&assets).unwrap();
+        let rules = MusicRules::load(&content.files).unwrap();
+        let music = assets.join("music");
+        let mut own = Vec::new();
+        files(&music, &music, &mut own);
+        let bosses: Vec<_> = content.creatures.iter().filter(|(_, c)| c.def.boss).collect();
+        assert!(!bosses.is_empty());
+        for (_, boss) in bosses {
+            let theirs = own.iter().find(|path| {
+                rules.categories.iter().filter(|c| c.folder.as_ref().is_some_and(|f| path.starts_with(&format!("{f}/")))).any(|c| {
+                    c.track_rule(path).is_some_and(|rule| rule.contexts.contains(&Context::Boss) && (rule.biomes.is_empty() || rule.biomes.iter().any(|t| boss.def.music.contains(t))))
+                })
+            });
+            assert!(theirs.is_some(), "no fight track for {} (music {:?})", boss.def.name, boss.def.music);
+        }
     }
 
     /// Voxmar's own tracks are named by the languages, each of them, and a borrowed one by
