@@ -5,6 +5,11 @@ use voxmar_engine::content::Content;
 use voxmar_engine::effect::{Condition, HomeSurvey, Situation};
 use voxmar_engine::weather::Weather;
 
+/// A sleeping bag's tags: the plainest bed.
+fn bag() -> Vec<String> {
+    vec!["bed".to_owned(), "sleeping_bag".to_owned()]
+}
+
 fn content() -> Content {
     Content::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).unwrap()
 }
@@ -59,7 +64,7 @@ fn a_home_shows_the_highest_step_it_has_and_a_rest_to_match() {
     };
     let rest = |survey: &HomeSurvey, outdoors: bool| {
         let situation = Situation { felt: 15.0, warmed: false, outdoors, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(survey), done: &[], held: &[], near: &[] };
-        effects.given_by_sleep(&situation).iter().map(|&(id, seconds)| (effects.get(id).name.clone(), seconds)).collect::<Vec<_>>()
+        effects.given_by_sleep(&situation, &bag()).iter().map(|&(id, seconds)| (effects.get(id).name.clone(), seconds)).collect::<Vec<_>>()
     };
     for step in LADDER {
         assert_eq!(top(&survey_of(step), false), [format!("base:{step}")], "a home furnished for {step} shows {step} alone");
@@ -67,11 +72,11 @@ fn a_home_shows_the_highest_step_it_has_and_a_rest_to_match() {
     // Out in the open nothing past the hearth holds.
     assert_eq!(top(&survey_of("heart_of_the_home"), true), ["base:hearthside"]);
     let names = |list: Vec<(String, f32)>| list.into_iter().map(|(n, _)| n).collect::<Vec<_>>();
-    assert_eq!(names(rest(&survey_of("camp"), false)), ["base:rested"]);
-    assert_eq!(names(rest(&survey_of("snug"), false)), ["base:rested", "base:well_rested"]);
-    assert_eq!(names(rest(&survey_of("cosy"), false)), ["base:rested", "base:well_rested", "base:deep_rest"]);
-    assert_eq!(names(rest(&survey_of("camp"), true)), ["base:rested"], "a bed under the sky is a plain rest");
-    assert_eq!(names(rest(&survey_of("cosy"), true)), ["base:rested", "base:well_rested"], "under the sky, its seats and lights are only a lit corner");
+    assert_eq!(names(rest(&survey_of("camp"), false)), ["base:mending", "base:rested"]);
+    assert_eq!(names(rest(&survey_of("snug"), false)), ["base:mending", "base:rested", "base:well_rested"]);
+    assert_eq!(names(rest(&survey_of("cosy"), false)), ["base:mending", "base:rested", "base:well_rested", "base:deep_rest"]);
+    assert_eq!(names(rest(&survey_of("camp"), true)), ["base:mending", "base:rested"], "a bed under the sky is a plain rest");
+    assert_eq!(names(rest(&survey_of("cosy"), true)), ["base:mending", "base:rested", "base:well_rested"], "under the sky, its seats and lights are only a lit corner");
 }
 
 #[test]
@@ -82,18 +87,18 @@ fn a_lit_corner_by_the_bed_rests_well_before_any_roof() {
     let survey = |counts: &[(&str, u32)]| HomeSurvey { counts: effects.home_tags().iter().map(|tag| (tag.clone(), counts.iter().find(|(t, _)| t == tag).map_or(0, |&(_, n)| n))).collect() };
     let rest = |survey: &HomeSurvey| {
         let situation = Situation { felt: 15.0, warmed: false, outdoors: true, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(survey), done: &[], held: &[], near: &[] };
-        effects.given_by_sleep(&situation).iter().map(|&(id, seconds)| (effects.get(id).name.clone(), seconds)).collect::<Vec<_>>()
+        effects.given_by_sleep(&situation, &bag()).iter().map(|&(id, seconds)| (effects.get(id).name.clone(), seconds)).collect::<Vec<_>>()
     };
     // A camp out under the sky: a plain rest. A seat and a second light by the bag: a well rested one.
-    assert_eq!(rest(&survey(&[("bed", 1), ("light", 1)])), [("base:rested".to_owned(), 600.0)]);
+    assert_eq!(rest(&survey(&[("bed", 1), ("light", 1)])), [("base:mending".to_owned(), 60.0), ("base:rested".to_owned(), 600.0)]);
     let corner = survey(&[("bed", 1), ("seat", 1), ("light", 2)]);
-    assert_eq!(rest(&corner), [("base:rested".to_owned(), 600.0), ("base:well_rested".to_owned(), 900.0)]);
+    assert_eq!(rest(&corner), [("base:mending".to_owned(), 60.0), ("base:rested".to_owned(), 600.0), ("base:well_rested".to_owned(), 900.0)]);
     assert_eq!(rooms_in(&[("bed", 1), ("seat", 1), ("light", 2)], &calm, true), ["base:bedside"]);
     assert_eq!(effects.get(effects.id("base:bedside").unwrap()).modifiers.warmth, 2.0);
     // Snug and a lit corner too: the one rest, once.
     let snug_corner = survey(&[("bed", 1), ("seat", 1), ("light", 2), ("hearth", 1)]);
     let situation = Situation { felt: 15.0, warmed: false, outdoors: false, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(&snug_corner), done: &[], held: &[], near: &[] };
-    let given = effects.given_by_sleep(&situation);
+    let given = effects.given_by_sleep(&situation, &bag());
     assert_eq!(given.iter().filter(|(id, _)| effects.get(*id).name == "base:well_rested").count(), 1, "two ways to one rest give it once");
 }
 
@@ -280,4 +285,30 @@ fn the_next_step_is_above_the_highest_reached_not_one_skipped_below() {
     let id = |name: &str| effects.id(&format!("base:{name}")).unwrap();
     let ladder = effects.home_progress(&situation).into_iter().find(|chain| chain.reached == Some(id("hearthside"))).expect("the ladder stands at Hearthside");
     assert_eq!(ladder.next.map(|(next, _)| next), Some(id("snug")));
+}
+
+/// A proper bed rests better than a bag on the ground (A Proper Bed: "something better than
+/// the ground"): well rested anywhere, and a longer mend. A sleep mends, yet slower than food
+/// (design draft 63: food is the heal).
+#[test]
+fn a_proper_bed_rests_well_and_every_sleep_mends_slower_than_food() {
+    let content = content();
+    let effects = &content.effects;
+    let calm = Weather::NONE;
+    let survey = |counts: &[(&str, u32)]| HomeSurvey { counts: effects.home_tags().iter().map(|tag| (tag.clone(), counts.iter().find(|(t, _)| t == tag).map_or(0, |&(_, n)| n))).collect() };
+    let camp = survey(&[("bed", 1), ("light", 1)]);
+    let situation = Situation { felt: 15.0, warmed: false, outdoors: true, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(&camp), done: &[], held: &[], near: &[] };
+    let bed = content.blocks.def(content.blocks.expect("base:oak_bed")).tags.clone();
+    let rest = |tags: &[String]| effects.given_by_sleep(&situation, tags).iter().map(|&(id, seconds)| (effects.get(id).name.clone(), seconds)).collect::<Vec<_>>();
+    assert_eq!(rest(&bag()), [("base:mending".to_owned(), 60.0), ("base:rested".to_owned(), 600.0)], "a bag under the sky");
+    assert_eq!(rest(&bed), [("base:mending".to_owned(), 120.0), ("base:rested".to_owned(), 600.0), ("base:well_rested".to_owned(), 900.0)], "a proper bed under the sky");
+    // The best home, the deepest rest and the mend together heal slower than eating the
+    // plainest cooked food, a bite at a time.
+    let heal = |name: &str| effects.get(effects.id(name).unwrap()).modifiers.heal;
+    let together = voxmar_engine::effect::Modifiers { heal: heal("base:heart_of_the_home") * heal("base:deep_rest") * heal("base:mending"), ..Default::default() };
+    let per_second = 1.0 / voxmar_engine::vitals::rates(&together).heal_every.unwrap();
+    let eat = content.actions.get(content.actions.id("core:eat").unwrap()).unwrap();
+    let voxmar_engine::action::Duration::Seconds(bite) = eat.duration else { panic!("eating takes a set time") };
+    let eating = voxmar_engine::vitals::cooked_heal(1) as f32 / bite;
+    assert!(per_second < eating, "a home, a rest and a mend heal {per_second:.2} a second, as fast as eating ({eating:.2})");
 }

@@ -2584,6 +2584,33 @@ fn a_furnished_home_heals_faster_and_sleeping_in_it_rests_you_once() {
     client.pump_until(|c| !has(c, "base:snug") && has(c, "base:well_rested"));
 }
 
+/// A proper bed rests better than a bag (A Proper Bed: "something better than the ground"),
+/// out under the sky with nothing around it: well rested, and a longer mend.
+#[test]
+fn a_proper_bed_rests_well_and_mends_longer_than_a_bag() {
+    let mut client = on_a_test_floor();
+    let feet = client.position.floor().as_ivec3();
+    let effect = |c: &Client, name: &str| c.vitals.effects.iter().find(|a| c.content.effects.get(a.effect).name == name).copied();
+    let told = |c: &Client, text: &str| c.chat.iter().any(|(_, t)| t.contains(text));
+    let (bag, bed) = (feet + IVec3::new(2, 0, 0), feet + IVec3::new(-2, 0, 0));
+    for line in [format!("/setblock {} {} {} sleeping_bag", bag.x, bag.y, bag.z), format!("/setblock {} {} {} oak_bed", bed.x, bed.y, bed.z)] {
+        client.ok(&line);
+    }
+    client.pump_until(|c| c.world.block(bag) == c.content.blocks.id("base:sleeping_bag") && c.world.block(bed) == c.content.blocks.id("base:oak_bed"));
+    // The bag: a plain rest, and a minute's mend.
+    client.propose("base:sleep", ActionTarget::Block { block: bag, face: Face::PosY });
+    client.pump_until(|c| effect(c, "base:rested").is_some() && effect(c, "base:mending").is_some());
+    assert!(effect(&client, "base:mending").and_then(|a| a.seconds_left).is_some_and(|s| s <= 60));
+    assert!(effect(&client, "base:well_rested").is_none(), "a bag on the ground is a plain rest");
+    // The bed, another night: well rested, and two minutes' mend.
+    client.ok("/effect clear");
+    client.pump_until(|c| effect(c, "base:rested").is_none() && effect(c, "base:mending").is_none());
+    client.chat.clear();
+    client.propose("base:sleep", ActionTarget::Block { block: bed, face: Face::PosY });
+    client.pump_until(|c| effect(c, "base:well_rested").is_some() && effect(c, "base:mending").is_some() && told(c, "Well rested"));
+    assert!(effect(&client, "base:mending").and_then(|a| a.seconds_left).is_some_and(|s| s > 60), "a bed mends longer");
+}
+
 #[test]
 fn a_larder_makes_more_of_a_meal() {
     real_time("eating takes its time on the clock (stamps of arrival)");

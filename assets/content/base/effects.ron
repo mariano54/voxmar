@@ -141,9 +141,13 @@
             replaces: [], modifiers: (meal_heal: 1.1)),
         // Sleeping at a bed (the sleeps rules below): the better the home around the bed, the
         // better the rest, which lasts a while wherever you go, and keeps you from sleeping again.
+        // A sleep mends too, for a minute (two in a proper bed): four times the healing of
+        // being awake, still slower than eating, since food is the heal (design draft 63).
+        (name: "mending", kind: Buff, title: "Mending", description: "You slept: your wounds close quickly for a little while.",
+            replaces: [], modifiers: (heal: 4.0)),
         (name: "rested", kind: Buff, title: "Rested", description: "You slept: you heal and learn a little more for a while.",
             replaces: [], modifiers: (heal: 1.1, xp: 1.03)),
-        (name: "well_rested", kind: Buff, title: "Well rested", description: "Slept snug, or with a lit corner by the bed: you learn more and mine faster for a while.",
+        (name: "well_rested", kind: Buff, title: "Well rested", description: "Slept snug, in a proper bed, or with a lit corner by the bed: you learn more and mine faster for a while.",
             replaces: ["rested"], modifiers: (heal: 1.15, xp: 1.05, mining: 1.03)),
         (name: "deep_rest", kind: Buff, title: "Deep rest", description: "Slept in a cosy home: you heal, learn, mine and walk faster for a while.",
             replaces: ["rested", "well_rested"], modifiers: (heal: 1.25, xp: 1.1, mining: 1.06, speed: 1.03)),
@@ -217,10 +221,14 @@
         (tags: ["breakfast"], effect: "focused", seconds: 240),
     ],
     // What sleeping at a bed gives: each rule whose `needs` effect would hold where the player
-    // sleeps (none: anywhere). A rest lasts this many seconds (a day is 1200), and a rested
-    // player cannot sleep again until it wears off.
+    // sleeps (none: anywhere) and whose `bed` tag the bed slept in carries (none: any bed; a
+    // proper bed is furniture, a sleeping bag is not). A rest lasts this many seconds (a day
+    // is 1200), and a rested player cannot sleep again until it wears off.
     sleeps: [
+        (effect: "mending", seconds: 60.0),
+        (effect: "mending", seconds: 120.0, bed: "furniture"),
         (effect: "rested", seconds: 600.0),
+        (effect: "well_rested", seconds: 900.0, bed: "furniture"),
         (effect: "well_rested", seconds: 900.0, needs: "snug"),
         (effect: "well_rested", seconds: 900.0, needs: "bedside"),
         (effect: "deep_rest", seconds: 1200.0, needs: "cosy"),

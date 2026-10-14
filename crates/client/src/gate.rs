@@ -5063,16 +5063,16 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
                 let (player, launch) = (world.resource::<LocalPlayer>(), world.resource::<Launch>());
                 launch.content.effects.id(name).is_some_and(|id| player.vitals.effects.iter().any(|a| a.effect == id))
             };
-            let (camp, rested) = (has(world, "base:camp"), has(world, "base:rested"));
+            let (camp, rested, mending) = (has(world, "base:camp"), has(world, "base:rested"), has(world, "base:mending"));
             let (announced, slept) = {
                 let lines: Vec<&str> = world.resource::<crate::hud::console::Console>().since(gate.phase_since).collect();
                 (lines.iter().any(|l| l.contains("Camp:") && l.contains("Next:")), lines.iter().any(|l| l.contains("You sleep soundly")))
             };
-            if camp && rested && announced && slept {
+            if camp && rested && mending && announced && slept {
                 if gate.shot(world, "home-chips").is_none() {
                     return;
                 }
-                gate.check("home: camp", Ok("a bed and a light slept in showed the Camp chip, the chat named it with its next step, and the sleep was a rest".into()));
+                gate.check("home: camp", Ok("a bed and a light slept in showed the Camp chip, the chat named it with its next step, and the sleep was a rest that mends".into()));
                 // Each with its own icon, not the plain buff's both would share.
                 let icons = {
                     let (images, effects) = (world.resource::<crate::hud::HudImages>(), &world.resource::<Launch>().content.effects);
@@ -5085,7 +5085,7 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
                 (style.home_hidden_within, style.home_shown_beyond) = (0.0, 0.0);
                 gate.advance(now);
             } else if waited > 30.0 {
-                gate.check("home: camp", Err(format!("{waited:.1} server s after sleeping at a bag with a torch beside it: Camp chip {camp}, Rested chip {rested}, Camp line with Next {announced}, sleep line {slept}")));
+                gate.check("home: camp", Err(format!("{waited:.1} server s after sleeping at a bag with a torch beside it: Camp chip {camp}, Rested chip {rested}, Mending chip {mending}, Camp line with Next {announced}, sleep line {slept}")));
                 leave(world, gate);
             }
         }

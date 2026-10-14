@@ -489,6 +489,11 @@ impl Content {
                 blocks.def(id).name
             )));
         }
+        // A sleep rule's `bed` tag names a kind of bed: some bed must carry it, or the rest it
+        // gives could never be had.
+        if let Some(tag) = effects.sleep_beds().find(|tag| !blocks.ids().any(|id| blocks.def(id).has_tag("bed") && blocks.def(id).has_tag(tag))) {
+            return Err(RegistryError(format!("effects.ron: a sleep rule asks for a bed tagged `{tag}`, and no block tagged `bed` carries it")));
+        }
         Ok(Self {
             blocks: Arc::new(blocks),
             actions: Arc::new(actions),
