@@ -216,6 +216,29 @@ columns go from 25, 23, 18, 12, 6, 5, 4, 2 quests to 10, 15, 21, 20, 15, 7, 5, 2
 column is four shorter. Only `after` changed. Levels asked only come later, and
 early_quests still holds that a quest names only quests open beside it.
 
+### Each path a chain (Oct 14)
+
+Ten starts still fanned out a few steps in: one column held 21 quests. Now each path runs
+as a chain, with a fork only where a quest's text sends the player two ways (A Kiln Load
+names Earthenware and Fired Whole; Herb Garden names Carrot Patch and A Kitchen Garden;
+Fresh Eggs names A Woolly Flock). Examples: the bees run Humming in the Meadow, A Bee
+Garden, then Smoke That Clings beside Sweet Relief and The Beekeeper Calls; the home runs A Table for
+Two, Shelves and Cupboards, A Proper Bed, Candlelight, Snug for Winter, then the door and
+the workshop; the road runs Field Guide, Many Travellers, Safe Home, The Rain Dance, the
+wedding; ores run Copper Kit, Tin Find, Rock Collector, Ore Run. Copper Kit follows Red
+Metal, the copper the main line already asks for, not First Metal: the bloomery smelters
+are a wandering party, and no chain waits on meeting one.
+
+| Measure | Main before | Ten starts | Chains |
+|---|---|---|---|
+| Farm quests open at once along the kiln bot's run (max, median) | 33, 31 | 17, 15 | 12, 11 |
+| Open at once, clearing the whole age one quest at a time, oldest first (max, median) | 34, 19 | 25, 15 | 15, 12 |
+| Columns, and the tallest | 8, 25 | 8, 21 | 11, 13 |
+
+Along the bot's run the open quests are one head per path: the next main quest, plus Camp
+Cook, Far Horizons, First Harvest, Patient Angler, A Seat by the Fire, Earthenware, Bigger
+Game, First Metal, Fired Whole and A Place to Pray.
+
 ## Readable to a newcomer (Oct 13)
 
 Every Nomad and Farm quest was read as someone who has never played would: does its text
