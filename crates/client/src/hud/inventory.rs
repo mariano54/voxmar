@@ -899,11 +899,12 @@ fn seed_line(
     Some((words, if ready { SOFT } else { ERROR }))
 }
 
-/// How much faster a tool works than a bare hand, on what it is made for (`speed:X`).
+/// How much faster a tool works than a bare hand, on what it is made for (`speed:X`): none
+/// for one no faster (a rod, which mines nothing).
 pub(crate) fn tool_line(locale: &Locale, content: &voxmar_engine::content::Content, item: voxmar_engine::block::BlockId) -> Option<(String, Color)> {
     let tool = content.tools.tool(Some(item));
     let speed = format!("{}", (tool.speed * 10.0).round() / 10.0);
-    tool.kind.map(|_| (locale.format("item.tool_speed", &[("speed", &speed)]), SOFT))
+    (tool.kind.is_some() && tool.speed > 1.0).then(|| (locale.format("item.tool_speed", &[("speed", &speed)]), SOFT))
 }
 
 /// How a weapon fights: its class, style and the level that wields it (red while the
@@ -1209,6 +1210,7 @@ mod tests {
             assert_eq!(line("base:copper_pickaxe"), Some(locale.format("item.tool_speed", &[("speed", &"7")])), "{code}");
             assert_eq!(line("base:wooden_axe"), Some(locale.format("item.tool_speed", &[("speed", &"2")])), "{code}");
             assert_eq!(line("base:oak_log"), None, "{code}: a log is no tool");
+            assert_eq!(line("base:fishing_rod"), None, "{code}: a rod mines nothing, so claims no speed");
         }
     }
 
