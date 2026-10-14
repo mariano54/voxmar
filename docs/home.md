@@ -12,7 +12,7 @@ engine's `effect.rs`):
 
 | Condition | Holds when |
 | --- | --- |
-| `AtHome` | the player stands within `home_reach` blocks of the home (and `home_up`/`home_down`) |
+| `AtHome` | the player stands within `home_reach` blocks of the home (and `home_up`/`home_down`), or of another online player's lit hearth as a guest |
 | `Indoors` | something solid is overhead |
 | `HomeHas(tag, n)` | at home, with at least n blocks carrying the tag around it |
 
@@ -229,6 +229,21 @@ whose palette holds such a block, and counts nearness as a share of each emissio
 so a far chimney takes its place among the nearest torches
 (`a_chimney_smokes_over_a_hearth_from_afar`). The gate's Cook step sets a hearthstone and a
 chimney beside its campfire and counts the chimney's puffs ("chimney smoke").
+
+## A guest at a friend's hearth
+
+Comfort was a home's own: a player sat at a friend's lit hearth, out of the cold beside a
+roaring fire, was as cold and slow to heal as in a field. Now a player away from their own
+home who stands within reach of another player's lit hearth (`home`, never a bed; the host
+online) is that home's guest (process.rs `guest_survey`): `AtHome` holds for them and
+`HomeHas` counts the host's home and kept animals, so they are Hearthside, Snug or Cosy as it
+is. Their own quest perks (`Done(..)`) still need their own quests. A guest's steps are never
+announced, tallied as reached or felt for their quests (so their own hearth announces them later), and a host's
+stores are not theirs to lay from (laying and sleep keep `at_home`). If two hosts' reaches
+overlap, the lower-numbered one's home counts. Tests (guests.rs):
+`a_guest_by_a_friends_hearth_is_hearthside_unannounced`,
+`a_guest_loses_the_comfort_away_from_it_or_with_the_host_gone`. No gate step: the gate runs
+one player.
 
 ## Quest hooks (written, in base/quests.ron)
 

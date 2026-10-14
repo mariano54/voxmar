@@ -145,7 +145,11 @@ impl Process for Survival {
             let weather = server.weather.local(&mut server.temperature, at, tick, day).weather;
             let cold_air = air - if wet { server.survival.water_chill } else { 0.0 };
             let warmed = heat > 0.5 && cold_air < vitals::CHILLY;
-            let home = server.home_survey(id);
+            // At home, or else a guest at another player's lit hearth.
+            let own = server.home_survey(id);
+            let guest = own.is_none();
+            let home = own.or_else(|| server.guest_survey(id));
+            let guest = guest && home.is_some();
             // What effects ask of the item in hand (`Holding`) and of the blocks near
             // (`Near`).
             let held: Vec<String> = player.held().map_or_else(Vec::new, |item| {
@@ -181,8 +185,11 @@ impl Process for Survival {
             situation.felt = cold_air + heat + effects.modifiers(&first).warmth;
             let active = effects.active(&situation, &player.timed_effects);
             let modifiers = effects.modifiers(&active);
+            // A guest's own: what they would have away from the home they are a guest in.
+            // Only these are counted for their quests and announced.
+            let own_effects = guest.then(|| effects.active(&Situation { home: None, ..situation }, &player.timed_effects));
             // Quests ask whether an effect was ever felt (`Felt`), not how often.
-            for a in &active {
+            for a in own_effects.as_ref().unwrap_or(&active) {
                 player.tallies.entry(format!("felt:{}", effects.get(a.effect).name)).or_insert(1);
             }
             player.modifiers = modifiers;
@@ -226,8 +233,8 @@ impl Process for Survival {
             player.vitals.felt = situation.felt.round();
             player.vitals.effects = effects.active(&situation, &player.timed_effects);
             player.vitals.home = player.home_block();
-            // The steps of a ladder say so when first reached.
-            let gained: Vec<EffectId> = player.vitals.effects.iter().map(|a| a.effect).filter(|&e| effects.get(e).announce && !player.announced.contains(&e)).collect();
+            // The steps of a ladder say so when first reached, at the player's own home.
+            let gained: Vec<EffectId> = own_effects.as_ref().unwrap_or(&player.vitals.effects).iter().map(|a| a.effect).filter(|&e| effects.get(e).announce && !player.announced.contains(&e)).collect();
             player.announced.extend(&gained);
             for effect in gained {
                 let def = effects.get(effect);
@@ -270,11 +277,30 @@ impl Server {
     pub(crate) fn at_home(&self, id: PlayerId) -> Option<IVec3> {
         let player = self.players.get(&id)?;
         let anchor = player.home.or(player.bed)?.floor().as_ivec3();
+        self.within_home(player.position, anchor).then_some(anchor)
+    }
+
+    /// Whether feet at `at` stand within a home's reach of its anchor.
+    fn within_home(&self, at: Vec3, anchor: IVec3) -> bool {
         let rules = &self.survival;
-        let feet = player.position.floor().as_ivec3();
+        let feet = at.floor().as_ivec3();
         let near = (feet - anchor).abs();
-        let within = near.x <= rules.home_reach && near.z <= rules.home_reach && feet.y <= anchor.y + rules.home_up && feet.y >= anchor.y - rules.home_down;
-        within.then_some(anchor)
+        near.x <= rules.home_reach && near.z <= rules.home_reach && feet.y <= anchor.y + rules.home_up && feet.y >= anchor.y - rules.home_down
+    }
+
+    /// What lies around the home player `id` is a guest in, away from their own: another
+    /// player's lit hearth (never their bed) they stand within reach of, that player here.
+    /// Its comfort is the guest's while they stay, the host's animals counting for it; its
+    /// steps are never announced to them nor counted for their quests, and its stores are
+    /// not theirs to lay from (`at_home` alone is).
+    pub(crate) fn guest_survey(&self, id: PlayerId) -> Option<HomeSurvey> {
+        let at = self.players.get(&id)?.position;
+        // The lowest-numbered host, should two homes' reaches overlap.
+        let (host, anchor) = self.players.iter().filter(|&(&other, p)| other != id && p.joined).filter_map(|(&other, p)| {
+            let anchor = p.home?.floor().as_ivec3();
+            self.within_home(at, anchor).then_some((other, anchor))
+        }).min_by_key(|&(other, _)| other)?;
+        Some(self.survey_around(anchor, Some(host)))
     }
 
     /// What lies around a home at `anchor`, whoever stands near it: its blocks by tag and the
