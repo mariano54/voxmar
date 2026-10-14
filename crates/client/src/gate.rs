@@ -4548,12 +4548,16 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
                 }
                 gate.advance(now);
             } else if waited > 10.0 {
-                gate.check("home: lay", Err(format!("{waited:.1} server s on, the home barrel held {stored} planks and the pack {held}")));
+                let open = player.inventory.store.is_some();
+                let laid: u32 = player.inventory.craft.iter().flatten().filter(|x| Some(x.item) == planks).map(|x| x.count as u32).sum();
+                let shown = world.resource::<ClientWorld>().registry.id("base:barrel").is_some_and(|b| world.resource::<ClientWorld>().block(barrel) == Some(b));
+                gate.check("home: lay", Err(format!("{waited:.1} server s on, the home barrel held {stored} planks (open {open}, on the client {shown}), the pack {held} and the grid {laid}")));
                 lay_done(world, barrel);
                 leave(world, gate);
             } else if gate.server_now - gate.machines_asked >= 1.0 {
                 if player.inventory.store.is_none() {
-                    if empty_hand(world) && world.resource::<ClientWorld>().registry.id("base:barrel").is_some_and(|b| world.resource::<ClientWorld>().block(barrel) == Some(b)) {
+                    // Whatever is in hand: a store opens to anything but a machine.
+                    if world.resource::<ClientWorld>().registry.id("base:barrel").is_some_and(|b| world.resource::<ClientWorld>().block(barrel) == Some(b)) {
                         world.resource_mut::<LocalPlayer>().store_asked = true;
                         let actions = world.resource::<crate::Actions>().0.clone();
                         world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("base:open_store"), voxmar_engine::action::ActionTarget::Block { block: barrel, face: voxmar_engine::coords::Face::PosY });
@@ -4567,7 +4571,7 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
         }
         // Lay pressed: the table's planks come out of the barrel into the grid.
         7 => {
-            let button = world.query::<(Entity, &crate::hud::recipes::LayButton, &InheritedVisibility)>().iter(world).find(|(_, lay, visible)| visible.get() && world.resource::<ClientWorld>().registry.id("base:crafting_table") == Some(lay.0)).map(|(entity, ..)| entity);
+            let button = world.query::<(Entity, &crate::hud::recipes::LayButton, &InheritedVisibility)>().iter(world).find(|(_, lay, visible)| visible.get() && world.resource::<ClientWorld>().registry.id("base:crafting_table") == Some(lay.output)).map(|(entity, ..)| entity);
             if let Some(button) = button {
                 world.resource_mut::<UiClicks>().next = Some((button, MouseButton::Left));
                 gate.advance(now);
@@ -4591,7 +4595,8 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
                 leave(world, gate);
             } else if waited > 10.0 {
                 let viewer = world.resource::<UiState>().recipes_open;
-                gate.check("home: lay", Err(format!("{waited:.1} server s after Lay: {laid} planks in the grid, {stored} left in the barrel, viewer open {viewer}")));
+                let held = holding(world, "base:oak_planks").0;
+                gate.check("home: lay", Err(format!("{waited:.1} server s after Lay: {laid} planks in the grid, {stored} left in the barrel, {held} in the pack, viewer open {viewer}")));
                 lay_done(world, barrel);
                 leave(world, gate);
             }

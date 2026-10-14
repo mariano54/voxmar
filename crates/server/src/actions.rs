@@ -387,7 +387,7 @@ impl Server {
                     player.teleport(spawn);
                 }
                 (Effect::Craft, ActionTarget::Slot(times)) => self.craft(agent, times == 0),
-                (Effect::LayRecipe, ActionTarget::Item { item, count }) => self.lay_recipe(agent, item, count),
+                (Effect::LayRecipe, ActionTarget::Recipe { first, ways, count }) => self.lay_recipe(agent, first as usize, ways as usize, count),
                 (Effect::Fish, ActionTarget::Block { block, .. }) => self.fish(agent, block),
                 (Effect::Till, ActionTarget::Block { block, .. }) => {
                     if let Some(farmland) = self.content.blocks.id("base:farmland") {

@@ -123,9 +123,14 @@ pub(crate) enum ViewerButton {
     Next,
     Back,
 }
-/// A crafting way's button that lays its recipe into the grid, for the item it makes.
+/// A crafting way's button that lays its recipe into the grid: the item it makes, and its
+/// recipes (the first, in content order, and how many variants follow it).
 #[derive(Component)]
-pub(crate) struct LayButton(pub BlockId);
+pub(crate) struct LayButton {
+    pub output: BlockId,
+    first: u16,
+    ways: u8,
+}
 /// An item drawn in the viewer: hover to look it up, click for its recipes.
 #[derive(Component)]
 pub struct ViewerItem(pub BlockId);
@@ -254,7 +259,7 @@ fn click(
         {
             let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
             let count = if shift { voxmar_engine::inventory::MAX_STACK } else { 1 };
-            net.propose_from(&player, action, voxmar_engine::action::ActionTarget::Item { item: lay.0, count });
+            net.propose_from(&player, action, voxmar_engine::action::ActionTarget::Recipe { first: lay.first, ways: lay.ways, count });
             viewer.trail.clear();
             ui.recipes_open = false;
         }
@@ -368,9 +373,12 @@ fn draw(
                     }
                 });
                 // Over the inventory, where its grid is, a crafting way can be laid in it.
-                if ui.inventory_open && matches!(entry.method, Method::Craft { .. }) {
+                if ui.inventory_open
+                    && let Method::Craft { variants, first, .. } = &entry.method
+                {
+                    let lay = LayButton { output: entry.output, first: *first as u16, ways: variants.len().min(u8::MAX as usize) as u8 };
                     card.spawn(Node { width: Val::Px(36.0 * PX), ..default() }).with_children(|cell| {
-                        spawn_button(cell, font, "recipes.lay", ButtonStyle::Secondary, LayButton(entry.output));
+                        spawn_button(cell, font, "recipes.lay", ButtonStyle::Secondary, lay);
                     });
                 }
             });

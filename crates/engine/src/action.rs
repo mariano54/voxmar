@@ -36,8 +36,10 @@ pub enum ActionTarget {
     Stack { slot: u8, count: u8 },
     /// A creature, by its id.
     Creature(u32),
-    /// An item, and how many: what a recipe is laid for (`Effect::LayRecipe`).
-    Item { item: crate::block::BlockId, count: u8 },
+    /// A crafting way to lay into the grid (`Effect::LayRecipe`): the recipes from `first`
+    /// (in content order) for `ways` on, one recipe book entry's variants (another wood's
+    /// planks), and how many sets.
+    Recipe { first: u16, ways: u8, count: u8 },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]

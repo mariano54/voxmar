@@ -18,18 +18,25 @@ use voxmar_protocol::{ChatKind, PlayerId, ServerMessage};
 use crate::Server;
 
 impl Server {
-    /// Lays the grid with `count` sets (at least one) of a recipe making `output`.
-    pub(crate) fn lay_recipe(&mut self, agent: PlayerId, output: BlockId, count: u8) {
+    /// Lays the grid with `count` sets (at least one) of one of the recipes from `first`
+    /// for `ways` on (a recipe book entry's variants, all making one thing).
+    pub(crate) fn lay_recipe(&mut self, agent: PlayerId, first: usize, ways: usize, count: u8) {
         let recipes = self.content.recipes.clone();
-        let making: Vec<&Recipe> = recipes.iter().filter(|r| r.output == output).collect();
-        if making.is_empty() {
+        let making: Vec<&Recipe> = recipes.iter().skip(first).take(ways.max(1)).collect();
+        if making.is_empty() || making.iter().any(|r| r.output != making[0].output) {
             return;
         }
         let allowed = self.allowed_recipes(agent);
         let stores = self.home_stores(agent);
         let Some(player) = self.players.get(&agent) else { return };
-        // What the grid holds goes back into the pack first.
+        // What the grid and the pointer hold goes back into the pack first.
         let mut trial = player.inventory.clone();
+        if let Some(stack) = trial.cursor.take() {
+            if trial.add(stack.item, stack.count) > 0 {
+                self.say(agent, Words::key("craft.lay.room"));
+                return;
+            }
+        }
         for cell in 0..GRID {
             if let Some(stack) = trial.craft[cell].take()
                 && trial.add(stack.item, stack.count) > 0
@@ -225,10 +232,20 @@ mod tests {
         server.content.blocks.expect(name)
     }
 
+    /// Lays the first crafting way the recipe book shows for `output`, as its Lay button.
     fn lay(server: &mut Server, output: &str, count: u8) {
         let action = server.content.actions.expect("core:lay");
         let item = id(server, output);
-        server.propose(1, action, ActionTarget::Item { item, count }, Instant::now());
+        let book = voxmar_engine::recipe_book::RecipeBook::new(&server.content);
+        let (first, ways) = book
+            .making(item)
+            .iter()
+            .find_map(|entry| match &entry.method {
+                voxmar_engine::recipe_book::Method::Craft { variants, first, .. } => Some((*first as u16, variants.len() as u8)),
+                _ => None,
+            })
+            .expect("a crafting way");
+        server.propose(1, action, ActionTarget::Recipe { first, ways, count }, Instant::now());
     }
 
     fn stock(server: &mut Server, name: &str, count: u8) {
