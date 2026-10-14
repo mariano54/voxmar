@@ -7493,20 +7493,19 @@ fn the_first_days(f: &mut Fresh) -> Site {
     // In by the open end to five blocks short of the nearest junglefowl (they huddle at the
     // far end, and the seeds tempt from ten), where it can walk up the rest.
     f.walk_toward(Fresh::middle(f.rel(-9, 0, 2)), 0.3);
+    // One may have stepped out by the open end while the player walked in: another is let in.
+    let origin = f.origin;
+    let in_lane = |c: &Client| lane(c, origin).iter().any(|&(_, _, species)| species == fowl);
+    if !in_lane(&f.c) {
+        f.stock("junglefowl", -4);
+        assert!(f.waited(2.0, in_lane), "the junglefowl let into the lane never showed");
+    }
     let near = lane(&f.c, f.origin).into_iter().filter(|&(_, _, species)| species == fowl).map(|(_, p, _)| p.z).fold(f32::MIN, f32::max);
     let lane_x = f.rel(-9, 0, 0).x as f32 + 0.5;
     f.walk_toward(Vec3::new(lane_x, f.at.y, (near + 5.0).min(f.rel(0, 0, 0).z as f32 + 0.5)), 0.3);
     f.hold("base:wheat_seeds");
-    // A lane crowded at its end can jam them in a heap that none walks out of (the wild
-    // has no dead ends so tight): then one more is let in nearer the open end, where it
-    // walks up as any does.
-    let mut drawn = f.waited(10.0, |c| quest_status(c, "a_tempting_bite").0);
-    if !drawn {
-        f.walk_toward(Fresh::middle(f.rel(-9, 0, 2)), 0.3);
-        f.stock("junglefowl", -3);
-        f.hold("base:wheat_seeds");
-        drawn = f.waited(20.0, |c| quest_status(c, "a_tempting_bite").0);
-    }
+    // However crowded the lane's end, one walks out of the heap and up to the seeds.
+    let drawn = f.waited(10.0, |c| quest_status(c, "a_tempting_bite").0);
     let fowls: Vec<_> = f.c.creatures.values().filter(|v| v.species == fowl && v.position.distance(f.at) < 12.0).map(|v| (v.id, v.position, v.pose, v.health)).collect();
     let cells: Vec<_> = (-11..=1).map(|z| (z, [-1, 0, 1].map(|y| f.c.world.block(f.rel(-9, y, z)).map(|b| f.c.content.blocks.def(b).name.clone())))).collect();
     assert!(drawn, "no junglefowl drawn up to the seeds: at {:?} holding {:?}, lane {:?}, fowl near (pose, health) {fowls:?}, cells {cells:?}, origin {:?}, quest {:?}", f.at, f.c.inventory.get(f.held as usize), lane(&f.c, f.origin), f.origin, f.c.quests.iter().find(|q| q.name == "base:a_tempting_bite").map(|q| (q.done, q.tasks.clone())));
