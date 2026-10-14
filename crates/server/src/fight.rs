@@ -787,8 +787,11 @@ impl Server {
         live.charging = None;
         live.body.velocity = live.body.velocity.with_x(0.0).with_z(0.0);
         let recovery = attack.and_then(|a| a.recovery).unwrap_or(feel.creature_recovery).max(0.0);
+        let windup = attack.and_then(|a| a.windup).unwrap_or(feel.creature_windup).max(0.0);
         live.held_until = tick + ticks(recovery + stun.unwrap_or(0.0));
-        live.mind.cooldown = attack.map_or(1.0, |a| a.every);
+        // The rest of its `every` after the wind-up and recovery, as a blow that lands
+        // leaves it: a miss, a wall or a braced point costs no more than a hit.
+        live.mind.cooldown = attack.map_or(1.0, |a| (a.every - windup - recovery).max(0.0));
         live.changed = true;
     }
 
