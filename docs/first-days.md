@@ -299,6 +299,12 @@ firing's cracks), First Night 52 to 60, Homestead Hearth lit 82 to 95, Fire the 
 148, Charcoal 196 to 207, Red Metal 205 to 216, A Kiln Load 292 to 316, Brick by Brick 381 to
 408, Crucible Kiln lit 392 to 418.
 
+With the earth clamp, in lockstep (twelve runs, medians): Timber 11, Homestead Hearth lit 90,
+Fire the Clay 148, The Potter 161, An Earth Clamp made 178, Charcoal 246, Red Metal 255, A
+Kiln Load 270, Brick by Brick 351, Crucible Kiln lit 361 (341 to 377). The bot stood at a
+fire or kiln 167 s in all (147 to 183), and the longest stretch with nothing new is Brick
+by Brick's 75 s of firing bricks.
+
 ## Measured pacing
 
 Run it with `cargo test -p voxmar_server --test gameplay a_fresh_survival -- --ignored --nocapture`
