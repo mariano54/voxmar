@@ -347,7 +347,7 @@ pub(crate) fn receive(
             ServerMessage::Items { changed, gone } => drops.receive(changed, gone, time.elapsed_secs()),
             ServerMessage::Creatures { changed, gone } => creatures.receive(changed, gone),
             ServerMessage::Struck { creature, damage, killed, blow, pips } => {
-                creatures.struck(creature, damage, killed, time.elapsed_secs());
+                creatures.struck(creature, damage, blow, killed, time.elapsed_secs());
                 fighting.struck(creature, damage, blow, pips, killed, time.elapsed_secs_f64());
             }
             ServerMessage::Hurt { creature, damage, defended } => fighting.hurt(creature, damage, defended, time.elapsed_secs_f64()),

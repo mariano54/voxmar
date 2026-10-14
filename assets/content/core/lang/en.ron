@@ -176,6 +176,8 @@
     "settings.toggle_guard.hint": "A right-click raises the guard and the next lowers it, instead of holding the button.",
     "settings.damage_numbers": "Damage numbers",
     "settings.damage_numbers.hint": "In a fight, shows what each blow did where it landed.",
+    "settings.screen_shake": "Screen shake",
+    "settings.screen_shake.hint": "In a fight, heavy blows dip the view, hurts tip it and blocks shake it.",
     "settings.fly_speed": "Fly speed",
     "settings.fly_speed.hint": "How fast you fly. Only admins may fly faster than normal.",
 
