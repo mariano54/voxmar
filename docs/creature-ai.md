@@ -84,16 +84,16 @@ Built now (`engine::creature::brain::modules`):
 
 | Module | Band | What it does |
 | --- | --- | --- |
-| wander | idle | strolls about home; pause length by style and energy (cats and bears pause long, snails barely) |
+| wander | idle | strolls about home, and with kin about, shorter and toward them by sociability; pause length by style and energy (cats and bears pause long, snails barely) |
 | look_around | idle | stands and turns its head; tires of it |
 | stand_to_look | social | rears up or lifts its head to watch a player; nervous ones more |
 | graze | drive | goes to its food and eats, head down; now and then a tuft is gone for good |
 | flee | danger | runs from a threat; hoppers zigzag; raises the alarm for kin (an alarmed one runs home, unless a player in sight who never hurt it holds its favourite food) |
 | freeze | danger | holds still and watches a threat just beyond fleeing distance, for as long as its nerve holds |
 | blink | reflex | supernatural: vanishes a few blocks away from a threat that comes too close |
-| herd | social | closes on its group when it drifts apart; spacing by sociability |
+| herd | social | closes on its group when it drifts well apart (its spacing past it), to its companion's near side, the same companion until there; spacing by sociability |
 | sentinel | social | stands watch while kin graze |
-| tempted | drive | follows a player holding its favourite food; a grudge outweighs the food |
+| tempted | drive | follows a player holding its favourite food, hurrying as they draw ahead, keeping after them to 1.5 times the radius it noticed them at, and stepping back when too close; its home goes with it, so it stays where it was led; a grudge outweighs the food |
 | hunt | danger | chases and strikes, by RuneScape's rules; stalkers creep crouched, then pounce |
 | defend | danger | fights back when hurt (the boar, the bull, the bear) |
 | curious | social | comes to look from a distance, backs off if you come closer |
@@ -182,7 +182,9 @@ the slide, and a step down further than `SAFE_DROP` (3 blocks), or into water tw
 for a land animal not already swimming, is as shut as a wall. So prey runs along a cliff
 edge or a lake shore rather than off it, and a boxed-in creature stands rather than press.
 Anything that jumps gets up a single block, however low its jump (the hop is lifted to
-clear it), and no higher.
+clear it), and no higher. A land animal out of its depth (water under its feet and below)
+makes for the nearest dry cell within 12 blocks, whatever it had in mind, and hauls itself
+up the bank.
 
 When steering is going round (or already following one), a short A* (`path::find`) looks
 for a way over the cells the body fits in: eight directions, no corner cut, up one block

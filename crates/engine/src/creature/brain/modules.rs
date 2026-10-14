@@ -153,7 +153,14 @@ impl Module for Wander {
                     reach = if ctx.random(6) < 0.3 * (0.5 + ctx.mind.personality.energy) { (ctx.creature.def.leash * (0.4 + 0.5 * ctx.random(7))).max(FLIES_PAST * 1.5) } else { reach.min(3.0) };
                 }
                 // About home, drifting back toward it (a kept one more so).
-                let base = at.position.lerp(at.home, if at.kept { 0.6 } else { 0.3 });
+                let mut base = at.position.lerp(at.home, if at.kept { 0.6 } else { 0.3 });
+                // And toward its kin, as much as it cares for company: strolling off from the
+                // herd only to herd back to it is a herd swapping places to and fro.
+                if !at.kin.is_empty() {
+                    let middle = at.kin.iter().copied().sum::<Vec3>() / at.kin.len() as f32;
+                    base = base.lerp(middle.with_y(base.y), 0.7 * ctx.mind.personality.sociability);
+                    reach *= 1.0 - 0.6 * ctx.mind.personality.sociability;
+                }
                 mind.goal = Some(base + Vec3::new(angle.cos(), 0.0, angle.sin()) * reach);
             }
         }
@@ -413,21 +420,43 @@ impl Module for Herd {
         let friend = herd_friend(ctx);
         let spacing = self.spacing * (1.5 - ctx.mind.personality.sociability);
         let apart = ((flat(friend, ctx.at.position) - spacing) / (spacing * 2.0)).clamp(0.0, 1.5);
-        Want::new(0.8 * ctx.mind.personality.sociability * apart * (0.5 + ctx.random(91)))
+        // Once on its way it goes on until it is beside its companion, at a steady will: a
+        // will drawn afresh each tick dips under its others' and back, and the animal turns
+        // to and fro between herding and wandering, twitching in place.
+        let going = ctx.mind.doing.is_some_and(|i| ctx.creature.modules[i].0.name() == self.name());
+        if going {
+            return (flat(beside(ctx, spacing), ctx.at.position) > 0.6).then(|| Want::new(0.8 * ctx.mind.personality.sociability * apart.max(0.25))).flatten();
+        }
+        // And it sets off only once well apart (its spacing past it), so a companion
+        // shifting a step does not start it each time.
+        (apart > 0.5).then(|| Want::new(0.8 * ctx.mind.personality.sociability * apart * (0.5 + ctx.random(91)))).flatten()
     }
 
-    fn act(&self, ctx: &Ctx, _: &mut Mind, _: Option<Seen>, _: bool) -> Decision {
-        let friend = herd_friend(ctx);
-        // To beside it, not onto it.
-        let side = (ctx.mind.seed % 360) as f32 * std::f32::consts::TAU / 360.0;
-        let beside = friend + Vec3::new(side.cos(), 0.0, side.sin()) * self.spacing * 0.6;
-        Decision { goal: Some(beside), speed: walk(ctx), ..Default::default() }
+    fn act(&self, ctx: &Ctx, mind: &mut Mind, _: Option<Seen>, _: bool) -> Decision {
+        // It keeps to the same companion while it goes (`herd_friend`).
+        mind.goal = Some(herd_friend(ctx));
+        let spacing = self.spacing * (1.5 - ctx.mind.personality.sociability);
+        Decision { goal: Some(beside(ctx, spacing)), speed: walk(ctx), ..Default::default() }
     }
 }
 
-/// The kin an individual keeps near: one of its own choosing among those about.
+/// Where a herd animal goes: beside its companion on its own side of it, not onto it, nor
+/// round to the far side: two that keep near each other would otherwise swap places, to
+/// and fro.
+fn beside(ctx: &Ctx, spacing: f32) -> Vec3 {
+    let friend = herd_friend(ctx);
+    friend + (ctx.at.position - friend).with_y(0.0).normalize_or(Vec3::X) * spacing * 0.6
+}
+
+/// The kin an individual keeps near: one of its own choosing among those about, and once it
+/// is going to one, the same one (the nearest to where that one last was), not whichever
+/// the list of those about now puts in its place.
 fn herd_friend(ctx: &Ctx) -> Vec3 {
     let kin = &ctx.at.kin;
+    let going = ctx.mind.doing.is_some_and(|i| ctx.creature.modules[i].0.name() == "herd");
+    if let Some(last) = ctx.mind.goal.filter(|_| going) {
+        return kin.iter().copied().min_by(|a, b| a.distance(last).total_cmp(&b.distance(last))).unwrap_or(last);
+    }
     kin[(ctx.mind.seed % kin.len().max(1) as u64) as usize % kin.len().max(1)]
 }
 
@@ -473,7 +502,11 @@ impl Module for Tempted {
     }
 
     fn want(&self, ctx: &Ctx) -> Option<Want> {
-        let p = ctx.at.players.iter().find(|p| p.tempting && ctx.distance(p.position) < self.radius)?;
+        // Once following, it keeps after the food a while further than it first noticed it,
+        // so a player walking on does not lose it at the edge.
+        let following = ctx.mind.doing.is_some_and(|i| ctx.creature.modules[i].0.name() == self.name());
+        let radius = if following { self.radius * 1.5 } else { self.radius };
+        let p = ctx.at.players.iter().find(|p| p.tempting && ctx.distance(p.position) < radius)?;
         // A grudge outweighs a carrot.
         if ctx.mind.attacker() == Some(p.id) {
             return None;
@@ -485,8 +518,16 @@ impl Module for Tempted {
         let Some(p) = target else { return Decision::default() };
         mind.remember(Memory::FedBy(p.id), 20.0);
         let keep = 1.6 + ctx.creature.def.body.size.0;
-        let goal = (ctx.distance(p.position) > keep).then_some(p.position);
-        Decision { goal, speed: walk(ctx) * 1.2, face: Some(p.position), pose: Pose::Alert, ..Default::default() }
+        let d = ctx.distance(p.position);
+        // Too close (carried in by a hop, or pushed by those behind): a step back, so a
+        // crowd after the food does not pile onto the player.
+        let back = ctx.at.position + (ctx.at.position - p.position).with_y(0.0).normalize_or(Vec3::X) * keep;
+        let goal = if d > keep { Some(p.position) } else if d < keep * 0.6 { Some(back) } else { None };
+        // It walks up to the food, and hurries after it as the player draws ahead (up to a
+        // run four blocks behind its place), so it keeps up with one walking on.
+        let behind = ((d - keep - 1.0) / 3.0).clamp(0.0, 1.0);
+        let speed = walk(ctx) * 1.2 + (run(ctx) - walk(ctx) * 1.2).max(0.0) * behind;
+        Decision { goal, speed, face: Some(p.position), pose: Pose::Alert, ..Default::default() }
     }
 }
 
