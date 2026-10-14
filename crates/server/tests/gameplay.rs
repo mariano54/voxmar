@@ -7892,3 +7892,161 @@ fn first_fights_measured() {
     }
     eprintln!("\nfirst fights:\n{}", lines.join("\n"));
 }
+
+/// The first-age fights as a brand-new player has them, measured: starting health, Attack
+/// 1 and Defence 1, a stone sword (`FIGHT_WEAPON` for another), on an open floor walled
+/// round, chasing on foot at a sprint (no teleports) and swinging on the cooldown whenever
+/// the creature is in reach. Each creature is fought `FIGHT_RUNS` times (3 unless set)
+/// twice over: never guarding, then raising the guard to meet every other wind-up just
+/// before it lands (about half the tells answered well). For each: how long the kill took
+/// and how much of it was spent chasing, the health left (or a death), and the blows that
+/// came back. Run by hand (`--ignored --nocapture`); it fights on the clock, so a loaded
+/// machine stretches it.
+#[test]
+#[ignore = "a measurement, printed: run by hand"]
+fn first_age_fights_balanced() {
+    real_time("combat is judged on the clock: chases, wind-ups and guards in seconds, not in ticks");
+    use voxmar_engine::combat::Defended;
+    let only = std::env::var("FIGHT_ONLY").ok();
+    let runs: u32 = std::env::var("FIGHT_RUNS").ok().and_then(|r| r.parse().ok()).unwrap_or(3);
+    let weapon = std::env::var("FIGHT_WEAPON").unwrap_or_else(|_| "stone_sword".into());
+    let modes: Vec<bool> = match std::env::var("FIGHT_GUARD").as_deref() {
+        Ok("0") => vec![false],
+        Ok("1") => vec![true],
+        _ => vec![false, true],
+    };
+    let mut lines = Vec::new();
+    for name in ["wild_boar", "badger", "fox", "aurochs", "wolf", "brown_bear"].into_iter().filter(|n| only.as_deref().is_none_or(|o| o == *n)) {
+        for &guarding in &modes {
+            let mut results = Vec::new();
+            for run in 0..runs {
+                let mut client = Client::join();
+                client.ok("/gamemode survival");
+                client.pump_until(|c| c.max_health > 0 && c.health == c.max_health);
+                let species = client.content.creatures.find(name).unwrap();
+                let def = client.content.creatures.get(species).def.clone();
+                let feel = client.content.combat.feel;
+                let windup = def.attack.map(|a| a.windup.unwrap_or(feel.creature_windup));
+                // An open floor 80 blocks across, walled round so nothing flees off it.
+                client.ok("/fill ~-40 ~-1 ~-40 ~40 ~-1 ~40 stone");
+                client.ok("/fill ~-40 ~ ~-40 ~40 ~3 ~40 air");
+                client.ok("/fill ~-40 ~4 ~-40 ~40 ~7 ~40 air");
+                for wall in ["~-40 ~ ~-40 ~40 ~2 ~-40", "~-40 ~ ~40 ~40 ~2 ~40", "~-40 ~ ~-40 ~-40 ~2 ~40", "~40 ~ ~-40 ~40 ~2 ~40"] {
+                    client.ok(&format!("/fill {wall} stone"));
+                }
+                let item = client.content.blocks.id(&format!("base:{weapon}")).unwrap();
+                client.ok("/clear");
+                client.ok(&format!("/give {weapon} 1"));
+                client.pump_until(|c| (0..voxmar_engine::inventory::HOTBAR_SLOTS).any(|s| c.inventory.get(s).is_some_and(|s| s.item == item)));
+                let slot = (0..voxmar_engine::inventory::HOTBAR_SLOTS).find(|&s| client.inventory.get(s).is_some_and(|s| s.item == item)).unwrap();
+                client.drain();
+                // Each run a little later than the last: the server's rolls go by its tick.
+                let later = Instant::now() + Duration::from_millis(370 * u64::from(run));
+                client.pump_until(|_| Instant::now() >= later);
+                let known: std::collections::HashSet<_> = client.creatures.keys().copied().collect();
+                client.ok(&format!("/summon {name} 1 ~ ~ ~3"));
+                client.pump_until(|c| c.creatures.values().any(|v| v.species == species && !known.contains(&v.id)));
+                let id = client.creatures.values().find(|v| v.species == species && !known.contains(&v.id)).unwrap().id;
+                let (health, max) = (client.health, client.max_health);
+                let (hurt_before, died_before) = (client.hurt.len(), client.died);
+                let class = client.content.combat.wielded(Some(item), |_| 1);
+                let reach = class.reach;
+                let sprint = client.content.movement.sprint_speed * 0.95;
+                let floor_y = client.position.y;
+                let start = Instant::now();
+                let mut last = Instant::now();
+                let mut chasing = 0.0f32;
+                let mut next_swing = Instant::now();
+                let mut swings = 0u32;
+                let (mut tells, mut seen) = (0u32, None::<Instant>);
+                let mut guard: Option<(Instant, Instant)> = None;
+                let mut up = false;
+                while client.creatures.contains_key(&id) && client.died == died_before && start.elapsed() < Duration::from_secs(120) {
+                    let now = Instant::now();
+                    let dt = (now - last).as_secs_f32().min(0.1);
+                    last = now;
+                    let view = &client.creatures[&id];
+                    let at = view.position;
+                    let half = def.body.size.0 * view.scale * 0.5;
+                    let flat = (at - client.position).with_y(0.0);
+                    let edge = flat.length() - half;
+                    // Run at it, stopping a step short of touching it.
+                    let mut position = client.position;
+                    if edge > 1.0 {
+                        position += flat.normalize() * (sprint * dt).min(edge - 0.9);
+                        position.y = floor_y;
+                    }
+                    if edge > reach {
+                        chasing += dt;
+                    }
+                    client.position = position;
+                    let yaw = yaw_toward(position, at);
+                    let _ = client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position, yaw, pitch: 0.0, selected_slot: slot as u8, flying: false }));
+                    // Every other wind-up met with the guard just before it lands.
+                    if let Some(&since) = client.attacking_since.get(&id)
+                        && seen != Some(since)
+                    {
+                        seen = Some(since);
+                        tells += 1;
+                        if guarding && tells % 2 == 1 {
+                            let w = windup.unwrap_or(feel.creature_windup);
+                            guard = Some((since + Duration::from_secs_f32((w - 0.1).max(0.0)), since + Duration::from_secs_f32(w + 0.25)));
+                        }
+                    }
+                    match guard {
+                        Some((raise, _)) if !up && now >= raise => {
+                            let _ = client.connection.send(ClientMessage::Guard { up: true });
+                            up = true;
+                        }
+                        Some((_, lower)) if up && now >= lower => {
+                            let _ = client.connection.send(ClientMessage::Guard { up: false });
+                            up = false;
+                            guard = None;
+                        }
+                        _ => {}
+                    }
+                    if !up && now >= next_swing && edge <= reach {
+                        client.propose("core:attack", ActionTarget::Creature(id));
+                        swings += 1;
+                        next_swing = now + Duration::from_millis(600);
+                    }
+                    let look_again = Instant::now() + Duration::from_millis(25);
+                    client.pump_until(|_| Instant::now() >= look_again);
+                }
+                let killed = !client.creatures.contains_key(&id);
+                let died = client.died > died_before;
+                let back: Vec<_> = (hurt_before..client.hurt.len()).filter(|&i| client.hurt_by[i].0 == id).map(|i| client.hurt[i]).collect();
+                let taken: u32 = back.iter().map(|&(d, _)| u32::from(d)).sum();
+                let met = back.iter().filter(|(_, d)| matches!(d, Defended::Perfect | Defended::Blocked)).count();
+                let left = if died { 0.0 } else { f32::from(client.health) / f32::from(max) };
+                eprintln!(
+                    "balance: {name} {} run {run}: killed {killed} died {died} in {:.1} s ({chasing:.1} s chasing), {swings} swings; {} blows back ({met} guarded, {tells} tells) for {taken}; health {}/{max} -> {:.0}% left",
+                    if guarding { "guarding" } else { "open" },
+                    start.elapsed().as_secs_f32(),
+                    back.len(),
+                    health,
+                    left * 100.0,
+                );
+                results.push((killed, died, start.elapsed().as_secs_f32(), chasing, back.len(), taken, left));
+            }
+            let n = results.len() as f32;
+            let mean = |f: &dyn Fn(&(bool, bool, f32, f32, usize, u32, f32)) -> f32| results.iter().map(f).sum::<f32>() / n;
+            let line = format!(
+                "{name:<11} {:<8} {}/{} killed, {} died; kill {:>5.1} s (chase {:>4.1} s); {:>4.1} blows back for {:>4.1}; {:>3.0}% health left (worst {:.0}%)",
+                if guarding { "guarding" } else { "open" },
+                results.iter().filter(|r| r.0).count(),
+                results.len(),
+                results.iter().filter(|r| r.1).count(),
+                mean(&|r| r.2),
+                mean(&|r| r.3),
+                mean(&|r| r.4 as f32),
+                mean(&|r| r.5 as f32),
+                mean(&|r| r.6) * 100.0,
+                results.iter().map(|r| r.6).fold(1.0, f32::min) * 100.0,
+            );
+            eprintln!("balance: {line}");
+            lines.push(line);
+        }
+    }
+    eprintln!("\nfirst-age fights:\n{}", lines.join("\n"));
+}
