@@ -63,8 +63,6 @@
         (template: "drop", name: "fried_egg", tags: ["egg", "cooked", "edible", "heal:4"], all: (color: (250, 220, 120))),
         (template: "drop", name: "milk", tags: ["dairy", "drink", "edible"], all: (color: (245, 245, 240))),
         // Fish (fishing.ron): raw ones heal 1, cooked ones by the level that cooks them.
-        (template: "drop", name: "raw_shrimp", tags: ["fish", "raw", "edible", "seafood"], all: (color: (150, 170, 190))),
-        (template: "drop", name: "cooked_shrimp", tags: ["fish", "cooked", "edible", "heal:4", "seafood", "flavour:savoury"], all: (color: (200, 150, 100))),
         (template: "drop", name: "raw_minnow", tags: ["fish", "raw", "edible", "seafood"], all: (color: (150, 170, 190))),
         (template: "drop", name: "cooked_minnow", tags: ["fish", "cooked", "edible", "heal:4", "seafood", "flavour:savoury"], all: (color: (200, 150, 100))),
         (template: "drop", name: "raw_sardine", tags: ["fish", "raw", "edible", "seafood"], all: (color: (150, 170, 190))),
@@ -109,5 +107,8 @@
         "raw_chicken": "raw_small_game",
         "cooked_rabbit": "cooked_small_game",
         "cooked_chicken": "cooked_small_game",
+        // Shrimp cooked, healed and taught as minnows did; minnows bite in any water now.
+        "raw_shrimp": "raw_minnow",
+        "cooked_shrimp": "cooked_minnow",
     },
 )

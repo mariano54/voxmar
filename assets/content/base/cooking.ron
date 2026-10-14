@@ -19,7 +19,6 @@
         (input: "raw_venison", output: "cooked_venison", level: 15, xp: 90.0, stop_burning: 34, burnt: "burnt_food"),
         (input: "raw_bear", output: "cooked_bear", level: 25, xp: 140.0, stop_burning: 45, burnt: "burnt_food"),
         // Fish (fishing.ron): cooking one teaches what catching it does (design draft 63).
-        (input: "raw_shrimp", output: "cooked_shrimp", level: 1, xp: 10.0, stop_burning: 15, burnt: "burnt_food"),
         (input: "raw_minnow", output: "cooked_minnow", level: 1, xp: 10.0, stop_burning: 15, burnt: "burnt_food"),
         (input: "raw_sardine", output: "cooked_sardine", level: 5, xp: 13.0, stop_burning: 25, burnt: "burnt_food"),
         (input: "raw_perch", output: "cooked_perch", level: 10, xp: 18.0, stop_burning: 30, burnt: "burnt_food"),
