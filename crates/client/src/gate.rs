@@ -7023,8 +7023,11 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         gate.feel.clicked = false;
     }
     if (1..=4).contains(&gate.phase) && gate.server_now - gate.feel.started > FEEL_LIMIT {
+        // In a block again for a late counter (phase 2 with the perfect block found), what is
+        // still owed is the counter: the perfect block passed at its first.
         let check = match gate.phase {
             3 => "counter",
+            2 if gate.feel.found.is_some() => "counter",
             4 => "dodge",
             _ => "perfect block",
         };
