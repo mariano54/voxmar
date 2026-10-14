@@ -31,6 +31,9 @@
         // the bees' own smoke_reach calms them anyway, so the player's needs to be close.
         (name: "smoky", kind: Buff, title: "Smoky", description: "Smoke clings to you: bees take you for a fire and stay calm.",
             when: Some(Any([Holding("fire"), Near("fire", 2)])), lingers: 30.0),
+        // A charm worn (the charm slot): Old Tusk's charge charm quickens your stride.
+        (name: "tusk_stride", kind: Buff, title: "Tusk Stride", description: "Old Tusk's charm hangs at your neck: you move 5% faster.",
+            when: Some(Wearing("charge_charm")), modifiers: (speed: 1.05)),
         // Taking from bees without smoke (bees.ron).
         (name: "stung", kind: Debuff, title: "Stung", description: "Bee stings: slower to heal for a while. Smoke them calm first.",
             modifiers: (heal: 0.75)),

@@ -304,6 +304,10 @@ enum Step {
     /// A torch held a moment leaves the player Smoky (smoke that clings): its chip shows,
     /// timed; then the hand is emptied.
     Smoke,
+    /// The charge charm in hand, a right click puts it on in the charm slot; the server
+    /// says it is worn and Tusk Stride (a `Wearing` effect) comes on, untimed, its chip
+    /// shown; taken off, the effect is gone.
+    Charm,
     /// A chainmail shirt and a wooden shield in hand, each right click puts one on in its
     /// own worn slot, and with the shield on the guard is the shield's; the inventory
     /// shows both in its worn wells, and their tooltips the armour lines.
@@ -1374,6 +1378,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Boss => boss(world, gate, now),
         Step::Tusk => tusk(world, gate, now),
         Step::Smoke => smoke(world, gate, now),
+        Step::Charm => charm(world, gate, now),
         Step::Wear => wear(world, gate, now, in_phase),
         Step::CombatHud => combat_hud(world, gate, now, in_phase),
         Step::Cook => cook(world, gate, now, in_phase),
@@ -7806,7 +7811,7 @@ const SMOKY: &str = "base:smoky";
 fn smoke(world: &mut World, gate: &mut Gate, now: f32) {
     let Some(smoky) = world.resource::<Launch>().content.effects.find(SMOKY) else {
         gate.check("smoky chip", Err(format!("no `{SMOKY}` in the content")));
-        gate.next(Step::Wear, now);
+        gate.next(Step::Charm, now);
         return;
     };
     let waited = gate.server_in_phase() > BOSS_WAIT;
@@ -7822,7 +7827,7 @@ fn smoke(world: &mut World, gate: &mut Gate, now: f32) {
                 gate.advance(now);
             } else if waited {
                 gate.check("smoky chip", Err(format!("no {SMOKE_ITEM} came to hand in {BOSS_WAIT} server seconds")));
-                gate.next(Step::Wear, now);
+                gate.next(Step::Charm, now);
             }
         }
         2 => {
@@ -7841,10 +7846,80 @@ fn smoke(world: &mut World, gate: &mut Gate, now: f32) {
         _ => {
             if empty_hand(world) || waited {
                 world.resource::<Net>().command("effect clear");
-                gate.next(Step::Wear, now);
+                gate.next(Step::Charm, now);
             }
         }
     }
+}
+
+/// The charm the charm step wears, and the effect it gives while worn.
+const CHARM: &str = "base:charge_charm";
+const CHARM_EFFECT: &str = "base:tusk_stride";
+
+fn charm(world: &mut World, gate: &mut Gate, now: f32) {
+    use voxmar_engine::combat::Slot;
+    use voxmar_engine::inventory::WORN;
+    let Some(stride) = world.resource::<Launch>().content.effects.find(CHARM_EFFECT) else {
+        gate.check("charm", Err(format!("no `{CHARM_EFFECT}` in the content")));
+        gate.next(Step::Wear, now);
+        return;
+    };
+    let waited = gate.server_in_phase() > BOSS_WAIT;
+    let item = world.resource::<ClientWorld>().registry.id(CHARM);
+    let worn = world.resource::<LocalPlayer>().inventory.get(WORN + Slot::Charm.index()).is_some_and(|s| Some(s.item) == item);
+    let on = world.resource::<LocalPlayer>().vitals.effects.iter().find(|a| a.effect == stride).copied();
+    match gate.phase {
+        0 => {
+            let net = world.resource::<Net>();
+            net.command("effect clear");
+            net.command(&format!("give {} 1", CHARM.trim_start_matches("base:")));
+            gate.advance(now);
+        }
+        1 => {
+            // In hand, looking up (nothing in reach takes the click), one right click.
+            if select(world, CHARM) {
+                look(world, 0.0, 80.0);
+                gate.settled += 1;
+                if gate.settled < 3 {
+                    return;
+                }
+                mouse(world, MouseButton::Right, true);
+                gate.advance(now);
+            } else if waited {
+                gate.check("charm", Err(format!("no {CHARM} came to the inventory in {BOSS_WAIT} server seconds")));
+                end_charm(world, gate, now);
+            }
+        }
+        2 => {
+            mouse(world, MouseButton::Right, false);
+            // Worn by the server's word, and its effect on for as long as it is: no timer.
+            let chip = world.query::<&crate::hud::effects::EffectHover>().iter(world).any(|hover| hover.0 == stride);
+            if worn && chip && on.is_some_and(|a| a.seconds_left.is_none()) {
+                let speed = world.resource::<Launch>().content.effects.modifiers(&world.resource::<LocalPlayer>().vitals.effects).speed;
+                gate.check("charm", Ok(format!("the charge charm worn in the charm slot: Tusk Stride on, untimed, moving {speed:.2}x")));
+                world.resource::<Net>().command(&format!("clear {}", CHARM.trim_start_matches("base:")));
+                gate.advance(now);
+            } else if waited {
+                gate.check("charm", Err(format!("a right click with the charm in hand: worn {worn}, chip {chip}, effect {on:?}")));
+                end_charm(world, gate, now);
+            }
+        }
+        _ => {
+            if !worn && on.is_none() {
+                gate.check("charm off", Ok("taken off, Tusk Stride is gone".to_owned()));
+                end_charm(world, gate, now);
+            } else if waited {
+                gate.check("charm off", Err(format!("cleared away: worn {worn}, effect {on:?}")));
+                end_charm(world, gate, now);
+            }
+        }
+    }
+}
+
+fn end_charm(world: &mut World, gate: &mut Gate, now: f32) {
+    mouse(world, MouseButton::Right, false);
+    world.resource::<Net>().command(&format!("clear {}", CHARM.trim_start_matches("base:")));
+    gate.next(Step::Wear, now);
 }
 
 /// What the wear step puts on, and where (`inventory::WORN` on).

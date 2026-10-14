@@ -27,6 +27,8 @@
         // Heartwood buff; it stacks, being a root and not a meal.
         // Old Tusk's great tusk (creatures_bosses.ron): one a kill, the head of a tusk club.
         (template: "drop", name: "great_tusk", tags: ["trophy", "bone"], all: (color: (236, 226, 200), rarity: Uncommon)),
+        // Old Tusk's rare keepsake: worn in the charm slot, it quickens your stride (effects.ron's `tusk_stride`).
+        (template: "drop", name: "charge_charm", tags: ["trophy", "charm", "charge_charm"], all: (color: (224, 206, 168), rarity: VeryRare)),
         (template: "drop", name: "heartroot", tags: ["root", "edible", "effect:heartwood:600", "flavour:bitter", "alchemy:healing", "alchemy:hearty"], all: (color: (150, 60, 50), rarity: Uncommon)),
         // Skins and fur.
         // Every warm pelt is fur (P27, 2026-10-07: fewer items, many ways to get each).

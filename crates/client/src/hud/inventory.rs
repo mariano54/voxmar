@@ -104,7 +104,7 @@ struct WornGlyph(usize);
 /// The mark for worn slot `slot`, if it is one, by `combat::Slot`'s order.
 fn worn_glyph(slot: usize) -> Option<Piece> {
     let at = slot.checked_sub(WORN).filter(|_| slot <= LAST)?;
-    [Piece::WornHead, Piece::WornBody, Piece::WornLegs, Piece::WornHands, Piece::WornFeet, Piece::WornShield].get(at).copied()
+    [Piece::WornHead, Piece::WornBody, Piece::WornLegs, Piece::WornHands, Piece::WornFeet, Piece::WornShield, Piece::WornCharm].get(at).copied()
 }
 
 /// What packages restyle of the interface (`interface.ron`, in `core`); a later package
@@ -242,7 +242,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
             // The crafting grid and what it makes, above the pack.
             let crafting = Node { align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), margin: UiRect::bottom(Val::Px(space::GAP)), ..default() };
             card.spawn(crafting).with_children(|row| {
-                // What is worn: head and body, legs and hands, feet and shield.
+                // What is worn: head and body, legs and hands, feet and shield, and a charm.
                 let worn = Node {
                     display: Display::Grid,
                     grid_template_columns: RepeatedGridTrack::px(2, SLOT),
@@ -933,9 +933,13 @@ fn weapon_lines(locale: &Locale, content: &voxmar_engine::content::Content, play
 
 /// What a piece of armour or a shield is: its slot and the Defence level that wears it (red
 /// while the player is below it, with why it then gives nothing), its armour and weight,
-/// and the styles it is strong against.
+/// and the styles it is strong against; or that a charm is one.
 pub(crate) fn armour_lines(locale: &Locale, content: &voxmar_engine::content::Content, player: &LocalPlayer, item: voxmar_engine::block::BlockId) -> Vec<(String, Color)> {
     let combat = &content.combat;
+    // A charm says only where it goes: what it does is its effect's, shown while worn.
+    if voxmar_engine::inventory::worn_slot(item) == Some(voxmar_engine::combat::Slot::Charm.index()) {
+        return vec![(locale.get("item.charm").to_owned(), SOFT), (locale.get("item.charm_wear").to_owned(), SOFT)];
+    }
     let defence = content.skills.ids().find(|&id| content.skills.get(id).name == "core:defence");
     let level = defence.map_or(1, |id| content.skills.level(player.skills.xp(id)));
     // What it is, the Defence it needs (red above the player's), then what it stops.

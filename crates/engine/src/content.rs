@@ -459,7 +459,16 @@ impl Content {
         }
         crate::inventory::set_stack_limits(limits);
         crate::inventory::set_pouches(pouches(&blocks)?);
-        crate::inventory::set_worn_slots(combat.worn_slots());
+        // A charm is worn in the charm slot, and is nothing else that is worn.
+        let mut worn = combat.worn_slots();
+        for id in blocks.ids().filter(|&id| blocks.def(id).has_tag("charm")) {
+            let at = &mut worn[id.0 as usize];
+            if at.is_some() {
+                return Err(RegistryError(format!("blocks: `{}` is a charm and armour or a shield too: it is worn in one slot", blocks.def(id).name)));
+            }
+            *at = Some(crate::combat::Slot::Charm.index() as u8);
+        }
+        crate::inventory::set_worn_slots(worn);
         // A store's slots follow the player's own in a slot number of a byte.
         let mut holds = vec![None; blocks.len()];
         for machine in machines.iter().filter(|m| m.is_store()) {

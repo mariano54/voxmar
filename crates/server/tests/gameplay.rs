@@ -7690,3 +7690,31 @@ fn finish(mut f: Fresh) {
         assert!(m.at <= budget, "{name} took {:.1} server seconds, over its budget of {budget}", m.at);
     }
 }
+
+/// The charm slot (`combat::Slot::Charm`): a charm goes on only there, never in an armour
+/// slot, and its `Wearing` effect holds while it is worn, untimed: Old Tusk's charge charm
+/// quickens the stride. Held in hand it does nothing; taken off, the effect is gone.
+#[test]
+fn a_charm_goes_in_the_charm_slot_and_works_while_worn() {
+    use voxmar_engine::combat::Slot;
+    use voxmar_engine::inventory::{HOTBAR_SLOTS, WORN};
+    let mut client = Client::join();
+    let charm = client.content.blocks.id("base:charge_charm").unwrap();
+    for line in ["/clear", "/effect clear", "/give charge_charm 1"] {
+        client.ok(line);
+    }
+    client.pump_until(|c| (0..HOTBAR_SLOTS).any(|s| c.inventory.get(s).is_some_and(|s| s.item == charm)));
+    let striding = |c: &Client| c.vitals.effects.iter().find(|a| c.content.effects.get(a.effect).name == "base:tusk_stride").copied();
+    // In hand it is no charm worn.
+    client.pump_ticks(TICKS_PER_SECOND as u64 * 2, |c| striding(c).is_some());
+    assert!(striding(&client).is_none(), "held, not worn");
+    let from = (0..HOTBAR_SLOTS).find(|&s| client.inventory.get(s).is_some_and(|s| s.item == charm)).unwrap();
+    client.propose("core:transfer", ActionTarget::Slots { from: from as u8, to: WORN as u8, count: 1 });
+    client.propose("core:transfer", ActionTarget::Slots { from: from as u8, to: (WORN + Slot::Charm.index()) as u8, count: 1 });
+    client.pump_until(|c| c.inventory.worn[Slot::Charm.index()].is_some_and(|s| s.item == charm) && striding(c).is_some());
+    assert!(client.inventory.worn[0].is_none(), "a charm is not a helmet");
+    assert_eq!(striding(&client).unwrap().seconds_left, None, "it holds while worn, untimed");
+    assert!(client.content.effects.modifiers(&client.vitals.effects).speed > 1.0);
+    client.ok("/clear charge_charm");
+    client.pump_until(|c| c.inventory.worn[Slot::Charm.index()].is_none() && striding(c).is_none());
+}

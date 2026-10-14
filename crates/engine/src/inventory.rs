@@ -7,8 +7,8 @@
 //! pointer ([`CURSOR`]), [`Inventory::quick_move`] between the hotbar and the rest, and
 //! [`Inventory::stow_cursor`] when the screen closes. The crafting grid is nine more slots
 //! ([`CRAFT`]; two by two of them away from a crafting table, see `craft::SMALL`), and [`Inventory::craft`] turns what it holds into a recipe's
-//! output. Six more slots ([`WORN`]) hold the armour worn and a shield, each only the piece
-//! made for it (`combat::Slot`). While a store is open (a chest, a cupboard: `machine::Role::Bin`),
+//! output. Seven more slots ([`WORN`]) hold the armour worn, a shield and a charm, each only the
+//! piece made for it (`combat::Slot`). While a store is open (a chest, a cupboard: `machine::Role::Bin`),
 //! its slots follow ([`STORE`]), a copy of what it holds that the server keeps in step with it.
 //! The client works out which moves a gesture means; the server checks and applies each the
 //! same way.
@@ -66,10 +66,10 @@ pub fn max_stack(item: BlockId) -> u8 {
 pub const CURSOR: usize = SLOTS;
 /// The crafting grid's first slot; its nine are `CRAFT..CRAFT + 9`, row by row.
 pub const CRAFT: usize = CURSOR + 1;
-/// The first worn slot; its six are head, body, legs, hands, feet and the off-hand's
-/// shield (`combat::Slot`).
+/// The first worn slot; its seven are head, body, legs, hands, feet, the off-hand's
+/// shield and a charm (`combat::Slot`).
 pub const WORN: usize = CRAFT + GRID;
-pub const WORN_SLOTS: usize = 6;
+pub const WORN_SLOTS: usize = 7;
 /// The last slot number of the player's own.
 pub const LAST: usize = WORN + WORN_SLOTS - 1;
 /// The first slot of an open store, after the player's own; a store has at most

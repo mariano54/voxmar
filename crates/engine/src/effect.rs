@@ -182,6 +182,9 @@ pub enum Condition {
     Sheltered(Box<Condition>),
     /// The item in the player's hand carries this tag (`Holding("fire")`: a torch).
     Holding(String),
+    /// Something the player wears carries this tag (`Wearing("charge_charm")`: the charm
+    /// in the charm slot, `inventory::WORN`).
+    Wearing(String),
     /// A block carrying this tag lies within this many blocks of the player's feet, every
     /// way (`Near("fire", 4)`: a campfire close by). The reach is 1 to 8.
     Near(String, i32),
@@ -225,12 +228,12 @@ impl Condition {
         }
     }
 
-    /// The tags and reaches `Near` asks about, and the tags `Holding` asks of the item in
-    /// hand, anywhere in this condition.
+    /// The tags and reaches `Near` asks about, and the tags `Holding` and `Wearing` ask of
+    /// what the player has in hand or wears, anywhere in this condition.
     fn asks<'a>(&'a self, near: &mut Vec<(&'a str, i32)>, held: &mut Vec<&'a str>) {
         match self {
             Condition::Near(tag, reach) => near.push((tag, *reach)),
-            Condition::Holding(tag) => held.push(tag),
+            Condition::Holding(tag) | Condition::Wearing(tag) => held.push(tag),
             Condition::All(list) | Condition::Any(list) => list.iter().for_each(|c| c.asks(near, held)),
             Condition::Not(c) | Condition::Sheltered(c) => c.asks(near, held),
             _ => {}
@@ -309,6 +312,8 @@ pub struct Situation<'a> {
     pub held: &'a [String],
     /// Which of the `Near` asks (`EffectRegistry::near_asks`) hold where the player stands.
     pub near: &'a [(String, i32)],
+    /// The tags of what the player wears (of those `EffectRegistry::held_tags` asks after).
+    pub worn: &'a [String],
 }
 
 /// How many blocks with each tag lie around a home: the tags are those effects ask of it
@@ -345,6 +350,7 @@ impl Condition {
             Condition::Sheltered(c) => !s.outdoors && c.holds(&Situation { outdoors: true, ..*s }),
             Condition::Done(quest) => s.done.iter().any(|d| d == quest),
             Condition::Holding(tag) => s.held.contains(tag),
+            Condition::Wearing(tag) => s.worn.contains(tag),
             Condition::Near(tag, reach) => s.near.iter().any(|(t, r)| t == tag && r == reach),
             Condition::All(all) => all.iter().all(|c| c.holds(s)),
             Condition::Any(any) => any.iter().any(|c| c.holds(s)),
@@ -687,7 +693,8 @@ impl EffectRegistry {
         &self.near_asks
     }
 
-    /// The tags effects ask of the item in hand with `Holding`.
+    /// The tags effects ask of the item in hand with `Holding`, and of what is worn with
+    /// `Wearing`.
     pub fn held_tags(&self) -> &[String] {
         &self.held_tags
     }
@@ -769,7 +776,7 @@ mod tests {
     }
 
     fn situation(weather: &Weather, warmed: bool, felt: f32, outdoors: bool) -> Situation<'_> {
-        Situation { felt, warmed, outdoors, weather, biome: "base:plains", biome_tags: &[], home: None, done: &[], held: &[], near: &[] }
+        Situation { felt, warmed, outdoors, weather, biome: "base:plains", biome_tags: &[], home: None, done: &[], held: &[], near: &[], worn: &[] }
     }
 
     #[test]
@@ -819,6 +826,25 @@ mod tests {
             let source = format!(r#"(effects: [(name: "smoky", kind: Buff, title: "Smoky", description: "", {bad})])"#);
             assert!(EffectRegistry::new(vec![EffectRegistry::read("core", &source).unwrap()]).is_err(), "{bad}");
         }
+    }
+
+    /// What is worn: `Wearing` holds off the situation's worn tags, and only them: the same
+    /// charm in hand is no charm worn.
+    #[test]
+    fn a_charm_works_while_worn_not_while_held() {
+        let source = r#"(effects: [
+            (name: "stride", kind: Buff, title: "Stride", description: "", when: Some(Wearing("charge_charm")), modifiers: (speed: 1.05)),
+        ])"#;
+        let effects = EffectRegistry::new(vec![EffectRegistry::read("core", source).unwrap()]).unwrap();
+        assert_eq!(effects.held_tags(), ["charge_charm"]);
+        let calm = Weather::NONE;
+        let charm = ["charge_charm".to_owned()];
+        let wearing = Situation { worn: &charm, ..situation(&calm, false, 15.0, true) };
+        let holding = Situation { held: &charm, ..situation(&calm, false, 15.0, true) };
+        let active = effects.active(&wearing, &[]);
+        assert_eq!(active.len(), 1);
+        assert_eq!(effects.modifiers(&active).speed, 1.05);
+        assert!(effects.active(&holding, &[]).is_empty(), "held, not worn");
     }
 
     #[test]

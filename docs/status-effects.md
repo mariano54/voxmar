@@ -32,7 +32,8 @@ faster), aether-touched (fantastical biomes: a twentieth more experience) and mi
 (marsh: a little slower), so where you go matters as well as what you eat.
 
 **What is in hand and what is near.** `Holding("tag")` holds while the item in hand carries
-the tag; `Near("tag", reach)` while a block carrying it lies within `reach` blocks (1 to 8,
+the tag, and `Wearing("tag")` while something worn carries it (the charm slot: base's
+`tusk_stride`, from Old Tusk's Charge Charm, never from it held in hand); `Near("tag", reach)` while a block carrying it lies within `reach` blocks (1 to 8,
 every way) of the player's feet. A tag no block carries is refused at launch. **Effects that
 cling:** `lingers: SECONDS` makes an effect stay that long after its `when` stops holding (it
 is kept topped up while it holds, as a timed effect). Base's `smoky`: a torch in hand or a

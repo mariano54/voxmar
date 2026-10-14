@@ -533,6 +533,8 @@
     "effect.base.bee_garden.description": ("Bees at work among your flowers: you heal a tenth faster here, and crops near the hive grow a quarter faster.", "花の間でミツバチが働いている。ここでは回復が1割速く、巣箱の近くの作物は4分の1速く育つ。"),
     "effect.base.smoky": ("Smoky", "煙たい"),
     "effect.base.smoky.description": ("Smoke clings to you: bees take you for a fire and stay calm.", "煙が体にまとわりついている。ハチは火と思っておとなしくしている。"),
+    "effect.base.tusk_stride": ("Tusk Stride", "牙の足取り"),
+    "effect.base.tusk_stride.description": ("Old Tusk's charm hangs at your neck: you move 5% faster.", "古牙のお守りを首にかけている。移動が5%速くなる。"),
     "effect.base.stung": ("Stung", "ハチ刺され"),
     "effect.base.stung.description": ("Bee stings: slower to heal for a while. Smoke them calm first.", "ハチに刺された。しばらく回復が遅い。先に煙でおとなしくさせよう。"),
     "quest.base.a_bee_garden": ("A Bee Garden", "ミツバチの庭"),

@@ -706,7 +706,7 @@ impl Server {
             let Some(anchor) = anchor else { return false };
             let survey = survey.get_or_init(|| self.survey_around(anchor, Some(player)));
             let calm = voxmar_engine::weather::Weather::NONE;
-            let situation = voxmar_engine::effect::Situation { felt: 0.0, warmed: false, outdoors: self.open_sky(anchor + IVec3::Y * 2), weather: &calm, biome: "", biome_tags: &[], home: Some(survey), done: &p.quests_done, held: &[], near: &[] };
+            let situation = voxmar_engine::effect::Situation { felt: 0.0, warmed: false, outdoors: self.open_sky(anchor + IVec3::Y * 2), weather: &calm, biome: "", biome_tags: &[], home: Some(survey), done: &p.quests_done, held: &[], near: &[], worn: &[] };
             self.content.effects.get(step).when.as_ref().is_some_and(|when| when.holds(&situation))
         };
         let mut choices: Vec<(usize, f32)> = Vec::new();
