@@ -9,6 +9,8 @@
 (
     recipes: [
         // Wood furniture, in whichever of birch, oak and dark oak the planks are.
+        // A door, in any planks: two blocks of them tall, closing a home against the night.
+        (pattern: [["{name}_planks", "{name}_planks"], ["{name}_planks", "{name}_planks"], ["{name}_planks", "{name}_planks"]], output: "wooden_door", skill: "core:construction", level: 2, xp: 4.0),
         (pattern: [["{name}_planks", "{name}_planks"], ["stick", "stick"]], output: "{name}_stool", skill: "core:construction", level: 1, xp: 2.0),
         (pattern: [["{name}_planks", "{name}_planks", "{name}_planks"], ["stick", "", "stick"]], output: "{name}_bench", skill: "core:construction", level: 2, xp: 3.0),
         (pattern: [["stick", "", ""], ["{name}_planks", "{name}_planks", "{name}_planks"], ["stick", "", "stick"]], output: "{name}_chair", skill: "core:construction", level: 3, xp: 3.0),

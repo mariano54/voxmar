@@ -46,7 +46,8 @@ either (`Recipe::alternatives`; the viewer shows the first). Torches use it.
 Every recipe trains a skill, Crafting unless it names another, may need a `level` in it,
 and gives `xp` for every one made: tools, the table, torches, shears, pails and smelting
 train Engineering, bread and animal feed Cooking. A recipe whose level is above yours
-shows "Needs Engineering 15" where its result would be.
+shows "Needs Engineering 15" where its result would be. The viewer's **Lay** button fills
+the grid with a recipe from the pack, and at home from its stores too (docs/home.md).
 
 Smelting is by hand for now (ore over coal at the grid makes an ingot); a furnace comes
 with Engineering 30.

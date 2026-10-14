@@ -12,6 +12,8 @@ mod creatures;
 mod fight;
 mod fishing;
 mod death;
+#[cfg(test)]
+mod doors;
 mod hearth;
 mod journal;
 mod lairs;
@@ -27,6 +29,7 @@ mod player;
 mod prayers;
 mod process;
 mod rules;
+mod laying;
 mod stations;
 mod stores;
 mod treasure;
