@@ -364,7 +364,7 @@ fi
 #
 # The Mac's slowdown, measured when it ran the tests at nice 10 and utility QoS beside the
 # played session (nice 19 now, without the QoS),
-# which keeps them mostly on its efficiency cores, so a calm Mac's landing gate (home #61,
+# which kept them mostly on its efficiency cores, so a calm Mac's landing gate (home #61,
 # 2026-10-13, load under the core count) took 3 to 8 times the Linux box's times for the same
 # tests, the gate's own build and tests being all its load: at most 3.5 times their budgets
 # (the glyph tests 17.4 s against 5), past the rod cast's 81 s (a wall-clock wait, since
