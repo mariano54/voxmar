@@ -8,7 +8,8 @@
 //! share of that range. A chunk whose palette holds no block seen from that far is passed
 //! over without reading its blocks, so away from fires the search costs next to nothing.
 //! An emission `over` a tag is given off only with such a block below and open air above
-//! (a chimney smokes over a hearth, from its top). Every frame those emitters spawn
+//! (a chimney smokes over a hearth, from its top), and over a structure's core only while
+//! its fire burns (`ClientWorld::fires`): a cold hearth's chimney does not smoke. Every frame those emitters spawn
 //! particles into the shared ring (`render::particles`), which moves, grows, cools and
 //! fades them on the GPU, so the CPU only writes each particle once. Nothing here allocates
 //! once its two lists have grown to their size.
@@ -78,6 +79,9 @@ pub(crate) struct Emitters {
     /// and the farthest of them.
     emits: Vec<i32>,
     far: i32,
+    /// Per block id, whether it is a structure's core (a hearthstone), which an emission
+    /// is `over` only while it burns.
+    cores: Vec<bool>,
     /// The nearest emitters, nearest first.
     near: Vec<Emitter>,
     /// The last search's finds by squared distance as a share of their range's (scaled to
@@ -151,7 +155,7 @@ impl Emitters {
                 .find(|&dy| world.block(pos + IVec3::Y * dy).is_none_or(|b| world.registry.info(b).solid))
                 .unwrap_or(HEADROOM + 1)
                 - 1;
-            let giving = giving(world, pos, block, distance, headroom);
+            let giving = giving(world, &self.cores, pos, block, distance, headroom);
             if giving != 0 {
                 self.near.push(Emitter { pos, block, sky: sky_light(world, above), headroom: headroom as f32 + 0.5, share, giving });
             }
@@ -189,6 +193,7 @@ impl Emitters {
 
 fn emit(
     time: Res<Time>,
+    launch: Res<crate::session::Launch>,
     camera: Query<&GlobalTransform, With<Camera3d>>,
     world: Res<ClientWorld>,
     weather: Res<ClientWeather>,
@@ -199,6 +204,7 @@ fn emit(
     if !emitters.registry.as_ref().is_some_and(|r| Arc::ptr_eq(r, &world.registry)) {
         emitters.emits = (0..world.registry.len()).map(|id| world.registry.def(BlockId(id as u16)).particles.iter().map(reach).max().unwrap_or(0)).collect();
         emitters.far = emitters.emits.iter().copied().max().unwrap_or(0);
+        emitters.cores = cores(&world.registry, &launch.content.multiblocks);
         emitters.registry = Some(world.registry.clone());
         emitters.searched_at = None;
     }
@@ -244,6 +250,11 @@ fn emit(
     }
 }
 
+/// Per block id, whether some structure has it as its core.
+fn cores(registry: &BlockRegistry, multiblocks: &voxmar_engine::multiblock::MultiblockRegistry) -> Vec<bool> {
+    (0..registry.len()).map(|id| multiblocks.with_core(BlockId(id as u16)).next().is_some()).collect()
+}
+
 /// How far off an emission is seen, in whole blocks.
 fn reach(emission: &Emission) -> i32 {
     emission.range.map_or(RANGE, |range| range.round() as i32)
@@ -252,14 +263,21 @@ fn reach(emission: &Emission) -> i32 {
 /// Which of `block`'s emissions at `pos`, `distance` squared from the camera with
 /// `headroom` blocks of air above, it gives off: those seen from this far, and with what
 /// they are `over` below them and open air above.
-fn giving(world: &ClientWorld, pos: IVec3, block: BlockId, distance: i32, headroom: i32) -> u8 {
+fn giving(world: &ClientWorld, cores: &[bool], pos: IVec3, block: BlockId, distance: i32, headroom: i32) -> u8 {
     let mut giving = 0;
     for (i, emission) in world.registry.def(block).particles.iter().enumerate().take(8) {
         let seen = reach(emission).pow(2) >= distance;
         let over = emission.over.as_ref().is_none_or(|(tag, reach)| {
             headroom > 0
                 && (1..=*reach as i32).any(|dy| {
-                    (-1..=1).any(|dx| (-1..=1).any(|dz| world.block(pos + IVec3::new(dx, -dy, dz)).is_some_and(|b| world.registry.def(b).has_tag(tag))))
+                    (-1..=1).any(|dx| {
+                        (-1..=1).any(|dz| {
+                            let at = pos + IVec3::new(dx, -dy, dz);
+                            world.block(at).is_some_and(|b| {
+                                world.registry.def(b).has_tag(tag) && (!cores.get(b.0 as usize).copied().unwrap_or(false) || world.fires.contains(&at))
+                            })
+                        })
+                    })
                 })
         });
         if seen && over {
@@ -391,8 +409,8 @@ mod tests {
         Emission { style, ..default() }
     }
 
-    /// A hearth's chimney smokes from its top, seen from far beyond a torch's flame, and
-    /// stops when the hearthstone goes.
+    /// A lit hearth's chimney smokes from its top, seen from far beyond a torch's flame; a
+    /// cold one does not smoke, nor one whose hearthstone has gone.
     #[test]
     fn a_chimney_smokes_over_a_hearth_from_afar() {
         use voxmar_engine::world::Column;
@@ -408,10 +426,13 @@ mod tests {
         let mut emitters = Emitters::default();
         emitters.emits = (0..world.registry.len()).map(|id| world.registry.def(BlockId(id as u16)).particles.iter().map(reach).max().unwrap_or(0)).collect();
         emitters.far = emitters.emits.iter().copied().max().unwrap_or(0);
+        emitters.cores = cores(&world.registry, &content.multiblocks);
         let found = |emitters: &mut Emitters, world: &ClientWorld| {
             emitters.search(world, IVec3::new(80, 102, 4));
             emitters.near.iter().map(|e| e.pos).collect::<Vec<_>>()
         };
+        assert!(found(&mut emitters, &world).is_empty(), "a cold hearth smokes");
+        world.fires.insert(hearth);
         assert_eq!(found(&mut emitters, &world), vec![top], "the top smokes, 76 blocks off; the torch is too far");
         world.set_block(hearth, BlockId::AIR);
         assert!(found(&mut emitters, &world).is_empty(), "no hearth, no smoke");

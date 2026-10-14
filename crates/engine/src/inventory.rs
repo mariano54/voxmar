@@ -496,6 +496,33 @@ impl Inventory {
         moved
     }
 
+    /// How many of `item` the slots hold (not the pouches, the pointer or the grid).
+    pub fn count(&self, item: BlockId) -> u32 {
+        self.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum()
+    }
+
+    /// Takes every one of `wants` (item and how many) from the slots, from `first` before
+    /// the others, or nothing if any falls short. Returns whether it took them.
+    pub fn take_all(&mut self, wants: &[(BlockId, u8)], first: usize) -> bool {
+        let needed = |item: BlockId| wants.iter().filter(|w| w.0 == item).map(|w| w.1 as u32).sum::<u32>();
+        if wants.iter().any(|&(item, _)| self.count(item) < needed(item)) {
+            return false;
+        }
+        for &(item, n) in wants {
+            let mut left = n;
+            let order = std::iter::once(first).chain((0..self.slots.len()).filter(|&s| s != first));
+            for slot in order {
+                if left == 0 {
+                    break;
+                }
+                if self.slots.get(slot).copied().flatten().is_some_and(|s| s.item == item) {
+                    left -= self.take(slot, left).map_or(0, |s| s.count);
+                }
+            }
+        }
+        true
+    }
+
     /// How many of `item` [`Inventory::add`] would take, up to `count`.
     pub fn room_for(&self, item: BlockId, count: u8) -> u8 {
         let room: u32 = self
@@ -544,6 +571,18 @@ impl Inventory {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn taking_several_items_takes_all_or_none_held_slot_first() {
+        let mut inv = Inventory::default();
+        inv.slots[0] = stack(SAND, 2);
+        inv.slots[4] = stack(SAND, 5);
+        inv.slots[6] = stack(DIRT, 1);
+        assert!(!inv.take_all(&[(SAND, 3), (DIRT, 2)], 4), "short of dirt");
+        assert_eq!((inv.count(SAND), inv.count(DIRT)), (7, 1), "nothing taken");
+        assert!(inv.take_all(&[(SAND, 6), (DIRT, 1)], 4));
+        assert_eq!((inv.slots[4], inv.slots[0], inv.count(DIRT)), (None, stack(SAND, 1), 0), "the held slot went first");
+    }
 
     #[test]
     fn room_and_taking_part_of_a_stack() {

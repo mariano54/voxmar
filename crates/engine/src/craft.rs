@@ -10,7 +10,12 @@
 //! items: `tag:TAG` takes anything with that tag (a family's own, with `{name}` in it, as
 //! `tag:dye:{name}`), and `a|b` either of two. A recipe trains a skill (Crafting unless it
 //! says), may need a level in it, and gives experience for every one made.
+//!
+//! A recipe may also be made only `near` a block with some tag, within a player's reach (a
+//! chopping block's planks): where the grid holds both a recipe made near something the
+//! player stands by and one made anywhere, the one near it is made.
 
+use glam::{IVec3, Vec3};
 use rustc_hash::FxHashMap;
 use serde::Deserialize;
 
@@ -51,6 +56,9 @@ pub struct RecipeDef {
     /// Boosts and schematics cannot lower its level (the Singularity's Engineering 90).
     #[serde(default)]
     pub firm: bool,
+    /// Made only within reach of a block with this tag.
+    #[serde(default)]
+    pub near: Option<String>,
 }
 
 fn one() -> u8 {
@@ -79,6 +87,8 @@ pub struct Recipe {
     pub level: u8,
     pub xp: f32,
     pub firm: bool,
+    /// The tag of a block it is made near, if any.
+    pub near: Option<String>,
 }
 
 impl Recipe {
@@ -156,6 +166,24 @@ impl Recipe {
             grid[at] = Some((item, times));
         }
         Some(grid)
+    }
+
+    /// What `have` (counts by item) lacks for one set, by item and how many: each cell takes
+    /// one of the first of its alternatives there is any left of, and a cell that finds
+    /// none counts its first alternative short. Empty when one set is there to lay.
+    pub fn short(&self, have: &FxHashMap<BlockId, u32>) -> Vec<(BlockId, u32)> {
+        let mut needed: Vec<(BlockId, u32)> = Vec::new();
+        let mut left = have.clone();
+        for accepts in self.alternatives().into_iter().flatten() {
+            match accepts.iter().find(|item| left.get(item).copied().unwrap_or(0) > 0) {
+                Some(item) => *left.get_mut(item).expect("found with some left") -= 1,
+                None => match needed.iter_mut().find(|(item, _)| *item == accepts[0]) {
+                    Some((_, n)) => *n += 1,
+                    None => needed.push((accepts[0], 1)),
+                },
+            }
+        }
+        needed
     }
 
     fn matches(&self, grid: &[Option<BlockId>; GRID]) -> bool {
@@ -259,6 +287,11 @@ impl RecipeRegistry {
             if def.pattern.is_empty() == def.ingredients.is_empty() || def.ingredients.len() > GRID {
                 return Err(bad("give either a pattern or up to nine ingredients"));
             }
+            if let Some(tag) = &def.near
+                && !blocks.ids().any(|id| blocks.def(id).has_tag(tag))
+            {
+                return Err(bad(&format!("nothing has the tag `{tag}` it is made near")));
+            }
             let skill = match &def.skill {
                 Some(name) => Some(skills.id(name).ok_or_else(|| bad(&format!("no skill `{name}`")))?),
                 None => crafting,
@@ -318,22 +351,38 @@ impl RecipeRegistry {
                 };
                 let ingredients: Vec<Accepts> = def.ingredients.iter().map(resolve).collect::<Result<Vec<_>, _>>()?.into_iter().flatten().collect();
                 let output = item(&def.output)?;
-                recipes.push(Recipe { pattern, ingredients, output, count: def.count.max(1), skill, level: def.level, xp: def.xp, firm: def.firm });
+                recipes.push(Recipe { pattern, ingredients, output, count: def.count.max(1), skill, level: def.level, xp: def.xp, firm: def.firm, near: def.near.clone() });
             }
         }
         Ok(Self { recipes })
     }
 
-    /// The recipe the grid holds, if any.
+    /// The recipe the grid holds away from anything: none made only near a block.
     pub fn find(&self, grid: &[Option<BlockId>; GRID]) -> Option<&Recipe> {
-        self.recipes.iter().find(|recipe| recipe.matches(grid))
+        self.find_near(grid, |_| false)
+    }
+
+    /// The recipe the grid holds where `near` says which tags' blocks are within reach: one
+    /// made near such a block first, else one made anywhere.
+    pub fn find_near(&self, grid: &[Option<BlockId>; GRID], near: impl Fn(&str) -> bool) -> Option<&Recipe> {
+        let nearby = self.recipes.iter().filter(|r| r.near.as_deref().is_some_and(&near)).find(|r| r.matches(grid));
+        nearby.or_else(|| self.recipes.iter().filter(|r| r.near.is_none()).find(|r| r.matches(grid)))
     }
 
     /// What each craft of the grid makes while it still holds `first`, the recipe it held
-    /// when the player crafted: crafting all stops once what is left makes another recipe.
-    /// The server judges a craft by this, and the client predicts it the same way.
-    pub fn while_making<'a>(&'a self, first: Option<&'a Recipe>) -> impl Fn(&[Option<BlockId>; GRID]) -> Option<(BlockId, u8)> + 'a {
-        move |grid| self.find(grid).filter(|r| first.is_some_and(|f| std::ptr::eq(*r, f))).map(|r| (r.output, r.count))
+    /// when the player crafted (where `near` says what is within reach): crafting all stops
+    /// once what is left makes another recipe. The server judges a craft by this, and the
+    /// client predicts it the same way.
+    pub fn while_making<'a>(&'a self, first: Option<&'a Recipe>, near: impl Fn(&str) -> bool + 'a) -> impl Fn(&[Option<BlockId>; GRID]) -> Option<(BlockId, u8)> + 'a {
+        move |grid| self.find_near(grid, &near).filter(|r| first.is_some_and(|f| std::ptr::eq(*r, f))).map(|r| (r.output, r.count))
+    }
+
+    /// The tags recipes are made near, each once.
+    pub fn near_tags(&self) -> Vec<&str> {
+        let mut tags: Vec<&str> = self.recipes.iter().filter_map(|r| r.near.as_deref()).collect();
+        tags.sort_unstable();
+        tags.dedup();
+        tags
     }
 
     /// Every recipe, in the order packages list them.
@@ -348,6 +397,42 @@ impl RecipeRegistry {
     pub fn is_empty(&self) -> bool {
         self.recipes.is_empty()
     }
+}
+
+/// How far a block a recipe is made near may be from the player's eye, to its middle: their
+/// reach.
+pub const NEAR_REACH: f32 = crate::physics::player::REACH;
+
+/// Which of `tags` (see [`RecipeRegistry::near_tags`]) some block within reach of `eye` has;
+/// `block` reads the world. The server judges crafts by this, and the client the same way.
+pub fn tags_near(tags: &[&str], blocks: &BlockRegistry, eye: Vec3, block: impl Fn(IVec3) -> Option<BlockId>) -> Vec<String> {
+    let mut found: Vec<String> = Vec::new();
+    if tags.is_empty() {
+        return found;
+    }
+    let r = NEAR_REACH.ceil() as i32;
+    let at = eye.floor().as_ivec3();
+    for dy in -r..=r {
+        for dz in -r..=r {
+            for dx in -r..=r {
+                let pos = at + IVec3::new(dx, dy, dz);
+                if eye.distance(pos.as_vec3() + 0.5) > NEAR_REACH {
+                    continue;
+                }
+                let Some(b) = block(pos).filter(|b| !b.is_air()) else { continue };
+                let def = blocks.def(b);
+                for tag in tags {
+                    if def.has_tag(tag) && !found.iter().any(|f| f == tag) {
+                        found.push((*tag).to_owned());
+                    }
+                }
+                if found.len() == tags.len() {
+                    return found;
+                }
+            }
+        }
+    }
+    found
 }
 
 /// How many of each item a recipe takes, for showing it.
@@ -543,15 +628,58 @@ mod tests {
         inventory.craft[1] = Some(ItemStack { item: id("stone"), count: 1 });
         let first = registry.find(&inventory.grid());
         assert_eq!(first.map(|r| r.output), Some(id("bread")));
-        assert_eq!(inventory.craft(registry.while_making(first), true), 1);
+        assert_eq!(inventory.craft(registry.while_making(first, |_| false), true), 1);
         assert_eq!(inventory.craft[0].map(|s| s.count), Some(3), "the logs left are not made into planks");
         let carried = |inventory: &Inventory, item| inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
         assert_eq!((carried(&inventory, id("bread")), carried(&inventory, id("oak_planks"))), (1, 0));
         // Nothing held, nothing made.
-        assert_eq!(inventory.craft(registry.while_making(None), true), 0);
+        assert_eq!(inventory.craft(registry.while_making(None, |_| false), true), 0);
         // The planks recipe, held from the start, crafts all three.
         let first = registry.find(&inventory.grid());
-        assert_eq!(inventory.craft(registry.while_making(first), true), 3);
+        assert_eq!(inventory.craft(registry.while_making(first, |_| false), true), 3);
         assert_eq!(carried(&inventory, id("oak_planks")), 12);
+    }
+    /// A recipe made near a tagged block wins where the player stands by one, and is not
+    /// made away from it; crafting all goes on only while still near it.
+    #[test]
+    fn a_recipe_made_near_a_block_wins_only_near_it() {
+        use crate::inventory::{Inventory, ItemStack};
+        let tagged = |name: &str, tags: &[&str]| BlockDef { name: name.into(), tags: tags.iter().map(|t| t.to_string()).collect(), ..Default::default() };
+        let blocks = BlockRegistry::new(vec![tagged("test:oak_log", &[]), tagged("test:oak_planks", &[]), tagged("test:stump", &["chopping_block"])]).unwrap();
+        let source = r#"(recipes: [
+            (ingredients: ["oak_log"], output: "oak_planks", count: 4),
+            (ingredients: ["oak_log"], output: "oak_planks", count: 6, near: "chopping_block"),
+        ])"#;
+        let registry = registry(&blocks, source);
+        let log = blocks.id("test:oak_log");
+        let held = grid(&[&[log]]);
+        let near = |tag: &str| tag == "chopping_block";
+        assert_eq!(registry.find(&held).map(|r| r.count), Some(4), "away from it, the grid's own");
+        assert_eq!(registry.find_near(&held, near).map(|r| r.count), Some(6), "by it, two more");
+        assert_eq!(registry.near_tags(), ["chopping_block"]);
+        let mut inventory = Inventory::default();
+        inventory.craft[0] = Some(ItemStack { item: log.unwrap(), count: 2 });
+        let first = registry.find_near(&inventory.grid(), near);
+        assert_eq!(inventory.craft(registry.while_making(first, near), true), 2);
+        // Held near it, the recipe makes nothing once away.
+        inventory.craft[0] = Some(ItemStack { item: log.unwrap(), count: 2 });
+        assert_eq!(inventory.craft(registry.while_making(first, |_| false), true), 0);
+        // A tag no block has is refused.
+        let bad = RecipeRegistry::read("test", r#"(recipes: [(ingredients: ["oak_log"], output: "oak_planks", near: "anvil")])"#).unwrap();
+        assert!(RecipeRegistry::new(bad, &blocks, &SkillRegistry::default()).is_err());
+    }
+
+    /// Only blocks within reach of the eye count, and only the tags asked about.
+    #[test]
+    fn tags_near_look_within_reach() {
+        let tagged = |name: &str, tags: &[&str]| BlockDef { name: name.into(), tags: tags.iter().map(|t| t.to_string()).collect(), ..Default::default() };
+        let blocks = BlockRegistry::new(vec![tagged("test:stump", &["chopping_block", "wood"])]).unwrap();
+        let stump = blocks.id("test:stump").unwrap();
+        let at = IVec3::new(3, 0, 0);
+        let world = |pos: IVec3| (pos == at).then_some(stump);
+        let eye = Vec3::new(0.5, 0.5, 0.5);
+        assert_eq!(tags_near(&["chopping_block", "anvil"], &blocks, eye, world), ["chopping_block"]);
+        assert!(tags_near(&["chopping_block"], &blocks, eye - Vec3::X * 3.0, world).is_empty(), "out of reach");
+        assert!(tags_near(&[], &blocks, eye, world).is_empty());
     }
 }

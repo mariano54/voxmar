@@ -242,7 +242,7 @@
         "rabbit": (
             size: 0.45,
             idle: (clips: ["sounds/creatures/rabbit/idle_1.ogg", "sounds/creatures/rabbit/idle_2.ogg", "sounds/creatures/rabbit/idle_3.ogg"]),
-            graze: (clips: ["sounds/creatures/rabbit/graze_1.ogg", "sounds/creatures/rabbit/graze_2.ogg", "sounds/creatures/rabbit/graze_3.ogg", "sounds/creatures/rabbit/graze_4.ogg", "sounds/creatures/rabbit/graze_5.ogg", "sounds/creatures/rabbit/graze_6.ogg"]),
+            graze: (clips: ["sounds/creatures/rabbit/graze_1.ogg", "sounds/creatures/rabbit/graze_2.ogg", "sounds/creatures/rabbit/graze_3.ogg", "sounds/creatures/rabbit/graze_4.ogg"]),
             alert: (clips: ["sounds/creatures/rabbit/alert_1.ogg", "sounds/creatures/rabbit/alert_2.ogg"]),
             hurt: (clips: ["sounds/creatures/rabbit/hurt_1.ogg", "sounds/creatures/rabbit/hurt_2.ogg", "sounds/creatures/rabbit/hurt_3.ogg"]),
             death: (clips: ["sounds/creatures/rabbit/death_1.ogg"]),
@@ -250,7 +250,7 @@
         // Snuffles and huffs.
         "hedgehog": (
             size: 0.22,
-            idle: (clips: ["sounds/creatures/hedgehog/idle_1.ogg", "sounds/creatures/hedgehog/idle_2.ogg", "sounds/creatures/hedgehog/idle_3.ogg", "sounds/creatures/hedgehog/idle_4.ogg", "sounds/creatures/hedgehog/idle_5.ogg"]),
+            idle: (clips: ["sounds/creatures/hedgehog/idle_1.ogg", "sounds/creatures/hedgehog/idle_2.ogg", "sounds/creatures/hedgehog/idle_3.ogg", "sounds/creatures/hedgehog/idle_5.ogg"]),
             alert: (clips: ["sounds/creatures/hedgehog/alert_1.ogg", "sounds/creatures/hedgehog/alert_2.ogg", "sounds/creatures/hedgehog/alert_3.ogg", "sounds/creatures/hedgehog/alert_4.ogg", "sounds/creatures/hedgehog/alert_5.ogg"]),
             hurt: (clips: ["sounds/creatures/hedgehog/hurt_1.ogg", "sounds/creatures/hedgehog/hurt_2.ogg"]),
         ),

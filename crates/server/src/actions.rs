@@ -167,6 +167,9 @@ impl ActionContext for Context<'_> {
     fn stations(&self) -> Option<&voxmar_engine::station::Stations> {
         Some(&self.server.content.stations)
     }
+    fn traps(&self) -> Option<&voxmar_engine::trap::Traps> {
+        Some(&self.server.content.traps)
+    }
 
     fn creature_accepts(&self, id: u32, item: BlockId) -> bool {
         self.server.creature_accepts(self.agent, id, item)
@@ -322,6 +325,7 @@ impl Server {
                 (Effect::Dodge, _) => self.dodge(agent),
                 (Effect::Cook, ActionTarget::Block { block, .. }) => self.cook(agent, block),
                 (Effect::UseStation, ActionTarget::Block { block, .. }) => self.use_station(agent, block),
+                (Effect::TakeFromTrap, ActionTarget::Block { block, .. }) => self.take_from_trap(agent, block),
                 (Effect::Fertilise, ActionTarget::Block { block, .. }) => self.fertilise(agent, block),
                 (Effect::Tend, ActionTarget::Creature(id)) => self.tend(agent, id),
                 (Effect::Inspect, ActionTarget::Creature(id)) => self.inspect(agent, id),
@@ -352,6 +356,7 @@ impl Server {
                     }
                     self.placed_plant(item, cell);
                     self.placed_machine(agent, cell);
+                    self.placed_by_field(agent, item, cell);
                 }
                 (Effect::MoveItems, ActionTarget::Slots { from, to, count }) => {
                     // An open store's slots as it holds them now, and what moved written back.
@@ -383,7 +388,7 @@ impl Server {
                     // world spawn. What they carried is left where they fell first.
                     self.bury_if_dead(agent);
                     let player = self.players.get_mut(&agent).unwrap();
-                    let spawn = player.home.or(player.bed).unwrap_or(self.spawn);
+                    let spawn = player.home_spot(&self.lit).unwrap_or(self.spawn);
                     player.buried = false;
                     player.health.heal(u8::MAX);
                     // Where they wake is where a grave goes until they stand elsewhere,
@@ -500,17 +505,20 @@ impl Server {
     }
 
     /// Crafts what `agent`'s grid holds, once or (`all`) as many times as it can: if the
-    /// recipe's skill level is met, and for a recipe bigger than two by two, at a crafting
-    /// table within reach. Experience comes for every one made.
+    /// recipe's skill level is met, for a recipe bigger than two by two, at a crafting
+    /// table within reach, and for one made near a block, within reach of one. Experience
+    /// comes for every one made.
     fn craft(&mut self, agent: PlayerId, all: bool) {
         let recipes = self.content.recipes.clone();
         let allowed = self.allowed_recipes(agent);
+        let near = self.near_tags(agent);
+        let near = |tag: &str| near.iter().any(|t| t == tag);
         let player = self.players.get_mut(&agent).unwrap();
         // Crafting all goes on only while the grid still makes the same recipe: experience
         // and tallies are this recipe's, once for each one made.
-        let first = recipes.find(&player.inventory.grid()).filter(|r| allowed(r));
+        let first = recipes.find_near(&player.inventory.grid(), near).filter(|r| allowed(r));
         let found = first.map(|r| (r.skill, r.xp, r.output, r.count));
-        let made = player.inventory.craft(recipes.while_making(first), all);
+        let made = player.inventory.craft(recipes.while_making(first, near), all);
         // Always: a refused craft the client predicted is undone.
         player.changed(traits::INVENTORY);
         if let Some((skill, xp, output, count)) = found.filter(|_| made > 0) {
@@ -565,6 +573,14 @@ impl Server {
     pub(crate) fn check_level(&self, agent: PlayerId, skill: SkillId) -> u8 {
         let Some(player) = self.players.get(&agent) else { return 1 };
         voxmar_engine::level::check_level(&self.content.skills, &self.content.effects, &player.skills, &player.vitals.effects, skill)
+    }
+
+    /// The tags recipes are made near (a chopping block's) that some block within `agent`'s
+    /// reach has.
+    pub(crate) fn near_tags(&self, agent: PlayerId) -> Vec<String> {
+        let Some(player) = self.players.get(&agent) else { return Vec::new() };
+        let tags = self.content.recipes.near_tags();
+        voxmar_engine::craft::tags_near(&tags, &self.content.blocks, player.eye(), |pos| self.block(pos))
     }
 
     /// Whether `agent` is at the crafting table they last opened, still within reach.

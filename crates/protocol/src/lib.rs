@@ -35,8 +35,10 @@ pub use voxmar_engine::weather::Weather;
 // 37: an open store's slots in the inventory (Inventory::store), after the open_store action.
 // 38: where home is (Vitals::home), for the way back.
 // 39: a crafting way as an action's target (ActionTarget::Recipe), for laying it.
-// 40: the seat a player sits on (Vitals::seated), for the lower eye.
-pub const PROTOCOL_VERSION: u32 = 40;
+// 40: ClientMessage::LookAtStation and ServerMessage::Station, what is on a station looked at.
+// 41: ServerMessage::Fires, the lit structures whose fires burn.
+// 42: the seat a player sits on (Vitals::seated), for the lower eye.
+pub const PROTOCOL_VERSION: u32 = 42;
 
 /// A creature's `tell` while it rears into a new phase of its fight.
 pub const REARING: u8 = u8::MAX;
@@ -96,6 +98,20 @@ pub enum ClientMessage {
     Pong { id: u32 },
     /// The player turned a prayer on or off (`voxmar_engine::prayer`).
     Pray { prayer: voxmar_engine::prayer::PrayerId, on: bool },
+    /// The player looks at the station at `block` (a drying rack at work, a kiln's core):
+    /// the server answers with `ServerMessage::Station`, if it is near enough to see.
+    LookAtStation { block: IVec3 },
+}
+
+/// What is on a station: `count` of `item`, making `makes` of `output`, done in `seconds`
+/// (0 once done).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StationLoad {
+    pub item: BlockId,
+    pub count: u8,
+    pub output: BlockId,
+    pub makes: u8,
+    pub seconds: u32,
 }
 
 /// The client's predicted movement state, sent every tick. The server checks it against
@@ -189,6 +205,14 @@ pub enum ServerMessage {
     /// The player's prayer points (whole, of `most`) and the prayers they have on, sent
     /// when either changes.
     Prayers { points: u16, most: u16, on: Vec<voxmar_engine::prayer::PrayerId> },
+    /// What is on the station at `block`, answering `ClientMessage::LookAtStation`: nothing
+    /// if it is empty; and, for a fuelled structure's core (a kiln), the seconds its fire
+    /// burns on (0 when cold).
+    Station { block: IVec3, load: Option<StationLoad>, fire: Option<u32> },
+    /// The cores of every structure a player has lit whose fire still burns (a hearth, a
+    /// kiln), sent on joining and whenever one is lit, breaks or burns out: they crackle
+    /// and their chimneys smoke, an unlit one is cold and quiet.
+    Fires { lit: Vec<IVec3> },
 }
 
 /// A creature as players see it. Its velocity lets clients carry it on smoothly between

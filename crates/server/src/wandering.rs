@@ -700,7 +700,7 @@ impl Server {
         let combat = self.combat_level(player);
         let recent = self.wandering.recent.get(&player);
         // The player's home, surveyed once and only if a kind asks how far it has come.
-        let anchor = p.home.or(p.bed).map(|h| h.floor().as_ivec3());
+        let anchor = p.home_spot(&self.lit).map(|h| h.floor().as_ivec3());
         let survey = std::cell::OnceCell::new();
         let home_is = |step: voxmar_engine::effect::EffectId| {
             let Some(anchor) = anchor else { return false };
@@ -3359,7 +3359,7 @@ mod tests {
         put_next_to(&mut server, hound, Vec3::new(1.5, 0.0, 0.0));
         skill_to(&mut server, "core:hunter", 2);
         for _ in 0..12 {
-            give_held(&mut server, "base:raw_rabbit", 1);
+            give_held(&mut server, "base:raw_small_game", 1);
             server.tend(1, hound);
             if server.creatures.live[&hound].owner.is_some() {
                 break;
@@ -3702,7 +3702,7 @@ mod tests {
         let hound = server.wandering.active[&id].members[0].creature;
         let distance = |server: &Server| flat(server.creatures.live[&hound].body.position, server.players[&1].position);
         let before = distance(&server);
-        give_held(&mut server, "base:cooked_rabbit", 1);
+        give_held(&mut server, "base:cooked_small_game", 1);
         run(&mut server, 20 * 12);
         assert!(distance(&server) < before - 3.0, "it came to the food: {before:.1} -> {:.1}", distance(&server));
         give_held(&mut server, "base:torch", 1);
@@ -4071,21 +4071,21 @@ mod tests {
         let mut server = fixture();
         let id = start(&mut server, "travelling_cook", (110, 128));
         let cook = members_of(&server, id, 0)[0];
-        give_held(&mut server, "base:raw_rabbit", 5);
+        give_held(&mut server, "base:raw_small_game", 5);
         assert!(server.meet(1, cook));
-        assert_eq!((count_of(&server, "base:raw_rabbit"), count_of(&server, "base:cooked_rabbit")), (0, 4), "five cooked, one kept");
+        assert_eq!((count_of(&server, "base:raw_small_game"), count_of(&server, "base:cooked_small_game")), (0, 4), "five cooked, one kept");
         // One raw is not enough to bother the pot with.
-        give_held(&mut server, "base:raw_rabbit", 1);
+        give_held(&mut server, "base:raw_small_game", 1);
         assert!(server.meet(1, cook));
-        assert_eq!(count_of(&server, "base:raw_rabbit"), 1);
+        assert_eq!(count_of(&server, "base:raw_small_game"), 1);
         // Showing cooked food teaches a beginner, once, and it is not taken.
         let cooking = server.content.skills.id("core:cooking").unwrap();
-        give_held(&mut server, "base:cooked_rabbit", 1);
+        give_held(&mut server, "base:cooked_small_game", 1);
         assert!(server.meet(1, cook));
         let xp = server.players[&1].skills.xp(cooking);
         assert!(xp > 0);
         assert!(server.meet(1, cook));
-        assert_eq!((server.players[&1].skills.xp(cooking), count_of(&server, "base:cooked_rabbit")), (xp, 1));
+        assert_eq!((server.players[&1].skills.xp(cooking), count_of(&server, "base:cooked_small_game")), (xp, 1));
     }
 
     #[test]
@@ -5120,9 +5120,9 @@ mod tests {
         server.players.get_mut(&1).unwrap().inventory.clear(|_| true);
         assert!(server.meet(1, neighbour));
         assert_eq!(count_of(&server, "base:earthen_plate"), 1, "a housewarming gift");
-        give_held(&mut server, "base:cooked_rabbit", 1);
+        give_held(&mut server, "base:cooked_small_game", 1);
         assert!(server.meet(1, neighbour));
-        assert_eq!(count_of(&server, "base:cooked_rabbit"), 0);
+        assert_eq!(count_of(&server, "base:cooked_small_game"), 0);
         assert!(count_of(&server, "base:seed_mix") >= 3);
         assert!(has_effect(&server, "sustained"));
         assert_eq!(count_of(&server, "base:earthen_plate"), 0, "the plate came once, to the party");
@@ -6167,7 +6167,9 @@ mod tests {
         let mut server = fixture();
         server.day = (0..40).map(|i| TICKS_PER_DAY as f64 * (4.0 + i as f64 / 40.0)).find(|&day| (0.1..0.5).contains(&voxmar_engine::creature::daylight(day as u64))).expect("an evening");
         let home = IVec3::new(128, 200, 128);
-        server.players.get_mut(&1).unwrap().home = Some(home.as_vec3());
+        // A hearth home, not burning, and the bed beside it: callers judge the bed's home.
+        let player = server.players.get_mut(&1).unwrap();
+        (player.home, player.bed) = (Some(home.as_vec3()), Some(home.as_vec3()));
         let spot = IVec3::new(128, 200, 150);
         let bare = ["base:hearthstone", "base:sleeping_bag", "base:candle"];
         for (i, name) in bare.iter().enumerate() {
@@ -6186,7 +6188,8 @@ mod tests {
         assert!(comes_at(&server, "fireside_guests", spot), "a homely home has callers");
         assert!(!comes_at(&server, "hedgehog_lodger", spot), "homely is not yet cosy");
         // Far from home, nobody calls there.
-        server.players.get_mut(&1).unwrap().home = Some(Vec3::new(600.0, 200.0, 600.0));
+        let player = server.players.get_mut(&1).unwrap();
+        (player.home, player.bed) = (Some(Vec3::new(600.0, 200.0, 600.0)), Some(Vec3::new(600.0, 200.0, 600.0)));
         assert!(!comes_at(&server, "fireside_guests", spot));
     }
 
@@ -6197,7 +6200,9 @@ mod tests {
         let mut server = fixture();
         server.day = (0..40).map(|i| TICKS_PER_DAY as f64 * (4.0 + i as f64 / 40.0)).find(|&day| voxmar_engine::creature::daylight(day as u64) >= 1.0).expect("midday");
         let home = IVec3::new(128, 200, 128);
-        server.players.get_mut(&1).unwrap().home = Some(home.as_vec3());
+        // A hearth home, not burning, and the bed beside it: callers judge the bed's home.
+        let player = server.players.get_mut(&1).unwrap();
+        (player.home, player.bed) = (Some(home.as_vec3()), Some(home.as_vec3()));
         let spot = IVec3::new(128, 200, 150);
         for (i, name) in ["base:hearthstone", "base:sleeping_bag", "base:dandelion", "base:dandelion", "base:dandelion"].iter().enumerate() {
             place(&mut server, name, home + IVec3::new(i as i32 + 1, 0, 0));
