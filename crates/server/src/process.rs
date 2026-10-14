@@ -35,6 +35,7 @@ pub(crate) fn core_processes() -> Vec<Box<dyn Process>> {
         Box::new(crate::machines::Machines),
         Box::new(crate::apiary::Bees::default()),
         Box::new(crate::stations::Stations),
+        Box::new(crate::traps::Traps),
         Box::new(crate::lairs::Bosses),
     ]
 }

@@ -168,6 +168,50 @@ mod tests {
         assert!(!server.lit.contains_key(&core));
     }
 
+    /// A standing Homestead Hearth and a Cottage Stove cook what a campfire cooks; a
+    /// hearthstone with no ring round it does not, and says what it lacks.
+    #[test]
+    fn the_hearth_and_the_stove_cook_as_a_campfire_does() {
+        let mut server = crate::test_server();
+        player(&mut server);
+        let core = ColumnPos::of_block(server.spawn.floor().as_ivec3()).origin() + IVec3::new(8, server.spawn.y as i32 + 4, 8);
+        let stove = core + IVec3::new(4, 0, 0);
+        let block = |server: &Server, name: &str| server.content.blocks.expect(name);
+        let (raw, cooked) = (block(&server, "base:raw_small_game"), block(&server, "base:cooked_small_game"));
+        server.set_block(core, block(&server, "base:hearthstone"));
+        server.set_block(stove, block(&server, "base:cottage_stove"));
+        // A tick whose roll never burns at level 1, at either fire.
+        let burn = server.content.cooking.for_item(raw, &["campfire".into()]).unwrap().burn_chance(1);
+        let tick = (server.tick..server.tick + 1000).find(|&tick| [core, stove].iter().all(|&at| crate::items::random3(tick, at, 1 ^ 0xc00c)[0] >= burn)).unwrap();
+        server.tick = tick;
+        let cook = |server: &mut Server, at: IVec3| {
+            server.players.get_mut(&1).unwrap().inventory.slots.iter_mut().for_each(|slot| *slot = None);
+            server.players.get_mut(&1).unwrap().inventory.slots[0] = Some(ItemStack { item: raw, count: 1 });
+            server.cook(1, at);
+            server.players[&1].inventory.get(0).map(|s| s.item)
+        };
+        assert_eq!(cook(&mut server, core), Some(raw), "a loose hearthstone cooked");
+        let stone = block(&server, "base:cobblestone");
+        for dz in -1..=1 {
+            for dx in -1..=1 {
+                if (dx, dz) != (0, 0) {
+                    server.set_block(core + IVec3::new(dx, 0, dz), stone);
+                }
+            }
+        }
+        for dy in 1..=2 {
+            server.set_block(core + IVec3::new(-1, dy, -1), block(&server, "base:chimney"));
+        }
+        assert!(server.station_stands(core));
+        assert_eq!(cook(&mut server, core), Some(cooked), "the standing hearth cooked nothing");
+        assert_eq!(cook(&mut server, stove), Some(cooked), "the stove cooked nothing");
+        assert_eq!(server.players[&1].tallies["cooked_at:campfire:base:cooked_small_game"], 2, "counted as campfire cooking, for First Night");
+        // The stove is a fire: it warms, and holds a pot.
+        let def = server.content.blocks.def(block(&server, "base:cottage_stove"));
+        assert!(def.has_tag("hob") && def.has_tag("heat"));
+        assert!(server.content.blocks.info(block(&server, "base:cottage_stove")).emission >= server.survival.heat_emission);
+    }
+
     /// Bronze is three copper ingots held and a tin ore carried, four at a time, in one
     /// step: short of the tin, nothing is taken and the player is told what it takes.
     #[test]

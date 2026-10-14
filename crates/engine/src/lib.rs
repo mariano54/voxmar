@@ -48,6 +48,7 @@ pub mod schedule;
 pub mod shape;
 pub mod skill;
 pub mod station;
+pub mod trap;
 pub mod tool;
 pub mod traits;
 pub mod treasure;
