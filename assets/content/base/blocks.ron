@@ -142,6 +142,10 @@
         // Rock
         (name: "bedrock", texture_variety: (turn: true, mirror: true), textures: All("bedrock"), hardness: -1.0, color: (60, 60, 60), tags: ["deep"]),
         (name: "stone", texture_variety: (turn: true, mirror: true), textures: All("stone"), hardness: 1.5, drops: "cobblestone", color: (125, 125, 125), family: "stone", tags: ["stone", "natural", "igneous", "cliff", "cave"]),
+        // A lair's room (lairs.ron): living root that no tool cuts, and the floor boss music
+        // knows the room by (music.ron's `boss.rooms`).
+        (name: "hollow_root", sound: Wood, textures: All("hollow_root"), hardness: -1.0, color: (78, 58, 42), tags: ["root", "lair"]),
+        (name: "hollow_floor", sound: Soil, textures: All("hollow_floor"), hardness: -1.0, color: (66, 50, 38), tags: ["lair"]),
         (name: "cobblestone", textures: All("cobblestone"), hardness: 2.0, color: (110, 110, 110), family: "stone", tags: ["stone", "cobbled", "building"]),
         (name: "mossy_cobblestone", textures: All("mossy_cobblestone"), hardness: 2.0, color: (100, 118, 90), family: "stone", tags: ["stone", "cobbled", "building", "natural", "mossy", "wet"]),
         (name: "polished_stone", textures: All("polished_stone"), hardness: 1.5, color: (135, 135, 135), family: "stone", tags: ["stone", "polished", "building"]),

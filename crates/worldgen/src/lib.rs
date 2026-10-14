@@ -41,6 +41,7 @@ mod ores;
 mod rng;
 mod rocks;
 mod router;
+mod lairs;
 mod settlements;
 mod shapes;
 mod stage;
@@ -73,6 +74,7 @@ pub use geology::Form;
 pub use rocks::ProvinceId;
 pub use shapes::ShapeId;
 pub use trails::{Kind as PlaceKind, Poi, TrailMark};
+pub use lairs::{LairDef, LairSite};
 pub use settlements::{Building as SettlementBuilding, Facing as SettlementFacing, Kind as BuildingKind, Levers as SettlementLevers, people};
 
 use fastnoise_lite::{FastNoiseLite, FractalType};
@@ -244,6 +246,7 @@ pub struct Overworld {
     rivers: water::Rivers,
     trails: trails::Trails,
     settlements: settlements::Settlements,
+    lairs: lairs::Lairs,
     ecology: Ecology,
     decor: decor::Decor,
     biomes: Biomes,
@@ -312,6 +315,7 @@ impl Overworld {
             decor,
             trails: trails::Trails::new(stream, content.trails.laid),
             settlements: settlements::Settlements::new(stream, &content.settlements, &registry, trees::tallest(content)),
+            lairs: lairs::Lairs::new(stream, &content.lairs, &registry),
             caves: caves::Caves::new(stream, &dials),
             underground,
             terrain: terrain::Terrain::new(stream, &registry, content, &rocks, &biomes),
@@ -519,6 +523,21 @@ impl Overworld {
     /// The land trails are planned over: the ground with its rivers and lakes.
     fn land(&self) -> RiverLand<'_> {
         RiverLand { rivers: &self.rivers, stages: self.stages(), world: self }
+    }
+
+    /// The lairs within `radius` blocks of `centre`, nearest first (`lairs.ron`).
+    pub fn lairs_near(&self, centre: IVec2, radius: i32) -> Vec<LairSite> {
+        self.lairs.near(self, centre, radius)
+    }
+
+    /// The kinds of lair, by `LairSite::lair`.
+    pub fn lair_defs(&self) -> &[LairDef] {
+        self.lairs.defs()
+    }
+
+    /// Whether a settlement's plan covers (x, z).
+    pub(crate) fn settlement_covers(&self, x: i32, z: i32) -> bool {
+        self.settlements.covers(self, x, z)
     }
 
     /// The settlements whose squares lie within `radius` blocks of `centre`: their names

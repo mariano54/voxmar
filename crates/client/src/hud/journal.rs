@@ -100,11 +100,12 @@ pub fn findables(locale: &Locale, launch: &Launch, biomes: &[String], page: Page
         let local = name.strip_prefix("tag:").unwrap_or(name);
         locale.get_or(&def_key("biome", local), &title_from_id(local)).to_owned()
     };
-    let creatures = |kinds: &[Kind]| -> Vec<Findable> {
+    // Bosses have their own page (`Page::Bosses`), whatever their kind.
+    let creatures = |kinds: &[Kind], bosses: bool| -> Vec<Findable> {
         let registry = &content.creatures;
         (0..registry.len())
             .map(|i| registry.get(voxmar_engine::creature::CreatureId(i as u16)))
-            .filter(|creature| kinds.contains(&creature.def.kind))
+            .filter(|creature| kinds.contains(&creature.def.kind) && creature.def.boss == bosses)
             .map(|creature| {
                 let def = &creature.def;
                 let home = def.habitat.biomes.iter().max_by(|a, b| a.1.total_cmp(&b.1)).map(|(biome, _)| biome_name(biome));
@@ -134,8 +135,9 @@ pub fn findables(locale: &Locale, launch: &Launch, biomes: &[String], page: Page
     };
     let ids = || blocks.ids().filter(|&id| blocks.listed(id));
     match page {
-        Page::Animals => creatures(&[Kind::Animal]),
-        Page::Monsters => creatures(&[Kind::Monster, Kind::Spirit]),
+        Page::Animals => creatures(&[Kind::Animal], false),
+        Page::Monsters => creatures(&[Kind::Monster, Kind::Spirit], false),
+        Page::Bosses => creatures(&[Kind::Animal, Kind::Monster, Kind::Spirit], true),
         Page::Fish => items(content.fishing.iter().map(|catch| catch.item).collect()),
         Page::Plants => {
             let wild = ids().filter(|&id| {

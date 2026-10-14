@@ -412,6 +412,14 @@ fn pick(tracks: &[Track], context: Context, biome: &[String], settings: &Setting
     group.last().copied()
 }
 
+/// Whether the music counts the player in a boss fight, and whether the track playing (or
+/// being read) is a boss's; none when no music runs. For the gate.
+pub(crate) fn boss_music(world: &World) -> Option<(bool, bool)> {
+    let music = world.get_resource::<Music>()?;
+    let track = music.current.is_some_and(|index| music.tracks[index].contexts.contains(&Context::Boss));
+    Some((music.fighting, track))
+}
+
 /// Whether the player is in a boss fight: a boss alive near, or a block of a boss's room
 /// (looked for once a second).
 fn in_boss_fight(music: &mut Music, time: &Time, feet: Vec3, creatures: Option<&Creatures>, world: Option<&ClientWorld>) -> bool {

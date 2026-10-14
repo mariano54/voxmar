@@ -9,6 +9,8 @@
             modifiers: (max_health_share: 1.1)),
         (name: "hunters_vigour", kind: Buff, title: "Hunter's vigour", description: "Game cooked over a fire: quicker on your feet.",
             modifiers: (speed: 1.1)),
+        (name: "heartwood", kind: Buff, title: "Heartwood", description: "The Rootmother's heartroot: room for a fifth more health, and you heal a quarter faster.",
+            modifiers: (max_health_share: 1.2, heal: 1.25)),
         (name: "sustained", kind: Buff, title: "Sustained", description: "Bread and roots: you heal by yourself a quarter faster.",
             modifiers: (heal: 1.25)),
         (name: "refreshed", kind: Buff, title: "Refreshed", description: "Fresh fruit: a spring in your step.",

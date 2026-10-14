@@ -1,0 +1,64 @@
+// Bosses' lairs (content/base/blocks.ron and blocks_creatures.ron), for this pack and Voxmar HD
+// alike: the living root a lair is lined with, its trodden floor, and the Rootmother's
+// heartroot.
+(
+    textures: {
+        // Strands of old root, grooved dark between, with a fleck of moss here and there.
+        "block/hollow_root": (size: (16, 16), layers: [Grid(legend: {'a': "#5a4230", 'b': "#6e5240", 'c': "#7e6450", 'd': "#36281c", 'm': "#4e6a38"}, rows: [
+            "daaaadbaaadabaad",
+            "daaacdambcdaaaad",
+            "daaaadaaacdbaaad",
+            "dambadaabadabaad",
+            "bbbcdbaacdbabcda",
+            "aaaadaaacdbaacdb",
+            "babadaaaadbbaadb",
+            "aabadaabcdbaaada",
+            "dabbadaaacdaabcd",
+            "dbaaadaabcdaaacd",
+            "daaacdaaaadaaaad",
+            "daaaadaabadaaaad",
+            "aabadaabadaaacda",
+            "bbaadaaacdaaacda",
+            "baaadaabcdbaacda",
+            "aabcdmaacdmbacdb",
+        ])]),
+        // Packed earth threaded with fine roots, and a pale fungus speck or two.
+        "block/hollow_floor": (size: (16, 16), layers: [Grid(legend: {'a': "#423226", 'b': "#4c3a2c", 'c': "#38291f", 'r': "#6a4e38", 'f': "#b8ac8c"}, rows: [
+            "raabfcbaaaarbcba",
+            "baraccafbaabarbc",
+            "bcabrbbaccaacfar",
+            "aaccaarbcaaafaca",
+            "bccababarbcababb",
+            "aaaabacbaarbacbf",
+            "braaafcaaabaraba",
+            "abbrbaaaabbbaara",
+            "cbcaaraaacaaaacc",
+            "aafaaaaraacbccaa",
+            "aabaacbccrbbcaaa",
+            "rcfacbacbcarcbbc",
+            "barabaaabaaabrac",
+            "aaaarcacaccbbabr",
+            "abaacarcbaaaacab",
+            "ccccabbbrabaaaca",
+        ])]),
+        // A knot of red root, darker at its rind, with a tail of fine roots.
+        "block/heartroot": (size: (16, 16), layers: [Grid(legend: {'a': "#5a2a22", 'b': "#7a3428", 'c': "#963c30", 'd': "#b04a3a", 'e': "#d0685a", 'r': "#6e5240"}, rows: [
+            "................",
+            "......aa........",
+            ".....abba.......",
+            "....abccba......",
+            "...abcddcba.....",
+            "...bcdeedcb.....",
+            "..abcdeedcba....",
+            "..bcdeeeedcb....",
+            "..bcdeeeedcb....",
+            "..abcdeedcba....",
+            "...bcdeedcb.....",
+            "....bcddcb......",
+            ".....bccb.......",
+            "......bb.r......",
+            ".......r..r.....",
+            "......r...r.....",
+        ])]),
+    },
+)
