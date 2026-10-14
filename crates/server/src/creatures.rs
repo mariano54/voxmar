@@ -259,7 +259,8 @@ pub struct Creatures {
 /// Every live creature by where it stood when a pass began, in square cells `CELL` blocks
 /// across, so finding those near one looks at nine cells instead of every creature in the
 /// world: kin for herding and alarms, a mate. Each id stands with its species, so a search
-/// for one kind passes the others by without looking them up.
+/// for one kind passes the others by without looking them up: this holds as a creature's
+/// id and species never change once it is spawned.
 pub(crate) struct Neighbours {
     cells: FxHashMap<(i32, i32), Vec<(u32, CreatureId)>>,
     /// Those of a kind in the nine cells around a cell, in id order, for each cell and kind
@@ -1703,16 +1704,19 @@ mod neighbour_tests {
         assert!(with_kin > 100 && with_mates > 10, "too sparse to judge: {with_kin} with kin, {with_mates} with mates");
     }
 
-    /// A full pen (the 64 kept animals a player may have, packed a block apart, with a few
-    /// of another kind among them): each one's kin and mate are what looking at every
-    /// creature finds, asked twice over in one pass as a think and an alarm would, with
-    /// some having moved on since the pass began.
+    /// A full pen (the 64 kept animals a player may have, with a few of another kind among
+    /// them) about 50 blocks across, round the corner where four cells meet and over the
+    /// cells beyond, so some of a kind stand out of each other's reach and some cells' nine
+    /// leave part of the pen out: each one's kin, mate and those
+    /// its alarm reaches are what looking at every creature finds, asked twice over in one
+    /// pass, with some having moved across a cell's edge since the pass began.
     #[test]
     fn a_full_pen_finds_what_looking_at_every_creature_finds() {
         let mut server = crate::test_server();
         let (sheep, hens) = (server.content.creatures.id("base:mouflon").expect("species"), server.content.creatures.id("base:junglefowl").expect("species"));
+        let corner = Vec3::new((server.spawn.x / CELL).round() * CELL, server.spawn.y, (server.spawn.z / CELL).round() * CELL);
         for i in 0..70u64 {
-            let at = server.spawn + Vec3::new((i % 9) as f32 * 1.1, 0.0, (i / 9) as f32 * 1.1);
+            let at = corner + Vec3::new((i % 9) as f32 * 6.0 - 24.2, 0.0, (i / 9) as f32 * 6.0 - 24.2);
             let id = server.spawn_creature(if i % 10 == 3 { hens } else { sheep }, at, i).expect("room");
             let creature = server.creatures.live.get_mut(&id).unwrap();
             creature.owner = Some("test".to_string());
@@ -1720,30 +1724,48 @@ mod neighbour_tests {
         }
         let neighbours = Neighbours::of(&server.creatures.live);
         let ids: Vec<u32> = server.creatures.live.keys().copied().collect();
+        let (mut short, mut crossed) = (0, 0);
         for round in 0..2 {
             for &id in &ids {
                 let me = &server.creatures.live[&id];
-                let everyone = |range: f32, ready: bool| -> Vec<Vec3> {
+                let near = |range: f32, ready: bool| -> Vec<(u32, Vec3)> {
                     server
                         .creatures
                         .live
                         .iter()
                         .filter(|&(&other, c)| other != id && c.species == me.species && (!ready || (c.ready_until > 0 && c.owner.is_some())) && c.body.position.distance(me.body.position) < range)
-                        .map(|(_, c)| c.body.position)
+                        .map(|(&other, c)| (other, c.body.position))
                         .collect()
                 };
-                assert_eq!(server.kin_of(id, &neighbours), everyone(KIN_RANGE, false), "kin of {id} (round {round})");
-                let nearest = everyone(voxmar_engine::creature::husbandry::MATE_RANGE, true).into_iter().min_by(|a, b| a.distance(me.body.position).total_cmp(&b.distance(me.body.position)));
+                let kin = near(KIN_RANGE, false);
+                assert_eq!(server.kin_of(id, &neighbours), kin.iter().map(|&(_, at)| at).collect::<Vec<_>>(), "kin of {id} (round {round})");
+                let kind = server.creatures.live.values().filter(|c| c.species == me.species).count();
+                short += usize::from(kin.len() + 1 < kind);
+                let nearest = near(voxmar_engine::creature::husbandry::MATE_RANGE, true).into_iter().map(|(_, at)| at).min_by(|a, b| a.distance(me.body.position).total_cmp(&b.distance(me.body.position)));
                 assert_eq!(server.mate_for(id, &neighbours), if me.ready_until > 0 { nearest } else { None }, "mate of {id} (round {round})");
+                // Its alarm frightens just its kin.
+                if id % 7 == 0 {
+                    for c in server.creatures.live.values_mut() {
+                        c.mind.fear = 0.0;
+                    }
+                    server.carry_out(id, Decision { alarm: true, ..Default::default() }, &neighbours);
+                    let alarmed: Vec<u32> = server.creatures.live.iter().filter(|(_, c)| c.mind.fear > 0.0).map(|(&other, _)| other).collect();
+                    assert_eq!(alarmed, kin.iter().map(|&(other, _)| other).collect::<Vec<_>>(), "alarmed by {id} (round {round})");
+                }
             }
-            // Some walk on after the pass began, as bodies move between thinks: kin are found
-            // where they are now.
-            for &id in ids.iter().step_by(5) {
-                server.creatures.live.get_mut(&id).unwrap().body.position += Vec3::new(0.7, 0.0, -0.4);
+            // Those beside a cell's edge step across it after the pass began, as bodies move
+            // between thinks: kin are found where they are now.
+            for &id in &ids {
+                let body = &mut server.creatures.live.get_mut(&id).unwrap().body;
+                if (body.position.x - corner.x).abs() < 0.5 {
+                    let before = Neighbours::cell(body.position);
+                    body.position.x += 0.9;
+                    crossed += usize::from(Neighbours::cell(body.position) != before);
+                }
             }
         }
-        let first = ids[0];
-        assert!(server.kin_of(first, &neighbours).len() > 50, "the pen is not full");
+        assert!(crossed > 0, "none crossed a cell's edge");
+        assert!(short > 0, "every one of a kind was in reach of every other: the pen is too small to judge");
     }
 }
 
