@@ -74,7 +74,7 @@ pub struct RecipeViewer {
     pub trail: Vec<Lookup>,
     book: Option<Arc<RecipeBook>>,
     /// What was drawn last, to draw again only on a change.
-    drawn: Option<(Lookup, String, u32, bool)>,
+    drawn: Option<(Lookup, String, u32, bool, Vec<String>)>,
     /// Items reported in this game, bounded by the content registry, cleared on leaving.
     reported: HashSet<BlockId>,
 }
@@ -314,6 +314,7 @@ fn draw(
     font: Res<UiFont>,
     images: Res<HudImages>,
     mut viewer: ResMut<RecipeViewer>,
+    player: Res<crate::player::LocalPlayer>,
     mut root: Query<&mut Visibility, With<ViewerRoot>>,
     mut title: Query<&mut Text, (With<ViewerTitle>, Without<ViewerPage>)>,
     mut page_text: Query<&mut Text, (With<ViewerPage>, Without<ViewerTitle>)>,
@@ -329,12 +330,27 @@ fn draw(
     // Families of recipes show each of their variants in turn, a second each.
     let cycles = viewer.found().iter().skip(lookup.page * PER_PAGE).take(PER_PAGE).any(|e| matches!(&e.method, Method::Craft { variants, .. } if variants.len() > 1));
     let tick = time.elapsed_secs() as u32;
-    let key = (lookup, locale.code().to_owned(), if cycles { tick } else { 0 }, ui.inventory_open);
+    // What each crafting way on the page still wants, from what the pack holds.
+    let content = &launch.content;
+    let lacks = super::makeable::lacks(content, &player);
+    let have = super::makeable::held(&player.inventory);
+    let wants: Vec<Option<(String, Color)>> = viewer
+        .found()
+        .iter()
+        .skip(lookup.page * PER_PAGE)
+        .take(PER_PAGE)
+        .map(|entry| {
+            let Method::Craft { variants, first, .. } = &entry.method else { return None };
+            let near = content.recipes.iter().skip(*first).take(variants.len()).map(|recipe| super::makeable::reach(recipe, &have, player.station.is_some(), &lacks).unwrap_or_else(|| super::makeable::Reach::Short(recipe.short(&have)))).min_by_key(super::makeable::Reach::rank)?;
+            let colour = if near == super::makeable::Reach::Ready { GOLD } else { SOFT };
+            Some((super::makeable::words(&locale, content, entry.output, &near), colour))
+        })
+        .collect();
+    let key = (lookup, locale.code().to_owned(), if cycles { tick } else { 0 }, ui.inventory_open, wants.iter().flatten().map(|(w, _)| w.clone()).collect::<Vec<_>>());
     if viewer.drawn.as_ref() == Some(&key) {
         return;
     }
     viewer.drawn = Some(key);
-    let content = &launch.content;
     let name = |item: BlockId| locale.block(content.blocks.def(item));
     let found = viewer.found();
     let pages = found.len().div_ceil(PER_PAGE).max(1);
@@ -352,7 +368,7 @@ fn draw(
             let key = if lookup.uses { "recipes.none.uses" } else { "recipes.none.recipes" };
             body.spawn(text(font, locale.format(key, &[("item", &name(lookup.item))]), BODY, MUTED));
         }
-        for entry in &entries {
+        for (entry, wants) in entries.iter().zip(wants.iter().cloned().chain(std::iter::repeat(None))) {
             let card = Node { align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), padding: UiRect::all(Val::Px(space::GAP)), ..default() };
             body.spawn((card, Piece::Well.image())).with_children(|card| {
                 // What goes in, as it is laid out in the game.
@@ -368,7 +384,7 @@ fn draw(
                 let words = Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(space::HAIR), flex_grow: 1.0, min_width: Val::ZERO, ..default() };
                 card.spawn(words).with_children(|words| {
                     words.spawn(shadowed(font, title, BODY, TEXT));
-                    for (line, colour) in describe(&locale, &launch, &entry.method) {
+                    for (line, colour) in describe(&locale, &launch, &entry.method).into_iter().chain(wants) {
                         words.spawn(text(font, line, BODY, colour));
                     }
                 });
