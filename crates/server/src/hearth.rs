@@ -295,6 +295,38 @@ mod tests {
         assert!(server.fires().is_empty(), "joining again lit a hearth left cold");
     }
 
+    /// Bronze is three copper ingots held and a tin ore carried, four at a time, in one
+    /// step: short of the tin, nothing is taken and the player is told what it takes.
+    #[test]
+    fn the_crucible_makes_four_bronze_from_three_copper_ingots_and_a_tin_ore() {
+        let mut server = crate::test_server();
+        player(&mut server);
+        let core = ColumnPos::of_block(server.spawn.floor().as_ivec3()).origin() + IVec3::new(8, server.spawn.y as i32 + 4, 8);
+        let blocks = server.content.blocks.clone();
+        let brick = blocks.expect("base:kiln_bricks");
+        for x in -1..=1 { for z in -1..=1 { server.set_block(core + IVec3::new(x, 0, z), brick); }}
+        for x in [-1, 1] { for z in [-1, 1] { server.set_block(core + IVec3::new(x, 1, z), brick); }}
+        server.set_block(core, blocks.expect("base:crucible"));
+        let (coal, copper, tin, bronze) = (blocks.expect("base:coal_ore"), blocks.expect("base:copper_ingot"), blocks.expect("base:tin_ore"), blocks.expect("base:bronze_ingot"));
+        server.players.get_mut(&1).unwrap().inventory.slots[0] = Some(ItemStack { item: coal, count: 24 });
+        server.light(1, core);
+        assert!(server.station_lit(core));
+        let engineering = server.content.skills.id("core:engineering").unwrap();
+        let player = server.players.get_mut(&1).unwrap();
+        player.skills.grant(engineering, server.content.skills.xp_for(12));
+        player.inventory.slots[0] = Some(ItemStack { item: copper, count: 4 });
+        player.selected = 0;
+        server.cook(1, core);
+        assert_eq!(server.players[&1].inventory.count(copper), 4, "no tin, nothing taken");
+        server.players.get_mut(&1).unwrap().inventory.slots[5] = Some(ItemStack { item: tin, count: 1 });
+        let before = server.players[&1].skills.xp(engineering);
+        server.cook(1, core);
+        let player = &server.players[&1];
+        assert_eq!((player.inventory.count(copper), player.inventory.count(tin), player.inventory.count(bronze)), (1, 0, 4));
+        assert_eq!(player.tallies["cooked:base:bronze_ingot"], 4, "First Bronze counts all four");
+        assert!(player.skills.xp(engineering) > before);
+    }
+
     #[test]
     fn a_burnt_meal_does_not_count_as_successful_campfire_food() {
         let mut server = crate::test_server();
