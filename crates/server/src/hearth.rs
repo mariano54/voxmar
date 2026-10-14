@@ -137,20 +137,31 @@ impl Server {
     }
 
     /// A home hearth lit before hearths kept their fire (a player saved earlier) is lit again
-    /// the first time its player joins, if it still stands; never again after, so a hearth
-    /// broken, rebuilt and left cold stays cold.
+    /// once its player is back and the land round it is loaded, if it still stands; never
+    /// again after, so a hearth broken, rebuilt and left cold stays cold. Tried as they
+    /// join and every second after until the hearth's land is there to look at.
     pub(crate) fn kindle_home(&mut self, id: PlayerId) {
-        let Some(player) = self.players.get_mut(&id).filter(|p| !p.kindled) else { return };
-        player.kindled = true;
-        let Some(home) = player.home else { return };
+        let Some(player) = self.players.get(&id).filter(|p| !p.kindled) else { return };
+        let Some(home) = player.home else {
+            self.players.get_mut(&id).unwrap().kindled = true;
+            return;
+        };
         let core = (home - Vec3::new(0.5, 1.0, 0.5)).round().as_ivec3();
-        if self.lit.contains_key(&core) {
+        let Some(block) = self.block(core) else { return };
+        let unloaded = std::cell::Cell::new(false);
+        let look = |p: IVec3| {
+            let block = self.block(p);
+            unloaded.set(unloaded.get() || block.is_none());
+            block
+        };
+        let multiblocks = self.content.multiblocks.clone();
+        let standing = multiblocks.with_core(block).find(|m| m.home && m.fuels.is_empty() && m.stands(core, look)).map(|m| m.name.clone());
+        if standing.is_none() && unloaded.get() {
             return;
         }
-        let Some(block) = self.block(core) else { return };
-        let multiblocks = self.content.multiblocks.clone();
-        if let Some(structure) = multiblocks.with_core(block).find(|m| m.home && m.fuels.is_empty() && m.stands(core, |p| self.block(p))) {
-            self.lit.insert(core, Lit { position: core.to_array(), structure: structure.name.clone(), until: u64::MAX });
+        self.players.get_mut(&id).unwrap().kindled = true;
+        if let Some(structure) = standing.filter(|_| !self.lit.contains_key(&core)) {
+            self.lit.insert(core, Lit { position: core.to_array(), structure, until: u64::MAX });
         }
     }
 }
@@ -209,7 +220,7 @@ mod tests {
 
     /// A hearth is cold until lit: then it burns, and players are told, until a piece of it
     /// is taken away, and players are told it went out. A home hearth from a world saved
-    /// before hearths kept their fire is lit again when its player joins, once.
+    /// before hearths kept their fire is lit again when its player joins and its land is loaded, once.
     #[test]
     fn a_hearth_burns_from_lighting_until_it_breaks_and_players_are_told() {
         let mut server = crate::test_server();
@@ -243,6 +254,12 @@ mod tests {
         assert!(server.fires().is_empty(), "mending a hearth lit it");
         let player = server.players.get_mut(&1).unwrap();
         (player.home, player.kindled) = (Some(core.as_vec3() + Vec3::new(0.5, 1.0, 0.5)), false);
+        // Its land not loaded yet (as when they join far from spawn): tried again later.
+        let column = ColumnPos::of_block(core);
+        let held = server.world.remove(column).expect("the hearth's column is loaded");
+        server.kindle_home(1);
+        assert!(server.fires().is_empty() && !server.players[&1].kindled, "gave up on a hearth not yet loaded");
+        server.world.insert(column, held);
         server.kindle_home(1);
         assert_eq!(server.fires(), [core], "the old home hearth was not lit again");
         // Once only: broken, mended and left cold, it stays cold when they join again.

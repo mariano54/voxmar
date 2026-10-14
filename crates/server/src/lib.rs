@@ -932,6 +932,9 @@ impl Server {
         self.broadcast_players();
         if self.tick.is_multiple_of(TICKS_PER_SECOND as u64) {
             self.broadcast(self.time_message());
+            for id in self.players.iter().filter(|(_, p)| !p.kindled).map(|(&id, _)| id).collect::<Vec<_>>() {
+                self.kindle_home(id);
+            }
             self.send_fires();
         }
         if self.tick.is_multiple_of(SAVE_INTERVAL) {
