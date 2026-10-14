@@ -45,7 +45,7 @@ use bevy::input::ButtonState;
 use bevy::input::keyboard::{Key, KeyboardInput, NativeKey};
 use bevy::input::mouse::MouseButtonInput;
 use bevy::prelude::*;
-use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured, save_to_disk};
+use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured};
 use rustc_hash::FxHashMap;
 use voxmar_engine::block::BlockId;
 use voxmar_engine::coords::ColumnPos;
@@ -499,6 +499,9 @@ struct Gate {
     /// Times each shot was forgotten: one asked for before its latest forgetting is
     /// dropped when it arrives, so a retake never keeps an image of the scene it replaces.
     forgotten: Arc<Mutex<FxHashMap<&'static str, u32>>>,
+    /// Shots still being written to disk, each on its own thread so encoding the PNG never
+    /// stalls a frame; `finish` waits for them all.
+    saving: Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>,
     placed: Vec<IVec3>,
     /// The block being dug, and those dug with what they were.
     digging: Option<(IVec3, BlockId)>,
@@ -733,6 +736,7 @@ impl Gate {
             requested: Vec::new(),
             shots: default(),
             forgotten: default(),
+            saving: default(),
             placed: Vec::new(),
             digging: None,
             dug: Vec::new(),
@@ -988,9 +992,13 @@ impl Gate {
             let shots = self.shots.clone();
             let forgotten = self.forgotten.clone();
             let round = forgotten.lock().expect("gate shots").get(name).copied();
+            let (path, saving) = (self.dir.join(format!("{name}.png")), self.saving.clone());
             world
                 .spawn(Screenshot::image(self.target.clone()))
-                .observe(save_to_disk(self.dir.join(format!("{name}.png"))))
+                .observe(move |captured: On<ScreenshotCaptured>| {
+                    let (image, path) = (captured.image.clone(), path.clone());
+                    saving.lock().expect("gate saves").push(std::thread::spawn(move || save_shot(image, &path)));
+                })
                 .observe(move |captured: On<ScreenshotCaptured>| {
                     if forgotten.lock().expect("gate shots").get(name).copied() == round {
                         shots.lock().expect("gate shots").insert(name, captured.image.clone());
@@ -11642,8 +11650,26 @@ fn dropped_count(world: &World, gate: &Gate) -> u32 {
     (0..voxmar_engine::inventory::SLOTS).filter_map(|slot| player.inventory.get(slot)).filter(|s| s.item == item).map(|s| s.count as u32).sum()
 }
 
+/// Writes a shot to `path` as a PNG, as `save_to_disk` would (without the alpha channel,
+/// which holds brightness when HDR is on).
+fn save_shot(image: Image, path: &std::path::Path) {
+    match image.try_into_dynamic() {
+        Ok(image) => match image.to_rgb8().save_with_format(path, image::ImageFormat::Png) {
+            Ok(()) => info!("Screenshot saved to {}", path.display()),
+            Err(e) => error!("Cannot save screenshot, IO error: {e}"),
+        },
+        Err(e) => error!("Cannot save screenshot, requested format not recognized: {e}"),
+    }
+}
+
 /// Writes the report and exits, with an error if any check failed.
 fn finish(world: &mut World, gate: &Gate, now: f32) {
+    // Every shot on disk before the session ends.
+    for save in std::mem::take(&mut *gate.saving.lock().expect("gate saves")) {
+        if save.join().is_err() {
+            error!("Cannot save screenshot: its thread panicked");
+        }
+    }
     let verdict = if gate.failures.is_empty() { "passed" } else { "FAILED" };
     let mut report = format!("gate {verdict}: {} checks passed, {} failed, in {now:.1}s\n", gate.passes, gate.failures.len());
     for failure in &gate.failures {
