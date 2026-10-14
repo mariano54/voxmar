@@ -691,6 +691,9 @@ struct Gate {
     sweep: Sweep,
     /// The weapon step's first swing, watched in the hand.
     swing_watch: SwingWatch,
+    /// When the music step checked the now-playing line, while it is watched fading out
+    /// beside the steps after it ([`music_fades`]).
+    music_fade: Option<f32>,
     /// The player's states the server had sent when the wear step clicked.
     worn_states: u32,
     /// The Defence level before the wear step raised it, to put back after.
@@ -827,6 +830,7 @@ impl Gate {
             feel: FeelRun::default(),
             sweep: Sweep::default(),
             swing_watch: SwingWatch::default(),
+            music_fade: None,
             worn_states: 0,
             worn_defence: 1,
             overlay_counted: (0.0, 0.0),
@@ -1323,6 +1327,7 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
 }
 
 fn step(world: &mut World, gate: &mut Gate, now: f32) {
+    music_fades(world, gate, now);
     let since = now - gate.since;
     let in_phase = now - gate.phase_since;
     let feet = gate.feet;
@@ -1748,8 +1753,17 @@ fn breaks(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 let blocks: Vec<BlockId> = BREAK_BLOCKS.iter().filter_map(|name| registry.id(name)).collect();
                 // Every holder once (as many as there are cells), every hardness at least once.
                 let cells = break_cells();
-                let count = blocks.len().max(holders.len()).min(cells.len());
-                (0..count).map(|i| (feet + cells[i], blocks[i % blocks.len()], holders[i % holders.len()])).collect::<Vec<_>>()
+                holders.truncate(cells.len());
+                let tools = &world.resource::<Launch>().content.tools;
+                let seconds = |block: BlockId, holder: Holder| {
+                    let item = match holder {
+                        Holder::Hand => None,
+                        Holder::Planks => registry.id("base:oak_planks"),
+                        Holder::Tool(tool) => Some(tool),
+                    };
+                    registry.info(block).hardness.max(0.0) / tools.speed(item, block).max(0.05)
+                };
+                cells.iter().zip(break_row(&blocks, &holders, seconds)).map(|(&cell, (block, holder))| (feet + cell, block, holder)).collect::<Vec<_>>()
             };
             let net = world.resource::<Net>();
             let stand = feet + BREAK_STAND;
@@ -1875,6 +1889,51 @@ fn breaks(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             end_breaks(world, gate, now);
         }
     }
+}
+
+/// The breaks step's row: every holder once, in order, each with a block, and every block
+/// (`blocks`, hardest last) at least once. The bare hand takes the slowest block it can
+/// and the planks the slowest after that, so a long break runs under the load and the hitches
+/// (and the planks' Q, thrown halfway, lands mid-break); each block not yet in the row goes to
+/// the holder left that breaks it fastest (of those as fast, the one it costs least beside
+/// the block that holder breaks fastest), and every other holder takes the block it breaks
+/// fastest, so the row takes no longer than it must. Fewer holders than blocks, and the
+/// blocks left over go to the holders again in turn.
+fn break_row(blocks: &[BlockId], holders: &[Holder], seconds: impl Fn(BlockId, Holder) -> f32) -> Vec<(BlockId, Holder)> {
+    let mut row: Vec<Option<BlockId>> = vec![None; holders.len()];
+    let fastest = |holder: Holder, among: &mut dyn Iterator<Item = BlockId>| among.min_by(|&a, &b| seconds(a, holder).total_cmp(&seconds(b, holder)));
+    let slowest = |holder: Holder, among: &mut dyn Iterator<Item = BlockId>| among.max_by(|&a, &b| seconds(a, holder).total_cmp(&seconds(b, holder)));
+    for slow in [Holder::Hand, Holder::Planks] {
+        if let Some(i) = holders.iter().position(|&h| h == slow) {
+            let taken: Vec<BlockId> = row.iter().flatten().copied().collect();
+            row[i] = slowest(slow, &mut blocks.iter().copied().filter(|b| !taken.contains(b)));
+        }
+    }
+    for &block in blocks {
+        if row.contains(&Some(block)) {
+            continue;
+        }
+        // The fastest on it; of those as fast, the one it costs least beside its own fastest.
+        let cost = |i: usize| {
+            let own = fastest(holders[i], &mut blocks.iter().copied()).map_or(0.0, |b| seconds(b, holders[i]));
+            (seconds(block, holders[i]), seconds(block, holders[i]) - own)
+        };
+        let free = (0..holders.len()).filter(|&i| row[i].is_none());
+        let Some(i) = free.min_by(|&a, &b| {
+            let (a, b) = (cost(a), cost(b));
+            a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1))
+        }) else {
+            break;
+        };
+        row[i] = Some(block);
+    }
+    let mut row: Vec<(BlockId, Holder)> = row.into_iter().zip(holders).map(|(block, &holder)| (block.or_else(|| fastest(holder, &mut blocks.iter().copied())).unwrap_or(blocks[0]), holder)).collect();
+    let mut left = blocks.iter().filter(|b| !row.iter().any(|(r, _)| r == *b)).copied().collect::<Vec<_>>().into_iter();
+    for i in 0.. {
+        let Some(block) = left.next() else { break };
+        row.push((block, holders[i % holders.len()]));
+    }
+    row
 }
 
 /// Puts `holder` in the player's hand: an empty hotbar slot, the planks, or the tool,
@@ -3318,6 +3377,20 @@ const SCREEN_WAIT: f32 = 10.0;
 const OVERLAY_TIMED: f32 = 2.0;
 const OVERLAY_FRAMES: usize = 60;
 
+/// The now-playing line the music step checked fades out by itself: watched every frame
+/// from then on, beside the overlay step (which leaves it alone), rather than waited out
+/// on its own. The weather step's first shot waits for it, so no shot has it in.
+fn music_fades(world: &mut World, gate: &mut Gate, now: f32) {
+    let Some(since) = gate.music_fade else { return };
+    if crate::music::now_playing_shown(world).is_none() {
+        gate.check("music: now playing fades", Ok(format!("gone {:.1} s after it was checked", now - since)));
+        gate.music_fade = None;
+    } else if now - since > SCREEN_WAIT {
+        gate.check("music: now playing fades", Err("still shown 10 s after it was checked".into()));
+        gate.music_fade = None;
+    }
+}
+
 /// F3 opens the debug overlay and closes it again, and while it is open its text changes
 /// only a few times a second: an overlay that rewrote its text every frame had UI layout
 /// redone every frame, 10 to 25 ms of Mariano's slow frames. That is judged by counting
@@ -3712,22 +3785,15 @@ fn music(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     _ => Err(format!("the line reads {line:?}, not a title and a category's name")),
                 };
                 gate.check("music: now playing", result);
-                gate.advance(now);
+                // The line fades out by itself, watched while the steps after go on.
+                gate.music_fade = Some(now);
+                gate.next(Step::Overlay, now);
             } else if in_phase > SCREEN_WAIT {
                 gate.check("music: now playing", Err("no track was named within 10 s of turning the music back on with M".into()));
                 gate.next(Step::Overlay, now);
             }
         }
-        _ => {
-            // The line fades out by itself.
-            if crate::music::now_playing_shown(world).is_none() {
-                gate.check("music: now playing fades", Ok(format!("gone {in_phase:.1} s after it was checked")));
-                gate.next(Step::Overlay, now);
-            } else if in_phase > SCREEN_WAIT {
-                gate.check("music: now playing fades", Err("still shown 10 s after it was checked".into()));
-                gate.next(Step::Overlay, now);
-            }
-        }
+        _ => {}
     }
 
     /// Esc, then on to the phase waiting for the menu to close.
@@ -6109,6 +6175,10 @@ fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 return;
             }
             look(world, 0.0, 5.0);
+            // Not with the music step's now-playing line still fading (`music_fades`).
+            if gate.music_fade.is_some() {
+                return;
+            }
             if gate.shot(world, "clear").is_some() {
                 world.resource::<Net>().command(&format!("weather {} 120", kinds[0].0));
                 gate.advance(now);
@@ -6702,9 +6772,25 @@ fn wild_near(world: &World, reach: f32) -> Option<String> {
         .map(|(d, species)| format!("{} {d:.1} blocks off", launch.content.creatures.get(species).def.name))
 }
 
+/// How many births `/creatures populate` said it made, from its reply in the chat since
+/// `since` (the game's clock); none until the reply has come.
+fn populated(world: &World, since: f32) -> Option<usize> {
+    const COUNT: &str = "\u{1}";
+    let words = world.resource::<Locale>().format("command.creatures.populated", &[("count", &COUNT)]);
+    let (before, after) = words.split_once(COUNT)?;
+    world.resource::<crate::hud::console::Console>().since(since).find_map(|line| {
+        let (_, rest) = line.split_once(before)?;
+        rest.strip_suffix(after)?.trim().parse().ok()
+    })
+}
+
 /// Births through ordinary spawning, driven through admin console inputs. The clear
 /// pad makes view-cone rejection observable from replicated birth poses; positive dark
 /// monsters and an emptied budget make the subsequent torch rejection meaningful.
+///
+/// The server makes a populate's births at once and says how many: each is judged once
+/// that many new creatures stand on the pad on the client, or after [`NATURAL_WAIT`]
+/// server seconds when some never do.
 fn natural_spawns(world: &mut World, gate: &mut Gate, now: f32) {
     let pad = gate.feet + IVec3::new(130, 12, 0);
     let (x, y, z) = (pad.x, pad.y, pad.z);
@@ -6714,6 +6800,10 @@ fn natural_spawns(world: &mut World, gate: &mut Gate, now: f32) {
             !v.kept && content.creatures.get(v.species).def.kind != voxmar_engine::creature::Kind::Villager
                 && !gate.natural_before.contains(&v.id) && (v.position.y - y as f32).abs() < 2.0 && v.position.distance(pad.as_vec3()) < 64.0
         }).copied().collect::<Vec<_>>()
+    };
+    // Births land 20 to 40 blocks off (`spawn_near`, `spawn_far`), on the pad.
+    let all_in = |world: &World, gate: &Gate| {
+        gate.server_in_phase() > NATURAL_WAIT || populated(world, gate.phase_since).is_some_and(|told| arrived(world, gate).len() >= told)
     };
     match gate.phase {
         0 => {
@@ -6740,7 +6830,7 @@ fn natural_spawns(world: &mut World, gate: &mut Gate, now: f32) {
             net.command("creatures populate");
             gate.advance(now);
         }
-        2 if gate.server_in_phase() > 3.0 => {
+        2 if all_in(world, gate) => {
             let births = arrived(world, gate);
             let content = &world.resource::<Launch>().content;
             let monsters = births.iter().filter(|v| content.creatures.get(v.species).def.kind == voxmar_engine::creature::Kind::Monster).count();
@@ -6790,7 +6880,7 @@ fn natural_spawns(world: &mut World, gate: &mut Gate, now: f32) {
             world.resource::<Net>().command("creatures populate");
             gate.advance(now);
         }
-        4 if gate.server_in_phase() > 3.0 => {
+        4 if all_in(world, gate) => {
             let content = &world.resource::<Launch>().content;
             let monsters = arrived(world, gate).iter().filter(|v| content.creatures.get(v.species).def.kind == voxmar_engine::creature::Kind::Monster).count();
             gate.check("natural torch protection", if monsters == 0 { Ok("no monsters born on the lit pad with the dark population dispersed".into()) } else { Err(format!("{monsters} monsters born among torches")) });
@@ -6804,6 +6894,9 @@ fn natural_spawns(world: &mut World, gate: &mut Gate, now: f32) {
         _ => {}
     }
 }
+
+/// Server seconds the natural spawns step waits for a populate's births at most.
+const NATURAL_WAIT: f32 = 3.0;
 
 /// Frames slower than this (milliseconds) draw a body's 0.45 s tip over in fewer than the
 /// three frames the falls check asks for.
@@ -8451,7 +8544,8 @@ fn end_boss(world: &mut World, gate: &mut Gate, now: f32) {
 const SMOKE_ITEM: &str = "base:torch";
 const SMOKY: &str = "base:smoky";
 
-/// A torch held a moment: the Smoky chip shows, with its time; then the hand is emptied.
+/// A torch held a moment: the Smoky chip shows, with its time; then the hand is emptied
+/// (the torch taken back when the hotbar has no free slot).
 fn smoke(world: &mut World, gate: &mut Gate, now: f32) {
     let Some(smoky) = world.resource::<Launch>().content.effects.find(SMOKY) else {
         gate.check("smoky chip", Err(format!("no `{SMOKY}` in the content")));
@@ -8484,6 +8578,17 @@ fn smoke(world: &mut World, gate: &mut Gate, now: f32) {
                 gate.advance(now);
             } else if waited {
                 gate.check("smoky chip", Err(format!("with a torch in hand for {BOSS_WAIT} server seconds: chip {chip}, timed {timed}")));
+                gate.advance(now);
+            }
+        }
+        // The hand emptied: onto a free hotbar slot, or, with none free, the torch taken
+        // back, which frees its own (waiting out the hotbar cost the step ten seconds).
+        3 => {
+            if empty_hand(world) {
+                world.resource::<Net>().command("effect clear");
+                gate.next(Step::Wear, now);
+            } else {
+                world.resource::<Net>().command(&format!("clear {}", SMOKE_ITEM.trim_start_matches("base:")));
                 gate.advance(now);
             }
         }
@@ -11401,6 +11506,27 @@ mod tests {
         assert!(warm_window([30.0, 40.0, 70.0], [10.0, 10.0, 12.0]).is_err(), "bright but blue");
     }
 
+    /// The natural spawns step reads the populate's count from its reply as the chat shows
+    /// it, in English and in Japanese, and only a reply since the phase began.
+    #[test]
+    fn a_populate_is_counted_from_its_reply() {
+        use bevy::prelude::World;
+        let content = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        for code in ["en", "ja"] {
+            let mut world = World::new();
+            let locale = crate::lang::Locale::load(&content, code);
+            let reply = locale.format("command.creatures.populated", &[("count", &17)]);
+            world.insert_resource(locale);
+            let mut console = crate::hud::console::Console::default();
+            console.push(voxmar_protocol::ChatKind::Chat, "an earlier line", 1.0);
+            world.insert_resource(console);
+            assert_eq!(super::populated(&world, 0.0), None, "{code}: not yet told");
+            world.resource_mut::<crate::hud::console::Console>().push(voxmar_protocol::ChatKind::Chat, &reply, 2.0);
+            assert_eq!(super::populated(&world, 1.5), Some(17), "{code}: {reply}");
+            assert_eq!(super::populated(&world, 2.5), None, "{code}: told before the phase");
+        }
+    }
+
     /// At the sling step's Ranged level, against its bear, every stone missing is a broken
     /// shot, not a bad run of rolls: under one gate in ten million.
     #[test]
@@ -11629,6 +11755,30 @@ mod tests {
         let mut feel = FeelRun { chances: 3, calm: true, ..default() };
         assert!(feel.observe(true, false));
         assert_eq!(feel.chances, 0);
+    }
+
+    /// Every holder once, every block at least once; the hand and the planks on the slowest
+    /// blocks, each block placed with the holder fastest on it, the rest on their fastest.
+    #[test]
+    fn the_break_row_has_every_holder_and_block_and_keeps_its_slow_breaks() {
+        let [glass, dirt, stone, cobble] = [BlockId(1), BlockId(2), BlockId(3), BlockId(4)];
+        let (pick, shovel, axe) = (Holder::Tool(BlockId(10)), Holder::Tool(BlockId(11)), Holder::Tool(BlockId(12)));
+        let hardness = |b: BlockId| [0.0, 0.3, 0.5, 1.5, 2.0][b.0 as usize];
+        let seconds = |b: BlockId, h: Holder| {
+            let speed = match h {
+                h if h == pick && (b == stone || b == cobble) => 8.0,
+                h if h == shovel && b == dirt => 4.0,
+                _ => 1.0,
+            };
+            hardness(b) / speed
+        };
+        let blocks = [glass, dirt, stone, cobble];
+        let holders = [Holder::Hand, Holder::Planks, pick, shovel, axe, Holder::Tool(BlockId(13))];
+        let row = break_row(&blocks, &holders, seconds);
+        assert_eq!(row, [(cobble, Holder::Hand), (stone, Holder::Planks), (stone, pick), (dirt, shovel), (glass, axe), (glass, Holder::Tool(BlockId(13)))]);
+        // More blocks than holders: the rest go round the holders again.
+        let row = break_row(&blocks, &[Holder::Hand, pick], seconds);
+        assert_eq!(row, [(cobble, Holder::Hand), (glass, pick), (dirt, Holder::Hand), (stone, pick)]);
     }
 
     #[test]
