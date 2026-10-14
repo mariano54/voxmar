@@ -53,6 +53,20 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
     });
 }
 
+/// The creature whose level shows: the nearest along the crosshair within `SIGHT`, before
+/// any solid block (grass is seen through), with no screen open; its kind, feet and health.
+pub fn pointed(ui: &UiState, player: &LocalPlayer, launch: &Launch, creatures: &Creatures, world: &crate::world::ClientWorld) -> Option<(voxmar_engine::creature::CreatureId, Vec3, u16)> {
+    let screen = ui.inventory_open || ui.character_open || ui.journal_open || ui.quests_open || ui.menu_open || ui.recipes_open || player.dead;
+    if screen {
+        return None;
+    }
+    let (eye_at, look) = (player.eye(), player.look_direction().normalize_or_zero());
+    let block = voxmar_engine::physics::raycast(eye_at, look, SIGHT, |p| world.block(p).is_some_and(|b| world.registry.info(b).solid)).map_or(f32::MAX, |hit| hit.distance);
+    let id = creatures.pointed(launch, eye_at, look, SIGHT, block)?;
+    let (_, kind, feet) = creatures.living().find(|(living, ..)| *living == id)?;
+    Some((kind, feet, creatures.sighting(id)?.health))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn label(
     ui: Res<UiState>,
@@ -68,15 +82,7 @@ fn label(
     mut health: Query<&mut Node, (With<LevelHealth>, Without<LevelLabel>)>,
 ) {
     let Ok((mut node, mut visibility)) = plate.single_mut() else { return };
-    let screen = ui.inventory_open || ui.character_open || ui.journal_open || ui.quests_open || ui.menu_open || ui.recipes_open || player.dead;
-    // The nearest creature along the crosshair, before any solid block (grass is seen through).
-    let (eye_at, look) = (player.eye(), player.look_direction().normalize_or_zero());
-    let block = voxmar_engine::physics::raycast(eye_at, look, SIGHT, |p| world.block(p).is_some_and(|b| world.registry.info(b).solid)).map_or(f32::MAX, |hit| hit.distance);
-    let pointed = creatures.pointed(&launch, eye_at, look, SIGHT, block).filter(|_| !screen).and_then(|id| {
-        let (_, kind, feet) = creatures.living().find(|(living, ..)| *living == id)?;
-        Some((kind, feet, creatures.sighting(id)?.health))
-    });
-    let Some((kind, feet, now)) = pointed else {
+    let Some((kind, feet, now)) = pointed(&ui, &player, &launch, &creatures, &world) else {
         visibility.set_if_neq(Visibility::Hidden);
         return;
     };
