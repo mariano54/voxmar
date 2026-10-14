@@ -93,7 +93,8 @@ impl Server {
             Spot::Near(tag, reach) => self.tagged_within(pos, tag, *reach),
             Spot::Water(reach) => {
                 let blocks = &self.content.blocks;
-                let water = |b: BlockId| blocks.info(b).fluid.is_some() && !blocks.def(b).has_tag("hot");
+                // A block that waters (a well) is water too.
+                let water = |b: BlockId| (blocks.info(b).fluid.is_some() && !blocks.def(b).has_tag("hot")) || blocks.def(b).has_tag("waters");
                 let r = *reach;
                 (-r..=r).any(|dy| (-r..=r).any(|dz| (-r..=r).any(|dx| self.block(pos + IVec3::new(dx, dy, dz)).is_some_and(water))))
             }
@@ -434,6 +435,14 @@ mod tests {
         hold(&mut server, "base:carrot", 4);
         server.use_station(1, wet);
         assert_eq!(server.stations.get(wet).unwrap().due, server.tick + 10 * MINUTE);
+
+        // A well beside a heap keeps it as damp as water does.
+        let by_well = AT + IVec3::new(6, 0, 6);
+        server.set_block(by_well, block(&server, "base:compost_heap"));
+        server.set_block(by_well + IVec3::new(2, 0, 0), block(&server, "base:well"));
+        hold(&mut server, "base:carrot", 4);
+        server.use_station(1, by_well);
+        assert_eq!(server.stations.get(by_well).unwrap().due, server.tick + 10 * MINUTE);
     }
 
     /// The pot: it simmers only over a hob (a campfire, or on the hearthstone) with water

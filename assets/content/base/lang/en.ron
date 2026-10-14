@@ -995,6 +995,7 @@
     "block.base.drying_rack_hung": "Hung Drying Rack",
     "block.base.drying_rack_dry": "Drying Rack of Jerky",
     "block.base.compost_heap": "Compost Heap",
+    "block.base.well": "Well",
     "block.base.compost_heap_full": "Rotting Compost Heap",
     "block.base.compost_heap_ready": "Ripe Compost Heap",
     "block.base.jerky": "Jerky",
