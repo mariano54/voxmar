@@ -189,8 +189,8 @@ struct Clip {
     speed: f32,
 }
 
-/// Result sounds by action: each with the tag its items must carry (none: any item).
-type Brings = FxHashMap<voxmar_engine::action::ActionId, Vec<(Option<String>, Vec<Clip>)>>;
+/// Result sounds by action: each with the tags its items must all carry.
+type Brings = FxHashMap<voxmar_engine::action::ActionId, Vec<(Vec<String>, Vec<Clip>)>>;
 
 #[derive(Resource)]
 struct Sfx {
@@ -199,7 +199,7 @@ struct Sfx {
     thunder: [Vec<Handle<AudioSource>>; 3],
     /// What actions sound like as the player does them.
     actions: FxHashMap<voxmar_engine::action::ActionId, Vec<Clip>>,
-    /// What their results sound like landing in the pack, by tag (none: anything).
+    /// What their results sound like landing in the pack, by their tags.
     brings: Brings,
     /// Actions done whose results may yet land, and until when (seconds).
     awaiting: Vec<(voxmar_engine::action::ActionId, f32)>,
@@ -365,7 +365,7 @@ fn synthesize(
         .filter_map(|(name, sound)| {
             let rules = sound.brings.iter().map(|brought| {
                 let gain = brought.volume * Cue::Place.gain() * level(&target, Cue::Place) / ACTION_LOUDNESS;
-                (brought.tag.clone(), load(&brought.sounds).into_iter().map(|source| Clip { source, gain, speed: 1.0 }).collect())
+                (brought.tags.clone(), load(&brought.sounds).into_iter().map(|source| Clip { source, gain, speed: 1.0 }).collect())
             });
             Some((launch.content.actions.id(name)?, rules.collect()))
         })
@@ -434,7 +434,7 @@ pub(crate) struct ActionSound {
     /// Heard from elsewhere instead.
     pub(crate) heard: Option<HeardBy>,
     /// What it sounds like when what it brings lands in the pack (a fish landed, food off
-    /// the fire done or burnt): the first whose `tag` the item has, or with none, any.
+    /// the fire done or burnt): the first whose `tags` the item all has.
     pub(crate) brings: Vec<Brought>,
 }
 
@@ -442,8 +442,9 @@ pub(crate) struct ActionSound {
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct Brought {
-    /// A tag the item brought has (`burnt`); none: anything it brings.
-    pub(crate) tag: Option<String>,
+    /// The tags an item brought has, all of them (`burnt`; `fish` and `raw`), so that only
+    /// what the action brings answers it, never anything else picked up meanwhile.
+    pub(crate) tags: Vec<String>,
     pub(crate) sounds: Vec<String>,
     #[serde(default = "full")]
     pub(crate) volume: f32,
@@ -552,8 +553,8 @@ impl Recordings {
                 if brought.sounds.is_empty() || !(brought.volume > 0.0 && brought.volume <= 2.0) {
                     return Err(format!("{RECORDINGS}: what `{name}` brings needs sounds, at a volume above 0 and up to 2"));
                 }
-                if brought.tag.as_deref() == Some("") {
-                    return Err(format!("{RECORDINGS}: what `{name}` brings has an empty tag; leave it out for anything"));
+                if brought.tags.is_empty() || brought.tags.iter().any(String::is_empty) {
+                    return Err(format!("{RECORDINGS}: what `{name}` brings needs the tags its items have, none empty"));
                 }
             }
         }
@@ -771,7 +772,7 @@ fn gained(before: &FxHashMap<BlockId, u32>, now: &FxHashMap<BlockId, u32>) -> Ve
 }
 
 /// Which awaited action an item landing in the pack answers, and with which clips: the
-/// first awaited whose rules take it, by its first rule whose tag the item has.
+/// first awaited whose rules take it, by its first rule whose tags the item all has.
 fn answered<'a>(
     awaiting: &[(voxmar_engine::action::ActionId, f32)],
     brings: &'a Brings,
@@ -779,7 +780,7 @@ fn answered<'a>(
 ) -> Option<(usize, &'a [Clip])> {
     awaiting.iter().enumerate().find_map(|(i, (action, _))| {
         let rules = brings.get(action)?;
-        rules.iter().find(|(tag, _)| tag.as_deref().is_none_or(&has)).map(|(_, clips)| (i, clips.as_slice()))
+        rules.iter().find(|(tags, _)| tags.iter().all(|tag| has(tag))).map(|(_, clips)| (i, clips.as_slice()))
     })
 }
 
@@ -1356,7 +1357,7 @@ mod tests {
         assert_eq!(recorded.actions["core:eat"], ActionSound { sounds: vec!["content/mod/x.ogg".into()], volume: 1.5, ..Default::default() });
         assert_eq!(recorded.actions["core:craft"], ActionSound { sounds: vec!["content/base/c.ogg".into()], volume: 0.5, ..Default::default() });
         assert_eq!(recorded.check(&content.actions), Ok(()));
-        for wrong in [r#"(actions: {"core:juggle": (sounds: ["a.ogg"])})"#, r#"(actions: {"core:eat": (sounds: [])})"#, r#"(actions: {"core:eat": (sounds: ["a.ogg"], volume: 0.0)})"#, r#"(actions: {"core:eat": (sounds: ["a.ogg"], silent: true)})"#, r#"(actions: {"core:eat": (silent: true, heard: Some(Block))})"#, r#"(actions: {"core:eat": (sounds: ["a.ogg"], brings: [(sounds: [])])})"#, r#"(actions: {"core:eat": (sounds: ["a.ogg"], brings: [(tag: Some(""), sounds: ["b.ogg"])])})"#, r#"(actions: {"core:eat": (sounds: ["a.ogg"], brings: [(sounds: ["b.ogg"], volume: 3.0)])})"#] {
+        for wrong in [r#"(actions: {"core:juggle": (sounds: ["a.ogg"])})"#, r#"(actions: {"core:eat": (sounds: [])})"#, r#"(actions: {"core:eat": (sounds: ["a.ogg"], volume: 0.0)})"#, r#"(actions: {"core:eat": (sounds: ["a.ogg"], silent: true)})"#, r#"(actions: {"core:eat": (silent: true, heard: Some(Block))})"#, r#"(actions: {"core:eat": (sounds: ["a.ogg"], brings: [(tags: ["x"], sounds: [])])})"#, r#"(actions: {"core:eat": (sounds: ["a.ogg"], brings: [(tags: [""], sounds: ["b.ogg"])])})"#, r#"(actions: {"core:eat": (sounds: ["a.ogg"], brings: [(sounds: ["b.ogg"])])})"#, r#"(actions: {"core:eat": (sounds: ["a.ogg"], brings: [(tags: ["x"], sounds: ["b.ogg"], volume: 3.0)])})"#] {
             assert!(Recordings::load(&[file("mod", wrong)]).unwrap().check(&content.actions).is_err(), "{wrong}");
         }
         // Every action must say how it sounds: the base package's do; a package that adds
@@ -1405,12 +1406,12 @@ mod tests {
         }
         assert!(!recorded.pickup.is_empty(), "no pickup pop");
         // What fishing and cooking bring is heard as it lands: a catch, food done or burnt.
-        let brings = |name: &str| recorded.actions[name].brings.iter().map(|b| b.tag.clone()).collect::<Vec<_>>();
-        assert_eq!(brings("base:fish"), [None]);
-        assert_eq!(brings("base:cook"), [Some("burnt".to_owned()), None]);
+        let brings = |name: &str| recorded.actions[name].brings.iter().map(|b| b.tags.join("+")).collect::<Vec<_>>();
+        assert_eq!(brings("base:fish"), ["fish+raw"]);
+        assert_eq!(brings("base:cook"), ["burnt", "cooked"]);
         // Every tag a result is told by is one some item has.
         for brought in recorded.actions.values().flat_map(|sound| &sound.brings) {
-            if let Some(tag) = &brought.tag {
+            for tag in &brought.tags {
                 assert!((0..content.blocks.len()).any(|id| content.blocks.def(BlockId(id as u16)).has_tag(tag)), "no item is tagged {tag}");
             }
         }
@@ -1476,12 +1477,18 @@ mod tests {
         let clip = |gain: f32| Clip { source: Handle::default(), gain, speed: 1.0 };
         let (cook, fish) = (ActionId(1), ActionId(2));
         let mut brings = FxHashMap::default();
-        brings.insert(cook, vec![(Some("burnt".to_owned()), vec![clip(1.0)]), (None, vec![clip(2.0)])]);
-        brings.insert(fish, vec![(None, vec![clip(3.0)])]);
+        let tags = |list: &[&str]| list.iter().map(|t| t.to_string()).collect::<Vec<_>>();
+        brings.insert(cook, vec![(tags(&["burnt"]), vec![clip(1.0)]), (tags(&["cooked"]), vec![clip(2.0)])]);
+        brings.insert(fish, vec![(tags(&["fish", "raw"]), vec![clip(3.0)])]);
         let gain = |found: Option<(usize, &[Clip])>| found.map(|(at, clips)| (at, clips[0].gain));
-        assert_eq!(gain(answered(&[(cook, 1.0)], &brings, |tag| tag == "burnt")), Some((0, 1.0)));
-        assert_eq!(gain(answered(&[(cook, 1.0)], &brings, |_| false)), Some((0, 2.0)));
-        assert_eq!(gain(answered(&[(fish, 1.0), (cook, 1.0)], &brings, |_| false)), Some((0, 3.0)));
+        let item = |has: &'static [&'static str]| move |tag: &str| has.contains(&tag);
+        assert_eq!(gain(answered(&[(cook, 1.0)], &brings, item(&["burnt"]))), Some((0, 1.0)));
+        assert_eq!(gain(answered(&[(cook, 1.0)], &brings, item(&["cooked", "meat"]))), Some((0, 2.0)));
+        assert_eq!(gain(answered(&[(fish, 1.0), (cook, 1.0)], &brings, item(&["fish", "raw"]))), Some((0, 3.0)));
+        // A cooked fish answers the meal, not a line still out; a stick picked up meanwhile
+        // answers neither.
+        assert_eq!(gain(answered(&[(fish, 1.0), (cook, 1.0)], &brings, item(&["fish", "cooked"]))), Some((1, 2.0)));
+        assert_eq!(gain(answered(&[(fish, 1.0), (cook, 1.0)], &brings, item(&["stick"]))), None);
         assert_eq!(gain(answered(&[(ActionId(9), 1.0)], &brings, |_| true)), None);
         let counts = |pairs: &[(u16, u32)]| pairs.iter().map(|&(i, n)| (BlockId(i), n)).collect::<FxHashMap<_, _>>();
         assert_eq!(gained(&counts(&[(5, 2), (6, 1)]), &counts(&[(5, 3), (6, 1), (7, 1)])), [BlockId(5), BlockId(7)]);
