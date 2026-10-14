@@ -4454,15 +4454,45 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
                 leave(world, gate);
             }
         }
-        _ => {
+        // The mark over the bag, with its distance.
+        3 => {
             let told = world.resource::<LocalPlayer>().vitals.home;
             let shown = world.query_filtered::<&Visibility, With<crate::hud::home::HomeMark>>().iter(world).any(|v| *v != Visibility::Hidden);
             let words = world.query_filtered::<&Text, With<crate::hud::home::HomeWords>>().iter(world).map(|t| t.0.clone()).next().unwrap_or_default();
             if told == Some(bag) && shown && words.contains(" m") {
                 gate.check("home: way", Ok(format!("the server named the bag as home and the hearth mark showed \"{words}\"")));
-                leave(world, gate);
+                // Turned away from it: home lies behind.
+                let eye = world.resource::<LocalPlayer>().eye();
+                aim_at(world, eye + (eye - bag.as_vec3() - Vec3::splat(0.5)).with_y(0.0));
+                gate.advance(now);
             } else if waited > 10.0 {
                 gate.check("home: way", Err(format!("{waited:.1} server s after the bag became home: home told {told:?} (bag {bag}), mark shown {shown}, words \"{words}\"")));
+                leave(world, gate);
+            }
+        }
+        // Home behind: the mark waits at an edge of the screen. Then, at the real hiding
+        // distance, two blocks from home it is gone.
+        4 => {
+            let edge = world.query::<&crate::hud::home::HomeMark>().iter(world).find_map(|m| m.edge);
+            if edge.is_some() {
+                gate.check("home: behind", Ok(format!("turned away from home, the mark waited at the {} edge", if edge == Some(-1.0) { "left" } else { "right" })));
+                let mut style = world.resource_mut::<crate::hud::inventory::InterfaceStyle>();
+                style.home_hidden_within = gate.home_hidden_within.take().unwrap_or(style.home_hidden_within);
+                gate.advance(now);
+            } else if waited > 5.0 {
+                let yaw = world.resource::<LocalPlayer>().yaw;
+                gate.check("home: behind", Err(format!("turned away from home (yaw {yaw:.2}), the mark was at no edge of the screen")));
+                leave(world, gate);
+            }
+        }
+        _ => {
+            let shown = world.query_filtered::<&Visibility, With<crate::hud::home::HomeMark>>().iter(world).any(|v| *v != Visibility::Hidden);
+            if !shown {
+                let within = world.resource::<crate::hud::inventory::InterfaceStyle>().home_hidden_within;
+                gate.check("home: near", Ok(format!("within {within} blocks of home the mark was gone")));
+                leave(world, gate);
+            } else if waited > 5.0 {
+                gate.check("home: near", Err("two blocks from home the mark still showed".into()));
                 leave(world, gate);
             }
         }

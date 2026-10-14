@@ -5,6 +5,7 @@
 //! mark is the icon of the item a package names as `home_icon` (base: the hearthstone).
 
 use bevy::prelude::*;
+use bevy::ui::UiScale;
 use bevy::window::PrimaryWindow;
 
 use crate::lang::Locale;
@@ -24,8 +25,12 @@ impl Plugin for HomePlugin {
 /// The mark's width, for keeping it whole on screen.
 const WIDTH: f32 = 40.0 * PX;
 
-#[derive(Component)]
-pub(crate) struct HomeMark;
+/// The mark, and the screen's edge it waits at (-1 left, 1 right) while home is out of
+/// view, for the gate.
+#[derive(Component, Default)]
+pub(crate) struct HomeMark {
+    pub edge: Option<f32>,
+}
 #[derive(Component)]
 struct HomeIcon;
 #[derive(Component)]
@@ -41,7 +46,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
         row_gap: Val::Px(space::HAIR),
         ..default()
     };
-    commands.spawn((HomeMark, mark, Visibility::Hidden)).with_children(|mark| {
+    commands.spawn((HomeMark::default(), mark, Visibility::Hidden)).with_children(|mark| {
         mark.spawn((HomeIcon, Node { width: Val::Px(10.0 * PX), height: Val::Px(10.0 * PX), ..default() }, ImageNode::default()));
         mark.spawn((HomeWords, shadowed(&font.0, "", BODY, SOFT)));
     });
@@ -78,25 +83,30 @@ fn show(
     locale: Res<Locale>,
     images: Res<super::HudImages>,
     world: Res<crate::world::ClientWorld>,
-    window: Query<&Window, With<PrimaryWindow>>,
-    mut mark: Query<(&mut Node, &mut Visibility), With<HomeMark>>,
+    (window, cameras, scale): (Query<&Window, With<PrimaryWindow>>, Query<&Camera, With<Camera3d>>, Res<UiScale>),
+    mut mark: Query<(&mut HomeMark, &mut Node, &mut Visibility)>,
     mut icon: Query<&mut ImageNode, With<HomeIcon>>,
     mut words: Query<&mut Text, With<HomeWords>>,
 ) {
-    let Ok((mut node, mut visibility)) = mark.single_mut() else { return };
+    let Ok((mut mark, mut node, mut visibility)) = mark.single_mut() else { return };
     let home = player.vitals.home.map(|at| at.as_vec3() + Vec3::new(0.5, 0.0, 0.5));
     let away = home.map(|home| (home - player.position).with_y(0.0).length());
     let Some((home, away)) = home.zip(away).filter(|&(_, away)| ui.cursor_locked && !player.dead && away > style.home_hidden_within) else {
         visibility.set_if_neq(Visibility::Hidden);
         return;
     };
-    let Ok(window) = window.single() else { return };
-    let (width, height) = (window.width().max(1.0), window.height().max(1.0));
-    // The view's width as an angle, from its height's (the camera's) and the window's shape.
+    // The window, or with none (the gate, captures) the image drawn off screen; the
+    // interface is laid out at its own scale.
+    let Some(view) = crate::ui::view_size(&window, &cameras) else { return };
+    let (width, height) = (view.x.max(1.0) / scale.0.max(0.01), view.y.max(1.0) / scale.0.max(0.01));
+    // The view's width as an angle, from its height's (the camera's) and the view's shape.
     let tall = camera.iter().find_map(|p| if let Projection::Perspective(p) = p { Some(p.fov) } else { None }).unwrap_or(1.2);
     let fov = 2.0 * ((tall * 0.5).tan() * width / height).atan();
-    let (x, _) = across(bearing(player.position, player.yaw, home), fov);
-    let left = ((x + 1.0) * 0.5 * width - WIDTH * 0.5).clamp(0.0, width - WIDTH);
+    let (x, edge) = across(bearing(player.position, player.yaw, home), fov);
+    if mark.edge != edge {
+        mark.edge = edge;
+    }
+    let left = ((x + 1.0) * 0.5 * width - WIDTH * 0.5).clamp(0.0, (width - WIDTH).max(0.0));
     if node.left != Val::Px(left) {
         node.left = Val::Px(left);
     }
