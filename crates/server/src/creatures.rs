@@ -69,6 +69,8 @@ pub(crate) const TOLERANCE: u64 = 600 * TICKS_PER_SECOND as u64;
 const SETTLE_RADIUS: f32 = 10.0;
 /// Light from blocks within this many blocks keeps monsters away underground.
 const LIT_REACH: i32 = 5;
+/// How far a land animal out of its depth looks for the shore.
+const SHORE_RANGE: i32 = 12;
 /// How near a wild creature comes to a player holding its favourite food to count as drawn
 /// to them (`Server::note_lured`): about a blow's reach.
 const LURED_WITHIN: f32 = 3.0;
@@ -113,6 +115,8 @@ pub struct Live {
     pub way: Vec<IVec3>,
     pub way_to: Option<IVec3>,
     pub way_at: u64,
+    /// Out of its depth (a land animal), the dry cell it makes for. Not saved.
+    pub shore: Option<IVec3>,
     /// The player who keeps it, by name (tamed or bred), and the id they have now.
     pub owner: Option<String>,
     pub owner_id: Option<PlayerId>,
@@ -458,6 +462,12 @@ impl Server {
                     creature.rearing = false;
                     brain::think(species, &mut creature.mind, &situation)
                 };
+                // Led by food held up (how a wild one is lured home, or a kept one moved to a
+                // new pen), its home goes with it: once the player puts the food away it
+                // stays where it was led rather than walk back.
+                if situation.errand.is_none() && creature.mind.doing.is_some_and(|i| species.modules[i].0.name() == "tempted") {
+                    creature.home = creature.body.position;
+                }
                 creature.decision = decision;
                 creature.changed = true;
                 actions.push((id, decision));
@@ -553,13 +563,45 @@ impl Server {
         None
     }
 
+    /// The nearest dry cell, within `SHORE_RANGE` blocks of `at` and a block of its level,
+    /// where a body `height` blocks tall stands.
+    fn shore_for(&self, at: Vec3, height: i32) -> Option<IVec3> {
+        let ground = Ground(self);
+        let walker = path::Walker { height, climbs: true, wary: true };
+        let feet = at.floor().as_ivec3();
+        (1..=SHORE_RANGE).find_map(|r| {
+            (-r..=r)
+                .flat_map(|x| (-r..=r).map(move |z| (x, z)))
+                .filter(|&(x, z)| x.abs() == r || z.abs() == r)
+                .flat_map(|(x, z)| (-1..=1).map(move |y| feet + IVec3::new(x, y, z)))
+                .filter(|&cell| !ground.water_at(cell) && walker.stands(&ground, cell))
+                .min_by(|a, b| (a.as_vec3() + Vec3::splat(0.5)).distance(at).total_cmp(&(b.as_vec3() + Vec3::splat(0.5)).distance(at)))
+        })
+    }
+
     /// Moves one creature's body a tick along its decision.
     fn move_creature(&mut self, id: u32, dt: f32) {
         let Some(creature) = self.creatures.live.get(&id) else { return };
         let species = self.content.creatures.get(creature.species);
         let mut body = creature.body;
-        let decision = creature.decision;
+        let mut decision = creature.decision;
         let held = self.tick < creature.held_until;
+        // A land animal out of its depth makes for the nearest shore, whatever it had in mind
+        // (rather than paddle where its wander or the food it was after takes it).
+        // Once making for it, it keeps on through the shallows until it is out of the water.
+        let land = !held && species.def.habitat.water == Water::Land && body.in_water;
+        let deep = land && Ground(self).water_at(body.position.floor().as_ivec3() - IVec3::Y);
+        let shore = if !deep && !(land && creature.shore.is_some()) {
+            None
+        } else if creature.shore.is_some() && !self.tick.is_multiple_of(TICKS_PER_SECOND as u64) {
+            creature.shore
+        } else {
+            self.shore_for(body.position, body.size.1.ceil() as i32)
+        };
+        if let Some(cell) = shore {
+            decision.goal = Some(cell.as_vec3() + Vec3::new(0.5, 0.0, 0.5));
+            decision.speed = decision.speed.max(species.def.movement.walk);
+        }
         // Winding up, it still turns and walks at its target until its aim locks.
         let tracking = if held { self.tracking_drive(id) } else { None };
         let drive = match decision.goal {
@@ -622,6 +664,7 @@ impl Server {
         };
         motion::step(&mut body, &Ground(self), movement, water, drive, dt);
         let creature = self.creatures.live.get_mut(&id).expect("still there");
+        creature.shore = shore;
         creature.detour = detour;
         creature.way = way;
         if let Some((to, at)) = searched {
@@ -1053,6 +1096,7 @@ impl Server {
             detour: 0.0,
             way: Vec::new(),
             way_to: None,
+            shore: None,
             way_at: 0,
             owner: None,
             owner_id: None,
@@ -2470,6 +2514,208 @@ mod way_tests {
             let id = server.spawn_creature(deer, at, i).expect("room");
             server.move_creature(id, 0.0);
             assert!(!server.creatures.live[&id].body.head_blocked(&Ground(&server)), "a deer was made with its head in a trunk at {}", at - c.as_vec3());
+        }
+    }
+}
+
+
+/// Animals at rest in a herd, after food held up, and out of their depth: a herd keeps
+/// together without twitching to and fro, followers keep up and do not crowd the player,
+/// and a land animal in deep water makes for the shore.
+#[cfg(test)]
+mod herd_tests {
+    use super::*;
+    use super::cornered_tests::{join, pen, put, wall};
+
+    /// Short starts (moving under 0.75 s between stands), sharp turns (over 90 degrees in
+    /// half a second, moving) and the widest the herd got, of six `name` left to themselves
+    /// a minute, over four worlds.
+    fn herd_jitter(name: &str) -> (u32, u32, f32) {
+        let (mut short, mut sharp, mut widest) = (0, 0, 0.0f32);
+        for salt in 0..4u64 {
+            let mut server = crate::test_server();
+            server.meta.seed ^= salt * 7919;
+            let c = pen(&mut server, 14);
+            let ids: Vec<u32> = (0..6).map(|i| put(&mut server, name, c.as_vec3() + Vec3::new((i % 3) as f32 * 1.2 - 1.2, 0.0, (i / 3) as f32 * 1.2), Vec3::X)).collect();
+            let mut runs = vec![0u32; ids.len()];
+            let mut heads: Vec<std::collections::VecDeque<Option<Vec3>>> = vec![Default::default(); ids.len()];
+            for _ in 0..60 * TICKS_PER_SECOND as u64 {
+                server.tick += 1;
+                let before: Vec<Vec3> = ids.iter().map(|id| server.creatures.live[id].body.position).collect();
+                server.think_and_move();
+                for (k, id) in ids.iter().enumerate() {
+                    let step = (server.creatures.live[id].body.position - before[k]).with_y(0.0);
+                    let moving = step.length() * TICKS_PER_SECOND as f32 > 0.3;
+                    if moving {
+                        runs[k] += 1;
+                    } else {
+                        short += (runs[k] > 0 && runs[k] < 15) as u32;
+                        runs[k] = 0;
+                    }
+                    heads[k].push_back(moving.then(|| step.normalize()));
+                    if heads[k].len() > 10 && let (Some(Some(a)), Some(Some(b))) = (heads[k].pop_front(), heads[k].back().copied()) && a.dot(b) < 0.0 {
+                        sharp += 1;
+                        heads[k].clear();
+                    }
+                }
+            }
+            let at: Vec<Vec3> = ids.iter().map(|id| server.creatures.live[id].body.position).collect();
+            widest = widest.max(at.iter().flat_map(|a| at.iter().map(move |b| a.distance(*b))).fold(0.0, f32::max));
+        }
+        (short, sharp, widest)
+    }
+
+    /// Before: a herd's will to keep together was drawn afresh each tick, its companion was
+    /// whichever the list of those about put first, two near each other went round to each
+    /// other's far side, and strolls took them well off: 288 sharp turns for mouflon, 256
+    /// for red deer, 394 for junglefowl.
+    #[test]
+    fn a_herd_at_rest_keeps_together_without_turning_to_and_fro() {
+        for (name, most) in [("base:mouflon", 110), ("base:red_deer", 110), ("base:junglefowl", 220)] {
+            let (short, sharp, widest) = herd_jitter(name);
+            assert!(sharp <= most, "{name}: {sharp} sharp turns in six animals over four minutes (at most {most})");
+            assert!(short <= 70, "{name}: {short} short starts");
+            assert!(widest < 15.0, "{name}: the herd spread {widest:.1} blocks");
+        }
+    }
+
+    /// Three kept animals of each kind after food their owner holds, who walks off through
+    /// a gap a block wide and two high in a wall and on. Before: they walked slower than the
+    /// player, lost the food at ten blocks and walked back home, and rabbits hopped in under
+    /// the player's feet.
+    #[test]
+    fn kept_animals_follow_held_food_through_a_gap_keep_up_and_stay_where_led() {
+        for (name, food) in [("base:mouflon", "base:wheat"), ("base:red_deer", "base:apple"), ("base:junglefowl", "base:wheat_seeds"), ("base:rabbit", "base:carrot")] {
+            let mut server = crate::test_server();
+            let c = pen(&mut server, 14);
+            wall(&mut server, (-13..=13).filter(|&z| z != 0).map(|z| c + IVec3::new(0, 0, z)).collect::<Vec<_>>(), 2);
+            let stone = server.content.blocks.expect("base:stone");
+            server.world.set_block(c + IVec3::new(0, 2, 0), stone);
+            let player = join(&mut server, c.as_vec3() + Vec3::new(-6.5, 0.0, 0.5));
+            let item = server.content.blocks.expect(food);
+            let owner = server.players[&player].name.clone();
+            let held = server.players.get_mut(&player).unwrap();
+            held.inventory.add(item, 4);
+            held.selected = (0..36).find(|&slot| held.inventory.get(slot).is_some_and(|s| s.item == item)).expect("the food is held");
+            let ids: Vec<u32> = (0..3)
+                .map(|i| {
+                    let id = put(&mut server, name, c.as_vec3() + Vec3::new(-8.5, 0.0, i as f32 * 1.5 - 1.0), Vec3::X);
+                    server.creatures.live.get_mut(&id).unwrap().owner = Some(owner.clone());
+                    id
+                })
+                .collect();
+            // Through the gap at a walk, and on.
+            let route = [Vec3::new(-1.5, 0.0, 0.5), Vec3::new(1.5, 0.0, 0.5), Vec3::new(9.5, 0.0, 0.5)].map(|r| c.as_vec3() + r);
+            let (mut leg, mut crowding, mut stalled) = (0, 0, 0);
+            let mut last: Vec<Vec3> = ids.iter().map(|id| server.creatures.live[id].body.position).collect();
+            for t in 0..20 * TICKS_PER_SECOND as u64 {
+                server.tick += 1;
+                let p = server.players[&player].position;
+                if let Some(&to) = route.get(leg) {
+                    let step = (to - p).with_y(0.0);
+                    if step.length() < 0.1 {
+                        leg += 1;
+                    } else {
+                        server.players.get_mut(&player).unwrap().position = p + step.normalize() * step.length().min(3.0 / TICKS_PER_SECOND as f32);
+                    }
+                }
+                server.think_and_move();
+                let p = server.players[&player].position;
+                for (k, id) in ids.iter().enumerate() {
+                    let at = server.creatures.live[id].body.position;
+                    crowding += (flat_distance(at, p) < 1.2) as u32;
+                    if t % TICKS_PER_SECOND as u64 == 0 {
+                        stalled += ((at - last[k]).with_y(0.0).length() < 0.2 && at.distance(p) > 3.5) as u32;
+                        last[k] = at;
+                    }
+                }
+            }
+            let p = server.players[&player].position;
+            let at = |server: &Server| ids.iter().map(|id| server.creatures.live[id].body.position - c.as_vec3()).collect::<Vec<_>>();
+            assert_eq!(stalled, 0, "{name}: stood still {stalled} seconds behind the player: {:.1?}", at(&server));
+            assert!(crowding <= 40, "{name}: {crowding} ticks under the player's feet");
+            assert!(ids.iter().all(|id| flat_distance(server.creatures.live[id].body.position, p) < 4.0), "{name}: not all came along: {:.1?}", at(&server));
+            // The food put away, they stay where they were led.
+            server.players.get_mut(&player).unwrap().selected = (0..36).find(|&slot| server.players[&player].inventory.get(slot).is_none()).expect("an empty slot");
+            for _ in 0..15 * TICKS_PER_SECOND as u64 {
+                server.tick += 1;
+                server.think_and_move();
+            }
+            assert!(ids.iter().all(|id| server.creatures.live[id].body.position.x > c.x as f32 + 2.0), "{name}: walked back to where they were: {:.1?}", at(&server));
+        }
+    }
+
+    fn flat_distance(a: Vec3, b: Vec3) -> f32 {
+        a.with_y(0.0).distance(b.with_y(0.0))
+    }
+
+    /// A lake two deep, its east shore 4.5 blocks off: each kind swims for it and climbs
+    /// out. Before: they paddled wherever they had been going, 9 to 33 s, a wolf never.
+    #[test]
+    fn a_land_animal_out_of_its_depth_swims_to_the_nearest_shore() {
+        for name in ["base:mouflon", "base:red_deer", "base:rabbit", "base:junglefowl", "base:wolf", "base:badger"] {
+            let mut server = crate::test_server();
+            let c = pen(&mut server, 14);
+            let (stone, water) = (server.content.blocks.expect("base:stone"), server.content.blocks.expect("base:water"));
+            for z in -6..=6 {
+                for x in -6..=6 {
+                    server.world.set_block(c + IVec3::new(x, -1, z), water);
+                    server.world.set_block(c + IVec3::new(x, -2, z), water);
+                    server.world.set_block(c + IVec3::new(x, -3, z), stone);
+                }
+            }
+            let id = put(&mut server, name, c.as_vec3() + Vec3::new(2.5, -1.5, 0.5), -Vec3::X);
+            let out = (0..8 * TICKS_PER_SECOND as u64).find(|_| {
+                server.tick += 1;
+                server.think_and_move();
+                let body = &server.creatures.live[&id].body;
+                body.on_ground && !body.in_water && body.position.y >= c.y as f32 - 0.01
+            });
+            let at = server.creatures.live[&id].body.position - c.as_vec3();
+            assert!(out.is_some(), "{name} was still in the lake after 8 s, at {at:.2}");
+            assert!(at.x > 6.5, "{name} came out on a far shore, at {at:.2}");
+        }
+    }
+
+    /// A lake two deep shelving to a block deep before its east shore: once out of the deep
+    /// water, each kind keeps on through the shallows to the shore, and does not wade back
+    /// into the deep after.
+    #[test]
+    fn a_land_animal_wades_out_through_shallows_and_keeps_out_of_the_deep() {
+        for name in ["base:mouflon", "base:red_deer", "base:rabbit", "base:junglefowl", "base:wolf", "base:badger"] {
+            for salt in 0..3u64 {
+                let mut server = crate::test_server();
+                server.meta.seed ^= salt * 7919;
+                let c = pen(&mut server, 14);
+                let (stone, water) = (server.content.blocks.expect("base:stone"), server.content.blocks.expect("base:water"));
+                for z in -8..=8 {
+                    for x in -8..=8 {
+                        let shallow = x >= 2;
+                        server.world.set_block(c + IVec3::new(x, -1, z), water);
+                        server.world.set_block(c + IVec3::new(x, -2, z), if shallow { stone } else { water });
+                        server.world.set_block(c + IVec3::new(x, -3, z), stone);
+                    }
+                }
+                let id = put(&mut server, name, c.as_vec3() + Vec3::new(-1.5, -1.5, 0.5), Vec3::X);
+                let deep = |server: &Server| {
+                    let body = &server.creatures.live[&id].body;
+                    body.in_water && Ground(server).water_at(body.position.floor().as_ivec3() - IVec3::Y)
+                };
+                let out = (0..12 * TICKS_PER_SECOND as u64).find(|_| {
+                    server.tick += 1;
+                    server.think_and_move();
+                    let body = &server.creatures.live[&id].body;
+                    body.on_ground && !body.in_water && body.position.y >= c.y as f32 - 0.01
+                });
+                let at = server.creatures.live[&id].body.position - c.as_vec3();
+                assert!(out.is_some(), "{name} (world {salt}) was still in the lake after 12 s, at {at:.2}");
+                for t in 0..30 * TICKS_PER_SECOND as u64 {
+                    server.tick += 1;
+                    server.think_and_move();
+                    let at = server.creatures.live[&id].body.position - c.as_vec3();
+                    assert!(!deep(&server), "{name} (world {salt}) waded back into the deep water at {at:.2} (tick {t})");
+                }
+            }
         }
     }
 }
