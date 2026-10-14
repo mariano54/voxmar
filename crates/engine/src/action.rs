@@ -36,6 +36,10 @@ pub enum ActionTarget {
     Stack { slot: u8, count: u8 },
     /// A creature, by its id.
     Creature(u32),
+    /// A crafting way to lay into the grid (`Effect::LayRecipe`): the recipes from `first`
+    /// (in content order) for `ways` on, one recipe book entry's variants (another wood's
+    /// planks), and how many sets.
+    Recipe { first: u16, ways: u8, count: u8 },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -184,6 +188,9 @@ pub enum Effect {
     /// Craft what the actor's crafting grid holds: once onto the pointer
     /// (`ActionTarget::Slot(1)`), or as many times as it can into the inventory (`Slot(0)`).
     Craft,
+    /// Lay a recipe for the target item into the actor's empty crafting grid, `count` sets
+    /// of it, from their pack and, at home, from the stores in it (`craft::lay`).
+    LayRecipe,
     /// Till the target soil into farmland.
     Till,
     /// Turn the target into what it swaps for, its upper or lower half with it: open or

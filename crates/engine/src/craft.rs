@@ -25,6 +25,9 @@ pub const GRID: usize = SIDE * SIDE;
 /// The cells of the two-by-two grid the inventory has away from a table.
 pub const SMALL: [usize; 4] = [0, 1, SIDE, SIDE + 1];
 
+/// Where a shapeless recipe's ingredients are laid, in order: the two by two first.
+const SHAPELESS_CELLS: [usize; GRID] = [0, 1, SIDE, SIDE + 1, 2, SIDE + 2, 2 * SIDE, 2 * SIDE + 1, 2 * SIDE + 2];
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RecipeDef {
@@ -121,6 +124,38 @@ impl Recipe {
             Some(rows) => (rows.len(), rows.first().map_or(0, Vec::len)),
             None => (self.ingredients.len().div_ceil(SIDE).max(1), self.ingredients.len().min(SIDE)),
         }
+    }
+
+    /// The grid laid with `times` sets of this recipe from what `have` holds (counts by
+    /// item), each cell with its item and how many: a cell takes the first of its
+    /// alternatives there is enough of, preferring what an earlier cell with the same
+    /// alternatives took (a family's logs all oak), and never more than one stack of it
+    /// (`stack`). A shaped recipe sits in the top left corner; a shapeless one fills the two
+    /// by two first, so one of up to four ingredients fits the inventory's own grid. None
+    /// if some cell finds not enough.
+    pub fn lay(&self, times: u8, have: &FxHashMap<BlockId, u32>, stack: impl Fn(BlockId) -> u8) -> Option<[Option<(BlockId, u8)>; GRID]> {
+        if times == 0 {
+            return None;
+        }
+        let mut used: FxHashMap<BlockId, u32> = FxHashMap::default();
+        let mut chosen: Vec<(&[BlockId], BlockId)> = Vec::new();
+        let mut grid = [None; GRID];
+        let cells = self.alternatives();
+        for (i, accepts) in cells.into_iter().enumerate() {
+            let Some(accepts) = accepts else { continue };
+            let at = if self.shapeless() { SHAPELESS_CELLS[i] } else { i };
+            // Enough for `cells` more cells' sets.
+            let enough = |item: &BlockId, cells: u32| stack(*item) >= times && have.get(item).copied().unwrap_or(0) >= used.get(item).copied().unwrap_or(0) + cells * times as u32;
+            let alike = cells[i..].iter().filter(|c| **c == Some(accepts)).count() as u32;
+            let same = chosen.iter().find(|(earlier, _)| *earlier == accepts).map(|&(_, item)| item).filter(|item| enough(item, 1));
+            let item = same
+                .or_else(|| accepts.iter().copied().find(|item| enough(item, alike)))
+                .or_else(|| accepts.iter().copied().find(|item| enough(item, 1)))?;
+            *used.entry(item).or_default() += times as u32;
+            chosen.push((accepts, item));
+            grid[at] = Some((item, times));
+        }
+        Some(grid)
     }
 
     fn matches(&self, grid: &[Option<BlockId>; GRID]) -> bool {
@@ -376,6 +411,41 @@ mod tests {
         assert!(registry.find(&[None; GRID]).is_none());
         // Planks train Crafting, and no recipe so far needs a table.
         assert!(registry.iter().all(|r| r.skill.is_some() && !r.needs_table()));
+    }
+
+    /// A recipe laid from what there is: the first alternative there is enough of, the
+    /// same one in every cell that takes it, as many sets as there is enough for, and the
+    /// grid it makes is the recipe's own.
+    #[test]
+    fn a_recipe_lays_from_what_there_is() {
+        let source = r#"(recipes: [
+            (pattern: [["stone", "stone"], ["stone", "stone"]], output: "stone_bricks", count: 4),
+            (pattern: [["tag:log", "tag:log"]], output: "bread"),
+            (ingredients: ["wheat", "oak_planks", "wheat"], output: "stone"),
+        ])"#;
+        let names = ["test:oak_log", "test:oak_planks", "test:birch_log", "test:stone", "test:stone_bricks", "test:wheat", "test:bread"];
+        let tags = |n: &str| if n.ends_with("_log") { vec!["log".to_string()] } else { Vec::new() };
+        let blocks = BlockRegistry::new(names.iter().map(|n| BlockDef { name: n.to_string(), tags: tags(n), ..Default::default() }).collect()).unwrap();
+        let registry = registry(&blocks, source);
+        let id = |name: &str| blocks.id(&format!("test:{name}")).unwrap();
+        let have = |items: &[(&str, u32)]| items.iter().map(|&(n, c)| (id(n), c)).collect::<FxHashMap<_, _>>();
+        let recipe = |output: &str| registry.iter().find(|r| r.output == id(output)).unwrap();
+        let stack = |_| 64;
+        let bricks = recipe("stone_bricks");
+        assert!(bricks.lay(2, &have(&[("stone", 7)]), stack).is_none(), "two sets take eight");
+        let laid = bricks.lay(1, &have(&[("stone", 7)]), stack).unwrap();
+        assert_eq!(laid.iter().flatten().count(), 4);
+        let items = |laid: [Option<(BlockId, u8)>; GRID]| laid.map(|c| c.map(|(item, _)| item));
+        assert_eq!(registry.find(&items(laid)).map(|r| r.output), Some(id("stone_bricks")));
+        // Both logs from one wood, the one there is enough of.
+        let logs = recipe("bread").lay(2, &have(&[("oak_log", 3), ("birch_log", 4)]), stack).unwrap();
+        assert_eq!((logs[0], logs[1]), (Some((id("birch_log"), 2)), Some((id("birch_log"), 2))));
+        // Shapeless: into the two by two, so the inventory's grid takes it.
+        let laid = recipe("stone").lay(1, &have(&[("wheat", 2), ("oak_planks", 1)]), stack).unwrap();
+        assert!(SMALL.iter().filter(|&&i| laid[i].is_some()).count() == 3 && laid.iter().flatten().count() == 3);
+        assert_eq!(registry.find(&items(laid)).map(|r| r.output), Some(id("stone")));
+        // No more than a stack in a cell.
+        assert!(recipe("stone").lay(2, &have(&[("wheat", 4), ("oak_planks", 2)]), |_| 1).is_none());
     }
 
     #[test]
