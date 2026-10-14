@@ -668,10 +668,10 @@ fn react(
         for (name, gain) in struck_sounds(damage, blow, killed, weapon.style, shell) {
             say(&name, gain * loud, pitch, &mut heard);
         }
-        // A shot that missed sails on past; one that hit strikes home.
-        if shooting.is_some() {
-            if damage == 0 { shots.missed.push(id) } else { shots.hit.push(id) }
-        }
+        // A shot that missed sails on past; one that hit strikes home. Told whatever is in
+        // hand now: a missile loosed before the weapon was put away still waits for its
+        // answer (a verdict with no missile at that creature is dropped at the next frame).
+        if damage == 0 { shots.missed.push(id) } else { shots.hit.push(id) }
         if damage == 0 || blow == Blow::Bleed {
             continue;
         }
