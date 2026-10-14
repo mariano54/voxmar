@@ -69,8 +69,14 @@ pub(crate) const TOLERANCE: u64 = 600 * TICKS_PER_SECOND as u64;
 const SETTLE_RADIUS: f32 = 10.0;
 /// Light from blocks within this many blocks keeps monsters away underground.
 const LIT_REACH: i32 = 5;
+/// Where a creature's stuck clock (`Live::stuck`, to 2 s) stands once a search finds no way
+/// to its goal.
+const NO_WAY_STUCK: f32 = 1.5;
 /// How soon after balking at a chase a second balk makes a creature give it up, in ticks.
 const BALK_WINDOW: u64 = 8 * TICKS_PER_SECOND as u64;
+/// How long after giving a chase up a creature that takes one up again gives it up at its
+/// first balk, in ticks: it has been round that box already.
+const REBALK_WINDOW: u64 = 60 * TICKS_PER_SECOND as u64;
 /// How far a land animal out of its depth looks for the shore.
 const SHORE_RANGE: i32 = 12;
 
@@ -117,6 +123,8 @@ pub struct Live {
     /// last. Not saved.
     pub balked: u8,
     pub balked_at: u64,
+    /// When it last gave a chase up for balking (`BALK_WINDOW`). Not saved.
+    pub gave_up_at: Option<u64>,
     /// The player who keeps it, by name (tamed or bred), and the id they have now.
     pub owner: Option<String>,
     pub owner_id: Option<PlayerId>,
@@ -641,6 +649,11 @@ impl Server {
         creature.way = way;
         if let Some((to, at)) = searched {
             (creature.way_to, creature.way_at) = (to, at);
+            // No way there at all (a player shut in a box, or behind a fence with no gap):
+            // going round on, it gives the goal up sooner.
+            if to.is_none() {
+                creature.stuck = creature.stuck.max(NO_WAY_STUCK);
+            }
         }
         let mut balked = false;
         // Stuck against something for two seconds, or going round it for four: give up the
@@ -654,14 +667,17 @@ impl Server {
                 creature.stuck = 0.0;
                 // Balked twice running in a chase (a player behind a fence it has no way
                 // through, or round a box it cannot get into): it gives the chase up and
-                // goes home rather than hang there.
+                // goes home rather than hang there. Back at it within a minute, it gives up
+                // at the first balk.
                 let chasing = creature.mind.doing.is_some_and(|i| matches!(species.modules[i].0.name(), "hunt" | "defend"));
                 if chasing && !species.def.boss {
                     let again = self.tick < creature.balked_at + BALK_WINDOW;
                     creature.balked = if again { creature.balked + 1 } else { 1 };
                     creature.balked_at = self.tick;
-                    if creature.balked >= 2 {
+                    let lately = creature.gave_up_at.is_some_and(|at| self.tick < at + REBALK_WINDOW);
+                    if creature.balked >= if lately { 1 } else { 2 } {
                         creature.balked = 0;
+                        creature.gave_up_at = Some(self.tick);
                         balked = true;
                     }
                 }
@@ -1088,6 +1104,7 @@ impl Server {
             shore: None,
             balked: 0,
             balked_at: 0,
+            gave_up_at: None,
             way_at: 0,
             owner: None,
             owner_id: None,
@@ -2825,8 +2842,10 @@ mod chase_tests {
     }
 
     /// The player shut in a stone box, struck at by a hunter from outside it. Before: wolf,
-    /// bear and badger hung about the box 32 to 37 seconds of 40. Now they balk twice,
-    /// give up and go home; struck again, they take the fight up again.
+    /// bear and badger hung about the box 32 to 37 seconds of 40. Now no way in found, they
+    /// balk twice, give up and lope home (5, 7 and 10 s by the box), not stand by it staring
+    /// or spinning to face the player through its wall, nor come back to it while they
+    /// remember giving up; struck again, they take the fight up again.
     #[test]
     fn a_hunter_that_cannot_get_at_the_player_gives_up_and_goes_home() {
         for name in ["base:wolf", "base:brown_bear", "base:badger"] {
@@ -2837,15 +2856,20 @@ mod chase_tests {
             let home = c.as_vec3() + Vec3::new(-9.5, 0.0, 0.5);
             let id = put(&mut server, name, home, Vec3::X);
             server.hurt_creature(player, id, 0, None, voxmar_engine::combat::Blow::Plain);
-            let mut hanging = 0;
+            let (mut hanging, mut back) = (0, f32::MAX);
             for _ in 0..40 * TICKS_PER_SECOND as u64 {
                 server.tick += 1;
                 server.think_and_move();
                 heal(&mut server, player);
-                hanging += (flat(server.creatures.live[&id].body.position, c.as_vec3()) < 4.5) as u32;
+                let at = server.creatures.live[&id].body.position;
+                hanging += (flat(at, c.as_vec3()) < 4.5) as u32;
+                if hanging > 0 {
+                    back = back.min(flat(at, home));
+                }
             }
             let seconds = hanging as f32 / TICKS_PER_SECOND as f32;
             assert!(seconds <= 13.0, "{name} hung about the box {seconds:.1} s of 40");
+            assert!(back < 4.0, "{name} never went home: {back:.1} blocks off it at nearest");
             assert!(!matches!(doing(&server, id), "hunt" | "defend"), "{name} was still after the player");
             server.hurt_creature(player, id, 0, None, voxmar_engine::combat::Blow::Plain);
             for _ in 0..TICKS_PER_SECOND as u64 {

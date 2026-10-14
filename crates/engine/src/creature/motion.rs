@@ -263,7 +263,8 @@ pub fn step(body: &mut Body, world: &impl Surroundings, movement: &Movement, wat
     // turn and walk out, or it would stand frozen for good.
     let head_was_blocked = body.head_blocked(world);
     // Face the way it moves, or what it was asked to look at.
-    let heading = if drive.wish.length_squared() > 1e-4 { Some(drive.wish) } else { drive.face };
+    let moving = drive.wish.length_squared() > 1e-4;
+    let heading = if moving { Some(drive.wish) } else { drive.face };
     let wanted = heading.filter(|h| h.x.abs() + h.z.abs() > 1e-4).map(yaw_of);
     if let Some(to) = wanted {
         let most = movement.turn.to_radians() * dt;
@@ -360,7 +361,11 @@ pub fn step(body: &mut Body, world: &impl Surroundings, movement: &Movement, wat
         let back = Vec3::new(start.x, moved.y, start.z);
         let other_way = start_yaw - (turned - start_yaw);
         let onward = (moved - start).with_y(0.0).dot(Body { yaw: start_yaw, ..*body }.forward()) >= -1e-4;
-        if turned != start_yaw && body.turn_way == 0.0 && clear(moved, other_way) {
+        // Standing to face something, the long way round only to a heading its head fits
+        // at: one it cannot face (a player behind a wall it stands against) it would turn
+        // for for ever.
+        let faceable = moving || wanted.is_none_or(|to| clear(moved, to));
+        if turned != start_yaw && body.turn_way == 0.0 && clear(moved, other_way) && faceable {
             body.yaw = other_way;
             body.turn_way = (other_way - start_yaw).signum();
             body.turn_to = wanted.unwrap_or(turned);
