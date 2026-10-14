@@ -239,6 +239,21 @@ ambience's `fire` group (`lit: true`) hears a hearth or a Crucible Kiln crackle 
 then; a campfire or a pit kiln always. A home hearth lit in a world saved before this is lit
 again when its player joins.
 
+## Light in the windows
+
+A home shows its lit rooms at night: a window glows warm by the light of the room behind it.
+Before glass there is the Hide Window (Farm, Construction 3: a hide in a frame of eight sticks,
+two windows), oiled hide in a stick frame. Every block tagged `window` (the hide window, glass,
+settlements' old glass) passes block light as air does (a `Cutout` cube), so a candle or the
+hearth behind it lights the ground outside, and is `lit_through` (a block field, any mod's
+window can say it): its bright texels glow by the block light reaching its face, which came
+through it, as a lantern's glow by its own light (client `render/mod.rs` `layer_table`, the
+glow byte's `THROUGH` bit; `voxel.wgsl`). It shows at any hour, as a lantern's glow does, and
+stands out after dark. A dark room's window stays dark; a wall keeps the light in
+(`a_window_lets_a_lit_rooms_light_out`, engine tests/windows.rs). The gate's Door step then
+sets a hide window in a candle-lit stone nook at midnight and judges the shot: the pane warm
+and bright against the night ("window: glows", shot `window-night`).
+
 ## Quest hooks (written, in base/quests.ron)
 
 `Built("home_camp", 1)` and the other steps are real goals (a step is tallied as
