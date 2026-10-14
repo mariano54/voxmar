@@ -85,7 +85,7 @@
         ),
         (
             name: "torchlight", age: "nomad", branch: "main", title: "Torchlight",
-            why: "Light keeps monsters off and lets you work at night. A coal (or a charcoal) over a stick makes four torches; coal shows as black flecks in the rock, and a black-flecked stone lying on the ground marks a seam below it. Any pickaxe breaks it, even a wooden one. Make eight. A night is a third of the day and cannot be slept away: spend it underground by torchlight digging coal (Coal and Cinders), or cooking and crafting at home.",
+            why: "Light keeps monsters off and lets you work at night. A coal (or a charcoal) over a stick makes four torches; coal shows as black flecks in the rock, and a black-flecked stone lying on the ground marks a seam below it. Any pickaxe breaks it, even a wooden one. Make eight. A night is a third of the day and cannot be slept away: spend it underground by torchlight digging coal, or at home cooking (Meat on the Fire) and crafting.",
             tasks: [[Craft("torch", 8)]],
             after: ["first_night"],
             rewards: [Xp("engineering", 21.0)],
@@ -135,6 +135,13 @@
             tasks: [[Craft("stone_sword", 1)], [Craft("bone_club", 1)]],
             after: ["stone_in_hand"],
             rewards: [Xp("crafting", 40.0)],
+        ),
+        (
+            name: "a_stones_throw", age: "nomad", branch: "combat", title: "A Stone's Throw",
+            why: "A sling hits from twelve blocks away, where a blade must be close: birds, runners, or something you would rather not stand next to. Lay a hide between two twine in a row at the crafting table. Hold it and click a creature in clear sight: each shot throws one cobblestone from your pack, hit or miss, so carry a stack. It hits softer than a stone sword (2 at most), and every hit trains Ranged. Reach Ranged 2.",
+            tasks: [[Craft("sling", 1), Level("ranged", 2)]],
+            after: ["twine_and_thong"],
+            rewards: [Xp("ranged", 40.0), Xp("crafting", 30.0)],
         ),
         (
             name: "small_game", age: "nomad", branch: "hunter", title: "Small Game",
@@ -397,7 +404,7 @@
         ),
         (
             name: "herb_garden", age: "farm", branch: "farming", title: "Herb Garden",
-            why: "Herbs cannot be sown, but a herb planter (planks round dirt, Construction 3) lets a picked herb grow back at home. Make a planter, set a herb in it, and pick it again when it returns. Pick six wild plants on your rounds as well. While a herb grows back, take spare herbs to the folk on the road who know them (Herb Lore).",
+            why: "Herbs cannot be sown, but a herb planter (planks round dirt, Construction 3) lets a picked herb grow back at home. Make a planter, set a herb in it, and pick it again when it returns. Pick six wild plants on your rounds as well. While a herb grows back, sow four crops by the house (A Kitchen Garden).",
             tasks: [[Craft("herb_planter", 1), Pick("any", 6)]],
             after: ["first_harvest"],
             rewards: [Xp("construction", 80.0), Xp("farming", 60.0)],
@@ -499,6 +506,13 @@
             tasks: [[Craft("copper_sword", 1), Craft("copper_shield", 1)]],
             after: ["red_metal"],
             rewards: [Xp("engineering", 200.0), Xp("attack", 100.0)],
+        ),
+        (
+            name: "bow_and_arrow", age: "farm", branch: "combat", title: "Bow and Arrow",
+            why: "A short bow reaches twenty blocks and hits twice as hard as a sling. At the crafting table, three sticks bent down one side and three twine down the other make it (Crafting 5). An arrow is a flint or a cobblestone over a stick over a feather, four at a time (Crafting 5): flint comes one gravel in eight, and feathers from junglefowl. The bow needs Ranged 5 to shoot (below it, it strikes as a fist), so keep slinging stones until then. Make the bow and eight arrows, and reach Ranged 5.",
+            tasks: [[Craft("short_bow", 1), Craft("arrow", 8), Level("ranged", 5)]],
+            after: ["homestead_hearth"],
+            rewards: [Xp("ranged", 120.0), Xp("crafting", 60.0)],
         ),
         (
             name: "copper_mail", age: "farm", branch: "combat", title: "Copper Mail",

@@ -209,6 +209,11 @@ impl Server {
         if self.eating(player) {
             return;
         }
+        // A sling or bow with nothing to shoot is no swing at all; the player is told why.
+        if self.ammo_slot(player, &weapon) == Some(None) {
+            self.no_ammo(player, &weapon);
+            return;
+        }
         let held = self.players.get(&player).and_then(|p| p.held());
         let timing = self.content.combat.timing(&weapon);
         let now = self.fight_arrival();
@@ -231,6 +236,28 @@ impl Server {
             fighter.aim = Some(Aim { creature, counter, riposte, weapon, held });
         }
     }
+
+    /// For a weapon that shoots: `Some` with the pack slot of the first thing it shoots,
+    /// or `Some(None)` with nothing to shoot; `None` for a weapon that strikes.
+    fn ammo_slot(&self, player: PlayerId, weapon: &Weapon) -> Option<Option<usize>> {
+        let ammo = self.content.combat.ammo(weapon);
+        if ammo.is_empty() {
+            return None;
+        }
+        let p = self.players.get(&player)?;
+        Some((0..voxmar_engine::inventory::SLOTS).find(|&slot| p.inventory.get(slot).is_some_and(|stack| ammo.contains(&stack.item))))
+    }
+
+    /// Tells a player their weapon has nothing to shoot, naming what it shoots.
+    fn no_ammo(&self, player: PlayerId, weapon: &Weapon) {
+        let (Some(p), Some(&first)) = (self.players.get(&player), self.content.combat.ammo(weapon).first()) else { return };
+        let held = p.held().map(|item| voxmar_engine::lang::Words::Block(self.content.blocks.def(item).name.clone()));
+        let words = voxmar_engine::lang::Words::key("combat.no_ammo")
+            .with("weapon", held.unwrap_or_else(|| voxmar_engine::lang::Words::key("combat.no_ammo.weapon")))
+            .with("ammo", voxmar_engine::lang::Words::Block(self.content.blocks.def(first).name.clone()));
+        p.connection.send(ServerMessage::Chat { kind: voxmar_protocol::ChatKind::Info, text: words });
+    }
+
 
     /// A player starts a bite of food (`core:eat`): a swing under way is dropped, and the
     /// meter starts again from empty, so a bite costs a beat (`Rhythm::restart`).
@@ -371,13 +398,21 @@ impl Server {
             }
         }
         // Players' swings. One at the air counts as off the beat: it earns no pip and spends
-        // no flourish.
+        // no flourish. A shot needs something to shoot and a clear line as well as reach: one
+        // into a wall, or with the last stone gone while it wound up, is at the air.
         let mut landing = Vec::new();
+        let (world, blocks, combat) = (&self.world, &self.content.blocks, &self.content.combat);
+        let solid = |cell: voxmar_engine::glam::IVec3| world.block(cell).is_some_and(|b| blocks.info(b).solid);
         for (&player, fighter) in &mut self.fights.fighters {
             if let Some(swing) = fighter.rhythm.landed(now) {
                 let Some(aim) = fighter.aim.take() else { continue };
-                let eye = self.players.get(&player).map(|p| p.eye());
-                let in_reach = eye.zip(self.creatures.reach_box(aim.creature, feel.reach_lag)).is_some_and(|(eye, aabb)| eye.distance(eye.clamp(aabb.min, aabb.max)) <= aim.weapon.reach + feel.reach_slack);
+                let p = self.players.get(&player);
+                let eye = p.map(|p| p.eye());
+                let ammo = combat.ammo(&aim.weapon);
+                let loaded = ammo.is_empty() || p.is_some_and(|p| (0..voxmar_engine::inventory::SLOTS).any(|slot| p.inventory.get(slot).is_some_and(|stack| ammo.contains(&stack.item))));
+                let in_reach = loaded && eye.zip(self.creatures.reach_box(aim.creature, feel.reach_lag)).is_some_and(|(eye, aabb)| {
+                    eye.distance(eye.clamp(aabb.min, aabb.max)) <= aim.weapon.reach + feel.reach_slack && (ammo.is_empty() || clear_shot(eye, &aabb, solid))
+                });
                 let on_beat = in_reach && (swing.on_beat || aim.riposte || aim.counter);
                 let kind = fighter.rhythm.blow(&Swing { on_beat, ..swing }, now, &feel);
                 landing.push((player, aim, swing.strength, on_beat, kind, in_reach));
@@ -423,6 +458,24 @@ impl Server {
     fn land_swing(&mut self, player: PlayerId, aim: Aim, strength: f32, on_beat: bool, kind: Blow, in_reach: bool) {
         let feel = self.content.combat.feel;
         let weapon = aim.weapon;
+        let mut shot = None;
+        // A shot takes one of what the weapon shoots, hit or miss; with none left (gone while
+        // it wound up) it is answered as a miss at the air, and the player told why.
+        match self.ammo_slot(player, &weapon) {
+            Some(None) => {
+                self.no_ammo(player, &weapon);
+                self.struck(player, aim.creature, 0, false, Blow::Plain);
+                return;
+            }
+            Some(Some(slot)) => {
+                if let Some(p) = self.players.get_mut(&player) {
+                    shot = p.inventory.get(slot).map(|stack| stack.item);
+                    p.inventory.take(slot, 1);
+                    p.changed(voxmar_engine::traits::INVENTORY);
+                }
+            }
+            None => {}
+        }
         let Some(p) = self.players.get(&player) else { return };
         let falling = p.fall_start.is_some_and(|top| p.position.y < top - feel.falling_drop);
         if !in_reach {
@@ -435,7 +488,15 @@ impl Server {
             p.last_blow = tick;
         }
         let stroke = Stroke::of(kind, strength, on_beat, aim.counter, aim.riposte, falling, &feel);
+        let at = self.creatures.live.get(&aim.creature).map(|c| c.body.position);
         let Some(damage) = self.land_blow(player, aim.creature, &weapon, stroke) else { return };
+        // A shot that hit may be left lying by the target, to be picked up again.
+        if let (Some(item), Some(at), true) = (shot, at, damage > 0)
+            && unit_from(mix(mix(self.tick, aim.creature as u64), 0xa770)) < self.content.combat.recover(&weapon)
+        {
+            let body = voxmar_engine::dropped::Loose::new(at + Vec3::Y * 0.25, Vec3::ZERO);
+            self.items.spawn(voxmar_engine::inventory::ItemStack { item, count: 1 }, body, voxmar_engine::dropped::PICKUP_DELAY);
+        }
         if kind == Blow::Flourish && damage > 0 {
             self.flourish(player, aim.creature, &weapon, damage);
         }
@@ -809,4 +870,12 @@ mod tests {
             assert!((server.lag_allowance(player) - allowance).abs() < 1e-6, "{round_trip}: {}", server.lag_allowance(player));
         }
     }
+}
+
+/// Whether nothing `solid` stands between an eye and the middle of `aabb`: a shot needs a
+/// clear line where a blow needs only reach.
+fn clear_shot(eye: Vec3, aabb: &Aabb, solid: impl Fn(voxmar_engine::glam::IVec3) -> bool) -> bool {
+    let centre = (aabb.min + aabb.max) * 0.5;
+    let distance = eye.distance(centre);
+    voxmar_engine::physics::raycast(eye, centre - eye, distance, solid).is_none_or(|hit| hit.distance >= distance)
 }
