@@ -300,6 +300,29 @@ stands out after dark. A dark room's window stays dark; a wall keeps the light i
 sets a hide window in a candle-lit stone nook at midnight and judges the shot: the pane warm
 and bright against the night ("window: glows", shot `window-night`).
 
+## A trough for the pen
+
+Kept animals graze within their leash of home (7 blocks), and grazing wears the land: now and
+then a tuft goes for good, so a full pen strips its grass and goes hungry, and a hungry animal
+loses condition and gives less. A Feed Trough (Farm, Construction 4: five planks in a low U) is
+a store of nine (machines.ron, opened like a barrel) tagged `trough`. A kept animal that grazes,
+unfed past a day (`creatures.ron`'s condition `fed`) with nothing to graze near, walks to a
+trough within its leash of home holding one of its foods (what it grazes, its favourites, what
+tames or readies it, any `breeding_feed`) and eats one, head down, as it grazes; it is fed
+for the day. So the trough feeds the pen while the keeper is away, an item an animal a day,
+and wheat from the field has a use at home. Hunters (a kept fox) still take meals by hand.
+Server `troughs.rs` (`trough_for`, `eat_from_trough`; the brain's food is a trough when it has
+no grazing); tests `a_hungry_kept_animal_eats_its_food_from_a_trough`,
+`a_kept_grazer_left_alone_feeds_itself_at_the_trough`. The gate's Tame step sets a trough
+and opens it ("trough: opens", shot `trough`).
+
+A kept animal also needs water within its leash of home, and that need reads one tag:
+any block tagged `drinking_water` (water itself, a well, a feed trough) meets it (server
+`condition.rs` `water_near`; the engine's `condition::DRINK`). So a pen away from the river
+is watered by the trough that feeds it, a Construction 4 piece any age can make, and a mod's
+water station is a tag on its block. Loading refuses creatures when no block carries
+`drinking_water` (`check_drink`). Test: `a_pen_drinks_from_water_a_well_or_a_trough`.
+
 ## Quest hooks (written, in base/quests.ron)
 
 `Built("home_camp", 1)` and the other steps are real goals (a step is tallied as
