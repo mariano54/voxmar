@@ -6257,13 +6257,25 @@ struct SlingRun {
     /// whatever else earlier steps or the land left there), and what each was: taken away
     /// for the shots and put back on every way out.
     cleared: Vec<(IVec3, String)>,
-    /// Whether the line has been looked along and cleared.
-    clear: bool,
 }
 
 /// One cell set to `block` by name.
 fn set_cell(cell: IVec3, block: &str) -> String {
     format!("fill {} {} {} {} {} {} {block}", cell.x, cell.y, cell.z, cell.x, cell.y, cell.z)
+}
+
+/// The cells between an eye and a creature standing at `feet`: on the lines to its feet,
+/// its middle and its top, each once.
+fn shot_lines(eye: Vec3, feet: Vec3) -> Vec<IVec3> {
+    let mut cells = Vec::new();
+    for height in [0.2, 0.6, 1.0, 1.4] {
+        for cell in cells_between(eye, feet + Vec3::Y * height) {
+            if !cells.contains(&cell) {
+                cells.push(cell);
+            }
+        }
+    }
+    cells
 }
 
 /// The cells a straight line from `from` to `to` passes through, in order, each once.
@@ -6355,24 +6367,28 @@ fn sling(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
         1 => {
             // Its own bear in sight, the sling in hand at the level that wields it, and the
             // stones given (on top of any the player had).
-            // Once at the spot with the bear in sight: whatever stands on the line from the
-            // eye to the bear is named, taken away, and remembered to put back.
+            // At the spot with the bear in sight, each frame until ready: whatever stands
+            // between the eye and the bear (on the lines to its feet, middle and top, which
+            // hold both the crosshair's aim and the server's line to its centre) is named,
+            // taken away, and remembered to put back. Looked along again each frame, so a
+            // bear that moved or a cell that loaded late is cleared too.
             let eye = world.resource::<LocalPlayer>().eye();
             let at_spot = eye.xz().distance(Vec2::new(pad.x as f32 + 0.5, pad.z as f32 - 6.5)) < 0.5;
-            let line = view.filter(|_| at_spot).map(|v| cells_between(eye, v.position + Vec3::Y * 0.6));
+            let line = view.filter(|_| at_spot).map(|v| shot_lines(eye, v.position));
             let standing: Vec<(IVec3, BlockId)> = line.iter().flatten().filter_map(|&cell| world.resource::<ClientWorld>().block(cell).filter(|b| !b.is_air()).map(|b| (cell, b))).collect();
-            if let (false, Some(_)) = (gate.sling.clear, &line) {
+            let new: Vec<(IVec3, String)> = {
                 let blocks = &world.resource::<Launch>().content.blocks;
-                let named: Vec<(IVec3, String)> = standing.iter().map(|&(cell, b)| (cell, blocks.def(b).name.clone())).collect();
-                info!("gate: sling line from the eye to the bear: {} blocks in the way {named:?}", named.len());
+                standing.iter().filter(|(cell, _)| !gate.sling.cleared.iter().any(|(c, _)| c == cell)).map(|&(cell, b)| (cell, blocks.def(b).name.clone())).collect()
+            };
+            if !new.is_empty() {
+                info!("gate: sling line from the eye to the bear: {} blocks in the way {new:?}", new.len());
                 let net = world.resource::<Net>();
-                for (cell, _) in &named {
+                for (cell, _) in &new {
                     net.command(&set_cell(*cell, "air"));
                 }
-                gate.sling.cleared = named;
-                gate.sling.clear = true;
+                gate.sling.cleared.extend(new);
             }
-            let open = gate.sling.clear && standing.is_empty();
+            let open = line.is_some() && standing.is_empty();
             let ready = skill_level(world, "core:ranged").0 >= SLING_LEVEL && view.is_some() && stones >= SLING_STONES && open;
             if ready && select(world, SLING) {
                 let bear = view.map(|v| v.id);
@@ -6380,7 +6396,7 @@ fn sling(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 world.resource::<Net>().command(&format!("creatures hold {}", BEAR.trim_start_matches("base:")));
                 let xp = skill_level(world, "core:ranged").1;
                 let (before, cleared) = (std::mem::take(&mut gate.sling.before), std::mem::take(&mut gate.sling.cleared));
-                gate.sling = SlingRun { before, cleared, clear: true, bear, landed, blows, xp, stones, ..default() };
+                gate.sling = SlingRun { before, cleared, bear, landed, blows, xp, stones, ..default() };
                 gate.advance(now);
             } else if gate.server_in_phase().min(now - gate.phase_since) > 10.0 {
                 let held = holding(world, SLING).1;
@@ -9231,6 +9247,13 @@ mod tests {
         for z in 1159..=1167 {
             assert!(cells.iter().any(|c| c.z == z), "every cell along the way: {cells:?}");
         }
+        // The lines to the bear's feet, middle and top: the look step's wall on the pad is
+        // crossed at both heights the server's line to its centre or the crosshair may take.
+        let lines = shot_lines(eye, bear - Vec3::Y * 0.6);
+        for y in 157..=158 {
+            assert!(lines.contains(&IVec3::new(-1104, y, 1166)), "the wall at height {y}: {lines:?}");
+        }
+        assert!(cells.iter().all(|c| lines.contains(c)), "the crosshair's line is among them");
     }
 
     use super::*;
