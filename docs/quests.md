@@ -227,7 +227,7 @@ wedding; ores run Copper Kit, Tin Find, Rock Collector, Ore Run.
 | Measure | Main before | Ten starts | Chains |
 |---|---|---|---|
 | Farm quests open at once along the kiln bot's run (max, median) | 33, 31 | 17, 15 | 12, 11 |
-| Open at once, clearing the whole age one quest at a time, oldest first (max, median) | 34, 19 | 25, 15 | 15, 11 |
+| Open at once, clearing the whole age one quest at a time, oldest first (max, median) | 34, 19 | 25, 15 | 15, 12 |
 | Columns, and the tallest | 8, 25 | 8, 21 | 11, 13 |
 
 Along the bot's run the open quests are one head per path: the next main quest, plus Camp
