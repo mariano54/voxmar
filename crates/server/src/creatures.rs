@@ -252,6 +252,8 @@ pub struct Creatures {
     /// The animal each player last asked to let go, and the tick: a second ask soon after
     /// lets it go (`release`).
     pub(crate) release_asked: FxHashMap<PlayerId, (u32, u64)>,
+    /// Which blocks are water a creature swims in or drinks, by id, worked out once.
+    water: std::sync::OnceLock<Vec<bool>>,
 }
 
 /// Every live creature by where it stood when a pass began, in square cells `CELL` blocks
@@ -284,6 +286,10 @@ impl Neighbours {
 }
 
 impl Creatures {
+    /// Which blocks are water (a fluid named for it), by id.
+    fn water_blocks(&self, blocks: &voxmar_engine::block::BlockRegistry) -> &[bool] {
+        self.water.get_or_init(|| blocks.ids().map(|b| blocks.info(b).fluid.is_some() && blocks.def(b).name.contains("water")).collect())
+    }
 
     /// Takes a creature out of the world without a death (`/creatures remove`).
     pub(crate) fn take_away(&mut self, id: u32) {
@@ -305,17 +311,48 @@ impl Creatures {
     }
 }
 
-/// The world as a creature's body feels it.
-struct Ground<'a>(&'a Server);
+/// The world as a creature's body feels it. A body, or a search for a way, looks at cells
+/// side by side, so it keeps the column it last looked in rather than find it again.
+struct Ground<'a> {
+    server: &'a Server,
+    last: std::cell::Cell<Option<(ColumnPos, &'a voxmar_engine::world::Column)>>,
+}
+
+impl<'a> Ground<'a> {
+    fn of(server: &'a Server) -> Self {
+        Self { server, last: std::cell::Cell::new(None) }
+    }
+
+    /// As `Server::block`: none in an unloaded column or under the world.
+    fn block(&self, cell: IVec3) -> Option<BlockId> {
+        if cell.y >= voxmar_engine::coords::WORLD_HEIGHT {
+            return Some(BlockId::AIR);
+        }
+        if cell.y < 0 {
+            return None;
+        }
+        let at = ColumnPos::of_block(cell);
+        let column = match self.last.get() {
+            Some((pos, column)) if pos == at => column,
+            _ => {
+                let column: &'a voxmar_engine::world::Column = self.server.world.column(at)?;
+                self.last.set(Some((at, column)));
+                column
+            }
+        };
+        let size = voxmar_engine::coords::CHUNK_SIZE;
+        Some(column.block(IVec3::new(cell.x & (size - 1), cell.y, cell.z & (size - 1))))
+    }
+}
 
 impl motion::Surroundings for Ground<'_> {
     fn solid(&self, cell: IVec3) -> bool {
         // Unloaded columns are walls, so nothing walks off the edge of the world.
-        self.0.block(cell).is_none_or(|b| self.0.content.blocks.info(b).solid)
+        self.block(cell).is_none_or(|b| self.server.content.blocks.info(b).solid)
     }
 
     fn water(&self, cell: IVec3) -> bool {
-        self.0.block(cell).is_some_and(|b| self.0.content.blocks.info(b).fluid.is_some() && self.0.content.blocks.def(b).name.contains("water"))
+        self.block(cell).is_some_and(|b| self.server.creatures.water_blocks(&self.server.content.blocks)[b.0 as usize])
     }
 }
 
@@ -564,12 +601,13 @@ impl Server {
         // A few rings out, starting at a seeded side so neighbours don't all pick the same
         // tuft.
         let start = (mix(salt as u64, self.tick / 200) % 4) as i32;
+        let ground = Ground::of(self);
         for r in 0..=FOOD_RANGE {
             for i in 0..(8 * r).max(1) {
                 let (dx, dz) = ring(r, (i + start * r.max(1)) % (8 * r).max(1));
                 for dy in [0, -1, 1] {
                     let cell = feet + IVec3::new(dx, dy, dz);
-                    if self.block(cell).is_some_and(|b| eats.contains(&b)) {
+                    if ground.block(cell).is_some_and(|b| eats.contains(&b)) {
                         return Some(cell);
                     }
                 }
@@ -581,7 +619,7 @@ impl Server {
     /// The nearest dry cell, within `SHORE_RANGE` blocks of `at` and a block of its level,
     /// where a body `height` blocks tall stands.
     fn shore_for(&self, at: Vec3, height: i32) -> Option<IVec3> {
-        let ground = Ground(self);
+        let ground = Ground::of(self);
         let walker = path::Walker { height, climbs: true, wary: true };
         let feet = at.floor().as_ivec3();
         (1..=SHORE_RANGE).find_map(|r| {
@@ -605,7 +643,7 @@ impl Server {
         // (rather than paddle where its wander or the food it was after takes it).
         // Once making for it, it keeps on through the shallows until it is out of the water.
         let land = !held && species.def.habitat.water == Water::Land && body.in_water;
-        let deep = land && Ground(self).water_at(body.position.floor().as_ivec3() - IVec3::Y);
+        let deep = land && Ground::of(self).water_at(body.position.floor().as_ivec3() - IVec3::Y);
         let shore = if !deep && !(land && creature.shore.is_some()) {
             None
         } else if creature.shore.is_some() && !self.tick.is_multiple_of(TICKS_PER_SECOND as u64) {
@@ -656,7 +694,7 @@ impl Server {
                 let going_round = creature.detour != 0.0 || creature.stuck > 0.5;
                 if (going_round || !cells.is_empty()) && stale && self.tick >= creature.way_at + TICKS_PER_SECOND as u64 {
                     let walker = path::Walker { height: body.size.1.ceil() as i32, climbs: movement.jump > 0.0, wary: water == Water::Land };
-                    let found = path::find(&Ground(self), &walker, (body.position + Vec3::Y * 0.01).floor().as_ivec3(), to);
+                    let found = path::find(&Ground::of(self), &walker, (body.position + Vec3::Y * 0.01).floor().as_ivec3(), to);
                     #[cfg(test)]
                     tick_cost_tests::SEARCHES.with(|n| n.set((n.get().0 + 1, n.get().1 + found.is_none() as u64)));
                     searched = Some((found.is_some().then_some(to), self.tick));
@@ -673,13 +711,13 @@ impl Server {
                     cells.remove(0);
                 }
                 let wish = cells.first().map_or(drive.wish, |cell| (cell.as_vec3() + Vec3::new(0.5, 0.0, 0.5) - body.position).with_y(0.0).normalize_or_zero());
-                let (heading, side) = motion::steer(&body, &Ground(self), movement, water, wish, creature.detour);
+                let (heading, side) = motion::steer(&body, &Ground::of(self), movement, water, wish, creature.detour);
                 way = cells;
                 (Drive { wish: heading, ..drive }, side)
             }
             _ => (drive, 0.0),
         };
-        motion::step(&mut body, &Ground(self), movement, water, drive, dt);
+        motion::step(&mut body, &Ground::of(self), movement, water, drive, dt);
         let creature = self.creatures.live.get_mut(&id).expect("still there");
         creature.shore = shore;
         creature.detour = detour;
@@ -1111,7 +1149,7 @@ impl Server {
         let looks = self.content.creatures.get(species);
         let yaw = (0..8)
             .map(|i| yaw + i as f32 * std::f32::consts::FRAC_PI_4)
-            .find(|&yaw| !Body { reach: looks.reach * scale, head: looks.head * scale, ..Body::new(at, yaw, size) }.head_blocked(&Ground(self)))
+            .find(|&yaw| !Body { reach: looks.reach * scale, head: looks.head * scale, ..Body::new(at, yaw, size) }.head_blocked(&Ground::of(self)))
             .unwrap_or(yaw);
         if self.model_seen_by_a_player(species, at, yaw, scale, angle) {
             return None;
@@ -1241,7 +1279,7 @@ impl Server {
         let biome = self.overworld.biomes().get(site.biome);
         let underground = spot.y < site.height - 4;
         let dark = !self.lit_near(spot) && (underground || self.daylight() < 0.25);
-        let in_water = Ground(self).water_at(spot);
+        let in_water = Ground::of(self).water_at(spot);
         let daylight = self.daylight();
         let mut choices: Vec<(CreatureId, f32)> = Vec::new();
         for (id, species) in self.content.creatures.iter() {
@@ -1503,7 +1541,13 @@ impl Ground<'_> {
 impl Server {
     /// Whether `cell` holds water a creature could drink or swim in.
     pub(crate) fn is_water(&self, cell: IVec3) -> bool {
-        Ground(self).water_at(cell)
+        Ground::of(self).water_at(cell)
+    }
+
+    /// Whether any of `cells` holds water (`is_water`), looked at in order.
+    pub(crate) fn any_water(&self, mut cells: impl Iterator<Item = IVec3>) -> bool {
+        let ground = Ground::of(self);
+        cells.any(|cell| ground.water_at(cell))
     }
 }
 
@@ -1818,7 +1862,7 @@ mod density_tests {
                 let cell = IVec3::new(x, min.y, z);
                 server.world.set_block(cell - IVec3::Y, stone);
                 assert_eq!(server.standing_spot(x, z, min.y), Some(cell), "the fixture must admit the intended floor");
-                assert!(!Ground(server).water_at(cell), "the fixture must offer dry land");
+                assert!(!Ground::of(server).water_at(cell), "the fixture must offer dry land");
             }
         }
     }
@@ -2260,7 +2304,7 @@ mod cornered_tests {
                 server.hurt_creature(player, id, 0, None, voxmar_engine::combat::Blow::Plain);
             }
             server.think_and_move();
-            let ground = Ground(server);
+            let ground = Ground::of(server);
             for (&other, c) in &server.creatures.live {
                 assert!(!c.body.aabb().intersects(|p| motion::Surroundings::solid(&ground, p)), "creature {other} went into a block at {} (tick {t})", c.body.position);
                 assert!(!c.body.head_blocked(&ground), "creature {other}'s head went into a block at {} (tick {t})", c.body.position);
@@ -2333,7 +2377,7 @@ mod cornered_tests {
         let body = server.creatures.live[&id].body;
         let face = (body.position + body.forward() * body.reach + Vec3::Y * body.head).floor().as_ivec3();
         server.world.set_block(face, server.content.blocks.expect("base:stone"));
-        assert!(body.head_blocked(&Ground(&server)), "the fixture must put the block at its head");
+        assert!(body.head_blocked(&Ground::of(&server)), "the fixture must put the block at its head");
         let start = body.position;
         server.hurt_creature(player, id, 0, None, voxmar_engine::combat::Blow::Plain);
         for _ in 0..3 * TICKS_PER_SECOND {
@@ -2341,7 +2385,7 @@ mod cornered_tests {
             server.think_and_move();
         }
         let now = server.creatures.live[&id].body;
-        assert!(!now.head_blocked(&Ground(&server)), "its head stayed in the block");
+        assert!(!now.head_blocked(&Ground::of(&server)), "its head stayed in the block");
         assert!(now.position.distance(start) > 3.0, "it stood frozen by the block at its face");
     }
 }
@@ -2559,7 +2603,7 @@ mod way_tests {
             let at = c.as_vec3() + Vec3::new((i % 12) as f32 * 2.0 - 11.5, 0.0, (i / 12) as f32 * 2.0 - 4.5);
             let id = server.spawn_creature(deer, at, i).expect("room");
             server.move_creature(id, 0.0);
-            assert!(!server.creatures.live[&id].body.head_blocked(&Ground(&server)), "a deer was made with its head in a trunk at {}", at - c.as_vec3());
+            assert!(!server.creatures.live[&id].body.head_blocked(&Ground::of(&server)), "a deer was made with its head in a trunk at {}", at - c.as_vec3());
         }
     }
 }
@@ -2745,7 +2789,7 @@ mod herd_tests {
                 let id = put(&mut server, name, c.as_vec3() + Vec3::new(-1.5, -1.5, 0.5), Vec3::X);
                 let deep = |server: &Server| {
                     let body = &server.creatures.live[&id].body;
-                    body.in_water && Ground(server).water_at(body.position.floor().as_ivec3() - IVec3::Y)
+                    body.in_water && Ground::of(server).water_at(body.position.floor().as_ivec3() - IVec3::Y)
                 };
                 let out = (0..12 * TICKS_PER_SECOND as u64).find(|_| {
                     server.tick += 1;
