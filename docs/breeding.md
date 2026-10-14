@@ -120,6 +120,8 @@ tag). Untreated, it lowers condition and can kill.
 3. They court for a moment (a behaviour, see [creature-ai.md](creature-ai.md)), then:
    - mammals: after the gestation time, a litter is born (rabbits 2–5, sheep 1–2, cattle 1);
    - birds and reptiles: eggs are laid in a nest if one is near, or on the ground.
+     Built so far: a kept bird's egg laid inside its keeper's home goes into the home's
+     stores, nearest first (`nests` on the product; [home.md](home.md), "Eggs in the stores").
 4. Both parents rest for a cooldown before breeding again.
 5. Young follow their mother and grow to adults over the growth time.
 
