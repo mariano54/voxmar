@@ -474,6 +474,20 @@ mod tests {
         assert_eq!(back.get(AT), server.stations.get(AT));
     }
 
+    /// A hoe tills no earth clamp away, empty, smouldering or cooled: it is earthwork, not
+    /// soil (a shovel digs it).
+    #[test]
+    fn a_hoe_never_tills_an_earth_clamp_away() {
+        let mut server = fixture(1);
+        let till = server.content.actions.expect("base:till");
+        for name in ["base:earth_clamp", "base:earth_clamp_lit", "base:earth_clamp_cooled"] {
+            server.set_block(AT, block(&server, name));
+            hold(&mut server, "base:wooden_hoe", 1);
+            server.propose(1, till, voxmar_engine::action::ActionTarget::Block { block: AT, face: voxmar_engine::coords::Face::PosY }, std::time::Instant::now());
+            assert_eq!(at(&server, AT), name, "a hoe tilled the clamp away");
+        }
+    }
+
     /// An earth clamp fires clay with nobody by it, and quests count what comes out as cooked;
     /// while it smoulders it is a fire, so a rack by it dries twice as fast.
     #[test]
