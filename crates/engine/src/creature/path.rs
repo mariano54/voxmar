@@ -21,6 +21,9 @@ pub struct Walker {
     pub climbs: bool,
     /// Whether water two deep is a wall to it (a land animal).
     pub wary: bool,
+    /// Whether its body is wider than a block (a bear, an aurochs): it needs a square two
+    /// blocks across about a cell to get through it, not the cell alone.
+    pub wide: bool,
 }
 
 /// The most cells a search looks at, and how far from where it starts it looks: a short way
@@ -40,9 +43,18 @@ impl Walker {
         self.clear(world, cell)
     }
 
-    /// Whether its body fits upright with its feet in `cell`.
+    /// Whether its body fits upright with its feet in `cell`: for a wide one, in one of
+    /// the four squares two across that hold the cell.
     fn clear(&self, world: &impl Surroundings, cell: IVec3) -> bool {
-        (0..self.height).all(|h| !world.solid(cell + IVec3::Y * h))
+        let open = |c: IVec3| (0..self.height).all(|h| !world.solid(c + IVec3::Y * h));
+        if !self.wide {
+            return open(cell);
+        }
+        open(cell)
+            && [(-1, -1), (-1, 0), (0, -1), (0, 0)].iter().any(|&(x, z)| {
+                let corner = cell + IVec3::new(x, 0, z);
+                [(0, 0), (1, 0), (0, 1), (1, 1)].iter().all(|&(dx, dz)| open(corner + IVec3::new(dx, 0, dz)))
+            })
     }
 
     /// Where it can go in one step from `cell` toward (dx, dz): level, a block up, or down
@@ -145,7 +157,7 @@ mod tests {
         }
     }
 
-    const WOLF: Walker = Walker { height: 1, climbs: true, wary: true };
+    const WOLF: Walker = Walker { height: 1, climbs: true, wary: true, wide: false };
 
     #[test]
     fn a_way_goes_through_the_door_and_up_the_step() {
@@ -166,5 +178,26 @@ mod tests {
         // One that cannot jump keeps off the step.
         let snail = Walker { climbs: false, ..WOLF };
         assert_eq!(find(&Yard { door: Some(0) }, &snail, IVec3::new(2, 0, 0), IVec3::new(6, 1, 0)), None);
+    }
+
+    #[test]
+    fn a_wide_body_takes_no_way_through_a_doorway_one_block_across_but_does_through_two() {
+        let bear = Walker { wide: true, ..WOLF };
+        assert_eq!(find(&Yard { door: Some(5) }, &bear, IVec3::new(-3, 0, 0), IVec3::new(3, 0, 0)), None);
+        assert!(find(&Yard { door: Some(5) }, &WOLF, IVec3::new(-3, 0, 0), IVec3::new(3, 0, 0)).is_some());
+        let way = find(&Wide, &bear, IVec3::new(-3, 0, 0), IVec3::new(3, 0, 0)).expect("a way through the wide door");
+        assert!(way.iter().any(|c| c.x == 0), "it never went through the door: {way:?}");
+    }
+
+    /// A wall along x = 0 with a doorway two blocks across at z = 4 and 5.
+    struct Wide;
+
+    impl Surroundings for Wide {
+        fn solid(&self, c: IVec3) -> bool {
+            c.y < 0 || (c.x == 0 && c.y < 3 && !(4..=5).contains(&c.z))
+        }
+        fn water(&self, _: IVec3) -> bool {
+            false
+        }
     }
 }

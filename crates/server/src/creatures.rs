@@ -620,7 +620,7 @@ impl Server {
     /// where a body `height` blocks tall stands.
     fn shore_for(&self, at: Vec3, height: i32) -> Option<IVec3> {
         let ground = Ground::of(self);
-        let walker = path::Walker { height, climbs: true, wary: true };
+        let walker = path::Walker { height, climbs: true, wary: true, wide: false };
         let feet = at.floor().as_ivec3();
         (1..=SHORE_RANGE).find_map(|r| {
             (-r..=r)
@@ -693,7 +693,7 @@ impl Server {
                 // wherever it has got to.
                 let going_round = creature.detour != 0.0 || creature.stuck > 0.5;
                 if (going_round || !cells.is_empty()) && stale && self.tick >= creature.way_at + TICKS_PER_SECOND as u64 {
-                    let walker = path::Walker { height: body.size.1.ceil() as i32, climbs: movement.jump > 0.0, wary: water == Water::Land };
+                    let walker = path::Walker { height: body.size.1.ceil() as i32, climbs: movement.jump > 0.0, wary: water == Water::Land, wide: body.size.0 > 1.0 };
                     let found = path::find(&Ground::of(self), &walker, (body.position + Vec3::Y * 0.01).floor().as_ivec3(), to);
                     #[cfg(test)]
                     tick_cost_tests::SEARCHES.with(|n| n.set((n.get().0 + 1, n.get().1 + found.is_none() as u64)));
@@ -3254,6 +3254,176 @@ mod boss_tests {
     fn the_rootmother_on_the_gate_pad_always_winds_up_a_told_move() {
         for (run, wander) in [(1, 9), (7, 15), (11, 19), (13, 8), (41, 10), (0, 8)] {
             assert!(told(run, wander).is_some(), "run {run}: no told move of hers wound up in 10 s");
+        }
+    }
+}
+
+/// Fights at walls and doorways: a player stands by a wall's end, in a doorway, behind a
+/// pillar or in a corner and strikes a creature each second it is in their reach, as the
+/// owner played it. Measures how soon and how often it strikes back, the seconds it spends
+/// pinned (wanting to go, not getting anywhere, out of its reach of the player) and the
+/// hops it makes at a wall.
+#[cfg(test)]
+mod fight_tests {
+    use super::cornered_tests::{join, pen, put, wall};
+    use super::*;
+
+    pub(super) const FIGHTERS: [&str; 4] = ["base:wolf", "base:brown_bear", "base:badger", "base:aurochs"];
+    pub(super) const PREY: [&str; 5] = ["base:red_deer", "base:mouflon", "base:wild_boar", "base:rabbit", "base:junglefowl"];
+
+    #[derive(Debug, Default)]
+    pub(super) struct Fight {
+        pub first: Option<f32>,
+        pub strikes: u32,
+        pub pinned: f32,
+        pub pressing: f32,
+        pub cornered: f32,
+        pub hops: u32,
+        pub nearest: f32,
+        /// How far it ended from the player.
+        pub last: f32,
+    }
+
+    /// A scene: walls set about the pen's centre `c`, and where the player stands and the
+    /// creature starts.
+    pub(super) type Scene = fn(&mut Server, IVec3) -> (Vec3, Vec3);
+
+    pub(super) fn scenes() -> [(&'static str, Scene); 6] {
+        [
+            ("wall back", |_, c| {
+                // The player with their back to the pen's wall.
+                (c.as_vec3() + Vec3::new(-7.7, 0.0, 0.5), c.as_vec3() + Vec3::new(-3.5, 0.0, 0.5))
+            }),
+            ("doorway", |s, c| {
+                // A wall across at x = 1, a gap at z = 3; the player stands in the gap.
+                wall(s, (-13..=13).filter(|&z| z != 3).map(|z| c + IVec3::new(1, 0, z)), 3);
+                (c.as_vec3() + Vec3::new(1.5, 0.0, 3.5), c.as_vec3() + Vec3::new(-4.5, 0.0, 0.5))
+            }),
+            ("past door", |s, c| {
+                wall(s, (-13..=13).filter(|&z| z != 3).map(|z| c + IVec3::new(1, 0, z)), 3);
+                (c.as_vec3() + Vec3::new(3.0, 0.0, 3.5), c.as_vec3() + Vec3::new(-4.5, 0.0, 0.5))
+            }),
+            ("wall end", |s, c| {
+                // A wall along x = 1 from the pen's edge to z = 2; the player just round its end.
+                wall(s, (-13..=2).map(|z| c + IVec3::new(1, 0, z)), 3);
+                (c.as_vec3() + Vec3::new(2.8, 0.0, 1.5), c.as_vec3() + Vec3::new(-2.5, 0.0, 0.5))
+            }),
+            ("pillar", |s, c| {
+                wall(s, [c], 3);
+                (c.as_vec3() + Vec3::new(2.0, 0.0, 0.5), c.as_vec3() + Vec3::new(-2.0, 0.0, 0.5))
+            }),
+            ("corner", |_, c| {
+                // The player with their back in the pen's corner.
+                (c.as_vec3() + Vec3::new(-7.7, 0.0, -7.7), c.as_vec3() + Vec3::new(-3.5, 0.0, -3.5))
+            }),
+        ]
+    }
+
+    /// `name` started at the scene's spot, struck once to anger it, then `seconds` of the
+    /// player standing there striking it each second it is within 3.5 blocks.
+    pub(super) fn fight(name: &str, scene: Scene, seconds: f32) -> Fight {
+        let mut server = crate::test_server();
+        let c = pen(&mut server, 9);
+        let (stand, from) = scene(&mut server, c);
+        let player = join(&mut server, stand);
+        let id = put(&mut server, name, from, stand - from);
+        server.tick = 1000;
+        server.hurt_creature(player, id, 0, None, voxmar_engine::combat::Blow::Plain);
+        let mut fight = Fight { nearest: f32::MAX, ..Default::default() };
+        let dt = 1.0 / TICKS_PER_SECOND as f32;
+        let (mut was_attacking, mut rising, mut still_for, mut last) = (false, false, 0.0f32, server.creatures.live[&id].body.position);
+        for t in 0..(seconds * TICKS_PER_SECOND as f32) as u64 {
+            server.tick += 1;
+            let d = server.players[&player].position.distance(server.creatures.live[&id].body.position);
+            if t % TICKS_PER_SECOND as u64 == 0 && d < 3.5 {
+                server.hurt_creature(player, id, 0, None, voxmar_engine::combat::Blow::Plain);
+            }
+            server.think_and_move();
+            server.players.get_mut(&player).unwrap().health = traits::Health::full(server.survival.max_health);
+            let creature = &server.creatures.live[&id];
+            let body = creature.body;
+            let attacking = creature.decision.attack.is_some();
+            if attacking && !was_attacking {
+                fight.strikes += 1;
+                fight.first.get_or_insert(t as f32 * dt);
+            }
+            was_attacking = attacking;
+            let up = body.velocity.y > 2.0;
+            if up && !rising {
+                fight.hops += 1;
+            }
+            rising = up;
+            if std::env::var("VOXMAR_TRACE").is_ok_and(|v| v == name) && t % 5 == 0 {
+                println!("t {t:>4} at {:.2} goal {:?} speed {:.2} doing {} stuck {:.2} detour {} way {} wall {}", body.position - c.as_vec3(), creature.decision.goal.map(|g| g - c.as_vec3()), creature.decision.speed, creature.mind.doing.map_or("-", |i| server.content.creatures.get(creature.species).modules[i].0.name()), creature.stuck, creature.detour, creature.way.len(), body.against_wall);
+            }
+            let flat = body.position.with_y(0.0).distance(stand.with_y(0.0));
+            fight.nearest = fight.nearest.min(flat);
+            // Wanting to go (a goal, not winding up or striking), out of reach, and no more
+            // than a tenth of a block from where it stood a second ago.
+            let wants = creature.decision.goal.is_some() && !attacking && server.tick >= creature.held_until;
+            // In the player's reach, pressing a wall or going round one, or standing.
+            if d < 3.5 && !attacking && (body.against_wall || creature.detour != 0.0 || body.velocity.with_y(0.0).length() < 0.2) {
+                fight.cornered += dt;
+            }
+            // Going at the player and pressing a wall or going round one, out of its reach.
+            if wants && (body.against_wall || creature.detour != 0.0) && creature.decision.goal.is_some_and(|g| g.distance(stand) < 0.5) {
+                fight.pressing += dt;
+            }
+            if wants && body.position.distance(last) < 0.1 * (still_for + dt).min(1.0) {
+                still_for += dt;
+                if still_for >= 1.0 {
+                    fight.pinned += dt;
+                }
+            } else {
+                still_for = 0.0;
+                last = body.position;
+            }
+        }
+        fight.last = server.creatures.live[&id].body.position.with_y(0.0).distance(stand.with_y(0.0));
+        fight
+    }
+
+    /// Every fighter, in every scene it fits, strikes back within 3 s and presses a wall for
+    /// under 2 s of the 20. Too wide for the doorway (a bear, an aurochs, with the player
+    /// past it), it tries for a few seconds and gives up out of the player's reach. Before:
+    /// those two pressed the wall beside the doorway 19 s of the 20 under the player's
+    /// blows, their way round planned through a gap their bodies could not pass.
+    #[test]
+    fn fighters_at_walls_and_doorways_strike_back_or_give_up_rather_than_press() {
+        for (scene, set) in scenes() {
+            for name in FIGHTERS {
+                let f = fight(name, set, 20.0);
+                let wide = matches!(name, "base:brown_bear" | "base:aurochs");
+                if scene == "past door" && wide {
+                    assert!(f.pressing < 6.0, "{scene}: {name} pressed the wall {:.1} s", f.pressing);
+                    assert!(f.strikes == 0, "{scene}: {name} struck through a doorway it cannot pass");
+                } else {
+                    assert!(f.first.is_some_and(|s| s < 3.0), "{scene}: {name} first struck at {:?}", f.first);
+                    assert!(f.pressing < 2.0, "{scene}: {name} pressed the wall {:.1} s", f.pressing);
+                }
+            }
+        }
+    }
+
+    /// The bear too wide for the doorway, with the player past it striking it whenever it is
+    /// within reach: it ends out of their reach, not at the wall.
+    #[test]
+    fn a_bear_too_wide_for_a_doorway_ends_out_of_reach() {
+        let (_, set) = scenes().into_iter().find(|(s, _)| *s == "past door").expect("the scene");
+        let f = fight("base:brown_bear", set, 20.0);
+        assert!(f.last > 3.5, "the bear ended {:.2} blocks from the player", f.last);
+    }
+
+    /// Prints the table (`cargo test -p voxmar_server --lib fight_table -- --ignored --nocapture`).
+    #[test]
+    #[ignore = "a measurement: prints a table"]
+    fn fight_table() {
+        let only = std::env::var("VOXMAR_SCENE").ok();
+        for (scene, set) in scenes().into_iter().filter(|(s, _)| only.as_deref().is_none_or(|o| o == *s)) {
+            for name in FIGHTERS.into_iter().chain(PREY) {
+                let f = fight(name, set, 20.0);
+                println!("{scene:>10} {name:>16}: first {:>5} strikes {:>2} pinned {:>4.1} s pressing {:>4.1} s cornered {:>4.1} s hops {:>2} nearest {:.2}", f.first.map_or("never".into(), |s| format!("{s:.1}")), f.strikes, f.pinned, f.pressing, f.cornered, f.hops, f.nearest);
+            }
         }
     }
 }
