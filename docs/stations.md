@@ -23,7 +23,9 @@ the server's side in `crates/server/src/stations.rs`.
 - Spot rules: `OpenSky`; `Near(tag, reach)` (a block with the tag within reach, 1 to 8);
   `Water(reach)` (water, not lava, within reach).
 - `counts` (`cooked` or `crafted`) makes quests count what is taken as cooked at a fire or
-  crafted, so a clamp's fired clay counts toward Fire the Clay and A Kiln Load.
+  crafted, so a clamp's fired clay counts toward Fire the Clay and A Kiln Load. `cooked`
+  also counts it as cooked at the station (by its empty block's name, `CookAt(item,
+  "earth_clamp", n)`), so An Earth Clamp asks for clay fired in the clamp itself.
 - A station pays no more experience for an output than the hand route from the same input
   at a fire (`a_station_pays_no_more_than_the_hand_route`).
 - Breaking (or replacing) a loaded station drops what is on it: the raw input before it is
