@@ -263,7 +263,10 @@ book lists each part with its own mark and count. Seven pairs became one:
 | A Rug Underfoot (Farm) | two cloths, a rug | Wool and Dye, A Rug Underfoot |
 | What Sleeps Below (Farm) | two Farm chests, a cave crawler | Deeper Down, What Sleeps Below |
 
-Each keeps both texts and both rewards. Nomad has 60 quests, Farm 92. A task with no part
+Each keeps both texts and both rewards. Nomad has 60 quests, Farm 93 with A Well by the
+Field (after A Field of Gold: make a well and set it by tilled ground; the new goal
+`Watering(block, n)` counts a block tagged `waters` set down within four blocks of tilled
+ground, as `crop_conditions` reads it, `a_well_set_by_tilled_ground_counts_as_watering_it`). A task with no part
 is refused at load (`a_quest_with_an_empty_task_is_refused`), as is a part the engine
 does not know.
 

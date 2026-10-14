@@ -424,6 +424,13 @@
             rewards: [Xp("farming", 250.0)],
         ),
         (
+            name: "a_well_by_the_field", age: "farm", branch: "farming", title: "A Well by the Field",
+            why: "Crops want water within four blocks, so a field far from a river or pond stays poor. A well waters as water does. Make one at the crafting table (Construction 8): a stick, a plank and a stick along the top; a cobblestone, a pail and a cobblestone across the middle; three cobblestones along the bottom. A pail is two planks set corner to corner. Set the well on the ground beside your tilled field, or sunk level with it, no more than four blocks from the crops.",
+            tasks: [[Craft("well", 1), Watering("well", 1)]],
+            after: ["a_field_of_gold"],
+            rewards: [Xp("construction", 120.0), Xp("farming", 80.0)],
+        ),
+        (
             name: "carrot_patch", age: "farm", branch: "farming", title: "Carrot Patch",
             why: "Carrots need Farming 5 and cool, moist soil. A carrot is its own seed: forage wild carrots (white-flowered, thickest in flower meadows, a few on plains), plant what you get, and harvest four. Rabbits love them too. Keep the four carrots you harvest. Carrots take a little longer than wheat; four crops sown by your home also make a kitchen garden (A Kitchen Garden) while they grow.",
             tasks: [[Pick("carrot_crop", 4), Have("carrot", 4)]],

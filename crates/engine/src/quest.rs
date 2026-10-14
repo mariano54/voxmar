@@ -91,6 +91,9 @@ pub enum Goal {
     /// Laid a recipe for this item (or `any`, or a `tag:TAG`) into the crafting grid this
     /// many times with the recipe viewer's Lay, taking from a store in the home.
     Laid(String, u32),
+    /// Set down this many blocks that water crops (a block, `any` or a `tag:TAG`, such as a
+    /// well) by tilled ground, near enough to keep it moist.
+    Watering(String, u32),
 }
 
 /// One way to finish a quest: every goal must hold.
@@ -240,6 +243,7 @@ impl Progress<'_> {
             Goal::Ate(food, n) => (tally("ate", food), *n),
             Goal::Felt(effect) => (tally("felt", effect).min(1), 1),
             Goal::Laid(item, n) => (tally("laid", item), *n),
+            Goal::Watering(block, n) => (tally("watering", block), *n),
         }
     }
 
@@ -430,6 +434,7 @@ impl QuestRegistry {
                     Goal::Ate(name, _) => find(name, &made)?,
                     Goal::Felt(name) => find(name, &effect)?,
                     Goal::Laid(name, _) => find(name, &made)?,
+                    Goal::Watering(name, _) => find(name, &made)?,
                 }
             }
             for given in &mut quest.rewards {
@@ -656,7 +661,7 @@ mod tests {
     fn wanderers_prayers_and_offerings_count_from_their_tallies() {
         let journal = Journal::default();
         let mut tallies = FxHashMap::default();
-        for (key, n) in [("met:base:pedlar", 2), ("met:base:smith", 1), ("met:base:hermit", 0), ("prayed:base:bark_skin", 3), ("offered:base:bone", 4), ("crafted:base:bone", 9), ("opened:base:nomad_treasure_chest", 2), ("ate:base:honey", 3), ("felt:base:smoky", 5), ("fertilised:base:compost", 5), ("laid:base:oak_planks", 2), ("lured:base:rabbit", 2)] {
+        for (key, n) in [("met:base:pedlar", 2), ("met:base:smith", 1), ("met:base:hermit", 0), ("prayed:base:bark_skin", 3), ("offered:base:bone", 4), ("crafted:base:bone", 9), ("opened:base:nomad_treasure_chest", 2), ("ate:base:honey", 3), ("felt:base:smoky", 5), ("fertilised:base:compost", 5), ("laid:base:oak_planks", 2), ("lured:base:rabbit", 2), ("watering:base:well", 1)] {
             tallies.insert(key.to_owned(), n);
         }
         let level = |_: &str| 1u8;
@@ -685,6 +690,8 @@ mod tests {
         assert_eq!(goal(Goal::Laid("base:bone".into(), 1)), (0, 1), "what was made is not what was laid");
         assert_eq!(goal(Goal::Lured("any".into(), 1)), (2, 1), "creatures drawn up close by their favourite food");
         assert_eq!(goal(Goal::Lured("base:junglefowl".into(), 1)), (0, 1), "a rabbit lured is no junglefowl");
+        assert_eq!(goal(Goal::Watering("base:well".into(), 1)), (1, 1), "a well set by the field");
+        assert_eq!(goal(Goal::Watering("base:bone".into(), 1)), (0, 1));
         assert_eq!(goal(Goal::Felt("base:heartwood".into())), (0, 1));
     }
 

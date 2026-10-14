@@ -214,7 +214,8 @@ sunk level with it, keeps its ground moist (farm.rs `crop_conditions`), and a st
 `Water` spot counts it too, so a compost heap beside a well rots as fast as one by a stream.
 A mod's rain barrel or cistern is the same tag. Tests: `a_well_waters_the_field_about_it`,
 `a_heap_rots_greens_four_to_one`. The gate's Refusal step sets one down from the hand by its
-dry plot ("well", shot "well").
+dry plot ("well", shot "well"). The Farm quest A Well by the Field (after A Field of Gold)
+asks for one made and set down where it keeps tilled ground moist (`Watering`).
 
 ## Smoke over home
 

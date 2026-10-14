@@ -473,6 +473,7 @@
     "quest.goal.fertilised": "{item}で作物を育てる",
     "quest.goal.ate": "{item}を食べる",
     "quest.goal.laid": "家の蓄えから{item}を並べる",
+    "quest.goal.watering": "{item}を耕地のそばに置いて水をやる",
     "quest.goal.felt": "「{effect}」の効果を受ける",
     "multiblock.fuel": "{structure}に火を入れるには、いずれかの燃料を必要な数だけ手に持つ：{fuels}。",
     "multiblock.fuel_or": " または ",
