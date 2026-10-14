@@ -186,18 +186,7 @@ impl Server {
 
 /// What a recipe is short of, for one set: "Not enough to lay it: 2 Oak Planks".
 fn short_words(recipe: &Recipe, have: &FxHashMap<BlockId, u32>, blocks: &voxmar_engine::block::BlockRegistry) -> Words {
-    let mut needed: Vec<(BlockId, u32)> = Vec::new();
-    let mut left = have.clone();
-    for accepts in recipe.alternatives().into_iter().flatten() {
-        match accepts.iter().find(|item| left.get(item).copied().unwrap_or(0) > 0) {
-            Some(item) => *left.get_mut(item).unwrap() -= 1,
-            None => match needed.iter_mut().find(|(item, _)| *item == accepts[0]) {
-                Some((_, n)) => *n += 1,
-                None => needed.push((accepts[0], 1)),
-            },
-        }
-    }
-    let items = needed.iter().map(|&(item, n)| Words::key("multiblock.fuel_stack").with("count", n.to_string()).with("item", Words::Block(blocks.def(item).name.clone()))).collect();
+    let items = recipe.short(have).iter().map(|&(item, n)| Words::key("multiblock.fuel_stack").with("count", n.to_string()).with("item", Words::Block(blocks.def(item).name.clone()))).collect();
     Words::key("craft.lay.short").with("items", Words::List(items))
 }
 

@@ -392,3 +392,34 @@ fn leaving_a_world_forgets_the_surroundings() {
     let fresh = super::Surroundings::default();
     assert_eq!((left.flowers, left.depth, left.sky), (fresh.flowers, fresh.depth, fresh.sky));
 }
+
+/// Every bed, over all of a segment, and every one-shot, at its loudest from where it
+/// sounds nearest, is heard within the ambience's band at full weight.
+#[test]
+fn the_ambience_is_heard_within_its_band() {
+    use super::defs::Placement;
+    use crate::mix::{Category, tests::{all, within}};
+    let ambience = base();
+    let mut heard = Vec::new();
+    for bed in &ambience.beds {
+        for variant in 0..synth::BED_VARIANTS {
+            let [left, right] = segment(&bed.sound, variant);
+            // The middle of the segment, past its fades.
+            let fade = (OVERLAP * RATE as f32) as usize;
+            let stereo: Vec<f32> = left[fade..left.len() - fade].iter().zip(&right[fade..right.len() - fade]).flat_map(|(l, r)| [*l, *r]).collect();
+            heard.push((format!("bed {} {variant}", bed.name), sfx::mean_loudness(&stereo) * bed.volume * super::AMBIENCE_GAIN));
+        }
+    }
+    for sound in &ambience.sounds {
+        let distance = match sound.at {
+            Placement::Around { distance, .. } => distance.0,
+            Placement::Block(_) | Placement::Listener => 0.0,
+        };
+        for variant in 0..synth::ONE_SHOT_VARIANTS {
+            let (dry, _) = synth::one_shot(sound.synth, variant);
+            let near = sound.reach / (sound.reach + distance);
+            heard.push((format!("{} {variant}", sound.name), sfx::loudness(&dry, 1) * sound.volume * near * super::AMBIENCE_GAIN));
+        }
+    }
+    all([within(Category::Ambience, heard)]);
+}
