@@ -331,6 +331,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let combat_marks = hud::combat::CombatStyle::load(&content.files)?;
     let look = hud::target::LookStyle::load(&content.files)?;
     let celebrations = hud::celebrate::Celebrations::load(&content.files)?;
+    sfx::Recordings::load(&content.files)?.check(&content.actions)?;
     let content_weather = content.weather.clone();
     let shader_packs = render::pack::ShaderPacks::load(&assets);
     let registry = content.blocks.clone();
