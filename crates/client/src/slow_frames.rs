@@ -154,11 +154,97 @@ fn path() -> Option<PathBuf> {
 /// The system's load average over the last minute: how many threads wanted a core. Well
 /// above the core count, every thread waits its turn, the game's too, and frames slow down
 /// with nothing in the game to blame (other work on the machine, say a build).
-fn load_average() -> Option<f64> {
+pub(crate) fn load_average() -> Option<f64> {
     let mut loads = [0.0f64; 3];
     // SAFETY: getloadavg writes at most `nelem` doubles into the buffer it is given.
     let n = unsafe { libc::getloadavg(loads.as_mut_ptr(), 3) };
     (n >= 1).then_some(loads[0])
+}
+
+/// How long this process's threads, together, have waited for a core since it started:
+/// ready to run, with every core busy with other work. On a calm machine it barely moves; on
+/// one crowded past its cores it grows by up to as many seconds a second as our threads
+/// wanted to run, the time something else ran instead of us. `None` where the system does not
+/// say (and on macOS until our CPU time is enough to tell the unit its counters use).
+#[cfg(target_os = "linux")]
+pub(crate) fn waited_for_cores() -> Option<std::time::Duration> {
+    // Each thread's `schedstat`: nanoseconds run, nanoseconds waited on a run queue, slices.
+    let mut waited = 0u64;
+    for task in std::fs::read_dir("/proc/self/task").ok()? {
+        let Ok(task) = task else { continue };
+        // A thread that ended since the listing is passed over: the sum then drops, and a
+        // drop counts as no waiting.
+        let Ok(stat) = std::fs::read_to_string(task.path().join("schedstat")) else { continue };
+        waited += stat.split_whitespace().nth(1)?.parse::<u64>().ok()?;
+    }
+    Some(std::time::Duration::from_nanos(waited))
+}
+
+/// macOS keeps it per process (`ri_runnable_time`, macOS 12 and later), in the unit of the
+/// task's other counters: mach ticks on Apple silicon, nanoseconds on Intel. That counter is
+/// the threads' time runnable, running or queued (XNU starts each thread's runnable timer when
+/// it is made runnable and stops it only when it blocks), so the waiting is what is left of it
+/// once the CPU time (`ri_user_time` and `ri_system_time`) is taken off (`queued`). Which unit is
+/// told once, by setting the same counters' CPU time beside `getrusage`'s, in microseconds:
+/// the unit (nanoseconds or ticks) that makes them agree within a half; neither, and nothing
+/// is said.
+#[cfg(target_os = "macos")]
+// libc marks its mach calls deprecated in favour of the mach2 crate; the one used here
+// (`mach_timebase_info`) is stable on every macOS, and no crate is added for it.
+#[allow(deprecated)]
+pub(crate) fn waited_for_cores() -> Option<std::time::Duration> {
+    use std::sync::OnceLock;
+    static NANOS_PER_UNIT: OnceLock<Option<f64>> = OnceLock::new();
+    let mut info = std::mem::MaybeUninit::<libc::rusage_info_v4>::zeroed();
+    // SAFETY: proc_pid_rusage fills at most a `rusage_info_v4` for this flavour, into the
+    // buffer it is given; it is read only when the call says it succeeded.
+    let info = unsafe {
+        if libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, info.as_mut_ptr().cast()) != 0 {
+            return None;
+        }
+        info.assume_init()
+    };
+    let scale = match NANOS_PER_UNIT.get() {
+        Some(scale) => *scale,
+        None => {
+            let mut usage = std::mem::MaybeUninit::<libc::rusage>::zeroed();
+            // SAFETY: getrusage fills the `rusage` it is given, read only on success.
+            let usage = unsafe {
+                if libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) != 0 {
+                    return None;
+                }
+                usage.assume_init()
+            };
+            let micros = |t: libc::timeval| t.tv_sec as f64 * 1e6 + t.tv_usec as f64;
+            let cpu_ns = (micros(usage.ru_utime) + micros(usage.ru_stime)) * 1e3;
+            let units = (info.ri_user_time + info.ri_system_time) as f64;
+            // Too little CPU yet to tell nanoseconds from ticks by: asked again later.
+            if cpu_ns < 1e9 || units == 0.0 {
+                return None;
+            }
+            let mut timebase = libc::mach_timebase_info { numer: 0, denom: 0 };
+            // SAFETY: mach_timebase_info fills the struct it is given.
+            let tick = if unsafe { libc::mach_timebase_info(&mut timebase) } == 0 && timebase.denom > 0 { timebase.numer as f64 / timebase.denom as f64 } else { 1.0 };
+            let measured = cpu_ns / units;
+            let scale = [1.0, tick].into_iter().find(|unit| (measured / unit - 1.0).abs() < 0.5);
+            *NANOS_PER_UNIT.get_or_init(|| scale)
+        }
+    };
+    let waited = queued(info.ri_runnable_time, info.ri_user_time, info.ri_system_time);
+    Some(std::time::Duration::from_nanos((waited as f64 * scale?) as u64))
+}
+
+/// Of the time a process's threads were runnable, what they spent queued for a core rather
+/// than running: their CPU time taken off, in the same unit. A busy thread nothing held back
+/// waited nothing; counters read a moment apart can put the CPU time a little past it.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn queued(runnable: u64, user: u64, system: u64) -> u64 {
+    runnable.saturating_sub(user.saturating_add(system))
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+pub(crate) fn waited_for_cores() -> Option<std::time::Duration> {
+    None
 }
 
 /// Milliseconds between two marks, if both were taken.
@@ -269,6 +355,31 @@ mod tests {
         let mut frames = SlowFrames::default();
         frames.recent.extend([5.0, 50.0, 6.0, 7.0, 4.0]);
         assert_eq!(frames.median(), 6.0);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn waiting_for_cores_is_told() {
+        // macOS tells its unit after a second of our CPU, which the other tests may have
+        // spent already: spun for until then, two seconds at most.
+        let start = Instant::now();
+        let mut spin = 0u64;
+        while waited_for_cores().is_none() && start.elapsed().as_secs_f32() < 2.0 {
+            for _ in 0..100_000 {
+                spin = std::hint::black_box(spin.wrapping_add(1));
+            }
+        }
+        assert!(waited_for_cores().is_some(), "the system tells how long we waited for a core");
+    }
+
+    /// macOS's runnable time counts running as well as queueing: a frame its threads were
+    /// busy for all along, held back by nothing, waited for no core, and only what was queued
+    /// beyond the running counts.
+    #[test]
+    fn running_is_not_waiting() {
+        assert_eq!(queued(1_000, 700, 300), 0);
+        assert_eq!(queued(3_000, 700, 300), 2_000);
+        assert_eq!(queued(990, 700, 300), 0);
     }
 
     #[test]

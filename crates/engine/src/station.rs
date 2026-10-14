@@ -12,7 +12,7 @@
 
 use serde::Deserialize;
 
-use crate::block::{BlockId, BlockRegistry, RegistryError};
+use crate::block::{BlockId, BlockRegistry, RegistryError, Sound};
 use crate::skill::{SkillId, SkillRegistry};
 
 /// Something about the spot a station stands on.
@@ -22,13 +22,14 @@ pub enum Spot {
     OpenSky,
     /// A block with this tag within this many blocks (any way, diagonals too).
     Near(String, i32),
-    /// Water (any fluid but a hot one) within this many blocks.
+    /// Water (any fluid but a hot one, or a block that waters: a well) within this many blocks.
     Water(i32),
 }
 
 /// One thing a station works: `takes` of `input` become `gives` of `output`, `minutes`
 /// after they went on. The input is an item, `tag:TAG`, items with every one of several
-/// tags (`tag:raw+meat`), or any of several of these (`tag:fruit|wheat_seeds`).
+/// tags (`tag:raw+meat`) and none of those marked `!` (`tag:grain+!vegetable`), or any of
+/// several of these (`tag:fruit|wheat_seeds`).
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkDef {
@@ -46,7 +47,14 @@ pub struct WorkDef {
     pub level: u8,
     #[serde(default)]
     pub xp: f32,
+    /// What quests count what it made as when it is taken: `cooked` (as if cooked at a
+    /// fire, for `Cook` goals) or `crafted` (`Craft` goals). None counts it as neither.
+    #[serde(default)]
+    pub counts: Option<String>,
 }
+
+/// The quest tallies a work's output may count toward (`WorkDef::counts`).
+pub const COUNTS: [&str; 2] = ["cooked", "crafted"];
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -64,6 +72,10 @@ pub struct StationDef {
     /// that hold, multiplied).
     #[serde(default)]
     pub faster: Vec<(Spot, f32)>,
+    /// What loading it sounds like: a material's stroke (`Water`: something stirred in),
+    /// else its working block's placing.
+    #[serde(default)]
+    pub sound: Option<Sound>,
 }
 
 /// An item held to a growing crop grows the crops within `reach` of it `stages` stages.
@@ -108,6 +120,7 @@ pub struct Work {
     pub skill: SkillId,
     pub level: u8,
     pub xp: f32,
+    pub counts: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -119,6 +132,7 @@ pub struct Station {
     pub works: Vec<Work>,
     pub needs: Vec<Spot>,
     pub faster: Vec<(Spot, f32)>,
+    pub sound: Option<Sound>,
 }
 
 impl Station {
@@ -215,7 +229,11 @@ impl Stations {
                     for one in work.input.split('|') {
                         match one.strip_prefix("tag:") {
                             Some(tags) => {
-                                let tagged: Vec<BlockId> = blocks.ids().filter(|&id| tags.split('+').all(|tag| blocks.def(id).has_tag(tag))).collect();
+                                let has = |id: BlockId, tag: &str| match tag.strip_prefix('!') {
+                                    Some(not) => !blocks.def(id).has_tag(not),
+                                    None => blocks.def(id).has_tag(tag),
+                                };
+                                let tagged: Vec<BlockId> = blocks.ids().filter(|&id| tags.split('+').all(|tag| has(id, tag))).collect();
                                 if tagged.is_empty() {
                                     return Err(refuse(format!("{}: no item has the tag in `{one}`", def.empty)));
                                 }
@@ -236,12 +254,15 @@ impl Stations {
                     if accepts.contains(&output) {
                         return Err(refuse(format!("{}: {} works into itself", def.empty, work.output)));
                     }
-                    if works.iter().any(|w: &Work| w.accepts.iter().any(|a| accepts.binary_search(a).is_ok())) {
-                        return Err(refuse(format!("{}: an item it takes has two works", def.empty)));
+                    if let Some(both) = works.iter().flat_map(|w: &Work| w.accepts.iter()).find(|a| accepts.binary_search(a).is_ok()) {
+                        return Err(refuse(format!("{}: {} has two works", def.empty, blocks.def(*both).name)));
                     }
-                    works.push(Work { accepts, takes: work.takes, output, gives: work.gives, minutes: work.minutes, skill: skill(&work.skill)?, level: work.level, xp: work.xp });
+                    if let Some(kind) = work.counts.as_deref().filter(|kind| !COUNTS.contains(kind)) {
+                        return Err(refuse(format!("{}: {} counts as `{kind}`, not one of {COUNTS:?}", def.empty, work.output)));
+                    }
+                    works.push(Work { accepts, takes: work.takes, output, gives: work.gives, minutes: work.minutes, skill: skill(&work.skill)?, level: work.level, xp: work.xp, counts: work.counts.clone() });
                 }
-                stations.stations.push(Station { empty, working, ready, holds: def.holds, works, needs: def.needs, faster: def.faster });
+                stations.stations.push(Station { empty, working, ready, holds: def.holds, works, needs: def.needs, faster: def.faster, sound: def.sound });
             }
             for def in file.fertilisers {
                 if !def.reach.is_finite() || !(0.0..=4.0).contains(&def.reach) || def.stages == 0 || !def.xp.is_finite() || def.xp < 0.0 {
@@ -313,7 +334,7 @@ mod tests {
     fn the_games_stations_read_as_their_rules_say() {
         let content = crate::content::Content::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).expect("content loads");
         let (blocks, stations) = (&content.blocks, &content.stations);
-        let (rack, hung, meat) = (blocks.expect("base:drying_rack"), blocks.expect("base:drying_rack_hung"), blocks.expect("base:raw_rabbit"));
+        let (rack, hung, meat) = (blocks.expect("base:drying_rack"), blocks.expect("base:drying_rack_hung"), blocks.expect("base:raw_small_game"));
         let (station, phase) = stations.of(rack).expect("the rack is a station");
         assert_eq!(phase, Phase::Empty);
         assert_eq!(stations.of(hung).map(|(_, p)| p), Some(Phase::Working));
@@ -321,7 +342,7 @@ mod tests {
         assert_eq!(work.output, blocks.expect("base:jerky"));
         assert!(station.needs.contains(&Spot::OpenSky), "air dries it");
         assert!(station.faster.iter().any(|(s, t)| matches!(s, Spot::Near(tag, _) if tag == "fire") && *t > 1.0), "smoke dries it faster");
-        assert!(station.work(blocks.expect("base:cooked_rabbit")).is_none(), "cooked meat is no work for it");
+        assert!(station.work(blocks.expect("base:cooked_small_game")).is_none(), "cooked meat is no work for it");
         assert!(station.work(blocks.expect("base:jerky")).is_none() && station.work(blocks.expect("base:egg")).is_none(), "nor jerky, nor a raw egg");
         assert!(station.work(blocks.expect("base:raw_trout")).is_some(), "fish dries too");
         assert!(stations.usable(rack, Some(meat)) && !stations.usable(rack, None) && stations.usable(hung, None));
@@ -331,6 +352,49 @@ mod tests {
         assert_eq!((rot.takes, rot.gives, rot.output), (4, 1, blocks.expect("base:compost")));
         let (compost, bone) = (stations.fertiliser(blocks.expect("base:compost")).unwrap(), stations.fertiliser(blocks.expect("base:bone")).unwrap());
         assert!(compost.reach > bone.reach);
+        let clamp = blocks.expect("base:earth_clamp");
+        let (clamp, _) = stations.of(clamp).expect("the clamp is a station");
+        let (_, fire) = clamp.work(blocks.expect("base:clay")).expect("clay fires in a clamp");
+        let (_, char) = clamp.work(blocks.expect("base:oak_log")).expect("logs char in a clamp");
+        assert_eq!((fire.output, char.output), (blocks.expect("base:fired_clay"), blocks.expect("base:charcoal")));
+        assert_eq!(fire.counts.as_deref(), Some("cooked"), "quests count clamp-fired clay as fired");
+    }
+
+    /// A station never pays more experience for an output than making it by hand from the
+    /// same input at a fire does (the plan: machine routes never pay more than hand).
+    #[test]
+    fn a_station_pays_no_more_than_the_hand_route() {
+        let content = crate::content::Content::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).expect("content loads");
+        let mut checked = 0;
+        for station in &content.stations.stations {
+            for work in &station.works {
+                for (input, recipe) in content.cooking.iter().filter(|(input, r)| r.output == work.output && work.accepts.contains(input)) {
+                    checked += 1;
+                    let hand = recipe.def.xp * work.takes as f32 / work.gives as f32;
+                    assert!(work.xp <= hand, "{} from {}: {} at a station, {hand} by hand", content.blocks.def(work.output).name, content.blocks.def(input).name, work.xp);
+                }
+            }
+        }
+        assert!(checked > 0, "some station work has a hand route to weigh it against");
+    }
+
+    /// The pot tells grain from vegetables by a `!` tag: wheat simmers to porridge, corn
+    /// (grain and vegetable) goes in a stew with the carrots and the meat.
+    #[test]
+    fn the_pot_tells_grain_from_vegetables() {
+        let content = crate::content::Content::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).expect("content loads");
+        let blocks = &content.blocks;
+        let pot = content.stations.stations.iter().find(|s| blocks.def(s.empty).name == "base:cooking_pot").expect("a pot");
+        let makes = |item: &str| pot.work(blocks.expect(item)).map(|(_, w)| blocks.def(w.output).name.clone());
+        assert_eq!(makes("base:wheat").as_deref(), Some("base:porridge"));
+        assert_eq!(makes("base:wild_corn").as_deref(), Some("base:stew"));
+        assert_eq!(makes("base:carrot").as_deref(), Some("base:stew"));
+        assert_eq!(makes("base:raw_beef").as_deref(), Some("base:stew"));
+        assert_eq!(makes("base:cabbage").as_deref(), Some("base:stew"));
+        // Nothing cooked goes in again, nor seed for planting.
+        assert_eq!(makes("base:cooked_beef"), None);
+        assert_eq!(makes("base:baked_potato"), None);
+        assert_eq!(makes("base:wheat_seeds"), None);
     }
 
     #[test]
@@ -350,5 +414,7 @@ mod tests {
         assert!(refused(&rack(meat, r#", faster: [(Near("fire", 3), 0.5)]"#)).is_some(), "faster must be faster");
         assert!(refused(&rack(meat, r#", needs: [Near("fyre", 3)]"#)).is_some());
         assert!(refused(r#"(fertilisers: [(item: "bone", reach: 9.0)])"#).is_some());
+        assert!(refused(&rack(r#"(input: "tag:raw+meat", output: "jerky", minutes: 10.0, skill: "core:cooking", counts: Some("cooked"))"#, "")).is_none());
+        assert!(refused(&rack(r#"(input: "tag:raw+meat", output: "jerky", minutes: 10.0, skill: "core:cooking", counts: Some("baked"))"#, "")).is_some_and(|e| e.contains("counts as")));
     }
 }

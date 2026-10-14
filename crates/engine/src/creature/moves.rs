@@ -178,6 +178,10 @@ impl super::Creature {
         if self.def.moves.is_empty() {
             return self.def.attack.map(|_| 0);
         }
+        // A target pressed against its body, or inside its edge, is as near as can be: its
+        // close moves fit, rather than a plain blow with no tell (`moves` are what a boss
+        // tells).
+        let edge = edge.max(0.0);
         let fits: Vec<u8> = self.moves_in(phase).filter(|(_, m)| edge >= m.least && edge <= m.attack.reach).map(|(i, _)| i).collect();
         if let Some(&next) = fits.iter().find(|&&i| i > last).or(fits.first()) {
             return Some(next);
@@ -271,6 +275,11 @@ mod tests {
         assert_eq!(her.choose(0, 1.0, 0), Some(lash));
         assert_eq!(her.choose(0, 1.0, lash), Some(grasp));
         assert_eq!(her.choose(0, 1.0, grasp), Some(lash));
+        // Pressed against her, or inside her edge, her close moves still fit, never a plain
+        // blow with no tell.
+        assert_eq!(her.choose(0, 0.0, 0), Some(lash));
+        assert_eq!(her.choose(0, -0.4, lash), Some(grasp));
+        assert!(her.reaches(0, -0.4));
         // Past her reach in the first phase, nothing reaches; in the second, the volley.
         assert_eq!(her.choose(0, 6.0, lash), None);
         assert_eq!(her.choose(1, 6.0, lash), Some(volley));

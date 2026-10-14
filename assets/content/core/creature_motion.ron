@@ -1,0 +1,99 @@
+// How creatures move on screen (crates/client/src/creature_motion.rs): each movement
+// style's walk and run, how a body turns, what it does standing about, how a fleeing one
+// looks, and how a wind-up shows beyond its stance (combat_fx.ron's `strikes`). None of it
+// changes where the server puts a creature. Read and checked at launch; a later package
+// replaces `turn`, `idle`, `flee` and `tells` whole, and each style's or species' gaits by
+// name. Turns are radians, sizes shares of the creature's height unless said.
+(
+    // A gait: each leg swings `swing` either way from straight down at its fullest; each
+    // foot is on the ground for `duty` of a stride (more than half: always a foot down, a
+    // walk; less: a moment in the air, a run); the body rises and falls `bob` and rocks nose
+    // to tail `pitch`; a foot swinging forward is drawn up by `lift` of its leg. The stride
+    // is worked out from the legs' length and the swing, so a foot on the ground never
+    // slides. Between its walk and its run (1.15 to 1.6 times its species' walking speed)
+    // the two are mixed. `paired_walk` and `paired_run` move each pair together: a hop, a
+    // bound; otherwise legs go in turn.
+    gaits: {
+        // Grazers and birds on foot: an easy walk, a gallop with the back rocking.
+        "Walker": (
+            walk: (swing: 0.42, duty: 0.62, bob: 0.03, lift: 0.12),
+            run: (swing: 0.82, duty: 0.36, bob: 0.10, pitch: 0.08, lift: 0.2),
+            paired_run: true,
+        ),
+        // Rabbits, hares, frogs: hops, both pairs together, the body arcing.
+        "Hopper": (
+            walk: (swing: 0.6, duty: 0.42, bob: 0.16, pitch: 0.12, lift: 0.12),
+            run: (swing: 0.95, duty: 0.3, bob: 0.2, pitch: 0.16, lift: 0.18),
+            paired_walk: true, paired_run: true,
+        ),
+        // Cats and foxes: a low, careful walk; a long, stretched sprint.
+        "Stalker": (
+            walk: (swing: 0.36, duty: 0.66, bob: 0.015, lift: 0.1),
+            run: (swing: 0.92, duty: 0.32, bob: 0.08, pitch: 0.1, lift: 0.2),
+            paired_run: true,
+        ),
+        // Wolves and dogs: a springy trot, then a bound.
+        "Trotter": (
+            walk: (swing: 0.46, duty: 0.52, bob: 0.035, lift: 0.14),
+            run: (swing: 0.86, duty: 0.34, bob: 0.09, pitch: 0.07, lift: 0.2),
+            paired_run: true,
+        ),
+        // Boars, bears, aurochs: short heavy steps, a rolling charge.
+        "Lumberer": (
+            walk: (swing: 0.34, duty: 0.66, bob: 0.035, lift: 0.1),
+            run: (swing: 0.68, duty: 0.42, bob: 0.08, pitch: 0.05, lift: 0.16),
+            paired_run: true,
+        ),
+        // Snails, crabs, crawlers: many small steps, always some feet down.
+        "Creeper": (
+            walk: (swing: 0.3, duty: 0.7, bob: 0.01, lift: 0.08),
+            run: (swing: 0.46, duty: 0.6, bob: 0.02, lift: 0.12),
+        ),
+        // Wisps and moths have no legs to speak of.
+        "Drifter": (
+            walk: (swing: 0.3, duty: 0.6, bob: 0.0, lift: 0.0),
+            run: (swing: 0.4, duty: 0.5, bob: 0.0, lift: 0.0),
+        ),
+        // Small birds on the ground: quick little steps, hopping when they hurry.
+        "Flier": (
+            walk: (swing: 0.5, duty: 0.55, bob: 0.04, lift: 0.15),
+            run: (swing: 0.7, duty: 0.4, bob: 0.12, lift: 0.18),
+            paired_run: true,
+        ),
+    },
+    // A species' own gaits, over its style's.
+    species: {
+        // Deer and horses gallop with long reaching legs.
+        "red_deer": (
+            walk: (swing: 0.4, duty: 0.62, bob: 0.025, lift: 0.14),
+            run: (swing: 0.95, duty: 0.3, bob: 0.1, pitch: 0.1, lift: 0.24),
+            paired_run: true,
+        ),
+        "wild_horse": (
+            walk: (swing: 0.4, duty: 0.62, bob: 0.025, lift: 0.14),
+            run: (swing: 0.9, duty: 0.32, bob: 0.09, pitch: 0.08, lift: 0.22),
+            paired_run: true,
+        ),
+    },
+    // A body turns at up to `share` of its species' turning speed (`movement.turn`), easing
+    // in over the last `ease` seconds of the turn; it leans into the turn `lean` for each
+    // radian a second at each block a second, at most `lean_most`; its head turns ahead by
+    // `head_lead` of what is left of the turn; turning on the spot, it steps round as if it
+    // walked `step` of its length for each radian.
+    turn: (share: 1.4, ease: 0.22, lean: 0.035, lean_most: 0.22, head_lead: 0.55, step: 0.5),
+    // Standing about, now and then: a glance aside (`size` radians, held `hold` seconds,
+    // tried every `every` seconds with `chance`), a sniff at the ground (a nod), a flick of
+    // the tail; and always a slow shift of its weight from side to side (`shift`, radians).
+    idle: (
+        glance: (every: 4.5, chance: 0.4, hold: 1.6, size: 0.65),
+        sniff: (every: 3.5, chance: 0.3, hold: 0.7, size: 0.22),
+        shift: 0.025,
+        flick: (every: 2.5, chance: 0.3, hold: 0.35, size: 0.5),
+    ),
+    // Running away: head pushed out and down, ears laid back, tail up (negative is up),
+    // body stretched long, legs reaching further.
+    flee: (head: 0.18, ears: 0.95, tail: -0.7, stretch: 0.08, reach: 1.15),
+    // A heavy blow's wind-up trembles (of its height); a crawler (the Rootmother) raises its
+    // front legs `crawler_front` times its stance's `paw` as it winds up and strikes.
+    tells: (heavy_tremble: 0.02, crawler_front: 0.9),
+)
