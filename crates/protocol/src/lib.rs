@@ -32,7 +32,7 @@ pub use voxmar_engine::weather::Weather;
 // QuestState::claimed.
 // 35: Pray and Prayers, the prayer book.
 // 36: a creature's tell (CreatureView::tell): the move it winds up, or rearing into a phase.
-// 37: an open store's slots in the inventory (Inventory::store; PR 130).
+// 37: an open store's slots in the inventory (Inventory::store), after the open_store action.
 // 38: where home is (Vitals::home), for the way back.
 pub const PROTOCOL_VERSION: u32 = 38;
 

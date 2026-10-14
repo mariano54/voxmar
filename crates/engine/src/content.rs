@@ -444,7 +444,7 @@ impl Content {
         let bees = crate::bees::Bees::new(bees, &blocks, &skills, &effects, &creatures)?;
         let wandering = crate::wander::WanderRegistry::new(wandering, wander_rules.value, &creatures, &blocks, &skills, &effects, &cooking, &weather)?;
         let mut quests = crate::quest::QuestRegistry::new(quests)?;
-        quests.resolve(&crate::quest::Named { blocks: &blocks, skills: &skills, creatures: &creatures, fishing: &fishing, multiblocks: &multiblocks, steps: &effects.steps(), events: &wandering.iter().map(|(_, e)| e.def.name.clone()).collect::<Vec<_>>(), prayers: &prayers.all().map(|(_, p)| p.name.clone()).collect::<Vec<_>>() })?;
+        quests.resolve(&crate::quest::Named { blocks: &blocks, skills: &skills, creatures: &creatures, fishing: &fishing, multiblocks: &multiblocks, steps: &effects.steps(), events: &wandering.iter().map(|(_, e)| e.def.name.clone()).collect::<Vec<_>>(), prayers: &prayers.all().map(|(_, p)| p.name.clone()).collect::<Vec<_>>(), effects: &effects.ids().map(|id| effects.get(id).name.clone()).collect::<Vec<_>>() })?;
         // An effect that waits on a quest nobody can finish would never come on.
         if let Some(quest) = effects.quests().iter().find(|quest| quests.get(quest).is_none()) {
             return Err(RegistryError(format!("effects.ron: an effect waits for the quest `{quest}`, which no package has")));
@@ -452,6 +452,15 @@ impl Content {
         crate::inventory::set_stack_limits(limits);
         crate::inventory::set_pouches(pouches(&blocks)?);
         crate::inventory::set_worn_slots(combat.worn_slots());
+        // A store's slots follow the player's own in a slot number of a byte.
+        let mut holds = vec![None; blocks.len()];
+        for machine in machines.iter().filter(|m| m.is_store()) {
+            if machine.bin_slots() > crate::inventory::STORE_SLOTS {
+                return Err(RegistryError(format!("machines.ron: the store `{}` has {} slots, more than {}", blocks.def(machine.block).name, machine.bin_slots(), crate::inventory::STORE_SLOTS)));
+            }
+            holds[machine.block.0 as usize] = machine.holds.clone();
+        }
+        crate::inventory::set_store_holds(holds);
         // A furnishing gives itself back only where a player placed it: one that drops
         // nothing anyway has no business with the tag.
         if let Some(id) = blocks.ids().find(|&id| blocks.def(id).has_tag("furnishing") && (blocks.info(id).drops.is_air() || blocks.info(id).drop_count == 0)) {
@@ -925,7 +934,7 @@ mod tests {
                             }
                         }
                         Goal::Visit(_) | Goal::LookUp(_) => {}
-                        Goal::Catch(..) | Goal::Pick(..) | Goal::Tame(..) | Goal::Kill(..) | Goal::Discover(..) | Goal::Kinds(..) | Goal::Thriving(..) | Goal::Met(..) | Goal::Prayed(..) | Goal::Offered(..) | Goal::Opened(..) => panic!("{}: the walk doesn't model {goal:?} yet", quest.name),
+                        Goal::Catch(..) | Goal::Pick(..) | Goal::Tame(..) | Goal::Kill(..) | Goal::Discover(..) | Goal::Kinds(..) | Goal::Thriving(..) | Goal::Met(..) | Goal::Prayed(..) | Goal::Offered(..) | Goal::Opened(..) | Goal::Ate(..) | Goal::Felt(..) => panic!("{}: the walk doesn't model {goal:?} yet", quest.name),
                     }
                 }
                 if route.walls.len() == walk.walls.len() {

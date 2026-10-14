@@ -46,6 +46,8 @@ pub struct Player {
     /// The crafting table the player last opened, whose three-by-three grid they may use
     /// while within reach of it.
     pub station: Option<voxmar_engine::glam::IVec3>,
+    /// The store the player has open (`stores`), whose slots follow theirs.
+    pub store: Option<voxmar_engine::glam::IVec3>,
     pub flying: bool,
     pub health: Health,
     pub inventory: Inventory,
@@ -149,6 +151,7 @@ impl Player {
             pitch: 0.0,
             selected: 0,
             station: None,
+            store: None,
             flying: false,
             health: Health::full(max_health),
             inventory: Inventory::default(),

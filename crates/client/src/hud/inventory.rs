@@ -12,7 +12,9 @@
 //!   outside the panel throws the held stack (a right click, one item of it);
 //! - hovering an item names it, coloured by rarity, with what it is good for, and for a
 //!   seed the level it takes to plant;
-//! - under the slots, every skill's level and how far it is to the next.
+//! - under the slots, every skill's level and how far it is to the next;
+//! - an open store (a chest, a cupboard, a jar) shows its slots in place of the crafting
+//!   grid, and shift click sends stacks between it and the pack.
 //!
 //! Each gesture becomes moves of the engine's inventory rules (`voxmar_engine::inventory`),
 //! proposed to the server as `core:transfer`, `core:quick_move`, `core:stow` and `core:drop` actions and
@@ -24,7 +26,7 @@ use bevy::window::PrimaryWindow;
 use voxmar_engine::action::ActionTarget;
 use voxmar_engine::block::{BlockDef, Rarity};
 use voxmar_engine::craft::GRID;
-use voxmar_engine::inventory::{LAST, WORN, CRAFT, CURSOR, HOTBAR_SLOTS, Inventory, ItemStack, SLOTS};
+use voxmar_engine::inventory::{LAST, WORN, CRAFT, CURSOR, HOTBAR_SLOTS, Inventory, ItemStack, SLOTS, STORE, STORE_SLOTS};
 
 use super::{SLOT, slot_contents};
 use crate::lang::{Locale, Localized, TightLine};
@@ -49,7 +51,7 @@ impl Plugin for InventoryPlugin {
             .add_systems(PostStartup, spawn)
             .add_systems(
                 Update,
-                ((toggle, fit_grid, click, craft, number_keys, preview).chain().in_set(InventorySystems).after(super::screens::ScreenSystems), (follow_pointer, tooltip, tap, hover_item, show_worn_glyphs).after(InventorySystems))
+                ((toggle, fit_grid, fit_store, click, craft, number_keys, preview).chain().in_set(InventorySystems).after(super::screens::ScreenSystems), (follow_pointer, tooltip, tap, hover_item, show_worn_glyphs).after(InventorySystems))
                     .run_if(in_state(Screen::InGame)),
             )
             .add_systems(OnExit(Screen::InGame), |mut gesture: ResMut<Gesture>, mut tips: Query<&mut Visibility, With<Tooltip>>| {
@@ -224,9 +226,22 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
                     slot_contents(cell, font, slot)
                 });
             };
+            // An open store's slots and its name, in place of the crafting grid (`fit_store`).
+            let store = Node {
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                row_gap: Val::Px(space::HAIR),
+                margin: UiRect::bottom(Val::Px(space::GAP)),
+                display: Display::None,
+                ..default()
+            };
+            card.spawn((store, StoreSection)).with_children(|section| {
+                section.spawn((shadowed(font, "", BODY, TEXT), StoreName));
+                section.spawn(grid(0.0)).with_children(|grid| (STORE..STORE + STORE_SLOTS).for_each(|slot| spawn_slot(grid, slot)));
+            });
             // The crafting grid and what it makes, above the pack.
             let crafting = Node { align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), margin: UiRect::bottom(Val::Px(space::GAP)), ..default() };
-            card.spawn(crafting).with_children(|row| {
+            card.spawn((crafting, CraftRow)).with_children(|row| {
                 // What is worn: head and body, legs and hands, feet and shield.
                 let worn = Node {
                     display: Display::Grid,
@@ -312,7 +327,8 @@ fn send(net: &Net, actions: &Actions, inventory: &mut Inventory, action: Move) {
     let (moved, target) = match action {
         Move::Items { from, to, count } => (inventory.move_items(from, to, count), ActionTarget::Slots { from: from as u8, to: to as u8, count }),
         Move::Quick(slot) => (inventory.quick_move(slot), ActionTarget::Slot(slot as u8)),
-        Move::Stow => (inventory.stow_cursor(), ActionTarget::None),
+        // Closing the screen closes a store too, whether or not anything was held.
+        Move::Stow => (inventory.stow_cursor() | inventory.close_store(), ActionTarget::None),
         Move::Throw { slot, count } => (inventory.take(slot, count).is_some(), ActionTarget::Stack { slot: slot as u8, count }),
     };
     if moved {
@@ -442,8 +458,57 @@ fn fit_grid(player: Res<LocalPlayer>, mut square: Query<&mut Node, With<CraftSqu
     }
 }
 
+/// The crafting grid's row, which an open store's slots take the place of.
+#[derive(Component)]
+struct CraftRow;
+#[derive(Component)]
+struct StoreSection;
+#[derive(Component)]
+struct StoreName;
+
+/// Shows an open store's slots, as many as it has, and its name, in place of the crafting
+/// grid; or the grid, with no store open.
+#[allow(clippy::type_complexity)]
+fn fit_store(
+    player: Res<LocalPlayer>,
+    launch: Res<Launch>,
+    locale: Res<Locale>,
+    mut rows: ParamSet<(Query<&mut Node, With<CraftRow>>, Query<&mut Node, With<StoreSection>>, Query<(&InventorySlot, &mut Node)>)>,
+    mut name: Query<&mut Text, With<StoreName>>,
+) {
+    let store = player.inventory.store.as_ref();
+    let (craft, section) = if store.is_some() { (Display::None, Display::Flex) } else { (Display::Flex, Display::None) };
+    for mut node in &mut rows.p0() {
+        show(&mut node, craft);
+    }
+    for mut node in &mut rows.p1() {
+        show(&mut node, section);
+    }
+    let shown = store.map_or(0, |s| s.slots.len());
+    for (slot, mut node) in &mut rows.p2() {
+        if slot.0 >= STORE {
+            show(&mut node, if slot.0 - STORE < shown { Display::Flex } else { Display::None });
+        }
+    }
+    if let (Some(store), Ok(mut text)) = (store, name.single_mut()) {
+        let words = locale.block(launch.content.blocks.def(store.block));
+        if text.0 != words {
+            text.0 = words;
+        }
+    }
+}
+
+/// Sets a node's display only when it changes, so the screen is not laid out again.
+fn show(node: &mut Node, display: Display) {
+    if node.display != display {
+        node.display = display;
+    }
+}
+
 /// Shows the screen while it is open (`screens` opens and closes it). Closing puts back
-/// what the pointer holds.
+/// what the pointer holds. A store the player asked open opens it, once the server says
+/// what it holds; one open on the server that the player did not ask for (the screen
+/// closed before the word came) is closed.
 fn toggle(
     mut ui: ResMut<UiState>,
     mut player: ResMut<LocalPlayer>,
@@ -460,7 +525,14 @@ fn toggle(
         *gesture = Gesture::default();
         // Walking away from a crafting table, as closing the screen does.
         player.station = None;
+        player.store_asked = false;
         send(&net, &actions, &mut player.inventory, Move::Stow);
+    } else if !ui.inventory_open && player.inventory.store.is_some() && !player.dead {
+        if std::mem::take(&mut player.store_asked) {
+            ui.inventory_open = true;
+        } else {
+            send(&net, &actions, &mut player.inventory, Move::Stow);
+        }
     }
     *was_open = ui.inventory_open;
     if let Ok(mut visibility) = root.single_mut() {
