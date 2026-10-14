@@ -1252,7 +1252,11 @@ mod tests {
         let mut wait_for = |done: &dyn Fn(&Inventory) -> bool| -> Inventory {
             let (ticks, mut cpu) = (server.ticks(), server.cpu_time());
             let mut starting = Duration::ZERO;
+            // A server that neither ticks nor works would never use up its seconds: ten
+            // times them by the wall's clock fail the wait too.
+            let began = std::time::Instant::now();
             while !done(&seen) {
+                assert!(began.elapsed() < Duration::from_secs(600), "the server neither ticked nor worked its way to that inventory in 600 s of the wall's clock: {seen:?}");
                 if server.ticks() == 0 {
                     let now = server.cpu_time();
                     starting += cpu.zip(now).map_or(Duration::ZERO, |(then, now)| now.saturating_sub(then));

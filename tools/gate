@@ -272,7 +272,29 @@ run='
   lower=(nice -n 19 env RAYON_NUM_THREADS=$TEST_POOL)
   [[ $(uname -s) == Darwin ]] && command -v taskpolicy >/dev/null && lower=(taskpolicy -c utility "${lower[@]}")
   while IFS=$(printf "\t") read -r dir exe; do
-    (cd "$dir" && RUSTC_BOOTSTRAP=1 "${lower[@]}" "$exe" -Z unstable-options --report-time "$@" >"$out/test-${exe##*/}.txt" 2>&1; echo $? >"$out/test-${exe##*/}.status") &
+    (
+      cd "$dir" || exit
+      RUSTC_BOOTSTRAP=1 "${lower[@]}" "$exe" -Z unstable-options --report-time "$@" >"$out/test-${exe##*/}.txt" 2>&1 &
+      pid=$!
+      # A test binary still running after $TEST_TIMEOUT s is stopped and fails the gate
+      # (a gameplay test once waited 39 minutes on a fight that never came, holding the
+      # landing). Counted in steps of ten seconds while it runs: memcap pausing it for
+      # Mariano playing pauses this count too.
+      ( ran=0
+        while kill -0 "$pid" 2>/dev/null; do
+          sleep 10
+          [[ $(ps -o state= -p "$pid" 2>/dev/null) == T* ]] || ran=$((ran + 10))
+          if ((ran >= TEST_TIMEOUT)) && kill -0 "$pid" 2>/dev/null; then
+            echo "$ran" >"$out/test-${exe##*/}.timeout"
+            kill "$pid"
+            break
+          fi
+        done ) &
+      watch=$!
+      wait "$pid"
+      echo $? >"$out/test-${exe##*/}.status"
+      kill "$watch" 2>/dev/null
+    ) &
   done <"$out/tests.list"
   wait'
 : >"$out/tests.list"
@@ -310,7 +332,11 @@ sampler=$!
 # the other half. With every core to each binary, the worldgen tests took 106 s, then 159
 # and 194 s on the Mac as the session sped up (and the Mac was busy besides).
 TEST_POOL=$(( $(getconf _NPROCESSORS_ONLN) / 2 > 1 ? $(getconf _NPROCESSORS_ONLN) / 2 : 1 ))
-export TEST_POOL
+# Seconds a test binary may run (not counting time paused for Mariano playing) before it
+# is stopped and fails the gate. A loaded Mac's slowest, the full gate's worldgen binary,
+# took about 11 minutes; past 30 a binary is stuck, not slow.
+TEST_TIMEOUT=${VOXMAR_TEST_TIMEOUT:-1800}
+export TEST_POOL TEST_TIMEOUT
 VOXMAR_CONFIG=$out/config VOXMAR_GATE_FULL=$full GATE_ARGS=$( ((full)) || echo --view-distance 4) RUST_TEST_THREADS=${RUST_TEST_THREADS:-8} \
   VOXMAR_FOREGROUND=1 $memcap 24 -- bash -c "$run" --gate "$out" "$session" ${skips[@]+"${skips[@]}"} >"$out/run.txt" 2>&1
 kill "$sampler" 2>/dev/null
@@ -351,6 +377,17 @@ for f in "$out"/test-*.status; do
   [[ -e $f ]] || continue
   cat "${f%.status}.txt" >>"$out/tests.txt"
   [[ $(cat "$f") == 0 ]] || tests_failed=1
+done
+# A binary stopped for running too long: named, with the tests it left running (libtest
+# names each one past 60 seconds; those with no result line had not finished).
+for f in "$out"/test-*.timeout; do
+  [[ -e $f ]] || continue
+  txt=${f%.timeout}.txt
+  running=$(sed -nE 's/^test (.*) has been running for over 60 seconds$/\1/p' "$txt" | while read -r name; do
+    grep -qF "test $name ... " "$txt" || echo "$name"
+  done | paste -sd, -)
+  echo "gate: ${f##*/test-} stopped after $(cat "$f") s, still running: ${running:-no test past 60 s}" | sed 's/\.timeout / /'
+  tests_failed=1
 done
 if ((tests_failed)); then
   grep -E '^test .* FAILED|^failures:|panicked|^error' "$out/tests.txt" | head -40
