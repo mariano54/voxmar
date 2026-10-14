@@ -8749,7 +8749,8 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     gate.check("trough: opens", Err(format!("{TROUGH_WAIT} server s after setting a trough: there {trough}, its store {slots:?}")));
                     done(world, gate);
                 }
-                _ if trough && gate.server_now - gate.machines_asked >= 2.0 && empty_hand(world) => {
+                // Whatever is in hand: a store opens to anything but a machine.
+                _ if trough && gate.server_now - gate.machines_asked >= 2.0 => {
                     world.resource_mut::<LocalPlayer>().store_asked = true;
                     let actions = world.resource::<crate::Actions>().0.clone();
                     world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("base:open_store"), voxmar_engine::action::ActionTarget::Block { block: at, face: voxmar_engine::coords::Face::PosY });
