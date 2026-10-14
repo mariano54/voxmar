@@ -489,17 +489,20 @@ impl Server {
     }
 
     /// Crafts what `agent`'s grid holds, once or (`all`) as many times as it can: if the
-    /// recipe's skill level is met, and for a recipe bigger than two by two, at a crafting
-    /// table within reach. Experience comes for every one made.
+    /// recipe's skill level is met, for a recipe bigger than two by two, at a crafting
+    /// table within reach, and for one made near a block, within reach of one. Experience
+    /// comes for every one made.
     fn craft(&mut self, agent: PlayerId, all: bool) {
         let recipes = self.content.recipes.clone();
         let allowed = self.allowed_recipes(agent);
+        let near = self.near_tags(agent);
+        let near = |tag: &str| near.iter().any(|t| t == tag);
         let player = self.players.get_mut(&agent).unwrap();
         // Crafting all goes on only while the grid still makes the same recipe: experience
         // and tallies are this recipe's, once for each one made.
-        let first = recipes.find(&player.inventory.grid()).filter(|r| allowed(r));
+        let first = recipes.find_near(&player.inventory.grid(), near).filter(|r| allowed(r));
         let found = first.map(|r| (r.skill, r.xp, r.output, r.count));
-        let made = player.inventory.craft(recipes.while_making(first), all);
+        let made = player.inventory.craft(recipes.while_making(first, near), all);
         // Always: a refused craft the client predicted is undone.
         player.changed(traits::INVENTORY);
         if let Some((skill, xp, output, count)) = found.filter(|_| made > 0) {
@@ -554,6 +557,14 @@ impl Server {
     pub(crate) fn check_level(&self, agent: PlayerId, skill: SkillId) -> u8 {
         let Some(player) = self.players.get(&agent) else { return 1 };
         voxmar_engine::level::check_level(&self.content.skills, &self.content.effects, &player.skills, &player.vitals.effects, skill)
+    }
+
+    /// The tags recipes are made near (a chopping block's) that some block within `agent`'s
+    /// reach has.
+    pub(crate) fn near_tags(&self, agent: PlayerId) -> Vec<String> {
+        let Some(player) = self.players.get(&agent) else { return Vec::new() };
+        let tags = self.content.recipes.near_tags();
+        voxmar_engine::craft::tags_near(&tags, &self.content.blocks, player.eye(), |pos| self.block(pos))
     }
 
     /// Whether `agent` is at the crafting table they last opened, still within reach.
