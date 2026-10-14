@@ -1,0 +1,9 @@
+// Traps (traps.ron, docs/traps.md): set where small game runs, and come back to. A snare is
+// a loop of twine pegged low on two sticks; sprung, it has pulled tight on what it caught.
+// Broken, either gives the snare back (a sprung one loses its catch).
+(
+    blocks: [
+        (name: "snare", render: Plant, solid: false, sound: Wood, textures: All("snare"), drops: "snare", hardness: 0.2, color: (150, 120, 80), tags: ["trap"]),
+        (name: "snare_sprung", render: Plant, solid: false, sound: Wood, textures: All("snare_sprung"), drops: "snare", hardness: 0.2, color: (160, 110, 80), tags: ["trap"]),
+    ],
+)

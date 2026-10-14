@@ -113,6 +113,9 @@ pub struct WorldMeta {
     /// worlds have none.
     #[serde(default)]
     pub stations: Vec<crate::stations::SavedLoad>,
+    /// What each sprung trap caught (`traps`). Older worlds have none.
+    #[serde(default)]
+    pub catches: Vec<crate::traps::SavedCatch>,
     /// Fuelled multiblocks and the server tick when their fire goes out. Older worlds
     /// open cold; completed quests stay completed in the player's own file.
     #[serde(default)]
@@ -162,6 +165,7 @@ impl WorldMeta {
             planter_grown: Vec::new(),
             hives: Vec::new(),
             stations: Vec::new(),
+            catches: Vec::new(),
             lit: Vec::new(),
             generation: 0,
             worldgen_content: None,
