@@ -272,11 +272,20 @@ impl Client {
     /// seconds, and the check then ran before the messages waiting for it were read, failing
     /// random tests with "20 s since its last message". A pause between two looks at the
     /// connection longer than `AWAY` moves both limits on by it.
+    ///
+    /// Nor is a server at work silent: its thread's CPU time going up says it is working,
+    /// told or not (`ServerHandle::cpu_time`), and only a server that has neither sent
+    /// anything nor worked for `SERVER_SILENT` is taken for stuck. Before its first tick it
+    /// is opening the world and generating where the player stands, never idle, so until
+    /// then the time in all is the CPU time its thread had: at load 120 a server starting
+    /// with a share of a core sent no welcome for 60 s while it worked all along.
     fn pump_until(&mut self, done: impl Fn(&Self) -> bool) {
         const AWAY: Duration = Duration::from_millis(500);
-        let mut start = Instant::now();
-        let mut heard = start;
-        let mut looked = start;
+        let mut looked = Instant::now();
+        let mut heard = looked;
+        let mut worked = looked;
+        let mut in_all = Duration::ZERO;
+        let mut cpu = self._server.as_ref().and_then(ServerHandle::cpu_time);
         while !done(self) {
             // In lockstep, the tick this player has taken in once nothing is left to read:
             // its messages are all sent before the tick counts.
@@ -286,15 +295,27 @@ impl Client {
             looked = now;
             if away > AWAY {
                 eprintln!("pump_until: this thread was away {:.1}s", away.as_secs_f32());
-                start += away;
                 heard += away;
+                worked += away;
                 continue;
             }
+            let starting = self._server.as_ref().is_some_and(|s| s.ticks() == 0);
+            let now_cpu = self._server.as_ref().and_then(ServerHandle::cpu_time);
+            let work = cpu.zip(now_cpu).map(|(then, now)| now.saturating_sub(then));
+            if work.is_some_and(|w| w > Duration::ZERO) {
+                worked = now;
+            }
+            in_all += match work {
+                Some(work) if starting => work,
+                _ => away,
+            };
+            cpu = now_cpu.or(cpu);
             assert!(
-                now - heard < SERVER_SILENT && now - start < SERVER_WAIT,
-                "{name:?} (id {id}, {phase}, tick {tick}, local {local}): timed out waiting for server: {:.1}s in all, {:.1}s since its last message",
-                (now - start).as_secs_f32(),
+                now - heard.max(worked) < SERVER_SILENT && in_all < SERVER_WAIT,
+                "{name:?} (id {id}, {phase}, tick {tick}, local {local}): timed out waiting for server: {:.1}s in all, {:.1}s since its last message, {:.1}s since its thread last worked",
+                in_all.as_secs_f32(),
                 (now - heard).as_secs_f32(),
+                (now - worked).as_secs_f32(),
                 name = self.name, id = self.id, phase = self.phase, tick = self.server_tick, local = self.connection.is_local()
             );
             match self.connection.try_recv() {
