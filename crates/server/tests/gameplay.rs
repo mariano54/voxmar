@@ -2826,6 +2826,15 @@ fn a_stone_hoe_reaps_the_ripe_crops_about_one() {
         client.after_server_ticks(4);
         assert!(got(&client) >= reaped as u32, "{reaped} wheat cut with a {hoe} gave {} seeds and wheat", got(&client));
     }
+    // Fruit on trees is no field: a stone hoe on one ripe apple leaf leaves the canopy about it.
+    let apple = client.content.blocks.expect("base:apple_leaves");
+    client.ok(&format!("/fill {} {} {} {} {} {} apple_leaves", centre.x - 1, centre.y, centre.z - 1, centre.x + 1, centre.y, centre.z + 1));
+    client.pump_until(|c| cells.iter().all(|&cell| c.world.block(cell) == Some(apple)));
+    client.propose("core:mine", ActionTarget::Block { block: centre, face: Face::PosY });
+    client.pump_until(|c| c.world.block(centre) != Some(apple));
+    client.after_server_ticks(2);
+    let left = cells.iter().filter(|&&cell| client.world.block(cell) == Some(apple)).count();
+    assert_eq!(left, 8, "a stone hoe on one ripe apple leaf took {} of the leaves about it", 8 - left);
 }
 
 // Seed 3 has a village at (368, 135, 784), 421 blocks from spawn (432, 134, 368).
