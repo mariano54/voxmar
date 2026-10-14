@@ -489,6 +489,7 @@
     "journal.stage.seen": "発見",
     "journal.stage.studied": "研究済み",
     "journal.stage.mastered": "極めた",
+    "hud.home": "家まで {distance} m",
     "journal.hint.lives_in": "{biome}にすむ",
     "journal.hint.animals": "野で動物を探そう。",
     "journal.hint.monsters": "魔物は暗がりに現れる。",

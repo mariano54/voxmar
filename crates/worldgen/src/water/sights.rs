@@ -100,12 +100,11 @@ impl Overworld {
 
     /// The best place of each kind within `range` blocks of `centre` (searched every two
     /// blocks), each as the column and the height of its water, preferring nearer ones.
-    /// Kinds none of which lie within range are left out. Costs about a second for a
-    /// range of 400.
+    /// Kinds none of which lie within range are left out.
     pub fn water_sights(&self, centre: IVec2, range: i32) -> Vec<(WaterSight, IVec3)> {
         const STEP: i32 = 2;
         let n = 2 * range / STEP + 1;
-        let geos: Vec<GeoSample> = (0..n * n).map(|i| self.geo(centre.x - range + i % n * STEP, centre.y - range + i / n * STEP)).collect();
+        let geos: Vec<GeoSample> = self.geo_grid(centre - range, STEP, n);
         let at = |i: i32, j: i32| geos[(j.clamp(0, n - 1) * n + i.clamp(0, n - 1)) as usize];
         let mut best: [Option<(f32, IVec3)>; WaterSight::ALL.len()] = [None; WaterSight::ALL.len()];
         let tarns = self.rivers.tarn_floor();
