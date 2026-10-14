@@ -6443,8 +6443,8 @@ struct Mark {
     side: Vec<String>,
 }
 
-/// The skills the first two ages train, as the timeline shows them.
-const PACED_SKILLS: &[&str] = &["mining", "crafting", "engineering", "cooking", "construction"];
+/// The skills the first two ages train and gate on, as the timeline shows them.
+const PACED_SKILLS: &[&str] = &["mining", "crafting", "engineering", "cooking", "construction", "farming", "hunter", "fishing", "attack", "hitpoints"];
 
 /// A player at the start of a survival game, and the plot built beside them to stand in for
 /// terrain the test cannot walk to.
