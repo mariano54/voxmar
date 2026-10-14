@@ -200,7 +200,8 @@ impl Factory {
         let (inputs, outputs) = machine.slots();
         state.inputs.resize(inputs, None);
         state.outputs.resize(outputs, None);
-        state.bin.resize(machine.bin_slots(), None);
+        // A store a home grew (`Machine::grown_bin`) keeps its size; nothing in it is lost.
+        state.bin.resize(machine.bin_slots().max(state.bin.len().min(crate::inventory::STORE_SLOTS)), None);
         let chute = match machine.role {
             Role::Chute { rate } => Some(rate),
             _ => None,

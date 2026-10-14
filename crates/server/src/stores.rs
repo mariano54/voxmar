@@ -27,6 +27,17 @@ impl Server {
         if self.factory.get(pos).is_none() {
             self.factory.insert(pos, block, &machines);
         }
+        // A store in its keeper's home holds more as the home climbs (effects' store_room).
+        if self.in_own_home(agent, pos)
+            && let Some(machine) = machines.get(block)
+        {
+            let want = machine.grown_bin(self.players[&agent].modifiers.store_room);
+            if let Some(state) = self.factory.state_mut(pos)
+                && state.bin.len() < want
+            {
+                state.bin.resize(want, None);
+            }
+        }
         let Some(player) = self.players.get_mut(&agent) else { return };
         player.store = Some(pos);
         player.inventory.store = Some(Store { block, slots: Vec::new() });
@@ -48,6 +59,15 @@ impl Server {
             player.inventory.store = Some(fresh);
             player.changed(traits::INVENTORY);
         }
+    }
+
+    /// Whether `cell` lies in the home `agent` stands in (their own: `at_home`), within the
+    /// box its furnishings are counted in.
+    fn in_own_home(&self, agent: PlayerId, cell: IVec3) -> bool {
+        let Some(anchor) = self.at_home(agent) else { return false };
+        let rules = &self.survival;
+        let near = (cell - anchor).abs();
+        near.x <= rules.home_reach && near.z <= rules.home_reach && cell.y <= anchor.y + rules.home_up && cell.y >= anchor.y - rules.home_down
     }
 
     /// Writes `agent`'s copy of their open store back into it, after a move.
@@ -259,5 +279,58 @@ mod tests {
         assert_eq!(player.store, Some(AT));
         let shown: Vec<(BlockId, u8)> = player.inventory.store.as_ref().unwrap().slots.iter().flatten().map(|s| (s.item, s.count)).collect();
         assert!(!shown.is_empty() && shown == held(&server), "its find, as the chest holds it");
+    }
+
+    fn slots(server: &Server) -> usize {
+        server.factory.get(AT).map_or(0, |(_, state)| state.bin.len())
+    }
+
+    /// Player 1 at home by `AT` (their bed beside it), and Homely for a while, as the
+    /// survival pass judges it.
+    fn homely(server: &mut Server) {
+        let homely = server.content.effects.id("base:homely").expect("base's homely");
+        let player = server.players.get_mut(&1).unwrap();
+        player.bed = Some(Vec3::new(9.5, (FLOOR + 1) as f32, 8.5));
+        player.give_effects(&[(homely, 60.0)]);
+        crate::process::Process::run(&mut crate::process::Survival, server);
+    }
+
+    /// A barrel of 9 in a Homely home, opened by its keeper, holds 18; in no home it holds
+    /// its 9.
+    #[test]
+    fn a_homely_home_doubles_the_stores_in_it() {
+        let mut server = fixture();
+        let barrel = id(&server, "base:barrel");
+        server.set_block(AT, barrel);
+        open(&mut server);
+        assert_eq!(slots(&server), 9, "a barrel away from any home");
+        server.close_store(1);
+        homely(&mut server);
+        assert_eq!(server.players[&1].modifiers.store_room, 2.0);
+        open(&mut server);
+        assert_eq!(slots(&server), 18, "a barrel in a Homely home");
+        assert_eq!(server.players[&1].inventory.store.as_ref().map(|s| s.slots.len()), Some(18), "the open store's slots, as the client is sent them");
+    }
+
+    /// A store grown at home keeps its size: the home no longer Homely, opened again, and
+    /// taken out of the factory and put back as a save does, it still holds 18.
+    #[test]
+    fn a_grown_store_never_shrinks() {
+        let mut server = fixture();
+        let barrel = id(&server, "base:barrel");
+        server.set_block(AT, barrel);
+        homely(&mut server);
+        open(&mut server);
+        server.close_store(1);
+        server.players.get_mut(&1).unwrap().timed_effects.clear();
+        crate::process::Process::run(&mut crate::process::Survival, &mut server);
+        assert_eq!(server.players[&1].modifiers.store_room, 1.0);
+        open(&mut server);
+        assert_eq!(slots(&server), 18, "shrank when the home slipped");
+        server.close_store(1);
+        let (block, state) = server.factory.remove(AT).unwrap();
+        let machines = server.content.machines.clone();
+        server.factory.insert_state(AT, block, state, &machines);
+        assert_eq!(slots(&server), 18, "shrank in a save");
     }
 }
