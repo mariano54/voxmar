@@ -258,30 +258,50 @@ pub struct Creatures {
 
 /// Every live creature by where it stood when a pass began, in square cells `CELL` blocks
 /// across, so finding those near one looks at nine cells instead of every creature in the
-/// world: kin for herding and alarms, a mate.
-pub(crate) struct Neighbours(FxHashMap<(i32, i32), Vec<u32>>);
+/// world: kin for herding and alarms, a mate. Each id stands with its species, so a search
+/// for one kind passes the others by without looking them up: this holds as a creature's
+/// id and species never change once it is spawned.
+pub(crate) struct Neighbours {
+    cells: FxHashMap<(i32, i32), Vec<(u32, CreatureId)>>,
+    /// Those of a kind in the nine cells around a cell, in id order, for each cell and kind
+    /// asked about so far: in a full pen every one of a kind asks for the same cell at each
+    /// think, so a pass gathers and sorts them once.
+    kinds: std::cell::RefCell<FxHashMap<((i32, i32), CreatureId), std::rc::Rc<[u32]>>>,
+}
 
 impl Neighbours {
     pub(crate) fn of(live: &BTreeMap<u32, Live>) -> Self {
-        let mut cells: FxHashMap<(i32, i32), Vec<u32>> = FxHashMap::default();
+        let mut cells: FxHashMap<(i32, i32), Vec<(u32, CreatureId)>> = FxHashMap::default();
         for (&id, creature) in live {
-            cells.entry(Self::cell(creature.body.position)).or_default().push(id);
+            cells.entry(Self::cell(creature.body.position)).or_default().push((id, creature.species));
         }
-        Self(cells)
+        Self { cells, kinds: Default::default() }
     }
 
     fn cell(at: Vec3) -> (i32, i32) {
         ((at.x / CELL).floor() as i32, (at.z / CELL).floor() as i32)
     }
 
-    /// The creatures that stood in the cells around `at`, in id order (as the world's own
-    /// order, so what is found does not change with the search): every one within `CELL`
-    /// blocks less a pass's movement, and some further.
-    pub(crate) fn around(&self, at: Vec3) -> Vec<u32> {
+    /// The creatures of `species` but `id` that stood in the cells around `at`, in id order
+    /// (as the world's own order, so what is found does not change with the search): every
+    /// one within `CELL` blocks less a pass's movement, and some further.
+    pub(crate) fn kind_around(&self, at: Vec3, species: CreatureId, id: u32) -> impl Iterator<Item = u32> {
         let (cx, cz) = Self::cell(at);
-        let mut ids: Vec<u32> = (-1..=1).flat_map(|dx| (-1..=1).map(move |dz| (cx + dx, cz + dz))).filter_map(|cell| self.0.get(&cell)).flatten().copied().collect();
-        ids.sort_unstable();
-        ids
+        let known = self.kinds.borrow().get(&((cx, cz), species)).cloned();
+        let ids = known.unwrap_or_else(|| {
+            let mut ids: Vec<u32> = (-1..=1)
+                .flat_map(|dx| (-1..=1).map(move |dz| (cx + dx, cz + dz)))
+                .filter_map(|cell| self.cells.get(&cell))
+                .flatten()
+                .filter(|&&(_, kind)| kind == species)
+                .map(|&(other, _)| other)
+                .collect();
+            ids.sort_unstable();
+            let ids: std::rc::Rc<[u32]> = ids.into();
+            self.kinds.borrow_mut().insert(((cx, cz), species), ids.clone());
+            ids
+        });
+        (0..ids.len()).map(move |i| ids[i]).filter(move |&other| other != id)
     }
 }
 
@@ -538,9 +558,7 @@ impl Server {
         let Some(creature) = self.creatures.live.get(&id) else { return Vec::new() };
         let (species, at) = (creature.species, creature.body.position);
         neighbours
-            .around(at)
-            .into_iter()
-            .filter(|&other| other != id)
+            .kind_around(at, species, id)
             .filter_map(|other| self.creatures.live.get(&other))
             .filter(|c| c.species == species && c.body.position.distance(at) < KIN_RANGE)
             .map(|c| c.body.position)
@@ -820,7 +838,7 @@ impl Server {
             }
         }
         if decision.alarm {
-            for other in neighbours.around(position).into_iter().filter(|&other| other != id) {
+            for other in neighbours.kind_around(position, species_id, id) {
                 if let Some(kin) = self.creatures.live.get_mut(&other)
                     && kin.species == species_id
                     && kin.body.position.distance(position) < KIN_RANGE
@@ -1688,6 +1706,70 @@ mod neighbour_tests {
             with_mates += usize::from(mate.is_some());
         }
         assert!(with_kin > 100 && with_mates > 10, "too sparse to judge: {with_kin} with kin, {with_mates} with mates");
+    }
+
+    /// A full pen (the 64 kept animals a player may have, with a few of another kind among
+    /// them) about 50 blocks across, round the corner where four cells meet and over the
+    /// cells beyond, so some of a kind stand out of each other's reach and some cells' nine
+    /// leave part of the pen out: each one's kin, mate and those
+    /// its alarm reaches are what looking at every creature finds, asked twice over in one
+    /// pass, with some having moved across a cell's edge since the pass began.
+    #[test]
+    fn a_full_pen_finds_what_looking_at_every_creature_finds() {
+        let mut server = crate::test_server();
+        let (sheep, hens) = (server.content.creatures.id("base:mouflon").expect("species"), server.content.creatures.id("base:junglefowl").expect("species"));
+        let corner = Vec3::new((server.spawn.x / CELL).round() * CELL, server.spawn.y, (server.spawn.z / CELL).round() * CELL);
+        for i in 0..70u64 {
+            let at = corner + Vec3::new((i % 9) as f32 * 6.0 - 24.2, 0.0, (i / 9) as f32 * 6.0 - 24.2);
+            let id = server.spawn_creature(if i % 10 == 3 { hens } else { sheep }, at, i).expect("room");
+            let creature = server.creatures.live.get_mut(&id).unwrap();
+            creature.owner = Some("test".to_string());
+            creature.ready_until = u64::from(i % 4 == 0);
+        }
+        let neighbours = Neighbours::of(&server.creatures.live);
+        let ids: Vec<u32> = server.creatures.live.keys().copied().collect();
+        let (mut short, mut crossed) = (0, 0);
+        for round in 0..2 {
+            for &id in &ids {
+                let me = &server.creatures.live[&id];
+                let near = |range: f32, ready: bool| -> Vec<(u32, Vec3)> {
+                    server
+                        .creatures
+                        .live
+                        .iter()
+                        .filter(|&(&other, c)| other != id && c.species == me.species && (!ready || (c.ready_until > 0 && c.owner.is_some())) && c.body.position.distance(me.body.position) < range)
+                        .map(|(&other, c)| (other, c.body.position))
+                        .collect()
+                };
+                let kin = near(KIN_RANGE, false);
+                assert_eq!(server.kin_of(id, &neighbours), kin.iter().map(|&(_, at)| at).collect::<Vec<_>>(), "kin of {id} (round {round})");
+                let kind = server.creatures.live.values().filter(|c| c.species == me.species).count();
+                short += usize::from(kin.len() + 1 < kind);
+                let nearest = near(voxmar_engine::creature::husbandry::MATE_RANGE, true).into_iter().map(|(_, at)| at).min_by(|a, b| a.distance(me.body.position).total_cmp(&b.distance(me.body.position)));
+                assert_eq!(server.mate_for(id, &neighbours), if me.ready_until > 0 { nearest } else { None }, "mate of {id} (round {round})");
+                // Its alarm frightens just its kin.
+                if id % 7 == 0 {
+                    for c in server.creatures.live.values_mut() {
+                        c.mind.fear = 0.0;
+                    }
+                    server.carry_out(id, Decision { alarm: true, ..Default::default() }, &neighbours);
+                    let alarmed: Vec<u32> = server.creatures.live.iter().filter(|(_, c)| c.mind.fear > 0.0).map(|(&other, _)| other).collect();
+                    assert_eq!(alarmed, kin.iter().map(|&(other, _)| other).collect::<Vec<_>>(), "alarmed by {id} (round {round})");
+                }
+            }
+            // Those beside a cell's edge step across it after the pass began, as bodies move
+            // between thinks: kin are found where they are now.
+            for &id in &ids {
+                let body = &mut server.creatures.live.get_mut(&id).unwrap().body;
+                if (body.position.x - corner.x).abs() < 0.5 {
+                    let before = Neighbours::cell(body.position);
+                    body.position.x += 0.9;
+                    crossed += usize::from(Neighbours::cell(body.position) != before);
+                }
+            }
+        }
+        assert!(crossed > 0, "none crossed a cell's edge");
+        assert!(short > 0, "every one of a kind was in reach of every other: the pen is too small to judge");
     }
 }
 
