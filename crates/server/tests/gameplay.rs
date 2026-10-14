@@ -289,7 +289,8 @@ impl Client {
     /// with a share of a core sent no welcome for 60 s while it worked all along.
     fn pump_until(&mut self, done: impl Fn(&Self) -> bool) {
         const AWAY: Duration = Duration::from_millis(500);
-        let mut looked = Instant::now();
+        let began = Instant::now();
+        let mut looked = began;
         let mut heard = looked;
         let mut worked = looked;
         let mut in_all = Duration::ZERO;
@@ -299,6 +300,13 @@ impl Client {
             // its messages are all sent before the tick counts.
             let taken = self._server.as_ref().filter(|s| s.lockstep()).map(|s| s.ticks());
             let now = Instant::now();
+            // Whatever the limits below make of the server's work and this thread's
+            // pauses, no wait outlasts ten times the longest they allow by the wall's clock.
+            assert!(
+                now - began < SERVER_WAIT * 10,
+                "{:?} (id {}, {}, tick {}): still waiting after {:.0}s of the wall's clock",
+                self.name, self.id, self.phase, self.server_tick, (now - began).as_secs_f32()
+            );
             let away = now - looked;
             looked = now;
             if away > AWAY {
@@ -4080,6 +4088,9 @@ fn provoke_until_it_winds_up(client: &mut Client, id: u32, slot: usize, name: &s
     provoke_until(client, id, slot, name, |c| c.creatures.get(&id).is_some_and(|v| v.pose == voxmar_engine::creature::brain::Pose::Attacking))
 }
 
+/// Server seconds [`provoke_until`] goes on provoking without seeing a wind-up, at most.
+const PROVOKE_WAIT: f32 = 60.0;
+
 /// `noticed` lets the regression below miss attack poses deliberately, as a delayed
 /// observer can, while still applying every real server reply.
 fn provoke_until(client: &mut Client, id: u32, slot: usize, name: &str, noticed: impl Fn(&Client) -> bool) -> usize {
@@ -4093,8 +4104,22 @@ fn provoke_until(client: &mut Client, id: u32, slot: usize, name: &str, noticed:
     let mut heard = before;
     let mut unseen = 0;
     let mut last_health = client.creatures.get(&id).map(|v| v.health);
+    let (began, died) = (client.server_tick, client.died);
     eprintln!("provoke: {name} id {id}, health {last_health:?}, tick {}, player damage {:?}, creature blows {before}, deaths {}", client.server_tick, client.damage, client.deaths);
     loop {
+        // A dead player is fought by nothing, and a creature that never answers is no
+        // fight: either would be waited on for ever, so each fails, by the server's clock.
+        assert!(
+            client.died == died && client.health > 0,
+            "the player died while provoking the {name} id {id} (health {}, {} creature blows, {} heard with the wind-up unseen)",
+            client.health, client.hurt.len(), unseen
+        );
+        let waited = client.server_tick.saturating_sub(began) as f32 / TICKS_PER_SECOND as f32;
+        assert!(
+            waited < PROVOKE_WAIT,
+            "the {name} id {id} began no wind-up in {waited:.0} server s of provoking (pose {:?}, health {last_health:?}, {} player blows, {} creature blows, {unseen} heard with the wind-up unseen, player health {})",
+            client.creatures.get(&id).map(|v| v.pose), client.blows, client.hurt.len(), client.health
+        );
         assert!(client.creatures.contains_key(&id), "the {name} id {id} went (last health {last_health:?}, tick {}, {} player blows, damage {:?}, {} creature blows, {} deaths)", client.server_tick, client.blows, client.damage, client.hurt.len(), client.deaths);
         face(client, id, slot, false);
         // Repositioning can pump replies too; judge retaliation after that round trip.
@@ -6670,6 +6695,13 @@ impl Fresh {
         self.origin + IVec3::new(x, y, z)
     }
 
+    /// The dirt standing above the plot's ground (its level is y -1), as the client sees it
+    /// now: what is left of the banks laid out for digging.
+    fn raised_dirt(&self) -> Vec<IVec3> {
+        let dirt = self.c.content.blocks.id("base:dirt");
+        (-13..=30).flat_map(|x| (-11..=13).map(move |z| (x, z))).map(|(x, z)| self.rel(x, 0, z)).filter(|&p| self.c.world.block(p) == dirt).collect()
+    }
+
     /// The middle of `cell`'s floor.
     fn middle(cell: IVec3) -> Vec3 {
         cell.as_vec3() + Vec3::new(0.5, 0.0, 0.5)
@@ -7259,7 +7291,10 @@ impl Fresh {
         c.fill(origin, v(-9, 0, -10), v(-9, 1, 0), "air");
         // Wild wheat growing by the lane's mouth, for A Tempting Bite.
         c.fill(origin, v(-7, 0, 2), v(-7, 0, 2), "wild_wheat");
-        let probes = [(v(7, 3, -5), "base:oak_log"), (v(17, 0, 4), "base:stone"), (v(-2, -1, 11), "base:water"), (v(-8, 1, 0), "base:stone"), (v(-7, 0, 2), "base:wild_wheat")];
+        // A low bank of dirt, eight blocks, for the earth clamp: the only dirt above the
+        // ground, so the bot finds it by looking (`Fresh::raised_dirt`).
+        c.fill(origin, v(-7, 0, 8), v(-4, 0, 9), "dirt");
+        let probes = [(v(7, 3, -5), "base:oak_log"), (v(17, 0, 4), "base:stone"), (v(-2, -1, 11), "base:water"), (v(-8, 1, 0), "base:stone"), (v(-7, 0, 2), "base:wild_wheat"), (v(-4, 0, 9), "base:dirt")];
         c.pump_until(|c| probes.iter().all(|&(at, name)| c.world.block(origin + at) == c.content.blocks.id(name)) && c.world.block(origin + v(-9, 1, 0)) == Some(BlockId::AIR));
         let (at, t0) = (c.position, c.ticks());
         let epoch = (t0, Instant::now());
@@ -7508,7 +7543,7 @@ fn the_first_days(f: &mut Fresh) -> Site {
     let fire = f.rel(6, 0, 2);
     f.craft(&[(0, log, 1), (1, log, 1), (3, cobble, 1), (4, cobble, 1)], "base:campfire", 1);
     f.place("base:campfire", fire - up);
-    let meats = [("base:raw_rabbit", "base:cooked_rabbit"), ("base:raw_chicken", "base:cooked_chicken")];
+    let meats = [("base:raw_small_game", "base:cooked_small_game")];
     let raw = |c: &Client| meats.iter().map(|(raw, _)| holding(c, raw) + loose(c, raw)).sum::<u32>();
     f.hunt(|_| "", |c| raw(c) >= 3);
     for (raw, _) in meats {
@@ -7540,26 +7575,32 @@ fn the_first_days(f: &mut Fresh) -> Site {
     f.wait(5.0, "picking the wild wheat", |c| c.world.block(wheat) == Some(BlockId::AIR));
     f.collect("base:wheat_seeds", 1);
     let fowl = f.c.content.creatures.find("junglefowl").expect("junglefowl in the content");
-    if !lane(&f.c, f.origin).iter().any(|&(_, _, species)| species == fowl) {
+    // Only one the night's hunt never hurt comes to seeds: a wounded one holds its grudge
+    // (`Tempted`) and runs, as a player sees it do. So one never struck is looked for, and
+    // let in if there is none.
+    let whole = f.c.content.creatures.get(fowl).def.health;
+    let origin = f.origin;
+    let unhurt = move |c: &Client| -> Vec<f32> {
+        lane(c, origin).into_iter().filter(|&(id, _, species)| species == fowl && c.creatures.get(&id).is_some_and(|v| v.health >= whole)).map(|(_, p, _)| p.z).collect()
+    };
+    if unhurt(&f.c).is_empty() {
         f.stock("junglefowl", -4);
     }
     // In by the open end to five blocks short of the nearest junglefowl (they huddle at the
     // far end, and the seeds tempt from ten), where it can walk up the rest.
     f.walk_toward(Fresh::middle(f.rel(-9, 0, 2)), 0.3);
-    let near = lane(&f.c, f.origin).into_iter().filter(|&(_, _, species)| species == fowl).map(|(_, p, _)| p.z).fold(f32::MIN, f32::max);
+    // One may have stepped out by the open end while the player walked in: another is let in.
+    let in_lane = |c: &Client| !unhurt(c).is_empty();
+    if !in_lane(&f.c) {
+        f.stock("junglefowl", -4);
+        assert!(f.waited(2.0, in_lane), "the junglefowl let into the lane never showed");
+    }
+    let near = unhurt(&f.c).into_iter().fold(f32::MIN, f32::max);
     let lane_x = f.rel(-9, 0, 0).x as f32 + 0.5;
     f.walk_toward(Vec3::new(lane_x, f.at.y, (near + 5.0).min(f.rel(0, 0, 0).z as f32 + 0.5)), 0.3);
     f.hold("base:wheat_seeds");
-    // A lane crowded at its end can jam them in a heap that none walks out of (the wild
-    // has no dead ends so tight): then one more is let in nearer the open end, where it
-    // walks up as any does.
-    let mut drawn = f.waited(10.0, |c| quest_status(c, "a_tempting_bite").0);
-    if !drawn {
-        f.walk_toward(Fresh::middle(f.rel(-9, 0, 2)), 0.3);
-        f.stock("junglefowl", -3);
-        f.hold("base:wheat_seeds");
-        drawn = f.waited(20.0, |c| quest_status(c, "a_tempting_bite").0);
-    }
+    // However crowded the lane's end, one walks out of the heap and up to the seeds.
+    let drawn = f.waited(10.0, |c| quest_status(c, "a_tempting_bite").0);
     let fowls: Vec<_> = f.c.creatures.values().filter(|v| v.species == fowl && v.position.distance(f.at) < 12.0).map(|v| (v.id, v.position, v.pose, v.health)).collect();
     let cells: Vec<_> = (-11..=1).map(|z| (z, [-1, 0, 1].map(|y| f.c.world.block(f.rel(-9, y, z)).map(|b| f.c.content.blocks.def(b).name.clone())))).collect();
     assert!(drawn, "no junglefowl drawn up to the seeds: at {:?} holding {:?}, lane {:?}, fowl near (pose, health) {fowls:?}, cells {cells:?}, origin {:?}, quest {:?}", f.at, f.c.inventory.get(f.held as usize), lane(&f.c, f.origin), f.origin, f.c.quests.iter().find(|q| q.name == "base:a_tempting_bite").map(|q| (q.done, q.tasks.clone())));
@@ -7624,12 +7665,13 @@ fn the_first_days(f: &mut Fresh) -> Site {
     // plot round a log at the table (Construction 3), set down by the kiln and loaded with
     // sixteen clay. It fires them, none cracked, while clay is fired by hand toward the
     // twelve; what it gives goes to The Potter.
-    let o = f.origin;
-    let ground: Vec<IVec3> = (24..=27).flat_map(|x| (-4..=-3).map(move |z| o + v(x, 0, z))).collect();
+    let ground = f.raised_dirt();
+    assert!(ground.len() >= 8, "the plot's dirt bank: {} blocks left of 8", ground.len());
     f.gather("base:stone_shovel", ground, "base:dirt", 8);
     f.at_table(table);
     f.craft(&[(0, "base:dirt", 1), (1, "base:dirt", 1), (2, "base:dirt", 1), (3, "base:dirt", 1), (4, log, 1), (5, "base:dirt", 1), (6, "base:dirt", 1), (7, "base:dirt", 1), (8, "base:dirt", 1)], "base:earth_clamp", 1);
-    f.walk_toward(Fresh::middle(f.rel(4, 0, 1)), 2.0);
+    // Set down from two blocks south of it, wherever the dirt was dug: never from the cell itself.
+    f.walk_toward(Fresh::middle(f.rel(4, 0, 3)), 0.3);
     let clamp = f.place("base:earth_clamp", f.rel(4, -1, 1));
     f.mark("earth_clamp");
     f.gather_from("base:stone_shovel", &banks, bed.clone(), clay, 28);
@@ -7686,9 +7728,7 @@ impl Fresh {
             }
         }
         self.c.fill(o, v(18, 0, 7), v(19, 0, 11), "copper_ore");
-        // A low bank of dirt, eight blocks, for the earth clamp.
-        self.c.fill(o, v(24, 0, -4), v(27, 0, -3), "dirt");
-        let probes = [(v(27, -1, 11), "base:water"), (v(15, 3, -9), "base:oak_log"), (v(19, 0, 11), "base:copper_ore"), (v(27, 0, -3), "base:dirt")];
+        let probes = [(v(27, -1, 11), "base:water"), (v(15, 3, -9), "base:oak_log"), (v(19, 0, 11), "base:copper_ore")];
         self.c.pump_until(|c| probes.iter().all(|&(at, name)| c.world.block(o + at) == c.content.blocks.id(name)));
     }
 
@@ -7739,7 +7779,7 @@ impl Fresh {
     /// takes nothing more in (a quest's reward, a craft, dug clay), and cooked food takes a
     /// slot each, so by the Farm age a player clears theirs out as this does.
     fn make_room(&mut self, free: usize) {
-        const SPARE: [&str; 9] = ["base:burnt_food", "base:feather", "base:wooden_pickaxe", "base:raw_rabbit", "base:raw_chicken", "base:cooked_rabbit", "base:cooked_chicken", "base:oak_planks", "base:bread"];
+        const SPARE: [&str; 7] = ["base:burnt_food", "base:feather", "base:wooden_pickaxe", "base:raw_small_game", "base:cooked_small_game", "base:oak_planks", "base:bread"];
         let slots = voxmar_engine::inventory::SLOTS;
         let empty = |c: &Client| (0..slots).filter(|&s| c.inventory.get(s).is_none()).count();
         if empty(&self.c) >= free {
