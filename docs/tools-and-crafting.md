@@ -9,7 +9,9 @@ grow faster. Everything is content a mod adds the same way.
 A tool is an item (`base/blocks_tools.ron`) tagged `tool`, its kind (`pickaxe`, `axe`,
 `shovel`, `hoe`, `knife`, `shears`), a `tier:N`, a `speed:X` and maybe a `yield:Y`. Five
 kinds come in four tiers: wooden (1), stone (2), copper (3) and iron (4), speed 2, 4, 7
-and 14, yield 0 to 0.15. The tooltip says it ("Works 7× as fast as a bare hand").
+and 14, yield 0 to 0.15. The tooltip says it ("Works 7× as fast as a bare hand"). Only
+the pickaxe and axe come in wood: the shovel, hoe and knife start at stone, which a
+wooden pickaxe reaches in the first minute (Oct 14 consolidation audit, fewer items).
 
 **Why those speeds** (Oct 14 tier audit). A block takes its hardness over the speed, and
 after each break the hand waits a quarter second before the next (`mine_cooldown`,
