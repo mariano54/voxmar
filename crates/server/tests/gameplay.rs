@@ -2055,7 +2055,8 @@ fn kiln_fuel_and_lighting_progress_survive_reload_without_free_refuelling() {
     let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
     let mut client = Client::join_with(config());
     let core = client.position.floor().as_ivec3() + IVec3::new(4, 0, 0);
-    let lit = |c: &Client| c.quests.iter().find(|q| q.name == "base:crucible_kiln").unwrap().tasks[0][0].0;
+    // The kiln lit, the quest's last part.
+    let lit = |c: &Client| c.quests.iter().find(|q| q.name == "base:crucible_kiln").unwrap().tasks[0].last().unwrap().0;
     let light = |c: &Client| c.propose("base:light", ActionTarget::Block { block: core, face: Face::PosY });
     let count = |c: &Client, name: &str| {
         let item = c.content.blocks.expect(name);

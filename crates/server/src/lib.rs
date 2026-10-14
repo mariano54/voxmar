@@ -37,7 +37,7 @@ use std::collections::VecDeque;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -304,6 +304,7 @@ pub struct ServerHandle {
     tick_times: Arc<Mutex<VecDeque<Duration>>>,
     ticks: Arc<AtomicU64>,
     lagging: Arc<AtomicBool>,
+    hurried: Arc<AtomicU32>,
 }
 
 /// Ticks whose times a server keeps, for `ServerHandle::tick_times`: the last minute.
@@ -327,6 +328,13 @@ impl ServerHandle {
     /// against a server running behind.
     pub fn set_lagging(&self, lagging: bool) {
         self.lagging.store(lagging, Ordering::Relaxed);
+    }
+
+    /// Ticks this many times a second's worth each second from now on (1: the game's pace),
+    /// as `ServerConfig::tick_speedup` does from the start: the gate's session hurries the
+    /// machine steps, whose bloom and dust take their recipes' full server time.
+    pub fn set_hurried(&self, times: u32) {
+        self.hurried.store(times.max(1), Ordering::Relaxed);
     }
 
     /// Sender for new connections (local or accepted by a TCP listener).
@@ -375,18 +383,20 @@ pub fn spawn(mut config: ServerConfig, content: Content) -> std::io::Result<Serv
     let tick_times = Arc::new(Mutex::new(VecDeque::with_capacity(TICK_TIMES)));
     let ticks = Arc::new(AtomicU64::new(0));
     let lagging = Arc::new(AtomicBool::new(true));
+    let hurried = Arc::new(AtomicU32::new(1));
     let thread = {
-        let (stop, tick_times, ticks, lagging) = (stop.clone(), tick_times.clone(), ticks.clone(), lagging.clone());
+        let (stop, tick_times, ticks, lagging, hurried) = (stop.clone(), tick_times.clone(), ticks.clone(), lagging.clone(), hurried.clone());
         std::thread::Builder::new()
             .name("server".into())
             .spawn(move || {
                 let mut server = Server::new(config, meta, save, state, content, incoming, lines);
                 server.generation_changed = generation_changed;
                 server.lagging = lagging;
+                server.hurried = hurried;
                 server.run(&stop, &tick_times, &ticks)
             })?
     };
-    Ok(ServerHandle { connections, console, stop, thread: Some(thread), tick_times, ticks, lagging })
+    Ok(ServerHandle { connections, console, stop, thread: Some(thread), tick_times, ticks, lagging, hurried })
 }
 
 /// The world `config` asks for: the one saved in `config.world` (created if missing), or
@@ -537,6 +547,9 @@ pub(crate) struct Server {
     /// Whether a server made to run behind (`ServerConfig::lag`) does so now
     /// (`ServerHandle::set_lagging`).
     lagging: Arc<AtomicBool>,
+    /// How many times the game's pace the server ticks now, on top of
+    /// `ServerConfig::tick_speedup` (`ServerHandle::set_hurried`).
+    hurried: Arc<AtomicU32>,
     /// When each address's new players had the starting kit, in ticks (`Server::grant_kit`).
     /// Kept only while the server runs.
     kits: FxHashMap<std::net::IpAddr, Vec<u64>>,
@@ -643,6 +656,7 @@ impl Server {
             kept: if loaded.keep_file { FxHashSet::from_iter([spawn_column]) } else { FxHashSet::default() },
             generation_changed: false,
             lagging: Arc::new(AtomicBool::new(true)),
+            hurried: Arc::new(AtomicU32::new(1)),
             kits: FxHashMap::default(),
             generating: FxHashSet::default(),
             generated_tx,
@@ -664,7 +678,6 @@ impl Server {
     /// handled as soon as they arrive so actions feel immediate.
     fn run(mut self, stop: &AtomicBool, tick_times: &Mutex<VecDeque<Duration>>, ticks: &AtomicU64) {
         let real_tick = Duration::from_secs(1) / TICKS_PER_SECOND;
-        let tick_length = real_tick / self.config.tick_speedup.max(1);
         let mut next_tick = Instant::now();
         while !stop.load(Ordering::Relaxed) {
             self.accept_connections();
@@ -693,7 +706,8 @@ impl Server {
                 // Land being generated on other threads arrives at the clock's pace, so a
                 // server whose ticks run quicker than the clock (tests) waits for it at that
                 // pace too: what happens in so many ticks is then what a game would see.
-                next_tick += if self.config.tick_speedup > 1 && !self.generating.is_empty() { real_tick } else { tick_length };
+                let speedup = self.config.tick_speedup.max(1) * self.hurried.load(Ordering::Relaxed);
+                next_tick += if speedup > 1 && !self.generating.is_empty() { real_tick } else { real_tick / speedup };
                 if now > next_tick + real_tick * 10 {
                     tracing::warn!("server is running behind, skipping ticks");
                     next_tick = now;
