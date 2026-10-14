@@ -552,6 +552,11 @@ impl Creatures {
         self.shown.get(&id).is_some_and(|shown| shown.stopped > 0.0 || shown.white > 0.0 || shown.flinch.is_some())
     }
 
+    /// Whether creature `id` is shown, alive, and winding up a blow.
+    pub fn winding(&self, id: u32) -> bool {
+        self.shown.get(&id).is_some_and(|shown| shown.dying.is_none() && shown.coiling.is_some())
+    }
+
     /// Creature `id` while it is shown, alive or falling: its species, where its feet are
     /// and its scale.
     pub fn body(&self, id: u32) -> Option<(CreatureId, Vec3, f32)> {
