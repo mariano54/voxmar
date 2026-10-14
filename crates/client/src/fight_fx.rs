@@ -823,11 +823,13 @@ fn react(
     }
     // Creatures staggered: a thud and a dazed wobble (deeper for a bigger one, as its hits
     // are), and sparks circling up over its head.
-    for (head, height) in std::mem::take(&mut creatures.staggers) {
+    for (head, height, coat) in std::mem::take(&mut creatures.staggers) {
         let pitch = (1.0 / height.max(0.2)).powf(0.15).clamp(0.82, 1.25);
-        say("stagger", 1.0, pitch, &mut heard);
+        // Heard as a blow near at hand is, fainter further off.
+        let gain = (TOLD_NEAR / head.distance(player.position).max(TOLD_NEAR)).sqrt();
+        say("stagger", gain, pitch, &mut heard);
         let sparks = look.stagger.sparks;
-        let colour = sparks.color.map_or([255, 238, 150], |c| [c.0, c.1, c.2]);
+        let colour = sparks.color.map_or(coat, |c| [c.0, c.1, c.2]);
         dizzy(&mut particles, &sparks, amount, head, height, colour, light_at(head), head.to_array().iter().map(|v| v.to_bits() as u64).fold(11, |a, b| a ^ b.rotate_left(23)));
         heard.bursts += 1;
     }

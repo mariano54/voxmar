@@ -227,6 +227,7 @@ impl Live {
         last.position.distance_squared(self.body.position) > 0.0025
             || (last.yaw - self.body.yaw).abs() > 0.05
             || last.pose != self.pose()
+            || last.tell != self.tell()
             || last.health != self.health
             || last.kept != self.owner.is_some()
             || last.owner != self.owner_id
