@@ -92,7 +92,7 @@ fn mark(world: &ClientWorld, eye: Vec3, toward: Vec3, reach: f32) -> Vec3 {
 }
 
 /// Lets drawn shots go, flies every shot, and shows where each arrives.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(super) fn fly(
     mut commands: Commands,
     time: Res<Time>,
