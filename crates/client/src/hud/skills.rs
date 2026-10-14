@@ -29,6 +29,10 @@ const LEVEL_SECONDS: f32 = 4.0;
 const APPEAR: f32 = 0.2;
 /// Lines shown at once at most.
 const LINES: usize = 6;
+/// How long a refusal's reason shows under the crosshair, and how far below its middle
+/// (of the screen's height): close enough to read without looking away from the block.
+const WHY_SECONDS: f32 = 2.5;
+const WHY_BELOW: f32 = 6.0;
 
 pub struct SkillHudPlugin;
 
@@ -52,8 +56,6 @@ struct Line {
 enum LineKind {
     /// Experience gained, in tenths.
     Gain { skill: SkillId, tenths: u32 },
-    /// Something refused, and why.
-    Refused(String),
 }
 
 /// What the skill HUD has to show.
@@ -64,15 +66,18 @@ pub struct SkillToasts {
     level: Option<(SkillId, u8, f32)>,
     /// Levels reached and not yet heard (`hear_levels`).
     unheard: Vec<u8>,
+    /// Why the last action was refused, and when, shown under the crosshair.
+    why: Option<(String, f32)>,
+    /// The clock of the last `show`, so a refusal is showing only while it would be drawn.
+    now: f32,
 }
 
 impl SkillToasts {
     /// `tenths` of experience earned in `skill` at `now` seconds.
     pub fn gained(&mut self, skill: SkillId, tenths: u32, now: f32) {
         if let Some(line) = self.lines.iter_mut().rev().find(|l| now - l.at < MERGE && matches!(l.kind, LineKind::Gain { skill: s, .. } if s == skill)) {
-            if let LineKind::Gain { tenths: total, .. } = &mut line.kind {
-                *total += tenths;
-            }
+            let LineKind::Gain { tenths: total, .. } = &mut line.kind;
+            *total += tenths;
             line.at = now;
             return;
         }
@@ -90,21 +95,16 @@ impl SkillToasts {
         self.refusals().any(|w| w == why)
     }
 
-    /// The refusals showing, each saying why.
+    /// The refusals showing, each saying why: the last one, under the crosshair.
     pub fn refusals(&self) -> impl Iterator<Item = &str> {
-        self.lines.iter().filter_map(|l| match &l.kind {
-            LineKind::Refused(why) => Some(why.as_str()),
-            LineKind::Gain { .. } => None,
-        })
+        self.why.iter().filter(|(_, at)| self.now - at < WHY_SECONDS).map(|(why, _)| why.as_str())
     }
 
-    /// An action refused, with why, at `now`; the same reason again only refreshes it.
+    /// An action refused, with why, at `now`: it shows under the crosshair in place of the
+    /// last; the same reason again only refreshes it.
     pub fn refused(&mut self, why: String, now: f32) {
-        if let Some(line) = self.lines.iter_mut().find(|l| l.kind == LineKind::Refused(why.clone())) {
-            line.at = now;
-            return;
-        }
-        self.push(Line { kind: LineKind::Refused(why), at: now });
+        self.now = self.now.max(now);
+        self.why = Some((why, now));
     }
 
     fn push(&mut self, line: Line) {
@@ -122,6 +122,9 @@ pub fn xp_text(tenths: u32) -> String {
 
 #[derive(Component)]
 struct ToastLine(usize);
+/// Why the last action was refused, under the crosshair.
+#[derive(Component)]
+pub struct WhyLine;
 /// The plate noting a new level, and its parts.
 #[derive(Component)]
 struct LevelPlate;
@@ -172,6 +175,19 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
             column.spawn((Node::default(), shadowed(font, "", BODY, ACCENT), ToastLine(i), Visibility::Hidden));
         }
     });
+    // Under the crosshair, where the player is looking: why a click did nothing.
+    let under = Node {
+        position_type: PositionType::Absolute,
+        left: Val::Px(0.0),
+        right: Val::Px(0.0),
+        top: Val::Percent(50.0 + WHY_BELOW),
+        justify_content: JustifyContent::Center,
+        ..default()
+    };
+    commands.spawn((under, GlobalZIndex(1))).with_children(|under| {
+        let line = Node { max_width: Val::Percent(60.0), ..default() };
+        under.spawn((line, shadowed(font, "", BODY, ERROR), TextLayout::default().with_justify(Justify::Center), WhyLine, Visibility::Hidden));
+    });
     // Just above the experience lines, so the two read as one quiet corner.
     let corner = Node { position_type: PositionType::Absolute, right: Val::Px(space::SECTION), bottom: Val::Percent(63.0), ..default() };
     let plate = Node {
@@ -205,10 +221,28 @@ fn show(
     mut skill_text: Query<(&mut Text, &mut TextColor, &mut TextShadow), (With<LevelSkill>, Without<ToastLine>, Without<LevelReached>)>,
     mut reached_text: Query<(&mut Text, &mut TextColor, &mut TextShadow), (With<LevelReached>, Without<ToastLine>, Without<LevelSkill>)>,
     mut opens_text: Query<(&mut Text, &mut TextColor, &mut TextShadow, &mut Node), (With<LevelOpens>, Without<ToastLine>, Without<LevelSkill>, Without<LevelReached>)>,
+    mut why_line: Query<(&mut Text, &mut TextColor, &mut TextShadow, &mut Visibility), (With<WhyLine>, Without<ToastLine>, Without<LevelSkill>, Without<LevelReached>, Without<LevelOpens>, Without<LevelPlate>)>,
 ) {
     let now = time.elapsed_secs();
     let skills = &launch.content.skills;
+    toasts.now = now;
     toasts.lines.retain(|line| now - line.at < LINE_SECONDS);
+    if let Ok((mut text, mut color, mut shadow, mut visibility)) = why_line.single_mut() {
+        match toasts.why.as_ref().filter(|(_, at)| now - at < WHY_SECONDS) {
+            Some((why, at)) => {
+                if text.0 != *why {
+                    text.0 = why.clone();
+                }
+                let alpha = ((WHY_SECONDS - (now - at)) / FADE).clamp(0.0, 1.0);
+                color.set_if_neq(TextColor(ERROR.with_alpha(alpha)));
+                shadow.color = SHADOW.with_alpha(SHADOW.alpha() * alpha);
+                visibility.set_if_neq(Visibility::Inherited);
+            }
+            None => {
+                visibility.set_if_neq(Visibility::Hidden);
+            }
+        }
+    }
     let fade = |since: f32, life: f32| ((life - since) / FADE).clamp(0.0, 1.0);
     for (ToastLine(i), mut text, mut color, mut shadow, mut node, mut visibility) in &mut lines {
         let Some(line) = toasts.lines.get(*i) else {
@@ -219,7 +253,6 @@ fn show(
             LineKind::Gain { skill, tenths } => {
                 (locale.format("skills.gained", &[("xp", &xp_text(*tenths)), ("skill", &locale.skill(skills.get(*skill)))]), ACCENT)
             }
-            LineKind::Refused(why) => (why.clone(), ERROR),
         };
         if text.0 != words {
             text.0 = words;

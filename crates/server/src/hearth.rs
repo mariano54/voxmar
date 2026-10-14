@@ -45,7 +45,7 @@ impl Server {
             let fuel = self.players.get(&agent).and_then(|p| p.inventory.get(p.selected))
                 .and_then(|stack| structure.fuels.iter().find(|&&(item, count)| item == stack.item && stack.count >= count).copied());
             let Some((item, count)) = fuel else {
-                self.structure_reply(agent, fuel_words(structure, &self.content.blocks));
+                self.refuse(agent, fuel_words(structure, &self.content.blocks));
                 return;
             };
             let seconds = self.content.machines.burn_seconds(item).expect("checked fuel") * count as f32;
@@ -76,7 +76,13 @@ impl Server {
         let Some(block) = self.block(core) else { return };
         let structures = &self.content.multiblocks;
         let words = match structures.with_core(block).find(|m| m.stands(core, |p| self.block(p))) {
-            Some(standing) => Words::key("multiblock.cold").with("structure", structure_words(standing)).with("fuel", fuel_words(standing, &self.content.blocks)),
+            // Cold: said where refusals are, with the soft no.
+            Some(standing) => {
+                let words = Words::key("multiblock.cold").with("structure", structure_words(standing)).with("fuel", fuel_words(standing, &self.content.blocks));
+                self.refuse(agent, words);
+                return;
+            }
+            // Not built yet: how to build it is a guide, for the console.
             None => {
                 let Some(first) = structures.with_core(block).next() else { return };
                 Words::Own(format!("{}.hint", def_key("multiblock", &first.name)), first.hint.clone())

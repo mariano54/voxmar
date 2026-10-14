@@ -369,9 +369,10 @@ enum Step {
     /// returns to the book.
     LookUp,
     /// Rice sown on the test ground, too cold for it, is refused by the server for that
-    /// reason, and the refusal shows by the hotbar, as a level the player lacks does (the
-    /// server sends it as a refusal, not a console line). Then a well from the hand goes
-    /// down by the plot.
+    /// reason, and the refusal shows under the crosshair, as a level the player lacks does
+    /// (the server sends it as a refusal, not a console line). Then a well from the hand goes
+    /// down by the plot, and stone mined there by hand says under the crosshair which tool
+    /// it wants, in words that fit.
     Refusal,
     /// A wild plant whose item merged (oregano into kitchen herbs) is given as the merged
     /// item, and the catalogues (creative, journal, recipe book) list the item, not the plant.
@@ -3996,7 +3997,7 @@ const REFUSAL_WAIT: f32 = 8.0;
 const WELL_BY: IVec3 = IVec3::new(1, 0, 0);
 
 /// Rice sown on a dry plot of the test ground: the server refuses it and says why, as a
-/// refusal, which shows by the hotbar with the others, naming the crop as the player holds
+/// refusal, which shows under the crosshair, naming the crop as the player holds
 /// it ("Rice"), not its growing stage. The reason is judged word for word against the one
 /// the plot's climate gives (`refusal_reason`): too cold on today's spawn (about 10 °C,
 /// where rice wants 18 to 34), no water on warmer ground.
@@ -4139,7 +4140,53 @@ fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 gate.advance(now);
             }
         }
+        // Stone where the plot was, and an empty hand.
+        5 => {
+            world.resource::<Net>().command(&format!("setblock {} {} {} stone", plot.x, plot.y, plot.z));
+            let empty = (0..voxmar_engine::inventory::HOTBAR_SLOTS).find(|&slot| world.resource::<LocalPlayer>().inventory.get(slot).is_none());
+            if let Some(slot) = empty {
+                world.resource_mut::<LocalPlayer>().selected = slot;
+            }
+            gate.advance(now);
+        }
+        // Mined by hand, it says under the crosshair which tool it wants, and the words fit.
+        6 => {
+            let stone = world.resource::<ClientWorld>().registry.id("base:stone");
+            let is_stone = stone.is_some() && world.resource::<ClientWorld>().block(plot) == stone;
+            let wanted = stone.and_then(|stone| why_by_hand(world, stone));
+            if !is_stone || wanted.is_none() {
+                if gate.server_in_phase() > REFUSAL_WAIT {
+                    gate.check("refusal: by hand", Err(format!("the stone never came at the plot ({is_stone}), or stone asks for no tool ({wanted:?})")));
+                    to_phase(gate, 7, now);
+                }
+                return;
+            }
+            let wanted = wanted.unwrap_or_default();
+            aim_at(world, plot.as_vec3() + Vec3::new(0.5, 0.9, 0.5));
+            let shown = world.resource::<crate::hud::skills::SkillToasts>().shows_refusal(&wanted);
+            if shown && let Some(placed) = why_placed(world, &wanted) {
+                mouse(world, MouseButton::Left, false);
+                let spills: Vec<String> = crate::ui::fit::find(world).into_iter().filter(|spill| spill.text == wanted).map(|spill| spill.to_string()).collect();
+                let judged = match (placed, spills.is_empty()) {
+                    (Ok(at), true) => Ok(format!("stone mined by hand said \"{wanted}\" {at}, and it fits")),
+                    (Ok(_), false) => Err(format!("stone mined by hand said \"{wanted}\", but it does not fit: {}", spills.join("; "))),
+                    (Err(why), _) => Err(why),
+                };
+                gate.check("refusal: by hand", judged);
+                gate.advance(now);
+            } else if gate.server_in_phase() > REFUSAL_WAIT {
+                mouse(world, MouseButton::Left, false);
+                let held = holding_any(world);
+                let showing: Vec<String> = world.resource::<crate::hud::skills::SkillToasts>().refusals().map(str::to_owned).collect();
+                gate.check("refusal: by hand", Err(format!("clicking stone holding {held:?} never showed \"{wanted}\" under the crosshair (showing {showing:?})")));
+                gate.advance(now);
+            } else {
+                // A fresh press each time: a held button mines on, it does not ask again.
+                mouse(world, MouseButton::Left, gate.frames % 2 == 0);
+            }
+        }
         _ => {
+            mouse(world, MouseButton::Left, false);
             let net = world.resource::<Net>();
             let well = plot + WELL_BY + IVec3::Y;
             net.command("clear rice");
@@ -4149,6 +4196,43 @@ fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             gate.next(Step::Merged, now);
         }
     }
+}
+
+/// What clicking `block` with no tool should say: `refusals.ron`'s words for the tool it
+/// wants, naming the least tool that would do.
+fn why_by_hand(world: &World, block: BlockId) -> Option<String> {
+    let (locale, launch) = (world.resource::<Locale>(), world.resource::<Launch>());
+    let content = &launch.content;
+    let key = content.refusals.says(voxmar_engine::action::Requirement::ToolGood)?;
+    let rule = content.tools.rule(block)?;
+    let tool = content.tools.first_of(rule.tool?, rule.tier)?;
+    Some(locale.format(key, &[("tool", &locale.block(content.blocks.def(tool)))]))
+}
+
+/// Where the reason `why` is drawn: under the crosshair, near the middle of the screen, or
+/// what is wrong with it; none while it is not laid out yet.
+fn why_placed(world: &mut World, why: &str) -> Option<Result<String, String>> {
+    let screen = world.query::<&Window>().iter(world).next().map(|w| w.physical_size().as_vec2())?;
+    let mut lines = world.query_filtered::<(&Text, &ComputedNode, &bevy::ui::UiGlobalTransform, &InheritedVisibility), With<crate::hud::skills::WhyLine>>();
+    let (text, node, transform, visible) = lines.single(world).ok()?;
+    if text.0 != why || node.size().x <= 0.0 {
+        return None;
+    }
+    let center = transform.translation;
+    let (dx, dy) = ((center.x - screen.x / 2.0) / screen.x, (center.y - screen.y / 2.0) / screen.y);
+    Some(if !visible.get() {
+        Err(format!("the reason \"{why}\" is laid out but hidden"))
+    } else if dx.abs() < 0.05 && (0.0..0.2).contains(&dy) {
+        Ok(format!("under the crosshair ({:.0}% below the middle)", dy * 100.0))
+    } else {
+        Err(format!("the reason \"{why}\" is not under the crosshair: {:.0}% across and {:.0}% down from the middle", dx * 100.0, dy * 100.0))
+    })
+}
+
+/// What the selected slot holds, by name.
+fn holding_any(world: &World) -> Option<String> {
+    let (player, client) = (world.resource::<LocalPlayer>(), world.resource::<ClientWorld>());
+    player.inventory.get(player.selected).map(|stack| client.registry.def(stack.item).name.clone())
 }
 
 /// `give oregano` hands out kitchen herbs (oregano is a wild plant now; its item merged
