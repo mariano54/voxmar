@@ -367,7 +367,8 @@ enum Step {
     /// hotbar names it once the screen is shut, and its quick key turns it off again.
     Prayers,
     /// A sleeping bag with a torch beside it, slept in, is a camp: the Camp chip comes on, the
-    /// chat says so with what to add next, and the sleep is a rest.
+    /// chat says so with what to add next, and the sleep is a rest. At home, Lay on a
+    /// recipe fills the crafting grid from a barrel there.
     Home,
     /// Ten twine crafted finish a quest; the quest key opens the book on a quest worth
     /// reading, W held with it open does not walk, Esc shuts it and W walks again; a quest pinned counts
@@ -1082,7 +1083,7 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         // A party walks in, is talked to, traded with and sent away, each in server seconds.
         Step::Party => 60.0,
         // The effects are judged once a second by the server, and a rest is a sleep away.
-        Step::Home => 45.0,
+        Step::Home => 70.0,
         // A fresh area around the settlement to generate: up to `SETTLEMENT_LOAD` of the
         // server's seconds.
         Step::Settlements => SETTLEMENT_LOAD + SETTLEMENT_PEOPLE + STEP_LIMIT,
@@ -4384,11 +4385,13 @@ fn prayers(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 /// A sleeping bag and a torch beside the player, slept in: the bed is their home and it has
 /// a light, so the Camp step (docs/home.md) comes on as a chip, the chat names it and what to
 /// add next, and the sleep gives a rest. Then the way home: with the mark's hiding distance
-/// set to nothing, the hearth mark shows how far the bag is. The blocks go again after, and
+/// set to nothing, the hearth mark shows how far the bag is. Then crafting at home: four
+/// planks shift clicked into a barrel beside the bag, none left in the pack, Lay on the
+/// crafting table's recipe fills the grid from the barrel. The blocks go again after, and
 /// the rest with them.
 fn home(world: &mut World, gate: &mut Gate, now: f32) {
     let stand = world.resource::<LocalPlayer>().position.floor().as_ivec3();
-    let (bag, torch) = (stand + IVec3::new(2, 0, 0), stand + IVec3::new(3, 0, 0));
+    let (bag, torch, barrel) = (stand + IVec3::new(2, 0, 0), stand + IVec3::new(3, 0, 0), stand + IVec3::new(-2, 0, 0));
     let waited = gate.server_in_phase();
     let leave = |world: &mut World, gate: &mut Gate| {
         let net = world.resource::<Net>();
@@ -4485,18 +4488,100 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
                 leave(world, gate);
             }
         }
-        _ => {
+        5 => {
             let shown = world.query_filtered::<&Visibility, With<crate::hud::home::HomeMark>>().iter(world).any(|v| *v != Visibility::Hidden);
             if !shown {
                 let within = world.resource::<crate::hud::inventory::InterfaceStyle>().home_hidden_within;
                 gate.check("home: near", Ok(format!("within {within} blocks of home the mark was gone")));
-                leave(world, gate);
+                // A barrel at home, four planks in it and none in the pack.
+                let net = world.resource::<Net>();
+                net.command("clear oak_planks");
+                net.command(&format!("give oak_planks {LAY_PLANKS}"));
+                net.command(&format!("setblock {} {} {} barrel", barrel.x, barrel.y, barrel.z));
+                gate.advance(now);
             } else if waited > 5.0 {
                 gate.check("home: near", Err("two blocks from home the mark still showed".into()));
                 leave(world, gate);
             }
         }
+        // The barrel opened, the planks shift clicked into it.
+        6 => {
+            let planks = world.resource::<ClientWorld>().registry.id("base:oak_planks");
+            let player = world.resource::<LocalPlayer>();
+            let stored: u32 = player.inventory.store.as_ref().map_or(0, |s| s.slots.iter().flatten().filter(|x| Some(x.item) == planks).map(|x| x.count as u32).sum());
+            let (held, slot) = holding(world, "base:oak_planks");
+            if stored == LAY_PLANKS && held == 0 {
+                // The crafting table's recipe in the viewer, over the open inventory.
+                let table = world.resource::<ClientWorld>().registry.id("base:crafting_table");
+                if let Some(table) = table {
+                    world.resource_mut::<crate::hud::recipes::RecipeViewer>().open(table, false);
+                }
+                gate.advance(now);
+            } else if waited > 10.0 {
+                gate.check("home: lay", Err(format!("{waited:.1} server s on, the home barrel held {stored} planks and the pack {held}")));
+                lay_done(world, barrel);
+                leave(world, gate);
+            } else if gate.server_now - gate.machines_asked >= 1.0 {
+                if player.inventory.store.is_none() {
+                    if empty_hand(world) && world.resource::<ClientWorld>().registry.id("base:barrel").is_some_and(|b| world.resource::<ClientWorld>().block(barrel) == Some(b)) {
+                        world.resource_mut::<LocalPlayer>().store_asked = true;
+                        let actions = world.resource::<crate::Actions>().0.clone();
+                        world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("base:open_store"), voxmar_engine::action::ActionTarget::Block { block: barrel, face: voxmar_engine::coords::Face::PosY });
+                    }
+                } else if let Some(slot) = slot {
+                    let actions = world.resource::<crate::Actions>().0.clone();
+                    world.resource::<Net>().propose(actions.expect("core:quick_move"), voxmar_engine::action::ActionTarget::Slot(slot as u8));
+                }
+                gate.machines_asked = gate.server_now;
+            }
+        }
+        // Lay pressed: the table's planks come out of the barrel into the grid.
+        7 => {
+            let button = world.query::<(Entity, &crate::hud::recipes::LayButton, &InheritedVisibility)>().iter(world).find(|(_, lay, visible)| visible.get() && world.resource::<ClientWorld>().registry.id("base:crafting_table") == Some(lay.0)).map(|(entity, ..)| entity);
+            if let Some(button) = button {
+                world.resource_mut::<UiClicks>().next = Some((button, MouseButton::Left));
+                gate.advance(now);
+            } else if waited > 3.0 {
+                gate.check("home: lay", Err("the crafting table's recipe showed no Lay button with the inventory open".into()));
+                lay_done(world, barrel);
+                leave(world, gate);
+            }
+        }
+        _ => {
+            let planks = world.resource::<ClientWorld>().registry.id("base:oak_planks");
+            let player = world.resource::<LocalPlayer>();
+            let laid: u32 = player.inventory.craft.iter().flatten().filter(|x| Some(x.item) == planks).map(|x| x.count as u32).sum();
+            let stored: u32 = player.inventory.store.as_ref().map_or(0, |s| s.slots.iter().flatten().filter(|x| Some(x.item) == planks).map(|x| x.count as u32).sum());
+            if laid == LAY_PLANKS && stored == 0 {
+                if gate.shot(world, "home-lay").is_none() {
+                    return;
+                }
+                gate.check("home: lay", Ok(format!("Lay on the crafting table's recipe filled the grid with {laid} planks from the home barrel")));
+                lay_done(world, barrel);
+                leave(world, gate);
+            } else if waited > 10.0 {
+                let viewer = world.resource::<UiState>().recipes_open;
+                gate.check("home: lay", Err(format!("{waited:.1} server s after Lay: {laid} planks in the grid, {stored} left in the barrel, viewer open {viewer}")));
+                lay_done(world, barrel);
+                leave(world, gate);
+            }
+        }
     }
+}
+
+/// How many planks the home barrel holds for the table laid from it.
+const LAY_PLANKS: u32 = 4;
+
+/// After the lay: the viewer and inventory shut (the grid goes back to the pack), the
+/// barrel gone, and the planks the session carries before it given back.
+fn lay_done(world: &mut World, barrel: IVec3) {
+    world.resource_mut::<crate::hud::recipes::RecipeViewer>().trail.clear();
+    let mut ui = world.resource_mut::<UiState>();
+    (ui.recipes_open, ui.inventory_open) = (false, false);
+    let net = world.resource::<Net>();
+    net.command(&format!("setblock {} {} {} air", barrel.x, barrel.y, barrel.z));
+    net.command("clear oak_planks");
+    net.command("give oak_planks 64");
 }
 
 /// The torch quest the tracker follows, and the quest it sees done.

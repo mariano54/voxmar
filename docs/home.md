@@ -165,6 +165,20 @@ All of it is data. Multipliers stack with food buffs; xp stops at `MAX_XP_BOOST`
 Home tiers use `heal`, `warmth` and `xp` only: a location effect that changed maximum health
 would cost health every time the player stepped out.
 
+## Crafting from home's stores
+
+The recipe viewer (U or R over an item) has a **Lay** button on every crafting recipe while
+the inventory is open, as NEI's "+" does: pressed, it fills the crafting grid with what that
+recipe takes (shift: as many sets as will go), putting what the grid held back in the pack
+first. It takes from the pack, and, while the player stands in their home (the box `/home`
+counts, `home_reach` across), from every store in it, nearest first: the barrel of planks
+by the door and the cupboard of wool are a woodshed and a larder to craft from, with no
+trips to fetch. A recipe that needs a table counts only at one; one above the player's
+level is passed over; with nothing to lay from, the chat says what is short. Server side in
+server/src/laying.rs (`core:lay`, an `ActionTarget::Item`, protocol 39), the grid choice in
+`Recipe::lay` (an alternative with enough for every alike cell). The gate's Home step puts
+four planks in a barrel beside the bag and lays a crafting table from it ("home: lay").
+
 ## Smoke over home
 
 The Homestead Hearth's chimney smokes from its top while the hearthstone stands below it, a
