@@ -55,6 +55,8 @@ impl Server {
         let name = self.content.blocks.def(block).name.clone();
         self.tally(agent, "opened", &name, 1);
         self.open_chest(pos, &chest);
+        // Opened, it shows what it held, as any chest does.
+        self.open_store(agent, pos);
         self.wake_beside(pos, &chest);
     }
 

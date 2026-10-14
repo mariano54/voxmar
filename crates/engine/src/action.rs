@@ -129,6 +129,9 @@ pub enum Requirement {
     /// The actor holds a fertiliser and the target is a crop still growing
     /// (`stations.ron`'s `fertilisers`).
     Fertilisable,
+    /// The target is a store (a bin that does not feed: a chest, a cupboard, a jar), and
+    /// the actor holds no machine to lay against it.
+    Store,
 }
 
 /// Engine-owned effects that actions compile down to.
@@ -208,6 +211,9 @@ pub enum Effect {
     UseStation,
     /// Spread one held fertiliser on the target crop: the crops within its reach grow.
     Fertilise,
+    /// Open the target store beside the actor's inventory, its slots theirs to move items
+    /// in and out of until the screen closes (`inventory::STORE`).
+    OpenStore,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -584,10 +590,16 @@ impl ActionDef {
                         let fuel = machine.burns() && machines.burn_seconds(item).is_some();
                         let input = machine.is_processor() && machines.takes(machine, item);
                         // A bin takes anything but machines: a chute in hand is laid against it.
-                        let bin = machine.bin_slots() > 0 && !ctx.blocks().def(item).has_tag(&machines.rules.machine_tag);
+                        let bin = machine.bin_takes(item) && !ctx.blocks().def(item).has_tag(&machines.rules.machine_tag);
                         fuel || input || bin || !ctx.info(item).placeable
                     }
                 }
+            }
+            Requirement::Store => {
+                let (block, _) = block_target()?;
+                let Some(machines) = ctx.machines() else { return Ok(false) };
+                let store = ctx.block(block).and_then(|b| machines.get(b)).is_some_and(|m| m.is_store());
+                store && !ctx.actor_held().is_some_and(|item| ctx.blocks().def(item).has_tag(&machines.rules.machine_tag))
             }
             Requirement::Altar => {
                 let (block, _) = block_target()?;

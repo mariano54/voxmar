@@ -28,6 +28,7 @@ mod prayers;
 mod process;
 mod rules;
 mod stations;
+mod stores;
 mod treasure;
 pub mod save;
 mod villagers;
@@ -850,6 +851,7 @@ impl Server {
         self.ping_players();
         self.tick_prayers();
         self.flow();
+        self.watch_stores();
         self.replicate_owned_traits();
         let ids: Vec<PlayerId> = self.players.keys().copied().collect();
         for &id in &ids {

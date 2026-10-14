@@ -460,6 +460,15 @@ impl Content {
         crate::inventory::set_stack_limits(limits);
         crate::inventory::set_pouches(pouches(&blocks)?);
         crate::inventory::set_worn_slots(combat.worn_slots());
+        // A store's slots follow the player's own in a slot number of a byte.
+        let mut holds = vec![None; blocks.len()];
+        for machine in machines.iter().filter(|m| m.is_store()) {
+            if machine.bin_slots() > crate::inventory::STORE_SLOTS {
+                return Err(RegistryError(format!("machines.ron: the store `{}` has {} slots, more than {}", blocks.def(machine.block).name, machine.bin_slots(), crate::inventory::STORE_SLOTS)));
+            }
+            holds[machine.block.0 as usize] = machine.holds.clone();
+        }
+        crate::inventory::set_store_holds(holds);
         // A furnishing gives itself back only where a player placed it: one that drops
         // nothing anyway has no business with the tag.
         if let Some(id) = blocks.ids().find(|&id| blocks.def(id).has_tag("furnishing") && (blocks.info(id).drops.is_air() || blocks.info(id).drop_count == 0)) {

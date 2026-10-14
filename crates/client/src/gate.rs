@@ -2958,11 +2958,18 @@ fn hv_age(world: &mut World, gate: &mut Gate, now: f32) {
             } else if gate.server_now - gate.machines_asked >= 2.0 { ask(gate, chest); }
         }
         42 => {
-            if holding(world, "base:gold_coin").0 > 0 {
+            // The opened chest opens into its slots beside the inventory, its find in them
+            // (`stores`): the server's word of it, not a prediction.
+            let coin = world.resource::<ClientWorld>().registry.id("base:gold_coin");
+            let store = world.resource::<LocalPlayer>().inventory.store.clone();
+            let found = store.as_ref().map(|s| s.slots.iter().flatten().count()).filter(|_| store.as_ref().is_some_and(|s| s.slots.iter().flatten().any(|x| Some(x.item) == coin)));
+            if let Some(stacks) = found {
+                gate.check("treasure: store", Ok(format!("the chest opened into its {} slots, {stacks} stacks in them with its gold", store.map_or(0, |s| s.slots.len()))));
                 world.resource_mut::<UiState>().inventory_open = true;
                 gate.advance(now);
             } else if empty_hand(world) && gate.server_now - gate.machines_asked >= 3.0 {
-                use_at(world, chest, "base:use_machine");
+                world.resource_mut::<LocalPlayer>().store_asked = true;
+                use_at(world, chest, "base:open_store");
                 gate.machines_asked = gate.server_now;
             }
         }
@@ -2971,6 +2978,26 @@ fn hv_age(world: &mut World, gate: &mut Gate, now: f32) {
             set_language(world, language);
             world.resource_mut::<Settings>().language = language.into();
             if gate.server_in_phase() > 1.0 && gate.shot(world, if language == "en" { "treasure-open-en" } else { "treasure-open-ja" }).is_some() { gate.advance(now); }
+        }
+        45 => {
+            // Shift click on the gold in the chest's slots takes it into the pack.
+            if holding(world, "base:gold_coin").0 > 0 {
+                gate.check("treasure: taken", Ok("shift click took the chest's gold into the pack".into()));
+                gate.advance(now);
+            } else if gate.server_now - gate.machines_asked >= 2.0 {
+                let coin = world.resource::<ClientWorld>().registry.id("base:gold_coin");
+                let player = world.resource::<LocalPlayer>();
+                let slot = player.inventory.store.as_ref().and_then(|s| s.slots.iter().position(|x| x.is_some_and(|x| Some(x.item) == coin)));
+                if let Some(slot) = slot {
+                    let actions = world.resource::<crate::Actions>().0.clone();
+                    let target = voxmar_engine::action::ActionTarget::Slot((voxmar_engine::inventory::STORE + slot) as u8);
+                    world.resource::<Net>().propose(actions.expect("core:quick_move"), target);
+                }
+                gate.machines_asked = gate.server_now;
+            } else if gate.server_in_phase() > BOSS_WAIT {
+                gate.check("treasure: taken", Err(format!("the chest's gold never reached the pack in {BOSS_WAIT} server seconds")));
+                gate.advance(now);
+            }
         }
         _ => {
             set_language(world, "en");

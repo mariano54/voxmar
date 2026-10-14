@@ -75,6 +75,9 @@ pub struct LocalPlayer {
     /// The crafting table the player is working at (its three-by-three grid shows in the
     /// inventory), until the inventory closes.
     pub station: Option<IVec3>,
+    /// A store was asked open (or a locked chest's lock tried): the screen opens when the
+    /// server's word of it comes (`hud::inventory`).
+    pub store_asked: bool,
     pub dead: bool,
     /// Set once the server has welcomed us.
     pub joined: bool,
@@ -108,6 +111,7 @@ impl Default for LocalPlayer {
             fly_speed: 1.0,
             health: 20,
             station: None,
+            store_asked: false,
             max_health: 20,
             inventory: Inventory::default(),
             skills: Skills::default(),
