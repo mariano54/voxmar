@@ -454,6 +454,7 @@ impl Server {
     fn land_swing(&mut self, player: PlayerId, aim: Aim, strength: f32, on_beat: bool, kind: Blow, in_reach: bool) {
         let feel = self.content.combat.feel;
         let weapon = aim.weapon;
+        let mut shot = None;
         // A shot takes one of what the weapon shoots, hit or miss; with none left (gone while
         // it wound up) it is answered as a miss at the air, and the player told why.
         match self.ammo_slot(player, &weapon) {
@@ -464,6 +465,7 @@ impl Server {
             }
             Some(Some(slot)) => {
                 if let Some(p) = self.players.get_mut(&player) {
+                    shot = p.inventory.get(slot).map(|stack| stack.item);
                     p.inventory.take(slot, 1);
                     p.changed(voxmar_engine::traits::INVENTORY);
                 }
@@ -482,7 +484,15 @@ impl Server {
             p.last_blow = tick;
         }
         let stroke = Stroke::of(kind, strength, on_beat, aim.counter, aim.riposte, falling, &feel);
+        let at = self.creatures.live.get(&aim.creature).map(|c| c.body.position);
         let Some(damage) = self.land_blow(player, aim.creature, &weapon, stroke) else { return };
+        // A shot that hit may be left lying by the target, to be picked up again.
+        if let (Some(item), Some(at), true) = (shot, at, damage > 0)
+            && unit_from(mix(mix(self.tick, aim.creature as u64), 0xa770)) < self.content.combat.recover(&weapon)
+        {
+            let body = voxmar_engine::dropped::Loose::new(at + Vec3::Y * 0.25, Vec3::ZERO);
+            self.items.spawn(voxmar_engine::inventory::ItemStack { item, count: 1 }, body, voxmar_engine::dropped::PICKUP_DELAY);
+        }
         if kind == Blow::Flourish && damage > 0 {
             self.flourish(player, aim.creature, &weapon, damage);
         }
