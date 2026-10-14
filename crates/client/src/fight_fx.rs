@@ -47,6 +47,7 @@ use crate::sfx::{Audible, MASTER};
 use crate::world::ClientWorld;
 use voxmar_engine::block::ParticleBlend;
 
+pub mod shot;
 pub mod sound;
 pub mod style;
 
@@ -66,7 +67,10 @@ impl Plugin for FightFxPlugin {
             .add_systems(Startup, make_sounds)
             .add_systems(PostStartup, spawn_vignette)
             .init_resource::<Pending>()
+            .init_resource::<shot::Shots>()
             .add_systems(Update, (react, tell).in_set(Reacted).after(ShowCreatures).run_if(in_state(Screen::InGame)))
+            .add_systems(Update, shot::fly.after(Reacted).before(play).run_if(in_state(Screen::InGame)))
+            .add_systems(OnExit(Screen::InGame), shot::reset)
             .add_systems(Update, markers.after(Reacted).run_if(in_state(Screen::InGame)))
             .add_systems(Update, play.after(Reacted).in_set(Audible))
             // What `react` set going shows the same frame.
@@ -305,6 +309,10 @@ pub struct Heard {
     pub knocks: u32,
     /// Rings drawn on the ground for bosses' blows.
     pub markers: u32,
+    /// Shots loosed, specks of their trails left, and shots arrived.
+    pub shots: u32,
+    pub trail: u32,
+    pub impacts: u32,
 }
 
 /// Sounds to play this frame: name, loudness and pitch.
@@ -610,6 +618,7 @@ fn react(
     mut creatures: ResMut<Creatures>,
     mut particles: ResMut<Particles>,
     (mut seen, mut stop, mut hand, mut kick, mut heard, mut queued): (ResMut<Seen>, ResMut<HitStop>, ResMut<HandKick>, ResMut<CameraKick>, ResMut<Heard>, ResMut<Queued>),
+    mut shots: ResMut<shot::Shots>,
 ) {
     let Some(look) = look else { return };
     let now = time.elapsed_secs();
@@ -630,8 +639,19 @@ fn react(
     // A swing starts: the rhythm's meter starts over (not for a switch of what is held).
     let timing = combat.timing(&weapon);
     let since = fighting.rhythm.meter(time.elapsed_secs_f64(), &timing) * timing.cooldown;
+    let shooting = look.shots.get(class);
     if held == seen.held && since < seen.since - 1e-3 {
         say(&format!("swing.{class}"), 1.0, 1.0, &mut heard);
+        // A shot is drawn, if there is one to loose: it lets go to reach the creature
+        // looked at as the wind-up ends.
+        let ammo = combat.ammo(&weapon);
+        let loaded = ammo.is_empty() || (0..voxmar_engine::inventory::SLOTS).any(|slot| player.inventory.get(slot).is_some_and(|stack| ammo.contains(&stack.item)));
+        if let Some(shooting) = shooting.filter(|_| loaded) {
+            let reach = weapon.reach + combat.feel.reach_slack;
+            let at = creatures.looked_at(&launch, player.eye(), player.look_direction(), reach);
+            let flight = at.map_or(0.0, |(_, distance)| distance / shooting.speed);
+            shots.draw(now + shot::let_go(timing.windup, flight), class, at.map(|(id, _)| id), reach);
+        }
     }
     (seen.since, seen.held) = (since, held);
     let dashing = fighting.dash.is_some();
@@ -674,6 +694,13 @@ fn react(
         let loud = 0.75 + 0.25 * (share * 3.0).min(1.0);
         for (name, gain) in struck_sounds(damage, blow, killed, weapon.style, shell) {
             say(&name, gain * loud, pitch, &mut heard);
+        }
+        // A shot that missed sails on past; one that hit strikes home. Told whatever is in
+        // hand now: a missile loosed before the weapon was put away still waits for its
+        // answer (one with no missile waiting at that creature is dropped). Bleeding is no
+        // answer to a shot.
+        if blow != Blow::Bleed {
+            shots.verdicts.push((id, damage > 0));
         }
         if damage == 0 || blow == Blow::Bleed {
             continue;

@@ -232,6 +232,29 @@
             Noise(low: 90, high: 700, attack: 0.6, seconds: 0.8, gain: 1.0),
             Later(at: 0.62, layer: Tone(from: 120, to: 50, seconds: 0.22, gain: 0.9)),
         ]),
+        // Shots arriving (`shots`): a stone's dull smack into a body and its knock and
+        // skitter on the ground; an arrow's sharp thock into a body, and its thunk and
+        // quiver where it sticks in the ground.
+        "shot.thud": (gain: 0.42, drive: 1.3, variants: 3, layers: [
+            Click(gain: 0.5),
+            Tone(from: 210, to: 85, seconds: 0.07, gain: 0.9),
+            Noise(low: 400, high: 1500, attack: 0.001, seconds: 0.05, gain: 0.5),
+        ]),
+        "shot.clatter": (gain: 0.7, variants: 4, layers: [
+            Click(gain: 0.8),
+            Tone(from: 380, to: 210, seconds: 0.04, gain: 0.6),
+            Crackle(low: 900, high: 3600, grains: 7, seconds: 0.14, gain: 0.6),
+        ]),
+        "shot.thock": (gain: 0.4, drive: 1.2, variants: 3, layers: [
+            Click(gain: 0.8),
+            Noise(low: 1800, high: 5200, attack: 0.0005, seconds: 0.03, gain: 0.5),
+            Tone(from: 280, to: 120, seconds: 0.06, gain: 0.8),
+        ]),
+        "shot.stick": (gain: 0.4, variants: 3, layers: [
+            Click(gain: 0.7),
+            Tone(from: 330, to: 190, seconds: 0.05, gain: 0.7),
+            Ring(freq: 190, partials: [1.0, 2.7], seconds: 0.16, gain: 0.35),
+        ]),
     },
     // How a boss's wind-up is told beyond its stance, by its name and its move's (its name
     // alone for its plain attack); every boss blow must have one. Its `sound` is played so
@@ -253,5 +276,27 @@
         "old_tusk.gore": (sound: "tell.gore", peak: 0.36),
         "old_tusk.charge": (sound: "tell.charge", peak: 0.66),
         "old_tusk.frenzy": (sound: "tell.charge", peak: 0.66),
+    },
+    // Shots by the weapon class that looses them (every class that takes ammunition needs
+    // one). Loosed from the hand as the draw lets go, timed to reach the creature as the
+    // blow is judged, the missile (`length` by `width` blocks, in `colour`) flies at `speed`
+    // blocks a second, rising `arc` blocks over the middle of a 10-block flight (more over a
+    // longer one), and leaves a `trail`: a speck every `every` blocks, `size` wide, fading
+    // over `life` at `alpha`. The hand kicks back `kick` as it lets go. Where it arrives it
+    // throws a `puff` (of the creature's coat, else in its colour) and plays `hit` on a
+    // creature or `land` on anything else; one the server says missed sails on past to
+    // land beyond. A stone is quick and flat with a faint grey streak; an arrow is long and
+    // quicker, arcing a little, with a pale streak.
+    shots: {
+        "sling": (speed: 34.0, arc: 0.15, length: 0.09, width: 0.09, colour: (128, 124, 118),
+            trail: (every: 0.35, size: 0.035, life: 0.18, colour: (205, 200, 192), alpha: 0.5),
+            kick: 0.05,
+            puff: (count: 6, speed: 1.8, life: 0.4, size: 0.06, color: Some((168, 156, 136))),
+            hit: "shot.thud", land: "shot.clatter"),
+        "bow": (speed: 52.0, arc: 0.3, length: 0.62, width: 0.05, colour: (150, 112, 70),
+            trail: (every: 0.25, size: 0.04, life: 0.3, colour: (236, 232, 220), alpha: 0.6),
+            kick: 0.08,
+            puff: (count: 7, speed: 2.0, life: 0.4, size: 0.05, color: Some((168, 156, 136))),
+            hit: "shot.thock", land: "shot.stick"),
     },
 )
