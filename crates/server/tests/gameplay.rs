@@ -292,7 +292,8 @@ impl Client {
     /// with a share of a core sent no welcome for 60 s while it worked all along.
     fn pump_until(&mut self, done: impl Fn(&Self) -> bool) {
         const AWAY: Duration = Duration::from_millis(500);
-        let mut looked = Instant::now();
+        let began = Instant::now();
+        let mut looked = began;
         let mut heard = looked;
         let mut worked = looked;
         let mut in_all = Duration::ZERO;
@@ -302,6 +303,13 @@ impl Client {
             // its messages are all sent before the tick counts.
             let taken = self._server.as_ref().filter(|s| s.lockstep()).map(|s| s.ticks());
             let now = Instant::now();
+            // Whatever the limits below make of the server's work and this thread's
+            // pauses, no wait outlasts ten times the longest they allow by the wall's clock.
+            assert!(
+                now - began < SERVER_WAIT * 10,
+                "{:?} (id {}, {}, tick {}): still waiting after {:.0}s of the wall's clock",
+                self.name, self.id, self.phase, self.server_tick, (now - began).as_secs_f32()
+            );
             let away = now - looked;
             looked = now;
             if away > AWAY {
@@ -4008,6 +4016,9 @@ fn provoke_until_it_winds_up(client: &mut Client, id: u32, slot: usize, name: &s
     provoke_until(client, id, slot, name, |c| c.creatures.get(&id).is_some_and(|v| v.pose == voxmar_engine::creature::brain::Pose::Attacking))
 }
 
+/// Server seconds [`provoke_until`] goes on provoking without seeing a wind-up, at most.
+const PROVOKE_WAIT: f32 = 60.0;
+
 /// `noticed` lets the regression below miss attack poses deliberately, as a delayed
 /// observer can, while still applying every real server reply.
 fn provoke_until(client: &mut Client, id: u32, slot: usize, name: &str, noticed: impl Fn(&Client) -> bool) -> usize {
@@ -4021,8 +4032,22 @@ fn provoke_until(client: &mut Client, id: u32, slot: usize, name: &str, noticed:
     let mut heard = before;
     let mut unseen = 0;
     let mut last_health = client.creatures.get(&id).map(|v| v.health);
+    let (began, died) = (client.server_tick, client.died);
     eprintln!("provoke: {name} id {id}, health {last_health:?}, tick {}, player damage {:?}, creature blows {before}, deaths {}", client.server_tick, client.damage, client.deaths);
     loop {
+        // A dead player is fought by nothing, and a creature that never answers is no
+        // fight: either would be waited on for ever, so each fails, by the server's clock.
+        assert!(
+            client.died == died && client.health > 0,
+            "the player died while provoking the {name} id {id} (health {}, {} creature blows, {} heard with the wind-up unseen)",
+            client.health, client.hurt.len(), unseen
+        );
+        let waited = client.server_tick.saturating_sub(began) as f32 / TICKS_PER_SECOND as f32;
+        assert!(
+            waited < PROVOKE_WAIT,
+            "the {name} id {id} began no wind-up in {waited:.0} server s of provoking (pose {:?}, health {last_health:?}, {} player blows, {} creature blows, {unseen} heard with the wind-up unseen, player health {})",
+            client.creatures.get(&id).map(|v| v.pose), client.blows, client.hurt.len(), client.health
+        );
         assert!(client.creatures.contains_key(&id), "the {name} id {id} went (last health {last_health:?}, tick {}, {} player blows, damage {:?}, {} creature blows, {} deaths)", client.server_tick, client.blows, client.damage, client.hurt.len(), client.deaths);
         face(client, id, slot, false);
         // Repositioning can pump replies too; judge retaliation after that round trip.
@@ -7474,20 +7499,19 @@ fn the_first_days(f: &mut Fresh) -> Site {
     // In by the open end to five blocks short of the nearest junglefowl (they huddle at the
     // far end, and the seeds tempt from ten), where it can walk up the rest.
     f.walk_toward(Fresh::middle(f.rel(-9, 0, 2)), 0.3);
+    // One may have stepped out by the open end while the player walked in: another is let in.
+    let origin = f.origin;
+    let in_lane = |c: &Client| lane(c, origin).iter().any(|&(_, _, species)| species == fowl);
+    if !in_lane(&f.c) {
+        f.stock("junglefowl", -4);
+        assert!(f.waited(2.0, in_lane), "the junglefowl let into the lane never showed");
+    }
     let near = lane(&f.c, f.origin).into_iter().filter(|&(_, _, species)| species == fowl).map(|(_, p, _)| p.z).fold(f32::MIN, f32::max);
     let lane_x = f.rel(-9, 0, 0).x as f32 + 0.5;
     f.walk_toward(Vec3::new(lane_x, f.at.y, (near + 5.0).min(f.rel(0, 0, 0).z as f32 + 0.5)), 0.3);
     f.hold("base:wheat_seeds");
-    // A lane crowded at its end can jam them in a heap that none walks out of (the wild
-    // has no dead ends so tight): then one more is let in nearer the open end, where it
-    // walks up as any does.
-    let mut drawn = f.waited(10.0, |c| quest_status(c, "a_tempting_bite").0);
-    if !drawn {
-        f.walk_toward(Fresh::middle(f.rel(-9, 0, 2)), 0.3);
-        f.stock("junglefowl", -3);
-        f.hold("base:wheat_seeds");
-        drawn = f.waited(20.0, |c| quest_status(c, "a_tempting_bite").0);
-    }
+    // However crowded the lane's end, one walks out of the heap and up to the seeds.
+    let drawn = f.waited(10.0, |c| quest_status(c, "a_tempting_bite").0);
     let fowls: Vec<_> = f.c.creatures.values().filter(|v| v.species == fowl && v.position.distance(f.at) < 12.0).map(|v| (v.id, v.position, v.pose, v.health)).collect();
     let cells: Vec<_> = (-11..=1).map(|z| (z, [-1, 0, 1].map(|y| f.c.world.block(f.rel(-9, y, z)).map(|b| f.c.content.blocks.def(b).name.clone())))).collect();
     assert!(drawn, "no junglefowl drawn up to the seeds: at {:?} holding {:?}, lane {:?}, fowl near (pose, health) {fowls:?}, cells {cells:?}, origin {:?}, quest {:?}", f.at, f.c.inventory.get(f.held as usize), lane(&f.c, f.origin), f.origin, f.c.quests.iter().find(|q| q.name == "base:a_tempting_bite").map(|q| (q.done, q.tasks.clone())));

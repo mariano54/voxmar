@@ -14,8 +14,8 @@
     // was struck, and tufts of its own coat fly. A shelled creature's chips are its shell's.
     hit: (
         stop: 0.045, stop_per_share: 0.12, stop_most: 0.11, shake: 0.035,
-        white: 0.06, red: 0.26,
-        flinch: 0.22, recoil: 0.12, tilt: 11.0, squash: 0.14,
+        white: 0.08, red: 0.26,
+        flinch: 0.22, recoil: 0.2, tilt: 16.0, squash: 0.14,
         sparks: (count: 5, speed: 4.5, life: 0.22, size: 0.07, color: Some((255, 244, 214))),
         tufts: (count: 5, speed: 2.6, life: 0.55, size: 0.07),
     ),
@@ -40,20 +40,30 @@
     // wind-up it coils into `coil` (head `nod` down in radians, `crouch` of its height down,
     // `rear` up from 0 to 1, `lean` of its length forward, front limbs `paw` radians forward,
     // the body turned aside `twist` radians, to its left positive);
-    // as the blow lands it snaps to `strike` over `snap` and settles back over `settle`.
+    // as the blow lands it snaps to `strike` over `snap` and settles back over `settle`, into
+    // `recover`: head low, weight back, as the server holds it still for its attack's
+    // `recovery` (the player's moment to hit back), eased out by the recovery's end.
+    // Coiling it plants its feet, following where the server has it only `plant` as closely
+    // as walking (0 rooted, 1 not planted at all), and as the blow snaps out it darts the rest
+    // of the way `dart` times as quickly, so the lunge is a lunge rather than a slide.
     // A bite pulls the head back and snaps it forward; claws rear and swipe down; horns and
     // hooves drop the head and drive through; a spell rears and flares.
     strikes: {
-        "stab": (coil: (nod: -0.45, crouch: 0.10, rear: 0.0, lean: -0.10, paw: 0.0),
-                 strike: (nod: 0.55, crouch: 0.0, rear: 0.0, lean: 0.28, paw: 0.0), snap: 0.07, settle: 0.32),
-        "slash": (coil: (nod: -0.30, crouch: 0.0, rear: 0.75, lean: -0.06, paw: -0.9, twist: 0.35),
-                  strike: (nod: 0.35, crouch: 0.08, rear: 0.0, lean: 0.22, paw: 1.1, twist: -0.3), snap: 0.08, settle: 0.36),
-        "crush": (coil: (nod: 0.55, crouch: 0.14, rear: 0.0, lean: -0.14, paw: 0.0),
-                  strike: (nod: -0.35, crouch: 0.0, rear: 0.2, lean: 0.34, paw: 0.0), snap: 0.09, settle: 0.40),
-        "ranged": (coil: (nod: -0.25, crouch: 0.06, rear: 0.3, lean: -0.08, paw: 0.0),
-                   strike: (nod: 0.25, crouch: 0.0, rear: 0.0, lean: 0.12, paw: 0.0), snap: 0.07, settle: 0.30),
-        "magic": (coil: (nod: -0.40, crouch: 0.0, rear: 0.9, lean: -0.05, paw: -0.5),
-                  strike: (nod: 0.30, crouch: 0.0, rear: 0.1, lean: 0.15, paw: 0.6), snap: 0.10, settle: 0.45),
+        "stab": (coil: (nod: -0.65, crouch: 0.22, rear: 0.0, lean: -0.22, paw: 0.0),
+                 strike: (nod: 0.6, crouch: 0.0, rear: 0.0, lean: 0.4, paw: 0.0), snap: 0.07, settle: 0.26,
+                 recover: (nod: 0.35, crouch: 0.08, rear: 0.0, lean: -0.12, paw: 0.0), plant: 0.1, dart: 3.0),
+        "slash": (coil: (nod: -0.35, crouch: 0.0, rear: 0.85, lean: -0.12, paw: -1.1, twist: 0.45),
+                  strike: (nod: 0.35, crouch: 0.08, rear: 0.0, lean: 0.3, paw: 1.1, twist: -0.3), snap: 0.08, settle: 0.3,
+                  recover: (nod: 0.25, crouch: 0.1, rear: 0.0, lean: -0.1, paw: 0.2, twist: -0.15), plant: 0.1, dart: 3.0),
+        "crush": (coil: (nod: 0.75, crouch: 0.22, rear: 0.0, lean: -0.24, paw: 0.0),
+                  strike: (nod: -0.35, crouch: 0.0, rear: 0.2, lean: 0.42, paw: 0.0), snap: 0.09, settle: 0.32,
+                  recover: (nod: 0.3, crouch: 0.1, rear: 0.0, lean: -0.14, paw: 0.0), plant: 0.1, dart: 3.0),
+        "ranged": (coil: (nod: -0.35, crouch: 0.1, rear: 0.4, lean: -0.12, paw: 0.0),
+                   strike: (nod: 0.25, crouch: 0.0, rear: 0.0, lean: 0.12, paw: 0.0), snap: 0.07, settle: 0.26,
+                   recover: (nod: 0.2, crouch: 0.06, rear: 0.0, lean: -0.08, paw: 0.0), plant: 0.1, dart: 2.0),
+        "magic": (coil: (nod: -0.5, crouch: 0.0, rear: 1.0, lean: -0.08, paw: -0.7),
+                  strike: (nod: 0.3, crouch: 0.0, rear: 0.1, lean: 0.15, paw: 0.6), snap: 0.10, settle: 0.32,
+                  recover: (nod: 0.3, crouch: 0.08, rear: 0.0, lean: -0.08, paw: 0.1), plant: 0.1, dart: 2.0),
     },
     // The camera and the hand. A blow that hurts the player tips the view `hurt_roll` toward
     // the side it came from and back over `hurt_seconds`, and reddens the edges of the screen
