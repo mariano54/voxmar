@@ -692,7 +692,8 @@ fn setup(
             texture.fill_transparent();
         }
     }
-    // Blocks that give off light glow by themselves, as brightly as the light they give;
+    // Blocks that give off light glow by themselves, as brightly as the light they give, and
+    // windows by the light through them;
     // opaque ones vary their textures from block to block as their data says.
     let mut layers = vec![LayerInfo::default(); block_textures.len()];
     for id in 0..registry.len() {
@@ -702,6 +703,7 @@ fn setup(
         for layer in info.layers {
             let layer = &mut layers[layer as usize];
             layer.glow = layer.glow.max(info.emission as f32 / 15.0);
+            layer.through |= registry.def(block).lit_through;
             if info.render == RenderKind::Opaque {
                 layer.variety.turn |= variety.turn;
                 layer.variety.mirror |= variety.mirror;

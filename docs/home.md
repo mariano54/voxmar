@@ -28,6 +28,13 @@ first reached in a session (with a **Next:** line). Reaching one counts as
 `Built("home_NAME", 1)` for quests (`home_camp`, `home_hearthside`, `home_snug`, `home_homely`,
 `home_cosy`, `home_heart_of_the_home`).
 
+Each step's chip has its own icon, so the HUD shows the home climbing at a glance: a tent
+(Camp), a hearth fire (Hearthside), a quilt (Snug), a house (Homely), its window lit and its
+chimney smoking (Cosy), a heart at its middle (Heart of the Home); and a moon for Rested, a
+moon and star for Well Rested, a full moon for Deep Rest (default pack
+`recipes/effects.ron`, `ui/effect/<name>`; test `the_homes_steps_and_rest_have_their_own_icons`;
+the gate's Home step, "home: icons", shot `home-chips`).
+
 | Step | Age | Needs (tags) | Gives while at home |
 | --- | --- | --- | --- |
 | Camp | Nomad | a bed (sleeping bag) slept in, 1 light | heal x1.2 |
@@ -229,6 +236,21 @@ whose palette holds such a block, and counts nearness as a share of each emissio
 so a far chimney takes its place among the nearest torches
 (`a_chimney_smokes_over_a_hearth_from_afar`). The gate's Cook step sets a hearthstone and a
 chimney beside its campfire and counts the chimney's puffs ("chimney smoke").
+
+## Light in the windows
+
+A home shows its lit rooms at night: a window glows warm by the light of the room behind it.
+Before glass there is the Hide Window (Farm, Construction 3: a hide in a frame of eight sticks,
+two windows), oiled hide in a stick frame. Every block tagged `window` (the hide window, glass,
+settlements' old glass) passes block light as air does (a `Cutout` cube), so a candle or the
+hearth behind it lights the ground outside, and is `lit_through` (a block field, any mod's
+window can say it): its bright texels glow by the block light reaching its face, which came
+through it, as a lantern's glow by its own light (client `render/mod.rs` `layer_table`, the
+glow byte's `THROUGH` bit; `voxel.wgsl`). It shows at any hour, as a lantern's glow does, and
+stands out after dark. A dark room's window stays dark; a wall keeps the light in
+(`a_window_lets_a_lit_rooms_light_out`, engine tests/windows.rs). The gate's Door step then
+sets a hide window in a candle-lit stone nook at midnight and judges the shot: the pane warm
+and bright against the night ("window: glows", shot `window-night`).
 
 ## Quest hooks (written, in base/quests.ron)
 

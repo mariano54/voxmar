@@ -141,6 +141,9 @@ pub struct CameraLook {
     pub recoil: f32,
     pub punch_seconds: f32,
     pub perfect_sparks: Burst,
+    /// Degrees the view leans into a dodge, and the seconds it takes.
+    pub dodge_lean: f32,
+    pub dodge_seconds: f32,
 }
 
 /// One layer of a synthesized sound (see `combat_fx.ron`).
@@ -297,6 +300,8 @@ impl FightLook {
             ("camera.block_jolt", camera.block_jolt),
             ("camera.recoil", camera.recoil),
             ("camera.punch_seconds", camera.punch_seconds),
+            ("camera.dodge_lean", camera.dodge_lean),
+            ("camera.dodge_seconds", camera.dodge_seconds),
         ];
         for (name, blow) in &self.blows {
             numbers.extend([("blows.*.stop", blow.stop), ("blows.*.sparks", blow.sparks), ("blows.*.punch", blow.punch)]);
