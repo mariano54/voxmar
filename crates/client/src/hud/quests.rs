@@ -3,7 +3,10 @@
 //! gold once done, lit while open, dim while what comes first is not done. A quest from
 //! another chapter that comes first stands at the web's left, dim, to show the way in. A
 //! web bigger than its well is a canvas: dragged by its empty space (or scrolled either
-//! way), it opens on the quest picked, and its lines are cut at the well's edge. A
+//! way), it opens on the quest picked, and its lines are cut at the well's edge. Each path
+//! (`quest_paths.ron`) runs along its own lane, under a header at the well's left with its
+//! name, icon and how many of its quests are done (dim once all are); pressed, the header
+//! brings the canvas to the path's next quest. A
 //! quest's page says first why it is worth doing (the reason and the reward), then what
 //! comes first if anything, its routes (any one finishes it) with each goal's progress,
 //! and its rewards, and pins it while it is open. The quests pinned (`core/quests.ron`'s
@@ -16,6 +19,7 @@ use voxmar_engine::block::BlockId;
 use voxmar_engine::content::Content;
 use voxmar_engine::lang::{def_key, title_from_id};
 use voxmar_engine::quest::{Goal, QuestDef, QuestState, Reward};
+use voxmar_engine::quest_path::QuestPath;
 
 use super::HudImages;
 use super::SLOT;
@@ -40,7 +44,7 @@ impl Plugin for QuestsPlugin {
         app.init_resource::<QuestView>()
             .add_systems(PostStartup, (spawn, spawn_tracker))
             .add_systems(OnEnter(Screen::InGame), keep_known_pins)
-            .add_systems(Update, ((open_start, choose_on_open, show, pick, claim, turn_ways, keep_web_in_range, drag_web, draw, fit_lines.after(crate::ui::widgets::scroll_lists)).chain().after(ScreenSystems), (seed_pins, retire, track).chain(), hear_quests).run_if(in_state(Screen::InGame)));
+            .add_systems(Update, ((open_start, choose_on_open, show, pick, go_to_path, claim, turn_ways, keep_web_in_range, drag_web, draw, fit_lines.after(crate::ui::widgets::scroll_lists)).chain().after(ScreenSystems), (seed_pins, retire, track).chain(), hear_quests).run_if(in_state(Screen::InGame)));
     }
 }
 
@@ -255,7 +259,7 @@ fn skill_words(locale: &Locale, content: &Content, name: &str) -> String {
 
 /// What a quest is drawn with: the item it gives, else the item it asks for, else the
 /// skill it trains.
-fn quest_icon(content: &Content, images: &HudImages, quest: &QuestDef) -> Handle<Image> {
+pub(crate) fn quest_icon(content: &Content, images: &HudImages, quest: &QuestDef) -> Handle<Image> {
     let package = package(quest);
     let item = |name: &str| item_id(content, package, name);
     let given = quest.rewards.iter().find_map(|r| if let Reward::Item(name, _) = r { item(name) } else { None });
@@ -287,6 +291,7 @@ pub fn goal_words(locale: &Locale, content: &Content, quest: &QuestDef, goal: &G
         Goal::Catch(fish, _) => locale.format("quest.goal.catch", &[("item", &item_words(locale, content, package, fish))]),
         Goal::Kill(creature, _) => locale.format("quest.goal.kill", &[("creature", &creature_words(locale, content, package, creature))]),
         Goal::Tame(creature, _) => locale.format("quest.goal.tame", &[("creature", &creature_words(locale, content, package, creature))]),
+        Goal::Lured(creature, _) => locale.format("quest.goal.lured", &[("creature", &creature_words(locale, content, package, creature))]),
         Goal::Pick(plant, _) => locale.format("quest.goal.pick", &[("item", &item_words(locale, content, package, plant))]),
         Goal::Mine(ore, _) => locale.format("quest.goal.mine", &[("item", &item_words(locale, content, package, ore))]),
         Goal::Visit(_) => locale.get("quest.goal.visit").to_owned(),
@@ -320,6 +325,8 @@ pub fn goal_words(locale: &Locale, content: &Content, quest: &QuestDef, goal: &G
         Goal::Opened(chest, _) => locale.format("quest.goal.opened", &[("item", &item_words(locale, content, package, chest))]),
         Goal::Fertilised(item, _) => locale.format("quest.goal.fertilised", &[("item", &item_words(locale, content, package, item))]),
         Goal::Ate(food, _) => locale.format("quest.goal.ate", &[("item", &item_words(locale, content, package, food))]),
+        Goal::Laid(item, _) => locale.format("quest.goal.laid", &[("item", &item_words(locale, content, package, item))]),
+        Goal::Watering(block, _) => locale.format("quest.goal.watering", &[("item", &item_words(locale, content, package, block))]),
         Goal::Felt(effect) => {
             let words = qualified(package, effect).iter().find_map(|name| content.effects.find(name)).map(|id| content.effects.get(id)).map_or_else(|| title_from_id(effect), |def| locale.get_or(&def_key("effect", &def.name), &def.title).to_owned());
             return locale.format("quest.goal.felt", &[("effect", &words)]);
@@ -341,7 +348,8 @@ pub fn goal_words(locale: &Locale, content: &Content, quest: &QuestDef, goal: &G
 }
 
 /// A chapter's web: its quests, then those of other chapters that come first; where each
-/// stands, in steps (its column, then its row); and how many columns and rows it takes.
+/// stands, in steps (its column, then its row); how many columns and rows it takes; and
+/// its lanes, one per path, top to bottom.
 pub(crate) struct Layout<'a> {
     pub quests: Vec<&'a QuestDef>,
     /// How many of `quests` are the chapter's own.
@@ -349,12 +357,23 @@ pub(crate) struct Layout<'a> {
     pub cells: Vec<Vec2>,
     pub columns: usize,
     pub tallest: usize,
+    pub lanes: Vec<Lane<'a>>,
 }
 
-/// Lays out chapter `age`'s web: each quest a column past the furthest of those it comes
-/// after (those from other chapters in the first), each column ordered by the rows of
-/// those its quests come after, so lines cross as little as may be, and centred on the
-/// tallest.
+/// One path's lane across the web: its first row and how many rows it takes, and its
+/// own quests (by their place in the layout's), in order along it.
+pub(crate) struct Lane<'a> {
+    pub path: Option<&'a QuestPath>,
+    pub top: usize,
+    pub rows: usize,
+    pub quests: Vec<usize>,
+}
+
+/// Lays out chapter `age`'s web in lanes, one per path (`quest_paths.ron`), top to bottom:
+/// each quest a column past the furthest of those it comes after (those from other
+/// chapters in the first, in the lane of the first quest that follows them), so a path's
+/// chain runs along its lane's first row; where a path forks, the quests of one column
+/// stack in its lane, ordered by those they come after so lines cross as little as may be.
 pub(crate) fn layout<'a>(content: &'a Content, age: &str) -> Layout<'a> {
     let mut quests: Vec<&QuestDef> = content.quests.iter().filter(|q| q.age == age).collect();
     let mut outside: Vec<&QuestDef> = Vec::new();
@@ -367,44 +386,59 @@ pub(crate) fn layout<'a>(content: &'a Content, age: &str) -> Layout<'a> {
     }
     let ours = quests.len();
     quests.extend(outside);
+    let index = |name: &str| quests.iter().position(|q| q.name == name);
     // Each quest's column: one past the furthest of those it comes after; those outside
     // the chapter stand in the first.
     let mut depth: Vec<usize> = vec![0; quests.len()];
     for _ in 0..quests.len() {
         for i in 0..ours {
-            depth[i] = before(content, quests[i]).iter().filter_map(|first| quests.iter().position(|q| q.name == first.name)).map(|j| depth[j] + 1).max().unwrap_or(0);
+            depth[i] = before(content, quests[i]).iter().filter_map(|first| index(&first.name)).map(|j| depth[j] + 1).max().unwrap_or(0);
         }
     }
-    // Each column's quests in the order of the rows of those they come after, so lines
-    // cross as little as may be; each column centred on the tallest.
     let columns = depth.iter().copied().max().map_or(1, |d| d + 1);
-    let mut row: Vec<f32> = vec![0.0; quests.len()];
-    let mut tallest = 1;
+    // Each quest's lane: its path's; one from outside, the lane of the first that follows it.
+    let paths: Vec<&QuestPath> = content.quest_paths.iter().filter(|p| p.age == age).collect();
+    let path_of = |quest: &QuestDef| paths.iter().position(|p| p.branch == quest.branch).unwrap_or(0);
+    let lane: Vec<usize> = (0..quests.len())
+        .map(|i| if i < ours { path_of(quests[i]) } else { (0..ours).find(|&k| before(content, quests[k]).iter().any(|f| f.name == quests[i].name)).map_or(0, |k| path_of(quests[k])) })
+        .collect();
+    let lanes_count = paths.len().max(1);
+    // Within each lane, column by column, the quests in the order of those they come after.
+    let mut row: Vec<usize> = vec![0; quests.len()];
+    let mut rows = vec![1; lanes_count];
     for d in 0..columns {
-        let mut column: Vec<usize> = (0..quests.len()).filter(|&i| depth[i] == d).collect();
-        let key = |i: usize| -> f32 {
-            let firsts: Vec<f32> = if i < ours { before(content, quests[i]).iter().filter_map(|first| quests.iter().position(|q| q.name == first.name)).map(|j| row[j]).collect() } else { Vec::new() };
-            if firsts.is_empty() { f32::MAX } else { firsts.iter().sum::<f32>() / firsts.len() as f32 }
-        };
-        let keys: Vec<(usize, f32)> = column.iter().map(|&i| (i, key(i))).collect();
-        column.sort_by(|a, b| {
-            let (ka, kb) = (keys.iter().find(|k| k.0 == *a).unwrap().1, keys.iter().find(|k| k.0 == *b).unwrap().1);
-            ka.total_cmp(&kb).then(a.cmp(b))
-        });
-        for (r, &i) in column.iter().enumerate() {
-            row[i] = r as f32;
-        }
-        tallest = tallest.max(column.len());
-    }
-    for d in 0..columns {
-        let count = depth.iter().filter(|&&x| x == d).count();
-        let shift = (tallest - count) as f32 / 2.0;
-        for i in (0..quests.len()).filter(|&i| depth[i] == d) {
-            row[i] += shift;
+        for l in 0..lanes_count {
+            let mut column: Vec<usize> = (0..quests.len()).filter(|&i| depth[i] == d && lane[i] == l).collect();
+            let key = |i: usize| -> f32 {
+                let firsts: Vec<f32> = if i < ours { before(content, quests[i]).iter().filter_map(|first| index(&first.name)).map(|j| (lane[j] * 1000 + row[j]) as f32).collect() } else { Vec::new() };
+                if firsts.is_empty() { f32::MAX } else { firsts.iter().sum::<f32>() / firsts.len() as f32 }
+            };
+            let keys: Vec<f32> = column.iter().map(|&i| key(i)).collect();
+            let mut order: Vec<usize> = (0..column.len()).collect();
+            order.sort_by(|&a, &b| keys[a].total_cmp(&keys[b]).then(column[a].cmp(&column[b])));
+            column = order.into_iter().map(|k| column[k]).collect();
+            for (r, &i) in column.iter().enumerate() {
+                row[i] = r;
+            }
+            rows[l] = rows[l].max(column.len());
         }
     }
-    let cells = (0..quests.len()).map(|i| Vec2::new(depth[i] as f32, row[i])).collect();
-    Layout { quests, ours, cells, columns, tallest }
+    let mut lanes = Vec::with_capacity(lanes_count);
+    let mut top = 0;
+    for (l, &taken) in rows.iter().enumerate() {
+        let mut own: Vec<usize> = (0..ours).filter(|&i| lane[i] == l).collect();
+        own.sort_by_key(|&i| (depth[i], row[i]));
+        lanes.push(Lane { path: paths.get(l).copied(), top, rows: taken, quests: own });
+        top += taken;
+    }
+    let cells = (0..quests.len()).map(|i| Vec2::new(depth[i] as f32, (lanes[lane[i]].top + row[i]) as f32)).collect();
+    Layout { quests, ours, cells, columns, tallest: top.max(1), lanes }
+}
+
+/// A path's head among its quests' standings, in order along it: the first open, else
+/// the first not done, else its last.
+fn path_head(standings: &[Standing]) -> Option<usize> {
+    standings.iter().position(|s| *s == Standing::Open).or_else(|| standings.iter().position(|s| *s != Standing::Done)).or(standings.len().checked_sub(1))
 }
 
 /// A goal's line: its mark (met, or not yet) and its words.
@@ -452,7 +486,14 @@ pub(crate) struct WebLine {
     to: Vec2,
 }
 #[derive(Component)]
-struct QuestNode(String);
+pub(crate) struct QuestNode(pub(crate) String);
+/// A lane's header: pressed, the canvas comes to `at` (scrolled so the path's head quest
+/// stands in the middle of what the well shows) and the head quest is picked.
+#[derive(Component)]
+pub(crate) struct LaneHead {
+    pub(crate) head: Option<String>,
+    pub(crate) at: Vec2,
+}
 #[derive(Component)]
 struct Detail;
 #[derive(Component)]
@@ -485,6 +526,10 @@ const STEP_LEAST: Vec2 = Vec2::new(CELL + 12.0 * PX, CELL + 6.0 * PX);
 const STEP_MOST: Vec2 = Vec2::new(CELL + 90.0 * PX, CELL + 40.0 * PX);
 /// How far the picked quest's glow reaches past it.
 const GLOW: f32 = 3.0 * PX;
+/// The width of a lane's header, at the left of the canvas, which stays as it is dragged.
+const HEADER: f32 = 74.0 * PX;
+/// A lane's path icon in its header.
+const PATH_ICON: f32 = 14.0 * PX;
 /// How thick the lines between quests are.
 const LINE: f32 = 2.0 * PX;
 
@@ -572,9 +617,9 @@ fn claim(buttons: Query<&Interaction, (Changed<Interaction>, With<ClaimButton>)>
     }
 }
 
-/// The sounds of quests: a jingle as one is finished, and coins as its rewards are
-/// claimed, told by the server's next states against the last (not on joining, when the
-/// first states arrive).
+/// The sound of a quest's rewards claimed (coins), told by the server's next states against
+/// the last (not on joining, when the first states arrive). A quest finished is one of the
+/// HUD's moments, which plays its jingle (`celebrate`).
 fn hear_quests(player: Res<LocalPlayer>, mut sounds: MessageWriter<UiSound>, mut last: Local<(u32, Vec<QuestState>)>) {
     // Cleared on joining: the next states are the first of a session.
     if player.quests.is_empty() {
@@ -584,10 +629,7 @@ fn hear_quests(player: Res<LocalPlayer>, mut sounds: MessageWriter<UiSound>, mut
     if last.0 == player.quests_rev {
         return;
     }
-    let (done, claimed) = quest_changes(&last.1, &player.quests);
-    if done {
-        sounds.write(UiSound::QuestDone);
-    }
+    let (_, claimed) = quest_changes(&last.1, &player.quests);
     if claimed {
         sounds.write(UiSound::QuestClaim);
     }
@@ -703,19 +745,22 @@ fn draw(
         });
     }
     let Some(age) = ages.get(view.chapter) else { return };
-    let Layout { quests, ours, cells, columns, tallest } = layout(content, age);
-    // Spread to fill the well, within reason; a web too big for it scrolls.
-    let step = Vec2::new(room.x / columns as f32, room.y / tallest as f32).clamp(STEP_LEAST, STEP_MOST);
-    let place = |i: usize| cells[i] * step + (step - Vec2::splat(CELL)) / 2.0;
+    let Layout { quests, ours, cells, columns, tallest, lanes } = layout(content, age);
+    // Spread to fill the well beside the lanes' headers, within reason; a web too big for
+    // it scrolls.
+    let lanes_room = Vec2::new((room.x - HEADER).max(0.0), room.y);
+    let step = Vec2::new(lanes_room.x / columns as f32, lanes_room.y / tallest as f32).clamp(STEP_LEAST, STEP_MOST);
+    let place = |i: usize| Vec2::X * HEADER + cells[i] * step + (step - Vec2::splat(CELL)) / 2.0;
     let centre = |i: usize| place(i) + Vec2::splat(CELL / 2.0);
     if let Ok((web, _, mut scroll)) = web.single_mut() {
-        let size = Vec2::new(columns as f32, tallest as f32) * step;
+        let size = Vec2::new(HEADER + columns as f32 * step.x, tallest as f32 * step.y);
         // Centred in the well by its margins; a web too big for the well has none that way,
         // and is dragged about in it rather than cut off.
         let margin = ((room - size) / 2.0).max(Vec2::ZERO);
+        // Scrolled so quest `i` stands in the middle of what the well shows beside the headers.
+        let brought = |i: usize| (centre(i) - Vec2::X * HEADER - lanes_room / 2.0).clamp(Vec2::ZERO, (size - room).max(Vec2::ZERO));
         if arrived {
-            let at = view.picked.as_deref().and_then(|name| quests.iter().position(|q| q.name == name)).map_or(Vec2::ZERO, |i| centre(i) - room / 2.0);
-            scroll.0 = at.clamp(Vec2::ZERO, (size - room).max(Vec2::ZERO));
+            scroll.0 = view.picked.as_deref().and_then(|name| quests.iter().position(|q| q.name == name)).map_or(Vec2::ZERO, brought);
         }
         commands.entity(web).despawn_children().with_children(|web| {
             if ours == 0 {
@@ -724,6 +769,11 @@ fn draw(
             }
             let canvas = Node { width: Val::Px(size.x), height: Val::Px(size.y), flex_shrink: 0.0, margin: UiRect { left: Val::Px(margin.x), top: Val::Px(margin.y), ..default() }, ..default() };
             web.spawn((canvas, Canvas { margin })).with_children(|area| {
+                // Every other lane faintly banded, so a path reads along its row.
+                for lane in lanes.iter().skip(1).step_by(2) {
+                    let band = Node { position_type: PositionType::Absolute, left: Val::ZERO, top: Val::Px(lane.top as f32 * step.y), width: Val::Px(size.x), height: Val::Px(lane.rows as f32 * step.y), ..default() };
+                    area.spawn((band, BackgroundColor(TEXT.with_alpha(0.04))));
+                }
                 // The lines first, under the quests; each is fitted to what the well shows
                 // of it as the canvas moves (`fit_lines`).
                 for i in 0..ours {
@@ -786,6 +836,39 @@ fn draw(
                             let ring = Node { position_type: PositionType::Absolute, left: Val::Px(-2.0 * PX), top: Val::Px(-2.0 * PX), width: Val::Px(CELL + 4.0 * PX), height: Val::Px(CELL + 4.0 * PX), ..default() };
                             cell.spawn((ring, Piece::Selection.image()));
                         }
+                    });
+                }
+                // Each lane's header, over the quests as the canvas moves under it
+                // (`fit_lines` keeps it at the well's left): the path's icon and name, how many
+                // of its quests are done, and dim once all are.
+                for lane in &lanes {
+                    let Some(path) = lane.path else { continue };
+                    let standings: Vec<Standing> = lane.quests.iter().map(|&i| standing(content, &player, quests[i])).collect();
+                    let done = standings.iter().filter(|s| **s == Standing::Done).count();
+                    let finished = done == lane.quests.len();
+                    let head = path_head(&standings).map(|k| lane.quests[k]);
+                    let node = Node {
+                        position_type: PositionType::Absolute,
+                        left: Val::ZERO,
+                        top: Val::Px(lane.top as f32 * step.y),
+                        width: Val::Px(HEADER),
+                        height: Val::Px(lane.rows as f32 * step.y),
+                        flex_direction: FlexDirection::Column,
+                        // Level with the lane's first row, where its chain runs.
+                        padding: UiRect { left: Val::Px(space::HAIR), right: Val::Px(space::HAIR), top: Val::Px((step.y - CELL) / 2.0), ..default() },
+                        ..default()
+                    };
+                    let head_name = head.map(|i| quests[i].name.clone());
+                    let at = head.map_or(Vec2::ZERO, brought);
+                    let (words, faint) = if finished { (MUTED, 0.45) } else { (TEXT, 1.0) };
+                    area.spawn((Button, crate::ui::widgets::HoverLight, LaneHead { head: head_name, at }, node, BackgroundColor(SCRIM.with_alpha(0.85)))).with_children(|header| {
+                        header.spawn(Node { align_items: AlignItems::Center, column_gap: Val::Px(space::HAIR), ..default() }).with_children(|top| {
+                            let icon = images.icons.get(path.icon.0 as usize).cloned().unwrap_or_default();
+                            top.spawn((Node { width: Val::Px(PATH_ICON), height: Val::Px(PATH_ICON), flex_shrink: 0.0, ..default() }, ImageNode::new(icon).with_color(Color::WHITE.with_alpha(faint))));
+                            top.spawn((shadowed(font, locale.get_or(&path.key(), &path.title).to_owned(), BODY, words), TightLine));
+                        });
+                        let count = locale.format("quest.chapter.count", &[("done", &done), ("all", &lane.quests.len())]);
+                        header.spawn((text(font, count, BODY, if finished { GOLD.with_alpha(0.6) } else { MUTED }), TightLine));
                     });
                 }
             });
@@ -930,9 +1013,15 @@ pub(crate) fn clip_line(from: Vec2, to: Vec2, view: Rect) -> Option<(Vec2, Vec2)
 /// Fits each line to what the well shows of the canvas, as it is dragged about or drawn
 /// anew: the part inside, turned along the line, or nothing. The well is narrowed by half
 /// a line's thickness so a cut end's corners stay in it too.
-fn fit_lines(web: Query<(Ref<ComputedNode>, Ref<ScrollPosition>), With<Web>>, canvas: Query<&Canvas>, mut lines: Query<(Ref<WebLine>, &mut Node, &mut UiTransform)>) {
+#[allow(clippy::type_complexity)]
+fn fit_lines(
+    web: Query<(Ref<ComputedNode>, Ref<ScrollPosition>), With<Web>>,
+    canvas: Query<&Canvas>,
+    mut lines: Query<(Ref<WebLine>, &mut Node, &mut UiTransform), Without<LaneHead>>,
+    mut heads: Query<(Ref<LaneHead>, &mut Node), Without<WebLine>>,
+) {
     let Ok((computed, scroll)) = web.single() else { return };
-    if !computed.is_changed() && !scroll.is_changed() && !lines.iter().any(|(line, ..)| line.is_added()) {
+    if !computed.is_changed() && !scroll.is_changed() && !lines.iter().any(|(line, ..)| line.is_added()) && !heads.iter().any(|(head, _)| head.is_added()) {
         return;
     }
     let Ok(canvas) = canvas.single() else { return };
@@ -943,6 +1032,13 @@ fn fit_lines(web: Query<(Ref<ComputedNode>, Ref<ScrollPosition>), With<Web>>, ca
     let max = (computed.content_size() - computed.size()).max(Vec2::ZERO) * scale;
     let corner = scroll.0.clamp(Vec2::ZERO, max).floor() - canvas.margin;
     let view = Rect::from_corners(corner, corner + room).inflate(-LINE / 2.0);
+    // The lanes' headers stay at the well's left as the canvas moves under them.
+    let left = Val::Px(corner.x.max(0.0));
+    for (_, mut node) in &mut heads {
+        if node.left != left {
+            node.left = left;
+        }
+    }
     for (line, mut node, mut turn) in &mut lines {
         let Some((from, to)) = clip_line(line.from, line.to, view) else {
             if node.display != Display::None {
@@ -958,6 +1054,21 @@ fn fit_lines(web: Query<(Ref<ComputedNode>, Ref<ScrollPosition>), With<Web>>, ca
         let rotation = Rot2::radians((line.to - line.from).to_angle());
         if turn.rotation != rotation {
             turn.rotation = rotation;
+        }
+    }
+}
+
+/// A lane's header pressed brings the canvas to its path's head quest, and picks it.
+fn go_to_path(heads: Query<(&LaneHead, &Interaction), Changed<Interaction>>, mut web: Query<&mut ScrollPosition, With<Web>>, mut view: ResMut<QuestView>) {
+    for (head, interaction) in &heads {
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+        if let Ok(mut scroll) = web.single_mut() {
+            scroll.0 = head.at;
+        }
+        if head.head.is_some() && view.picked != head.head {
+            view.picked.clone_from(&head.head);
         }
     }
 }
@@ -985,14 +1096,15 @@ struct Drag {
 }
 
 /// Dragging the web's empty canvas with the left button held moves it under the pointer,
-/// within its edges, so the web never leaves the well; a press on a quest picks it instead.
+/// within its edges, so the web never leaves the well; a press on a quest picks it instead,
+/// and one on a lane's header brings its path (`go_to_path`).
 /// The pointer moves in the window's points, the canvas in the interface's, `UiScale` of
 /// them to a point.
 fn drag_web(
     buttons: Res<ButtonInput<MouseButton>>,
     scale: Res<UiScale>,
     mut moved: MessageReader<CursorMoved>,
-    quests: Query<&Interaction, With<QuestNode>>,
+    quests: Query<&Interaction, Or<(With<QuestNode>, With<LaneHead>)>>,
     mut web: Query<(&mut ScrollPosition, &bevy::ui::RelativeCursorPosition, &ComputedNode), With<Web>>,
     mut drag: Local<Drag>,
 ) {
@@ -1070,21 +1182,46 @@ fn spawn_tracker(mut commands: Commands) {
 #[derive(Default)]
 struct Finished(Vec<(String, f32)>);
 
-/// Unpins a quest once it has shown done on screen for a moment.
+/// Unpins a quest once it has shown done on screen for a moment, and pins what follows it
+/// (`follow_ons`) where the tracker's data asks.
 fn retire(time: Res<Time>, player: Res<LocalPlayer>, launch: Res<Launch>, tracker: Query<&Visibility, With<Tracker>>, mut settings: ResMut<Settings>, mut finished: Local<Finished>) {
     let shown = tracker.iter().any(|v| *v != Visibility::Hidden);
     let done = |name: &str| state(&player, name).is_some_and(|s| s.done);
-    let gone = finished.tick(&settings.pinned_quests, done, shown, time.delta_secs(), launch.content.quests.tracker().done_stays);
+    let content = &launch.content;
+    let gone = finished.tick(&settings.pinned_quests, done, shown, time.delta_secs(), content.quests.tracker().done_stays);
     if !gone.is_empty() {
         settings.pinned_quests.retain(|p| !gone.contains(p));
+        if content.quests.tracker().follow_on {
+            let next = follow_ons(content, &settings.pinned_quests, &gone, &done);
+            settings.pinned_quests.extend(next);
+        }
         settings.save();
     }
 }
 
+/// What to pin after the quests `gone` drop off done, beside those still `pinned`, as far
+/// as the tracker has room: the open quests that come after one of them, in the book's
+/// order; opening none, and leaving nothing pinned, the first open quest of the age the
+/// first of them is in, so the next step is always on screen.
+pub(crate) fn follow_ons(content: &Content, pinned: &[String], gone: &[String], done: &dyn Fn(&str) -> bool) -> Vec<String> {
+    let room = content.quests.tracker().pins.saturating_sub(pinned.len());
+    let open = |quest: &&QuestDef| !done(&quest.name) && content.quests.open(quest, done) && !pinned.contains(&quest.name);
+    let mut next: Vec<String> = content.quests.iter().filter(open).filter(|quest| before(content, quest).iter().any(|first| gone.contains(&first.name))).map(|quest| quest.name.clone()).take(room).collect();
+    if next.is_empty()
+        && pinned.is_empty()
+        && let Some(age) = gone.first().and_then(|name| content.quests.get(name)).map(|quest| quest.age.clone())
+    {
+        next.extend(content.quests.iter().filter(open).find(|quest| quest.age == age).map(|quest| quest.name.clone()));
+    }
+    next
+}
+
 impl Finished {
     /// Counts `seconds` for each pinned quest done, while the tracker is `shown`: those
-    /// shown done longer than `stays`, which then drop off.
+    /// shown done longer than `stays`, which then drop off. One unpinned meanwhile (its ×)
+    /// is forgotten, so it never drops off and pins what follows it.
     fn tick(&mut self, pinned: &[String], done: impl Fn(&str) -> bool, shown: bool, seconds: f32, stays: f32) -> Vec<String> {
+        self.0.retain(|(n, _)| pinned.contains(n));
         for name in pinned {
             if done(name) && !self.0.iter().any(|(n, _)| n == name) {
                 self.0.push((name.clone(), 0.0));
@@ -1190,7 +1327,7 @@ mod tests {
                         voxmar_engine::journal::Page::Plants | voxmar_engine::journal::Page::Ores | voxmar_engine::journal::Page::Fish => item(name),
                         _ => name == "any",
                     },
-                    Goal::Kill(name, _) | Goal::Tame(name, _) => name == "any" || qualified(package, name).iter().any(|name| content.creatures.find(name).is_some()),
+                    Goal::Kill(name, _) | Goal::Tame(name, _) | Goal::Lured(name, _) => name == "any" || qualified(package, name).iter().any(|name| content.creatures.find(name).is_some()),
                     Goal::Built(name, _) => qualified(package, name).iter().any(|name| content.multiblocks.get(name).is_some() || content.effects.step(name).is_some()),
                     Goal::Lit(name, _) => qualified(package, name).iter().any(|name| content.multiblocks.get(name).is_some()),
                     Goal::Level(skill, _) => skill_id(&content, skill).is_some(),
@@ -1252,6 +1389,52 @@ mod tests {
         assert_eq!(pins.len(), most - 1);
     }
 
+    /// A pinned quest that drops off done leaves what it opens pinned, within the tracker's
+    /// room, never a quest done or one still waiting on another; opening nothing, and with
+    /// nothing else pinned, the next open quest of its age.
+    #[test]
+    fn what_a_done_quest_opens_is_pinned_in_its_place() {
+        let content = content();
+        let room = content.quests.tracker().pins;
+        // Some quest whose follower waits on it alone.
+        let (first, follower) = content
+            .quests
+            .iter()
+            .find_map(|quest| (quest.after.len() == 1 && !quest.after[0].contains('|')).then(|| (quest.after[0].clone(), quest.name.clone())))
+            .and_then(|(after, name)| content.quests.get(&after).map(|q| (q.name.clone(), name)))
+            .expect("a quest after one other");
+        // Done: the first and everything before it.
+        let mut finished = vec![first.clone()];
+        let mut i = 0;
+        while i < finished.len() {
+            let quest = content.quests.get(&finished[i]).unwrap();
+            for b in before(&content, quest) {
+                if !finished.contains(&b.name) {
+                    finished.push(b.name.clone());
+                }
+            }
+            i += 1;
+        }
+        let done = |name: &str| finished.iter().any(|f| f == name);
+        let next = follow_ons(&content, &[], std::slice::from_ref(&first), &done);
+        assert!(next.contains(&follower), "{follower} follows {first}: {next:?}");
+        assert!(next.len() <= room);
+        for name in &next {
+            let quest = content.quests.get(name).unwrap();
+            assert!(!done(name) && content.quests.open(quest, &done), "{name} is open");
+        }
+        // A full tracker takes none.
+        let full: Vec<String> = (0..room).map(|i| format!("base:pinned_{i}")).collect();
+        assert!(follow_ons(&content, &full, std::slice::from_ref(&first), &done).is_empty());
+        // Opening nothing new: the age's next open quest, only with nothing else pinned.
+        let last = content.quests.iter().find(|q| content.quests.iter().all(|other| !before(&content, other).iter().any(|b| b.name == q.name))).expect("a quest nothing follows");
+        let none = |name: &str| name == last.name;
+        let fallback = follow_ons(&content, &[], std::slice::from_ref(&last.name), &none);
+        assert_eq!(fallback.len(), 1, "{fallback:?}");
+        assert_eq!(content.quests.get(&fallback[0]).unwrap().age, last.age);
+        assert!(follow_ons(&content, &["base:other".to_owned()], std::slice::from_ref(&last.name), &none).is_empty());
+    }
+
     #[test]
     fn lines_are_cut_to_the_well() {
         let view = Rect::new(0.0, 0.0, 100.0, 50.0);
@@ -1289,6 +1472,13 @@ mod tests {
         }
         assert_eq!(finished.tick(&pinned, done, true, 0.5, 5.0), vec!["base:a".to_owned()]);
         assert!(finished.0.is_empty());
+        // Done, then unpinned by its × before its time: it never drops off as done.
+        assert!(finished.tick(&pinned, done, true, 0.5, 5.0).is_empty());
+        let left = vec!["base:b".to_owned()];
+        for _ in 0..20 {
+            assert!(finished.tick(&left, done, true, 0.5, 5.0).is_empty());
+        }
+        assert!(finished.0.is_empty());
     }
 
     /// No two quests of a web stand in one place, and a quest from another chapter that
@@ -1313,6 +1503,44 @@ mod tests {
         assert!(hearth >= farm.ours);
     }
 
+    /// Each path runs along a lane of its own, in `quest_paths.ron`'s order: its quests
+    /// stand inside it, the lanes do not overlap, and its first quest is on its top row.
+    #[test]
+    fn each_path_runs_along_its_own_lane() {
+        let content = content();
+        for age in chapters(&content) {
+            let web = layout(&content, &age);
+            let paths: Vec<&str> = content.quest_paths.iter().filter(|p| p.age == age).map(|p| p.branch.as_str()).collect();
+            assert_eq!(web.lanes.iter().map(|l| l.path.map_or("", |p| p.branch.as_str())).collect::<Vec<_>>(), paths, "{age}");
+            let mut next = 0;
+            for lane in &web.lanes {
+                assert_eq!(lane.top, next, "{age}: lanes overlap or leave a gap");
+                next += lane.rows;
+                let branch = lane.path.unwrap().branch.as_str();
+                assert!(!lane.quests.is_empty(), "{age}/{branch}: an empty lane");
+                for &i in &lane.quests {
+                    assert_eq!(web.quests[i].branch, branch, "{age}: {} in another path's lane", web.quests[i].name);
+                    let row = web.cells[i].y as usize;
+                    assert!((lane.top..lane.top + lane.rows).contains(&row), "{age}/{branch}: {} on row {row}, outside its lane", web.quests[i].name);
+                }
+                assert_eq!(web.cells[lane.quests[0]].y as usize, lane.top, "{age}/{branch}: its first quest is not on its top row");
+            }
+            assert_eq!(next, web.tallest, "{age}");
+            assert_eq!(web.lanes.iter().map(|l| l.quests.len()).sum::<usize>(), web.ours, "{age}: every quest in one lane");
+        }
+    }
+
+    /// A path's header brings the first quest open along it, else the first not done, else
+    /// its last.
+    #[test]
+    fn a_path_head_is_its_next_quest() {
+        use Standing::{Done, Open, Waiting};
+        assert_eq!(path_head(&[Done, Open, Waiting, Open]), Some(1));
+        assert_eq!(path_head(&[Done, Waiting, Waiting]), Some(1));
+        assert_eq!(path_head(&[Done, Done]), Some(1));
+        assert_eq!(path_head(&[]), None);
+    }
+
     /// Each chapter has a name in Japanese, and the tracker's numbers come from the data.
     #[test]
     fn chapters_are_named_and_the_tracker_is_data() {
@@ -1321,6 +1549,6 @@ mod tests {
         for age in chapters(&content) {
             assert!(ja.find(&format!("quest.age.{age}")).is_some(), "no Japanese name for the {age} chapter");
         }
-        assert_eq!(content.quests.tracker(), voxmar_engine::quest::Tracker { pins: 3, done_stays: 5.0, backing_alpha: 0.5 });
+        assert_eq!(content.quests.tracker(), voxmar_engine::quest::Tracker { pins: 3, done_stays: 5.0, backing_alpha: 0.5, follow_on: true });
     }
 }

@@ -216,6 +216,15 @@ impl Server {
             self.items.spawn(ItemStack { item: work.output, count: left }, body, dropped::PICKUP_DELAY);
         }
         self.grant_xp(agent, work.skill, work.xp * made as f32);
+        if let Some(kind) = &work.counts {
+            let output = self.content.blocks.def(work.output).name.clone();
+            self.tally(agent, kind, &output, made as u32);
+            // Cooked at this station too, by its empty block's name, for a quest's `CookAt`.
+            if kind == "cooked" {
+                let at = self.content.blocks.def(station.empty).name.rsplit(':').next().unwrap_or_default().to_owned();
+                self.tally(agent, &format!("cooked_at:{at}"), &output, made as u32);
+            }
+        }
         let words = Words::key("station.took").with("count", Words::text(made)).with("item", Words::Block(self.content.blocks.def(work.output).name.clone()));
         self.tell_station(agent, words);
     }
@@ -386,7 +395,7 @@ mod tests {
     fn a_rack_left_alone_is_done_when_its_owner_comes_back() {
         let mut server = fixture(1);
         server.set_block(AT, block(&server, "base:drying_rack"));
-        hold(&mut server, "base:raw_rabbit", 3);
+        hold(&mut server, "base:raw_small_game", 3);
         server.use_station(1, AT);
         server.tick += 60 * MINUTE;
         server.use_station(1, AT);
@@ -544,6 +553,37 @@ mod tests {
         assert_eq!(saved.len(), 1);
         let back = Loads::restore(&saved, |name| blocks.id(name));
         assert_eq!(back.get(AT), server.stations.get(AT));
+    }
+
+    /// An earth clamp fires clay with nobody by it, and quests count what comes out as cooked;
+    /// while it smoulders it is a fire, so a rack by it dries twice as fast.
+    #[test]
+    fn an_earth_clamp_fires_clay_by_itself_and_smoulders_like_a_fire() {
+        let mut server = fixture(1);
+        server.set_block(AT, block(&server, "base:earth_clamp"));
+        hold(&mut server, "base:clay", 20);
+        server.use_station(1, AT);
+        assert_eq!(at(&server, AT), "base:earth_clamp_lit");
+        assert_eq!(carried(&server, "base:clay"), 4, "sixteen go in");
+        let rack = AT + IVec3::new(2, 0, 0);
+        server.set_block(rack, block(&server, "base:drying_rack"));
+        hold(&mut server, "base:raw_beef", 1);
+        server.use_station(1, rack);
+        assert_eq!(server.stations.get(rack).unwrap().due, server.tick + 5 * MINUTE, "the smouldering clamp is a fire near");
+        server.tick += 2 * MINUTE;
+        server.show_done_stations();
+        assert_eq!(at(&server, AT), "base:earth_clamp_cooled");
+        server.use_station(1, AT);
+        assert_eq!(carried(&server, "base:fired_clay"), 16, "none cracked");
+        assert_eq!(server.players[&1].tallies.get("cooked:base:fired_clay"), Some(&16), "Fire the Clay and A Kiln Load count it");
+        assert_eq!(server.players[&1].tallies.get("cooked_at:earth_clamp:base:fired_clay"), Some(&16), "An Earth Clamp counts it as fired in the clamp");
+
+        hold(&mut server, "base:oak_log", 16);
+        server.use_station(1, AT);
+        server.tick += 2 * MINUTE;
+        server.use_station(1, AT);
+        assert_eq!(carried(&server, "base:charcoal"), 16);
+        assert_eq!(server.players[&1].tallies.get("cooked:base:charcoal"), Some(&16));
     }
 
     /// Wheat sprouts on farmland at y 200 for each x of `xs` along z 40.

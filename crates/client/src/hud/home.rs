@@ -1,8 +1,10 @@
 //! The way home: away from home (the lit hearth, else the bed last slept in: `Vitals::home`,
 //! from the server), a small hearth mark at the top of the screen sits over where home lies,
 //! with how far it is. Turned away from it, the mark waits at the screen's edge on the side
-//! to turn to. Within `home_hidden_within` blocks (`interface.ron`) nothing shows; the
-//! mark is the icon of the item a package names as `home_icon` (base: the hearthstone).
+//! to turn to. Within `home_hidden_within` blocks (`interface.ron`) nothing shows; from
+//! dusk to dawn it shows beyond that, by day only beyond `home_shown_beyond`, fading in and
+//! out over `home_fade` seconds; the "Way Home Marker" setting turns it off. The mark is
+//! the icon of the item a package names as `home_icon` (base: the hearthstone).
 
 use bevy::prelude::*;
 use bevy::ui::UiScale;
@@ -32,6 +34,12 @@ const WIDTH: f32 = 40.0 * PX;
 #[derive(Component, Default)]
 pub(crate) struct HomeMark {
     pub edge: Option<f32>,
+    /// How far faded in, 0 (gone) to 1.
+    pub shown: f32,
+    /// Where across the screen it sits (-1 to 1) and the view's width as an angle, for the
+    /// gate to read back the bearing it draws.
+    pub x: f32,
+    pub fov: f32,
 }
 #[derive(Component)]
 struct HomeIcon;
@@ -74,6 +82,16 @@ pub fn across(angle: f32, fov: f32) -> (f32, Option<f32>) {
     }
 }
 
+/// Whether the way home is wanted `way` (x, z) blocks from home at `tick` of the day
+/// (ticks after sunrise): never within `home_hidden_within` blocks either way, which is a
+/// square as the home's own box is (its corners are inside too), from dusk to dawn beyond
+/// it, and by day farther than `home_shown_beyond`.
+pub fn wanted(style: &super::inventory::InterfaceStyle, way: Vec2, tick: u64) -> bool {
+    let (dusk, dawn) = (style.home_dusk, style.home_dawn);
+    let night = if dusk < dawn { (dusk..dawn).contains(&tick) } else { tick >= dusk || tick < dawn };
+    way.abs().max_element() > style.home_hidden_within && (night || way.length() > style.home_shown_beyond)
+}
+
 /// The bearing to `to` from `from`, in radians to the right of a view turned `yaw`.
 pub fn bearing(from: Vec3, yaw: f32, to: Vec3) -> f32 {
     let forward = Vec2::new(-yaw.sin(), -yaw.cos());
@@ -93,14 +111,24 @@ fn show(
     images: Res<super::HudImages>,
     world: Res<crate::world::ClientWorld>,
     (window, cameras, scale): (Query<&Window, With<PrimaryWindow>>, Query<&Camera, With<Camera3d>>, Res<UiScale>),
+    (settings, cycle, time): (Res<crate::settings::Settings>, Res<crate::render::DayCycle>, Res<Time>),
     mut mark: Query<(&mut HomeMark, &mut Node, &mut Visibility)>,
     mut icon: Query<&mut ImageNode, With<HomeIcon>>,
-    mut words: Query<&mut Text, With<HomeWords>>,
+    mut words: Query<(&mut Text, &mut TextColor), With<HomeWords>>,
 ) {
     let Ok((mut mark, mut node, mut visibility)) = mark.single_mut() else { return };
     let home = player.vitals.home.map(|at| at.as_vec3() + Vec3::new(0.5, 0.0, 0.5));
-    let away = home.map(|home| (home - player.position).with_y(0.0).length());
-    let Some((home, away)) = home.zip(away).filter(|&(_, away)| ui.cursor_locked && !player.dead && away > style.home_hidden_within) else {
+    let way = home.map(|home| Vec2::new(home.x - player.position.x, home.z - player.position.z));
+    let away = way.map(Vec2::length);
+    let tick = cycle.ticks.max(0.0) as u64 % voxmar_protocol::TICKS_PER_DAY;
+    let want = settings.way_home_marker && ui.cursor_locked && !player.dead && way.is_some_and(|way| wanted(&style, way, tick));
+    // Faded in and out, at once with no fade; gone at once with no home or on dying.
+    let step = if style.home_fade > 0.0 { time.delta_secs() / style.home_fade } else { 1.0 };
+    let shown = if home.is_none() || player.dead { 0.0 } else { (mark.shown + if want { step } else { -step }).clamp(0.0, 1.0) };
+    if mark.shown != shown {
+        mark.shown = shown;
+    }
+    let Some((home, away)) = home.zip(away).filter(|_| shown > 0.0) else {
         visibility.set_if_neq(Visibility::Hidden);
         return;
     };
@@ -115,21 +143,34 @@ fn show(
     if mark.edge != edge {
         mark.edge = edge;
     }
+    if (mark.x, mark.fov) != (x, fov) {
+        (mark.x, mark.fov) = (x, fov);
+    }
     let left = ((x + 1.0) * 0.5 * width - WIDTH * 0.5).clamp(0.0, (width - WIDTH).max(0.0));
     if node.left != Val::Px(left) {
         node.left = Val::Px(left);
     }
     visibility.set_if_neq(Visibility::Inherited);
-    if let (Ok(mut image), Some(id)) = (icon.single_mut(), style.home_icon.as_deref().and_then(|name| world.registry.id(name)))
-        && let Some(handle) = images.icons.get(id.0 as usize)
-        && image.image != *handle
-    {
-        image.image = handle.clone();
+    if let Ok(mut image) = icon.single_mut() {
+        if let Some(id) = style.home_icon.as_deref().and_then(|name| world.registry.id(name))
+            && let Some(handle) = images.icons.get(id.0 as usize)
+            && image.image != *handle
+        {
+            image.image = handle.clone();
+        }
+        let faded = Color::WHITE.with_alpha(shown);
+        if image.color != faded {
+            image.color = faded;
+        }
     }
-    if let Ok(mut text) = words.single_mut() {
+    if let Ok((mut text, mut color)) = words.single_mut() {
         let said = locale.format("hud.home", &[("distance", &(away.round() as i64))]);
         if text.0 != said {
             text.0 = said;
+        }
+        let faded = SOFT.with_alpha(shown);
+        if color.0 != faded {
+            color.0 = faded;
         }
     }
 }
@@ -137,6 +178,28 @@ fn show(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Inside the home nothing shows; from dusk to dawn it shows past the home's box; by day
+    /// only far off. A night that runs past midnight wraps.
+    #[test]
+    fn the_way_home_shows_at_night_or_far_off() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let files: Vec<_> = content.files.iter().cloned().collect();
+        let mut style = super::super::inventory::InterfaceStyle::load(&files).unwrap();
+        let (noon, dusk, midnight, dawn) = (8000, style.home_dusk, 20000, style.home_dawn);
+        let along = |d: f32| Vec2::new(d, 0.0);
+        let (inside, near, far) = (along(style.home_hidden_within - 1.0), along(style.home_hidden_within + 2.0), along(style.home_shown_beyond + 2.0));
+        // In a corner of the home's square box, farther than its side but still inside.
+        let corner = Vec2::splat(style.home_hidden_within - 0.5);
+        for tick in [noon, dusk, midnight, dawn] {
+            assert!(!wanted(&style, inside, tick) && !wanted(&style, corner, tick), "never inside the home, {tick}");
+            assert!(wanted(&style, far, tick), "always far off, {tick}");
+        }
+        assert!(wanted(&style, near, dusk) && wanted(&style, near, midnight));
+        assert!(!wanted(&style, near, noon) && !wanted(&style, near, dawn), "by day only far off");
+        (style.home_dusk, style.home_dawn) = (22000, 2000);
+        assert!(wanted(&style, near, 23000) && wanted(&style, near, 1000) && !wanted(&style, near, noon));
+    }
 
     /// Home dead ahead sits in the middle; to the right, right of it; behind, at the edge
     /// on the side to turn to.

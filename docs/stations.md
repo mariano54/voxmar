@@ -24,6 +24,12 @@ the server's side in `crates/server/src/stations.rs`.
   loaded, and multiply its speed.
 - Spot rules: `OpenSky`; `Near(tag, reach)` (a block with the tag within reach, 1 to 8);
   `Water(reach)` (water, not lava, within reach).
+- `counts` (`cooked` or `crafted`) makes quests count what is taken as cooked at a fire or
+  crafted, so a clamp's fired clay counts toward Fire the Clay and A Kiln Load. `cooked`
+  also counts it as cooked at the station (by its empty block's name, `CookAt(item,
+  "earth_clamp", n)`), so An Earth Clamp asks for clay fired in the clamp itself.
+- A station pays no more experience for an output than the hand route from the same input
+  at a fire (`a_station_pays_no_more_than_the_hand_route`).
 - Loading one sounds at the block when the server says it took (never predicted, so a refused
   load is silent): its `sound` (the pot's `Water`, a stir), else its working block's placing.
   Taking from it pops like a pickup (client `sfx::station_cue`).
@@ -50,6 +56,7 @@ and a fertiliser reach outside 0 to 4.
 | Drying rack | Nomad | 4 sticks, 3 twine (Crafting 3) | up to 8 raw meat or raw fish into jerky, one for one | open sky; a `fire` within 3 doubles the speed | 10 min (5 by a fire) | Cooking 1, 6 xp each |
 | Cooking pot | Nomad | 7 fired clay about a clay pot (Crafting 3) | up to 6: two grain, not seed (`tag:grain+!vegetable+!seed`), into porridge (Cooking 3, 14 xp); three raw meat, roots, vegetables or other edible produce, none of it cooked, grain or fruit, into a stew (Cooking 14, 36 xp) | a `hob` within 1 (a campfire beside it, or the hearthstone under it) and water within 4 (a well counts), both at load and take | 2 min (porridge), 3 min (stew) | Cooking 3 / 14 |
 | Compost heap | Farm | 7 planks in a U (Construction 5) | up to 16 produce, vegetables, fruit, seed or burnt food (`compost` tag), four into one compost | water within 2 makes it x1.5 | 15 min (10 by water) | Farming 5, 8 xp each |
+| Earth clamp | Farm | 8 dirt round a log (Construction 3) | up to 16 clay into fired clay (never cracked), or 16 logs into charcoal, one for one; quests count both as cooked | anywhere | 1 min | Crafting 1, 4 xp each (clay); Cooking 1, 3 xp each (charcoal) |
 
 | Fertiliser | Reach | Grows | Xp per crop |
 | --- | --- | --- | --- |
@@ -78,6 +85,7 @@ of the two bunches a herb nook needs (docs/home.md).
 | breaking drops the load (raw or done) | `a_broken_station_drops_what_was_on_it` |
 | saves with the world | `loads_keep_across_a_save` |
 | compost, bone, nothing to grow; the quest tally | `compost_grows_a_crop_and_its_neighbours` |
+| a clamp fires clay unattended, counts as cooked, smoulders as a fire | `an_earth_clamp_fires_clay_by_itself_and_smoulders_like_a_fire` |
 | the pot: hob, water, porridge at 3, stew at 14, on the hearthstone | `a_pot_simmers_on_a_hob_by_water` |
 | grain against vegetables by a `!` tag | `the_pot_tells_grain_from_vegetables` (engine) |
 | loaded stirs or thumps, taken pops, done or not a station silent | `stations_stir_and_pop` (client `sfx.rs`) |
@@ -85,15 +93,26 @@ of the two bunches a herb nook needs (docs/home.md).
 
 Gate step **Dry** (after Cook): a rack two blocks from the campfire, raw rabbit in hand; a right
 click hangs it, the server sends the hung rack back (shot `rack`), and chat says where it
-stands makes it quicker. Then a cooking pot against the fire, water sunk in the ground near it,
-wheat in hand: a right click sets it simmering (shot `pot`, check "cooking pot").
+stands makes it quicker. Then an earth clamp in its place, sixteen clay in hand: a right click
+sets it smouldering (shot `clamp`). Then a cooking pot against the fire, water sunk in the
+ground near it, wheat in hand: a right click sets it simmering (shot `pot`, check "cooking
+pot").
 
 ## Quests
 
 - **Hung to Dry** (Nomad, cooking, after Small Game): craft a drying rack, keep four jerky.
 - **Trail Rations** (Nomad, cooking, after it): a second rack, twelve jerky.
-- **A Compost Heap** (Farm, farming, after Carrot Patch): craft a compost heap, keep two compost.
-- **Rich Soil** (Farm, farming, after it): grow six crops with compost and one with a bone.
+- **A Compost Heap** (Farm, farming, after Roots in the Embers): craft a compost heap, then grow
+  six crops with compost and one with a bone (one quest in three parts since Oct 14).
+- **An Earth Clamp** (Farm, pottery, after A Pit Kiln): make a clamp and fire sixteen clay
+  or char sixteen logs. Fire the Clay, Charcoal and Brick by Brick name it.
+
+The earth clamp came from the Oct 14 pacing pass (docs/first-days.md): half the Farm main
+line was standing at a fire, one clay or log at a time. A clamp is slower than the hand
+(3.75 s a clay against about 2.5 by hand with cracks) but needs nobody by it, so a player
+keeps one smouldering while they dig, chop, mine or fire by hand. While lit it is tagged
+`fire`, so it smokes bees calm, leaves a player beside it Smoky and dries a rack near it
+twice as fast, as any fire does.
 
 ## Next
 
