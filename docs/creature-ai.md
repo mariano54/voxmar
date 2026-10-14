@@ -170,7 +170,9 @@ really clears); when it is shut, it takes the nearest turn that is open, 40, 80,
 160 degrees off, and keeps to the side it took until it is round, so a creature struck
 with its back to a wall runs along it, one in a corner runs out past the player, and one
 before a tree runs round the trunk. Its head stops at what its box does not: a turn that
-would put it into a wall goes the other way round, a step that would is undone, and a
+would put it into a wall goes the other way round (only while it still wants that way, and,
+standing, only to a heading its head fits at, so it never spins to face a player through a
+wall), a step that would is undone, and a
 head already in a block (one built before its face) may turn and walk out rather than
 stand frozen. It gives up a goal after two stuck seconds, or four going round. Fliers on
 the wing, drifters and swimmers do not steer.
