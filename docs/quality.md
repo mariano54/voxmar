@@ -107,8 +107,9 @@ mesa-vulkan-drivers`), as a look: frames take half a second, so the steps that t
 
    Steps judge what the server does by its own clock (`ServerHandle::ticks`), not the
    wall's or the game's: a server running behind takes longer, not too long. The tests run
-   a step below the session (`nice 10`), so they cannot starve its server; once they
-   did, and nine checks failed together. A step that fails lets go of every key and
+   at the lowest priority (`nice 19`), below the session, so they cannot starve its server
+   or its frames; once they did, and nine checks failed together, and at `nice 10` a loaded
+   Mac still drew the fight-feel step's frames past the bear's wind-up. A step that fails lets go of every key and
    button, so it cannot fail the steps after it. The session must never kill its player:
 every loss of health is logged with where and among what, and a death fails `alive` at
 once, naming the step (the workshop kills the player on purpose, and the text-fit steps show the death screen), and the
@@ -228,7 +229,7 @@ over its budget is listed in `[[allow]]` with its own `seconds` and the reason. 
 slowest tests every time. It fails on a test over its budget and on a binary over the suite
 budget; with `--strict`, run on the Linux box the budgets were set on, also on an allowance a
 test no longer needs (it ran back under the default), so the list only shrinks as tests get
-cheaper (a faster machine would find many unneeded, so the gate only notes them). The scale is the machine's slowdown against the Linux box the budgets were set on (`tools/gate`: 5 on the Mac, whose gate runs the tests at nice 10 and utility QoS beside the session, mostly on its efficiency cores, measured 3 to 8 times slower on a calm day; `VOXMAR_TEST_SLOWDOWN` for another machine); past the core count, the load averaged while the tests ran, the gate lists the times and does not judge them (what else the machine runs must never block a landing; a calm machine holds the budgets). A new test over the default is made cheaper first;
+cheaper (a faster machine would find many unneeded, so the gate only notes them). The scale is the machine's slowdown against the Linux box the budgets were set on (`tools/gate`: 5 on the Mac, whose gate runs the tests at nice 19 (nice 10 when measured) and utility QoS beside the session, mostly on its efficiency cores, measured 3 to 8 times slower on a calm day; `VOXMAR_TEST_SLOWDOWN` for another machine); past the core count, the load averaged while the tests ran, the gate lists the times and does not judge them (what else the machine runs must never block a landing; a calm machine holds the budgets). A new test over the default is made cheaper first;
 an entry is the last resort, with a reason a reader can check.
 
 How the tests are kept cheap:
