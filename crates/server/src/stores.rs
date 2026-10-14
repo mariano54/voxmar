@@ -92,7 +92,8 @@ mod tests {
     use voxmar_engine::coords::Face;
     use voxmar_engine::glam::Vec3;
     use voxmar_engine::inventory::{ItemStack, STORE};
-    use voxmar_engine::world::{Column, ColumnPos};
+    use voxmar_engine::coords::ColumnPos;
+    use voxmar_engine::world::Column;
 
     use super::*;
 
@@ -192,7 +193,7 @@ mod tests {
         let stone = ItemStack { item: id(&server, "base:cobblestone"), count: 1 };
         assert_eq!(server.factory.put(AT, stone, &machines), Some(stone), "nor from a chute");
         let basket = server.content.machines.get(id(&server, "base:earthen_basket")).expect("a store");
-        assert!(basket.bin_takes(id(&server, "base:yarrow")) && !basket.bin_takes(id(&server, "base:honey")));
+        assert!(basket.bin_takes(id(&server, "base:windroot")) && !basket.bin_takes(id(&server, "base:honey")));
     }
 
     /// Furniture holds what it is given until it is broken, when it spills it, and the
@@ -204,9 +205,9 @@ mod tests {
         give(&mut server, 0, "base:dirt", 7);
         open(&mut server);
         act(&mut server, "core:quick_move", ActionTarget::Slot(0));
-        let before = server.items.all.len();
+        let before = server.items.saved(|_| String::new()).len();
         server.set_block(AT, BlockId::AIR);
-        assert_eq!(server.items.all.len(), before + 1, "the dirt lies where it stood");
+        assert_eq!(server.items.saved(|_| String::new()).len(), before + 1, "the dirt lies where it stood");
         server.watch_stores();
         assert!(server.players[&1].inventory.store.is_none());
     }

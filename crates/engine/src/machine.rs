@@ -474,7 +474,7 @@ impl Machine {
     /// Whether it is a store: a bin that does not feed, which players open into a screen of
     /// its slots.
     pub fn is_store(&self) -> bool {
-        matches!(self.role, Role::Bin { feeds: false, slots } if slots > 0)
+        matches!(self.role, Role::Bin { feeds: false, slots, .. } if slots > 0)
     }
 }
 
