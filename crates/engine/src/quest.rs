@@ -85,6 +85,9 @@ pub enum Goal {
     /// Was under an effect (by name) at least once, whatever gave it: a food, smoke, a
     /// home's comfort.
     Felt(String),
+    /// Laid a recipe for this item (or `any`, or a `tag:TAG`) into the crafting grid this
+    /// many times with the recipe viewer's Lay, taking from a store in the home.
+    Laid(String, u32),
 }
 
 /// One way to finish a quest: every goal must hold.
@@ -232,6 +235,7 @@ impl Progress<'_> {
             Goal::Fertilised(item, n) => (tally("fertilised", item), *n),
             Goal::Ate(food, n) => (tally("ate", food), *n),
             Goal::Felt(effect) => (tally("felt", effect).min(1), 1),
+            Goal::Laid(item, n) => (tally("laid", item), *n),
         }
     }
 
@@ -417,6 +421,7 @@ impl QuestRegistry {
                     Goal::Fertilised(name, _) => find(name, &made)?,
                     Goal::Ate(name, _) => find(name, &made)?,
                     Goal::Felt(name) => find(name, &effect)?,
+                    Goal::Laid(name, _) => find(name, &made)?,
                 }
             }
             for given in &mut quest.rewards {
@@ -643,7 +648,7 @@ mod tests {
     fn wanderers_prayers_and_offerings_count_from_their_tallies() {
         let journal = Journal::default();
         let mut tallies = FxHashMap::default();
-        for (key, n) in [("met:base:pedlar", 2), ("met:base:smith", 1), ("met:base:hermit", 0), ("prayed:base:bark_skin", 3), ("offered:base:bone", 4), ("crafted:base:bone", 9), ("opened:base:nomad_treasure_chest", 2), ("ate:base:honey", 3), ("felt:base:smoky", 5), ("fertilised:base:compost", 5)] {
+        for (key, n) in [("met:base:pedlar", 2), ("met:base:smith", 1), ("met:base:hermit", 0), ("prayed:base:bark_skin", 3), ("offered:base:bone", 4), ("crafted:base:bone", 9), ("opened:base:nomad_treasure_chest", 2), ("ate:base:honey", 3), ("felt:base:smoky", 5), ("fertilised:base:compost", 5), ("laid:base:oak_planks", 2)] {
             tallies.insert(key.to_owned(), n);
         }
         let level = |_: &str| 1u8;
@@ -668,6 +673,8 @@ mod tests {
         assert_eq!(goal(Goal::Ate("tag:sweet".into(), 4)), (3, 4), "food eaten counts by tag");
         assert_eq!(goal(Goal::Ate("base:bone".into(), 1)), (0, 1), "what was made is not what was eaten");
         assert_eq!(goal(Goal::Felt("base:smoky".into())), (1, 1), "felt once is enough");
+        assert_eq!(goal(Goal::Laid("any".into(), 3)), (2, 3), "recipes laid from a home's stores");
+        assert_eq!(goal(Goal::Laid("base:bone".into(), 1)), (0, 1), "what was made is not what was laid");
         assert_eq!(goal(Goal::Felt("base:heartwood".into())), (0, 1));
     }
 

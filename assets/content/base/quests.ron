@@ -811,6 +811,13 @@
             rewards: [Xp("construction", 60.0), Item("bread", 2)],
         ),
         (
+            name: "from_the_shelves", age: "nomad", branch: "home", title: "From the Shelves",
+            why: "No need to carry it all: at home, open your pack, look a recipe up (U or R over an item) and press Lay. The grid fills from your pack and from every store in your home, nearest first, so a crate stack of planks by the bed is a woodshed to craft from. Shift lays as many as will go. Put planks in a store and lay three recipes from it.",
+            tasks: [[Laid("any", 3)]],
+            after: ["pantry_shelves"],
+            rewards: [Xp("crafting", 40.0), Xp("construction", 20.0)],
+        ),
+        (
             name: "company_at_camp", age: "nomad", branch: "home", title: "Company at Camp",
             why: "An animal you keep, near your home, is company: you heal a tenth faster there. Tame one close to your bed or hearth, where the junglefowl or rabbits graze, so it is kept within your home's reach.",
             tasks: [[Built("home_company", 1)], [Built("home_full_house", 1)]],

@@ -484,6 +484,7 @@
     "quest.goal.opened": "Pick the lock of {item}",
     "quest.goal.fertilised": "Grow crops with {item}",
     "quest.goal.ate": "Eat {item}",
+    "quest.goal.laid": "Lay {item} from your home's stores",
     "quest.goal.felt": "Have {effect} on you",
     "multiblock.fuel": "Hold one complete fuel charge to light the {structure}: {fuels}.",
     "multiblock.fuel_or": " or ",
