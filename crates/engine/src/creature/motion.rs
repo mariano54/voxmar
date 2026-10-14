@@ -43,13 +43,16 @@ pub struct Body {
     pub reach: f32,
     pub head: f32,
     /// Which way round it turns, 1 or -1, once its head barred the short way (round a wall
-    /// at its side); 0 turns the short way.
+    /// at its side); 0 turns the short way. Kept only while it still wants the heading it
+    /// took the long way for (`turn_to`, a yaw): wanting another, it turns the short way
+    /// again rather than spin round.
     pub turn_way: f32,
+    pub turn_to: f32,
 }
 
 impl Body {
     pub fn new(position: Vec3, yaw: f32, size: (f32, f32)) -> Self {
-        Self { position, velocity: Vec3::ZERO, yaw, on_ground: false, in_water: false, size, against_wall: false, reach: 0.0, head: 0.0, turn_way: 0.0 }
+        Self { position, velocity: Vec3::ZERO, yaw, on_ground: false, in_water: false, size, against_wall: false, reach: 0.0, head: 0.0, turn_way: 0.0, turn_to: 0.0 }
     }
 
     pub fn aabb(&self) -> Aabb {
@@ -237,6 +240,12 @@ pub fn walks(movement: &Movement, water: Water, drive: Drive) -> bool {
     !(movement.style == Style::Flier && flies(movement, drive)) && movement.style != Style::Drifter && !matches!(water, Water::Air | Water::Swim)
 }
 
+/// How far apart two yaws are, the short way round, in radians.
+fn angle_between(a: f32, b: f32) -> f32 {
+    let d = (a - b).rem_euclid(std::f32::consts::TAU);
+    d.min(std::f32::consts::TAU - d)
+}
+
 /// Advances the body by `dt` seconds.
 pub fn step(body: &mut Body, world: &impl Surroundings, movement: &Movement, water: Water, drive: Drive, dt: f32) {
     let feet = body.position.floor().as_ivec3();
@@ -252,8 +261,12 @@ pub fn step(body: &mut Body, world: &impl Surroundings, movement: &Movement, wat
     let head_was_blocked = body.head_blocked(world);
     // Face the way it moves, or what it was asked to look at.
     let heading = if drive.wish.length_squared() > 1e-4 { Some(drive.wish) } else { drive.face };
-    if let Some(heading) = heading.filter(|h| h.x.abs() + h.z.abs() > 1e-4) {
-        let (to, most) = (yaw_of(heading), movement.turn.to_radians() * dt);
+    let wanted = heading.filter(|h| h.x.abs() + h.z.abs() > 1e-4).map(yaw_of);
+    if let Some(to) = wanted {
+        let most = movement.turn.to_radians() * dt;
+        if body.turn_way != 0.0 && angle_between(to, body.turn_to) > 45f32.to_radians() {
+            body.turn_way = 0.0;
+        }
         if body.turn_way == 0.0 {
             body.yaw = turn(body.yaw, to, most);
         } else {
@@ -345,6 +358,7 @@ pub fn step(body: &mut Body, world: &impl Surroundings, movement: &Movement, wat
         if turned != start_yaw && body.turn_way == 0.0 && clear(moved, other_way) {
             body.yaw = other_way;
             body.turn_way = (other_way - start_yaw).signum();
+            body.turn_to = wanted.unwrap_or(turned);
         } else if onward && clear(moved, start_yaw) {
             body.yaw = start_yaw;
         } else {
@@ -540,6 +554,19 @@ mod tests {
             assert!(!body.head_blocked(&wall), "its head went into the wall at {}", body.position);
         }
         assert!(body.forward().z > 0.9, "it never turned: facing {}", body.forward());
+        // Wanting another way part way round the long turn, it turns the short way to it
+        // rather than finish a spin it no longer wants.
+        let mut body = Body::new(Vec3::new(2.6, 0.0, 0.5), yaw_of(-Vec3::Z), (0.6, 1.4));
+        body.reach = 0.9;
+        body.head = 1.4;
+        for _ in 0..3 {
+            step(&mut body, &wall, &movement, Water::Land, Drive { wish: Vec3::new(0.2, 0.0, 1.0).normalize(), speed: 2.0, face: None }, 0.05);
+        }
+        assert!(body.turn_way != 0.0, "it never took the long way");
+        let from = body.yaw;
+        step(&mut body, &wall, &movement, Water::Land, Drive { wish: -Vec3::X, speed: 0.0, face: None }, 0.05);
+        assert_eq!(body.turn_way, 0.0, "the long turn outlived the heading it was for");
+        assert!(angle_between(body.yaw, yaw_of(-Vec3::X)) < angle_between(from, yaw_of(-Vec3::X)), "it turned away from the new heading");
     }
 
     #[test]
