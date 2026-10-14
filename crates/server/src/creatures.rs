@@ -560,8 +560,10 @@ impl Server {
         let held = self.tick < creature.held_until;
         // A land animal out of its depth makes for the nearest shore, whatever it had in mind
         // (rather than paddle where its wander or the food it was after takes it).
-        let deep = !held && species.def.habitat.water == Water::Land && body.in_water && Ground(self).water_at(body.position.floor().as_ivec3() - IVec3::Y);
-        let shore = if !deep {
+        // Once making for it, it keeps on through the shallows until it is out of the water.
+        let land = !held && species.def.habitat.water == Water::Land && body.in_water;
+        let deep = land && Ground(self).water_at(body.position.floor().as_ivec3() - IVec3::Y);
+        let shore = if !deep && !(land && creature.shore.is_some()) {
             None
         } else if creature.shore.is_some() && !self.tick.is_multiple_of(TICKS_PER_SECOND as u64) {
             creature.shore
@@ -2663,6 +2665,48 @@ mod herd_tests {
             let at = server.creatures.live[&id].body.position - c.as_vec3();
             assert!(out.is_some(), "{name} was still in the lake after 8 s, at {at:.2}");
             assert!(at.x > 6.5, "{name} came out on a far shore, at {at:.2}");
+        }
+    }
+
+    /// A lake two deep shelving to a block deep before its east shore: once out of the deep
+    /// water, each kind keeps on through the shallows to the shore, and does not wade back
+    /// into the deep after.
+    #[test]
+    fn a_land_animal_wades_out_through_shallows_and_keeps_out_of_the_deep() {
+        for name in ["base:mouflon", "base:red_deer", "base:rabbit", "base:junglefowl", "base:wolf", "base:badger"] {
+            for salt in 0..3u64 {
+                let mut server = crate::test_server();
+                server.meta.seed ^= salt * 7919;
+                let c = pen(&mut server, 14);
+                let (stone, water) = (server.content.blocks.expect("base:stone"), server.content.blocks.expect("base:water"));
+                for z in -8..=8 {
+                    for x in -8..=8 {
+                        let shallow = x >= 2;
+                        server.world.set_block(c + IVec3::new(x, -1, z), water);
+                        server.world.set_block(c + IVec3::new(x, -2, z), if shallow { stone } else { water });
+                        server.world.set_block(c + IVec3::new(x, -3, z), stone);
+                    }
+                }
+                let id = put(&mut server, name, c.as_vec3() + Vec3::new(-1.5, -1.5, 0.5), Vec3::X);
+                let deep = |server: &Server| {
+                    let body = &server.creatures.live[&id].body;
+                    body.in_water && Ground(server).water_at(body.position.floor().as_ivec3() - IVec3::Y)
+                };
+                let out = (0..12 * TICKS_PER_SECOND as u64).find(|_| {
+                    server.tick += 1;
+                    server.think_and_move();
+                    let body = &server.creatures.live[&id].body;
+                    body.on_ground && !body.in_water && body.position.y >= c.y as f32 - 0.01
+                });
+                let at = server.creatures.live[&id].body.position - c.as_vec3();
+                assert!(out.is_some(), "{name} (world {salt}) was still in the lake after 12 s, at {at:.2}");
+                for t in 0..30 * TICKS_PER_SECOND as u64 {
+                    server.tick += 1;
+                    server.think_and_move();
+                    let at = server.creatures.live[&id].body.position - c.as_vec3();
+                    assert!(!deep(&server), "{name} (world {salt}) waded back into the deep water at {at:.2} (tick {t})");
+                }
+            }
         }
     }
 }
