@@ -284,9 +284,10 @@ pub struct Heard {
 struct Queued(Vec<(String, f32, f32, bool)>);
 
 /// Tells' sounds waiting for their moment (app seconds), so each one's loudest lands with
-/// its blow.
+/// its blow, and whose wind-up they tell: one whose wind-up ended first (the creature died,
+/// went, or struck sooner) is dropped.
 #[derive(Resource, Default, Debug)]
-pub struct Pending(pub Vec<(f32, String)>);
+pub struct Pending(pub Vec<(f32, String, u32)>);
 
 /// A ring on the ground telling how far a boss's blow reaches: whose, when its wind-up
 /// began, how long it lasts, how far it reaches, and whether this is the filling disc
@@ -388,7 +389,7 @@ fn tell(
     for told in told {
         let Some(tell) = look.tells.get(&told.key) else { continue };
         *heard.asked.entry(tell.sound.clone()).or_default() += 1;
-        pending.0.push((now + (told.windup - tell.peak).max(0.0), tell.sound.clone()));
+        pending.0.push((now + (told.windup - tell.peak).max(0.0), tell.sound.clone(), told.id));
         let Some(marker) = tell.marker else { continue };
         let Some((_, at, _)) = creatures.body(told.id) else { continue };
         heard.markers += 1;
@@ -406,9 +407,10 @@ fn tell(
             ));
         }
     }
-    let (due, waiting): (Vec<_>, Vec<_>) = pending.0.drain(..).partition(|(at, _)| *at <= now);
+    pending.0.retain(|&(_, _, id)| creatures.winding(id));
+    let (due, waiting): (Vec<_>, Vec<_>) = pending.0.drain(..).partition(|(at, ..)| *at <= now);
     pending.0 = waiting;
-    for (_, sound) in due {
+    for (_, sound, _) in due {
         queued.0.push((sound, 1.0, 1.0, true));
     }
 }
@@ -450,7 +452,9 @@ fn markers(
     for (entity, marker, mut transform, material) in &mut rings {
         let t = now - marker.from;
         let body = creatures.body(marker.id);
-        if t > marker.windup + MARKER_AFTER || body.is_none() {
+        // Gone with its wind-up: run out, or ended first (died, went, or struck sooner).
+        let ended = t < marker.windup && !creatures.winding(marker.id);
+        if t > marker.windup + MARKER_AFTER || body.is_none() || ended {
             materials.remove(&material.0);
             commands.entity(entity).despawn();
             continue;
