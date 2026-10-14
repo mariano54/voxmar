@@ -14,6 +14,8 @@ mod fishing;
 mod death;
 #[cfg(test)]
 mod doors;
+#[cfg(test)]
+mod guests;
 mod hearth;
 mod journal;
 mod lairs;
