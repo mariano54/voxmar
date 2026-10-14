@@ -21,11 +21,15 @@ pub struct Vitals {
     pub felt: f32,
     /// Buffs first, then debuffs.
     pub effects: Vec<ActiveEffect>,
+    /// Where home is, the block of its lit hearth (else the bed last slept in), if the
+    /// player has one: what the interface points the way back to.
+    #[serde(default)]
+    pub home: Option<glam::IVec3>,
 }
 
 impl Default for Vitals {
     fn default() -> Self {
-        Self { felt: 15.0, effects: Vec::new() }
+        Self { felt: 15.0, effects: Vec::new(), home: None }
     }
 }
 
