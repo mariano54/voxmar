@@ -59,7 +59,7 @@
     // A boss fight: a creature with `boss: true` alive within `within` blocks, or a block
     // of a boss's room (by name in `rooms`) within `room_reach` blocks. Only Boss tracks
     // play then: the calm track playing fades as it starts, and the boss's when it ends.
-    boss: (within: 32.0, rooms: [], room_reach: 12),
+    boss: (within: 32.0, rooms: ["base:hollow_floor"], room_reach: 12),
         // Underground: this many blocks below the surface, with this little of the air
     // around open to the sky.
     underground: (depth: 12.0, max_sky: 0.05),

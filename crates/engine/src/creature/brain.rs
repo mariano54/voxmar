@@ -112,6 +112,9 @@ pub struct Situation<'a> {
     pub home: Vec3,
     /// Its health as a share of its most.
     pub health: f32,
+    /// The phase of its fight it has reached (`moves::Phase`): a boss mended back over a
+    /// phase's line stays in it.
+    pub phase: u8,
     /// 0 at night .. 1 by day.
     pub daylight: f32,
     /// Players it can sense, nearest first.
@@ -281,7 +284,8 @@ impl Mind {
     /// hurt, angers. Remembered for a while (Minecraft keeps revenge 15 s; a grudge here
     /// lasts longer, and bravery decides fight or flight).
     pub fn hurt(&mut self, creature: &Creature, by: Option<u32>, health: f32) {
-        let fights = creature.fights() && health > 0.5 - 0.35 * self.personality.bravery;
+        // A boss never runs: it fights to the end.
+        let fights = creature.fights() && (creature.def.boss || health > 0.5 - 0.35 * self.personality.bravery);
         if fights {
             self.anger = 1.0;
         } else {
@@ -465,7 +469,7 @@ pub(super) mod tests {
     pub(super) const BODY: &str = "body: (size: (0.6, 0.6), model: Blob(body: (0.5, 0.5, 0.5)), colours: [(1, 2, 3)])";
 
     pub(super) fn situation<'a>(players: &'a [Seen]) -> Situation<'a> {
-        Situation { position: Vec3::ZERO, home: Vec3::ZERO, health: 1.0, daylight: 1.0, players, kin: &[], food: None, mate: None, kept: false, errand: None, dt: 0.2, seed: 7 }
+        Situation { position: Vec3::ZERO, home: Vec3::ZERO, health: 1.0, phase: 0, daylight: 1.0, players, kin: &[], food: None, mate: None, kept: false, errand: None, dt: 0.2, seed: 7 }
     }
 
     pub(super) fn player(at: Vec3) -> Seen {

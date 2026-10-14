@@ -40,6 +40,7 @@ mod ores;
 mod rng;
 mod rocks;
 mod router;
+mod lairs;
 mod settlements;
 mod shapes;
 mod stage;
@@ -72,6 +73,7 @@ pub use geology::Form;
 pub use rocks::ProvinceId;
 pub use shapes::ShapeId;
 pub use trails::{Kind as PlaceKind, Poi, TrailMark};
+pub use lairs::{LairDef, LairSite};
 pub use settlements::{Building as SettlementBuilding, Facing as SettlementFacing, Kind as BuildingKind, Levers as SettlementLevers, people};
 
 use fastnoise_lite::{FastNoiseLite, FractalType};
@@ -243,6 +245,7 @@ pub struct Overworld {
     rivers: water::Rivers,
     trails: trails::Trails,
     settlements: settlements::Settlements,
+    lairs: lairs::Lairs,
     ecology: Ecology,
     decor: decor::Decor,
     biomes: Biomes,
@@ -258,8 +261,17 @@ pub struct Overworld {
     blend: FastNoiseLite,
     /// Patches of lighter and darker grass and leaves.
     tint: FastNoiseLite,
+    /// The biome picker's fields on the lattice `locate_biome` searches, a tile of
+    /// `FIELD_TILE` × `FIELD_TILE` points at a time, by the lattice's offset and the tile:
+    /// searches from the same lattice (a test's many biomes from the same places) work
+    /// each out once.
+    fields: water::cache::Cache<(IVec2, IVec2), Arc<[Point]>>,
     seed: u64,
 }
+
+/// Points a side of a tile of `Overworld::fields`, and the bytes those tiles may hold.
+const FIELD_TILE: i32 = 16;
+const FIELD_BUDGET: usize = 16 << 20;
 
 /// How far around the first place found `locate_biome` looks for the biome's interior.
 const LOCATE_INSIDE: i32 = 256;
@@ -311,6 +323,7 @@ impl Overworld {
             decor,
             trails: trails::Trails::new(stream, content.trails.laid),
             settlements: settlements::Settlements::new(stream, &content.settlements, &registry, trees::tallest(content)),
+            lairs: lairs::Lairs::new(stream, &content.lairs, &registry),
             caves: caves::Caves::new(stream, &dials),
             underground,
             terrain: terrain::Terrain::new(stream, &registry, content, &rocks, &biomes),
@@ -321,6 +334,7 @@ impl Overworld {
             shape_surfaces,
             blend: geology::noise(stream, 40, 1.0 / 12.0, FractalType::FBm, 2),
             tint: geology::noise(stream, 41, 1.0 / 45.0, FractalType::FBm, 2),
+            fields: water::cache::Cache::new(FIELD_BUDGET),
             seed: stream,
         }
     }
@@ -411,10 +425,7 @@ impl Overworld {
             from,
             radius,
             climate::CELL,
-            |ring| {
-                let at: Vec<(f32, f32)> = ring.iter().map(|p| (p.x as f32, p.y as f32)).collect();
-                self.geology.climate().regionals(&self.geology, &at).iter().map(|r| self.point(r)).collect()
-            },
+            |ring| self.fields_at(ring),
             // Only a patch with ground at least `LOCATE_DEPTH` from its border near the
             // candidate: a sliver of the biome is passed over and the search goes on.
             |at| {
@@ -441,6 +452,36 @@ impl Overworld {
             })
             .max_by(|a, b| a.1.total_cmp(&b.1));
         Some(best.map_or(found, |b| b.0))
+    }
+
+    /// The biome picker's fields at each of `at`, all on one climate lattice (a multiple
+    /// of `climate::CELL` apart), from the tiles of them cached in `fields`.
+    fn fields_at(&self, at: &[IVec2]) -> Vec<Point> {
+        let mut last: Option<((IVec2, IVec2), Arc<[Point]>)> = None;
+        at.iter()
+            .map(|&p| {
+                let offset = p.rem_euclid(IVec2::splat(climate::CELL));
+                let cell = (p - offset) / climate::CELL;
+                let key = (offset, cell.div_euclid(IVec2::splat(FIELD_TILE)));
+                let tile = match &last {
+                    Some((k, tile)) if *k == key => tile.clone(),
+                    _ => {
+                        let tile = self.fields.get(key, || {
+                            let first = offset + key.1 * FIELD_TILE * climate::CELL;
+                            let at: Vec<(f32, f32)> = (0..FIELD_TILE * FIELD_TILE)
+                                .map(|i| first + IVec2::new(i % FIELD_TILE, i / FIELD_TILE) * climate::CELL)
+                                .map(|q| (q.x as f32, q.y as f32))
+                                .collect();
+                            self.geology.climate().regionals(&self.geology, &at).iter().map(|r| self.point(r)).collect()
+                        });
+                        last = Some((key, tile.clone()));
+                        tile
+                    }
+                };
+                let within = cell.rem_euclid(IVec2::splat(FIELD_TILE));
+                tile[(within.y * FIELD_TILE + within.x) as usize]
+            })
+            .collect()
     }
 
     /// The biome picker's fields from the regional climate.
@@ -518,6 +559,21 @@ impl Overworld {
     /// The land trails are planned over: the ground with its rivers and lakes.
     fn land(&self) -> RiverLand<'_> {
         RiverLand { rivers: &self.rivers, stages: self.stages(), world: self }
+    }
+
+    /// The lairs within `radius` blocks of `centre`, nearest first (`lairs.ron`).
+    pub fn lairs_near(&self, centre: IVec2, radius: i32) -> Vec<LairSite> {
+        self.lairs.near(self, centre, radius)
+    }
+
+    /// The kinds of lair, by `LairSite::lair`.
+    pub fn lair_defs(&self) -> &[LairDef] {
+        self.lairs.defs()
+    }
+
+    /// Whether a settlement's plan covers (x, z).
+    pub(crate) fn settlement_covers(&self, x: i32, z: i32) -> bool {
+        self.settlements.covers(self, x, z)
     }
 
     /// The settlements whose squares lie within `radius` blocks of `centre`: their names

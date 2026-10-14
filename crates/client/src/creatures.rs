@@ -57,6 +57,8 @@ const HEARTS: usize = 3;
 /// Blocks within which a creature turns its head to watch the player, and how far it turns.
 const WATCHES_WITHIN: f32 = 9.0;
 const WATCH_TURN: f32 = 1.0;
+/// How far a boss rears up at its fullest, in radians (`shown.rear`).
+const REAR: f32 = 0.45;
 
 /// A small bird's flight: blocks it rises and dips each bound, beats a second, how far its
 /// wings swing out from folded (radians), how much longer they reach spread, and how fast
@@ -233,6 +235,9 @@ struct Shown {
     nod: f32,
     look: f32,
     crouch: f32,
+    /// How far it rears up, 0 ..= 1: a boss's tell (`moves::Tell::rear`), or rearing
+    /// into a new phase of its fight.
+    rear: f32,
     /// How far a flier's wings are spread, 0 (folded, on the ground) ..= 1 (in flight).
     spread: f32,
     /// Blocks one that died in the air has fallen so far.
@@ -747,6 +752,7 @@ fn show(
                 nod: 0.0,
                 look: 0.0,
                 crouch: 0.0,
+                rear: 0.0,
                 spread: 0.0,
                 fell: 0.0,
                 hearts: Vec::new(),
@@ -796,8 +802,19 @@ fn show(
             Pose::Attacking => (0.3, 0.05),
             Pose::Idle => (0.0, 0.0),
         };
+        // A boss's move shows its own tell, so each reads apart; rearing into a new phase,
+        // it rears right up.
+        let (nod, crouch, rear) = match shown.view.tell {
+            voxmar_protocol::REARING => (-0.4, 0.0, 1.0),
+            0 => (nod, crouch, 0.0),
+            index => {
+                let tell = registry.get(shown.view.species).tell_at(index);
+                (tell.nod, tell.crouch * 0.3, tell.rear)
+            }
+        };
         shown.nod += (nod - shown.nod) * (6.0 * dt).min(1.0);
         shown.crouch += (crouch - shown.crouch) * (6.0 * dt).min(1.0);
+        shown.rear += (rear - shown.rear) * (5.0 * dt).min(1.0);
         // Watching the player who comes near, unless grazing or running.
         let to_eye = eye - shown.position;
         let watching = to_eye.length() < WATCHES_WITHIN && shown.view.pose != Pose::Grazing && speed < def.movement.walk * 1.2 && shown.dying.is_none();
@@ -834,7 +851,7 @@ fn show(
         };
 
         let mut root = Transform::from_translation(shown.position + Vec3::Y * height * (bob - shown.crouch))
-            .with_rotation(Quat::from_rotation_y(shown.yaw))
+            .with_rotation(Quat::from_rotation_y(shown.yaw) * Quat::from_rotation_x(shown.rear * REAR))
             .with_scale(Vec3::splat(scale));
         if let Some(dying) = shown.dying.as_mut() {
             // One that died in the air rolls over as it falls, and sinks away only once it is
@@ -1156,6 +1173,7 @@ mod tests {
             velocity: Vec3::ZERO,
             yaw: 0.0,
             pose: creature::brain::Pose::Idle,
+            tell: 0,
             health: 4,
             scale: 1.0,
             seed: 0,

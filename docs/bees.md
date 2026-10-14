@@ -16,8 +16,10 @@ and honey in `blocks.ron`, which generation reads alone), the server's apiary in
    decoration grows in, and a test (`the_bee_quest_names_every_biome_wild_bees_nest_in`)
    keeps it so.
 2. **Make a skep.** Seven wheat and three twine at a crafting table (Crafting 6).
-3. **Take the swarm.** A campfire within four blocks of the nest smokes the bees calm (or a
-   torch in hand, later). Hold the skep up to the nest and right-click (`base:tend_bees`,
+3. **Take the swarm.** A campfire within four blocks of the nest smokes the bees calm. So
+   does smoke on the player: a torch held a moment, or a fire within two blocks, leaves
+   them Smoky for 30 seconds (effects.ron's `smoky`, which `lingers`), long enough to put
+   the torch away and take up the skep. Hold the skep up to the nest and right-click (`base:tend_bees`,
    Farming 12, 60 Farming XP): the nest is gone and the skep in hand is a skep of bees.
    Without smoke the bees sting (2 damage, never the last health, and Stung, heal ×0.75
    for a minute) and the swarm stays put. Breaking a nest gives one honey and nothing more.
@@ -36,7 +38,8 @@ and honey in `blocks.ron`, which generation reads alone), the server's apiary in
 
 | Rule | What happens | Test |
 | --- | --- | --- |
-| Smoke (`smoke`, `smoke_reach` 4) | a `fire`-tagged block within reach, or in hand, calms the bees: no stings | `a_swarm_goes_into_a_skep_only_under_smoke` |
+| Smoke (`smoke`, `smoke_reach` 4) | a `fire`-tagged block within reach calms the bees: no stings | `a_swarm_goes_into_a_skep_only_under_smoke` |
+| Smoke that clings (`smoky`) | a player Smoky (a torch in hand or a fire within 2, lingering 30 s) calms bees as a fire near them would | `smoke_from_a_torch_in_hand_clings_while_the_skep_is_taken_up` |
 | Fire (`scorch_reach` 1) | a fire right beside a kept hive drives its bees off: an empty skep | `a_fire_beside_a_hive_drives_its_bees_off` |
 | Night and rain (`dusk`, `rain`) | the bees stay in; no foraging | `bees_fill_a_skep_from_the_flowers_near_by_day_only`, `the_games_bees_stay_in_from_rain_and_night_and_follow_the_flowers` |
 | Flowers (`nectar`, `nectar_full`) | more flowers, faster honey; none, none | same |
