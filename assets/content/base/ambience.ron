@@ -31,6 +31,8 @@
         (name: "wood", tags: ["log"], range: (5, 60)),
         // Lava and falling water sound like water to the step, so they come first.
         (name: "lava", tags: ["lava"], range: (4, 80)),
+        // A pot on the boil (`simmering`): one within five blocks is full.
+        (name: "pot", tags: ["simmering"], range: (2, 10)),
         (name: "falls", materials: [Water], falling: true, range: (6, 90)),
         (name: "water", materials: [Water], range: (20, 300)),
         // Not heard: the air's pollen keeps near flowers (client/src/weather/atmosphere.rs).
@@ -275,6 +277,12 @@
             name: "lava_pop", sound: LavaPop, volume: 0.35, at: Block("lava"), per_minute: 5, cooldown: 4,
             pitch: (0.8, 1.15), reach: 10,
             when: {"lava": (min: 0.3, fade: 0.3)},
+        ),
+        // A pot on the fire bubbling away while it cooks.
+        (
+            name: "simmer", sound: Simmer, volume: 0.3, at: Block("pot"), per_minute: 14, cooldown: 1.5,
+            pitch: (0.85, 1.2), reach: 4,
+            when: {"pot": (min: 0.3, fade: 0.3)},
         ),
     ],
 )
