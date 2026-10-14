@@ -68,6 +68,8 @@
         block_shake: 0.7, block_jolt: 0.07, recoil: 0.05,
         punch_seconds: 0.22,
         perfect_sparks: (count: 12, speed: 3.2, life: 0.28, size: 0.035, color: Some((255, 236, 170))),
+        // The view leans into a dodge, the way the player goes (degrees, seconds).
+        dodge_lean: 3.0, dodge_seconds: 0.3,
     ),
     // Fight sounds, each synthesized from layers (nothing is shipped), or played from
     // recordings in the package where a package lists any for it (`recordings`, paths in

@@ -339,7 +339,9 @@ running: on 2026-10-06 that turned the play binary and a thread's build into six
   landing's build took 25 minutes on the efficiency cores alone, and the clamp bought
   nothing while he is not playing, since PLAYING stops every job and is written only when
   he plays. Timing runs (`VOXMAR_TIMING=1`) and the benchmark's timed runs
-  (`VOXMAR_FOREGROUND=1`) run as his game does, and a timing run takes no slot.
+  (`VOXMAR_FOREGROUND=1`) run as his game does, and a timing run takes no slot. So does
+  the gate's played session, whose checks time the game's frames: its tests beside it are
+  clamped to utility QoS (`nice 19`) by `tools/gate` itself.
 - Everything memcap runs is muted (`VOXMAR_MUTE=1`): no run of ours ever plays a sound.
 - While `~/Projects/voxmar-wt/QUIET` exists (and is younger than 20 minutes), nothing new
   starts and running builds pause; tests and game runs, which finish within a minute or
