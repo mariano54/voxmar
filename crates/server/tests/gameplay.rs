@@ -4284,6 +4284,13 @@ fn a_shot_by_a_bees_nest_stirs_the_bees_unless_smoke_calms_them() {
     client.pump_until(|c| c.blows == 3);
     client.wait_server(1);
     assert!(stung(&client), "an unsmoked nest beside a smoked one stirs: {:?}", client.chat);
+    // Smoke clinging to the shooter (effects.ron's `smoky`) calms every nest the shot is near.
+    client.ok("/effect smoky 60");
+    client.chat.clear();
+    client.propose("core:attack", ActionTarget::Creature(id));
+    client.pump_until(|c| c.blows == 4);
+    client.wait_server(1);
+    assert!(!stung(&client), "a smoky shooter stirs no bees: {:?}", client.chat);
 }
 
 /// Whether a dodge proposed now is taken: a second one at once must then be refused by its
