@@ -315,10 +315,6 @@ pub struct Marker {
     alpha: f32,
 }
 
-/// The least wind-up a creature's blow may have (seconds): time to see it coming and
-/// answer it.
-pub const READABLE: f32 = 0.3;
-
 /// Blocks within which a tell is heard at its full loudness.
 const TOLD_NEAR: f32 = 6.0;
 
@@ -820,6 +816,10 @@ fn smoke(particles: &mut Particles, poof: &Burst, scale: f32, at: Vec3, height: 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The least wind-up a creature's blow may have (seconds): time to see it coming and
+    /// answer it.
+    const READABLE: f32 = 0.3;
 
     fn look() -> FightLook {
         let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/content/core/combat_fx.ron")).unwrap();
