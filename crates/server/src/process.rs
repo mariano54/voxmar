@@ -220,6 +220,7 @@ impl Process for Survival {
             // The felt temperature is sent to the degree, so it does not resend every tick.
             player.vitals.felt = situation.felt.round();
             player.vitals.effects = effects.active(&situation, &player.timed_effects);
+            player.vitals.home = player.home.or(player.bed).map(|at| at.floor().as_ivec3());
             // The steps of a ladder say so when first reached.
             let gained: Vec<EffectId> = player.vitals.effects.iter().map(|a| a.effect).filter(|&e| effects.get(e).announce && !player.announced.contains(&e)).collect();
             player.announced.extend(&gained);

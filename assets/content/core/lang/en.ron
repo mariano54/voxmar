@@ -496,6 +496,7 @@
     "journal.stage.seen": "Seen",
     "journal.stage.studied": "Studied",
     "journal.stage.mastered": "Mastered",
+    "hud.home": "Home {distance} m",
     "journal.hint.lives_in": "Lives in {biome}",
     "journal.hint.animals": "Look for animals in the wild.",
     "journal.hint.monsters": "Monsters come out in the dark.",

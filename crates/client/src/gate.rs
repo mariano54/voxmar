@@ -455,6 +455,8 @@ struct Gate {
     count_before: u32,
     natural_before: Vec<u32>,
     natural_home: Vec3,
+    /// The way home's hiding distance, while the Home step shows the mark close up.
+    home_hidden_within: Option<f32>,
     /// The creature the combat-marks step tells its blows at, when (game time) it last told
     /// them, and how many runs it has told.
     marked: Option<u32>,
@@ -634,6 +636,7 @@ impl Gate {
             count_before: 0,
             natural_before: Vec::new(),
             natural_home: Vec3::ZERO,
+            home_hidden_within: None,
             marked: None,
             marked_at: 0.0,
             marked_tries: 0,
@@ -4349,7 +4352,9 @@ fn prayers(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 
 /// A sleeping bag and a torch beside the player, slept in: the bed is their home and it has
 /// a light, so the Camp step (docs/home.md) comes on as a chip, the chat names it and what to
-/// add next, and the sleep gives a rest. The blocks go again after, and the rest with them.
+/// add next, and the sleep gives a rest. Then the way home: with the mark's hiding distance
+/// set to nothing, the hearth mark shows how far the bag is. The blocks go again after, and
+/// the rest with them.
 fn home(world: &mut World, gate: &mut Gate, now: f32) {
     let stand = world.resource::<LocalPlayer>().position.floor().as_ivec3();
     let (bag, torch) = (stand + IVec3::new(2, 0, 0), stand + IVec3::new(3, 0, 0));
@@ -4360,6 +4365,8 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
             net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
         }
         net.command("effect clear");
+        let style = &mut world.resource_mut::<crate::hud::inventory::InterfaceStyle>();
+        style.home_hidden_within = gate.home_hidden_within.take().unwrap_or(style.home_hidden_within);
         gate.next(Step::Quests, now);
     };
     match gate.phase {
@@ -4395,7 +4402,7 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
                 Some(false) => {}
             }
         }
-        _ => {
+        2 => {
             let has = |world: &World, name: &str| {
                 let (player, launch) = (world.resource::<LocalPlayer>(), world.resource::<Launch>());
                 launch.content.effects.id(name).is_some_and(|id| player.vitals.effects.iter().any(|a| a.effect == id))
@@ -4407,9 +4414,24 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
             };
             if camp && rested && announced && slept {
                 gate.check("home: camp", Ok("a bed and a light slept in showed the Camp chip, the chat named it with its next step, and the sleep was a rest".into()));
-                leave(world, gate);
+                let mut style = world.resource_mut::<crate::hud::inventory::InterfaceStyle>();
+                gate.home_hidden_within = Some(style.home_hidden_within);
+                style.home_hidden_within = 0.0;
+                gate.advance(now);
             } else if waited > 30.0 {
                 gate.check("home: camp", Err(format!("{waited:.1} server s after sleeping at a bag with a torch beside it: Camp chip {camp}, Rested chip {rested}, Camp line with Next {announced}, sleep line {slept}")));
+                leave(world, gate);
+            }
+        }
+        _ => {
+            let told = world.resource::<LocalPlayer>().vitals.home;
+            let shown = world.query_filtered::<&Visibility, With<crate::hud::home::HomeMark>>().iter(world).any(|v| *v != Visibility::Hidden);
+            let words = world.query_filtered::<&Text, With<crate::hud::home::HomeWords>>().iter(world).map(|t| t.0.clone()).next().unwrap_or_default();
+            if told == Some(bag) && shown && words.contains(" m") {
+                gate.check("home: way", Ok(format!("the server named the bag as home and the hearth mark showed \"{words}\"")));
+                leave(world, gate);
+            } else if waited > 10.0 {
+                gate.check("home: way", Err(format!("{waited:.1} server s after the bag became home: home told {told:?} (bag {bag}), mark shown {shown}, words \"{words}\"")));
                 leave(world, gate);
             }
         }

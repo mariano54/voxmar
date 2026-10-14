@@ -4,4 +4,8 @@
     // How strongly an empty worn well shows what it takes (the pack's `ui/slot/*` marks),
     // from 0 (not at all) to 1 (as drawn).
     worn_glyph_alpha: 0.25,
+    // The way home: a mark at the top of the screen toward home (the lit hearth, else the
+    // bed last slept in) and how far it is, once the player is farther than this many
+    // blocks from it.
+    home_hidden_within: 24.0,
 )
