@@ -1733,8 +1733,17 @@ fn breaks(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 let blocks: Vec<BlockId> = BREAK_BLOCKS.iter().filter_map(|name| registry.id(name)).collect();
                 // Every holder once (as many as there are cells), every hardness at least once.
                 let cells = break_cells();
-                let count = blocks.len().max(holders.len()).min(cells.len());
-                (0..count).map(|i| (feet + cells[i], blocks[i % blocks.len()], holders[i % holders.len()])).collect::<Vec<_>>()
+                holders.truncate(cells.len());
+                let tools = &world.resource::<Launch>().content.tools;
+                let seconds = |block: BlockId, holder: Holder| {
+                    let item = match holder {
+                        Holder::Hand => None,
+                        Holder::Planks => registry.id("base:oak_planks"),
+                        Holder::Tool(tool) => Some(tool),
+                    };
+                    registry.info(block).hardness.max(0.0) / tools.speed(item, block).max(0.05)
+                };
+                cells.iter().zip(break_row(&blocks, &holders, seconds)).map(|(&cell, (block, holder))| (feet + cell, block, holder)).collect::<Vec<_>>()
             };
             let net = world.resource::<Net>();
             let stand = feet + BREAK_STAND;
@@ -1860,6 +1869,51 @@ fn breaks(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             end_breaks(world, gate, now);
         }
     }
+}
+
+/// The breaks step's row: every holder once, in order, each with a block, and every block
+/// (`blocks`, hardest last) at least once. The bare hand takes the slowest block it can
+/// and the planks the slowest after that, so a long break runs under the load and the hitches
+/// (and the planks' Q, thrown halfway, lands mid-break); each block not yet in the row goes to
+/// the holder left that breaks it fastest (of those as fast, the one it costs least beside
+/// the block that holder breaks fastest), and every other holder takes the block it breaks
+/// fastest, so the row takes no longer than it must. Fewer holders than blocks, and the
+/// blocks left over go to the holders again in turn.
+fn break_row(blocks: &[BlockId], holders: &[Holder], seconds: impl Fn(BlockId, Holder) -> f32) -> Vec<(BlockId, Holder)> {
+    let mut row: Vec<Option<BlockId>> = vec![None; holders.len()];
+    let fastest = |holder: Holder, among: &mut dyn Iterator<Item = BlockId>| among.min_by(|&a, &b| seconds(a, holder).total_cmp(&seconds(b, holder)));
+    let slowest = |holder: Holder, among: &mut dyn Iterator<Item = BlockId>| among.max_by(|&a, &b| seconds(a, holder).total_cmp(&seconds(b, holder)));
+    for slow in [Holder::Hand, Holder::Planks] {
+        if let Some(i) = holders.iter().position(|&h| h == slow) {
+            let taken: Vec<BlockId> = row.iter().flatten().copied().collect();
+            row[i] = slowest(slow, &mut blocks.iter().copied().filter(|b| !taken.contains(b)));
+        }
+    }
+    for &block in blocks {
+        if row.contains(&Some(block)) {
+            continue;
+        }
+        // The fastest on it; of those as fast, the one it costs least beside its own fastest.
+        let cost = |i: usize| {
+            let own = fastest(holders[i], &mut blocks.iter().copied()).map_or(0.0, |b| seconds(b, holders[i]));
+            (seconds(block, holders[i]), seconds(block, holders[i]) - own)
+        };
+        let free = (0..holders.len()).filter(|&i| row[i].is_none());
+        let Some(i) = free.min_by(|&a, &b| {
+            let (a, b) = (cost(a), cost(b));
+            a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1))
+        }) else {
+            break;
+        };
+        row[i] = Some(block);
+    }
+    let mut row: Vec<(BlockId, Holder)> = row.into_iter().zip(holders).map(|(block, &holder)| (block.or_else(|| fastest(holder, &mut blocks.iter().copied())).unwrap_or(blocks[0]), holder)).collect();
+    let mut left = blocks.iter().filter(|b| !row.iter().any(|(r, _)| r == *b)).copied().collect::<Vec<_>>().into_iter();
+    for i in 0.. {
+        let Some(block) = left.next() else { break };
+        row.push((block, holders[i % holders.len()]));
+    }
+    row
 }
 
 /// Puts `holder` in the player's hand: an empty hotbar slot, the planks, or the tool,
@@ -11437,6 +11491,30 @@ mod tests {
         let mut feel = FeelRun { chances: 3, calm: true, ..default() };
         assert!(feel.observe(true, false));
         assert_eq!(feel.chances, 0);
+    }
+
+    /// Every holder once, every block at least once; the hand and the planks on the slowest
+    /// blocks, each block placed with the holder fastest on it, the rest on their fastest.
+    #[test]
+    fn the_break_row_has_every_holder_and_block_and_keeps_its_slow_breaks() {
+        let [glass, dirt, stone, cobble] = [BlockId(1), BlockId(2), BlockId(3), BlockId(4)];
+        let (pick, shovel, axe) = (Holder::Tool(BlockId(10)), Holder::Tool(BlockId(11)), Holder::Tool(BlockId(12)));
+        let hardness = |b: BlockId| [0.0, 0.3, 0.5, 1.5, 2.0][b.0 as usize];
+        let seconds = |b: BlockId, h: Holder| {
+            let speed = match h {
+                h if h == pick && (b == stone || b == cobble) => 8.0,
+                h if h == shovel && b == dirt => 4.0,
+                _ => 1.0,
+            };
+            hardness(b) / speed
+        };
+        let blocks = [glass, dirt, stone, cobble];
+        let holders = [Holder::Hand, Holder::Planks, pick, shovel, axe, Holder::Tool(BlockId(13))];
+        let row = break_row(&blocks, &holders, seconds);
+        assert_eq!(row, [(cobble, Holder::Hand), (stone, Holder::Planks), (stone, pick), (dirt, shovel), (glass, axe), (glass, Holder::Tool(BlockId(13)))]);
+        // More blocks than holders: the rest go round the holders again.
+        let row = break_row(&blocks, &[Holder::Hand, pick], seconds);
+        assert_eq!(row, [(cobble, Holder::Hand), (glass, pick), (dirt, Holder::Hand), (stone, pick)]);
     }
 
     #[test]
