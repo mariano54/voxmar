@@ -407,6 +407,9 @@ enum Step {
     /// chat says so with what to add next, and the sleep is a rest. At home, Lay on a
     /// recipe fills the crafting grid from a barrel there.
     Home,
+    /// The way home at dusk: past the home's box, the hearth mark sits within a few degrees
+    /// of where home lies; back inside the home, it is gone.
+    WayHome,
     /// A wooden door placed before the player goes in whole, both halves facing them, and a
     /// right click on it opens it and another shuts it, as the server turns it.
     Door,
@@ -498,12 +501,14 @@ struct Gate {
     dug: Vec<(IVec3, BlockId)>,
     /// How many of an item the inventory held before a step that changes it.
     count_before: u32,
+    /// The time of day before the way home step set dusk, set back after it.
+    way_time: u64,
     /// The window step's lit pane, kept to judge against it snuffed.
     window_lit: Option<[f64; 3]>,
     natural_before: Vec<u32>,
     natural_home: Vec3,
-    /// The way home's hiding distance, while the Home step shows the mark close up.
-    home_hidden_within: Option<f32>,
+    /// The way home's numbers, while the Home step shows the mark close up at any hour.
+    home_style: Option<crate::hud::inventory::InterfaceStyle>,
     /// Puffs the watched chimney owed so far (its rate times the seconds watched).
     chimney_owed: f32,
     /// What the dry step's pot water replaced, put back after.
@@ -725,10 +730,11 @@ impl Gate {
             digging: None,
             dug: Vec::new(),
             count_before: 0,
+            way_time: 0,
             window_lit: None,
             natural_before: Vec::new(),
             natural_home: Vec3::ZERO,
-            home_hidden_within: None,
+            home_style: None,
             chimney_owed: 0.0,
             pot_ground: None,
             marked: None,
@@ -1566,6 +1572,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Journal => journal(world, gate, now, in_phase),
         Step::Prayers => prayers(world, gate, now, in_phase),
         Step::Home => home(world, gate, now),
+        Step::WayHome => way_home(world, gate, now, in_phase),
         Step::Door => door(world, gate, now, in_phase),
         Step::Quests => quests(world, gate, now, in_phase),
         Step::Catalogue => catalogue(world, gate, now, in_phase),
@@ -4807,14 +4814,19 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
     let (bag, torch, barrel) = (stand + IVec3::new(2, 0, 0), stand + IVec3::new(3, 0, 0), stand + IVec3::new(-2, 0, 0));
     let waited = gate.server_in_phase();
     let leave = |world: &mut World, gate: &mut Gate| {
-        let net = world.resource::<Net>();
-        for at in [bag, torch] {
-            net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
+        world.resource::<Net>().command("effect clear");
+        if let Some(style) = gate.home_style.take() {
+            *world.resource_mut::<crate::hud::inventory::InterfaceStyle>() = style;
         }
-        net.command("effect clear");
-        let style = &mut world.resource_mut::<crate::hud::inventory::InterfaceStyle>();
-        style.home_hidden_within = gate.home_hidden_within.take().unwrap_or(style.home_hidden_within);
-        gate.next(Step::Door, now);
+        // The camp stays home for the way home step, which takes it down; one the server
+        // never named home that step cannot find, so it goes here.
+        if world.resource::<LocalPlayer>().vitals.home != Some(bag) {
+            let net = world.resource::<Net>();
+            for at in [bag, torch] {
+                net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
+            }
+        }
+        gate.next(Step::WayHome, now);
     };
     match gate.phase {
         0 => {
@@ -4870,9 +4882,10 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
                     ["base:camp", "base:rested"].map(|name| effects.id(name).map(|id| images.effect(id)))
                 };
                 gate.check("home: icons", if icons[0].is_some() && icons[0] != icons[1] { Ok("the Camp and Rested chips each show an icon of their own".into()) } else { Err(format!("the Camp and Rested chips share an icon: {icons:?}")) });
+                // Shown however near and at any hour, for the mark's own checks.
                 let mut style = world.resource_mut::<crate::hud::inventory::InterfaceStyle>();
-                gate.home_hidden_within = Some(style.home_hidden_within);
-                style.home_hidden_within = 0.0;
+                gate.home_style = Some(style.clone());
+                (style.home_hidden_within, style.home_shown_beyond) = (0.0, 0.0);
                 gate.advance(now);
             } else if waited > 30.0 {
                 gate.check("home: camp", Err(format!("{waited:.1} server s after sleeping at a bag with a torch beside it: Camp chip {camp}, Rested chip {rested}, Camp line with Next {announced}, sleep line {slept}")));
@@ -4901,8 +4914,9 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
             let edge = world.query::<&crate::hud::home::HomeMark>().iter(world).find_map(|m| m.edge);
             if edge.is_some() {
                 gate.check("home: behind", Ok(format!("turned away from home, the mark waited at the {} edge", if edge == Some(-1.0) { "left" } else { "right" })));
-                let mut style = world.resource_mut::<crate::hud::inventory::InterfaceStyle>();
-                style.home_hidden_within = gate.home_hidden_within.take().unwrap_or(style.home_hidden_within);
+                if let Some(style) = gate.home_style.take() {
+                    *world.resource_mut::<crate::hud::inventory::InterfaceStyle>() = style;
+                }
                 gate.advance(now);
             } else if waited > 5.0 {
                 let yaw = world.resource::<LocalPlayer>().yaw;
@@ -5009,6 +5023,110 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
         }
     }
 }
+
+/// The way home, played at dusk: from a pad `WAY_OUT` blocks east of home (past the home's
+/// box, short of how far it shows by day) the hearth mark, faded in, sits within
+/// `WAY_DEGREES` of where home lies with home off to one side of the view; back by the camp
+/// it fades out. The camp (bag and torch, two and three blocks east of where the Home step
+/// stood) comes down after, and the time of day goes back.
+fn way_home(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    let home = world.resource::<LocalPlayer>().vitals.home;
+    let waited = gate.server_in_phase();
+    let leave = |world: &mut World, gate: &mut Gate| {
+        let net = world.resource::<Net>();
+        if let Some(home) = home {
+            let pad = home + IVec3::new(WAY_OUT, -1, 0);
+            net.command(&format!("setblock {} {} {} air", pad.x, pad.y, pad.z));
+            for at in [home, home + IVec3::X] {
+                net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
+            }
+        }
+        // The time it was, once it was moved.
+        if gate.phase > 0 {
+            net.command(&format!("time set {}", gate.way_time));
+        }
+        gate.next(Step::Door, now);
+    };
+    let Some(home) = home else {
+        gate.check("way home", Err("no home after the Home step: the server named none".into()));
+        return leave(world, gate);
+    };
+    let mark = world.query::<&crate::hud::home::HomeMark>().iter(world).next().map(|m| (m.shown, m.x, m.fov));
+    let shown = world.query_filtered::<&Visibility, With<crate::hud::home::HomeMark>>().iter(world).any(|v| *v != Visibility::Hidden);
+    let feet = world.resource::<LocalPlayer>().position;
+    let out = home + IVec3::new(WAY_OUT, 0, 0);
+    // Back where the Home step stood, two blocks west of the bag.
+    let inside = home - IVec3::new(2, 0, 0);
+    let at = |cell: IVec3| (feet - cell.as_vec3() - Vec3::new(0.5, 0.0, 0.5)).with_y(0.0).length() < 1.0;
+    match gate.phase {
+        0 => {
+            gate.way_time = world.resource::<crate::render::DayCycle>().ticks.max(0.0) as u64 % voxmar_protocol::TICKS_PER_DAY;
+            let net = world.resource::<Net>();
+            net.command("time set dusk");
+            net.command(&format!("fill {} {} {} {} {} {} air", out.x, out.y, out.z, out.x, out.y + 1, out.z));
+            net.command(&format!("setblock {} {} {} stone", out.x, out.y - 1, out.z));
+            net.command(&format!("tp {} {} {}", out.x as f32 + 0.5, out.y, out.z as f32 + 0.5));
+            gate.advance(now);
+        }
+        // Out on the pad at dusk, the mark faded in; home put `WAY_ASIDE` degrees to one side
+        // of the view, so the mark sits off the middle.
+        1 => {
+            let dusk = {
+                let style = world.resource::<crate::hud::inventory::InterfaceStyle>();
+                let tick = world.resource::<crate::render::DayCycle>().ticks.max(0.0) as u64 % voxmar_protocol::TICKS_PER_DAY;
+                crate::hud::home::wanted(style, Vec2::new((WAY_OUT as f32) - 0.5, 0.0), tick)
+            };
+            if at(out) && dusk && mark.is_some_and(|(faded, ..)| faded >= 1.0) {
+                let eye = world.resource::<LocalPlayer>().eye();
+                let to = home.as_vec3() + Vec3::new(0.5, 0.0, 0.5) - eye;
+                let turned = Quat::from_rotation_y(WAY_ASIDE.to_radians()) * to.with_y(0.0);
+                aim_at(world, eye + turned);
+                gate.advance(now);
+            } else if waited > QUEST_WAIT && in_phase > QUEST_WAIT {
+                gate.check("way home: dusk", Err(format!("{waited:.1} server s and {in_phase:.1} game s on: on the pad {}, dusk by the client's clock {dusk}, the mark faded to {:?}", at(out), mark.map(|m| m.0))));
+                leave(world, gate);
+            }
+        }
+        // Where the mark sits says the bearing it draws; it must be home's, within a few
+        // degrees. Given the frames to lay out.
+        2 => {
+            if in_phase < 0.3 {
+                return;
+            }
+            let player = world.resource::<LocalPlayer>();
+            let (from, yaw) = (player.position, player.yaw);
+            let truth = crate::hud::home::bearing(from, yaw, home.as_vec3() + Vec3::new(0.5, 0.0, 0.5));
+            let drawn = mark.map(|(_, x, fov)| (x * (fov * 0.5).tan()).atan());
+            let off = drawn.map(|drawn| (drawn - truth).abs().to_degrees());
+            if shown && off.is_some_and(|off| off <= WAY_DEGREES) {
+                gate.check("way home: dusk", Ok(format!("at dusk {WAY_OUT} blocks out, the hearth mark showed home {:.1}° from the middle of the view, {:.1}° off its true bearing", truth.to_degrees(), off.unwrap_or_default())));
+                let net = world.resource::<Net>();
+                net.command(&format!("tp {} {} {}", inside.x as f32 + 0.5, inside.y, inside.z as f32 + 0.5));
+                gate.advance(now);
+            } else if in_phase > 2.0 {
+                gate.check("way home: dusk", Err(format!("the mark (shown {shown}) drew home at {:?}°, its true bearing {:.1}°", drawn.map(f32::to_degrees), truth.to_degrees())));
+                leave(world, gate);
+            }
+        }
+        // Back in the camp, it fades out.
+        _ => {
+            if at(inside) && !shown {
+                gate.check("way home: inside", Ok("back inside the home at dusk, the mark faded out".into()));
+                leave(world, gate);
+            } else if waited > QUEST_WAIT && in_phase > QUEST_WAIT {
+                gate.check("way home: inside", Err(format!("{waited:.1} server s and {in_phase:.1} game s on: back in the camp {}, the mark still shown at {:?}", at(inside), mark.map(|m| m.0))));
+                leave(world, gate);
+            }
+        }
+    }
+}
+
+/// How far east of home the way home step stands, past the home's box and short of where
+/// the mark shows by day.
+const WAY_OUT: i32 = 20;
+/// How far to one side of the view home is put, and how near the mark must draw it.
+const WAY_ASIDE: f32 = 20.0;
+const WAY_DEGREES: f32 = 3.0;
 
 /// The door step's two cells, as the client has them: (shut, open) when both halves are
 /// a door's, shut or open alike.
