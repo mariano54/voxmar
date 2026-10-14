@@ -436,7 +436,7 @@ struct Chapters;
 #[derive(Component)]
 struct Web;
 #[derive(Component)]
-struct QuestNode(String);
+pub(crate) struct QuestNode(String);
 #[derive(Component)]
 struct Detail;
 #[derive(Component)]

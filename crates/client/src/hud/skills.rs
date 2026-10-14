@@ -96,6 +96,11 @@ impl SkillToasts {
         })
     }
 
+    /// When the newest refusal showing was last given, to hear it by (`ui::sound`).
+    pub fn newest_refusal(&self) -> Option<f32> {
+        self.lines.iter().filter(|l| matches!(l.kind, LineKind::Refused(_))).map(|l| l.at).reduce(f32::max)
+    }
+
     /// An action refused, with why, at `now`; the same reason again only refreshes it.
     pub fn refused(&mut self, why: String, now: f32) {
         if let Some(line) = self.lines.iter_mut().find(|l| l.kind == LineKind::Refused(why.clone())) {

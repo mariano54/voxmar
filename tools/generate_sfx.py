@@ -2,8 +2,9 @@
 """Synthesizes the everyday action sounds: eating, crafting, lighting a fire, opening a
 chest or a door, cooking, lying down to sleep, casting a line, picking an item up, feeding
 an animal, emptying a pouch, loading a machine, picking a lock, praying at an altar,
-spreading fertiliser, throwing an item down, a snare springing shut, a fish landed, and
-food coming off the fire done or burnt.
+spreading fertiliser, throwing an item down, a snare springing shut, a fish landed, food
+coming off the fire done or burnt; and for the interface, a quest book's page turned and
+a soft "no" when something is refused.
 
 Our own work, built from noise, resonators and decaying modes (no samples). Run once
 offline; the clips are written to assets/content/base/sounds/ as Ogg Vorbis and listed in
@@ -401,6 +402,30 @@ def cooked(rng):
     return out
 
 
+def page(rng):
+    """A page of the quest book turned: a quick papery swish rising, settling with a light
+    flap."""
+    seconds = 0.16
+    n = int(seconds * RATE)
+    t = np.arange(n) / RATE
+    swish = bandpass(rng.standard_normal(n), 2400 + 3200 * np.minimum(t / 0.09, 1), 1.2) * envelope(n, 0.025, 0.05)
+    out = swish * 0.8
+    m = int(0.03 * RATE)
+    flap = bandpass(rng.standard_normal(m), rng.uniform(1300, 1600), 1.6) * envelope(m, 0.001, 0.008)
+    place(out, 0.085 + rng.uniform(-0.01, 0.01), flap, 0.9)
+    return out
+
+
+def refuse(rng):
+    """Something the player tried refused: two soft, muted wooden knocks falling a step,
+    as a "no" said kindly, never a buzzer."""
+    out = np.zeros(int(0.3 * RATE))
+    low = rng.uniform(300, 330)
+    place(out, 0.0, lowpass(knock(rng, low * 1.25, 1.0), 0.25), 1.0)
+    place(out, 0.11, lowpass(knock(rng, low, 1.0), 0.25), 0.85)
+    return out
+
+
 def finish(mono, rng, width=0.15):
     """The clip made stereo (a hair of width from a short delay), faded, and brought to
     its loudness."""
@@ -441,6 +466,8 @@ SOUNDS = {
     "catch": (catch, 2),
     "burnt": (burnt, 2),
     "cooked": (cooked, 2),
+    "page": (page, 2),
+    "refuse": (refuse, 2),
 }
 
 

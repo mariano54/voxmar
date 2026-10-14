@@ -920,6 +920,13 @@ later package replaces an action's sound; the launch fails on a sound for an act
 lacks, and on an action, a mod's too, that says nothing of how it sounds. The clips, and the pop of an item picked up
 when Minecraft's own sounds are off, are our own, synthesized by `tools/generate_sfx.py`.
 
+The interface is heard the same way: `sounds.ron`'s `interface` names what each thing that
+happens in it sounds like (a button pressed, the pointer over one, an item picked up or put
+down, half a stack split off, a screen opened or closed, a quest picked in the book, something
+refused, and the events' jingles): the chosen set's click or tap at a volume and pitch, clips of
+its own (a page turned, a soft "no"), a jingle, or `silent`. The launch fails on a name the
+interface never makes and on one it makes that says nothing.
+
 Creatures are heard: footsteps on whatever block they walk, bleats, grunts and clucks while
 they wander, munching, sighs and purrs at rest, barks and snorts of alarm, calls carrying far,
 mating calls, snarls when they strike, and cries when hurt or dying. `creature_sounds.ron` in

@@ -102,6 +102,34 @@
         "base:release": (silent: true),
         "core:respawn": (silent: true),
     },
+    // What the interface sounds like, by what happens in it: the player's chosen set's
+    // `tap` (Click or Item, settings' Interface sounds), clips of its own (`sounds`, ours
+    // from tools/generate_sfx.py, played at the set's loudness and off with it), a
+    // `jingle` (the tunes above), or `silent: true`. `volume` times the clip, `pitch` its
+    // speed. A package that names one replaces its sound; every one says how it sounds, or
+    // the game does not start.
+    interface: {
+        // A button pressed.
+        "click": (tap: Some(Click), volume: 0.4),
+        // The pointer over a button: quiet, or menus chatter.
+        "hover": (silent: true),
+        // An item picked up or put down.
+        "item": (tap: Some(Item), volume: 0.32),
+        // Half a stack picked up: the same tap, higher and lighter.
+        "split": (tap: Some(Item), volume: 0.26, pitch: 1.3),
+        // A screen opened: the tap, a little higher; closed, a little lower.
+        "open": (tap: Some(Item), volume: 0.3, pitch: 1.15),
+        "close": (tap: Some(Item), volume: 0.24, pitch: 0.85),
+        // A quest picked in the book: a page turned.
+        "quest_pick": (sounds: ["sounds/page_1.ogg", "sounds/page_2.ogg"], volume: 0.32),
+        // Something tried and refused (a level lacking, a recipe short, a home that cannot
+        // be): two soft knocks falling, a kind "no".
+        "refuse": (sounds: ["sounds/refuse_1.ogg", "sounds/refuse_2.ogg"], volume: 0.4),
+        "quest_done": (jingle: true),
+        "quest_claim": (jingle: true),
+        "level_up": (jingle: true),
+        "level_milestone": (jingle: true),
+    },
     // The mix (crates/client/src/mix.rs). A later package's bands and caps replace those it
     // names; its ducking replaces the whole.
     mix: (

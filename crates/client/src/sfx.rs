@@ -411,6 +411,10 @@ pub(crate) struct Recordings {
     /// What the player does, heard as they do it, by the action's name (`core:eat`): the
     /// clips take turns at random. A later package that names an action replaces its sound.
     pub(crate) actions: std::collections::BTreeMap<String, ActionSound>,
+    /// What the interface sounds like, by what happens in it (`open`, `refuse`; see
+    /// `ui::sound::UiSound`). A later package that names one replaces its sound. Every one
+    /// says how it sounds, or the game does not start.
+    pub(crate) interface: std::collections::BTreeMap<String, InterfaceSound>,
     /// How loud each kind of sound is, how many play at once and what the music makes
     /// room for (`mix`).
     pub(crate) mix: crate::mix::MixDef,
@@ -443,6 +447,33 @@ pub(crate) struct Brought {
     pub(crate) sounds: Vec<String>,
     #[serde(default = "full")]
     pub(crate) volume: f32,
+}
+
+/// The sound of something happening in the interface: the player's chosen set's click or
+/// item tap (`tap`), clips of its own, or a jingle (the events' tunes above); or that it is
+/// meant to be silent. Every one says one of the four. Its own clips, like the set's, are
+/// not heard with the interface's sounds turned off.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub(crate) struct InterfaceSound {
+    pub(crate) tap: Option<Tap>,
+    pub(crate) sounds: Vec<String>,
+    /// Played by its event's jingle (`quest_done`, `quest_claim`, `level_up`,
+    /// `level_milestone`).
+    pub(crate) jingle: bool,
+    pub(crate) silent: bool,
+    #[serde(default = "full")]
+    pub(crate) volume: f32,
+    /// How fast it is played: higher is higher and shorter.
+    #[serde(default = "full")]
+    pub(crate) pitch: f32,
+}
+
+/// Which of the player's set's two sounds an interface sound plays.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+pub(crate) enum Tap {
+    Click,
+    Item,
 }
 
 /// Where an action's sound comes from when not from `sounds.ron`.
@@ -495,6 +526,9 @@ impl Recordings {
                 let brings = sound.brings.into_iter().map(|b| Brought { sounds: path(b.sounds).collect(), ..b }).collect();
                 all.actions.insert(name, ActionSound { sounds: path(sound.sounds).collect(), brings, ..sound });
             }
+            for (name, sound) in def.interface {
+                all.interface.insert(name, InterfaceSound { sounds: path(sound.sounds).collect(), ..sound });
+            }
             all.mix.merge(def.mix);
         }
         Ok(all)
@@ -523,19 +557,42 @@ impl Recordings {
                 }
             }
         }
+        for (name, sound) in &self.interface {
+            let Some(event) = crate::ui::sound::UiSound::named(name) else {
+                return Err(format!("{RECORDINGS}: an interface sound for `{name}`, which the interface never makes"));
+            };
+            let says = [sound.tap.is_some(), !sound.sounds.is_empty(), sound.jingle, sound.silent].into_iter().filter(|&s| s).count();
+            if says != 1 {
+                return Err(format!("{RECORDINGS}: interface `{name}` says {says} of tap, sounds, jingle and silent; it says one"));
+            }
+            if sound.jingle != event.is_jingle() {
+                let jingles = crate::ui::sound::UiSound::ALL.iter().filter(|e| e.is_jingle()).map(|e| e.name()).collect::<Vec<_>>().join(", ");
+                return Err(format!("{RECORDINGS}: interface `{name}`: only {jingles} are jingles, and they are"));
+            }
+            if !(sound.volume > 0.0 && sound.volume <= 2.0) {
+                return Err(format!("{RECORDINGS}: interface `{name}` has volume {}, not above 0 and up to 2", sound.volume));
+            }
+            if !(0.5..=2.0).contains(&sound.pitch) {
+                return Err(format!("{RECORDINGS}: interface `{name}` has pitch {}, not from 0.5 to 2", sound.pitch));
+            }
+        }
         Ok(())
     }
 
     /// Whether every action the content has says how it sounds (`actions`): its clips, or
     /// that it is silent or heard from elsewhere, so a new action is never mute by
-    /// oversight.
+    /// oversight; and so does everything the interface does (`interface`).
     pub(crate) fn covers(&self, actions: &voxmar_engine::action::ActionRegistry) -> Result<(), String> {
         let missing: Vec<&str> = actions.names().filter(|name| !self.actions.contains_key(*name)).collect();
-        if missing.is_empty() {
-            Ok(())
-        } else {
-            Err(format!("{RECORDINGS}: no sound for {}; give each `sounds`, `silent: true` or `heard`", missing.join(", ")))
+        if !missing.is_empty() {
+            return Err(format!("{RECORDINGS}: no sound for {}; give each `sounds`, `silent: true` or `heard`", missing.join(", ")));
         }
+        // And everything the interface does, likewise.
+        let missing: Vec<&str> = crate::ui::sound::UiSound::ALL.iter().map(|e| e.name()).filter(|name| !self.interface.contains_key(*name)).collect();
+        if !missing.is_empty() {
+            return Err(format!("{RECORDINGS}: no interface sound for {}; give each `tap`, `sounds`, `jingle: true` or `silent: true`", missing.join(", ")));
+        }
+        Ok(())
     }
 }
 
