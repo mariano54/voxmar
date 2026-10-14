@@ -173,10 +173,25 @@ before a tree runs round the trunk. Its head stops at what its box does not: a t
 would put it into a wall goes the other way round, a step that would is undone, and a
 head already in a block (one built before its face) may turn and walk out rather than
 stand frozen. It gives up a goal after two stuck seconds, or four going round. Fliers on
-the wing, drifters and swimmers do not steer. Next, from the deep dive:
+the wing, drifters and swimmers do not steer.
 
-- A* over standable cells with a per-species movement profile (step, jump, safe fall,
-  media) and sparse overrides of one block-cost table (water, fire, powder snow, berry
+A way open to steer by is also one it can stand on: it looks a body's length ahead along
+the slide, and a step down further than `SAFE_DROP` (3 blocks), or into water two deep
+for a land animal not already swimming, is as shut as a wall. So prey runs along a cliff
+edge or a lake shore rather than off it, and a boxed-in creature stands rather than press.
+Anything that jumps gets up a single block, however low its jump (the hop is lifted to
+clear it), and no higher.
+
+When steering is going round (or already following one), a short A* (`path::find`) looks
+for a way over the cells the body fits in: eight directions, no corner cut, up one block
+if it jumps, down no further than `SAFE_DROP`, at most 1500 cells within 24 blocks, again
+at most once a second and only when its goal has moved. It walks the cells' centres, still
+steering, so a wolf finds the doorway in a wall (a shut door is a wall) and a sheep after
+wheat follows the player through it. A creature is made facing open air, so none starts
+with its head in a trunk. Next, from the deep dive:
+
+- A per-species movement profile for that search (step, jump, safe fall, media) and sparse
+  overrides of one block-cost table (water, fire, powder snow, berry
   bushes), capped per search and per tick.
 - A per-chunk connectivity layer so "no path" is answered at once (Factorio).
 - Herds share their leader's path; large groups heading one way share a flow field.
