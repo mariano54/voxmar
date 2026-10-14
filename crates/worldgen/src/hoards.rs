@@ -227,7 +227,8 @@ impl Hoards {
 
     /// The floor a try's chest stands on in a column of blocks, if it has one: the highest
     /// air with air over it and firm natural ground under it, `depth` below the surface,
-    /// roofed by natural rock or earth within `roof` blocks.
+    /// roofed by natural rock or earth within `roof` blocks. `at` is asked of no block above
+    /// `top`, so a roof is looked for no higher than that.
     pub fn floor(&self, hoard: usize, surface: i32, top: i32, at: impl Fn(i32) -> Floor) -> Option<i32> {
         let h = &self.hoards[hoard];
         let (high, low) = ((surface - h.depth.0).min(top - 1), (surface - h.depth.1).max(2));
@@ -235,7 +236,7 @@ impl Hoards {
             at(y) == Floor::Air
                 && at(y + 1) == Floor::Air
                 && at(y - 1) == Floor::Ground
-                && (y + 2..=y + h.roof).any(|r| at(r) == Floor::Ground)
+                && (y + 2..=(y + h.roof).min(top)).any(|r| at(r) == Floor::Ground)
         })
     }
 }
@@ -283,6 +284,18 @@ mod tests {
         assert_eq!(hoards.floor(0, 100, 120, shallow), None);
         let deep = |y: i32| if (60..=62).contains(&y) { Floor::Air } else { Floor::Ground };
         assert_eq!(hoards.floor(0, 100, 120, deep), None);
+        // Land up to the top of the world: nothing above `top` is asked about. Open to the
+        // top, no roof and no chest; rock at the top, a roof.
+        let open_top = |y: i32| {
+            assert!(y <= 120, "asked about {y}, over the top");
+            if y >= 116 { Floor::Air } else { Floor::Ground }
+        };
+        assert_eq!(hoards.floor(0, 120, 120, open_top), None);
+        let roofed_top = |y: i32| {
+            assert!(y <= 120, "asked about {y}, over the top");
+            if (116..=119).contains(&y) { Floor::Air } else { Floor::Ground }
+        };
+        assert_eq!(hoards.floor(0, 120, 120, roofed_top), Some(116));
     }
 
     /// The game's hoards over the land near where a world begins, made column by column on

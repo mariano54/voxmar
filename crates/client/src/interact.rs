@@ -336,6 +336,18 @@ fn break_and_place(
                 return;
             }
         }
+        // A store (a chest, a cupboard, a jar) opens beside the inventory once the server
+        // says what it holds.
+        if let (Some(hit), Some(open_store)) = (hit, actions.0.id("base:open_store")) {
+            let context = ClientContext { world: &world, player: &player, content };
+            let action_target = ActionTarget::Block { block: hit.block, face: hit.face };
+            if actions.0.get(open_store).is_some_and(|def| def.validate(&context, action_target).is_ok()) {
+                net.propose_from(&player, open_store, action_target);
+                target.used_right = true;
+                player.store_asked = true;
+                return;
+            }
+        }
         // A machine takes what it burns or works from the hand, or gives what it made; the
         // server says how it is doing. Anything else in hand is placed against it.
         if let (Some(hit), Some(use_machine)) = (hit, actions.0.id("base:use_machine")) {
@@ -359,6 +371,8 @@ fn break_and_place(
                 if !cooks && actions.0.get(action).is_some_and(|def| def.validate(&context, action_target).is_ok()) {
                     net.propose_from(&player, action, action_target);
                     target.used_right = true;
+                    // A lock picked opens the chest's slots.
+                    player.store_asked |= name == "base:pick_lock";
                     return;
                 }
             }

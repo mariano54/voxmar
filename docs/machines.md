@@ -116,8 +116,17 @@ Right click (`base:use_machine`):
   into the inventory;
 - with a block it does not take, the block is placed against it.
 
-A hopper or chest takes whatever is in hand but a machine, and gives back everything with
-an empty hand. A machine with half a recipe (or the wrong things) gives back what went in.
+A hopper takes whatever is in hand but a machine, and gives back everything with an empty
+hand. A chest, and every other bin that does not feed (a **store**: barrels, crates,
+cupboards, wardrobes, barrel racks, jars, baskets), opens instead (`base:open_store`) into
+a screen of its slots in place of the crafting grid, where items move in and out as in the
+inventory and shift click sends stacks between it and the pack (`server/src/stores.rs`,
+`inventory::STORE`). The store is the bin's: the slots the player sees are a copy kept in
+step every tick, so a chute filling it or a second player taking from it shows at once,
+and it closes with the screen, out of reach, or when broken (what it held spills). A bin
+with `holds` takes only those things, from a hand or a chute: a jar what is `edible`, a
+basket what is `forage`. A machine entry naming `{name}` (`{name}_cupboard`) is every
+block of that family. A treasure chest whose lock gives opens straight into its slots. A machine with half a recipe (or the wrong things) gives back what went in.
 Either way the player is told, in chat, how the machine is doing: working and how far,
 no power, no fuel, no wind, no water, no animal walking it, its structure unfinished,
 full, too high a voltage, overloaded or idle; a bin says what it holds, a chute how fast
