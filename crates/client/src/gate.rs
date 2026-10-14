@@ -4998,10 +4998,13 @@ fn door_cells(world: &World, at: IVec3) -> Option<(bool, bool)> {
 }
 
 /// A wooden door set in the ground two blocks before the player, opened and shut by right
-/// clicks the server answers (it holds the collision, so the client never guesses).
+/// clicks the server answers (it holds the collision, so the client never guesses); then a
+/// hide window in a candle-lit nook, seen glowing at midnight (shot `window-night`).
 fn door(world: &mut World, gate: &mut Gate, now: f32) {
     let stand = world.resource::<LocalPlayer>().position.floor().as_ivec3();
     let at = stand + IVec3::new(0, 0, -2);
+    // The window's nook, standing on the ground a block beyond the door, and its pane.
+    let (nook, pane) = (stand + IVec3::new(0, 1, -4), stand + IVec3::new(0, 1, -3));
     let waited = gate.server_in_phase();
     let leave = |world: &mut World, gate: &mut Gate| {
         let net = world.resource::<Net>();
@@ -5062,11 +5065,21 @@ fn door(world: &mut World, gate: &mut Gate, now: f32) {
             }
             _ => {}
         },
-        _ => match door_cells(world, at) {
+        4 => match door_cells(world, at) {
             Some((true, false)) => {
                 let solid = world.resource::<ClientWorld>().is_solid(at) && world.resource::<ClientWorld>().is_solid(at + IVec3::Y);
                 gate.check("door: shut", if solid { Ok("another shut it, solid again".into()) } else { Err("the shut door is not solid on the client".into()) });
-                leave(world, gate);
+                // Then a window: a stone nook lit by a candle, a hide window in its face, at
+                // midnight.
+                let net = world.resource::<Net>();
+                net.command(&format!("fill {} {} {} {} {} {} air", at.x, at.y, at.z, at.x, at.y + 1, at.z));
+                net.command("clear wooden_door");
+                let (low, high) = (nook - IVec3::ONE, nook + IVec3::ONE);
+                net.command(&format!("fill {} {} {} {} {} {} stone", low.x, low.y, low.z, high.x, high.y, high.z));
+                net.command(&format!("fill {} {} {} {} {} {} candle", nook.x, nook.y, nook.z, nook.x, nook.y, nook.z));
+                net.command(&format!("fill {} {} {} {} {} {} hide_window", pane.x, pane.y, pane.z, pane.x, pane.y, pane.z));
+                net.command("time set midnight");
+                gate.advance(now);
             }
             _ if waited > 10.0 => {
                 gate.check("door: shut", Err(format!("{waited:.1} server s after a second right click, the door's cells are {:?}", door_cells(world, at))));
@@ -5074,8 +5087,67 @@ fn door(world: &mut World, gate: &mut Gate, now: f32) {
             }
             _ => {}
         },
+        // The window seen from outside at midnight: warm with the candle's light through it.
+        _ => {
+            aim_at(world, pane.as_vec3() + Vec3::splat(0.5));
+            let client = world.resource::<ClientWorld>();
+            let window = client.block(pane).map(|b| client.registry.def(b)).filter(|d| d.name == "base:hide_window").map(|d| d.lit_through);
+            let lit = client.block(nook).is_some_and(|b| client.registry.def(b).name == "base:candle");
+            match window {
+                Some(through) if lit && waited > 2.0 => {
+                    let Some(shot) = gate.shot(world, "window-night") else { return };
+                    let judged = if through { warm_window(&shot) } else { Err("the hide window is not `lit_through`".into()) };
+                    gate.check("window: glows", judged);
+                    let net = world.resource::<Net>();
+                    let (low, high) = (nook - IVec3::ONE, nook + IVec3::ONE);
+                    net.command(&format!("fill {} {} {} {} {} {} air", low.x, low.y, low.z, high.x, high.y, high.z));
+                    net.command("time set noon");
+                    gate.next(Step::Quests, now);
+                }
+                _ if waited > 10.0 => {
+                    gate.check("window: glows", Err(format!("{waited:.1} server s after building the nook, its window is {window:?} and its candle is there: {lit}")));
+                    let net = world.resource::<Net>();
+                    let (low, high) = (nook - IVec3::ONE, nook + IVec3::ONE);
+                    net.command(&format!("fill {} {} {} {} {} {} air", low.x, low.y, low.z, high.x, high.y, high.z));
+                    net.command("time set noon");
+                    gate.next(Step::Quests, now);
+                }
+                _ => {}
+            }
+        }
     }
 }
+
+/// Whether a shot aimed at a lit room's window at midnight shows it warm and bright: the
+/// middle of the screen (the pane) redder than it is blue and well above the night around
+/// it (the shot's top corners, the sky over the nook).
+fn warm_window(shot: &Image) -> Result<String, String> {
+    let (w, h, data) = pixels(shot)?;
+    let mean = |x0: usize, y0: usize, size: usize| {
+        let mut sum = [0.0f64; 3];
+        for y in y0..y0 + size {
+            for x in x0..x0 + size {
+                let i = (y * w + x) * 4;
+                (0..3).for_each(|c| sum[c] += data[i + c] as f64);
+            }
+        }
+        sum.map(|v| v / (size * size) as f64)
+    };
+    let size = (w.min(h) / 16).max(1);
+    let pane = mean(w / 2 - size / 2, h / 2 - size / 2, size);
+    let night = [mean(0, 0, size), mean(w - size, 0, size)].map(|m| m.iter().sum::<f64>() / 3.0);
+    let (bright, dark) = (pane.iter().sum::<f64>() / 3.0, night[0].max(night[1]));
+    if pane[0] > pane[2] + WINDOW_WARMTH && bright > dark + WINDOW_LIFT {
+        Ok(format!("the pane is warm (rgb {:.0} {:.0} {:.0}) against the night ({dark:.0})", pane[0], pane[1], pane[2]))
+    } else {
+        Err(format!("the pane is rgb {:.0} {:.0} {:.0} against the night's {dark:.0}: not a warm, lit window", pane[0], pane[1], pane[2]))
+    }
+}
+
+/// How much redder than blue, and brighter than the night around it, a lit window's pane
+/// shows in a shot, of 255.
+const WINDOW_WARMTH: f64 = 12.0;
+const WINDOW_LIFT: f64 = 15.0;
 
 /// How many planks the home barrel holds for the table laid from it.
 const LAY_PLANKS: u32 = 4;
