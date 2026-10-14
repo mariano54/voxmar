@@ -1120,6 +1120,7 @@ pub fn aim(
         && fighting.click(time.elapsed_secs_f64(), &combat.timing(&weapon), held, &combat.feel)
     {
         net.propose_from(&player, attack, ActionTarget::Creature(id));
+        fighting.strikes += 1;
     }
 }
 

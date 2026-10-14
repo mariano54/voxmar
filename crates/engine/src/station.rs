@@ -12,7 +12,7 @@
 
 use serde::Deserialize;
 
-use crate::block::{BlockId, BlockRegistry, RegistryError};
+use crate::block::{BlockId, BlockRegistry, RegistryError, Sound};
 use crate::skill::{SkillId, SkillRegistry};
 
 /// Something about the spot a station stands on.
@@ -22,13 +22,14 @@ pub enum Spot {
     OpenSky,
     /// A block with this tag within this many blocks (any way, diagonals too).
     Near(String, i32),
-    /// Water (any fluid but a hot one) within this many blocks.
+    /// Water (any fluid but a hot one, or a block that waters: a well) within this many blocks.
     Water(i32),
 }
 
 /// One thing a station works: `takes` of `input` become `gives` of `output`, `minutes`
 /// after they went on. The input is an item, `tag:TAG`, items with every one of several
-/// tags (`tag:raw+meat`), or any of several of these (`tag:fruit|wheat_seeds`).
+/// tags (`tag:raw+meat`) and none of those marked `!` (`tag:grain+!vegetable`), or any of
+/// several of these (`tag:fruit|wheat_seeds`).
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkDef {
@@ -64,6 +65,10 @@ pub struct StationDef {
     /// that hold, multiplied).
     #[serde(default)]
     pub faster: Vec<(Spot, f32)>,
+    /// What loading it sounds like: a material's stroke (`Water`: something stirred in),
+    /// else its working block's placing.
+    #[serde(default)]
+    pub sound: Option<Sound>,
 }
 
 /// An item held to a growing crop grows the crops within `reach` of it `stages` stages.
@@ -119,6 +124,7 @@ pub struct Station {
     pub works: Vec<Work>,
     pub needs: Vec<Spot>,
     pub faster: Vec<(Spot, f32)>,
+    pub sound: Option<Sound>,
 }
 
 impl Station {
@@ -215,7 +221,11 @@ impl Stations {
                     for one in work.input.split('|') {
                         match one.strip_prefix("tag:") {
                             Some(tags) => {
-                                let tagged: Vec<BlockId> = blocks.ids().filter(|&id| tags.split('+').all(|tag| blocks.def(id).has_tag(tag))).collect();
+                                let has = |id: BlockId, tag: &str| match tag.strip_prefix('!') {
+                                    Some(not) => !blocks.def(id).has_tag(not),
+                                    None => blocks.def(id).has_tag(tag),
+                                };
+                                let tagged: Vec<BlockId> = blocks.ids().filter(|&id| tags.split('+').all(|tag| has(id, tag))).collect();
                                 if tagged.is_empty() {
                                     return Err(refuse(format!("{}: no item has the tag in `{one}`", def.empty)));
                                 }
@@ -236,12 +246,12 @@ impl Stations {
                     if accepts.contains(&output) {
                         return Err(refuse(format!("{}: {} works into itself", def.empty, work.output)));
                     }
-                    if works.iter().any(|w: &Work| w.accepts.iter().any(|a| accepts.binary_search(a).is_ok())) {
-                        return Err(refuse(format!("{}: an item it takes has two works", def.empty)));
+                    if let Some(both) = works.iter().flat_map(|w: &Work| w.accepts.iter()).find(|a| accepts.binary_search(a).is_ok()) {
+                        return Err(refuse(format!("{}: {} has two works", def.empty, blocks.def(*both).name)));
                     }
                     works.push(Work { accepts, takes: work.takes, output, gives: work.gives, minutes: work.minutes, skill: skill(&work.skill)?, level: work.level, xp: work.xp });
                 }
-                stations.stations.push(Station { empty, working, ready, holds: def.holds, works, needs: def.needs, faster: def.faster });
+                stations.stations.push(Station { empty, working, ready, holds: def.holds, works, needs: def.needs, faster: def.faster, sound: def.sound });
             }
             for def in file.fertilisers {
                 if !def.reach.is_finite() || !(0.0..=4.0).contains(&def.reach) || def.stages == 0 || !def.xp.is_finite() || def.xp < 0.0 {
@@ -331,6 +341,25 @@ mod tests {
         assert_eq!((rot.takes, rot.gives, rot.output), (4, 1, blocks.expect("base:compost")));
         let (compost, bone) = (stations.fertiliser(blocks.expect("base:compost")).unwrap(), stations.fertiliser(blocks.expect("base:bone")).unwrap());
         assert!(compost.reach > bone.reach);
+    }
+
+    /// The pot tells grain from vegetables by a `!` tag: wheat simmers to porridge, corn
+    /// (grain and vegetable) goes in a stew with the carrots and the meat.
+    #[test]
+    fn the_pot_tells_grain_from_vegetables() {
+        let content = crate::content::Content::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).expect("content loads");
+        let blocks = &content.blocks;
+        let pot = content.stations.stations.iter().find(|s| blocks.def(s.empty).name == "base:cooking_pot").expect("a pot");
+        let makes = |item: &str| pot.work(blocks.expect(item)).map(|(_, w)| blocks.def(w.output).name.clone());
+        assert_eq!(makes("base:wheat").as_deref(), Some("base:porridge"));
+        assert_eq!(makes("base:wild_corn").as_deref(), Some("base:stew"));
+        assert_eq!(makes("base:carrot").as_deref(), Some("base:stew"));
+        assert_eq!(makes("base:raw_beef").as_deref(), Some("base:stew"));
+        assert_eq!(makes("base:cabbage").as_deref(), Some("base:stew"));
+        // Nothing cooked goes in again, nor seed for planting.
+        assert_eq!(makes("base:cooked_beef"), None);
+        assert_eq!(makes("base:baked_potato"), None);
+        assert_eq!(makes("base:wheat_seeds"), None);
     }
 
     #[test]
