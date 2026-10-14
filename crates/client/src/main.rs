@@ -764,6 +764,17 @@ fn setup(
         }
         layers[layer].variants = Some(render::Variants { first, count });
     }
+    // The empty hand's pieces (`held.ron`), each a layer of its own after all of those.
+    let mut handled = held::load(source.held_books(), registry);
+    if let Some(handling) = handled.0.as_mut()
+        && let Some(bare) = &handling.bare
+    {
+        for texture in source.held_textures(&bare.pieces, size) {
+            handling.bare_layers.push(block_textures.len() as u16);
+            block_textures.push(texture);
+            layers.push(LayerInfo::default());
+        }
+    }
     ui::skin::load(&mut source, &mut images);
     ui::skin::set_font(settings.font, &mut fonts);
     let colormaps = source.colormaps();
@@ -875,7 +886,7 @@ fn setup(
         })
         .collect();
     commands.insert_resource(HudImages { icons, crosshair, skills: skill_icons, effects });
-    commands.insert_resource(held::load(source.held_books(), registry));
+    commands.insert_resource(handled);
 }
 
 fn tint(texture: &mut Rgba, color: [f32; 3]) {
