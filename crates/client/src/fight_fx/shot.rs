@@ -25,9 +25,12 @@ pub struct Shots {
     drawn: Vec<(f32, String, Option<u32>, f32)>,
     /// To fly from this frame.
     pub loosed: Vec<Loose>,
-    /// Creatures the server said a shot missed, to sail past, and hit, to strike.
-    pub(super) missed: Vec<u32>,
-    pub(super) hit: Vec<u32>,
+    /// The server's answers to shots, in the order it gave them: the creature shot at, and
+    /// whether it hit (to strike) or missed (to sail past). Each answers the oldest missile
+    /// at that creature still waiting for one.
+    pub(super) verdicts: Vec<(u32, bool)>,
+    /// Missiles loosed so far, numbering each in turn.
+    loosed_count: u64,
     /// Seconds each frame moves a shot on whatever the frame took: the gate's, so a slow
     /// machine shows the same flight (unset: the frame's own).
     pub step: Option<f32>,
@@ -61,6 +64,8 @@ pub struct Shot {
     /// The server said it hit; and the seconds it has waited at its mark for that word.
     hit: bool,
     waited: f32,
+    /// Its number among the missiles loosed, so answers go to them in turn.
+    serial: u64,
 }
 
 /// The most seconds a shot that reached its creature waits there for the server's word
@@ -150,13 +155,33 @@ pub(super) fn fly(
             Mesh3d(mesh),
             MeshMaterial3d(material),
             Transform::from_translation(loose.from).looking_to((loose.to - loose.from).normalize_or(Vec3::NEG_Z), Vec3::Y),
-            Shot { class: loose.class, from: loose.from, to: loose.to, beyond: loose.beyond, at: loose.at, gone: 0.0, length, trailed: 0.0, missed: false, hit: false, waited: 0.0 },
+            Shot { class: loose.class, from: loose.from, to: loose.to, beyond: loose.beyond, at: loose.at, gone: 0.0, length, trailed: 0.0, missed: false, hit: false, waited: 0.0, serial: shots.loosed_count },
             bevy::light::NotShadowCaster,
             DespawnOnExit(Screen::InGame),
         ));
+        shots.loosed_count += 1;
     }
-    let missed = std::mem::take(&mut shots.missed);
-    let hit = std::mem::take(&mut shots.hit);
+    // The server's answers, each to the oldest missile at that creature still waiting for
+    // one: two shots at one creature take their own answers, not each other's. One with no
+    // missile waiting (a blow struck by hand) is dropped.
+    let verdicts = std::mem::take(&mut shots.verdicts);
+    if !verdicts.is_empty() {
+        let mut waiting: Vec<_> = flying.iter_mut().filter(|(_, flight, _)| flight.at.is_some() && !flight.missed && !flight.hit).collect();
+        waiting.sort_by_key(|(_, flight, _)| flight.serial);
+        for (id, struck) in verdicts {
+            let Some(index) = waiting.iter().position(|(_, flight, _)| flight.at == Some(id)) else { continue };
+            let (_, mut flight, transform) = waiting.remove(index);
+            if struck {
+                flight.hit = true;
+            } else {
+                // Missed: it flies on past, from where it is now, to land beyond.
+                let here = transform.translation;
+                (flight.missed, flight.from, flight.to, flight.gone) = (true, here, flight.beyond, 0.0);
+                flight.length = here.distance(flight.beyond);
+                flight.trailed = 0.0;
+            }
+        }
+    }
     let step = shots.step.unwrap_or(time.delta_secs());
     let amount = particles.amount;
     for (entity, mut flight, mut transform) in &mut flying {
@@ -164,16 +189,6 @@ pub(super) fn fly(
             commands.entity(entity).despawn();
             continue;
         };
-        if flight.at.is_some_and(|id| hit.contains(&id)) {
-            flight.hit = true;
-        }
-        // Missed: it flies on past, from where it is now, to land beyond.
-        if !flight.missed && !flight.hit && flight.at.is_some_and(|id| missed.contains(&id)) {
-            let here = transform.translation;
-            (flight.missed, flight.from, flight.to, flight.gone) = (true, here, flight.beyond, 0.0);
-            flight.length = here.distance(flight.beyond);
-            flight.trailed = 0.0;
-        }
         let along = |gone: f32, flight: &Shot| {
             let t = (gone / flight.length.max(1e-3)).min(1.0);
             flight.from.lerp(flight.to, t) + Vec3::Y * rise(shot.arc, flight.length, t)

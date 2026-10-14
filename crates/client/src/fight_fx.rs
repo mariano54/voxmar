@@ -75,6 +75,7 @@ impl Plugin for FightFxPlugin {
             .add_systems(Update, play.after(Reacted).in_set(Audible))
             // What `react` set going shows the same frame.
             .add_systems(Update, (kick_camera.after(crate::player::follow_camera), vignette).after(Reacted).run_if(in_state(Screen::InGame)))
+            .add_systems(OnEnter(Screen::InGame), warm_markers)
             .add_systems(OnExit(Screen::InGame), reset);
     }
 }
@@ -476,6 +477,14 @@ fn tell(
     }
 }
 
+/// A tell's ground ring and disc compile as the world loads (`render::warm`), not the first
+/// time a boss winds up a blow that reaches past its body: drawn as `tell` draws them, see-
+/// through, unlit and two-sided.
+fn warm_markers(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>) {
+    let material = materials.add(StandardMaterial { base_color: Color::WHITE.with_alpha(0.0), unlit: true, alpha_mode: AlphaMode::Blend, cull_mode: None, ..default() });
+    crate::render::warm::warm(&mut commands, meshes.add(annulus(1.0, 0.5)), material, false, DespawnOnExit(Screen::InGame));
+}
+
 /// A flat ring on the ground, `outer` blocks across from its middle to its edge and open
 /// inside `inner` (0: a disc), facing up.
 fn annulus(outer: f32, inner: f32) -> Mesh {
@@ -701,8 +710,11 @@ fn react(
         }
         // A shot that missed sails on past; one that hit strikes home. Told whatever is in
         // hand now: a missile loosed before the weapon was put away still waits for its
-        // answer (a verdict with no missile at that creature is dropped at the next frame).
-        if damage == 0 { shots.missed.push(id) } else { shots.hit.push(id) }
+        // answer (one with no missile waiting at that creature is dropped). Bleeding is no
+        // answer to a shot.
+        if blow != Blow::Bleed {
+            shots.verdicts.push((id, damage > 0));
+        }
         if damage == 0 || blow == Blow::Bleed {
             continue;
         }
