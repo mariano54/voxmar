@@ -135,6 +135,9 @@ pub struct Player {
     pub sent: FxHashSet<ColumnPos>,
     /// Dropped items this player has been told about.
     pub items_seen: FxHashSet<u32>,
+    /// What their kept animals laid into the home's stores (`Product::nests`), by item
+    /// name, not yet told: they are told once home.
+    pub nested: Vec<(String, u32)>,
 }
 
 impl Player {
@@ -212,6 +215,7 @@ impl Player {
             dirty: vec![traits::HEALTH, traits::INVENTORY, traits::SKILLS, traits::VITALS],
             sent: FxHashSet::default(),
             items_seen: FxHashSet::default(),
+            nested: Vec::new(),
         }
     }
 
