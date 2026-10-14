@@ -139,10 +139,13 @@ impl Server {
         })
     }
 
-    /// Whether water lies within `reach` blocks of `at` across and a few up and down.
+    /// Whether something to drink (a block tagged `drink`: water, a well, a trough) lies
+    /// within `reach` blocks of `at` across and a few up and down.
     fn water_near(&self, at: Vec3, reach: i32) -> bool {
         let centre = at.floor().as_ivec3();
-        (-3..=1).any(|dy| (-reach..=reach).any(|dz| (-reach..=reach).any(|dx| self.is_water(centre + IVec3::new(dx, dy, dz)))))
+        let blocks = &self.content.blocks;
+        let drink = |cell: IVec3| self.block(cell).is_some_and(|b| blocks.def(b).has_tag(condition::DRINK));
+        (-3..=1).any(|dy| (-reach..=reach).any(|dz| (-reach..=reach).any(|dx| drink(centre + IVec3::new(dx, dy, dz)))))
     }
 
     /// What a kept animal puts into work, a treadwheel's or gin's share (0.5 to 1.2 of a
@@ -155,5 +158,52 @@ impl Server {
             return 0.0;
         }
         rules.output(creature.condition)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use voxmar_engine::block::BlockId;
+    use voxmar_engine::creature::condition::{DRINK, Met};
+    use voxmar_engine::creature::husbandry::KEPT_LEASH;
+    use voxmar_engine::glam::IVec3;
+
+    /// Water, a well and a feed trough all water a pen through the `drink` tag, and a block
+    /// without it does not.
+    #[test]
+    fn a_pen_drinks_from_water_a_well_or_a_trough() {
+        let mut server = crate::test_server();
+        let at = server.spawn.floor().as_ivec3();
+        let reach = KEPT_LEASH as i32 + 1;
+        server.load_area(at - IVec3::splat(reach), at + IVec3::splat(reach));
+        let species = server.content.creatures.id("base:rabbit").expect("rabbits");
+        let rabbit = server.spawn_creature(species, server.spawn, 1).expect("room");
+        let creature = server.creatures.live.get_mut(&rabbit).unwrap();
+        (creature.owner, creature.home) = (Some("test".into()), server.spawn);
+        // Nothing to drink about its home.
+        for dy in -4..=2 {
+            for dz in -reach..=reach {
+                for dx in -reach..=reach {
+                    let cell = at + IVec3::new(dx, dy, dz);
+                    if server.block(cell).is_some_and(|b| server.content.blocks.def(b).has_tag(DRINK)) {
+                        server.set_block(cell, BlockId::AIR);
+                    }
+                }
+            }
+        }
+        assert_eq!(server.needs_of(rabbit).water, Met::No, "a dry pen watered its rabbit");
+        let spot = at + IVec3::new(3, 0, 0);
+        let cobblestone = server.content.blocks.expect("base:cobblestone");
+        server.set_block(spot, cobblestone);
+        assert_eq!(server.needs_of(rabbit).water, Met::No, "a cobblestone counted as water");
+        for name in ["base:water", "base:well", "base:feed_trough"] {
+            let block = server.content.blocks.expect(name);
+            server.set_block(spot, block);
+            assert_eq!(server.needs_of(rabbit).water, Met::Yes, "{name} by its home did not water a kept rabbit");
+        }
+        // Past its leash, it is too far.
+        server.set_block(spot, BlockId::AIR);
+        server.set_block(at + IVec3::new(KEPT_LEASH as i32 + 1, 0, 0), server.content.blocks.expect("base:well"));
+        assert_eq!(server.needs_of(rabbit).water, Met::No, "a well past its leash watered it");
     }
 }

@@ -14,11 +14,11 @@
         // A well: a ring of stone over water, with a pail on a beam. It waters crops and keeps a
         // compost heap damp as water does (`waters`), so a field can grow by the home, far
         // from any river.
-        (name: "well", render: Model, shape: "well", facing: true, sound: Stone, textures: All("cobblestone"), hardness: 2.5, color: (115, 115, 120), tags: ["waters", "building"]),
+        (name: "well", render: Model, shape: "well", facing: true, sound: Stone, textures: All("cobblestone"), hardness: 2.5, color: (115, 115, 120), tags: ["waters", "drink", "building"]),
         (name: "compost_heap_ready", sound: Wood, textures: Column(end: "compost_heap_ready_top", side: "compost_heap_ready_side"), drops: "compost_heap", hardness: 1.0, color: (60, 45, 30), tags: ["wood"]),
         // A feed trough (Farm): a store of 9 (machines.ron) a hungry kept animal eats its food
         // from, within its leash of home (`trough`; server/src/troughs.rs).
-        (name: "feed_trough", render: Model, shape: "trough", sound: Wood, textures: All("oak_planks"), hardness: 1.0, color: (140, 105, 65), tags: ["trough", "wood"]),
+        (name: "feed_trough", render: Model, shape: "trough", sound: Wood, textures: All("oak_planks"), hardness: 1.0, color: (140, 105, 65), tags: ["trough", "wood", "drink"]),
     ],
     families: [
         // Jerky: meat dried on a rack. It stacks, as cooked food does not, and heals as fruit does.

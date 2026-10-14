@@ -49,8 +49,9 @@
 // Fantasy: wonder (fantastical; more common where the aether field is high), supernatural
 //   (a plant tied to a creature or dish: docs/systems-web.md)
 // Creatures and buffs: feed:<creature> (what it eats or is lured by), bait, taming,
-//   nectar (bees), salt; alchemy also: night_sight, quiet_steps, mutation, hearty,
-//   invisibility, steady_hand, cleansing
+//   nectar (bees), salt, drink (kept animals drink from it: water, a well, a trough),
+//   waters (waters crops and stations as water does: a well); alchemy also: night_sight,
+//   quiet_steps, mutation, hearty, invisibility, steady_hand, cleansing
 (
     templates: {
         // A wood: bark, the stripped log, bark on every side, planks, leaves and a sapling.
@@ -232,6 +233,8 @@
         (
             name: "water", sound: Water,
             textures: All("water_still"),
+            // Kept animals drink from it (as from a well or a trough).
+            tags: ["drink"],
             render: Translucent,
             solid: false,
             tint: Water,
