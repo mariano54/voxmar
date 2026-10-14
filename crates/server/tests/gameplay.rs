@@ -2084,7 +2084,9 @@ fn kiln_fuel_and_lighting_progress_survive_reload_without_free_refuelling() {
     client.chat.clear();
     light(&client);
     client.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("Crucible Kiln is lit")) && lit(c) == 1);
-    assert_eq!(count(&client, "base:coal_ore"), 0);
+    // The word and the quest can come before the inventory that paid for it: the charge as
+    // it settles.
+    assert_eq!(client.quiet(|c| count(c, "base:coal_ore") as usize), 0);
     drop(client);
     let meta = voxmar_server::save::WorldSave::new(&dir).read_meta().unwrap();
     let fire = meta.lit.iter().find(|fire| fire.position == core.to_array()).expect("saved paid fire").clone();
