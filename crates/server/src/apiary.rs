@@ -131,11 +131,13 @@ impl Server {
     }
 
     /// Whether bees at `pos` are smoked calm: a smoking block (a campfire) within reach of
-    /// them, or one in `agent`'s hand.
+    /// them, or `agent` smoky (`bees.ron`'s `smoky`: smoke clings to them a while after a
+    /// torch in hand or a fire close by, so they can wave one and then take up the skep).
     pub(crate) fn smoked(&self, pos: IVec3, agent: Option<PlayerId>) -> bool {
         let Some(hive) = &self.content.bees.hive else { return true };
-        let blocks = &self.content.blocks;
-        if agent.and_then(|a| self.players.get(&a)).and_then(|p| p.held()).is_some_and(|held| hive.smokes(blocks, held)) {
+        if let (Some(smoky), Some(player)) = (hive.smoky, agent.and_then(|a| self.players.get(&a)))
+            && player.timed_effects.iter().any(|&(e, _)| e == smoky)
+        {
             return true;
         }
         self.smoke_within(pos, hive.def.smoke_reach)
@@ -371,6 +373,42 @@ mod tests {
         hold(&mut server, "base:skep");
         server.tend_bees(1, HIVE);
         assert_eq!(server.players[&1].health.current, 1);
+    }
+
+    /// Smoke clings: a torch waved in hand leaves the player smoky (effects.ron's `smoky`,
+    /// lingering), so the swarm goes into the skep taken up after it; once the smoke has
+    /// worn off, the bees sting again. A campfire close by makes them smoky too.
+    #[test]
+    fn smoke_from_a_torch_in_hand_clings_while_the_skep_is_taken_up() {
+        use crate::process::Process;
+        let mut server = fixture();
+        let smoky = hive(&server).smoky.expect("base bees know smoke that clings");
+        let is_smoky = |server: &Server| server.players[&1].timed_effects.iter().any(|&(e, _)| e == smoky);
+        let nest = block(&server, "base:bee_nest");
+        server.set_block(HIVE, nest);
+        hold(&mut server, "base:torch");
+        crate::process::Survival.run(&mut server);
+        assert!(is_smoky(&server), "a torch in hand smokes the player");
+        hold(&mut server, "base:skep");
+        crate::process::Survival.run(&mut server);
+        assert!(is_smoky(&server), "the smoke lingers with the skep in hand");
+        let health = server.players[&1].health.current;
+        server.tend_bees(1, HIVE);
+        assert!(server.block(HIVE).is_some_and(|b| b.is_air()), "the swarm is taken");
+        assert_eq!(held(&server), Some(block(&server, "base:bee_skep")));
+        assert_eq!(server.players[&1].health.current, health, "smoked bees do not sting");
+        // Worn off: the bees sting and stay.
+        server.players.get_mut(&1).unwrap().timed_effects.retain(|&(e, _)| e != smoky);
+        server.set_block(HIVE, nest);
+        hold(&mut server, "base:skep");
+        server.tend_bees(1, HIVE);
+        assert_eq!(server.block(HIVE), Some(nest), "no smoke left: the swarm stays");
+        // A campfire close by: smoky again, without one in hand.
+        let feet = server.players[&1].position.floor().as_ivec3();
+        server.set_block(feet + IVec3::new(0, 0, -2), block(&server, "base:campfire"));
+        server.players.get_mut(&1).unwrap().timed_effects.clear();
+        crate::process::Survival.run(&mut server);
+        assert!(is_smoky(&server), "a fire close by smokes the player");
     }
 
     /// A full skep gives its honey whether smoked or not, stinging without smoke, and the

@@ -31,6 +31,14 @@ fifth more often), forest calm (heal a fifth faster), rich rock (mountains: mine
 faster), aether-touched (fantastical biomes: a twentieth more experience) and mired
 (marsh: a little slower), so where you go matters as well as what you eat.
 
+**What is in hand and what is near.** `Holding("tag")` holds while the item in hand carries
+the tag; `Near("tag", reach)` while a block carrying it lies within `reach` blocks (1 to 8,
+every way) of the player's feet. A tag no block carries is refused at launch. **Effects that
+cling:** `lingers: SECONDS` makes an effect stay that long after its `when` stops holding (it
+is kept topped up while it holds, as a timed effect). Base's `smoky`: a torch in hand or a
+fire within 2 blocks leaves the player Smoky for 30 s, and bees treat a Smoky player as
+smoked (docs/bees.md). Any content can ask about it later, as about any effect.
+
 **Know-how: what a quest taught stays.** The condition `Done("quest")` holds from the moment
 the player has finished that quest (its package's name unless written in full; a quest no
 package has is refused at launch). It is how finishing an early gathering quest becomes an
