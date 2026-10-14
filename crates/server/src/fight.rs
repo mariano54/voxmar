@@ -337,7 +337,7 @@ impl Server {
         // Which of its attacks: a boss's next move that fits its phase and how far away the
         // player stands, from its body's edge (`Creature::choose`).
         let species = self.content.creatures.get(live.species);
-        let edge = to.length() - species.def.body.size.0 * live.scale * 0.5 - 0.3;
+        let edge = species.edge(to.length(), live.scale);
         let Some(index) = species.choose(live.phase, edge, live.attack) else { return };
         let Some(attack) = species.attack_at(index) else { return };
         let feel = self.content.combat.feel;

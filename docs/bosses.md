@@ -39,7 +39,9 @@ counter, no knockback. What it adds, in `creature.rs` and `creature/moves.rs`:
 - `moves`: attacks it chooses among, each with the phases it is used in, a least distance
   (`least`), and a `tell` (nod, crouch, rear) the client draws through the wind-up. It
   takes the next move that fits, in order, so a fight has a pattern to learn; its plain
-  `attack` when none fits.
+  `attack` when none fits. Reach counts from its body's edge at its own size, the same
+  for its brain and its wind-up (`Creature::edge`): it stops to strike only where a move
+  fits, and closes in across a gap between its moves' reaches.
 - `phases`: health shares it changes at. It rears for `hold` seconds, its blow on the way
   is forgotten, and players within 32 blocks are told (`boss.NS.NAME.phase.N`).
 - `mend`: health it regains every `every` seconds once `after` seconds pass without a
