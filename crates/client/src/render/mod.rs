@@ -462,6 +462,9 @@ pub struct LayerInfo {
     pub overlay: Option<(u16, Tint)>,
     /// How brightly it glows by itself, 0..1.
     pub glow: f32,
+    /// It glows by the block light passing through it, a lit room's window
+    /// (`BlockDef::lit_through`).
+    pub through: bool,
     /// How it varies from block to block (see `voxmar_engine::block::TextureVariety`).
     pub variety: voxmar_engine::block::TextureVariety,
     /// Its animation, if its texture is a strip of frames.
@@ -491,11 +494,14 @@ pub struct Animation {
 const ANIMATED: u8 = 32;
 /// The tint byte's bit for a layer with other drawings.
 const VARIED: u8 = 16;
+/// The glow byte's bit for a layer that glows by the block light through it.
+const THROUGH: u8 = 128;
 
 /// Each block texture layer's `LayerInfo`, a column of two texels per layer. The first:
 /// red and green the overlay's layer plus one (0 for none), blue its tint in the low four
 /// bits, whether it has other drawings (16), whether it animates (32), and whether the
-/// layer turns (64) and mirrors (128) from block to block, alpha the glow. The terrain
+/// layer turns (64) and mirrors (128) from block to block, alpha the glow in its low seven
+/// bits and whether it glows by the light through it (`THROUGH`). The terrain
 /// shader adds the glow to the texels bright enough to be the glowing part (see
 /// voxel.wgsl). The second, read only for a layer that animates or has other drawings:
 /// red and green its second frame's (or first other drawing's) layer, blue how many frames
@@ -510,7 +516,8 @@ fn layer_table(layers: &[LayerInfo]) -> Image {
             (None, Some(_)) => VARIED,
             (None, None) => 0,
         };
-        [low, high, tint | animated | variety, (layer.glow.clamp(0.0, 1.0) * 255.0).round() as u8]
+        let glow = (layer.glow.clamp(0.0, 1.0) * 127.0).round() as u8 | if layer.through { THROUGH } else { 0 };
+        [low, high, tint | animated | variety, glow]
     });
     let second = layers.iter().flat_map(|layer| {
         let (first, count, ticks) = match (layer.animation, layer.variants) {
@@ -990,14 +997,16 @@ mod tests {
                 variety: TextureVariety { turn: false, mirror: true },
                 animation: Some(Animation { first: 700, frames: 4, ticks: 3 }),
                 variants: None,
+                through: false,
             },
-            LayerInfo { variants: Some(Variants { first: 900, count: 2 }), ..default() },
+            LayerInfo { variants: Some(Variants { first: 900, count: 2 }), through: true, ..default() },
         ];
         let table = layer_table(&layers);
         let data = table.data.unwrap();
-        assert_eq!(data[..4], [45, 1, Tint::Water as u8 | 64, 255]);
+        assert_eq!(data[..4], [45, 1, Tint::Water as u8 | 64, 127]);
         assert_eq!(data[4..8], [0, 0, 128 | ANIMATED, 0]);
-        assert_eq!(data[8..12], [0, 0, VARIED, 0]);
+        // A window: no glow of its own, but by the light through it.
+        assert_eq!(data[8..12], [0, 0, VARIED, THROUGH]);
         // The second row: where the frames or drawings are, how many, and for how long.
         assert_eq!(data[12..16], [0, 0, 0, 1]);
         assert_eq!(data[16..20], [188, 2, 4, 3]);
