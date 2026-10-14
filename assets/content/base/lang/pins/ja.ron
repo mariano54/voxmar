@@ -520,6 +520,7 @@
     "quest.base.callers_at_the_door": ("Callers at the Door", "戸口の訪問者"),
     "quest.base.callers_at_the_door.why": ("A homely home draws callers. With seats, a table and stores under your roof, guests may come of an evening to sit by your fire while you are home: talk with them, share a cooked supper. Make it cosy and, by night, something smaller may come to the door for the crumbs.", "居心地のよい家には客が来る。屋根の下に椅子と机と収納があれば、家にいる夕べに客が炉のそばへ座りに来ることがある。話をして、温かい夕食を分けよう。さらに心地よい家にすれば、夜には小さな何かがパンくずを求めて戸口に来るかもしれない。"),
     "creature.base.rootmother": ("Rootmother", "根の母"),
+    "creature.base.old_tusk": ("Old Tusk", "古牙"),
     "effect.base.heartwood": ("Heartwood", "心材"),
     "effect.base.heartwood.description": ("The Rootmother's heartroot: room for a fifth more health, and you heal a quarter faster.", "根の母の心根。体力の上限が5分の1増え、回復が4分の1速くなる。"),
     "quest.base.the_rootmother": ("The Rootmother", "根の母"),

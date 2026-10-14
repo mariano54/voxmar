@@ -744,7 +744,7 @@ impl Server {
                 return;
             }
         }
-        // The first player in its way.
+        // The first player in its way: the nearest it has come to.
         let touching = size.0 * scale * 0.5 + PLAYER_HALF + feel.creature_clearance + 0.2;
         let struck = self
             .players
@@ -754,8 +754,8 @@ impl Server {
                 let to = (p.position - body.position).with_y(0.0);
                 to.length() <= touching && to.dot(charge.along) >= 0.0 && (p.position.y - body.position.y).abs() < size.1 * scale + 1.0
             })
-            .map(|p| p.id)
-            .next();
+            .min_by(|a, b| (a.position - body.position).with_y(0.0).length_squared().total_cmp(&(b.position - body.position).with_y(0.0).length_squared()))
+            .map(|p| p.id);
         if let Some(player) = struck {
             self.end_charge(creature, None);
             let lands = self.fights.now();

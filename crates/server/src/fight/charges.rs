@@ -254,3 +254,23 @@ fn a_charge_off_a_cliff_hurts_and_a_pit_holds_the_charger() {
     let at = field.at();
     assert!(at.y < STAND - 0.9 && at.z < 44.0, "he climbed out: {at}");
 }
+
+/// Struck from afar, he does not flee but turns on the one who struck him and charges:
+/// a boss fights to the end (his `Defend`, `Creature::fights`).
+#[test]
+fn struck_old_tusk_turns_and_charges() {
+    let mut field = Field::new(Vec3::new(40.5, STAND, 36.5), Vec3::new(40.5, STAND, 46.5));
+    field.server.hurt_creature(1, field.tusk, 1, None, voxmar_engine::combat::Blow::Plain);
+    let mind = &field.server.creatures.live[&field.tusk].mind;
+    assert!(mind.anger > 0.0 && mind.fear == 0.0, "angered, not frightened");
+    // The fight clock follows the game's, as a player's stamped messages make it.
+    let mut charged = false;
+    for n in 1..=6 * TICKS_PER_SECOND {
+        field.server.tick += 1;
+        field.server.arrival = field.server.fights.epoch + std::time::Duration::from_secs_f64(n as f64 / TICKS_PER_SECOND as f64);
+        field.server.tick_creatures();
+        field.server.tick_fights();
+        charged |= field.charging();
+    }
+    assert!(charged, "he charged the one who struck him");
+}
