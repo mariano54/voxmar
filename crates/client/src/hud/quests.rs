@@ -40,7 +40,7 @@ impl Plugin for QuestsPlugin {
         app.init_resource::<QuestView>()
             .add_systems(PostStartup, (spawn, spawn_tracker))
             .add_systems(OnEnter(Screen::InGame), keep_known_pins)
-            .add_systems(Update, ((open_start, choose_on_open, show, pick, claim, turn_ways, drag_web, draw, fit_lines.after(crate::ui::widgets::scroll_lists)).chain().after(ScreenSystems), (seed_pins, retire, track).chain(), hear_quests).run_if(in_state(Screen::InGame)));
+            .add_systems(Update, ((open_start, choose_on_open, show, pick, claim, turn_ways, keep_web_in_range, drag_web, draw, fit_lines.after(crate::ui::widgets::scroll_lists)).chain().after(ScreenSystems), (seed_pins, retire, track).chain(), hear_quests).run_if(in_state(Screen::InGame)));
     }
 }
 
@@ -959,6 +959,21 @@ fn fit_lines(web: Query<(Ref<ComputedNode>, Ref<ScrollPosition>), With<Web>>, ca
         if turn.rotation != rotation {
             turn.rotation = rotation;
         }
+    }
+}
+
+/// Holds the web's scroll within what its layout lets it move, as dragging, the wheel and
+/// `fit_lines` reckon it: the canvas centred on a quest by `draw` may ask a little past it
+/// (the well's padding), and a first drag from there would jump.
+fn keep_web_in_range(mut web: Query<(&ComputedNode, &mut ScrollPosition), With<Web>>) {
+    let Ok((computed, mut scroll)) = web.single_mut() else { return };
+    if computed.content_size() == Vec2::ZERO {
+        return;
+    }
+    let max = (computed.content_size() - computed.size()).max(Vec2::ZERO) * computed.inverse_scale_factor();
+    let held = scroll.0.clamp(Vec2::ZERO, max);
+    if scroll.0 != held {
+        scroll.0 = held;
     }
 }
 
