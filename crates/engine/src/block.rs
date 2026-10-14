@@ -269,6 +269,13 @@ pub struct BlockDef {
     /// The block placed instead when this one is placed against a block's side, by name,
     /// facing out from it: a torch on a wall is a wall torch (`facing` and `support: Wall`).
     pub wall: Option<String>,
+    /// The block it turns into when used (opened or shut), by name, in the same facing: a
+    /// shut door's open form, and the open form's shut one. Its upper half (see `upper`)
+    /// turns with it. The server turns it first, so its collision changes before anyone's.
+    pub swaps: Option<String>,
+    /// The block placed in the cell above along with it, by name, in the same facing, and
+    /// broken with it: a door's top half, which rests on it (`support: Below`).
+    pub upper: Option<String>,
 }
 
 /// The name suffix of a block made upside down (see [`BlockDef::flips`]), before any facing's.
@@ -531,6 +538,8 @@ impl Default for BlockDef {
             flipped: false,
             wall: None,
             shape: None,
+            swaps: None,
+            upper: None,
         }
     }
 }
@@ -562,6 +571,8 @@ impl BlockDef {
         self.textures.names_mut().into_iter().for_each(fill);
         self.drops.iter_mut().for_each(fill);
         self.wall.iter_mut().for_each(fill);
+        self.swaps.iter_mut().for_each(fill);
+        self.upper.iter_mut().for_each(fill);
         self.icon.iter_mut().for_each(fill);
         self.tags.iter_mut().for_each(fill);
         for variant in &mut self.variants {
@@ -583,6 +594,8 @@ impl BlockDef {
         self.family.iter_mut().for_each(qualify);
         self.variant_of.iter_mut().for_each(qualify);
         self.wall.iter_mut().for_each(qualify);
+        self.swaps.iter_mut().for_each(qualify);
+        self.upper.iter_mut().for_each(qualify);
         self.shape.iter_mut().for_each(qualify);
         if let Some(fluid) = &mut self.fluid {
             for meeting in &mut fluid.meets {
@@ -802,6 +815,12 @@ pub struct BlockInfo {
     /// The block placed instead against a block's side, facing north (see
     /// [`BlockDef::wall`] and [`BlockRegistry::facing`]).
     pub wall: Option<BlockId>,
+    /// What it turns into when used, facing north (see [`BlockDef::swaps`] and
+    /// [`BlockRegistry::swapped`]).
+    pub swaps: Option<BlockId>,
+    /// The block placed above with it, facing north (see [`BlockDef::upper`] and
+    /// [`BlockRegistry::upper`]).
+    pub upper: Option<BlockId>,
     /// Its shape, made ready for its facing (see [`BlockRegistry::shape`]), for a block
     /// drawn as one.
     pub shape: Option<u16>,
@@ -1176,6 +1195,30 @@ impl BlockRegistry {
                     }
                     None => None,
                 },
+                swaps: match &def.swaps {
+                    Some(name) => {
+                        let to = *by_name.get(name).ok_or_else(|| RegistryError(format!("`{}` swaps for unknown block `{name}`", def.name)))?;
+                        if defs[to.0 as usize].facing != def.facing {
+                            return Err(RegistryError(format!("`{}` swaps for `{name}`, which {} facings", def.name, if def.facing { "has no" } else { "comes in" })));
+                        }
+                        Some(to)
+                    }
+                    None => None,
+                },
+                upper: match &def.upper {
+                    Some(name) => {
+                        let up = *by_name.get(name).ok_or_else(|| RegistryError(format!("`{}` has unknown upper block `{name}`", def.name)))?;
+                        // It stands on its lower half and goes with it.
+                        if defs[up.0 as usize].support != Some(Support::Below) {
+                            return Err(RegistryError(format!("`{}` has upper block `{name}`, which does not rest on it (`support: Below`)", def.name)));
+                        }
+                        if defs[up.0 as usize].facing != def.facing {
+                            return Err(RegistryError(format!("`{}` has upper block `{name}`, which {} facings", def.name, if def.facing { "has no" } else { "comes in" })));
+                        }
+                        Some(up)
+                    }
+                    None => None,
+                },
                 shape,
             });
         }
@@ -1202,6 +1245,20 @@ impl BlockRegistry {
         let mut placement_forms: Vec<bool> = defs.iter().map(|def| def.variant_of.is_some() || def.form_of().is_some()).collect();
         for wall in info.iter().filter_map(|info| info.wall) {
             placement_forms[wall.0 as usize] = true;
+        }
+        // An upper half is only ever placed with its lower; a form swapped to that drops
+        // another block (an open door, dropping the door) is only ever swapped to.
+        let forms: Vec<BlockId> = info
+            .iter()
+            .flat_map(|block| block.upper.into_iter().chain(block.swaps.filter(|&to| info[to.0 as usize].drops != to)))
+            .collect();
+        for form in forms {
+            placement_forms[form.0 as usize] = true;
+            for facing in Facing::ALL {
+                if let Some(&id) = by_name.get(&format!("{}{}", defs[form.0 as usize].name, facing.suffix())) {
+                    placement_forms[id.0 as usize] = true;
+                }
+            }
         }
         // Nothing drops a plant whose item merged into another: that is never held, never
         // stacks with its kind and shows in no catalogue. It drops what it merged into.
@@ -1323,6 +1380,18 @@ impl BlockRegistry {
         let name = &self.def(block).name;
         let base = name.strip_suffix(now.suffix()).unwrap_or(name);
         self.id(&format!("{base}{}", facing.suffix())).unwrap_or(block)
+    }
+
+    /// What `block` turns into when used (see [`BlockDef::swaps`]), in its facing.
+    pub fn swapped(&self, block: BlockId) -> Option<BlockId> {
+        let to = self.info(block).swaps?;
+        Some(self.info(block).facing.map_or(to, |facing| self.facing(to, facing)))
+    }
+
+    /// The block placed above `block` with it (see [`BlockDef::upper`]), in its facing.
+    pub fn upper(&self, block: BlockId) -> Option<BlockId> {
+        let up = self.info(block).upper?;
+        Some(self.info(block).facing.map_or(up, |facing| self.facing(up, facing)))
     }
 
     /// Like [`Self::id`] but for names the engine or generator cannot work without.

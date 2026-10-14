@@ -145,6 +145,10 @@ impl ActionContext for Context<'_> {
         self.server.players.values().any(|p| p.joined && p.health.alive() && p.aabb().intersects(|c| c == cell))
     }
 
+    fn creature_in(&self, cell: IVec3) -> bool {
+        self.server.creatures.live.values().any(|c| c.health > 0 && c.body.aabb().intersects(|at| at == cell))
+    }
+
     fn cooking(&self) -> Option<&voxmar_engine::cooking::CookingRegistry> {
         Some(&self.server.content.cooking)
     }
@@ -336,6 +340,10 @@ impl Server {
                     player.changed(traits::INVENTORY);
                     let placed = placed_block(&Context { server: self, agent }, item, block, face);
                     self.set_block(cell, placed);
+                    // Its upper half goes in above with it (a door's top).
+                    if let Some(upper) = self.content.blocks.upper(placed) {
+                        self.set_block(cell + IVec3::Y, upper);
+                    }
                     // Marked as the player's: an ore teaches nothing broken again, and a
                     // furnishing gives itself back (where the world placed one, it does not).
                     // (By the block placed: a held item may place as another, as a torch does.)
@@ -388,6 +396,11 @@ impl Server {
                 }
                 (Effect::Craft, ActionTarget::Slot(times)) => self.craft(agent, times == 0),
                 (Effect::Fish, ActionTarget::Block { block, .. }) => self.fish(agent, block),
+                (Effect::Swap, ActionTarget::Block { block, .. }) => {
+                    // Opened or shut here first: the clients follow what the server holds.
+                    let changes = voxmar_engine::action::swapping(&Context { server: self, agent }, block);
+                    self.set_blocks(&changes);
+                }
                 (Effect::Till, ActionTarget::Block { block, .. }) => {
                     if let Some(farmland) = self.content.blocks.id("base:farmland") {
                         self.set_block(block, farmland);
