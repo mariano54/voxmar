@@ -18,6 +18,10 @@
 //! - A blow that hurts the player thuds, tips the view toward the side it came from and
 //!   reddens the edges of the screen. A block knocks and jolts the hand; a perfect block
 //!   rings and throws sparks before the eyes.
+//! - A boss's wind-up is told by ear: a sound swelling to its loudest as the blow lands
+//!   (the music dips under it), and, for a blow whose reach the body cannot show, a ring on
+//!   the ground as far as it reaches, filling in as the wind-up runs out (`tells`).
+//! - Every fight sound is a voice of the mix's Combat category (`mix`).
 //! - Sounds are synthesized at startup from the file's layers ([`sound`]), unless a package
 //!   gives recordings.
 //!
@@ -38,10 +42,12 @@ use crate::player::LocalPlayer;
 use crate::render::particles::{Look, Motion, Particle, Particles};
 use crate::session::Launch;
 use crate::settings::Settings;
+use crate::mix::{Category, Voice};
 use crate::sfx::{Audible, MASTER};
 use crate::world::ClientWorld;
 use voxmar_engine::block::ParticleBlend;
 
+pub mod shot;
 pub mod sound;
 pub mod style;
 
@@ -60,10 +66,16 @@ impl Plugin for FightFxPlugin {
             .init_resource::<Queued>()
             .add_systems(Startup, make_sounds)
             .add_systems(PostStartup, spawn_vignette)
-            .add_systems(Update, react.in_set(Reacted).after(ShowCreatures).run_if(in_state(Screen::InGame)))
-            .add_systems(Update, play.after(react).in_set(Audible))
+            .init_resource::<Pending>()
+            .init_resource::<shot::Shots>()
+            .add_systems(Update, (react, tell).in_set(Reacted).after(ShowCreatures).run_if(in_state(Screen::InGame)))
+            .add_systems(Update, shot::fly.after(Reacted).before(play).run_if(in_state(Screen::InGame)))
+            .add_systems(OnExit(Screen::InGame), shot::reset)
+            .add_systems(Update, markers.after(Reacted).run_if(in_state(Screen::InGame)))
+            .add_systems(Update, play.after(Reacted).in_set(Audible))
             // What `react` set going shows the same frame.
             .add_systems(Update, (kick_camera.after(crate::player::follow_camera), vignette).after(Reacted).run_if(in_state(Screen::InGame)))
+            .add_systems(OnEnter(Screen::InGame), warm_markers)
             .add_systems(OnExit(Screen::InGame), reset);
     }
 }
@@ -295,11 +307,59 @@ pub struct Heard {
     /// Times the view moved, and the hand was knocked.
     pub kicks: u32,
     pub knocks: u32,
+    /// Rings drawn on the ground for bosses' blows.
+    pub markers: u32,
+    /// Shots loosed, specks of their trails left, and shots arrived.
+    pub shots: u32,
+    pub trail: u32,
+    pub impacts: u32,
 }
 
 /// Sounds to play this frame: name, loudness and pitch.
 #[derive(Resource, Default)]
-struct Queued(Vec<(String, f32, f32)>);
+struct Queued(Vec<(String, f32, f32, bool)>);
+
+/// Tells' sounds waiting for their moment (app seconds), so each one's loudest lands with
+/// its blow, whose wind-up they tell and when that wind-up ends (its blow): one whose
+/// wind-up ended well before its blow (the creature died, went, or stopped) is dropped.
+#[derive(Resource, Default, Debug)]
+pub struct Pending(pub Vec<Cue>);
+
+/// A tell's sound waiting: when it plays (app seconds), what, whose wind-up it tells, how
+/// loud (quieter further off), whether the music dips under it, and when the wind-up it
+/// tells ends (its blow).
+#[derive(Debug, Clone)]
+pub struct Cue {
+    pub due: f32,
+    pub sound: String,
+    pub id: u32,
+    pub gain: f32,
+    pub ducks: bool,
+    pub blow: f32,
+}
+
+/// A ring on the ground telling how far a boss's blow reaches: whose, when its wind-up
+/// began, how long it lasts, how far it reaches, and whether this is the filling disc
+/// inside the ring rather than the ring.
+#[derive(Component, Debug, Clone, Copy)]
+pub struct Marker {
+    pub id: u32,
+    pub from: f32,
+    pub windup: f32,
+    pub reach: f32,
+    pub fill: bool,
+    alpha: f32,
+}
+
+/// Blocks within which a tell is heard at its full loudness.
+const TOLD_NEAR: f32 = 6.0;
+
+/// Seconds a tell's ring stays after the blow lands.
+const MARKER_AFTER: f32 = 0.12;
+
+/// How long before its end a wind-up seen to stop is its blow, not cut short: the pose is
+/// seen late by up to the round trip, so the blow can end it this much early to the eye.
+const BLOW_SLACK: f32 = 0.25;
 
 /// What has been seen of the fight so far, to find what is new.
 #[derive(Resource, Default)]
@@ -349,15 +409,156 @@ fn play(mut commands: Commands, mut queued: ResMut<Queued>, bank: Option<ResMut<
         return;
     };
     let master = MASTER * settings.sound_volume as f32 / 100.0;
-    for (name, gain, pitch) in queued.0.drain(..) {
+    for (name, gain, pitch, ducks) in queued.0.drain(..) {
         bank.counter += 1;
         let roll = crate::sfx::mix(bank.counter);
         let Some(clips) = bank.clips.get(&name).filter(|c| !c.is_empty()) else { continue };
         let clip = clips[(roll % clips.len() as u64) as usize].clone();
         let jitter = ((roll >> 32) & 0xffff) as f32 / 65535.0;
         let volume = Volume::Linear(bank.gains[&name] * gain * master);
-        commands.spawn((AudioPlayer(clip), PlaybackSettings { speed: pitch * (0.96 + 0.08 * jitter), ..PlaybackSettings::DESPAWN.with_volume(volume) }));
+        commands.spawn((
+            AudioPlayer(clip),
+            PlaybackSettings { speed: pitch * (0.96 + 0.08 * jitter), ..PlaybackSettings::DESPAWN.with_volume(volume) },
+            Voice { category: Category::Combat, at: None, ducks },
+        ));
     }
+}
+
+/// Tells each wind-up begun: its sound timed so its loudest lands with the blow (a boss's
+/// with the music dipping under it), quieter further off, and a ring on the ground for a
+/// blow that reaches further than the body shows.
+#[allow(clippy::too_many_arguments)]
+fn tell(
+    mut commands: Commands,
+    time: Res<Time>,
+    look: Option<Res<FightLook>>,
+    mut creatures: ResMut<Creatures>,
+    mut pending: ResMut<Pending>,
+    mut queued: ResMut<Queued>,
+    mut heard: ResMut<Heard>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    player: Res<LocalPlayer>,
+) {
+    let now = time.elapsed_secs();
+    let told = std::mem::take(&mut creatures.told);
+    let Some(look) = look else { return };
+    for told in told {
+        let Some(tell) = look.tell_for(&told.key, told.style) else { continue };
+        let Some((_, at, _)) = creatures.body(told.id) else { continue };
+        // Heard as well as a blow near at hand, fainter further off.
+        let gain = (TOLD_NEAR / at.distance(player.position).max(TOLD_NEAR)).sqrt();
+        *heard.asked.entry(tell.sound.clone()).or_default() += 1;
+        // Seen first mid wind-up, how much of it is left is not known: told at once.
+        let due = if told.late { now } else { now + (told.windup - tell.peak).max(0.0) };
+        pending.0.push(Cue { due, sound: tell.sound.clone(), id: told.id, gain, ducks: tell.ducks, blow: now + told.windup });
+        let Some(marker) = tell.marker else { continue };
+        heard.markers += 1;
+        let colour = |alpha: f32| StandardMaterial { base_color: marker.colour.color().with_alpha(alpha), unlit: true, alpha_mode: AlphaMode::Blend, cull_mode: None, ..default() };
+        let ring = meshes.add(annulus(told.reach, (told.reach - marker.width).max(0.0)));
+        let disc = meshes.add(annulus(1.0, 0.0));
+        for (mesh, fill) in [(ring, false), (disc, true)] {
+            commands.spawn((
+                Mesh3d(mesh),
+                MeshMaterial3d(materials.add(colour(0.0))),
+                Transform::from_translation(at + Vec3::Y * 0.04).with_scale(if fill { Vec3::ZERO } else { Vec3::ONE }),
+                Marker { id: told.id, from: now, windup: told.windup, reach: told.reach, fill, alpha: marker.alpha },
+                bevy::light::NotShadowCaster,
+                DespawnOnExit(Screen::InGame),
+            ));
+        }
+    }
+    // A wind-up that stops near its end was the blow: a tell still to come plays with it.
+    // One that stops sooner, or whose creature falls or goes, was cut short: its tell is
+    // dropped. Judged by the time left to the blow, not to the cue (which starts its sound's
+    // peak before the blow).
+    for cue in std::mem::take(&mut pending.0) {
+        let struck = !creatures.winding(cue.id);
+        if struck && !(creatures.standing(cue.id) && cue.blow - now <= BLOW_SLACK) {
+            continue;
+        }
+        if struck || cue.due <= now {
+            queued.0.push((cue.sound, cue.gain, 1.0, cue.ducks));
+        } else {
+            pending.0.push(cue);
+        }
+    }
+}
+
+/// A tell's ground ring and disc compile as the world loads (`render::warm`), not the first
+/// time a boss winds up a blow that reaches past its body: drawn as `tell` draws them, see-
+/// through, unlit and two-sided.
+fn warm_markers(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>) {
+    let material = materials.add(StandardMaterial { base_color: Color::WHITE.with_alpha(0.0), unlit: true, alpha_mode: AlphaMode::Blend, cull_mode: None, ..default() });
+    crate::render::warm::warm(&mut commands, meshes.add(annulus(1.0, 0.5)), material, false, DespawnOnExit(Screen::InGame));
+}
+
+/// A flat ring on the ground, `outer` blocks across from its middle to its edge and open
+/// inside `inner` (0: a disc), facing up.
+fn annulus(outer: f32, inner: f32) -> Mesh {
+    use bevy::asset::RenderAssetUsages;
+    use bevy::mesh::{Indices, PrimitiveTopology};
+    const SIDES: u32 = 48;
+    let mut positions = Vec::new();
+    for i in 0..SIDES {
+        let a = i as f32 / SIDES as f32 * std::f32::consts::TAU;
+        let (sin, cos) = a.sin_cos();
+        positions.push([cos * outer, 0.0, sin * outer]);
+        positions.push([cos * inner, 0.0, sin * inner]);
+    }
+    let indices: Vec<u32> = (0..SIDES).flat_map(|i| {
+        let (o, n) = (i * 2, (i + 1) % SIDES * 2);
+        [o, o + 1, n, n, o + 1, n + 1]
+    }).collect();
+    let count = positions.len();
+    Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD | RenderAssetUsages::MAIN_WORLD)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0, 1.0, 0.0]; count])
+        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, vec![[0.0, 0.0]; count])
+        .with_inserted_indices(Indices::U32(indices))
+}
+
+/// Tells' rings follow their boss and fill in as its wind-up runs out, then go.
+fn markers(
+    mut commands: Commands,
+    time: Res<Time>,
+    creatures: Res<Creatures>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut rings: Query<(Entity, &Marker, &mut Transform, &MeshMaterial3d<StandardMaterial>)>,
+) {
+    let now = time.elapsed_secs();
+    for (entity, marker, mut transform, material) in &mut rings {
+        let t = now - marker.from;
+        let body = creatures.body(marker.id);
+        // Its blow fills it at once; a wind-up cut short (it fell, went, or stopped well
+        // before its end) takes it away.
+        let struck = !creatures.winding(marker.id);
+        let ended = struck && (!creatures.standing(marker.id) || t < marker.windup - BLOW_SLACK);
+        if t > marker.windup + MARKER_AFTER || body.is_none() || ended {
+            materials.remove(&material.0);
+            commands.entity(entity).despawn();
+            continue;
+        }
+        let filled = if struck { 1.0 } else { marker_fill(t, marker.windup) };
+        if let Some((_, at, _)) = body {
+            transform.translation = at + Vec3::Y * 0.04;
+        }
+        let alpha = if marker.fill {
+            transform.scale = Vec3::splat(filled * marker.reach);
+            marker.alpha * 0.4 * filled
+        } else {
+            marker.alpha * (0.35 + 0.65 * filled)
+        };
+        if let Some(mut m) = materials.get_mut(&material.0) {
+            m.base_color = m.base_color.with_alpha(alpha);
+        }
+    }
+}
+
+/// How far a tell's ring has filled in, 0 to 1, `t` seconds into a wind-up of `windup`:
+/// full as the blow lands, and held there a moment after.
+pub fn marker_fill(t: f32, windup: f32) -> f32 {
+    (t / windup.max(0.05)).clamp(0.0, 1.0)
 }
 
 /// The edges of the screen, reddened while the player is hurt.
@@ -417,7 +618,8 @@ fn kick_camera(time: Res<Time>, settings: Res<Settings>, kick: Res<CameraKick>, 
     }
 }
 
-fn reset(mut seen: ResMut<Seen>, mut kick: ResMut<CameraKick>, mut hand: ResMut<HandKick>, mut stop: ResMut<HitStop>) {
+fn reset(mut seen: ResMut<Seen>, mut kick: ResMut<CameraKick>, mut hand: ResMut<HandKick>, mut stop: ResMut<HitStop>, mut pending: ResMut<Pending>) {
+    pending.0.clear();
     *seen = Seen::default();
     *kick = CameraKick::default();
     *hand = HandKick::default();
@@ -437,13 +639,14 @@ fn react(
     mut creatures: ResMut<Creatures>,
     mut particles: ResMut<Particles>,
     (mut seen, mut stop, mut hand, mut kick, mut heard, mut queued): (ResMut<Seen>, ResMut<HitStop>, ResMut<HandKick>, ResMut<CameraKick>, ResMut<Heard>, ResMut<Queued>),
+    mut shots: ResMut<shot::Shots>,
 ) {
     let Some(look) = look else { return };
     let now = time.elapsed_secs();
     let mut say = |name: &str, gain: f32, pitch: f32, heard: &mut Heard| {
         if let Some(name) = resolve(&look, name) {
             *heard.asked.entry(name.to_owned()).or_default() += 1;
-            queued.0.push((name.to_owned(), gain, pitch));
+            queued.0.push((name.to_owned(), gain, pitch, false));
         }
     };
     // The fight so far is not news on joining.
@@ -457,8 +660,19 @@ fn react(
     // A swing starts: the rhythm's meter starts over (not for a switch of what is held).
     let timing = combat.timing(&weapon);
     let since = fighting.rhythm.meter(time.elapsed_secs_f64(), &timing) * timing.cooldown;
+    let shooting = look.shots.get(class);
     if held == seen.held && since < seen.since - 1e-3 {
         say(&format!("swing.{class}"), 1.0, 1.0, &mut heard);
+        // A shot is drawn, if there is one to loose: it lets go to reach the creature
+        // looked at as the wind-up ends.
+        let ammo = combat.ammo(&weapon);
+        let loaded = ammo.is_empty() || (0..voxmar_engine::inventory::SLOTS).any(|slot| player.inventory.get(slot).is_some_and(|stack| ammo.contains(&stack.item)));
+        if let Some(shooting) = shooting.filter(|_| loaded) {
+            let reach = weapon.reach + combat.feel.reach_slack;
+            let at = creatures.looked_at(&launch, player.eye(), player.look_direction(), reach);
+            let flight = at.map_or(0.0, |(_, distance)| distance / shooting.speed);
+            shots.draw(now + shot::let_go(timing.windup, flight), class, at.map(|(id, _)| id), reach);
+        }
     }
     (seen.since, seen.held) = (since, held);
     let dashing = fighting.dash.is_some();
@@ -501,6 +715,13 @@ fn react(
         let loud = 0.75 + 0.25 * (share * 3.0).min(1.0);
         for (name, gain) in struck_sounds(damage, blow, killed, weapon.style, shell) {
             say(&name, gain * loud, pitch, &mut heard);
+        }
+        // A shot that missed sails on past; one that hit strikes home. Told whatever is in
+        // hand now: a missile loosed before the weapon was put away still waits for its
+        // answer (one with no missile waiting at that creature is dropped). Bleeding is no
+        // answer to a shot.
+        if blow != Blow::Bleed {
+            shots.verdicts.push((id, damage > 0));
         }
         if damage == 0 || blow == Blow::Bleed {
             continue;
@@ -643,9 +864,58 @@ fn smoke(particles: &mut Particles, poof: &Burst, scale: f32, at: Vec3, height: 
 mod tests {
     use super::*;
 
+    /// The least wind-up a creature's blow may have (seconds): time to see it coming and
+    /// answer it.
+    const READABLE: f32 = 0.3;
+
     fn look() -> FightLook {
         let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/content/core/combat_fx.ron")).unwrap();
         FightLook::load(&[voxmar_engine::content::ContentFile { package: "core".into(), name: style::FILE.into(), source }]).unwrap()
+    }
+
+    /// Every fight sound, each of its takes as the game plays it (its gain, every volume at
+    /// 100%), is heard within the Combat band.
+    #[test]
+    fn fight_sounds_are_heard_within_the_combat_band() {
+        let look = look();
+        let heard = look.sounds.iter().filter(|(_, def)| def.recordings.is_empty()).flat_map(|(name, def)| {
+            sound::render(def, 7).into_iter().enumerate().map(move |(i, take)| (format!("{name} #{i}"), crate::sfx::loudness(&take, 1) * def.gain * MASTER))
+        });
+        crate::mix::tests::all([crate::mix::tests::within(Category::Combat, heard)]);
+    }
+
+    /// Every creature blow in the content has a tell (a boss's its own), each winds up long
+    /// enough to be read and answered, and each tell's sound is at its loudest when it says
+    /// (`peak`), no later than its blow lands, so played that long before the blow it
+    /// lands with it.
+    #[test]
+    fn every_blow_is_told_and_its_sound_peaks_with_the_blow() {
+        let look = look();
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        assert_eq!(look.untold(&content.creatures), Vec::<String>::new(), "blows with no tell");
+        for (_, creature) in content.creatures.iter() {
+            let name = creature.def.name.rsplit(':').next().unwrap();
+            let blows = creature.def.attack.iter().map(|a| (name.to_owned(), a)).chain(creature.def.moves.iter().map(|m| (format!("{name}.{}", m.name), &m.attack)));
+            for (key, attack) in blows {
+                let windup = attack.windup.unwrap_or(content.combat.feel.creature_windup);
+                assert!(windup >= READABLE, "{key} winds up {windup} s, under the {READABLE} s a blow needs to be read");
+                let tell = look.tell_for(&key, attack.style).unwrap();
+                assert!(tell.peak <= windup + 1e-3, "{key}'s tell {} is loudest {} s in, after its blow lands at {windup} s", tell.sound, tell.peak);
+            }
+        }
+        let window = (0.05 * crate::sfx::RATE as f32) as usize; // the loudness window (`sfx::loudness`)
+        for (name, tell) in &look.tells {
+            for take in sound::render(&look.sounds[&tell.sound], 3) {
+                let energy = |at: usize| take[at..(at + window).min(take.len())].iter().map(|s| s * s).sum::<f32>();
+                let loudest = (0..take.len().saturating_sub(window)).step_by(window / 8).max_by(|a, b| energy(*a).total_cmp(&energy(*b))).unwrap();
+                let at = (loudest + window / 2) as f32 / crate::sfx::RATE as f32;
+                assert!((at - tell.peak).abs() < 0.12, "{name}: {} is loudest {at:.2} s in, not at {} s", tell.sound, tell.peak);
+            }
+        }
+        // A ring fills as the wind-up runs out, full as the blow lands.
+        assert_eq!(marker_fill(0.0, 1.1), 0.0);
+        assert!((marker_fill(0.55, 1.1) - 0.5).abs() < 1e-5);
+        assert_eq!(marker_fill(1.2, 1.1), 1.0);
     }
 
     #[test]

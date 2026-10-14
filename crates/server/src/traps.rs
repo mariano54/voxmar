@@ -171,6 +171,7 @@ mod tests {
     use voxmar_engine::coords::ColumnPos;
     use voxmar_engine::glam::Vec3;
     use voxmar_engine::world::Column;
+    use voxmar_protocol::TICKS_PER_SECOND;
 
     use super::*;
 
@@ -233,6 +234,25 @@ mod tests {
         // Taken once: nothing more.
         server.take_from_trap(1, snare);
         assert_eq!(named(&server, snare), "base:snare");
+    }
+
+    /// What the gate's Snare step does: a rabbit summoned (by command, with the player two
+    /// blocks off) into a set snare's cell is caught by the server's own ticks.
+    #[test]
+    fn a_rabbit_summoned_into_a_set_snare_springs_it() {
+        let (mut server, snare) = field(1);
+        server.players.get_mut(&1).unwrap().position = snare.as_vec3() + Vec3::new(0.5, 0.0, -2.5);
+        server.console(&format!("summon rabbit 1 {} {} {}", snare.x + 2, snare.y, snare.z));
+        let rabbit = server.creatures.live.iter().find(|(_, c)| c.owner.is_none()).map(|(&id, c)| (id, c.body.position));
+        let (_, at) = rabbit.expect("a rabbit was summoned");
+        assert_eq!(at.floor().as_ivec3(), snare, "summoned into the snare's cell, not {at}");
+        for _ in 0..TICKS_PER_SECOND * 2 {
+            server.tick();
+            if named(&server, snare) == "base:snare_sprung" {
+                return;
+            }
+        }
+        panic!("the snare never sprang: the rabbit is at {:?}", server.creatures.live.values().find(|c| c.owner.is_none()).map(|c| c.body.position));
     }
 
     /// A snare catches only its kinds, only wild ones, and only in its own cell.
