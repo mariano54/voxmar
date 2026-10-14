@@ -526,9 +526,9 @@ const STEP_MOST: Vec2 = Vec2::new(CELL + 90.0 * PX, CELL + 40.0 * PX);
 /// How far the picked quest's glow reaches past it.
 const GLOW: f32 = 3.0 * PX;
 /// The width of a lane's header, at the left of the canvas, which stays as it is dragged.
-const HEADER: f32 = 58.0 * PX;
+const HEADER: f32 = 74.0 * PX;
 /// A lane's path icon in its header.
-const PATH_ICON: f32 = 12.0 * PX;
+const PATH_ICON: f32 = 14.0 * PX;
 /// How thick the lines between quests are.
 const LINE: f32 = 2.0 * PX;
 
@@ -856,8 +856,8 @@ fn draw(
                         width: Val::Px(HEADER),
                         height: Val::Px(lane.rows as f32 * step.y),
                         flex_direction: FlexDirection::Column,
-                        justify_content: JustifyContent::Center,
-                        padding: UiRect::axes(Val::Px(space::HAIR), Val::Px(space::HAIR)),
+                        // Level with the lane's first row, where its chain runs.
+                        padding: UiRect { left: Val::Px(space::HAIR), right: Val::Px(space::HAIR), top: Val::Px((step.y - CELL) / 2.0), ..default() },
                         ..default()
                     };
                     let head_name = head.map(|i| quests[i].name.clone());
