@@ -155,6 +155,10 @@ fn add(out: &mut [f32], layer: &Layer, pitch: f32, pace: f32, noise: &mut Noise)
                 *s += run_band(&mut band, *g) * decay(t, seconds * 1.5) * gain * 1.4;
             }
         }
+        Layer::Later { at, ref layer } => {
+            let start = ((at * pace * SR) as usize).min(len);
+            add(&mut out[start..], layer, pitch, pace, noise);
+        }
     }
 }
 
