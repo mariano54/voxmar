@@ -7176,7 +7176,20 @@ fn the_first_days(f: &mut Fresh) -> Site {
     let kiln = f.rel(2, 0, 1);
     f.walk_toward(Fresh::middle(kiln), 3.0);
     f.place("base:pit_kiln", kiln - up);
+    // An Earth Clamp, which Fire the Clay names: eight dirt dug from a bank of it on the farm
+    // plot round a log at the table (Construction 3), set down by the kiln and loaded with
+    // sixteen clay. It fires them, none cracked, while clay is fired by hand toward the
+    // twelve; what it gives goes to The Potter.
+    let o = f.origin;
+    let ground: Vec<IVec3> = (24..=27).flat_map(|x| (-4..=-3).map(move |z| o + v(x, 0, z))).collect();
+    f.gather("base:stone_shovel", ground, "base:dirt", 8);
+    f.at_table(table);
+    f.craft(&[(0, "base:dirt", 1), (1, "base:dirt", 1), (2, "base:dirt", 1), (3, "base:dirt", 1), (4, log, 1), (5, "base:dirt", 1), (6, "base:dirt", 1), (7, "base:dirt", 1), (8, "base:dirt", 1)], "base:earth_clamp", 1);
+    f.walk_toward(Fresh::middle(f.rel(4, 0, 1)), 2.0);
+    let clamp = f.place("base:earth_clamp", f.rel(4, -1, 1));
+    f.mark("earth_clamp");
     f.gather_from("base:stone_shovel", &banks, bed.clone(), clay, 28);
+    f.tend_clamp(clamp, Some(clay));
     f.walk_toward(Fresh::middle(kiln), 3.0);
     let fired = "base:fired_clay";
     while f.have(fired) < 12 {
@@ -7187,7 +7200,7 @@ fn the_first_days(f: &mut Fresh) -> Site {
         f.cook(kiln, clay, fired);
     }
     f.mark("fire_the_clay");
-    Site { table, fire, kiln, bed, banks, clamp: None }
+    Site { table, fire, kiln, bed, banks, clamp: Some(clamp) }
 }
 
 /// The quests a new player follows from nothing to the lit Crucible Kiln, in the order the
@@ -7391,17 +7404,10 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     // sixteen (three more), and a log for sticks: twenty-four is a few to spare.
     let trunks: Vec<IVec3> = [-7, -9].into_iter().flat_map(|z| [1, 3, 5, 7, 11, 13, 15].into_iter().flat_map(move |x| (0..4).map(move |y| o + IVec3::new(x, y, z)))).collect();
     f.gather("base:stone_axe", trunks, log, 24);
-    // An Earth Clamp: eight dirt dug from a bank of it on the farm plot round a log at the table
-    // (Construction 3), set down by the kiln and loaded with sixteen logs. It chars them
-    // while clay is fired by hand toward A Kiln Load; Charcoal is done when it is taken.
-    let ground: Vec<IVec3> = (24..=27).flat_map(|x| (-4..=-3).map(move |z| o + IVec3::new(x, 0, z))).collect();
-    f.gather("base:stone_shovel", ground, "base:dirt", 8);
-    f.at_table(site.table);
-    f.craft(&[(0, "base:dirt", 1), (1, "base:dirt", 1), (2, "base:dirt", 1), (3, "base:dirt", 1), (4, log, 1), (5, "base:dirt", 1), (6, "base:dirt", 1), (7, "base:dirt", 1), (8, "base:dirt", 1)], "base:earth_clamp", 1);
-    f.walk_toward(Fresh::middle(f.rel(4, 0, 1)), 2.0);
-    let clamp = f.place("base:earth_clamp", f.rel(4, -1, 1));
-    site.clamp = Some(clamp);
-    f.mark("earth_clamp");
+    // The earth clamp from Fire the Clay, taken of its clay and loaded with sixteen logs. It
+    // chars them while clay is fired by hand toward A Kiln Load; Charcoal is done when it
+    // is taken.
+    let clamp = site.clamp.expect("the clamp set down for Fire the Clay");
     f.tend_clamp(clamp, Some(log));
     while f.have(charcoal) < 16 {
         let more = f.have(fired) + 1;

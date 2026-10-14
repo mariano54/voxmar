@@ -1116,7 +1116,7 @@
     "quest.base.a_pit_kiln": "A Pit Kiln",
     "quest.base.a_pit_kiln.why": "Clay needs more heat than an open fire gives. A pit kiln is a campfire walled in with cobblestone: at the crafting table, put the campfire in the middle of the bottom row with a cobblestone on each side of it and one above each of those, four in all, as the recipe shows. Set it down, then hold clay and right-click it.",
     "quest.base.fire_the_clay": "Fire the Clay",
-    "quest.base.fire_the_clay.why": "Hold clay and right-click the pit kiln: after a moment it comes out as fired clay. Low Crafting levels crack some, so bring spare. Fire twelve.",
+    "quest.base.fire_the_clay.why": "Hold clay and right-click the pit kiln: after a moment it comes out as fired clay. Low Crafting levels crack some, so bring spare (a cracked one is clay again). Waiting at the kiln? Heap eight dirt over a log for an earth clamp (An Earth Clamp): it fires sixteen at once, none cracked, while you dig. Fire twelve.",
     "quest.base.brick_by_brick": "Brick by Brick",
     "quest.base.brick_by_brick.why": "The Crucible Kiln is built of kiln bricks: nineteen for the kiln and its crucible. Four fired clay make a brick at the crafting grid (Crafting 5). Have nineteen in hand: A Kiln Load pays the first four, and the rest is still a lot of clay, so keep firing. An earth clamp fires sixteen at a time while you dig the next (An Earth Clamp).",
     "quest.base.a_kiln_load": "A Kiln Load",
