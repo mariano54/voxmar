@@ -319,6 +319,7 @@ impl Server {
             ClientMessage::Pray { prayer, on } => self.pray(id, prayer, on),
             ClientMessage::LookedUp { item } => self.looked_up(id, item),
             ClientMessage::ClaimQuest { name } => self.claim_quest(id, &name),
+            ClientMessage::LookAtStation { block } => self.look_at_station(id, block),
         }
     }
 

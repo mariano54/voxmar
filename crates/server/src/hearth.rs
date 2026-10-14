@@ -147,10 +147,14 @@ mod tests {
         server.light(1, core);
         let until = server.lit[&core].until;
         assert_eq!(until - server.tick, (24.0 * server.content.machines.burn_seconds(coal).unwrap() * TICKS_PER_SECOND as f32) as u64);
+        server.players.get_mut(&1).unwrap().position = core.as_vec3() + Vec3::new(0.5, 0.0, 3.5);
+        let burns = (until - server.tick).div_ceil(TICKS_PER_SECOND as u64) as u32;
+        assert_eq!(server.station_seen(1, core), Some((None, Some(burns))), "a look says how long the fire burns");
         server.tick = until - 1;
         assert!(server.station_lit(core));
         server.tick = until;
         assert!(!server.station_lit(core), "the fire outlived its charge");
+        assert_eq!(server.station_seen(1, core), Some((None, Some(0))), "a look says the kiln is cold");
         server.light(1, core);
         assert!(!server.station_lit(core), "an empty hand relit an expired fire");
         assert_eq!(server.players[&1].tallies["lit:base:crucible_kiln"], 1);

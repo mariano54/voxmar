@@ -9,6 +9,11 @@
 //! looked at) also shows its combat level, coloured by how it compares with ours; once struck
 //! at, a thin bar of its health underneath. A kept animal says so (and whose, when it is
 //! someone else's), as do one still young and one ready to breed, in a quiet line under the name.
+//!
+//! A station looked at (a drying rack, a compost heap, a kiln's core) says what is on it and
+//! about how long it has left, in the same quiet line: the client asks the server about that
+//! one block only (`ClientMessage::LookAtStation`), again while it works, and counts down
+//! between answers.
 
 use bevy::color::Mix;
 use bevy::prelude::*;
@@ -19,7 +24,7 @@ use voxmar_engine::block::BlockId;
 use voxmar_engine::content::ContentFile;
 use voxmar_engine::inventory::ItemStack;
 use voxmar_engine::physics::raycast;
-use voxmar_protocol::PlayerId;
+use voxmar_protocol::{PlayerId, StationLoad};
 
 use crate::breaking::shows_breaking;
 use crate::creatures::{Creatures, Keeper, Sighting};
@@ -29,7 +34,7 @@ use crate::hud::inventory::rarity_color;
 use crate::interact::Target;
 use crate::lang::Locale;
 use crate::menu::Screen;
-use crate::net::RemotePlayers;
+use crate::net::{Net, RemotePlayers};
 use crate::player::{LocalPlayer, UiState};
 use crate::session::Launch;
 use crate::ui::skin::{PX, Piece};
@@ -43,6 +48,8 @@ const FIGHTING: f32 = 6.0;
 const SPREAD: f32 = 10.0;
 /// The level colour of a creature far below us.
 const EASY: Color = Color::srgb(0.56, 0.88, 0.46);
+/// Seconds between asks about a station still looked at, so the count down keeps true.
+const ASK_EVERY: f64 = 5.0;
 
 /// How far each kind of thing is named from, and how big a box a dropped item is aimed at
 /// with (`look.ron`, in `core`); a later package changes what it gives. Read with the rest
@@ -101,7 +108,8 @@ impl Plugin for TargetPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Readout>()
             .add_systems(PostStartup, spawn)
-            .add_systems(Update, (show, place).chain().run_if(in_state(Screen::InGame)))
+            .init_resource::<StationSeen>()
+            .add_systems(Update, (ask, show, place).chain().run_if(in_state(Screen::InGame)))
             .add_systems(OnExit(Screen::InGame), hide);
     }
 }
@@ -125,6 +133,78 @@ pub struct Readout {
 
 /// Tags shown at most: kept, young, ready.
 const TAGS: usize = 3;
+
+/// The server's last word on the station looked at, and the last ask about one.
+#[derive(Resource, Default)]
+pub struct StationSeen {
+    /// Which block, what is on it, its fire's seconds left (a kiln), and when that came.
+    told: Option<(IVec3, Option<StationLoad>, Option<u32>, f64)>,
+    /// Which block was asked about, as which block, and when.
+    asked: Option<(IVec3, BlockId, f64)>,
+}
+
+impl StationSeen {
+    /// The server's answer about the station at `block` (`ServerMessage::Station`).
+    pub fn tell(&mut self, block: IVec3, load: Option<StationLoad>, fire: Option<u32>, now: f64) {
+        self.told = Some((block, load, fire, now));
+    }
+}
+
+/// Whether `block` says something when looked at: a station, or a fuelled structure's core.
+fn says_more(launch: &Launch, block: BlockId) -> bool {
+    launch.content.stations.of(block).is_some() || launch.content.multiblocks.with_core(block).any(|m| !m.fuels.is_empty())
+}
+
+/// Asks the server about the station looked at: once on looking, again when its block
+/// changes (loaded, done), and every few seconds while it works.
+fn ask(time: Res<Time>, net: Option<Res<Net>>, target: Res<Target>, world: Res<ClientWorld>, launch: Res<Launch>, mut seen: ResMut<StationSeen>) {
+    let Some(net) = net else { return };
+    let Some(at) = target.block_hit.map(|hit| hit.block) else { return };
+    let Some(block) = world.block(at).filter(|&b| says_more(&launch, b)) else { return };
+    let now = time.elapsed_secs_f64();
+    let fresh = seen.asked.is_none_or(|(pos, was, when)| pos != at || was != block || now - when >= ASK_EVERY);
+    if fresh {
+        seen.asked = Some((at, block, now));
+        net.look_at_station(at);
+    }
+}
+
+/// Seconds as the plate says them: about so many minutes, or seconds under one.
+fn time_left(locale: &Locale, seconds: f64) -> String {
+    let seconds = seconds.max(1.0).ceil() as u64;
+    if seconds < 60 { locale.format("target.station.seconds", &[("seconds", &seconds)]) } else { locale.format("target.station.minutes", &[("minutes", &seconds.div_ceil(60))]) }
+}
+
+/// The quiet line under a station's name: what it holds and makes, and how long it has
+/// left; a kiln's fire, or that it is cold. Nothing until the server has said.
+/// `ready` when the block itself shows its work done; `name` names an item.
+fn station_tags(locale: &Locale, name: impl Fn(BlockId) -> String, at: IVec3, ready: bool, seen: &StationSeen, now: f64) -> Vec<(String, Color)> {
+    let Some((_, load, fire, told)) = seen.told.filter(|told| told.0 == at) else { return Vec::new() };
+    let gone = now - told;
+    let mut tags = Vec::new();
+    if let Some(fire) = fire {
+        let left = fire as f64 - gone;
+        if left > 0.0 {
+            tags.push((locale.format("target.station.burning", &[("time", &time_left(locale, left))]), GOLD));
+        } else {
+            tags.push((locale.get("target.station.cold").to_owned(), MUTED));
+        }
+    }
+    match load {
+        Some(load) => {
+            tags.push((locale.format("target.station.holds", &[("count", &load.count), ("item", &name(load.item))]), SOFT));
+            let left = load.seconds as f64 - gone;
+            if ready || left <= 0.0 {
+                tags.push((locale.format("target.station.ready", &[("count", &load.makes), ("item", &name(load.output))]), ACCENT));
+            } else {
+                tags.push((locale.format("target.station.makes", &[("count", &load.makes), ("item", &name(load.output)), ("time", &time_left(locale, left))]), SOFT));
+            }
+        }
+        None if fire.is_none() => tags.push((locale.get("target.station.empty").to_owned(), MUTED)),
+        None => {}
+    }
+    tags
+}
 
 #[derive(Component)]
 struct ReadoutStrip;
@@ -249,6 +329,7 @@ fn show(
     locale: Res<Locale>,
     ui: Res<UiState>,
     sight: Sight,
+    seen: Res<StationSeen>,
     mut readout: ResMut<Readout>,
     mut plate: Query<&mut Visibility, (With<ReadoutPlate>, Without<ReadoutBar>)>,
     mut bar: Query<&mut Visibility, (With<ReadoutBar>, Without<ReadoutPlate>)>,
@@ -286,7 +367,15 @@ fn show(
         }),
         Some(Subject::Block(block)) => {
             let def = sight.world.registry.def(block);
-            Some(Readout { name: locale.block(def), name_colour: rarity_color(def.rarity), ..Readout::default() })
+            let tags = match sight.target.block_hit {
+                Some(hit) if says_more(launch, block) => {
+                    let ready = launch.content.stations.of(block).is_some_and(|(_, phase)| phase == voxmar_engine::station::Phase::Ready);
+                    let name = |item: BlockId| locale.block(sight.world.registry.def(item));
+                    station_tags(&locale, name, hit.block, ready, &seen, time.elapsed_secs_f64())
+                }
+                _ => Vec::new(),
+            };
+            Some(Readout { name: locale.block(def), name_colour: rarity_color(def.rarity), tags, ..Readout::default() })
         }
         Some(Subject::Item(stack)) => {
             let def = sight.world.registry.def(stack.item);
@@ -405,6 +494,29 @@ mod tests {
         assert_eq!(words(seen(Some(Keeper::Us), true, true)), ["Kept", "Young", "Ready to breed"]);
         // Someone else's, with them away: still kept, without a name to give.
         assert_eq!(words(seen(Some(Keeper::Other(7)), false, false)), ["Kept"]);
+    }
+
+    #[test]
+    fn a_station_says_what_it_holds_and_counts_down_between_answers() {
+        let content = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        let locale = Locale::load(&content, "en");
+        let name = |item: BlockId| if item == BlockId(1) { "Raw Beef".to_owned() } else { "Jerky".to_owned() };
+        let at = IVec3::new(4, 60, -2);
+        let mut seen = StationSeen::default();
+        let words = |seen: &StationSeen, at: IVec3, ready: bool, now: f64| station_tags(&locale, name, at, ready, seen, now).into_iter().map(|(words, _)| words).collect::<Vec<_>>();
+        assert!(words(&seen, at, false, 0.0).is_empty(), "nothing until the server says");
+        let load = StationLoad { item: BlockId(1), count: 6, output: BlockId(2), makes: 6, seconds: 360 };
+        seen.tell(at, Some(load), None, 10.0);
+        assert_eq!(words(&seen, at, false, 10.0), ["6 Raw Beef", "6 Jerky in about 6 min"]);
+        assert_eq!(words(&seen, at, false, 340.0), ["6 Raw Beef", "6 Jerky in 30 s"], "counted down on the client");
+        assert_eq!(words(&seen, at, false, 400.0), ["6 Raw Beef", "6 Jerky ready"]);
+        assert_eq!(words(&seen, at, true, 11.0), ["6 Raw Beef", "6 Jerky ready"], "the block says done");
+        assert!(words(&seen, at + IVec3::X, false, 10.0).is_empty(), "another block's answer is not this one's");
+        seen.tell(at, None, None, 20.0);
+        assert_eq!(words(&seen, at, false, 20.0), ["Empty"]);
+        seen.tell(at, None, Some(150), 20.0);
+        assert_eq!(words(&seen, at, false, 20.0), ["Burning, about 3 min left"]);
+        assert_eq!(words(&seen, at, false, 200.0), ["Cold"]);
     }
 
     #[test]

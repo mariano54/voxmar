@@ -8480,7 +8480,8 @@ const MEAT_SHOWS: f32 = 0.08;
 /// A drying rack by the campfire, seen from three blocks at eye height (shot `rack_bare`
 /// once the renderer has it), raw rabbit selected: right clicks on it hang the rabbit
 /// (`base:use_station`), so the server sends the hung rack back, and once the renderer has
-/// that too (shot `rack`) the meat must show in the middle of the shot. Then the rack goes,
+/// that too (shot `rack`) the meat must show in the middle of the shot; looked at, the
+/// plate under its name says what hangs and what it makes (shot `rack_readout`). Then the rack goes,
 /// letting the rabbit fall as a broken rack does.
 fn dry(world: &mut World, gate: &mut Gate, now: f32) {
     let rack = gate.feet + IVec3::new(0, 0, 14) + RACK_FROM_FIRE;
@@ -8552,9 +8553,33 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
                     }
                 };
                 gate.check("drying rack", result);
-                world.resource::<Net>().command(&format!("setblock {} {} {} air", rack.x, rack.y, rack.z));
-                gate.next(Step::Tame, now);
+                gate.advance(now);
             }
+        }
+        // Looked at, the plate under the rack's name says what hangs on it and what it
+        // makes, with the time left, as the server answers the look. The client asks on its
+        // own clock, so giving up wants the server's seconds and the client's both.
+        4 => {
+            aim_at(world, rack.as_vec3() + RACK_MEAT);
+            let (holds, makes) = {
+                let (locale, launch, client) = (world.resource::<Locale>(), world.resource::<Launch>(), world.resource::<ClientWorld>());
+                let (raw, hung) = (client.registry.id("base:raw_rabbit"), client.registry.id("base:drying_rack_hung"));
+                let output = hung.zip(raw).and_then(|(hung, raw)| Some(launch.content.stations.of(hung)?.0.work(raw)?.1.output));
+                let count = 2 - holding(world, "base:raw_rabbit").0.min(2);
+                let name = |item: BlockId| locale.block(launch.content.blocks.def(item));
+                (raw.map(|raw| locale.format("target.station.holds", &[("count", &count), ("item", &name(raw))])), output.map(name))
+            };
+            let tags: Vec<String> = world.resource::<crate::hud::target::Readout>().tags.iter().map(|(words, _)| words.clone()).collect();
+            let shown = holds.as_ref().is_some_and(|holds| tags.contains(holds)) && makes.as_ref().is_some_and(|makes| tags.iter().any(|t| t.contains(makes.as_str())));
+            if shown && gate.shot(world, "rack_readout").is_some() {
+                gate.check("station readout", Ok(format!("looked at, the hung rack reads {tags:?}")));
+            } else if shown || gate.server_in_phase() <= DRY_WAIT || now - gate.phase_since <= DRY_WAIT {
+                return;
+            } else {
+                gate.check("station readout", Err(format!("looked at for {DRY_WAIT} server and game seconds, the hung rack reads {tags:?}, not {holds:?} and a line making {makes:?}")));
+            }
+            world.resource::<Net>().command(&format!("setblock {} {} {} air", rack.x, rack.y, rack.z));
+            gate.next(Step::Tame, now);
         }
         _ => {}
     }
