@@ -1,0 +1,47 @@
+// How the game marks a quest finished and a level reached (crates/client/src/hud/celebrate.rs),
+// read and checked at launch: a banner at the top of the screen, motes bursting around the
+// player, and the moment's jingle (sounds.ron). Moments take turns: one arriving while
+// another shows waits until that one has held for `hold`. None of it stops play. Times are
+// seconds, distances blocks, colours (red, green, blue) from 0 to 255. A later package
+// changes what it gives: `milestone_every`, or a moment whole.
+(
+    // Levels this many apart (10, 20, ...) are milestones: the grander moment and jingle.
+    milestone_every: 10,
+    // A banner pops in (growing to `pop` times its size and settling), shows for `seconds`
+    // and fades over the last `fade`; `shine` makes its title glimmer.
+    // A burst is `count` motes (at the full particle setting) of these `colors`, starting
+    // on a ring `ring` around the player at `height` over their feet, after `delay`. Each
+    // flies out at `out` and up at `up` (blocks a second), slowed by `drag`; with `gravity`
+    // over 0 it arcs over and falls, else it drifts up, wandering `wander` across. Motes
+    // are `size` wide, live `life` (up to half again as long, at random) and shine by
+    // their own light.
+    // Motes are seen from the player's own eyes: small, and in a ring a little way out, so
+    // they read as sparkles round the edge of the view rather than blobs in front of it.
+    quest: (
+        hold: 1.2,
+        banner: (seconds: 3.5, fade: 0.6, pop: 1.12),
+        bursts: [
+            (count: 26, colors: [(255, 220, 130), (255, 246, 214), (170, 230, 140)], ring: 1.7, height: 0.4, out: 0.3, up: 1.5, drag: 0.8, size: 0.035, life: 1.6, wander: 0.25),
+        ],
+    ),
+    level: (
+        hold: 1.2,
+        banner: (seconds: 3.5, fade: 0.6, pop: 1.12),
+        bursts: [
+            // Sparks thrown up and out, falling back around the player.
+            (count: 24, colors: [(255, 216, 110), (255, 244, 200)], ring: 1.4, height: 0.6, out: 1.6, up: 4.6, gravity: 7.0, drag: 0.6, size: 0.03, life: 1.0),
+            // Then a soft column of motes rising past the eyes.
+            (count: 22, colors: [(255, 230, 150), (200, 235, 255)], ring: 1.7, height: 0.3, delay: 0.15, out: 0.1, up: 1.8, drag: 0.7, size: 0.035, life: 1.6, wander: 0.2),
+        ],
+    ),
+    milestone: (
+        hold: 1.9,
+        banner: (seconds: 5.0, fade: 0.8, pop: 1.2, shine: true),
+        bursts: [
+            (count: 40, colors: [(255, 216, 110), (255, 250, 230), (255, 170, 80)], ring: 1.4, height: 0.6, out: 2.2, up: 5.2, gravity: 7.0, drag: 0.6, size: 0.035, life: 1.1),
+            (count: 36, colors: [(255, 230, 150), (200, 235, 255), (230, 200, 255)], ring: 1.8, height: 0.3, delay: 0.2, out: 0.15, up: 2.2, drag: 0.6, size: 0.04, life: 1.9, wander: 0.3),
+            // A second wave as the answer in the jingle lands.
+            (count: 32, colors: [(255, 240, 180), (255, 216, 110)], ring: 1.5, height: 0.8, delay: 0.75, out: 2.0, up: 4.4, gravity: 6.0, drag: 0.6, size: 0.03, life: 1.1),
+        ],
+    ),
+)

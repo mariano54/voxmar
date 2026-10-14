@@ -67,6 +67,11 @@ pub struct Product {
     /// Farming experience for taking it.
     #[serde(default)]
     pub xp: f32,
+    /// Laid by a kept animal inside its keeper's home, it goes into the home's stores,
+    /// nearest first, where one takes it and has room, instead of onto the ground (eggs in
+    /// a nest). Only for what it leaves by itself (no `tool`).
+    #[serde(default)]
+    pub nests: bool,
 }
 
 fn first() -> u8 {

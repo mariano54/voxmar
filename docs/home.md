@@ -28,6 +28,13 @@ first reached in a session (with a **Next:** line). Reaching one counts as
 `Built("home_NAME", 1)` for quests (`home_camp`, `home_hearthside`, `home_snug`, `home_homely`,
 `home_cosy`, `home_heart_of_the_home`).
 
+Each step's chip has its own icon, so the HUD shows the home climbing at a glance: a tent
+(Camp), a hearth fire (Hearthside), a quilt (Snug), a house (Homely), its window lit and its
+chimney smoking (Cosy), a heart at its middle (Heart of the Home); and a moon for Rested, a
+moon and star for Well Rested, a full moon for Deep Rest (default pack
+`recipes/effects.ron`, `ui/effect/<name>`; test `the_homes_steps_and_rest_have_their_own_icons`;
+the gate's Home step, "home: icons", shot `home-chips`).
+
 | Step | Age | Needs (tags) | Gives while at home |
 | --- | --- | --- | --- |
 | Camp | Nomad | a bed (sleeping bag) slept in, 1 light | heal x1.2 |
@@ -93,7 +100,7 @@ position is inside the home box (`survey_around(anchor, keeper)`); a mod can ask
 `HomeHas("kept", n)` like any other tag, and content load accepts it. `crop` is the block tag
 every crop stage carries, so a garden needs no new tag. Other players' animals never count.
 
-Ideas left: species rules (`kept:hen` for eggs, a cat for fewer mice).
+Ideas left: a cat for fewer mice. Hens lay into the home's stores (below, "Eggs in the stores").
 
 ## Callers (wandering parties that come to a home)
 
@@ -146,12 +153,39 @@ It is a console command, so it needs no protocol change.
 Away from home (the lit hearth, else the bed last slept in), a small hearth mark at the top
 of the screen sits over where home lies, with how far it is ("Home 140 m"). Turned away from
 it, the mark waits at the screen's edge on the side to turn to, so a player lost at night
-turns until it is in the middle and walks. Within `home_hidden_within` blocks (core
-`interface.ron`, 24) nothing shows; the mark's icon is the item a package names as
+turns until it is in the middle and walks. The mark's icon is the item a package names as
 `home_icon` (base: the hearthstone). The server sends home in the player's vitals
-(`Vitals::home`, protocol 38) once a second when it changes. With no hearth lit and no bed
-slept in, there is no mark. The gate's Home step checks it after the camp: the bag named as
-home and the mark showing its distance.
+(`Vitals::home`, protocol 38) once a second when it changes, so the way home needs no new
+protocol. With no hearth lit and no bed slept in, there is no mark.
+
+**When it shows (Oct 14, thirteenth pass).** The first nights are where a player gets lost.
+They wander off at dusk, the hearth is a dot of light among dark trees, and nights stay dark
+with no torches before coal. More light is not the answer; the mark is. It used to show
+whenever the player was over 24 blocks from home, all day long. Now:
+
+- **Never inside the home.** Within `home_hidden_within` (8) blocks either way (a square, as
+  the home's own box is, `home_reach` 7, and a step), nothing shows, corners included.
+- **From dusk to dawn** (`home_dusk` 16500 to `home_dawn` 23500 ticks after sunrise, the
+  times `/time set dusk` and `dawn` name) it shows everywhere past that. A night can wrap
+  past midnight (a dusk later than its dawn).
+- **By day** it shows only farther than `home_shown_beyond` (48) blocks. A day spent working
+  round the home is not cluttered, and a long trip still has its way back.
+- It **fades** in and out over `home_fade` (0.5) seconds instead of popping.
+- The **"Way Home Marker"** setting (Interface tab, on by default, en+ja) turns it off.
+
+All five numbers live in core `interface.ron`, where a later package changes what it gives.
+They are checked as they load: the distances are 0 or more and the day distance is not under
+the inside one; both times are under a day and differ; the fade is 0 to 5 s. The rule is
+`hud::home::wanted`, with its own test (`the_way_home_shows_at_night_or_far_off`).
+
+**Gate.** The Home step checks the mark itself after the camp: named home, its distance, the
+edge, and gone near home. It does this with the distances set to 0 so it shows at any hour.
+The **WayHome** step then plays the rule at dusk. It sets `/time set dusk` and stands on a
+pad 20 blocks out, past the box and short of the day distance. It waits, in server and game
+seconds both, for the mark to fade in. It turns home 20° to one side and reads back the
+bearing the mark draws from where it sits, which must be within 3° of home's
+("way home: dusk"). Back at the camp it waits for the mark to fade out ("way home:
+inside"). It then sets the time back and leaves the camp to the Nest step, which takes it down.
 
 ## Sleeping
 
@@ -204,6 +238,26 @@ step puts four planks in a barrel beside the bag, shoots the table's recipe with
 button ("home-lay-recipe"), presses it, and shoots the grid laid from the barrel
 ("home-lay"; check "home: lay").
 
+## Eggs in the stores
+
+A kept hen (any bird whose product `nests`) that lays inside its keeper's home box lays into
+the home's stores instead of onto the ground: the nearest store that takes an egg and has
+room (a barrel, a crate, a jar; not a basket, which keeps only what is foraged). What finds
+no room, or is laid away from home, falls on the ground as before, where it lasts 30
+minutes. So a pen by the house fills the larder while the keeper is out: no egg hunt round
+the yard, nothing rotting while you travel, and the eggs are there for **Lay**, stations and
+Put Away to draw on like anything else stored.
+
+The keeper is told once home ("Your animals laid into your home's stores: 3 Egg."), so the
+first egg in a barrel is never a mystery; it is told once, then the tally starts again. It
+is data: `nests: true` on a product in creatures.ron (base sets it on every egg), refused at
+launch on a product taken with a tool (wool, milk). The home box is the survival rules' own
+(`home_reach`, `home_up`, `home_down`). Server side in server/src/husbandry.rs (the laying
+pass) with `Server::stores_around`; the keeper must be in the world (logged out, it falls). The
+gate's Nest step keeps a junglefowl at the Home step's bag, opens a barrel, makes an egg
+due, and checks the egg in the barrel and the chat line (shot `home-nest`, check
+"home: nest").
+
 ## A well by the field
 
 Crops grow best with water within four blocks, and rice not at all without it, so a home
@@ -214,7 +268,8 @@ sunk level with it, keeps its ground moist (farm.rs `crop_conditions`), and a st
 `Water` spot counts it too, so a compost heap beside a well rots as fast as one by a stream.
 A mod's rain barrel or cistern is the same tag. Tests: `a_well_waters_the_field_about_it`,
 `a_heap_rots_greens_four_to_one`. The gate's Refusal step sets one down from the hand by its
-dry plot ("well", shot "well").
+dry plot ("well", shot "well"). The Farm quest A Well by the Field (after A Field of Gold)
+asks for one made and set down where it keeps tilled ground moist (`Watering`).
 
 ## Smoke over home
 
@@ -229,6 +284,44 @@ whose palette holds such a block, and counts nearness as a share of each emissio
 so a far chimney takes its place among the nearest torches
 (`a_chimney_smokes_over_a_hearth_from_afar`). The gate's Cook step sets a hearthstone and a
 chimney beside its campfire and counts the chimney's puffs ("chimney smoke").
+
+## Light in the windows
+
+A home shows its lit rooms at night: a window glows warm by the light of the room behind it.
+Before glass there is the Hide Window (Farm, Construction 3: a hide in a frame of eight sticks,
+two windows), oiled hide in a stick frame. Every block tagged `window` (the hide window, glass,
+settlements' old glass) passes block light as air does (a `Cutout` cube), so a candle or the
+hearth behind it lights the ground outside, and is `lit_through` (a block field, any mod's
+window can say it): its bright texels glow by the block light reaching its face, which came
+through it, as a lantern's glow by its own light (client `render/mod.rs` `layer_table`, the
+glow byte's `THROUGH` bit; `voxel.wgsl`). It shows at any hour, as a lantern's glow does, and
+stands out after dark. A dark room's window stays dark; a wall keeps the light in
+(`a_window_lets_a_lit_rooms_light_out`, engine tests/windows.rs). The gate's Door step then
+sets a hide window in a candle-lit stone nook at midnight and judges the shot: the pane warm
+and bright against the night ("window: glows", shot `window-night`).
+
+## A trough for the pen
+
+Kept animals graze within their leash of home (7 blocks), and grazing wears the land: now and
+then a tuft goes for good, so a full pen strips its grass and goes hungry, and a hungry animal
+loses condition and gives less. A Feed Trough (Farm, Construction 4: five planks in a low U) is
+a store of nine (machines.ron, opened like a barrel) tagged `trough`. A kept animal that grazes,
+unfed past a day (`creatures.ron`'s condition `fed`) with nothing to graze near, walks to a
+trough within its leash of home holding one of its foods (what it grazes, its favourites, what
+tames or readies it, any `breeding_feed`) and eats one, head down, as it grazes; it is fed
+for the day. So the trough feeds the pen while the keeper is away, an item an animal a day,
+and wheat from the field has a use at home. Hunters (a kept fox) still take meals by hand.
+Server `troughs.rs` (`trough_for`, `eat_from_trough`; the brain's food is a trough when it has
+no grazing); tests `a_hungry_kept_animal_eats_its_food_from_a_trough`,
+`a_kept_grazer_left_alone_feeds_itself_at_the_trough`. The gate's Tame step sets a trough
+and opens it ("trough: opens", shot `trough`).
+
+A kept animal also needs water within its leash of home, and that need reads one tag:
+any block tagged `drinking_water` (water itself, a well, a feed trough) meets it (server
+`condition.rs` `water_near`; the engine's `condition::DRINK`). So a pen away from the river
+is watered by the trough that feeds it, a Construction 4 piece any age can make, and a mod's
+water station is a tag on its block. Loading refuses creatures when no block carries
+`drinking_water` (`check_drink`). Test: `a_pen_drinks_from_water_a_well_or_a_trough`.
 
 ## Quest hooks (written, in base/quests.ron)
 

@@ -56,6 +56,8 @@ pub enum Run {
     Effect,
     /// Kills the player.
     Kill,
+    /// Heals the player to full health.
+    Heal,
     /// Makes an online player an admin, until `Deop`.
     Op,
     /// Takes an online player's admin rights away.
