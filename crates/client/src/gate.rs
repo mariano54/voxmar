@@ -318,6 +318,17 @@ enum Step {
     /// none). The fights before saw creatures coil and strike, and the fallen go up in
     /// smoke. Shot mid-flinch.
     CombatFeel,
+    /// How creatures move (`creature_motion`): a deer this side alone walks across the
+    /// view, its pose driven as the server's word would drive it, and its feet stay where
+    /// they are put while they are down (they slide less than `MOST_SLIP` of the ground it
+    /// goes).
+    CreatureWalk,
+    /// The deer runs straight away from the player: its feet still stay put, and it shows
+    /// it is fleeing. Shot mid-run.
+    CreatureRun,
+    /// The deer, standing, is told to face a quarter turn round: it turns no faster than its
+    /// kind may and ends facing that way.
+    CreatureTurn,
     /// Raw rabbit used on a campfire comes back cooked (or burnt) into the inventory, and
     /// smoke and embers rise from the fire.
     Cook,
@@ -641,6 +652,9 @@ struct Gate {
     /// told its blows.
     feel_asked: std::collections::BTreeMap<String, u32>,
     feel_counts: (u32, u32, u32),
+    /// The deer walked by the CreatureWalk, CreatureRun and CreatureTurn steps: where it
+    /// is, frames into its stage, and whether its shot is taken.
+    puppet: (Vec3, u32, bool),
 }
 
 impl Gate {
@@ -754,6 +768,7 @@ impl Gate {
             overlay_counted: (0.0, 0.0),
             feel_asked: Default::default(),
             feel_counts: (0, 0, 0),
+            puppet: (Vec3::ZERO, 0, false),
         }
     }
 
@@ -1385,6 +1400,9 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Wear => wear(world, gate, now, in_phase),
         Step::CombatHud => combat_hud(world, gate, now, in_phase),
         Step::CombatFeel => combat_feel(world, gate, now, in_phase),
+        Step::CreatureWalk => creature_motion(world, gate, gate.phase.min(1)),
+        Step::CreatureRun => creature_motion(world, gate, 2),
+        Step::CreatureTurn => creature_motion(world, gate, 3),
         Step::Cook => cook(world, gate, now, in_phase),
         Step::Dry => dry(world, gate, now),
         Step::Tame => tame(world, gate, now, in_phase),
@@ -8245,7 +8263,7 @@ fn combat_feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let Some((id, _)) = creature else {
                 if gate.server_in_phase() > UNANSWERED {
                     gate.check("combat feel", Err("the marked creature is gone".into()));
-                    gate.next(Step::Cook, now);
+                    gate.next(Step::CreatureWalk, now);
                 }
                 return;
             };
@@ -8270,7 +8288,7 @@ fn combat_feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         1 => {
             let Some((id, _)) = creature else {
                 gate.check("combat feel", Err("the marked creature went before its blows showed".into()));
-                gate.next(Step::Cook, now);
+                gate.next(Step::CreatureWalk, now);
                 return;
             };
             let after = asked(world);
@@ -8311,9 +8329,142 @@ fn combat_feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         }
         _ => {
             if gate.shot(world, "combat-feel").is_some() {
+                gate.next(Step::CreatureWalk, now);
+            }
+        }
+    }
+}
+
+/// The deer the creature motion steps walk, an id the server never gives, and its species.
+const PUPPET: u32 = u32::MAX - 7;
+const PUPPET_SPECIES: &str = "red_deer";
+/// Frames it walks (and runs, and turns) for, after `PUPPET_WARM` to get going: counted in
+/// frames, so a slow machine draws as many strides to judge.
+const PUPPET_FRAMES: u32 = 72;
+const PUPPET_WARM: u32 = 12;
+/// The most a foot that is down may slide, for each block the body goes.
+const MOST_SLIP: f32 = 0.15;
+
+/// The CreatureWalk, CreatureRun and CreatureTurn steps, by `stage`: 0 putting the deer
+/// down, 1 walking, 2 running, 3 turning.
+fn creature_motion(world: &mut World, gate: &mut Gate, stage: u32) {
+    use crate::creatures::{Creatures, Watched};
+    let launch = world.resource::<Launch>();
+    let Some(species) = launch.content.creatures.find(PUPPET_SPECIES) else {
+        gate.check("creature motion", Err(format!("no {PUPPET_SPECIES} in the content")));
+        gate.next(Step::Cook, gate.since);
+        return;
+    };
+    let def = &launch.content.creatures.get(species).def;
+    let (walk, run, turn, health) = (def.movement.walk, def.movement.run, def.movement.turn.to_radians(), def.health);
+    let most_turn = turn * world.resource::<crate::creature_motion::Motion>().turn.share;
+    let dt = world.resource::<Time>().delta_secs();
+    let now = world.resource::<Time>().elapsed_secs();
+    let facing = |d: Vec3| (-d.x).atan2(-d.z);
+    let view = |at: Vec3, velocity: Vec3, yaw: f32| voxmar_protocol::CreatureView {
+        id: PUPPET,
+        species,
+        position: at,
+        velocity,
+        yaw,
+        pose: voxmar_engine::creature::brain::Pose::Idle,
+        tell: 0,
+        health,
+        scale: 1.0,
+        seed: 1,
+        kept: false,
+        owner: None,
+        young: false,
+        ready: false,
+        trust: 0,
+        genes: [0; voxmar_engine::genes::MOST],
+    };
+    // Walking across the view, then running straight away from the player.
+    let (across, away) = (Vec3::X, Vec3::Z);
+    let (at, frames, shot) = gate.puppet;
+    let moving = |world: &mut World, gate: &mut Gate, direction: Vec3, speed: f32| {
+        let (at, frames) = (gate.puppet.0 + direction * speed * dt, gate.puppet.1 + 1);
+        (gate.puppet.0, gate.puppet.1) = (at, frames);
+        world.resource_mut::<Creatures>().receive(vec![view(at, direction * speed, facing(direction))], vec![]);
+        if frames == PUPPET_WARM {
+            world.resource_mut::<Creatures>().watched = Watched::default();
+        }
+    };
+    let judged = |w: &Watched, how: &str| -> Result<String, String> {
+        if w.planted < 20 || w.frames < PUPPET_FRAMES / 2 {
+            Err(format!("{how}: only {} frames of feet down over {} frames drawn", w.planted, w.frames))
+        } else if w.slip() > MOST_SLIP {
+            Err(format!("{how}: its feet slid {:.2} of the ground it went while down ({MOST_SLIP} the most)", w.slip()))
+        } else {
+            Ok(format!("{how}: feet slid {:.3} of the ground it went while down, over {} foot frames", w.slip(), w.planted))
+        }
+    };
+    match stage {
+        0 => {
+            let start = gate.feet.as_vec3() + Vec3::new(-5.0, 0.0, 5.0);
+            gate.puppet = (start, 0, false);
+            let mut creatures = world.resource_mut::<Creatures>();
+            creatures.receive(vec![view(start, Vec3::ZERO, facing(across))], vec![]);
+            creatures.watch = Some(PUPPET);
+            gate.advance(now);
+        }
+        1 => {
+            aim_at(world, at + Vec3::Y);
+            moving(world, gate, across, walk);
+            if frames >= PUPPET_WARM + PUPPET_FRAMES {
+                let result = judged(&world.resource::<Creatures>().watched, "walking");
+                gate.check("creature motion: walk", result);
+                gate.puppet.1 = 0;
+                gate.next(Step::CreatureRun, now);
+            }
+        }
+        // From near the player again, so the shot shows it close, mid-stride.
+        2 => {
+            if frames == 0 && !shot {
+                gate.puppet.0 = gate.feet.as_vec3() + Vec3::new(0.0, 0.0, 5.0);
+            }
+            aim_at(world, gate.puppet.0 + Vec3::Y);
+            moving(world, gate, away, run);
+            if frames >= PUPPET_WARM && !shot && gate.shot(world, "creature-motion").is_some() {
+                gate.puppet.2 = true;
+            }
+            if frames >= PUPPET_WARM + PUPPET_FRAMES && gate.puppet.2 {
+                let watched = world.resource::<Creatures>().watched;
+                let result = judged(&watched, "running away").and_then(|ok| {
+                    if watched.flee < 0.5 { Err(format!("running away from the player it showed fleeing only {:.2}", watched.flee)) } else { Ok(format!("{ok}; fleeing shown {:.2}", watched.flee)) }
+                });
+                gate.check("creature motion: run", result);
+                gate.puppet.1 = 0;
+                gate.next(Step::CreatureTurn, now);
+            }
+        }
+        // Standing, told to face a quarter turn round: it turns there, no faster than its
+        // kind may.
+        3 => {
+            let toward = facing(away) + std::f32::consts::FRAC_PI_2;
+            gate.puppet.1 = frames + 1;
+            let mut creatures = world.resource_mut::<Creatures>();
+            if frames == 0 {
+                creatures.watched = Watched::default();
+            }
+            creatures.receive(vec![view(at, Vec3::ZERO, toward)], vec![]);
+            if frames >= PUPPET_FRAMES {
+                let w = creatures.watched;
+                let off = (toward - w.yaw + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+                let result = if w.fastest_turn > most_turn * 1.02 {
+                    Err(format!("turned at {:.0} degrees a second, {:.0} the most", w.fastest_turn.to_degrees(), most_turn.to_degrees()))
+                } else if off.abs() > 0.05 {
+                    Err(format!("{:.0} degrees short of the way it was told to face", off.to_degrees()))
+                } else {
+                    Ok(format!("turned a quarter round at up to {:.0} degrees a second ({:.0} the most)", w.fastest_turn.to_degrees(), most_turn.to_degrees()))
+                };
+                gate.check("creature motion: turn", result);
+                creatures.receive(vec![], vec![voxmar_protocol::CreatureGone { id: PUPPET, died: false }]);
+                creatures.watch = None;
                 gate.next(Step::Cook, now);
             }
         }
+        _ => {}
     }
 }
 

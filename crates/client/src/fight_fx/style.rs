@@ -69,8 +69,8 @@ pub struct DeathLook {
 }
 
 /// A pose a creature's body takes on top of its own: head nod (radians, down positive),
-/// crouch (of its height), rear (0 to 1), lean (of its length, forward positive) and front
-/// limbs reaching forward (radians).
+/// crouch (of its height), rear (0 to 1), lean (of its length, forward positive), front
+/// limbs reaching forward (radians) and the body turned aside (radians).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Stance {
@@ -79,15 +79,19 @@ pub struct Stance {
     pub rear: f32,
     pub lean: f32,
     pub paw: f32,
+    /// The body turned aside (radians, to its left positive): a swipe winds round and
+    /// sweeps across.
+    #[serde(default)]
+    pub twist: f32,
 }
 
 impl Stance {
     pub fn scaled(self, by: f32) -> Stance {
-        Stance { nod: self.nod * by, crouch: self.crouch * by, rear: self.rear * by, lean: self.lean * by, paw: self.paw * by }
+        Stance { nod: self.nod * by, crouch: self.crouch * by, rear: self.rear * by, lean: self.lean * by, paw: self.paw * by, twist: self.twist * by }
     }
 
     pub fn plus(self, other: Stance) -> Stance {
-        Stance { nod: self.nod + other.nod, crouch: self.crouch + other.crouch, rear: self.rear + other.rear, lean: self.lean + other.lean, paw: self.paw + other.paw }
+        Stance { nod: self.nod + other.nod, crouch: self.crouch + other.crouch, rear: self.rear + other.rear, lean: self.lean + other.lean, paw: self.paw + other.paw, twist: self.twist + other.twist }
     }
 }
 
@@ -282,7 +286,7 @@ impl FightLook {
                 return Err(format!("{FILE}: the {name} strike snaps over 0 to 1 s and settles over 0 to 2 s"));
             }
             for stance in [strike.coil, strike.strike] {
-                let parts = [stance.nod, stance.crouch, stance.rear, stance.lean, stance.paw];
+                let parts = [stance.nod, stance.crouch, stance.rear, stance.lean, stance.paw, stance.twist];
                 if parts.iter().any(|v| !v.is_finite() || v.abs() > 2.0) || !(0.0..=1.0).contains(&stance.rear) {
                     return Err(format!("{FILE}: the {name} strike's stances turn at most 2 radians, move at most 2 heights, and rear from 0 to 1"));
                 }
