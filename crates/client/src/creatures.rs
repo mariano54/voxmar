@@ -140,7 +140,7 @@ impl Plugin for CreaturesPlugin {
         embedded_asset!(app, "creature_skin.wgsl");
         app.add_plugins(MaterialPlugin::<SkinMaterial>::default())
             .init_resource::<Creatures>()
-            .add_systems(Update, show.run_if(in_state(Screen::InGame)))
+            .add_systems(Update, show.in_set(ShowCreatures).run_if(in_state(Screen::InGame)))
             .add_systems(OnExit(Screen::InGame), |mut commands: Commands, mut creatures: ResMut<Creatures>| {
                 for shown in creatures.shown.values() {
                     despawn(&mut commands, shown);
@@ -589,6 +589,11 @@ fn sound(kind: Sound, id: u32, view: &CreatureView, position: Vec3, speed: f32) 
 
 /// Applies what the server sent, then moves and animates every creature, and handles
 /// aiming at and striking them.
+/// Where the creatures are shown each frame: what they did is heard after it
+/// (`creature_sounds`).
+#[derive(SystemSet, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ShowCreatures;
+
 #[allow(clippy::too_many_arguments)]
 fn show(
     mut commands: Commands,
@@ -662,6 +667,8 @@ fn show(
                     skins.remove(&shown.material);
                 }
             }
+            // Never shown here (it died out of sight): nothing to cry.
+            None if gone.died => debug!("creature {} died unseen: no death cry", gone.id),
             None => {}
         }
     }
