@@ -21,6 +21,7 @@ pub mod husbandry;
 pub mod model;
 pub mod motion;
 pub mod moves;
+pub mod path;
 pub mod skin;
 pub mod volume;
 
