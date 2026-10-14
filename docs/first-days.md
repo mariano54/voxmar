@@ -322,6 +322,11 @@ walk up instead of running. A new `Lured` goal counts each wild creature drawn w
 blocks once. It costs the bot about 9 s, since its lane needs no chase, and saves a player
 the chase.
 
+In lockstep (twelve runs, against the clamp after The Potter in lockstep): Homestead Hearth
+lit 98.6 (was 89.8), An Earth Clamp made 112.2 (177.7), Fire the Clay 158.5 (148.2), A Kiln
+Load 266.4 (269.9), Crucible Kiln lit 351.7 (341 to 357; was 361.2), and 145 s at a fire or
+kiln in all (167).
+
 In lockstep (Oct 14) the bot loses no ticks to its own turns, which a server ticking at 60
 times the clock's pace ran on through, about a tenth of each step even on a calm machine
 (Timber 13 to 12, An Axe to It 34 to 30). Five runs: Timber 11 to 12, An Axe to It 29 to 30,
