@@ -203,7 +203,8 @@ pub fn step(body: &mut Body, world: &impl Surroundings, movement: &Movement, wat
     // turn and walk out, or it would stand frozen for good.
     let head_was_blocked = body.head_blocked(world);
     // Face the way it moves, or what it was asked to look at.
-    let heading = if drive.wish.length_squared() > 1e-4 { Some(drive.wish) } else { drive.face };
+    let moving = drive.wish.length_squared() > 1e-4;
+    let heading = if moving { Some(drive.wish) } else { drive.face };
     let wanted = heading.filter(|h| h.x.abs() + h.z.abs() > 1e-4).map(yaw_of);
     if let Some(to) = wanted {
         let most = movement.turn.to_radians() * dt;
@@ -290,7 +291,11 @@ pub fn step(body: &mut Body, world: &impl Surroundings, movement: &Movement, wat
         let clear = |at: Vec3, yaw: f32| fits(at) && !Body { position: at, yaw, ..*body }.head_blocked(world);
         let back = Vec3::new(start.x, moved.y, start.z);
         let other_way = start_yaw - (turned - start_yaw);
-        if turned != start_yaw && clear(moved, other_way) {
+        // Standing to face something, the long way round only to a heading its head fits
+        // at: one it cannot face (a player behind a wall it stands against) it would turn
+        // for for ever.
+        let faceable = moving || wanted.is_none_or(|to| clear(moved, to));
+        if turned != start_yaw && clear(moved, other_way) && faceable {
             body.yaw = other_way;
             body.turn_way = (other_way - start_yaw).signum();
             body.turn_to = wanted.unwrap_or(turned);
@@ -456,6 +461,19 @@ mod tests {
         step(&mut body, &wall, &movement, Water::Land, Drive { wish: -Vec3::X, speed: 0.0, face: None }, 0.05);
         assert_eq!(body.turn_way, 0.0, "the long turn outlived the heading it was for");
         assert!(angle_between(body.yaw, yaw_of(-Vec3::X)) < angle_between(from, yaw_of(-Vec3::X)), "it turned away from the new heading");
+        // Standing to look at something through the wall, which its head cannot face, it
+        // turns as far as it can and does not spin round for it.
+        let mut body = Body::new(Vec3::new(2.6, 0.0, 0.5), yaw_of(-Vec3::Z), (0.6, 1.4));
+        body.reach = 0.9;
+        body.head = 1.4;
+        let mut swept = 0.0;
+        for _ in 0..200 {
+            let was = body.yaw;
+            step(&mut body, &wall, &movement, Water::Land, Drive { wish: Vec3::ZERO, speed: 0.0, face: Some(Vec3::new(1.0, 0.0, 0.05)) }, 0.05);
+            swept += angle_between(body.yaw, was);
+            assert!(!body.head_blocked(&wall), "its head went into the wall facing {}", body.forward());
+        }
+        assert!(swept < std::f32::consts::PI, "it spun {swept} radians looking at what it cannot face");
     }
 
     #[test]
