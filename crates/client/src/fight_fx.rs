@@ -60,12 +60,18 @@ impl Plugin for FightFxPlugin {
             .init_resource::<Queued>()
             .add_systems(Startup, make_sounds)
             .add_systems(PostStartup, spawn_vignette)
-            .add_systems(Update, react.after(ShowCreatures).run_if(in_state(Screen::InGame)))
+            .add_systems(Update, react.in_set(Reacted).after(ShowCreatures).run_if(in_state(Screen::InGame)))
             .add_systems(Update, play.after(react).in_set(Audible))
-            .add_systems(Update, (kick_camera.after(crate::player::follow_camera), vignette).run_if(in_state(Screen::InGame)))
+            // What `react` set going shows the same frame.
+            .add_systems(Update, (kick_camera.after(crate::player::follow_camera), vignette).after(Reacted).run_if(in_state(Screen::InGame)))
             .add_systems(OnExit(Screen::InGame), reset);
     }
 }
+
+/// Where blows are taken in (the freeze, the hand's knock, the view's kicks): what shows
+/// them runs after, so they show the frame they land.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Reacted;
 
 /// How long a blow's freeze lasts: the hit's share of its target's health makes it longer,
 /// up to the most a hit freezes; the kind of blow scales it, and a killing blow freezes at
@@ -182,7 +188,8 @@ impl HandKick {
     /// Where the hand is knocked to now, in the hand's own blocks (right, up, forward): back
     /// toward the eye and a little down, there quickly and easing back.
     pub fn offset(&self, now: f32) -> Vec3 {
-        let back: f32 = self.kicks.iter().map(|&(at, by, seconds)| by * flinch_weight(now - at, seconds)).sum();
+        // Knocked back at once, the frame the blow lands, and easing back.
+        let back: f32 = self.kicks.iter().map(|&(at, by, seconds)| if (0.0..seconds).contains(&(now - at)) { by * (1.0 - (now - at) / seconds).powi(2) } else { 0.0 }).sum();
         Vec3::new(0.0, -back * 0.3, -back)
     }
 
@@ -693,7 +700,8 @@ mod tests {
         assert_eq!(kick.turn(1.0), Vec3::ZERO, "and comes back to still");
         let mut hand = HandKick::default();
         hand.add(0.0, 0.05, 0.2);
-        assert!(hand.offset(0.035).z < -0.04, "the hand is knocked back");
+        assert!(hand.offset(0.0).z < -0.049, "the hand is knocked back the frame the blow lands (the gate looks then)");
+        assert!(hand.offset(0.1).z < 0.0 && hand.offset(0.1).z > hand.offset(0.0).z, "and eases back");
         assert_eq!(hand.offset(0.5), Vec3::ZERO);
     }
 }
