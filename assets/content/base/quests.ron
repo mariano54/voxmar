@@ -362,7 +362,7 @@
             why: "At Cooking 14 the pot takes three raw meat, roots or vegetables at once and simmers them into a stew, the best food a pot makes. Carrots, raw rabbit, raw chicken or raw mutton all go in; cooked food and grain do not. Load it as before, take the stew three minutes later, and keep two.",
             tasks: [[Level("cooking", 14), Have("stew", 2)]],
             after: ["a_pot_on_the_fire"],
-            rewards: [Xp("cooking", 300.0)],
+            rewards: [Xp("cooking", 300.0), Item("cooking_pot", 1)],
         ),
         // Fuel before metal, and the Engineering and Mining that copper asks for (design
         // drafts 100 and 102: the nomad path alone left both short of 5).
@@ -392,7 +392,7 @@
             why: "Three copper ingots and one tin ore make four bronze blend in the crafting grid (Engineering 12). Hold the blend and right-click the crucible of your lit kiln: it melts into bronze, the metal of the next age. Smelt four.",
             tasks: [[Cook("bronze_ingot", 4)]],
             after: ["crucible_kiln"],
-            rewards: [Xp("engineering", 400.0)],
+            rewards: [Xp("engineering", 400.0), Item("bronze_ingot", 4)],
         ),
         (
             name: "clay_banks", age: "farm", branch: "pottery", title: "Clay Banks",
@@ -469,7 +469,7 @@
             why: "A stone hoe reaps every ripe crop in the three by three around the one you cut, and an iron hoe the five by five, so a wide field comes in at a few strokes. Sow a field nine across with your well in it, let it ripen, and bring in sixty-four wheat plants; keep thirty-two wheat of the harvest for bread, twine and feed.",
             tasks: [[Pick("wheat_crop", 64), Have("wheat", 32)]],
             after: ["a_well_by_the_field"],
-            rewards: [Xp("farming", 300.0), Item("bread", 6)],
+            rewards: [Xp("farming", 300.0), Item("bread", 6), Item("copper_hoe", 1)],
         ),
         (
             name: "carrot_patch", age: "farm", branch: "farming", title: "Carrot Patch",
@@ -567,7 +567,7 @@
             why: "Six animals under your care is a real farm. Keep each fed, watered, roofed against rain and given room; condition decides what they give. You can keep up to 64 animals.",
             tasks: [[Tame("any", 6)]],
             after: ["the_milk_pail"],
-            rewards: [Xp("farming", 200.0)],
+            rewards: [Xp("farming", 200.0), Item("feed_trough", 1), Item("seed_mix", 4)],
         ),
         (
             name: "bigger_game", age: "farm", branch: "hunter", title: "Bigger Game",
@@ -630,7 +630,7 @@
             why: "The Rootmother leaves three heartroot. Eaten, one gives Heartwood for ten minutes: room for a fifth more health, and you heal a quarter faster. Another eaten while it lasts only starts the ten minutes again, so keep the rest for the next hard fight. Eat one and keep two.",
             tasks: [[Ate("heartroot", 1), Have("heartroot", 2)]],
             after: ["the_rootmother"],
-            rewards: [Xp("hitpoints", 200.0)],
+            rewards: [Xp("hitpoints", 200.0), Item("copper_shield", 1)],
         ),
         (
             name: "tin_find", age: "farm", branch: "mining", title: "A Silvery Ore",
@@ -658,7 +658,7 @@
             why: "Rivers, lakes and the sea bite differently: shrimp anywhere, minnows in fresh water, sardines in the sea, perch in lakes from Fishing 10. Land three different kinds. Cook six of your catch: the best fish are worth a fire.",
             tasks: [[Catch("Kinds", 3), Cook("tag:fish", 6)]],
             after: ["patient_angler"],
-            rewards: [Xp("fishing", 150.0)],
+            rewards: [Xp("fishing", 150.0), Item("barrel", 1)],
         ),
         (
             name: "far_horizons", age: "farm", branch: "explore", title: "Far Horizons",
@@ -798,7 +798,7 @@
             why: "Everything a home needs: a bookshelf, a stove or cauldron, a quern, spindle or loom, and a banner, all in a cosy home. Heal twice as fast and learn an eighth more where you live.",
             tasks: [[Built("home_heart_of_the_home", 1)]],
             after: ["a_cosy_home", "workshop_and_stove", "books_and_banners"],
-            rewards: [Xp("construction", 500.0), Xp("cooking", 200.0), Item("bread", 12)],
+            rewards: [Xp("construction", 500.0), Xp("cooking", 200.0), Item("bread", 12), Item("crate", 2)],
         ),
         (
             name: "ore_run", age: "farm", branch: "mining", title: "An Ore Run",
@@ -1064,7 +1064,7 @@
             why: "A potter and an apprentice dig clay at river banks and wet ground near folk's homes. Hand them clay and it comes back fired in their kiln, none cracked, one kept, up to eight; a beginner who shows a fired piece learns to throw a pot. Have clay fired by them, and fire twenty-four clay in all. The reward is a dozen clay for the next kiln load.",
             tasks: [[Met("clay_diggers", 1), Cook("fired_clay", 24)]],
             after: ["a_kiln_load"],
-            rewards: [Xp("crafting", 150.0), Item("clay", 12)],
+            rewards: [Xp("crafting", 150.0), Item("clay", 12), Item("earth_clamp", 1)],
         ),
         (
             name: "coal_by_road", age: "nomad", branch: "explore", title: "Coal by Road",
@@ -1092,21 +1092,21 @@
             why: "A poacher stalks deer in the woods at dusk: be there when he takes one and he cuts you a share, or face him with a weapon in hand (Attack 10) and he leaves. Gamekeepers follow on his trail and say which way he went, and on a later day, once you can fight, his gang may lie in wait for you. Deal with all three.",
             tasks: [[Met("poacher", 1), Met("gamekeepers", 1), Met("poachers_gang", 1)]],
             after: ["a_share_of_the_hunt"],
-            rewards: [Xp("hunter", 200.0), Xp("attack", 100.0)],
+            rewards: [Xp("hunter", 200.0), Xp("attack", 100.0), Item("snare", 4)],
         ),
         (
             name: "catch_up_the_shrine", age: "farm", branch: "prayer", title: "Catch Up the Shrine",
             why: "Pilgrims who fell behind the shrine bearer walk the roads after it, asking which way it went. They point you after it too, and a loaf from you buys their prayers. Meet the shrine bearer and the stragglers both.",
             tasks: [[Met("shrine_bearer", 1), Met("stragglers", 1)]],
             after: ["filled_again"],
-            rewards: [Xp("magic", 120.0)],
+            rewards: [Xp("magic", 120.0), Item("bone", 12)],
         ),
         (
             name: "wedding_to_christening", age: "farm", branch: "explore", title: "From Wedding to Christening",
             why: "A wedding party walks the open country behind a priest: a flower for the bride, and they share bread and good cheer. Some days later the same folk may pass again with a child to be christened. Bring a loaf for the feast, and the priest's blessing restores your prayer. Meet both.",
             tasks: [[Met("wedding", 1), Met("christening", 1)]],
             after: ["the_rain_dance"],
-            rewards: [Xp("magic", 60.0), Xp("cooking", 60.0)],
+            rewards: [Xp("magic", 60.0), Xp("cooking", 60.0), Item("gold_coin", 8)],
         ),
         (
             name: "those_taken_in", age: "farm", branch: "home", title: "Those Taken In",
@@ -1134,7 +1134,7 @@
             why: "A child may tag along behind you for a while, watching you work. Once you are good at something (Farming, Mining or Crafting 15), they ask to learn it and pay a coin for the lesson. Days later they pass again as a journeyman, with a gift for their old teacher. Teach them, then meet the journeyman.",
             tasks: [[Met("apprentice", 1), Met("journeyman", 1)]],
             after: ["fired_whole"],
-            rewards: [Xp("crafting", 150.0), Xp("mining", 100.0)],
+            rewards: [Xp("crafting", 150.0), Xp("mining", 100.0), Item("coin_purse", 1)],
         ),
         (
             name: "the_market_road", age: "nomad", branch: "explore", title: "The Market Road",
