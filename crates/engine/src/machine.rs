@@ -131,11 +131,15 @@ pub enum Role {
     /// a run moves as fast as its slowest chute.
     Chute { rate: f32 },
     /// Holds items in `slots` stacks. One that `feeds` (a hopper) gives what players put in
-    /// it to the machines on its chutes; one that does not (a chest) collects what they make.
+    /// it to the machines on its chutes; one that does not (a chest) collects what they make,
+    /// and opens into a screen of its slots (a store). With `holds` (an item, `tag:TAG` or
+    /// `a|b`), it takes only those: a jar what is edible, a basket what is foraged.
     Bin {
         slots: u8,
         #[serde(default)]
         feeds: bool,
+        #[serde(default)]
+        holds: Option<String>,
     },
 }
 
@@ -146,7 +150,8 @@ fn one() -> f32 {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MachineDef {
-    /// The block that is this machine.
+    /// The block that is this machine; with `{name}` in it, every block of that family
+    /// (`{name}_cupboard`: each wood's cupboard).
     pub block: String,
     pub role: Role,
 }
@@ -349,6 +354,8 @@ pub struct Machine {
     pub role: Role,
     /// The recipes it works, in the order packages list them.
     pub processes: Vec<ProcessId>,
+    /// What it takes, as a bin that `holds` only some things, sorted.
+    pub holds: Option<Accepts>,
 }
 
 impl Role {
@@ -458,6 +465,17 @@ impl Machine {
             _ => 0,
         }
     }
+
+    /// Whether it is a bin that takes `item`: anything, unless it `holds` only some things.
+    pub fn bin_takes(&self, item: BlockId) -> bool {
+        self.bin_slots() > 0 && self.holds.as_ref().is_none_or(|holds| holds.binary_search(&item).is_ok())
+    }
+
+    /// Whether it is a store: a bin that does not feed, which players open into a screen of
+    /// its slots.
+    pub fn is_store(&self) -> bool {
+        matches!(self.role, Role::Bin { feeds: false, slots, .. } if slots > 0)
+    }
 }
 
 /// Every machine, fuel and processing recipe.
@@ -481,6 +499,9 @@ impl MachineRegistry {
         let mut file: MachineFile = ron::from_str(source).map_err(|e| RegistryError(format!("{namespace}/machines.ron: {e}")))?;
         for def in &mut file.machines {
             qualify(namespace, &mut def.block);
+            if let Role::Bin { holds: Some(holds), .. } = &mut def.role {
+                qualify(namespace, holds);
+            }
         }
         for fuel in &mut file.fuels {
             qualify(namespace, &mut fuel.item);
@@ -535,7 +556,21 @@ impl MachineRegistry {
             registry.processes.push(Process { kind: def.kind.clone(), inputs, outputs, byproducts, seconds: def.seconds, tier: def.tier });
         }
         for file in files {
-            for def in file.machines {
+            // A family is one machine for each block it names.
+            let defs = file.machines.into_iter().map(|def| {
+                let Some((prefix, suffix)) = def.block.split_once("{name}") else { return Ok(vec![def]) };
+                let family: Vec<MachineDef> = blocks
+                    .ids()
+                    .filter(|&id| blocks.def(id).name.strip_prefix(prefix).and_then(|rest| rest.strip_suffix(suffix)).is_some_and(|fill| !fill.is_empty()))
+                    .map(|id| MachineDef { block: blocks.def(id).name.clone(), role: def.role.clone() })
+                    .collect();
+                if family.is_empty() {
+                    return Err(RegistryError(format!("machine: no block fits `{}`", def.block)));
+                }
+                Ok(family)
+            });
+            let defs: Vec<MachineDef> = defs.collect::<Result<Vec<_>, _>>()?.into_iter().flatten().collect();
+            for def in defs {
                 let block = blocks.id(&def.block).ok_or_else(|| RegistryError(format!("machine: no block `{}`", def.block)))?;
                 let processes = match &def.role {
                     Role::Processor { kinds, .. } => (0..registry.processes.len())
@@ -557,7 +592,11 @@ impl MachineRegistry {
                 if registry.by_block.insert(block, registry.machines.len()).is_some() {
                     return Err(RegistryError(format!("machine {} is defined twice", def.block)));
                 }
-                registry.machines.push(Machine { block, role: def.role, processes });
+                let holds = match &def.role {
+                    Role::Bin { holds: Some(holds), .. } => Some(accepts(holds, blocks).map_err(|e| RegistryError(format!("machine {}: holds {}", def.block, e.0)))?),
+                    _ => None,
+                };
+                registry.machines.push(Machine { block, role: def.role, processes, holds });
             }
             for fuel in file.fuels {
                 registry.fuels.push((accepts(&fuel.item, blocks)?, fuel.seconds.max(0.0), fuel.item.contains("tag:")));

@@ -17,7 +17,8 @@ blocks, with the land's), `blocks_treasure.ron` (the lockpicks), `recipes_treasu
 - **Opened, it is a plain chest.** The block becomes `opens_to` (a chest), holding what its
   table rolled. The roll is seeded by the world's seed and where the chest stands, so the
   same chest in the same world held the same. The registry refuses a table that could give
-  more stacks than its chest holds.
+  more stacks than its chest holds. The lock given, the chest opens straight into its
+  slots beside the inventory, as every chest and store does (`docs/machines.md`).
 - **Never a whole set, nothing too rare.** A table's `loot` entries come on their own
   chances (the format of `loot.rs`); each `one_of` group gives, on its chance, one of its
   items, which is where gear goes, so a chest holds at most one piece. Nothing may come in

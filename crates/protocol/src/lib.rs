@@ -32,7 +32,8 @@ pub use voxmar_engine::weather::Weather;
 // QuestState::claimed.
 // 35: Pray and Prayers, the prayer book.
 // 36: a creature's tell (CreatureView::tell): the move it winds up, or rearing into a phase.
-pub const PROTOCOL_VERSION: u32 = 36;
+// 37: an open store's slots in the inventory (Inventory::store), after the open_store action.
+pub const PROTOCOL_VERSION: u32 = 37;
 
 /// A creature's `tell` while it rears into a new phase of its fight.
 pub const REARING: u8 = u8::MAX;

@@ -268,7 +268,7 @@ impl Factory {
     }
 
     /// Puts what it can of `stack` into the machine at `pos`: fuel where it burns, an input
-    /// where a recipe takes it, anything into a bin. Returns what is left.
+    /// where a recipe takes it, into a bin anything it holds. Returns what is left.
     pub fn put(&mut self, pos: IVec3, stack: ItemStack, machines: &MachineRegistry) -> Option<ItemStack> {
         let Some(node) = self.nodes.get_mut(&pos) else { return Some(stack) };
         let Some(machine) = machines.get(node.block) else { return Some(stack) };
@@ -280,7 +280,7 @@ impl Factory {
             let room = machines.input_room(machine, stack.item, node.state.inputs.len());
             left = fill_within(&mut node.state.inputs, stack.item, left, room, |other| machines.same_input(machine, stack.item, other));
         }
-        if left > 0 && !node.state.bin.is_empty() {
+        if left > 0 && !node.state.bin.is_empty() && machine.bin_takes(stack.item) {
             let left = fill(&mut node.state.bin, stack.item, left);
             return (left > 0).then_some(ItemStack { count: left, ..stack });
         }
@@ -305,10 +305,10 @@ impl Factory {
     }
 
     /// Whether the machine at `pos` would take `item` at all, room or not: something it
-    /// burns or works, or anything, for a bin.
+    /// burns or works, or for a bin, anything it holds.
     pub fn accepts(&self, pos: IVec3, item: BlockId, machines: &MachineRegistry) -> bool {
         let Some(machine) = self.nodes.get(&pos).and_then(|node| machines.get(node.block)) else { return false };
-        (machine.burns() && machines.burn_seconds(item).is_some()) || (machine.is_processor() && machines.takes(machine, item)) || machine.bin_slots() > 0
+        (machine.burns() && machines.burn_seconds(item).is_some()) || (machine.is_processor() && machines.takes(machine, item)) || machine.bin_takes(item)
     }
 
     /// Takes everything out of the machine's outputs, or out of a bin; and what went in,
