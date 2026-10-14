@@ -50,6 +50,8 @@ const SPREAD: f32 = 10.0;
 const EASY: Color = Color::srgb(0.56, 0.88, 0.46);
 /// Seconds between asks about a station still looked at, so the count down keeps true.
 const ASK_EVERY: f64 = 5.0;
+/// Seconds after a station is used before it is asked about again.
+const AFTER_USE: f64 = 0.3;
 
 /// How far each kind of thing is named from, and how big a box a dropped item is aimed at
 /// with (`look.ron`, in `core`); a later package changes what it gives. Read with the rest
@@ -156,12 +158,18 @@ fn says_more(launch: &Launch, block: BlockId) -> bool {
 }
 
 /// Asks the server about the station looked at: once on looking, again when its block
-/// changes (loaded, done), and every few seconds while it works.
-fn ask(time: Res<Time>, net: Option<Res<Net>>, target: Res<Target>, world: Res<ClientWorld>, launch: Res<Launch>, mut seen: ResMut<StationSeen>) {
+/// changes (loaded, done), soon after it is used (a kiln lit keeps its block), and every
+/// few seconds while it works.
+fn ask(time: Res<Time>, buttons: Res<ButtonInput<MouseButton>>, net: Option<Res<Net>>, target: Res<Target>, world: Res<ClientWorld>, launch: Res<Launch>, mut seen: ResMut<StationSeen>) {
     let Some(net) = net else { return };
     let Some(at) = target.block_hit.map(|hit| hit.block) else { return };
     let Some(block) = world.block(at).filter(|&b| says_more(&launch, b)) else { return };
     let now = time.elapsed_secs_f64();
+    if buttons.just_pressed(MouseButton::Right) {
+        // Asked again once the server has had the use: the answer then says what it did.
+        seen.asked = Some((at, block, now - ASK_EVERY + AFTER_USE));
+        return;
+    }
     let fresh = seen.asked.is_none_or(|(pos, was, when)| pos != at || was != block || now - when >= ASK_EVERY);
     if fresh {
         seen.asked = Some((at, block, now));
