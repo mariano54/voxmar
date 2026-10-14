@@ -64,13 +64,22 @@ pub struct AmbiencePlugin;
 /// flowers are near, 0..1 (the `flowers` group of `ambience.ron`), how far below the
 /// ground surface the player is, in blocks, and how much of the air around is open to the
 /// sky, 0..1 (for the music underground).
-#[derive(Resource, Default)]
+#[derive(Resource)]
 pub struct Surroundings {
     pub flowers: f32,
     pub depth: f32,
     pub sky: f32,
     /// The tags of the biome the player is in (`biomes.ron`), for the music of a place.
     pub biome: Vec<String>,
+    /// How loud thunder is here, against out in the open: less indoors (`ambience.ron`
+    /// `shelter`).
+    pub thunder: f32,
+}
+
+impl Default for Surroundings {
+    fn default() -> Self {
+        Self { flowers: 0.0, depth: 0.0, sky: 0.0, biome: Vec::new(), thunder: 1.0 }
+    }
 }
 
 impl Plugin for AmbiencePlugin {
@@ -216,6 +225,8 @@ fn kinds(ambience: &Ambience, registry: &BlockRegistry) -> Kinds {
         leaves: ids.map(|info| info.render == RenderKind::Leaves).collect(),
         group: ambience.block_groups(registry),
         groups: ambience.groups.len(),
+        walls: ambience.shelter.walls,
+        roof: ambience.shelter.roof,
     }
 }
 
@@ -265,7 +276,14 @@ fn survey(
     if smooth.groups.len() != latest.groups.len() {
         *smooth = latest.clone();
     } else {
-        for (value, target) in [(&mut smooth.air, latest.air), (&mut smooth.sky, latest.sky), (&mut smooth.canopy, latest.canopy)] {
+        let eased = [
+            (&mut smooth.air, latest.air),
+            (&mut smooth.sky, latest.sky),
+            (&mut smooth.canopy, latest.canopy),
+            (&mut smooth.shelter, latest.shelter),
+            (&mut smooth.roof, latest.roof),
+        ];
+        for (value, target) in eased {
             *value += (target - *value) * ease;
         }
         for (value, target) in smooth.groups.iter_mut().zip(&latest.groups) {
@@ -350,6 +368,9 @@ fn listen(
     env.set(Fixed::Sky, smooth.sky);
     surroundings.sky = smooth.sky;
     env.set(Fixed::Canopy, smooth.canopy);
+    env.set(Fixed::Shelter, smooth.shelter);
+    env.set(Fixed::Roof, smooth.roof);
+    surroundings.thunder = 1.0 - (1.0 - ambient.ambience.shelter.thunder) * smooth.shelter;
     let enclosed = (1.0 - smooth.sky) * ((smooth.air - 0.02) / 0.28).clamp(0.0, 1.0);
     env.set(Fixed::Reverb, enclosed);
     for (group, &count) in smooth.groups.iter().enumerate() {
@@ -440,10 +461,12 @@ fn play(
                     }
                 }
             }
-            Cue::Sound { sound, variant, at, volume, speed } => {
+            Cue::Sound { sound, variant, at, volume, speed, muffle } => {
                 let Some(clip) = clips.sounds[sound].get(variant) else { continue };
                 let reverb = ambient.env.get(Fixed::Reverb);
-                let [left, right] = mixer::place(&clip.dry, &clip.wet, at, ears, camera.right().into(), camera.forward().into(), reverb);
+                let mut placed = mixer::place(&clip.dry, &clip.wet, at, ears, camera.right().into(), camera.forward().into(), reverb);
+                mixer::muffle(&mut placed, muffle, ambient.ambience.shelter.muffle);
+                let [left, right] = placed;
                 let source = sources.add(AudioSource { bytes: Arc::from(sfx::wav_stereo(&left, &right)) });
                 let playback = PlaybackSettings { speed, ..PlaybackSettings::DESPAWN.with_volume(Volume::Linear(volume * master)) };
                 commands.spawn((AudioPlayer(source), playback));
@@ -462,8 +485,9 @@ fn play(
     let beds = beds.join(", ");
     if beds != ambient.logged {
         let env = &ambient.env;
-        let [air, sky, reverb, relief, depth] = [Fixed::Air, Fixed::Sky, Fixed::Reverb, Fixed::Relief, Fixed::Depth].map(|a| env.get(a));
-        info!("ambience: [{beds}] air {air:.2} sky {sky:.2} reverb {reverb:.2} relief {relief:.0} depth {depth:.0}");
+        let [air, sky, reverb, relief, depth, shelter] =
+            [Fixed::Air, Fixed::Sky, Fixed::Reverb, Fixed::Relief, Fixed::Depth, Fixed::Shelter].map(|a| env.get(a));
+        info!("ambience: [{beds}] air {air:.2} sky {sky:.2} reverb {reverb:.2} relief {relief:.0} depth {depth:.0} shelter {shelter:.2}");
         ambient.logged = beds;
     }
 }

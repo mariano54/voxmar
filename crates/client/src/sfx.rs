@@ -540,10 +540,16 @@ fn thunder_gain(distance: f32) -> f32 {
     THUNDER_GAIN / (1.0 + distance / 400.0)
 }
 
-/// Plays thunder as it reaches the player, quieter the farther the lightning.
-fn thunder(mut commands: Commands, mut heard: MessageReader<Thunder>, sfx: Option<ResMut<Sfx>>, settings: Res<Settings>) {
+/// Plays thunder as it reaches the player, quieter the farther the lightning, and indoors.
+fn thunder(
+    mut commands: Commands,
+    mut heard: MessageReader<Thunder>,
+    sfx: Option<ResMut<Sfx>>,
+    settings: Res<Settings>,
+    surroundings: Option<Res<crate::ambience::Surroundings>>,
+) {
     let Some(mut sfx) = sfx else { return };
-    let master = MASTER * settings.sound_volume as f32 / 100.0;
+    let master = MASTER * settings.sound_volume as f32 / 100.0 * surroundings.map_or(1.0, |s| s.thunder);
     for thunder in heard.read() {
         let (pick, jitter) = (sfx.random(), sfx.random());
         let clips = &sfx.thunder[Reach::of(thunder.distance) as usize];

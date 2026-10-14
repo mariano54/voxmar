@@ -4,7 +4,7 @@ use bevy::math::{IVec2, IVec3, Vec3};
 use voxmar_engine::content::ContentFile;
 
 use super::defs::{Ambience, BedSound, Environment, FILE, Fixed};
-use super::mixer::{Cue, Mixer, place};
+use super::mixer::{Cue, Mixer, muffle, place};
 use super::synth::{self, OVERLAP};
 use crate::sfx::{self, RATE, mix};
 
@@ -79,6 +79,13 @@ fn scene(ambience: &Ambience, name: &'static str, tags: &[&str], set: &[(&str, f
     Scene { name, env, samples }
 }
 
+/// A thunderstorm in the woods, heard out in it.
+const STORM: &[(&str, f32)] =
+    &[("rain", 1.0), ("raining", 1.0), ("storm", 0.9), ("wind", 11.0), ("gusts", 1.0), ("cover", 1.0), ("wetness", 1.0)];
+/// The same from inside a home with its door open: the fill leaks out of the door, so sky
+/// and air say half outdoors, and rain is heard falling outside it.
+const INDOORS: &[(&str, f32)] = &[("shelter", 1.0), ("roof", 1.0), ("sky", 0.25), ("air", 0.35), ("rain", 0.3), ("reverb", 0.1)];
+
 fn scenes(ambience: &Ambience) -> Vec<Scene> {
     let forest = [("leaves", 1.0), ("wood", 0.7), ("grass", 0.5), ("canopy", 0.8)];
     let forest_tags = ["forest", "temperate", "broadleaf"];
@@ -98,12 +105,14 @@ fn scenes(ambience: &Ambience) -> Vec<Scene> {
         scene(ambience, "sleet", &["grassland", "temperate", "open"], &[("grass", 1.0), ("sleet", 0.5), ("rain", 0.3), ("temperature", 1.0), ("cover", 1.0)]),
         scene(ambience, "lake", &["lake", "water"], &[("water", 0.8), ("grass", 0.4), ("river", 1.0), ("still", 1.0)]),
         scene(ambience, "light_rain", &["grassland", "temperate", "open"], &[("grass", 1.0), ("rain", 0.3), ("raining", 0.3), ("cover", 0.9)]),
-        scene(ambience, "porch_in_rain", &["forest", "temperate"], &[("air", 0.6), ("sky", 0.0), ("rain", 0.2), ("raining", 0.7), ("cover", 1.0)]),
+        scene(ambience, "porch_in_rain", &["forest", "temperate"], &[("air", 0.6), ("sky", 0.0), ("roof", 1.0), ("rain", 0.2), ("raining", 0.7), ("cover", 1.0)]),
         scene(ambience, "forest_after_rain", &forest_tags, &[&forest[..], &[("wetness", 0.9), ("cover", 0.6)]].concat()),
         scene(ambience, "lava_cave", &["mountain"], &[("rock", 1.0), ("lava", 0.8), ("sky", 0.0), ("air", 0.3), ("reverb", 0.7), ("depth", 30.0)]),
         scene(ambience, "waterfall", &["river", "water"], &[("water", 0.6), ("falls", 0.9), ("flowing", 1.0), ("rock", 0.4)]),
         scene(ambience, "campfire_night", &["grassland", "temperate", "open"], &[("grass", 1.0), ("fire", 1.0), ("sun", -0.7), ("temperature", 18.0)]),
-        scene(ambience, "by_the_hearth", &["forest", "temperate"], &[("fire", 1.0), ("air", 0.5), ("sky", 0.0), ("reverb", 0.1)]),
+        scene(ambience, "by_the_hearth", &["forest", "temperate"], &[("fire", 1.0), ("air", 0.5), ("sky", 0.0), ("reverb", 0.1), ("shelter", 1.0), ("roof", 1.0)]),
+        scene(ambience, "storm_outside", &forest_tags, &[&forest[..], STORM].concat()),
+        scene(ambience, "storm_by_the_hearth", &forest_tags, &[&forest[..], STORM, INDOORS, &[("fire", 1.0)]].concat()),
         scene(ambience, "quiet_peak", &["mountain"], &[("rock", 0.8), ("relief", 60.0), ("height", 150.0), ("wind", 4.0), ("temperature", 2.0)]),
     ]
 }
@@ -153,6 +162,9 @@ fn each_place_has_its_own_sound() {
             // A fire is heard by the fire, crackling and snapping, under the night outdoors.
             "campfire_night" => (&["fire", "fire_snap", "crickets"], &["lava", "lava_pop", "warbler"]),
             "by_the_hearth" => (&["fire", "fire_snap"], &["lava", "breeze", "rain_on_roof"]),
+            "storm_outside" => (&["downpour", "storm_wind"], &["rain_on_roof", "fire"]),
+            // Indoors in a storm: the rain on the roof and the hearth, the storm a murmur.
+            "storm_by_the_hearth" => (&["rain_on_roof", "fire", "fire_snap"], &["downpour", "storm_wind", "dripping_trees", "leaves", "breeze"]),
             "waterfall" => (&["waterfall"], &["lava", "cave"]),
             // Wind on heights even on a quiet day.
             "quiet_peak" => (&["high_wind"], &["leaves", "warbler"]),
@@ -179,6 +191,38 @@ fn each_place_has_its_own_sound() {
     let (dry, wet) = (run(&ambience, &all[1], 30.0).1, run(&ambience, &all[2], 30.0).1);
     let leaves = bed("leaves");
     assert!(wet[leaves] > 0.0 && wet[leaves] < 0.6 * dry[leaves], "{} vs {}", wet[leaves], dry[leaves]);
+}
+
+/// Indoors the storm and the wild outside fall to a murmur, and their one-shots are
+/// muffled, while the hearth by the player sounds as it does anywhere and the rain drums on
+/// the roof.
+#[test]
+fn indoors_the_outside_is_muffled_and_the_hearth_is_clear() {
+    let ambience = base();
+    let all = scenes(&ambience);
+    let find = |name: &str| all.iter().find(|s| s.name == name).unwrap();
+    let bed = |name: &str| ambience.beds.iter().position(|b| b.name == format!("base:{name}")).unwrap();
+    let (outside, inside) = (run(&ambience, find("storm_outside"), 60.0), run(&ambience, find("storm_by_the_hearth"), 60.0));
+    for name in ["downpour", "storm_wind", "breeze", "leaves"] {
+        let (out, home) = (outside.1[bed(name)], inside.1[bed(name)]);
+        assert!(out > 0.0 && home <= 0.3 * out, "{name}: {home} indoors against {out} out");
+    }
+    assert_eq!(outside.1[bed("rain_on_roof")], 0.0);
+    assert!(inside.1[bed("rain_on_roof")] > 0.9 * ambience.beds[bed("rain_on_roof")].volume);
+    // The hearth is as loud indoors in a storm as by a fire on a still night.
+    let night = run(&ambience, find("campfire_night"), 60.0).1;
+    assert_eq!(inside.1[bed("fire")], night[bed("fire")]);
+    // Birds through the walls: still there, muffled; the fire's snaps never.
+    let sounds = |timeline: &[(f32, Cue)], name: &str| -> Vec<(f32, f32)> {
+        let i = ambience.sounds.iter().position(|s| s.name == format!("base:{name}")).unwrap();
+        timeline.iter().filter_map(|(_, c)| match *c { Cue::Sound { sound, volume, muffle, .. } if sound == i => Some((volume, muffle)), _ => None }).collect()
+    };
+    let dry = run(&ambience, &scene(&ambience, "forest_noon_inside", &["forest", "temperate", "broadleaf"], &[("leaves", 1.0), ("wood", 0.7), ("shelter", 1.0), ("roof", 1.0)]), 300.0);
+    let birds = sounds(&dry.0, "warbler");
+    assert!(!birds.is_empty() && birds.iter().all(|&(_, muffle)| muffle >= 0.75), "{birds:?}");
+    let snaps = sounds(&inside.0, "fire_snap");
+    assert!(!snaps.is_empty() && snaps.iter().all(|&(_, muffle)| muffle == 0.0), "{snaps:?}");
+    assert!(sounds(&outside.0, "gusty").iter().all(|&(_, muffle)| muffle == 0.0), "outdoors nothing is muffled");
 }
 
 /// Recorded beds are what the mixer expects: segments of `SEGMENT` seconds that fade in
@@ -212,6 +256,40 @@ fn recorded_beds_fit_the_mixer() {
 #[ignore]
 fn ambience_preview() {
     let ambience = base();
+    let [left, right] = render(&ambience, scenes(&ambience), &[]);
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/ambience_preview.wav");
+    std::fs::write(&path, sfx::wav_stereo(&left, &right)).unwrap();
+    println!("wrote {}", path.display());
+}
+
+/// `cargo test --release -p voxmar_client indoor_preview -- --ignored` writes a woodland
+/// noon and then a thunderstorm, each heard out in it and then from inside a home by its
+/// hearth, with a thunderclap in each storm, to `target/indoor_preview.wav`.
+#[test]
+#[ignore]
+fn indoor_preview() {
+    let ambience = base();
+    let forest = [("leaves", 1.0), ("wood", 0.7), ("grass", 0.5), ("canopy", 0.8)];
+    let tags = ["forest", "temperate", "broadleaf"];
+    let picked = vec![
+        scene(&ambience, "forest_noon", &tags, &forest),
+        scene(&ambience, "forest_noon_inside", &tags, &[&forest[..], INDOORS, &[("rain", 0.0), ("fire", 1.0)]].concat()),
+        scene(&ambience, "storm_outside", &tags, &[&forest[..], STORM].concat()),
+        scene(&ambience, "storm_by_the_hearth", &tags, &[&forest[..], STORM, INDOORS, &[("fire", 1.0)]].concat()),
+    ];
+    // A strike 300 blocks off, as sfx plays it, eight seconds into each storm.
+    let clap = decode("content/base/sounds/thunder_middle_1.mp3");
+    let gain = 0.9 / (1.0 + 300.0 / 400.0) * sfx::MASTER;
+    let thunder = [(2, 8.0, gain), (3, 8.0, gain * ambience.shelter.thunder)];
+    let [left, right] = render(&ambience, picked, &thunder.map(|(scene, at, gain)| (scene, at, gain, &clap)));
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/indoor_preview.wav");
+    std::fs::write(&path, sfx::wav_stereo(&left, &right)).unwrap();
+    println!("wrote {}", path.display());
+}
+
+/// About twenty seconds of each scene, one after another, mixed as the game mixes them,
+/// with `extra` clips laid over: (scene, seconds into it, gain, clip).
+fn render(ambience: &Ambience, scenes: Vec<Scene>, extra: &[(usize, f32, f32, &[Vec<f32>; 2])]) -> [Vec<f32>; 2] {
     let beds: Vec<Vec<[Vec<f32>; 2]>> =
         ambience.beds.iter().map(|b| (0..synth::BED_VARIANTS).map(|v| segment(&b.sound, v)).collect()).collect();
     type Variants = Vec<(Vec<f32>, [Vec<f32>; 2])>;
@@ -219,18 +297,18 @@ fn ambience_preview() {
         ambience.sounds.iter().map(|s| (0..synth::ONE_SHOT_VARIANTS).map(|v| synth::one_shot(s.synth, v)).collect()).collect();
     let block = RATE as usize / 100;
     let (mut left, mut right) = (Vec::new(), Vec::new());
-    for scene in scenes(&ambience) {
+    for (index, scene) in scenes.into_iter().enumerate() {
         println!("{} starts at {:.0} s", scene.name, left.len() as f32 / RATE as f32);
         let seconds = 20.0;
         let total = (seconds * RATE as f32) as usize;
         let start = left.len();
         left.resize(start + total + RATE as usize * 4, 0.0);
         right.resize(start + total + RATE as usize * 4, 0.0);
-        let mut mixer = Mixer::new(&ambience, 9);
+        let mut mixer = Mixer::new(ambience, 9);
         // Skip the warm-up and the beds' fade-in, as if the player had been there a while.
         let mut cues = Vec::new();
         for _ in 0..1000 {
-            mixer.update(&ambience, &scene.env, &scene.samples, Vec3::ZERO, 0.01, |_, _| 2.0, (synth::BED_VARIANTS, synth::ONE_SHOT_VARIANTS), &mut cues);
+            mixer.update(ambience, &scene.env, &scene.samples, Vec3::ZERO, 0.01, |_, _| 2.0, (synth::BED_VARIANTS, synth::ONE_SHOT_VARIANTS), &mut cues);
         }
         cues.clear();
         let mut playing: Vec<(usize, usize, usize)> = (0..ambience.beds.len())
@@ -239,15 +317,17 @@ fn ambience_preview() {
             .collect();
         for step in 0..total / block {
             let at = start + step * block;
-            mixer.update(&ambience, &scene.env, &scene.samples, Vec3::ZERO, 0.01, |s, v| sounds[s][v].0.len() as f32 / RATE as f32, (synth::BED_VARIANTS, synth::ONE_SHOT_VARIANTS), &mut cues);
+            mixer.update(ambience, &scene.env, &scene.samples, Vec3::ZERO, 0.01, |s, v| sounds[s][v].0.len() as f32 / RATE as f32, (synth::BED_VARIANTS, synth::ONE_SHOT_VARIANTS), &mut cues);
             for cue in cues.drain(..) {
                 match cue {
                     Cue::Segment { bed, variant } => playing.push((bed, variant, 0)),
                     Cue::Stop { bed } => playing.retain(|p| p.0 != bed),
-                    Cue::Sound { sound, variant, at: position, volume, .. } => {
+                    Cue::Sound { sound, variant, at: position, volume, muffle: muffled, .. } => {
                         let (dry, wet) = &sounds[sound][variant];
                         let reverb = scene.env.get(Fixed::Reverb);
-                        let [l, r] = place(dry, wet, position, Vec3::ZERO, Vec3::X, Vec3::NEG_Z, reverb);
+                        let mut placed = place(dry, wet, position, Vec3::ZERO, Vec3::X, Vec3::NEG_Z, reverb);
+                        muffle(&mut placed, muffled, ambience.shelter.muffle);
+                        let [l, r] = placed;
                         for (i, (l, r)) in l.iter().zip(&r).enumerate() {
                             if let (Some(a), Some(b)) = (left.get_mut(at + i), right.get_mut(at + i)) {
                                 *a += l * volume * sfx::MASTER * super::AMBIENCE_GAIN;
@@ -270,6 +350,15 @@ fn ambience_preview() {
             }
             playing.retain(|&(bed, variant, offset)| offset < beds[bed][variant][0].len());
         }
+        for &(_, at, gain, clip) in extra.iter().filter(|e| e.0 == index) {
+            let from = start + (at * RATE as f32) as usize;
+            for (i, (l, r)) in clip[0].iter().zip(&clip[1]).enumerate() {
+                if let (Some(a), Some(b)) = (left.get_mut(from + i), right.get_mut(from + i)) {
+                    *a += l * gain;
+                    *b += r * gain;
+                }
+            }
+        }
         // A short gap between scenes, and fade out whatever rings on.
         let end = start + total;
         for i in 0..RATE as usize {
@@ -287,9 +376,7 @@ fn ambience_preview() {
         println!("  peak {peak:.2}, rms {rms:.3}");
         assert!(peak < 1.0, "{} clips", scene.name);
     }
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/ambience_preview.wav");
-    std::fs::write(&path, sfx::wav_stereo(&left, &right)).unwrap();
-    println!("wrote {}", path.display());
+    [left, right]
 }
 
 /// `cargo test --profile iter -p voxmar_client ambience_survey -- --ignored --nocapture`
@@ -371,11 +458,11 @@ fn leaving_a_world_forgets_the_surroundings() {
     use bevy::ecs::system::RunSystemOnce;
     use bevy::prelude::World;
     let mut world = World::new();
-    world.insert_resource(super::Surroundings { flowers: 0.6, depth: 40.0, sky: 0.0, biome: Vec::new() });
+    world.insert_resource(super::Surroundings { flowers: 0.6, depth: 40.0, sky: 0.0, biome: Vec::new(), thunder: 0.5 });
     world.run_system_once(super::leave).unwrap();
     let left = world.resource::<super::Surroundings>();
     let fresh = super::Surroundings::default();
-    assert_eq!((left.flowers, left.depth, left.sky), (fresh.flowers, fresh.depth, fresh.sky));
+    assert_eq!((left.flowers, left.depth, left.sky, left.thunder), (fresh.flowers, fresh.depth, fresh.sky, fresh.thunder));
 }
 
 /// Every bed, over all of a segment, and every one-shot, at its loudest from where it
