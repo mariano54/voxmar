@@ -139,6 +139,13 @@ pub struct InterfaceStyle {
     pub worn_glyph_alpha: f32,
     /// Blocks from home within which the way home is not shown (`hud::home`).
     pub home_hidden_within: f32,
+    /// Blocks from home beyond which the way home shows by day too.
+    pub home_shown_beyond: f32,
+    /// When the night it shows through starts and ends, in ticks after sunrise.
+    pub home_dusk: u64,
+    pub home_dawn: u64,
+    /// Seconds the mark takes to fade in or out.
+    pub home_fade: f32,
     /// The item whose icon marks home, if a package names one.
     pub home_icon: Option<String>,
 }
@@ -148,6 +155,10 @@ pub struct InterfaceStyle {
 struct InterfaceFile {
     worn_glyph_alpha: Option<f32>,
     home_hidden_within: Option<f32>,
+    home_shown_beyond: Option<f32>,
+    home_dusk: Option<u64>,
+    home_dawn: Option<u64>,
+    home_fade: Option<f32>,
     home_icon: Option<String>,
 }
 
@@ -157,10 +168,15 @@ impl InterfaceStyle {
     pub fn load(files: &[voxmar_engine::content::ContentFile]) -> Result<Self, String> {
         let options = ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME);
         let (mut alpha, mut hidden, mut icon) = (None, None, None);
+        let (mut beyond, mut dusk, mut dawn, mut fade) = (None, None, None, None);
         for file in files.iter().filter(|f| f.name == Self::FILE) {
             let given: InterfaceFile = options.from_str(&file.source).map_err(|e| format!("{}/{}: {e}", file.package, Self::FILE))?;
             alpha = given.worn_glyph_alpha.or(alpha);
             hidden = given.home_hidden_within.or(hidden);
+            beyond = given.home_shown_beyond.or(beyond);
+            dusk = given.home_dusk.or(dusk);
+            dawn = given.home_dawn.or(dawn);
+            fade = given.home_fade.or(fade);
             icon = given.home_icon.or(icon);
         }
         let worn_glyph_alpha = alpha.ok_or(format!("no package's {} gives worn_glyph_alpha", Self::FILE))?;
@@ -171,7 +187,23 @@ impl InterfaceStyle {
         if !(home_hidden_within >= 0.0 && home_hidden_within.is_finite()) {
             return Err(format!("{}: home_hidden_within {home_hidden_within} is not 0 or more", Self::FILE));
         }
-        Ok(InterfaceStyle { worn_glyph_alpha, home_hidden_within, home_icon: icon })
+        fn given<T>(value: Option<T>, name: &str) -> Result<T, String> {
+            value.ok_or(format!("no package's {} gives {name}", InterfaceStyle::FILE))
+        }
+        let home_shown_beyond: f32 = given(beyond, "home_shown_beyond")?;
+        if !(home_shown_beyond >= home_hidden_within && home_shown_beyond.is_finite()) {
+            return Err(format!("{}: home_shown_beyond {home_shown_beyond} is not home_hidden_within ({home_hidden_within}) or more", Self::FILE));
+        }
+        let (home_dusk, home_dawn): (u64, u64) = (given(dusk, "home_dusk")?, given(dawn, "home_dawn")?);
+        let day = voxmar_protocol::TICKS_PER_DAY;
+        if home_dusk >= day || home_dawn >= day || home_dusk == home_dawn {
+            return Err(format!("{}: home_dusk {home_dusk} and home_dawn {home_dawn} are not two times of day under {day}", Self::FILE));
+        }
+        let home_fade: f32 = given(fade, "home_fade")?;
+        if !(0.0..=5.0).contains(&home_fade) {
+            return Err(format!("{}: home_fade {home_fade} is not from 0 to 5 seconds", Self::FILE));
+        }
+        Ok(InterfaceStyle { worn_glyph_alpha, home_hidden_within, home_shown_beyond, home_dusk, home_dawn, home_fade, home_icon: icon })
     }
 }
 
@@ -1216,10 +1248,14 @@ mod tests {
         files.push(file("(worn_glyph_alpha: 0.5)"));
         assert_eq!(InterfaceStyle::load(&files).unwrap().worn_glyph_alpha, 0.5);
         let style = InterfaceStyle::load(&files).unwrap();
-        assert_eq!((style.home_hidden_within, style.home_icon.as_deref()), (24.0, Some("base:hearthstone")), "core's distance, base's icon");
-        files.push(file("(home_hidden_within: -1.0)"));
-        assert!(InterfaceStyle::load(&files).is_err());
-        files.pop();
+        assert_eq!((style.home_hidden_within, style.home_icon.as_deref()), (8.0, Some("base:hearthstone")), "core's distance, base's icon");
+        assert_eq!((style.home_shown_beyond, style.home_dusk, style.home_dawn, style.home_fade), (48.0, 16500, 23500, 0.5));
+        // Each way home number is checked as it loads.
+        for bad in ["(home_hidden_within: -1.0)", "(home_shown_beyond: 4.0)", "(home_dusk: 24000)", "(home_dawn: 16500)", "(home_fade: -0.5)", "(home_fade: 9.0)"] {
+            files.push(file(bad));
+            assert!(InterfaceStyle::load(&files).is_err(), "{bad}");
+            files.pop();
+        }
         files.push(file("(worn_glyph_alpha: 2.0)"));
         assert!(InterfaceStyle::load(&files).is_err());
     }
@@ -1287,7 +1323,11 @@ mod tests {
         let mut wait_for = |done: &dyn Fn(&Inventory) -> bool| -> Inventory {
             let (ticks, mut cpu) = (server.ticks(), server.cpu_time());
             let mut starting = Duration::ZERO;
+            // A server that neither ticks nor works would never use up its seconds: ten
+            // times them by the wall's clock fail the wait too.
+            let began = std::time::Instant::now();
             while !done(&seen) {
+                assert!(began.elapsed() < Duration::from_secs(600), "the server neither ticked nor worked its way to that inventory in 600 s of the wall's clock: {seen:?}");
                 if server.ticks() == 0 {
                     let now = server.cpu_time();
                     starting += cpu.zip(now).map_or(Duration::ZERO, |(then, now)| now.saturating_sub(then));
