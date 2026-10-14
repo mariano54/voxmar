@@ -146,6 +146,12 @@ fired clay replaces unfired pots, unfired vials and fired bricks, and tin ore go
 into bronze at the crucible (Oct 14: the bronze blend between them is gone). Flint comes from gravel, one break in eight (tools.ron's `instead`;
 gravel a player placed gives none).
 
+Raw and cooked rabbit and chicken were the same meat (Cooking 1, the same experience and
+healing) and are **small game** now (Oct 14). A package's blocks file lists what it renamed
+or merged, old name to new (`renamed: {"raw_rabbit": "raw_small_game"}`), and an older save
+loads those items, in slots, pouches, on the ground and on stations, as the new one. Load
+refuses a rename to a block that does not exist, or of a name a block still has.
+
 ## Dying
 
 Dying costs what you carried, not your skills (Mariano, 2026-10-06). You keep your three most

@@ -5593,7 +5593,7 @@ enum View {
 
 /// What the text-fit tour looks up in the recipe viewer, and whether its uses: a crafted
 /// item, an ingredient, and a creature's product with a range of amounts.
-const FIT_LOOKUPS: [(&str, bool); 4] = [("base:campfire", false), ("base:oak_log", true), ("base:wool", false), ("base:cooked_rabbit", false)];
+const FIT_LOOKUPS: [(&str, bool); 4] = [("base:campfire", false), ("base:oak_log", true), ("base:wool", false), ("base:cooked_small_game", false)];
 
 /// The languages the text-fit tour checks, and how long it leaves each view to lay out.
 const FIT_LANGUAGES: [&str; 2] = ["en", "ja"];
@@ -9000,14 +9000,14 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             // up behind the menus' text check.
             net.command("creatures kill");
             net.command(&format!("setblock {} {} {} campfire", fire.x, fire.y, fire.z));
-            net.command("give raw_rabbit 3");
+            net.command("give raw_small_game 3");
             // In reach of it, wherever the steps before left the player.
             net.command(&format!("tp {} {} {}", fire.x as f32 + 0.5, fire.y, fire.z as f32 - 1.5));
             gate.advance(now);
         }
         3 => {
             let client = world.resource::<ClientWorld>();
-            let (Some(raw), Some(campfire)) = (client.registry.id("base:raw_rabbit"), client.registry.id("base:campfire")) else {
+            let (Some(raw), Some(campfire)) = (client.registry.id("base:raw_small_game"), client.registry.id("base:campfire")) else {
                 gate.check("cook", Err("no raw rabbit or campfire in the content".into()));
                 gate.next(Step::Ore, now);
                 return;
@@ -9019,7 +9019,7 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             match (lit, slot) {
                 (true, Some(slot)) => {
                     world.resource_mut::<LocalPlayer>().selected = slot;
-                    gate.count_before = item_count(world, "base:cooked_rabbit") + item_count(world, "base:burnt_food");
+                    gate.count_before = item_count(world, "base:cooked_small_game") + item_count(world, "base:burnt_food");
                     gate.advance(now);
                 }
                 _ if gate.server_in_phase() > 10.0 => {
@@ -9031,7 +9031,7 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         }
         4 => {
             aim_at(world, fire.as_vec3() + Vec3::new(0.5, 0.3, 0.5));
-            let cooked = item_count(world, "base:cooked_rabbit") + item_count(world, "base:burnt_food");
+            let cooked = item_count(world, "base:cooked_small_game") + item_count(world, "base:burnt_food");
             let first_night = world.resource::<LocalPlayer>().quests.iter().any(|q| q.name == "base:first_night" && q.done);
             if cooked > gate.count_before && first_night {
                 mouse(world, MouseButton::Right, false);
@@ -9167,7 +9167,7 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
         0 => {
             let net = world.resource::<Net>();
             net.command(&format!("setblock {} {} {} drying_rack", rack.x, rack.y, rack.z));
-            net.command("give raw_rabbit 2");
+            net.command("give raw_small_game 2");
             net.command(&format!("tp {} {} {}", rack.x as f32 + 0.5, rack.y, rack.z as f32 - 2.5));
             gate.advance(now);
         }
@@ -9176,7 +9176,7 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
             let client = world.resource::<ClientWorld>();
             let stood = client.registry.id("base:drying_rack").is_some_and(|r| client.block(rack) == Some(r));
             let there = world.resource::<LocalPlayer>().position.distance(Vec3::new(rack.x as f32 + 0.5, rack.y as f32, rack.z as f32 - 2.5)) < 0.5;
-            if stood && there && drawn(world, rack) && gate.shot(world, "rack_bare").is_some() && select(world, "base:raw_rabbit") {
+            if stood && there && drawn(world, rack) && gate.shot(world, "rack_bare").is_some() && select(world, "base:raw_small_game") {
                 gate.advance(now);
             } else if waited {
                 gate.check("drying rack", Err(format!("the rack ({stood}) or raw rabbit in hand never came in {DRY_WAIT} server seconds")));

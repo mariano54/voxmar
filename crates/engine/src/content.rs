@@ -388,6 +388,7 @@ impl Content {
                 }
             }
         }
+        let renames = BlockRegistry::renames(&blocks);
         let blocks = BlockRegistry::expand(blocks)?;
         weather.validate()?;
         notes.extend(weather.notes().iter().cloned());
@@ -396,7 +397,8 @@ impl Content {
         }
         let movement = movement.ok_or_else(|| RegistryError("no package sets movement (movement.ron)".to_owned()))?.value;
         skills.validate()?;
-        let blocks = BlockRegistry::with_shapes(blocks, &crate::shape::Shapes::gather(shapes, shape_limits.value)?)?;
+        let mut blocks = BlockRegistry::with_shapes(blocks, &crate::shape::Shapes::gather(shapes, shape_limits.value)?)?;
+        blocks.rename(renames)?;
         let crops = CropRegistry::new(crops, &blocks, &skills)?;
         let rules = Rules { limits: creature_limits.value, defence: defence.value, condition: condition.value };
         let creatures = CreatureRegistry::new(creatures, rules, &blocks, &skills)?;
