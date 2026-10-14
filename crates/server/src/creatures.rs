@@ -729,9 +729,12 @@ impl Server {
         };
         motion::step(&mut body, &Ground::of(self), movement, water, drive, dt);
         let creature = self.creatures.live.get_mut(&id).expect("still there");
-        creature.shore = shore;
+        // What a search found holds for a second, bobbing at the surface or not; out on dry
+        // ground it is done with.
         if looked_for_shore {
-            creature.shore_at = Some(self.tick);
+            (creature.shore, creature.shore_at) = (shore, Some(self.tick));
+        } else if body.on_ground && !body.in_water {
+            (creature.shore, creature.shore_at) = (None, None);
         }
         creature.detour = detour;
         creature.way = way;
