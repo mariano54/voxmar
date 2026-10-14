@@ -49,6 +49,7 @@ mod interact;
 mod keys;
 mod lang;
 mod menu;
+mod mix;
 mod music;
 mod net;
 mod player;
@@ -337,6 +338,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err(format!("{}: gaits for `{name}`, which is no creature", creature_motion::FILE).into());
     }
     let look = hud::target::LookStyle::load(&content.files)?;
+    let celebrations = hud::celebrate::Celebrations::load(&content.files)?;
+    let recorded = sfx::Recordings::load(&content.files)?;
+    recorded.check(&content.actions)?;
+    recorded.mix.check().map_err(|e| format!("sounds.ron: {e}"))?;
     let content_weather = content.weather.clone();
     let shader_packs = render::pack::ShaderPacks::load(&assets);
     let registry = content.blocks.clone();
@@ -426,7 +431,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         weather::WeatherPlugin,
         ui::UiPlugin,
     ))
-    .add_plugins(lang::LangPlugin);
+    .add_plugins((lang::LangPlugin, mix::MixPlugin));
     app.add_plugins((creatures::CreaturesPlugin, creature_sounds::CreatureSoundsPlugin, butterflies::ButterfliesPlugin));
     app.add_plugins(emitters::EmittersPlugin);
     app.add_plugins(held::HeldPlugin);
@@ -476,7 +481,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         Screen::Title
     };
-    app.insert_resource(FirstScreen(first)).insert_resource(launch).insert_resource(interface).insert_resource(combat_marks).insert_resource(fight_look).insert_resource(creature_motion).insert_resource(look);
+    app.insert_resource(FirstScreen(first)).insert_resource(launch).insert_resource(interface).insert_resource(combat_marks).insert_resource(fight_look).insert_resource(creature_motion).insert_resource(look).insert_resource(celebrations);
     if options.loading {
         app.insert_resource(menu::HoldCover);
     }
