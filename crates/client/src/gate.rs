@@ -5435,9 +5435,19 @@ pub fn newcomer_misses(content: &voxmar_engine::content::Content, locale: &Local
         todo.extend(quests.get(name).iter().flat_map(|q| q.after.iter().map(String::as_str)));
     }
     opening.extend(quests.iter().filter(|q| q.after.iter().any(|a| a == NEWCOMER_GOAL)).map(|q| q.name.as_str()));
+    unexplained(content, locale, &opening)
+}
+
+/// Of `names`, what a quest asks for that the book cannot make and its words, or those of a
+/// quest before it, do not name (`newcomer_misses`).
+pub fn unexplained(content: &voxmar_engine::content::Content, locale: &Locale, names: &[&str]) -> Vec<String> {
+    use voxmar_engine::quest::Goal;
+    let quests = &content.quests;
+    let book = voxmar_engine::recipe_book::RecipeBook::new(content);
+    let opening = names;
     let words = |name: &str| quests.get(name).map(|q| locale.get_or(&format!("{}.why", voxmar_engine::lang::def_key("quest", &q.name)), &q.why).to_lowercase()).unwrap_or_default();
     let mut misses = Vec::new();
-    for &name in &opening {
+    for &name in opening {
         let Some(quest) = quests.get(name) else { continue };
         // Its own words and those of every quest it waits on.
         let mut told = words(name);
@@ -11317,6 +11327,18 @@ mod tests {
         for code in ["en", "ja"] {
             let misses = super::newcomer_misses(&content, &Locale::load(&assets, code));
             assert!(misses.is_empty(), "{code}: {misses:?}");
+        }
+    }
+
+    /// The same through the whole Farm age, to the lit Crucible Kiln.
+    #[test]
+    fn every_farm_quest_names_what_it_asks_for() {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        let content = voxmar_engine::content::Content::load(&assets).unwrap();
+        let farm: Vec<&str> = content.quests.iter().filter(|q| q.age == "farm").map(|q| q.name.as_str()).collect();
+        for code in ["en", "ja"] {
+            let misses = super::unexplained(&content, &Locale::load(&assets, code), &farm);
+            assert!(misses.is_empty(), "{code}: {} {misses:?}", misses.len());
         }
     }
 
