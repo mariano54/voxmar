@@ -202,7 +202,7 @@ tests = [
 
 [[allow]]
 binary = "voxmar_worldgen"
-seconds = 150
+seconds = 45
 why = "Generates or samples many columns, sites and water routes over several seeds and biomes; the cost is the generator (a column 13 to 18 ms, a site() 0.15 to 0.5 ms), the lead for the worldgen perf work."
 tests = [
   "tests::decorations_rest_on_the_ground",
