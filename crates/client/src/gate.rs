@@ -9726,9 +9726,11 @@ fn combat_feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let reads = &creatures.reads;
             let slid = reads.iter().find(|r| r.slid > r.planted);
             let shallow = reads.iter().find(|r| r.coiled < STRIKE_COILED);
-            let stood: Vec<f32> = reads.iter().filter_map(|r| r.recovered).collect();
+            let stood = &creatures.recoveries;
             let result = if strikes == 0 {
                 Err("no creature was seen to strike in the fights".into())
+            } else if reads.is_empty() {
+                Err(format!("{strikes} strikes seen and none of their wind-ups written down"))
             } else if let Some(read) = slid {
                 Err(format!("a creature slid {:.2} blocks as it wound up, where planted it would have moved {:.2} at most", read.slid, read.planted))
             } else if let Some(read) = shallow {
