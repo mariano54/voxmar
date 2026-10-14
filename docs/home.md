@@ -203,7 +203,7 @@ four planks in a barrel beside the bag and lays a crafting table from it ("home:
 
 ## Smoke over home
 
-The Homestead Hearth's chimney smokes from its top while the hearthstone stands below it, a
+The Homestead Hearth's chimney smokes from its top while the hearth below it is lit, a
 thick column seen from 96 blocks, so a player out at dusk sees where home is from across a
 valley. It is data on the chimney block (blocks_tools.ron): a smoke emission with
 `range: Some(96.0)` (how far off it is seen, up to 128, against the 24 every other block's
@@ -212,8 +212,17 @@ particles keep) and `over: Some(("hearth", 3))` (given off only with a `hearth` 
 stove pipe or a forge's flue can do the same. The client searches farther only for chunks
 whose palette holds such a block, and counts nearness as a share of each emission's range,
 so a far chimney takes its place among the nearest torches
-(`a_chimney_smokes_over_a_hearth_from_afar`). The gate's Cook step sets a hearthstone and a
-chimney beside its campfire and counts the chimney's puffs ("chimney smoke").
+(`a_chimney_smokes_over_a_hearth_from_afar`). The gate's Cook step builds a hearth beside
+its campfire, checks its chimney gives nothing off cold, lights it and counts the puffs
+("chimney smoke").
+
+A cold hearth is quiet. Lighting a hearth keeps its fire until a piece of it is taken away
+(server/src/hearth.rs; a kiln's burns for its fuel charge), and the server tells every
+player which fires burn when that changes (`ServerMessage::Fires`, protocol 41). Over a
+structure's core (a hearthstone) an emission is `over` it only while it burns, and the
+ambience's `fire` group (`lit: true`) hears a hearth or a Crucible Kiln crackle and snap only
+then; a campfire or a pit kiln always. A home hearth lit in a world saved before this is lit
+again when its player joins.
 
 ## Quest hooks (written, in base/quests.ron)
 

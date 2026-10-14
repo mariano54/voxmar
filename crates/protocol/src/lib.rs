@@ -36,7 +36,8 @@ pub use voxmar_engine::weather::Weather;
 // 38: where home is (Vitals::home), for the way back.
 // 39: a crafting way as an action's target (ActionTarget::Recipe), for laying it.
 // 40: ClientMessage::LookAtStation and ServerMessage::Station, what is on a station looked at.
-pub const PROTOCOL_VERSION: u32 = 40;
+// 41: ServerMessage::Fires, the lit structures whose fires burn.
+pub const PROTOCOL_VERSION: u32 = 41;
 
 /// A creature's `tell` while it rears into a new phase of its fight.
 pub const REARING: u8 = u8::MAX;
@@ -207,6 +208,10 @@ pub enum ServerMessage {
     /// if it is empty; and, for a fuelled structure's core (a kiln), the seconds its fire
     /// burns on (0 when cold).
     Station { block: IVec3, load: Option<StationLoad>, fire: Option<u32> },
+    /// The cores of every structure a player has lit whose fire still burns (a hearth, a
+    /// kiln), sent on joining and whenever one is lit, breaks or burns out: they crackle
+    /// and their chimneys smoke, an unlit one is cold and quiet.
+    Fires { lit: Vec<IVec3> },
 }
 
 /// A creature as players see it. Its velocity lets clients carry it on smoothly between

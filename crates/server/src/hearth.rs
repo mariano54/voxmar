@@ -56,8 +56,11 @@ impl Server {
             self.lit.insert(core, Lit { position: core.to_array(), structure: structure.name.clone(), until });
             self.tally(agent, "lit", &structure.name, 1);
         } else if structure.fuels.is_empty() {
+            // A fire that needs no fuel burns until the structure breaks.
+            self.lit.insert(core, Lit { position: core.to_array(), structure: structure.name.clone(), until: u64::MAX });
             self.tally(agent, "lit", &structure.name, 1);
         }
+        self.send_fires();
         if structure.home && let Some(player) = self.players.get_mut(&agent) {
             player.home = Some(core.as_vec3() + Vec3::new(0.5, 1.0, 0.5));
         }
@@ -109,8 +112,43 @@ impl Server {
     /// the piece back cannot resurrect a paid charge, even between simulation ticks.
     pub(crate) fn fire_changed(&mut self, changed: IVec3) {
         let (structures, world, tick) = (&self.content.multiblocks, &self.world, self.tick);
+        let before = self.lit.len();
         self.lit.retain(|&core, fire| fire.until > tick && structures.get(&fire.structure)
             .is_some_and(|m| !m.includes(core, changed) || m.stands(core, |p| world.block(p))));
+        if self.lit.len() != before {
+            self.send_fires();
+        }
+    }
+
+    /// The cores of every fire burning, in order.
+    pub(crate) fn fires(&self) -> Vec<IVec3> {
+        let mut fires: Vec<IVec3> = self.lit.iter().filter(|(_, fire)| fire.until > self.tick).map(|(&core, _)| core).collect();
+        fires.sort_by_key(|core| core.to_array());
+        fires
+    }
+
+    /// Tells every player which fires burn, when that changed since they were last told.
+    pub(crate) fn send_fires(&mut self) {
+        let fires = self.fires();
+        if fires != self.fires_sent {
+            self.broadcast(ServerMessage::Fires { lit: fires.clone() });
+            self.fires_sent = fires;
+        }
+    }
+
+    /// A home hearth lit before hearths kept their fire (a world saved earlier) is lit again
+    /// when its player joins, if it still stands.
+    pub(crate) fn kindle_home(&mut self, id: PlayerId) {
+        let Some(home) = self.players.get(&id).and_then(|p| p.home) else { return };
+        let core = (home - Vec3::new(0.5, 1.0, 0.5)).round().as_ivec3();
+        if self.lit.contains_key(&core) {
+            return;
+        }
+        let Some(block) = self.block(core) else { return };
+        let multiblocks = self.content.multiblocks.clone();
+        if let Some(structure) = multiblocks.with_core(block).find(|m| m.home && m.fuels.is_empty() && m.stands(core, |p| self.block(p))) {
+            self.lit.insert(core, Lit { position: core.to_array(), structure: structure.name.clone(), until: u64::MAX });
+        }
     }
 }
 
@@ -164,6 +202,45 @@ mod tests {
         assert_eq!(server.players[&1].tallies["lit:base:crucible_kiln"], 2);
         server.set_block(core, BlockId::AIR);
         assert!(!server.lit.contains_key(&core));
+    }
+
+    /// A hearth is cold until lit: then it burns, and players are told, until a piece of it
+    /// is taken away, and players are told it went out. A home hearth from a world saved
+    /// before hearths kept their fire is lit again when its player joins.
+    #[test]
+    fn a_hearth_burns_from_lighting_until_it_breaks_and_players_are_told() {
+        let mut server = crate::test_server();
+        let (client, connection) = voxmar_protocol::local_pair();
+        server.players.insert(1, Player::new(1, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits));
+        server.players.get_mut(&1).unwrap().joined = true;
+        let told = |client: &voxmar_protocol::ClientConnection| -> Vec<Vec<IVec3>> {
+            std::iter::from_fn(|| client.try_recv().ok().flatten()).filter_map(|m| match m { ServerMessage::Fires { lit } => Some(lit), _ => None }).collect()
+        };
+        let core = ColumnPos::of_block(server.spawn.floor().as_ivec3()).origin() + IVec3::new(8, server.spawn.y as i32 + 4, 8);
+        let (stone, chimney) = (server.content.blocks.expect("base:cobblestone"), server.content.blocks.expect("base:chimney"));
+        for x in -1..=1 { for z in -1..=1 {
+            server.set_block(core + IVec3::new(x, 0, z), stone);
+        }}
+        server.set_block(core, server.content.blocks.expect("base:hearthstone"));
+        for y in 1..=2 { server.set_block(core + IVec3::new(-1, y, -1), chimney); }
+        server.send_fires();
+        assert!(server.fires().is_empty() && told(&client).is_empty(), "a hearth burned before it was lit");
+        server.light(1, core);
+        assert_eq!(server.fires(), [core], "the hearth was not lit");
+        assert_eq!(told(&client), [vec![core]]);
+        server.tick += 1_000_000;
+        server.send_fires();
+        assert_eq!(server.fires(), [core], "a hearth burned out");
+        assert!(told(&client).is_empty(), "players were told again of what had not changed");
+        server.set_block(core + IVec3::new(1, 0, 1), BlockId::AIR);
+        assert!(server.fires().is_empty(), "a broken hearth still burns");
+        assert_eq!(told(&client), [Vec::<IVec3>::new()]);
+        // An older world's home hearth: standing, the player's home, but never kept lit.
+        server.set_block(core + IVec3::new(1, 0, 1), stone);
+        assert!(server.fires().is_empty(), "mending a hearth lit it");
+        server.players.get_mut(&1).unwrap().home = Some(core.as_vec3() + Vec3::new(0.5, 1.0, 0.5));
+        server.kindle_home(1);
+        assert_eq!(server.fires(), [core], "the old home hearth was not lit again");
     }
 
     #[test]

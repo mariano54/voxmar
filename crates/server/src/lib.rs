@@ -548,8 +548,11 @@ pub(crate) struct Server {
     farm: farm::Farm,
     /// Machines players built, and the power between them.
     factory: voxmar_engine::factory::Factory,
-    /// Multiblocks burning their initial fuel charge, by core cell.
+    /// Lit multiblocks, by core cell: a kiln burning its fuel charge, a hearth (which needs
+    /// none) until it breaks.
     lit: FxHashMap<IVec3, hearth::Lit>,
+    /// The burning fires players were last told of (`ServerMessage::Fires`).
+    fires_sent: Vec<IVec3>,
     /// Cells whose block a player placed: ores, which then teach nothing; plants, which
     /// don't regrow by themselves; and furnishings, which give themselves back only from
     /// these cells (see `WorldMeta::placed`).
@@ -695,6 +698,7 @@ impl Server {
             farm,
             factory: voxmar_engine::factory::Factory::default(),
             lit,
+            fires_sent: Vec::new(),
             placed,
             regrowing,
             planter_grown,
@@ -928,6 +932,7 @@ impl Server {
         self.broadcast_players();
         if self.tick.is_multiple_of(TICKS_PER_SECOND as u64) {
             self.broadcast(self.time_message());
+            self.send_fires();
         }
         if self.tick.is_multiple_of(SAVE_INTERVAL) {
             self.save();

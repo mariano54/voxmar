@@ -8413,21 +8413,45 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             };
             gate.check("campfire smoke", result);
             let net = world.resource::<Net>();
+            for at in hearth_ring(hearth) {
+                net.command(&format!("setblock {} {} {} cobblestone", at.x, at.y, at.z));
+            }
             for (at, block) in [(hearth, "hearthstone"), (chimney[0], "chimney"), (chimney[1], "chimney")] {
                 net.command(&format!("setblock {} {} {} {block}", at.x, at.y, at.z));
             }
             gate.advance(now);
         }
-        // A hearthstone beside it, with a chimney two tall at its corner: the chimney's top
-        // smokes (`over` the hearth), as home does from across a valley.
+        // A Homestead Hearth beside it, a hearthstone in a ring of stone with a chimney two
+        // tall at its corner: cold, the chimney does not smoke; lit, its top smokes (`over`
+        // the hearth), as home does from across a valley.
         7 => {
-            let placed = {
+            let (placed, lit) = {
                 let client = world.resource::<ClientWorld>();
-                client.registry.id("base:chimney").is_some_and(|c| client.block(chimney[1]) == Some(c))
+                (client.registry.id("base:chimney").is_some_and(|c| client.block(chimney[1]) == Some(c)), client.fires.contains(&hearth))
             };
-            if placed {
+            if placed && lit {
                 world.resource_mut::<crate::emitters::Emitters>().watch(chimney[1]);
                 gate.advance(now);
+            } else if placed {
+                // A cold hearth's chimney gives nothing off.
+                let amount = world.resource::<crate::render::particles::Particles>().amount;
+                let cold = world.resource::<crate::emitters::Emitters>().rate_of(chimney[1], world.resource::<ClientWorld>(), amount);
+                if cold > 0.0 {
+                    gate.check("chimney smoke", Err(format!("the chimney of a cold hearth smokes ({cold:.2} a second)")));
+                    gate.phase = 8;
+                    return;
+                }
+                // Lit as a player lights it, asked once each `TAP_EVERY` and counted as taps.
+                if now - gate.tap_at >= TAP_EVERY {
+                    gate.tap_at = now;
+                    gate.taps += 1;
+                    let actions = world.resource::<crate::Actions>().0.clone();
+                    world.resource::<Net>().propose(actions.expect("base:light"), voxmar_engine::action::ActionTarget::Block { block: hearth, face: voxmar_engine::coords::Face::PosY });
+                }
+                if gate.waited_out(10.0) {
+                    gate.check("chimney smoke", Err(format!("the hearth was never lit: {} asks in {:.1} server s", gate.taps, gate.server_in_phase())));
+                    gate.phase = 8;
+                }
             } else if in_phase > 5.0 {
                 gate.check("chimney smoke", Err(format!("the chimney was not on the client {in_phase:.1} s after it was placed")));
                 gate.phase = 8;
@@ -8452,18 +8476,23 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             emitters.watch = None;
             gate.chimney_owed = 0.0;
             gate.check("chimney smoke", if done {
-                Ok(format!("{count} puffs rose from the chimney's top over the hearthstone in {in_phase:.1} s ({owed:.1} owed)"))
+                Ok(format!("no smoke while the hearth was cold; lit, {count} puffs rose from the chimney's top in {in_phase:.1} s ({owed:.1} owed)"))
             } else {
                 Err(format!("only {count} puffs rose from the chimney's top over a hearthstone in {in_phase:.1} s, under {CHIMNEY_PARTICLES} with {owed:.1} owed ({why})"))
             });
             let net = world.resource::<Net>();
-            for at in [hearth, chimney[0], chimney[1]] {
+            for at in [hearth, chimney[0], chimney[1]].into_iter().chain(hearth_ring(hearth)) {
                 net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
             }
             gate.next(Step::Dry, now);
         }
         _ => {}
     }
+}
+
+/// The ring of stone around the cook step's hearthstone.
+fn hearth_ring(hearth: IVec3) -> impl Iterator<Item = IVec3> {
+    (-1..=1).flat_map(move |x| (-1..=1).map(move |z| hearth + IVec3::new(x, 0, z))).filter(move |&at| at != hearth)
 }
 
 /// Where the dry step stands its rack: two blocks from the cook step's campfire, within

@@ -362,6 +362,7 @@ pub(crate) fn receive(
                 fighting.pings += 1;
             }
             ServerMessage::Prayers { points, most, on } => fighting.prayers = crate::fight::Prayers { points, most, on },
+            ServerMessage::Fires { lit } => world.fires = lit.into_iter().collect(),
             ServerMessage::Xp { skill, tenths } => toasts.gained(skill, tenths, time.elapsed_secs()),
             ServerMessage::Station { block, load, fire } => stations.tell(block, load, fire, time.elapsed_secs_f64()),
         }
