@@ -28,6 +28,13 @@ first reached in a session (with a **Next:** line). Reaching one counts as
 `Built("home_NAME", 1)` for quests (`home_camp`, `home_hearthside`, `home_snug`, `home_homely`,
 `home_cosy`, `home_heart_of_the_home`).
 
+Each step's chip has its own icon, so the HUD shows the home climbing at a glance: a tent
+(Camp), a hearth fire (Hearthside), a quilt (Snug), a house (Homely), its window lit and its
+chimney smoking (Cosy), a heart at its middle (Heart of the Home); and a moon for Rested, a
+moon and star for Well Rested, a full moon for Deep Rest (default pack
+`recipes/effects.ron`, `ui/effect/<name>`; test `the_homes_steps_and_rest_have_their_own_icons`;
+the gate's Home step, "home: icons", shot `home-chips`).
+
 | Step | Age | Needs (tags) | Gives while at home |
 | --- | --- | --- | --- |
 | Camp | Nomad | a bed (sleeping bag) slept in, 1 light | heal x1.2 |
@@ -198,8 +205,23 @@ by the door and the cupboard of wool are a woodshed and a larder to craft from, 
 trips to fetch. A recipe that needs a table counts only at one; one above the player's
 level is passed over; with nothing to lay from, the chat says what is short. Server side in
 server/src/laying.rs (`core:lay`, an `ActionTarget::Item`, protocol 39), the grid choice in
-`Recipe::lay` (an alternative with enough for every alike cell). The gate's Home step puts
-four planks in a barrel beside the bag and lays a crafting table from it ("home: lay").
+`Recipe::lay` (an alternative with enough for every alike cell). Laid with a store open,
+the store's screen closes, since its slots stand where the grid is drawn. The gate's Home
+step puts four planks in a barrel beside the bag, shoots the table's recipe with its Lay
+button ("home-lay-recipe"), presses it, and shoots the grid laid from the barrel
+("home-lay"; check "home: lay").
+
+## A well by the field
+
+Crops grow best with water within four blocks, and rice not at all without it, so a home
+far from a river had no field worth the name. A **Well** (Construction 8, Farm age: a ring of
+cobbles about a pail, under sticks and a plank) is one block that waters as water does: any
+block tagged `waters` within `WATER_REACH` of a crop, standing on the ground by the field or
+sunk level with it, keeps its ground moist (farm.rs `crop_conditions`), and a station's
+`Water` spot counts it too, so a compost heap beside a well rots as fast as one by a stream.
+A mod's rain barrel or cistern is the same tag. Tests: `a_well_waters_the_field_about_it`,
+`a_heap_rots_greens_four_to_one`. The gate's Refusal step sets one down from the hand by its
+dry plot ("well", shot "well").
 
 ## Smoke over home
 
@@ -214,6 +236,21 @@ whose palette holds such a block, and counts nearness as a share of each emissio
 so a far chimney takes its place among the nearest torches
 (`a_chimney_smokes_over_a_hearth_from_afar`). The gate's Cook step sets a hearthstone and a
 chimney beside its campfire and counts the chimney's puffs ("chimney smoke").
+
+## Light in the windows
+
+A home shows its lit rooms at night: a window glows warm by the light of the room behind it.
+Before glass there is the Hide Window (Farm, Construction 3: a hide in a frame of eight sticks,
+two windows), oiled hide in a stick frame. Every block tagged `window` (the hide window, glass,
+settlements' old glass) passes block light as air does (a `Cutout` cube), so a candle or the
+hearth behind it lights the ground outside, and is `lit_through` (a block field, any mod's
+window can say it): its bright texels glow by the block light reaching its face, which came
+through it, as a lantern's glow by its own light (client `render/mod.rs` `layer_table`, the
+glow byte's `THROUGH` bit; `voxel.wgsl`). It shows at any hour, as a lantern's glow does, and
+stands out after dark. A dark room's window stays dark; a wall keeps the light in
+(`a_window_lets_a_lit_rooms_light_out`, engine tests/windows.rs). The gate's Door step then
+sets a hide window in a candle-lit stone nook at midnight and judges the shot: the pane warm
+and bright against the night ("window: glows", shot `window-night`).
 
 ## Quest hooks (written, in base/quests.ron)
 

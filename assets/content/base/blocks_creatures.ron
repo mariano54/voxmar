@@ -13,8 +13,7 @@
     },
     families: [
         // Meat: heals a little raw, more once cooked.
-        (template: "drop", name: "raw_rabbit", tags: ["meat", "raw", "edible", "flavour:savoury"], all: (color: (220, 120, 120))),
-        (template: "drop", name: "raw_chicken", tags: ["meat", "raw", "edible", "flavour:savoury"], all: (color: (235, 170, 150))),
+        (template: "drop", name: "raw_small_game", tags: ["meat", "raw", "edible", "flavour:savoury"], all: (color: (220, 120, 120))),
         (template: "drop", name: "raw_duck", tags: ["meat", "raw", "edible", "flavour:savoury", "fat"], all: (color: (200, 110, 100), rarity: Uncommon)),
         (template: "drop", name: "raw_mutton", tags: ["meat", "raw", "edible", "flavour:savoury"], all: (color: (200, 80, 80))),
         (template: "drop", name: "raw_pork", tags: ["meat", "raw", "edible", "flavour:savoury", "fat"], all: (color: (240, 150, 150))),

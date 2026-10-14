@@ -42,7 +42,7 @@
             loot: [
                 (item: "flint", count: (2, 5), chance: 0.6),
                 (item: "twine", count: (1, 4), chance: 0.5),
-                (item: "cooked_rabbit", count: (1, 3), chance: 0.4),
+                (item: "cooked_small_game", count: (1, 3), chance: 0.4),
                 (item: "bone_lockpick", count: (1, 2), chance: 0.25),
             ],
             one_of: [
