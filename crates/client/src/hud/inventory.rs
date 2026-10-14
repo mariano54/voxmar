@@ -872,7 +872,7 @@ pub fn origins_and_uses(locale: &Locale, content: &voxmar_engine::content::Conte
     let mut harvested = content.crops.iter().any(|(_, crop)| crop.harvest.iter().any(|(got, _)| *got == item));
     for id in blocks.ids() {
         let info = blocks.info(id);
-        if info.drops == item && info.drop_count > 0 && blocks.item_of(id) != item && !blocks.merged_away(id) {
+        if info.drops == item && info.drop_count > 0 && blocks.item_of(id) != item && blocks.listed(id) {
             if staged.contains(&id) {
                 harvested = true;
             } else if !book.making(id).iter().any(|entry| matches!(entry.method, Method::Craft { .. })) {
@@ -1294,6 +1294,9 @@ mod tests {
             assert!(cobble[0].contains(&name(&locale, "base:stone")), "{code}: cobblestone comes from stone: {cobble:?}");
             assert!(minnow[0].contains(locale.get("tooltip.from.fishing")), "{code}: {minnow:?}");
             assert!(minnow[1].contains(&name(&locale, "base:jerky")), "{code}: a minnow dries to jerky on the rack: {minnow:?}");
+            // Planks come from crafting, not from the stools and looms they make.
+            let planks = lines("base:oak_planks");
+            assert!(!planks[0].contains(&name(&locale, "base:oak_chair")), "{code}: {planks:?}");
             // A crop's stages read as one harvest.
             for (_, crop) in content.crops.iter() {
                 let Some(seed) = crop.seed else { continue };
