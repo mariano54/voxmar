@@ -8577,7 +8577,7 @@ fn snare(world: &mut World, gate: &mut Gate, now: f32) {
     let rabbit = client.registry.id("base:raw_rabbit");
     let carried = world.resource::<LocalPlayer>().inventory.slots.iter().flatten().filter(|s| Some(s.item) == rabbit).map(|s| s.count as u32).sum::<u32>();
     let end = |world: &mut World, gate: &mut Gate| {
-        mouse(world, MouseButton::Right, false);
+        gate.tap(world, false, now);
         world.resource::<Net>().command(&format!("setblock {} {} {} air", snare.x, snare.y, snare.z));
         gate.next(Step::Tame, now);
     };
@@ -8603,7 +8603,6 @@ fn snare(world: &mut World, gate: &mut Gate, now: f32) {
             aim_at(world, snare.as_vec3() + Vec3::new(0.5, 0.3, 0.5));
             if sprung && drawn(world, snare) && gate.shot(world, "snare_sprung").is_some() {
                 gate.check("snare", Ok("a rabbit summoned into a set snare was caught: the server sprang it".to_owned()));
-                mouse(world, MouseButton::Right, true);
                 gate.advance(now);
             } else if waited {
                 gate.check("snare", Err(format!("a rabbit in the snare never sprang it in {DRY_WAIT} server seconds")));
@@ -8611,14 +8610,16 @@ fn snare(world: &mut World, gate: &mut Gate, now: f32) {
             }
         }
         _ => {
-            mouse(world, MouseButton::Right, false);
+            // Right clicks on the sprung snare, until the server answers one.
             aim_at(world, snare.as_vec3() + Vec3::new(0.5, 0.3, 0.5));
             if set && carried > 0 {
-                gate.check("snare taken", Ok(format!("a right click took {carried} raw rabbit from the snare, set again")));
+                gate.check("snare taken", Ok(format!("a right click took {carried} raw rabbit from the snare, set again ({} clicks)", gate.taps)));
                 end(world, gate);
-            } else if waited {
-                gate.check("snare taken", Err(format!("a right click on the sprung snare: set again {set}, raw rabbit carried {carried}")));
+            } else if gate.waited_out(DRY_WAIT) {
+                gate.check("snare taken", Err(format!("{} right clicks on the sprung snare: set again {set}, raw rabbit carried {carried}", gate.taps)));
                 end(world, gate);
+            } else {
+                gate.tap(world, true, now);
             }
         }
     }
