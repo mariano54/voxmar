@@ -250,6 +250,9 @@ pub struct Group {
     pub name: String,
     /// Weighted count where the group starts to be present, and where it is fully present.
     pub range: (f32, f32),
+    /// Whether a structure's core (a hearthstone, a crucible) counts only while its fire
+    /// burns (`ClientWorld::fires`); the group's other blocks always count.
+    pub lit: bool,
 }
 
 /// What a bed plays: a synthesized sound, or recorded segments shipped in its package.
@@ -336,6 +339,9 @@ struct GroupDef {
     #[serde(default)]
     falling: bool,
     range: (f32, f32),
+    /// A structure's core counts only while lit.
+    #[serde(default)]
+    lit: bool,
 }
 
 #[derive(Deserialize)]
@@ -421,7 +427,7 @@ impl Ambience {
                 if ambience.groups.iter().any(|g| g.name == group.name) || Fixed::ALL.iter().any(|a| a.name() == group.name) {
                     return Err(format!("{package}/{FILE}: group {} is defined twice", group.name));
                 }
-                ambience.groups.push(Group { name: group.name, range: group.range });
+                ambience.groups.push(Group { name: group.name, range: group.range, lit: group.lit });
                 ambience.selectors.push((group.tags, group.materials, group.falling));
             }
         }
