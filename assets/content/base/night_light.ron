@@ -1,0 +1,16 @@
+// How bright a night is, linear RGB before the shader pack's scales and tints
+// (render/night_light.rs). Dark but readable: under a full moon, faces turned to it stand
+// out from the shade and the skyline shows against the horizon; a moonless night is darker
+// still, never black; campfires, hearths and torches are what light a night. The game
+// refuses a night whose sky light is black when moonless or far too bright under a full
+// moon (Mariano's bounds, 2026-10-06/07).
+(
+    // The full moon's direct light on a face turned to it.
+    moon: (0.025, 0.034, 0.060),
+    // The sky's light on open ground under a full moon, all that lights the shade.
+    ambient: (0.0425, 0.056, 0.098),
+    zenith: (0.0012, 0.0018, 0.0045),
+    horizon: (0.0062, 0.0088, 0.0175),
+    // How much of the sky's light a night without a moon keeps.
+    moonless: 0.5,
+)
