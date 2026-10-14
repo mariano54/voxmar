@@ -97,4 +97,27 @@
     cube: Some((tag: "cube", pose: (at: (0.34, -0.26, 0.56), turn: (12.0, 36.0, 0.0), size: 0.3))),
     // Any other item is its icon, thin, facing the player.
     sprite: Some((tag: "sprite", pose: (at: (0.34, -0.27, 0.56), turn: (0.0, -16.0, 10.0), size: 0.42))),
+    // The empty hand: the fist at `pose`, the forearm and sleeve behind it, each a cube
+    // `spacing` widths further back along the arm (its +z, toward the eye: a positive pitch
+    // brings the elbow down, a positive yaw to the right). Textures in recipes/hand.ron.
+    // A punch drives the fist in toward the crosshair, peaking as the fist's wind-up
+    // (combat.ron) ends; working at a block is a shorter jab; the guard (with a shield worn)
+    // raises the fist before the face.
+    bare: Some((
+        pose: (at: (0.29, -0.24, 0.42), turn: (35.0, 25.0, 0.0), size: 0.15),
+        pieces: ["block/held_fist", "block/held_arm", "block/held_sleeve"],
+        spacing: 1.0,
+        moves: (
+            attack: Some((at: (-0.16, 0.10, 0.26), turn: (-18.0, -12.0, 0.0), seconds: 0.26,
+                wind: Some((at: (0.02, 0.0, -0.05), turn: (6.0, 4.0, 0.0), share: 0.25)))),
+            dig: Some((at: (-0.10, 0.07, 0.18), turn: (-14.0, -10.0, 0.0), seconds: 0.28)),
+            place: Some((at: (-0.07, 0.05, 0.10), turn: (-16.0, -6.0, 0.0), seconds: 0.22)),
+            guard: Some((at: (-0.12, 0.15, -0.02), turn: (30.0, -22.0, 0.0))),
+            // Nothing is eaten from an empty hand; should a bite go on as the hand empties, the
+            // fist comes up toward the mouth, the arm kept clear of the eye.
+            eat: Some((at: (-0.12, 0.12, -0.04), turn: (10.0, -10.0, 0.0))),
+            dodge: Some((at: (-0.10, -0.04, 0.0), turn: (8.0, 12.0, -12.0), seconds: 0.32)),
+            flinch: Some((at: (0.04, -0.03, -0.02), turn: (12.0, 6.0, -10.0), seconds: 0.3)),
+        ),
+    )),
 )
