@@ -6253,14 +6253,30 @@ struct SlingRun {
     shots: u32,
     aimed: u32,
     shot_at: Option<(f32, f32)>,
-    /// Whether the look step's wall stood on the pad, between the sling and its bear: taken
-    /// down for the shots and put back after.
-    wall: bool,
+    /// The blocks that stood on the line from the eye to the bear (the look step's wall, or
+    /// whatever else earlier steps or the land left there), and what each was: taken away
+    /// for the shots and put back on every way out.
+    cleared: Vec<(IVec3, String)>,
+    /// Whether the line has been looked along and cleared.
+    clear: bool,
 }
 
-/// The look step's wall on the pad (`look`), which stands between the sling and its bear.
-fn look_wall(pad: IVec3, block: &str) -> String {
-    format!("fill {} {} {} {} {} {} {block}", pad.x - 1, pad.y, pad.z, pad.x + 1, pad.y + 2, pad.z)
+/// One cell set to `block` by name.
+fn set_cell(cell: IVec3, block: &str) -> String {
+    format!("fill {} {} {} {} {} {} {block}", cell.x, cell.y, cell.z, cell.x, cell.y, cell.z)
+}
+
+/// The cells a straight line from `from` to `to` passes through, in order, each once.
+fn cells_between(from: Vec3, to: Vec3) -> Vec<IVec3> {
+    let steps = (from.distance(to) / 0.05).ceil().max(1.0) as u32;
+    let mut cells: Vec<IVec3> = Vec::new();
+    for i in 0..=steps {
+        let cell = from.lerp(to, i as f32 / steps as f32).floor().as_ivec3();
+        if cells.last() != Some(&cell) {
+            cells.push(cell);
+        }
+    }
+    cells
 }
 
 /// What the sling step does next.
@@ -6278,12 +6294,18 @@ enum SlingNext {
 /// The sling step's verdict from counts alone, so its logic is tested without a session.
 /// Nothing fails before the first shot: every miss verdict counts shots answered, and an
 /// unanswered shot is judged by both clocks since it went, never by the stage's clock.
-fn sling_next(shots: u32, answered: u32, landed: u32, xp_gained: u32, stones: u32, unanswered_for: f32) -> SlingNext {
+/// `blocked` names the block the crosshair is on instead of the bear, as a shot would go:
+/// a shot that cannot reach is a failure at once, not twelve seconds of waiting.
+fn sling_next(shots: u32, answered: u32, landed: u32, xp_gained: u32, stones: u32, unanswered_for: f32, blocked: Option<&str>) -> SlingNext {
     if landed > 0 && xp_gained > 0 {
         return SlingNext::Hit;
     }
+    let shoot = || match blocked {
+        Some(block) => SlingNext::Fail(format!("the crosshair is on {block}, not the bear, after {shots} shots")),
+        None => SlingNext::Shoot,
+    };
     if shots == 0 {
-        return SlingNext::Shoot;
+        return shoot();
     }
     if answered < shots {
         return if unanswered_for > UNANSWERED { SlingNext::Fail(format!("shot {shots} went unanswered for {unanswered_for:.1} s ({answered} answered)")) } else { SlingNext::Wait };
@@ -6291,7 +6313,7 @@ fn sling_next(shots: u32, answered: u32, landed: u32, xp_gained: u32, stones: u3
     if answered >= SLING_STONES || stones == 0 {
         return SlingNext::Fail(format!("no stone hit in {answered} shots answered ({landed} landed, {xp_gained} Ranged xp, {stones} stones left)"));
     }
-    SlingNext::Shoot
+    shoot()
 }
 
 /// A sling at Ranged 10 against a held brown bear seven blocks off: shot a second apart
@@ -6319,12 +6341,8 @@ fn sling(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
     match gate.phase {
         0 => {
             let before = world.resource::<crate::creatures::Creatures>().views().filter(|v| v.species == species).map(|v| v.id).collect();
-            let wall = world.resource::<ClientWorld>().block(pad + IVec3::Y).is_some_and(|b| !b.is_air());
-            gate.sling = SlingRun { before, wall, ..default() };
+            gate.sling = SlingRun { before, ..default() };
             let net = world.resource::<Net>();
-            if wall {
-                net.command(&look_wall(pad, "air"));
-            }
             net.command("gamemode creative");
             net.command(&format!("skill ranged {SLING_LEVEL}"));
             net.command(&format!("give {} 1", SLING.trim_start_matches("base:")));
@@ -6337,18 +6355,36 @@ fn sling(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
         1 => {
             // Its own bear in sight, the sling in hand at the level that wields it, and the
             // stones given (on top of any the player had).
-            let open = world.resource::<ClientWorld>().block(pad + IVec3::Y).is_none_or(|b| b.is_air());
+            // Once at the spot with the bear in sight: whatever stands on the line from the
+            // eye to the bear is named, taken away, and remembered to put back.
+            let eye = world.resource::<LocalPlayer>().eye();
+            let at_spot = eye.xz().distance(Vec2::new(pad.x as f32 + 0.5, pad.z as f32 - 6.5)) < 0.5;
+            let line = view.filter(|_| at_spot).map(|v| cells_between(eye, v.position + Vec3::Y * 0.6));
+            let standing: Vec<(IVec3, BlockId)> = line.iter().flatten().filter_map(|&cell| world.resource::<ClientWorld>().block(cell).filter(|b| !b.is_air()).map(|b| (cell, b))).collect();
+            if let (false, Some(_)) = (gate.sling.clear, &line) {
+                let blocks = &world.resource::<Launch>().content.blocks;
+                let named: Vec<(IVec3, String)> = standing.iter().map(|&(cell, b)| (cell, blocks.def(b).name.clone())).collect();
+                info!("gate: sling line from the eye to the bear: {} blocks in the way {named:?}", named.len());
+                let net = world.resource::<Net>();
+                for (cell, _) in &named {
+                    net.command(&set_cell(*cell, "air"));
+                }
+                gate.sling.cleared = named;
+                gate.sling.clear = true;
+            }
+            let open = gate.sling.clear && standing.is_empty();
             let ready = skill_level(world, "core:ranged").0 >= SLING_LEVEL && view.is_some() && stones >= SLING_STONES && open;
             if ready && select(world, SLING) {
                 let bear = view.map(|v| v.id);
                 info!("gate: sling in hand, bear {bear:?} in sight, {stones} cobblestone, Ranged {}", skill_level(world, "core:ranged").0);
                 world.resource::<Net>().command(&format!("creatures hold {}", BEAR.trim_start_matches("base:")));
                 let xp = skill_level(world, "core:ranged").1;
-                gate.sling = SlingRun { before: std::mem::take(&mut gate.sling.before), wall: gate.sling.wall, bear, landed, blows, xp, stones, ..default() };
+                let (before, cleared) = (std::mem::take(&mut gate.sling.before), std::mem::take(&mut gate.sling.cleared));
+                gate.sling = SlingRun { before, cleared, clear: true, bear, landed, blows, xp, stones, ..default() };
                 gate.advance(now);
             } else if gate.server_in_phase().min(now - gate.phase_since) > 10.0 {
                 let held = holding(world, SLING).1;
-                gate.check("sling", Err(format!("the sling, Ranged {SLING_LEVEL}, the stones, the bear or a clear pad never came (bear seen: {}, stones {stones}, sling in slot {held:?}, pad open {open})", view.is_some())));
+                gate.check("sling", Err(format!("the sling, Ranged {SLING_LEVEL}, the stones, the bear or a clear pad never came (bear seen: {}, stones {stones}, sling in slot {held:?}, line clear {open}: {standing:?})", view.is_some())));
                 end_weapon(world, gate, now);
             }
         }
@@ -6364,7 +6400,17 @@ fn sling(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             let run = &gate.sling;
             let xp = skill_level(world, "core:ranged").1;
             let unanswered = run.shot_at.map_or(0.0, |(game, server)| (now - game).min(gate.server_now - server));
-            let next = sling_next(run.shots, blows.saturating_sub(run.blows), landed.saturating_sub(run.landed), xp.saturating_sub(run.xp), stones, unanswered);
+            // What the crosshair is on instead of the bear, once the aim has settled.
+            let blocked = {
+                let target = world.resource::<crate::interact::Target>();
+                let blocks = &world.resource::<Launch>().content.blocks;
+                let cells = world.resource::<ClientWorld>();
+                target.block_hit.filter(|_| run.aimed > 2 && target.creature.is_none()).map(|hit| {
+                    let name = cells.block(hit.block).map_or_else(|| "an unloaded block".to_owned(), |b| blocks.def(b).name.clone());
+                    format!("{name} at {} ({:.2} blocks)", hit.block, hit.distance)
+                })
+            };
+            let next = sling_next(run.shots, blows.saturating_sub(run.blows), landed.saturating_sub(run.landed), xp.saturating_sub(run.xp), stones, unanswered, blocked.as_deref());
             // The press of the shot before is let go first, so each shot is its own click.
             mouse(world, MouseButton::Left, false);
             match next {
@@ -6405,9 +6451,9 @@ fn sling(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             }
         }
         _ => {
-            // The look step's wall back where it stood, then the bears swept away.
-            if std::mem::take(&mut gate.sling.wall) {
-                world.resource::<Net>().command(&look_wall(pad, "stone"));
+            // What stood on the line back where it stood, then the bears swept away.
+            for (cell, block) in std::mem::take(&mut gate.sling.cleared) {
+                world.resource::<Net>().command(&set_cell(cell, &block));
             }
             if sweep_bears(world, gate, species, pad) {
                 gate.next(Step::Feel, now);
@@ -9150,17 +9196,41 @@ mod tests {
     #[test]
     fn the_sling_step_never_fails_before_a_shot_and_judges_misses_by_shots_answered() {
         // The first frame of shooting: however long the stage has stood, it shoots.
-        assert_eq!(sling_next(0, 0, 0, 0, SLING_STONES, 0.0), SlingNext::Shoot);
-        assert_eq!(sling_next(0, 0, 0, 0, SLING_STONES, UNANSWERED * 10.0), SlingNext::Shoot);
+        assert_eq!(sling_next(0, 0, 0, 0, SLING_STONES, 0.0, None), SlingNext::Shoot);
+        assert_eq!(sling_next(0, 0, 0, 0, SLING_STONES, UNANSWERED * 10.0, None), SlingNext::Shoot);
         // A shot on its way waits, then fails only once unanswered past UNANSWERED.
-        assert_eq!(sling_next(1, 0, 0, 0, SLING_STONES - 1, 1.0), SlingNext::Wait);
-        assert!(matches!(sling_next(1, 0, 0, 0, SLING_STONES - 1, UNANSWERED + 1.0), SlingNext::Fail(_)));
+        assert_eq!(sling_next(1, 0, 0, 0, SLING_STONES - 1, 1.0, None), SlingNext::Wait);
+        assert!(matches!(sling_next(1, 0, 0, 0, SLING_STONES - 1, UNANSWERED + 1.0, None), SlingNext::Fail(_)));
         // Answered misses shoot again, until every stone is spent.
-        assert_eq!(sling_next(3, 3, 0, 0, SLING_STONES - 3, 0.5), SlingNext::Shoot);
-        assert!(matches!(sling_next(SLING_STONES, SLING_STONES, 0, 0, 0, 0.5), SlingNext::Fail(_)));
+        assert_eq!(sling_next(3, 3, 0, 0, SLING_STONES - 3, 0.5, None), SlingNext::Shoot);
+        assert!(matches!(sling_next(SLING_STONES, SLING_STONES, 0, 0, 0, 0.5, None), SlingNext::Fail(_)));
         // A hit needs the landing and the experience both.
-        assert_eq!(sling_next(2, 2, 1, 20, SLING_STONES - 2, 0.0), SlingNext::Hit);
-        assert_eq!(sling_next(2, 2, 1, 0, SLING_STONES - 2, 0.0), SlingNext::Shoot);
+        assert_eq!(sling_next(2, 2, 1, 20, SLING_STONES - 2, 0.0, None), SlingNext::Hit);
+        assert_eq!(sling_next(2, 2, 1, 0, SLING_STONES - 2, 0.0, None), SlingNext::Shoot);
+        // The crosshair on a block instead of the bear: a failure naming it, before the
+        // first shot or between shots, never a wait for an answer that cannot come; a shot
+        // already on its way is still waited for, and a hit is still a hit.
+        let stone = Some("base:stone at [-1104, 158, 1160]");
+        assert!(matches!(sling_next(0, 0, 0, 0, SLING_STONES, 0.0, stone), SlingNext::Fail(why) if why.contains("base:stone")));
+        assert!(matches!(sling_next(2, 2, 0, 0, SLING_STONES - 2, 0.0, stone), SlingNext::Fail(_)));
+        assert_eq!(sling_next(1, 0, 0, 0, SLING_STONES - 1, 1.0, stone), SlingNext::Wait);
+        assert_eq!(sling_next(2, 2, 1, 20, SLING_STONES - 2, 0.0, stone), SlingNext::Hit);
+    }
+
+    /// The line from the eye to the bear passes through each cell between once, in order:
+    /// the cell right before the eye (where the Mac's sling step found stone) among them.
+    #[test]
+    fn the_line_to_the_bear_names_every_cell_it_crosses() {
+        let eye = Vec3::new(-1103.5, 158.62, 1159.5);
+        let bear = Vec3::new(-1103.5, 157.6, 1167.5);
+        let cells = cells_between(eye, bear);
+        assert_eq!(cells.first(), Some(&IVec3::new(-1104, 158, 1159)));
+        assert_eq!(cells.last(), Some(&IVec3::new(-1104, 157, 1167)));
+        assert!(cells.contains(&IVec3::new(-1104, 158, 1160)), "{cells:?}");
+        assert!(cells.windows(2).all(|w| w[0] != w[1] && (w[1] - w[0]).abs().max_element() == 1), "{cells:?}");
+        for z in 1159..=1167 {
+            assert!(cells.iter().any(|c| c.z == z), "every cell along the way: {cells:?}");
+        }
     }
 
     use super::*;
