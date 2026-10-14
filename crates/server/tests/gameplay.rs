@@ -7238,7 +7238,9 @@ impl Fresh {
     /// Waits for the server to count `quest` done (it looks once a second), and claims its
     /// rewards in the quest screen.
     fn claim(&mut self, quest: &str) {
-        self.wait(5.0, &format!("the quest book showing {quest} done (done, a task holding: {:?})", quest_status(&self.c, quest)), |c| quest_status(c, quest).0);
+        // Each task's (have, need), as the server counted them, for a failure to say which fell short.
+        let tasks = self.c.quests.iter().find(|q| q.name == format!("base:{quest}")).map(|q| q.tasks.clone());
+        self.wait(5.0, &format!("the quest book showing {quest} done (done, a task holding: {:?}; tasks {tasks:?})", quest_status(&self.c, quest)), |c| quest_status(c, quest).0);
         let name = format!("base:{quest}");
         self.c.connection.send_at(ClientMessage::ClaimQuest { name: name.clone() }, self.now());
         self.wait(5.0, &format!("claiming {quest}"), |c| c.quests.iter().any(|q| q.name == name && q.claimed));
@@ -7405,6 +7407,10 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
         let more = f.have(fired) + 1;
         f.fire_clay(&Site { clamp: None, ..site.clone() }, more);
         f.tend_clamp(clamp, Some(log));
+        // The charcoal must come from taking it (which counts it cooked), not from a clamp
+        // broken open.
+        let stands = f.c.world.block(clamp).map(|b| f.c.content.blocks.def(b).name.clone()).unwrap_or_default();
+        assert!(stands.starts_with("base:earth_clamp"), "the clamp at {clamp} is {stands} at {:.1} s, with {} charcoal", f.secs(), f.have(charcoal));
     }
     f.mark("charcoal");
     f.make_room(8);
