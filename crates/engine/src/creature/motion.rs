@@ -594,6 +594,19 @@ mod tests {
         step(&mut body, &wall, &movement, Water::Land, Drive { wish: -Vec3::X, speed: 0.0, face: None }, 0.05);
         assert_eq!(body.turn_way, 0.0, "the long turn outlived the heading it was for");
         assert!(angle_between(body.yaw, yaw_of(-Vec3::X)) < angle_between(from, yaw_of(-Vec3::X)), "it turned away from the new heading");
+        // Standing to look at something through the wall, which its head cannot face, it
+        // turns as far as it can and does not spin round for it.
+        let mut body = Body::new(Vec3::new(2.6, 0.0, 0.5), yaw_of(-Vec3::Z), (0.6, 1.4));
+        body.reach = 0.9;
+        body.head = 1.4;
+        let mut swept = 0.0;
+        for _ in 0..200 {
+            let was = body.yaw;
+            step(&mut body, &wall, &movement, Water::Land, Drive { wish: Vec3::ZERO, speed: 0.0, face: Some(Vec3::new(1.0, 0.0, 0.05)) }, 0.05);
+            swept += angle_between(body.yaw, was);
+            assert!(!body.head_blocked(&wall), "its head went into the wall facing {}", body.forward());
+        }
+        assert!(swept < std::f32::consts::PI, "it spun {swept} radians looking at what it cannot face");
     }
 
     #[test]
