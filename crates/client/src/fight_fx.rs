@@ -680,8 +680,11 @@ fn react(
         }
         // A shot that missed sails on past; one that hit strikes home. Told whatever is in
         // hand now: a missile loosed before the weapon was put away still waits for its
-        // answer (a verdict with no missile at that creature is dropped at the next frame).
-        if damage == 0 { shots.missed.push(id) } else { shots.hit.push(id) }
+        // answer (one with no missile waiting at that creature is dropped). Bleeding is no
+        // answer to a shot.
+        if blow != Blow::Bleed {
+            shots.verdicts.push((id, damage > 0));
+        }
         if damage == 0 || blow == Blow::Bleed {
             continue;
         }
