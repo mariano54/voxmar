@@ -848,30 +848,62 @@ fn listed(locale: &Locale, names: Vec<String>, most: usize) -> String {
     locale.format("tooltip.more", &[("list", &shown.join(comma)), ("count", &rest.len())])
 }
 
-/// Where an item comes from and what it goes into, for its tooltip: "Comes from: crafting,
-/// a junglefowl" and "Used in: Oak Planks, Campfire and 4 more".
+/// Where an item comes from and what it goes into, for its tooltip, each by name: "Comes
+/// from: Stone, Junglefowl, Crafting Table" and "Used in: Oak Planks, Jerky and 4 more".
+/// It comes from a block that breaks into it, a creature that drops or gives it, a harvest,
+/// the crafting grid or the table, the station that cooks it or works it, or fishing; it
+/// goes into what the recipe book makes of it and what a station works it into. All of it
+/// is read from the loaded content, so a package's blocks, creatures and stations are
+/// named with no more work.
 pub fn origins_and_uses(locale: &Locale, content: &voxmar_engine::content::Content, book: &voxmar_engine::recipe_book::RecipeBook, item: voxmar_engine::block::BlockId) -> Vec<String> {
     use voxmar_engine::recipe_book::Method;
+    let blocks = &content.blocks;
+    let own = locale.block(blocks.def(item));
+    // A station's or a tag's name: its first block's.
+    let tagged = |tag: &str| blocks.tagged(tag).next().map(|b| locale.block(blocks.def(b)));
     let mut from: Vec<String> = Vec::new();
     let mut add = |name: String| {
-        if !from.contains(&name) {
+        if name != own && !from.contains(&name) {
             from.push(name);
         }
     };
+    for id in blocks.ids() {
+        let info = blocks.info(id);
+        if info.drops == item && info.drop_count > 0 && blocks.item_of(id) != item && !blocks.merged_away(id) {
+            add(locale.block(blocks.def(id)));
+        }
+    }
     for entry in book.making(item) {
-        match &entry.method {
-            Method::Craft { .. } => add(locale.get("tooltip.from.craft").to_owned()),
-            Method::Cook { .. } => add(locale.get("tooltip.from.cook").to_owned()),
-            Method::Product { creature, .. } | Method::Drop { creature, .. } => add(locale.creature(&content.creatures.get(*creature).def)),
+        if let Method::Product { creature, .. } | Method::Drop { creature, .. } = &entry.method {
+            add(locale.creature(&content.creatures.get(*creature).def));
         }
     }
     if content.crops.iter().any(|(_, crop)| crop.harvest.iter().any(|(got, _)| *got == item)) {
         add(locale.get("tooltip.from.harvest").to_owned());
     }
+    for entry in book.making(item) {
+        match &entry.method {
+            Method::Craft { first, .. } => {
+                let table = content.recipes.iter().nth(*first).is_some_and(|recipe| recipe.needs_table());
+                add(if table { tagged("crafting_table") } else { None }.unwrap_or_else(|| locale.get("tooltip.from.craft").to_owned()));
+            }
+            Method::Cook { station, .. } => add(tagged(station).unwrap_or_else(|| locale.get("tooltip.from.cook").to_owned())),
+            Method::Product { .. } | Method::Drop { .. } => {}
+        }
+    }
+    let works = content.stations.stations.iter().flat_map(|station| station.works.iter().map(move |work| (station, work)));
+    for (station, _) in works.clone().filter(|(_, work)| work.output == item) {
+        add(locale.block(blocks.def(station.empty)));
+    }
+    if content.fishing.iter().any(|catch| catch.item == item) {
+        add(locale.get("tooltip.from.fishing").to_owned());
+    }
     let mut into: Vec<String> = Vec::new();
-    for entry in book.using(item) {
-        let name = locale.block(content.blocks.def(entry.output));
-        if entry.output != item && !into.contains(&name) {
+    let made = book.using(item).into_iter().map(|entry| entry.output);
+    let worked = works.filter(|(_, work)| work.accepts.contains(&item)).map(|(_, work)| work.output);
+    for output in made.chain(worked) {
+        let name = locale.block(blocks.def(output));
+        if output != item && !into.contains(&name) {
             into.push(name);
         }
     }
@@ -1225,6 +1257,25 @@ mod tests {
             }
             assert_ne!(package_name(&locale, "base"), "base");
             assert_eq!(package_name(&locale, "some_mod"), "some_mod", "{code}: a mod that names itself nowhere goes by its id");
+        }
+    }
+
+    /// An item's tooltip names where it comes from and what it goes into, from the loaded
+    /// content alone: the block that breaks into it, the station that works it, fishing.
+    #[test]
+    fn an_item_says_where_it_comes_from_and_what_it_goes_into() {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+        let content = voxmar_server::load_content(&assets).unwrap();
+        let book = voxmar_engine::recipe_book::RecipeBook::new(&content);
+        let name = |locale: &Locale, id: &str| locale.block(content.blocks.def(content.blocks.expect(id)));
+        for code in ["en", "ja"] {
+            let locale = Locale::load(&assets.join("content"), code);
+            let lines = |id: &str| origins_and_uses(&locale, &content, &book, content.blocks.expect(id));
+            let (cobble, minnow) = (lines("base:cobblestone"), lines("base:raw_minnow"));
+            assert_eq!(cobble.len(), 2, "{code}: {cobble:?}");
+            assert!(cobble[0].contains(&name(&locale, "base:stone")), "{code}: cobblestone comes from stone: {cobble:?}");
+            assert!(minnow[0].contains(locale.get("tooltip.from.fishing")), "{code}: {minnow:?}");
+            assert!(minnow[1].contains(&name(&locale, "base:jerky")), "{code}: a minnow dries to jerky on the rack: {minnow:?}");
         }
     }
 

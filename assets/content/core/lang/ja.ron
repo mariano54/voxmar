@@ -525,6 +525,7 @@
     "tooltip.from.craft": "クラフト",
     "tooltip.from.cook": "料理",
     "tooltip.from.harvest": "収穫",
+    "tooltip.from.fishing": "釣り",
     "tip.label": "ヒント",
     "tip.inventory": "スタックを複数のマスへドラッグすると分けられる。Shift＋クリックでホットバーとの間を移す。",
     "tip.recipes": "アイテムの上で{recipes}を押すとレシピ、{uses}で使い道が見られる。",

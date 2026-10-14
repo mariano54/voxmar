@@ -3671,7 +3671,8 @@ fn music(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 }
 
 /// The recipe viewer: U over an oak log in the inventory lists what it goes into, then an
-/// item clicked in the viewer shows its own recipes, and Back returns.
+/// item clicked in the viewer shows its own recipes, its tooltip says where it comes from
+/// and what it goes into, and Back returns.
 fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     use crate::hud::recipes::{HoveredItem, RecipeViewer};
     let blocks = world.resource::<Launch>().content.blocks.clone();
@@ -3733,6 +3734,9 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     return;
                 }
                 gate.check("recipes: ingredient tooltip", Ok(format!("hovering the recipe ingredient draws {name} above the viewer with the inventory closed")));
+                if let Some(cell) = world.query::<(Entity, &crate::hud::recipes::ViewerItem, &InheritedVisibility)>().iter(world).find(|(_, item, visible)| item.0 == planks && visible.get()).map(|(entity, ..)| entity) {
+                    world.resource_mut::<UiClicks>().hover = Some(cell);
+                }
                 gate.advance(now);
             } else if in_phase > 2.0 {
                 gate.check("recipes: ingredient tooltip", Err(format!("hovering the recipe ingredient drew no visible {name} tooltip")));
@@ -3742,6 +3746,57 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
         }
         4 => {
+            // The planks the viewer makes: their tooltip says where they come from and what
+            // they go into, every line inside the tooltip and the tooltip inside the window.
+            let (from, into) = {
+                let locale = world.resource::<Locale>();
+                let head = |key: &str| locale.format(key, &[("list", &"")]);
+                (head("tooltip.comes_from"), head("tooltip.used_in"))
+            };
+            let name = world.resource::<Locale>().block(blocks.def(planks));
+            let tooltip = world.query_filtered::<(Entity, &InheritedVisibility, &ComputedNode, &bevy::ui::UiGlobalTransform), With<crate::hud::inventory::TooltipLines>>().iter(world).find(|(_, visible, ..)| visible.get()).map(|(entity, _, node, at)| (entity, bevy::math::Rect::from_center_size(at.translation, node.size())));
+            let lines: Vec<(String, bevy::math::Rect, f32)> = match tooltip {
+                Some((tip, _)) => world
+                    .query::<(&Text, &ChildOf, &ComputedNode, &bevy::ui::UiGlobalTransform, &bevy::text::TextLayoutInfo)>()
+                    .iter(world)
+                    .filter(|(_, parent, ..)| parent.parent() == tip)
+                    .map(|(text, _, node, at, layout)| (text.0.clone(), bevy::math::Rect::from_center_size(at.translation, node.size()), layout.size.x))
+                    .collect(),
+                None => Vec::new(),
+            };
+            let both = lines.iter().any(|(line, ..)| *line == name) && lines.iter().any(|(line, ..)| line.starts_with(&from)) && lines.iter().any(|(line, ..)| line.starts_with(&into));
+            if both {
+                if gate.shot(world, "item-sources-tooltip").is_none() {
+                    if let Some(cell) = world.query::<(Entity, &crate::hud::recipes::ViewerItem, &InheritedVisibility)>().iter(world).find(|(_, item, visible)| item.0 == planks && visible.get()).map(|(entity, ..)| entity) {
+                        world.resource_mut::<UiClicks>().hover = Some(cell);
+                    }
+                    return;
+                }
+                let (_, tip) = tooltip.unwrap();
+                let window = world.query::<&Window>().iter(world).next().map(|window| bevy::math::Rect::new(0.0, 0.0, window.physical_width() as f32, window.physical_height() as f32));
+                let inside = |inner: bevy::math::Rect, outer: bevy::math::Rect| inner.min.x >= outer.min.x - 0.5 && inner.min.y >= outer.min.y - 0.5 && inner.max.x <= outer.max.x + 0.5 && inner.max.y <= outer.max.y + 0.5;
+                let spills: Vec<&str> = lines.iter().filter(|(_, at, width)| !inside(*at, tip) || *width > at.width() + 0.5).map(|(line, ..)| line.as_str()).collect();
+                let sources: Vec<&str> = lines.iter().map(|(line, ..)| line.as_str()).filter(|line| line.starts_with(&from) || line.starts_with(&into)).collect();
+                gate.check(
+                    "tooltip: comes from and used in",
+                    if !spills.is_empty() {
+                        Err(format!("hovering {name} in the viewer, these lines spill out of its tooltip: {spills:?}"))
+                    } else if window.is_some_and(|window| !inside(tip, window)) {
+                        Err(format!("hovering {name}, its tooltip {tip:?} reaches past the window {window:?}"))
+                    } else {
+                        Ok(format!("hovering {name} in the viewer: {}, each inside its tooltip", sources.join(" / ")))
+                    },
+                );
+                gate.advance(now);
+            } else if in_phase > 2.0 {
+                let said: Vec<&str> = lines.iter().map(|(line, ..)| line.as_str()).collect();
+                gate.check("tooltip: comes from and used in", Err(format!("hovering {name} in the viewer, its tooltip says {said:?}")));
+                gate.advance(now);
+            } else if let Some(cell) = world.query::<(Entity, &crate::hud::recipes::ViewerItem, &InheritedVisibility)>().iter(world).find(|(_, item, visible)| item.0 == planks && visible.get()).map(|(entity, ..)| entity) {
+                world.resource_mut::<UiClicks>().hover = Some(cell);
+            }
+        }
+        5 => {
             let hidden = world.query_filtered::<&Visibility, With<crate::hud::inventory::TooltipLines>>().iter(world).all(|visibility| *visibility == Visibility::Hidden);
             if hidden || in_phase > 2.0 {
                 gate.check("recipes: tooltip leave", if hidden { Ok("the ingredient tooltip disappears when the pointer leaves".into()) } else { Err("the ingredient tooltip remains after leaving its cell".into()) });
