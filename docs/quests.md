@@ -68,11 +68,14 @@ Unclaimed rewards persist: the save lists the claimed quests (`quests_claimed`).
 from before claiming has no list, and counts everything it finished as claimed, since all of
 it was paid then.
 
-The sounds: a chime as a quest is finished and a softer ring as it is claimed, played by the
-client as the server's states change (not for the states a session starts with). They are
-synthesized (`ui/sound.rs`) unless a package's `sounds.ron` lists `quest_done` or
-`quest_claim` recordings, which replace them; they follow the sound volume, not the choice
-of click sounds.
+The sounds: a jingle as a quest is finished and coins into the purse as it is claimed,
+played by the client as the server's states change (not for the states a session starts
+with). A skill's new level rings too, and every tenth level a grander tune. They are
+recordings the base package's `sounds.ron` lists (`quest_done`, `quest_claim`, `level_up`,
+`level_milestone`), our own, composed by `tools/generate_jingles.py`; a later package that
+lists any for an event replaces them. Two tunes never start over each other: a quest
+finished by reaching a level chimes first, then the level rings (`ui/sound.rs`). They
+follow the sound volume, not the choice of click sounds.
 
 The Nomad and Farm chapters (ages 1 and 2) have the quests the game can already do:
 Nomad runs from the first campfire to the lit Homestead Hearth, Farm from the first harvest

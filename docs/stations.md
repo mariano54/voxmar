@@ -10,7 +10,9 @@ the server's side in `crates/server/src/stations.rs`.
 
 - A station is three blocks: `empty`, `working` (loaded) and `ready` (done). Right-click
   (`base:use_station`) with an input in hand loads it: up to `holds` of one input, in whole
-  multiples of `takes`; the station asks `level` in the work's skill to load.
+  multiples of `takes`; the station asks `level` in the work's skill to load. An input is an
+  item, `tag:TAG`, tags that must all hold (`tag:raw+meat`), with `!` for one that must not
+  (`tag:grain+!vegetable`), or several of these joined by `|`.
 - The load is done `minutes` later on the world's clock (`due` is a server tick, saved with
   the world), near or far, loaded column or not. A look every 5 s (`base:stations`, Low tier)
   turns done stations in loaded columns to their ready block; one far away shows it when used.
@@ -28,6 +30,9 @@ the server's side in `crates/server/src/stations.rs`.
   "earth_clamp", n)`), so An Earth Clamp asks for clay fired in the clamp itself.
 - A station pays no more experience for an output than the hand route from the same input
   at a fire (`a_station_pays_no_more_than_the_hand_route`).
+- Loading one sounds at the block when the server says it took (never predicted, so a refused
+  load is silent): its `sound` (the pot's `Water`, a stir), else its working block's placing.
+  Taking from it pops like a pickup (client `sfx::station_cue`).
 - Breaking (or replacing) a loaded station drops what is on it: the raw input before it is
   done, the output after.
 - `fertilisers`: an item right-clicked on a growing sown crop (`base:fertilise`) grows the sown
@@ -44,6 +49,7 @@ and a fertiliser reach outside 0 to 4.
 | Station | Age | Recipe | Works | Spot | Time | Skill |
 | --- | --- | --- | --- | --- | --- | --- |
 | Drying rack | Nomad | 4 sticks, 3 twine (Crafting 3) | up to 8 raw meat or raw fish into jerky, one for one | open sky; a `fire` within 3 doubles the speed | 10 min (5 by a fire) | Cooking 1, 6 xp each |
+| Cooking pot | Nomad | 7 fired clay about a clay pot (Crafting 3) | up to 6: two grain, not seed (`tag:grain+!vegetable+!seed`), into porridge (Cooking 3, 14 xp); three raw meat, roots, vegetables or other edible produce, none of it cooked, grain or fruit, into a stew (Cooking 14, 36 xp) | a `hob` within 1 (a campfire beside it, or the hearthstone under it) and water within 4 (a well counts), both at load and take | 2 min (porridge), 3 min (stew) | Cooking 3 / 14 |
 | Compost heap | Farm | 7 planks in a U (Construction 5) | up to 16 produce, vegetables, fruit, seed or burnt food (`compost` tag), four into one compost | water within 2 makes it x1.5 | 15 min (10 by water) | Farming 5, 8 xp each |
 | Earth clamp | Farm | 8 dirt round a log (Construction 3) | up to 16 clay into fired clay (never cracked), or 16 logs into charcoal, one for one; quests count both as cooked | anywhere | 1 min | Crafting 1, 4 xp each (clay); Cooking 1, 3 xp each (charcoal) |
 
@@ -51,6 +57,11 @@ and a fertiliser reach outside 0 to 4.
 | --- | --- | --- | --- |
 | Compost | 1.5 (the crop and its four neighbours) | a stage | Farming 4 |
 | Bone | 0.5 (the one crop) | a stage | Farming 2 |
+
+The pot on the boil steams and throws up little bubbles (particles on its simmering block),
+and is heard bubbling within a few blocks: its simmering block is tagged `simmering`, the
+ambience's `pot` group, which plays the synthesized `Simmer` one-shot (ambience.ron). Done, a
+thinner wisp of steam says a dish is waiting.
 
 Jerky (new item, tags `meat`, `dried`, `edible`) heals 2 and stacks, like honey and fruit, so it
 is trail food; cooked meat heals more but takes a slot each (`core/stacking.ron`). Compost
@@ -70,12 +81,17 @@ of the two bunches a herb nook needs (docs/home.md).
 | saves with the world | `loads_keep_across_a_save` |
 | compost, bone, nothing to grow; the quest tally | `compost_grows_a_crop_and_its_neighbours` |
 | a clamp fires clay unattended, counts as cooked, smoulders as a fire | `an_earth_clamp_fires_clay_by_itself_and_smoulders_like_a_fire` |
+| the pot: hob, water, porridge at 3, stew at 14, on the hearthstone | `a_pot_simmers_on_a_hob_by_water` |
+| grain against vegetables by a `!` tag | `the_pot_tells_grain_from_vegetables` (engine) |
+| loaded stirs or thumps, taken pops, done or not a station silent | `stations_stir_and_pop` (client `sfx.rs`) |
 | the content's stations and the load checks | `the_games_stations_read_as_their_rules_say`, `a_station_that_makes_no_sense_is_refused` (engine) |
 
 Gate step **Dry** (after Cook): a rack two blocks from the campfire, raw rabbit in hand; a right
 click hangs it, the server sends the hung rack back (shot `rack`), and chat says where it
 stands makes it quicker. Then an earth clamp in its place, sixteen clay in hand: a right click
-sets it smouldering (shot `clamp`).
+sets it smouldering (shot `clamp`). Then a cooking pot against the fire, water sunk in the
+ground near it, wheat in hand: a right click sets it simmering (shot `pot`, check "cooking
+pot").
 
 ## Quests
 
@@ -95,7 +111,8 @@ twice as fast, as any fire does.
 
 ## Next
 
-More stations fit the same rules without code: a smoker (meat, Near fire, Cooking 23), a crock
+A pot of other dishes (boiled eggs, jam, fish soup) is a line each in `works`. More stations
+fit the same rules without code: a smoker (meat, Near fire, Cooking 23), a crock
 (ferment, a cool spot), dried fruit and herbs on the rack at Cooking 31 (docs/food-and-cooking.md).
 A spot rule for dry air (the moisture field, no rain) would let a desert rack dry faster than a
 swamp one.

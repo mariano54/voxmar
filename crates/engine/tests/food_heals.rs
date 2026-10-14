@@ -1,5 +1,5 @@
 //! Every food heals by the rule (design drafts 55, 63 and 107): cooked food 0.4 × the
-//! lowest level that cooks it, at least 4; wonder fruit 0.4 × the Farming level that picks
+//! lowest level that cooks it (at a fire, a station or by hand), at least 4; wonder fruit 0.4 × the Farming level that picks
 //! it, at least 2 (it is a fruit); other fruit, berries, honey and dried food (jerky, which
 //! stacks as they do) 2; anything else edible, raw produce and meat among it, 1.
 
@@ -25,6 +25,12 @@ fn every_food_heals_by_its_level() {
     }
     for recipe in content.recipes.iter().filter(|r| r.skill.is_some() && r.skill == cooking) {
         made(recipe.output, recipe.level);
+    }
+    // A station's cooked dishes (the pot's), not its dried ones (the rack's jerky).
+    for station in &content.stations.stations {
+        for work in station.works.iter().filter(|w| Some(w.skill) == cooking && content.blocks.def(w.output).has_tag("cooked")) {
+            made(work.output, work.level);
+        }
     }
     let picked_at = |item: BlockId| content.crops.iter().find(|(_, c)| c.def.fruit && c.harvest.iter().any(|(i, _)| *i == item)).map(|(_, c)| c.def.level);
     let mut wrong = Vec::new();

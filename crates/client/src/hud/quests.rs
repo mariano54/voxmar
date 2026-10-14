@@ -555,7 +555,7 @@ fn claim(buttons: Query<&Interaction, (Changed<Interaction>, With<ClaimButton>)>
     }
 }
 
-/// The sounds of quests: a chime as one is finished, and a softer one as its rewards are
+/// The sounds of quests: a jingle as one is finished, and coins as its rewards are
 /// claimed, told by the server's next states against the last (not on joining, when the
 /// first states arrive).
 fn hear_quests(player: Res<LocalPlayer>, mut sounds: MessageWriter<UiSound>, mut last: Local<(u32, Vec<QuestState>)>) {
