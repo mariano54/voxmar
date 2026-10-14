@@ -81,8 +81,8 @@ sets it smouldering (shot `clamp`).
 - **Trail Rations** (Nomad, cooking, after it): a second rack, twelve jerky.
 - **A Compost Heap** (Farm, farming, after Carrot Patch): craft a compost heap, keep two compost.
 - **Rich Soil** (Farm, farming, after it): grow six crops with compost and one with a bone.
-- **An Earth Clamp** (Farm, pottery, after The Potter): make a clamp and fire sixteen clay or
-  char sixteen logs. Charcoal and Brick by Brick name it.
+- **An Earth Clamp** (Farm, pottery, after A Pit Kiln): make a clamp and fire sixteen clay
+  or char sixteen logs. Fire the Clay, Charcoal and Brick by Brick name it.
 
 The earth clamp came from the Oct 14 pacing pass (docs/first-days.md): half the Farm main
 line was standing at a fire, one clay or log at a time. A clamp is slower than the hand

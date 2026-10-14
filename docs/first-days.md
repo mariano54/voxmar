@@ -288,6 +288,37 @@ Still long, and left: Fire the Clay (about 60 s, 35 of it firing, before the cla
 and punching the first logs. The clamp could open with A Pit Kiln to cover Fire the Clay
 too; that is the next step if the first Farm minutes read as slow in play.
 
+### Fire the Clay and the Nomad pass (Oct 14)
+
+Medians of twelve bot runs each, before lockstep (game seconds; the earlier columns are the
+clamp after The Potter, the later ones the clamp after A Pit Kiln, then A Tempting Bite too).
+
+| Milestone | Clamp after Potter | After A Pit Kiln | And A Tempting Bite |
+|---|---|---|---|
+| First Night | 61.5 | 61.8 | 62.1 |
+| A Tempting Bite | | | 71.3 |
+| A Bed of Your Own | 68.7 | 67.6 | 78.8 |
+| Homestead Hearth lit | 104.2 | 104.4 | 116.8 |
+| An Earth Clamp made | 198.9 | 121.4 | 133.5 |
+| Fire the Clay | 166.9 (56.1 in it, 34 firing) | 175.1 (53.8) | 187.4 (57.2) |
+| A Kiln Load | 318.8 (32.5 in it) | 285.6 (0.8) | 297.9 (0.8) |
+| Crucible Kiln lit | 410.8 | 376.0 | 388.6 |
+
+Fire the Clay: the player stood at the pit kiln for most of a minute with nothing to learn.
+The clamp now opens with A Pit Kiln, and Fire the Clay's text sends the player to heap one
+while they wait. The stretch is no shorter (the clamp is built inside it), but it now
+teaches a station, and the line to the Crucible Kiln is 35 s shorter because A Kiln Load's
+wait is gone.
+
+Nomad: the bot's longest stretch with nothing new is the Hearth's 28 cobblestone (about 25
+s), which A Pile of Stone and Dig In already fill. For a real player the stall is the hunt
+for A Bed of Your Own: rabbits run at 7 blocks a second, and the bot's stocked lane hides
+that. A Tempting Bite (hunter, after First Night) teaches bait: hold the favourite food (a
+carrot from wild carrot for rabbits, wheat seeds from wild wheat for junglefowl) and they
+walk up instead of running. A new `Lured` goal counts each wild creature drawn within three
+blocks once. It costs the bot about 9 s, since its lane needs no chase, and saves a player
+the chase.
+
 ## Measured pacing
 
 Run it with `cargo test -p voxmar_server --test gameplay a_fresh_survival -- --ignored --nocapture`
