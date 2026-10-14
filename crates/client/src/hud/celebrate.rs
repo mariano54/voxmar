@@ -445,6 +445,12 @@ fn words(moment: &Moment, celebrations: &Celebrations, locale: &Locale, launch: 
     }
 }
 
+/// Whether something is up that the banner must not sit over: a screen (the chat line
+/// excepted, at the bottom), death's, or the debug overlay.
+fn covered(ui: &UiState, dead: bool, debug: bool) -> bool {
+    ui.inventory_open || ui.character_open || ui.journal_open || ui.quests_open || ui.menu_open || ui.recipes_open || dead || debug
+}
+
 /// How the banner shows `since` seconds into its moment: its opacity and size.
 fn banner_at(banner: &Banner, since: f32) -> (f32, f32) {
     let alpha = (since / 0.12).clamp(0.0, 1.0) * ((banner.seconds - since) / banner.fade.max(1e-3)).clamp(0.0, 1.0);
@@ -458,6 +464,8 @@ fn banner_at(banner: &Banner, since: f32) -> (f32, f32) {
 fn draw(
     time: Res<Time>,
     ui: Res<UiState>,
+    player: Res<LocalPlayer>,
+    settings: Res<crate::settings::Settings>,
     celebrations: Res<Celebrations>,
     launch: Res<Launch>,
     locale: Res<Locale>,
@@ -472,8 +480,9 @@ fn draw(
     let Ok(mut visibility) = row.single_mut() else { return };
     let now = time.elapsed_secs();
     let showing = stage.showing.as_ref().filter(|(moment, at)| now - at < celebrations.look(moment).banner.seconds);
-    // Under the screens that fill the view, as the experience notes are.
-    let Some((moment, at)) = showing.filter(|_| !(ui.quests_open || ui.journal_open)) else {
+    // Never over an open screen or the debug overlay: it waits under them, and shows what is
+    // left of its time when they close.
+    let Some((moment, at)) = showing.filter(|_| !covered(&ui, player.dead, settings.debug_overlay)) else {
         visibility.set_if_neq(Visibility::Hidden);
         return;
     };
@@ -595,6 +604,26 @@ mod tests {
         world.run_system_once(leave).unwrap();
         assert_eq!(world.get::<Visibility>(row), Some(&Visibility::Hidden));
         assert!(world.resource::<Stage>().waiting.is_empty());
+    }
+
+    /// The banner keeps off every screen and the debug overlay; play and the chat line
+    /// leave it up.
+    #[test]
+    fn the_banner_keeps_off_open_screens() {
+        assert!(!covered(&UiState::default(), false, false));
+        assert!(!covered(&UiState { console_open: true, ..default() }, false, false));
+        for ui in [
+            UiState { inventory_open: true, ..default() },
+            UiState { character_open: true, ..default() },
+            UiState { journal_open: true, ..default() },
+            UiState { quests_open: true, ..default() },
+            UiState { menu_open: true, ..default() },
+            UiState { recipes_open: true, ..default() },
+        ] {
+            assert!(covered(&ui, false, false));
+        }
+        assert!(covered(&UiState::default(), true, false), "dead");
+        assert!(covered(&UiState::default(), false, true), "debug overlay");
     }
 
     /// Levels in one skill reached together show once, as the highest; other skills and a
