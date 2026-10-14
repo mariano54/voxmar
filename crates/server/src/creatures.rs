@@ -64,7 +64,7 @@ const _: () = assert!(KIN_RANGE + 1.0 <= CELL && voxmar_engine::creature::husban
 const FOOD_RANGE: i32 = 6;
 /// Seconds a player must keep within `SETTLE_RADIUS` blocks of one spot before hunters
 /// there leave them be (RuneScape's ten minutes in 21 × 21 squares).
-const TOLERANCE: u64 = 600 * TICKS_PER_SECOND as u64;
+pub(crate) const TOLERANCE: u64 = 600 * TICKS_PER_SECOND as u64;
 const SETTLE_RADIUS: f32 = 10.0;
 /// Light from blocks within this many blocks keeps monsters away underground.
 const LIT_REACH: i32 = 5;
@@ -215,7 +215,7 @@ pub struct Creatures {
     /// Those that died or went since players were last told.
     pub(crate) gone: Vec<CreatureGone>,
     /// Where each player settled and since when (RuneScape's tolerance).
-    settled: FxHashMap<PlayerId, (Vec3, u64)>,
+    pub(crate) settled: FxHashMap<PlayerId, (Vec3, u64)>,
     /// Kept creatures from the save that could not be put back yet (their species is gone
     /// from the content, or the world was full): kept in the save and tried again, never
     /// lost.
