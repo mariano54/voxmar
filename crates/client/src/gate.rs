@@ -460,6 +460,8 @@ struct Gate {
     count_before: u32,
     natural_before: Vec<u32>,
     natural_home: Vec3,
+    /// The way home's hiding distance, while the Home step shows the mark close up.
+    home_hidden_within: Option<f32>,
     /// The creature the combat-marks step tells its blows at, when (game time) it last told
     /// them, and how many runs it has told.
     marked: Option<u32>,
@@ -641,6 +643,7 @@ impl Gate {
             count_before: 0,
             natural_before: Vec::new(),
             natural_home: Vec3::ZERO,
+            home_hidden_within: None,
             marked: None,
             marked_at: 0.0,
             marked_tries: 0,
@@ -4385,7 +4388,9 @@ fn prayers(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 
 /// A sleeping bag and a torch beside the player, slept in: the bed is their home and it has
 /// a light, so the Camp step (docs/home.md) comes on as a chip, the chat names it and what to
-/// add next, and the sleep gives a rest. The blocks go again after, and the rest with them.
+/// add next, and the sleep gives a rest. Then the way home: with the mark's hiding distance
+/// set to nothing, the hearth mark shows how far the bag is. The blocks go again after, and
+/// the rest with them.
 fn home(world: &mut World, gate: &mut Gate, now: f32) {
     let stand = world.resource::<LocalPlayer>().position.floor().as_ivec3();
     let (bag, torch) = (stand + IVec3::new(2, 0, 0), stand + IVec3::new(3, 0, 0));
@@ -4396,6 +4401,8 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
             net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
         }
         net.command("effect clear");
+        let style = &mut world.resource_mut::<crate::hud::inventory::InterfaceStyle>();
+        style.home_hidden_within = gate.home_hidden_within.take().unwrap_or(style.home_hidden_within);
         gate.next(Step::Quests, now);
     };
     match gate.phase {
@@ -4431,7 +4438,7 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
                 Some(false) => {}
             }
         }
-        _ => {
+        2 => {
             let has = |world: &World, name: &str| {
                 let (player, launch) = (world.resource::<LocalPlayer>(), world.resource::<Launch>());
                 launch.content.effects.id(name).is_some_and(|id| player.vitals.effects.iter().any(|a| a.effect == id))
@@ -4443,9 +4450,54 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
             };
             if camp && rested && announced && slept {
                 gate.check("home: camp", Ok("a bed and a light slept in showed the Camp chip, the chat named it with its next step, and the sleep was a rest".into()));
-                leave(world, gate);
+                let mut style = world.resource_mut::<crate::hud::inventory::InterfaceStyle>();
+                gate.home_hidden_within = Some(style.home_hidden_within);
+                style.home_hidden_within = 0.0;
+                gate.advance(now);
             } else if waited > 30.0 {
                 gate.check("home: camp", Err(format!("{waited:.1} server s after sleeping at a bag with a torch beside it: Camp chip {camp}, Rested chip {rested}, Camp line with Next {announced}, sleep line {slept}")));
+                leave(world, gate);
+            }
+        }
+        // The mark over the bag, with its distance.
+        3 => {
+            let told = world.resource::<LocalPlayer>().vitals.home;
+            let shown = world.query_filtered::<&Visibility, With<crate::hud::home::HomeMark>>().iter(world).any(|v| *v != Visibility::Hidden);
+            let words = world.query_filtered::<&Text, With<crate::hud::home::HomeWords>>().iter(world).map(|t| t.0.clone()).next().unwrap_or_default();
+            if told == Some(bag) && shown && words.contains(" m") {
+                gate.check("home: way", Ok(format!("the server named the bag as home and the hearth mark showed \"{words}\"")));
+                // Turned away from it: home lies behind.
+                let eye = world.resource::<LocalPlayer>().eye();
+                aim_at(world, eye + (eye - bag.as_vec3() - Vec3::splat(0.5)).with_y(0.0));
+                gate.advance(now);
+            } else if waited > 10.0 {
+                gate.check("home: way", Err(format!("{waited:.1} server s after the bag became home: home told {told:?} (bag {bag}), mark shown {shown}, words \"{words}\"")));
+                leave(world, gate);
+            }
+        }
+        // Home behind: the mark waits at an edge of the screen. Then, at the real hiding
+        // distance, two blocks from home it is gone.
+        4 => {
+            let edge = world.query::<&crate::hud::home::HomeMark>().iter(world).find_map(|m| m.edge);
+            if edge.is_some() {
+                gate.check("home: behind", Ok(format!("turned away from home, the mark waited at the {} edge", if edge == Some(-1.0) { "left" } else { "right" })));
+                let mut style = world.resource_mut::<crate::hud::inventory::InterfaceStyle>();
+                style.home_hidden_within = gate.home_hidden_within.take().unwrap_or(style.home_hidden_within);
+                gate.advance(now);
+            } else if waited > 5.0 {
+                let yaw = world.resource::<LocalPlayer>().yaw;
+                gate.check("home: behind", Err(format!("turned away from home (yaw {yaw:.2}), the mark was at no edge of the screen")));
+                leave(world, gate);
+            }
+        }
+        _ => {
+            let shown = world.query_filtered::<&Visibility, With<crate::hud::home::HomeMark>>().iter(world).any(|v| *v != Visibility::Hidden);
+            if !shown {
+                let within = world.resource::<crate::hud::inventory::InterfaceStyle>().home_hidden_within;
+                gate.check("home: near", Ok(format!("within {within} blocks of home the mark was gone")));
+                leave(world, gate);
+            } else if waited > 5.0 {
+                gate.check("home: near", Err("two blocks from home the mark still showed".into()));
                 leave(world, gate);
             }
         }
@@ -7855,6 +7907,8 @@ fn combat_hud(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 /// burnt. Waited for by the server's clock.
 fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let fire = gate.feet + IVec3::new(0, 0, 14);
+    let hearth = fire + IVec3::new(3, 0, 0);
+    let chimney = [hearth + IVec3::new(-1, 1, -1), hearth + IVec3::new(-1, 2, -1)];
     match gate.phase {
         0 => {
             let net = world.resource::<Net>();
@@ -7980,6 +8034,41 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 Err(format!("only {count} particles rose from it in {FIRE_WATCH} s, under {FIRE_PARTICLES} (still a campfire: {is_fire}; {why})"))
             };
             gate.check("campfire smoke", result);
+            let net = world.resource::<Net>();
+            for (at, block) in [(hearth, "hearthstone"), (chimney[0], "chimney"), (chimney[1], "chimney")] {
+                net.command(&format!("setblock {} {} {} {block}", at.x, at.y, at.z));
+            }
+            gate.advance(now);
+        }
+        // A hearthstone beside it, with a chimney two tall at its corner: the chimney's top
+        // smokes (`over` the hearth), as home does from across a valley.
+        7 => {
+            let placed = {
+                let client = world.resource::<ClientWorld>();
+                client.registry.id("base:chimney").is_some_and(|c| client.block(chimney[1]) == Some(c))
+            };
+            if placed {
+                world.resource_mut::<crate::emitters::Emitters>().watch(chimney[1]);
+                gate.advance(now);
+            } else if in_phase > 5.0 {
+                gate.check("chimney smoke", Err(format!("the chimney was not on the client {in_phase:.1} s after it was placed")));
+                gate.phase = 8;
+            }
+        }
+        8 if in_phase > FIRE_WATCH => {
+            let amount = world.resource::<crate::render::particles::Particles>().amount;
+            let mut emitters = world.resource_mut::<crate::emitters::Emitters>();
+            let (count, why) = (emitters.watched, emitters.why_quiet(chimney[1], amount));
+            emitters.watch = None;
+            gate.check("chimney smoke", if count >= CHIMNEY_PARTICLES {
+                Ok(format!("{count} puffs rose from the chimney's top over the hearthstone in {FIRE_WATCH} s"))
+            } else {
+                Err(format!("only {count} puffs rose from the chimney's top over a hearthstone in {FIRE_WATCH} s, under {CHIMNEY_PARTICLES} ({why})"))
+            });
+            let net = world.resource::<Net>();
+            for at in [hearth, chimney[0], chimney[1]] {
+                net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
+            }
             gate.next(Step::Dry, now);
         }
         _ => {}
@@ -8097,6 +8186,10 @@ const FIRE_WATCH: f32 = 1.5;
 /// sparks come at about ten a second, about fifteen in that time at any frame rate, so
 /// fewer than this means the fire gives off (almost) nothing.
 const FIRE_PARTICLES: u32 = 4;
+
+/// Puffs a chimney's top over a hearth must give off in `FIRE_WATCH` seconds: about three
+/// a second, so none means it gives off nothing.
+const CHIMNEY_PARTICLES: u32 = 1;
 
 /// A junglefowl on the pad, wheat in hand: right clicks feed it until it trusts the
 /// player and is theirs (kept, with them as its owner).

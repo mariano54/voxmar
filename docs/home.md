@@ -140,6 +140,18 @@ lacks is read off its own condition (`Condition::lacks`), so a mod's steps are c
 extra work; a block tag shows by `home.tag.<tag>` in the language files, else as the tag.
 It is a console command, so it needs no protocol change.
 
+## The way home
+
+Away from home (the lit hearth, else the bed last slept in), a small hearth mark at the top
+of the screen sits over where home lies, with how far it is ("Home 140 m"). Turned away from
+it, the mark waits at the screen's edge on the side to turn to, so a player lost at night
+turns until it is in the middle and walks. Within `home_hidden_within` blocks (core
+`interface.ron`, 24) nothing shows; the mark's icon is the item a package names as
+`home_icon` (base: the hearthstone). The server sends home in the player's vitals
+(`Vitals::home`, protocol 38) once a second when it changes. With no hearth lit and no bed
+slept in, there is no mark. The gate's Home step checks it after the camp: the bag named as
+home and the mark showing its distance.
+
 ## Sleeping
 
 Right clicking a bed used to only set where you wake. It now also gives a **rest** (the
@@ -154,6 +166,20 @@ online only.
 All of it is data. Multipliers stack with food buffs; xp stops at `MAX_XP_BOOST` (1.25).
 Home tiers use `heal`, `warmth` and `xp` only: a location effect that changed maximum health
 would cost health every time the player stepped out.
+
+## Smoke over home
+
+The Homestead Hearth's chimney smokes from its top while the hearthstone stands below it, a
+thick column seen from 96 blocks, so a player out at dusk sees where home is from across a
+valley. It is data on the chimney block (blocks_tools.ron): a smoke emission with
+`range: Some(96.0)` (how far off it is seen, up to 128, against the 24 every other block's
+particles keep) and `over: Some(("hearth", 3))` (given off only with a `hearth` block up to
+3 below and one across, and only from the top of a stack, with open air above). A mod's
+stove pipe or a forge's flue can do the same. The client searches farther only for chunks
+whose palette holds such a block, and counts nearness as a share of each emission's range,
+so a far chimney takes its place among the nearest torches
+(`a_chimney_smokes_over_a_hearth_from_afar`). The gate's Cook step sets a hearthstone and a
+chimney beside its campfire and counts the chimney's puffs ("chimney smoke").
 
 ## Quest hooks (written, in base/quests.ron)
 
