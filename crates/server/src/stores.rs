@@ -6,7 +6,7 @@
 //! player walks out of reach or dies, or when the store is broken.
 
 use voxmar_engine::glam::IVec3;
-use voxmar_engine::inventory::Store;
+use voxmar_engine::inventory::{ItemStack, Store};
 use voxmar_engine::traits;
 use voxmar_protocol::PlayerId;
 
@@ -50,14 +50,23 @@ impl Server {
         }
     }
 
-    /// Writes `agent`'s copy of their open store back into it, after a move.
+    /// Writes `agent`'s copy of their open store back into it, after a move. What it gained
+    /// is tallied by the store's block, for a quest's `Stocked`.
     pub(crate) fn push_store(&mut self, agent: PlayerId) {
         let Some(player) = self.players.get(&agent) else { return };
         let (Some(pos), Some(store)) = (player.store, player.inventory.store.as_ref()) else { return };
+        let count = |slots: &[Option<ItemStack>]| slots.iter().flatten().map(|stack| u32::from(stack.count)).sum::<u32>();
+        let block = store.block;
+        let mut gained = 0;
         if let Some(state) = self.factory.state_mut(pos)
             && state.bin.len() == store.slots.len()
         {
+            gained = count(&store.slots).saturating_sub(count(&state.bin));
             state.bin.clone_from(&store.slots);
+        }
+        if gained > 0 {
+            let name = self.content.blocks.def(block).name.clone();
+            self.tally(agent, "stocked", &name, gained);
         }
     }
 
@@ -163,6 +172,7 @@ mod tests {
         let dirt = id(&server, "base:dirt");
         assert_eq!(held(&server), vec![(dirt, 10)]);
         assert_eq!(server.players[&1].inventory.slots[0], None);
+        assert_eq!(server.players[&1].tallies.get("stocked:base:chest"), Some(&10), "what went in is tallied for quests");
         // A chute brings sand.
         let sand = id(&server, "base:sand");
         let machines = server.content.machines.clone();
@@ -172,6 +182,7 @@ mod tests {
         // Shift click takes it into the pack.
         act(&mut server, "core:quick_move", ActionTarget::Slot(STORE as u8));
         assert_eq!(held(&server), vec![(dirt, 10)]);
+        assert_eq!(server.players[&1].tallies.get("stocked:base:chest"), Some(&10), "taking out stocks nothing");
         assert!(server.players[&1].inventory.slots.iter().flatten().any(|s| s.item == sand && s.count == 5));
         server.players.get_mut(&1).unwrap().position = Vec3::new(28.5, (FLOOR + 1) as f32, 28.5);
         server.watch_stores();

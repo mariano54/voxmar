@@ -94,6 +94,16 @@ pub enum Goal {
     /// Set down this many blocks that water crops (a block, `any` or a `tag:TAG`, such as a
     /// well) by tilled ground, near enough to keep it moist.
     Watering(String, u32),
+    /// Set down this many of a block (an item, `any` or a `tag:TAG`) from the hand.
+    Placed(String, u32),
+    /// Put this many items into stores of a kind (a store block, `any` or a `tag:TAG`):
+    /// what is put in, whatever it is.
+    Stocked(String, u32),
+    /// Made this many of an item (or a `tag:TAG`) by a recipe made near a block with this
+    /// tag (`near` in recipes.ron), such as planks split on a chopping block.
+    CraftNear(String, String, u32),
+    /// Took this many creatures (one, or `any`) from a sprung trap.
+    Trapped(String, u32),
 }
 
 /// One way to finish a quest: every goal must hold.
@@ -244,6 +254,10 @@ impl Progress<'_> {
             Goal::Felt(effect) => (tally("felt", effect).min(1), 1),
             Goal::Laid(item, n) => (tally("laid", item), *n),
             Goal::Watering(block, n) => (tally("watering", block), *n),
+            Goal::Placed(block, n) => (tally("placed", block), *n),
+            Goal::Stocked(store, n) => (tally("stocked", store), *n),
+            Goal::CraftNear(item, near, n) => (tally(&format!("crafted_near:{near}"), item), *n),
+            Goal::Trapped(creature, n) => (tally("trapped", creature), *n),
         }
     }
 
@@ -434,7 +448,9 @@ impl QuestRegistry {
                     Goal::Ate(name, _) => find(name, &made)?,
                     Goal::Felt(name) => find(name, &effect)?,
                     Goal::Laid(name, _) => find(name, &made)?,
-                    Goal::Watering(name, _) => find(name, &made)?,
+                    Goal::Watering(name, _) | Goal::Placed(name, _) | Goal::Stocked(name, _) => find(name, &made)?,
+                    Goal::CraftNear(name, _, _) => find(name, &made)?,
+                    Goal::Trapped(name, _) => find(name, &creature)?,
                 }
             }
             for given in &mut quest.rewards {
@@ -661,7 +677,7 @@ mod tests {
     fn wanderers_prayers_and_offerings_count_from_their_tallies() {
         let journal = Journal::default();
         let mut tallies = FxHashMap::default();
-        for (key, n) in [("met:base:pedlar", 2), ("met:base:smith", 1), ("met:base:hermit", 0), ("prayed:base:bark_skin", 3), ("offered:base:bone", 4), ("crafted:base:bone", 9), ("opened:base:nomad_treasure_chest", 2), ("ate:base:honey", 3), ("felt:base:smoky", 5), ("fertilised:base:compost", 5), ("laid:base:oak_planks", 2), ("lured:base:rabbit", 2), ("watering:base:well", 1)] {
+        for (key, n) in [("met:base:pedlar", 2), ("met:base:smith", 1), ("met:base:hermit", 0), ("prayed:base:bark_skin", 3), ("offered:base:bone", 4), ("crafted:base:bone", 9), ("opened:base:nomad_treasure_chest", 2), ("ate:base:honey", 3), ("felt:base:smoky", 5), ("fertilised:base:compost", 5), ("laid:base:oak_planks", 2), ("lured:base:rabbit", 2), ("watering:base:well", 1), ("placed:base:hide_window", 2), ("stocked:base:feed_trough", 8), ("crafted_near:chopping_block:base:oak_planks", 6), ("trapped:base:rabbit", 1)] {
             tallies.insert(key.to_owned(), n);
         }
         let level = |_: &str| 1u8;
@@ -687,6 +703,11 @@ mod tests {
         assert_eq!(goal(Goal::Ate("base:bone".into(), 1)), (0, 1), "what was made is not what was eaten");
         assert_eq!(goal(Goal::Felt("base:smoky".into())), (1, 1), "felt once is enough");
         assert_eq!(goal(Goal::Laid("any".into(), 3)), (2, 3), "recipes laid from a home's stores");
+        assert_eq!(goal(Goal::Placed("base:hide_window".into(), 2)), (2, 2), "blocks set down");
+        assert_eq!(goal(Goal::Stocked("base:feed_trough".into(), 8)), (8, 8), "items put in a store");
+        assert_eq!(goal(Goal::CraftNear("base:oak_planks".into(), "chopping_block".into(), 6)), (6, 6));
+        assert_eq!(goal(Goal::CraftNear("base:oak_planks".into(), "oven".into(), 1)), (0, 1), "made near another block");
+        assert_eq!(goal(Goal::Trapped("any".into(), 1)), (1, 1), "a catch taken from a trap");
         assert_eq!(goal(Goal::Laid("base:bone".into(), 1)), (0, 1), "what was made is not what was laid");
         assert_eq!(goal(Goal::Lured("any".into(), 1)), (2, 1), "creatures drawn up close by their favourite food");
         assert_eq!(goal(Goal::Lured("base:junglefowl".into(), 1)), (0, 1), "a rabbit lured is no junglefowl");

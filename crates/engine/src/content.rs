@@ -952,7 +952,7 @@ mod tests {
                             }
                         }
                         Goal::Visit(_) | Goal::LookUp(_) => {}
-                        Goal::Catch(..) | Goal::Pick(..) | Goal::Tame(..) | Goal::Lured(..) | Goal::Kill(..) | Goal::Discover(..) | Goal::Kinds(..) | Goal::Thriving(..) | Goal::Met(..) | Goal::Prayed(..) | Goal::Offered(..) | Goal::Opened(..) | Goal::Ate(..) | Goal::Felt(..) | Goal::Fertilised(..) | Goal::Laid(..) | Goal::Watering(..) => panic!("{}: the walk doesn't model {goal:?} yet", quest.name),
+                        Goal::Catch(..) | Goal::Pick(..) | Goal::Tame(..) | Goal::Lured(..) | Goal::Kill(..) | Goal::Discover(..) | Goal::Kinds(..) | Goal::Thriving(..) | Goal::Met(..) | Goal::Prayed(..) | Goal::Offered(..) | Goal::Opened(..) | Goal::Ate(..) | Goal::Felt(..) | Goal::Fertilised(..) | Goal::Laid(..) | Goal::Watering(..) | Goal::Placed(..) | Goal::Stocked(..) | Goal::CraftNear(..) | Goal::Trapped(..) => panic!("{}: the walk doesn't model {goal:?} yet", quest.name),
                     }
                 }
                 if route.walls.len() == walk.walls.len() {

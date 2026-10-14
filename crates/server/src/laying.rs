@@ -364,6 +364,8 @@ mod tests {
         server.set_block(block, id(&server, "base:chopping_block"));
         split(&mut server);
         assert_eq!(carried(&server), 10, "two more by one");
+        let tallies = &server.players[&1].tallies;
+        assert_eq!((tallies.get("crafted:base:oak_planks"), tallies.get("crafted_near:chopping_block:base:oak_planks")), (Some(&10), Some(&6)), "made near it, tallied for quests");
         // Its way in the recipe book lays only near one.
         let book = voxmar_engine::recipe_book::RecipeBook::new(&server.content);
         let first = book

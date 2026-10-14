@@ -357,6 +357,8 @@ impl Server {
                     self.placed_plant(item, cell);
                     self.placed_machine(agent, cell);
                     self.placed_by_field(agent, item, cell);
+                    let name = self.content.blocks.def(item).name.clone();
+                    self.tally(agent, "placed", &name, 1);
                 }
                 (Effect::MoveItems, ActionTarget::Slots { from, to, count }) => {
                     // An open store's slots as it holds them now, and what moved written back.
@@ -506,17 +508,21 @@ impl Server {
         // Crafting all goes on only while the grid still makes the same recipe: experience
         // and tallies are this recipe's, once for each one made.
         let first = recipes.find_near(&player.inventory.grid(), near).filter(|r| allowed(r));
-        let found = first.map(|r| (r.skill, r.xp, r.output, r.count));
+        let found = first.map(|r| (r.skill, r.xp, r.output, r.count, r.near.clone()));
         let made = player.inventory.craft(recipes.while_making(first, near), all);
         // Always: a refused craft the client predicted is undone.
         player.changed(traits::INVENTORY);
-        if let Some((skill, xp, output, count)) = found.filter(|_| made > 0) {
+        if let Some((skill, xp, output, count, made_near)) = found.filter(|_| made > 0) {
             if let Some(skill) = skill {
                 self.grant_xp(agent, skill, xp * made as f32);
             }
             // For quests that ask for things made.
             let name = self.content.blocks.def(output).name.clone();
             self.tally(agent, "crafted", &name, made * count as u32);
+            // And by the block it was made near, for a quest's `CraftNear`.
+            if let Some(tag) = made_near {
+                self.tally(agent, &format!("crafted_near:{tag}"), &name, made * count as u32);
+            }
         }
     }
 
