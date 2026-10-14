@@ -312,3 +312,21 @@ fn a_proper_bed_rests_well_and_every_sleep_mends_slower_than_food() {
     let eating = voxmar_engine::vitals::cooked_heal(1) as f32 / bite;
     assert!(per_second < eating, "a home, a rest and a mend heal {per_second:.2} a second, as fast as eating ({eating:.2})");
 }
+
+/// Whatever a home keeps things in, or on, counts as its storage: every store a player opens
+/// (a chest, a cupboard, a crate stack, a jar), and every shelf and cupboard Shelves and
+/// Cupboards asks for. A feed trough is the pen's, not the home's.
+#[test]
+fn every_store_shelf_and_cupboard_counts_as_storage() {
+    let content = content();
+    let blocks = &content.blocks;
+    let stores = content.machines.iter().filter(|m| m.is_store()).map(|m| m.block);
+    let furniture = blocks.ids().filter(|&id| blocks.def(id).has_tag("shelf") || blocks.def(id).has_tag("cupboard"));
+    let missing: Vec<&str> = stores
+        .chain(furniture)
+        .filter(|&id| !blocks.def(id).has_tag("trough") && !blocks.def(id).has_tag("storage"))
+        .map(|id| blocks.def(id).name.as_str())
+        .collect();
+    assert!(missing.is_empty(), "kept things in, yet not storage: {missing:?}");
+    assert!(blocks.ids().filter(|&id| blocks.def(id).has_tag("trough")).all(|id| !blocks.def(id).has_tag("storage")), "a trough counted as a home's storage");
+}
