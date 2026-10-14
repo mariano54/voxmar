@@ -64,6 +64,13 @@
             rewards: [Xp("hunter", 180.0), Item("seed_mix", 5)],
         ),
         (
+            name: "a_tempting_bite", age: "nomad", branch: "hunter", title: "A Tempting Bite",
+            why: "Rabbits bolt and junglefowl scatter, but each comes to a favourite food: a carrot for rabbits (pick a wild carrot by hand, a white-flowered plant of meadows), wheat seeds or wheat for junglefowl (break wild wheat). Hold it and walk slowly, and they come up to you instead of running; switch to your axe once one is close. Draw an animal to you with its favourite food.",
+            tasks: [[Lured("any", 1)]],
+            after: ["first_night"],
+            rewards: [Xp("hunter", 40.0)],
+        ),
+        (
             name: "bare_hands", age: "nomad", branch: "fishing", title: "First Catch",
             why: "Fish are the easiest food near water. Hold your rod, right-click water and wait for a bite: shrimp and minnows come first. Land five; cooked fish heal well.",
             tasks: [[Catch("any", 5)]],

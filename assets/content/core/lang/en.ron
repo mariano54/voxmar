@@ -465,6 +465,7 @@
     "quest.goal.kinds_of_which": "Different kinds: {page} ({item})",
     "quest.goal.kill": "Defeat {creature}",
     "quest.goal.tame": "Tame {creature}",
+    "quest.goal.lured": "Draw {creature} to you with its favourite food",
     "quest.goal.pick": "Pick {item}",
     "quest.goal.mine": "Mine {item}",
     "quest.goal.visit": "Biomes visited",

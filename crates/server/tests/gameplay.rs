@@ -6375,6 +6375,7 @@ const FRESH_BUDGETS: &[(&str, f32)] = &[
     ("crafting_table", 60.0),
     ("stone_in_hand", 120.0),
     ("first_night", 180.0),
+    ("a_tempting_bite", 190.0),
     ("a_bed_of_your_own", 200.0),
     ("torchlight", 220.0),
     ("hearth_materials", 300.0),
@@ -7080,7 +7081,9 @@ impl Fresh {
         // where the animals cannot get past the player.
         c.fill(origin, v(-10, 0, -11), v(-8, 1, 0), "stone");
         c.fill(origin, v(-9, 0, -10), v(-9, 1, 0), "air");
-        let probes = [(v(7, 3, -5), "base:oak_log"), (v(17, 0, 4), "base:stone"), (v(-2, -1, 11), "base:water"), (v(-8, 1, 0), "base:stone")];
+        // Wild wheat growing by the lane's mouth, for A Tempting Bite.
+        c.fill(origin, v(-7, 0, 2), v(-7, 0, 2), "wild_wheat");
+        let probes = [(v(7, 3, -5), "base:oak_log"), (v(17, 0, 4), "base:stone"), (v(-2, -1, 11), "base:water"), (v(-8, 1, 0), "base:stone"), (v(-7, 0, 2), "base:wild_wheat")];
         c.pump_until(|c| probes.iter().all(|&(at, name)| c.world.block(origin + at) == c.content.blocks.id(name)) && c.world.block(origin + v(-9, 1, 0)) == Some(BlockId::AIR));
         let (at, t0) = (c.position, c.ticks());
         let epoch = (t0, Instant::now());
@@ -7328,6 +7331,28 @@ fn the_first_days(f: &mut Fresh) -> Site {
         f.cook(fire, raw, cooked);
     }
     f.mark("first_night");
+
+    // A Tempting Bite: the wild wheat by the lane broken by hand for its seeds, and the seeds
+    // held in the lane until a junglefowl comes up to them (one is let in if the
+    // night's hunt took them all).
+    let wheat = f.rel(-7, 0, 2);
+    f.walk_toward(Fresh::middle(wheat), 1.3);
+    // `mine` waits for a solid block to go; a plant is picked at a touch.
+    f.propose("core:mine", ActionTarget::Block { block: wheat, face: Face::PosY });
+    f.wait(5.0, "picking the wild wheat", |c| c.world.block(wheat) == Some(BlockId::AIR));
+    f.collect("base:wheat_seeds", 1);
+    let fowl = f.c.content.creatures.find("junglefowl").expect("junglefowl in the content");
+    if !lane(&f.c, f.origin).iter().any(|&(_, _, species)| species == fowl) {
+        f.stock("junglefowl", -4);
+    }
+    // In by the open end to within ten blocks of the far end, where they huddle: the
+    // seeds tempt from ten blocks.
+    f.walk_toward(Fresh::middle(f.rel(-9, 0, 2)), 0.3);
+    f.walk_toward(Fresh::middle(f.rel(-9, 0, -1)), 0.3);
+    f.hold("base:wheat_seeds");
+    let drawn = f.waited(30.0, |c| quest_status(c, "a_tempting_bite").0);
+    assert!(drawn, "no junglefowl drawn up to the seeds: at {:?} holding {:?}, lane {:?}, quest {:?}", f.at, f.c.inventory.get(f.held as usize), lane(&f.c, f.origin), f.c.quests.iter().find(|q| q.name == "base:a_tempting_bite").map(|q| (q.done, q.tasks.clone())));
+    f.mark("a_tempting_bite");
 
     // A Bed of Your Own: two feathers (junglefowl) and two hides (rabbits) for a sleeping
     // bag, crafted in the two by two grid.
@@ -7717,6 +7742,7 @@ const FRESH_QUESTS: &[(&str, &str)] = &[
     ("an_axe_to_it", "an_axe_to_it"),
     ("stone_in_hand", "stone_in_hand"),
     ("first_night", "first_night"),
+    ("a_tempting_bite", "a_tempting_bite"),
     ("a_bed_of_your_own", "a_bed_of_your_own"),
     ("torchlight", "torchlight"),
     ("hearth_lit", "homestead_hearth"),
