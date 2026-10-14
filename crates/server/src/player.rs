@@ -128,6 +128,9 @@ pub struct Player {
     pub praying: voxmar_engine::prayer::Praying,
     /// Lines the player has cast, which numbers each cast's draw (`Server::fish`).
     pub casts: u64,
+    /// The player's own share of the world's draw key (`player_draw_key`), so two players
+    /// casting the same count into the same water draw apart, whatever connection each has.
+    pub draw_key: u64,
     pub prayers_sent: Option<(u16, u16, Vec<voxmar_engine::prayer::PrayerId>)>,
     /// Owner-replicated traits changed since they were last sent.
     pub dirty: Vec<TraitDecl>,
@@ -203,6 +206,7 @@ impl Player {
             last_blow: 0,
             praying: Default::default(),
             casts: 0,
+            draw_key: 0,
             prayers_sent: None,
             dirty: vec![traits::HEALTH, traits::INVENTORY, traits::SKILLS, traits::VITALS],
             sent: FxHashSet::default(),
@@ -518,6 +522,7 @@ impl Server {
         let points = saved.as_ref().filter(|saved| saved.health.alive()).and_then(|saved| saved.prayer_points);
         // Casts go on being numbered from where they were, alive or dead, so no cast is drawn twice.
         player.casts = saved.as_ref().map_or(0, |saved| saved.casts);
+        player.draw_key = player_draw_key(self.meta.draw_key, &player.name);
         match saved {
             Some(saved) if saved.health.alive() => {
                 player.position = saved.position;
@@ -927,6 +932,12 @@ fn same_token(ours: &str, theirs: &str) -> bool {
 }
 
 /// Whether two names are one player's: names differ in case only for show.
+/// A player's draw key: the world's secret one mixed with the name their file is kept
+/// under, the same each time they join and never another player's.
+pub(crate) fn player_draw_key(world: u64, name: &str) -> u64 {
+    crate::player_key(name).bytes().fold(world ^ 0x5d5e_c7a1_9b3f_0e27, |h, b| (h ^ b as u64).wrapping_mul(0x0000_0100_0000_01b3))
+}
+
 pub(crate) fn same_name(a: &str, b: &str) -> bool {
     crate::player_key(a) == crate::player_key(b)
 }

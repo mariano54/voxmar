@@ -22,12 +22,13 @@ fn spot_tags(biome: &[String], temperature: f32, rules: &voxmar_engine::fishing:
     biome.iter().cloned().chain([rules.water.tag(temperature).to_owned()]).collect()
 }
 
-/// The draws of `agent`'s `cast`th line (counting from 0) into `at`, in the world of `seed`.
-/// Numbered by the player's own casts, which their save keeps, rather than by the tick the
-/// line lands on: a cast's luck does not follow how the frames and messages fell, and no
-/// count is drawn twice, a reload included.
-fn cast_draws(seed: u64, cast: u64, at: IVec3, agent: PlayerId) -> [f32; 3] {
-    random3(seed ^ cast.wrapping_mul(0x9e37_79b9_7f4a_7c15), at, agent ^ 0xf15)
+/// The draws of a player's `cast`th line (counting from 0) into `at`, by their draw key
+/// (`Player::draw_key`, from the world's secret one). Numbered by the player's own casts,
+/// which their save keeps, rather than by the tick the line lands on: a cast's luck does
+/// not follow how the frames and messages fell, no count is drawn twice, a reload
+/// included, and nothing a client knows (the seed, its id, the cell) tells it the draw.
+fn cast_draws(key: u64, cast: u64, at: IVec3) -> [f32; 3] {
+    random3(key ^ cast.wrapping_mul(0x9e37_79b9_7f4a_7c15), at, 0xf15)
 }
 
 impl Server {
@@ -54,7 +55,7 @@ impl Server {
             rod_yield: rod.yield_,
             luck: player.modifiers.fishing,
         };
-        let [land, pick, kick] = cast_draws(self.meta.seed, cast, at, agent);
+        let [land, pick, kick] = cast_draws(player.draw_key, cast, at);
         let Some(catch) = fishing.cast(&spot, land, pick).cloned() else {
             if let Some(p) = self.players.get(&agent) {
                 p.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: Words::key("fishing.nothing") });
@@ -83,10 +84,6 @@ mod tests {
     use super::cast_draws;
     use crate::Server;
 
-    /// Every catch bites somewhere: in a biome with the water it wants (salt in the sea),
-    /// with one of its biome tags among those a cast there reads at some temperature from
-    /// −30 to 45 °C. Cod, tuna and swordfish once bit nowhere: the sea is one biome, tagged
-    /// neither cold nor warm, until the water's temperature gave it a climate.
     /// The same world, water, player and count of casts land the same catches, whatever
     /// tick each cast lands on.
     #[test]
@@ -111,20 +108,34 @@ mod tests {
     }
 
     /// Numbered draws keep the odds: a cast lands when its `land` draw is under the chance,
-    /// so over many casts the share under each chance is that chance.
+    /// so over many casts the share under each chance is that chance (within four standard
+    /// errors), in any world, water and player; and the catch drawn does not lean on it.
     #[test]
     fn numbered_casts_land_at_their_odds() {
         const CASTS: u64 = 4000;
-        let draws: Vec<f32> = (0..CASTS).map(|n| cast_draws(0x5eed, n, WATER, 1)[0]).collect();
-        for chance in [0.35f32, 0.6, 0.9] {
-            let share = draws.iter().filter(|&&land| land < chance).count() as f32 / CASTS as f32;
-            assert!((share - chance).abs() < 0.03, "{share} of casts under {chance}");
+        for (key, at) in [(0x5eed, WATER), (0x9d2c_5680_a1b3_e7f1, IVec3::new(-3000, 62, 811)), (crate::player::player_draw_key(7, "Ünï"), IVec3::new(17, 120, -40))] {
+            let draws: Vec<[f32; 3]> = (0..CASTS).map(|n| cast_draws(key, n, at)).collect();
+            for chance in [0.35f32, 0.6, 0.9] {
+                let share = draws.iter().filter(|d| d[0] < chance).count() as f32 / CASTS as f32;
+                let within = 4.0 * (chance * (1.0 - chance) / CASTS as f32).sqrt();
+                assert!((share - chance).abs() < within, "key {key:x} at {at}: {share} of casts under {chance}");
+            }
+            let landed: Vec<f32> = draws.iter().filter(|d| d[0] < 0.5).map(|d| d[1]).collect();
+            let mean = landed.iter().sum::<f32>() / landed.len() as f32;
+            let within = 4.0 * (1.0 / 12.0 / landed.len() as f32).sqrt();
+            assert!((mean - 0.5).abs() < within, "key {key:x} at {at}: the catch drawn leans {mean} on landed casts");
         }
-        // And the catch drawn does not follow the land draw.
-        let picks: Vec<f32> = (0..CASTS).map(|n| cast_draws(0x5eed, n, WATER, 1)[1]).collect();
-        let low = draws.iter().zip(&picks).filter(|&(&land, _)| land < 0.5).map(|(_, &pick)| pick).collect::<Vec<_>>();
-        let mean = low.iter().sum::<f32>() / low.len() as f32;
-        assert!((mean - 0.5).abs() < 0.03, "the catch drawn leans {mean} on landed casts");
+    }
+
+    /// Two players casting the same count into the same water draw apart, and the same
+    /// player in two worlds of one seed does too: the draw follows the world's secret key
+    /// and the player's name, which no client knows together, not the seed or a connection.
+    #[test]
+    fn a_cast_draws_by_the_world_key_and_the_player() {
+        let draws = |world: u64, name: &str| (0..64).map(|n| cast_draws(crate::player::player_draw_key(world, name), n, WATER)).collect::<Vec<_>>();
+        assert_ne!(draws(1, "alex"), draws(1, "sam"), "two players");
+        assert_ne!(draws(1, "alex"), draws(2, "alex"), "two worlds");
+        assert_eq!(draws(1, "alex"), draws(1, "ALEX"), "one player, however they type their name");
     }
 
     const WATER: IVec3 = IVec3::new(130, 199, 128);
@@ -132,6 +143,7 @@ mod tests {
     /// Player 1 on a test world, holding a rod beside a pool.
     fn angler() -> Server {
         let mut server = crate::test_server();
+        server.meta.draw_key = 0x0d1a;
         let water = server.content.blocks.expect("base:water");
         for dx in -2..=2 {
             for dz in -2..=2 {
@@ -142,6 +154,7 @@ mod tests {
         std::mem::forget(client);
         let mut player = crate::player::Player::new(1, connection, Vec3::new(128.5, 200.0, 128.5), 2, server.tick, server.survival.max_health, &server.config.limits);
         (player.joined, player.name) = (true, "Angler".into());
+        player.draw_key = crate::player::player_draw_key(server.meta.draw_key, &player.name);
         let rod = server.content.blocks.expect("base:fishing_rod");
         assert_eq!(player.inventory.add(rod, 1), 0);
         player.selected = (0..voxmar_engine::inventory::SLOTS).find(|&s| player.inventory.get(s).is_some_and(|s| s.item == rod)).unwrap();
@@ -159,6 +172,10 @@ mod tests {
             .collect()
     }
 
+    /// Every catch bites somewhere: in a biome with the water it wants (salt in the sea),
+    /// with one of its biome tags among those a cast there reads at some temperature from
+    /// −30 to 45 °C. Cod, tuna and swordfish once bit nowhere: the sea is one biome, tagged
+    /// neither cold nor warm, until the water's temperature gave it a climate.
     #[test]
     fn every_catch_bites_somewhere() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");

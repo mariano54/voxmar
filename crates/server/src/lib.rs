@@ -108,6 +108,9 @@ pub struct ServerConfig {
     /// the clock. What the server judges by arrival stamps (a break, a blow) keeps the
     /// clock's pace, since players' messages carry theirs.
     pub tick_speedup: u32,
+    /// The key a new world's draws hash (`WorldMeta::draw_key`), else a random one. The gate
+    /// sets one, as it sets the seed, so its world draws the same every run.
+    pub draw_key: Option<u64>,
     /// Whether the server ticks only as far as its test's player allows
     /// (`ServerHandle::allow_tick`): one tick past the last the player has taken in, so a
     /// player starved of the cores on a busy machine is never left behind by a quick
@@ -232,6 +235,7 @@ impl Default for ServerConfig {
             lag: Lag::default(),
             cut_saves: false,
             tick_speedup: 1,
+            draw_key: None,
             lockstep: false,
             wandering_starts: true,
         }
@@ -506,15 +510,25 @@ pub fn spawn(mut config: ServerConfig, content: Content) -> std::io::Result<Serv
 /// an unsaved one.
 fn open_world(config: &mut ServerConfig) -> std::io::Result<(Option<WorldSave>, WorldMeta)> {
     let new_mode = if config.allow_flight { GameMode::Creative } else { GameMode::Survival };
-    let Some(dir) = &config.world else { return Ok((None, WorldMeta::new("world", config.seed, new_mode))) };
+    let keyed = |mut meta: WorldMeta| {
+        if let Some(key) = config.draw_key {
+            meta.draw_key = key;
+        }
+        meta
+    };
+    let Some(dir) = &config.world else { return Ok((None, keyed(WorldMeta::new("world", config.seed, new_mode)))) };
     let save = WorldSave::new(dir);
     let mut meta = if save.exists() {
-        let meta = save.read_meta()?;
+        let mut meta = save.read_meta()?;
         save.recover(&meta);
+        // A world from before its draws had a key gets one now, kept from its next save.
+        if meta.draw_key == 0 {
+            meta.draw_key = config.draw_key.unwrap_or_else(save::random_key);
+        }
         meta
     } else {
         let name = dir.file_name().map_or_else(|| "world".into(), |name| name.to_string_lossy().into_owned());
-        let meta = WorldMeta::new(name, config.seed, new_mode);
+        let meta = keyed(WorldMeta::new(name, config.seed, new_mode));
         save.create(&meta)?;
         tracing::info!("created world {}", dir.display());
         meta
@@ -1322,6 +1336,22 @@ pub(crate) fn test_server_on(content: Content) -> Server {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A world's draw key is made with it (the config's, else a random one) and kept in its
+    /// meta; an older world, saved without one, is given one when it opens.
+    #[test]
+    fn a_world_keeps_its_draw_key_and_an_older_one_is_given_one() {
+        let dir = std::env::temp_dir().join(format!("voxmar-draw-key-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let config = |key| ServerConfig { world: Some(dir.clone()), draw_key: key, ..Default::default() };
+        let (save, meta) = open_world(&mut config(Some(42))).unwrap();
+        assert_eq!(meta.draw_key, 42, "made with the config's key");
+        assert_eq!(open_world(&mut config(None)).unwrap().1.draw_key, 42, "kept");
+        save.unwrap().write_meta(&WorldMeta { draw_key: 0, ..meta }).unwrap();
+        assert_ne!(open_world(&mut config(None)).unwrap().1.draw_key, 0, "an older world given one");
+        assert_ne!(WorldMeta::new("a", 1, GameMode::Survival).draw_key, WorldMeta::new("a", 1, GameMode::Survival).draw_key, "random without one asked");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     /// A drop and its rejoin are queued together before one reading loop: the old
     /// connection must leave before the new hello is answered, without scheduler luck.

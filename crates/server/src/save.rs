@@ -131,6 +131,11 @@ pub struct WorldMeta {
     /// Lairs standing empty after their boss fell, until a time of day (`lairs`).
     #[serde(default)]
     pub lairs: Vec<crate::lairs::SavedLair>,
+    /// The secret the world's draws hash (a cast's catch), never sent to a player, so no
+    /// client can work out what a cast will bring up. 0 in older worlds, which are given
+    /// one when they open (`ServerConfig::draw_key`, else a random one).
+    #[serde(default)]
+    pub draw_key: u64,
 }
 
 /// How a regrowing plant is saved, by block names.
@@ -170,6 +175,21 @@ impl WorldMeta {
             generation: 0,
             worldgen_content: None,
             lairs: Vec::new(),
+            draw_key: random_key(),
+        }
+    }
+}
+
+/// A random key, never 0 (which marks a world or player without one).
+pub fn random_key() -> u64 {
+    use std::hash::{BuildHasher, Hasher};
+    loop {
+        // The standard library seeds each `RandomState` from the system's randomness.
+        let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+        hasher.write_u64(unix_time());
+        let key = hasher.finish();
+        if key != 0 {
+            return key;
         }
     }
 }
@@ -1256,6 +1276,7 @@ mod tests {
             pouched: [("base:raw_rabbit", 5), ("base:raw_chicken", 6)])"#;
         std::fs::write(dir.join("players/hunter.ron"), file).unwrap();
         let loaded = save.read_player("hunter", &blocks).unwrap().unwrap();
+        assert_eq!(loaded.casts, 0, "an older save has cast nothing yet");
         let (raw, cooked) = (blocks.expect("base:raw_small_game"), blocks.expect("base:cooked_small_game"));
         let slots: Vec<(BlockId, u8)> = loaded.inventory.slots.iter().flatten().map(|s| (s.item, s.count)).collect();
         assert_eq!(slots, [(raw, 3), (raw, 2), (cooked, 4)]);
