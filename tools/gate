@@ -258,19 +258,20 @@ fi
 # cores, build 21) still drew the fight-feel step's frames a quarter second or more apart,
 # past the bear's 0.7 s wind-up. Not background QoS: that also throttles timers, and a test
 # that times a break by the clock then failed.
-# Nor does the session share the tests' QoS: memcap runs the pair as his game would
-# (`VOXMAR_FOREGROUND=1`), and the tests alone are clamped to utility QoS here. Under
-# memcap's utility clamp the session had it too, and nice 19 bought it little against
-# them: at load 55 on 18 cores (T3, 2026-10-14) its frames ran 0.5 to 2 s, its threads
+# Nor any QoS clamp: memcap runs the pair as his game would (`VOXMAR_FOREGROUND=1`). Under
+# memcap's utility clamp the session had it too, and nice 19 bought it little against the
+# tests: at load 55 on 18 cores (T3, 2026-10-14) its frames ran 0.5 to 2 s, its threads
 # waiting up to 8.5 s for a core within one, and the perfect block judged nothing in ten
-# tries. PLAYING still pauses both, so neither takes a core from his game.
+# tries. The tests alone at utility QoS kept to the efficiency cores (12 of the 18): the
+# worldgen binary alone took 115 s there and 33 s at nice 19 without it (twice the CPU
+# time too, 613 s against 301; T7b, 2026-10-14), so nice 19 is all that keeps them under
+# the session. PLAYING still pauses both, so neither takes a core from his game.
 run='
   out=$1 session=$2; shift 2
   if [[ $session == 1 ]]; then
     (VOXMAR_MUTE=1 $GATE_PREFIX target/iter/voxmar --gate "$out" $GATE_ARGS >"$out/game.txt" 2>&1; echo $? >"$out/game.status") &
   fi
   lower=(nice -n 19 env RAYON_NUM_THREADS=$TEST_POOL)
-  [[ $(uname -s) == Darwin ]] && command -v taskpolicy >/dev/null && lower=(taskpolicy -c utility "${lower[@]}")
   while IFS=$(printf "\t") read -r dir exe; do
     (cd "$dir" && RUSTC_BOOTSTRAP=1 "${lower[@]}" "$exe" -Z unstable-options --report-time "$@" >"$out/test-${exe##*/}.txt" 2>&1; echo $? >"$out/test-${exe##*/}.status") &
   done <"$out/tests.list"
@@ -361,7 +362,8 @@ fi
 # on the Linux box running the gate (every binary side by side); a busier machine scales them
 # by the load it averaged while the tests ran, and a slower one by its slowdown.
 #
-# The Mac's slowdown: it runs the tests at nice 19 (nice 10 when it was measured) and utility QoS beside the played session,
+# The Mac's slowdown, measured when it ran the tests at nice 10 and utility QoS beside the
+# played session (nice 19 now, without the QoS),
 # which keeps them mostly on its efficiency cores, so a calm Mac's landing gate (home #61,
 # 2026-10-13, load under the core count) took 3 to 8 times the Linux box's times for the same
 # tests, the gate's own build and tests being all its load: at most 3.5 times their budgets
