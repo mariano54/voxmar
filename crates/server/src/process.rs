@@ -125,133 +125,148 @@ impl Process for Survival {
 
     fn run(&mut self, server: &mut Server) {
         let seconds = Tier::Low.period() as f32 / TICKS_PER_SECOND as f32;
-        let effects = server.content.effects.clone();
-        let hitpoints = server.content.skills.id("core:hitpoints");
-        // Steps of a home reached this second, counted for quests (`Built("home_snug", 1)`, qualified by the effect's package).
-        let mut reached: Vec<(PlayerId, String)> = Vec::new();
         let ids: Vec<PlayerId> = server.players.keys().copied().collect();
         for id in ids {
-            let player = &server.players[&id];
-            if !player.joined || !player.health.alive() {
-                continue;
-            }
-            let feet = player.position.floor().as_ivec3();
-            let air = server.temperature.sample(feet.x, feet.z);
-            let heat = server.heat_near(feet);
-            let wet = server.block(feet).and_then(|b| server.content.blocks.fluid(b)).is_some();
-            let outdoors = server.open_sky(feet + voxmar_engine::glam::IVec3::Y * 2);
-            let at = voxmar_engine::glam::Vec2::new(player.position.x, player.position.z);
-            let (tick, day) = (server.tick, server.day);
-            let weather = server.weather.local(&mut server.temperature, at, tick, day).weather;
-            let cold_air = air - if wet { server.survival.water_chill } else { 0.0 };
-            let warmed = heat > 0.5 && cold_air < vitals::CHILLY;
-            let home = server.home_survey(id);
-            // What effects ask of the item in hand (`Holding`) and of the blocks near
-            // (`Near`).
-            let held: Vec<String> = player.held().map_or_else(Vec::new, |item| {
-                let def = server.content.blocks.def(item);
-                effects.held_tags().iter().filter(|tag| def.has_tag(tag)).cloned().collect()
-            });
-            let near: Vec<(String, i32)> = effects.near_asks().iter().filter(|(tag, reach)| server.tagged_within(feet, tag, *reach)).cloned().collect();
-            let max_level = hitpoints.map(|skill| server.content.skills.level(server.players[&id].skills.xp(skill)));
-            // Mending (a prayer) brings health back faster.
-            let mending = server.content.prayers.mending(&server.players[&id].praying.on);
-            // Sat on a seat until they step off it, or it goes.
-            let seated = server.players[&id].vitals.seated.filter(|&seat| {
-                vitals::still_seated(server.players[&id].position, seat)
-                    && server.block(seat).is_some_and(|b| server.content.blocks.def(b).has_tag(voxmar_engine::action::SEAT_TAG))
-            });
+            Survival::step(server, id, seconds);
+        }
+    }
+}
 
-            let player = server.players.get_mut(&id).unwrap();
-            let creative = player.allow_flight;
-            let before = (player.vitals.clone(), player.health);
-            // A minute of other things brings back what eating the same food over and over
-            // took off it.
-            player.food_clock += seconds;
-            if player.food_clock >= 60.0 {
-                player.food_clock -= 60.0;
-                player.recent_food.recover();
+impl Survival {
+    /// Judges player `id`'s effects at once, as the once-a-second pass does but with no time
+    /// gone by: for a change that should tell at once (sat down at a table, then a bite).
+    pub(crate) fn refresh(server: &mut Server, id: PlayerId) {
+        Survival::step(server, id, 0.0);
+    }
+
+    /// One player's pass `seconds` on from the last: warmth, effects, healing and hurt.
+    fn step(server: &mut Server, id: PlayerId, seconds: f32) {
+        let effects = server.content.effects.clone();
+        let hitpoints = server.content.skills.id("core:hitpoints");
+        // Steps of a home reached, counted for quests (`Built("home_snug", 1)`, qualified by the effect's package).
+        let mut reached: Vec<(PlayerId, String)> = Vec::new();
+        {
+        let player = &server.players[&id];
+        if !player.joined || !player.health.alive() {
+            return;
+        }
+        let feet = player.position.floor().as_ivec3();
+        let air = server.temperature.sample(feet.x, feet.z);
+        let heat = server.heat_near(feet);
+        let wet = server.block(feet).and_then(|b| server.content.blocks.fluid(b)).is_some();
+        let outdoors = server.open_sky(feet + voxmar_engine::glam::IVec3::Y * 2);
+        let at = voxmar_engine::glam::Vec2::new(player.position.x, player.position.z);
+        let (tick, day) = (server.tick, server.day);
+        let weather = server.weather.local(&mut server.temperature, at, tick, day).weather;
+        let cold_air = air - if wet { server.survival.water_chill } else { 0.0 };
+        let warmed = heat > 0.5 && cold_air < vitals::CHILLY;
+        let home = server.home_survey(id);
+        // What effects ask of the item in hand (`Holding`) and of the blocks near
+        // (`Near`).
+        let held: Vec<String> = player.held().map_or_else(Vec::new, |item| {
+            let def = server.content.blocks.def(item);
+            effects.held_tags().iter().filter(|tag| def.has_tag(tag)).cloned().collect()
+        });
+        let near: Vec<(String, i32)> = effects.near_asks().iter().filter(|(tag, reach)| server.tagged_within(feet, tag, *reach)).cloned().collect();
+        let max_level = hitpoints.map(|skill| server.content.skills.level(server.players[&id].skills.xp(skill)));
+        // Mending (a prayer) brings health back faster.
+        let mending = server.content.prayers.mending(&server.players[&id].praying.on);
+        // Sat on a seat until they step off it, or it goes.
+        let seated = server.players[&id].vitals.seated.filter(|&seat| {
+            vitals::still_seated(server.players[&id].position, seat)
+                && server.block(seat).is_some_and(|b| server.content.blocks.def(b).has_tag(voxmar_engine::action::SEAT_TAG))
+        });
+
+        let player = server.players.get_mut(&id).unwrap();
+        let creative = player.allow_flight;
+        let before = (player.vitals.clone(), player.health);
+        // A minute of other things brings back what eating the same food over and over
+        // took off it.
+        player.food_clock += seconds;
+        if player.food_clock >= 60.0 {
+            player.food_clock -= 60.0;
+            player.recent_food.recover();
+        }
+        player.timed_effects.retain_mut(|(_, left)| {
+            *left -= seconds;
+            *left > 0.0
+        });
+        // Warmth from what was eaten and the weather counts before the bands of warmth
+        // are judged: soaked through, a mild day feels chilly.
+        let biome = server.overworld.biome_at(feet.x, feet.z);
+        let mut situation = Situation { felt: cold_air + heat, warmed, outdoors, weather: &weather, biome: &biome.name, biome_tags: &biome.tags, home: home.as_ref(), done: &player.quests_done, held: &held, near: &near, seated: seated.is_some() };
+        // What clings (smoke) is topped up while it holds, and lasts after.
+        effects.linger(&situation, &mut player.timed_effects);
+        let first = effects.active(&situation, &player.timed_effects);
+        situation.felt = cold_air + heat + effects.modifiers(&first).warmth;
+        let active = effects.active(&situation, &player.timed_effects);
+        let modifiers = effects.modifiers(&active);
+        // Quests ask whether an effect was ever felt (`Felt`), not how often.
+        for a in &active {
+            player.tallies.entry(format!("felt:{}", effects.get(a.effect).name)).or_insert(1);
+        }
+        player.modifiers = modifiers;
+        let rates = vitals::rates(&modifiers);
+        // Twice the Hitpoints level, and what effects add: a level gained brings health
+        // to fill it; what effects add comes empty (Hearty's tenth, design draft 63), and
+        // what a lowered most takes goes.
+        let base = max_level.map_or(server.survival.max_health as i32, |level| 2 * level as i32).clamp(1, u8::MAX as i32) as u8;
+        let max = (((base as i32 + modifiers.max_health as i32) as f32 * modifiers.max_health_share).round() as i32).clamp(1, u8::MAX as i32) as u8;
+        if base != player.health_base || max != player.health.max {
+            // Just joined: as much as the most went up.
+            let gained = if player.health_base == 0 { max.saturating_sub(player.health.max) } else { base.saturating_sub(player.health_base) };
+            player.health_base = base;
+            player.health.max = max;
+            player.health.current = player.health.current.saturating_add(gained).min(max);
+        }
+        // Healing, while anything is left to heal.
+        match rates.heal_every.filter(|_| player.health.current < player.health.max) {
+            Some(every) => {
+                player.heal_clock += seconds * mending;
+                if player.heal_clock >= every {
+                    player.heal_clock -= every;
+                    player.health.heal(1);
+                }
             }
-            player.timed_effects.retain_mut(|(_, left)| {
-                *left -= seconds;
-                *left > 0.0
-            });
-            // Warmth from what was eaten and the weather counts before the bands of warmth
-            // are judged: soaked through, a mild day feels chilly.
-            let biome = server.overworld.biome_at(feet.x, feet.z);
-            let mut situation = Situation { felt: cold_air + heat, warmed, outdoors, weather: &weather, biome: &biome.name, biome_tags: &biome.tags, home: home.as_ref(), done: &player.quests_done, held: &held, near: &near, seated: seated.is_some() };
-            // What clings (smoke) is topped up while it holds, and lasts after.
-            effects.linger(&situation, &mut player.timed_effects);
-            let first = effects.active(&situation, &player.timed_effects);
-            situation.felt = cold_air + heat + effects.modifiers(&first).warmth;
-            let active = effects.active(&situation, &player.timed_effects);
-            let modifiers = effects.modifiers(&active);
-            // Quests ask whether an effect was ever felt (`Felt`), not how often.
-            for a in &active {
-                player.tallies.entry(format!("felt:{}", effects.get(a.effect).name)).or_insert(1);
-            }
-            player.modifiers = modifiers;
-            let rates = vitals::rates(&modifiers);
-            // Twice the Hitpoints level, and what effects add: a level gained brings health
-            // to fill it; what effects add comes empty (Hearty's tenth, design draft 63), and
-            // what a lowered most takes goes.
-            let base = max_level.map_or(server.survival.max_health as i32, |level| 2 * level as i32).clamp(1, u8::MAX as i32) as u8;
-            let max = (((base as i32 + modifiers.max_health as i32) as f32 * modifiers.max_health_share).round() as i32).clamp(1, u8::MAX as i32) as u8;
-            if base != player.health_base || max != player.health.max {
-                // Just joined: as much as the most went up.
-                let gained = if player.health_base == 0 { max.saturating_sub(player.health.max) } else { base.saturating_sub(player.health_base) };
-                player.health_base = base;
-                player.health.max = max;
-                player.health.current = player.health.current.saturating_add(gained).min(max);
-            }
-            // Healing, while anything is left to heal.
-            match rates.heal_every.filter(|_| player.health.current < player.health.max) {
-                Some(every) => {
-                    player.heal_clock += seconds * mending;
-                    if player.heal_clock >= every {
-                        player.heal_clock -= every;
-                        player.health.heal(1);
+            None => player.heal_clock = 0.0,
+        }
+        match rates.hurt_every.filter(|_| !creative) {
+            Some(every) => {
+                player.hurt_clock += seconds;
+                if player.hurt_clock >= every {
+                    player.hurt_clock -= every;
+                    if player.health.damage(1) {
+                        player.connection.send(ServerMessage::Died);
                     }
                 }
-                None => player.heal_clock = 0.0,
             }
-            match rates.hurt_every.filter(|_| !creative) {
-                Some(every) => {
-                    player.hurt_clock += seconds;
-                    if player.hurt_clock >= every {
-                        player.hurt_clock -= every;
-                        if player.health.damage(1) {
-                            player.connection.send(ServerMessage::Died);
-                        }
-                    }
-                }
-                None => player.hurt_clock = 0.0,
+            None => player.hurt_clock = 0.0,
+        }
+        // The felt temperature is sent to the degree, so it does not resend every tick.
+        player.vitals.felt = situation.felt.round();
+        player.vitals.effects = effects.active(&situation, &player.timed_effects);
+        player.vitals.home = player.home_block();
+        player.vitals.seated = seated;
+        // The steps of a ladder say so when first reached.
+        let gained: Vec<EffectId> = player.vitals.effects.iter().map(|a| a.effect).filter(|&e| effects.get(e).announce && !player.announced.contains(&e)).collect();
+        player.announced.extend(&gained);
+        for effect in gained {
+            let def = effects.get(effect);
+            let (package, own) = def.name.split_once(':').unwrap_or(("", &def.name));
+            reached.push((id, format!("{package}:{}_{own}", def.ladder)));
+            let key = voxmar_engine::lang::def_key("effect", &def.name);
+            let mut words = Words::key("effect.gained").with("name", Words::Own(key.clone(), def.title.clone())).with("what", Words::Own(format!("{key}.description"), def.description.clone()));
+            if !def.next.is_empty() {
+                words = Words::key("effect.gained_next").with("name", Words::Own(key.clone(), def.title.clone())).with("what", Words::Own(format!("{key}.description"), def.description.clone())).with("next", Words::Own(format!("{key}.next"), def.next.clone()));
             }
-            // The felt temperature is sent to the degree, so it does not resend every tick.
-            player.vitals.felt = situation.felt.round();
-            player.vitals.effects = effects.active(&situation, &player.timed_effects);
-            player.vitals.home = player.home_block();
-            player.vitals.seated = seated;
-            // The steps of a ladder say so when first reached.
-            let gained: Vec<EffectId> = player.vitals.effects.iter().map(|a| a.effect).filter(|&e| effects.get(e).announce && !player.announced.contains(&e)).collect();
-            player.announced.extend(&gained);
-            for effect in gained {
-                let def = effects.get(effect);
-                let (package, own) = def.name.split_once(':').unwrap_or(("", &def.name));
-                reached.push((id, format!("{package}:{}_{own}", def.ladder)));
-                let key = voxmar_engine::lang::def_key("effect", &def.name);
-                let mut words = Words::key("effect.gained").with("name", Words::Own(key.clone(), def.title.clone())).with("what", Words::Own(format!("{key}.description"), def.description.clone()));
-                if !def.next.is_empty() {
-                    words = Words::key("effect.gained_next").with("name", Words::Own(key.clone(), def.title.clone())).with("what", Words::Own(format!("{key}.description"), def.description.clone())).with("next", Words::Own(format!("{key}.next"), def.next.clone()));
-                }
-                player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: words });
-            }
-            if player.vitals != before.0 {
-                player.changed(traits::VITALS);
-            }
-            if player.health != before.1 {
-                player.changed(traits::HEALTH);
-            }
+            player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: words });
+        }
+        if player.vitals != before.0 {
+            player.changed(traits::VITALS);
+        }
+        if player.health != before.1 {
+            player.changed(traits::HEALTH);
+        }
         }
         for (id, step) in reached {
             server.tally(id, "built", &step, 1);

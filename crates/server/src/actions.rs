@@ -499,6 +499,8 @@ impl Server {
         player.teleport(voxmar_engine::vitals::seated_feet(seat, solid));
         player.vitals.seated = Some(seat);
         player.changed(traits::VITALS);
+        // What sitting there gives (a table's meal bonus) holds from the first bite.
+        crate::process::Survival::refresh(self, agent);
     }
 
     /// Crafts what `agent`'s grid holds, once or (`all`) as many times as it can: if the

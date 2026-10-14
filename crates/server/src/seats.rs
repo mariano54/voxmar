@@ -157,3 +157,26 @@ fn every_meal_effect_together_stops_at_meal_most() {
     assert_eq!(left, Some(480.0 * 2.0), "a stew's Warm meal under every meal effect");
     assert_eq!(player.health.current, 2 + (6.0 * together.meal_heal).round() as u8, "the heal, under the ceiling, is whole");
 }
+
+/// Sat at a table and eating at once, before the once-a-second pass: the bite already has
+/// the table's meal bonus (a stew's Warm meal lasts a quarter longer).
+#[test]
+fn a_bite_straight_after_sitting_down_has_the_table() {
+    let mut server = fixture();
+    let table = id(&server, "base:oak_table");
+    server.set_block(STOOL + IVec3::new(1, 0, 0), table);
+    let stew = server.content.blocks.expect("base:stew");
+    let warm_meal = server.content.effects.id("base:warm_meal").expect("base's warm_meal");
+    let player = server.players.get_mut(&1).unwrap();
+    player.inventory.slots[0] = Some(ItemStack { item: stew, count: 1 });
+    player.selected = 0;
+    sit(&mut server, STOOL);
+    // Hurt, or a bite is refused.
+    server.players.get_mut(&1).unwrap().health.current = 1;
+    let eat = server.content.actions.expect("core:eat");
+    let at = Instant::now();
+    server.propose(1, eat, ActionTarget::None, at);
+    server.finished_action(1, ActionTarget::None, at + std::time::Duration::from_millis(600));
+    let left = server.players[&1].timed_effects.iter().find(|(e, _)| *e == warm_meal).map(|&(_, s)| s);
+    assert_eq!(left, Some(480.0 * 1.25), "a stew eaten straight after sitting at a table");
+}
