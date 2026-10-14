@@ -74,8 +74,7 @@ fn every_early_quest_names_things_the_content_has() {
                 Goal::Level(name, _) => skill(name),
                 Goal::Met(name, _) => name == "Kinds" || name == "any" || content.wandering.find(name).is_some(),
                 Goal::Prayed(name, _) => qualified(package, name).iter().any(|name| content.prayers.id(name).is_some()),
-                Goal::Offered(name, _) | Goal::Opened(name, _) | Goal::Fertilised(name, _) => item(name),
-                Goal::Offered(name, _) | Goal::Opened(name, _) | Goal::Ate(name, _) => item(name),
+                Goal::Offered(name, _) | Goal::Opened(name, _) | Goal::Ate(name, _) | Goal::Fertilised(name, _) => item(name),
                 Goal::Felt(name) => qualified(package, name).iter().any(|name| content.effects.find(name).is_some()),
                 _ => true,
             };
