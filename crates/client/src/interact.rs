@@ -245,8 +245,9 @@ const BLOCK_USES: [&str; 7] = ["base:light", "base:sleep", "base:pick_lock", "ba
 /// What a right click on the block at `hit` does, as `break_and_place` decides it, for
 /// the prompt under the crosshair (`hud::prompt`): a table, a store or a machine is used;
 /// then the first of `BLOCK_USES` that holds, unless what is in hand cooks there; then
-/// cooking; then picking a ripe crop, sowing from a pouch, or the held item's own action.
-/// Eating, wearing and placing are what the hand does, not the block, and are left out.
+/// cooking; then, unless the press eats, puts armour on or casts instead, picking a ripe
+/// crop, sowing from a pouch, or the held item's own action. Eating, wearing and placing
+/// are what the hand does, not the block, and say nothing.
 pub(crate) fn block_use(world: &ClientWorld, player: &LocalPlayer, content: &Content, actions: &ActionRegistry, hit: &RayHit) -> Option<ActionId> {
     let context = ClientContext { world, player, content };
     let at = ActionTarget::Block { block: hit.block, face: hit.face };
@@ -260,10 +261,24 @@ pub(crate) fn block_use(world: &ClientWorld, player: &LocalPlayer, content: &Con
     {
         return Some(used);
     }
+    if cook.is_some() {
+        return cook;
+    }
+    // The press eats food that would not be placed, puts on armour in hand unless a ripe
+    // crop is picked, or casts a rod, before the held button picks, sows or uses the item.
     let held = context.actor_held();
+    let food = held.is_some_and(|item| world.registry.info(item).food > 0);
+    let placeable = held.is_some_and(|item| world.registry.info(item).placeable);
+    let sowing = actions.id("base:plant").and_then(|plant| actions.get(plant)).map(|def| def.validate(&context, at));
+    let pick = holds("base:pick");
+    let worn = held.and_then(voxmar_engine::inventory::worn_slot).is_some() && pick.is_none();
+    let rod = held.is_some_and(|item| world.registry.def(item).has_tag("rod"));
+    if eats(food, placeable, false, true, sowing.as_ref()) || worn || rod {
+        return None;
+    }
     let pouch = held.is_some_and(|item| world.registry.def(item).has_tag("pouch"));
     let own = held.and_then(|item| world.registry.def(item).action.as_deref());
-    cook.or_else(|| holds("base:pick")).or_else(|| holds("base:plant").filter(|_| pouch)).or_else(|| own.and_then(holds))
+    pick.or_else(|| holds("base:plant").filter(|_| pouch)).or_else(|| own.and_then(holds))
 }
 
 /// Mining proposes `core:mine` and shows progress over the same duration the server
