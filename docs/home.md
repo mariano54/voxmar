@@ -100,7 +100,7 @@ position is inside the home box (`survey_around(anchor, keeper)`); a mod can ask
 `HomeHas("kept", n)` like any other tag, and content load accepts it. `crop` is the block tag
 every crop stage carries, so a garden needs no new tag. Other players' animals never count.
 
-Ideas left: species rules (`kept:hen` for eggs, a cat for fewer mice).
+Ideas left: a cat for fewer mice. Hens lay into the home's stores (below, "Eggs in the stores").
 
 ## Callers (wandering parties that come to a home)
 
@@ -185,7 +185,7 @@ pad 20 blocks out, past the box and short of the day distance. It waits, in serv
 seconds both, for the mark to fade in. It turns home 20° to one side and reads back the
 bearing the mark draws from where it sits, which must be within 3° of home's
 ("way home: dusk"). Back at the camp it waits for the mark to fade out ("way home:
-inside"). It then takes the camp down and sets the time back.
+inside"). It then sets the time back and leaves the camp to the Nest step, which takes it down.
 
 ## Sleeping
 
@@ -238,6 +238,26 @@ step puts four planks in a barrel beside the bag, shoots the table's recipe with
 button ("home-lay-recipe"), presses it, and shoots the grid laid from the barrel
 ("home-lay"; check "home: lay").
 
+## Eggs in the stores
+
+A kept hen (any bird whose product `nests`) that lays inside its keeper's home box lays into
+the home's stores instead of onto the ground: the nearest store that takes an egg and has
+room (a barrel, a crate, a jar; not a basket, which keeps only what is foraged). What finds
+no room, or is laid away from home, falls on the ground as before, where it lasts 30
+minutes. So a pen by the house fills the larder while the keeper is out: no egg hunt round
+the yard, nothing rotting while you travel, and the eggs are there for **Lay**, stations and
+Put Away to draw on like anything else stored.
+
+The keeper is told once home ("Your animals laid into your home's stores: 3 Egg."), so the
+first egg in a barrel is never a mystery; it is told once, then the tally starts again. It
+is data: `nests: true` on a product in creatures.ron (base sets it on every egg), refused at
+launch on a product taken with a tool (wool, milk). The home box is the survival rules' own
+(`home_reach`, `home_up`, `home_down`). Server side in server/src/husbandry.rs (the laying
+pass) with `Server::stores_around`; the keeper must be in the world (logged out, it falls). The
+gate's Nest step keeps a junglefowl at the Home step's bag, opens a barrel, makes an egg
+due, and checks the egg in the barrel and the chat line (shot `home-nest`, check
+"home: nest").
+
 ## A well by the field
 
 Crops grow best with water within four blocks, and rice not at all without it, so a home
@@ -248,7 +268,8 @@ sunk level with it, keeps its ground moist (farm.rs `crop_conditions`), and a st
 `Water` spot counts it too, so a compost heap beside a well rots as fast as one by a stream.
 A mod's rain barrel or cistern is the same tag. Tests: `a_well_waters_the_field_about_it`,
 `a_heap_rots_greens_four_to_one`. The gate's Refusal step sets one down from the hand by its
-dry plot ("well", shot "well").
+dry plot ("well", shot "well"). The Farm quest A Well by the Field (after A Field of Gold)
+asks for one made and set down where it keeps tilled ground moist (`Watering`).
 
 ## Smoke over home
 

@@ -80,8 +80,8 @@ depth or roof that cannot be, or a chance outside (0, 1].
   the fortune teller's cards may tell of one.
 - **Quests count it.** `Opened(chest, n)` counts locks picked open, by chest, tag or `any`.
   Under Lock and Key (Nomad) sends a new player to make a bone pick and open their first
-  chest, and says where they lie; Deeper Down (Farm) sends them further and deeper for a
-  Farm chest.
+  chest, and says where they lie; What Sleeps Below (Farm) sends them further and deeper for
+  two Farm chests.
 
 ## Tests
 

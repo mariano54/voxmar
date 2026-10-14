@@ -10,7 +10,7 @@
         far: ["sounds/thunder_far_1.mp3", "sounds/thunder_far_2.mp3", "sounds/thunder_far_3.mp3"],
     ),
     // Strokes while swimming.
-    swim: ["sounds/swim_1.mp3", "sounds/swim_2.mp3", "sounds/swim_3.mp3", "sounds/swim_4.mp3", "sounds/swim_5.mp3", "sounds/swim_6.mp3"],
+    swim: ["sounds/swim_2.mp3", "sounds/swim_3.mp3", "sounds/swim_4.mp3", "sounds/swim_6.mp3"],
     // Jumping or falling into water.
     splash: ["sounds/splash_1.mp3", "sounds/splash_2.mp3", "sounds/splash_3.mp3"],
     // Jingles for events, our own (tools/generate_jingles.py). A package that lists any for
@@ -28,7 +28,9 @@
     // off.
     pickup: ["sounds/pickup_1.ogg", "sounds/pickup_2.ogg", "sounds/pickup_3.ogg", "sounds/pickup_4.ogg"],
     // What the player does, heard as they do it, by action: about as loud as placing a
-    // block, times `volume`. A package that names an action replaces its sound.
+    // block, times `volume`. A package that names an action replaces its sound. Every
+    // action says how it sounds, or the game does not start: its `sounds`, `silent: true`,
+    // or `heard` elsewhere (Block, Interface or Combat).
     actions: {
         // Three bites and their chews.
         "core:eat": (sounds: ["sounds/eat_1.ogg", "sounds/eat_2.ogg", "sounds/eat_3.ogg"], volume: 0.8),
@@ -49,5 +51,83 @@
         "base:sleep": (sounds: ["sounds/sleep_1.ogg"], volume: 0.7),
         // A line whipped out over the water (the plop is the water's own).
         "base:fish": (sounds: ["sounds/cast_1.ogg", "sounds/cast_2.ogg"], volume: 0.7),
+        // A handful of grain shaken out to an animal, and a pat.
+        "base:tend": (sounds: ["sounds/tend_1.ogg", "sounds/tend_2.ogg"], volume: 0.7),
+        // A pouch tipped out: cloth and a few small things clinking.
+        "base:empty_pouch": (sounds: ["sounds/pouch_1.ogg", "sounds/pouch_2.ogg"], volume: 0.6),
+        // Stepping up to the crafting table: the same parts fitted, softer.
+        "base:use_table": (sounds: ["sounds/craft_1.ogg", "sounds/craft_2.ogg", "sounds/craft_3.ogg"], volume: 0.6),
+        // Something fed into a machine: a scrape and a heavy clunk inside.
+        "base:use_machine": (sounds: ["sounds/machine_1.ogg", "sounds/machine_2.ogg"], volume: 0.9),
+        // Metal ticks in the lock, then the bolt giving.
+        "base:pick_lock": (sounds: ["sounds/lock_1.ogg", "sounds/lock_2.ogg"], volume: 0.7),
+        // A skep's lid lifted, as a store's is.
+        "base:tend_bees": (sounds: ["sounds/store_open_1.ogg", "sounds/store_open_2.ogg"], volume: 0.7),
+        // A soft bell swelling at the altar.
+        "base:pray": (sounds: ["sounds/pray_1.ogg"], volume: 0.8),
+        // Fertiliser scattered over the soil.
+        "base:fertilise": (sounds: ["sounds/sprinkle_1.ogg", "sounds/sprinkle_2.ogg"], volume: 0.8),
+        // Something thrown down: a swish and a soft landing.
+        "core:drop": (sounds: ["sounds/toss_1.ogg", "sounds/toss_2.ogg"], volume: 0.6),
+        // Heard by the block touched: its material's tap, break or placing.
+        "core:mine": (heard: Some(Block)),
+        "core:place": (heard: Some(Block)),
+        "base:plant": (heard: Some(Block)),
+        "base:pick": (heard: Some(Block)),
+        "base:till": (heard: Some(Block)),
+        // Heard by the interface: an item's tap as it moves, a screen closing.
+        "core:transfer": (heard: Some(Interface)),
+        "core:quick_move": (heard: Some(Interface)),
+        "core:lay": (heard: Some(Interface)),
+        "core:stow": (heard: Some(Interface)),
+        // Heard by the fight's own sounds.
+        "core:attack": (heard: Some(Combat)),
+        "core:dodge": (heard: Some(Combat)),
+        // Quiet on purpose: looking an animal over, letting one go (its own sounds say
+        // it), and coming back to life (the screen says it).
+        "base:inspect": (silent: true),
+        "base:release": (silent: true),
+        "core:respawn": (silent: true),
     },
+    // The mix (crates/client/src/mix.rs). A later package's bands and caps replace those it
+    // names; its ducking replaces the whole.
+    mix: (
+        // How loud each kind of sound is heard, low to high, in dB below full scale: the RMS
+        // of a clip's loudest 50 ms (of all of it, for music and the ambience's beds) times
+        // the volume the game plays it at, every volume setting at 100%. Tests measure every
+        // clip we ship against these.
+        bands: {
+            // Every own track is levelled to one loudness (music.ron's `levels`).
+            Music: (-31, -28.5),
+            // Wide: beds and one-shots are tuned place by place (ambience.ron and its tests);
+            // this only catches one far off the rest.
+            Ambience: (-47, -19),
+            // A soft open or close of the quietest set (Tap) up to the brightest click.
+            Ui: (-35, -17),
+            // A mining tap and a step in the leaves up to a block of water broken.
+            Everyday: (-35, -14),
+            // Blows, blocks and dodges: above the everyday, below a near thunderclap.
+            Combat: (-30, -10),
+            // The coins of a claim, softer, up to the milestone tune.
+            Jingles: (-24, -15),
+            // A munch at rest up to a call carrying far.
+            Creatures: (-30.5, -6.5),
+            // Far thunder rolling up to a strike overhead.
+            Weather: (-22, -6),
+        },
+        // Sounds of a kind playing at once, at most; past it, the farthest, then the oldest,
+        // fades out at once to make room.
+        voices: {
+            Ambience: 8,
+            Ui: 3,
+            Everyday: 10,
+            Combat: 8,
+            Jingles: 2,
+            Creatures: 14,
+            Weather: 3,
+        },
+        // The music dips while a jingle plays, or a boss calls, roars or cries, and comes
+        // back after.
+        duck: Some((under: [Jingles], bosses: true, to: 0.4, fall: 0.15, rise: 1.2)),
+    ),
 )
