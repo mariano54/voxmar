@@ -588,8 +588,9 @@ const GAP_MOST: Vec2 = Vec2::new(90.0 * PX, 40.0 * PX);
 const GLOW: f32 = 3.0 * PX;
 /// Pinch a trackpad this much for one step of zoom.
 const PINCH_STEP: f32 = 0.15;
-/// The width of a lane's header, at the left of the canvas, which stays as it is dragged.
-const HEADER: f32 = 74.0 * PX;
+/// The width of a lane's header, at the left of the canvas, which stays as it is dragged:
+/// room for the longest path name (First Steps) on one line, its count under it.
+const HEADER: f32 = 88.0 * PX;
 /// A lane's path icon in its header.
 const PATH_ICON: f32 = 14.0 * PX;
 /// The width of the Current Quest button.
