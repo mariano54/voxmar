@@ -158,7 +158,7 @@ true)`, each optional: room from its width, shelter wanted, company if it is soc
             behaviours: ["prey_small", "grazer"],  // sets from behaviours.ron, plus inline ones
             quirks: ["stands_to_look", "thumps_alarm"],
             loot: [
-                (item: "raw_rabbit"),
+                (item: "raw_small_game"),
                 (item: "rabbit_hide", chance: 0.8, tools: [(tag: "knife", chance: 1.25)]),
                 (item: "rabbit_foot", chance: 0.02, rarity: Rare),
             ],

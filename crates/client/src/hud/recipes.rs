@@ -409,8 +409,14 @@ pub(super) fn way_inputs(card: &mut ChildSpawnerCommands, font: &Handle<Font>, i
                 item_cell(card, font, images, Some(block), None);
             }
         }
-        Method::Cook { input, station, .. } => {
-            item_cell(card, font, images, Some(*input), None);
+        Method::Cook { input, uses, with, station, .. } => {
+            // What is held, then what else it takes, each with how many if more than one.
+            let count = |n: u8| (n > 1).then(|| n.to_string());
+            item_cell(card, font, images, Some(*input), count(*uses));
+            for &(item, n) in with {
+                card.spawn(text(font, "+", BODY, MUTED));
+                item_cell(card, font, images, Some(item), count(n));
+            }
             if let Some(fire) = content.blocks.tagged(station).next() {
                 card.spawn(text(font, "+", BODY, MUTED));
                 item_cell(card, font, images, Some(fire), None);
