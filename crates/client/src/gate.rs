@@ -3755,12 +3755,12 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             };
             let name = world.resource::<Locale>().block(blocks.def(planks));
             let tooltip = world.query_filtered::<(Entity, &InheritedVisibility, &ComputedNode, &bevy::ui::UiGlobalTransform), With<crate::hud::inventory::TooltipLines>>().iter(world).find(|(_, visible, ..)| visible.get()).map(|(entity, _, node, at)| (entity, bevy::math::Rect::from_center_size(at.translation, node.size())));
-            let lines: Vec<(String, bevy::math::Rect, f32)> = match tooltip {
+            let lines: Vec<(String, bevy::math::Rect, Vec2)> = match tooltip {
                 Some((tip, _)) => world
                     .query::<(&Text, &ChildOf, &ComputedNode, &bevy::ui::UiGlobalTransform, &bevy::text::TextLayoutInfo)>()
                     .iter(world)
                     .filter(|(_, parent, ..)| parent.parent() == tip)
-                    .map(|(text, _, node, at, layout)| (text.0.clone(), bevy::math::Rect::from_center_size(at.translation, node.size()), layout.size.x))
+                    .map(|(text, _, node, at, layout)| (text.0.clone(), bevy::math::Rect::from_center_size(at.translation, node.size()), layout.size))
                     .collect(),
                 None => Vec::new(),
             };
@@ -3775,7 +3775,7 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 let (_, tip) = tooltip.unwrap();
                 let window = world.query::<&Window>().iter(world).next().map(|window| bevy::math::Rect::new(0.0, 0.0, window.physical_width() as f32, window.physical_height() as f32));
                 let inside = |inner: bevy::math::Rect, outer: bevy::math::Rect| inner.min.x >= outer.min.x - 0.5 && inner.min.y >= outer.min.y - 0.5 && inner.max.x <= outer.max.x + 0.5 && inner.max.y <= outer.max.y + 0.5;
-                let spills: Vec<&str> = lines.iter().filter(|(_, at, width)| !inside(*at, tip) || *width > at.width() + 0.5).map(|(line, ..)| line.as_str()).collect();
+                let spills: Vec<&str> = lines.iter().filter(|(_, at, drawn)| !inside(*at, tip) || drawn.x > at.width() + 0.5 || drawn.y > at.height() + 0.5).map(|(line, ..)| line.as_str()).collect();
                 let sources: Vec<&str> = lines.iter().map(|(line, ..)| line.as_str()).filter(|line| line.starts_with(&from) || line.starts_with(&into)).collect();
                 gate.check(
                     "tooltip: comes from and used in",
