@@ -163,17 +163,20 @@ impl Server {
         crop::rate(&self.content.crops.get(crop).def, self.crop_conditions(pos)) * self.pollination(pos)
     }
 
-    /// A block that waters crops (`waters`: a well) set down by `agent` where it keeps some
-    /// tilled ground moist counts for the quests that ask a field watered (`Watering`).
-    pub(crate) fn placed_by_field(&mut self, agent: PlayerId, cell: IVec3) {
+    /// A block that waters crops (`waters`: a well) set down by `agent` from `item` where it
+    /// keeps some tilled ground moist counts for the quests that ask a field watered
+    /// (`Watering`), by the item: a well set facing east is still a well.
+    pub(crate) fn placed_by_field(&mut self, agent: PlayerId, item: BlockId, cell: IVec3) {
         let blocks = &self.content.blocks;
-        let Some(placed) = self.block(cell).filter(|&b| blocks.def(b).has_tag("waters")) else { return };
+        if !self.block(cell).is_some_and(|b| blocks.def(b).has_tag("waters")) {
+            return;
+        }
         // The ground a crop is sown on, a level below to a level above it (crop_conditions).
         let tilled = (-1..=1).any(|dy| {
             (-WATER_REACH..=WATER_REACH).any(|dz| (-WATER_REACH..=WATER_REACH).any(|dx| self.block(cell + IVec3::new(dx, dy, dz)).is_some_and(|b| blocks.def(b).has_tag("tilled"))))
         });
         if tilled {
-            let name = blocks.def(placed).name.clone();
+            let name = blocks.def(item).name.clone();
             self.tally(agent, "watering", &name, 1);
         }
     }
@@ -470,14 +473,15 @@ mod tests {
         server.players.insert(1, player);
         let place = server.content.actions.expect("core:place");
         let watering = |server: &Server| server.players[&1].tallies.get("watering:base:well").copied().unwrap_or(0);
+        let waters = |server: &Server, at: IVec3| server.block(at).map(|b| server.content.blocks.def(b).name.clone());
         server.propose(1, place, voxmar_engine::action::ActionTarget::Block { block: IVec3::new(10, FLOOR, 8), face: Face::PosY }, std::time::Instant::now());
-        assert_eq!(server.block(IVec3::new(10, FLOOR + 1, 8)), Some(well));
+        assert_eq!(waters(&server, IVec3::new(10, FLOOR + 1, 8)).as_deref(), Some("base:well_west"), "set facing the player");
         assert_eq!(watering(&server), 0, "no tilled ground near");
         // Farmland four blocks off, level with the floor the next well stands on.
         server.set_block(IVec3::new(10, FLOOR, 14), farmland);
         server.propose(1, place, voxmar_engine::action::ActionTarget::Block { block: IVec3::new(10, FLOOR, 10), face: Face::PosY }, std::time::Instant::now());
-        assert_eq!(server.block(IVec3::new(10, FLOOR + 1, 10)), Some(well));
-        assert_eq!(watering(&server), 1, "a well by the field");
+        assert!(server.block(IVec3::new(10, FLOOR + 1, 10)).is_some_and(|b| server.content.blocks.def(b).has_tag("waters")));
+        assert_eq!(watering(&server), 1, "a well by the field, whichever way it faces");
     }
 
     #[test]
