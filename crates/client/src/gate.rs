@@ -568,6 +568,10 @@ struct Gate {
     web_canvas: Vec2,
     /// The quest a lane's header was pressed to bring into view.
     web_head: Option<String>,
+    /// A quest's cell on the web across, and the point of the canvas at the middle of the
+    /// well (a share of it), before the wheel zooms the web.
+    web_cell: f32,
+    web_middle: Vec2,
     /// Where the player died in the workshop, the most items carried since waking, and when
     /// (in server seconds) that last went up.
     fell: Vec3,
@@ -801,6 +805,8 @@ impl Gate {
             web_scroll: Vec2::ZERO,
             web_canvas: Vec2::ZERO,
             web_head: None,
+            web_cell: 0.0,
+            web_middle: Vec2::ZERO,
             fell: Vec3::ZERO,
             gathered: (0, 0.0),
             kiln: IVec3::ZERO,
@@ -5441,12 +5447,15 @@ fn nest(world: &mut World, gate: &mut Gate, now: f32) {
     let (torch, barrel, hen) = (bag + IVec3::X, stand + IVec3::new(0, 0, 2), stand + IVec3::new(0, 0, -3));
     // Where a rug and a stool are set down and broken again, either side of the barrel.
     let (rug, stool) = (stand + IVec3::new(1, 0, 1), stand + IVec3::new(-1, 0, 1));
+    // A chest beside the barrel and a campfire: two stores by a fire are a Pantry, and the
+    // barrel alone is one, so the Pantry comes only if a chest counts as storage.
+    let (chest, fire) = (stand + IVec3::new(-1, 0, 2), stand + IVec3::new(2, 0, 2));
     let waited = gate.server_in_phase();
     let leave = |world: &mut World, gate: &mut Gate| {
         world.resource_mut::<UiState>().inventory_open = false;
         let net = world.resource::<Net>();
         net.command("creatures remove junglefowl");
-        for at in [bag, torch, barrel, rug, stool] {
+        for at in [bag, torch, barrel, rug, stool, chest, fire] {
             net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
         }
         net.command("clear egg");
@@ -5464,6 +5473,8 @@ fn nest(world: &mut World, gate: &mut Gate, now: f32) {
             // Back where the Home step stood, whatever the way home step left.
             net.command(&format!("tp {} {} {}", stand.x as f32 + 0.5, stand.y, stand.z as f32 + 0.5));
             net.command(&format!("setblock {} {} {} barrel", barrel.x, barrel.y, barrel.z));
+            net.command(&format!("setblock {} {} {} chest", chest.x, chest.y, chest.z));
+            net.command(&format!("setblock {} {} {} campfire", fire.x, fire.y, fire.z));
             net.command(&format!("summon junglefowl 1 {} {} {}", hen.x, hen.y, hen.z));
             net.command("creatures tame junglefowl");
             net.command("creatures hold junglefowl");
@@ -5491,11 +5502,16 @@ fn nest(world: &mut World, gate: &mut Gate, now: f32) {
         2 => {
             let laid = eggs(world);
             let told = world.resource::<crate::hud::console::Console>().since(gate.phase_since).any(|l| l.contains("laid into your home's stores"));
-            if laid > 0 && told {
+            let pantry = {
+                let (player, launch) = (world.resource::<LocalPlayer>(), world.resource::<Launch>());
+                launch.content.effects.id("base:pantry").is_some_and(|id| player.vitals.effects.iter().any(|a| a.effect == id))
+            };
+            if laid > 0 && told && pantry {
                 if gate.shot(world, "home-nest").is_none() {
                     return;
                 }
                 gate.check("home: nest", Ok(format!("a hen kept at home laid {laid} egg into the barrel there (shot home-nest), and the chat said so")));
+                gate.check("home: storage", Ok("a chest and a barrel by a campfire made a Pantry: the chest counts as storage".into()));
                 // Then the furniture is moved: a rug and a stool beside the player, on stone.
                 world.resource_mut::<UiState>().inventory_open = false;
                 let net = world.resource::<Net>();
@@ -5511,6 +5527,7 @@ fn nest(world: &mut World, gate: &mut Gate, now: f32) {
             } else if waited > 15.0 {
                 let open = world.resource::<LocalPlayer>().inventory.store.is_some();
                 gate.check("home: nest", Err(format!("{waited:.1} server s after the hen's egg was made due: {laid} eggs in the barrel (open {open}), told {told}")));
+                gate.check("home: storage", if pantry { Ok("a chest and a barrel by a campfire made a Pantry".into()) } else { Err(format!("{waited:.1} server s on, a chest and a barrel by a campfire at home made no Pantry: the chest did not count as storage")) });
                 leave(world, gate);
             }
         }
@@ -5827,6 +5844,46 @@ const WEB_GRAB: Vec2 = Vec2::new(900.0, 700.0);
 const WEB_DRAG: Vec2 = Vec2::new(160.0, 120.0);
 
 /// Where the quest book's canvas stands in the window, in its pixels.
+/// Whether every line the quest book's web draws has its corners inside the well (`well`,
+/// in the window's pixels), slanted ones cut at its edge, and some line is drawn.
+fn lines_inside(world: &mut World, well: Rect) -> Result<String, String> {
+    let well = well.inflate(1.0);
+    let mut lines = world.query_filtered::<(&Node, &ComputedNode, &bevy::ui::UiGlobalTransform), With<crate::hud::quests::WebLine>>();
+    let (mut shown, mut out) = (0, Vec::new());
+    for (node, computed, at) in lines.iter(world) {
+        if node.display == Display::None {
+            continue;
+        }
+        shown += 1;
+        let half = computed.size() / 2.0;
+        let corners = [Vec2::new(-half.x, -half.y), Vec2::new(half.x, -half.y), half, Vec2::new(-half.x, half.y)].map(|c| at.transform_point2(c));
+        if let Some(c) = corners.iter().find(|c| !well.contains(**c)) {
+            out.push(format!("{c} outside {well:?}"));
+        }
+    }
+    let all = lines.iter(world).count();
+    if out.is_empty() && shown > 0 { Ok(format!("{shown} of {all} lines drawn, every corner inside the well")) } else { Err(format!("{shown} of {all} lines drawn; {} poke out: {:?}", out.len(), out.iter().take(3).collect::<Vec<_>>())) }
+}
+
+/// The quest book's well, in the window's pixels, and the size of a quest's cell on its
+/// web, in the interface's.
+fn web_well(world: &mut World) -> Option<(Rect, f32)> {
+    let well = world.query_filtered::<(&ComputedNode, &bevy::ui::UiGlobalTransform), With<crate::hud::quests::Web>>().iter(world).next().map(|(c, at)| Rect::from_center_size(at.translation, c.size()))?;
+    let cell = world.query_filtered::<&ComputedNode, With<crate::hud::quests::QuestNode>>().iter(world).next().map(|c| c.size().x * c.inverse_scale_factor())?;
+    Some((well, cell))
+}
+
+/// The point of the quest book's canvas at the middle of its well, in steps between
+/// quests, and which ways the canvas is bigger than the well (a canvas smaller than the
+/// well is centred in it).
+fn web_middle(world: &mut World) -> Option<(Vec2, BVec2)> {
+    let (well, room) = world.query_filtered::<(&ComputedNode, &bevy::ui::UiGlobalTransform), With<crate::hud::quests::Web>>().iter(world).next().map(|(c, at)| (at.translation, c.size()))?;
+    let mut canvases = world.query::<(&crate::hud::quests::Canvas, &ComputedNode, &bevy::ui::UiGlobalTransform)>();
+    let (canvas, computed, at) = canvases.iter(world).next()?;
+    let size = computed.size();
+    Some((canvas.grid((well - (at.translation - size / 2.0)) * computed.inverse_scale_factor()), size.cmpgt(room)))
+}
+
 fn canvas_at(world: &mut World) -> Vec2 {
     world.query_filtered::<&bevy::ui::UiGlobalTransform, With<crate::hud::quests::Canvas>>().iter(world).next().map_or(Vec2::ZERO, |at| at.translation)
 }
@@ -6211,23 +6268,8 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 "quests: drag",
                 if moved.distance(wanted) < 2.0 { Ok(format!("dragged {WEB_DRAG} points on the empty web, its canvas moved {moved} pixels ({wanted} within its edges)")) } else { Err(format!("dragged {WEB_DRAG} points on the empty web, its canvas moved {moved} pixels, not {wanted}")) },
             );
-            // Each line's drawn corners against the well, in the window's pixels.
-            let well = Rect::from_center_size(Vec2::new(x, y), Vec2::new(w, h)).inflate(1.0);
-            let mut lines = world.query_filtered::<(&Node, &ComputedNode, &bevy::ui::UiGlobalTransform), With<crate::hud::quests::WebLine>>();
-            let (mut shown, mut out) = (0, Vec::new());
-            for (node, computed, at) in lines.iter(world) {
-                if node.display == Display::None {
-                    continue;
-                }
-                shown += 1;
-                let half = computed.size() / 2.0;
-                let corners = [Vec2::new(-half.x, -half.y), Vec2::new(half.x, -half.y), half, Vec2::new(-half.x, half.y)].map(|c| at.transform_point2(c));
-                if let Some(c) = corners.iter().find(|c| !well.contains(**c)) {
-                    out.push(format!("{c} outside {well:?}"));
-                }
-            }
-            let all = lines.iter(world).count();
-            gate.check("quests: lines inside", if out.is_empty() && shown > 0 { Ok(format!("{shown} of {all} lines drawn, every corner inside the well")) } else { Err(format!("{shown} of {all} lines drawn; {} poke out: {:?}", out.len(), out.iter().take(3).collect::<Vec<_>>())) });
+            let lines = lines_inside(world, Rect::from_center_size(Vec2::new(x, y), Vec2::new(w, h)));
+            gate.check("quests: lines inside", lines);
             gate.advance(now);
         }
         19 => {
@@ -6275,6 +6317,90 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             } else {
                 gate.check("quests: path", Err(format!("2 s after a lane header was pressed for {:?} (canvas wanted at {wanted}): picked {picked:?}, canvas at {scroll}, the quest at {node:?} in the well {well:?}", gate.web_head)));
             }
+            gate.advance(now);
+        }
+        // The wheel turned a notch toward the player over the web zooms it out a step: its
+        // quests draw smaller about the middle of the well, which stays where it was on the
+        // web, and every line still stays inside the well.
+        22 => {
+            let (Some((_, cell)), Some((middle, _))) = (web_well(world), web_middle(world)) else {
+                return quit(world, gate, "quests: zoom", "the quest book has no web or no quests".into());
+            };
+            gate.web_cell = cell;
+            gate.web_middle = middle;
+            let Some(web) = world.query_filtered::<Entity, With<crate::hud::quests::Web>>().iter(world).next() else { return };
+            world.resource_mut::<UiClicks>().hover = Some(web);
+            world.write_message(bevy::input::mouse::MouseWheel { unit: bevy::input::mouse::MouseScrollUnit::Line, x: 0.0, y: -1.0, window: Entity::PLACEHOLDER, phase: bevy::input::touch::TouchPhase::Moved });
+            gate.advance(now);
+        }
+        23 => {
+            let zoom = world.resource::<crate::hud::quests::QuestView>().zoom;
+            let (Some((well, cell)), Some((middle, bigger))) = (web_well(world), web_middle(world)) else {
+                if in_phase > 2.0 {
+                    quit(world, gate, "quests: zoom", "the quest book's web went after a notch of the wheel".into());
+                }
+                return;
+            };
+            // Drawn anew at the new zoom: the canvas follows the frame after.
+            let settled = zoom < 0 && cell < gate.web_cell && in_phase > 0.2;
+            if !settled && in_phase < 2.0 {
+                return;
+            }
+            // Where the middle of the well falls on the web moves by less than half a step
+            // between quests, a pixel's rounding; a canvas smaller than the well is centred
+            // in it instead.
+            let off = (middle - gate.web_middle).abs();
+            let held = (!bigger.x || off.x < 0.5) && (!bigger.y || off.y < 0.5);
+            let result = if settled && held {
+                Ok(format!("a notch of the wheel zoomed the web out to zoom {zoom}: quests {:.0} pixels across (were {:.0}), the middle of the well still at {middle} steps on the web", cell, gate.web_cell))
+            } else {
+                Err(format!("2 s after a notch of the wheel over the web: zoom {zoom}, quests {cell:.0} pixels across (were {:.0}), the middle of the well at {middle} steps on the web (was {})", gate.web_cell, gate.web_middle))
+            };
+            gate.check("quests: zoom", result);
+            gate.check("quests: lines inside zoomed", lines_inside(world, well));
+            if gate.shot(world, "quests-zoomed").is_some() {
+                gate.advance(now);
+            }
+        }
+        // Turned to the last chapter and another quest, Current Quest brings the book back
+        // to the quest the player is on, picked, its cell inside the well.
+        24 => {
+            let current = {
+                let (launch, player, settings) = (world.resource::<Launch>(), world.resource::<LocalPlayer>(), world.resource::<crate::settings::Settings>());
+                crate::hud::quests::current(&launch.content, player, settings).map(|q| q.name.clone())
+            };
+            let Some(button) = world.query_filtered::<Entity, With<crate::hud::quests::CurrentButton>>().iter(world).next() else {
+                return quit(world, gate, "quests: current", "the quest book has no Current Quest button".into());
+            };
+            let (last, other) = {
+                let content = &world.resource::<Launch>().content;
+                let ages = crate::hud::quests::chapters(content);
+                let last = ages.len().saturating_sub(1);
+                (last, content.quests.iter().filter(|q| ages.get(last) == Some(&q.age) && Some(&q.name) != current.as_ref()).last().map(|q| q.name.clone()))
+            };
+            let mut view = world.resource_mut::<crate::hud::quests::QuestView>();
+            view.chapter = last;
+            view.picked = other;
+            gate.web_head = current;
+            world.resource_mut::<UiClicks>().next = Some((button, MouseButton::Left));
+            gate.advance(now);
+        }
+        25 => {
+            let picked = world.resource::<crate::hud::quests::QuestView>().picked.clone();
+            let well = web_well(world).map(|(well, _)| well);
+            let node = world.query::<(&crate::hud::quests::QuestNode, &bevy::ui::UiGlobalTransform)>().iter(world).find(|(n, _)| Some(&n.0) == gate.web_head.as_ref()).map(|(_, at)| at.translation);
+            let shown = matches!((well, node), (Some(well), Some(node)) if well.contains(node));
+            if gate.web_head.is_some() && picked == gate.web_head && shown {
+                if gate.shot(world, "quests-current").is_none() {
+                    return;
+                }
+                gate.check("quests: current", Ok(format!("Current Quest turned the book back to {picked:?}, picked and inside the well")));
+            } else if in_phase < 2.0 {
+                return;
+            } else {
+                gate.check("quests: current", Err(format!("2 s after Current Quest was pressed (the quest on: {:?}): picked {picked:?}, its cell at {node:?} in the well {well:?}", gate.web_head)));
+            }
+            world.resource_mut::<crate::hud::quests::QuestView>().zoom = 0;
             world.resource_mut::<UiState>().quests_open = false;
             gate.next(Step::Catalogue, now);
         }
@@ -10722,7 +10848,19 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     world.resource_mut::<LocalPlayer>().selected = slot;
                     gate.count_before = cooked;
                     gate.cook_started = true;
-                } else if gate.waited_out(10.0) {
+                    // The looks were not clicks: the cook's own wait counts its clicks.
+                    gate.taps = 0;
+                } else {
+                    // No click goes before the cook starts: each look at the setup, once
+                    // every `TAP_EVERY` of the game's time, is what `waited_out` counts, so
+                    // it gives up only once both the server and this client have waited.
+                    if now - gate.tap_at >= TAP_EVERY {
+                        gate.tap_at = now;
+                        gate.taps += 1;
+                    }
+                    if !gate.waited_out(10.0) {
+                        return;
+                    }
                     gate.check(check, Err(format!("the {name} ({placed}) or raw small game in the hotbar ({slot:?}) never came")));
                     hearth_done(world, gate, now, hearth, chimney, stove);
                 }
