@@ -5,6 +5,8 @@
 // far. What `needs` asks of the spot is asked when it is loaded and when it is taken; what
 // `faster` notices about the spot when it is loaded makes the work that many times as quick.
 // The skill named is asked to load it and trained (`xp` each) when what it made is taken.
+// `sound` is what loading it sounds like (`Water`: stirred in), else its working block's
+// placing; taking what it made pops like a pickup.
 //
 // `fertilisers`: an item held to a growing crop grows the crops within `reach` a stage.
 (
@@ -19,6 +21,17 @@
             ],
             needs: [OpenSky],
             faster: [(Near("fire", 3), 2.0)],
+        ),
+        // A cooking pot (Nomad): over a hob (a campfire, or on the hearthstone) with water near,
+        // two grain simmer to porridge (Cooking 3) and, in the Farm age, three meat, roots or
+        // vegetables to a stew (Cooking 14), warm going down.
+        (
+            empty: "cooking_pot", working: "cooking_pot_simmering", ready: "cooking_pot_ready", holds: 6,
+            works: [
+                (input: "tag:grain+!vegetable+!seed", takes: 2, output: "porridge", minutes: 2.0, skill: "core:cooking", level: 3, xp: 14.0),
+                (input: "tag:raw+meat|tag:root+!grain+!cooked|tag:vegetable+!cooked|tag:produce+edible+!grain+!fruit+!cooked", takes: 3, output: "stew", minutes: 3.0, skill: "core:cooking", level: 14, xp: 36.0),
+            ],
+            needs: [Near("hob", 1), Water(4)], sound: Some(Water),
         ),
         // A compost heap (Farm): crops, greens, fruit, spare seed and burnt food rot down,
         // four to one, half as fast again with water near to keep it damp.

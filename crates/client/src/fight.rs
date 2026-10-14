@@ -45,6 +45,9 @@ pub struct Fighting {
     /// taken is the tail of `struck` and `hurt`.
     pub struck_count: u32,
     pub hurt_count: u32,
+    /// How many blows this side has asked the server to strike, ever (`core:attack`): a click
+    /// at nothing in reach, or one held for the beat, asks nothing.
+    pub strikes: u32,
     /// How many of the server's pings (`ServerMessage::Ping`), which time the round trip
     /// guards and dodges are judged by, have been answered, ever.
     pub pings: u32,
