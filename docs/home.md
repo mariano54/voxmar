@@ -138,6 +138,18 @@ lacks is read off its own condition (`Condition::lacks`), so a mod's steps are c
 extra work; a block tag shows by `home.tag.<tag>` in the language files, else as the tag.
 It is a console command, so it needs no protocol change.
 
+## The way home
+
+Away from home (the lit hearth, else the bed last slept in), a small hearth mark at the top
+of the screen sits over where home lies, with how far it is ("Home 140 m"). Turned away from
+it, the mark waits at the screen's edge on the side to turn to, so a player lost at night
+turns until it is in the middle and walks. Within `home_hidden_within` blocks (core
+`interface.ron`, 24) nothing shows; the mark's icon is the item a package names as
+`home_icon` (base: the hearthstone). The server sends home in the player's vitals
+(`Vitals::home`, protocol 38) once a second when it changes. With no hearth lit and no bed
+slept in, there is no mark. The gate's Home step checks it after the camp: the bag named as
+home and the mark showing its distance.
+
 ## Sleeping
 
 Right clicking a bed used to only set where you wake. It now also gives a **rest** (the

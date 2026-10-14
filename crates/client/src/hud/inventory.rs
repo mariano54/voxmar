@@ -110,16 +110,22 @@ fn worn_glyph(slot: usize) -> Option<Piece> {
 /// What packages restyle of the interface (`interface.ron`, in `core`); a later package
 /// changes what it gives. Read with the rest of the content at launch, which a bad value
 /// fails.
-#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+#[derive(Resource, Clone, Debug, PartialEq)]
 pub struct InterfaceStyle {
     /// How strongly an empty worn well shows what it takes, 0 to 1.
     pub worn_glyph_alpha: f32,
+    /// Blocks from home within which the way home is not shown (`hud::home`).
+    pub home_hidden_within: f32,
+    /// The item whose icon marks home, if a package names one.
+    pub home_icon: Option<String>,
 }
 
 #[derive(Default, serde::Deserialize)]
 #[serde(default, deny_unknown_fields)]
 struct InterfaceFile {
     worn_glyph_alpha: Option<f32>,
+    home_hidden_within: Option<f32>,
+    home_icon: Option<String>,
 }
 
 impl InterfaceStyle {
@@ -127,16 +133,22 @@ impl InterfaceStyle {
 
     pub fn load(files: &[voxmar_engine::content::ContentFile]) -> Result<Self, String> {
         let options = ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME);
-        let mut alpha = None;
+        let (mut alpha, mut hidden, mut icon) = (None, None, None);
         for file in files.iter().filter(|f| f.name == Self::FILE) {
             let given: InterfaceFile = options.from_str(&file.source).map_err(|e| format!("{}/{}: {e}", file.package, Self::FILE))?;
             alpha = given.worn_glyph_alpha.or(alpha);
+            hidden = given.home_hidden_within.or(hidden);
+            icon = given.home_icon.or(icon);
         }
         let worn_glyph_alpha = alpha.ok_or(format!("no package's {} gives worn_glyph_alpha", Self::FILE))?;
         if !(0.0..=1.0).contains(&worn_glyph_alpha) {
             return Err(format!("{}: worn_glyph_alpha {worn_glyph_alpha} is not from 0 to 1", Self::FILE));
         }
-        Ok(InterfaceStyle { worn_glyph_alpha })
+        let home_hidden_within = hidden.ok_or(format!("no package's {} gives home_hidden_within", Self::FILE))?;
+        if !(home_hidden_within >= 0.0 && home_hidden_within.is_finite()) {
+            return Err(format!("{}: home_hidden_within {home_hidden_within} is not 0 or more", Self::FILE));
+        }
+        Ok(InterfaceStyle { worn_glyph_alpha, home_hidden_within, home_icon: icon })
     }
 }
 
@@ -1169,6 +1181,11 @@ mod tests {
         let file = |source: &str| voxmar_engine::content::ContentFile { package: "mod".into(), name: InterfaceStyle::FILE.into(), source: source.into() };
         files.push(file("(worn_glyph_alpha: 0.5)"));
         assert_eq!(InterfaceStyle::load(&files).unwrap().worn_glyph_alpha, 0.5);
+        let style = InterfaceStyle::load(&files).unwrap();
+        assert_eq!((style.home_hidden_within, style.home_icon.as_deref()), (24.0, Some("base:hearthstone")), "core's distance, base's icon");
+        files.push(file("(home_hidden_within: -1.0)"));
+        assert!(InterfaceStyle::load(&files).is_err());
+        files.pop();
         files.push(file("(worn_glyph_alpha: 2.0)"));
         assert!(InterfaceStyle::load(&files).is_err());
     }
