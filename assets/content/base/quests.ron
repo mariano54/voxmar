@@ -197,8 +197,8 @@
         ),
         (
             name: "hard_to_put_down", age: "nomad", branch: "combat", title: "Hard to Put Down",
-            why: "Two skills grow only in a fight. Defence trains on the blows you turn aside while you fight back against something your match, and Hitpoints, twice your level in health, on every blow you land. Rabbits and fowl cannot hurt you, so wear your hide wraps against boar and wolves in the woods, or the monsters that come out at night. Reach Defence 3 and Hitpoints 12.",
-            tasks: [[Level("defence", 3), Level("hitpoints", 12)]],
+            why: "Two skills grow only in a fight. Defence trains on the blows you turn aside while you fight back against something your match, and Hitpoints, twice your level in health, on every blow you land. Rabbits and fowl cannot hurt you, so wear your hide wraps against boar and wolves in the woods, or the monsters that come out at night. Reach Defence 3 and Hitpoints 11.",
+            tasks: [[Level("defence", 3), Level("hitpoints", 11)]],
             after: ["raise_your_guard"],
             rewards: [Xp("defence", 60.0), Xp("hitpoints", 40.0)],
         ),
@@ -225,7 +225,7 @@
         ),
         (
             name: "break_ground", age: "nomad", branch: "farming", title: "Break Ground",
-            why: "A hoe tills grass or dirt into farmland, where seeds can be sown. Make a hoe at the crafting table: two cobblestone or two planks over two sticks. Right-click soil with it to till.",
+            why: "A hoe tills grass or dirt into farmland, where seeds can be sown. Make a hoe at the crafting table: two cobblestone over two sticks. Right-click soil with it to till.",
             tasks: [[Craft("stone_hoe", 1)], [Craft("wooden_hoe", 1)], [Craft("copper_hoe", 1)]],
             after: ["daily_bread", "crafting_table"],
             rewards: [Xp("engineering", 40.0), Item("wheat_seeds", 4)],
@@ -302,7 +302,7 @@
         ),
         (
             name: "a_sharp_edge", age: "nomad", branch: "crafting", title: "A Sharp Edge",
-            why: "A knife is the hunter's tool: it makes a kill drop hide more often, cuts plants cleanly, and cuts twine from tall grass. A wooden knife is a plank over a stick, a stone knife a cobblestone over a stick; both fit the inventory grid.",
+            why: "A knife is the hunter's tool: it makes a kill drop hide more often, cuts plants cleanly, and cuts twine from tall grass. A stone knife is a cobblestone over a stick; it fits the inventory grid.",
             tasks: [[Craft("stone_knife", 1)], [Craft("wooden_knife", 1)]],
             after: ["stone_in_hand"],
             rewards: [Xp("engineering", 30.0)],
@@ -345,10 +345,10 @@
         // The Farm age: fired clay, copper and tin, and the Crucible Kiln that opens bronze.
         (
             name: "the_potter", age: "farm", branch: "main", title: "The Potter",
-            why: "Pots and vials hold potions and stews, and the pot is the heart of the kiln you are working toward. Shape six clay pots from fired clay at the crafting table: five fired clay in a cup shape make two (Crafting 2).",
+            why: "Pots hold stews, and the pot is the heart of the kiln you are working toward. Shape six clay pots from fired clay at the crafting table: five fired clay in a cup shape make two (Crafting 2).",
             tasks: [[Craft("clay_pot", 6)]],
             after: ["homestead_hearth", "fire_the_clay"],
-            rewards: [Xp("crafting", 305.0), Item("clay", 8)],
+            rewards: [Xp("crafting", 305.0), Item("fired_clay", 4)],
         ),
         (
             name: "a_pot_on_the_fire", age: "farm", branch: "cooking", title: "A Pot on the Fire",
@@ -461,7 +461,7 @@
             name: "a_well_by_the_field", age: "farm", branch: "farming", title: "A Well by the Field",
             why: "Crops want water within four blocks, so a field far from a river or pond stays poor. A well waters as water does. Make one at the crafting table (Construction 8): a stick, a plank and a stick along the top; a cobblestone, a pail and a cobblestone across the middle; three cobblestones along the bottom. A pail is two planks set corner to corner. Set the well on the ground beside your tilled field, or sunk level with it, no more than four blocks from the crops.",
             tasks: [[Craft("well", 1), Watering("well", 1)]],
-            after: ["a_field_of_gold"],
+            after: ["a_field_of_gold", "a_proper_bed"],
             rewards: [Xp("construction", 120.0), Xp("farming", 80.0)],
         ),
         (
@@ -511,7 +511,7 @@
             why: "Hold wheat seeds (wild wheat and your own field give them), walk up slowly (no sprinting, no hitting) and right-click a junglefowl until it trusts you; they keep to warm grassland and jungle. A kept hen needs room, grass or feed, and water nearby, and lays an egg about every five minutes. Tame three.",
             tasks: [[Tame("junglefowl", 3)]],
             after: ["first_harvest"],
-            rewards: [Xp("farming", 100.0)],
+            rewards: [Xp("farming", 100.0), Xp("hunter", 180.0)],
         ),
         (
             name: "a_trough_for_the_pen", age: "farm", branch: "husbandry", title: "A Trough for the Pen",
@@ -536,7 +536,7 @@
         ),
         (
             name: "a_woolly_flock", age: "farm", branch: "husbandry", title: "A Woolly Flock",
-            why: "Mouflon, the wild sheep, need Hunter 5 to tame; look on mountains and heath. Hold wheat, its favourite, approach calmly and right-click. A kept sheep grows its wool back: shear it with your shears. Have your shears made before you go.",
+            why: "Mouflon, the wild sheep, need Hunter 5 to tame (taming, hunting and Bigger Game teach it); look on mountains and heath. Hold wheat, its favourite, approach calmly and right-click. A kept sheep grows its wool back: shear it with your shears. Have your shears made before you go.",
             tasks: [[Tame("mouflon", 1), Craft("shears", 1)]],
             after: ["fresh_eggs"],
             rewards: [Xp("hunter", 200.0), Xp("farming", 100.0)],
@@ -613,8 +613,8 @@
         ),
         (
             name: "seasoned_fighter", age: "farm", branch: "combat", title: "Seasoned Fighter",
-            why: "Bigger animals and tougher monsters teach Attack faster. Keep fighting until you reach Attack 8; your health grows with Hitpoints as you go.",
-            tasks: [[Level("attack", 8)]],
+            why: "Bigger animals and tougher monsters teach Attack faster. Keep fighting until you reach Attack 6; your health grows with Hitpoints as you go.",
+            tasks: [[Level("attack", 6)]],
             after: ["bigger_game", "full_hide_wraps"],
             rewards: [Xp("hitpoints", 200.0)],
         ),

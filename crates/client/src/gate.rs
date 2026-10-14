@@ -5421,9 +5421,7 @@ const NEWCOMER_GOAL: &str = "base:homestead_hearth";
 /// in the book and that neither its quest's words nor those of a quest before it name, or a
 /// creature none of them name. Each as "quest: thing".
 pub fn newcomer_misses(content: &voxmar_engine::content::Content, locale: &Locale) -> Vec<String> {
-    use voxmar_engine::quest::Goal;
     let quests = &content.quests;
-    let book = voxmar_engine::recipe_book::RecipeBook::new(content);
     // The way to the hearth, every quest before it, then the Farm quests that open with it.
     let mut opening: Vec<&str> = Vec::new();
     let mut todo = vec![NEWCOMER_GOAL];
