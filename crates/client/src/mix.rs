@@ -7,8 +7,9 @@
 //!   of its kind is lost; one far louder startles.
 //! - Ducking. While a jingle plays (a quest finished, a level reached), or a boss calls or
 //!   strikes, the music dips under it and comes back after.
-//! - Voices. Every sound started is a [`Voice`] of a category; past the category's cap the
-//!   farthest, then the oldest, fades out at once to make room.
+//! - Voices. Every sound started is a [`Voice`] of a category (but the music and the
+//!   ambience's beds, which crossfade on their own); past the category's cap the farthest,
+//!   then the oldest, fades out at once to make room.
 //! - Distance. Sounds of things the player can walk up to (a block broken, a creature's
 //!   call or step) fade along one curve, [`falloff`], to silence at their reach, and are
 //!   panned to the nearer ear. The ambience's birds and thunder are far off by design and
