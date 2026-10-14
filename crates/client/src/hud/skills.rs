@@ -1,7 +1,7 @@
 //! Skills on the HUD, RuneScape-style: each bit of experience earned rises at the right of
 //! the screen as "+18 Farming" and fades (gains close together add up into one line), a
-//! new level is noted in a small plate above them with the skill's icon, and an action
-//! refused for want of a level says what it needs (all of them waiting under the quest book
+//! new level rings and is noted in a small plate above them with the skill's icon, and an
+//! action refused for want of a level says what it needs (all of them waiting under the quest book
 //! and the journal while one is open). The character screen lists every
 //! skill's level and how far it is to the next.
 
@@ -13,6 +13,7 @@ use crate::menu::Screen;
 use crate::player::UiState;
 use crate::session::Launch;
 use crate::ui::skin::{PX, Piece};
+use crate::ui::sound::UiSound;
 use crate::ui::widgets::{ACCENT, BODY, ERROR, GOLD, SHADOW, TEXT, UiFont, shadowed};
 use crate::ui::widgets::space;
 
@@ -35,7 +36,7 @@ impl Plugin for SkillHudPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<SkillToasts>()
             .add_systems(PostStartup, spawn)
-            .add_systems(Update, (show, move_aside).run_if(in_state(Screen::InGame)))
+            .add_systems(Update, (show, move_aside, hear_levels).run_if(in_state(Screen::InGame)))
             .add_systems(OnExit(Screen::InGame), |mut toasts: ResMut<SkillToasts>| *toasts = SkillToasts::default());
     }
 }
@@ -61,6 +62,8 @@ pub struct SkillToasts {
     lines: Vec<Line>,
     /// A level just reached, and when.
     level: Option<(SkillId, u8, f32)>,
+    /// Levels reached and not yet heard (`hear_levels`).
+    unheard: Vec<u8>,
 }
 
 impl SkillToasts {
@@ -79,6 +82,7 @@ impl SkillToasts {
     /// `skill` reached `level` at `now`.
     pub fn level_up(&mut self, skill: SkillId, level: u8, now: f32) {
         self.level = Some((skill, level, now));
+        self.unheard.push(level);
     }
 
     /// Whether a refusal saying `why` is showing.
@@ -275,6 +279,13 @@ fn show(
         shadow.color = SHADOW.with_alpha(SHADOW.alpha() * alpha);
     }
     visibility.set_if_neq(Visibility::Inherited);
+}
+
+/// A level reached rings (the interface's jingles take it from there).
+fn hear_levels(mut toasts: ResMut<SkillToasts>, mut sounds: MessageWriter<UiSound>) {
+    for level in toasts.unheard.drain(..) {
+        sounds.write(UiSound::LevelUp(level));
+    }
 }
 
 #[cfg(test)]
