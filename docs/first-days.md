@@ -149,8 +149,11 @@ a /tp across the plot. Each quest must show done at its step, so a step whose te
 recipes cannot be followed fails here.
 
 Its messages are stamped with the game's clock (`Fresh::now`), so mining, cooking, walking and
-blows go at the test server's ticks (60 times the clock's pace) and the run takes about 11 s
-of wall time for some nine minutes of game time. For that, a test server's swings land by the
+blows go at the test server's ticks, and the server runs in lockstep with the bot
+(`ServerConfig::lockstep`): it ticks only once the bot has taken in the tick before, as quick
+as the bot goes. The run takes about 4 s of wall time for some seven minutes of game time,
+and a bot starved of the cores on a busy machine loses no ticks: the game time is the bot's
+own however loaded the machine. For that, a test server's swings land by the
 latest stamp heard when it is later than the clock (`tick_fights`), which over a network it
 never is.
 
@@ -287,6 +290,14 @@ clamp's minute is spent firing clay toward A Kiln Load, which then comes sooner)
 Still long, and left: Fire the Clay (about 60 s, 35 of it firing, before the clamp is known)
 and punching the first logs. The clamp could open with A Pit Kiln to cover Fire the Clay
 too; that is the next step if the first Farm minutes read as slow in play.
+
+In lockstep (Oct 14) the bot loses no ticks to its own turns, which a server ticking at 60
+times the clock's pace ran on through, about a tenth of each step even on a calm machine
+(Timber 13 to 12, An Axe to It 34 to 30). Five runs: Timber 11 to 12, An Axe to It 29 to 30,
+Stone in Hand 39 to 40 (the same each run, as the rest would be but for the hunt and the
+firing's cracks), First Night 52 to 60, Homestead Hearth lit 82 to 95, Fire the Clay 137 to
+148, Charcoal 196 to 207, Red Metal 205 to 216, A Kiln Load 292 to 316, Brick by Brick 381 to
+408, Crucible Kiln lit 392 to 418.
 
 ## Measured pacing
 
