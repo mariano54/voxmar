@@ -32,6 +32,8 @@ use super::{Creature, Temperament, mix, unit_from};
 const HUNGER_RATE: f32 = 1.0 / 240.0;
 /// Fear and anger fade per second.
 const FEAR_FADE: f32 = 0.12;
+/// How long a creature that gave up a chase leaves players be (`Mind::give_up`).
+pub const GAVE_UP: f32 = 20.0;
 const ANGER_FADE: f32 = 1.0 / 45.0;
 /// Within a band, modules within this share of the best score are all in the draw, and
 /// the running one keeps going while it is.
@@ -211,6 +213,9 @@ pub enum Memory {
     FedBy(u32),
     /// Kin nearby raised the alarm.
     Alarm,
+    /// It gave up a chase it could not win (out past its leash, or no way to its target):
+    /// it neither hunts nor fights back for a while, unless struck again.
+    GaveUp,
 }
 
 /// A creature's state of mind, kept between decisions.
@@ -296,6 +301,17 @@ impl Mind {
         if let Some(id) = by {
             self.remember(Memory::HurtBy(id), 45.0);
         }
+        // Struck again, it takes up the fight it gave up.
+        self.memories.retain(|(m, _)| *m != Memory::GaveUp);
+    }
+
+    /// Gives up the chase: its anger and grudges go, and for `GAVE_UP` seconds it hunts
+    /// no one (`Memory::GaveUp`), so it goes home rather than hang at a fence or follow a
+    /// player across the land.
+    pub fn give_up(&mut self) {
+        self.anger = 0.0;
+        self.memories.retain(|(m, _)| !matches!(m, Memory::HurtBy(_)));
+        self.remember(Memory::GaveUp, GAVE_UP);
     }
 
     /// Lets go of every grudge and fright: it was hurt by no one.

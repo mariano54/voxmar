@@ -551,6 +551,9 @@ impl Module for Hunt {
     fn want(&self, ctx: &Ctx) -> Option<Want> {
         let def = &ctx.creature.def;
         let personality = &ctx.mind.personality;
+        if ctx.mind.recalls(Memory::GaveUp) {
+            return None;
+        }
         if let Some(p) = ctx.attacker().filter(|_| ctx.mind.anger > 0.0) {
             return Want::at(2.5 * ctx.mind.anger.max(personality.aggression), *p);
         }
@@ -596,6 +599,14 @@ impl Module for Defend {
 fn strike(ctx: &Ctx, mind: &mut Mind, target: Option<Seen>, stalks: bool) -> Decision {
     let Some(p) = target else { return Decision::default() };
     let def = &ctx.creature.def;
+    // Past its leash it gives the chase up and goes home: a wolf does not follow a player
+    // across the land. A boss fights to the end, and those the server sends after someone
+    // (guards) go where it says.
+    let leash = if ctx.at.kept { def.leash.min(super::super::husbandry::KEPT_LEASH) } else { def.leash };
+    if !def.boss && ctx.at.errand.is_none() && flat(ctx.at.position, ctx.at.home) > leash {
+        mind.give_up();
+        return Decision::default();
+    }
     // Close when an attack of the phase it has reached fits, measured as its wind-up
     // measures it (from its body's edge, at its own size): a boss with a volley strikes
     // from afar, and closes in where none of its moves fits (`moves::Creature::reaches`).
