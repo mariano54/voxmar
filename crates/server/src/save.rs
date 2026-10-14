@@ -1223,6 +1223,7 @@ mod tests {
         assert_eq!(blocks.item_named("base:cooked_rabbit"), Some(cooked), "dropped items and station loads resolve the same way");
         assert_eq!(blocks.saved_id("base:raw_chicken"), Some(raw), "and a column's block names");
         assert_eq!(blocks.id("base:raw_rabbit"), None, "the old names are no items now");
+        assert_eq!(blocks.item_named("base:bronze_blend"), Some(blocks.expect("base:bronze_ingot")), "a blend is the bronze it smelted into");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

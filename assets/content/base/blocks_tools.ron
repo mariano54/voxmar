@@ -120,4 +120,9 @@
         (template: "drop", name: "taming_treat", tags: ["taming_treat", "trust:2"], all: (color: (200, 140, 80))),
         (template: "drop", name: "seed_mix", tags: ["breeding_feed"], all: (color: (170, 140, 70))),
     ],
+    // Bronze is made in one step at the crucible now; a blend an older save holds comes
+    // back as the bronze it would have smelted into (Oct 14).
+    renamed: {
+        "bronze_blend": "bronze_ingot",
+    },
 )
