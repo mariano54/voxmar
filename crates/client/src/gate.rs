@@ -448,6 +448,9 @@ struct Gate {
     /// Shots asked for, and those that arrived.
     requested: Vec<&'static str>,
     shots: Arc<Mutex<FxHashMap<&'static str, Image>>>,
+    /// Times each shot was forgotten: one asked for before its latest forgetting is
+    /// dropped when it arrives, so a retake never keeps an image of the scene it replaces.
+    forgotten: Arc<Mutex<FxHashMap<&'static str, u32>>>,
     placed: Vec<IVec3>,
     /// The block being dug, and those dug with what they were.
     digging: Option<(IVec3, BlockId)>,
@@ -631,6 +634,7 @@ impl Gate {
             identity_id: None,
             requested: Vec::new(),
             shots: default(),
+            forgotten: default(),
             placed: Vec::new(),
             digging: None,
             dug: Vec::new(),
@@ -788,14 +792,30 @@ impl Gate {
         if !self.requested.contains(&name) {
             self.requested.push(name);
             let shots = self.shots.clone();
+            let forgotten = self.forgotten.clone();
+            let round = forgotten.lock().expect("gate shots").get(name).copied();
             world
                 .spawn(Screenshot::image(self.target.clone()))
                 .observe(save_to_disk(self.dir.join(format!("{name}.png"))))
                 .observe(move |captured: On<ScreenshotCaptured>| {
-                    shots.lock().expect("gate shots").insert(name, captured.image.clone());
+                    if forgotten.lock().expect("gate shots").get(name).copied() == round {
+                        shots.lock().expect("gate shots").insert(name, captured.image.clone());
+                    }
                 });
         }
         self.shots.lock().expect("gate shots").get(name).cloned()
+    }
+
+    /// Forgets the shots called `names`, those still on their way included, so the next
+    /// `shot` of each takes it again.
+    fn forget(&mut self, names: &[&'static str]) {
+        let mut forgotten = self.forgotten.lock().expect("gate shots");
+        for &name in names {
+            *forgotten.entry(name).or_default() += 1;
+        }
+        drop(forgotten);
+        self.requested.retain(|n| !names.contains(n));
+        self.shots.lock().expect("gate shots").retain(|n, _| !names.contains(n));
     }
 
     fn earlier_shot(&self, name: &str) -> Option<Image> {
@@ -5736,6 +5756,7 @@ fn held(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         info!("gate: held: {near} near the sky shots; sending the wild creatures away and taking them again");
         world.resource::<Net>().command("creatures disperse");
         empty_hand(world);
+        gate.forget(&HELD_SKY);
         gate.phase = 1;
         gate.advance(now);
         return;
@@ -5813,7 +5834,7 @@ fn held(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let Some(empty_dark) = gate.shot(world, "held-empty-dark") else { return };
             let (x, y, z) = (feet.x, feet.y, feet.z);
             world.resource::<Net>().command(&format!("fill {} {y} {} {} {} {} air", x - 3, z - 3, x + 3, y + 5, z + 3));
-            let shots: Vec<Option<Image>> = ["held-empty", "held-sword", "held-block", "held-empty-after", "held-sword-dark"].map(|n| gate.earlier_shot(n)).into();
+            let shots: Vec<Option<Image>> = [HELD_SKY[0], HELD_SKY[1], HELD_SKY[2], HELD_SKY[3], "held-sword-dark"].map(|n| gate.earlier_shot(n)).into();
             let [Some(empty), Some(sword), Some(block), Some(empty_after), Some(sword_dark)] = shots.as_slice() else {
                 gate.check("held", Err("a shot of the hand was never taken".into()));
                 gate.next(Step::NaturalSpawns, now);
@@ -5860,6 +5881,8 @@ const HELD_ELSEWHERE: f32 = 0.5;
 /// shots, and the times the step sends them away and begins those shots again.
 const HELD_CLEAR: f32 = 32.0;
 const HELD_CLEARS: u32 = 3;
+/// The sky shots a retake takes again.
+const HELD_SKY: [&str; 4] = ["held-empty", "held-sword", "held-block", "held-empty-after"];
 
 /// The nearest wild creature shown within `reach` of the player (none kept by anyone, and
 /// no villager: what `/creatures disperse` sends away), by name and distance.
