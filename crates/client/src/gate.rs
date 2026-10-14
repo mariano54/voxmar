@@ -529,8 +529,8 @@ struct Gate {
     chimney_owed: f32,
     /// What the dry step's pot water replaced, put back after.
     pot_ground: Option<String>,
-    /// Raw small game carried as the dry step hangs the rack, so its readout can count what
-    /// hung.
+    /// Raw small game carried, slots and pouch, as the dry step hangs the rack, so its
+    /// readout can count what hung.
     rack_rabbits: u32,
     /// The creature the combat-marks step tells its blows at, when (game time) it last told
     /// them, and how many runs it has told.
@@ -2058,6 +2058,14 @@ fn holding(world: &World, name: &str) -> (u32, Option<usize>) {
     let slots = &player.inventory.slots;
     let count = slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum();
     (count, slots.iter().position(|s| s.is_some_and(|s| s.item == item)))
+}
+
+/// How many of item `name` the player carries, in slots and pouches (`carried` counts
+/// everything).
+fn carried_of(world: &World, name: &str) -> u32 {
+    let (player, client) = (world.resource::<LocalPlayer>(), world.resource::<ClientWorld>());
+    let Some(item) = client.registry.id(name) else { return 0 };
+    holding(world, name).0 + player.inventory.pouched.iter().filter(|(i, _)| *i == item).map(|&(_, n)| n as u32).sum::<u32>()
 }
 
 /// Puts one of item `name` into each crafting cell in `cells` and crafts as many as it
@@ -10194,6 +10202,9 @@ const POT_WATER: IVec3 = IVec3::new(-2, -1, 0);
 /// the bare rack's: the strips cover about half the middle of the hung rack.
 const MEAT_SHOWS: f32 = 0.08;
 
+/// Raw small game the dry step gives to hang on the rack.
+const RACK_GIVEN: u32 = 2;
+
 /// A drying rack by the campfire, seen from three blocks at eye height (shot `rack_bare`
 /// once the renderer has it), raw rabbit selected: right clicks on it hang the rabbit
 /// (`base:use_station`), so the server sends the hung rack back, and once the renderer has
@@ -10210,8 +10221,10 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
         0 => {
             let net = world.resource::<Net>();
             net.command(&format!("setblock {} {} {} drying_rack", rack.x, rack.y, rack.z));
-            net.command("give raw_small_game 2");
+            net.command(&format!("give raw_small_game {RACK_GIVEN}"));
             net.command(&format!("tp {} {} {}", rack.x as f32 + 0.5, rack.y, rack.z as f32 - 2.5));
+            // What will be carried once the gift comes: earlier steps may have left some.
+            gate.rack_rabbits = carried_of(world, "base:raw_small_game") + RACK_GIVEN;
             gate.advance(now);
         }
         1 => {
@@ -10219,11 +10232,12 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
             let client = world.resource::<ClientWorld>();
             let stood = client.registry.id("base:drying_rack").is_some_and(|r| client.block(rack) == Some(r));
             let there = world.resource::<LocalPlayer>().position.distance(Vec3::new(rack.x as f32 + 0.5, rack.y as f32, rack.z as f32 - 2.5)) < 0.5;
-            if stood && there && drawn(world, rack) && gate.shot(world, "rack_bare").is_some() && select(world, "base:raw_small_game") {
-                gate.rack_rabbits = holding(world, "base:raw_small_game").0;
+            let given = carried_of(world, "base:raw_small_game") >= gate.rack_rabbits;
+            if stood && there && given && drawn(world, rack) && gate.shot(world, "rack_bare").is_some() && select(world, "base:raw_small_game") {
+                gate.rack_rabbits = carried_of(world, "base:raw_small_game");
                 gate.advance(now);
             } else if waited {
-                gate.check("drying rack", Err(format!("the rack ({stood}) or raw rabbit in hand never came in {DRY_WAIT} server seconds")));
+                gate.check("drying rack", Err(format!("the rack ({stood}) or the {RACK_GIVEN} raw small game given ({given}) never came in {DRY_WAIT} server seconds")));
                 gate.next(Step::Tame, now);
             }
         }
@@ -10286,8 +10300,9 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
                 let (locale, launch, client) = (world.resource::<Locale>(), world.resource::<Launch>(), world.resource::<ClientWorld>());
                 let (raw, hung) = (client.registry.id("base:raw_small_game"), client.registry.id("base:drying_rack_hung"));
                 let output = hung.zip(raw).and_then(|(hung, raw)| Some(launch.content.stations.of(hung)?.0.work(raw)?.1.output));
-                // What hung: what was carried before, less what is carried now.
-                let count = gate.rack_rabbits.saturating_sub(holding(world, "base:raw_small_game").0);
+                // What hung: what was carried before, less what is carried now (a rack takes
+                // what the pouch holds too).
+                let count = gate.rack_rabbits.saturating_sub(carried_of(world, "base:raw_small_game"));
                 let name = |item: BlockId| locale.block(launch.content.blocks.def(item));
                 (raw.map(|raw| locale.format("target.station.holds", &[("count", &count), ("item", &name(raw))])), output.map(name))
             };
