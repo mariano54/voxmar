@@ -2,7 +2,8 @@
 """Synthesizes the everyday action sounds: eating, crafting, lighting a fire, opening a
 chest or a door, cooking, lying down to sleep, casting a line, picking an item up, feeding
 an animal, emptying a pouch, loading a machine, picking a lock, praying at an altar,
-spreading fertiliser, throwing an item down, and a snare springing shut.
+spreading fertiliser, throwing an item down, a snare springing shut, a fish landed, and
+food coming off the fire done or burnt.
 
 Our own work, built from noise, resonators and decaying modes (no samples). Run once
 offline; the clips are written to assets/content/base/sounds/ as Ogg Vorbis and listed in
@@ -346,6 +347,60 @@ def snare(rng):
     return out
 
 
+def splash(rng, seconds, centre):
+    """Water broken: a wet burst of noise falling in pitch, and a few drops after."""
+    n = int(seconds * RATE)
+    t = np.arange(n) / RATE
+    burst = bandpass(rng.standard_normal(n), centre * (0.55 + 0.45 * np.exp(-t / 0.08)), 0.9) * envelope(n, 0.004, 0.09)
+    return burst + 0.4 * lowpass(rng.standard_normal(n), 0.05) * envelope(n, 0.002, 0.05)
+
+
+def drop(rng, freq):
+    """One drop falling back into water: a short rising bloop."""
+    n = int(0.07 * RATE)
+    t = np.arange(n) / RATE
+    phase = np.cumsum(2 * np.pi * freq * (1 + 1.2 * t / 0.07) / RATE)
+    return np.sin(phase) * envelope(n, 0.002, 0.018)
+
+
+def catch(rng):
+    """A fish landed: it breaks the water, drops patter back, and it flaps twice on the
+    bank."""
+    out = np.zeros(int(0.85 * RATE))
+    place(out, 0.0, splash(rng, 0.35, rng.uniform(1400, 1800)), 1.0)
+    for _ in range(5):
+        place(out, rng.uniform(0.12, 0.38), drop(rng, rng.uniform(700, 1300)), rng.uniform(0.15, 0.3))
+    for at in [0.5, 0.66]:
+        n = int(0.06 * RATE)
+        slap = bandpass(rng.standard_normal(n), rng.uniform(900, 1200), 1.4) * envelope(n, 0.001, 0.015)
+        place(out, at + rng.uniform(-0.02, 0.02), slap + 0.5 * lowpass(rng.standard_normal(n), 0.04) * envelope(n, 0.001, 0.01), 0.6)
+    return out
+
+
+def burnt(rng):
+    """Food left too long: a sharp hiss as it catches, a dull puff of smoke and a few dry
+    sputters, darker than a sizzle."""
+    seconds = 1.0
+    n = int(seconds * RATE)
+    t = np.arange(n) / RATE
+    hiss = bandpass(rng.standard_normal(n), 2600 * (1 - 0.5 * np.minimum(t / 0.6, 1)), 0.8) * envelope(n, 0.005, 0.25)
+    puff = lowpass(rng.standard_normal(n), 0.015) * envelope(n, 0.02, 0.18) * 3
+    out = hiss + puff
+    place(out, 0.25, crackles(rng, 0.6, 12, 0.7))
+    return out * np.minimum((seconds - t) / 0.2, 1.0)
+
+
+def cooked(rng):
+    """Food done and lifted off: the sizzle easing away and a light tap on a board."""
+    seconds = 0.7
+    n = int(seconds * RATE)
+    t = np.arange(n) / RATE
+    sizzle = bandpass(rng.standard_normal(n), 4800, 0.8) * np.exp(-t / 0.22) * 0.6
+    out = sizzle + crackles(rng, seconds, 18, 0.5) * np.exp(-t / 0.3)
+    place(out, 0.3, knock(rng, rng.uniform(380, 460), 0.8))
+    return out
+
+
 def finish(mono, rng, width=0.15):
     """The clip made stereo (a hair of width from a short delay), faded, and brought to
     its loudness."""
@@ -383,6 +438,9 @@ SOUNDS = {
     "sprinkle": (sprinkle, 2),
     "toss": (toss, 2),
     "snare": (snare, 2),
+    "catch": (catch, 2),
+    "burnt": (burnt, 2),
+    "cooked": (cooked, 2),
 }
 
 

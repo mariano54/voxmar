@@ -95,8 +95,8 @@ impl Mixer {
             .product()
     }
 
-    /// How muffled a one-shot is, 0..1: as far as it ducks indoors.
-    fn muffling(&self, env: &Environment, duck: &[(DuckBy, f32)]) -> f32 {
+    /// How muffled a layer is, 0..1: as far as it ducks indoors.
+    pub fn muffling(&self, env: &Environment, duck: &[(DuckBy, f32)]) -> f32 {
         let shelter = env.get(Fixed::Shelter).clamp(0.0, 1.0);
         duck.iter().filter(|(by, _)| *by == DuckBy::Axis(Fixed::Shelter as usize)).map(|&(_, amount)| amount * shelter).fold(0.0, f32::max)
     }
@@ -196,6 +196,17 @@ pub fn place(dry: &[f32], wet: &[Vec<f32>; 2], at: Option<Vec3>, ears: Vec3, rig
         (0..len).map(|i| dry.get(i).copied().unwrap_or(0.0) * gain * dry_gain + wet.get(i).copied().unwrap_or(0.0) * reverb).collect()
     };
     [channel(left_gain, &wet[0]), channel(right_gain, &wet[1])]
+}
+
+/// Every how many samples a fully muffled bed keeps one: past its cutoff there is nothing
+/// left to keep at the full rate, and a bed so kept takes a quarter of the memory.
+pub const MUFFLED_STEP: usize = 4;
+
+/// A bed's segment fully muffled, as heard from indoors: low-passed to `cutoff` Hz and
+/// kept at a [`MUFFLED_STEP`]th of the rate.
+pub fn muffled(mut channels: [Vec<f32>; 2], cutoff: f32) -> [Vec<f32>; 2] {
+    muffle(&mut channels, 1.0, cutoff.min(crate::sfx::RATE as f32 / MUFFLED_STEP as f32 * 0.4));
+    channels.map(|channel| channel.into_iter().step_by(MUFFLED_STEP).collect())
 }
 
 /// Muffles a placed one-shot by `amount` (0: as it is, 1: down to `cutoff` Hz) with a gentle

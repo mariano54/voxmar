@@ -30,7 +30,8 @@
     // What the player does, heard as they do it, by action: about as loud as placing a
     // block, times `volume`. A package that names an action replaces its sound. Every
     // action says how it sounds, or the game does not start: its `sounds`, `silent: true`,
-    // or `heard` elsewhere (Block, Interface or Combat).
+    // or `heard` elsewhere (Block, Interface or Combat). `brings`: what its result sounds
+    // like as it lands in the pack, by the first `tag` the item has (none: anything).
     actions: {
         // Three bites and their chews.
         "core:eat": (sounds: ["sounds/eat_1.ogg", "sounds/eat_2.ogg", "sounds/eat_3.ogg"], volume: 0.8),
@@ -46,11 +47,23 @@
         // played louder.
         "base:open": (sounds: ["sounds/door_1.ogg", "sounds/door_2.ogg"], volume: 1.3),
         // A hiss settling into a sizzle as food meets the fire.
-        "base:cook": (sounds: ["sounds/cook_1.ogg", "sounds/cook_2.ogg"], volume: 0.9),
+        // Food on the fire, and as it comes off: done, with a tap on a board, or burnt, with a
+        // dark hiss and a puff of smoke, so a burn is heard as it happens.
+        "base:cook": (
+            sounds: ["sounds/cook_1.ogg", "sounds/cook_2.ogg"], volume: 0.9,
+            brings: [
+                (tag: Some("burnt"), sounds: ["sounds/burnt_1.ogg", "sounds/burnt_2.ogg"], volume: 0.8),
+                (sounds: ["sounds/cooked_1.ogg", "sounds/cooked_2.ogg"], volume: 0.7),
+            ],
+        ),
         // Lying down: rustles of cloth and straw.
         "base:sleep": (sounds: ["sounds/sleep_1.ogg"], volume: 0.7),
         // A line whipped out over the water (the plop is the water's own).
-        "base:fish": (sounds: ["sounds/cast_1.ogg", "sounds/cast_2.ogg"], volume: 0.7),
+        // A line cast, and what it lands: a fish breaking the water and flapping on the bank.
+        "base:fish": (
+            sounds: ["sounds/cast_1.ogg", "sounds/cast_2.ogg"], volume: 0.7,
+            brings: [(sounds: ["sounds/catch_1.ogg", "sounds/catch_2.ogg"], volume: 0.8)],
+        ),
         // A handful of grain shaken out to an animal, and a pat.
         "base:tend": (sounds: ["sounds/tend_1.ogg", "sounds/tend_2.ogg"], volume: 0.7),
         // A pouch tipped out: cloth and a few small things clinking.
