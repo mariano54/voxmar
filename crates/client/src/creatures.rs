@@ -552,6 +552,18 @@ impl Creatures {
         self.shown.get(&id).is_some_and(|shown| shown.stopped > 0.0 || shown.white > 0.0 || shown.flinch.is_some())
     }
 
+    /// Creature `id`'s death as shown: seconds since it died, and whether it has gone up in
+    /// smoke.
+    pub fn dying(&self, id: u32) -> Option<(f32, bool)> {
+        let shown = self.shown.get(&id)?;
+        shown.dying.map(|t| (t, shown.poofed))
+    }
+
+    /// Seconds into creature `id`'s flinch from a blow, while it flinches.
+    pub fn flinching(&self, id: u32) -> Option<f32> {
+        self.shown.get(&id)?.flinch
+    }
+
     /// Creature `id` while it is shown, alive or falling: its species, where its feet are
     /// and its scale.
     pub fn body(&self, id: u32) -> Option<(CreatureId, Vec3, f32)> {

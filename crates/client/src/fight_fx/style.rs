@@ -127,6 +127,39 @@ pub struct MarkerLook {
     pub width: f32,
 }
 
+/// A shot from a sling or a bow, flying from the hand to what it was loosed at: how fast
+/// (blocks a second), how high it arcs over the way (blocks at the middle of a flight 10
+/// blocks long, more for longer), the missile drawn (`length` along its flight by `width`
+/// across, in `colour`), the trail it leaves, how far the hand kicks back as it is loosed,
+/// the puff where it lands (unset colour: the coat of the creature it struck, else dust), and
+/// the sounds it lands with on a creature (`hit`) or anything else (`land`).
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ShotLook {
+    pub speed: f32,
+    pub arc: f32,
+    pub length: f32,
+    pub width: f32,
+    pub colour: Rgb,
+    pub trail: TrailLook,
+    pub kick: f32,
+    pub puff: Burst,
+    pub hit: String,
+    pub land: String,
+}
+
+/// A shot's trail: a speck left every `every` blocks of its flight, `size` wide, fading over
+/// `life` seconds, in `colour` at `alpha` (0 to 1).
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TrailLook {
+    pub every: f32,
+    pub size: f32,
+    pub life: f32,
+    pub colour: Rgb,
+    pub alpha: f32,
+}
+
 /// The camera and the hand.
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -200,6 +233,7 @@ struct FxFile {
     camera: Option<CameraLook>,
     sounds: BTreeMap<String, SoundDef>,
     tells: BTreeMap<String, TellLook>,
+    shots: BTreeMap<String, ShotLook>,
 }
 
 /// How fights look and sound, from every package's `combat_fx.ron`.
@@ -214,6 +248,8 @@ pub struct FightLook {
     /// Wind-ups told by sound and marker, by the creature's name and its move's
     /// (`rootmother.grasp`), or its name alone for its plain attack.
     pub tells: BTreeMap<String, TellLook>,
+    /// Shots by the weapon class that looses them (`sling`, `bow`).
+    pub shots: BTreeMap<String, ShotLook>,
 }
 
 const BLOWS: [Blow; 5] = [Blow::Plain, Blow::Beat, Blow::Flourish, Blow::Counter, Blow::Bleed];
@@ -234,6 +270,11 @@ impl FightLook {
         missing
     }
 
+    /// Weapon classes that shoot (take ammunition) with no shot to show.
+    pub fn unshot<'a>(&self, classes: impl IntoIterator<Item = &'a voxmar_engine::combat::ClassDef>) -> Vec<String> {
+        classes.into_iter().filter(|c| c.ammo.is_some() && !self.shots.contains_key(&c.name)).map(|c| c.name.clone()).collect()
+    }
+
     pub fn load(files: &[ContentFile]) -> Result<Self, String> {
         let options = ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME);
         let mut all = FxFile::default();
@@ -251,6 +292,7 @@ impl FightLook {
             all.strikes.extend(given.strikes);
             all.sounds.extend(given.sounds);
             all.tells.extend(given.tells);
+            all.shots.extend(given.shots);
         }
         let look = FightLook {
             hit: all.hit.ok_or(format!("no package's {FILE} gives the hit"))?,
@@ -260,6 +302,7 @@ impl FightLook {
             camera: all.camera.ok_or(format!("no package's {FILE} gives the camera"))?,
             sounds: all.sounds,
             tells: all.tells,
+            shots: all.shots,
         };
         for blow in BLOWS.map(blow_name) {
             look.blows.get(blow).ok_or(format!("{FILE}: nothing for a {blow} blow"))?;
@@ -344,6 +387,28 @@ impl FightLook {
                 && (!(0.05..=1.0).contains(&marker.alpha) || !(0.02..=1.0).contains(&marker.width))
             {
                 return Err(format!("{FILE}: the {name} tell's ring is 0.05 to 1 opaque and 0.02 to 1 blocks wide"));
+            }
+        }
+        for (name, shot) in &self.shots {
+            for sound in [&shot.hit, &shot.land] {
+                self.sounds.get(sound).ok_or(format!("{FILE}: the {name} shot's sound `{sound}` is not given"))?;
+            }
+            let trail = &shot.trail;
+            let fine = (5.0..=120.0).contains(&shot.speed)
+                && (0.0..=3.0).contains(&shot.arc)
+                && (0.02..=2.0).contains(&shot.length)
+                && (0.01..=0.5).contains(&shot.width)
+                && (0.0..=0.3).contains(&shot.kick)
+                && (0.05..=4.0).contains(&trail.every)
+                && (0.005..=0.5).contains(&trail.size)
+                && (0.02..=2.0).contains(&trail.life)
+                && (0.0..=1.0).contains(&trail.alpha);
+            if !fine {
+                return Err(format!("{FILE}: the {name} shot flies 5 to 120 blocks a second, arcs 0 to 3 blocks, is 0.02 to 2 long and 0.01 to 0.5 wide, kicks 0 to 0.3, and leaves a speck every 0.05 to 4 blocks 0.005 to 0.5 wide for 0.02 to 2 s at 0 to 1 opaque"));
+            }
+            let puff = shot.puff;
+            if puff.count > 64 || !(puff.life > 0.0 && puff.life <= 4.0) || !(puff.size > 0.0 && puff.size <= 2.0) || !(puff.speed >= 0.0 && puff.speed <= 30.0) {
+                return Err(format!("{FILE}: the {name} shot's puff must be at most 64 particles, living over 0 to 4 s, 0 to 2 blocks wide, at 0 to 30 blocks a second"));
             }
         }
         for (name, sound) in &self.sounds {
