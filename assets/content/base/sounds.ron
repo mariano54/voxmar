@@ -1,6 +1,6 @@
 // Recorded sounds the game plays for events: paths within this package. Field recordings
-// from Freesound, all CC0; who made each is in THIRD_PARTY_NOTICES.md. Rain and running
-// water are ambience beds (ambience.ron).
+// from Freesound, all CC0; who made each is in THIRD_PARTY_NOTICES.md. The jingles at the
+// end are our own. Rain and running water are ambience beds (ambience.ron).
 (
     // Thunder by how far off the lightning struck: close strikes that crack and roll, the
     // same heard from farther off (muffled), and far rolls.
@@ -13,8 +13,14 @@
     swim: ["sounds/swim_1.mp3", "sounds/swim_2.mp3", "sounds/swim_3.mp3", "sounds/swim_4.mp3", "sounds/swim_5.mp3", "sounds/swim_6.mp3"],
     // Jumping or falling into water.
     splash: ["sounds/splash_1.mp3", "sounds/splash_2.mp3", "sounds/splash_3.mp3"],
-    // A quest finished, and a finished quest's rewards claimed. None listed: the game plays
-    // its own synthesized chimes. A package that lists some (here or in a mod) replaces them.
-    quest_done: [],
-    quest_claim: [],
+    // Jingles for events, our own (tools/generate_jingles.py). A package that lists any for
+    // an event replaces these; several listed take turns.
+    // A quest finished: a plucked "amen" close, settling home under bells.
+    quest_done: ["sounds/quest_done_1.ogg"],
+    // A finished quest's rewards claimed: coins into the purse and a glint.
+    quest_claim: ["sounds/quest_claim_1.ogg", "sounds/quest_claim_2.ogg", "sounds/quest_claim_3.ogg"],
+    // A skill's level reached: a harp run up onto a bright chord.
+    level_up: ["sounds/level_up_1.ogg"],
+    // Every tenth level (10, 20, ...): the grander one, played instead.
+    level_milestone: (every: 10, sounds: ["sounds/level_milestone_1.ogg"]),
 )

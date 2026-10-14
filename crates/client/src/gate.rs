@@ -107,6 +107,13 @@ const STRIKE_LIMIT: f32 = 90.0;
 /// Seconds without the server answering a blow, and blows answered without a kill, that
 /// fail the strike step: a creature with 4 health dies within a few hits at any level.
 const UNANSWERED: f32 = 12.0;
+/// Strikes asked with none answered, at least, before a striking step says the server
+/// answered none (`Gate::unanswered`), and clicks before a phase says it waited one out
+/// (`Gate::waited_out`): a client starved of frames sends few in those seconds, and a
+/// server that answered no blow was not shown one.
+const UNANSWERED_SWINGS: u32 = 3;
+/// Game seconds between a phase's right clicks (`Gate::tap`).
+const TAP_EVERY: f32 = 0.5;
 const MOST_BLOWS: u32 = 40;
 /// How long an edit is given at least (seconds of game time), and at most (of the
 /// server's), to reach the server, come back and be meshed; the checks run as soon as both
@@ -535,6 +542,21 @@ struct Gate {
     weapon_fallen_since: Option<f32>,
     /// Blows the server has answered, as last counted.
     blows_seen: u32,
+    /// The striking steps' swings (`Gate::swing`): when the last went (game time), whether
+    /// it is held this frame, and how many went since the server last answered one.
+    swing_at: f32,
+    swung: bool,
+    swings: u32,
+    /// The striking steps' strikes asked of the server (`Fighting::strikes`) as counted at
+    /// its last answer, `None` until the step first looks; and the server's time when the
+    /// first strike since then was seen gone (`Gate::unanswered`).
+    strikes_seen: Option<u32>,
+    first_unanswered: Option<f32>,
+    /// The right clicks of a phase (`Gate::tap`): when the last went, whether it is held
+    /// this frame, and how many went in the phase.
+    tap_at: f32,
+    tapped: bool,
+    taps: u32,
     /// The sling step's run (`sling`).
     sling: SlingRun,
     /// The Rootmothers seen before the Boss step summoned its own, and the one it summoned:
@@ -693,6 +715,14 @@ impl Gate {
             fallen_since: None,
             weapon_fallen_since: None,
             blows_seen: 0,
+            swing_at: f32::MIN,
+            swung: false,
+            swings: 0,
+            strikes_seen: None,
+            first_unanswered: None,
+            tap_at: f32::MIN,
+            tapped: false,
+            taps: 0,
             sling: SlingRun::default(),
             boss_before: Vec::new(),
             boss_id: None,
@@ -766,8 +796,79 @@ impl Gate {
         }
     }
 
+    /// A well-timed click, a full charge after the last (spamming lands lighter blows:
+    /// `combat`), as a player swings: pressed for one frame, let go the next, however long
+    /// the frames (a swing timed as a slice of each charge was never pressed by frames
+    /// longer than the slice). Counted in `swings` until the server answers one; whether it
+    /// answered none is judged by the strikes the presses asked of it (`Gate::unanswered`).
+    fn swing(&mut self, world: &mut World, now: f32) {
+        if self.swung {
+            mouse(world, MouseButton::Left, false);
+            self.swung = false;
+        } else if now - self.swing_at >= voxmar_engine::combat::FULL_CHARGE + 0.05 {
+            mouse(world, MouseButton::Left, true);
+            self.swung = true;
+            self.swing_at = now;
+            self.swings += 1;
+        }
+    }
+
+    /// A right click held out to what is aimed at, `on` while it is wanted: pressed for one
+    /// frame each half second of game time and let go the next, counted in `taps` for the
+    /// phase. Pressed as a slice of each half second, it went unpressed by frames longer
+    /// than the slice, while the step's server seconds ran out.
+    fn tap(&mut self, world: &mut World, on: bool, now: f32) {
+        if self.tapped || !on {
+            mouse(world, MouseButton::Right, false);
+            self.tapped = false;
+        } else if now - self.tap_at >= TAP_EVERY {
+            mouse(world, MouseButton::Right, true);
+            self.tapped = true;
+            self.tap_at = now;
+            self.taps += 1;
+        }
+    }
+
+    /// Whether a phase that clicks (`tap`) has waited out `seconds` of the server's clock
+    /// with at least `UNANSWERED_SWINGS` clicks sent: a client starved of frames that sent
+    /// fewer has not been answered no, only not asked.
+    fn waited_out(&self, seconds: f32) -> bool {
+        self.server_in_phase() > seconds && self.taps >= UNANSWERED_SWINGS
+    }
+
+    /// Whether the server has answered none of the strikes of a striking step: at least
+    /// `UNANSWERED_SWINGS` asked of it (`Fighting::strikes`, of `strikes` so far) since its
+    /// last answer, and `UNANSWERED` of its seconds since the first of them went. A press
+    /// asks nothing when the client sees nothing in reach (a starved client's view of a
+    /// moving creature runs behind), and a server shown no strike has answered none.
+    fn unanswered(&mut self, strikes: u32) -> bool {
+        let seen = *self.strikes_seen.get_or_insert(strikes);
+        let asked = strikes.saturating_sub(seen);
+        if asked > 0 && self.first_unanswered.is_none() {
+            self.first_unanswered = Some(self.server_now);
+        }
+        asked >= UNANSWERED_SWINGS && self.first_unanswered.is_some_and(|first| self.server_now - first > UNANSWERED)
+    }
+
+    /// Strikes asked of the server and not yet answered, of `strikes` so far.
+    fn unanswered_strikes(&self, strikes: u32) -> u32 {
+        strikes.saturating_sub(self.strikes_seen.unwrap_or(strikes))
+    }
+
+    /// The server answered a strike: the next unanswered one is counted from here.
+    fn strike_answered(&mut self, strikes: u32) {
+        self.swings = 0;
+        self.strikes_seen = Some(strikes);
+        self.first_unanswered = None;
+    }
+
     fn next(&mut self, step: Step, now: f32) {
         info!("gate: {step:?} at {now:.1}s, server {:.1}s", self.server_now);
+        self.swings = 0;
+        self.swung = false;
+        self.strikes_seen = None;
+        self.first_unanswered = None;
+        self.taps = 0;
         self.step = step;
         self.since = now;
         self.frames = 0;
@@ -788,6 +889,7 @@ impl Gate {
         self.phase_since = now;
         self.settled = 0;
         self.phase_server = self.server_now;
+        self.taps = 0;
     }
 
     /// Seconds of the server's own clock since the phase began: what a wait on the server
@@ -3929,7 +4031,7 @@ fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 let result = if said == cold { Ok(format!("sowing rice was refused for its reason ({reason}): \"{said}\"")) } else { Err(format!("sowing rice was refused, but not as {reason} (\"{cold}\"): \"{said}\"")) };
                 gate.check("refusal", result);
                 gate.advance(now);
-            } else if gate.server_in_phase() > REFUSAL_WAIT {
+            } else if gate.waited_out(REFUSAL_WAIT) {
                 mouse(world, MouseButton::Right, false);
                 let (target, held) = {
                     let (target, player) = (world.resource::<crate::interact::Target>(), world.resource::<LocalPlayer>());
@@ -3939,7 +4041,7 @@ fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 gate.check("refusal", Err(format!("sowing rice showed no refusal naming {name} (aimed at {target:?} from the feet, standing at {from:.2} from them, holding {held:?})")));
                 gate.advance(now);
             } else {
-                mouse(world, MouseButton::Right, ((now - gate.since) * 2.0).fract() < 0.2);
+                gate.tap(world, true, now);
                 if gate.frames % 120 == 0 {
                     let (target, player, toasts, client) =
                         (world.resource::<crate::interact::Target>(), world.resource::<LocalPlayer>(), world.resource::<crate::hud::skills::SkillToasts>(), world.resource::<ClientWorld>());
@@ -6478,12 +6580,14 @@ fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     gate.check("target readout", Ok(detail));
                 }
             }
+            let strikes = world.resource::<crate::fight::Fighting>().strikes;
             if blows > gate.blows_seen {
                 gate.blows_seen = blows;
                 gate.phase_since = now;
                 gate.phase_server = gate.server_now;
+                gate.strike_answered(strikes);
             }
-            let stalled = gate.server_in_phase() > UNANSWERED;
+            let stalled = gate.unanswered(strikes);
             match snail(world) {
                 Some(view) if !stalled && blows < MOST_BLOWS => {
                     gate.quarry = view.position;
@@ -6495,17 +6599,14 @@ fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     let far = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz()) > 1.6;
                     key(world, KeyCode::KeyW, far);
                     aim_at(world, view.position + Vec3::Y * 0.2);
-                    // A well-timed click, a full charge apart, as a player swings (spamming
-                    // lands lighter blows: `combat`).
-                    let swing = ((now - gate.since) / (voxmar_engine::combat::FULL_CHARGE + 0.05)).fract() < 0.1;
-                    mouse(world, MouseButton::Left, swing);
+                    gate.swing(world, now);
                 }
                 Some(view) => {
                     mouse(world, MouseButton::Left, false);
                     key(world, KeyCode::KeyW, false);
                     let aimed = world.resource::<crate::interact::Target>().creature.is_some();
                     let distance = view.position.distance(world.resource::<LocalPlayer>().eye());
-                    let why = if stalled { format!("the server answered no blow for {UNANSWERED}s") } else { format!("{blows} blows ({landed} landed) did not kill it") };
+                    let why = if stalled { format!("the server answered none of {} strikes in {UNANSWERED}s", gate.unanswered_strikes(strikes)) } else { format!("{blows} blows ({landed} landed) did not kill it") };
                     gate.check("creature struck", Err(format!("{why} (aimed at it: {aimed}, {distance:.1} blocks from the eye)")));
                     gate.next(Step::Ore, now);
                 }
@@ -6673,23 +6774,24 @@ fn weapon(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 let creatures = world.resource::<crate::creatures::Creatures>();
                 (creatures.blows, creatures.hardest)
             };
+            let strikes = world.resource::<crate::fight::Fighting>().strikes;
             if blows > gate.blows_seen {
                 gate.blows_seen = blows;
                 gate.phase_since = now;
                 gate.phase_server = gate.server_now;
+                gate.strike_answered(strikes);
             }
-            let stalled = gate.server_in_phase() > UNANSWERED;
+            let stalled = gate.unanswered(strikes);
             match view {
                 Some(view) if !stalled => {
                     // Close in and strike a full charge apart, as a player swings.
                     let far = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz()) > 2.0;
                     key(world, KeyCode::KeyW, far);
                     aim_at(world, view.position + Vec3::Y * 0.6);
-                    let swing = ((now - gate.since) / (voxmar_engine::combat::FULL_CHARGE + 0.05)).fract() < 0.1;
-                    mouse(world, MouseButton::Left, swing);
+                    gate.swing(world, now);
                 }
                 Some(_) => {
-                    gate.check("weapon strikes", Err(format!("the server answered no blow for {UNANSWERED}s")));
+                    gate.check("weapon strikes", Err(format!("the server answered none of {} strikes in {UNANSWERED}s", gate.unanswered_strikes(strikes))));
                     end_weapon(world, gate, now);
                 }
                 // Out of sight: dead only if it was seen dying.
@@ -7186,9 +7288,23 @@ struct FeelRun {
     slow: u32,
     /// Whether this wind-up's moment came with no press, already told (`answer`).
     held: bool,
+    /// Frames since this wind-up showed that could have pressed before its result came
+    /// (`answer`), and the tries set aside as unanswerable: the result came before any
+    /// frame at or after the moment tried (`feel`).
+    chances: u32,
+    unanswerable: u32,
 }
 
 impl FeelRun {
+    /// Whether this wind-up's result came before the client could answer it, with `answered`
+    /// whether a press went: none did, and its moment passed between two frames with the
+    /// result heard in the later (`held`), or no frame came at all between the wind-up
+    /// showing and the result. A frame before the moment that could have pressed says a
+    /// result after it came before the moment: that try counts, and the search moves earlier.
+    fn could_not_answer(&self, answered: bool) -> bool {
+        !answered && (self.held || self.chances == 0)
+    }
+
     /// Observe a pose edge only after a calm pose. Hurt can arrive before the server's
     /// next Idle replication; consuming it invalidates the still-shown attack pose.
     fn observe(&mut self, attacking: bool, received: bool) -> bool {
@@ -7199,6 +7315,7 @@ impl FeelRun {
         } else if self.calm && self.seen.is_none() && !self.answered {
             self.seen = Some(Instant::now());
             self.calm = false;
+            self.chances = 0;
             return true;
         }
         false
@@ -7224,6 +7341,11 @@ impl FeelRun {
             self.held = true;
         }
         if received || self.answered || !due {
+            // A frame before the moment, with the blow still to come: a press could have
+            // gone, so a result after it says the moment was late.
+            if !received && !self.answered {
+                self.chances += 1;
+            }
             return false;
         }
         self.answered = true;
@@ -7280,12 +7402,15 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         gate.feel.clicked = false;
     }
     if (1..=4).contains(&gate.phase) && gate.server_now - gate.feel.started > FEEL_LIMIT {
+        // In a block again for a late counter (phase 2 with the perfect block found), what is
+        // still owed is the counter: the perfect block passed at its first.
         let check = match gate.phase {
             3 => "counter",
+            2 if gate.feel.found.is_some() => "counter",
             4 => "dodge",
             _ => "perfect block",
         };
-        gate.check(check, Err(format!("not done in {FEEL_LIMIT} server seconds: {:?}", gate.feel.outcomes)));
+        gate.check(check, Err(format!("not done in {FEEL_LIMIT} server seconds: {:?}, {} set aside as unanswerable", gate.feel.outcomes, gate.feel.unanswerable)));
         clear_feel(gate, now);
         return;
     }
@@ -7439,6 +7564,19 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             // landed, whatever moment was tried: the try says nothing of the moment, so it is
             // set aside, not counted, and the search stays. Enough of them and the machine is
             // too slow to judge (as `creature falls` is when it draws too few frames).
+            // A result before any frame at or after the moment tried, with none before it
+            // that could have pressed (the wind-up first seen after it landed, or the moment
+            // passed between two frames, as frames of a second or more do on a loaded
+            // machine): no press could have answered it, so the try says nothing of the
+            // moment. It is set aside and the search stays; unlike a late frame it never
+            // excuses the step, which `FEEL_LIMIT` still bounds.
+            if !passed && gate.feel.could_not_answer(answered) {
+                gate.feel.outcomes.pop();
+                gate.feel.unanswerable += 1;
+                let why = if gate.feel.held { "the moment passed between two frames" } else { "no frame came between the wind-up showing and the blow landing" };
+                info!("gate: combat try set aside phase {} try {} bear {}: {defended:?} came before it could be answered ({why}), frame {:.3}s, {} set aside", gate.phase, gate.feel.tries + 1, view.id, world.resource::<Time>().delta_secs(), gate.feel.unanswerable);
+                return;
+            }
             let late = std::mem::take(&mut gate.feel.late);
             if !passed && answered && late > FEEL_SLOW_FRAME {
                 gate.feel.outcomes.pop();
@@ -7459,8 +7597,14 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
             if passed {
                 let detail = format!("{defended:?} for {damage} damage, requested {:.2}s after the wind-up showed, try {}", gate.feel.after, gate.feel.tries + 1);
-                let result = if damage == 0 { Ok(detail) } else { Err(format!("{detail}: it still did damage")) };
-                gate.check(if blocking { "perfect block" } else { "dodge" }, result);
+                // A block again, for a counter that came too late (phase 3): the perfect
+                // block was judged at its first, so this one only opens the counter's window.
+                if blocking && damage == 0 && gate.feel.found.is_some() {
+                    info!("gate: combat block again for the counter: {detail}");
+                } else {
+                    let result = if damage == 0 { Ok(detail) } else { Err(format!("{detail}: it still did damage")) };
+                    gate.check(if blocking { "perfect block" } else { "dodge" }, result);
+                }
                 gate.feel.struck = world.resource::<crate::fight::Fighting>().struck_count;
                 if blocking {
                     gate.feel.found = Some(gate.feel.after);
@@ -7493,7 +7637,13 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.feel.after = (gate.feel.centre + side * FEEL_STEP * k.div_ceil(2) as f32).clamp(0.0, windup);
             if gate.feel.tries >= FEEL_TRIES {
                 let outcomes = std::mem::take(&mut gate.feel.outcomes);
-                gate.check(if blocking { "perfect block" } else { "dodge" }, Err(format!("{FEEL_TRIES} answers to the bear's blows came to {outcomes:?}")));
+                // After a perfect block whose counter came too late, what is still owed is
+                // the counter: the perfect block passed at its first.
+                if blocking && gate.feel.found.is_some() {
+                    gate.check("counter", Err(format!("the click after the perfect block came too late, and the blocks after it came to {outcomes:?}, none perfect to counter from")));
+                } else {
+                    gate.check(if blocking { "perfect block" } else { "dodge" }, Err(format!("{FEEL_TRIES} answers to the bear's blows came to {outcomes:?}, {} more set aside as unanswerable", gate.feel.unanswerable)));
+                }
                 if blocking {
                     to_dodge(gate, windup, perfect, now);
                 } else {
@@ -7528,6 +7678,7 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 } else {
                     // Too late for the window (a server far behind): block again.
                     gate.feel.tries += 1;
+                    gate.feel.outcomes.clear();
                     to_phase(gate, FEEL_BLOCK, now);
                 }
             } else if gate.server_in_phase() > UNANSWERED {
@@ -7548,6 +7699,7 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 fn to_dodge(gate: &mut Gate, windup: f32, perfect: f32, now: f32) {
     gate.feel.tries = 0;
     gate.feel.slow = 0;
+    gate.feel.unanswerable = 0;
     gate.feel.slowest = 0.0;
     gate.feel.outcomes.clear();
     gate.feel.seen = None;
@@ -8328,7 +8480,7 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.check("cook", Ok(format!("{} came back from the fire", cooked - gate.count_before)));
                 gate.check("first night: food", Ok("a crafted campfire and successful cooked meal completed First Night".into()));
                 gate.advance(now);
-            } else if gate.server_in_phase() > 15.0 {
+            } else if gate.waited_out(15.0) {
                 mouse(world, MouseButton::Right, false);
                 // What the hand held, for a step before may have left something else in it.
                 let held = {
@@ -8344,7 +8496,7 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.check("cook", Err(reason));
                 gate.next(Step::Ore, now);
             } else {
-                mouse(world, MouseButton::Right, ((now - gate.since) * 2.0).fract() < 0.2);
+                gate.tap(world, true, now);
             }
         }
         // The fire's particles, counted for a while: smoke, embers and sparks rising from
@@ -8475,12 +8627,12 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
             if hung {
                 mouse(world, MouseButton::Right, false);
                 gate.advance(now);
-            } else if waited {
+            } else if gate.waited_out(DRY_WAIT) {
                 mouse(world, MouseButton::Right, false);
                 gate.check("drying rack", Err(format!("right clicks with raw rabbit in hand never hung the rack in {DRY_WAIT} server seconds")));
                 gate.next(Step::Tame, now);
             } else {
-                mouse(world, MouseButton::Right, ((now - gate.since) * 2.0).fract() < 0.2);
+                gate.tap(world, true, now);
             }
         }
         3 => {
@@ -8633,7 +8785,7 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 key(world, KeyCode::KeyW, false);
                 gate.check("tame", Ok(format!("a junglefowl is ours after {in_phase:.1}s of feeding")));
                 gate.advance(now);
-            } else if gate.server_in_phase() > 25.0 {
+            } else if gate.waited_out(25.0) {
                 mouse(world, MouseButton::Right, false);
                 key(world, KeyCode::KeyW, false);
                 let (wheat, trust) = (item_count(world, "base:wheat"), view.trust);
@@ -8653,7 +8805,7 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 let aimed = under == Some(view.id);
                 gate.tame_aim[if aimed { 0 } else if under.is_some() { 1 } else { 2 }] += 1;
                 gate.tame_nearest = gate.tame_nearest.min(world.resource::<LocalPlayer>().eye().distance(view.position));
-                mouse(world, MouseButton::Right, aimed && ((now - gate.since) * 2.0).fract() < 0.2);
+                gate.tap(world, aimed, now);
             }
         }
         3 => {
@@ -8687,7 +8839,7 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 mouse(world, MouseButton::Right, false);
                 gate.check("condition", Ok(format!("looking closely read \"{line}\" after {in_phase:.1}s")));
                 gate.advance(now);
-            } else if gate.server_in_phase() > 3.0 {
+            } else if gate.waited_out(3.0) {
                 mouse(world, MouseButton::Right, false);
                 gate.check("condition", Err(format!("3 server seconds of looking closely at our junglefowl read none of {lines:?}")));
                 gate.next(Step::Party, now);
@@ -8706,7 +8858,7 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 }
                 aim_at(world, view.position + Vec3::Y * 0.3);
                 let aimed = world.resource::<crate::interact::Target>().creature == Some(view.id);
-                mouse(world, MouseButton::Right, aimed && ((now - gate.phase_since) * 2.0).fract() < 0.2);
+                gate.tap(world, aimed, now);
             }
         }
         5 => {
@@ -8724,7 +8876,7 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 key(world, KeyCode::KeyW, false);
                 gate.check("release", Ok(format!("the junglefowl went wild again after {in_phase:.1}s")));
                 gate.next(Step::Party, now);
-            } else if gate.server_in_phase() > 8.0 {
+            } else if gate.waited_out(8.0) {
                 mouse(world, MouseButton::Right, false);
                 key(world, KeyCode::ShiftLeft, false);
                 key(world, KeyCode::KeyW, false);
@@ -8737,7 +8889,7 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 aim_at(world, view.position + Vec3::Y * 0.3);
                 key(world, KeyCode::ShiftLeft, true);
                 let aimed = world.resource::<crate::interact::Target>().creature == Some(view.id);
-                mouse(world, MouseButton::Right, aimed && ((now - gate.phase_since) * 2.0).fract() < 0.2);
+                gate.tap(world, aimed, now);
             }
         }
         _ => {}
@@ -8829,7 +8981,7 @@ fn party(world: &mut World, gate: &mut Gate, now: f32) {
                 key(world, KeyCode::KeyW, false);
                 gate.check("party: greeting", Ok(format!("a right click on the trader read \"{line}\" after {:.1}s", gate.server_in_phase())));
                 gate.advance(now);
-            } else if gate.server_in_phase() > 15.0 {
+            } else if gate.waited_out(15.0) {
                 gate.check("party: greeting", Err(format!("15 server seconds of right clicks on the trader read none of {greetings:?}")));
                 leave(world, gate);
             } else {
@@ -8850,7 +9002,7 @@ fn party(world: &mut World, gate: &mut Gate, now: f32) {
                 key(world, KeyCode::KeyW, far);
                 aim_at(world, view.position + Vec3::Y * 0.9);
                 let aimed = world.resource::<crate::interact::Target>().creature == Some(view.id);
-                mouse(world, MouseButton::Right, hides_here && aimed && ((now - gate.phase_since) * 2.0).fract() < 0.2);
+                gate.tap(world, hides_here && aimed, now);
             }
         }
         // The same click with four hides in hand: the party's trade, loaves for them.
@@ -8869,7 +9021,7 @@ fn party(world: &mut World, gate: &mut Gate, now: f32) {
                 key(world, KeyCode::KeyW, false);
                 gate.check("party: trade", Ok(format!("four hides held out for the trader came back as {} loaves after {:.1}s", bread - gate.count_before, gate.server_in_phase())));
                 gate.advance(now);
-            } else if gate.server_in_phase() > 15.0 {
+            } else if gate.waited_out(15.0) {
                 gate.check("party: trade", Err(format!("15 server seconds with four hides in hand got no swap from the trader: the line spoken {said}, loaves {} (had {}), hides held {}", bread, gate.count_before, item_count(world, "base:hide"))));
                 leave(world, gate);
             } else if let Some(hide) = content.blocks.id("base:hide")
@@ -8880,7 +9032,7 @@ fn party(world: &mut World, gate: &mut Gate, now: f32) {
                 key(world, KeyCode::KeyW, far);
                 aim_at(world, view.position + Vec3::Y * 0.9);
                 let aimed = world.resource::<crate::interact::Target>().creature == Some(view.id);
-                mouse(world, MouseButton::Right, aimed && ((now - gate.phase_since) * 2.0).fract() < 0.2);
+                gate.tap(world, aimed, now);
             }
         }
         // Sent away: the party goes from the client.
@@ -10298,6 +10450,65 @@ mod tests {
     }
 
     #[test]
+    fn a_striking_step_waits_on_strikes_asked_not_presses() {
+        let mut gate = Gate::new(std::env::temp_dir());
+        // Earlier steps' strikes are not this one's.
+        assert!(!gate.unanswered(40));
+        // Presses that asked nothing (nothing in reach as the client saw it), however long
+        // the server runs: no strike was shown it.
+        gate.server_now = 100.0;
+        assert!(!gate.unanswered(40));
+        // Three asked: unanswered only once the server has run past `UNANSWERED` since the
+        // first went.
+        gate.server_now = 101.0;
+        assert!(!gate.unanswered(41));
+        gate.server_now = 101.0 + UNANSWERED;
+        assert!(!gate.unanswered(43), "{} s since the first", UNANSWERED);
+        gate.server_now = 101.5 + UNANSWERED;
+        assert!(gate.unanswered(43));
+        assert_eq!(gate.unanswered_strikes(43), 3);
+        // An answer counts afresh from there.
+        gate.strike_answered(43);
+        assert!(!gate.unanswered(46));
+        gate.server_now = 200.0;
+        assert!(gate.unanswered(46));
+    }
+
+    #[test]
+    fn swings_and_clicks_go_one_a_frame_however_long_the_frames() {
+        let mut app = App::new();
+        app.add_plugins(bevy::input::InputPlugin);
+        let mut gate = Gate::new(std::env::temp_dir());
+        // Frames a second apart, as a starved client draws them: every other frame presses,
+        // the one after lets go, and each press counts.
+        let mut pressed = 0;
+        for frame in 0..6 {
+            gate.swing(app.world_mut(), frame as f32);
+            app.update();
+            pressed += app.world().resource::<ButtonInput<MouseButton>>().just_pressed(MouseButton::Left) as u32;
+        }
+        assert_eq!((pressed, gate.swings), (3, 3));
+        // Frames a few milliseconds apart: one a full charge.
+        let mut gate = Gate::new(std::env::temp_dir());
+        for frame in 0..100 {
+            gate.swing(app.world_mut(), frame as f32 * 0.005);
+        }
+        assert_eq!(gate.swings, 1, "a swing a full charge after the last");
+        // Right clicks wanted but not aimed press nothing.
+        let mut gate = Gate::new(std::env::temp_dir());
+        for frame in 0..6 {
+            gate.tap(app.world_mut(), frame >= 2, frame as f32);
+        }
+        assert_eq!(gate.taps, 2, "pressed at frames 2 and 4");
+        // A starved client that sent fewer than three clicks has not waited out its phase,
+        // however many server seconds passed.
+        gate.server_now = 100.0;
+        assert!(!gate.waited_out(15.0));
+        gate.taps = UNANSWERED_SWINGS;
+        assert!(gate.waited_out(15.0));
+    }
+
+    #[test]
     fn an_already_received_blow_never_queues_a_late_native_defence_edge() {
         for blocking in [false, true] {
             for received in [false, true] {
@@ -10326,6 +10537,37 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn a_blow_heard_before_any_frame_could_answer_it_is_set_aside() {
+        let mut app = App::new();
+        app.add_plugins(bevy::input::InputPlugin);
+        let dodge = KeyCode::ShiftLeft;
+        // A wind-up seen, and the result heard at the next frame, before the moment tried
+        // (0.6 s): no frame could have pressed.
+        let mut feel = FeelRun { after: 0.6, calm: true, ..default() };
+        assert!(feel.observe(true, false));
+        assert!(!feel.answer(app.world_mut(), true, dodge, true));
+        assert!(feel.could_not_answer(false), "no frame came between the wind-up and its result");
+        // A frame before the moment came first, with the blow still to come: a press could
+        // have gone there, so the result after it says the moment was late, and counts.
+        let mut feel = FeelRun { after: 0.6, calm: true, ..default() };
+        assert!(feel.observe(true, false));
+        assert!(!feel.answer(app.world_mut(), true, dodge, false));
+        assert!(!feel.answer(app.world_mut(), true, dodge, true));
+        assert!(!feel.could_not_answer(false), "a frame before the moment could have answered");
+        // The moment passed between that frame and the next, which heard the result: the
+        // press would have gone in the next, after the blow, so this one is set aside too.
+        let mut feel = FeelRun { seen: Some(Instant::now() - std::time::Duration::from_secs(1)), after: 0.6, chances: 1, ..default() };
+        assert!(!feel.answer(app.world_mut(), true, dodge, true));
+        assert!(feel.held && feel.could_not_answer(false));
+        // An answered try is never set aside for this: it said something of its moment.
+        assert!(!feel.could_not_answer(true));
+        // A new wind-up starts with no frames.
+        let mut feel = FeelRun { chances: 3, calm: true, ..default() };
+        assert!(feel.observe(true, false));
+        assert_eq!(feel.chances, 0);
     }
 
     #[test]

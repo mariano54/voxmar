@@ -529,7 +529,7 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn hunters_attack_in_reach_but_leave_strong_and_settled_players_alone() {
+    fn hunters_attack_in_reach_but_leave_strong_and_settled_players_alone_unless_a_boss() {
         let wolf = species(&format!(
             "(creatures: [(name: \"wolf\", health: 10, level: 5, {BODY}, attack: (damage: (1, 3)), temperament: (aggression: 0.9), behaviours: [(do: Hunt(radius: 16.0))])])"
         ));
@@ -546,6 +546,15 @@ pub(super) mod tests {
             mind.hurt(&wolf, Some(1), 1.0);
             let _ = think(&wolf, &mut mind, &situation(&[seen]));
             assert_eq!(doing(&wolf, &mind), "hunt");
+        }
+        // A boss always fights: neither rule leaves anyone be.
+        let boss = species(&format!(
+            "(creatures: [(name: \"warden\", boss: true, health: 10, level: 5, {BODY}, attack: (damage: (1, 3)), temperament: (aggression: 0.9), behaviours: [(do: Hunt(radius: 16.0))])])"
+        ));
+        for seen in [Seen { combat_level: 12, ..near[0] }, Seen { tolerated: true, ..near[0] }] {
+            let mut mind = Mind::new(&boss.def.temperament, 2);
+            let _ = think(&boss, &mut mind, &situation(&[seen]));
+            assert_eq!(doing(&boss, &mind), "hunt");
         }
     }
 
