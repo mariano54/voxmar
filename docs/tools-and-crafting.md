@@ -123,8 +123,9 @@ you wake after dying until a hearth gives you a home: right click it to sleep
 vials and kiln bricks are made of at the grid. The Crucible Kiln, the Farm age's gate, is a multiblock:
 a crucible (kiln bricks round a clay pot) ringed with kiln bricks, with a pillar on each
 corner. A crucible smelts only in a standing kiln with an unexpired paid fire:
-copper ore into ingots, and a bronze blend (three copper ingots and a tin ore) into
-bronze, all Engineering, never burnt (`stop_burning: 0`). To light a cold kiln,
+copper ore into ingots, and three copper ingots held with a tin ore carried into four
+bronze (a station recipe may take several of what is held, `uses`, and other items
+besides, `with`, and make several, `count`), all Engineering, never burnt (`stop_burning: 0`). To light a cold kiln,
 hold 32 charcoal or 24 coal and right-click the crucible. Lighting consumes the charge
 and quests count it (`Lit("crucible_kiln", 1)`). Its fire uses the fuel times in
 `machines.ron`, survives reload, and goes out when it expires or a required piece is
@@ -142,7 +143,7 @@ Mariano, 2026-10-07: one item per material or part, each with several ways to ge
 thing. Every warm pelt is fur (a bear gives two), rabbit hide is hide, duck eggs are eggs,
 bear fat is lard, bright feathers are feathers, claws are fangs, glimmer dust is moon dust;
 fired clay replaces unfired pots, unfired vials and fired bricks, and tin ore goes straight
-into the bronze blend. Flint comes from gravel, one break in eight (tools.ron's `instead`;
+into bronze at the crucible (Oct 14: the bronze blend between them is gone). Flint comes from gravel, one break in eight (tools.ron's `instead`;
 gravel a player placed gives none).
 
 Raw and cooked rabbit and chicken were the same meat (Cooking 1, the same experience and
