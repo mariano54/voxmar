@@ -1,6 +1,6 @@
 // Recorded sounds the game plays for events: paths within this package. Field recordings
-// from Freesound, all CC0; who made each is in THIRD_PARTY_NOTICES.md. Rain and running
-// water are ambience beds (ambience.ron).
+// from Freesound, all CC0; who made each is in THIRD_PARTY_NOTICES.md. The jingles at the
+// end are our own. Rain and running water are ambience beds (ambience.ron).
 (
     // Thunder by how far off the lightning struck: close strikes that crack and roll, the
     // same heard from farther off (muffled), and far rolls.
@@ -13,8 +13,41 @@
     swim: ["sounds/swim_1.mp3", "sounds/swim_2.mp3", "sounds/swim_3.mp3", "sounds/swim_4.mp3", "sounds/swim_5.mp3", "sounds/swim_6.mp3"],
     // Jumping or falling into water.
     splash: ["sounds/splash_1.mp3", "sounds/splash_2.mp3", "sounds/splash_3.mp3"],
-    // A quest finished, and a finished quest's rewards claimed. None listed: the game plays
-    // its own synthesized chimes. A package that lists some (here or in a mod) replaces them.
-    quest_done: [],
-    quest_claim: [],
+    // Jingles for events, our own (tools/generate_jingles.py). A package that lists any for
+    // an event replaces these; several listed take turns.
+    // A quest finished: a plucked "amen" close, settling home under bells.
+    quest_done: ["sounds/quest_done_1.ogg"],
+    // A finished quest's rewards claimed: coins into the purse and a glint.
+    quest_claim: ["sounds/quest_claim_1.ogg", "sounds/quest_claim_2.ogg", "sounds/quest_claim_3.ogg"],
+    // A skill's level reached: a harp run up onto a bright chord.
+    level_up: ["sounds/level_up_1.ogg"],
+    // Every tenth level (10, 20, ...): the grander one, played instead.
+    level_milestone: (every: 10, sounds: ["sounds/level_milestone_1.ogg"]),
+    // Our own (tools/generate_sfx.py), made at the loudness the game expects of them.
+    // An item picked up off the ground: a soft pop, when the player's Minecraft sounds are
+    // off.
+    pickup: ["sounds/pickup_1.ogg", "sounds/pickup_2.ogg", "sounds/pickup_3.ogg", "sounds/pickup_4.ogg"],
+    // What the player does, heard as they do it, by action: about as loud as placing a
+    // block, times `volume`. A package that names an action replaces its sound.
+    actions: {
+        // Three bites and their chews.
+        "core:eat": (sounds: ["sounds/eat_1.ogg", "sounds/eat_2.ogg", "sounds/eat_3.ogg"], volume: 0.8),
+        // A scrape and two knocks: parts fitted together at the grid.
+        "core:craft": (sounds: ["sounds/craft_1.ogg", "sounds/craft_2.ogg", "sounds/craft_3.ogg"], volume: 0.8),
+        // Loading or emptying a home station (a drying rack, a compost bin) sounds the same.
+        "base:use_station": (sounds: ["sounds/craft_1.ogg", "sounds/craft_2.ogg", "sounds/craft_3.ogg"], volume: 0.6),
+        // Flint struck, sparks, and the tinder catching: a fire or a kiln lit.
+        "base:light": (sounds: ["sounds/light_1.ogg", "sounds/light_2.ogg"]),
+        // A lid lifted: a short creak and the lid knocking back.
+        "base:open_store": (sounds: ["sounds/store_open_1.ogg", "sounds/store_open_2.ogg"], volume: 0.8),
+        // The latch, then a slow creak on the hinges; quieter than the rest at its loudest, so
+        // played louder.
+        "base:open": (sounds: ["sounds/door_1.ogg", "sounds/door_2.ogg"], volume: 1.3),
+        // A hiss settling into a sizzle as food meets the fire.
+        "base:cook": (sounds: ["sounds/cook_1.ogg", "sounds/cook_2.ogg"], volume: 0.9),
+        // Lying down: rustles of cloth and straw.
+        "base:sleep": (sounds: ["sounds/sleep_1.ogg"], volume: 0.7),
+        // A line whipped out over the water (the plop is the water's own).
+        "base:fish": (sounds: ["sounds/cast_1.ogg", "sounds/cast_2.ogg"], volume: 0.7),
+    },
 )

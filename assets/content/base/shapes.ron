@@ -12,6 +12,32 @@
             (from: (0, 0, 0), to: (16, 8, 16), cull: true),
             (from: (0, 8, 8), to: (16, 16, 16), cull: true),
         ]),
+        // A clay cooking pot: a round belly, a rim standing proud, and what is in it (the
+        // block's own texture: empty, simmering or full) just below the rim.
+        "cooking_pot": (boxes: [
+            (from: (3, 0, 3), to: (13, 8, 13), textures: All("cooking_pot_clay")),
+            (from: (2, 2, 4), to: (14, 7, 12), textures: All("cooking_pot_clay")),
+            (from: (4, 2, 2), to: (12, 7, 14), textures: All("cooking_pot_clay")),
+            (from: (3, 8, 3), to: (13, 8.5, 13)),
+            (from: (2, 8, 2), to: (14, 9.5, 3), textures: All("cooking_pot_clay")),
+            (from: (2, 8, 13), to: (14, 9.5, 14), textures: All("cooking_pot_clay")),
+            (from: (2, 8, 3), to: (3, 9.5, 13), textures: All("cooking_pot_clay")),
+            (from: (13, 8, 3), to: (14, 9.5, 13), textures: All("cooking_pot_clay")),
+        ]),
+        // A well: a stone ring two texels thick about dark water, two posts, a beam and a
+        // pail hanging from it on a rope.
+        "well": (boxes: [
+            (from: (0, 0, 0), to: (16, 9, 2), cull: true),
+            (from: (0, 0, 14), to: (16, 9, 16), cull: true),
+            (from: (0, 0, 2), to: (2, 9, 14), cull: true),
+            (from: (14, 0, 2), to: (16, 9, 14), cull: true),
+            (from: (2, 0, 2), to: (14, 6, 14), textures: All("well_water")),
+            (from: (1, 9, 7), to: (3, 15, 9), textures: All("oak_planks")),
+            (from: (13, 9, 7), to: (15, 15, 9), textures: All("oak_planks")),
+            (from: (1, 15, 6.5), to: (15, 16, 9.5), textures: All("oak_planks")),
+            (from: (7.75, 12.5, 7.75), to: (8.25, 15, 8.25), textures: All("oak_planks")),
+            (from: (6.5, 10, 6.5), to: (9.5, 12.5, 9.5), textures: All("oak_planks")),
+        ]),
         // A round barrel, as round as texels allow: two crossed boxes make its staves (a
         // square with its corners cut), and two more each side stand proud as its iron
         // hoops, where its texture draws them.
