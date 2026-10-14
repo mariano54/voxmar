@@ -156,9 +156,10 @@ impl Server {
         }
         // Loaded in the loader's home, the rest of the pack and then the home's stores top
         // the load up with more of what is in hand (docs/home.md).
-        let stores = if station.from_stores && self.in_home_with(agent, pos) { self.home_stores(agent) } else { Vec::new() };
+        let topped = station.from_stores && self.in_home_with(agent, pos);
+        let stores = if topped { self.home_stores(agent) } else { Vec::new() };
         let player = &self.players[&agent];
-        let packed: u32 = if stores.is_empty() { 0 } else { player.inventory.slots.iter().enumerate().filter(|&(slot, _)| slot != selected).filter_map(|(_, s)| s.filter(|s| s.item == stack.item)).map(|s| s.count as u32).sum() };
+        let packed: u32 = if !topped { 0 } else { player.inventory.slots.iter().enumerate().filter(|&(slot, _)| slot != selected).filter_map(|(_, s)| s.filter(|s| s.item == stack.item)).map(|s| s.count as u32).sum() };
         let stored: u32 = stores.iter().filter_map(|&at| self.factory.get(at)).flat_map(|(_, state)| state.bin.iter().flatten()).filter(|s| s.item == stack.item).map(|s| s.count as u32).sum();
         let within = (stack.count as u32 + packed + stored).min(station.holds as u32) as u8;
         // Whole batches only: the heap rots four greens to one compost, so a load is a
@@ -172,7 +173,7 @@ impl Server {
         let ticks = (work.minutes * 60.0 * TICKS_PER_SECOND as f32 / speed).round() as u64;
         let player = self.players.get_mut(&agent).expect("checked above");
         let mut left = count - player.inventory.take(selected, count).map_or(0, |taken| taken.count);
-        if !stores.is_empty() {
+        if topped {
             for slot in (0..player.inventory.slots.len()).filter(|&slot| slot != selected) {
                 if left > 0 && player.inventory.slots[slot].is_some_and(|s| s.item == stack.item) {
                     left -= player.inventory.take(slot, left).map_or(0, |taken| taken.count);

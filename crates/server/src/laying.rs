@@ -407,6 +407,19 @@ mod tests {
         assert_eq!(barrel(&server), 5);
     }
 
+    /// At a camp with no store, a rack in the home still tops up from the rest of the pack.
+    #[test]
+    fn at_home_with_no_store_a_rack_tops_up_from_the_pack() {
+        let mut server = fixture();
+        server.set_block(BARREL, BlockId::AIR);
+        server.factory.remove(BARREL);
+        home_here(&mut server);
+        let rack = IVec3::new(12, FLOOR + 1, 8);
+        uses(&mut server, rack, "base:drying_rack", "base:raw_beef", 2, 3);
+        assert_eq!(loaded(&server, rack), 5, "the hand's two and the pack's three");
+        assert_eq!(server.players[&1].inventory.slots[5], None);
+    }
+
     /// A station marked `from_stores: false` (the compost heap: stored grain is for eating)
     /// takes only what is in hand, even at home.
     #[test]
