@@ -6429,6 +6429,11 @@ struct Fresh {
     /// A server tick and the moment it stood for: the game's clock, which the player's
     /// messages are stamped with (`Fresh::now`).
     epoch: (u64, Instant),
+    /// The ticks the bot has let pass (`Fresh::tick`), each of them a turn it took: its own
+    /// clock for how long it has tried. A busy machine can keep the bot from its turns while
+    /// a quick server ticks on (sixty times the clock's pace runs thirty seconds of ticks in
+    /// half a real one), so a try bounded by the server's ticks could end after a step or two.
+    steps: u64,
 }
 
 /// How many of `item` the pack and its pouches carry.
@@ -6527,6 +6532,7 @@ impl Fresh {
     fn tick(&mut self) {
         let t = self.c.ticks();
         self.c.pump_until(|c| c.ticks() > t);
+        self.steps += 1;
     }
 
     /// The game's clock: the moment the server's tick stands for, at its pace. The player's
@@ -6755,17 +6761,18 @@ impl Fresh {
     /// taken: walking to one out of the pull, and onto one in reach that has lain there untaken.
     fn collect(&mut self, item: &str, need: u32) {
         let id = self.c.content.blocks.expect(item);
-        let until = self.c.ticks() + 30 * TICKS_PER_SECOND as u64;
+        // Thirty seconds of the bot's turns (`Fresh::steps`), not the server's ticks.
+        let until = self.steps + 30 * TICKS_PER_SECOND as u64;
         self.spend(Act::Mine, |me| {
             // Ticks the nearest drop has lain in the body's reach, by the player's reckoning,
             // without coming in.
             let mut beside = 0;
-            // The server tick of the last drop to come in, and what the bot last did, for a
+            // The bot's turn the last drop came in at, and what the bot last did, for a
             // failure to tell.
-            let (mut came, mut had) = (me.c.ticks(), me.have(item));
+            let (mut came, mut had) = (me.steps, me.have(item));
             let mut done: std::collections::VecDeque<String> = Default::default();
             while me.have(item) < need {
-                assert!(me.c.ticks() < until, "{item}: only {} of {need} came in, {} loose, nearest {:?} from {:?} (last put at {:?}), lately {:?}; carrying {:?}", me.have(item), loose(&me.c, item), me.c.items.values().filter(|i| i.stack.item == id).map(|i| i.position).min_by(|a, b| across(*a, me.at).total_cmp(&across(*b, me.at))), me.at, me.c.position, done, (0..voxmar_engine::inventory::SLOTS).filter_map(|s| me.c.inventory.get(s).map(|x| (me.c.content.blocks.def(x.item).name.clone(), x.count))).collect::<Vec<_>>());
+                assert!(me.steps < until, "{item}: only {} of {need} came in, {} loose, nearest {:?} from {:?} (last put at {:?}), lately {:?}; carrying {:?}", me.have(item), loose(&me.c, item), me.c.items.values().filter(|i| i.stack.item == id).map(|i| i.position).min_by(|a, b| across(*a, me.at).total_cmp(&across(*b, me.at))), me.at, me.c.position, done, (0..voxmar_engine::inventory::SLOTS).filter_map(|s| me.c.inventory.get(s).map(|x| (me.c.content.blocks.def(x.item).name.clone(), x.count))).collect::<Vec<_>>());
                 let did = |what: String, done: &mut std::collections::VecDeque<String>| {
                     if done.len() == 8 {
                         done.pop_front();
@@ -6773,7 +6780,7 @@ impl Fresh {
                     done.push_back(what);
                 };
                 if me.have(item) != had {
-                    (came, had) = (me.c.ticks(), me.have(item));
+                    (came, had) = (me.steps, me.have(item));
                 }
                 // Put back by the server after a walk ended (its last step refused, heard a tick
                 // late): the server picks up where it has the player, so the player goes on from
@@ -6788,9 +6795,9 @@ impl Fresh {
                 // the test's shortcut where closing on it has not done (where the server has
                 // the player, not the bot, is what takes it).
                 if let Some(p) = near
-                    && me.c.ticks() > came + 3 * TICKS_PER_SECOND as u64
+                    && me.steps > came + 3 * TICKS_PER_SECOND as u64
                 {
-                    came = me.c.ticks();
+                    came = me.steps;
                     let on = p.with_y(me.at.y);
                     if me.has_room(on) {
                         me.c.tp(on);
@@ -6975,7 +6982,7 @@ impl Fresh {
         c.pump_until(|c| probes.iter().all(|&(at, name)| c.world.block(origin + at) == c.content.blocks.id(name)) && c.world.block(origin + v(-9, 1, 0)) == Some(BlockId::AIR));
         let (at, t0) = (c.position, c.ticks());
         let epoch = (t0, Instant::now());
-        let mut plot = Self { c, origin, at, held: 0, t0, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch };
+        let mut plot = Self { c, origin, at, held: 0, t0, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch, steps: 0 };
         // Ten animals in the lane: three rabbits and seven junglefowl.
         for (i, z) in (-10..=-1).enumerate() {
             plot.stock(if i % 3 == 1 { "rabbit" } else { "junglefowl" }, z);
@@ -6995,7 +7002,7 @@ fn the_bot_closes_on_a_drop_from_where_the_server_put_it() {
     let c = on_a_test_floor();
     let (feet, ticks) = (c.position, c.ticks());
     let origin = feet.floor().as_ivec3();
-    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()) };
+    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0 };
     // A cobblestone four blocks off, beyond the pull.
     let cell = origin + IVec3::X * 4;
     f.c.ok(&format!("/drop cobblestone 1 {} {} {}", cell.x, cell.y, cell.z));
@@ -7007,6 +7014,27 @@ fn the_bot_closes_on_a_drop_from_where_the_server_put_it() {
     assert_eq!(f.have("base:cobblestone"), 1);
 }
 
+/// The bot's pickup (`Fresh::collect`) is bounded by its own turns, not the server's ticks:
+/// on a busy machine a quick server ran the kiln run's thirty seconds of ticks while the bot
+/// walked to one drop, and the try ended with the last cobblestone lying five blocks off.
+/// Here the server ticks as quick as it can, far ahead of the bot, and the bot still walks
+/// to each of six drops laid four blocks apart.
+#[test]
+fn the_bot_collects_while_the_server_ticks_far_ahead_of_it() {
+    quicker(100_000, "as quick as the server can tick, to outrun the bot's turns");
+    let c = on_a_test_floor();
+    let (feet, ticks) = (c.position, c.ticks());
+    let origin = feet.floor().as_ivec3();
+    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0 };
+    for i in 1..=6 {
+        let cell = origin + IVec3::X * (4 * i);
+        f.c.ok(&format!("/drop cobblestone 1 {} {} {}", cell.x, cell.y, cell.z));
+    }
+    f.c.pump_until(|c| loose(c, "base:cobblestone") == 6);
+    f.collect("base:cobblestone", 6);
+    assert_eq!(f.have("base:cobblestone"), 6);
+}
+
 /// The bot's hand is the server's before it places: a move the server corrected, heard
 /// after the bot changed slots, dropped that change, and the place was judged by the
 /// pickaxe still in hand and refused unseen.
@@ -7015,7 +7043,7 @@ fn the_bot_places_from_the_slot_it_holds_after_a_correction() {
     let c = on_a_test_floor();
     let (feet, ticks) = (c.position, c.ticks());
     let origin = feet.floor().as_ivec3();
-    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()) };
+    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0 };
     f.c.ok("/give stone_pickaxe 1");
     f.c.ok("/give cobblestone 1");
     f.c.pump_until(|c| holding(c, "base:stone_pickaxe") == 1 && holding(c, "base:cobblestone") == 1);
