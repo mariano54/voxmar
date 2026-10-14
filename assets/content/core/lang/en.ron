@@ -307,6 +307,7 @@
     "recipes.craft": "Crafting grid",
     "recipes.shapeless": "Crafting grid, any arrangement",
     "recipes.cook": "Cooked on a {station}",
+    "recipes.near": "Near a {block}",
     "recipes.cook.use": "Select the ingredient in your hotbar, then right-click the station. Each item takes two seconds.",
     "recipes.level": "{skill} level {level}",
     "recipes.burnt": "Can burn to {item}",

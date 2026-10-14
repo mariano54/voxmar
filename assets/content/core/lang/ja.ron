@@ -294,6 +294,7 @@
     "recipes.craft": "クラフト",
     "recipes.shapeless": "クラフト(配置自由)",
     "recipes.cook": "{station}で調理",
+    "recipes.near": "{block}のそばで",
     "recipes.cook.use": "材料をホットバーで選び、調理台を右クリック。1個につき2秒。",
     "recipes.level": "{skill}レベル{level}",
     "recipes.burnt": "焦げると{item}",

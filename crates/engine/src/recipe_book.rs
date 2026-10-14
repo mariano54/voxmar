@@ -18,8 +18,9 @@ pub enum Method {
     /// their ingredients in any arrangement. A family of recipes making the same thing
     /// from different woods (or stones) is one entry with each way laid out, as NEI
     /// cycles them. `first` is the first of its recipes, in content order (its variants
-    /// follow), for laying one into the grid.
-    Craft { variants: Vec<[Option<BlockId>; GRID]>, shapeless: bool, first: usize },
+    /// follow), for laying one into the grid. `near` is the tag of a block it is made
+    /// near, if any.
+    Craft { variants: Vec<[Option<BlockId>; GRID]>, shapeless: bool, first: usize, near: Option<String> },
     /// Cooked (or fired, or smelted) at a station (blocks with the station's tag), from
     /// `level` in `skill`; what is left when it burns, if anything.
     Cook { input: BlockId, station: String, skill: Option<crate::skill::SkillId>, level: u8, burnt: Option<BlockId> },
@@ -58,8 +59,9 @@ impl RecipeBook {
             if let Some(last) = book.entries.last_mut()
                 && last.output == recipe.output
                 && last.count == (recipe.count, recipe.count)
-                && let Method::Craft { variants, shapeless, .. } = &mut last.method
+                && let Method::Craft { variants, shapeless, near, .. } = &mut last.method
                 && *shapeless == recipe.shapeless()
+                && *near == recipe.near
                 && variants[0].map(|c| c.is_some()) == cells.map(|c| c.is_some())
             {
                 variants.push(cells);
@@ -72,8 +74,10 @@ impl RecipeBook {
                 }
                 continue;
             }
-            let method = Method::Craft { variants: vec![cells], shapeless: recipe.shapeless(), first: index };
-            book.add(blocks, Entry { method, output: recipe.output, count: (recipe.count, recipe.count) }, items);
+            let method = Method::Craft { variants: vec![cells], shapeless: recipe.shapeless(), first: index, near: recipe.near.clone() };
+            // The blocks it is made near are among what it uses, as a cooking station is.
+            let stations: Vec<BlockId> = recipe.near.as_deref().map(|tag| blocks.tagged(tag).collect()).unwrap_or_default();
+            book.add(blocks, Entry { method, output: recipe.output, count: (recipe.count, recipe.count) }, items.into_iter().chain(stations).collect());
         }
         for (input, recipe) in content.cooking.iter() {
             let station = recipe.def.station.clone();
