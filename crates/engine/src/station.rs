@@ -355,7 +355,11 @@ mod tests {
         assert_eq!(makes("base:wild_corn").as_deref(), Some("base:stew"));
         assert_eq!(makes("base:carrot").as_deref(), Some("base:stew"));
         assert_eq!(makes("base:raw_beef").as_deref(), Some("base:stew"));
+        assert_eq!(makes("base:cabbage").as_deref(), Some("base:stew"));
+        // Nothing cooked goes in again, nor seed for planting.
         assert_eq!(makes("base:cooked_beef"), None);
+        assert_eq!(makes("base:baked_potato"), None);
+        assert_eq!(makes("base:wheat_seeds"), None);
     }
 
     #[test]

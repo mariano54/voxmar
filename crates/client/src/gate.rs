@@ -8508,7 +8508,7 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
             let net = world.resource::<Net>();
             net.command(&format!("setblock {} {} {} cooking_pot", pot.x, pot.y, pot.z));
             net.command(&format!("setblock {} {} {} water", water.x, water.y, water.z));
-            net.command("skill cooking 3");
+            // Cooking stays as the Cook step left it (99), past the porridge's 3.
             net.command("give wheat 2");
             net.command(&format!("tp {} {} {}", pot.x as f32 + 0.5, pot.y, pot.z as f32 - 2.5));
             gate.advance(now);

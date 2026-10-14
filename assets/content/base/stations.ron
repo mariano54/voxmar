@@ -28,8 +28,8 @@
         (
             empty: "cooking_pot", working: "cooking_pot_simmering", ready: "cooking_pot_ready", holds: 6,
             works: [
-                (input: "tag:grain+!vegetable", takes: 2, output: "porridge", minutes: 2.0, skill: "core:cooking", level: 3, xp: 14.0),
-                (input: "tag:raw+meat|tag:root+!grain|tag:vegetable", takes: 3, output: "stew", minutes: 3.0, skill: "core:cooking", level: 14, xp: 36.0),
+                (input: "tag:grain+!vegetable+!seed", takes: 2, output: "porridge", minutes: 2.0, skill: "core:cooking", level: 3, xp: 14.0),
+                (input: "tag:raw+meat|tag:root+!grain+!cooked|tag:vegetable+!cooked|tag:produce+edible+!grain+!fruit+!cooked", takes: 3, output: "stew", minutes: 3.0, skill: "core:cooking", level: 14, xp: 36.0),
             ],
             needs: [Near("hob", 1), Water(4)], sound: Some(Water),
         ),

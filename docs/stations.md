@@ -43,7 +43,7 @@ and a fertiliser reach outside 0 to 4.
 | Station | Age | Recipe | Works | Spot | Time | Skill |
 | --- | --- | --- | --- | --- | --- | --- |
 | Drying rack | Nomad | 4 sticks, 3 twine (Crafting 3) | up to 8 raw meat or raw fish into jerky, one for one | open sky; a `fire` within 3 doubles the speed | 10 min (5 by a fire) | Cooking 1, 6 xp each |
-| Cooking pot | Nomad | 7 fired clay about a clay pot (Crafting 3) | up to 6: two grain (`tag:grain+!vegetable`) into porridge (Cooking 3, 14 xp); three raw meat, roots or vegetables into a stew (Cooking 14, 36 xp) | a `hob` within 1 (a campfire beside it, or the hearthstone under it) and water within 4 (a well counts), both at load and take | 2 min (porridge), 3 min (stew) | Cooking 3 / 14 |
+| Cooking pot | Nomad | 7 fired clay about a clay pot (Crafting 3) | up to 6: two grain, not seed (`tag:grain+!vegetable+!seed`), into porridge (Cooking 3, 14 xp); three raw meat, roots, vegetables or other edible produce, none of it cooked, grain or fruit, into a stew (Cooking 14, 36 xp) | a `hob` within 1 (a campfire beside it, or the hearthstone under it) and water within 4 (a well counts), both at load and take | 2 min (porridge), 3 min (stew) | Cooking 3 / 14 |
 | Compost heap | Farm | 7 planks in a U (Construction 5) | up to 16 produce, vegetables, fruit, seed or burnt food (`compost` tag), four into one compost | water within 2 makes it x1.5 | 15 min (10 by water) | Farming 5, 8 xp each |
 
 | Fertiliser | Reach | Grows | Xp per crop |
