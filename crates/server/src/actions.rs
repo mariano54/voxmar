@@ -527,8 +527,10 @@ impl Server {
 
     /// The ripe crops of the same kind and stage round the ripe crop at `at`, on its level,
     /// that `agent`'s held tool reaps with it (`reap:N`, tools.ron): none for anything else.
+    /// Fruit on trees is picked back to bare leaves one at a time, never reaped.
     fn reaped(&self, agent: PlayerId, at: IVec3) -> Vec<IVec3> {
-        let Some(crop) = self.block(at).filter(|&b| self.ripe_crop(b).is_some()) else { return Vec::new() };
+        let field_crop = |b: BlockId| self.ripe_crop(b).is_some_and(|crop| !self.content.crops.get(crop).def.fruit);
+        let Some(crop) = self.block(at).filter(|&b| field_crop(b)) else { return Vec::new() };
         let held = self.players.get(&agent).and_then(|p| p.held());
         let reach = self.content.tools.reap(held, crop) as i32;
         let around = (-reach..=reach).flat_map(|dx| (-reach..=reach).map(move |dz| IVec3::new(dx, 0, dz)));
