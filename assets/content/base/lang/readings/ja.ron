@@ -740,6 +740,8 @@
     "block.base.honey_skep": "はちみつのつまったすばこ",
     "block.base.skep": "わらすばこ",
     "block.base.drying_rack": "ほしだい",
+    "block.base.snare": "くくりわな",
+    "block.base.snare_sprung": "かかったくくりわな",
     "block.base.drying_rack_hung": "にくをかけたほしだい",
     "block.base.drying_rack_dry": "ほしにくのほしだい",
     "block.base.compost_heap": "たいひわく",

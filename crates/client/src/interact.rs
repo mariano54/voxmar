@@ -220,6 +220,9 @@ impl ActionContext for ClientContext<'_> {
     fn stations(&self) -> Option<&voxmar_engine::station::Stations> {
         Some(&self.content.stations)
     }
+    fn traps(&self) -> Option<&voxmar_engine::trap::Traps> {
+        Some(&self.content.traps)
+    }
 
     fn combat(&self) -> Option<&voxmar_engine::combat::CombatRegistry> {
         Some(&self.content.combat)
