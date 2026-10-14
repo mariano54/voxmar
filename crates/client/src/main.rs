@@ -49,6 +49,7 @@ mod interact;
 mod keys;
 mod lang;
 mod menu;
+mod mix;
 mod music;
 mod net;
 mod player;
@@ -338,7 +339,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let look = hud::target::LookStyle::load(&content.files)?;
     let celebrations = hud::celebrate::Celebrations::load(&content.files)?;
-    sfx::Recordings::load(&content.files)?.check(&content.actions)?;
+    let recorded = sfx::Recordings::load(&content.files)?;
+    recorded.check(&content.actions)?;
+    recorded.mix.check().map_err(|e| format!("sounds.ron: {e}"))?;
     let content_weather = content.weather.clone();
     let shader_packs = render::pack::ShaderPacks::load(&assets);
     let registry = content.blocks.clone();
@@ -428,7 +431,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         weather::WeatherPlugin,
         ui::UiPlugin,
     ))
-    .add_plugins(lang::LangPlugin);
+    .add_plugins((lang::LangPlugin, mix::MixPlugin));
     app.add_plugins((creatures::CreaturesPlugin, creature_sounds::CreatureSoundsPlugin, butterflies::ButterfliesPlugin));
     app.add_plugins(emitters::EmittersPlugin);
     app.add_plugins(held::HeldPlugin);
@@ -761,6 +764,17 @@ fn setup(
         }
         layers[layer].variants = Some(render::Variants { first, count });
     }
+    // The empty hand's pieces (`held.ron`), each a layer of its own after all of those.
+    let mut handled = held::load(source.held_books(), registry);
+    if let Some(handling) = handled.0.as_mut()
+        && let Some(bare) = &handling.bare
+    {
+        for texture in source.held_textures(&bare.pieces, size) {
+            handling.bare_layers.push(block_textures.len() as u16);
+            block_textures.push(texture);
+            layers.push(LayerInfo::default());
+        }
+    }
     ui::skin::load(&mut source, &mut images);
     ui::skin::set_font(settings.font, &mut fonts);
     let colormaps = source.colormaps();
@@ -872,7 +886,7 @@ fn setup(
         })
         .collect();
     commands.insert_resource(HudImages { icons, crosshair, skills: skill_icons, effects });
-    commands.insert_resource(held::load(source.held_books(), registry));
+    commands.insert_resource(handled);
 }
 
 fn tint(texture: &mut Rgba, color: [f32; 3]) {

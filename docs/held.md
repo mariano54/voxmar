@@ -20,6 +20,18 @@ wall the player stands against cannot cut it. It is queued for the camera only, 
 shadow. It takes the sky and block light at the player's eye (measured again as they move and
 every 0.2 s, and eased at 8 a second), so it is dark in a dark cave and warm beside a torch.
 
+## The empty hand
+
+With nothing held the player sees their own fist and forearm (`bare` in `held.ron`): a row of
+cubes, the fist at the pose and each piece of the arm a set spacing further back toward the
+elbow, drawn like a held block, in the hand's light. The drawings are `block/held_fist`,
+`block/held_arm` and `block/held_sleeve` (`recipes/hand.ron`, drawn for this game); a pack
+redraws them by those names, and one it lacks is a skin-coloured placeholder. All of the hand
+is drawn at one depth in front of the world, so the pieces go nearest last. It punches (peaking
+as the fist's 0.08 s wind-up ends), jabs at a block while digging, dips for a use, raises the
+fist when guarding (with a shield worn: bare fists have no guard of their own), and dodges and
+flinches as anything held does. A pack without `bare` draws no empty hand.
+
 ## What it does
 
 `client/src/held.rs` moves it from what the player does, all timed by the things that time
@@ -63,7 +75,8 @@ Before: every swing peaked at its stroke's own pace, after the server had judged
 a blow taken did nothing in the hand. After: the peaks meet the wind-ups, the thrusts reach
 further, and dodge and flinch moves exist (`/mnt/project-files/combat/player-swing-before-after.png`).
 The guard already rose in its 0.14 s stance, well inside the 0.3 s tells. Still open: the empty
-hand (fists) draws nothing, so a punch has no first-person move at all.
+hand (fists) drew nothing, so a punch had no first-person move at all; it now has the fist and
+arm above (`/mnt/project-files/combat/empty-hand-before-after.png`).
 
 ## Tests and the gate
 
@@ -78,6 +91,11 @@ hand (fists) draws nothing, so a punch has no first-person move at all.
   swing at the bear is watched in the hand on a fixed 1/60 s clock (`HeldClock`): it must peak
   within a frame of the sword's wind-up, go all the way out, come back to rest and be
   answered by the server, shot as it connects (`player swing`).
+- The gate's `strike` step strikes the snail with the empty hand and watches its first punch
+  the same way (`player punch`), and that the hand was drawn with every piece of the arm.
+- `VOXMAR_HELD_PREVIEW=DIR cargo test -p voxmar_client bare_hand_strip -- --ignored` writes
+  `bare.png`: the empty hand's punch, dig, use, guard, dodge, flinch and raise, frame by frame,
+  through the same maths as the shader (cubes, each covering those before it).
 - `VOXMAR_HELD_PREVIEW=DIR cargo test -p voxmar_client held_swing_strip -- --ignored
   --nocapture` writes `swings.png`: each weapon's swing, the guard, both dodges and the flinch,
   frame by frame at 1/30 s, the judged frame in red and the peak in yellow.
