@@ -75,6 +75,16 @@ screen, stopped at these points; each is fixed in the words (en and ja):
 | A Chopping Block | flint from gravel, but not where gravel is | stony slopes, game trails, dry stream beds |
 | First Harvest | "keep water within four blocks", with no way yet to carry water | farm beside a river, pond or lake |
 | First Harvest | seeds named without a source | wild wheat gives them |
+| Bigger Game | asks for red deer and wild boar, while its words said "deer and boar" | names them as the game does |
+| Copper Kit | "six times as fast", where the tool tiers now give seven | seven, and a tool's tooltip says how fast it works |
+
+A check keeps it so: `gate::newcomer_misses` walks every quest before the lit hearth and the
+Farm quests that open with it, and lists any item or creature a goal asks for that has no
+recipe in the book and is not named in that quest's words or an earlier one's (a crop picked
+counts by what it gives). The client test `a_newcomer_finds_what_the_opening_quests_ask_for`
+runs it in English and Japanese, and the gate's Quests step runs it on the live words
+("quests: a newcomer's way"). It found First Harvest's wheat crop (now counted by its wheat)
+and Bigger Game's deer and boar.
 
 Checked and fine: the start pins (Timber, Look It Up, First Night) are reachable bare-handed
 (stone breaks to cobblestone by hand, `tools.ron`); every main step names its recipe; the

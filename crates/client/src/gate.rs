@@ -5562,6 +5562,10 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         // Ten twine, from fifteen wheat in three stacks of five, to finish Twine and Thong, so
         // the book shows a quest done and the line out of it gold.
         0 => {
+            // The way to the lit hearth and the Farm's opening quests, followed by their words
+            // and the recipe book alone: nothing they ask for is left unexplained.
+            let misses = newcomer_misses(&world.resource::<Launch>().content, world.resource::<Locale>());
+            gate.check("quests: a newcomer's way", if misses.is_empty() { Ok("every item and creature the opening quests ask for has a recipe or is named in their words".into()) } else { Err(format!("not found from the quest words or the book: {}", misses.join(", "))) });
             world.resource_mut::<crate::settings::Settings>().pinned_quests.clear();
             let net = world.resource::<Net>();
             net.command("clear wheat");
