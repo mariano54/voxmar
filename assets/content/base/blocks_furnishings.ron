@@ -7,9 +7,9 @@
 // Homes (design draft 108, P58a) are below: wood furniture in three woods, cloth things in
 // twelve dyes, and crockery in three glazes, each a template that one family line fills in.
 // Their boxes are in shapes.ron and their greyscale drawings, which a block's `tint:
-// Fixed(r, g, b)` colours (a wood's, a dye's), in the default pack's decor.ron. Decor drops
-// little: player-placed furniture breaks to half its planks, cloth and crockery to nothing.
-// The `furnishing` tag prevents world-placed furniture from yielding those planks.
+// Fixed(r, g, b)` colours (a wood's, a dye's), in the default pack's decor.ron. A piece a
+// player placed gives itself back when broken, so a home can be rearranged or moved; the
+// `furnishing` tag makes one a village placed give nothing, as its props do.
 (
     // The dyes `dyes: true` families are made over: each is a name (`family.base.<name>` in
     // the language files) and the colour a greyscale drawing is multiplied by. The colours
@@ -30,43 +30,43 @@
     ],
     templates: {
         // Furniture in one wood (`{name}`): boxes in a drawing of grain, tinted the wood's
-        // colour (the family line below). Breaking one gives half its planks back.
+        // colour (the family line below). Broken, a placed piece gives itself back.
         "furniture": [
-            (name: "{name}_stool", render: Model, shape: "stool", sound: Wood, textures: All("furniture_wood"), drops: "{name}_planks", drop_count: 1, hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "seat", "decor", "wood"]),
-            (name: "{name}_chair", render: Model, shape: "chair", facing: true, sound: Wood, textures: All("furniture_wood"), drops: "{name}_planks", drop_count: 1, hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "seat", "decor", "wood"]),
-            (name: "{name}_bench", render: Model, shape: "bench", facing: true, sound: Wood, textures: All("furniture_wood"), drops: "{name}_planks", drop_count: 1, hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "seat", "decor", "wood"]),
-            (name: "{name}_table", render: Model, shape: "table", sound: Wood, textures: All("furniture_wood"), drops: "{name}_planks", drop_count: 1, hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "table", "decor", "wood"]),
-            (name: "{name}_bed", render: Model, shape: "bed", facing: true, sound: Wood, textures: All("furniture_wood"), drops: "{name}_planks", drop_count: 1, hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "bed", "decor", "wood"]),
-            (name: "{name}_shelf", render: Model, shape: "shelf", facing: true, sound: Wood, textures: All("furniture_wood"), drops: "{name}_planks", drop_count: 3, hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "shelf", "decor", "wood"]),
-            (name: "{name}_bookshelf", render: Model, shape: "bookshelf", facing: true, sound: Wood, textures: All("furniture_wood"), drops: "{name}_planks", drop_count: 3, hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "shelf", "books", "decor", "wood"]),
-            (name: "{name}_cupboard", render: Model, shape: "cupboard", facing: true, sound: Wood, textures: All("furniture_wood"), drops: "{name}_planks", drop_count: 4, hardness: 1.5, color: (160, 120, 70), tags: ["furniture", "cupboard", "decor", "wood"]),
-            (name: "{name}_wardrobe", render: Model, shape: "wardrobe", facing: true, sound: Wood, textures: All("furniture_wood"), drops: "{name}_planks", drop_count: 5, hardness: 1.5, color: (160, 120, 70), tags: ["furniture", "cupboard", "decor", "wood"]),
-            (name: "{name}_desk", render: Model, shape: "desk", facing: true, sound: Wood, textures: All("furniture_wood"), drops: "{name}_planks", drop_count: 3, hardness: 1.5, color: (160, 120, 70), tags: ["furniture", "table", "decor", "wood"]),
-            (name: "{name}_counter", render: Model, shape: "counter", sound: Wood, textures: All("furniture_wood"), drops: "{name}_planks", drop_count: 1, hardness: 1.5, color: (160, 120, 70), tags: ["furniture", "table", "decor", "wood"]),
-            (name: "{name}_barrel_rack", render: Model, shape: "barrel_rack", facing: true, sound: Wood, textures: All("furniture_wood"), drops: "{name}_planks", drop_count: 2, hardness: 1.5, color: (160, 120, 70), tags: ["furniture", "storage", "decor", "wood"]),
-            (name: "{name}_crate_stack", render: Model, shape: "crate_stack", sound: Wood, textures: All("furniture_crate"), drops: "{name}_planks", drop_count: 2, hardness: 1.5, color: (160, 120, 70), tags: ["furniture", "storage", "decor", "wood"]),
-            (name: "{name}_pot_shelf", render: Model, shape: "pot_shelf", facing: true, sound: Wood, textures: All("furniture_wood"), drops: "{name}_planks", drop_count: 1, hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "shelf", "decor", "wood"]),
+            (name: "{name}_stool", render: Model, shape: "stool", sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "seat", "decor", "wood"]),
+            (name: "{name}_chair", render: Model, shape: "chair", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "seat", "decor", "wood"]),
+            (name: "{name}_bench", render: Model, shape: "bench", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "seat", "decor", "wood"]),
+            (name: "{name}_table", render: Model, shape: "table", sound: Wood, textures: All("furniture_wood"), hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "table", "decor", "wood"]),
+            (name: "{name}_bed", render: Model, shape: "bed", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "bed", "decor", "wood"]),
+            (name: "{name}_shelf", render: Model, shape: "shelf", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "shelf", "decor", "wood"]),
+            (name: "{name}_bookshelf", render: Model, shape: "bookshelf", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "shelf", "books", "decor", "wood"]),
+            (name: "{name}_cupboard", render: Model, shape: "cupboard", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.5, color: (160, 120, 70), tags: ["furniture", "cupboard", "decor", "wood"]),
+            (name: "{name}_wardrobe", render: Model, shape: "wardrobe", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.5, color: (160, 120, 70), tags: ["furniture", "cupboard", "decor", "wood"]),
+            (name: "{name}_desk", render: Model, shape: "desk", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.5, color: (160, 120, 70), tags: ["furniture", "table", "decor", "wood"]),
+            (name: "{name}_counter", render: Model, shape: "counter", sound: Wood, textures: All("furniture_wood"), hardness: 1.5, color: (160, 120, 70), tags: ["furniture", "table", "decor", "wood"]),
+            (name: "{name}_barrel_rack", render: Model, shape: "barrel_rack", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.5, color: (160, 120, 70), tags: ["furniture", "storage", "decor", "wood"]),
+            (name: "{name}_crate_stack", render: Model, shape: "crate_stack", sound: Wood, textures: All("furniture_crate"), hardness: 1.5, color: (160, 120, 70), tags: ["furniture", "storage", "decor", "wood"]),
+            (name: "{name}_pot_shelf", render: Model, shape: "pot_shelf", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "shelf", "decor", "wood"]),
         ],
         // Cloth in one dye (`dyes: true` fills `{name}` and the tint): the greyscale drawings
-        // of cloth_grey and its kin, multiplied by the dye. Breaking one gives nothing.
+        // of cloth_grey and its kin, multiplied by the dye. Broken, a placed piece gives itself back.
         "dyed": [
-            (name: "{name}_cloth", sound: Moss, textures: All("cloth_grey"), drops: "core:air", hardness: 0.4, color: (200, 200, 200), tags: ["cloth", "decor", "building", "colour:{name}"]),
-            (name: "{name}_rug", render: Model, shape: "rug", solid: false, sound: Moss, textures: All("rug_grey"), drops: "core:air", hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "rug", "decor", "colour:{name}"]),
-            (name: "{name}_banner", render: Model, shape: "banner", facing: true, solid: false, sound: Moss, textures: All("banner_grey"), drops: "core:air", hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "banner", "decor", "colour:{name}"]),
-            (name: "{name}_curtain", render: Model, shape: "curtain", facing: true, solid: false, sound: Moss, textures: All("curtain_grey"), drops: "core:air", hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "curtain", "decor", "colour:{name}"]),
-            (name: "{name}_paper_lantern", render: Model, shape: "paper_lantern", solid: false, sound: Moss, light: 12, textures: All("lantern_grey"), drops: "core:air", hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "lantern", "light", "decor", "colour:{name}"]),
-            (name: "{name}_cushion", render: Model, shape: "cushion", solid: false, sound: Moss, textures: All("cushion_grey"), drops: "core:air", hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "seat", "cushion", "decor", "colour:{name}"]),
-            (name: "{name}_bunting", render: Model, shape: "bunting", facing: true, solid: false, sound: Moss, textures: All("bunting_grey"), drops: "core:air", hardness: 0.1, color: (200, 200, 200), tags: ["cloth", "bunting", "decor", "colour:{name}"]),
-            (name: "{name}_awning", render: Model, shape: "awning", facing: true, solid: false, sound: Moss, textures: All("awning_grey"), drops: "core:air", hardness: 0.3, color: (200, 200, 200), tags: ["cloth", "awning", "decor", "building", "colour:{name}"]),
+            (name: "{name}_cloth", sound: Moss, textures: All("cloth_grey"), hardness: 0.4, color: (200, 200, 200), tags: ["cloth", "decor", "building", "colour:{name}"]),
+            (name: "{name}_rug", render: Model, shape: "rug", solid: false, sound: Moss, textures: All("rug_grey"), hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "rug", "decor", "colour:{name}"]),
+            (name: "{name}_banner", render: Model, shape: "banner", facing: true, solid: false, sound: Moss, textures: All("banner_grey"), hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "banner", "decor", "colour:{name}"]),
+            (name: "{name}_curtain", render: Model, shape: "curtain", facing: true, solid: false, sound: Moss, textures: All("curtain_grey"), hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "curtain", "decor", "colour:{name}"]),
+            (name: "{name}_paper_lantern", render: Model, shape: "paper_lantern", solid: false, sound: Moss, light: 12, textures: All("lantern_grey"), hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "lantern", "light", "decor", "colour:{name}"]),
+            (name: "{name}_cushion", render: Model, shape: "cushion", solid: false, sound: Moss, textures: All("cushion_grey"), hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "seat", "cushion", "decor", "colour:{name}"]),
+            (name: "{name}_bunting", render: Model, shape: "bunting", facing: true, solid: false, sound: Moss, textures: All("bunting_grey"), hardness: 0.1, color: (200, 200, 200), tags: ["cloth", "bunting", "decor", "colour:{name}"]),
+            (name: "{name}_awning", render: Model, shape: "awning", facing: true, solid: false, sound: Moss, textures: All("awning_grey"), hardness: 0.3, color: (200, 200, 200), tags: ["cloth", "awning", "decor", "building", "colour:{name}"]),
         ],
         // Crockery in one glaze: a plate, a bowl, a jar, a jug and a basket for tables and
-        // shelves, decor that drops nothing.
+        // shelves; broken, a placed piece gives itself back.
         "crockery": [
-            (name: "{name}_plate", render: Model, shape: "plate", solid: false, sound: Stone, textures: All("crockery_grey"), drops: "core:air", hardness: 0.1, color: (190, 120, 80), tags: ["crockery", "decor"]),
-            (name: "{name}_bowl", render: Model, shape: "bowl", solid: false, sound: Stone, textures: All("crockery_grey"), drops: "core:air", hardness: 0.1, color: (190, 120, 80), tags: ["crockery", "decor"]),
-            (name: "{name}_jar", render: Model, shape: "jar", solid: false, sound: Stone, textures: All("crockery_grey"), drops: "core:air", hardness: 0.1, color: (190, 120, 80), tags: ["crockery", "storage", "decor"]),
-            (name: "{name}_jug", render: Model, shape: "jug", solid: false, sound: Stone, textures: All("crockery_grey"), drops: "core:air", hardness: 0.1, color: (190, 120, 80), tags: ["crockery", "decor"]),
-            (name: "{name}_basket", render: Model, shape: "basket", solid: false, sound: Grass, textures: All("basket_grey"), drops: "core:air", hardness: 0.1, color: (190, 120, 80), tags: ["crockery", "storage", "decor"]),
+            (name: "{name}_plate", render: Model, shape: "plate", solid: false, sound: Stone, textures: All("crockery_grey"), hardness: 0.1, color: (190, 120, 80), tags: ["crockery", "decor"]),
+            (name: "{name}_bowl", render: Model, shape: "bowl", solid: false, sound: Stone, textures: All("crockery_grey"), hardness: 0.1, color: (190, 120, 80), tags: ["crockery", "decor"]),
+            (name: "{name}_jar", render: Model, shape: "jar", solid: false, sound: Stone, textures: All("crockery_grey"), hardness: 0.1, color: (190, 120, 80), tags: ["crockery", "storage", "decor"]),
+            (name: "{name}_jug", render: Model, shape: "jug", solid: false, sound: Stone, textures: All("crockery_grey"), hardness: 0.1, color: (190, 120, 80), tags: ["crockery", "decor"]),
+            (name: "{name}_basket", render: Model, shape: "basket", solid: false, sound: Grass, textures: All("basket_grey"), hardness: 0.1, color: (190, 120, 80), tags: ["crockery", "storage", "decor"]),
         ],
         // A hanging lantern of one metal (`{name}`: iron or copper), its drawing tinted the
         // metal's colour; it breaks to an ingot.
@@ -153,7 +153,7 @@
         // Singles. A candle (tallow until bees make wax), and the fire a hearth has.
         (
             name: "candle", render: Model, shape: "candle", solid: false, light: 8, sound: Wood, textures: All("candle_grey"), tint: Fixed(240, 228, 196),
-            drops: "core:air", hardness: 0.0, color: (240, 228, 196), tags: ["candle", "light", "decor"],
+            hardness: 0.0, color: (240, 228, 196), tags: ["candle", "light", "decor", "furnishing"],
             particles: [(style: Flame, rate: 8.0, at: (0.5, 0.45, 0.5), spread: 0.01, size: 0.7, height: 0.2, color: Some((240, 150, 40)))],
         ),
         (
@@ -204,9 +204,9 @@
         (template: "furniture", name: "birch", tags: ["furnishing"], all: (tint: Fixed(236, 212, 164), color: (200, 175, 125))),
         (template: "furniture", name: "oak", tags: ["furnishing"], all: (tint: Fixed(205, 150, 86), color: (160, 120, 70))),
         (template: "furniture", name: "dark_oak", tags: ["furnishing"], all: (tint: Fixed(130, 88, 58), color: (100, 70, 45))),
-        (template: "dyed", dyes: true),
-        (template: "crockery", name: "earthen", all: (tint: Fixed(196, 120, 82), color: (196, 120, 82))),
-        (template: "crockery", name: "ivory", all: (tint: Fixed(238, 230, 208), color: (238, 230, 208))),
+        (template: "dyed", dyes: true, tags: ["furnishing"]),
+        (template: "crockery", name: "earthen", tags: ["furnishing"], all: (tint: Fixed(196, 120, 82), color: (196, 120, 82))),
+        (template: "crockery", name: "ivory", tags: ["furnishing"], all: (tint: Fixed(238, 230, 208), color: (238, 230, 208))),
         (template: "metal_lantern", name: "iron", tags: ["furnishing"], all: (tint: Fixed(176, 178, 190), color: (176, 178, 190))),
         (template: "metal_lantern", name: "copper", tags: ["furnishing"], all: (tint: Fixed(214, 128, 86), color: (214, 128, 86))),
         (template: "stone_lantern", name: "stone"),
@@ -214,6 +214,6 @@
         (template: "column", name: "calcite"),
         (template: "column", name: "sandstone"),
         (template: "column", name: "stone"),
-        (template: "crockery", name: "cobalt", all: (tint: Fixed(70, 100, 170), color: (70, 100, 170))),
+        (template: "crockery", name: "cobalt", tags: ["furnishing"], all: (tint: Fixed(70, 100, 170), color: (70, 100, 170))),
     ],
 )

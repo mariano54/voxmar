@@ -1336,8 +1336,9 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         Step::Party => 60.0,
         // The effects are judged once a second by the server, and a rest is a sleep away.
         Step::Home => 70.0,
-        // The barrel opened, then a server pass for the egg and a second for the chat.
-        Step::Nest => 45.0,
+        // The barrel opened, then a server pass for the egg and a second for the chat; then
+        // a rug and a stool set down, broken by hand and picked up.
+        Step::Nest => 60.0,
         // A rack hung, then a pot set simmering, each answer waited on.
         Step::Dry => 5.0 * DRY_WAIT + STEP_LIMIT,
         // The refusal waited on, then a well set down by the plot.
@@ -5393,15 +5394,24 @@ fn nest(world: &mut World, gate: &mut Gate, now: f32) {
     // Where the Home step stood, two blocks west of the bag.
     let stand = bag - IVec3::new(2, 0, 0);
     let (torch, barrel, hen) = (bag + IVec3::X, stand + IVec3::new(0, 0, 2), stand + IVec3::new(0, 0, -3));
+    // Where a rug and a stool are set down and broken again, either side of the barrel.
+    let (rug, stool) = (stand + IVec3::new(1, 0, 1), stand + IVec3::new(-1, 0, 1));
+    let block_is = |world: &World, gate: &Gate, at: IVec3, name: &str| {
+        let client = world.resource::<ClientWorld>();
+        let want = client.registry.id(name);
+        client.block(at) == want && gate.observer.as_ref().is_none_or(|o| o.world.block(at) == want)
+    };
     let waited = gate.server_in_phase();
     let leave = |world: &mut World, gate: &mut Gate| {
         world.resource_mut::<UiState>().inventory_open = false;
         let net = world.resource::<Net>();
         net.command("creatures remove junglefowl");
-        for at in [bag, torch, barrel] {
+        for at in [bag, torch, barrel, rug, stool] {
             net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
         }
         net.command("clear egg");
+        net.command("clear red_rug");
+        net.command("clear oak_stool");
         gate.next(Step::Door, now);
     };
     let eggs = |world: &World| {
@@ -5438,7 +5448,7 @@ fn nest(world: &mut World, gate: &mut Gate, now: f32) {
                 gate.machines_asked = gate.server_now;
             }
         }
-        _ => {
+        2 => {
             let laid = eggs(world);
             let told = world.resource::<crate::hud::console::Console>().since(gate.phase_since).any(|l| l.contains("laid into your home's stores"));
             if laid > 0 && told {
@@ -5446,10 +5456,66 @@ fn nest(world: &mut World, gate: &mut Gate, now: f32) {
                     return;
                 }
                 gate.check("home: nest", Ok(format!("a hen kept at home laid {laid} egg into the barrel there (shot home-nest), and the chat said so")));
-                leave(world, gate);
+                // Then the furniture is moved: a rug and a stool beside the player, on stone.
+                world.resource_mut::<UiState>().inventory_open = false;
+                let net = world.resource::<Net>();
+                for at in [rug, stool] {
+                    net.command(&format!("setblock {} {} {} stone", at.x, at.y - 1, at.z));
+                    net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
+                }
+                net.command("clear red_rug");
+                net.command("clear oak_stool");
+                net.command("give red_rug 1");
+                net.command("give oak_stool 1");
+                gate.advance(now);
             } else if waited > 15.0 {
                 let open = world.resource::<LocalPlayer>().inventory.store.is_some();
                 gate.check("home: nest", Err(format!("{waited:.1} server s after the hen's egg was made due: {laid} eggs in the barrel (open {open}), told {told}")));
+                leave(world, gate);
+            }
+        }
+        // Each set down by the player, the rug first.
+        3 | 4 => {
+            let (name, at) = if gate.phase == 3 { ("base:red_rug", rug) } else { ("base:oak_stool", stool) };
+            if select(world, name) {
+                let actions = world.resource::<crate::Actions>().0.clone();
+                world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("core:place"), voxmar_engine::action::ActionTarget::Block { block: at - IVec3::Y, face: voxmar_engine::coords::Face::PosY });
+                gate.advance(now);
+            } else if waited > 10.0 {
+                gate.check("home: furnishings", Err(format!("no {name} came to hand {waited:.1} server s after it was given")));
+                leave(world, gate);
+            }
+        }
+        // Both in, then broken by hand one after the other.
+        5 | 6 => {
+            let (name, at, height) = if gate.phase == 5 { ("base:red_rug", rug, 0.03) } else { ("base:oak_stool", stool, 0.4) };
+            if gate.phase == 5 && !(block_is(world, gate, rug, "base:red_rug") && block_is(world, gate, stool, "base:oak_stool")) {
+                if waited > 10.0 {
+                    gate.check("home: furnishings", Err(format!("{waited:.1} server s after placing, the rug and stool did not both stand")));
+                    leave(world, gate);
+                }
+                return;
+            }
+            aim_at(world, at.as_vec3() + Vec3::new(0.5, height, 0.5));
+            mouse(world, MouseButton::Left, true);
+            let gone = world.resource::<ClientWorld>().block(at).is_some_and(|b| b.is_air()) && gate.observer.as_ref().is_none_or(|o| o.world.block(at).is_some_and(|b| b.is_air()));
+            if gone {
+                mouse(world, MouseButton::Left, false);
+                gate.advance(now);
+            } else if waited > 10.0 {
+                mouse(world, MouseButton::Left, false);
+                gate.check("home: furnishings", Err(format!("{waited:.1} server s of breaking, the {name} still stands")));
+                leave(world, gate);
+            }
+        }
+        // Each back in the pack, whole.
+        _ => {
+            let (rugs, stools) = (holding(world, "base:red_rug").0, holding(world, "base:oak_stool").0);
+            if rugs == 1 && stools == 1 {
+                gate.check("home: furnishings: come back", Ok("a rug and a stool the player set down came back whole when broken".into()));
+                leave(world, gate);
+            } else if waited > 10.0 {
+                gate.check("home: furnishings: come back", Err(format!("{waited:.1} server s after breaking them, the pack holds {rugs} rug and {stools} stool (want one each)")));
                 leave(world, gate);
             }
         }

@@ -977,8 +977,13 @@ fn a_world_placed_altar_drops_nothing_and_a_players_drops_itself_across_restarts
 }
 
 #[test]
-fn a_village_crate_stack_gives_no_free_planks_but_a_players_keeps_its_drop_across_restarts() {
-    furnishing_drops_across_restarts("crate-stack", "oak_crate_stack", "oak_planks", 2);
+fn a_village_crate_stack_gives_nothing_but_a_players_comes_back_whole_across_restarts() {
+    furnishing_drops_across_restarts("crate-stack", "oak_crate_stack", "oak_crate_stack", 1);
+}
+
+#[test]
+fn a_village_rug_gives_nothing_but_a_players_comes_back_whole_across_restarts() {
+    furnishing_drops_across_restarts("rug", "red_rug", "red_rug", 1);
 }
 
 fn furnishing_drops_across_restarts(label: &str, name: &str, material: &str, count: usize) {
