@@ -270,5 +270,18 @@
             "d..d.kdk..",
             "d..d......",
         ])]),
+        // At the Table: a bowl on a table, a stool drawn up.
+        "ui/effect/at_table": (size: (10, 10), layers: [Grid(legend: {'b': "#8a5a2a", 'c': "#e8d8b0", 's': "#d0a060", 'w': "#a06a3a", 'd': "#6a4222"}, rows: [
+            "..........",
+            "...s.s....",
+            "....s.....",
+            "..cccccc..",
+            "...cbbc...",
+            "wwwwwwwwww",
+            "dddddddddd",
+            ".d......d.",
+            ".d......d.",
+            ".d......d.",
+        ])]),
     },
 )

@@ -108,3 +108,21 @@ fn a_seat_wants_room_and_an_empty_hand() {
     sit(&mut server, STOOL);
     assert_eq!(server.players[&1].vitals.seated, Some(STOOL), "not sat on a stool under a roof two blocks up");
 }
+
+/// Sat with a table beside the stool, the player is At the Table: a meal there heals a
+/// quarter more and its good lasts a quarter longer. Standing by the table, it does not.
+#[test]
+fn a_meal_at_the_table_does_more() {
+    let mut server = fixture();
+    let table = id(&server, "base:oak_table");
+    server.set_block(STOOL + IVec3::new(1, 0, 0), table);
+    let at_table = server.content.effects.id("base:at_table").expect("base's at_table");
+    let has = |server: &Server| server.players[&1].vitals.effects.iter().any(|a| a.effect == at_table);
+    crate::process::Survival.run(&mut server);
+    assert!(!has(&server), "At the Table standing beside it");
+    sit(&mut server, STOOL);
+    crate::process::Survival.run(&mut server);
+    assert!(has(&server), "sat at a table, not At the Table");
+    let modifiers = server.players[&1].modifiers;
+    assert_eq!((modifiers.meal_heal, modifiers.meal_time), (1.25, 1.25));
+}
