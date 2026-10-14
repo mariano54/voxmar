@@ -136,6 +136,7 @@ impl Plugin for GatePlugin {
             .insert_resource(crate::music::Rehearse)
             .add_systems(PostStartup, render_offscreen)
             .add_systems(PreUpdate, ui_clicks.after(bevy::ui::UiSystems::Focus))
+            .add_systems(PreUpdate, feel_press.after(crate::net::receive).before(bevy::input::InputSystems))
             .add_systems(Update, crate::capture::target_ui)
             .add_systems(Last, run);
         let mut order = app.world_mut().resource_mut::<MainScheduleOrder>();
@@ -2953,11 +2954,18 @@ fn hv_age(world: &mut World, gate: &mut Gate, now: f32) {
             } else if gate.server_now - gate.machines_asked >= 2.0 { ask(gate, chest); }
         }
         42 => {
-            if holding(world, "base:gold_coin").0 > 0 {
+            // The opened chest opens into its slots beside the inventory, its find in them
+            // (`stores`): the server's word of it, not a prediction.
+            let coin = world.resource::<ClientWorld>().registry.id("base:gold_coin");
+            let store = world.resource::<LocalPlayer>().inventory.store.clone();
+            let found = store.as_ref().map(|s| s.slots.iter().flatten().count()).filter(|_| store.as_ref().is_some_and(|s| s.slots.iter().flatten().any(|x| Some(x.item) == coin)));
+            if let Some(stacks) = found {
+                gate.check("treasure: store", Ok(format!("the chest opened into its {} slots, {stacks} stacks in them with its gold", store.map_or(0, |s| s.slots.len()))));
                 world.resource_mut::<UiState>().inventory_open = true;
                 gate.advance(now);
             } else if empty_hand(world) && gate.server_now - gate.machines_asked >= 3.0 {
-                use_at(world, chest, "base:use_machine");
+                world.resource_mut::<LocalPlayer>().store_asked = true;
+                use_at(world, chest, "base:open_store");
                 gate.machines_asked = gate.server_now;
             }
         }
@@ -2966,6 +2974,26 @@ fn hv_age(world: &mut World, gate: &mut Gate, now: f32) {
             set_language(world, language);
             world.resource_mut::<Settings>().language = language.into();
             if gate.server_in_phase() > 1.0 && gate.shot(world, if language == "en" { "treasure-open-en" } else { "treasure-open-ja" }).is_some() { gate.advance(now); }
+        }
+        45 => {
+            // Shift click on the gold in the chest's slots takes it into the pack.
+            if holding(world, "base:gold_coin").0 > 0 {
+                gate.check("treasure: taken", Ok("shift click took the chest's gold into the pack".into()));
+                gate.advance(now);
+            } else if gate.server_now - gate.machines_asked >= 2.0 {
+                let coin = world.resource::<ClientWorld>().registry.id("base:gold_coin");
+                let player = world.resource::<LocalPlayer>();
+                let slot = player.inventory.store.as_ref().and_then(|s| s.slots.iter().position(|x| x.is_some_and(|x| Some(x.item) == coin)));
+                if let Some(slot) = slot {
+                    let actions = world.resource::<crate::Actions>().0.clone();
+                    let target = voxmar_engine::action::ActionTarget::Slot((voxmar_engine::inventory::STORE + slot) as u8);
+                    world.resource::<Net>().propose(actions.expect("core:quick_move"), target);
+                }
+                gate.machines_asked = gate.server_now;
+            } else if gate.server_in_phase() > BOSS_WAIT {
+                gate.check("treasure: taken", Err(format!("the chest's gold never reached the pack in {BOSS_WAIT} server seconds")));
+                gate.advance(now);
+            }
         }
         _ => {
             set_language(world, "en");
@@ -6621,6 +6649,22 @@ fn end_weapon(world: &mut World, gate: &mut Gate, now: f32) {
 /// The bear a fight step is about, as shown: the one first seen since the step summoned it,
 /// followed by its id, so another (one left behind) is never taken for it. Notes in
 /// `gate.feel.died` when it is seen dying.
+/// The fight-feel step's answer to a wind-up, pressed at the start of the frame, after the
+/// server's messages are taken and before the game reads its input, so the press goes out
+/// in this frame rather than the next (`FeelRun::answer`). A blow heard this frame for the
+/// bear is answered by nothing; `feel` judges it in `Last`.
+fn feel_press(world: &mut World) {
+    let Some(mut gate) = world.remove_resource::<Gate>() else { return };
+    if gate.step == Step::Feel && matches!(gate.phase, 2 | 4) {
+        let fighting = world.resource::<crate::fight::Fighting>();
+        let new = (fighting.hurt_count - gate.feel.hurts) as usize;
+        let received = gate.feel.bear.is_some_and(|bear| fighting.hurt.iter().rev().take(new).any(|h| h.0 == bear));
+        let dodge_key = world.resource::<Settings>().dodge_key.0;
+        gate.feel.answer(world, gate.phase == 2, dodge_key, received);
+    }
+    world.insert_resource(gate);
+}
+
 fn the_bear(world: &World, gate: &mut Gate, species: voxmar_engine::creature::CreatureId) -> Option<voxmar_protocol::CreatureView> {
     let creatures = world.resource::<crate::creatures::Creatures>();
     if let Some(id) = gate.feel.bear {
@@ -6692,12 +6736,12 @@ fn sweep_bears(world: &mut World, gate: &mut Gate, species: voxmar_engine::creat
 /// step of 0.05 cannot jump one.
 const FEEL_TRIES: u32 = 10;
 const FEEL_STEP: f32 = 0.05;
-/// Frames before the moment tried that an answer is pressed (`FeelRun::answer`): one for the
-/// frame the game takes to send it, and half of one so the frame that sends it is the
-/// nearest to the moment, not the first past it. Never more than half the window aimed at
-/// (`FeelRun::room`): a quarter-second frame led a try at 0.55 s to be queued at 0.50 s,
-/// before the perfect window, where a press that waited sent it inside.
-const FEEL_AIM: f32 = 1.5;
+/// Frames before the moment tried that an answer is pressed (`FeelRun::answer`): half of one,
+/// so the frame that sends it is the nearest to the moment, not the first past it. Never
+/// more than half the window aimed at (`FeelRun::room`): a quarter-second frame led a try
+/// at 0.55 s to be queued at 0.50 s, before the perfect window, where a press that waited
+/// sent it inside.
+const FEEL_AIM: f32 = 0.5;
 /// Seconds past the moment tried that a frame may come late with the try still saying
 /// something of the moment: a frame that late answered after the blow could have landed
 /// (the wind-up is 0.7 s), and said nothing, as on a machine drawing a frame a second.
@@ -6764,6 +6808,9 @@ struct FeelRun {
     /// set aside for it, and how many were.
     late: f32,
     slowest: f32,
+    /// When after the wind-up showed the answer went, the frame it was pressed in (for
+    /// `Last` to tell of it).
+    sent: Option<f32>,
     slow: u32,
 }
 
@@ -6786,11 +6833,11 @@ impl FeelRun {
     /// Queue a real input only while this observed wind-up remains unanswered by the
     /// server. A result already received cannot be defended by a next-frame input edge.
     ///
-    /// The gate presses in `Last` and the game sends the press a frame on, so the press is
-    /// queued on the frame that sends it nearest the moment tried: from `FEEL_AIM` frames
-    /// before it, by the frame just drawn. With frames of a few milliseconds that is the
-    /// moment itself; on a loaded machine drawing a frame a tenth of a second, waiting for
-    /// the moment sent every answer up to two frames late, past a perfect window.
+    /// Pressed at the start of a frame, before the game reads its input (`feel_press`), so
+    /// the frame that presses is the one that sends it: from `FEEL_AIM` frames before the
+    /// moment tried, by the frame just drawn. With frames of a few milliseconds that is the
+    /// moment itself. Pressed in `Last`, the press went a frame on, and a quarter-second
+    /// frame then sent a dodge tried at 0.57 s after 0.63 s, past the dodge's window.
     fn answer(&mut self, world: &mut World, blocking: bool, dodge_key: KeyCode, received: bool) -> bool {
         let Some(seen) = self.seen else { return false };
         let frame = world.get_resource::<Time>().map_or(0.0, |t| t.delta_secs());
@@ -6798,6 +6845,7 @@ impl FeelRun {
             return false;
         }
         self.answered = true;
+        self.sent = Some(seen.elapsed().as_secs_f32());
         if blocking {
             mouse(world, MouseButton::Right, true);
         } else {
@@ -6957,12 +7005,11 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             {
                 gate.shot(world, "windup-facing");
             }
-            if gate.feel.answer(world, blocking, dodge_key, ours.is_some()) {
-                let seen = gate.feel.seen.expect("answered an observed wind-up");
-                // When the game sends it, a frame on, past the moment tried.
-                gate.feel.late = seen.elapsed().as_secs_f32() + world.resource::<Time>().delta_secs() - gate.feel.after;
+            // Pressed at this frame's start (`feel_press`), and sent by it.
+            if let Some(sent) = gate.feel.sent.take() {
+                gate.feel.late = sent - gate.feel.after;
                 let player = world.resource::<LocalPlayer>();
-                info!("gate: combat response phase {} try {} bear {}, requested {:.3}s, queued {:.3}s after wind-up, grounded {}, flying {}, frame {:.3}s", gate.phase, gate.feel.tries + 1, view.id, gate.feel.after, seen.elapsed().as_secs_f32(), player.on_ground, player.flying, world.resource::<Time>().delta_secs());
+                info!("gate: combat response phase {} try {} bear {}, requested {:.3}s, sent {sent:.3}s after wind-up, grounded {}, flying {}, frame {:.3}s", gate.phase, gate.feel.tries + 1, view.id, gate.feel.after, player.on_ground, player.flying, world.resource::<Time>().delta_secs());
             } else if !blocking {
                 key(world, dodge_key, false);
             }
@@ -9720,6 +9767,29 @@ mod tests {
                     assert!(!feel.answer(app.world_mut(), blocking, dodge, false), "an already queued response is sent once");
                 }
             }
+        }
+    }
+
+    #[test]
+    fn an_answer_pressed_before_the_input_is_read_goes_in_that_frame() {
+        // As `feel_press` runs: in PreUpdate, before the input systems. The game reads the
+        // press in the same update, so it is sent by the frame that pressed it, not the next.
+        #[derive(Resource)]
+        struct Answer(FeelRun, bool);
+        for blocking in [false, true] {
+            let mut app = App::new();
+            app.add_plugins(bevy::input::InputPlugin);
+            app.insert_resource(Answer(FeelRun { seen: Some(Instant::now()), after: 0.0, ..default() }, blocking));
+            app.add_systems(PreUpdate, (|world: &mut World| {
+                world.resource_scope(|world, mut answer: Mut<Answer>| {
+                    let blocking = answer.1;
+                    answer.0.answer(world, blocking, KeyCode::ShiftLeft, false);
+                });
+            }).before(bevy::input::InputSystems));
+            app.update();
+            assert_eq!(app.world().resource::<ButtonInput<KeyCode>>().just_pressed(KeyCode::ShiftLeft), !blocking);
+            assert_eq!(app.world().resource::<ButtonInput<MouseButton>>().just_pressed(MouseButton::Right), blocking);
+            assert!(app.world().resource::<Answer>().0.sent.is_some(), "Last is told when it went");
         }
     }
 

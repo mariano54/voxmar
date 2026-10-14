@@ -14,9 +14,12 @@
 // - `Chute`: carries items between the machines beside a run of chutes, up to `rate` a
 //   second (a run moves as fast as its slowest chute);
 // - `Bin`: holds `slots` stacks; one that `feeds` (a hopper) gives what players put in it
-//   to the machines on its chutes, one that does not (a chest) collects what they made.
+//   to the machines on its chutes, one that does not (a chest) collects what they made and
+//   opens into a screen of its slots (a store, at most 54); with `holds` (an item, `tag:TAG`
+//   or `a|b`), it takes only those.
 //   Along a run, each item goes in turn to a machine that works or burns it; what a
 //   processor made that none takes goes to a chest. Bins never feed bins.
+// A `block` with `{name}` in it is every block of that family (`{name}_cupboard`).
 // Machines of a kind differ in speed and yield, never in what they make. Machines teach
 // nothing; building them (recipes_machines.ron) takes Engineering.
 (
@@ -41,6 +44,16 @@
         // Items: hoppers feed, chests collect, chutes and conveyors carry.
         (block: "hopper", role: Bin(slots: 5, feeds: true)),
         (block: "chest", role: Bin(slots: 27)),
+        // Stores about the home: each opens into a screen of its slots, as a chest does.
+        // A jar keeps what is edible, a basket what is foraged; furniture takes anything.
+        (block: "barrel", role: Bin(slots: 9)),
+        (block: "crate", role: Bin(slots: 9)),
+        (block: "{name}_crate_stack", role: Bin(slots: 9)),
+        (block: "{name}_barrel_rack", role: Bin(slots: 18)),
+        (block: "{name}_cupboard", role: Bin(slots: 9)),
+        (block: "{name}_wardrobe", role: Bin(slots: 18)),
+        (block: "{name}_jar", role: Bin(slots: 4, holds: Some("tag:edible"))),
+        (block: "{name}_basket", role: Bin(slots: 4, holds: Some("tag:forage"))),
         (block: "chute", role: Chute(rate: 1.0)),
         (block: "conveyor", role: Chute(rate: 4.0)),
         // Iron and Steam: steam.

@@ -341,15 +341,20 @@ impl Server {
                     self.placed_machine(agent, cell);
                 }
                 (Effect::MoveItems, ActionTarget::Slots { from, to, count }) => {
+                    // An open store's slots as it holds them now, and what moved written back.
+                    self.pull_store(agent);
                     let player = self.players.get_mut(&agent).unwrap();
                     if player.inventory.move_items(from as usize, to as usize, count) {
                         player.changed(traits::INVENTORY);
+                        self.push_store(agent);
                     }
                 }
                 (Effect::QuickMove, ActionTarget::Slot(slot)) => {
+                    self.pull_store(agent);
                     let player = self.players.get_mut(&agent).unwrap();
                     if player.inventory.quick_move(slot as usize) {
                         player.changed(traits::INVENTORY);
+                        self.push_store(agent);
                     }
                 }
                 (Effect::StowCursor, _) => {
@@ -357,6 +362,8 @@ impl Server {
                     if player.inventory.stow_cursor() {
                         player.changed(traits::INVENTORY);
                     }
+                    // The screen closed: so does the store.
+                    self.close_store(agent);
                 }
                 (Effect::Respawn, _) => {
                     // Home, if the player has one, else the bed they last slept in, else
@@ -390,6 +397,7 @@ impl Server {
                 }
                 (Effect::Light, ActionTarget::Block { block, .. }) => self.light(agent, block),
                 (Effect::UseMachine, ActionTarget::Block { block, .. }) => self.use_machine(agent, block),
+                (Effect::OpenStore, ActionTarget::Block { block, .. }) => self.open_store(agent, block),
                 (Effect::PickLock, ActionTarget::Block { block, .. }) => self.pick_lock(agent, block),
                 (Effect::TendBees, ActionTarget::Block { block, .. }) => self.tend_bees(agent, block),
                 (Effect::Pray, ActionTarget::Block { .. }) => self.pray_at_altar(agent),
@@ -402,6 +410,8 @@ impl Server {
                     let player = self.players.get_mut(&agent).unwrap();
                     let selected = player.selected;
                     let Some(item) = player.inventory.take_one(selected) else { continue };
+                    // Quests count what was eaten (`Ate`).
+                    *player.tallies.entry(format!("ate:{}", blocks.def(item).name)).or_default() += 1;
                     // Food heals, the same food a little less each time in a row.
                     let share = player.recent_food.share(item);
                     player.recent_food.eat(item);
