@@ -356,6 +356,12 @@ impl Creatures {
         self.shown.iter().filter(|(_, shown)| shown.dying.is_none()).map(|(&id, shown)| (id, shown.view.species, shown.position))
     }
 
+    /// Whether creature `id` is in a fight: winding up or charging, or hurt below `most`
+    /// health (a roaming boss's fight music waits for one).
+    pub fn stirred(&self, id: u32, most: u16) -> bool {
+        self.shown.get(&id).is_some_and(|shown| shown.view.pose == Pose::Attacking || shown.view.health < most)
+    }
+
     pub fn sighting(&self, id: u32) -> Option<Sighting> {
         let shown = self.shown.get(&id)?;
         let health = if shown.dying.is_some() { 0 } else { shown.view.health };

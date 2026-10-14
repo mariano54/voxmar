@@ -26,6 +26,33 @@ pub struct Move {
     pub tell: Tell,
 }
 
+/// A charge (`Attack::charge`): once its wind-up is done the creature runs straight the
+/// way it faces, its aim locked, at `speed` blocks a second for up to `distance` blocks. It
+/// does not turn or stop for what lies ahead, so it is a thing to step aside from, and the
+/// land answers it as data, for any charger (docs/bosses.md):
+/// - it strikes the first player it comes to, judged as any blow is (a dodge passes it);
+/// - a guard that braces (`combat::GuardDef::brace`, a spear's) raised facing it stops
+///   it on the point: the bracer's max hit, sure to land, and it stands dazed `stun` s;
+/// - a wall two blocks high stops it dazed for `stun` seconds as well (a step it hops);
+/// - it runs off edges, and falls past survival's `safe_fall` cost it
+///   `combat::Feel::charge_fall` of its most health a block: a cliff, or a pit it cannot
+///   climb out of.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Charge {
+    pub speed: f32,
+    pub distance: f32,
+    #[serde(default)]
+    pub stun: f32,
+}
+
+impl Charge {
+    /// Seconds the run takes at most.
+    pub fn seconds(&self) -> f32 {
+        self.distance / self.speed
+    }
+}
+
 /// How a creature's body shows a wind-up: it nods its head down, crouches and rears up
 /// (each 0 ..= 1, as the client draws a pose).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Deserialize)]
@@ -184,10 +211,16 @@ pub(super) fn check(def: &super::CreatureDef) -> Result<(), String> {
         if !(m.least >= 0.0 && m.least < m.attack.reach) {
             return Err(format!("move `{}` needs its `least` from 0 to under its reach", m.name));
         }
+        if let Some(charge) = m.attack.charge {
+            check_charge(&m.name, charge)?;
+        }
         let t = m.tell;
         if ![t.nod, t.crouch, t.rear].iter().all(|v| (0.0..=1.0).contains(v)) {
             return Err(format!("move `{}`'s tell must be from 0 to 1", m.name));
         }
+    }
+    if let Some(charge) = def.attack.and_then(|a| a.charge) {
+        check_charge("attack", charge)?;
     }
     if let Some(mend) = &def.mend {
         if mend.health == 0 || !(mend.every > 0.0) || !(mend.after >= 0.0) || !(mend.fire_reach >= 0.0) || mend.fire.is_empty() != (mend.fire_reach == 0.0) {
@@ -200,10 +233,18 @@ pub(super) fn check(def: &super::CreatureDef) -> Result<(), String> {
     Ok(())
 }
 
+fn check_charge(name: &str, charge: Charge) -> Result<(), String> {
+    if !(charge.speed > 0.0 && charge.speed <= 32.0 && charge.distance > 0.0 && charge.distance <= 64.0 && charge.stun >= 0.0 && charge.stun <= 30.0) {
+        return Err(format!("`{name}`'s charge needs a speed from above 0 to 32, a distance from above 0 to 64 and a stun from 0 to 30 seconds"));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::content::Content;
+    use glam::Vec3;
 
     fn content() -> Content {
         Content::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).expect("the game's content loads")
@@ -240,6 +281,34 @@ mod tests {
         assert!(her.attack_at(grasp).is_some_and(|a| a.heavy) && her.attack_at(lash).is_some_and(|a| !a.heavy));
         assert_eq!(her.attack_at(volley).map(|a| a.style), Some(crate::combat::Style::Ranged));
         assert!(her.tell_at(grasp) != her.tell_at(lash) && her.tell_at(volley) != her.tell_at(lash), "each move reads apart");
+    }
+
+    /// Old Tusk gores a player beside him and charges one who keeps away; below half his
+    /// charge is the quicker frenzy. Each charge is heavy (a guard does not take it), its
+    /// crouch reads apart from the gore's nod, and a spear's guard braces against it where a
+    /// sword's does not. He roams rather than keeps a room, never starts a fight, and a
+    /// truffle tempts him.
+    #[test]
+    fn old_tusk_gores_up_close_and_charges_from_afar() {
+        let content = content();
+        let tusk = content.creatures.get(content.creatures.id("base:old_tusk").expect("Old Tusk"));
+        let [gore, charge, frenzy] = ["gore", "charge", "frenzy"].map(|m| index(tusk, m));
+        assert_eq!(tusk.choose(0, 0.5, 0), Some(gore));
+        assert_eq!(tusk.choose(0, 6.0, 0), Some(charge));
+        assert_eq!(tusk.choose(1, 6.0, 0), Some(frenzy));
+        assert_eq!(tusk.choose(1, 0.5, frenzy), Some(gore));
+        for i in [charge, frenzy] {
+            let attack = tusk.attack_at(i).unwrap();
+            assert!(attack.heavy && attack.charge.is_some(), "a charge goes through any guard");
+        }
+        assert!(tusk.attack_at(frenzy).unwrap().charge.unwrap().speed > tusk.attack_at(charge).unwrap().charge.unwrap().speed);
+        assert!(tusk.tell_at(charge) != tusk.tell_at(gore));
+        let guard = |item: &str| content.combat.guard_of(content.blocks.id(item), &[], |_| 1).expect("it guards");
+        assert!(guard("base:flint_spear").braces(Vec3::Z, Vec3::Z) && !guard("base:flint_spear").braces(Vec3::Z, -Vec3::Z));
+        assert!(!guard("base:stone_sword").braces(Vec3::Z, Vec3::Z));
+        let def = &tusk.def;
+        assert!(def.boss && !def.habitat.party_only && def.temperament.aggression == 0.0);
+        assert!(tusk.favourite.contains(&content.blocks.id("base:truffle").unwrap()));
     }
 
     /// Cut her and she grows back, unless a fire burns near her or the sun is on her.
