@@ -1,0 +1,34 @@
+// The quest book's paths: each age's branches (a quest's `branch` in quests.ron) as the
+// lanes the book draws them in, top to bottom, each with a short name and an item for its
+// icon. Every branch a quest names needs a path here, and every path a quest on it; the
+// names are in the language files too (`quest.path.<age>.<branch>`). A mod's file adds
+// paths for its own branches, or gives one already here a new name or icon.
+(
+    paths: [
+        (age: "nomad", branch: "start", title: "First Steps", icon: "stone_axe"),
+        (age: "nomad", branch: "main", title: "The Hearth", icon: "campfire"),
+        (age: "nomad", branch: "home", title: "Home", icon: "wooden_door"),
+        (age: "nomad", branch: "cooking", title: "Cooking", icon: "cooked_beef"),
+        (age: "nomad", branch: "farming", title: "Farming", icon: "wheat"),
+        (age: "nomad", branch: "hunter", title: "Hunting", icon: "raw_rabbit"),
+        (age: "nomad", branch: "combat", title: "Combat", icon: "stone_sword"),
+        (age: "nomad", branch: "fishing", title: "Fishing", icon: "fishing_rod"),
+        (age: "nomad", branch: "mining", title: "Mining", icon: "stone_pickaxe"),
+        (age: "nomad", branch: "crafting", title: "Crafting", icon: "crafting_table"),
+        (age: "nomad", branch: "explore", title: "The Wilds", icon: "hide_boots"),
+        (age: "nomad", branch: "qol", title: "Comforts", icon: "chest"),
+        (age: "farm", branch: "main", title: "The Kiln", icon: "crucible"),
+        (age: "farm", branch: "pottery", title: "Pottery", icon: "fired_clay"),
+        (age: "farm", branch: "farming", title: "Fields", icon: "wheat"),
+        (age: "farm", branch: "cooking", title: "Kitchen", icon: "bread"),
+        (age: "farm", branch: "husbandry", title: "Husbandry", icon: "egg"),
+        (age: "farm", branch: "home", title: "Home", icon: "candle"),
+        (age: "farm", branch: "hunter", title: "Hunting", icon: "jerky"),
+        (age: "farm", branch: "combat", title: "Combat", icon: "short_bow"),
+        (age: "farm", branch: "fishing", title: "Fishing", icon: "fishing_rod"),
+        (age: "farm", branch: "mining", title: "Metals", icon: "copper_ingot"),
+        (age: "farm", branch: "crafting", title: "Crafting", icon: "crafting_table"),
+        (age: "farm", branch: "explore", title: "The Road", icon: "copper_boots"),
+        (age: "farm", branch: "prayer", title: "Prayer", icon: "stone_altar"),
+    ],
+)
