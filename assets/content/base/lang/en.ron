@@ -1149,7 +1149,7 @@
     "quest.base.fire_the_clay": "Fire the Clay",
     "quest.base.fire_the_clay.why": "Hold clay and right-click the pit kiln: after a moment it comes out as fired clay. Low Crafting levels crack some, so bring spare (a cracked one is clay again). Waiting at the kiln? Heap eight dirt over a log for an earth clamp (An Earth Clamp): it fires sixteen at once, none cracked, while you dig. Fire twelve.",
     "quest.base.brick_by_brick": "Brick by Brick",
-    "quest.base.brick_by_brick.why": "The Crucible Kiln is built of kiln bricks: nineteen for the kiln and its crucible. Four fired clay make a brick at the crafting grid (Crafting 5). Have nineteen in hand: A Kiln Load pays the first four, and the rest is still a lot of clay, so keep firing. An earth clamp fires sixteen at a time while you dig the next (An Earth Clamp).",
+    "quest.base.brick_by_brick.why": "The Crucible Kiln is built of kiln bricks: nineteen for the kiln and its crucible. Four fired clay make two bricks at the crafting grid (Crafting 5). Have nineteen in hand: A Kiln Load pays the first four, and the rest is still a lot of clay, so keep firing. An earth clamp fires sixteen at a time while you dig the next (An Earth Clamp).",
     "quest.base.a_kiln_load": "A Kiln Load",
     "quest.base.a_kiln_load.why": "Brick by Brick takes a lot of fired clay, so keep the pit kiln busy. Fire forty clay in all, counting what you have fired before, and the potters' trick is yours: four kiln bricks to start the kiln with. Between loads, turn spare fired clay into crockery (Earthenware), fire cobblestone into stone for an altar (A Place to Pray), or hand clay to potters on the road (Fired Whole).",
     "quest.base.an_earth_clamp": "An Earth Clamp",
