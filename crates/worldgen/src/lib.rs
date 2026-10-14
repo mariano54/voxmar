@@ -1368,9 +1368,13 @@ mod tests {
             (&[2, 3, 42], "savanna"),
             (&[9, 1], "mixed_forest"),
         ];
-        for (seeds, biome) in places {
+        // The places side by side, each on its own worlds.
+        use rayon::prelude::*;
+        places.into_par_iter().for_each(|(seeds, biome)| {
             // Dry, wooded land well inside the biome, not on a sliver of it at a border, in one
-            // of its clearings, or under snow, where few plants grow.
+            // of its clearings, or under snow, where few plants grow. A site's home and edge
+            // are its sampler's pick, which needs no ground: only a place that passes them
+            // has its ground found.
             let found = seeds.iter().find_map(|&seed| {
                 let world = Overworld::new(seed, registry.clone());
                 let id = world.biomes.id(&format!("base:{biome}")).unwrap();
@@ -1378,8 +1382,12 @@ mod tests {
                     .flat_map(|ring| (0..(ring * 8).max(1)).map(move |step| spiral(ring, step)))
                     .map(|(dx, dz)| IVec2::new(dx, dz) * 64)
                     .find(|&p| {
-                        let site = world.site(p.x, p.y);
-                        site.home == id && site.edge >= 48.0 && site.height > SEA_LEVEL + 2 && site.forest > 0.15 && site.temperature > 0.0
+                        let sampler = world.sampler(p, p);
+                        let pick = sampler.pick(p.x, p.y);
+                        pick.home == id && pick.edge >= 48.0 && {
+                            let site = sampler.site(p.x, p.y);
+                            site.height > SEA_LEVEL + 2 && site.forest > 0.15 && site.temperature > 0.0
+                        }
                     })?;
                 Some((seed, world, id, at))
             });
@@ -1387,9 +1395,12 @@ mod tests {
             let at = (0..60 * 60)
                 .map(|i| spiral(i / 60, i % 60))
                 .map(|(dx, dz)| at + IVec2::new(dx * 8, dz * 8))
-                .find(|p| {
-                    let site = world.site(p.x, p.y);
-                    site.home == id && site.height > site.water
+                .find(|&p| {
+                    let sampler = world.sampler(p, p);
+                    sampler.pick(p.x, p.y).home == id && {
+                        let site = sampler.site(p.x, p.y);
+                        site.height > site.water
+                    }
                 })
                 .unwrap_or_else(|| panic!("seed {seed}: no dry {biome}"));
             let first = ColumnPos::of_block(IVec3::new(at.x, 0, at.y)).offset(-1, -1);
@@ -1447,7 +1458,7 @@ mod tests {
                 }
             }
             assert!(pieces >= 10 && plants > 200, "seed {seed}: only {pieces} pieces and {plants} plants in a {biome} at {at}: {:?}", world.site(at.x, at.y));
-        }
+        });
     }
 
     /// What rests on nothing in the inner columns of `count`×`count` columns from `first`:
