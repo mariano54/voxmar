@@ -374,10 +374,14 @@
         (name: "sapphire_ore_sample", render: Plant, model: Rock, solid: false, sound: Stone, textures: All("sapphire_ore"), host: "stone", hardness: 0.5, drops: "sapphire_ore", color: (50, 90, 210), tags: ["ore_sample", "ore", "gem", "gem:sapphire", "natural"]),
         (name: "emerald_ore_sample", render: Plant, model: Rock, solid: false, sound: Stone, textures: All("emerald_ore"), host: "stone", hardness: 0.5, drops: "emerald_ore", color: (40, 170, 100), tags: ["ore_sample", "ore", "gem", "gem:emerald", "natural"]),
         // Building
-        (name: "glass", sound: Glass, textures: All("glass"), render: Cutout, hardness: 0.3, color: (200, 230, 240), tags: ["glass", "building"]),
+        // Windows glow by the light of a lit room behind them (`lit_through`).
+        (name: "glass", sound: Glass, textures: All("glass"), render: Cutout, hardness: 0.3, color: (200, 230, 240), tags: ["glass", "window", "building"], lit_through: true),
         // Settlements' windows: old panes that break to nothing, so a village is no free
         // glass while glass has no recipe (settlements.ron `window`).
-        (name: "old_glass", sound: Glass, textures: All("old_glass"), render: Cutout, hardness: 0.3, drops: "core:air", color: (200, 230, 240), tags: ["building"]),
+        (name: "old_glass", sound: Glass, textures: All("old_glass"), render: Cutout, hardness: 0.3, drops: "core:air", color: (200, 230, 240), tags: ["window", "building"], lit_through: true),
+        // A window before glass (Farm, Construction 3): oiled hide in a frame of sticks. Light
+        // passes it as it does glass, and a lit room behind it shows warm through it at night.
+        (name: "hide_window", sound: Wood, textures: All("hide_window"), render: Cutout, hardness: 0.4, color: (200, 150, 90), tags: ["window", "building"], lit_through: true),
         (name: "glowstone", sound: Glass, textures: All("glowstone"), light: 15, hardness: 0.3, color: (250, 210, 120), tags: ["light", "building"]),
         (name: "sea_lantern", sound: Glass, textures: All("sea_lantern"), light: 15, hardness: 0.3, color: (200, 225, 220), tags: ["light", "building"]),
         // Food made in the crafting grid (recipes.ron).
