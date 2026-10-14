@@ -45,7 +45,11 @@ the gate's Home step, "home: icons", shot `home-chips`).
 | Heart of the Home | Farm end | + books, cooking, workshop, banner | heal x2, xp x1.125 |
 
 Seats are stools, chairs, benches and cushions; tables include desks and counters; storage is
-barrels, crates, barrel racks, jars and baskets; cooking is the cottage stove and cauldron;
+whatever a home keeps things in or on: chests, cupboards and wardrobes, shelves (pot shelves
+and bookshelves too), crate stacks, barrel racks, jars and baskets, and a village's barrels
+and crates (every store a player opens counts but the feed trough, which is the pen's: test
+`every_store_shelf_and_cupboard_counts_as_storage`; the gate's Nest step finds a Pantry made
+of a chest and a barrel by a campfire, "home: storage"); cooking is the cottage stove and cauldron;
 workshop is the loom frame, spindle stand and quern. All are craftable in the first two ages
 (Construction 1 to 8, Crafting 2 to 8), so each step is a few minutes of gathering and
 crafting, not a grind.
@@ -337,6 +341,21 @@ any block tagged `drinking_water` (water itself, a well, a feed trough) meets it
 is watered by the trough that feeds it, a Construction 4 piece any age can make, and a mod's
 water station is a tag on its block. Loading refuses creatures when no block carries
 `drinking_water` (`check_drink`). Test: `a_pen_drinks_from_water_a_well_or_a_trough`.
+
+## Moving the furniture
+
+A home is rearranged, not rebuilt: whatever a player placed to furnish it (the wood
+furniture, the dyed cloth, the crockery, a candle) comes back whole when broken, so a bed
+moved to the other wall, or a whole home moved to a better spot, costs nothing. It is one
+tag: a block tagged `furnishing` gives its drop only from a cell a player set
+(`Server::placed`, kept in the save), and one a village placed gives nothing, as its props
+do (design draft 80), so a settlement is still no free store of goods. Since a piece drops
+itself, breaking one is no way to make planks or dye, and a placed cell teaches no skill
+when broken. Loading refuses a `furnishing` that drops nothing. Tests: the engine's
+`a_placed_piece_gives_itself_back_and_a_village_one_nothing`, the server's
+`a_village_rug_gives_nothing_but_a_players_comes_back_whole_across_restarts` (and the crate
+stack's). The gate's Nest step places a rug and a stool, breaks them and finds both back in
+the pack ("furnishings: come back").
 
 ## Quest hooks (written, in base/quests.ron)
 
