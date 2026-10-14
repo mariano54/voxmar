@@ -31,7 +31,8 @@
     // block, times `volume`. A package that names an action replaces its sound. Every
     // action says how it sounds, or the game does not start: its `sounds`, `silent: true`,
     // or `heard` elsewhere (Block, Interface or Combat). `brings`: what its result sounds
-    // like as it lands in the pack, by the first `tag` the item has (none: anything).
+    // like as it lands in the pack, by the first `tags` the item all has (only what the
+    // action brings, never anything else picked up meanwhile).
     actions: {
         // Three bites and their chews.
         "core:eat": (sounds: ["sounds/eat_1.ogg", "sounds/eat_2.ogg", "sounds/eat_3.ogg"], volume: 0.8),
@@ -52,8 +53,8 @@
         "base:cook": (
             sounds: ["sounds/cook_1.ogg", "sounds/cook_2.ogg"], volume: 0.9,
             brings: [
-                (tag: Some("burnt"), sounds: ["sounds/burnt_1.ogg", "sounds/burnt_2.ogg"], volume: 0.8),
-                (sounds: ["sounds/cooked_1.ogg", "sounds/cooked_2.ogg"], volume: 0.7),
+                (tags: ["burnt"], sounds: ["sounds/burnt_1.ogg", "sounds/burnt_2.ogg"], volume: 0.8),
+                (tags: ["cooked"], sounds: ["sounds/cooked_1.ogg", "sounds/cooked_2.ogg"], volume: 0.7),
             ],
         ),
         // Lying down: rustles of cloth and straw.
@@ -62,7 +63,7 @@
         // A line cast, and what it lands: a fish breaking the water and flapping on the bank.
         "base:fish": (
             sounds: ["sounds/cast_1.ogg", "sounds/cast_2.ogg"], volume: 0.7,
-            brings: [(sounds: ["sounds/catch_1.ogg", "sounds/catch_2.ogg"], volume: 0.8)],
+            brings: [(tags: ["fish", "raw"], sounds: ["sounds/catch_1.ogg", "sounds/catch_2.ogg"], volume: 0.8)],
         ),
         // A handful of grain shaken out to an animal, and a pat.
         "base:tend": (sounds: ["sounds/tend_1.ogg", "sounds/tend_2.ogg"], volume: 0.7),

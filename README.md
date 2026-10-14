@@ -911,7 +911,7 @@ What the player does is heard as they do it: eating, crafting at the grid, loadi
 station, lighting a fire or a kiln, opening a chest or a door, putting food on to cook,
 lying down to sleep, casting a line, feeding an animal, emptying a pouch, feeding a machine,
 picking a lock, praying at an altar, spreading fertiliser and throwing something down; and what
-an action brings as it lands in the pack (`brings`, by the item's tag): a fish landed, food off
+an action brings as it lands in the pack (`brings`, by the item's tags): a fish landed, food off
 the fire done, or burnt.
 `sounds.ron`'s `actions` gives each action, by name, its clips (one picked at random, at a
 slightly different pitch) and a volume, around the loudness of placing a block, or says it is
