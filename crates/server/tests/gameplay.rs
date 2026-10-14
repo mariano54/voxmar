@@ -7497,20 +7497,27 @@ fn the_first_days(f: &mut Fresh) -> Site {
     f.wait(5.0, "picking the wild wheat", |c| c.world.block(wheat) == Some(BlockId::AIR));
     f.collect("base:wheat_seeds", 1);
     let fowl = f.c.content.creatures.find("junglefowl").expect("junglefowl in the content");
-    if !lane(&f.c, f.origin).iter().any(|&(_, _, species)| species == fowl) {
+    // Only one the night's hunt never hurt comes to seeds: a wounded one holds its grudge
+    // (`Tempted`) and runs, as a player sees it do. So one never struck is looked for, and
+    // let in if there is none.
+    let whole = f.c.content.creatures.get(fowl).def.health;
+    let origin = f.origin;
+    let unhurt = move |c: &Client| -> Vec<f32> {
+        lane(c, origin).into_iter().filter(|&(id, _, species)| species == fowl && c.creatures.get(&id).is_some_and(|v| v.health >= whole)).map(|(_, p, _)| p.z).collect()
+    };
+    if unhurt(&f.c).is_empty() {
         f.stock("junglefowl", -4);
     }
     // In by the open end to five blocks short of the nearest junglefowl (they huddle at the
     // far end, and the seeds tempt from ten), where it can walk up the rest.
     f.walk_toward(Fresh::middle(f.rel(-9, 0, 2)), 0.3);
     // One may have stepped out by the open end while the player walked in: another is let in.
-    let origin = f.origin;
-    let in_lane = |c: &Client| lane(c, origin).iter().any(|&(_, _, species)| species == fowl);
+    let in_lane = |c: &Client| !unhurt(c).is_empty();
     if !in_lane(&f.c) {
         f.stock("junglefowl", -4);
         assert!(f.waited(2.0, in_lane), "the junglefowl let into the lane never showed");
     }
-    let near = lane(&f.c, f.origin).into_iter().filter(|&(_, _, species)| species == fowl).map(|(_, p, _)| p.z).fold(f32::MIN, f32::max);
+    let near = unhurt(&f.c).into_iter().fold(f32::MIN, f32::max);
     let lane_x = f.rel(-9, 0, 0).x as f32 + 0.5;
     f.walk_toward(Vec3::new(lane_x, f.at.y, (near + 5.0).min(f.rel(0, 0, 0).z as f32 + 0.5)), 0.3);
     f.hold("base:wheat_seeds");
