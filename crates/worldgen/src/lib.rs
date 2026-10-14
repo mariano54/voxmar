@@ -547,27 +547,31 @@ impl Overworld {
     /// tile of positions (a few regions at most, which `Rivers::grid` shares), the tiles
     /// side by side.
     pub(crate) fn geo_grid(&self, origin: IVec2, step: i32, size: i32) -> Vec<GeoSample> {
-        use rayon::prelude::*;
         // Tiles of about 64 positions a side, as even as the size allows.
         let count = (size + 63) / 64;
         let tile = (size + count - 1) / count.max(1);
-        let tiles: Vec<Vec<GeoSample>> = (0..count * count)
-            .into_par_iter()
-            .map(|t| {
-                let from = origin + IVec2::new(t % count, t / count) * tile * step;
-                let land = self.land();
-                let mut samples = {
-                    let _stage = stage::enter(Stage::Rivers);
-                    self.rivers.grid_with_crags(self.stages(), from, step, tile)
-                };
-                let _stage = stage::enter(Stage::Trails);
-                for (i, sample) in samples.iter_mut().enumerate() {
-                    let (x, z) = (from.x + i as i32 % tile * step, from.y + i as i32 / tile * step);
-                    *sample = self.settlements.apply(self, self.trails.apply(&land, *sample, x, z), x, z);
-                }
-                samples
-            })
-            .collect();
+        let one = |t: i32| {
+            let from = origin + IVec2::new(t % count, t / count) * tile * step;
+            let land = self.land();
+            let mut samples = {
+                let _stage = stage::enter(Stage::Rivers);
+                self.rivers.grid_with_crags(self.stages(), from, step, tile)
+            };
+            let _stage = stage::enter(Stage::Trails);
+            for (i, sample) in samples.iter_mut().enumerate() {
+                let (x, z) = (from.x + i as i32 % tile * step, from.y + i as i32 / tile * step);
+                *sample = self.settlements.apply(self, self.trails.apply(&land, *sample, x, z), x, z);
+            }
+            samples
+        };
+        // Side by side in tests (rayon is only a test dependency here); the same tiles either way.
+        #[cfg(test)]
+        let tiles: Vec<Vec<GeoSample>> = {
+            use rayon::prelude::*;
+            (0..count * count).into_par_iter().map(one).collect()
+        };
+        #[cfg(not(test))]
+        let tiles: Vec<Vec<GeoSample>> = (0..count * count).map(one).collect();
         // Cropped to the grid where the last tiles run past it.
         (0..size * size)
             .map(|i| {
