@@ -67,7 +67,8 @@ with Engineering 30.
   (`ground` in crops.ron says otherwise for a crop that wants something else). A hoe over a
   ripe crop adds its yield to rarer finds. A stone or copper hoe also **reaps**: cutting a
   ripe crop takes every ripe crop of the same kind in the three by three patch about it, an
-  iron hoe the five by five (`reap:N` on the tool, at most 2, checked at load). Each crop
+  iron hoe the five by five (`reap:N` on the tool, at most 2, checked at load); fruit on
+  trees is still picked one leaf at a time. Each crop
   reaped gives its harvest and experience as if cut on its own, so a field goes faster, not
   richer. The tooltip says so ("Reaps ripe crops in a 3×3 patch").
 - A **taming treat** (Cooking 27) is taken by any animal you are skilled enough to tame,
