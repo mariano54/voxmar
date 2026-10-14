@@ -25,11 +25,15 @@ pub struct Vitals {
     /// player has one: what the interface points the way back to.
     #[serde(default)]
     pub home: Option<glam::IVec3>,
+    /// What the stores in the player's home hold, by item, while they stand in it (empty
+    /// elsewhere): what they can make there counts it, as laying a recipe takes from it.
+    #[serde(default)]
+    pub home_stores: Vec<(BlockId, u32)>,
 }
 
 impl Default for Vitals {
     fn default() -> Self {
-        Self { felt: 15.0, effects: Vec::new(), home: None }
+        Self { felt: 15.0, effects: Vec::new(), home: None, home_stores: Vec::new() }
     }
 }
 

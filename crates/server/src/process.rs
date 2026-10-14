@@ -146,6 +146,7 @@ impl Process for Survival {
             let cold_air = air - if wet { server.survival.water_chill } else { 0.0 };
             let warmed = heat > 0.5 && cold_air < vitals::CHILLY;
             let home = server.home_survey(id);
+            let home_stores = server.home_store_tally(id);
             // What effects ask of the item in hand (`Holding`) and of the blocks near
             // (`Near`).
             let held: Vec<String> = player.held().map_or_else(Vec::new, |item| {
@@ -226,6 +227,7 @@ impl Process for Survival {
             player.vitals.felt = situation.felt.round();
             player.vitals.effects = effects.active(&situation, &player.timed_effects);
             player.vitals.home = player.home_block();
+            player.vitals.home_stores = home_stores;
             // The steps of a ladder say so when first reached.
             let gained: Vec<EffectId> = player.vitals.effects.iter().map(|a| a.effect).filter(|&e| effects.get(e).announce && !player.announced.contains(&e)).collect();
             player.announced.extend(&gained);

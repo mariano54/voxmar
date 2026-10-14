@@ -6,7 +6,9 @@
 // `faster` notices about the spot when it is loaded makes the work that many times as quick.
 // The skill named is asked to load it and trained (`xp` each) when what it made is taken.
 // `sound` is what loading it sounds like (`Water`: stirred in), else its working block's
-// placing; taking what it made pops like a pickup.
+// placing; taking what it made pops like a pickup. Loaded inside the loader's own home, a
+// station tops the load up with more of what is in hand, from the pack and then the home's
+// stores, unless `from_stores: false` (docs/home.md, "Crafting from home stores").
 //
 // `fertilisers`: an item held to a growing crop grows the crops within `reach` a stage.
 (
@@ -41,6 +43,9 @@
                 (input: "tag:produce|tag:vegetable|tag:fruit|tag:seed|tag:compost", takes: 4, output: "compost", minutes: 15.0, skill: "core:farming", level: 5, xp: 8.0),
             ],
             faster: [(Water(2), 1.5)],
+            // Seed and produce kept in the stores are for sowing and eating: the heap
+            // takes only what is in hand.
+            from_stores: false,
         ),
     ],
     fertilisers: [

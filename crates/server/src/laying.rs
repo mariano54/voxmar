@@ -165,6 +165,51 @@ impl Server {
         found
     }
 
+    /// What the stores in `agent`'s home hold, by item (in id order), while they stand in
+    /// it; empty elsewhere. Sent with their vitals, so what they can make counts it.
+    pub(crate) fn home_store_tally(&self, agent: PlayerId) -> Vec<(BlockId, u32)> {
+        let mut have: FxHashMap<BlockId, u32> = FxHashMap::default();
+        for pos in self.home_stores(agent) {
+            for stack in self.factory.get(pos).map(|(_, state)| state.bin.as_slice()).unwrap_or_default().iter().flatten() {
+                *have.entry(stack.item).or_default() += stack.count as u32;
+            }
+        }
+        let mut tally: Vec<(BlockId, u32)> = have.into_iter().collect();
+        tally.sort_unstable();
+        tally
+    }
+
+    /// Whether `cell` lies in `agent`'s home while they stand in it.
+    pub(crate) fn in_home_with(&self, agent: PlayerId, cell: IVec3) -> bool {
+        let Some(anchor) = self.at_home(agent) else { return false };
+        let rules = &self.survival;
+        let near = (cell - anchor).abs();
+        near.x <= rules.home_reach && near.z <= rules.home_reach && cell.y <= anchor.y + rules.home_up && cell.y >= anchor.y - rules.home_down
+    }
+
+    /// Takes up to `count` of `item` out of the stores at `stores`, in order; how many it
+    /// took.
+    pub(crate) fn take_from_stores(&mut self, stores: &[IVec3], item: BlockId, count: u32) -> u32 {
+        let mut left = count;
+        for &pos in stores {
+            let Some(state) = self.factory.state_mut(pos) else { continue };
+            for slot in state.bin.iter_mut() {
+                if left == 0 {
+                    return count;
+                }
+                if let Some(stack) = slot.as_mut().filter(|s| s.item == item) {
+                    let took = left.min(stack.count as u32);
+                    stack.count -= took as u8;
+                    left -= took;
+                    if stack.count == 0 {
+                        *slot = None;
+                    }
+                }
+            }
+        }
+        count - left
+    }
+
     fn say(&self, agent: PlayerId, words: Words) {
         if let Some(player) = self.players.get(&agent) {
             player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: words });
@@ -315,5 +360,82 @@ mod tests {
         lay(&mut server, "base:crafting_table", 1);
         assert!(grid(&server).is_empty());
         assert_eq!(barrel(&server), 3);
+    }
+
+    /// Player 1's home is where they stand.
+    fn home_here(server: &mut Server) {
+        server.players.get_mut(&1).unwrap().bed = Some(Vec3::new(8.5, (FLOOR + 1) as f32, 8.5));
+    }
+
+    fn uses(server: &mut Server, at: IVec3, station: &str, held: &str, in_hand: u8, packed: u8) {
+        server.set_block(at, id(server, station));
+        let item = id(server, held);
+        let player = server.players.get_mut(&1).unwrap();
+        player.inventory = Default::default();
+        player.inventory.slots[0] = Some(ItemStack { item, count: in_hand });
+        player.inventory.slots[5] = (packed > 0).then_some(ItemStack { item, count: packed });
+        player.selected = 0;
+        server.use_station(1, at);
+    }
+
+    fn loaded(server: &Server, at: IVec3) -> u8 {
+        server.stations.get(at).map_or(0, |load| load.count)
+    }
+
+    /// In the loader's home, a rack tops a load up to what it holds: what is in hand, then
+    /// the rest of the pack, then the home's barrel; away from home, only what is in hand.
+    #[test]
+    fn at_home_a_rack_tops_its_load_up_from_the_stores() {
+        let mut server = fixture();
+        let rack = IVec3::new(12, FLOOR + 1, 8);
+        stock(&mut server, "base:raw_beef", 10);
+        uses(&mut server, rack, "base:drying_rack", "base:raw_beef", 2, 1);
+        assert_eq!(loaded(&server, rack), 2, "no home: only what is in hand");
+        assert_eq!(barrel(&server), 10);
+        home_here(&mut server);
+        let rack = IVec3::new(12, FLOOR + 1, 10);
+        uses(&mut server, rack, "base:drying_rack", "base:raw_beef", 2, 1);
+        assert_eq!(loaded(&server, rack), 8, "topped up to what the rack holds");
+        let player = &server.players[&1];
+        assert_eq!((player.inventory.slots[0], player.inventory.slots[5]), (None, None), "the pack's own first");
+        assert_eq!(barrel(&server), 5, "then five from the barrel");
+        // Walked off, a rack outside the home is loaded from the hand alone.
+        let far = IVec3::new(28, FLOOR + 1, 28);
+        server.players.get_mut(&1).unwrap().position = Vec3::new(27.5, (FLOOR + 1) as f32, 27.5);
+        uses(&mut server, far, "base:drying_rack", "base:raw_beef", 2, 0);
+        assert_eq!(loaded(&server, far), 2);
+        assert_eq!(barrel(&server), 5);
+    }
+
+    /// A station marked `from_stores: false` (the compost heap: stored grain is for eating)
+    /// takes only what is in hand, even at home.
+    #[test]
+    fn a_compost_heap_leaves_the_stores_alone() {
+        let mut server = fixture();
+        let farming = server.content.skills.id("core:farming").unwrap();
+        let xp = server.content.skills.xp_for(5);
+        server.players.get_mut(&1).unwrap().skills.grant(farming, xp);
+        home_here(&mut server);
+        stock(&mut server, "base:wheat", 12);
+        let heap = IVec3::new(12, FLOOR + 1, 8);
+        uses(&mut server, heap, "base:compost_heap", "base:wheat", 4, 0);
+        assert_eq!(loaded(&server, heap), 4);
+        assert_eq!(barrel(&server), 12);
+    }
+
+    /// The home's stores are counted for the player while they stand in it, and not
+    /// elsewhere.
+    #[test]
+    fn the_home_stores_are_counted_only_at_home() {
+        let mut server = fixture();
+        stock(&mut server, "base:oak_planks", 6);
+        stock(&mut server, "base:raw_beef", 3);
+        assert!(server.home_store_tally(1).is_empty(), "no home yet");
+        home_here(&mut server);
+        let mut want = vec![(id(&server, "base:oak_planks"), 6), (id(&server, "base:raw_beef"), 3)];
+        want.sort_unstable();
+        assert_eq!(server.home_store_tally(1), want);
+        server.players.get_mut(&1).unwrap().position = Vec3::new(28.5, (FLOOR + 1) as f32, 28.5);
+        assert!(server.home_store_tally(1).is_empty(), "away from home");
     }
 }

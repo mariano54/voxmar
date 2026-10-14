@@ -397,8 +397,9 @@ enum Step {
     /// hotbar names it once the screen is shut, and its quick key turns it off again.
     Prayers,
     /// A sleeping bag with a torch beside it, slept in, is a camp: the Camp chip comes on, the
-    /// chat says so with what to add next, and the sleep is a rest. At home, Lay on a
-    /// recipe fills the crafting grid from a barrel there.
+    /// chat says so with what to add next, and the sleep is a rest. At home, what a barrel
+    /// there holds counts in the Can Make list, and Lay on a recipe fills the crafting grid
+    /// from it.
     Home,
     /// A wooden door placed before the player goes in whole, both halves facing them, and a
     /// right click on it opens it and another shuts it, as the server turns it.
@@ -4790,9 +4791,18 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
             let player = world.resource::<LocalPlayer>();
             let stored: u32 = player.inventory.store.as_ref().map_or(0, |s| s.slots.iter().flatten().filter(|x| Some(x.item) == planks).map(|x| x.count as u32).sum());
             let (held, slot) = holding(world, "base:oak_planks");
-            if stored == LAY_PLANKS && held == 0 {
+            // The pack holds none, so the Can Make list has the crafting table ready from
+            // what the home's barrel holds, as the server counts it for laying.
+            let table = world.resource::<ClientWorld>().registry.id("base:crafting_table");
+            let ready = world.resource::<crate::hud::makeable::Drawn>().0.iter().any(|m| Some(m.output) == table && m.reach == crate::hud::makeable::Reach::Ready);
+            if stored == LAY_PLANKS && held == 0 && !ready && waited > 10.0 {
+                let counted = world.resource::<LocalPlayer>().vitals.home_stores.iter().filter(|&&(item, _)| Some(item) == planks).map(|&(_, n)| n).sum::<u32>();
+                gate.check("home: can make", Err(format!("{waited:.1} server s on, the barrel holds {stored} planks and the pack none, but the Can Make list has no crafting table ready (the home's stores counted {counted} planks)")));
+                lay_done(world, barrel);
+                leave(world, gate);
+            } else if stored == LAY_PLANKS && held == 0 && ready {
+                gate.check("home: can make", Ok(format!("with {stored} planks in the home barrel and none in the pack, Can Make shows the crafting table ready")));
                 // The crafting table's recipe in the viewer, over the open inventory.
-                let table = world.resource::<ClientWorld>().registry.id("base:crafting_table");
                 // Opened as a click in it does: a trail with the viewer shut reads as Esc.
                 if let Some(table) = table {
                     world.resource_mut::<crate::hud::recipes::RecipeViewer>().open(table, false);

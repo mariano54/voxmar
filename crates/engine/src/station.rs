@@ -69,6 +69,10 @@ pub struct StationDef {
     /// else its working block's placing.
     #[serde(default)]
     pub sound: Option<Sound>,
+    /// Whether, loaded in its owner's home, it tops the load up from the home's stores (the
+    /// pack's own first): true unless said otherwise.
+    #[serde(default = "yes")]
+    pub from_stores: bool,
 }
 
 /// An item held to a growing crop grows the crops within `reach` of it `stages` stages.
@@ -87,6 +91,10 @@ pub struct FertiliserDef {
 
 fn one() -> u8 {
     1
+}
+
+fn yes() -> bool {
+    true
 }
 
 fn farming() -> String {
@@ -125,6 +133,7 @@ pub struct Station {
     pub needs: Vec<Spot>,
     pub faster: Vec<(Spot, f32)>,
     pub sound: Option<Sound>,
+    pub from_stores: bool,
 }
 
 impl Station {
@@ -251,7 +260,7 @@ impl Stations {
                     }
                     works.push(Work { accepts, takes: work.takes, output, gives: work.gives, minutes: work.minutes, skill: skill(&work.skill)?, level: work.level, xp: work.xp });
                 }
-                stations.stations.push(Station { empty, working, ready, holds: def.holds, works, needs: def.needs, faster: def.faster, sound: def.sound });
+                stations.stations.push(Station { empty, working, ready, holds: def.holds, works, needs: def.needs, faster: def.faster, sound: def.sound, from_stores: def.from_stores });
             }
             for def in file.fertilisers {
                 if !def.reach.is_finite() || !(0.0..=4.0).contains(&def.reach) || def.stages == 0 || !def.xp.is_finite() || def.xp < 0.0 {

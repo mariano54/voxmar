@@ -68,6 +68,7 @@
     "home.tag.flower": "flowers",
     "station.loaded": "You put on {count} {item}: done in about {minutes} min, whether you stay or go.",
     "station.loaded_faster": "{words} Where it stands makes it quicker.",
+    "station.loaded_from_stores": "{words} {count} of them came from your home's stores.",
     "station.working": "Still at work on {item}: about {minutes} min left.",
     "station.took": "You take {count} {item}.",
     "station.level": "It takes {skill} {level} to work this.",

@@ -1,4 +1,5 @@
-//! What the player can make, under the inventory's slots: from what is in the pack, the
+//! What the player can make, under the inventory's slots: from what is in the pack (and,
+//! standing in their home, its stores, as laying a recipe takes from them too), the
 //! recipes ready to make now first, then those that want a crafting table, a level or a
 //! station, then those nearly there (half or more of what they take is in the pack). A
 //! click on one ready to make lays it in the grid (`core:lay`, Shift for as many sets as a
@@ -84,6 +85,16 @@ pub(crate) fn held(inventory: &voxmar_engine::inventory::Inventory) -> FxHashMap
     }
     for &(item, n) in &inventory.pouched {
         *have.entry(item).or_default() += n as u32;
+    }
+    have
+}
+
+/// What laying a recipe can take from: the pack (`held`) and, while the player stands in
+/// their home, what its stores hold, as the server sends it (`Vitals::home_stores`).
+pub(crate) fn within_reach(player: &LocalPlayer) -> FxHashMap<BlockId, u32> {
+    let mut have = held(&player.inventory);
+    for &(item, n) in &player.vitals.home_stores {
+        *have.entry(item).or_default() += n;
     }
     have
 }
@@ -234,7 +245,7 @@ fn draw(
     }
     let content = &launch.content;
     let lacks = lacks(content, &player);
-    let plan = plan(content, book, &held(&player.inventory), player.station.is_some(), &lacks);
+    let plan = plan(content, book, &within_reach(&player), player.station.is_some(), &lacks);
     if drawn.0 == plan {
         return;
     }
@@ -322,6 +333,25 @@ mod tests {
     fn find<'a>(plan: &'a [Makeable], content: &Content, name: &str) -> Option<&'a Makeable> {
         let id = content.blocks.id(name)?;
         plan.iter().find(|m| m.output == id)
+    }
+
+    /// Standing in their home, what its stores hold counts as within reach, as the
+    /// server lays from it: four planks in the barrel and none in the pack make a table.
+    #[test]
+    fn the_home_stores_count_toward_what_can_be_made() {
+        let content = content();
+        let book = RecipeBook::new(&content);
+        let none = |_: &Recipe| None;
+        let mut player = LocalPlayer::default();
+        let planks = content.blocks.id("base:oak_planks").unwrap();
+        player.vitals.home_stores = vec![(planks, 4)];
+        player.inventory.slots[0] = Some(voxmar_engine::inventory::ItemStack { item: planks, count: 1 });
+        assert_eq!(within_reach(&player).get(&planks), Some(&5), "the pack's and the stores' together");
+        let made = plan(&content, &book, &within_reach(&player), false, &none);
+        assert_eq!(find(&made, &content, "base:crafting_table").map(|m| &m.reach), Some(&Reach::Ready));
+        player.vitals.home_stores.clear();
+        let away = plan(&content, &book, &within_reach(&player), false, &none);
+        assert_ne!(find(&away, &content, "base:crafting_table").map(|m| &m.reach), Some(&Reach::Ready), "one plank alone is not a table");
     }
 
     /// A log in an empty pack makes planks at once; with planks, sticks and a crafting

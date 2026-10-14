@@ -35,7 +35,8 @@ pub use voxmar_engine::weather::Weather;
 // 37: an open store's slots in the inventory (Inventory::store), after the open_store action.
 // 38: where home is (Vitals::home), for the way back.
 // 39: a crafting way as an action's target (ActionTarget::Recipe), for laying it.
-pub const PROTOCOL_VERSION: u32 = 39;
+// 43: what the home's stores hold (Vitals::home_stores), for what can be made there.
+pub const PROTOCOL_VERSION: u32 = 43;
 
 /// A creature's `tell` while it rears into a new phase of its fight.
 pub const REARING: u8 = u8::MAX;
