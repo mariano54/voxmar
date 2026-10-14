@@ -46,7 +46,14 @@ pub struct WorkDef {
     pub level: u8,
     #[serde(default)]
     pub xp: f32,
+    /// What quests count what it made as when it is taken: `cooked` (as if cooked at a
+    /// fire, for `Cook` goals) or `crafted` (`Craft` goals). None counts it as neither.
+    #[serde(default)]
+    pub counts: Option<String>,
 }
+
+/// The quest tallies a work's output may count toward (`WorkDef::counts`).
+pub const COUNTS: [&str; 2] = ["cooked", "crafted"];
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -108,6 +115,7 @@ pub struct Work {
     pub skill: SkillId,
     pub level: u8,
     pub xp: f32,
+    pub counts: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -239,7 +247,10 @@ impl Stations {
                     if works.iter().any(|w: &Work| w.accepts.iter().any(|a| accepts.binary_search(a).is_ok())) {
                         return Err(refuse(format!("{}: an item it takes has two works", def.empty)));
                     }
-                    works.push(Work { accepts, takes: work.takes, output, gives: work.gives, minutes: work.minutes, skill: skill(&work.skill)?, level: work.level, xp: work.xp });
+                    if let Some(kind) = work.counts.as_deref().filter(|kind| !COUNTS.contains(kind)) {
+                        return Err(refuse(format!("{}: {} counts as `{kind}`, not one of {COUNTS:?}", def.empty, work.output)));
+                    }
+                    works.push(Work { accepts, takes: work.takes, output, gives: work.gives, minutes: work.minutes, skill: skill(&work.skill)?, level: work.level, xp: work.xp, counts: work.counts.clone() });
                 }
                 stations.stations.push(Station { empty, working, ready, holds: def.holds, works, needs: def.needs, faster: def.faster });
             }
@@ -331,6 +342,30 @@ mod tests {
         assert_eq!((rot.takes, rot.gives, rot.output), (4, 1, blocks.expect("base:compost")));
         let (compost, bone) = (stations.fertiliser(blocks.expect("base:compost")).unwrap(), stations.fertiliser(blocks.expect("base:bone")).unwrap());
         assert!(compost.reach > bone.reach);
+        let clamp = blocks.expect("base:earth_clamp");
+        let (clamp, _) = stations.of(clamp).expect("the clamp is a station");
+        let (_, fire) = clamp.work(blocks.expect("base:clay")).expect("clay fires in a clamp");
+        let (_, char) = clamp.work(blocks.expect("base:oak_log")).expect("logs char in a clamp");
+        assert_eq!((fire.output, char.output), (blocks.expect("base:fired_clay"), blocks.expect("base:charcoal")));
+        assert_eq!(fire.counts.as_deref(), Some("cooked"), "quests count clamp-fired clay as fired");
+    }
+
+    /// A station never pays more experience for an output than making it by hand from the
+    /// same input at a fire does (the plan: machine routes never pay more than hand).
+    #[test]
+    fn a_station_pays_no_more_than_the_hand_route() {
+        let content = crate::content::Content::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).expect("content loads");
+        let mut checked = 0;
+        for station in &content.stations.stations {
+            for work in &station.works {
+                for (input, recipe) in content.cooking.iter().filter(|(input, r)| r.output == work.output && work.accepts.contains(input)) {
+                    checked += 1;
+                    let hand = recipe.def.xp * work.takes as f32 / work.gives as f32;
+                    assert!(work.xp <= hand, "{} from {}: {} at a station, {hand} by hand", content.blocks.def(work.output).name, content.blocks.def(input).name, work.xp);
+                }
+            }
+        }
+        assert!(checked > 0, "some station work has a hand route to weigh it against");
     }
 
     #[test]
@@ -350,5 +385,7 @@ mod tests {
         assert!(refused(&rack(meat, r#", faster: [(Near("fire", 3), 0.5)]"#)).is_some(), "faster must be faster");
         assert!(refused(&rack(meat, r#", needs: [Near("fyre", 3)]"#)).is_some());
         assert!(refused(r#"(fertilisers: [(item: "bone", reach: 9.0)])"#).is_some());
+        assert!(refused(&rack(r#"(input: "tag:raw+meat", output: "jerky", minutes: 10.0, skill: "core:cooking", counts: Some("cooked"))"#, "")).is_none());
+        assert!(refused(&rack(r#"(input: "tag:raw+meat", output: "jerky", minutes: 10.0, skill: "core:cooking", counts: Some("baked"))"#, "")).is_some_and(|e| e.contains("counts as")));
     }
 }

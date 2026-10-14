@@ -14,7 +14,7 @@
     kinds: [
         (name: "pickaxe", mines: ["stone", "ore", "cobbled", "bricks", "crystal", "ice"]),
         (name: "axe", mines: ["log", "wood", "planks", "bush"]),
-        (name: "shovel", mines: ["soil", "sand", "gravel", "clay", "snow", "silt"]),
+        (name: "shovel", mines: ["soil", "earthwork", "sand", "gravel", "clay", "snow", "silt"]),
         (name: "hoe", mines: ["crop", "leaves", "moss", "hay"]),
         (name: "shears", mines: ["leaves", "wool", "vine"]),
         (name: "knife", mines: ["plant", "vine", "flower"]),
