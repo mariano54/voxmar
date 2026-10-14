@@ -73,7 +73,7 @@
         ),
         (
             name: "bare_hands", age: "nomad", branch: "fishing", title: "First Catch",
-            why: "Fish are the easiest food near water. Hold your rod, right-click water and wait for a bite: shrimp and minnows come first. Land five; cooked fish heal well.",
+            why: "Fish are the easiest food near water. Hold your rod, right-click water and wait for a bite: minnows come first. Land five; cooked fish heal well.",
             tasks: [[Catch("any", 5)]],
             after: ["rod_and_line"],
             rewards: [Xp("fishing", 130.0)],
@@ -620,8 +620,8 @@
         ),
         (
             name: "many_kinds", age: "farm", branch: "fishing", title: "Many Kinds of Fish",
-            why: "Rivers, lakes and the sea bite differently: shrimp anywhere, minnows in fresh water, sardines in the sea, perch in lakes from Fishing 10. Land three different kinds. Cook six of your catch: the best fish are worth a fire.",
-            tasks: [[Catch("Kinds", 3), Cook("tag:fish", 6)]],
+            why: "Rivers, lakes and the sea bite differently: minnows in fresh water, sardines in the sea, perch in lakes from Fishing 10. Land two different kinds. Cook six of your catch: the best fish are worth a fire.",
+            tasks: [[Catch("Kinds", 2), Cook("tag:fish", 6)]],
             after: ["patient_angler"],
             rewards: [Xp("fishing", 150.0)],
         ),
