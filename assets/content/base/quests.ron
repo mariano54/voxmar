@@ -25,7 +25,7 @@
         ),
         (
             name: "first_night", age: "nomad", branch: "main", title: "First Night",
-            why: "Make a campfire: put two logs or Wood blocks above two Cobblestones in the 2×2 crafting grid. No stripped wood is needed; cobblestone comes from stone, a few blocks under the dirt or bare on hillsides, and bare hands can break it slowly. Place the fire, select raw rabbit, raw chicken or an egg in your hotbar, and right-click the fire. Rabbits and junglefowl roam open grassland; a junglefowl gives chicken and sometimes an egg. Fists are slow at the hunt too: swing the stone axe, which hits three times as hard (a stone sword, two cobblestone over a stick, does as well). Wait two seconds; the cooked food goes into your inventory. If it burns, try again. Cooked food heals more than raw food.",
+            why: "Make a campfire: put two logs or Wood blocks above two Cobblestones in the 2×2 crafting grid. No stripped wood is needed; cobblestone comes from stone, a few blocks under the dirt or bare on hillsides, and bare hands can break it slowly. Place the fire, select raw small game or an egg in your hotbar, and right-click the fire. Rabbits and junglefowl roam open grassland; both give small game, and a junglefowl sometimes an egg. Fists are slow at the hunt too: swing the stone axe, which hits three times as hard (a stone sword, two cobblestone over a stick, does as well). Wait two seconds; the cooked food goes into your inventory. If it burns, try again. Cooked food heals more than raw food.",
             tasks: [[Craft("campfire", 1), CookAt("tag:edible", "campfire", 1)]],
             rewards: [Xp("cooking", 93.0), Item("torch", 4)],
         ),
@@ -155,7 +155,7 @@
         ),
         (
             name: "small_game", age: "nomad", branch: "hunter", title: "Small Game",
-            why: "Rabbits, junglefowl and other small animals are the easiest food: raw rabbit and chicken cook well at a campfire. Look for them on open grassland. Hunt three; a few blows are enough, and each kill trains Hunter. Then cook one of what you killed.",
+            why: "Rabbits, junglefowl and other small animals are the easiest food: small game cooks well at a campfire. Look for them on open grassland. Hunt three; a few blows are enough, and each kill trains Hunter. Then cook one of what you killed.",
             tasks: [[Kill("any", 3), Cook("tag:meat", 1)]],
             after: ["something_to_swing"],
             rewards: [Xp("hunter", 80.0)],
@@ -338,7 +338,7 @@
         ),
         (
             name: "a_hearty_stew", age: "farm", branch: "cooking", title: "A Hearty Stew",
-            why: "At Cooking 14 the pot takes three raw meat, roots or vegetables at once and simmers them into a stew, the best food a pot makes. Carrots, raw rabbit, raw chicken or raw mutton all go in; cooked food and grain do not. Load it as before, take the stew three minutes later, and keep two.",
+            why: "At Cooking 14 the pot takes three raw meat, roots or vegetables at once and simmers them into a stew, the best food a pot makes. Carrots, raw small game or raw mutton all go in; cooked food and grain do not. Load it as before, take the stew three minutes later, and keep two.",
             tasks: [[Level("cooking", 14), Have("stew", 2)]],
             after: ["a_pot_on_the_fire"],
             rewards: [Xp("cooking", 300.0)],
@@ -368,7 +368,7 @@
         ),
         (
             name: "first_bronze", age: "farm", branch: "main", title: "First Bronze",
-            why: "Three copper ingots and one tin ore make four bronze blend in the crafting grid (Engineering 12). Hold the blend and right-click the crucible of your lit kiln: it melts into bronze, the metal of the next age. Smelt four.",
+            why: "Hold three copper ingots, with a tin ore in your pack, and right-click the crucible of your lit kiln: they melt into four bronze ingots, the metal of the next age (Engineering 12). Smelt four.",
             tasks: [[Cook("bronze_ingot", 4)]],
             after: ["crucible_kiln"],
             rewards: [Xp("engineering", 400.0)],
@@ -620,7 +620,7 @@
         ),
         (
             name: "many_kinds", age: "farm", branch: "fishing", title: "Many Kinds of Fish",
-            why: "Rivers, lakes and the sea bite differently: minnows in fresh water, sardines in the sea, perch in lakes from Fishing 10. Land two different kinds. Cook six of your catch: the best fish are worth a fire.",
+            why: "Rivers, lakes and the sea bite differently: minnows anywhere, sardines in the sea, perch in lakes from Fishing 10. Land two different kinds. Cook six of your catch: the best fish are worth a fire.",
             tasks: [[Catch("Kinds", 2), Cook("tag:fish", 6)]],
             after: ["patient_angler"],
             rewards: [Xp("fishing", 150.0)],
