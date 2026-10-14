@@ -6688,9 +6688,25 @@ fn wild_near(world: &World, reach: f32) -> Option<String> {
         .map(|(d, species)| format!("{} {d:.1} blocks off", launch.content.creatures.get(species).def.name))
 }
 
+/// How many births `/creatures populate` said it made, from its reply in the chat since
+/// `since` (the game's clock); none until the reply has come.
+fn populated(world: &World, since: f32) -> Option<usize> {
+    const COUNT: &str = "\u{1}";
+    let words = world.resource::<Locale>().format("command.creatures.populated", &[("count", &COUNT)]);
+    let (before, after) = words.split_once(COUNT)?;
+    world.resource::<crate::hud::console::Console>().since(since).find_map(|line| {
+        let (_, rest) = line.split_once(before)?;
+        rest.strip_suffix(after)?.trim().parse().ok()
+    })
+}
+
 /// Births through ordinary spawning, driven through admin console inputs. The clear
 /// pad makes view-cone rejection observable from replicated birth poses; positive dark
 /// monsters and an emptied budget make the subsequent torch rejection meaningful.
+///
+/// The server makes a populate's births at once and says how many: each is judged once
+/// that many new creatures stand on the pad on the client, or after [`NATURAL_WAIT`]
+/// server seconds when some never do.
 fn natural_spawns(world: &mut World, gate: &mut Gate, now: f32) {
     let pad = gate.feet + IVec3::new(130, 12, 0);
     let (x, y, z) = (pad.x, pad.y, pad.z);
@@ -6700,6 +6716,10 @@ fn natural_spawns(world: &mut World, gate: &mut Gate, now: f32) {
             !v.kept && content.creatures.get(v.species).def.kind != voxmar_engine::creature::Kind::Villager
                 && !gate.natural_before.contains(&v.id) && (v.position.y - y as f32).abs() < 2.0 && v.position.distance(pad.as_vec3()) < 64.0
         }).copied().collect::<Vec<_>>()
+    };
+    // Births land 20 to 40 blocks off (`spawn_near`, `spawn_far`), on the pad.
+    let all_in = |world: &World, gate: &Gate| {
+        gate.server_in_phase() > NATURAL_WAIT || populated(world, gate.phase_since).is_some_and(|told| arrived(world, gate).len() >= told)
     };
     match gate.phase {
         0 => {
@@ -6726,7 +6746,7 @@ fn natural_spawns(world: &mut World, gate: &mut Gate, now: f32) {
             net.command("creatures populate");
             gate.advance(now);
         }
-        2 if gate.server_in_phase() > 3.0 => {
+        2 if all_in(world, gate) => {
             let births = arrived(world, gate);
             let content = &world.resource::<Launch>().content;
             let monsters = births.iter().filter(|v| content.creatures.get(v.species).def.kind == voxmar_engine::creature::Kind::Monster).count();
@@ -6776,7 +6796,7 @@ fn natural_spawns(world: &mut World, gate: &mut Gate, now: f32) {
             world.resource::<Net>().command("creatures populate");
             gate.advance(now);
         }
-        4 if gate.server_in_phase() > 3.0 => {
+        4 if all_in(world, gate) => {
             let content = &world.resource::<Launch>().content;
             let monsters = arrived(world, gate).iter().filter(|v| content.creatures.get(v.species).def.kind == voxmar_engine::creature::Kind::Monster).count();
             gate.check("natural torch protection", if monsters == 0 { Ok("no monsters born on the lit pad with the dark population dispersed".into()) } else { Err(format!("{monsters} monsters born among torches")) });
@@ -6790,6 +6810,9 @@ fn natural_spawns(world: &mut World, gate: &mut Gate, now: f32) {
         _ => {}
     }
 }
+
+/// Server seconds the natural spawns step waits for a populate's births at most.
+const NATURAL_WAIT: f32 = 3.0;
 
 /// Frames slower than this (milliseconds) draw a body's 0.45 s tip over in fewer than the
 /// three frames the falls check asks for.
@@ -11289,6 +11312,27 @@ mod tests {
         assert!(warm_window(lit.map(|c| c + moon), [14.0 + moon, 15.0 + moon, 19.0 + moon]).is_ok(), "a brighter moon cancels");
         assert!(warm_window(lit, lit).is_err(), "the candle added nothing");
         assert!(warm_window([30.0, 40.0, 70.0], [10.0, 10.0, 12.0]).is_err(), "bright but blue");
+    }
+
+    /// The natural spawns step reads the populate's count from its reply as the chat shows
+    /// it, in English and in Japanese, and only a reply since the phase began.
+    #[test]
+    fn a_populate_is_counted_from_its_reply() {
+        use bevy::prelude::World;
+        let content = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        for code in ["en", "ja"] {
+            let mut world = World::new();
+            let locale = crate::lang::Locale::load(&content, code);
+            let reply = locale.format("command.creatures.populated", &[("count", &17)]);
+            world.insert_resource(locale);
+            let mut console = crate::hud::console::Console::default();
+            console.push(voxmar_protocol::ChatKind::Chat, "an earlier line", 1.0);
+            world.insert_resource(console);
+            assert_eq!(super::populated(&world, 0.0), None, "{code}: not yet told");
+            world.resource_mut::<crate::hud::console::Console>().push(voxmar_protocol::ChatKind::Chat, &reply, 2.0);
+            assert_eq!(super::populated(&world, 1.5), Some(17), "{code}: {reply}");
+            assert_eq!(super::populated(&world, 2.5), None, "{code}: told before the phase");
+        }
     }
 
     /// At the sling step's Ranged level, against its bear, every stone missing is a broken
