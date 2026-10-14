@@ -143,6 +143,12 @@ pub fn recover_share(strike: &StrikeLook, striking: f32, recovery: f32) -> f32 {
     (stance.size() / strike.recover.size().max(1e-4)).min(1.0)
 }
 
+/// Seconds into a creature's strike that its recover stance is deepest: halfway through
+/// what its recovery leaves after the snap.
+pub fn recover_peak(strike: &StrikeLook, recovery: f32) -> f32 {
+    strike.snap + (recovery - strike.snap).max(strike.settle) * 0.5
+}
+
 /// How deep a creature's coil shows `coil` of the way through its wind-up (0 to 1).
 pub fn coil_share(strike: &StrikeLook, coil: f32) -> f32 {
     let (stance, _) = strike_stance(strike, Some(coil), None, 0.0);
@@ -690,7 +696,8 @@ mod tests {
             let (end, _) = strike_stance(&strike, None, Some(strike.snap + room - 0.001), RECOVERY);
             assert!(end.lean.abs() + end.nod.abs() + end.crouch.abs() < 0.02, "{style:?} eases out of its recovery: {end:?}");
             assert!(strike.recover != Stance::default(), "{style:?} shows its recovery");
-            let middle = strike.snap + room * 0.5;
+            let middle = recover_peak(&strike, RECOVERY);
+            assert!((middle - (strike.snap + room * 0.5)).abs() < 1e-6);
             assert!(recover_share(&strike, middle, RECOVERY) > 0.95, "{style:?} stands in its recover stance halfway through");
             // A short recovery (a fox's) still shows its recover stance whole, the strike gone.
             let short = 0.4;
