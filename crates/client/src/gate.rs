@@ -283,6 +283,10 @@ enum Step {
     /// An iron sword in hand at Attack 20, a brown bear struck until it dies takes harder
     /// blows than a fist could deal.
     Weapon,
+    /// A sling at Ranged 10 against a held brown bear seven blocks off, out of a sword's
+    /// reach: shot with left clicks until a stone hits, each shot spends one cobblestone,
+    /// and the hit trains Ranged.
+    Sling,
     /// The bear again, in survival, provoked into fighting back: the guard raised just as
     /// its wind-up ends is a perfect block that takes nothing, a click then is a counter,
     /// and a dodge as the next blow comes down lets it pass.
@@ -510,6 +514,8 @@ struct Gate {
     weapon_fallen_since: Option<f32>,
     /// Blows the server has answered, as last counted.
     blows_seen: u32,
+    /// The sling step's run (`sling`).
+    sling: SlingRun,
     /// Whether the target readout has shown the struck creature's health.
     readout_seen: bool,
     /// Whether the creatures step could release its butterfly.
@@ -658,6 +664,7 @@ impl Gate {
             fallen_since: None,
             weapon_fallen_since: None,
             blows_seen: 0,
+            sling: SlingRun::default(),
             readout_seen: false,
             butterfly: false,
             fall_judged: false,
@@ -1050,7 +1057,7 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         // A fresh area of the world to generate and mesh.
         Step::Gorge | Step::Ore | Step::Tarns => GORGE_OVERLOADED_LIMIT + STEP_LIMIT,
         // Striking judges itself by the blows the server answers (see `strike`).
-        Step::Strike | Step::Weapon => STRIKE_LIMIT,
+        Step::Strike | Step::Weapon | Step::Sling => STRIKE_LIMIT,
         // The feel step ends itself by the server's clock (`FEEL_LIMIT`, then the kill);
         // this is the backstop for a server that stopped.
         Step::Feel => FEEL_LIMIT + 2.0 * UNANSWERED + STEP_LIMIT,
@@ -1311,6 +1318,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Creatures => creatures(world, gate, now, in_phase),
         Step::Strike => strike(world, gate, now, in_phase),
         Step::Weapon => weapon(world, gate, now, in_phase),
+        Step::Sling => sling(world, gate, now, in_phase),
         Step::Feel => feel(world, gate, now, in_phase),
         Step::Boss => boss(world, gate, now),
         Step::Wear => wear(world, gate, now, in_phase),
@@ -6271,6 +6279,287 @@ fn weapon(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
         }
         _ => {
             if sweep_bears(world, gate, species, pad) {
+                gate.next(Step::Sling, now);
+            }
+        }
+    }
+}
+
+/// The sling, the Ranged level it is shot at, and what it shoots.
+const SLING: &str = "base:sling";
+const SLING_LEVEL: u8 = 10;
+const SLING_STONES: u32 = 12;
+/// Seconds between shots (past the sling's 0.53 s cooldown), by the game's clock.
+const SLING_EVERY: f32 = 1.0;
+
+/// The sling step's run: what stood before it began, its bear, and its shots.
+#[derive(Default)]
+struct SlingRun {
+    /// Bears in view before the step summoned its own, which it never takes for it.
+    before: Vec<u32>,
+    bear: Option<u32>,
+    /// Blows landed, blows answered, Ranged experience and cobblestone as shooting began.
+    landed: u32,
+    blows: u32,
+    xp: u32,
+    stones: u32,
+    /// Shots clicked, frames the bear has been aimed at, and when the last shot went (the
+    /// game's clock, the server's).
+    shots: u32,
+    aimed: u32,
+    shot_at: Option<(f32, f32)>,
+    /// Since when (the game's clock) a block has stood on the line while shooting.
+    in_the_way: Option<f32>,
+    /// The blocks that stood on the line from the eye to the bear (the look step's wall, or
+    /// whatever else earlier steps or the land left there), and what each was: taken away
+    /// for the shots and put back on every way out.
+    cleared: Vec<(IVec3, String)>,
+}
+
+/// One cell set to `block` by name.
+fn set_cell(cell: IVec3, block: &str) -> String {
+    format!("fill {} {} {} {} {} {} {block}", cell.x, cell.y, cell.z, cell.x, cell.y, cell.z)
+}
+
+/// The cells between an eye and a creature standing at `feet`: on the lines to its feet,
+/// its middle and its top, each once.
+fn shot_lines(eye: Vec3, feet: Vec3) -> Vec<IVec3> {
+    let mut cells = Vec::new();
+    for height in [0.2, 0.6, 1.0, 1.4] {
+        for cell in cells_between(eye, feet + Vec3::Y * height) {
+            if !cells.contains(&cell) {
+                cells.push(cell);
+            }
+        }
+    }
+    cells
+}
+
+/// The cells a straight line from `from` to `to` passes through, in order, each once.
+fn cells_between(from: Vec3, to: Vec3) -> Vec<IVec3> {
+    let steps = (from.distance(to) / 0.05).ceil().max(1.0) as u32;
+    let mut cells: Vec<IVec3> = Vec::new();
+    for i in 0..=steps {
+        let cell = from.lerp(to, i as f32 / steps as f32).floor().as_ivec3();
+        if cells.last() != Some(&cell) {
+            cells.push(cell);
+        }
+    }
+    cells
+}
+
+/// What the sling step does next.
+#[derive(Debug, PartialEq)]
+enum SlingNext {
+    /// A stone hit and trained Ranged.
+    Hit,
+    /// Click once more.
+    Shoot,
+    /// A shot is on its way.
+    Wait,
+    Fail(String),
+}
+
+/// The sling step's verdict from counts alone, so its logic is tested without a session.
+/// Nothing fails before the first shot: every miss verdict counts shots answered, and an
+/// unanswered shot is judged by both clocks since it went, never by the stage's clock.
+/// `blocked` names the block the crosshair is on instead of the bear, as a shot would go:
+/// a shot that cannot reach is a failure at once, not twelve seconds of waiting.
+fn sling_next(shots: u32, answered: u32, landed: u32, xp_gained: u32, stones: u32, unanswered_for: f32, blocked: Option<&str>) -> SlingNext {
+    if landed > 0 && xp_gained > 0 {
+        return SlingNext::Hit;
+    }
+    let shoot = || match blocked {
+        Some(block) => SlingNext::Fail(format!("the crosshair is on {block}, not the bear, after {shots} shots")),
+        None => SlingNext::Shoot,
+    };
+    if shots == 0 {
+        return shoot();
+    }
+    if answered < shots {
+        return if unanswered_for > UNANSWERED { SlingNext::Fail(format!("shot {shots} went unanswered for {unanswered_for:.1} s ({answered} answered)")) } else { SlingNext::Wait };
+    }
+    if answered >= SLING_STONES || stones == 0 {
+        return SlingNext::Fail(format!("no stone hit in {answered} shots answered ({landed} landed, {xp_gained} Ranged xp, {stones} stones left)"));
+    }
+    shoot()
+}
+
+/// A sling at Ranged 10 against a held brown bear seven blocks off: shot a second apart
+/// until a stone hits, every shot answered spends one cobblestone, and the hit trains Ranged.
+/// Every way out (a hit, a failure, a bear that never came) sweeps the bears away.
+fn sling(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
+    let Some(species) = world.resource::<Launch>().content.creatures.find(BEAR) else {
+        gate.check("sling", Err(format!("no `{BEAR}` in the content")));
+        gate.next(Step::Feel, now);
+        return;
+    };
+    let pad = gate.feet + IVec3::new(0, 0, 14);
+    let stones = item_count(world, "base:cobblestone");
+    let (blows, landed) = {
+        let creatures = world.resource::<crate::creatures::Creatures>();
+        (creatures.blows, creatures.landed)
+    };
+    let view = {
+        let creatures = world.resource::<crate::creatures::Creatures>();
+        match gate.sling.bear {
+            Some(id) => creatures.views().find(|v| v.id == id).copied(),
+            None => creatures.views().find(|v| v.species == species && !gate.sling.before.contains(&v.id)).copied(),
+        }
+    };
+    match gate.phase {
+        0 => {
+            let before = world.resource::<crate::creatures::Creatures>().views().filter(|v| v.species == species).map(|v| v.id).collect();
+            gate.sling = SlingRun { before, ..default() };
+            let net = world.resource::<Net>();
+            net.command("gamemode creative");
+            net.command(&format!("skill ranged {SLING_LEVEL}"));
+            net.command(&format!("give {} 1", SLING.trim_start_matches("base:")));
+            net.command(&format!("give cobblestone {SLING_STONES}"));
+            // Held from the moment it comes, so it never walks in on the line before a shot.
+            net.command(&format!("summon {} 1 {} {} {} held", BEAR.trim_start_matches("base:"), pad.x, pad.y, pad.z + 1));
+            // Seven blocks back from it, past any blow's reach and inside the sling's.
+            net.command(&format!("tp {} {} {}", pad.x as f32 + 0.5, pad.y, pad.z as f32 - 6.5));
+            gate.advance(now);
+        }
+        1 => {
+            // Its own bear in sight, the sling in hand at the level that wields it, and the
+            // stones given (on top of any the player had).
+            // At the spot with the bear in sight, each frame until ready: whatever stands
+            // between the eye and the bear (on the lines to its feet, middle and top, which
+            // hold both the crosshair's aim and the server's line to its centre) is named,
+            // taken away, and remembered to put back. Looked along again each frame, so a
+            // bear that moved or a cell that loaded late is cleared too.
+            let eye = world.resource::<LocalPlayer>().eye();
+            let at_spot = eye.xz().distance(Vec2::new(pad.x as f32 + 0.5, pad.z as f32 - 6.5)) < 0.5;
+            let line = view.filter(|_| at_spot).map(|v| shot_lines(eye, v.position));
+            let standing: Vec<(IVec3, BlockId)> = line.iter().flatten().filter_map(|&cell| world.resource::<ClientWorld>().block(cell).filter(|b| !b.is_air()).map(|b| (cell, b))).collect();
+            let new: Vec<(IVec3, String)> = {
+                let blocks = &world.resource::<Launch>().content.blocks;
+                standing.iter().filter(|(cell, _)| !gate.sling.cleared.iter().any(|(c, _)| c == cell)).map(|&(cell, b)| (cell, blocks.def(b).name.clone())).collect()
+            };
+            if !new.is_empty() {
+                info!("gate: sling line from the eye to the bear: {} blocks in the way {new:?}", new.len());
+                let net = world.resource::<Net>();
+                for (cell, _) in &new {
+                    net.command(&set_cell(*cell, "air"));
+                }
+                gate.sling.cleared.extend(new);
+            }
+            let open = line.is_some() && standing.is_empty();
+            let ready = skill_level(world, "core:ranged").0 >= SLING_LEVEL && view.is_some() && stones >= SLING_STONES && open;
+            if ready && select(world, SLING) {
+                let bear = view.map(|v| v.id);
+                info!("gate: sling in hand, bear {bear:?} in sight, {stones} cobblestone, Ranged {}", skill_level(world, "core:ranged").0);
+                world.resource::<Net>().command(&format!("creatures hold {}", BEAR.trim_start_matches("base:")));
+                let xp = skill_level(world, "core:ranged").1;
+                let (before, cleared) = (std::mem::take(&mut gate.sling.before), std::mem::take(&mut gate.sling.cleared));
+                gate.sling = SlingRun { before, cleared, bear, landed, blows, xp, stones, ..default() };
+                gate.advance(now);
+            } else if gate.server_in_phase().min(now - gate.phase_since) > 10.0 {
+                let held = holding(world, SLING).1;
+                gate.check("sling", Err(format!("the sling, Ranged {SLING_LEVEL}, the stones, the bear or a clear pad never came (bear seen: {}, stones {stones}, sling in slot {held:?}, line clear {open}: {standing:?})", view.is_some())));
+                end_weapon(world, gate, now);
+            }
+        }
+        2 => {
+            let Some(view) = view else {
+                gate.check("sling shot", Err("the bear went out of sight".into()));
+                end_weapon(world, gate, now);
+                return;
+            };
+            key(world, KeyCode::KeyW, false);
+            aim_at(world, view.position + Vec3::Y * 0.6);
+            gate.sling.aimed += 1;
+            // Before every shot the line is looked along again: a block that came under it
+            // (the bear nearer, or a cell loaded late) is named, cleared and kept to put back,
+            // and nothing is shot until the line is open.
+            let eye = world.resource::<LocalPlayer>().eye();
+            let standing: Vec<(IVec3, BlockId)> = shot_lines(eye, view.position).into_iter().filter_map(|cell| world.resource::<ClientWorld>().block(cell).filter(|b| !b.is_air()).map(|b| (cell, b))).collect();
+            if !standing.is_empty() {
+                let new: Vec<(IVec3, String)> = {
+                    let blocks = &world.resource::<Launch>().content.blocks;
+                    standing.iter().filter(|(cell, _)| !gate.sling.cleared.iter().any(|(c, _)| c == cell)).map(|&(cell, b)| (cell, blocks.def(b).name.clone())).collect()
+                };
+                if !new.is_empty() {
+                    let distance = eye.distance(view.position + Vec3::Y * 0.6);
+                    info!("gate: sling line before shot {}, bear {distance:.1} blocks off: {} blocks in the way {new:?}", gate.sling.shots + 1, new.len());
+                    let net = world.resource::<Net>();
+                    for (cell, _) in &new {
+                        net.command(&set_cell(*cell, "air"));
+                    }
+                    gate.sling.cleared.extend(new);
+                }
+                let since = *gate.sling.in_the_way.get_or_insert(now);
+                if now - since > 5.0 {
+                    let blocks = &world.resource::<Launch>().content.blocks;
+                    let named: Vec<_> = standing.iter().map(|&(cell, b)| (cell, blocks.def(b).name.clone())).collect();
+                    gate.check("sling shot", Err(format!("the line to the bear stayed blocked for 5 s after clearing: {named:?}")));
+                    end_weapon(world, gate, now);
+                }
+                mouse(world, MouseButton::Left, false);
+                return;
+            }
+            gate.sling.in_the_way = None;
+            let run = &gate.sling;
+            let xp = skill_level(world, "core:ranged").1;
+            let unanswered = run.shot_at.map_or(0.0, |(game, server)| (now - game).min(gate.server_now - server));
+            // What the crosshair is on instead of the bear, once the aim has settled.
+            let blocked = {
+                let target = world.resource::<crate::interact::Target>();
+                let blocks = &world.resource::<Launch>().content.blocks;
+                let cells = world.resource::<ClientWorld>();
+                target.block_hit.filter(|_| run.aimed > 2 && target.creature.is_none()).map(|hit| {
+                    let name = cells.block(hit.block).map_or_else(|| "an unloaded block".to_owned(), |b| blocks.def(b).name.clone());
+                    format!("{name} at {} ({:.2} blocks)", hit.block, hit.distance)
+                })
+            };
+            let next = sling_next(run.shots, blows.saturating_sub(run.blows), landed.saturating_sub(run.landed), xp.saturating_sub(run.xp), stones, unanswered, blocked.as_deref());
+            // The press of the shot before is let go first, so each shot is its own click.
+            mouse(world, MouseButton::Left, false);
+            match next {
+                SlingNext::Hit => {
+                    // Every shot the server answered spent a stone: the hit, and any misses before it.
+                    let spent = run.stones.saturating_sub(stones);
+                    let distance = world.resource::<LocalPlayer>().eye().distance(view.position + Vec3::Y * 0.6);
+                    let result = if spent >= 1 {
+                        Ok(format!("a stone hit from {distance:.1} blocks in {} shots; Ranged xp {} -> {xp}, {spent} stones spent", run.shots, run.xp))
+                    } else {
+                        Err(format!("a stone hit from {distance:.1} blocks, but no cobblestone was spent ({stones} left)"))
+                    };
+                    gate.check("sling shot", result);
+                    end_weapon(world, gate, now);
+                }
+                SlingNext::Fail(why) => {
+                    let distance = world.resource::<LocalPlayer>().eye().distance(view.position + Vec3::Y * 0.6);
+                    gate.check("sling shot", Err(format!("{why}; the bear {distance:.1} blocks off")));
+                    end_weapon(world, gate, now);
+                }
+                SlingNext::Shoot if run.aimed > 2 && run.shot_at.is_none_or(|(game, _)| now - game >= SLING_EVERY) => {
+                    mouse(world, MouseButton::Left, true);
+                    gate.sling.shots += 1;
+                    gate.sling.shot_at = Some((now, gate.server_now));
+                    // What the crosshair is on as it shoots, so a shot that never goes says why.
+                    let target = world.resource::<crate::interact::Target>();
+                    let distance = world.resource::<LocalPlayer>().eye().distance(view.position + Vec3::Y * 0.6);
+                    info!(
+                        "gate: sling shot {} at bear {} {distance:.1} blocks off: crosshair on creature {:?}, block {:?}; {} answered",
+                        gate.sling.shots,
+                        view.id,
+                        target.creature,
+                        target.block_hit.map(|hit| (hit.block, hit.distance)),
+                        blows.saturating_sub(gate.sling.blows)
+                    );
+                }
+                SlingNext::Shoot | SlingNext::Wait => {}
+            }
+        }
+        _ => {
+            // What stood on the line back where it stood, then the bears swept away.
+            for (cell, block) in std::mem::take(&mut gate.sling.cleared) {
+                world.resource::<Net>().command(&set_cell(cell, &block));
+            }
+            if sweep_bears(world, gate, species, pad) {
                 gate.next(Step::Feel, now);
             }
         }
@@ -6359,6 +6648,10 @@ fn sweep_bears(world: &mut World, gate: &mut Gate, species: voxmar_engine::creat
 /// step of 0.05 cannot jump one.
 const FEEL_TRIES: u32 = 10;
 const FEEL_STEP: f32 = 0.05;
+/// Frames before the moment tried that an answer is pressed (`FeelRun::answer`): one for the
+/// frame the game takes to send it, and half of one so the frame that sends it is the
+/// nearest to the moment, not the first past it.
+const FEEL_AIM: f32 = 1.5;
 /// Seconds past the moment tried that a frame may come late with the try still saying
 /// something of the moment: a frame that late answered after the blow could have landed
 /// (the wind-up is 0.7 s), and said nothing, as on a machine drawing a frame a second.
@@ -6367,13 +6660,15 @@ const FEEL_SLOW_FRAME: f32 = 0.25;
 /// fails what it is on and goes on to kill the bears, so none is left behind.
 const FEEL_LIMIT: f32 = 120.0;
 
-/// Server seconds of lag before the first blow is provoked. Guards and dodges are judged
+/// Pings answered under lag before the first blow is provoked. Guards and dodges are judged
 /// earlier by the player's round trip (`Server::lag_allowance`), smoothed by a quarter at
-/// each ping, one a second: put behind from calm, it is a tenth from where it settles eight
-/// pings on (0.75^8), about 0.02 s of a 0.2 s allowance, under the 0.05 s steps the tries
-/// take. With the lag on only from the block's phase, the block was found while the allowance
-/// still grew, and every dodge after it, at 0.40 to 0.65 s, was judged too late.
-const FEEL_LAG_SETTLE: f32 = 8.0;
+/// each ping: put behind from calm, it is a tenth from where it settles eight pings on
+/// (0.75^8), about 0.02 s of a 0.2 s allowance, under the 0.05 s steps the tries take; the
+/// ninth, as the first may have been sent before the lag. With the lag on only from the
+/// block's phase, the block was found while the allowance still grew, and every dodge after
+/// it, at 0.40 to 0.65 s, was judged too late. A lagging server pings every tick, so this
+/// takes ticks, where at a ping a second it took 44 s of the game's clock on the Mac.
+const FEEL_LAG_SETTLE: u32 = 9;
 /// Bears the step summons at most, should provoking them and the counter kill one.
 const FEEL_BEARS: u32 = 3;
 
@@ -6395,8 +6690,8 @@ struct FeelRun {
     bears: u32,
     /// The server's clock when the step began, for `FEEL_LIMIT`.
     started: f32,
-    /// The server's clock when the step began to run behind, for `FEEL_LAG_SETTLE`.
-    lagged_from: Option<f32>,
+    /// The server's pings answered when the step began to run behind, for `FEEL_LAG_SETTLE`.
+    lagged_from: Option<u32>,
     /// The moment the answer's search is centred on, and how far round it the dodge's
     /// search has gone (`after` is the moment tried next).
     centre: f32,
@@ -6440,9 +6735,16 @@ impl FeelRun {
 
     /// Queue a real input only while this observed wind-up remains unanswered by the
     /// server. A result already received cannot be defended by a next-frame input edge.
+    ///
+    /// The gate presses in `Last` and the game sends the press a frame on, so the press is
+    /// queued on the frame that sends it nearest the moment tried: from `FEEL_AIM` frames
+    /// before it, by the frame just drawn. With frames of a few milliseconds that is the
+    /// moment itself; on a loaded machine drawing a frame a tenth of a second, waiting for
+    /// the moment sent every answer up to two frames late, past a perfect window.
     fn answer(&mut self, world: &mut World, blocking: bool, dodge_key: KeyCode, received: bool) -> bool {
         let Some(seen) = self.seen else { return false };
-        if received || self.answered || seen.elapsed().as_secs_f32() < self.after {
+        let frame = world.get_resource::<Time>().map_or(0.0, |t| t.delta_secs());
+        if received || self.answered || seen.elapsed().as_secs_f32() + FEEL_AIM * frame < self.after {
             return false;
         }
         self.answered = true;
@@ -6516,7 +6818,7 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         1 => {
             let roomy = world.resource::<LocalPlayer>().max_health >= 100;
             if gate.feel.lagged_from.is_none() {
-                gate.feel.lagged_from = Some(gate.server_now);
+                gate.feel.lagged_from = Some(world.resource::<crate::fight::Fighting>().pings);
             }
             if roomy && view.is_some() && select(world, WEAPON) {
                 gate.advance(now);
@@ -6569,6 +6871,10 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             // A wind-up is timed from its pose coming on: one still shown from the blow just
             // judged (its end not yet heard) is not a new one.
             if gate.feel.observe(view.pose == Pose::Attacking, ours.is_some()) {
+                // The pose came in some time during the frame just drawn: on average half of
+                // it before this moment, which a slow frame makes worth counting.
+                let half = std::time::Duration::from_secs_f32(world.resource::<Time>().delta_secs() / 2.0);
+                gate.feel.seen = gate.feel.seen.map(|seen| seen.checked_sub(half).unwrap_or(seen));
                 if !gate.feel.facing_checked {
                     let target = gate.observer.as_ref().and_then(|o| o.others.values().next().copied()).unwrap_or(world.resource::<LocalPlayer>().position);
                     let to = (target - view.position).with_y(0.0).normalize_or_zero();
@@ -6589,7 +6895,8 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
             if gate.feel.answer(world, blocking, dodge_key, ours.is_some()) {
                 let seen = gate.feel.seen.expect("answered an observed wind-up");
-                gate.feel.late = seen.elapsed().as_secs_f32() - gate.feel.after;
+                // When the game sends it, a frame on, past the moment tried.
+                gate.feel.late = seen.elapsed().as_secs_f32() + world.resource::<Time>().delta_secs() - gate.feel.after;
                 let player = world.resource::<LocalPlayer>();
                 info!("gate: combat response phase {} try {} bear {}, requested {:.3}s, queued {:.3}s after wind-up, grounded {}, flying {}, frame {:.3}s", gate.phase, gate.feel.tries + 1, view.id, gate.feel.after, seen.elapsed().as_secs_f32(), player.on_ground, player.flying, world.resource::<Time>().delta_secs());
             } else if !blocking {
@@ -6597,7 +6904,8 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
             // Provoked at most every few server seconds while it does not fight back, and only
             // once the lag has held long enough for the server's round trip to settle on it.
-            let settled = gate.feel.lagged_from.is_some_and(|from| gate.server_now - from >= FEEL_LAG_SETTLE);
+            let pings = world.resource::<crate::fight::Fighting>().pings;
+            let settled = gate.feel.lagged_from.is_some_and(|from| pings - from >= FEEL_LAG_SETTLE);
             if gate.feel.seen.is_none() && gate.server_now - gate.feel.poked > 3.0 && distance < 2.4 && settled {
                 if !gate.feel.facing_checked {
                     if gate.feel.facing_camera.is_none() {
@@ -9113,6 +9421,55 @@ fn finish(world: &mut World, gate: &Gate, now: f32) {
 
 #[cfg(test)]
 mod tests {
+    use super::{sling_next, SlingNext, SLING_STONES, UNANSWERED};
+
+    #[test]
+    fn the_sling_step_never_fails_before_a_shot_and_judges_misses_by_shots_answered() {
+        // The first frame of shooting: however long the stage has stood, it shoots.
+        assert_eq!(sling_next(0, 0, 0, 0, SLING_STONES, 0.0, None), SlingNext::Shoot);
+        assert_eq!(sling_next(0, 0, 0, 0, SLING_STONES, UNANSWERED * 10.0, None), SlingNext::Shoot);
+        // A shot on its way waits, then fails only once unanswered past UNANSWERED.
+        assert_eq!(sling_next(1, 0, 0, 0, SLING_STONES - 1, 1.0, None), SlingNext::Wait);
+        assert!(matches!(sling_next(1, 0, 0, 0, SLING_STONES - 1, UNANSWERED + 1.0, None), SlingNext::Fail(_)));
+        // Answered misses shoot again, until every stone is spent.
+        assert_eq!(sling_next(3, 3, 0, 0, SLING_STONES - 3, 0.5, None), SlingNext::Shoot);
+        assert!(matches!(sling_next(SLING_STONES, SLING_STONES, 0, 0, 0, 0.5, None), SlingNext::Fail(_)));
+        // A hit needs the landing and the experience both.
+        assert_eq!(sling_next(2, 2, 1, 20, SLING_STONES - 2, 0.0, None), SlingNext::Hit);
+        assert_eq!(sling_next(2, 2, 1, 0, SLING_STONES - 2, 0.0, None), SlingNext::Shoot);
+        // The crosshair on a block instead of the bear: a failure naming it, before the
+        // first shot or between shots, never a wait for an answer that cannot come; a shot
+        // already on its way is still waited for, and a hit is still a hit.
+        let stone = Some("base:stone at [-1104, 158, 1160]");
+        assert!(matches!(sling_next(0, 0, 0, 0, SLING_STONES, 0.0, stone), SlingNext::Fail(why) if why.contains("base:stone")));
+        assert!(matches!(sling_next(2, 2, 0, 0, SLING_STONES - 2, 0.0, stone), SlingNext::Fail(_)));
+        assert_eq!(sling_next(1, 0, 0, 0, SLING_STONES - 1, 1.0, stone), SlingNext::Wait);
+        assert_eq!(sling_next(2, 2, 1, 20, SLING_STONES - 2, 0.0, stone), SlingNext::Hit);
+    }
+
+    /// The line from the eye to the bear passes through each cell between once, in order:
+    /// the cell right before the eye (where the Mac's sling step found stone) among them.
+    #[test]
+    fn the_line_to_the_bear_names_every_cell_it_crosses() {
+        let eye = Vec3::new(-1103.5, 158.62, 1159.5);
+        let bear = Vec3::new(-1103.5, 157.6, 1167.5);
+        let cells = cells_between(eye, bear);
+        assert_eq!(cells.first(), Some(&IVec3::new(-1104, 158, 1159)));
+        assert_eq!(cells.last(), Some(&IVec3::new(-1104, 157, 1167)));
+        assert!(cells.contains(&IVec3::new(-1104, 158, 1160)), "{cells:?}");
+        assert!(cells.windows(2).all(|w| w[0] != w[1] && (w[1] - w[0]).abs().max_element() == 1), "{cells:?}");
+        for z in 1159..=1167 {
+            assert!(cells.iter().any(|c| c.z == z), "every cell along the way: {cells:?}");
+        }
+        // The lines to the bear's feet, middle and top: the look step's wall on the pad is
+        // crossed at both heights the server's line to its centre or the crosshair may take.
+        let lines = shot_lines(eye, bear - Vec3::Y * 0.6);
+        for y in 157..=158 {
+            assert!(lines.contains(&IVec3::new(-1104, y, 1166)), "the wall at height {y}: {lines:?}");
+        }
+        assert!(cells.iter().all(|c| lines.contains(c)), "the crosshair's line is among them");
+    }
+
     use super::*;
 
     /// A shot of grey pixels, `grey(x, y)` each.

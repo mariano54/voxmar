@@ -226,3 +226,63 @@ fn every_early_quest_asks_for_what_the_land_and_recipes_give() {
     }
     assert!(wrong.is_empty(), "nothing gives {wrong:#?}");
 }
+
+/// A quest's words point only at quests open beside it: a title it names in brackets (to
+/// spend a wait on, or as the next step) is done already or opens with what this quest
+/// needs. Naming a side quest the player may never have opened sends them looking for
+/// nothing.
+#[test]
+fn a_quest_names_only_quests_open_beside_it() {
+    use rustc_hash::{FxHashMap, FxHashSet};
+    let content = content();
+    let quests: FxHashMap<&str, &voxmar_engine::quest::QuestDef> = content.quests.iter().map(|q| (q.name.as_str(), q)).collect();
+    let titled: FxHashMap<&str, &str> = content.quests.iter().map(|q| (q.title.as_str(), q.name.as_str())).collect();
+    // The quests surely done when `name` opens: all its `after`, and for `a|b` only what
+    // both ways share.
+    fn done<'a>(name: &'a str, quests: &FxHashMap<&'a str, &'a voxmar_engine::quest::QuestDef>, memo: &mut FxHashMap<&'a str, FxHashSet<&'a str>>) -> FxHashSet<&'a str> {
+        if let Some(set) = memo.get(name) {
+            return set.clone();
+        }
+        memo.insert(name, FxHashSet::default());
+        let mut set = FxHashSet::default();
+        for entry in quests.get(name).map_or(&[][..], |q| &q.after[..]) {
+            let mut ways = entry.split('|').filter_map(|a| quests.get_key_value(a).map(|(&a, _)| a)).map(|a| {
+                let mut way = done(a, quests, memo);
+                way.insert(a);
+                way
+            });
+            if let Some(first) = ways.next() {
+                set.extend(ways.fold(first, |shared, way| shared.intersection(&way).copied().collect()));
+            }
+        }
+        memo.insert(name, set.clone());
+        set
+    }
+    let mut memo = FxHashMap::default();
+    let mut wrong = Vec::new();
+    for quest in content.quests.iter() {
+        let before = done(&quest.name, &quests, &mut memo);
+        // A bracket holds one title, or several joined by commas, "or" and "and" (which a
+        // title such as Coal and Cinders may hold itself).
+        let brackets = quest.why.split('(').skip(1).filter_map(|rest| rest.split_once(')')).map(|(inside, _)| inside);
+        let mut names = FxHashSet::default();
+        for inside in brackets {
+            for part in inside.split([',', ';']).flat_map(|part| part.split(" or ")) {
+                let part = part.trim().trim_start_matches("and ");
+                names.insert(part);
+                names.extend(part.split(" and ").map(str::trim));
+            }
+        }
+        for named in names {
+            let Some(&other) = titled.get(named) else { continue };
+            if other == quest.name || before.contains(other) {
+                continue;
+            }
+            let opens = quests[other].after.iter().all(|entry| entry.split('|').any(|a| a == quest.name || before.contains(a)));
+            if !opens {
+                wrong.push(format!("{} names {named} ({other}), which needs {:?}", quest.name, quests[other].after));
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}

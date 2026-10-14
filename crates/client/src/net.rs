@@ -351,7 +351,10 @@ pub(crate) fn receive(
                 fighting.struck(creature, damage, blow, pips, killed, time.elapsed_secs_f64());
             }
             ServerMessage::Hurt { creature, damage, defended } => fighting.hurt(creature, damage, defended, time.elapsed_secs_f64()),
-            ServerMessage::Ping { id } => net.pong(id),
+            ServerMessage::Ping { id } => {
+                net.pong(id);
+                fighting.pings += 1;
+            }
             ServerMessage::Prayers { points, most, on } => fighting.prayers = crate::fight::Prayers { points, most, on },
             ServerMessage::Xp { skill, tenths } => toasts.gained(skill, tenths, time.elapsed_secs()),
         }

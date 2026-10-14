@@ -45,6 +45,9 @@ pub struct Fighting {
     /// taken is the tail of `struck` and `hurt`.
     pub struck_count: u32,
     pub hurt_count: u32,
+    /// How many of the server's pings (`ServerMessage::Ping`), which time the round trip
+    /// guards and dodges are judged by, have been answered, ever.
+    pub pings: u32,
     /// The item last swung, to lose the pips on a switch as the server does.
     held: Option<voxmar_engine::block::BlockId>,
     /// When the player and each creature last traded blows, either way (app seconds).
