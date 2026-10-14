@@ -108,7 +108,7 @@ struct Way {
 }
 
 /// Every item a player can come by, and the cheapest way: what breaking the land gives
-/// (any block no recipe makes), what crops, catches and animals give, and what crafting
+/// (any block no recipe makes), what crops, catches, animals and bees give, and what crafting
 /// and cooking make from those at a station that can itself be come by.
 fn reachable(content: &Content) -> rustc_hash::FxHashMap<voxmar_engine::block::BlockId, Way> {
     use voxmar_engine::block::BlockId;
@@ -155,6 +155,14 @@ fn reachable(content: &Content) -> rustc_hash::FxHashMap<voxmar_engine::block::B
         }
         for &item in &creature.products {
             give(&mut ways, item, free);
+        }
+    }
+    // What bees give (bees.ron): a swarm into the skep in hand, honey and wax from a full
+    // one, at the level each take asks.
+    for take in &content.bees.takes {
+        let way = Way { level: take.level, skill: Some(take.skill) };
+        for item in take.gives.iter().map(|(item, _)| *item).chain(take.held_becomes) {
+            give(&mut ways, item, way);
         }
     }
     let worst = |a: Way, b: Way| if b.level > a.level { b } else { a };

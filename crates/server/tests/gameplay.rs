@@ -2085,7 +2085,9 @@ fn kiln_fuel_and_lighting_progress_survive_reload_without_free_refuelling() {
     client.chat.clear();
     light(&client);
     client.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("Crucible Kiln is lit")) && lit(c) == 1);
-    assert_eq!(count(&client, "base:coal_ore"), 0);
+    // The word and the quest can come before the inventory that paid for it: the charge as
+    // it settles.
+    assert_eq!(client.quiet(|c| count(c, "base:coal_ore") as usize), 0);
     drop(client);
     let meta = voxmar_server::save::WorldSave::new(&dir).read_meta().unwrap();
     let fire = meta.lit.iter().find(|fire| fire.position == core.to_array()).expect("saved paid fire").clone();
@@ -6417,12 +6419,18 @@ impl Fresh {
     /// The player stands still meanwhile, saying so each tick, which brings the game's clock
     /// to the server: a timed action is done once a message stamped after it arrives.
     fn wait(&mut self, limit: f32, what: &str, done: impl Fn(&Client) -> bool) {
+        let finished = self.waited(limit, done);
+        assert!(finished, "{what}: not done within {limit} server seconds (now {:.1} s into the run)", self.secs());
+    }
+
+    /// As `wait`, saying whether `done` came rather than failing.
+    fn waited(&mut self, limit: f32, done: impl Fn(&Client) -> bool) -> bool {
         let until = self.c.ticks() + (limit * TICKS_PER_SECOND as f32) as u64;
         while !done(&self.c) && self.c.ticks() < until {
             self.send();
             self.tick();
         }
-        assert!(done(&self.c), "{what}: not done within {limit} server seconds (now {:.1} s into the run)", self.secs());
+        done(&self.c)
     }
 
     /// Lets one server tick pass.
@@ -6696,7 +6704,20 @@ impl Fresh {
         self.hold(item);
         self.propose("core:place", ActionTarget::Block { block: ground, face: Face::PosY });
         let cell = ground + IVec3::Y;
-        self.wait(5.0, &format!("placing {item}"), |c| c.world.block(cell).is_some_and(|b| b != BlockId::AIR));
+        let refused = self.c.refused.len();
+        let placed = self.waited(5.0, |c| c.world.block(cell).is_some_and(|b| b != BlockId::AIR));
+        assert!(
+            placed,
+            "placing {item} on {ground}: not done within 5 server seconds (now {:.1} s into the run), from {:.2} ({:.2} from the eye to the cell), ground {:?} and cell {:?} as the client sees them, holding slot {} ({:?}), refused since: {:?}",
+            self.secs(),
+            self.at,
+            (self.at + Vec3::Y * voxmar_engine::physics::player::EYE_HEIGHT).distance(cell.as_vec3() + 0.5),
+            self.c.world.block(ground).map(|b| self.c.content.blocks.def(b).name.clone()),
+            self.c.world.block(cell).map(|b| self.c.content.blocks.def(b).name.clone()),
+            self.held,
+            self.c.inventory.get(self.held as usize).map(|s| self.c.content.blocks.def(s.item).name.clone()),
+            &self.c.refused[refused.min(self.c.refused.len())..]
+        );
         cell
     }
 

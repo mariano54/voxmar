@@ -161,9 +161,13 @@ impl Server {
         self.content.combat.guard_of(p.held(), &p.inventory.worn, |skill| self.content.skills.level(p.skills.xp(skill)))
     }
 
-    /// Pings each player every second (`ServerMessage::Ping`), for their round trip.
+    /// Pings each player every second (`ServerMessage::Ping`), for their round trip. A
+    /// server made to run behind (`ServerConfig::lag`, the gate's) pings every tick while it
+    /// does, one ping in flight at a time, so a round trip it has just been put behind by
+    /// settles in a few ticks rather than as many seconds; a server for play never lags.
     pub(crate) fn ping_players(&mut self) {
-        if !self.tick.is_multiple_of(PING_EVERY) {
+        let lagging = self.config.lag != crate::Lag::default() && self.lagging.load(std::sync::atomic::Ordering::Relaxed);
+        if !lagging && !self.tick.is_multiple_of(PING_EVERY) {
             return;
         }
         let number = self.tick as u32;
