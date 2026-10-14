@@ -7817,6 +7817,9 @@ fn finish(mut f: Fresh) {
     }
 }
 
+/// A stone sword's 0.6 s cooldown in server ticks.
+const SWORD_TICKS: u64 = 600 * TICKS_PER_SECOND as u64 / 1000;
+
 /// The first fights of the Nomad age as a new player meets them, measured: a bot with a
 /// stone sword at Attack 5 stands up to each creature, facing it and swinging on the
 /// sword's cooldown, never guarding or dodging, until it dies. For each: how long the kill
@@ -7847,18 +7850,19 @@ fn first_fights_measured() {
         let (before, mut swung) = (client.hurt.len(), 0u32);
         let mut reads: Vec<f32> = Vec::new();
         let mut unread = 0;
-        let mut next_swing = Instant::now();
+        // Swings on the sword's 0.6 s cooldown, and a look each tick, by the server's clock.
+        let mut next_swing = client.ticks();
         let mut read_from = client.wound_at.iter().rev().find(|(by, _)| *by == id).map(|&(_, at)| at);
         while client.creatures.contains_key(&id) && start.elapsed() < Duration::from_secs(90) {
             face(&mut client, id, slot, false);
-            if Instant::now() >= next_swing {
+            if client.ticks() >= next_swing {
                 client.propose("core:attack", ActionTarget::Creature(id));
                 swung += 1;
-                next_swing += Duration::from_millis(600);
+                next_swing = client.ticks() + SWORD_TICKS;
             }
             let heard = client.hurt.len();
-            let look_again = Instant::now() + Duration::from_millis(50);
-            client.pump_until(|_| Instant::now() >= look_again);
+            let next = client.ticks() + 1;
+            client.pump_until(|c| c.ticks() >= next);
             // Each blow read from the wind-up seen last before it, if one was seen since the
             // blow before.
             for i in heard..client.hurt.len() {
@@ -7942,9 +7946,8 @@ fn first_age_fights_balanced() {
                 client.pump_until(|c| (0..voxmar_engine::inventory::HOTBAR_SLOTS).any(|s| c.inventory.get(s).is_some_and(|s| s.item == item)));
                 let slot = (0..voxmar_engine::inventory::HOTBAR_SLOTS).find(|&s| client.inventory.get(s).is_some_and(|s| s.item == item)).unwrap();
                 client.drain();
-                // Each run a little later than the last: the server's rolls go by its tick.
-                let later = Instant::now() + Duration::from_millis(370 * u64::from(run));
-                client.pump_until(|_| Instant::now() >= later);
+                // Each run a few ticks later than the last: the server's rolls go by its tick.
+                client.after_server_ticks(7 * u64::from(run));
                 let known: std::collections::HashSet<_> = client.creatures.keys().copied().collect();
                 client.ok(&format!("/summon {name} 1 ~ ~ ~3"));
                 client.pump_until(|c| c.creatures.values().any(|v| v.species == species && !known.contains(&v.id)));
@@ -7958,7 +7961,8 @@ fn first_age_fights_balanced() {
                 let start = Instant::now();
                 let mut last = Instant::now();
                 let mut chasing = 0.0f32;
-                let mut next_swing = Instant::now();
+                // Swings on the cooldown, and a look each tick, by the server's clock.
+                let mut next_swing = client.ticks();
                 let mut swings = 0u32;
                 let (mut tells, mut seen) = (0u32, None::<Instant>);
                 let mut guard: Option<(Instant, Instant)> = None;
@@ -8007,13 +8011,13 @@ fn first_age_fights_balanced() {
                         }
                         _ => {}
                     }
-                    if !up && now >= next_swing && edge <= reach {
+                    if !up && client.ticks() >= next_swing && edge <= reach {
                         client.propose("core:attack", ActionTarget::Creature(id));
                         swings += 1;
-                        next_swing = now + Duration::from_millis(600);
+                        next_swing = client.ticks() + SWORD_TICKS;
                     }
-                    let look_again = Instant::now() + Duration::from_millis(25);
-                    client.pump_until(|_| Instant::now() >= look_again);
+                    let next = client.ticks() + 1;
+                    client.pump_until(|c| c.ticks() >= next);
                 }
                 let killed = !client.creatures.contains_key(&id);
                 let died = client.died > died_before;
