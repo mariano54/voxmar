@@ -2310,48 +2310,51 @@ mod way_tests {
         assert!(comes(&mut server, id, to, 12).is_some(), "the sheep never found its way to the wheat");
     }
 
-    /// Seven junglefowl and three rabbits in a lane one block wide and two high, closed at
-    /// its far end: the player walks in from the open end, they crowd away into the dead
-    /// end, and then the player holds up wheat seeds four blocks off. The fowl must come out
-    /// of the heap, one behind another, and walk up to the seeds (the kiln bot's A Tempting
-    /// Bite, where they used to stay jammed in the end cell).
+    /// Seven junglefowl heaped in the end cell of a lane one block wide and two high, facing
+    /// its stone, alarmed by kin (as when the player walked in without food and scared some
+    /// off), and the player four blocks off holding wheat seeds. The kiln bot's A Tempting
+    /// Bite saw them stay there hopping at the stone, running "home" into the dead end. Food
+    /// held up by a player who never hurt them settles them: they turn out of the heap and
+    /// walk up, one behind another.
     #[test]
-    fn tempted_fowl_crowded_into_a_dead_end_come_out_to_the_seeds() {
-        let mut server = crate::test_server();
-        let c = pen(&mut server, 14);
-        wall(&mut server, (-11..=0).flat_map(|z| [c + IVec3::new(-1, 0, z), c + IVec3::new(1, 0, z)]).chain([c + IVec3::new(0, 0, -11)]).collect::<Vec<_>>(), 2);
-        let lane = |z: f32| c.as_vec3() + Vec3::new(0.5, 0.0, z + 0.5);
-        let player = join(&mut server, lane(3.0));
-        let mut fowl = Vec::new();
-        for (i, z) in (-10..=-1).enumerate() {
-            let name = if i % 3 == 1 { "base:rabbit" } else { "base:junglefowl" };
-            let id = put(&mut server, name, lane(z as f32), Vec3::Z);
-            if i % 3 != 1 {
-                fowl.push(id);
+    fn alarmed_fowl_heaped_in_a_dead_end_come_out_to_seeds_held_up() {
+        for salt in 0..6u64 {
+            let mut server = crate::test_server();
+            server.meta.seed ^= salt * 7919;
+            let c = pen(&mut server, 14);
+            wall(&mut server, (-11..=0).flat_map(|z| [c + IVec3::new(-1, 0, z), c + IVec3::new(1, 0, z)]).chain([c + IVec3::new(0, 0, -11)]).collect::<Vec<_>>(), 2);
+            let lane = |z: f32| c.as_vec3() + Vec3::new(0.5, 0.0, z + 0.5);
+            let to = lane(-6.0);
+            let player = join(&mut server, to);
+            let fowl: Vec<u32> = (0..7)
+                .map(|i| {
+                    let at = lane(-10.0) + Vec3::new((i as f32 * 0.9).sin() * 0.25, 0.0, (i as f32 * 1.7).cos() * 0.25);
+                    let id = put(&mut server, "base:junglefowl", at, -Vec3::Z);
+                    let live = server.creatures.live.get_mut(&id).unwrap();
+                    live.home = at;
+                    live.mind.alarmed();
+                    id
+                })
+                .collect();
+            let seeds = server.content.blocks.expect("base:wheat_seeds");
+            let held = server.players.get_mut(&player).unwrap();
+            held.inventory.add(seeds, 4);
+            held.selected = (0..36).find(|&slot| held.inventory.get(slot).is_some_and(|s| s.item == seeds)).expect("the seeds are held");
+            let near = |server: &Server| fowl.iter().filter(|id| server.creatures.live[id].body.position.distance(to) < 3.0).count();
+            let first = (0..2 * TICKS_PER_SECOND as u64).find(|_| {
+                server.tick += 1;
+                server.think_and_move();
+                near(&server) > 0
+            });
+            let heap = |server: &Server| fowl.iter().map(|id| server.creatures.live[id].body.position - c.as_vec3()).collect::<Vec<_>>();
+            assert!(first.is_some(), "no junglefowl came out to the seeds within 2 s (salt {salt}): {:.2?}", heap(&server));
+            for _ in 0..5 * TICKS_PER_SECOND as u64 {
+                server.tick += 1;
+                server.think_and_move();
             }
+            let out = fowl.iter().filter(|id| server.creatures.live[id].body.position.z > lane(-9.0).z).count();
+            assert!(out >= 5, "only {out} of 7 junglefowl left the end cell after 7 s (salt {salt}): {:.2?}", heap(&server));
         }
-        // In, as far as the nearest animal lets it: they crowd away into the dead end.
-        for t in 0..8 * TICKS_PER_SECOND as u64 {
-            server.tick += 1;
-            let deepest = server.creatures.live.values().map(|c| c.body.position.z).fold(f32::MIN, f32::max);
-            let to = lane((t as f32 * 0.05 - 1.0).min(deepest - c.z as f32 + 1.5).max(-6.0) - 0.5 + 3.0).min(lane(3.0));
-            server.players.get_mut(&player).unwrap().position = Vec3::new(lane(0.0).x, lane(0.0).y, to.z.min(lane(3.0).z));
-            server.think_and_move();
-        }
-        let near = fowl.iter().map(|id| server.creatures.live[id].body.position.z).fold(f32::MIN, f32::max);
-        let to = Vec3::new(lane(0.0).x, lane(0.0).y, near + 4.0);
-        let seeds = server.content.blocks.expect("base:wheat_seeds");
-        let held = server.players.get_mut(&player).unwrap();
-        held.position = to;
-        held.inventory.add(seeds, 4);
-        held.selected = (0..36).find(|&slot| held.inventory.get(slot).is_some_and(|s| s.item == seeds)).expect("the seeds are held");
-        let came = (0..10 * TICKS_PER_SECOND as u64).find(|_| {
-            server.tick += 1;
-            server.think_and_move();
-            fowl.iter().any(|id| server.creatures.live[id].body.position.distance(to) < 2.6)
-        });
-        let heap: Vec<_> = fowl.iter().map(|id| (server.creatures.live[id].body.position - c.as_vec3(), server.creatures.live[id].decision.goal.is_some())).collect();
-        assert!(came.is_some(), "no junglefowl came out to the seeds 4 blocks off: (where, wanting to move) {heap:.2?}");
     }
 
     /// The pen's x > 0 half sunk `depth` blocks, with water to its rim when `wet`.
@@ -2407,3 +2410,4 @@ mod way_tests {
         }
     }
 }
+

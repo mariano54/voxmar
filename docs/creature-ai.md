@@ -88,7 +88,7 @@ Built now (`engine::creature::brain::modules`):
 | look_around | idle | stands and turns its head; tires of it |
 | stand_to_look | social | rears up or lifts its head to watch a player; nervous ones more |
 | graze | drive | goes to its food and eats, head down; now and then a tuft is gone for good |
-| flee | danger | runs from a threat; hoppers zigzag; raises the alarm for kin |
+| flee | danger | runs from a threat; hoppers zigzag; raises the alarm for kin (an alarmed one runs home, unless a player in sight who never hurt it holds its favourite food) |
 | freeze | danger | holds still and watches a threat just beyond fleeing distance, for as long as its nerve holds |
 | blink | reflex | supernatural: vanishes a few blocks away from a threat that comes too close |
 | herd | social | closes on its group when it drifts apart; spacing by sociability |

@@ -271,6 +271,11 @@ impl Flee {
             .or_else(|| ctx.nearest().filter(|p| !p.tempting && ctx.distance(p.position) < radius))
             .copied()
     }
+
+    /// A player in sight holds its favourite food, and never hurt it.
+    fn calmed(&self, ctx: &Ctx) -> bool {
+        ctx.at.players.iter().any(|p| p.tempting && ctx.distance(p.position) < ctx.sight && ctx.mind.attacker() != Some(p.id))
+    }
 }
 
 impl Module for Flee {
@@ -291,8 +296,10 @@ impl Module for Flee {
                 let closeness = 1.0 - (ctx.distance(threat.position) / (self.radius * 1.5)).min(1.0);
                 Want::at(3.0 * ctx.mind.fear.max(closeness * ctx.mind.personality.fear()), threat)
             }
-            // Alarmed by kin, it runs from wherever it is toward home.
-            None if ctx.mind.fear > 0.3 && ctx.mind.recalls(Memory::Alarm) => Want::new(ctx.mind.fear),
+            // Alarmed by kin, it runs from wherever it is toward home; but a player in
+            // sight holding its favourite food (and who never hurt it) settles it, so kin
+            // that were scared off come to the food rather than run into wherever home is.
+            None if ctx.mind.fear > 0.3 && ctx.mind.recalls(Memory::Alarm) && !self.calmed(ctx) => Want::new(ctx.mind.fear),
             None => None,
         }
     }
