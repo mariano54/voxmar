@@ -342,9 +342,10 @@ enum Step {
     /// pickaxe shows its recipe inline, an item clicked there opens the viewer, and Back
     /// returns to the book.
     LookUp,
-    /// Rice sown on farmland with no water near is refused by the server, and the refusal
-    /// shows by the hotbar, as a level the player lacks does (the server sends it as a
-    /// refusal, not a console line). Then a well from the hand goes down by the plot.
+    /// Rice sown on the test ground, too cold for it, is refused by the server for that
+    /// reason, and the refusal shows by the hotbar, as a level the player lacks does (the
+    /// server sends it as a refusal, not a console line). Then a well from the hand goes
+    /// down by the plot.
     Refusal,
     /// A wild plant whose item merged (oregano into kitchen herbs) is given as the merged
     /// item, and the catalogues (creative, journal, recipe book) list the item, not the plant.
@@ -3822,9 +3823,11 @@ const REFUSAL_WAIT: f32 = 8.0;
 /// The ground beside the dry plot where the well goes, from the plot.
 const WELL_BY: IVec3 = IVec3::new(1, 0, 0);
 
-/// Rice (which grows only with water near) sown on a dry plot: the server refuses it and
-/// says why as a refusal, which shows by the hotbar with the others, naming the crop as
-/// the player holds it ("Rice"), not its growing stage.
+/// Rice sown on the test ground, about 10 °C where it wants 18 to 34: the server refuses
+/// it and says why, too cold, as a refusal, which shows by the hotbar with the others,
+/// naming the crop as the player holds it ("Rice"), not its growing stage. The reason is
+/// judged word for word, so a refusal for another cause (no water: the plot is dry too)
+/// fails it.
 fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
     let plot = gate.feet + DRY_PLOT;
     let rice = world.resource::<ClientWorld>().registry.id("base:rice");
@@ -3883,10 +3886,16 @@ fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 let (locale, launch) = (world.resource::<Locale>(), world.resource::<Launch>());
                 locale.block(launch.content.blocks.def(rice))
             };
+            let cold = {
+                let (locale, launch) = (world.resource::<Locale>(), world.resource::<Launch>());
+                let blocks = &launch.content.blocks;
+                locale.render(&voxmar_engine::lang::Words::key("farming.too_cold").with("crop", voxmar_engine::lang::Words::Block(blocks.def(rice).name.clone())), blocks)
+            };
             let said = world.resource::<crate::hud::skills::SkillToasts>().refusals().find(|why| why.contains(&name)).map(str::to_owned);
             if let Some(said) = said {
                 mouse(world, MouseButton::Right, false);
-                gate.check("refusal", Ok(format!("sowing rice on a dry plot was refused: \"{said}\"")));
+                let result = if said == cold { Ok(format!("sowing rice where it is too cold was refused for that: \"{said}\"")) } else { Err(format!("sowing rice was refused, but not as too cold (\"{cold}\"): \"{said}\"")) };
+                gate.check("refusal", result);
                 gate.advance(now);
             } else if gate.server_in_phase() > REFUSAL_WAIT {
                 mouse(world, MouseButton::Right, false);
@@ -3895,7 +3904,7 @@ fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                     (target.hit.as_ref().map(|hit| (hit.block - gate.feet, hit.face)), player.inventory.get(player.selected).map(|s| s.item))
                 };
                 let from = world.resource::<LocalPlayer>().position - gate.feet.as_vec3();
-                gate.check("refusal", Err(format!("sowing rice on a dry plot showed no refusal naming {name} (aimed at {target:?} from the feet, standing at {from:.2} from them, holding {held:?})")));
+                gate.check("refusal", Err(format!("sowing rice showed no refusal naming {name} (aimed at {target:?} from the feet, standing at {from:.2} from them, holding {held:?})")));
                 gate.advance(now);
             } else {
                 mouse(world, MouseButton::Right, ((now - gate.since) * 2.0).fract() < 0.2);
