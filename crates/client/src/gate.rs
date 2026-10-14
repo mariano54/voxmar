@@ -5231,6 +5231,11 @@ fn way_home(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 leave(world, gate);
             } else if waited > QUEST_WAIT && in_phase > QUEST_WAIT {
                 gate.check("way home: inside", Err(format!("{waited:.1} server s and {in_phase:.1} game s on: back in the camp {}, the mark still shown at {:?}", at(inside), mark.map(|m| m.0))));
+                leave(world, gate);
+            }
+        }
+    }
+}
 
 /// A junglefowl summoned at the Home step's bag, tamed and with an egg due, lays it into a
 /// barrel in that home (`Product::nests`), seen in the barrel's open screen (shot
