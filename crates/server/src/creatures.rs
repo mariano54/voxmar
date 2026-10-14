@@ -69,6 +69,14 @@ pub(crate) const TOLERANCE: u64 = 600 * TICKS_PER_SECOND as u64;
 const SETTLE_RADIUS: f32 = 10.0;
 /// Light from blocks within this many blocks keeps monsters away underground.
 const LIT_REACH: i32 = 5;
+/// Where a creature's stuck clock (`Live::stuck`, to 2 s) stands once a search finds no way
+/// to its goal.
+const NO_WAY_STUCK: f32 = 1.5;
+/// How soon after balking at a chase a second balk makes a creature give it up, in ticks.
+const BALK_WINDOW: u64 = 8 * TICKS_PER_SECOND as u64;
+/// How long after giving a chase up a creature that takes one up again gives it up at its
+/// first balk, in ticks: it has been round that box already.
+const REBALK_WINDOW: u64 = 60 * TICKS_PER_SECOND as u64;
 /// How far a land animal out of its depth looks for the shore.
 const SHORE_RANGE: i32 = 12;
 /// How near a wild creature comes to a player holding its favourite food to count as drawn
@@ -117,6 +125,12 @@ pub struct Live {
     pub way_at: u64,
     /// Out of its depth (a land animal), the dry cell it makes for. Not saved.
     pub shore: Option<IVec3>,
+    /// Times running a chase of its balked (gave up its goal, stuck), and the tick of the
+    /// last. Not saved.
+    pub balked: u8,
+    pub balked_at: u64,
+    /// When it last gave a chase up for balking (`BALK_WINDOW`). Not saved.
+    pub gave_up_at: Option<u64>,
     /// The player who keeps it, by name (tamed or bred), and the id they have now.
     pub owner: Option<String>,
     pub owner_id: Option<PlayerId>,
@@ -669,7 +683,13 @@ impl Server {
         creature.way = way;
         if let Some((to, at)) = searched {
             (creature.way_to, creature.way_at) = (to, at);
+            // No way there at all (a player shut in a box, or behind a fence with no gap):
+            // going round on, it gives the goal up sooner.
+            if to.is_none() {
+                creature.stuck = creature.stuck.max(NO_WAY_STUCK);
+            }
         }
+        let mut balked = false;
         // Stuck against something for two seconds, or going round it for four: give up the
         // goal.
         let gained = body.position.distance(before) >= drive.speed * dt * 0.2;
@@ -679,6 +699,22 @@ impl Server {
                 creature.decision.goal = None;
                 creature.mind.goal = None;
                 creature.stuck = 0.0;
+                // Balked twice running in a chase (a player behind a fence it has no way
+                // through, or round a box it cannot get into): it gives the chase up and
+                // goes home rather than hang there. Back at it within a minute, it gives up
+                // at the first balk.
+                let chasing = creature.mind.doing.is_some_and(|i| matches!(species.modules[i].0.name(), "hunt" | "defend"));
+                if chasing && !species.def.boss {
+                    let again = self.tick < creature.balked_at + BALK_WINDOW;
+                    creature.balked = if again { creature.balked + 1 } else { 1 };
+                    creature.balked_at = self.tick;
+                    let lately = creature.gave_up_at.is_some_and(|at| self.tick < at + REBALK_WINDOW);
+                    if creature.balked >= if lately { 1 } else { 2 } {
+                        creature.balked = 0;
+                        creature.gave_up_at = Some(self.tick);
+                        balked = true;
+                    }
+                }
             }
         } else {
             creature.stuck = 0.0;
@@ -686,6 +722,10 @@ impl Server {
         if body != creature.body {
             creature.body = body;
             creature.changed = true;
+        }
+        let handoff = self.overworld.settlement_people().live.handoff;
+        if balked && self.villagers.errand(id, handoff).is_none() && self.wandering.errand(id).is_none() {
+            self.creatures.live.get_mut(&id).expect("still there").mind.give_up();
         }
         if body.position.y < -64.0 {
             self.creatures.live.remove(&id);
@@ -1097,6 +1137,9 @@ impl Server {
             way: Vec::new(),
             way_to: None,
             shore: None,
+            balked: 0,
+            balked_at: 0,
+            gave_up_at: None,
             way_at: 0,
             owner: None,
             owner_id: None,
@@ -2716,6 +2759,189 @@ mod herd_tests {
                     assert!(!deep(&server), "{name} (world {salt}) waded back into the deep water at {at:.2} (tick {t})");
                 }
             }
+        }
+    }
+}
+
+/// Chases and flights when a player attacks: prey runs over open ground (not into the
+/// fence, the tree or the pond), hunters come round them, and a hunter that cannot get at
+/// the player, or would follow past its leash, gives up and goes home.
+#[cfg(test)]
+mod chase_tests {
+    use super::*;
+    use super::cornered_tests::{join, pen, put, wall};
+
+    fn doing(server: &Server, id: u32) -> &'static str {
+        let c = &server.creatures.live[&id];
+        c.mind.doing.map_or("-", |i| server.content.creatures.get(c.species).modules[i].0.name())
+    }
+
+    /// A fence along x = 3 for z -8..8 (two high), a tree at (-3, 4), a pond two deep at
+    /// x -8..-5, z -3..1.
+    fn yard(server: &mut Server, c: IVec3) {
+        wall(server, (-8..=8).map(|z| c + IVec3::new(3, 0, z)).collect::<Vec<_>>(), 2);
+        wall(server, [c + IVec3::new(-3, 0, 4)], 4);
+        let (stone, water) = (server.content.blocks.expect("base:stone"), server.content.blocks.expect("base:water"));
+        for z in -3..=1 {
+            for x in -8..=-5 {
+                server.world.set_block(c + IVec3::new(x, -1, z), water);
+                server.world.set_block(c + IVec3::new(x, -2, z), water);
+                server.world.set_block(c + IVec3::new(x, -3, z), stone);
+            }
+        }
+    }
+
+    fn heal(server: &mut Server, player: PlayerId) {
+        let health = &mut server.players.get_mut(&player).unwrap().health;
+        health.current = health.max;
+    }
+
+    /// Whether a body moved under a fifth of its run this tick while it had a goal.
+    fn stalled(server: &Server, id: u32, before: Vec3) -> bool {
+        let live = &server.creatures.live[&id];
+        let run = server.content.creatures.get(live.species).def.movement.run;
+        live.decision.goal.is_some() && (live.body.position - before).with_y(0.0).length() < run / TICKS_PER_SECOND as f32 * 0.2
+    }
+
+    /// Prey struck beside the fence, the tree, the pond, and with its way off toward them:
+    /// six seconds each, they never go into the water, stall little and touch little.
+    #[test]
+    fn struck_prey_runs_over_open_ground_past_fence_tree_and_pond() {
+        let starts = [((1.5, 0.5), (-1.0, 0.0)), ((-1.5, 4.5), (-1.0, 0.0)), ((-3.5, -1.5), (1.0, 0.0)), ((1.5, -6.5), (-1.0, 0.3))];
+        for name in ["base:rabbit", "base:red_deer", "base:mouflon", "base:junglefowl", "base:wild_boar"] {
+            let (mut stalls, mut touching, mut gained) = (0, 0, 0.0);
+            for &((x, z), (ax, az)) in &starts {
+                let mut server = crate::test_server();
+                let c = pen(&mut server, 30);
+                yard(&mut server, c);
+                let at = c.as_vec3() + Vec3::new(x, 0.0, z);
+                let player = join(&mut server, at + Vec3::new(ax, 0.0, az).normalize() * 1.5);
+                let id = put(&mut server, name, at, -Vec3::new(ax, 0.0, az));
+                server.hurt_creature(player, id, 0, None, voxmar_engine::combat::Blow::Plain);
+                for _ in 0..6 * TICKS_PER_SECOND as u64 {
+                    server.tick += 1;
+                    let before = server.creatures.live[&id].body.position;
+                    server.think_and_move();
+                    stalls += stalled(&server, id, before) as u32;
+                    let body = &server.creatures.live[&id].body;
+                    touching += body.against_wall as u32;
+                    assert!(!body.in_water, "{name} ran into the pond from ({x}, {z}), at {:.1}", body.position - c.as_vec3());
+                }
+                gained += flat(server.creatures.live[&id].body.position, server.players[&player].position);
+            }
+            let mean = gained / starts.len() as f32;
+            assert!(stalls <= 60, "{name}: stalled {stalls} ticks of 480");
+            assert!(touching <= 40, "{name}: against a block {touching} ticks of 480");
+            assert!(mean > 18.0, "{name}: got only {mean:.1} blocks clear in six seconds");
+        }
+    }
+
+    fn flat(a: Vec3, b: Vec3) -> f32 {
+        a.with_y(0.0).distance(b.with_y(0.0))
+    }
+
+    /// The player behind the fence (the way round at its ends), behind the tree, across
+    /// the pond: an angered hunter comes round to them, stalling and turning back little.
+    #[test]
+    fn struck_hunters_come_round_fence_tree_and_pond() {
+        let scenes = [((6.5, 0.5), (-0.5, 0.5)), ((-3.5, 7.5), (-3.5, 0.5)), ((-6.5, 4.5), (-6.5, -6.5))];
+        for name in ["base:wolf", "base:brown_bear", "base:badger"] {
+            for &((px, pz), (hx, hz)) in &scenes {
+                let mut server = crate::test_server();
+                let c = pen(&mut server, 14);
+                yard(&mut server, c);
+                let player = join(&mut server, c.as_vec3() + Vec3::new(px, 0.0, pz));
+                let id = put(&mut server, name, c.as_vec3() + Vec3::new(hx, 0.0, hz), Vec3::X);
+                server.hurt_creature(player, id, 0, None, voxmar_engine::combat::Blow::Plain);
+                let (mut stalls, mut back) = (0, 0);
+                let mut heads: std::collections::VecDeque<Option<Vec3>> = Default::default();
+                let p = server.players[&player].position;
+                let came = (0..8 * TICKS_PER_SECOND as u64).find(|_| {
+                    server.tick += 1;
+                    let before = server.creatures.live[&id].body.position;
+                    server.think_and_move();
+                    heal(&mut server, player);
+                    stalls += stalled(&server, id, before) as u32;
+                    let step = (server.creatures.live[&id].body.position - before).with_y(0.0);
+                    heads.push_back((step.length() * TICKS_PER_SECOND as f32 > 0.3).then(|| step.normalize()));
+                    if heads.len() > 10 && let (Some(Some(a)), Some(Some(b))) = (heads.pop_front(), heads.back().copied()) && a.dot(b) < 0.0 {
+                        back += 1;
+                        heads.clear();
+                    }
+                    flat(server.creatures.live[&id].body.position, p) < 2.0
+                });
+                assert!(came.is_some(), "{name} never came round to the player at ({px}, {pz}): {:.1}", server.creatures.live[&id].body.position - c.as_vec3());
+                assert!(stalls <= 10 && back <= 3, "{name} to ({px}, {pz}): stalled {stalls} ticks, turned back {back} times");
+            }
+        }
+    }
+
+    /// The player shut in a stone box, struck at by a hunter from outside it. Before: wolf,
+    /// bear and badger hung about the box 32 to 37 seconds of 40. Now no way in found, they
+    /// balk twice, give up and lope home (5, 7 and 10 s by the box), not stand by it staring
+    /// or spinning to face the player through its wall, nor come back to it while they
+    /// remember giving up; struck again, they take the fight up again.
+    #[test]
+    fn a_hunter_that_cannot_get_at_the_player_gives_up_and_goes_home() {
+        for name in ["base:wolf", "base:brown_bear", "base:badger"] {
+            let mut server = crate::test_server();
+            let c = pen(&mut server, 14);
+            wall(&mut server, (-2..=2).flat_map(|i| [IVec3::new(i, 0, -2), IVec3::new(i, 0, 2), IVec3::new(-2, 0, i), IVec3::new(2, 0, i)]).map(|d| c + d).collect::<Vec<_>>(), 3);
+            let player = join(&mut server, c.as_vec3() + Vec3::new(0.5, 0.0, 0.5));
+            let home = c.as_vec3() + Vec3::new(-9.5, 0.0, 0.5);
+            let id = put(&mut server, name, home, Vec3::X);
+            server.hurt_creature(player, id, 0, None, voxmar_engine::combat::Blow::Plain);
+            let (mut hanging, mut back) = (0, f32::MAX);
+            for _ in 0..40 * TICKS_PER_SECOND as u64 {
+                server.tick += 1;
+                server.think_and_move();
+                heal(&mut server, player);
+                let at = server.creatures.live[&id].body.position;
+                hanging += (flat(at, c.as_vec3()) < 4.5) as u32;
+                if hanging > 0 {
+                    back = back.min(flat(at, home));
+                }
+            }
+            let seconds = hanging as f32 / TICKS_PER_SECOND as f32;
+            assert!(seconds <= 13.0, "{name} hung about the box {seconds:.1} s of 40");
+            assert!(back < 4.0, "{name} never went home: {back:.1} blocks off it at nearest");
+            assert!(!matches!(doing(&server, id), "hunt" | "defend"), "{name} was still after the player");
+            server.hurt_creature(player, id, 0, None, voxmar_engine::combat::Blow::Plain);
+            for _ in 0..TICKS_PER_SECOND as u64 {
+                server.tick += 1;
+                server.think_and_move();
+            }
+            assert!(matches!(doing(&server, id), "hunt" | "defend"), "{name} struck again did not take the fight up: {}", doing(&server, id));
+        }
+    }
+
+    /// A player walking off across open land a little faster than the hunter runs. Before:
+    /// they followed 105 blocks (leashes 20 to 48). Now they turn back at their leash.
+    #[test]
+    fn a_hunter_follows_no_further_than_its_leash() {
+        for name in ["base:wolf", "base:brown_bear", "base:badger"] {
+            let mut server = crate::test_server();
+            let c = pen(&mut server, 60);
+            let home = c.as_vec3() + Vec3::new(-50.5, 0.0, 0.5);
+            let player = join(&mut server, home + Vec3::new(2.0, 0.0, 0.0));
+            let id = put(&mut server, name, home, Vec3::X);
+            server.hurt_creature(player, id, 0, None, voxmar_engine::combat::Blow::Plain);
+            let def = &server.content.creatures.get(server.creatures.live[&id].species).def;
+            let (run, leash) = (def.movement.run, def.leash);
+            let mut furthest = 0.0f32;
+            for _ in 0..30 * TICKS_PER_SECOND as u64 {
+                server.tick += 1;
+                let p = server.players[&player].position;
+                if p.x < c.x as f32 + 55.0 {
+                    server.players.get_mut(&player).unwrap().position = p + Vec3::X * run * 1.05 / TICKS_PER_SECOND as f32;
+                }
+                server.think_and_move();
+                heal(&mut server, player);
+                furthest = furthest.max(flat(server.creatures.live[&id].body.position, home));
+            }
+            let end = flat(server.creatures.live[&id].body.position, home);
+            assert!(furthest <= leash + 3.0, "{name} followed {furthest:.1} blocks from home (leash {leash})");
+            assert!(end < leash, "{name} did not turn back home: {end:.1} blocks off, {}", doing(&server, id));
         }
     }
 }

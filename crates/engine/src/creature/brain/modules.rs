@@ -161,7 +161,15 @@ impl Module for Wander {
                     base = base.lerp(middle.with_y(base.y), 0.7 * ctx.mind.personality.sociability);
                     reach *= 1.0 - 0.6 * ctx.mind.personality.sociability;
                 }
-                mind.goal = Some(base + Vec3::new(angle.cos(), 0.0, angle.sin()) * reach);
+                let mut way = Vec3::new(angle.cos(), 0.0, angle.sin());
+                // Having given up a chase, it leaves players be: it strolls the far side.
+                if ctx.mind.recalls(Memory::GaveUp)
+                    && let Some(p) = ctx.nearest()
+                {
+                    let toward = (p.position - base).with_y(0.0).normalize_or_zero();
+                    way -= toward * 2.0 * way.dot(toward).max(0.0);
+                }
+                mind.goal = Some(base + way * reach);
             }
         }
         if mind.pause > 0.0 {
@@ -551,6 +559,9 @@ impl Module for Hunt {
     fn want(&self, ctx: &Ctx) -> Option<Want> {
         let def = &ctx.creature.def;
         let personality = &ctx.mind.personality;
+        if ctx.mind.recalls(Memory::GaveUp) {
+            return None;
+        }
         if let Some(p) = ctx.attacker().filter(|_| ctx.mind.anger > 0.0) {
             return Want::at(2.5 * ctx.mind.anger.max(personality.aggression), *p);
         }
@@ -596,6 +607,14 @@ impl Module for Defend {
 fn strike(ctx: &Ctx, mind: &mut Mind, target: Option<Seen>, stalks: bool) -> Decision {
     let Some(p) = target else { return Decision::default() };
     let def = &ctx.creature.def;
+    // Past its leash it gives the chase up and goes home: a wolf does not follow a player
+    // across the land. A boss fights to the end, and those the server sends after someone
+    // (guards) go where it says.
+    let leash = if ctx.at.kept { def.leash.min(super::super::husbandry::KEPT_LEASH) } else { def.leash };
+    if !def.boss && ctx.at.errand.is_none() && flat(ctx.at.position, ctx.at.home) > leash {
+        mind.give_up();
+        return Decision::default();
+    }
     // Close when an attack of the phase it has reached fits, measured as its wind-up
     // measures it (from its body's edge, at its own size): a boss with a volley strikes
     // from afar, and closes in where none of its moves fits (`moves::Creature::reaches`).
@@ -694,7 +713,10 @@ impl Module for Routine {
     }
 }
 
-/// Goes back toward home when it has strayed past its leash.
+/// How near home a creature that gave up a chase goes, in blocks.
+const GAVE_UP_HOME: f32 = 3.0;
+
+/// Goes back toward home when it has strayed past its leash, or gave up a chase.
 #[derive(Debug)]
 struct ReturnHome;
 
@@ -716,12 +738,22 @@ impl Module for ReturnHome {
         let from_home = flat(ctx.at.position, ctx.at.home);
         // Once going, it keeps on until well inside.
         let going = ctx.mind.doing.is_some_and(|i| ctx.creature.modules[i].0.name() == self.name());
-        let limit = if going { leash * 0.5 } else { leash };
+        // Having given up a chase, it goes all the way home rather than hang about where
+        // it gave up (at a fence, round a box it could not get into).
+        let limit = if ctx.mind.recalls(Memory::Homeward) {
+            GAVE_UP_HOME
+        } else if going {
+            leash * 0.5
+        } else {
+            leash
+        };
         (from_home > limit).then(|| Want::new(1.0 + 2.0 * ((from_home - leash) / leash).clamp(0.0, 1.0))).flatten()
     }
 
     fn act(&self, ctx: &Ctx, _: &mut Mind, _: Option<Seen>, _: bool) -> Decision {
-        Decision { goal: Some(ctx.at.home), speed: walk(ctx), ..Default::default() }
+        // Having given up a chase, it lopes off rather than amble about where it gave up.
+        let speed = if ctx.mind.recalls(Memory::Homeward) { walk(ctx) + (run(ctx) - walk(ctx)) * 0.3 } else { walk(ctx) };
+        Decision { goal: Some(ctx.at.home), speed, ..Default::default() }
     }
 }
 

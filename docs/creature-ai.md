@@ -94,10 +94,10 @@ Built now (`engine::creature::brain::modules`):
 | herd | social | closes on its group when it drifts well apart (its spacing past it), to its companion's near side, the same companion until there; spacing by sociability |
 | sentinel | social | stands watch while kin graze |
 | tempted | drive | follows a player holding its favourite food, hurrying as they draw ahead, keeping after them to 1.5 times the radius it noticed them at, and stepping back when too close; its home goes with it, so it stays where it was led; a grudge outweighs the food |
-| hunt | danger | chases and strikes, by RuneScape's rules; stalkers creep crouched, then pounce |
-| defend | danger | fights back when hurt (the boar, the bull, the bear) |
+| hunt | danger | chases and strikes, by RuneScape's rules; stalkers creep crouched, then pounce; gives up past its leash, or after balking twice running (a search finding no way to its target brings a balk on sooner), then lopes home and leaves players be for 45 s (strolling the side away from them) unless struck again; back at a chase within a minute, it gives up at its first balk |
+| defend | danger | fights back when hurt (the boar, the bull, the bear); gives up as hunt does |
 | curious | social | comes to look from a distance, backs off if you come closer |
-| return_home | drive | every creature: goes home when past its leash, until well inside |
+| return_home | drive | every creature: goes home when past its leash, until well inside; having given up a chase, lopes all the way home |
 
 Planned (from the deep dive's library): cache food, drink, sleep, bask, seek shade, huddle,
 hibernate, migrate, school, flock, ambush, pack hunt, scavenge, play dead, burrow, defend
@@ -172,19 +172,20 @@ with its back to a wall runs along it, one in a corner runs out past the player,
 before a tree runs round the trunk. Its head stops at what its box does not: a turn that
 would put it into a wall goes the other way round (only while it still wants that way, and,
 standing, only to a heading its head fits at, so it never spins to face a player through a
-wall), a step that would is undone, and a
-head already in a block (one built before its face) may turn and walk out rather than
-stand frozen. It gives up a goal after two stuck seconds, or four going round. Fliers on
+wall), a step that would is undone, and a head already in a block (one built before its
+face) may turn and walk out rather than stand frozen. It gives up a goal after two stuck
+seconds, or four going round, or about one once a search finds no way there. Fliers on
 the wing, drifters and swimmers do not steer.
 
 A way open to steer by is also one it can stand on: it looks a body's length ahead along
 the slide, and a step down further than `SAFE_DROP` (3 blocks), or into water two deep
-for a land animal not already swimming, is as shut as a wall. So prey runs along a cliff
+for a land animal not already out of its depth, is as shut as a wall (wading in the
+shallows too). So prey runs along a cliff
 edge or a lake shore rather than off it, and a boxed-in creature stands rather than press.
 Anything that jumps gets up a single block, however low its jump (the hop is lifted to
 clear it), and no higher. A land animal out of its depth (water under its feet and below)
-makes for the nearest dry cell within 12 blocks, whatever it had in mind, and hauls itself
-up the bank.
+makes for the nearest dry cell within 12 blocks, whatever it had in mind, keeps on through
+the shallows, and hauls itself up the bank.
 
 When steering is going round (or already following one), a short A* (`path::find`) looks
 for a way over the cells the body fits in: eight directions, no corner cut, up one block
