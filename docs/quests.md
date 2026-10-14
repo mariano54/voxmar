@@ -198,6 +198,21 @@ Left as they are: Timber stays off the spine (branch `start`, with An Axe to It)
 main-line walk test models only the spine's goals; Crafting Table stays a root so a player
 who already has a table finds it done.
 
+## Farm paths in layers (Oct 14)
+
+The Farm tab had 25 quests hanging straight off Homestead Hearth, so its first column was a
+wall of parallel starts. Now each of ten paths starts once off the hearth and runs in
+layers, with forks inside a path and few links between paths: the main line (A Pit Kiln to
+the Crucible Kiln), pottery (Clay Banks), farming (First Harvest), cooking (Camp Cook),
+husbandry (Hens in a Row), hunting and fighting (Bigger Game), ranged (Bow and Arrow),
+fishing (Patient Angler), the road (Far Horizons), and the home (A Seat by the Fire).
+Prayer opens off A Pit Kiln as before. Encounter quests sit inside their path: the
+hunters' and the poachers' after Bigger Game, the road's travellers after the Field Guide,
+the farming folk after A Field of Gold, the neighbours after a snug home. The book's
+columns go from 25, 23, 18, 12, 6, 5, 4, 2 quests to 10, 15, 21, 20, 15, 7, 5, 2: the tallest
+column is four shorter. Only `after` changed. Levels asked only come later, and
+early_quests still holds that a quest names only quests open beside it.
+
 ## Readable to a newcomer (Oct 13)
 
 Every Nomad and Farm quest was read as someone who has never played would: does its text
