@@ -1340,7 +1340,7 @@ mod tests {
             ("wooden_hoe", "hoe", vec![("rest", weights())]),
             ("fishing_rod", "rod", vec![("rest", weights())]),
             ("torch_lit", "light", vec![("rest", weights())]),
-            ("cooked_rabbit", "edible", vec![("rest", weights()), ("eat", Weights { eat: 1.0, ..weights() })]),
+            ("cooked_small_game", "edible", vec![("rest", weights()), ("eat", Weights { eat: 1.0, ..weights() })]),
         ];
         let panels: Vec<(String, Vec<u8>)> = sheet
             .iter()

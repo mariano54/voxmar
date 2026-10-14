@@ -130,6 +130,8 @@ pub fn page(locale: &Locale, launch: &Launch, skill: SkillId, entries: &[Entry],
             if !inputs.is_empty() {
                 parts.push(Part::Items(inputs));
             }
+            // What it takes besides what is held (a tin ore with the copper).
+            parts.extend(recipes.first().into_iter().flat_map(|(_, recipe)| recipe.with.iter().map(|&(item, _)| Part::Items(vec![item]))));
             if let Some((_, recipe)) = recipes.first() {
                 how.push(locale.get(if recipe.def.station.ends_with("campfire") { "guide.station.campfire" } else { "guide.station.other" }).to_owned());
                 if recipe.def.stop_burning.is_some() {
