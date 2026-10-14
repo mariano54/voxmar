@@ -305,10 +305,15 @@ pub fn leg_phase(own: f32, hind: bool, paired: f32) -> f32 {
 /// through it (0 ..= 1). Each creature keeps its own time (`seed`).
 pub fn now_and_then(at: &Now, now: f32, seed: u32, salt: u64) -> Option<f32> {
     let t = now / at.every + voxmar_engine::creature::unit_from(seed as u64 ^ salt) * 7.0;
-    let slot = t.floor();
-    let roll = voxmar_engine::creature::unit_from(voxmar_engine::creature::mix(seed as u64 ^ salt, slot as i64 as u64));
+    let roll = voxmar_engine::creature::unit_from(voxmar_engine::creature::mix(seed as u64 ^ salt, slot(at, now, seed, salt)));
     let into = t.fract() * at.every;
     (roll < at.chance && into < at.hold).then_some(into / at.hold)
+}
+
+/// Which of `now_and_then`'s turns `now` falls in: the same all through one, so whatever
+/// is picked by it (which way a glance goes) holds for the whole of it.
+pub fn slot(at: &Now, now: f32, seed: u32, salt: u64) -> u64 {
+    (now / at.every + voxmar_engine::creature::unit_from(seed as u64 ^ salt) * 7.0).floor() as i64 as u64
 }
 
 /// Its new yaw and turning speed, `dt` after: turning toward `toward` at up to `most`
