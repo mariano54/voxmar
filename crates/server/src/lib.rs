@@ -1169,9 +1169,26 @@ fn ring_positions(center: ColumnPos, ring: i32) -> impl Iterator<Item = ColumnPo
 /// A server on the game's own content with a new world kept in memory, for unit tests.
 #[cfg(test)]
 pub(crate) fn test_server() -> Server {
-    let content = load_content(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).expect("content loads");
+    test_server_on(test_content())
+}
+
+/// The game's own content, as `test_server` loads it.
+#[cfg(test)]
+pub(crate) fn test_content() -> Content {
+    load_content(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).expect("content loads")
+}
+
+/// As `test_server`, on `content` already loaded: a test that makes many servers loads it
+/// once (a copy shares its tables, so one changed through `Arc::get_mut` must be its own).
+#[cfg(test)]
+pub(crate) fn test_server_on(content: Content) -> Server {
     let mut config = ServerConfig::default();
     let (save, meta) = open_world(&mut config).expect("no save to open");
+    // Every test server is on the one seed: its world, held for the whole run, is the one
+    // each shares (`Overworld::shared`), with the land round spawn planned once rather than
+    // again for each (1.7 s a server; a test that made 34 took 75 s).
+    static HELD: std::sync::OnceLock<Arc<Overworld>> = std::sync::OnceLock::new();
+    HELD.get_or_init(|| Overworld::shared(meta.seed, &content, &WorldContent::load(&content).expect("checked by load_content")));
     let (_, incoming) = crossbeam_channel::unbounded();
     let (_, console) = crossbeam_channel::unbounded();
     Server::new(config, meta, save, save::WorldState::default(), content, incoming, console)

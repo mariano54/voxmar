@@ -7004,6 +7004,8 @@ struct FeelRun {
     /// `Last` to tell of it).
     sent: Option<f32>,
     slow: u32,
+    /// Whether this wind-up's moment came with no press, already told (`answer`).
+    held: bool,
 }
 
 impl FeelRun {
@@ -7033,7 +7035,15 @@ impl FeelRun {
     fn answer(&mut self, world: &mut World, blocking: bool, dodge_key: KeyCode, received: bool) -> bool {
         let Some(seen) = self.seen else { return false };
         let frame = world.get_resource::<Time>().map_or(0.0, |t| t.delta_secs());
-        if received || self.answered || seen.elapsed().as_secs_f32() + (FEEL_AIM * frame).min(self.room) < self.after {
+        let due = seen.elapsed().as_secs_f32() + (FEEL_AIM * frame).min(self.room) >= self.after;
+        if due && (received || self.answered) {
+            // Told once a wind-up, for a try that ends with no response queued.
+            if !self.held && !self.answered {
+                info!("gate: combat response due {:.3}s after wind-up and not pressed: its result came first, frame {frame:.3}s", seen.elapsed().as_secs_f32());
+            }
+            self.held = true;
+        }
+        if received || self.answered || !due {
             return false;
         }
         self.answered = true;
@@ -7179,6 +7189,8 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 // it before this moment, which a slow frame makes worth counting.
                 let half = std::time::Duration::from_secs_f32(world.resource::<Time>().delta_secs() / 2.0);
                 gate.feel.seen = gate.feel.seen.map(|seen| seen.checked_sub(half).unwrap_or(seen));
+                gate.feel.held = false;
+                info!("gate: combat wind-up seen phase {} try {} bear {}, frame {:.3}s, server {:.2}s", gate.phase, gate.feel.tries + 1, view.id, world.resource::<Time>().delta_secs(), gate.server_now);
                 if !gate.feel.facing_checked {
                     let target = gate.observer.as_ref().and_then(|o| o.others.values().next().copied()).unwrap_or(world.resource::<LocalPlayer>().position);
                     let to = (target - view.position).with_y(0.0).normalize_or_zero();
@@ -8231,9 +8243,15 @@ const RACK_FROM_FIRE: IVec3 = IVec3::new(2, 0, 0);
 /// Server seconds the dry step waits on each answer.
 const DRY_WAIT: f32 = 10.0;
 
-/// A drying rack by the campfire, raw rabbit selected: right clicks on it hang the rabbit
-/// (`base:use_station`), so the server sends the hung rack back (shot `rack`). Then the rack
-/// goes, letting the rabbit fall as a broken rack does.
+/// Share of a rack shot's middle that must turn meat-coloured once the rabbit hangs, over
+/// the bare rack's: the strips cover about half the middle of the hung rack.
+const MEAT_SHOWS: f32 = 0.08;
+
+/// A drying rack by the campfire, seen from three blocks at eye height (shot `rack_bare`
+/// once the renderer has it), raw rabbit selected: right clicks on it hang the rabbit
+/// (`base:use_station`), so the server sends the hung rack back, and once the renderer has
+/// that too (shot `rack`) the meat must show in the middle of the shot. Then the rack goes,
+/// letting the rabbit fall as a broken rack does.
 fn dry(world: &mut World, gate: &mut Gate, now: f32) {
     let rack = gate.feet + IVec3::new(0, 0, 14) + RACK_FROM_FIRE;
     let waited = gate.server_in_phase() > DRY_WAIT;
@@ -8242,13 +8260,15 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
             let net = world.resource::<Net>();
             net.command(&format!("setblock {} {} {} drying_rack", rack.x, rack.y, rack.z));
             net.command("give raw_rabbit 2");
-            net.command(&format!("tp {} {} {}", rack.x as f32 + 0.5, rack.y, rack.z as f32 - 1.5));
+            net.command(&format!("tp {} {} {}", rack.x as f32 + 0.5, rack.y, rack.z as f32 - 2.5));
             gate.advance(now);
         }
         1 => {
+            aim_at(world, rack.as_vec3() + RACK_MEAT);
             let client = world.resource::<ClientWorld>();
             let stood = client.registry.id("base:drying_rack").is_some_and(|r| client.block(rack) == Some(r));
-            if stood && select(world, "base:raw_rabbit") {
+            let there = world.resource::<LocalPlayer>().position.distance(Vec3::new(rack.x as f32 + 0.5, rack.y as f32, rack.z as f32 - 2.5)) < 0.5;
+            if stood && there && drawn(world, rack) && gate.shot(world, "rack_bare").is_some() && select(world, "base:raw_rabbit") {
                 gate.advance(now);
             } else if waited {
                 gate.check("drying rack", Err(format!("the rack ({stood}) or raw rabbit in hand never came in {DRY_WAIT} server seconds")));
@@ -8256,7 +8276,7 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
             }
         }
         2 => {
-            aim_at(world, rack.as_vec3() + Vec3::new(0.5, 0.4, 0.5));
+            aim_at(world, rack.as_vec3() + RACK_MEAT);
             let client = world.resource::<ClientWorld>();
             let hung = client.registry.id("base:drying_rack_hung").is_some_and(|h| client.block(rack) == Some(h));
             if hung {
@@ -8271,16 +8291,36 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
             }
         }
         3 => {
-            aim_at(world, rack.as_vec3() + Vec3::new(0.5, 0.4, 0.5));
+            aim_at(world, rack.as_vec3() + RACK_MEAT);
             // The word that the fire near makes it quicker: the tail of `station.loaded_faster`,
             // which nothing before this step says.
             let faster = world.resource::<crate::lang::Locale>().get("station.loaded_faster").replace("{words}", "").trim().to_owned();
             let said = world.resource::<crate::hud::console::Console>().since(0.0).any(|line| line.contains(faster.as_str()));
-            if !said && !waited {
+            if !(said && drawn(world, rack)) && !waited {
                 return;
             }
-            if gate.shot(world, "rack").is_some() {
-                let result = if said { Ok("raw rabbit hung on a rack by the fire: the server sent back the hung rack, quicker for the fire".into()) } else { Err(format!("the rack hung, but chat never said \"{faster}\" in {DRY_WAIT} server seconds, with a campfire two blocks off")) };
+            if let Some(hung) = gate.shot(world, "rack") {
+                let result = if !said {
+                    Err(format!("the rack hung, but chat never said \"{faster}\" in {DRY_WAIT} server seconds, with a campfire two blocks off"))
+                } else {
+                    let client = world.resource::<ClientWorld>();
+                    let shown = client.check_meshed(ColumnPos::of_block(rack));
+                    let shares = gate.earlier_shot("rack_bare").ok_or_else(|| "the bare rack was never shot".to_owned()).and_then(|bare| Ok((meat_share(&bare)?, meat_share(&hung)?)));
+                    match (shown, shares) {
+                        (Err(e), _) | (_, Err(e)) => Err(format!("the rack hung, but {e}")),
+                        (Ok(()), Ok((bare, meat))) if meat - bare < MEAT_SHOWS => Err(format!(
+                            "the rack hung, but from three blocks the meat shows on {:.0}% of the rack's middle, against {:.0}% bare (wanted {:.0} points more)",
+                            100.0 * meat,
+                            100.0 * bare,
+                            100.0 * MEAT_SHOWS
+                        )),
+                        (Ok(()), Ok((bare, meat))) => Ok(format!(
+                            "raw rabbit hung on a rack by the fire: the server sent back the hung rack, quicker for the fire; from three blocks meat shows on {:.0}% of its middle, {:.0}% bare",
+                            100.0 * meat,
+                            100.0 * bare
+                        )),
+                    }
+                };
                 gate.check("drying rack", result);
                 world.resource::<Net>().command(&format!("setblock {} {} {} air", rack.x, rack.y, rack.z));
                 gate.next(Step::Tame, now);
@@ -8288,6 +8328,32 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
         }
         _ => {}
     }
+}
+
+/// Where the dry step looks on its rack: the middle of the strips hung from its twine.
+const RACK_MEAT: Vec3 = Vec3::new(0.5, 0.55, 0.5);
+
+/// Whether the renderer has the column holding `at` as its blocks are now: none of it waits
+/// to be meshed, so a shot shows what was just placed there.
+fn drawn(world: &World, at: IVec3) -> bool {
+    !world.resource::<ClientWorld>().meshing(ColumnPos::of_block(at))
+}
+
+/// The share of a shot's middle (a square a tenth of its height across, where the dry
+/// step aims) that is meat-coloured: red well over green and blue, raw or dried.
+fn meat_share(shot: &Image) -> Result<f32, String> {
+    let (w, h, data) = pixels(shot)?;
+    let half = h / 20;
+    let (mut meat, mut all) = (0usize, 0usize);
+    for y in h / 2 - half..h / 2 + half {
+        for x in w / 2 - half..w / 2 + half {
+            let i = (y * w + x) * 4;
+            let [r, g, b] = [data[i], data[i + 1], data[i + 2]].map(f32::from);
+            all += 1;
+            meat += usize::from(r >= 24.0 && r >= 1.5 * g && r >= 1.5 * b);
+        }
+    }
+    Ok(meat as f32 / all.max(1) as f32)
 }
 
 /// Seconds the gate watches a campfire's particles for.
