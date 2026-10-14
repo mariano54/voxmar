@@ -5429,6 +5429,9 @@ fn nest(world: &mut World, gate: &mut Gate, now: f32) {
     let (torch, barrel, hen) = (bag + IVec3::X, stand + IVec3::new(0, 0, 2), stand + IVec3::new(0, 0, -3));
     // Where a rug and a stool are set down and broken again, either side of the barrel.
     let (rug, stool) = (stand + IVec3::new(1, 0, 1), stand + IVec3::new(-1, 0, 1));
+    // A chest beside the barrel and a campfire: two stores by a fire are a Pantry, and the
+    // barrel alone is one, so the Pantry comes only if a chest counts as storage.
+    let (chest, fire) = (stand + IVec3::new(-1, 0, 2), stand + IVec3::new(2, 0, 2));
     let block_is = |world: &World, gate: &Gate, at: IVec3, name: &str| {
         let client = world.resource::<ClientWorld>();
         let want = client.registry.id(name);
@@ -5439,7 +5442,7 @@ fn nest(world: &mut World, gate: &mut Gate, now: f32) {
         world.resource_mut::<UiState>().inventory_open = false;
         let net = world.resource::<Net>();
         net.command("creatures remove junglefowl");
-        for at in [bag, torch, barrel, rug, stool] {
+        for at in [bag, torch, barrel, rug, stool, chest, fire] {
             net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
         }
         net.command("clear egg");
@@ -5457,6 +5460,8 @@ fn nest(world: &mut World, gate: &mut Gate, now: f32) {
             // Back where the Home step stood, whatever the way home step left.
             net.command(&format!("tp {} {} {}", stand.x as f32 + 0.5, stand.y, stand.z as f32 + 0.5));
             net.command(&format!("setblock {} {} {} barrel", barrel.x, barrel.y, barrel.z));
+            net.command(&format!("setblock {} {} {} chest", chest.x, chest.y, chest.z));
+            net.command(&format!("setblock {} {} {} campfire", fire.x, fire.y, fire.z));
             net.command(&format!("summon junglefowl 1 {} {} {}", hen.x, hen.y, hen.z));
             net.command("creatures tame junglefowl");
             net.command("creatures hold junglefowl");
@@ -5484,11 +5489,16 @@ fn nest(world: &mut World, gate: &mut Gate, now: f32) {
         2 => {
             let laid = eggs(world);
             let told = world.resource::<crate::hud::console::Console>().since(gate.phase_since).any(|l| l.contains("laid into your home's stores"));
-            if laid > 0 && told {
+            let pantry = {
+                let (player, launch) = (world.resource::<LocalPlayer>(), world.resource::<Launch>());
+                launch.content.effects.id("base:pantry").is_some_and(|id| player.vitals.effects.iter().any(|a| a.effect == id))
+            };
+            if laid > 0 && told && pantry {
                 if gate.shot(world, "home-nest").is_none() {
                     return;
                 }
                 gate.check("home: nest", Ok(format!("a hen kept at home laid {laid} egg into the barrel there (shot home-nest), and the chat said so")));
+                gate.check("home: storage", Ok("a chest and a barrel by a campfire made a Pantry: the chest counts as storage".into()));
                 // Then the furniture is moved: a rug and a stool beside the player, on stone.
                 world.resource_mut::<UiState>().inventory_open = false;
                 let net = world.resource::<Net>();
@@ -5504,6 +5514,7 @@ fn nest(world: &mut World, gate: &mut Gate, now: f32) {
             } else if waited > 15.0 {
                 let open = world.resource::<LocalPlayer>().inventory.store.is_some();
                 gate.check("home: nest", Err(format!("{waited:.1} server s after the hen's egg was made due: {laid} eggs in the barrel (open {open}), told {told}")));
+                gate.check("home: storage", if pantry { Ok("a chest and a barrel by a campfire made a Pantry".into()) } else { Err(format!("{waited:.1} server s on, a chest and a barrel by a campfire at home made no Pantry: the chest did not count as storage")) });
                 leave(world, gate);
             }
         }
