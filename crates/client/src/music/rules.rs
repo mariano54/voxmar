@@ -34,6 +34,12 @@ pub struct MusicRules {
     pub volume: f32,
     /// Borrowed tracks' gain relative to Voxmar's own.
     pub borrowed_volume: f32,
+    /// The loudness each of Voxmar's own tracks is brought to, in dB below full scale (the
+    /// RMS of all of it), by its measured `levels`; `None` plays them as they are.
+    pub loudness: Option<f32>,
+    /// How loud each own track is as made, by its path under `assets/music`, in dB below
+    /// full scale: the RMS of all of it, both channels. A test measures them again.
+    pub levels: std::collections::BTreeMap<String, f32>,
     /// Seconds before the title screen's first track, as a range picked from.
     pub first_menu_delay: (f32, f32),
     /// Seconds of quiet between tracks in a world, and before its first.
@@ -172,6 +178,8 @@ fn one() -> f32 {
 struct File {
     volume: Option<f32>,
     borrowed_volume: Option<f32>,
+    loudness: Option<f32>,
+    levels: std::collections::BTreeMap<String, f32>,
     first_menu_delay: Option<(f32, f32)>,
     gap: Option<(f32, f32)>,
     menu_gap: Option<(f32, f32)>,
@@ -194,6 +202,8 @@ impl Default for MusicRules {
         Self {
             volume: 0.35,
             borrowed_volume: 1.0,
+            loudness: None,
+            levels: Default::default(),
             first_menu_delay: (2.0, 6.0),
             gap: (180.0, 420.0),
             menu_gap: (180.0, 420.0),
@@ -221,6 +231,10 @@ impl MusicRules {
             macro_rules! replace {
                 ($($field:ident),*) => {$(if let Some(value) = read.$field { rules.$field = value; })*};
             }
+            rules.levels.extend(read.levels);
+            if read.loudness.is_some() {
+                rules.loudness = read.loudness;
+            }
             replace!(volume, borrowed_volume, first_menu_delay, gap, menu_gap, now_playing, boss, fade_out, retry_after, resume_after, own_share, recent, underground, prism);
             for category in read.categories {
                 check_category(&category).map_err(|e| format!("{}/{FILE}: {e}", file.package))?;
@@ -238,6 +252,15 @@ impl MusicRules {
             return Err(format!("{FILE}: the rule for {:?} puts tracks in category {:?}, which no categories list has", rule.paths, rule.category));
         }
         Ok(rules)
+    }
+
+    /// The gain that brings an own track (its path under `assets/music`) to `loudness`: at
+    /// most four times up or down, and none for a track not measured.
+    pub fn trim(&self, track: &str) -> f32 {
+        match (self.loudness, self.levels.get(track)) {
+            (Some(target), Some(level)) => 10f32.powf((target - level) / 20.0).clamp(0.25, 4.0),
+            _ => 1.0,
+        }
     }
 
     /// The category called `name`.
@@ -339,7 +362,7 @@ mod tests {
         assert!(rules.rule("minecraft:dig/grass1").is_none());
         // Patterns see the path, not the namespace.
         assert!(rules.rule("musicmod:dig/grass1").is_none());
-        assert!(MusicRules::load(&[package("bad", "(loudness: 2.0)")]).unwrap_err().contains("bad/music.ron"));
+        assert!(MusicRules::load(&[package("bad", "(loudest: 2.0)")]).unwrap_err().contains("bad/music.ron"));
     }
 
     /// A rule's category must be listed, and a category's name and folder must be safe to
