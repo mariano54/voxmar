@@ -38,6 +38,9 @@ pub enum Goal {
     Kill(String, u32),
     /// Tamed this many of a creature (or `any`).
     Tame(String, u32),
+    /// Drew this many wild creatures (a creature, or `any`) up close by holding their
+    /// favourite food: each creature counts once.
+    Lured(String, u32),
     /// Picked or harvested this many of a plant (or `any`).
     Pick(String, u32),
     /// Mined this many of an ore or rock (or `any`).
@@ -85,6 +88,9 @@ pub enum Goal {
     /// Was under an effect (by name) at least once, whatever gave it: a food, smoke, a
     /// home's comfort.
     Felt(String),
+    /// Laid a recipe for this item (or `any`, or a `tag:TAG`) into the crafting grid this
+    /// many times with the recipe viewer's Lay, taking from a store in the home.
+    Laid(String, u32),
 }
 
 /// One way to finish a quest: every goal must hold.
@@ -143,6 +149,8 @@ pub struct TrackerPatch {
     pub done_stays: Option<f32>,
     #[serde(default)]
     pub backing_alpha: Option<f32>,
+    #[serde(default)]
+    pub follow_on: Option<bool>,
 }
 
 /// How the interface follows pinned quests on screen.
@@ -154,11 +162,14 @@ pub struct Tracker {
     pub done_stays: f32,
     /// How opaque the backing behind each pinned quest is, 0 to 1.
     pub backing_alpha: f32,
+    /// Whether a pinned quest that drops off done leaves the quests it opens pinned in its
+    /// place, so what to do next is always on screen.
+    pub follow_on: bool,
 }
 
 impl Default for Tracker {
     fn default() -> Self {
-        Self { pins: 3, done_stays: 5.0, backing_alpha: 0.5 }
+        Self { pins: 3, done_stays: 5.0, backing_alpha: 0.5, follow_on: true }
     }
 }
 
@@ -209,6 +220,7 @@ impl Progress<'_> {
             Goal::Catch(fish, n) => (journal(Page::Fish, fish), *n),
             Goal::Kill(creature, n) => (journal(Page::Animals, creature) + journal(Page::Monsters, creature) + journal(Page::Bosses, creature), *n),
             Goal::Tame(creature, n) => (tally("tamed", creature), *n),
+            Goal::Lured(creature, n) => (tally("lured", creature), *n),
             Goal::Pick(plant, n) => (journal(Page::Plants, plant), *n),
             Goal::Mine(ore, n) => {
                 let mined = self.journal.entries().filter(|e| e.page == Page::Ores && (matches(ore, &e.name) || (self.drops)(&e.name).is_some_and(|d| matches(ore, &d))));
@@ -232,6 +244,7 @@ impl Progress<'_> {
             Goal::Fertilised(item, n) => (tally("fertilised", item), *n),
             Goal::Ate(food, n) => (tally("ate", food), *n),
             Goal::Felt(effect) => (tally("felt", effect).min(1), 1),
+            Goal::Laid(item, n) => (tally("laid", item), *n),
         }
     }
 
@@ -296,6 +309,7 @@ impl QuestRegistry {
             tracker.pins = patch.pins.unwrap_or(tracker.pins);
             tracker.done_stays = patch.done_stays.unwrap_or(tracker.done_stays);
             tracker.backing_alpha = patch.backing_alpha.unwrap_or(tracker.backing_alpha);
+            tracker.follow_on = patch.follow_on.unwrap_or(tracker.follow_on);
         }
         if tracker.pins == 0 || !(tracker.done_stays >= 0.0) || !(0.0..=1.0).contains(&tracker.backing_alpha) {
             return Err(RegistryError(format!("quests.ron: the tracker needs a pin or more, a stay of 0 s or more and a backing from 0 to 1, not {tracker:?}")));
@@ -393,7 +407,7 @@ impl QuestRegistry {
                     Goal::Mine(name, _) => find(name, &rock)?,
                     Goal::Catch(name, _) if name == "Kinds" => {}
                     Goal::Catch(name, _) => find(name, &fish)?,
-                    Goal::Kill(name, _) => find(name, &creature)?,
+                    Goal::Kill(name, _) | Goal::Lured(name, _) => find(name, &creature)?,
                     Goal::Tame(name, _) => find(name, &tame)?,
                     Goal::Built(name, _) => find(name, &built)?,
                     Goal::Lit(name, _) => find(name, &multiblock)?,
@@ -417,6 +431,7 @@ impl QuestRegistry {
                     Goal::Fertilised(name, _) => find(name, &made)?,
                     Goal::Ate(name, _) => find(name, &made)?,
                     Goal::Felt(name) => find(name, &effect)?,
+                    Goal::Laid(name, _) => find(name, &made)?,
                 }
             }
             for given in &mut quest.rewards {
@@ -643,7 +658,7 @@ mod tests {
     fn wanderers_prayers_and_offerings_count_from_their_tallies() {
         let journal = Journal::default();
         let mut tallies = FxHashMap::default();
-        for (key, n) in [("met:base:pedlar", 2), ("met:base:smith", 1), ("met:base:hermit", 0), ("prayed:base:bark_skin", 3), ("offered:base:bone", 4), ("crafted:base:bone", 9), ("opened:base:nomad_treasure_chest", 2), ("ate:base:honey", 3), ("felt:base:smoky", 5), ("fertilised:base:compost", 5)] {
+        for (key, n) in [("met:base:pedlar", 2), ("met:base:smith", 1), ("met:base:hermit", 0), ("prayed:base:bark_skin", 3), ("offered:base:bone", 4), ("crafted:base:bone", 9), ("opened:base:nomad_treasure_chest", 2), ("ate:base:honey", 3), ("felt:base:smoky", 5), ("fertilised:base:compost", 5), ("laid:base:oak_planks", 2), ("lured:base:rabbit", 2)] {
             tallies.insert(key.to_owned(), n);
         }
         let level = |_: &str| 1u8;
@@ -668,6 +683,10 @@ mod tests {
         assert_eq!(goal(Goal::Ate("tag:sweet".into(), 4)), (3, 4), "food eaten counts by tag");
         assert_eq!(goal(Goal::Ate("base:bone".into(), 1)), (0, 1), "what was made is not what was eaten");
         assert_eq!(goal(Goal::Felt("base:smoky".into())), (1, 1), "felt once is enough");
+        assert_eq!(goal(Goal::Laid("any".into(), 3)), (2, 3), "recipes laid from a home's stores");
+        assert_eq!(goal(Goal::Laid("base:bone".into(), 1)), (0, 1), "what was made is not what was laid");
+        assert_eq!(goal(Goal::Lured("any".into(), 1)), (2, 1), "creatures drawn up close by their favourite food");
+        assert_eq!(goal(Goal::Lured("base:junglefowl".into(), 1)), (0, 1), "a rabbit lured is no junglefowl");
         assert_eq!(goal(Goal::Felt("base:heartwood".into())), (0, 1));
     }
 
@@ -717,8 +736,8 @@ mod tests {
     #[test]
     fn a_later_package_changes_the_tracker_field_by_field() {
         let core = QuestRegistry::read("core", "(tracker: (pins: 2, done_stays: 3.0, backing_alpha: 0.4))").unwrap();
-        let mod_ = QuestRegistry::read("mod", "(tracker: (pins: 5))").unwrap();
-        assert_eq!(QuestRegistry::new(vec![core, mod_]).unwrap().tracker(), Tracker { pins: 5, done_stays: 3.0, backing_alpha: 0.4 });
+        let mod_ = QuestRegistry::read("mod", "(tracker: (pins: 5, follow_on: false))").unwrap();
+        assert_eq!(QuestRegistry::new(vec![core, mod_]).unwrap().tracker(), Tracker { pins: 5, done_stays: 3.0, backing_alpha: 0.4, follow_on: false });
         assert_eq!(registry().tracker(), Tracker::default());
         let none = QuestRegistry::read("core", "(tracker: (pins: 0))").unwrap();
         assert!(QuestRegistry::new(vec![none]).is_err());

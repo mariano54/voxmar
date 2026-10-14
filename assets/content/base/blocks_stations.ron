@@ -2,8 +2,9 @@
 // Each is three blocks, empty, working and ready, and gives back the empty one when broken
 // (with what was on it). A drying rack of sticks and twine, hung with meat, then hung with
 // jerky; a hung rack counts toward a home's herb nook (`drying`). A compost heap of boards,
-// heaped with greens, then rotted down to compost. A well beside them, one block that
-// works by being there.
+// heaped with greens, then rotted down to compost. An earth clamp of dirt over a log,
+// smouldering (a fire: it smokes bees calm and leaves you Smoky), then cooled. A well beside
+// them, one block that works by being there.
 (
     blocks: [
         (name: "drying_rack", render: Plant, solid: false, sound: Wood, textures: All("drying_rack"), drops: "drying_rack", hardness: 0.3, color: (140, 105, 60), tags: ["decor"]),
@@ -33,6 +34,9 @@
         // from any river.
         (name: "well", render: Model, shape: "well", facing: true, sound: Stone, textures: All("cobblestone"), hardness: 2.5, color: (115, 115, 120), tags: ["waters", "building"]),
         (name: "compost_heap_ready", sound: Wood, textures: Column(end: "compost_heap_ready_top", side: "compost_heap_ready_side"), drops: "compost_heap", hardness: 1.0, color: (60, 45, 30), tags: ["wood"]),
+        (name: "earth_clamp", sound: Soil, textures: Column(end: "earth_clamp_top", side: "earth_clamp_side"), drops: "earth_clamp", hardness: 0.6, color: (110, 80, 55), tags: ["soil"]),
+        (name: "earth_clamp_lit", sound: Soil, textures: Column(end: "earth_clamp_lit_top", side: "earth_clamp_lit_side"), drops: "earth_clamp", hardness: 0.6, light: 6, color: (150, 70, 40), tags: ["soil", "fire"]),
+        (name: "earth_clamp_cooled", sound: Soil, textures: Column(end: "earth_clamp_cooled_top", side: "earth_clamp_cooled_side"), drops: "earth_clamp", hardness: 0.6, color: (80, 70, 65), tags: ["soil"]),
     ],
     families: [
         // Jerky: meat dried on a rack. It stacks, as cooked food does not, and heals as fruit does.

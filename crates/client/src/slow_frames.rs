@@ -181,7 +181,10 @@ pub(crate) fn waited_for_cores() -> Option<std::time::Duration> {
 }
 
 /// macOS keeps it per process (`ri_runnable_time`, macOS 12 and later), in the unit of the
-/// task's other counters: mach ticks on Apple silicon, nanoseconds on Intel. Which one is
+/// task's other counters: mach ticks on Apple silicon, nanoseconds on Intel. That counter is
+/// the threads' time runnable, running or queued (XNU starts each thread's runnable timer when
+/// it is made runnable and stops it only when it blocks), so the waiting is what is left of it
+/// once the CPU time (`ri_user_time` and `ri_system_time`) is taken off (`queued`). Which unit is
 /// told once, by setting the same counters' CPU time beside `getrusage`'s, in microseconds:
 /// the unit (nanoseconds or ticks) that makes them agree within a half; neither, and nothing
 /// is said.
@@ -227,7 +230,16 @@ pub(crate) fn waited_for_cores() -> Option<std::time::Duration> {
             *NANOS_PER_UNIT.get_or_init(|| scale)
         }
     };
-    Some(std::time::Duration::from_nanos((info.ri_runnable_time as f64 * scale?) as u64))
+    let waited = queued(info.ri_runnable_time, info.ri_user_time, info.ri_system_time);
+    Some(std::time::Duration::from_nanos((waited as f64 * scale?) as u64))
+}
+
+/// Of the time a process's threads were runnable, what they spent queued for a core rather
+/// than running: their CPU time taken off, in the same unit. A busy thread nothing held back
+/// waited nothing; counters read a moment apart can put the CPU time a little past it.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn queued(runnable: u64, user: u64, system: u64) -> u64 {
+    runnable.saturating_sub(user.saturating_add(system))
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
@@ -358,6 +370,16 @@ mod tests {
             }
         }
         assert!(waited_for_cores().is_some(), "the system tells how long we waited for a core");
+    }
+
+    /// macOS's runnable time counts running as well as queueing: a frame its threads were
+    /// busy for all along, held back by nothing, waited for no core, and only what was queued
+    /// beyond the running counts.
+    #[test]
+    fn running_is_not_waiting() {
+        assert_eq!(queued(1_000, 700, 300), 0);
+        assert_eq!(queued(3_000, 700, 300), 2_000);
+        assert_eq!(queued(990, 700, 300), 0);
     }
 
     #[test]
