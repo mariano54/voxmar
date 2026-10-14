@@ -3561,6 +3561,55 @@ mod fight_tests {
         ]
     }
 
+    /// Stone (or `block`) on each of `cells`, by name.
+    fn set(s: &mut Server, block: &str, cells: impl IntoIterator<Item = IVec3>) {
+        let id = s.content.blocks.expect(block);
+        for cell in cells {
+            s.world.set_block(cell, id);
+        }
+    }
+
+    /// Uneven ground in a fight: a step, steps, a slab and block, logs lying about, tall
+    /// grass, and a fence (two blocks high: the game has no fence block yet) or a ledge the
+    /// player stands behind or on, out of the creature's way.
+    pub(super) fn ground_scenes() -> [(&'static str, Scene); 7] {
+        [
+            ("step", |s, c| {
+                set(s, "base:stone", (1..=4).flat_map(|x| (-3..=3).map(move |z| c + IVec3::new(x, 0, z))));
+                (c.as_vec3() + Vec3::new(2.5, 1.0, 0.5), c.as_vec3() + Vec3::new(-4.5, 0.0, 0.5))
+            }),
+            ("steps", |s, c| {
+                for x in 1..=3 {
+                    set(s, "base:stone", (0..x).flat_map(|y| (-2..=2).map(move |z| c + IVec3::new(x, y, z))));
+                }
+                (c.as_vec3() + Vec3::new(3.5, 3.0, 0.5), c.as_vec3() + Vec3::new(-4.5, 0.0, 0.5))
+            }),
+            ("slab", |s, c| {
+                set(s, "base:oak_slab", (-2..=2).map(|z| c + IVec3::new(1, 0, z)));
+                set(s, "base:oak_planks", (2..=4).flat_map(|x| (-2..=2).map(move |z| c + IVec3::new(x, 0, z))));
+                (c.as_vec3() + Vec3::new(3.0, 1.0, 0.5), c.as_vec3() + Vec3::new(-4.5, 0.0, 0.5))
+            }),
+            ("logs", |s, c| {
+                set(s, "base:oak_log", [(-2, 0), (-1, 1), (0, -1), (-1, -1), (0, 1), (1, 0), (-3, 2), (-2, -2)].map(|(x, z)| c + IVec3::new(x, 0, z)));
+                (c.as_vec3() + Vec3::new(2.5, 0.0, 0.5), c.as_vec3() + Vec3::new(-4.5, 0.0, 0.5))
+            }),
+            ("tall grass", |s, c| {
+                let area = |y: i32| (-4..=1).flat_map(move |x| (-3..=3).map(move |z| c + IVec3::new(x, y, z)));
+                set(s, "base:tall_grass", area(0));
+                set(s, "base:tall_grass_top", area(1));
+                (c.as_vec3() + Vec3::new(2.5, 0.0, 0.5), c.as_vec3() + Vec3::new(-4.5, 0.0, 0.5))
+            }),
+            ("fence", |s, c| {
+                wall(s, (-8..=8).map(|z| c + IVec3::new(1, 0, z)), 2);
+                (c.as_vec3() + Vec3::new(2.5, 0.0, 0.5), c.as_vec3() + Vec3::new(-4.5, 0.0, 0.5))
+            }),
+            ("ledge", |s, c| {
+                set(s, "base:stone", (1..=8).flat_map(|x| (-8..=8).flat_map(move |z| (0..2).map(move |y| c + IVec3::new(x, y, z)))));
+                (c.as_vec3() + Vec3::new(2.0, 2.0, 0.5), c.as_vec3() + Vec3::new(-4.5, 0.0, 0.5))
+            }),
+        ]
+    }
+
     /// `name` started at the scene's spot, struck once to anger it, then `seconds` of the
     /// player standing there striking it each second it is within 3.5 blocks.
     pub(super) fn fight(name: &str, scene: Scene, seconds: f32) -> Fight {
@@ -3655,7 +3704,7 @@ mod fight_tests {
     #[ignore = "a measurement: prints a table"]
     fn fight_table() {
         let only = std::env::var("VOXMAR_SCENE").ok();
-        for (scene, set) in scenes().into_iter().filter(|(s, _)| only.as_deref().is_none_or(|o| o == *s)) {
+        for (scene, set) in scenes().into_iter().chain(ground_scenes()).filter(|(s, _)| only.as_deref().is_none_or(|o| o == *s)) {
             for name in FIGHTERS.into_iter().chain(PREY) {
                 let f = fight(name, set, 20.0);
                 println!("{scene:>10} {name:>16}: first {:>5} strikes {:>2} pinned {:>4.1} s pressing {:>4.1} s cornered {:>4.1} s hops {:>2} nearest {:.2}", f.first.map_or("never".into(), |s| format!("{s:.1}")), f.strikes, f.pinned, f.pressing, f.cornered, f.hops, f.nearest);
