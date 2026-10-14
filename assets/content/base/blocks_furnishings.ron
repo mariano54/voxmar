@@ -91,6 +91,29 @@
         ],
     },
     blocks: [
+        // A wooden door, two blocks tall: placed facing whoever sets it, its top half goes
+        // in above with it (`upper`) and both break together, giving the door back. A right
+        // click opens or shuts it (`swaps`, base:open), the server first, so nobody walks
+        // through a door the server still holds shut. Shut, it is solid to players and
+        // creatures alike, and no creature opens one: a home with its door shut keeps the
+        // night out. Open, it stands against its jamb. It is not a furnishing: a village's
+        // gives itself back too.
+        (
+            name: "wooden_door", render: Model, shape: "door", facing: true, sound: Wood, textures: All("oak_planks"),
+            upper: "wooden_door_top", swaps: "wooden_door_open", hardness: 1.5, color: (150, 110, 65), tags: ["door", "door_shut", "wood", "building"],
+        ),
+        (
+            name: "wooden_door_top", render: Model, shape: "door", facing: true, support: Below, sound: Wood, textures: All("oak_planks"),
+            swaps: "wooden_door_open_top", drops: "core:air", hardness: 1.5, color: (150, 110, 65), tags: ["door", "door_shut", "wood", "building"],
+        ),
+        (
+            name: "wooden_door_open", render: Model, shape: "door_open", facing: true, solid: false, sound: Wood, textures: All("oak_planks"),
+            upper: "wooden_door_open_top", swaps: "wooden_door", drops: "wooden_door", hardness: 1.5, color: (150, 110, 65), tags: ["door", "door_open", "wood", "building"],
+        ),
+        (
+            name: "wooden_door_open_top", render: Model, shape: "door_open", facing: true, solid: false, support: Below, sound: Wood, textures: All("oak_planks"),
+            swaps: "wooden_door_top", drops: "core:air", hardness: 1.5, color: (150, 110, 65), tags: ["door", "door_open", "wood", "building"],
+        ),
         // A bale of straw, tied in two places.
         (
             name: "hay_bale", sound: Grass, textures: Column(end: "hay_bale_top", side: "hay_bale_side"),
