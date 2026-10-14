@@ -873,7 +873,7 @@ random pitch change so nothing repeats exactly. Footsteps come from whatever is 
 ground, the rustle of plants, flowers and moss carpet walked through (with the ground softer
 under them), a splash when wading, strokes when swimming. Every broken block plays its break
 sound once, whether the player's own break or one the server reports, fading out over 16 blocks
-for others' breaks.
+for others' breaks, panned to the nearer ear.
 Rain is a synthesized loop of tiny drops over a soft hiss, as loud as the rain is heavy and
 quieter under cover. `cargo test -p voxmar_client sfx_preview -- --ignored` writes every
 synthesized cue to `target/sfx_preview.wav`.
@@ -923,6 +923,16 @@ are Freesound's (CC0 and CC-BY, credited in THIRD_PARTY_NOTICES.md); hisses, sli
 clicks, embers and the wisps' chimes are synthesized. `cargo test -p voxmar_client
 creature_sound_preview -- --ignored` writes every species' sounds, as each plays them, to
 `target/creature_sounds/`.
+
+The mix (`sounds.ron`'s `mix`, crates/client/src/mix.rs) holds it all together. Each kind of
+sound (music, ambience, interface, everyday, combat, jingles, creatures, weather) has a loudness
+band, and tests measure every clip we ship, as the game plays it, against its band; Voxmar's own
+music tracks are each brought to one loudness by levels `music.ron` lists (a test measures the
+files again and says what to write when one is off). The music dips under a jingle and under a
+boss's voice, and comes back after. Each kind has a cap on sounds playing at once: past it, the
+farthest, then the oldest, fades out to make room. Things the player can walk up to (blocks,
+creatures) fade along one curve to silence at their reach; the ambience's distant birds and
+thunder fade by their own reach, never quite to nothing.
 
 ## Rendering and performance
 
