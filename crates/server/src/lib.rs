@@ -27,6 +27,7 @@ mod player;
 mod prayers;
 mod process;
 mod rules;
+mod laying;
 mod stores;
 mod treasure;
 pub mod save;

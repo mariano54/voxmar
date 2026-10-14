@@ -36,6 +36,8 @@ pub enum ActionTarget {
     Stack { slot: u8, count: u8 },
     /// A creature, by its id.
     Creature(u32),
+    /// An item, and how many: what a recipe is laid for (`Effect::LayRecipe`).
+    Item { item: crate::block::BlockId, count: u8 },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -175,6 +177,9 @@ pub enum Effect {
     /// Craft what the actor's crafting grid holds: once onto the pointer
     /// (`ActionTarget::Slot(1)`), or as many times as it can into the inventory (`Slot(0)`).
     Craft,
+    /// Lay a recipe for the target item into the actor's empty crafting grid, `count` sets
+    /// of it, from their pack and, at home, from the stores in it (`craft::lay`).
+    LayRecipe,
     /// Till the target soil into farmland.
     Till,
     /// Work at the target crafting table: its three-by-three grid, until the actor walks away.

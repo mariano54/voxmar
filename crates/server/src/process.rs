@@ -261,16 +261,18 @@ impl Server {
     /// What lies around player `id`'s home (the lit hearth, else the bed last slept in),
     /// counted by the tags effects ask of it, if they stand within its reach.
     pub(crate) fn home_survey(&self, id: PlayerId) -> Option<HomeSurvey> {
+        self.at_home(id).map(|anchor| self.survey_around(anchor, Some(id)))
+    }
+
+    /// Where player `id`'s home is, if they stand within its reach.
+    pub(crate) fn at_home(&self, id: PlayerId) -> Option<IVec3> {
         let player = self.players.get(&id)?;
         let anchor = player.home.or(player.bed)?.floor().as_ivec3();
         let rules = &self.survival;
-        let (up, down) = (rules.home_up, rules.home_down);
         let feet = player.position.floor().as_ivec3();
         let near = (feet - anchor).abs();
-        if near.x > rules.home_reach || near.z > rules.home_reach || feet.y > anchor.y + up || feet.y < anchor.y - down {
-            return None;
-        }
-        Some(self.survey_around(anchor, Some(id)))
+        let within = near.x <= rules.home_reach && near.z <= rules.home_reach && feet.y <= anchor.y + rules.home_up && feet.y >= anchor.y - rules.home_down;
+        within.then_some(anchor)
     }
 
     /// What lies around a home at `anchor`, whoever stands near it: its blocks by tag and the
