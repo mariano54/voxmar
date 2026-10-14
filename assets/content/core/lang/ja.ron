@@ -258,6 +258,7 @@
     "item.light": "光る",
     "item.alchemy": "錬金術: {property}",
     "item.plants": "{crop}を植える・{skill} {level}",
+    "item.tool_speed": "素手の{speed}倍の速さで作業できる",
     "item.weapon": "{class}・{style}・{skill} {level}",
     "item.weapon_hit": "最大ダメージ {hit}・{seconds}秒ごとに一撃",
     "item.weapon_reach": "{reach}ブロック先まで届く",

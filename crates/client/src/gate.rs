@@ -257,6 +257,10 @@ enum Step {
     /// Swimming against the pool's bank and holding jump climbs out onto the block on it.
     Swim,
     /// Esc opens and closes the menu, E the inventory.
+    /// The same stone broken with a wooden pickaxe, then a copper one, from the breaks'
+    /// stand: each tooltip says how fast it works, and the copper takes the wooden one's
+    /// time over 3.5, as their speeds (2 and 7) say.
+    Tiers,
     Screens,
     /// On the menu's audio page, a switch for each category of music the player can hear;
     /// clicking one turns that category off, and again on. A track starting is named, with
@@ -597,6 +601,10 @@ struct Gate {
     /// for from then on.
     party_given: f32,
     breaks: Breaks,
+    /// Where the tiers step found the player, to put them back, and the seconds each
+    /// pickaxe's break was to take.
+    tiers_from: Vec3,
+    tiers: Vec<f32>,
     /// Mining experience before the workshop's ore was broken.
     mining_before: Option<u32>,
     /// The lowest and highest the struck creature stood while struck: no knockback lifts it.
@@ -744,6 +752,8 @@ impl Gate {
             party_sent: false,
             party_given: 0.0,
             breaks: Breaks::default(),
+            tiers_from: Vec3::ZERO,
+            tiers: Vec::new(),
             mining_before: None,
             struck_heights: (f32::MAX, f32::MIN),
             failures: Vec::new(),
@@ -1214,6 +1224,8 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         // this is the backstop for a server that stopped.
         Step::Feel => FEEL_LIMIT + 2.0 * UNANSWERED + STEP_LIMIT,
         Step::Breaks => BREAKS_LIMIT + 15.0,
+        // Two tools to hand and two breaks, each answer waited on.
+        Step::Tiers => 6.0 * TIERS_WAIT + STEP_LIMIT,
         // Crafting, mining, tilling and fishing until something bites.
         // In the full gate, with time for its full-only machine phases.
         Step::Workshop => 250.0 + full_allowance(),
@@ -1461,6 +1473,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Workshop => workshop(world, gate, now, in_phase),
         Step::HvAge => hv_age(world, gate, now),
         Step::Swim => swim(world, gate, now, in_phase),
+        Step::Tiers => tiers(world, gate, now),
         Step::Screens => screens(world, gate, now, in_phase),
         Step::Music => music(world, gate, now, in_phase),
         Step::Overlay => overlay(world, gate, now, in_phase),
@@ -1858,6 +1871,124 @@ fn end_breaks(world: &mut World, gate: &mut Gate, now: f32) {
         net.command(&format!("clear {}", registry.def(tool).name));
     }
     gate.next(Step::Workshop, now);
+}
+
+/// Where the tiers step sets its stone, from the test ground's middle: a cell of the broken
+/// row beside the breaks' stand.
+const TIERS_AT: IVec3 = IVec3::new(-2, 0, -1);
+/// Longest the tiers step waits on one answer, in seconds of the server's clock and the game's.
+const TIERS_WAIT: f32 = 8.0;
+/// The two pickaxes the tiers step compares, slowest first.
+const TIERS: [&str; 2] = ["wooden_pickaxe", "copper_pickaxe"];
+
+/// The same stone broken with each pickaxe of `TIERS` in turn: the client works out how
+/// long each takes when it starts (as the server does), and the better one takes the other's
+/// time over the ratio of their speeds, the tooltip naming each speed.
+fn tiers(world: &mut World, gate: &mut Gate, now: f32) {
+    let cell = gate.feet + TIERS_AT;
+    let stand = gate.feet + BREAK_STAND;
+    // Given up on only once the server's seconds and the game's have both passed.
+    let waited = gate.server_in_phase() > TIERS_WAIT && now - gate.phase_since > TIERS_WAIT;
+    let content = world.resource::<Launch>().content.clone();
+    let stone = content.blocks.id("base:stone");
+    let picks: Vec<BlockId> = TIERS.iter().filter_map(|name| content.blocks.id(&format!("base:{name}"))).collect();
+    let end = |world: &mut World, gate: &mut Gate| {
+        mouse(world, MouseButton::Left, false);
+        let net = world.resource::<Net>();
+        net.command(&format!("setblock {} {} {} air", cell.x, cell.y, cell.z));
+        for name in TIERS {
+            net.command(&format!("clear {name}"));
+        }
+        let from = gate.tiers_from;
+        net.command(&format!("tp {} {} {}", from.x, from.y, from.z));
+        gate.next(Step::Screens, now);
+    };
+    let (Some(stone), &[slow, fast]) = (stone, picks.as_slice()) else {
+        gate.check("tiers", Err("no stone, wooden pickaxe or copper pickaxe in the content".into()));
+        end(world, gate);
+        return;
+    };
+    // Which pickaxe this round uses: phases 1 to 3 the slow one, 4 to 6 the fast one.
+    let pick = if gate.phase <= 3 { slow } else { fast };
+    match gate.phase {
+        0 => {
+            gate.tiers_from = world.resource::<LocalPlayer>().position;
+            gate.tiers.clear();
+            let net = world.resource::<Net>();
+            for name in TIERS {
+                net.command(&format!("clear {name}"));
+                net.command(&format!("give {name} 1"));
+            }
+            net.command(&format!("tp {} {} {}", stand.x as f32 + 0.5, stand.y, stand.z as f32 + 0.5));
+            gate.advance(now);
+        }
+        1 | 4 => {
+            world.resource::<Net>().command(&format!("setblock {} {} {} stone", cell.x, cell.y, cell.z));
+            gate.advance(now);
+        }
+        2 | 5 => {
+            // The stone standing on both sides, the pickaxe in hand.
+            let client = world.resource::<ClientWorld>().block(cell) == Some(stone);
+            let server = gate.observer.as_ref().is_none_or(|o| o.world.block(cell) == Some(stone));
+            let has = world.resource::<LocalPlayer>().inventory.slots.iter().flatten().any(|s| s.item == pick);
+            if has {
+                hold(world, Holder::Tool(pick));
+            }
+            let player = world.resource::<LocalPlayer>();
+            let held = player.inventory.get(player.selected).map(|s| s.item) == Some(pick);
+            if client && server && held {
+                gate.advance(now);
+            } else if waited {
+                let name = content.blocks.def(pick).name.clone();
+                gate.check("tiers", Err(format!("the stone (client {client}, server {server}) or the {name} in hand ({has}, {held}) never came in {TIERS_WAIT} seconds")));
+                end(world, gate);
+            }
+        }
+        3 | 6 => {
+            aim_at(world, cell.as_vec3() + Vec3::splat(0.5));
+            let target = world.resource::<crate::interact::Target>();
+            let taking = target.breaking.is_some_and(|(at, _)| at == cell).then(|| target.mining_seconds()).flatten();
+            let round = (gate.phase / 3) as usize;
+            if let Some(seconds) = taking
+                && gate.tiers.len() < round
+            {
+                gate.tiers.push(seconds);
+            }
+            if world.resource::<ClientWorld>().block(cell).is_some_and(|b| b.is_air()) {
+                mouse(world, MouseButton::Left, false);
+                if gate.tiers.len() < round {
+                    gate.check("tiers", Err(format!("the stone broke with the {} before the client said how long it would take", content.blocks.def(pick).name)));
+                    end(world, gate);
+                } else if gate.phase == 3 {
+                    gate.advance(now);
+                } else {
+                    let (slow_s, fast_s) = (gate.tiers[0], gate.tiers[1]);
+                    let tools = &content.tools;
+                    let wanted = tools.speed(Some(fast), stone) / tools.speed(Some(slow), stone);
+                    let ratio = slow_s / fast_s.max(f32::EPSILON);
+                    let locale = world.resource::<Locale>();
+                    let said: Vec<Option<String>> = [slow, fast].iter().map(|&p| crate::hud::inventory::tool_line(locale, &content, p).map(|(line, _)| line)).collect();
+                    let speeds = [slow, fast].map(|p| format!("{}", tools.tool(Some(p)).speed));
+                    let told = [0, 1].iter().all(|&i| said[i].as_deref() == Some(locale.format("item.tool_speed", &[("speed", &speeds[i])]).as_str()));
+                    let result = if (ratio - wanted).abs() > 0.01 * wanted {
+                        Err(format!("stone took {slow_s:.3} s with the wooden pickaxe and {fast_s:.3} s with the copper, {ratio:.2}x, not {wanted:.2}x"))
+                    } else if !told {
+                        Err(format!("the pickaxes' tooltips say {said:?}, not their speeds {speeds:?}"))
+                    } else {
+                        Ok(format!("stone broke in {slow_s:.3} s with a wooden pickaxe and {fast_s:.3} s with a copper one, {ratio:.2}x as their speeds say; each tooltip names its speed"))
+                    };
+                    gate.check("tiers", result);
+                    end(world, gate);
+                }
+            } else if waited {
+                gate.check("tiers", Err(format!("the stone at {cell} never broke with the {} in {TIERS_WAIT} seconds", content.blocks.def(pick).name)));
+                end(world, gate);
+            } else {
+                mouse(world, MouseButton::Left, true);
+            }
+        }
+        _ => end(world, gate),
+    }
 }
 
 /// Where the workshop puts the crafting table, the ore, and the soil it tills, from the
@@ -3219,7 +3350,7 @@ fn swim(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 let client = world.resource::<ClientWorld>();
                 let support = (client.block(cell), client.block(cell - IVec3::Y));
                 gate.check("swim", Err(format!("did not land on the step: highest {reached:+.2}, position {}, velocity {velocity}, grounded {on_ground}, water {in_water}, flying {flying}, over bank {over_bank}, support {support:?}, teleport {teleport}; {in_phase:.1} client s, {:.1} server s", position - feet.as_vec3(), gate.server_in_phase())));
-                gate.next(Step::Screens, now);
+                gate.next(Step::Tiers, now);
             }
         }
         2 => {
@@ -3233,7 +3364,7 @@ fn swim(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 None => Err("the server told the observer of no player".into()),
             };
             gate.check("swim: server", result);
-            gate.next(Step::Screens, now);
+            gate.next(Step::Tiers, now);
         }
         _ => {}
     }
