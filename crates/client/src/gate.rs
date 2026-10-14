@@ -289,7 +289,9 @@ enum Step {
     /// over picks up.
     Strike,
     /// An iron sword in hand at Attack 20, a brown bear struck until it dies takes harder
-    /// blows than a fist could deal.
+    /// blows than a fist could deal. The first swing, watched in the hand on the gate's
+    /// clock, peaks as the server judges its blow (the sword's wind-up), comes back to rest
+    /// and is answered; shot as it connects.
     Weapon,
     /// A sling at Ranged 70 against a held brown bear seven blocks off, out of a sword's
     /// reach: shot with left clicks until a stone hits, each shot spends one cobblestone,
@@ -672,6 +674,8 @@ struct Gate {
     feel: FeelRun,
     /// Clearing the bears after the weapon and feel steps.
     sweep: Sweep,
+    /// The weapon step's first swing, watched in the hand.
+    swing_watch: SwingWatch,
     /// The player's states the server had sent when the wear step clicked.
     worn_states: u32,
     /// The Defence level before the wear step raised it, to put back after.
@@ -803,6 +807,7 @@ impl Gate {
             overlay_changes: 0,
             feel: FeelRun::default(),
             sweep: Sweep::default(),
+            swing_watch: SwingWatch::default(),
             worn_states: 0,
             worn_defence: 1,
             overlay_counted: (0.0, 0.0),
@@ -6979,6 +6984,7 @@ fn weapon(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             net.command(&format!("summon {} 1 {} {} {}", BEAR.trim_start_matches("base:"), pad.x, pad.y, pad.z + 1));
             gate.blows_seen = world.resource::<crate::creatures::Creatures>().blows;
             gate.feel = FeelRun::default();
+            gate.swing_watch = SwingWatch::default();
             gate.advance(now);
         }
         1 => {
@@ -7010,7 +7016,9 @@ fn weapon(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                     let far = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz()) > 2.0;
                     key(world, KeyCode::KeyW, far);
                     aim_at(world, view.position + Vec3::Y * 0.6);
-                    gate.swing(world, now);
+                    if !watch_swing(world, gate, far, now) {
+                        gate.swing(world, now);
+                    }
                 }
                 Some(_) => {
                     gate.check("weapon strikes", Err(format!("the server answered none of {} strikes in {UNANSWERED}s", gate.unanswered_strikes(strikes))));
@@ -7336,10 +7344,118 @@ fn sling(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
 
 /// Hands free, then the bears are swept away (phase 3) before the fight's feel.
 fn end_weapon(world: &mut World, gate: &mut Gate, now: f32) {
+    if gate.swing_watch.stage < 2 {
+        judge_swing(world, gate, false);
+    }
     mouse(world, MouseButton::Left, false);
     key(world, KeyCode::KeyW, false);
     gate.sweep = Sweep::default();
     to_phase(gate, 3, now);
+}
+
+/// The weapon step's first swing at the bear, watched in the hand frame by frame on the
+/// gate's clock (`held::HeldClock`), so a slow machine sees the same stroke.
+#[derive(Default)]
+struct SwingWatch {
+    /// 0 before its press, 1 watching, 2 judged.
+    stage: u8,
+    /// Each new weighing of its stroke: seconds in, the seconds in at which it connects and
+    /// how far out the hand is.
+    frames: Vec<(f32, f32, f32)>,
+    /// The server's seconds at its press, and the blows the server had answered then.
+    pressed: (f32, u32),
+    /// Its stroke has run its course, back to rest.
+    ended: bool,
+    /// The shot taken as it connects.
+    shot: bool,
+}
+
+/// The gate's frame for the watched swing (game seconds).
+const SWING_FRAME: f32 = 1.0 / 60.0;
+/// Server seconds the watched swing has to play out and be answered.
+const SWING_WAIT: f32 = 4.0;
+
+/// Watches the weapon step's first swing: pressed once the bear is in reach and aimed at,
+/// then followed each frame until its stroke is back at rest and the server has answered
+/// its blow, held still for a shot as it connects. Whether it took this frame's input.
+fn watch_swing(world: &mut World, gate: &mut Gate, far: bool, now: f32) -> bool {
+    match gate.swing_watch.stage {
+        0 => {
+            let aimed = world.resource::<crate::interact::Target>().creature.is_some();
+            if far || !aimed || gate.swung || now - gate.swing_at < voxmar_engine::combat::FULL_CHARGE + 0.05 {
+                return false;
+            }
+            world.resource_mut::<crate::held::HeldClock>().step = Some(SWING_FRAME);
+            gate.swing_watch.stage = 1;
+            gate.swing_watch.pressed = (gate.server_now, world.resource::<crate::creatures::Creatures>().blows);
+            gate.swing(world, now);
+            true
+        }
+        1 => {
+            // Let go the frame after the press, and press nothing more until it is judged.
+            if gate.swung {
+                gate.swing(world, now);
+            }
+            let seen = world.resource::<crate::held::Motion>().swing();
+            let watch = &mut gate.swing_watch;
+            match seen {
+                Some(frame) if !watch.ended => {
+                    if watch.frames.last().is_none_or(|last| last.0 != frame.0) {
+                        watch.frames.push(frame);
+                    }
+                }
+                None if !watch.frames.is_empty() => watch.ended = true,
+                _ => {}
+            }
+            // Held where it connects (the hand's clock stopped) until the shot is taken.
+            if !watch.shot && !watch.ended && watch.frames.last().is_some_and(|&(t, connect, _)| t >= connect) {
+                world.resource_mut::<crate::held::HeldClock>().step = Some(0.0);
+                if gate.shot(world, "player-swing-connect").is_none() {
+                    return true;
+                }
+                gate.swing_watch.shot = true;
+                world.resource_mut::<crate::held::HeldClock>().step = Some(SWING_FRAME);
+            }
+            let answered = world.resource::<crate::creatures::Creatures>().blows > gate.swing_watch.pressed.1;
+            if (gate.swing_watch.ended && answered) || gate.server_now - gate.swing_watch.pressed.0 > SWING_WAIT {
+                judge_swing(world, gate, answered);
+            }
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Judges the watched swing: it peaked as its blow is judged (the class wind-up the server
+/// times it by), went out all the way, came back to rest and was answered; the hand's clock
+/// is the frame's own again.
+fn judge_swing(world: &mut World, gate: &mut Gate, answered: bool) {
+    world.resource_mut::<crate::held::HeldClock>().step = None;
+    let watch = std::mem::replace(&mut gate.swing_watch, SwingWatch { stage: 2, ..SwingWatch::default() });
+    let windup = {
+        let (launch, player) = (world.resource::<Launch>(), world.resource::<LocalPlayer>());
+        let combat = &launch.content.combat;
+        let held = player.inventory.get(player.selected).map(|s| s.item);
+        let level = |skill| launch.content.skills.level(player.skills.xp(skill));
+        combat.timing(&combat.wielded(held, level)).windup
+    };
+    let peak = watch.frames.iter().copied().max_by(|a, b| a.2.total_cmp(&b.2));
+    let result = match peak {
+        _ if watch.stage == 0 => Err("the bear was never in reach and aimed at for the watched swing".to_string()),
+        None => Err("the swing at the bear never played in the hand".to_string()),
+        Some((_, connect, _)) if (connect - windup).abs() > 1e-4 => Err(format!("the swing was timed to connect {connect:.3} s in, not at the sword's wind-up of {windup:.3} s")),
+        Some((at, _, _)) if (at - windup).abs() > SWING_FRAME + 1e-3 => Err(format!("the swing peaked {at:.3} s in, where the server judges its blow at {windup:.3} s")),
+        Some((_, _, weight)) if weight < 0.9 => Err(format!("the swing went only {weight:.2} of the way out")),
+        Some(_) if !watch.ended => Err(format!("the swing never came back to rest in {SWING_WAIT} server s ({} frames)", watch.frames.len())),
+        Some(_) if !answered => Err(format!("the server answered no blow for the swing in {SWING_WAIT} s")),
+        Some(_) if !watch.shot => Err("the swing was never shot as it connected".to_string()),
+        Some((at, _, weight)) => Ok(format!(
+            "{} frames of 1/60 s: out {weight:.2} at {at:.3} s, the blow judged at {windup:.3} s; at rest {:.2} s in; its blow answered",
+            watch.frames.len(),
+            watch.frames.last().map_or(0.0, |f| f.0)
+        )),
+    };
+    gate.check("player swing", result);
 }
 
 /// The bear a fight step is about, as shown: the one first seen since the step summoned it,

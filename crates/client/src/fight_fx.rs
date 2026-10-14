@@ -429,6 +429,14 @@ fn react(
     let dashing = fighting.dash.is_some();
     if dashing && !seen.dashing {
         say("dodge", 1.0, 1.0, &mut heard);
+        // The view leans the way the player goes.
+        if let Some((dir, ..)) = fighting.dash
+            && settings.screen_shake
+        {
+            let side = if dir.dot(player.rotation() * Vec3::X) < -0.1 { -1.0 } else { 1.0 };
+            kick.add(Kick::Tip { at: now, degrees: look.camera.dodge_lean * side, seconds: look.camera.dodge_seconds });
+            heard.kicks += 1;
+        }
     }
     let guarding = fighting.guard.is_some();
     if guarding && !seen.guarding {
