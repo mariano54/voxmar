@@ -163,6 +163,8 @@
     "settings.toggle_guard.hint": "右クリックでガードを構え、もう一度押すと下ろします。押し続ける必要はありません。",
     "settings.damage_numbers": "ダメージ表示",
     "settings.damage_numbers.hint": "戦闘中、各攻撃の結果を当たった場所に表示します。",
+    "settings.screen_shake": "画面の揺れ",
+    "settings.screen_shake.hint": "戦闘中、重い一撃や被弾、防御で視点が揺れます。",
     "settings.fly_speed": "飛行速度",
     "settings.fly_speed.hint": "飛ぶ速さ。通常より速く飛べるのは管理者だけです。",
 

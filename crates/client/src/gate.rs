@@ -317,6 +317,14 @@ enum Step {
     /// numbers off the same run draws none; and with the guard on a toggle, one right click
     /// raises it and the next lowers it.
     CombatHud,
+    /// How blows feel beyond their marks (`fight_fx`): a flourish of the player's at the
+    /// creature marked, and a hit, a block and a perfect block at the player, told to this
+    /// side as the server would: the creature freezes, flashes and flinches with sparks
+    /// flying, the swing holds still and the hand is knocked back, the view dips and tips
+    /// and the screen's edges redden, and each asks for its sounds (a silent run plays
+    /// none). The fights before saw creatures coil and strike, and the fallen go up in
+    /// smoke. Shot mid-flinch.
+    CombatFeel,
     /// Raw rabbit used on a campfire comes back cooked (or burnt) into the inventory, and
     /// smoke and embers rise from the fire.
     Cook,
@@ -654,6 +662,10 @@ struct Gate {
     /// The Defence level before the wear step raised it, to put back after.
     worn_defence: u8,
     overlay_counted: (f32, f32),
+    /// The fight sounds asked for, and the bursts, kicks and knocks, before `combat_feel`
+    /// told its blows.
+    feel_asked: std::collections::BTreeMap<String, u32>,
+    feel_counts: (u32, u32, u32),
 }
 
 impl Gate {
@@ -774,6 +786,8 @@ impl Gate {
             worn_states: 0,
             worn_defence: 1,
             overlay_counted: (0.0, 0.0),
+            feel_asked: Default::default(),
+            feel_counts: (0, 0, 0),
         }
     }
 
@@ -1480,6 +1494,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Smoke => smoke(world, gate, now),
         Step::Wear => wear(world, gate, now, in_phase),
         Step::CombatHud => combat_hud(world, gate, now, in_phase),
+        Step::CombatFeel => combat_feel(world, gate, now, in_phase),
         Step::Cook => cook(world, gate, now, in_phase),
         Step::Dry => dry(world, gate, now),
         Step::Tame => tame(world, gate, now, in_phase),
@@ -8182,7 +8197,7 @@ fn combat_hud(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if creature.is_none() {
                 if gate.server_in_phase() > UNANSWERED {
                     gate.check("combat marks", Err("no creature near to mark".into()));
-                    gate.next(Step::Cook, now);
+                    gate.next(Step::CombatFeel, now);
                 }
                 return;
             }
@@ -8245,7 +8260,7 @@ fn combat_hud(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.check("combat marks", Err(format!("{language}: no splat reads {missing:?} in {} runs told; drawn: {:?}", gate.marked_tries, splats_drawn(world))));
                 world.resource_mut::<crate::settings::Settings>().language = "en".into();
                 set_language(world, "en");
-                gate.next(Step::Cook, now);
+                gate.next(Step::CombatFeel, now);
                 return;
             }
             let meter = world.query_filtered::<&InheritedVisibility, With<crate::hud::combat::MeterRoot>>().iter(world).any(|v| v.get());
@@ -8293,7 +8308,7 @@ fn combat_hud(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.check("combat marks", Err(format!("ja: {up} English splats still up, or no creature to mark ({})", creature.is_some())));
                 world.resource_mut::<crate::settings::Settings>().language = "en".into();
                 set_language(world, "en");
-                gate.next(Step::Cook, now);
+                gate.next(Step::CombatFeel, now);
             }
         }
         4 => {
@@ -8336,7 +8351,7 @@ fn combat_hud(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.check("toggle guard", Err(format!("the sword in hand: {in_hand}; guarding with it: {guards}; nothing under the crosshair: {clear}")));
                 world.resource_mut::<crate::settings::Settings>().toggle_guard = false;
                 world.resource::<Net>().command("skill attack 1");
-                gate.next(Step::Cook, now);
+                gate.next(Step::CombatFeel, now);
             } else {
                 look(world, (in_phase * 90.0) % 360.0, 30.0);
             }
@@ -8370,7 +8385,99 @@ fn combat_hud(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             );
             world.resource_mut::<crate::settings::Settings>().toggle_guard = false;
             world.resource::<Net>().command("skill attack 1");
-            gate.next(Step::Cook, now);
+            gate.next(Step::CombatFeel, now);
+        }
+    }
+}
+
+/// The blows `combat_feel` tells: a flourish of the player's for this much, and what came
+/// at the player (a hit that hurt, a block and a perfect block).
+const FEEL_STRUCK: u16 = 4;
+const FEEL_HURT: [(u16, voxmar_engine::combat::Defended); 3] = {
+    use voxmar_engine::combat::Defended;
+    [(3, Defended::Hit), (0, Defended::Blocked), (0, Defended::Perfect)]
+};
+
+fn combat_feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    use crate::fight_fx::{CameraKick, HandKick, Heard, HitStop};
+    let creature = gate.marked.and_then(|id| world.resource::<crate::creatures::Creatures>().living().find(|&(at, ..)| at == id).map(|(id, _, feet)| (id, feet)));
+    if let Some((_, feet)) = creature {
+        aim_at(world, feet + Vec3::Y * 0.3);
+    }
+    let asked = |world: &World| world.resource::<Heard>().asked.clone();
+    match gate.phase {
+        0 => {
+            let Some((id, _)) = creature else {
+                if gate.server_in_phase() > UNANSWERED {
+                    gate.check("combat feel", Err("the marked creature is gone".into()));
+                    gate.next(Step::Cook, now);
+                }
+                return;
+            };
+            // Let the aim settle on it, so the shot shows it.
+            if in_phase < 0.2 {
+                return;
+            }
+            gate.feel_asked = asked(world);
+            let heard = world.resource::<Heard>();
+            gate.feel_counts = (heard.bursts, heard.kicks, heard.knocks);
+            let pips = world.resource::<Launch>().content.combat.feel.pips;
+            world.resource_mut::<crate::creatures::Creatures>().struck(id, FEEL_STRUCK, voxmar_engine::combat::Blow::Flourish, false, now);
+            let at = world.resource::<Time>().elapsed_secs_f64();
+            let mut fighting = world.resource_mut::<crate::fight::Fighting>();
+            fighting.struck(id, FEEL_STRUCK, voxmar_engine::combat::Blow::Flourish, pips, false, at);
+            for (damage, defended) in FEEL_HURT {
+                fighting.hurt(id, damage, defended, at);
+            }
+            gate.advance(now);
+        }
+        // The frame after: everything the blows set going, before any of it fades.
+        1 => {
+            let Some((id, _)) = creature else {
+                gate.check("combat feel", Err("the marked creature went before its blows showed".into()));
+                gate.next(Step::Cook, now);
+                return;
+            };
+            let after = asked(world);
+            let grew = |name: &str| after.get(name).copied().unwrap_or(0) > gate.feel_asked.get(name).copied().unwrap_or(0);
+            let hit = after.iter().any(|(name, &n)| name.starts_with("hit") && n > gate.feel_asked.get(name).copied().unwrap_or(0));
+            let missing: Vec<&str> = ["flourish", "hurt", "blocked", "perfect"].into_iter().filter(|name| !grew(name)).chain((!hit).then_some("hit")).collect();
+            let edges = world.query_filtered::<&Visibility, With<crate::fight_fx::Vignette>>().iter(world).any(|v| *v != Visibility::Hidden);
+            let (heard, creatures) = (world.resource::<Heard>(), world.resource::<crate::creatures::Creatures>());
+            let (bursts, kicks, knocks) = (heard.bursts - gate.feel_counts.0, heard.kicks - gate.feel_counts.1, heard.knocks - gate.feel_counts.2);
+            let jolted = creatures.jolted(id);
+            let held = world.resource::<HitStop>().holds(now);
+            let hand = world.resource::<HandKick>().offset(now);
+            let turned = world.resource::<CameraKick>().turn(now);
+            let result = if !missing.is_empty() {
+                Err(format!("no sound asked for: {missing:?}"))
+            } else if !jolted {
+                Err("the struck creature showed no freeze, flash or flinch".into())
+            } else if bursts < 2 || knocks < 3 || kicks < 3 {
+                Err(format!("{bursts} bursts of sparks (2 wanted), {knocks} knocks to the hand (3), {kicks} kicks to the view (3)"))
+            } else if !held || hand.z >= 0.0 || turned == Vec3::ZERO || !edges {
+                Err(format!("the swing held still: {held}; the hand knocked to {hand}; the view turned by {turned}; the screen's edges red: {edges}"))
+            } else {
+                Ok(format!("sounds asked for, the creature jolted, {bursts} bursts of sparks, the hand knocked back {:.3}, the view turned {:.2} degrees, the edges reddened", -hand.z, turned.length().to_degrees()))
+            };
+            gate.check("combat feel: blows", result);
+            // What the fights before showed: creatures coiling into strikes, and the fallen
+            // going up in smoke as they vanish.
+            let (strikes, deaths, poofs) = (creatures.strikes, creatures.deaths, heard.poofs);
+            let result = if strikes == 0 {
+                Err("no creature was seen to strike in the fights".into())
+            } else if deaths > 0 && poofs == 0 {
+                Err(format!("{deaths} creatures died in view and none went up in smoke"))
+            } else {
+                Ok(format!("{strikes} strikes snapped out of their wind-ups, {poofs} of {deaths} fallen gone in smoke"))
+            };
+            gate.check("combat feel: fights", result);
+            gate.advance(now);
+        }
+        _ => {
+            if gate.shot(world, "combat-feel").is_some() {
+                gate.next(Step::Cook, now);
+            }
         }
     }
 }

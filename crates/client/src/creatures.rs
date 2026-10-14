@@ -28,6 +28,7 @@ use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, futures_lite::future};
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use rustc_hash::FxHashMap;
 use voxmar_engine::action::ActionTarget;
+use voxmar_engine::combat::Blow;
 use voxmar_engine::creature::brain::Pose;
 use voxmar_engine::creature::skin::{self, FACES};
 use voxmar_engine::creature::volume::{self, BodyMesh, Shape};
@@ -245,6 +246,22 @@ struct Shown {
     /// Hearts over it, made when first needed: trust filling while it is tamed, and all
     /// red while a kept one is ready to breed.
     hearts: Vec<Entity>,
+    /// How a blow shows on it (`fight_fx`): seconds it stays frozen, and of that freeze at
+    /// first; seconds of white flash left; seconds into its flinch, and the way it flinches
+    /// (away from the striker, level).
+    stopped: f32,
+    stop_from: f32,
+    white: f32,
+    flinch: Option<f32>,
+    flinch_away: Vec3,
+    /// Seconds into its wind-up while it winds up, and into its strike once the blow lands;
+    /// whether this wind-up has struck already (the client times it, the server's word
+    /// that the wind-up is over comes after).
+    coiling: Option<f32>,
+    striking: Option<f32>,
+    coil_struck: bool,
+    /// Whether its puff of smoke has gone up as it vanishes.
+    poofed: bool,
 }
 
 
@@ -259,6 +276,15 @@ pub struct Creatures {
     waiting: Vec<CreatureView>,
     /// Creatures our blows landed on since the last frame, to cry out.
     cries: Vec<u32>,
+    /// Our blows the server answered since the last frame: at whom, for how much, what kind,
+    /// and whether it killed. Each jolts its creature (`fight_fx`).
+    jolts: Vec<(u32, u16, Blow, bool)>,
+    /// Bodies vanishing since `fight_fx` last looked: where their middle is, how tall they
+    /// are and their coat's colour, for the puff of smoke they go in.
+    pub poofs: Vec<(Vec3, f32, [u8; 3])>,
+    /// Blows creatures were seen to strike since joining (their wind-up ended in a snap),
+    /// for the gate.
+    pub strikes: u32,
     /// How each creature seen to die fell, for the gate's check.
     pub falls: Vec<Fall>,
     /// Each species' body, made when the first of it is seen.
@@ -332,8 +358,9 @@ impl Creatures {
     }
 
     /// The server took a blow of ours at `id`: it landed for `damage`, or missed.
-    pub fn struck(&mut self, id: u32, damage: u16, _killed: bool, now: f32) {
+    pub fn struck(&mut self, id: u32, damage: u16, blow: Blow, killed: bool, now: f32) {
         self.blows += 1;
+        self.jolts.push((id, damage, blow, killed));
         self.fighting = Some((id, now));
         if let Some(shown) = self.shown.get_mut(&id) {
             shown.struck = true;
@@ -448,6 +475,18 @@ impl Creatures {
 
     /// The middle of creature `id`'s body while it is shown, alive or falling, and whether
     /// it is falling: for marks that follow a body to its end (the killing blow's hitsplat).
+    /// Whether creature `id` shows a blow now: frozen, flashing white or flinching.
+    pub fn jolted(&self, id: u32) -> bool {
+        self.shown.get(&id).is_some_and(|shown| shown.stopped > 0.0 || shown.white > 0.0 || shown.flinch.is_some())
+    }
+
+    /// Creature `id` while it is shown, alive or falling: its species, where its feet are
+    /// and its scale.
+    pub fn body(&self, id: u32) -> Option<(CreatureId, Vec3, f32)> {
+        let shown = self.shown.get(&id)?;
+        Some((shown.view.species, shown.position, shown.view.scale))
+    }
+
     pub fn centre(&self, launch: &Launch, id: u32) -> Option<(Vec3, bool)> {
         let shown = self.shown.get(&id)?;
         let height = launch.content.creatures.get(shown.view.species).def.body.size.1 * shown.view.scale;
@@ -553,6 +592,8 @@ struct Drawn<'w, 's> {
     visible: Query<'w, 's, &'static mut Visibility>,
     globals: Query<'w, 's, &'static GlobalTransform>,
     inspect: Option<Res<'w, InspectEyes>>,
+    /// How blows, strikes and deaths show (`combat_fx.ron`); without it, they show plainly.
+    look: Option<Res<'w, crate::fight_fx::FightLook>>,
 }
 
 /// The light creatures are lit by and the air they are fogged by, as the terrain's.
@@ -655,6 +696,13 @@ fn show(
         match creatures.shown.get_mut(&gone.id) {
             Some(shown) if gone.died => {
                 shown.dying = Some(0.0);
+                // The killing blow freezes it a moment, flashing, before it tips over.
+                if let Some(look) = drawn.look.as_deref() {
+                    shown.stopped = shown.stopped.max(look.death.stop);
+                    shown.stop_from = shown.stopped;
+                    shown.white = look.hit.white;
+                }
+                (shown.coiling, shown.striking, shown.flinch) = (None, None, None);
                 sounds.push(sound(Sound::Death, gone.id, &shown.view, shown.position, 0.0));
                 creatures.deaths += 1;
             }
@@ -676,6 +724,31 @@ fn show(
     for &id in &cried {
         if let Some(shown) = creatures.shown.get(&id) {
             sounds.push(sound(Sound::Hurt, id, &shown.view, shown.position, 0.0));
+        }
+    }
+    // Our blows that landed: a freeze, a white flash and a flinch away from us, as large as
+    // the share of its health the blow took (`combat_fx.ron`'s `hit`). Bleeding only reddens.
+    let eye = player.eye();
+    let fx = drawn.look.as_deref();
+    let red_seconds = fx.map_or(FLASH, |fx| fx.hit.red.max(1e-3));
+    for (id, damage, blow, killed) in std::mem::take(&mut creatures.jolts) {
+        let (Some(look), Some(shown)) = (fx, creatures.shown.get_mut(&id)) else { continue };
+        if damage == 0 {
+            continue;
+        }
+        shown.flash = red_seconds;
+        if blow == Blow::Bleed {
+            continue;
+        }
+        let health = registry.get(shown.view.species).def.health.max(1);
+        let stop = crate::fight_fx::stop_for(look, blow, f32::from(damage) / f32::from(health), killed);
+        if stop > shown.stopped {
+            (shown.stopped, shown.stop_from) = (stop, stop);
+        }
+        shown.white = look.hit.white;
+        if shown.dying.is_none() && !killed {
+            shown.flinch = Some(0.0);
+            shown.flinch_away = (shown.position - eye).with_y(0.0).normalize_or(Vec3::X);
         }
     }
     let mut built = 0;
@@ -702,6 +775,18 @@ fn show(
             }
             if view.ready && !shown.view.ready {
                 sounds.push(sound(Sound::Ready, view.id, &view, shown.position, 0.0));
+            }
+            // A wind-up starts its coil; its end is the blow, struck now unless the wind-up's
+            // own time struck it already.
+            let attacking = |pose| pose == Pose::Attacking;
+            if attacking(view.pose) && !attacking(shown.view.pose) {
+                (shown.coiling, shown.striking, shown.coil_struck) = (Some(0.0), None, false);
+            } else if !attacking(view.pose) && attacking(shown.view.pose) {
+                if !shown.coil_struck && shown.coiling.is_some() && shown.dying.is_none() {
+                    shown.striking = Some(0.0);
+                    creatures.strikes += 1;
+                }
+                shown.coiling = None;
             }
             shown.view = view;
             shown.told_at = now;
@@ -763,15 +848,31 @@ fn show(
                 spread: 0.0,
                 fell: 0.0,
                 hearts: Vec::new(),
+                stopped: 0.0,
+                stop_from: 0.0,
+                white: 0.0,
+                flinch: None,
+                flinch_away: Vec3::X,
+                coiling: None,
+                striking: None,
+                coil_struck: false,
+                poofed: false,
             },
         );
     }
 
-    let eye = player.eye();
     let me = creatures.me;
     let mut finished = Vec::new();
+    let (mut poofs, mut strikes) = (Vec::new(), 0);
+    let feel = &launch.content.combat.feel;
     for (&id, shown) in creatures.shown.iter_mut() {
         let def = &registry.get(shown.view.species).def;
+        // A blow freezes it a moment (a hit-stop): it holds still where it was, shaking,
+        // and its flinch, flash and fall wait for the freeze to end.
+        let frozen = shown.stopped > 0.0;
+        let shake = if frozen { shown.stopped / shown.stop_from.max(1e-3) } else { 0.0 };
+        shown.stopped = (shown.stopped - dt).max(0.0);
+        let dt = if frozen { 0.0 } else { dt };
         // Carry on along its velocity a little past the last word, then ease toward it.
         let ahead = (now - shown.told_at).min(AHEAD);
         let target = shown.view.position + shown.view.velocity.with_y(0.0) * ahead;
@@ -800,6 +901,39 @@ fn show(
             shown.quiet = 6.0 + roll * 18.0;
         }
         shown.flash = (shown.flash - dt).max(0.0);
+        // Its wind-up and strike (`combat_fx.ron`'s `strikes`, by how it attacks): coiled
+        // through the wind-up, snapping forward as the blow lands (the wind-up's time, or
+        // the server's word, whichever comes first) and settling back.
+        let attack = def.attack.as_ref();
+        let windup = attack.and_then(|a| a.windup).unwrap_or(feel.creature_windup).max(0.05);
+        if let Some(coil) = shown.coiling.as_mut() {
+            *coil += dt;
+            if *coil >= windup && !shown.coil_struck && shown.dying.is_none() {
+                shown.coil_struck = true;
+                shown.striking = Some(0.0);
+                strikes += 1;
+            }
+        }
+        if let Some(striking) = shown.striking.as_mut() {
+            *striking += dt;
+        }
+        let strike = fx.zip(attack).map(|(fx, attack)| fx.strike(attack.style));
+        let coil = shown.coiling.filter(|_| !shown.coil_struck).map(|c| c / windup);
+        let (stance, struck_out) = strike.map_or((Default::default(), true), |strike| crate::fight_fx::strike_stance(&strike, coil, shown.striking));
+        if struck_out {
+            shown.striking = None;
+        }
+        // Its flinch from our blow: pushed back and tipped away, squashed, then easing back.
+        if let Some(flinch) = shown.flinch.as_mut() {
+            *flinch += dt;
+        }
+        let flinch = match (shown.flinch, fx) {
+            (Some(t), Some(fx)) if t < fx.hit.flinch && shown.dying.is_none() => crate::fight_fx::flinch_weight(t, fx.hit.flinch),
+            _ => {
+                shown.flinch = None;
+                0.0
+            }
+        };
 
         let (nod, crouch) = match shown.view.pose {
             Pose::Grazing => (0.8, 0.0),
@@ -857,9 +991,23 @@ fn show(
             _ => bob,
         };
 
-        let mut root = Transform::from_translation(shown.position + Vec3::Y * height * (bob - shown.crouch))
-            .with_rotation(Quat::from_rotation_y(shown.yaw) * Quat::from_rotation_x(shown.rear * REAR))
+        let rear = (shown.rear + stance.rear).clamp(0.0, 1.0);
+        let mut root = Transform::from_translation(shown.position + Vec3::Y * height * (bob - shown.crouch - stance.crouch))
+            .with_rotation(Quat::from_rotation_y(shown.yaw) * Quat::from_rotation_x(rear * REAR))
             .with_scale(Vec3::splat(scale));
+        let forward = Quat::from_rotation_y(shown.yaw) * Vec3::NEG_Z;
+        root.translation += forward * stance.lean * def.body.size.0.max(def.body.size.1) * scale;
+        if let Some(fx) = fx.filter(|_| flinch > 0.0) {
+            let away = shown.flinch_away;
+            root.translation += away * fx.hit.recoil * height * flinch;
+            root.rotation = Quat::from_axis_angle(Vec3::Y.cross(away).normalize_or(Vec3::X), fx.hit.tilt.to_radians() * flinch) * root.rotation;
+            let squash = fx.hit.squash * flinch;
+            root.scale *= Vec3::new(1.0 + squash * 0.5, 1.0 - squash, 1.0 + squash * 0.5);
+        }
+        if shake > 0.0 && let Some(fx) = fx {
+            let wobble = Vec3::new((now * 157.0 + id as f32).sin(), 0.0, (now * 131.0 + id as f32 * 1.7).cos());
+            root.translation += wobble * fx.hit.shake * shake;
+        }
         if let Some(dying) = shown.dying.as_mut() {
             // One that died in the air rolls over as it falls, and sinks away only once it is
             // down, however high it flew.
@@ -882,6 +1030,16 @@ fn show(
             let strayed = middle.distance(shown.position + Vec3::Y * height * 0.5) / height.max(0.1);
             root.translation.y -= (t * 2.0 - 1.0).max(0.0) * death.sink * height;
             shown.death_strayed = shown.death_strayed.max(strayed);
+            // Over the last of its death it shrinks away into a puff of smoke where it lay.
+            let shrink = fx.map_or(0.0, |fx| fx.death.shrink);
+            if shrink > 0.0 && t > 1.0 - shrink {
+                root.scale *= ((1.0 - t) / shrink).clamp(0.02, 1.0);
+                if !shown.poofed {
+                    shown.poofed = true;
+                    let coat = def.body.colours.first().copied().unwrap_or([200, 200, 200]);
+                    poofs.push((shown.position + Vec3::Y * height * 0.4, height, coat));
+                }
+            }
             if t >= 1.0 {
                 finished.push(id);
             }
@@ -967,10 +1125,12 @@ fn show(
                 Swing::Leg { phase, hind } => {
                     let phase = if paired { if hind { 0.0 } else { 0.5 } } else { phase };
                     let reach = if paired { 0.9 } else { 0.7 };
-                    (Quat::from_rotation_x(((shown.stride + phase) * std::f32::consts::TAU).sin() * reach * moving), Vec3::ONE)
+                    // Front limbs reach with a strike (claws swipe, a spell's caster raises them).
+                    let paw = if hind { 0.0 } else { stance.paw };
+                    (Quat::from_rotation_x(((shown.stride + phase) * std::f32::consts::TAU).sin() * reach * moving + paw), Vec3::ONE)
                 }
                 Swing::Scuttle { phase } => (Quat::from_rotation_y(((shown.stride * 1.5 + phase) * std::f32::consts::TAU).sin() * 0.45 * moving), Vec3::ONE),
-                Swing::Head => (Quat::from_rotation_y(shown.look) * Quat::from_rotation_x(-shown.nod), Vec3::ONE),
+                Swing::Head => (Quat::from_rotation_y(shown.look) * Quat::from_rotation_x(-(shown.nod + stance.nod)), Vec3::ONE),
                 Swing::Ear { side } => (Quat::from_rotation_x(twitch(side)) * Quat::from_rotation_y(shown.look), Vec3::ONE),
                 Swing::Tail => {
                     let (rate, sway) = if keeper_near { (11.0, 0.45) } else { (2.5, 0.3) };
@@ -1010,15 +1170,23 @@ fn show(
         // and each shadow cascade: writing it every frame took a herd of 40 from 4 to 8 ms
         // a frame on an NVIDIA L4.
         let step = |c: f32| (c * LIGHT_STEPS).round() / LIGHT_STEPS;
-        let red = shown.flash / FLASH;
+        let red = shown.flash / red_seconds;
         let lit = LinearRgba::rgb(step(light.red), step(light.green), step(light.blue));
-        let colour = Color::LinearRgba(lit.mix(&LinearRgba::rgb(0.9, 0.08, 0.05), red * 0.7));
+        let mut colour = lit.mix(&LinearRgba::rgb(0.9, 0.08, 0.05), red.min(1.0) * 0.7);
+        // The moment of a blow: a white flash, through the freeze and a moment after.
+        if shown.white > 0.0 {
+            colour = colour.mix(&LinearRgba::rgb(2.2, 2.2, 2.2), 0.85);
+        }
+        shown.white = (shown.white - dt).max(0.0);
+        let colour = Color::LinearRgba(colour);
         if skins.get(&shown.material).is_some_and(|material| material.base.base_color != colour)
             && let Some(mut material) = skins.get_mut(&shown.material)
         {
             material.base.base_color = colour;
         }
     }
+    creatures.poofs.extend(poofs);
+    creatures.strikes += strikes;
     for id in finished {
         if let Some(shown) = creatures.shown.remove(&id) {
             creatures.falls.push(Fall { strayed: shown.death_strayed, around_eye: shown.death_around_eye, spread: shown.death_spread, scale: shown.death_scale, samples: shown.death_samples, joints: shown.joints.len() as u32, slowest: shown.death_slowest });

@@ -39,7 +39,7 @@ impl Plugin for HeldPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Handled>()
             .init_resource::<Motion>()
-            .add_systems(Update, show.after(crate::drops::show).run_if(in_state(Screen::InGame)))
+            .add_systems(Update, show.after(crate::drops::show).after(crate::fight_fx::Reacted).run_if(in_state(Screen::InGame)))
             .add_systems(OnExit(Screen::InGame), |mut motion: ResMut<Motion>| *motion = Motion::default());
     }
 }
@@ -58,13 +58,42 @@ pub struct Pose {
 }
 
 /// A stroke: what the pose gains at the stroke's peak (and the same of the turn), over
-/// `seconds` from start to rest.
+/// `seconds` from start to rest, after a wind-up if it has one.
 #[derive(Deserialize, Clone, Copy, Debug, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Stroke {
     pub at: [f32; 3],
     pub turn: [f32; 3],
     pub seconds: f32,
+    #[serde(default)]
+    pub wind: Option<Wind>,
+}
+
+/// The wind-up before a stroke: what the pose gains drawn back at its fullest, reached over
+/// the first `share` of the stroke's time; the stroke proper fills the rest, as the wind-up
+/// lets go.
+#[derive(Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Wind {
+    pub at: [f32; 3],
+    pub turn: [f32; 3],
+    pub share: f32,
+}
+
+/// How far into its wind-up and its stroke proper a stroke `progress` (0 to 1) of the way
+/// through is: the wind-up rises over its share and lets go quickly as the stroke goes
+/// out; without one, the stroke is the whole of it.
+pub fn wound_weights(progress: f32, wind: Option<Wind>, skew: f32) -> (f32, f32) {
+    let share = wind.map_or(0.0, |w| w.share);
+    if share <= 0.0 {
+        return (0.0, stroke_weight(progress, skew));
+    }
+    let p = progress.clamp(0.0, 1.0);
+    if p < share {
+        return (smoothstep(p / share), 0.0);
+    }
+    let after = (p - share) / (1.0 - share);
+    ((1.0 - after / 0.25).max(0.0).powi(2), stroke_weight(after, skew))
 }
 
 /// A stance, held while it lasts (the guard up, a bite being eaten): what the pose gains
@@ -267,6 +296,7 @@ impl Handling {
         check("the hand's light_rate and measure_seconds must be above 0", h.light_rate > 0.0 && h.measure_seconds > 0.0);
         for (name, stroke) in [("attack", self.moves.attack), ("dig", self.moves.dig), ("place", self.moves.place)] {
             check(&format!("the {name} stroke must take 0.05 to 3 seconds"), stroke.seconds.is_finite() && (0.05..=3.0).contains(&stroke.seconds));
+            check(&format!("the {name} stroke's wind-up must take 0 to 0.6 of it, in finite numbers"), stroke.wind.is_none_or(|w| (0.0..=0.6).contains(&w.share) && finite(&w.at) && finite(&w.turn)));
         }
         let mut tags = std::collections::BTreeSet::new();
         for (label, kind) in self.kinds.iter().map(|k| (k.tag.as_str(), k)).chain([("cube", &self.cube), ("sprite", &self.sprite)]) {
@@ -284,6 +314,7 @@ impl Handling {
             for (name, stroke) in [("attack", own.attack), ("dig", own.dig), ("place", own.place)] {
                 if let Some(s) = stroke {
                     check(&format!("{named}'s {name} stroke must take 0.05 to 3 seconds"), s.seconds.is_finite() && (0.05..=3.0).contains(&s.seconds));
+                    check(&format!("{named}'s {name} stroke's wind-up must take 0 to 0.6 of it, in finite numbers"), s.wind.is_none_or(|w| (0.0..=0.6).contains(&w.share) && finite(&w.at) && finite(&w.turn)));
                 }
             }
             for (name, at, turn) in [
@@ -350,6 +381,8 @@ pub struct Doing {
     pub eating: bool,
     /// Blocks a second along the ground.
     pub speed: f32,
+    /// A blow that landed holds the swing still a moment (`fight_fx::HitStop`).
+    pub frozen: bool,
 }
 
 /// The hand's motion from frame to frame.
@@ -383,6 +416,8 @@ pub struct Motion {
 pub struct Weights {
     pub raise: f32,
     pub attack: f32,
+    /// How far back the attack's wind-up has drawn the hand.
+    pub attack_wind: f32,
     pub dig: f32,
     pub place: f32,
     pub guard: f32,
@@ -410,7 +445,7 @@ impl Motion {
         }
         self.raised += dt;
         // Strokes run their course, and a held button starts the next.
-        let run = |stroke: &mut Option<f32>, start: bool, seconds: f32| {
+        let run = |stroke: &mut Option<f32>, start: bool, seconds: f32, dt: f32| {
             if start && stroke.is_none() {
                 *stroke = Some(0.0);
             }
@@ -422,9 +457,9 @@ impl Motion {
             }
         };
         // A stroke that has just ended gets its last frame at rest: step first, weigh after.
-        run(&mut self.attack, doing.swung, moves.attack.seconds);
-        run(&mut self.dig, doing.digging && !doing.swung, moves.dig.seconds);
-        run(&mut self.place, doing.using && !doing.guarding, moves.place.seconds);
+        run(&mut self.attack, doing.swung, moves.attack.seconds, if doing.frozen { 0.0 } else { dt });
+        run(&mut self.dig, doing.digging && !doing.swung, moves.dig.seconds, dt);
+        run(&mut self.place, doing.using && !doing.guarding, moves.place.seconds, dt);
         let toward = |value: &mut f32, on: bool| {
             let step = dt / hand.stance_seconds;
             *value = if on { (*value + step).min(1.0) } else { (*value - step).max(0.0) };
@@ -436,9 +471,11 @@ impl Motion {
         self.breath = (self.breath + dt * hand.breath_rate).fract();
         self.stride = (self.stride + dt * self.speed * hand.steps_per_block * 0.5).fract();
         let weight = |stroke: Option<f32>, seconds: f32| stroke.map_or(0.0, |t| stroke_weight(t / seconds, hand.skew));
+        let (attack_wind, attack) = self.attack.map_or((0.0, 0.0), |t| wound_weights(t / moves.attack.seconds, moves.attack.wind, hand.skew));
         Weights {
             raise: smoothstep(self.raised / hand.raise_seconds),
-            attack: weight(self.attack, moves.attack.seconds),
+            attack,
+            attack_wind,
             dig: weight(self.dig, moves.dig.seconds),
             place: weight(self.place, moves.place.seconds),
             guard: smoothstep(self.guard),
@@ -479,6 +516,9 @@ pub fn compose(pose: &Pose, moves: &AllMoves, hand: &Hand, w: &Weights) -> (Vec3
         turn += Vec3::from(by_turn) * weight;
     };
     add(moves.attack.at, moves.attack.turn, w.attack);
+    if let Some(wind) = moves.attack.wind {
+        add(wind.at, wind.turn, w.attack_wind);
+    }
     add(moves.dig.at, moves.dig.turn, w.dig);
     add(moves.place.at, moves.place.turn, w.place);
     add(moves.guard.at, moves.guard.turn, w.guard);
@@ -511,6 +551,7 @@ fn show(
     handled: Res<Handled>,
     mut motion: ResMut<Motion>,
     mut models: ResMut<ItemModels>,
+    (stop, kick): (Option<Res<crate::fight_fx::HitStop>>, Option<Res<crate::fight_fx::HandKick>>),
 ) {
     let Some(handling) = &handled.0 else { return };
     let (dt, now) = (time.delta_secs(), time.elapsed_secs());
@@ -534,6 +575,7 @@ fn show(
         guarding,
         eating,
         speed: player.velocity.xz().length(),
+        frozen: stop.is_some_and(|stop| stop.holds(now)),
     };
     // The kind comes first, for the moves its strokes time.
     let Some(item) = item else {
@@ -546,7 +588,11 @@ fn show(
     let kind = handling.kind_of(|tag| def.has_tag(tag), look.shape);
     let moves = handling.moves_of(kind);
     let weights = motion.step(doing, dt, &handling.hand, &moves);
-    let (at, turn, size) = compose(&kind.pose, &moves, &handling.hand, &weights);
+    let (mut at, turn, size) = compose(&kind.pose, &moves, &handling.hand, &weights);
+    // A blow landing, or one taken on the guard, knocks the hand back toward the eye.
+    if let Some(kick) = kick {
+        at += kick.offset(now);
+    }
     // Measured again as the player moves on and every so often where they stand: a torch
     // put down beside them or a roof built over them changes it.
     let measured = match motion.lit {
@@ -642,6 +688,7 @@ mod tests {
                 // Every move, at its peak (the stroke's weight is 1 there), keeps its middle in view.
                 for (move_name, w) in [
                     ("attack", Weights { attack: 1.0, ..weights() }),
+                    ("attack's wind-up", Weights { attack_wind: 1.0, ..weights() }),
                     ("dig", Weights { dig: 1.0, ..weights() }),
                     ("place", Weights { place: 1.0, ..weights() }),
                     ("guard", Weights { guard: 1.0, ..weights() }),
