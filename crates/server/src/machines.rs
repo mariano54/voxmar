@@ -522,7 +522,9 @@ impl Server {
             if let Some(def) = machines.get(block) {
                 let (inputs, outputs) = def.slots();
                 let mut spilled = Vec::new();
-                for (slots, room) in [(&mut state.inputs, inputs), (&mut state.outputs, outputs), (&mut state.bin, def.bin_slots())] {
+                // A store a home grew holds up to a full store's slots (`Machine::grown_bin`).
+                let bin = if def.is_store() { def.bin_slots().max(voxmar_engine::inventory::STORE_SLOTS) } else { def.bin_slots() };
+                for (slots, room) in [(&mut state.inputs, inputs), (&mut state.outputs, outputs), (&mut state.bin, bin)] {
                     slots.retain(Option::is_some);
                     if slots.len() > room {
                         spilled.extend(slots.split_off(room).into_iter().flatten());

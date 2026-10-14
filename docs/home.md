@@ -259,9 +259,22 @@ Company at Camp and A Lit Corner (Nomad), A Proper Workshop, A Larder, A Kitchen
 A Full House and A Herb Nook (Farm). Callers at the Door (Farm, after A Homely Home) asks
 for a supper or a talk with fireside guests.
 
+## Room to store (a tier perk)
+
+A home that climbs the ladder holds more. The choice, the smallest that makes storage a
+reason to build up: a store (barrel, crate, cupboard, jar, rack, chest) in its keeper's
+home, opened by the keeper, grows to its slots times the home's `store_room`. Homely and
+Cosy double it, and the Heart of the Home triples it, up to the screen's 54. A barrel of 9
+holds 18 in a Homely home and 27 at its heart. It is a modifier on the ladder's steps
+(effects.ron, `store_room`, 1 to 6, checked at launch; steps replace each other, so one
+counts), so a mod's step or room can give it too. A store only grows, never shrinks: one
+filled while the home was Homely keeps what it holds if the home slips, and a save keeps
+its size (`Factory::insert_state` keeps a bin larger than its machine's). Broken and set
+down again, it starts at its own size. It needs no protocol change: a store's slots go as
+a list, and the screen shows as many as come. Tests: server `stores.rs`, engine `effect.rs`.
+The gate's Home step gives Homely before opening its barrel ("home: store room").
+
 ## Not built (ideas)
 
-- Real storage (extra pack slots or a home chest) as a tier perk: needs the inventory and
-  protocol to take a slot count.
 - Passing the night by sleeping, and a visible Rested icon (effects use the plain buff icon).
 - Sleeping, and the ladder, for villagers' houses.
