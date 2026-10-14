@@ -59,6 +59,27 @@ Mostly yes, with these checks:
   91 fired clay between the Potter and the Kiln. That is a long clay session; Clay Banks and
   Fire the Clay split it into steps with rewards so it reads as progress.
 
+## The first day of each age, read as a newcomer (Oct 14)
+
+The first in-game day of each age, followed using only quest text, recipes and what is on
+screen, stopped at these points; each is fixed in the words (en and ja):
+
+| Where | What stopped a newcomer | Now |
+|---|---|---|
+| First tip | Nothing named the inventory key, and Look It Up starts "Open the inventory" | `tip.quests` also names `{inventory}` (bound key) |
+| Timber | "Hold the attack button" names no button | the left mouse button, on the trunk |
+| Crafting Table | "Set it down" did not say how a block is placed | hold it and right-click the ground, then right-click the table |
+| First Night | "Swing the stone axe", while a fresh player has none | swing an axe; a stone one hits three times a fist |
+| A Bed of Your Own | made a bag but never said to place and use it, which is what sets where you wake | set it down where you mean to stay and right-click it |
+| Homestead Hearth | "a shovel" with no recipe on the main line; "a ring of eight stone" read as smooth stone only | shovel recipe given; stone or cobblestone, level with the hearthstone |
+| A Chopping Block | flint from gravel, but not where gravel is | stony slopes, game trails, dry stream beds |
+| First Harvest | "keep water within four blocks", with no way yet to carry water | farm beside a river, pond or lake |
+| First Harvest | seeds named without a source | wild wheat gives them |
+
+Checked and fine: the start pins (Timber, Look It Up, First Night) are reachable bare-handed
+(stone breaks to cobblestone by hand, `tools.ron`); every main step names its recipe; the
+Farm's first steps (Pit Kiln, Clay Banks, Fire the Clay) say where clay is and how to fire it.
+
 ## Gaps found, and where each stands
 
 1. **Nothing said "open the quest book".** Fixed: a first-time tip names the bound key

@@ -25,7 +25,7 @@
         ),
         (
             name: "first_night", age: "nomad", branch: "main", title: "First Night",
-            why: "Make a campfire: put two logs or Wood blocks above two Cobblestones in the 2×2 crafting grid. No stripped wood is needed; cobblestone comes from stone, a few blocks under the dirt or bare on hillsides, and bare hands can break it slowly. Place the fire, select raw rabbit, raw chicken or an egg in your hotbar, and right-click the fire. Rabbits and junglefowl roam open grassland; a junglefowl gives chicken and sometimes an egg. Fists are slow at the hunt too: swing the stone axe, which hits three times as hard (a stone sword, two cobblestone over a stick, does as well). Wait two seconds; the cooked food goes into your inventory. If it burns, try again. Cooked food heals more than raw food.",
+            why: "Make a campfire: put two logs or Wood blocks above two Cobblestones in the 2×2 crafting grid. No stripped wood is needed; cobblestone comes from stone, a few blocks under the dirt or bare on hillsides, and bare hands can break it slowly. Place the fire, select raw rabbit, raw chicken or an egg in your hotbar, and right-click the fire. Rabbits and junglefowl roam open grassland; a junglefowl gives chicken and sometimes an egg. Fists are slow at the hunt too: swing an axe instead; a stone one hits three times as hard as a fist (a stone sword, two cobblestone over a stick, does as well). Wait two seconds; the cooked food goes into your inventory. If it burns, try again. Cooked food heals more than raw food.",
             tasks: [[Craft("campfire", 1), CookAt("tag:edible", "campfire", 1)]],
             rewards: [Xp("cooking", 93.0), Item("torch", 4)],
         ),
@@ -38,7 +38,7 @@
         ),
         (
             name: "a_bed_of_your_own", age: "nomad", branch: "main", title: "A Bed of Your Own",
-            why: "Until you sleep somewhere, death sends you back to world spawn. Two feathers and two hides make a sleeping bag, no table needed; wool and hide, or pelts, make one at Crafting 5. Junglefowl on warm grassland drop feathers, and rabbits in the grass drop hides.",
+            why: "Until you sleep somewhere, death sends you back to world spawn. Two feathers and two hides make a sleeping bag, no table needed; wool and hide, or pelts, make one at Crafting 5. Junglefowl on warm grassland drop feathers, and rabbits in the grass drop hides. Set the bag down where you mean to stay and right-click it: you wake there after dying.",
             tasks: [[Craft("sleeping_bag", 1)]],
             after: ["first_night"],
             rewards: [Xp("crafting", 82.0)],
@@ -52,7 +52,7 @@
         ),
         (
             name: "homestead_hearth", age: "nomad", branch: "main", title: "Homestead Hearth",
-            why: "Your home: you wake here after dying, and the Farm age opens. Craft a hearthstone (eight cobblestone round an empty middle) and two chimney blocks (six cobblestone and two clay each). Set the hearthstone in a ring of eight stone, stack both chimneys on one corner stone, then right-click the hearthstone. About 28 cobblestone and 4 clay in all; clay lies on the bottom of ponds and lakes, so wade in and dig it with a shovel.",
+            why: "Your home: you wake here after dying, and the Farm age opens. Craft a hearthstone (eight cobblestone round an empty middle) and two chimney blocks (six cobblestone and two clay each). Set the hearthstone in a ring of eight stone or cobblestone blocks level with it, stack both chimneys on one corner stone, then right-click the hearthstone. About 28 cobblestone and 4 clay in all; clay lies on the bottom of ponds and lakes, so wade in and dig it with a shovel (one cobblestone over two sticks).",
             tasks: [[Craft("hearthstone", 1), Craft("chimney", 2), Home]],
             after: ["torchlight"],
             rewards: [Xp("construction", 250.0), Xp("mining", 75.0), Item("seed_pouch", 1), Item("bread", 1)],
@@ -108,7 +108,7 @@
         ),
         (
             name: "crafting_table", age: "nomad", branch: "main", title: "Crafting Table",
-            why: "Four planks in the 2×2 grid of your inventory make a crafting table: a log splits into four planks there. Set it down and right-click it; its three-by-three grid makes every tool and weapon.",
+            why: "Four planks in the 2×2 grid of your inventory make a crafting table: a log splits into four planks there. Hold it and right-click the ground to set it down, then right-click the table; its three-by-three grid makes every tool and weapon.",
             tasks: [[Craft("crafting_table", 1)]],
             rewards: [Xp("engineering", 18.0)],
         ),
@@ -121,7 +121,7 @@
         ),
         (
             name: "a_chopping_block", age: "nomad", branch: "start", title: "A Chopping Block",
-            why: "Splitting logs in the grid wastes wood. A chopping block is a flint over a log (Crafting 2): dig gravel, by hand or with a shovel, and about one in eight gives a flint. Set the block down and split logs within reach of it: each gives six planks there, two more than the grid's four. Split two logs by it.",
+            why: "Splitting logs in the grid wastes wood. A chopping block is a flint over a log (Crafting 2): dig gravel, by hand or with a shovel, and about one in eight gives a flint; it lies on stony slopes, game trails and dry stream beds. Set the block down and split logs within reach of it: each gives six planks there, two more than the grid's four. Split two logs by it.",
             tasks: [[Placed("chopping_block", 1), CraftNear("tag:planks", "chopping_block", 12)]],
             after: ["an_axe_to_it", "a_bed_of_your_own"],
             rewards: [Xp("crafting", 40.0), Item("oak_log", 4)],
@@ -135,7 +135,7 @@
         ),
         (
             name: "timber", age: "nomad", branch: "start", title: "Timber",
-            why: "You start with nothing, and every tool starts as wood. Punch a tree trunk (hold the attack button: bare hands are slow, but they work) and gather four logs; woods have the most trees, and plains have a few in groves. Four are enough to start: a log splits into four planks at the crafting grid; four planks make a crafting table, and with sticks (two planks make four) the table makes a wooden pickaxe and a wooden axe. Chop the rest with the axe, in half the time a fist takes.",
+            why: "You start with nothing, and every tool starts as wood. Punch a tree trunk (hold the left mouse button on it: bare hands are slow, but they work) and gather four logs; woods have the most trees, and plains have a few in groves. Four are enough to start: a log splits into four planks at the crafting grid; four planks make a crafting table, and with sticks (two planks make four) the table makes a wooden pickaxe and a wooden axe. Chop the rest with the axe, in half the time a fist takes.",
             tasks: [[Have("tag:log", 4)]],
             rewards: [Xp("engineering", 30.0)],
         ),
@@ -445,7 +445,7 @@
         ),
         (
             name: "first_harvest", age: "farm", branch: "farming", title: "First Harvest",
-            why: "Till grass or dirt with a hoe (right-click), sow wheat seeds on the farmland (right-click), keep water within four blocks, and wait: wheat ripens in about twelve minutes. Break the ripe plants to harvest; a stone hoe reaps the ripe crops around the one you cut. Harvest four. Keep the four wheat you harvest in your pack. While it grows, there is plenty to do: fish (Patient Angler), tame hens (Hens in a Row) or make seats and a table for the hearth (A Table for Two).",
+            why: "Till grass or dirt with a hoe (right-click), sow wheat seeds (wild wheat gives them) on the farmland (right-click), keeping it within four blocks of water (beside a river, pond or lake), and wait: wheat ripens in about twelve minutes. Break the ripe plants to harvest; a stone hoe reaps the ripe crops around the one you cut. Harvest four. Keep the four wheat you harvest in your pack. While it grows, there is plenty to do: fish (Patient Angler), tame hens (Hens in a Row) or make seats and a table for the hearth (A Table for Two).",
             tasks: [[Pick("wheat_crop", 4), Have("wheat", 4)]],
             after: ["homestead_hearth"],
             rewards: [Xp("farming", 100.0), Item("wheat_seeds", 6)],
