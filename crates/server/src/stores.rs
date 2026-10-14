@@ -328,9 +328,19 @@ mod tests {
         open(&mut server);
         assert_eq!(slots(&server), 18, "shrank when the home slipped");
         server.close_store(1);
-        let (block, state) = server.factory.remove(AT).unwrap();
+        // Filled to the brim and saved, the world loads it with every stack in place.
         let machines = server.content.machines.clone();
-        server.factory.insert_state(AT, block, state, &machines);
+        let stone = id(&server, "base:cobblestone");
+        let full = voxmar_engine::inventory::max_stack(stone);
+        for _ in 0..18 {
+            assert_eq!(server.factory.put(AT, ItemStack { item: stone, count: full }, &machines), None);
+        }
+        let saved = server.saved_machines();
+        server.factory.remove(AT).unwrap();
+        server.restore_machines(saved);
         assert_eq!(slots(&server), 18, "shrank in a save");
+        let kept: u32 = server.factory.get(AT).unwrap().1.bin.iter().flatten().map(|s| s.count as u32).sum();
+        assert_eq!(kept, 18 * full as u32, "nothing fell out on loading");
+        assert!(server.items.saved(|b| server.content.blocks.def(b).name.clone()).is_empty(), "nothing lies loose");
     }
 }
