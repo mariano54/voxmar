@@ -40,6 +40,8 @@ mod creatures;
 mod drops;
 mod emitters;
 mod fight;
+mod creature_motion;
+mod fight_fx;
 mod gate;
 mod held;
 mod hud;
@@ -330,6 +332,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let content = voxmar_server::load_content(&assets)?;
     let interface = hud::inventory::InterfaceStyle::load(&content.files)?;
     let combat_marks = hud::combat::CombatStyle::load(&content.files)?;
+    let fight_look = fight_fx::FightLook::load(&content.files)?;
+    let creature_motion = creature_motion::Motion::load(&content.files)?;
+    if let Some(name) = creature_motion.unknown_species(|name| content.creatures.find(name).is_some()).next() {
+        return Err(format!("{}: gaits for `{name}`, which is no creature", creature_motion::FILE).into());
+    }
     let look = hud::target::LookStyle::load(&content.files)?;
     let celebrations = hud::celebrate::Celebrations::load(&content.files)?;
     let recorded = sfx::Recordings::load(&content.files)?;
@@ -428,6 +435,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     app.add_plugins((creatures::CreaturesPlugin, creature_sounds::CreatureSoundsPlugin, butterflies::ButterfliesPlugin));
     app.add_plugins(emitters::EmittersPlugin);
     app.add_plugins(held::HeldPlugin);
+    app.add_plugins(fight_fx::FightFxPlugin);
     // GPU time per render pass (timestamp queries, Vulkan and DX12), which captures print
     // beside their frame statistics.
     if std::env::var_os("VOXMAR_GPU_TIMES").is_some() {
@@ -473,7 +481,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         Screen::Title
     };
-    app.insert_resource(FirstScreen(first)).insert_resource(launch).insert_resource(interface).insert_resource(combat_marks).insert_resource(look).insert_resource(celebrations);
+    app.insert_resource(FirstScreen(first)).insert_resource(launch).insert_resource(interface).insert_resource(combat_marks).insert_resource(fight_look).insert_resource(creature_motion).insert_resource(look).insert_resource(celebrations);
     if options.loading {
         app.insert_resource(menu::HoldCover);
     }
@@ -681,7 +689,8 @@ fn setup(
             texture.fill_transparent();
         }
     }
-    // Blocks that give off light glow by themselves, as brightly as the light they give;
+    // Blocks that give off light glow by themselves, as brightly as the light they give, and
+    // windows by the light through them;
     // opaque ones vary their textures from block to block as their data says.
     let mut layers = vec![LayerInfo::default(); block_textures.len()];
     for id in 0..registry.len() {
@@ -691,6 +700,7 @@ fn setup(
         for layer in info.layers {
             let layer = &mut layers[layer as usize];
             layer.glow = layer.glow.max(info.emission as f32 / 15.0);
+            layer.through |= registry.def(block).lit_through;
             if info.render == RenderKind::Opaque {
                 layer.variety.turn |= variety.turn;
                 layer.variety.mirror |= variety.mirror;
