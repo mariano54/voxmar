@@ -25,7 +25,7 @@
         (template: "drop", name: "raw_crab", tags: ["meat", "raw", "edible", "flavour:savoury", "seafood"], all: (color: (220, 120, 80))),
         // The Rootmother's heart of root (lairs.ron): eaten raw it heals and leaves the
         // Heartwood buff; it stacks, being a root and not a meal.
-        (template: "drop", name: "heartroot", tags: ["root", "edible", "effect:heartwood:600", "flavour:bitter", "alchemy:healing", "alchemy:hearty"], all: (color: (150, 60, 50), rarity: Rare)),
+        (template: "drop", name: "heartroot", tags: ["root", "edible", "effect:heartwood:600", "flavour:bitter", "alchemy:healing", "alchemy:hearty"], all: (color: (150, 60, 50), rarity: Uncommon)),
         // Skins and fur.
         // Every warm pelt is fur (P27, 2026-10-07: fewer items, many ways to get each).
         (template: "drop", name: "fur", tags: ["hide", "fur", "warm"], all: (color: (150, 110, 70))),
