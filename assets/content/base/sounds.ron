@@ -51,6 +51,8 @@
         "base:cook": (sounds: ["sounds/cook_1.ogg", "sounds/cook_2.ogg"], volume: 0.9),
         // Lying down: rustles of cloth and straw.
         "base:sleep": (sounds: ["sounds/sleep_1.ogg"], volume: 0.7),
+        // Settling onto a seat: the same rustle, softer.
+        "base:sit": (sounds: ["sounds/sleep_1.ogg"], volume: 0.4),
         // A line whipped out over the water (the plop is the water's own).
         "base:fish": (sounds: ["sounds/cast_1.ogg", "sounds/cast_2.ogg"], volume: 0.7),
         // A handful of grain shaken out to an animal, and a pat.
