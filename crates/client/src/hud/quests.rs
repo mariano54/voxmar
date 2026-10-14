@@ -710,8 +710,9 @@ fn draw(
     if drawn.as_ref() == Some(&wanted) && !locale.is_changed() {
         return;
     }
-    // Opened, or turned to another chapter, the canvas comes to the quest picked.
-    let arrived = drawn.as_ref().is_none_or(|(was, ..)| was.chapter != view.chapter);
+    // Opened, or turned to another chapter, the canvas comes to the quest picked: again
+    // once the well has its size, for the book's first frame has none to centre in.
+    let arrived = drawn.as_ref().is_none_or(|(was, .., was_room)| was.chapter != view.chapter || *was_room == IVec2::ZERO);
     *drawn = Some(wanted);
     let content = &launch.content;
     let font = &font.0;
