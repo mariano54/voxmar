@@ -351,6 +351,7 @@ fn play_jingles(
     }
 }
 
+#[allow(clippy::type_complexity)]
 fn click_buttons(
     buttons: Query<&Interaction, (Changed<Interaction>, With<Button>, Without<Disabled>, Without<Silent>)>,
     mut sounds: MessageWriter<UiSound>,
