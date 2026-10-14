@@ -34,6 +34,8 @@ const HUNGER_RATE: f32 = 1.0 / 240.0;
 const FEAR_FADE: f32 = 0.12;
 /// How long a creature that gave up a chase leaves players be (`Mind::give_up`).
 pub const GAVE_UP: f32 = 45.0;
+/// How long it holds a grudge against a player who hurt it (`Memory::HurtBy`), in seconds.
+pub const GRUDGE: f32 = 45.0;
 /// How long a creature that gave up a chase makes for home (`Memory::Homeward`).
 pub const HOMEWARD: f32 = 20.0;
 const ANGER_FADE: f32 = 1.0 / 45.0;
@@ -283,6 +285,11 @@ impl Mind {
         self.memories.iter().any(|(m, _)| *m == memory)
     }
 
+    /// Whether a player struck it within the last `seconds`.
+    pub fn struck_within(&self, seconds: f32) -> bool {
+        self.memories.iter().any(|&(m, left)| matches!(m, Memory::HurtBy(_)) && left > GRUDGE - seconds)
+    }
+
     /// The player it most recently remembers being hurt by.
     pub fn attacker(&self) -> Option<u32> {
         self.memories.iter().rev().find_map(|(m, _)| match m {
@@ -303,7 +310,7 @@ impl Mind {
             self.fear = 1.0;
         }
         if let Some(id) = by {
-            self.remember(Memory::HurtBy(id), 45.0);
+            self.remember(Memory::HurtBy(id), GRUDGE);
         }
         // Struck again, it takes up the fight it gave up.
         self.memories.retain(|(m, _)| !matches!(m, Memory::GaveUp | Memory::Homeward));

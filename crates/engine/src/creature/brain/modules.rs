@@ -603,24 +603,28 @@ impl Module for Defend {
     }
 }
 
+/// Seconds since a blow within which a hunter past its leash still fights back.
+const STRUCK_LATELY: f32 = 3.0;
+
 /// Closes on a target and strikes when in reach; stalkers creep crouched and pounce.
 fn strike(ctx: &Ctx, mind: &mut Mind, target: Option<Seen>, stalks: bool) -> Decision {
     let Some(p) = target else { return Decision::default() };
     let def = &ctx.creature.def;
-    // Past its leash it gives the chase up and goes home: a wolf does not follow a player
-    // across the land. A boss fights to the end, and those the server sends after someone
-    // (guards) go where it says.
-    let leash = if ctx.at.kept { def.leash.min(super::super::husbandry::KEPT_LEASH) } else { def.leash };
-    if !def.boss && ctx.at.errand.is_none() && flat(ctx.at.position, ctx.at.home) > leash {
-        mind.give_up();
-        return Decision::default();
-    }
     // Close when an attack of the phase it has reached fits, measured as its wind-up
     // measures it (from its body's edge, at its own size): a boss with a volley strikes
     // from afar, and closes in where none of its moves fits (`moves::Creature::reaches`).
     let d = flat(p.position, ctx.at.position);
     let reaches = ctx.creature.reaches(ctx.at.phase, ctx.creature.edge(d, ctx.at.scale));
     let close = reaches && (p.position.y - ctx.at.position.y).abs() < def.body.size.1 + 1.5;
+    // Past its leash it gives the chase up and goes home: a wolf does not follow a player
+    // across the land. A boss fights to the end, and those the server sends after someone
+    // (guards) go where it says. Struck there within the last few seconds, it fights back:
+    // a player who led it past its leash and stands to fight is fought.
+    let leash = if ctx.at.kept { def.leash.min(super::super::husbandry::KEPT_LEASH) } else { def.leash };
+    if !close && !mind.struck_within(STRUCK_LATELY) && !def.boss && ctx.at.errand.is_none() && flat(ctx.at.position, ctx.at.home) > leash {
+        mind.give_up();
+        return Decision::default();
+    }
     let mut decision = Decision { face: Some(p.position), ..Default::default() };
     let stalker = stalks && def.movement.style == Style::Stalker;
     if !close {
