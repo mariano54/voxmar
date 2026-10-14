@@ -1772,6 +1772,8 @@ pub struct WorldContent {
     pub land: LandDef,
     /// Ore veins (`ores.ron`).
     pub ores: crate::ores::OresDef,
+    /// Locked treasure chests the land keeps (`hoards.ron`).
+    pub hoards: crate::hoards::HoardsDef,
     /// Settlements (`settlements.ron`).
     pub settlements: crate::settlements::SettlementsDef,
     /// Bosses' lairs (`lairs.ron`), every package's.
@@ -1829,7 +1831,7 @@ pub struct TreadDef {
 
 /// The base package's files, built in so that a generator can be made from a block
 /// registry alone (distant terrain, tools and tests).
-pub(crate) const BASE_FILES: [(&str, &str); 18] = [
+pub(crate) const BASE_FILES: [(&str, &str); 19] = [
     ("ambient.ron", include_str!("../../../assets/content/base/ambient.ron")),
     ("crops.ron", include_str!("../../../assets/content/base/crops.ron")),
     ("biomes.ron", include_str!("../../../assets/content/base/biomes.ron")),
@@ -1837,6 +1839,7 @@ pub(crate) const BASE_FILES: [(&str, &str); 18] = [
     ("climate.ron", include_str!("../../../assets/content/base/climate.ron")),
     ("cultures.ron", include_str!("../../../assets/content/base/cultures.ron")),
     ("decorations.ron", include_str!("../../../assets/content/base/decorations.ron")),
+    ("hoards.ron", include_str!("../../../assets/content/base/hoards.ron")),
     ("lairs.ron", include_str!("../../../assets/content/base/lairs.ron")),
     ("land.ron", include_str!("../../../assets/content/base/land.ron")),
     ("ores.ron", include_str!("../../../assets/content/base/ores.ron")),
@@ -1914,6 +1917,7 @@ impl WorldContent {
         let (mut decorations, mut rule_sets) = (Vec::new(), Vec::new());
         let mut weather = voxmar_engine::weather::WeatherTable::default();
         let mut ores = crate::ores::OresDef::default();
+        let mut hoards = crate::hoards::HoardsDef::default();
         let mut settlements = crate::settlements::SettlementsDef::default();
         let mut lairs = Vec::new();
         let mut tarns: Option<(TarnsDef, Setters)> = None;
@@ -2024,6 +2028,7 @@ impl WorldContent {
                 }
                 "land.ron" => lay_file(&mut land, file, |_: &mut LandSet| {}, &mut notes)?,
                 "ores.ron" => ores.extend(&at, &file.package, &file.source)?,
+                "hoards.ron" => hoards.extend(&at, &file.package, &file.source)?,
                 "settlements.ron" => settlements.extend(&at, &file.package, &file.source)?,
                 "lairs.ron" => lairs.extend(crate::lairs::read(&at, &file.package, &file.source)?),
                 "cultures.ron" => settlements.cultures.extend(&at, &file.package, &file.source)?,
@@ -2134,12 +2139,14 @@ impl WorldContent {
             trails,
             land,
             ores,
+            hoards,
             settlements,
             lairs,
             tarns: tarns.map(|(t, _)| t),
             notes,
         };
         content.ores.check(registry, &content.provinces)?;
+        content.hoards.check(registry)?;
         if !content.settlements.styles.is_empty() {
             content.settlements.check(registry)?;
         }
