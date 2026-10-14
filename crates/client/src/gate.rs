@@ -667,6 +667,8 @@ struct Gate {
     font: Option<crate::ui::skin::InterfaceFont>,
     /// Whether the taming food was moved into the hotbar, which earlier steps may have filled.
     food_moved: bool,
+    /// The Cook step's hearth or stove has raw rabbit selected and is being clicked.
+    cook_started: bool,
     /// While taming, frames the junglefowl was under the crosshair, another creature was,
     /// or none was, and the nearest the player came to it.
     tame_aim: [u32; 3],
@@ -847,6 +849,7 @@ impl Gate {
             fit_layout: ((Step::Load, 0), 0, false, 0),
             font: None,
             food_moved: false,
+            cook_started: false,
             tame_aim: [0; 3],
             tame_nearest: f32::MAX,
             party_after: 0,
@@ -1361,6 +1364,8 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         Step::Party => 60.0,
         // The effects are judged once a second by the server, and a rest is a sleep away.
         Step::Home => 70.0,
+        // The campfire, its smoke and the chimney's, then a cook at the hearth and the stove.
+        Step::Cook => STEP_LIMIT + 30.0,
         // The barrel opened, then a server pass for the egg and a second for the chat; then
         // a rug and a stool set down, broken by hand and picked up.
         Step::Nest => 60.0,
@@ -10464,7 +10469,11 @@ fn bronze(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let fire = gate.feet + IVec3::new(0, 0, 14);
     let hearth = fire + IVec3::new(3, 0, 0);
-    let chimney = [hearth + IVec3::new(-1, 1, -1), hearth + IVec3::new(-1, 2, -1)];
+    // At the corner away from the fire, so it stands behind the hearthstone as the player
+    // by the fire sees it: at the near corner it is in the way of a click on its top.
+    let chimney = [hearth + IVec3::new(1, 1, 1), hearth + IVec3::new(1, 2, 1)];
+    // A cottage stove the other side of the fire, cooked at after the hearth.
+    let stove = fire + IVec3::new(-2, 0, 0);
     match gate.phase {
         0 => {
             let net = world.resource::<Net>();
@@ -10634,14 +10643,73 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             } else {
                 Err(format!("only {count} puffs rose from the chimney's top over a hearthstone in {in_phase:.1} s, under {CHIMNEY_PARTICLES} with {owed:.1} owed ({why})"))
             });
+            // The ring of stone round it, and the hearth stands; a stove the other side of
+            // the fire.
             let net = world.resource::<Net>();
-            for at in [hearth, chimney[0], chimney[1]] {
-                net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
+            net.command(&format!("fill {} {} {} {} {} {} cobblestone", hearth.x - 1, hearth.y, hearth.z - 1, hearth.x + 1, hearth.y, hearth.z + 1));
+            net.command(&format!("setblock {} {} {} hearthstone", hearth.x, hearth.y, hearth.z));
+            net.command(&format!("setblock {} {} {} cottage_stove", stove.x, stove.y, stove.z));
+            net.command("give raw_small_game 2");
+            gate.advance(now);
+        }
+        // Raw small game in hand, right clicks on the standing hearth, then on the stove, each
+        // cook one as the campfire did.
+        9 | 10 => {
+            let (at, name, check) = if gate.phase == 9 { (hearth, "base:hearthstone", "hearth: cooks") } else { (stove, "base:cottage_stove", "stove: cooks") };
+            let (placed, raw) = {
+                let client = world.resource::<ClientWorld>();
+                let ring = client.registry.id("base:cobblestone").is_some_and(|c| client.block(hearth + IVec3::X) == Some(c));
+                (ring && client.registry.id(name).is_some_and(|b| client.block(at) == Some(b)), client.registry.id("base:raw_small_game"))
+            };
+            let slot = raw.and_then(|raw| in_hotbar(world, &mut gate.food_moved, raw));
+            let cooked = item_count(world, "base:cooked_small_game") + item_count(world, "base:burnt_food");
+            if !gate.cook_started {
+                if let (true, Some(slot)) = (placed, slot) {
+                    world.resource_mut::<LocalPlayer>().selected = slot;
+                    gate.count_before = cooked;
+                    gate.cook_started = true;
+                } else if gate.waited_out(10.0) {
+                    gate.check(check, Err(format!("the {name} ({placed}) or raw small game in the hotbar ({slot:?}) never came")));
+                    hearth_done(world, gate, now, hearth, chimney, stove);
+                }
+                return;
             }
-            gate.next(Step::Dry, now);
+            aim_at(world, at.as_vec3() + Vec3::new(0.5, 0.9, 0.5));
+            if cooked > gate.count_before {
+                mouse(world, MouseButton::Right, false);
+                gate.check(check, Ok(format!("a right click on the {name} with raw small game cooked {}, as a campfire does", cooked - gate.count_before)));
+                gate.cook_started = false;
+                if gate.phase == 9 {
+                    gate.advance(now);
+                } else {
+                    hearth_done(world, gate, now, hearth, chimney, stove);
+                }
+            } else if gate.waited_out(15.0) {
+                mouse(world, MouseButton::Right, false);
+                // What the clicks landed on, if not the station.
+                let on = {
+                    let (target, cells) = (world.resource::<crate::interact::Target>(), world.resource::<ClientWorld>());
+                    target.block_hit.map_or_else(|| "nothing".to_owned(), |hit| format!("{} at {}", cells.block(hit.block).map_or("an unloaded block", |b| cells.registry.def(b).name.as_str()), hit.block))
+                };
+                gate.check(check, Err(format!("right clicks on the {name} at {at} with raw small game cooked nothing in 15 server seconds ({in_phase:.1} game s); the crosshair was on {on}")));
+                gate.cook_started = false;
+                hearth_done(world, gate, now, hearth, chimney, stove);
+            } else {
+                gate.tap(world, true, now);
+            }
         }
         _ => {}
     }
+}
+
+/// Takes the Cook step's hearth, its ring and chimney, and the stove down, and goes on.
+fn hearth_done(world: &mut World, gate: &mut Gate, now: f32, hearth: IVec3, chimney: [IVec3; 2], stove: IVec3) {
+    let net = world.resource::<Net>();
+    net.command(&format!("fill {} {} {} {} {} {} air", hearth.x - 1, hearth.y, hearth.z - 1, hearth.x + 1, hearth.y, hearth.z + 1));
+    for at in [chimney[0], chimney[1], stove] {
+        net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
+    }
+    gate.next(Step::Dry, now);
 }
 
 /// Where the dry step stands its rack: two blocks from the cook step's campfire, within
