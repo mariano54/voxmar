@@ -75,6 +75,8 @@ pub enum Goal {
     Prayed(String, u32),
     /// Offered this many of an item (or `any`, or a `tag:TAG`) at an altar.
     Offered(String, u32),
+    /// Opened this many locked chests (a chest block, `any`, or a `tag:TAG`) by picking the lock.
+    Opened(String, u32),
 }
 
 /// One way to finish a quest: every goal must hold.
@@ -218,6 +220,7 @@ impl Progress<'_> {
             Goal::Met(kind, n) => (tally("met", kind), *n),
             Goal::Prayed(prayer, n) => (tally("prayed", prayer), *n),
             Goal::Offered(item, n) => (tally("offered", item), *n),
+            Goal::Opened(chest, n) => (tally("opened", chest), *n),
         }
     }
 
@@ -397,6 +400,7 @@ impl QuestRegistry {
                     Goal::Met(name, _) => find(name, &event)?,
                     Goal::Prayed(name, _) => find(name, &prayer)?,
                     Goal::Offered(name, _) => find(name, &made)?,
+                    Goal::Opened(name, _) => find(name, &rock)?,
                 }
             }
             for given in &mut quest.rewards {
@@ -614,12 +618,13 @@ mod tests {
     }
 
     /// Dealings with wanderers count by kind or all together, and `Kinds` counts the kinds
-    /// dealt with at least once; prayers and offerings count by name, offerings by tag too.
+    /// dealt with at least once; prayers and offerings count by name, offerings by tag too;
+    /// opened chests count by chest or all together.
     #[test]
     fn wanderers_prayers_and_offerings_count_from_their_tallies() {
         let journal = Journal::default();
         let mut tallies = FxHashMap::default();
-        for (key, n) in [("met:base:pedlar", 2), ("met:base:smith", 1), ("met:base:hermit", 0), ("prayed:base:bark_skin", 3), ("offered:base:bone", 4), ("crafted:base:bone", 9)] {
+        for (key, n) in [("met:base:pedlar", 2), ("met:base:smith", 1), ("met:base:hermit", 0), ("prayed:base:bark_skin", 3), ("offered:base:bone", 4), ("crafted:base:bone", 9), ("opened:base:nomad_treasure_chest", 2)] {
             tallies.insert(key.to_owned(), n);
         }
         let level = |_: &str| 1u8;
@@ -636,6 +641,8 @@ mod tests {
         assert_eq!(goal(Goal::Prayed("base:ember_arm".into(), 1)), (0, 1));
         assert_eq!(goal(Goal::Offered("base:bone".into(), 3)), (4, 3), "only what was offered, not what was made");
         assert_eq!(goal(Goal::Offered("tag:offering".into(), 3)), (4, 3));
+        assert_eq!(goal(Goal::Opened("any".into(), 1)), (2, 1), "locked chests opened count by chest or all together");
+        assert_eq!(goal(Goal::Opened("base:farm_treasure_chest".into(), 1)), (0, 1));
     }
 
     /// A look-up goal holds from the first time the item was looked up, and a tag or `any`
@@ -756,6 +763,7 @@ mod tests {
         assert_eq!(refused(r#"Met("pedler", 1)"#, ""), Some("quest base:dig names the wandering kind `pedler`, which no package has".to_owned()));
         assert_eq!(refused(r#"Prayed("bark_skn", 1)"#, ""), Some("quest base:dig names the prayer `bark_skn`, which no package has".to_owned()));
         assert_eq!(refused(r#"Offered("bon", 1)"#, ""), Some("quest base:dig names the item `bon`, which no package has".to_owned()));
+        assert_eq!(refused(r#"Opened("nomad_chest", 1)"#, ""), Some("quest base:dig names the block `nomad_chest`, which no package has".to_owned()));
         assert!(refused(r#"Met("pedlar", 1), Met("Kinds", 3), Met("any", 2), Prayed("bark_skin", 1), Offered("torch", 2)"#, "").is_none());
         // A page no journal has is refused as the file is read.
         let page = quest(r#"Discover(Spells, 1)"#, "");

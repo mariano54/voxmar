@@ -1079,6 +1079,9 @@ fn teleporting() {
     assert_eq!(client.teleported, Some(start + Vec3::Y * 20.0));
     client.ok("/tp 100 150 -40");
     assert_eq!(client.position, Vec3::new(100.5, 150.0, -39.5));
+    // The tests' own teleport (`Client::tp`) lands exactly where asked, on whole numbers too.
+    client.tp(Vec3::new(100.0, 150.0, -40.0));
+    assert_eq!(client.position, Vec3::new(100.0, 150.0, -40.0));
     // To the ground somewhere far away, which loads it.
     client.ok("/tp 5000 5000");
     let (x, z) = (5000, 5000);
@@ -3195,7 +3198,9 @@ fn on_a_test_floor() -> Client {
 impl Client {
     /// Teleports the player, and forgets the correction that moved them.
     fn tp(&mut self, to: Vec3) {
-        self.ok(&format!("/tp {} {} {}", to.x, to.y, to.z));
+        // Debug keeps the decimal point a whole number would lose ("12.0", not "12"), which
+        // the command would take as the middle of block 12.
+        self.ok(&format!("/tp {:?} {:?} {:?}", to.x, to.y, to.z));
         self.pump_until(|c| c.position == to);
         self.teleported = None;
     }
@@ -4273,6 +4278,24 @@ fn a_shot_by_a_bees_nest_stirs_the_bees_unless_smoke_calms_them() {
     client.pump_until(|c| c.blows == 2);
     client.wait_server(1);
     assert!(!stung(&client), "smoked bees stay calm: {:?}", client.chat);
+    // A smoked nest on the bear's other side, met first in the search, and the first nest's
+    // campfire moved off: the unsmoked nest's bees are stirred though the smoked one's stay calm.
+    let other = at.floor().as_ivec3() + IVec3::new(0, 0, -2);
+    client.ok(&format!("/setblock {} {} {} bee_nest", other.x, other.y, other.z));
+    client.ok(&format!("/setblock {} {} {} air", nest.x + 1, nest.y, nest.z));
+    client.ok(&format!("/setblock {} {} {} campfire", other.x, other.y, other.z - 3));
+    client.chat.clear();
+    client.propose("core:attack", ActionTarget::Creature(id));
+    client.pump_until(|c| c.blows == 3);
+    client.wait_server(1);
+    assert!(stung(&client), "an unsmoked nest beside a smoked one stirs: {:?}", client.chat);
+    // Smoke clinging to the shooter (effects.ron's `smoky`) calms every nest the shot is near.
+    client.ok("/effect smoky 60");
+    client.chat.clear();
+    client.propose("core:attack", ActionTarget::Creature(id));
+    client.pump_until(|c| c.blows == 4);
+    client.wait_server(1);
+    assert!(!stung(&client), "a smoky shooter stirs no bees: {:?}", client.chat);
 }
 
 /// Whether a dodge proposed now is taken: a second one at once must then be refused by its
@@ -6710,25 +6733,45 @@ impl Fresh {
         self.collect(item, need);
     }
 
-    /// Waits until `need` of `item` are carried, walking to loose ones out of the pull.
+    /// Waits until `need` of `item` are carried, closing on the nearest loose one until it is
+    /// taken: walking to one out of the pull, and onto one in reach that has lain there untaken.
     fn collect(&mut self, item: &str, need: u32) {
         let id = self.c.content.blocks.expect(item);
         let until = self.c.ticks() + 30 * TICKS_PER_SECOND as u64;
         self.spend(Act::Mine, |me| {
+            // Ticks the nearest drop has lain in the body's reach, by the player's reckoning,
+            // without coming in.
+            let mut beside = 0;
             while me.have(item) < need {
-                assert!(me.c.ticks() < until, "{item}: only {} of {need} came in, {} loose, nearest {:?} from {:?}; carrying {:?}", me.have(item), loose(&me.c, item), me.c.items.values().filter(|i| i.stack.item == id).map(|i| i.position).min_by(|a, b| across(*a, me.at).total_cmp(&across(*b, me.at))), me.at, (0..voxmar_engine::inventory::SLOTS).filter_map(|s| me.c.inventory.get(s).map(|x| (me.c.content.blocks.def(x.item).name.clone(), x.count))).collect::<Vec<_>>());
+                assert!(me.c.ticks() < until, "{item}: only {} of {need} came in, {} loose, nearest {:?} from {:?} (last put at {:?}); carrying {:?}", me.have(item), loose(&me.c, item), me.c.items.values().filter(|i| i.stack.item == id).map(|i| i.position).min_by(|a, b| across(*a, me.at).total_cmp(&across(*b, me.at))), me.at, me.c.position, (0..voxmar_engine::inventory::SLOTS).filter_map(|s| me.c.inventory.get(s).map(|x| (me.c.content.blocks.def(x.item).name.clone(), x.count))).collect::<Vec<_>>());
+                // Put back by the server after a walk ended (its last step refused, heard a tick
+                // late): the server picks up where it has the player, so the player goes on from
+                // there rather than waiting beside a drop it has them nowhere near.
+                if let Some(back) = me.c.teleported.take() {
+                    me.at = back;
+                }
                 let at = me.at;
-                let far = me.c.items.values().filter(|i| i.stack.item == id).map(|i| i.position).min_by(|a, b| across(*a, at).total_cmp(&across(*b, at)));
-                match far {
+                let near = me.c.items.values().filter(|i| i.stack.item == id).map(|i| i.position).min_by(|a, b| across(*a, at).total_cmp(&across(*b, at)));
+                match near {
                     // Walked up to rather than left to the pull, which stops at blocks: a drop
                     // with a trunk or a pit's side between would lie there, in the pull's range
                     // and out of it at once. Within 0.8 the body's reach takes it, walls or not.
                     Some(p) if across(p, me.at) > 0.8 => {
+                        beside = 0;
                         me.go_near(p);
-                        me.tick();
                     }
-                    _ => me.tick(),
+                    // In reach and not taken for half a second: stepped onto, on open ground.
+                    Some(p) if beside >= TICKS_PER_SECOND / 2 && solid(&me.c, IVec3::new(p.x.floor() as i32, me.origin.y - 1, p.z.floor() as i32)) => {
+                        beside = 0;
+                        me.walk_toward(p, 0.3);
+                    }
+                    Some(_) => beside += 1,
+                    None => beside = 0,
                 }
+                // Standing there, as a client says each tick: the server judges the pickup by
+                // its own reckoning of where the player is, and corrects one it disagrees with.
+                me.send();
+                me.tick();
             }
         });
     }
@@ -6888,6 +6931,26 @@ impl Fresh {
         plot.t0 = plot.c.ticks();
         plot
     }
+}
+
+/// The bot's pickup (`Fresh::collect`) goes on from where the server has the player: put
+/// back after a walk ended (its last step refused, heard a tick late), it closes on the drop
+/// again rather than standing on it by its own reckoning while the server has it out of reach.
+#[test]
+fn the_bot_closes_on_a_drop_from_where_the_server_put_it() {
+    let c = on_a_test_floor();
+    let (feet, ticks) = (c.position, c.ticks());
+    let origin = feet.floor().as_ivec3();
+    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()) };
+    // A cobblestone four blocks off, beyond the pull.
+    let cell = origin + IVec3::X * 4;
+    f.c.ok(&format!("/drop cobblestone 1 {} {} {}", cell.x, cell.y, cell.z));
+    f.c.pump_until(|c| loose(c, "base:cobblestone") == 1);
+    // The player thinks they stand on it; the server has them where they were, and says so.
+    f.at = f.c.items.values().next().expect("the drop").position;
+    f.c.ok(&format!("/tp {:?} {:?} {:?}", feet.x, feet.y, feet.z));
+    f.collect("base:cobblestone", 1);
+    assert_eq!(f.have("base:cobblestone"), 1);
 }
 
 /// Takes 3 to 4 minutes (it plays real server time), too slow for every run: use

@@ -1,0 +1,24 @@
+// Hoards (worldgen/src/hoards.rs): where the land keeps its locked treasure chests
+// (treasure.ron, blocks_treasure.ron). A chest is left on a floor under rock: a cave's
+// floor, a ledge under an overhang, the floor of an arch or a hollow behind a fall, never
+// out in the open or under water. The land's level (biomes.ron, `levels`) picks the age:
+// the Nomad chest on the gentle land near where the world began, the Farm chest a step
+// further out and a little deeper. A rarer chest stands in fewer squares than a plainer one.
+//
+// - `grid`: one square of `spacing` blocks a side holds `slots` tries, each at its own spot.
+// - Each try's land level picks among the hoards on that level, in file order, by chance;
+//   the first that comes is the one, and none may come at all.
+// - `depth`: how far below the column's surface the floor lies, least first; a few blocks
+//   is a ledge or an arch, more is a cave.
+// - `roof`: the most air over the floor before rock (a low roof is a hollow, not a hall).
+(
+    grid: (spacing: 128, slots: 2),
+    hoards: [
+        // Under an overhang or an arch, a stone's throw under the ground.
+        (chest: "nomad_treasure_chest", levels: (1, 2), depth: (1, 8), roof: 6, chance: 0.2),
+        // On the floor of a shallow cave.
+        (chest: "nomad_treasure_chest", levels: (1, 2), depth: (6, 40), chance: 0.45),
+        // Further out, and deeper: the Farm age's.
+        (chest: "farm_treasure_chest", levels: (3, 6), depth: (10, 56), chance: 0.2),
+    ],
+)

@@ -25,6 +25,7 @@ use crate::content::WorldContent;
 use crate::ecology::{Ground, Plant};
 use crate::features::{self, Features};
 use crate::geology::{GeoGrid, noise};
+use crate::hoards::{Floor, Hoards};
 use crate::lattice::{self, Lattice, Profile};
 use crate::ores::Ores;
 use crate::rng::hash3;
@@ -89,6 +90,8 @@ pub struct Terrain {
     seed: u64,
     /// Ore veins, and the samples of their ore over them.
     pub(crate) ores: Ores,
+    /// Locked treasure chests, left on floors under rock.
+    pub(crate) hoards: Hoards,
     pub(crate) features: Features,
     /// Trail treads, by the biome tags they suit (none: everywhere); bridge decks and
     /// stepping stones.
@@ -175,6 +178,7 @@ impl Terrain {
             snow_cover,
             seed,
             ores: Ores::new(content, registry, rocks),
+            hoards: Hoards::new(&content.hoards, registry),
             features: Features::new(content, registry),
             treads: content.trails.tread.iter().map(|t| (t.biome.clone(), Palette::new(&t.blocks, registry))).collect(),
             worn_edge: registry.expect(&content.trails.edge),
@@ -634,6 +638,29 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
         let open = above.is_air() || terrain.plants[above.0 as usize] && !terrain.plants[over.0 as usize];
         if terrain.firm[ground.0 as usize] && terrain.earth[ground.0 as usize] && open {
             blocks.set_local(x, h + 1, z, sample.block);
+        }
+    }
+
+    // Locked chests, on a floor under rock near a try that came here: a cave's floor or a
+    // ledge under an overhang, never in the open, in water, or where a settlement stands;
+    // at most one a column.
+    if settled.is_none() {
+        let ground = |block: BlockId| terrain.firm[block.0 as usize] && terrain.earth[block.0 as usize];
+        for t in terrain.hoards.tries_in(world, pos) {
+            let found = Hoards::spots(&t, corner).into_iter().find_map(|(x, z)| {
+                let surface = surfaces[(z * CHUNK_SIZE + x) as usize].0.height;
+                let at = |y: i32| match blocks.get_local(x, y, z) {
+                    block if block.is_air() => Floor::Air,
+                    block if ground(block) => Floor::Ground,
+                    _ => Floor::Other,
+                };
+                terrain.hoards.floor(t.hoard, surface, WORLD_HEIGHT - 2, at).map(|y| (x, y, z))
+            });
+            // One chest to a column at most: two tries near each other leave one.
+            if let Some((x, y, z)) = found {
+                blocks.set_local(x, y, z, terrain.hoards.chest(t.hoard));
+                break;
+            }
         }
     }
 

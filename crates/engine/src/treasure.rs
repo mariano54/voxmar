@@ -79,6 +79,18 @@ pub struct ChestDef {
     pub level: u8,
     pub table: String,
     pub opens_to: String,
+    /// What may wake when its lock gives: creatures that slept beside it.
+    #[serde(default)]
+    pub wakes: Vec<WakeDef>,
+}
+
+/// Creatures a chest may wake as it opens: `count` of `creature`, on `chance`.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WakeDef {
+    pub creature: String,
+    pub count: (u8, u8),
+    pub chance: f32,
 }
 
 /// What a chest may hold: each `loot` entry on its own chance, and from each `one_of`
@@ -115,6 +127,8 @@ pub struct Chest {
     pub opens_to: BlockId,
     /// How many gold coins it holds, at least and at most.
     pub gold: (u32, u32),
+    /// What may wake as it opens: a species, how many at least and at most, and the chance.
+    pub wakes: Vec<(crate::creature::CreatureId, (u8, u8), f32)>,
 }
 
 /// A table, resolved.
@@ -166,6 +180,9 @@ impl Treasure {
         for chest in &mut file.chests {
             qualify(&mut chest.block);
             qualify(&mut chest.opens_to);
+            for wake in &mut chest.wakes {
+                qualify(&mut wake.creature);
+            }
         }
         for table in &mut file.tables {
             for loot in &mut table.loot {
@@ -180,8 +197,9 @@ impl Treasure {
 
     /// Every package's treasure, a later package's gold, pick, chest or table replacing an
     /// earlier one of the same item, block or name; gold is priced by `value`, and stacks
-    /// as `stacks` (each item's most per stack, by block id) say.
-    pub fn new(files: Vec<(String, TreasureFile)>, blocks: &BlockRegistry, value: &crate::value::Value, stacks: &[u8], notes: &mut Vec<String>) -> Result<Self, RegistryError> {
+    /// as `stacks` (each item's most per stack, by block id) say; `creature` finds the
+    /// species a chest wakes.
+    pub fn new(files: Vec<(String, TreasureFile)>, blocks: &BlockRegistry, creature: &dyn Fn(&str) -> Option<crate::creature::CreatureId>, value: &crate::value::Value, stacks: &[u8], notes: &mut Vec<String>) -> Result<Self, RegistryError> {
         let error = |message: String| RegistryError(format!("treasure.ron: {message}"));
         let mut lucky = crate::content::Setting::<f32>::default();
         let mut gold = crate::content::Setting::<Option<GoldDef>>::default();
@@ -288,7 +306,16 @@ impl Treasure {
                 }
                 None => (0, 0),
             };
-            by_block.insert(block, Chest { age: chest.age, table, opens_to: id(&chest.opens_to)?, gold });
+            let mut wakes = Vec::new();
+            for wake in &chest.wakes {
+                let species = creature(&wake.creature).ok_or_else(|| error(format!("`{}` wakes `{}`, which is no creature", chest.block, wake.creature)))?;
+                let (low, high) = wake.count;
+                if low == 0 || low > high || high > 8 || !(wake.chance > 0.0 && wake.chance <= 1.0) {
+                    return Err(error(format!("`{}`: what it wakes comes 1 to 8 at a time, least first, on a chance in (0, 1]", chest.block)));
+                }
+                wakes.push((species, wake.count, wake.chance));
+            }
+            by_block.insert(block, Chest { age: chest.age, table, opens_to: id(&chest.opens_to)?, gold, wakes });
         }
         if let Some(stray) = blocks.ids().find(|&b| blocks.def(b).has_tag(LOCKED_TAG) && !by_block.contains_key(&b)) {
             return Err(error(format!("`{}` is tagged `{LOCKED_TAG}` but is no chest here", blocks.def(stray).name)));
@@ -453,7 +480,7 @@ mod tests {
         // Coins stack to four here.
         let stacks: Vec<u8> = blocks.ids().map(|b| if blocks.def(b).name == "t:coin" { 4 } else { 64 }).collect();
         let value = crate::value::Value::default();
-        let treasure = Treasure::new(vec![("t".into(), Treasure::read("t", FILE).unwrap())], &blocks, &value, &stacks, &mut Vec::new()).unwrap();
+        let treasure = Treasure::new(vec![("t".into(), Treasure::read("t", FILE).unwrap())], &blocks, &|_| None, &value, &stacks, &mut Vec::new()).unwrap();
         let chest = treasure.chest(blocks.id("t:bronze_chest").unwrap()).unwrap().clone();
         assert_eq!(chest.age, 3);
         // Level 16 is worth 5, so its gold is 5 x (1.5 ± 0.5): 5 to 10 coins, in up to three
@@ -474,7 +501,7 @@ mod tests {
             assert!((5..=10).contains(&coins.iter().map(|&n| n as u32).sum::<u32>()) && coins.iter().all(|&n| (1..=4).contains(&n)), "{coins:?}");
             assert!(found.len() <= treasure.most_stacks(&chest));
         }
-        let bad = |file: &str| Treasure::new(vec![("t".into(), Treasure::read("t", file).unwrap())], &blocks, &value, &stacks, &mut Vec::new()).is_err();
+        let bad = |file: &str| Treasure::new(vec![("t".into(), Treasure::read("t", file).unwrap())], &blocks, &|_| None, &value, &stacks, &mut Vec::new()).is_err();
         // Rarer than one in 400, a breakable lock, a chest that is not tagged, a missing table.
         assert!(bad(r#"(tables: [(name: "x", loot: [(item: "coin", chance: 0.001)])])"#));
         assert!(bad(r#"(tables: [(name: "x", one_of: [(chance: 0.004, items: ["sword", "helm"])])])"#));
@@ -501,10 +528,32 @@ mod tests {
         assert!(bad(r#"(chests: [(block: "bronze_chest", age: 1, level: 5, table: "x", opens_to: "chest")], tables: [(name: "x", one_of: [(chance: 1.0, count: (0, 255), items: ["coin"])])])"#));
         // The accepted byte boundary is safe, and room counts full stacks even for a group.
         let file = Treasure::read("t", r#"(chests: [(block: "bronze_chest", age: 1, level: 5, table: "x", opens_to: "chest")], tables: [(name: "x", loot: [(item: "coin", count: (1, 255))], one_of: [(chance: 1.0, count: (1, 255), items: ["coin"])])])"#).unwrap();
-        let many = Treasure::new(vec![("t".into(), file)], &blocks, &value, &stacks, &mut Vec::new()).unwrap();
+        let many = Treasure::new(vec![("t".into(), file)], &blocks, &|_| None, &value, &stacks, &mut Vec::new()).unwrap();
         let chest = many.chest(blocks.expect("t:bronze_chest")).unwrap();
         assert_eq!(many.most_stacks(chest), 128, "two 255-coin finds need 64 four-coin stacks each");
         assert_eq!(many.roll(chest, || 0.999).iter().map(|(_, n)| *n).collect::<Vec<_>>(), [255, 255]);
         assert!(!bad(&tables(r#"(item: "helm", chance: 0.05, rarity: Rare), (item: "coin", chance: 0.5)"#)), "plain finds above a tenth are no bar");
+    }
+
+    /// A chest's wakes name a real creature, come one to eight at a time on a real chance,
+    /// and are kept resolved on the chest.
+    #[test]
+    fn what_a_chest_wakes_is_a_real_creature_a_few_at_a_time() {
+        let blocks = blocks();
+        let stacks: Vec<u8> = blocks.ids().map(|_| 64).collect();
+        let value = crate::value::Value::default();
+        let bat = |name: &str| (name == "t:bat").then_some(crate::creature::CreatureId(3));
+        let with = |wakes: &str| {
+            let file = format!(r#"(chests: [(block: "bronze_chest", age: 1, level: 5, table: "x", opens_to: "chest", wakes: [{wakes}])], tables: [(name: "x")])"#);
+            Treasure::new(vec![("t".into(), Treasure::read("t", &file).unwrap())], &blocks, &bat, &value, &stacks, &mut Vec::new())
+        };
+        let treasure = with(r#"(creature: "bat", count: (2, 4), chance: 0.5)"#).unwrap();
+        let chest = treasure.chest(blocks.id("t:bronze_chest").unwrap()).unwrap();
+        assert_eq!(chest.wakes, [(crate::creature::CreatureId(3), (2, 4), 0.5)]);
+        assert!(with(r#"(creature: "wolf", count: (1, 1), chance: 0.5)"#).is_err(), "no such creature");
+        assert!(with(r#"(creature: "bat", count: (0, 2), chance: 0.5)"#).is_err(), "none at a time");
+        assert!(with(r#"(creature: "bat", count: (3, 2), chance: 0.5)"#).is_err(), "least first");
+        assert!(with(r#"(creature: "bat", count: (1, 9), chance: 0.5)"#).is_err(), "a swarm, not a guard");
+        assert!(with(r#"(creature: "bat", count: (1, 2), chance: 0.0)"#).is_err(), "never");
     }
 }

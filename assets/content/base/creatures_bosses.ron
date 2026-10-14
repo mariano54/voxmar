@@ -16,7 +16,8 @@
             // mends between blows unless a fire burns within four blocks of her or the
             // sun is on her: cut her and she grows back, so burn her, or bring her up
             // into the light. Weak to slash, as roots are to an axe.
-            name: "rootmother", kind: Monster, boss: true, rarity: Rare, level: 22, health: 120, weak: Some(Slash),
+            // Her fight plays the forest's boss tracks, wherever she is met.
+            name: "rootmother", kind: Monster, boss: true, music: ["forest"], rarity: Rare, level: 22, health: 120, weak: Some(Slash),
             attack: (windup: 0.6, recovery: 0.7, damage: (1, 4), reach: 2.0, every: 1.8, lunge: 0.8, style: Slash, pace: Walk),
             moves: [
                 (name: "lash", phases: [0], attack: (windup: 0.6, recovery: 0.7, damage: (1, 4), reach: 2.0, every: 1.8, lunge: 0.8, style: Slash, pace: Walk), tell: (nod: 0.6)),

@@ -1,6 +1,7 @@
 // Treasure (engine/src/treasure.rs): chests locked by the age they belong to (1 Nomad,
 // 2 Farm, 3 Bronze, 4 Iron, 5 Steam ...), the lockpicks that open them, and what each age's
-// chest holds. The chest blocks are in blocks_treasure.ron; worldgen places them.
+// chest holds. The chest blocks are in blocks.ron; worldgen leaves them on floors
+// under rock (hoards.ron).
 //
 // - A lockpick of the age before the chest's, or any later, opens it and is used up.
 // - One two ages short opens it only `lucky` times in one, and breaks either way.
@@ -15,6 +16,8 @@
 //   Common thing of it is (value.ron), times a share between `centre - spread` and
 //   `centre + spread` (the centre above the spread, the spread at least 0), in full
 //   stacks. Nomad 3-6, Farm 5-10, Bronze 9-18, Iron 18-36, Steam 45-90.
+// - `wakes`: what slept beside a chest left under rock, and may wake as its lock gives:
+//   `count` of `creature` (1 to 8), on `chance`, out of the dark around it.
 (
     lucky: 0.05,
     gold: (item: "gold_coin", centre: 1.5, spread: 0.5),
@@ -25,8 +28,10 @@
         (item: "iron_lockpick", age: 4),
     ],
     chests: [
-        (block: "nomad_treasure_chest", age: 1, level: 5, table: "nomad", opens_to: "chest"),
-        (block: "farm_treasure_chest", age: 2, level: 15, table: "farm", opens_to: "chest"),
+        (block: "nomad_treasure_chest", age: 1, level: 5, table: "nomad", opens_to: "chest",
+            wakes: [(creature: "cave_bat", count: (2, 4), chance: 0.4)]),
+        (block: "farm_treasure_chest", age: 2, level: 15, table: "farm", opens_to: "chest",
+            wakes: [(creature: "cave_crawler", count: (1, 2), chance: 0.4)]),
         (block: "bronze_treasure_chest", age: 3, level: 25, table: "bronze", opens_to: "chest"),
         (block: "iron_treasure_chest", age: 4, level: 37, table: "iron", opens_to: "chest"),
         (block: "steam_treasure_chest", age: 5, level: 52, table: "steam", opens_to: "chest"),

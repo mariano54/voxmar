@@ -687,8 +687,9 @@
             ])],
         ),
         // A cartographer camps to draw the land, far from where the world began. They tell
-        // the way to the nearest town, if one is within a few hundred blocks, and teach a
-        // beginner builder to pace out ground.
+        // the way to the nearest town, if one is within a few hundred blocks, and to a locked
+        // chest they marked under the rock nearby, and teach a beginner builder to pace out
+        // ground.
         (
             name: "cartographer", weight: 0.4,
             biomes: [("tag:open", 1.0), ("tag:mountain", 0.8), ("tag:forest", 0.6)],
@@ -697,6 +698,7 @@
             script: Camp(near: 24.0, stay: (300.0, 480.0), mill: 2.0, away: 120.0),
             meetings: [(who: 0, greets: 2, lines: [
                 (name: "town", gives: [Town(600.0)], once: Player),
+                (name: "chest", gives: [Point("tag:locked", 128.0)], once: Player),
                 (name: "pace", needs: [Below("construction", 8)], gives: [Xp("construction", 15.0)], once: Player),
             ])],
         ),
@@ -788,8 +790,8 @@
             ])],
         ),
         // A fortune teller camps of an evening. A coin across the palm and the cards tell
-        // something true and near: a wonder, an ore that shows at the surface, a root, or
-        // the way to a town, whichever there is to tell.
+        // something true and near: a wonder, an ore that shows at the surface, a root, a
+        // locked chest under the rock, or the way to a town, whichever there is to tell.
         (
             name: "fortune_teller", weight: 0.4,
             biomes: [("tag:open", 1.0), ("tag:grassland", 1.0), ("tag:forest", 0.5)],
@@ -797,7 +799,7 @@
             cast: [(species: "elder"), (species: "child", count: (0, 1), role: Follow)],
             script: Camp(near: 22.0, stay: (300.0, 480.0), mill: 2.0, away: 120.0),
             meetings: [(who: 0, greets: 2, lines: [
-                (name: "fortune", wants: ("gold_coin", 1), gives: [OneOf([Point("tag:wonder", 128.0), Point("tag:ore_sample", 128.0), Point("tag:root", 96.0), Town(600.0)])], once: Player),
+                (name: "fortune", wants: ("gold_coin", 1), gives: [OneOf([Point("tag:wonder", 128.0), Point("tag:ore_sample", 128.0), Point("tag:root", 96.0), Point("tag:locked", 128.0), Town(600.0)])], once: Player),
             ])],
         ),
         // Market folk on their way to town with what they grew. Walk the way with them and
