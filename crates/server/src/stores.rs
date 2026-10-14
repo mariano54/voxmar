@@ -33,11 +33,16 @@ impl Server {
         self.pull_store(agent);
     }
 
-    /// Brings `agent`'s copy of their open store up to date with what it holds.
+    /// Brings `agent`'s copy of their open store up to date with what it holds, or closes
+    /// it if the store is gone (broken this tick, before `watch_stores` saw it), so no move
+    /// goes into a copy nothing would keep.
     pub(crate) fn pull_store(&mut self, agent: PlayerId) {
         let Some(player) = self.players.get_mut(&agent) else { return };
         let Some(pos) = player.store else { return };
-        let Some((block, state)) = self.factory.get(pos) else { return };
+        let Some((block, state)) = self.factory.get(pos) else {
+            self.close_store(agent);
+            return;
+        };
         let fresh = Store { block, slots: state.bin.clone() };
         if player.inventory.store.as_ref() != Some(&fresh) {
             player.inventory.store = Some(fresh);
@@ -210,6 +215,20 @@ mod tests {
         assert_eq!(server.items.saved(|_| String::new()).len(), before + 1, "the dirt lies where it stood");
         server.watch_stores();
         assert!(server.players[&1].inventory.store.is_none());
+    }
+
+    /// A move into a store broken earlier the same tick finds it closed: what was moved
+    /// stays in the pack rather than going into a copy nothing keeps.
+    #[test]
+    fn a_move_into_a_store_just_broken_stays_in_the_pack() {
+        let mut server = fixture();
+        server.set_block(AT, id(&server, "base:oak_cupboard"));
+        open(&mut server);
+        give(&mut server, 0, "base:dirt", 5);
+        server.set_block(AT, BlockId::AIR);
+        act(&mut server, "core:transfer", ActionTarget::Slots { from: 0, to: STORE as u8, count: 5 });
+        let player = &server.players[&1];
+        assert_eq!((player.store, player.inventory.slots[0].map(|s| s.count)), (None, Some(5)));
     }
 
     /// A barrel the world placed (in a village) was never a machine: opened, it becomes a

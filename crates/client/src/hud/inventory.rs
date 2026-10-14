@@ -229,7 +229,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
             });
             // The crafting grid and what it makes, above the pack.
             let crafting = Node { align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), margin: UiRect::bottom(Val::Px(space::GAP)), ..default() };
-            card.spawn((crafting, CraftRow)).with_children(|row| {
+            card.spawn(crafting).with_children(|row| {
                 // What is worn: head and body, legs and hands, feet and shield.
                 let worn = Node {
                     display: Display::Grid,
@@ -240,35 +240,40 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
                     ..default()
                 };
                 row.spawn(worn).with_children(|grid| (WORN..=LAST).for_each(|slot| spawn_slot(grid, slot)));
-                let square = Node {
-                    display: Display::Grid,
-                    grid_template_columns: RepeatedGridTrack::px(2, SLOT),
-                    row_gap: Val::Px(PX),
-                    column_gap: Val::Px(PX),
-                    ..default()
-                };
-                // Two by two, or three by three at a crafting table (`fit_grid`).
-                row.spawn((square, CraftSquare)).with_children(|grid| {
-                    for cell in 0..GRID {
-                        let node = Node { width: Val::Px(SLOT), height: Val::Px(SLOT), ..default() };
-                        grid.spawn((Button, Silent, InventorySlot(CRAFT + cell), CraftCell(cell), RelativeCursorPosition::default(), node, Piece::Well.image()))
-                            .with_children(|slot| slot_contents(slot, font, CRAFT + cell));
-                    }
-                });
-                row.spawn(shadowed(font, "→", LARGE, GOLD));
-                let node = Node { width: Val::Px(SLOT + 4.0 * PX), height: Val::Px(SLOT + 4.0 * PX), ..default() };
-                row.spawn((Button, Silent, OutputSlot, RelativeCursorPosition::default(), node, Piece::Frame.image())).with_children(|cell| {
-                    let inset = (SLOT + 4.0 * PX - 16.0 * PX) / 2.0;
-                    let icon = Node { position_type: PositionType::Absolute, left: Val::Px(inset), top: Val::Px(inset), width: Val::Px(16.0 * PX), height: Val::Px(16.0 * PX), ..default() };
-                    cell.spawn((icon, ImageNode::default(), Visibility::Hidden, OutputIcon));
-                    let corner = Node { position_type: PositionType::Absolute, right: Val::Px(super::COUNT_INSET + 2.0 * PX), bottom: Val::Px(super::COUNT_INSET + 2.0 * PX), ..default() };
-                    super::spawn_count(cell, font, corner, OutputCount);
-                });
-                // What the grid makes and how to take it, or how to find a recipe.
-                let words = Node { width: Val::Px(CRAFT_WORDS), flex_direction: FlexDirection::Column, row_gap: Val::Px(space::HAIR), ..default() };
-                row.spawn(words).with_children(|words| {
-                    words.spawn((shadowed(font, "", BODY, TEXT), CraftName));
-                    words.spawn((text(font, "", BODY, MUTED), CraftHint));
+                // The grid, its arrow, what it makes and its words: an open store's slots
+                // take their place (`fit_store`), while what is worn stays.
+                let craft = Node { align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), ..default() };
+                row.spawn((craft, CraftRow)).with_children(|craft| {
+                    let square = Node {
+                        display: Display::Grid,
+                        grid_template_columns: RepeatedGridTrack::px(2, SLOT),
+                        row_gap: Val::Px(PX),
+                        column_gap: Val::Px(PX),
+                        ..default()
+                    };
+                    // Two by two, or three by three at a crafting table (`fit_grid`).
+                    craft.spawn((square, CraftSquare)).with_children(|grid| {
+                        for cell in 0..GRID {
+                            let node = Node { width: Val::Px(SLOT), height: Val::Px(SLOT), ..default() };
+                            grid.spawn((Button, Silent, InventorySlot(CRAFT + cell), CraftCell(cell), RelativeCursorPosition::default(), node, Piece::Well.image()))
+                                .with_children(|slot| slot_contents(slot, font, CRAFT + cell));
+                        }
+                    });
+                    craft.spawn(shadowed(font, "→", LARGE, GOLD));
+                    let node = Node { width: Val::Px(SLOT + 4.0 * PX), height: Val::Px(SLOT + 4.0 * PX), ..default() };
+                    craft.spawn((Button, Silent, OutputSlot, RelativeCursorPosition::default(), node, Piece::Frame.image())).with_children(|cell| {
+                        let inset = (SLOT + 4.0 * PX - 16.0 * PX) / 2.0;
+                        let icon = Node { position_type: PositionType::Absolute, left: Val::Px(inset), top: Val::Px(inset), width: Val::Px(16.0 * PX), height: Val::Px(16.0 * PX), ..default() };
+                        cell.spawn((icon, ImageNode::default(), Visibility::Hidden, OutputIcon));
+                        let corner = Node { position_type: PositionType::Absolute, right: Val::Px(super::COUNT_INSET + 2.0 * PX), bottom: Val::Px(super::COUNT_INSET + 2.0 * PX), ..default() };
+                        super::spawn_count(cell, font, corner, OutputCount);
+                    });
+                    // What the grid makes and how to take it, or how to find a recipe.
+                    let words = Node { width: Val::Px(CRAFT_WORDS), flex_direction: FlexDirection::Column, row_gap: Val::Px(space::HAIR), ..default() };
+                    craft.spawn(words).with_children(|words| {
+                        words.spawn((shadowed(font, "", BODY, TEXT), CraftName));
+                        words.spawn((text(font, "", BODY, MUTED), CraftHint));
+                    });
                 });
             });
             card.spawn(grid(0.0)).with_children(|grid| (HOTBAR_SLOTS..SLOTS).for_each(|slot| spawn_slot(grid, slot)));
@@ -446,7 +451,8 @@ fn fit_grid(player: Res<LocalPlayer>, mut square: Query<&mut Node, With<CraftSqu
     }
 }
 
-/// The crafting grid's row, which an open store's slots take the place of.
+/// The crafting grid, its arrow, what it makes and its words: an open store's slots take
+/// their place, while what is worn stays beside them.
 #[derive(Component)]
 struct CraftRow;
 #[derive(Component)]
