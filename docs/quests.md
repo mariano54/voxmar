@@ -147,6 +147,12 @@ so that what the game already does is something the book points to:
   dealing their tally counts) and Found and Thanked (Nomad, after A Kind Turn: the lost
   child brought to town, then the parents who come to your home).
 
+- **Bees** (Oct 14, docs/bees.md). Farm: Humming in the Meadow (Farming 12, a skep made and a
+  swarm taken into it; the hint names every biome wild bees nest in, held by a test), A Bee
+  Garden (the home step and three honey; it names the Kitchen Garden and Herb Garden for the
+  wait while the skep fills) and The Beekeeper Calls (the beekeeper met and three candles, or
+  two beeswax kept and six candles; pays a spare skep).
+
 ## Quick upgrades
 
 Oct 13 (docs/first-days.md, "Quick upgrades on common resources"): Timber asks for four logs

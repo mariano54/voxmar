@@ -80,6 +80,7 @@ A home also answers other content, as plain effects with a condition, no code of
 | Company | 1 animal the player keeps within the home's reach | heal x1.1 |
 | Full house | 4 such animals (hides Company) | heal x1.2, learn x1.05 |
 | Kitchen garden | 4 crop plants (any stage) within reach | meals heal x1.1 (`meal_heal`, stacks with a larder) |
+| Bee garden | a skep of bees (`hive`) and 3 flowers within reach | heal x1.1; the hive's bees make crops within 8 blocks grow x1.25 (docs/bees.md) |
 
 How they work, for mod authors: `Condition::Sheltered(inner)` holds under a roof while `inner`
 (a weather condition, which is normally true only out in the open) holds in the open, so the
@@ -102,6 +103,7 @@ roof), so it works wherever the player stands near home. With `near_home` it bri
 | Neighbours | any lit hearth (batch 9) | a plate for the house; seed for a cooked meal |
 | Fireside guests | a Homely home, of an evening | a long talk (Focused, 15 minutes); for a cooked supper, two candles toward Cosy |
 | A hedgehog at the door | a Cosy home, by night | a wild hedgehog after the crumbs: tame it (Hunter 3) and it is one of the animals about the house (Company) |
+| Beekeeper | a home with a Bee garden, by day | walks the garden (crops near grow a stage, Farming XP); a spare skep for three honey |
 
 They are wandering kinds like any other (docs/wandering.md), rare, one at a time.
 

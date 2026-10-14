@@ -1,16 +1,9 @@
-// Bees (bees.ron, docs/bees.md): a wild nest at the foot of a tree where flowers grow
-// thick, the straw skep a swarm is taken into, the same skep with bees in it and full of
-// honey, and what bees give. Art is in the default pack's bees.ron; boxes in shapes.ron.
+// Bees (bees.ron, docs/bees.md): the straw skep a swarm is taken into, the same skep
+// with bees in it and full of honey, and beeswax. The wild nest and honey are in
+// blocks.ron, which generation reads alone. Art is in the default pack's bees.ron, boxes
+// in shapes.ron.
 (
     blocks: [
-        // A wild nest: a papery comb in a hollow at a trunk's foot, bees about it. Broken,
-        // it gives a little honey and is gone; a skep held up to it under smoke takes the
-        // swarm home.
-        (
-            name: "bee_nest", render: Model, shape: "bee_nest", solid: false, sound: Grass, textures: All("bee_nest"),
-            hardness: 0.4, drops: "honey", color: (190, 150, 80), tags: ["bees", "wild_nest"],
-            particles: [(style: Ember, rate: 3.0, at: (0.5, 0.5, 0.5), spread: 0.4, size: 0.35, height: 0.8, color: Some((70, 52, 14)), blend: Some(Cutout))],
-        ),
         // A skep: coiled straw bound into a dome, wheat over a ring of twine. Empty until a
         // swarm is taken into it; with bees in it, it fills with honey while they forage,
         // and full, a right click under smoke takes the honey and leaves the bees.
@@ -30,9 +23,8 @@
         ),
     ],
     families: [
-        // Honey heals as fruit does and keeps (raw, so it stacks: core/stacking.ron);
-        // beeswax makes the best candles, a few at a time.
-        (template: "drop", name: "honey", tags: ["edible", "honey", "flavour:sweet", "heal:2", "alchemy:healing"], all: (color: (230, 170, 40), rarity: Uncommon)),
+        // Beeswax makes the best candles, a few at a time. (Honey and the wild nest are
+        // in blocks.ron, which generation reads alone.)
         (template: "drop", name: "beeswax", tags: ["wax"], all: (color: (232, 200, 110), rarity: Uncommon)),
     ],
 )

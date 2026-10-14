@@ -1029,6 +1029,7 @@ pub(crate) fn test_registry() -> BlockRegistry {
     let sources = [
         include_str!("../../../assets/content/base/blocks.ron"),
         include_str!("../../../assets/content/base/blocks_armour.ron"),
+        include_str!("../../../assets/content/base/blocks_bees.ron"),
         include_str!("../../../assets/content/base/blocks_creatures.ron"),
         include_str!("../../../assets/content/base/blocks_farm.ron"),
         include_str!("../../../assets/content/base/blocks_food.ron"),

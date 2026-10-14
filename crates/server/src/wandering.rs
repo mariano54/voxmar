@@ -452,21 +452,11 @@ impl Server {
     }
 
     /// A party that comes after another (`needs.after`) and started on its own: the nearest
-    /// forerunner of its kind within reach that no party joined yet counts as joined, so
-    /// none joins it again through `try_follower`.
+    /// forerunner within reach that no party joined yet, the one its pick asked for
+    /// (`forerunner_near`), counts as joined, so none joins it again through `try_follower`.
     fn mark_forerunner(&mut self, id: u64, event: usize, spot: IVec3) {
         let Some((forerunner, reach)) = self.content.wandering.get(event).def.needs.after.clone() else { return };
-        let Some(kind) = self.content.wandering.find(&forerunner) else { return };
-        let nearest = self
-            .wandering
-            .active
-            .values()
-            .filter(|inst| inst.id != id && inst.event == kind && !self.wandering.followed.contains(&inst.id))
-            .filter_map(|inst| inst.members.first().and_then(|m| self.creatures.live.get(&m.creature)).map(|c| (inst.id, flat(c.body.position, spot.as_vec3()))))
-            .filter(|(_, d)| *d <= reach)
-            .min_by(|a, b| a.1.total_cmp(&b.1))
-            .map(|(id, _)| id);
-        if let Some(led) = nearest {
+        if let Some(led) = self.forerunner_near(spot.as_vec3(), &forerunner, reach).filter(|&led| led != id) {
             self.wandering.followed.insert(led);
         }
     }
@@ -612,6 +602,20 @@ impl Server {
     /// and the way to its centre.
     /// Where the leader of the nearest running party of kind `name` stands, within `reach`
     /// blocks of `from`.
+    /// The nearest party of kind `name` within `reach` (across) of `from` that no party has
+    /// come after yet: the one a party that comes after it joins.
+    fn forerunner_near(&self, from: Vec3, name: &str, reach: f32) -> Option<u64> {
+        let kind = self.content.wandering.find(name)?;
+        self.wandering
+            .active
+            .values()
+            .filter(|inst| inst.event == kind && !self.wandering.followed.contains(&inst.id))
+            .filter_map(|inst| inst.members.first().and_then(|m| self.creatures.live.get(&m.creature)).map(|c| (inst.id, flat(c.body.position, from))))
+            .filter(|(_, d)| *d <= reach)
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(id, _)| id)
+    }
+
     fn party_near(&self, from: Vec3, name: &str, reach: f32) -> Option<Vec3> {
         let kind = self.content.wandering.find(name)?;
         self.wandering
@@ -719,7 +723,7 @@ impl Server {
                 && needs.town.is_none_or(|reach| self.town_near(spot.as_vec3(), reach).is_some())
                 && needs.wet.is_none_or(|w| w == wet)
                 && needs.near_home.is_none_or(|near| p.home.is_some_and(|home| flat(home, p.position) <= near))
-                && needs.after.as_ref().is_none_or(|(name, reach)| self.party_near(spot.as_vec3(), name, *reach).is_some())
+                && needs.after.as_ref().is_none_or(|(name, reach)| self.forerunner_near(spot.as_vec3(), name, *reach).is_some())
                 && needs.met.as_ref().is_none_or(|name| p.tallies.get(&format!("met:{name}")).is_some_and(|&n| n > 0))
                 && event.home_is.is_none_or(home_is);
             let weight = event.biome_weight(&biome.name, &biome.tags);
@@ -6119,6 +6123,10 @@ mod tests {
         server.mark_forerunner(rival, event(&server, "rival_pedlar"), IVec3::new(x, 200, z));
         assert!(server.wandering.followed.contains(&third));
         assert_eq!(follow(&mut server), None, "a rival that came on its own counts as the join");
+        // With every pedlar about joined, no rival comes by the ordinary pick either.
+        assert!(!comes_at(&server, "rival_pedlar", IVec3::new(x, 200, z)), "a joined pedlar draws no second rival");
+        server.wandering.followed.remove(&third);
+        assert!(comes_at(&server, "rival_pedlar", IVec3::new(x, 200, z)), "an unjoined one does");
     }
 
     /// Callers come only to a home that has come far enough (`home_is`), judged at the home

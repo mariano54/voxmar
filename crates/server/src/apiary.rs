@@ -45,6 +45,7 @@ impl Apiary {
     }
 
     /// The seconds the hive at `pos` has foraged, if it is one.
+    #[cfg(test)]
     pub fn foraged(&self, pos: IVec3) -> Option<f32> {
         self.hives.get(&pos).copied()
     }
