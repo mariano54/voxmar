@@ -2463,6 +2463,30 @@ mod cornered_tests {
         }
     }
 
+    /// A pen walled two high keeps its animals, struck and running, tall heads and all: a
+    /// head over the wall is no step (motion's head-met step is judged at the feet).
+    #[test]
+    fn a_pen_two_high_keeps_its_animals_struck_and_running() {
+        let mut server = crate::test_server();
+        let half = 5;
+        let centre = pen(&mut server, half);
+        for i in -half..=half {
+            for cell in [IVec3::new(i, 2, -half), IVec3::new(i, 2, half), IVec3::new(-half, 2, i), IVec3::new(half, 2, i)] {
+                server.world.set_block(centre + cell, voxmar_engine::block::BlockId::AIR);
+            }
+        }
+        let player = join(&mut server, centre.as_vec3() + Vec3::new(0.5, 0.0, 0.5));
+        for name in ["base:red_deer", "base:wild_boar", "base:aurochs", "base:brown_bear"] {
+            let Some(species) = server.content.creatures.id(name) else { continue };
+            let id = put(&mut server, name, centre.as_vec3() + Vec3::new(-2.5, 0.0, 0.5), Vec3::NEG_X);
+            server.creatures.live.get_mut(&id).unwrap().owner = Some("1".into());
+            let _ = hunted(&mut server, id, player, 10.0);
+            let at = server.creatures.live[&id].body.position - centre.as_vec3();
+            assert!(at.x.abs() < half as f32 && at.z.abs() < half as f32 && at.y < 1.5, "{name} ({species:?}) left a pen two high: at {at}");
+            server.creatures.live.remove(&id);
+        }
+    }
+
     /// Struck in a corner, with the player in front: it finds the way out, past them (and,
     /// the pen being small, runs round it).
     #[test]
