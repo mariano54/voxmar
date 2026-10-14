@@ -244,6 +244,40 @@ mod tests {
         assert_eq!(progress.tasks[0][0], (2, 5), "kinds dealt with, out of five");
     }
 
+    /// What is eaten counts by food (`Ate`), and an effect counts once it has been felt at
+    /// all (`Felt`), whatever gave it: Sweet Relief and Smoke That Clings finish from them.
+    #[test]
+    fn food_eaten_and_smoke_felt_finish_the_honey_quests() {
+        use crate::process::Process;
+        let mut server = fixture();
+        for quest in ["base:humming_in_the_meadow", "base:a_bee_garden"] {
+            server.players.get_mut(&1).unwrap().quests_done.push(quest.into());
+        }
+        let eat = server.content.actions.expect("core:eat");
+        hold(&mut server, "base:honey", 6);
+        // Food is eaten only by the hurt.
+        server.players.get_mut(&1).unwrap().health.current = 2;
+        let mut at = std::time::Instant::now();
+        for _ in 0..3 {
+            server.propose(1, eat, voxmar_engine::action::ActionTarget::None, at);
+            at += std::time::Duration::from_secs(2);
+            server.finished_action(1, voxmar_engine::action::ActionTarget::None, at);
+        }
+        assert_eq!(tally(&server, "ate:base:honey"), 3, "each honey eaten counts");
+        server.update_quests(1);
+        assert!(done(&server, "base:sweet_relief"), "three eaten, three kept");
+        assert!(!done(&server, "base:smoke_that_clings"), "the honey, but no smoke yet");
+        // A fire within two blocks leaves the player Smoky: felt once, it counts once.
+        let feet = server.players[&1].position.floor().as_ivec3();
+        server.set_block(feet + IVec3::new(0, 0, -2), server.content.blocks.expect("base:campfire"));
+        hold(&mut server, "base:honey", 4);
+        crate::process::Survival.run(&mut server);
+        crate::process::Survival.run(&mut server);
+        assert_eq!(tally(&server, "felt:base:smoky"), 1, "an effect counts once, however long it lasts");
+        server.update_quests(1);
+        assert!(done(&server, "base:smoke_that_clings"));
+    }
+
     #[test]
     fn prayers_turned_on_and_bones_offered_finish_the_altar_rites() {
         let mut server = fixture();

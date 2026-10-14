@@ -144,6 +144,13 @@
             rewards: [Xp("ranged", 40.0), Xp("crafting", 30.0)],
         ),
         (
+            name: "stones_back", age: "nomad", branch: "combat", title: "Stones Back",
+            why: "A sling stone that hits is left lying where the creature stood about one time in four; one that misses, or hits for nothing, is gone. Walk over and pick up what lies there before you throw again, and a stack of cobblestone lasts. Bring down five creatures and reach Ranged 4.",
+            tasks: [[Kill("any", 5), Level("ranged", 4)]],
+            after: ["a_stones_throw"],
+            rewards: [Xp("ranged", 60.0)],
+        ),
+        (
             name: "small_game", age: "nomad", branch: "hunter", title: "Small Game",
             why: "Rabbits, junglefowl and other small animals are the easiest food: raw rabbit and chicken cook well at a campfire. Look for them on open grassland. Hunt three; a few blows are enough, and each kill trains Hunter. Then cook one of what you killed.",
             tasks: [[Kill("any", 3), Cook("tag:meat", 1)]],
@@ -300,6 +307,13 @@
             tasks: [[Craft("bone_lockpick", 1), Opened("nomad_treasure_chest", 1)]],
             after: ["twine_and_thong", "small_game"],
             rewards: [Xp("crafting", 40.0), Item("bone_lockpick", 2)],
+        ),
+        (
+            name: "light_sleepers", age: "nomad", branch: "explore", title: "Light Sleepers",
+            why: "What sleeps beside a chest under rock may wake as its lock gives: four Nomad chests in ten wake two to four cave bats. Have a weapon to hand before you pick the lock. Open two Nomad chests in all and bring down two cave bats.",
+            tasks: [[Opened("nomad_treasure_chest", 2), Kill("cave_bat", 2)]],
+            after: ["under_lock_and_key"],
+            rewards: [Xp("attack", 60.0), Item("bone_lockpick", 1)],
         ),
         (
             name: "stockpile", age: "nomad", branch: "start", title: "Stockpile",
@@ -522,6 +536,13 @@
             rewards: [Xp("ranged", 120.0), Xp("crafting", 60.0)],
         ),
         (
+            name: "every_arrow_counts", age: "farm", branch: "combat", title: "Every Arrow Counts",
+            why: "An arrow that hits is left lying where the creature stood half the time; one that misses, or hits for nothing, is gone. Pick them up as you go and a quiver lasts. Make sixteen arrows in all and reach Ranged 8.",
+            tasks: [[Craft("arrow", 16), Level("ranged", 8)]],
+            after: ["bow_and_arrow"],
+            rewards: [Xp("ranged", 150.0), Item("arrow", 8)],
+        ),
+        (
             name: "copper_mail", age: "farm", branch: "combat", title: "Copper Mail",
             why: "A copper helmet takes five ingots and a chestplate eight, at the crafting table (Engineering 5). They turn aside far more than hide does, and every ingot is ore you carried out of the hills.",
             tasks: [[Craft("copper_helmet", 1), Craft("copper_chestplate", 1)]],
@@ -541,6 +562,13 @@
             tasks: [[Level("attack", 12), Level("defence", 10)], [Kill("rootmother", 1)]],
             after: ["seasoned_fighter", "copper_arms"],
             rewards: [Xp("attack", 500.0), Xp("defence", 300.0), Item("gold_coin", 10)],
+        ),
+        (
+            name: "heart_of_the_wood", age: "farm", branch: "combat", title: "Heart of the Wood",
+            why: "The Rootmother leaves three heartroot. Eaten, one gives Heartwood for ten minutes: room for a fifth more health, and you heal a quarter faster. Another eaten while it lasts only starts the ten minutes again, so keep the rest for the next hard fight. Eat one and keep two.",
+            tasks: [[Ate("heartroot", 1), Have("heartroot", 2)]],
+            after: ["the_rootmother"],
+            rewards: [Xp("hitpoints", 200.0)],
         ),
         (
             name: "tin_find", age: "farm", branch: "mining", title: "A Silvery Ore",
@@ -583,6 +611,13 @@
             tasks: [[Opened("farm_treasure_chest", 1)]],
             after: ["homestead_hearth"],
             rewards: [Xp("mining", 150.0)],
+        ),
+        (
+            name: "what_sleeps_below", age: "farm", branch: "explore", title: "What Sleeps Below",
+            why: "Farm chests lie deeper, and four in ten wake one or two cave crawlers as the lock gives. A crawler has twice a bat's health: come with a copper weapon and food. Open two Farm chests in all and bring down a cave crawler.",
+            tasks: [[Opened("farm_treasure_chest", 2), Kill("cave_crawler", 1)]],
+            after: ["deeper_down"],
+            rewards: [Xp("mining", 120.0), Xp("attack", 80.0)],
         ),
         (
             name: "field_guide", age: "farm", branch: "explore", title: "Field Guide",
@@ -921,11 +956,25 @@
             rewards: [Xp("farming", 300.0), Xp("crafting", 60.0)],
         ),
         (
+            name: "smoke_that_clings", age: "farm", branch: "farming", title: "Smoke That Clings",
+            why: "Smoke clings. Hold a torch a moment, or stand within two blocks of a fire, and you are Smoky for thirty seconds after: bees take you for a fire and stay calm. Smoky, you can take a swarm with no campfire by the nest, take honey from a full skep unstung, and shoot by a nest without stirring it. Get Smoky and carry four honey.",
+            tasks: [[Felt("smoky"), Have("honey", 4)]],
+            after: ["humming_in_the_meadow"],
+            rewards: [Xp("farming", 120.0)],
+        ),
+        (
             name: "a_bee_garden", age: "farm", branch: "home", title: "A Bee Garden",
             why: "Set your skep of bees down at home with three flowers near: a bee garden, where you heal a tenth faster and crops within eight blocks of the hive grow a quarter faster. The bees forage by day in dry weather, quicker with more flowers about (a honeydew lily counts for four), and a full skep drips honey. A fire right beside it drives them off; one within four blocks smokes them calm. Right-click a full skep for two or three honey, and half the time a cake of beeswax. While it fills, sow a Kitchen Garden by the hive or plant a Herb Garden.",
             tasks: [[Built("home_bee_garden", 1), Have("honey", 3)]],
             after: ["humming_in_the_meadow"],
             rewards: [Xp("farming", 250.0)],
+        ),
+        (
+            name: "sweet_relief", age: "farm", branch: "cooking", title: "Sweet Relief",
+            why: "Honey heals 2, as fruit does, and unlike cooked food it stacks, so a pouch of it goes a long way. The same food heals a little less each time you eat it in a row, and a minute of other things brings it back: eat honey between other meals. Eat three honey and keep three more.",
+            tasks: [[Ate("honey", 3), Have("honey", 3)]],
+            after: ["a_bee_garden"],
+            rewards: [Xp("cooking", 80.0), Xp("farming", 60.0)],
         ),
         (
             name: "the_beekeeper_calls", age: "farm", branch: "home", title: "The Beekeeper Calls",

@@ -80,6 +80,11 @@ pub enum Goal {
     /// Grew this many crops by spreading a fertiliser on them (an item, `any`, or a
     /// `tag:TAG`): one compost on three crops is three.
     Fertilised(String, u32),
+    /// Ate this many of a food (an item, `any`, or a `tag:TAG`).
+    Ate(String, u32),
+    /// Was under an effect (by name) at least once, whatever gave it: a food, smoke, a
+    /// home's comfort.
+    Felt(String),
 }
 
 /// One way to finish a quest: every goal must hold.
@@ -225,6 +230,8 @@ impl Progress<'_> {
             Goal::Offered(item, n) => (tally("offered", item), *n),
             Goal::Opened(chest, n) => (tally("opened", chest), *n),
             Goal::Fertilised(item, n) => (tally("fertilised", item), *n),
+            Goal::Ate(food, n) => (tally("ate", food), *n),
+            Goal::Felt(effect) => (tally("felt", effect).min(1), 1),
         }
     }
 
@@ -325,7 +332,7 @@ impl QuestRegistry {
     /// quest that never finishes or a reward that never comes. Journal pages are checked as
     /// the file is read.
     pub fn resolve(&mut self, named: &Named) -> Result<(), RegistryError> {
-        let Named { blocks, skills, creatures, fishing, multiblocks, steps, events, prayers } = *named;
+        let Named { blocks, skills, creatures, fishing, multiblocks, steps, events, prayers, effects } = *named;
         let block_ids: Vec<BlockId> = blocks.ids().collect();
         let fish_ids: Vec<BlockId> = fishing.iter().map(|c| c.item).collect();
         let names = |ids: &[BlockId]| ids.iter().map(|&id| blocks.def(id).name.as_str()).collect::<Vec<_>>();
@@ -356,6 +363,8 @@ impl QuestRegistry {
         let prayer_names: Vec<&str> = prayers.iter().map(String::as_str).collect();
         let event = Kind { what: "wandering kind", names: &event_names, ..creature };
         let prayer = Kind { what: "prayer", names: &prayer_names, ..creature };
+        let effect_names: Vec<&str> = effects.iter().map(String::as_str).collect();
+        let effect = Kind { what: "effect", names: &effect_names, any: false, tagged: &[] };
         for quest in &mut self.quests {
             let namespace = quest.name.split(':').next().unwrap_or("").to_owned();
             let refuse = |what: &str, name: &str| RegistryError(format!("quest {} names the {what} `{name}`, which no package has", quest.name));
@@ -406,6 +415,8 @@ impl QuestRegistry {
                     Goal::Offered(name, _) => find(name, &made)?,
                     Goal::Opened(name, _) => find(name, &rock)?,
                     Goal::Fertilised(name, _) => find(name, &made)?,
+                    Goal::Ate(name, _) => find(name, &made)?,
+                    Goal::Felt(name) => find(name, &effect)?,
                 }
             }
             for given in &mut quest.rewards {
@@ -483,6 +494,8 @@ pub struct Named<'a> {
     pub events: &'a [String],
     /// The prayers' full names, which `Prayed` names.
     pub prayers: &'a [String],
+    /// The effects' full names, which `Felt` names.
+    pub effects: &'a [String],
 }
 
 /// The one of `names` a quest in package `namespace` means by `name`: a full name as
@@ -624,17 +637,19 @@ mod tests {
 
     /// Dealings with wanderers count by kind or all together, and `Kinds` counts the kinds
     /// dealt with at least once; prayers and offerings count by name, offerings by tag too;
-    /// opened chests count by chest or all together.
+    /// opened chests count by chest or all together; food eaten by name or tag; an effect
+    /// felt counts once, however often.
     #[test]
     fn wanderers_prayers_and_offerings_count_from_their_tallies() {
         let journal = Journal::default();
         let mut tallies = FxHashMap::default();
         for (key, n) in [("met:base:pedlar", 2), ("met:base:smith", 1), ("met:base:hermit", 0), ("prayed:base:bark_skin", 3), ("offered:base:bone", 4), ("crafted:base:bone", 9), ("opened:base:nomad_treasure_chest", 2), ("fertilised:base:compost", 5)] {
+        for (key, n) in [("met:base:pedlar", 2), ("met:base:smith", 1), ("met:base:hermit", 0), ("prayed:base:bark_skin", 3), ("offered:base:bone", 4), ("crafted:base:bone", 9), ("opened:base:nomad_treasure_chest", 2), ("ate:base:honey", 3), ("felt:base:smoky", 5)] {
             tallies.insert(key.to_owned(), n);
         }
         let level = |_: &str| 1u8;
         let carried = |_: &str| 0u32;
-        let has_tag = |name: &str, tag: &str| name == "base:bone" && tag == "offering";
+        let has_tag = |name: &str, tag: &str| (name == "base:bone" && tag == "offering") || (name == "base:honey" && tag == "sweet");
         let drops = |_: &str| None;
         let progress = Progress { journal: &journal, tallies: &tallies, level: &level, carried: &carried, has_tag: &has_tag, drops: &drops, thriving: &|_| 0, home: false };
         let goal = |goal: Goal| progress.goal(&goal);
@@ -650,6 +665,11 @@ mod tests {
         assert_eq!(goal(Goal::Opened("base:farm_treasure_chest".into(), 1)), (0, 1));
         assert_eq!(goal(Goal::Fertilised("base:compost".into(), 4)), (5, 4), "crops grown by compost spread");
         assert_eq!(goal(Goal::Fertilised("base:bone".into(), 1)), (0, 1));
+        assert_eq!(goal(Goal::Ate("base:honey".into(), 2)), (3, 2));
+        assert_eq!(goal(Goal::Ate("tag:sweet".into(), 4)), (3, 4), "food eaten counts by tag");
+        assert_eq!(goal(Goal::Ate("base:bone".into(), 1)), (0, 1), "what was made is not what was eaten");
+        assert_eq!(goal(Goal::Felt("base:smoky".into())), (1, 1), "felt once is enough");
+        assert_eq!(goal(Goal::Felt("base:heartwood".into())), (0, 1));
     }
 
     /// A look-up goal holds from the first time the item was looked up, and a tag or `any`
@@ -736,7 +756,7 @@ mod tests {
         let multiblocks = MultiblockRegistry::new(vec![MultiblockRegistry::read("base", kiln).unwrap()], &blocks).unwrap();
         let source = format!("(quests: [{quest}])");
         let mut quests = QuestRegistry::new(vec![QuestRegistry::read(namespace, &source).unwrap()])?;
-        quests.resolve(&Named { blocks: &blocks, skills: &skills, creatures: &creatures, fishing: &fishing, multiblocks: &multiblocks, steps: &[], events: &["base:pedlar".to_owned()], prayers: &["base:bark_skin".to_owned()] })?;
+        quests.resolve(&Named { blocks: &blocks, skills: &skills, creatures: &creatures, fishing: &fishing, multiblocks: &multiblocks, steps: &[], events: &["base:pedlar".to_owned()], prayers: &["base:bark_skin".to_owned()], effects: &["base:smoky".to_owned()] })?;
         Ok(quests)
     }
 
@@ -771,6 +791,9 @@ mod tests {
         assert_eq!(refused(r#"Prayed("bark_skn", 1)"#, ""), Some("quest base:dig names the prayer `bark_skn`, which no package has".to_owned()));
         assert_eq!(refused(r#"Offered("bon", 1)"#, ""), Some("quest base:dig names the item `bon`, which no package has".to_owned()));
         assert_eq!(refused(r#"Opened("nomad_chest", 1)"#, ""), Some("quest base:dig names the block `nomad_chest`, which no package has".to_owned()));
+        assert_eq!(refused(r#"Ate("hony", 1)"#, ""), Some("quest base:dig names the item `hony`, which no package has".to_owned()));
+        assert_eq!(refused(r#"Felt("smokey")"#, ""), Some("quest base:dig names the effect `smokey`, which no package has".to_owned()));
+        assert!(refused(r#"Felt("smoky"), Ate("torch", 1)"#, "").is_none(), "an effect by its short name");
         assert!(refused(r#"Met("pedlar", 1), Met("Kinds", 3), Met("any", 2), Prayed("bark_skin", 1), Offered("torch", 2)"#, "").is_none());
         // A page no journal has is refused as the file is read.
         let page = quest(r#"Discover(Spells, 1)"#, "");
