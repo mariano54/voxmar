@@ -559,10 +559,10 @@ impl Server {
                 let to = goal.floor().as_ivec3();
                 let mut cells = creature.way.clone();
                 let stale = creature.way_to.is_none_or(|known| known.as_vec3().distance(to.as_vec3()) > 2.0);
-                // Going round, pressing or boxed in (its stuck clock running), or on a way whose
+                // Going round, pressing or boxed in for half a second, or on a way whose
                 // goal moved. A search that found nothing is tried again a second on, from
                 // wherever it has got to.
-                let going_round = creature.detour != 0.0 || creature.stuck > 0.0;
+                let going_round = creature.detour != 0.0 || creature.stuck > 0.5;
                 if (going_round || !cells.is_empty()) && stale && self.tick >= creature.way_at + TICKS_PER_SECOND as u64 {
                     let walker = path::Walker { height: body.size.1.ceil() as i32, climbs: movement.jump > 0.0, wary: water == Water::Land };
                     let found = path::find(&Ground(self), &walker, (body.position + Vec3::Y * 0.01).floor().as_ivec3(), to);
