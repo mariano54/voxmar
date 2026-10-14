@@ -183,6 +183,7 @@ impl Server {
             Run::Clear => self.clear(id, args),
             Run::Effect => self.effect_command(id, args),
             Run::Kill => self.kill_command(id),
+            Run::Heal => self.heal_command(id),
             Run::Op => self.op_command(args, true),
             Run::Deop => self.op_command(args, false),
             Run::Drop => self.drop_command(id, args),
@@ -995,6 +996,16 @@ impl Server {
             player.connection.send(ServerMessage::Died);
         }
         Ok(Words::key("command.kill"))
+    }
+
+    fn heal_command(&mut self, source: Source) -> Reply {
+        let player = self.players.get_mut(&Self::me(source)?).ok_or_else(|| Words::key("command.error.nobody_to_give_to"))?;
+        if !player.health.alive() {
+            return Err(Words::key("command.heal.dead"));
+        }
+        player.health.current = player.health.max;
+        player.changed(voxmar_engine::traits::HEALTH);
+        Ok(Words::key("command.heal"))
     }
 
     fn grow_command(&mut self, source: Source, args: &[String]) -> Reply {

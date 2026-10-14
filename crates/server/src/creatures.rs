@@ -79,6 +79,9 @@ const BALK_WINDOW: u64 = 8 * TICKS_PER_SECOND as u64;
 const REBALK_WINDOW: u64 = 60 * TICKS_PER_SECOND as u64;
 /// How far a land animal out of its depth looks for the shore.
 const SHORE_RANGE: i32 = 12;
+/// How near a wild creature comes to a player holding its favourite food to count as drawn
+/// to them (`Server::note_lured`): about a blow's reach.
+const LURED_WITHIN: f32 = 3.0;
 
 /// A live creature.
 #[derive(Clone, Debug)]
@@ -101,6 +104,9 @@ pub struct Live {
     /// Once kept and let go (`release`): taming it again pays no Hunter xp and counts for
     /// no quest. Only wild creatures carry it, and those are never saved.
     pub was_kept: bool,
+    /// Drawn up close by a player holding its favourite food (`note_lured`): it counts for
+    /// their quests once. Not saved.
+    pub lured: bool,
     /// Came with a wandering party (`wandering`), and so is never one of the settlements'
     /// people, in the party or let go from it.
     pub wanderer: bool,
@@ -352,6 +358,7 @@ impl Server {
         self.tick_villagers();
         self.tick_wandering();
         self.think_and_move();
+        self.note_lured();
         self.tick_husbandry();
         self.drop_fallen_loot();
         if self.tick.is_multiple_of(10 * TICKS_PER_SECOND as u64) {
@@ -393,6 +400,33 @@ impl Server {
             .collect();
         seen.sort_by(|a, b| a.position.distance(at).total_cmp(&b.position.distance(at)));
         seen
+    }
+
+    /// Once a second: a wild creature within `LURED_WITHIN` blocks of a player holding its
+    /// favourite food was drawn there by it, and the player's `lured` tally counts it, once
+    /// for each creature.
+    fn note_lured(&mut self) {
+        if !self.tick.is_multiple_of(TICKS_PER_SECOND as u64) {
+            return;
+        }
+        let mut lured: Vec<(u32, PlayerId, String)> = Vec::new();
+        for (&id, creature) in &self.creatures.live {
+            if creature.lured || creature.owner.is_some() {
+                continue;
+            }
+            let species = self.content.creatures.get(creature.species);
+            let at = creature.body.position;
+            let drawn = |p: &&crate::player::Player| p.joined && p.health.alive() && p.position.distance(at) < LURED_WITHIN && p.held().is_some_and(|item| species.favourite.contains(&item));
+            if let Some(player) = self.players.values().find(drawn) {
+                lured.push((id, player.id, species.def.name.clone()));
+            }
+        }
+        for (id, player, name) in lured {
+            if let Some(creature) = self.creatures.live.get_mut(&id) {
+                creature.lured = true;
+            }
+            self.tally(player, "lured", &name, 1);
+        }
     }
 
     fn think_and_move(&mut self) {
@@ -1095,6 +1129,7 @@ impl Server {
             hurt_by: None,
             fought: None,
             was_kept: false,
+            lured: false,
             wanderer: false,
             companion: false,
             stuck: 0.0,
@@ -2908,5 +2943,40 @@ mod chase_tests {
             assert!(furthest <= leash + 3.0, "{name} followed {furthest:.1} blocks from home (leash {leash})");
             assert!(end < leash, "{name} did not turn back home: {end:.1} blocks off, {}", doing(&server, id));
         }
+    }
+}
+
+#[cfg(test)]
+mod lure_tests {
+    use super::*;
+
+    /// A wild rabbit near a player holding wild carrot counts once as lured, and not while
+    /// the player holds something else or once it is kept.
+    #[test]
+    fn a_favourite_food_held_close_counts_a_creature_lured_once() {
+        let mut server = crate::test_server();
+        let (_client, connection) = voxmar_protocol::local_pair();
+        let player = 1;
+        let mut joined = crate::player::Player::new(player, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
+        joined.joined = true;
+        server.players.insert(player, joined);
+        let rabbit = server.content.creatures.id("base:rabbit").expect("rabbits");
+        let (near, kept, far) = [1.5, -1.5, 6.0].map(|dx| server.spawn_creature(rabbit, server.spawn + Vec3::X * dx, 1).expect("room")).into();
+        server.creatures.live.get_mut(&kept).unwrap().owner = Some("test".into());
+        let lured = |server: &Server| server.players[&player].tallies.get("lured:base:rabbit").copied().unwrap_or(0);
+        let second = |server: &mut Server| {
+            server.tick += TICKS_PER_SECOND as u64;
+            server.note_lured();
+        };
+        // A stick in hand tempts nothing.
+        server.players.get_mut(&player).unwrap().inventory.slots[0] = Some(ItemStack { item: server.content.blocks.expect("base:stick"), count: 1 });
+        second(&mut server);
+        assert_eq!(lured(&server), 0, "a stick lured a rabbit");
+        server.players.get_mut(&player).unwrap().inventory.slots[0] = Some(ItemStack { item: server.content.blocks.expect("base:wild_carrot"), count: 1 });
+        second(&mut server);
+        assert_eq!(lured(&server), 1, "only the wild rabbit in reach is lured");
+        assert!(server.creatures.live[&near].lured && !server.creatures.live[&far].lured);
+        second(&mut server);
+        assert_eq!(lured(&server), 1, "the same rabbit counted twice");
     }
 }

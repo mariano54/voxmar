@@ -78,6 +78,24 @@ pack can retune or replace all of it.
 | 12 | Inspect or guard | A right click at a creature looks closely at it, unless it is fighting the player (winding up, or blows traded within 6 s, `engaged`) and what is held or worn guards: then it guards. Food or a tool it takes tends it first; a ripe crop is picked before armour in hand goes on. |
 | 13 | Lag | A guard or dodge is judged as of when the player saw the wind-up: by when their message arrived, less their round trip (the server pings each player every second and smooths what comes back), never more than 0.2 s (`lag_allowance`), so a slower connection earns no wider a window. A creature's blow on a player waits that long before it is judged, so their answer has time to come; counters and ripostes count the same way. Breaking blocks is judged by arrival the same way (`actions`). |
 
+## Feel on screen
+
+Oct 14, 2026 (Mariano: "combat sucks ... the sound effects and visual effects are not
+satisfactory, animations are bad"). Everything here is drawn and heard on the client from what
+the server already says; no rule, time or number of the fight changes. The code is
+`client/src/fight_fx.rs` (and `creatures.rs` for bodies, `held.rs` for the hand); every number
+and sound is `core/combat_fx.ron`'s, and the hand's strokes are the texture pack's `held.ron`.
+
+| # | Question | Decision |
+| --- | --- | --- |
+| 1 | A blow landing | A hit-stop: the creature freezes for 0.045 s plus 0.12 s × the share of its health the blow took (at most 0.11 s), shaking a little, the kind of blow scaling it (a beat 1.25×, a flourish 2×, a counter 1.8×). It flashes white, then red, then flinches: pushed back 0.12 of its height and tipped 11° away from the striker, squashed, easing back over 0.22 s. Its position never moves (no knockback, decision 7 above). The swing in hand holds still as long as the creature does, then the hand is knocked back. |
+| 2 | Sparks | A burst of glowing sparks where it was struck (on the side facing the eye) and tufts of its own coat; a shelled creature throws chips of its shell's colour. On the beat more, a flourish three times as many. The particle setting scales them. |
+| 3 | Sounds | Synthesized at startup from layers (a contact click, a body's falling thump, a band of noise for the surface, crackle, rings, swept air), saturated and given a small room, a few takes each. A hit sounds the weapon's style; a big creature's lower, a small one's higher; a shelled one clacks. On the beat a bright tick plays over the hit, so the rhythm is heard; a flourish crunches and shimmers; a counter clashes and rings; a kill thumps deep. Swings whoosh by class (a dagger quick and high, a mace low and long, a bow's string). A miss is air; a blow that hurts thuds; a block knocks; a perfect block rings like a parry. A package may give recordings for any of them. |
+| 4 | Creature strikes | A creature coils through its wind-up and snaps into its strike as the blow lands (at the wind-up's own time, or the server's word if sooner), then settles, by its attack's style: a bite pulls its head back and snaps it forward, claws rear up and swipe their front limbs down, horns and hooves drop the head and drive through, a spell rears and flares. The coil is the tell to block or dodge by. |
+| 5 | Deaths | A killing blow freezes 0.12 s and dips the view; the body tips over (its `death`), then over the last 22% of its death shrinks into a puff of smoke. |
+| 6 | The player | A blow that hurts tips the view 4° toward the side it came from and reddens the screen's edges; a block jolts the hand and shakes the view; a perfect block throws sparks before the eyes. A flourish, counter or kill dips the view. Screen shake in the settings turns every movement of the view off. |
+| 7 | The hand | Every attack stroke winds up before it cuts (`wind` in `held.ron`): a sword draws back and slashes across, a dagger and a spear draw back and thrust, a club and an axe rise overhead and come down, a bow draws to the cheek and looses. |
+
 ## Armour and shields
 
 Oct 7, 2026 (the wiki's "Items" tab for sets, weights and Defence levels, its material tiers
