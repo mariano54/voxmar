@@ -6652,7 +6652,7 @@ impl Fresh {
             let hotbar = voxmar_engine::inventory::HOTBAR_SLOTS;
             let empty = (0..hotbar).find(|&s| self.c.inventory.get(s).is_none()).expect("a free hotbar slot for bare hands");
             self.held = empty as u8;
-            self.send();
+            self.steady();
             return;
         }
         let id = self.c.content.blocks.expect(item);
@@ -6668,7 +6668,25 @@ impl Fresh {
             }
         };
         self.held = slot as u8;
-        self.send();
+        self.steady();
+    }
+
+    /// Says where the player stands and what is in hand until the server has taken it: an
+    /// input sent before the client heard of a correction (a walk's last step put back, heard
+    /// a tick late) is dropped whole, the slot in hand with it, and a place judged by the slot
+    /// held before is refused with nothing said.
+    fn steady(&mut self) {
+        loop {
+            if let Some(back) = self.c.teleported.take() {
+                self.at = back;
+            }
+            self.send();
+            // (The server tells of a correction before it answers what was sent after it.)
+            self.c.settle();
+            if self.c.teleported.is_none() {
+                return;
+            }
+        }
     }
 
     /// Breaks one block with what is in hand, waiting out its time by the server's ticks.
@@ -6742,28 +6760,64 @@ impl Fresh {
             // Ticks the nearest drop has lain in the body's reach, by the player's reckoning,
             // without coming in.
             let mut beside = 0;
+            // The server tick of the last drop to come in, and what the bot last did, for a
+            // failure to tell.
+            let (mut came, mut had) = (me.c.ticks(), me.have(item));
+            let mut done: std::collections::VecDeque<String> = Default::default();
             while me.have(item) < need {
-                assert!(me.c.ticks() < until, "{item}: only {} of {need} came in, {} loose, nearest {:?} from {:?} (last put at {:?}); carrying {:?}", me.have(item), loose(&me.c, item), me.c.items.values().filter(|i| i.stack.item == id).map(|i| i.position).min_by(|a, b| across(*a, me.at).total_cmp(&across(*b, me.at))), me.at, me.c.position, (0..voxmar_engine::inventory::SLOTS).filter_map(|s| me.c.inventory.get(s).map(|x| (me.c.content.blocks.def(x.item).name.clone(), x.count))).collect::<Vec<_>>());
+                assert!(me.c.ticks() < until, "{item}: only {} of {need} came in, {} loose, nearest {:?} from {:?} (last put at {:?}), lately {:?}; carrying {:?}", me.have(item), loose(&me.c, item), me.c.items.values().filter(|i| i.stack.item == id).map(|i| i.position).min_by(|a, b| across(*a, me.at).total_cmp(&across(*b, me.at))), me.at, me.c.position, done, (0..voxmar_engine::inventory::SLOTS).filter_map(|s| me.c.inventory.get(s).map(|x| (me.c.content.blocks.def(x.item).name.clone(), x.count))).collect::<Vec<_>>());
+                let did = |what: String, done: &mut std::collections::VecDeque<String>| {
+                    if done.len() == 8 {
+                        done.pop_front();
+                    }
+                    done.push_back(what);
+                };
+                if me.have(item) != had {
+                    (came, had) = (me.c.ticks(), me.have(item));
+                }
                 // Put back by the server after a walk ended (its last step refused, heard a tick
                 // late): the server picks up where it has the player, so the player goes on from
                 // there rather than waiting beside a drop it has them nowhere near.
                 if let Some(back) = me.c.teleported.take() {
+                    did(format!("put back at {back:.2} from {:.2}", me.at), &mut done);
                     me.at = back;
                 }
                 let at = me.at;
                 let near = me.c.items.values().filter(|i| i.stack.item == id).map(|i| i.position).min_by(|a, b| across(*a, at).total_cmp(&across(*b, at)));
+                // Nothing in for three seconds with one loose: put by the server where it lies,
+                // the test's shortcut where closing on it has not done (where the server has
+                // the player, not the bot, is what takes it).
+                if let Some(p) = near
+                    && me.c.ticks() > came + 3 * TICKS_PER_SECOND as u64
+                {
+                    came = me.c.ticks();
+                    let on = p.with_y(me.at.y);
+                    if me.has_room(on) {
+                        me.c.tp(on);
+                        me.at = on;
+                    } else {
+                        assert!(me.hop_near(p, 0.5), "no room near the drop at {p:?}");
+                    }
+                    did(format!("hopped to {:.2} for the drop at {p:.2}", me.at), &mut done);
+                    me.send();
+                    me.tick();
+                    continue;
+                }
                 match near {
                     // Walked up to rather than left to the pull, which stops at blocks: a drop
                     // with a trunk or a pit's side between would lie there, in the pull's range
                     // and out of it at once. Within 0.8 the body's reach takes it, walls or not.
                     Some(p) if across(p, me.at) > 0.8 => {
                         beside = 0;
+                        let from = me.at;
                         me.go_near(p);
+                        did(format!("went from {from:.2} to {:.2} for the drop at {p:.2}", me.at), &mut done);
                     }
                     // In reach and not taken for half a second: stepped onto, on open ground.
                     Some(p) if beside >= TICKS_PER_SECOND / 2 && solid(&me.c, IVec3::new(p.x.floor() as i32, me.origin.y - 1, p.z.floor() as i32)) => {
                         beside = 0;
                         me.walk_toward(p, 0.3);
+                        did(format!("stepped to {:.2} onto the drop at {p:.2}", me.at), &mut done);
                     }
                     Some(_) => beside += 1,
                     None => beside = 0,
@@ -6951,6 +7005,25 @@ fn the_bot_closes_on_a_drop_from_where_the_server_put_it() {
     f.c.ok(&format!("/tp {:?} {:?} {:?}", feet.x, feet.y, feet.z));
     f.collect("base:cobblestone", 1);
     assert_eq!(f.have("base:cobblestone"), 1);
+}
+
+/// The bot's hand is the server's before it places: a move the server corrected, heard
+/// after the bot changed slots, dropped that change, and the place was judged by the
+/// pickaxe still in hand and refused unseen.
+#[test]
+fn the_bot_places_from_the_slot_it_holds_after_a_correction() {
+    let c = on_a_test_floor();
+    let (feet, ticks) = (c.position, c.ticks());
+    let origin = feet.floor().as_ivec3();
+    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()) };
+    f.c.ok("/give stone_pickaxe 1");
+    f.c.ok("/give cobblestone 1");
+    f.c.pump_until(|c| holding(c, "base:stone_pickaxe") == 1 && holding(c, "base:cobblestone") == 1);
+    f.hold("base:stone_pickaxe");
+    // The server moves the player (as it puts back a walk's last step) before it reads the
+    // bot's next input, which the bot sends without having heard of it.
+    f.c.connection.send(ClientMessage::Command { line: format!("/tp {:?} {:?} {:?}", feet.x, feet.y, feet.z) });
+    f.place("base:cobblestone", origin + IVec3::new(2, -1, 0));
 }
 
 /// Takes 3 to 4 minutes (it plays real server time), too slow for every run: use
