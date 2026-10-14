@@ -551,15 +551,23 @@ impl Server {
         let (movement, water) = (&species.def.movement, species.def.habitat.water);
         // The way it follows after this tick, and the goal cell and tick of a fresh search.
         let (mut way, mut searched) = (Vec::new(), None);
+        // What it wanted before steering: a creature boxed in steers to a standstill but still
+        // wants to go, so its stuck clock runs and it gives the goal up.
+        let wanted = drive.wish;
         let (drive, detour) = match decision.goal {
             Some(goal) if !held && drive.wish != Vec3::ZERO && motion::walks(movement, water, drive) => {
                 let to = goal.floor().as_ivec3();
                 let mut cells = creature.way.clone();
                 let stale = creature.way_to.is_none_or(|known| known.as_vec3().distance(to.as_vec3()) > 2.0);
-                if (creature.detour != 0.0 || !cells.is_empty()) && stale && self.tick >= creature.way_at + TICKS_PER_SECOND as u64 {
+                // Going round, pressing or boxed in (its stuck clock running), or on a way whose
+                // goal moved. A search that found nothing is tried again a second on, from
+                // wherever it has got to.
+                let going_round = creature.detour != 0.0 || creature.stuck > 0.0;
+                if (going_round || !cells.is_empty()) && stale && self.tick >= creature.way_at + TICKS_PER_SECOND as u64 {
                     let walker = path::Walker { height: body.size.1.ceil() as i32, climbs: movement.jump > 0.0, wary: water == Water::Land };
-                    cells = path::find(&Ground(self), &walker, (body.position + Vec3::Y * 0.01).floor().as_ivec3(), to).unwrap_or_default();
-                    searched = Some((to, self.tick));
+                    let found = path::find(&Ground(self), &walker, (body.position + Vec3::Y * 0.01).floor().as_ivec3(), to);
+                    searched = Some((found.is_some().then_some(to), self.tick));
+                    cells = found.unwrap_or_default();
                 }
                 // At a cell (beside it, at its level), or already nearer the one after: on to
                 // the next, so it never turns back for a cell it brushed past.
@@ -583,12 +591,12 @@ impl Server {
         creature.detour = detour;
         creature.way = way;
         if let Some((to, at)) = searched {
-            (creature.way_to, creature.way_at) = (Some(to), at);
+            (creature.way_to, creature.way_at) = (to, at);
         }
         // Stuck against something for two seconds, or going round it for four: give up the
         // goal.
         let gained = body.position.distance(before) >= drive.speed * dt * 0.2;
-        if drive.wish != Vec3::ZERO && (!gained || detour != 0.0) {
+        if wanted != Vec3::ZERO && (!gained || detour != 0.0) {
             creature.stuck += if gained { dt * 0.5 } else { dt };
             if creature.stuck > 2.0 {
                 creature.decision.goal = None;
@@ -2355,6 +2363,26 @@ mod way_tests {
             let out = fowl.iter().filter(|id| server.creatures.live[id].body.position.z > lane(-9.0).z).count();
             assert!(out >= 5, "only {out} of 7 junglefowl left the end cell after 7 s (salt {salt}): {:.2?}", heap(&server));
         }
+    }
+
+    /// A deer struck shut in a box of stone one block across has nowhere to run: it stands
+    /// rather than press into the walls, but its stuck clock still runs and it gives up the
+    /// goal (for another, or the next look at a way round).
+    #[test]
+    fn a_creature_boxed_in_gives_up_its_goal() {
+        let mut server = crate::test_server();
+        let c = pen(&mut server, 6);
+        wall(&mut server, [IVec3::new(-1, 0, 0), IVec3::new(1, 0, 0), IVec3::new(0, 0, -1), IVec3::new(0, 0, 1)].map(|d| c + d), 3);
+        let player = join(&mut server, c.as_vec3() + Vec3::new(3.5, 0.0, 0.5));
+        let id = put(&mut server, "base:rabbit", c.as_vec3() + Vec3::new(0.5, 0.0, 0.5), Vec3::X);
+        server.hurt_creature(player, id, 0, None, voxmar_engine::combat::Blow::Plain);
+        let mut most: f32 = 0.0;
+        for _ in 0..4 * TICKS_PER_SECOND as u64 {
+            server.tick += 1;
+            server.think_and_move();
+            most = most.max(server.creatures.live[&id].stuck);
+        }
+        assert!(most > 1.5, "a boxed-in rabbit's stuck clock never ran (most {most:.2})");
     }
 
     /// The pen's x > 0 half sunk `depth` blocks, with water to its rim when `wet`.
