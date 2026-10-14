@@ -529,6 +529,13 @@
             rewards: [Xp("hitpoints", 200.0)],
         ),
         (
+            name: "the_rootmother", age: "farm", branch: "combat", title: "The Rootmother",
+            why: "Under the oldest woods, in the Old Growth Forest, the Dark Forest, the Redwood Forest and the Old Growth Taiga, a passage slopes down into a hollow of living root, and the Rootmother waits there. Cut her and she grows back: what do woodsmen do with stumps? A campfire or torch within four blocks of her, or the sun on her back, stops her mending. Block her lash; dodge her grasp, which no guard holds. Below half she rears and wakes: a quicker thrash, and seeds flung at anyone who keeps away. Train to Attack 12 and Defence 10, then bring her down. Her heartroot heals, and leaves you Heartwood.",
+            tasks: [[Level("attack", 12), Level("defence", 10)], [Kill("rootmother", 1)]],
+            after: ["seasoned_fighter", "copper_arms"],
+            rewards: [Xp("attack", 500.0), Xp("defence", 300.0), Item("gold_coin", 10)],
+        ),
+        (
             name: "tin_find", age: "farm", branch: "mining", title: "A Silvery Ore",
             why: "Tin is the other half of bronze. It needs Mining 10 and a pickaxe, so keep digging coal and copper to get there. Tin lies in the lower part of copper veins: where you found copper, dig below it. Mine three tin ore. Take three copper from the same seam: bronze wants both.",
             tasks: [[Mine("tin_ore", 3), Mine("copper_ore", 3)]],
@@ -864,7 +871,7 @@
         // second names quests to do by it meanwhile.
         (
             name: "humming_in_the_meadow", age: "farm", branch: "farming", title: "Humming in the Meadow",
-            why: "Wild bees nest in hollows at the foot of broadleaf, fruit and blossom trees in a Flower Meadow, a Cherry Grove or Lavender Fields: listen for the hum and look for bees about the roots. Coil a skep from seven wheat and three twine (Crafting 6), light a campfire within four blocks of the nest so the smoke calms them, then hold the skep up to it and right-click (Farming 12). Without smoke they only sting.",
+            why: "Wild bees nest in hollows at the foot of broadleaf, fruit and blossom trees in a Flower Meadow, a Cherry Grove or Lavender Fields: listen for the hum and look for bees about the roots. Coil a skep from seven wheat and three twine (Crafting 6), light a campfire within four blocks of the nest so the smoke calms them (or hold a torch a moment: its smoke clings to you for half a minute), then hold the skep up to it and right-click (Farming 12). Without smoke they only sting.",
             tasks: [[Level("farming", 12), Craft("skep", 1), Have("bee_skep", 1)]],
             after: ["a_field_of_gold"],
             rewards: [Xp("farming", 300.0), Xp("crafting", 60.0)],

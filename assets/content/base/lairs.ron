@@ -1,0 +1,28 @@
+// Lairs: a boss's room dug under the land of its biomes (worldgen/src/lairs.rs,
+// docs/bosses.md). A share of the squares of `grid` hold one, at the first of `tries`
+// spots that lies `inside` blocks deep in one of its biomes on dry, gentle ground: a dome
+// `radius` wide and `height` high whose floor lies `depth` under the ground, lined with
+// its `wall` (unbreakable), floored with its `floor` (the block boss music knows the room
+// by, music.ron), and a passage sloping up to the surface. The server puts its `boss` on
+// the floor's middle when a player comes within `wakes` blocks; once it falls the lair
+// stands empty `rest` days. No wild creature is born within `quiet` blocks of it.
+(
+    lairs: [
+        // The Rootmother's hollow, under the oldest woods (design wiki: Farm age boss,
+        // "rooms in old_growth_forest, dark_forest"; the old redwoods and old taiga too, so
+        // most worlds have one within a few kilometres).
+        (
+            name: "root_hollow",
+            boss: "rootmother",
+            biomes: ["old_growth_forest", "dark_forest", "redwood_forest", "old_growth_taiga"],
+            inside: 16.0,
+            grid: (spacing: 640, chance: 0.8, margin: 64),
+            tries: 8,
+            radius: 7, height: 5, depth: 10,
+            wall: "hollow_root", floor: "hollow_floor",
+            quiet: 32.0,
+            rest: 1.0,
+            wakes: 48.0,
+        ),
+    ],
+)

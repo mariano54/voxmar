@@ -197,7 +197,7 @@ impl Progress<'_> {
             Goal::CookAt(item, station, n) => (tally(&format!("cooked_at:{station}"), item), *n),
             Goal::Catch(fish, n) if fish == "Kinds" => (self.journal.found(Page::Fish) as u32, *n),
             Goal::Catch(fish, n) => (journal(Page::Fish, fish), *n),
-            Goal::Kill(creature, n) => (journal(Page::Animals, creature) + journal(Page::Monsters, creature), *n),
+            Goal::Kill(creature, n) => (journal(Page::Animals, creature) + journal(Page::Monsters, creature) + journal(Page::Bosses, creature), *n),
             Goal::Tame(creature, n) => (tally("tamed", creature), *n),
             Goal::Pick(plant, n) => (journal(Page::Plants, plant), *n),
             Goal::Mine(ore, n) => {

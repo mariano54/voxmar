@@ -56,6 +56,11 @@ pub struct EffectDef {
     /// Milder effects it hides while it lasts.
     #[serde(default)]
     pub replaces: Vec<String>,
+    /// Seconds it stays once its `when` stops holding: an effect that clings (smoke on
+    /// clothes). While `when` holds it is kept topped up to this, as a timed effect; 0 (the
+    /// default) is an effect that lasts only while `when` holds.
+    #[serde(default)]
+    pub lingers: f32,
     /// Whether the player is told (in chat) when it comes on, with what it does: for the
     /// steps of a ladder they work toward.
     #[serde(default)]
@@ -175,6 +180,11 @@ pub enum Condition {
     /// Under a roof while the inner condition (the weather) holds out in the open: the
     /// storm outside, from indoors.
     Sheltered(Box<Condition>),
+    /// The item in the player's hand carries this tag (`Holding("fire")`: a torch).
+    Holding(String),
+    /// A block carrying this tag lies within this many blocks of the player's feet, every
+    /// way (`Near("fire", 4)`: a campfire close by). The reach is 1 to 8.
+    Near(String, i32),
     /// The player has finished this quest (its full name, or its name alone in the package
     /// that lists the effect): what a quest taught stays with them, as an effect that holds
     /// from then on.
@@ -211,6 +221,18 @@ impl Condition {
             Condition::HomeHas(tag, _) => into.push(tag),
             Condition::All(list) | Condition::Any(list) => list.iter().for_each(|c| c.home_tags(into)),
             Condition::Not(c) | Condition::Sheltered(c) => c.home_tags(into),
+            _ => {}
+        }
+    }
+
+    /// The tags and reaches `Near` asks about, and the tags `Holding` asks of the item in
+    /// hand, anywhere in this condition.
+    fn asks<'a>(&'a self, near: &mut Vec<(&'a str, i32)>, held: &mut Vec<&'a str>) {
+        match self {
+            Condition::Near(tag, reach) => near.push((tag, *reach)),
+            Condition::Holding(tag) => held.push(tag),
+            Condition::All(list) | Condition::Any(list) => list.iter().for_each(|c| c.asks(near, held)),
+            Condition::Not(c) | Condition::Sheltered(c) => c.asks(near, held),
             _ => {}
         }
     }
@@ -283,6 +305,10 @@ pub struct Situation<'a> {
     pub home: Option<&'a HomeSurvey>,
     /// The quests the player has finished (full names).
     pub done: &'a [String],
+    /// The tags of the item in the player's hand.
+    pub held: &'a [String],
+    /// Which of the `Near` asks (`EffectRegistry::near_asks`) hold where the player stands.
+    pub near: &'a [(String, i32)],
 }
 
 /// How many blocks with each tag lie around a home: the tags are those effects ask of it
@@ -318,6 +344,8 @@ impl Condition {
             Condition::HomeHas(tag, n) => s.home.is_some_and(|h| h.count(tag) >= *n),
             Condition::Sheltered(c) => !s.outdoors && c.holds(&Situation { outdoors: true, ..*s }),
             Condition::Done(quest) => s.done.iter().any(|d| d == quest),
+            Condition::Holding(tag) => s.held.contains(tag),
+            Condition::Near(tag, reach) => s.near.iter().any(|(t, r)| t == tag && r == reach),
             Condition::All(all) => all.iter().all(|c| c.holds(s)),
             Condition::Any(any) => any.iter().any(|c| c.holds(s)),
             Condition::Not(c) => !c.holds(s),
@@ -379,6 +407,10 @@ pub struct EffectRegistry {
     home_tags: Vec<String>,
     /// The quests effects wait on, each once.
     quests: Vec<String>,
+    /// The tags and reaches `Near` asks about, each once, and the tags `Holding` asks of
+    /// the item in hand.
+    near_asks: Vec<(String, i32)>,
+    held_tags: Vec<String>,
 }
 
 impl EffectRegistry {
@@ -485,7 +517,31 @@ impl EffectRegistry {
                 quests.push(quest.to_owned());
             }
         }
-        Ok(Self { defs, by_name, replaces, foods, sleeps, home_tags, quests })
+        let (mut near, mut held) = (Vec::new(), Vec::new());
+        for def in &defs {
+            if !(def.lingers.is_finite() && def.lingers >= 0.0) || (def.lingers > 0.0 && def.when.is_none()) {
+                return Err(RegistryError(format!("effect `{}` lingers {} seconds: it takes 0 or more, and a `when` to linger after", def.name, def.lingers)));
+            }
+            if let Some(when) = &def.when {
+                when.asks(&mut near, &mut held);
+            }
+        }
+        if let Some((tag, reach)) = near.iter().find(|(_, reach)| !(1..=8).contains(reach)) {
+            return Err(RegistryError(format!("effects.ron: `Near(\"{tag}\", {reach})` reaches 1 to 8 blocks")));
+        }
+        let mut near_asks: Vec<(String, i32)> = Vec::new();
+        for (tag, reach) in near {
+            if !near_asks.iter().any(|(t, r)| t == tag && *r == reach) {
+                near_asks.push((tag.to_owned(), reach));
+            }
+        }
+        let mut held_tags: Vec<String> = Vec::new();
+        for tag in held {
+            if !held_tags.iter().any(|t| t == tag) {
+                held_tags.push(tag.to_owned());
+            }
+        }
+        Ok(Self { defs, by_name, replaces, foods, sleeps, home_tags, quests, near_asks, held_tags })
     }
 
     pub fn get(&self, id: EffectId) -> &EffectDef {
@@ -530,6 +586,10 @@ impl EffectRegistry {
     pub fn active(&self, situation: &Situation, timed: &[(EffectId, f32)]) -> Vec<ActiveEffect> {
         let mut active: Vec<ActiveEffect> = timed.iter().map(|&(effect, left)| ActiveEffect { effect, seconds_left: Some(left.ceil().clamp(0.0, u16::MAX as f32) as u16) }).collect();
         for id in self.ids() {
+            // One that lingers comes as a timed effect (`linger`), never while it holds only.
+            if self.get(id).lingers > 0.0 {
+                continue;
+            }
             if !active.iter().any(|a| a.effect == id) && self.get(id).when.as_ref().is_some_and(|c| c.holds(situation)) {
                 active.push(ActiveEffect { effect: id, seconds_left: None });
             }
@@ -605,6 +665,33 @@ impl EffectRegistry {
     }
 
     /// The tags effects ask of a home (`HomeHas`): what surveying a home counts.
+    /// Tops up `timed` with every effect that lingers whose `when` holds at `situation`:
+    /// each kept at no less than its `lingers` seconds, so it lasts that long once it stops
+    /// holding.
+    pub fn linger(&self, situation: &Situation, timed: &mut Vec<(EffectId, f32)>) {
+        for id in self.ids() {
+            let def = self.get(id);
+            if def.lingers <= 0.0 || !def.when.as_ref().is_some_and(|c| c.holds(situation)) {
+                continue;
+            }
+            match timed.iter_mut().find(|(e, _)| *e == id) {
+                Some((_, left)) => *left = left.max(def.lingers),
+                None => timed.push((id, def.lingers)),
+            }
+        }
+    }
+
+    /// The tags and reaches effects ask about with `Near`, each once: the server looks for
+    /// them around each player.
+    pub fn near_asks(&self) -> &[(String, i32)] {
+        &self.near_asks
+    }
+
+    /// The tags effects ask of the item in hand with `Holding`.
+    pub fn held_tags(&self) -> &[String] {
+        &self.held_tags
+    }
+
     pub fn home_tags(&self) -> &[String] {
         &self.home_tags
     }
@@ -682,7 +769,7 @@ mod tests {
     }
 
     fn situation(weather: &Weather, warmed: bool, felt: f32, outdoors: bool) -> Situation<'_> {
-        Situation { felt, warmed, outdoors, weather, biome: "base:plains", biome_tags: &[], home: None, done: &[] }
+        Situation { felt, warmed, outdoors, weather, biome: "base:plains", biome_tags: &[], home: None, done: &[], held: &[], near: &[] }
     }
 
     #[test]
@@ -698,6 +785,40 @@ mod tests {
         assert!(effects.active(&situation(&rain, false, 15.0, false), &[]).is_empty(), "rain under a roof soaks no one");
         let snow = Weather { precipitation: 0.8, snow: 1.0, ..Weather::NONE };
         assert!(effects.active(&situation(&snow, false, 15.0, true), &[]).is_empty(), "snow is not rain");
+    }
+
+    /// What is in hand and what is near: `Holding` and `Near` hold off the situation's
+    /// lists; an effect that `lingers` is no ambient one, but is topped up as a timed one
+    /// while it holds and then runs down; asks are listed each once and checked at load.
+    #[test]
+    fn smoke_in_hand_or_near_clings_for_its_lingering_seconds() {
+        let source = r#"(effects: [
+            (name: "smoky", kind: Buff, title: "Smoky", description: "", when: Some(Any([Holding("fire"), Near("fire", 2), Near("fire", 2)])), lingers: 30.0),
+        ])"#;
+        let effects = EffectRegistry::new(vec![EffectRegistry::read("core", source).unwrap()]).unwrap();
+        assert_eq!(effects.near_asks(), [("fire".to_owned(), 2)], "each ask once");
+        assert_eq!(effects.held_tags(), ["fire"]);
+        let smoky = effects.find("smoky").unwrap();
+        let calm = Weather::NONE;
+        let (torch, fire) = (["fire".to_owned()], [("fire".to_owned(), 2)]);
+        let holding = Situation { held: &torch, ..situation(&calm, false, 15.0, true) };
+        let near = Situation { near: &fire, ..situation(&calm, false, 15.0, true) };
+        let away = situation(&calm, false, 15.0, true);
+        assert!(effects.active(&holding, &[]).is_empty(), "it comes as a timed effect, not while it holds");
+        let mut timed = Vec::new();
+        effects.linger(&holding, &mut timed);
+        assert_eq!(timed, [(smoky, 30.0)]);
+        timed[0].1 = 5.0;
+        effects.linger(&near, &mut timed);
+        assert_eq!(timed, [(smoky, 30.0)], "topped up, once");
+        timed[0].1 = 5.0;
+        effects.linger(&away, &mut timed);
+        assert_eq!(timed, [(smoky, 5.0)], "away from smoke it runs down");
+        assert_eq!(effects.active(&away, &timed).len(), 1);
+        for bad in [r#"when: Some(Near("fire", 0)), lingers: 1.0"#, r#"when: Some(Near("fire", 9))"#, "lingers: 5.0", r#"when: Some(Holding("fire")), lingers: -1.0"#] {
+            let source = format!(r#"(effects: [(name: "smoky", kind: Buff, title: "Smoky", description: "", {bad})])"#);
+            assert!(EffectRegistry::new(vec![EffectRegistry::read("core", &source).unwrap()]).is_err(), "{bad}");
+        }
     }
 
     #[test]

@@ -121,6 +121,9 @@ pub struct WorldMeta {
     /// `None` until a world is first opened with it.
     #[serde(default)]
     pub worldgen_content: Option<u64>,
+    /// Lairs standing empty after their boss fell, until a time of day (`lairs`).
+    #[serde(default)]
+    pub lairs: Vec<crate::lairs::SavedLair>,
 }
 
 /// How a regrowing plant is saved, by block names.
@@ -157,6 +160,7 @@ impl WorldMeta {
             lit: Vec::new(),
             generation: 0,
             worldgen_content: None,
+            lairs: Vec::new(),
         }
     }
 }

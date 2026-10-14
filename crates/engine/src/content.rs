@@ -401,6 +401,10 @@ impl Content {
         if let Some(tag) = effects.home_tags().iter().find(|tag| *tag != "kept" && !blocks.ids().any(|id| blocks.def(id).has_tag(tag))) {
             return Err(RegistryError(format!("effects.ron: a home is asked for blocks tagged `{tag}`, which no block carries")));
         }
+        // So are the tags of blocks near, and of the item in hand.
+        if let Some(tag) = effects.near_asks().iter().map(|(tag, _)| tag).chain(effects.held_tags()).find(|tag| !blocks.ids().any(|id| blocks.def(id).has_tag(tag))) {
+            return Err(RegistryError(format!("effects.ron: an effect asks for a block or held item tagged `{tag}`, which no block carries")));
+        }
         let tools = ToolRegistry::new(tools, &blocks, &skills)?;
         let combat = crate::combat::CombatRegistry::new(combat, &blocks, &skills)?;
         let prayers = crate::prayer::PrayerRegistry::new(prayers, &blocks, &skills)?;

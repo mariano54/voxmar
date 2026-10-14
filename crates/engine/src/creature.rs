@@ -20,6 +20,7 @@ pub mod condition;
 pub mod husbandry;
 pub mod model;
 pub mod motion;
+pub mod moves;
 pub mod skin;
 pub mod volume;
 
@@ -221,8 +222,9 @@ pub struct Habitat {
     pub active: Active,
     /// Lives under ground, in caves.
     pub caves: bool,
-    /// Comes only with a wandering party (`wandering.ron`), never from the land's own
-    /// population: a bandit patrol's raiders, a hunter's hound.
+    /// Comes only with a wandering party (`wandering.ron`), or a boss in its lairs
+    /// (`lairs.ron`), never from the land's own population: a bandit patrol's raiders, a
+    /// hunter's hound, the Rootmother.
     pub party_only: bool,
 }
 
@@ -441,6 +443,15 @@ pub struct CreatureDef {
     pub health: u16,
     #[serde(default)]
     pub attack: Option<Attack>,
+    /// Attacks besides `attack`, chosen by phase and distance (`moves::Creature::choose`).
+    #[serde(default)]
+    pub moves: Vec<moves::Move>,
+    /// The stages of its fight, by the health it falls to.
+    #[serde(default)]
+    pub phases: Vec<moves::Phase>,
+    /// How it mends its wounds while it fights, if it does.
+    #[serde(default)]
+    pub mend: Option<moves::Mend>,
     /// Its defence level, against which hits are rolled.
     #[serde(default = "first")]
     pub defence: u8,
@@ -799,6 +810,7 @@ impl CreatureRegistry {
             if def.health == 0 || def.body.size.0 <= 0.0 || def.body.size.1 <= 0.0 || def.body.colours.is_empty() {
                 return Err(error("needs health, a size and at least one colour".into()));
             }
+            moves::check(&def).map_err(error)?;
             if def.genes.len() > crate::genes::MOST {
                 return Err(error(format!("has more than {} genes", crate::genes::MOST)));
             }

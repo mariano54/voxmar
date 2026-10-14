@@ -31,7 +31,12 @@ pub use voxmar_engine::weather::Weather;
 // 34: ClientMessage::ClaimQuest (a finished quest's rewards are claimed in the quest screen), and
 // QuestState::claimed.
 // 35: Pray and Prayers, the prayer book.
-pub const PROTOCOL_VERSION: u32 = 35;
+// 36: a creature's tell (CreatureView::tell): the move it winds up, or rearing into a phase.
+pub const PROTOCOL_VERSION: u32 = 36;
+
+/// A creature's `tell` while it rears into a new phase of its fight.
+pub const REARING: u8 = u8::MAX;
+
 pub const DEFAULT_PORT: u16 = 25_665;
 /// Server simulation rate.
 pub const TICKS_PER_SECOND: u32 = 20;
@@ -193,6 +198,10 @@ pub struct CreatureView {
     pub velocity: Vec3,
     pub yaw: f32,
     pub pose: Pose,
+    /// What its body shows: the move it winds up (`Creature::attack_at`'s index, its
+    /// `moves` from 1; 0 its plain attack or none) or `REARING` into a new phase of its
+    /// fight, so each reads apart.
+    pub tell: u8,
     pub health: u16,
     /// Its size against its species', from its genes.
     pub scale: f32,

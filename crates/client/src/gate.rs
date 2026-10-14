@@ -291,6 +291,10 @@ enum Step {
     /// its wind-up ends is a perfect block that takes nothing, a click then is a counter,
     /// and a dodge as the next blow comes down lets it pass.
     Feel,
+    /// The Rootmother summoned on the pad reaches the client and draws; the music counts it a
+    /// boss fight and plays a boss's track; in survival she winds up a move of her own, its
+    /// tell shown. Every exit sweeps her away.
+    Boss,
     /// A chainmail shirt and a wooden shield in hand, each right click puts one on in its
     /// own worn slot, and with the shield on the guard is the shield's; the inventory
     /// shows both in its worn wells, and their tooltips the armour lines.
@@ -1316,6 +1320,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Weapon => weapon(world, gate, now, in_phase),
         Step::Sling => sling(world, gate, now, in_phase),
         Step::Feel => feel(world, gate, now, in_phase),
+        Step::Boss => boss(world, gate, now),
         Step::Wear => wear(world, gate, now, in_phase),
         Step::CombatHud => combat_hud(world, gate, now, in_phase),
         Step::Cook => cook(world, gate, now, in_phase),
@@ -6645,7 +6650,9 @@ const FEEL_TRIES: u32 = 10;
 const FEEL_STEP: f32 = 0.05;
 /// Frames before the moment tried that an answer is pressed (`FeelRun::answer`): one for the
 /// frame the game takes to send it, and half of one so the frame that sends it is the
-/// nearest to the moment, not the first past it.
+/// nearest to the moment, not the first past it. Never more than half the window aimed at
+/// (`FeelRun::room`): a quarter-second frame led a try at 0.55 s to be queued at 0.50 s,
+/// before the perfect window, where a press that waited sent it inside.
 const FEEL_AIM: f32 = 1.5;
 /// Seconds past the moment tried that a frame may come late with the try still saying
 /// something of the moment: a frame that late answered after the blow could have landed
@@ -6690,6 +6697,10 @@ struct FeelRun {
     /// The moment the answer's search is centred on, and how far round it the dodge's
     /// search has gone (`after` is the moment tried next).
     centre: f32,
+    /// Half the window the answer aims at (the perfect block's, then the dodge's), and the
+    /// dodge's middle and half, in seconds before the blow, from the content.
+    room: f32,
+    dodge: (f32, f32),
     probe: u32,
     /// The moment after the wind-up showed that the perfect block was found at: the dodge's
     /// search starts there, as the same delays (the server's, the frames') hold.
@@ -6739,7 +6750,7 @@ impl FeelRun {
     fn answer(&mut self, world: &mut World, blocking: bool, dodge_key: KeyCode, received: bool) -> bool {
         let Some(seen) = self.seen else { return false };
         let frame = world.get_resource::<Time>().map_or(0.0, |t| t.delta_secs());
-        if received || self.answered || seen.elapsed().as_secs_f32() + FEEL_AIM * frame < self.after {
+        if received || self.answered || seen.elapsed().as_secs_f32() + (FEEL_AIM * frame).min(self.room) < self.after {
             return false;
         }
         self.answered = true;
@@ -6765,7 +6776,7 @@ impl FeelRun {
 fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     use voxmar_engine::combat::{Blow, Defended};
     use voxmar_engine::creature::brain::Pose;
-    let (species, windup) = {
+    let (species, windup, perfect, dodge) = {
         let content = &world.resource::<Launch>().content;
         let Some(species) = content.creatures.find(BEAR) else {
             gate.check("perfect block", Err(format!("no `{BEAR}` in the content")));
@@ -6773,7 +6784,18 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             return;
         };
         let windup = content.creatures.get(species).def.attack.and_then(|a| a.windup).unwrap_or(content.combat.feel.creature_windup);
-        (species, windup)
+        // The windows the answers aim at, as the server judges them (`Guarding::meets`): a
+        // raise up to `perfect` before the blow is a perfect block, and a dodge is safe from
+        // `safe.0` to `safe.1` after it begins. The step wears no armour.
+        let combat = &content.combat;
+        let sword = combat.wielded(content.blocks.id(WEAPON), |_| WEAPON_LEVEL);
+        let Some(perfect) = combat.guard(&sword).map(|g| g.perfect) else {
+            gate.check("perfect block", Err(format!("`{WEAPON}` has no guard")));
+            end_feel(world, gate, now);
+            return;
+        };
+        let safe = combat.dodge_of(&[]).safe;
+        (species, windup, perfect, ((safe.0 + safe.1) / 2.0, (safe.1 - safe.0) / 2.0))
     };
     let view = the_bear(world, gate, species);
     let dodge_key = world.resource::<Settings>().dodge_key.0;
@@ -6805,9 +6827,12 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
             summon(world);
             let fighting = world.resource::<crate::fight::Fighting>();
-            // The search starts 0.15 s before the blow, where the perfect block has been found
-            // on the Mac (0.55 s into a 0.7 s wind-up); it moves either way from there.
-            gate.feel = FeelRun { after: (windup - 0.15).max(0.0), centre: (windup - 0.15).max(0.0), hurts: fighting.hurt_count, struck: fighting.struck_count, poked: f32::MIN, bears: 1, started: gate.server_now, ..default() };
+            // The search starts in the middle of the perfect window (0.625 s into a 0.7 s
+            // wind-up). From its earliest moment (0.55 s), a press a few milliseconds early
+            // was raised too soon, and on calm runs the block took two tries. It moves either
+            // way from there.
+            let middle = (windup - perfect / 2.0).max(0.0);
+            gate.feel = FeelRun { after: middle, centre: middle, room: perfect / 2.0, dodge, hurts: fighting.hurt_count, struck: fighting.struck_count, poked: f32::MIN, bears: 1, started: gate.server_now, ..default() };
             gate.advance(now);
         }
         1 => {
@@ -6950,7 +6975,7 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     gate.feel.slow = 0;
                     gate.feel.slowest = 0.0;
                     if blocking {
-                        to_dodge(gate, windup, now);
+                        to_dodge(gate, windup, perfect, now);
                     } else {
                         clear_feel(gate, now);
                     }
@@ -6995,7 +7020,7 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 let outcomes = std::mem::take(&mut gate.feel.outcomes);
                 gate.check(if blocking { "perfect block" } else { "dodge" }, Err(format!("{FEEL_TRIES} answers to the bear's blows came to {outcomes:?}")));
                 if blocking {
-                    to_dodge(gate, windup, now);
+                    to_dodge(gate, windup, perfect, now);
                 } else {
                     clear_feel(gate, now);
                 }
@@ -7006,7 +7031,7 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             mouse(world, MouseButton::Right, false);
             let Some(view) = view else {
                 gate.check("counter", Err("the bear went before the counter".into()));
-                to_dodge(gate, windup, now);
+                to_dodge(gate, windup, perfect, now);
                 return;
             };
             aim_at(world, view.position + Vec3::Y * 0.6);
@@ -7021,10 +7046,10 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.feel.poked = gate.server_now;
                 if blow == Blow::Counter && damage > 0 {
                     gate.check("counter", Ok(format!("the click after the perfect block was a counter for {damage}")));
-                    to_dodge(gate, windup, now);
+                    to_dodge(gate, windup, perfect, now);
                 } else if gate.feel.tries + 1 >= FEEL_TRIES {
                     gate.check("counter", Err(format!("the click after the perfect block was {blow:?} for {damage}")));
-                    to_dodge(gate, windup, now);
+                    to_dodge(gate, windup, perfect, now);
                 } else {
                     // Too late for the window (a server far behind): block again.
                     gate.feel.tries += 1;
@@ -7032,7 +7057,7 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 }
             } else if gate.server_in_phase() > UNANSWERED {
                 gate.check("counter", Err(format!("the server answered no blow for {UNANSWERED}s")));
-                to_dodge(gate, windup, now);
+                to_dodge(gate, windup, perfect, now);
             }
         }
         5 => {
@@ -7045,20 +7070,23 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 }
 
 /// After the block and counter, passed or not: on to the dodge (phase 4) with its own tries.
-fn to_dodge(gate: &mut Gate, windup: f32, now: f32) {
+fn to_dodge(gate: &mut Gate, windup: f32, perfect: f32, now: f32) {
     gate.feel.tries = 0;
     gate.feel.slow = 0;
     gate.feel.slowest = 0.0;
     gate.feel.outcomes.clear();
     gate.feel.seen = None;
     gate.feel.answered = false;
-    // A dodge is safe from 0.04 to about 0.2 s in, a perfect guard up to 0.15 s before the
-    // blow. The block's search starts at its window's earliest moment and moves later only
-    // on a guard raised too soon, so the moment it was found at lands early in the guard's
-    // window, which is the middle of the dodge's: the dodge starts there. (0.05 s before it
-    // was the dodge window's very edge, and once the smoothed round trip had grown with the
-    // lag since the block's try, the server judged the same request earlier and it was hit.)
-    gate.feel.after = gate.feel.found.unwrap_or(windup - 0.15).clamp(0.0, windup);
+    // The dodge's search starts in the middle of its window (0.57 s into a 0.7 s wind-up,
+    // for a dodge safe from 0.04 to 0.22 s in), moved as far as the perfect block was found
+    // from its own window's middle: the same delays (the server's, the frames') hold for
+    // both. (Started 0.05 s before the block's moment, it was hit once the smoothed round
+    // trip had grown with the lag since the block's try, as the server then judged the
+    // same request earlier.)
+    let (middle, half) = gate.feel.dodge;
+    let moved = gate.feel.found.map_or(0.0, |found| found - (windup - perfect / 2.0));
+    gate.feel.after = (windup - middle + moved).clamp(0.0, windup);
+    gate.feel.room = half;
     gate.feel.centre = gate.feel.after;
     gate.feel.probe = 0;
     to_phase(gate, FEEL_DODGE, now);
@@ -7096,6 +7124,96 @@ fn end_feel(world: &mut World, gate: &mut Gate, now: f32) {
     let net = world.resource::<Net>();
     net.command("gamemode survival");
     net.command("skill attack 1");
+    net.command("skill hitpoints 10");
+    net.command(&format!("tp {} {} {}", feet.x as f32 + 0.5, feet.y, feet.z as f32 + 0.5));
+    gate.next(Step::Boss, now);
+}
+
+/// The boss the boss step summons.
+const BOSS: &str = "base:rootmother";
+/// Server seconds each of the boss step's waits may take.
+const BOSS_WAIT: f32 = 10.0;
+/// The boss step's sweep, which every exit comes to.
+const BOSS_SWEEP: u32 = 4;
+
+/// The Rootmother on the pad: drawn, her music, a move's tell; then swept away.
+fn boss(world: &mut World, gate: &mut Gate, now: f32) {
+    let Some(species) = world.resource::<Launch>().content.creatures.find(BOSS) else {
+        gate.check("boss", Err(format!("no `{BOSS}` in the content")));
+        end_boss(world, gate, now);
+        return;
+    };
+    let pad = gate.feet + IVec3::new(0, 0, 14);
+    let view = world.resource::<crate::creatures::Creatures>().views().find(|v| v.species == species).copied();
+    let waited = gate.server_in_phase() > BOSS_WAIT;
+    let sweep = |gate: &mut Gate, now: f32| {
+        gate.sweep = Sweep::default();
+        to_phase(gate, BOSS_SWEEP, now);
+    };
+    match gate.phase {
+        0 => {
+            // In creative, so she does not fight before the music is judged.
+            let net = world.resource::<Net>();
+            net.command("gamemode creative");
+            net.command(&format!("summon {} 1 {} {} {}", BOSS.trim_start_matches("base:"), pad.x, pad.y, pad.z + 1));
+            gate.advance(now);
+        }
+        1 => {
+            if let Some(view) = view {
+                gate.check("boss drawn", Ok(format!("the Rootmother reached the client at {:.1}", view.position)));
+                gate.advance(now);
+            } else if waited {
+                gate.check("boss drawn", Err(format!("a summoned {BOSS} never reached the client in {BOSS_WAIT} server seconds")));
+                sweep(gate, now);
+            }
+        }
+        2 => {
+            // A boss within the rules' reach is a boss fight: the calm track fades and a
+            // boss's starts (silently, `music::Rehearse`).
+            let music = crate::music::boss_music(world);
+            if music.is_some_and(|(fighting, track)| fighting && track) {
+                gate.check("boss music", Ok("a boss fight, with a boss's track playing".into()));
+                gate.advance(now);
+            } else if waited {
+                let said = music.map_or("no music running".to_owned(), |(fighting, track)| format!("in a boss fight: {fighting}, a boss's track: {track}"));
+                gate.check("boss music", Err(format!("not a boss fight with its track after {BOSS_WAIT} server seconds ({said})")));
+                gate.advance(now);
+            }
+        }
+        3 => {
+            if gate.settled == 0 {
+                // Close enough for her lash, with room for a blow should one land.
+                let net = world.resource::<Net>();
+                net.command("skill hitpoints 60");
+                net.command(&format!("tp {} {} {}", pad.x as f32 + 0.5, pad.y, pad.z as f32 - 1.0));
+                net.command("gamemode survival");
+                gate.settled = 1;
+            }
+            let told = view.filter(|v| v.tell != 0 && v.tell != voxmar_protocol::REARING);
+            if let Some(view) = told {
+                let content = &world.resource::<Launch>().content;
+                let name = content.creatures.get(species).def.moves.get(view.tell as usize - 1).map_or("?", |m| m.name.as_str());
+                gate.check("boss tell", Ok(format!("she wound up her {name}, its tell shown")));
+                world.resource::<Net>().command("gamemode creative");
+                sweep(gate, now);
+            } else if waited || view.is_none() {
+                gate.check("boss tell", Err(format!("no move of hers wound up in {BOSS_WAIT} server seconds (seen: {})", view.is_some())));
+                sweep(gate, now);
+            }
+        }
+        _ => {
+            if sweep_bears(world, gate, species, pad) {
+                end_boss(world, gate, now);
+            }
+        }
+    }
+}
+
+/// Back to survival at the first levels on the test ground, for the steps after.
+fn end_boss(world: &mut World, gate: &mut Gate, now: f32) {
+    let feet = gate.feet;
+    let net = world.resource::<Net>();
+    net.command("gamemode survival");
     net.command("skill hitpoints 10");
     net.command(&format!("tp {} {} {}", feet.x as f32 + 0.5, feet.y, feet.z as f32 + 0.5));
     gate.next(Step::Wear, now);

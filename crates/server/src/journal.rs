@@ -27,8 +27,11 @@ impl Server {
     }
 
     /// The journal page a creature kind is found on; people are on none.
-    pub(crate) fn page_of(kind: Kind) -> Option<Page> {
-        match kind {
+    pub(crate) fn page_of(def: &voxmar_engine::creature::CreatureDef) -> Option<Page> {
+        if def.boss {
+            return Some(Page::Bosses);
+        }
+        match def.kind {
             Kind::Animal => Some(Page::Animals),
             Kind::Monster | Kind::Spirit => Some(Page::Monsters),
             Kind::Fish => Some(Page::Fish),
@@ -62,7 +65,7 @@ impl Server {
         }
         let mut found: Vec<(PlayerId, Page, String)> = Vec::new();
         let rules = &self.content.journal;
-        let reach = [Page::Animals, Page::Monsters, Page::Fish].into_iter().filter_map(|p| rules.seen_within(p)).fold(0.0f32, f32::max);
+        let reach = [Page::Animals, Page::Monsters, Page::Bosses, Page::Fish].into_iter().filter_map(|p| rules.seen_within(p)).fold(0.0f32, f32::max);
         for player in self.players.values().filter(|p| p.joined && p.health.alive()) {
             let feet = player.position.floor().as_ivec3();
             found.push((player.id, Page::Biomes, self.overworld.biome_at(feet.x, feet.z).name.clone()));
@@ -73,7 +76,7 @@ impl Server {
                     continue;
                 }
                 let species = self.content.creatures.get(creature.species);
-                let Some(page) = Self::page_of(species.def.kind) else { continue };
+                let Some(page) = Self::page_of(&species.def) else { continue };
                 let Some(within) = rules.seen_within(page) else { continue };
                 let body = creature.body.position + Vec3::Y * (species.def.body.size.1 * 0.5);
                 if body.distance(eye) <= within && self.in_plain_view(eye, body) {

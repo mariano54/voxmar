@@ -444,7 +444,7 @@ impl Server {
         let feet = self.players[&agent].position.floor().as_ivec3();
         let outdoors = self.open_sky(feet + IVec3::Y * 2);
         let calm = voxmar_engine::weather::Weather::NONE;
-        let situation = voxmar_engine::effect::Situation { felt: 0.0, warmed: false, outdoors, weather: &calm, biome: "", biome_tags: &[], home: home.as_ref(), done: &self.players[&agent].quests_done };
+        let situation = voxmar_engine::effect::Situation { felt: 0.0, warmed: false, outdoors, weather: &calm, biome: "", biome_tags: &[], home: home.as_ref(), done: &self.players[&agent].quests_done, held: &[], near: &[] };
         let given = effects.given_by_sleep(&situation);
         // The best rest it gives (the one the others are hidden by) is the one it says.
         let best = given.iter().map(|&(id, _)| id).filter(|&id| !given.iter().any(|&(other, _)| other != id && effects.hides(other, id))).next_back();
