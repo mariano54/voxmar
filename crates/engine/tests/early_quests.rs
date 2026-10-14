@@ -188,8 +188,10 @@ fn reachable(content: &Content) -> rustc_hash::FxHashMap<voxmar_engine::block::B
         }
         for (input, recipe) in content.cooking.iter() {
             let station = blocks.tagged(&recipe.def.station).filter_map(|b| ways.get(&blocks.item_of(b)).copied()).min_by_key(|w| w.level);
-            if let (Some(input), Some(station)) = (ways.get(&blocks.item_of(input)).copied(), station) {
-                let way = worst(worst(input, station), Way { level: recipe.def.level, skill: recipe.skill });
+            // Whatever it takes besides what is held must be come by too.
+            let with: Option<Vec<Way>> = recipe.with.iter().map(|&(item, _)| ways.get(&blocks.item_of(item)).copied()).collect();
+            if let (Some(input), Some(station), Some(with)) = (ways.get(&blocks.item_of(input)).copied(), station, with) {
+                let way = with.into_iter().fold(worst(worst(input, station), Way { level: recipe.def.level, skill: recipe.skill }), worst);
                 grew |= give(&mut ways, recipe.output, way);
             }
         }

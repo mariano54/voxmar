@@ -2,7 +2,7 @@
 // tools too, in blocks_tools.ron.
 (
     families: [
-        (template: "drop", name: "bone_club", tags: ["weapon", "stack:1", "bone"], all: (color: (225, 215, 190))),
+        (template: "drop", name: "bone_club", tags: ["weapon", "stack:1", "bone", "mace"], all: (color: (225, 215, 190))),
         (template: "drop", name: "stone_sword", tags: ["weapon", "stack:1", "sword"], all: (color: (120, 120, 125))),
         // Ranged: a sling shoots cobbled stone, a short bow arrows (combat.ron).
         (template: "drop", name: "sling", tags: ["weapon", "stack:1", "sling"], all: (color: (150, 110, 75))),

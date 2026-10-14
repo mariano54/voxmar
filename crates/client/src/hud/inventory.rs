@@ -1238,17 +1238,28 @@ mod tests {
     /// client makes as many as the server does, and nothing else.
     #[test]
     fn crafting_all_here_makes_what_the_server_makes_when_the_grid_turns_into_another_recipe() {
-        use std::time::{Duration, Instant};
+        use std::time::Duration;
         let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
         let server = voxmar_server::spawn(voxmar_server::ServerConfig { view_distance: 2, ..Default::default() }, content.clone()).unwrap();
         let (connection, server_side) = voxmar_protocol::local_pair();
         server.connections().send(server_side).unwrap();
         let net = Net::new(connection, Some(server), "crafter".into(), content.fingerprint(), None);
         let mut seen = Inventory::default();
+        // Given up after 60 of the server's seconds: its ticks, and before its first its
+        // thread's CPU time, as it opens the world. By the wall's clock, a server starting
+        // with a share of a core on a loaded machine ran out of it before it had begun.
+        let server = net.server().expect("singleplayer");
         let mut wait_for = |done: &dyn Fn(&Inventory) -> bool| -> Inventory {
-            let deadline = Instant::now() + Duration::from_secs(60);
+            let (ticks, mut cpu) = (server.ticks(), server.cpu_time());
+            let mut starting = Duration::ZERO;
             while !done(&seen) {
-                assert!(Instant::now() < deadline, "the server never sent that inventory: {seen:?}");
+                if server.ticks() == 0 {
+                    let now = server.cpu_time();
+                    starting += cpu.zip(now).map_or(Duration::ZERO, |(then, now)| now.saturating_sub(then));
+                    cpu = now.or(cpu);
+                }
+                let waited = starting.as_secs_f32() + (server.ticks() - ticks) as f32 / voxmar_protocol::TICKS_PER_SECOND as f32;
+                assert!(waited < 60.0, "the server never sent that inventory in 60 of its seconds: {seen:?}");
                 match net.try_recv() {
                     Ok(Some(voxmar_protocol::ServerMessage::PlayerState { inventory, .. })) => seen = inventory,
                     Ok(_) => std::thread::sleep(Duration::from_millis(1)),
