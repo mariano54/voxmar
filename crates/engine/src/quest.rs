@@ -313,6 +313,10 @@ impl QuestRegistry {
             if quest.tasks.is_empty() {
                 return Err(RegistryError(format!("quest {} has no task", quest.name)));
             }
+            // A task is its parts, all to be done; one with none would be done at once.
+            if quest.tasks.iter().any(Vec::is_empty) {
+                return Err(RegistryError(format!("quest {} has a task with no part", quest.name)));
+            }
             for name in quest.after.iter().flat_map(|a| a.split('|')) {
                 if !quests.iter().any(|q| q.name == name) {
                     return Err(RegistryError(format!("quest {} comes after `{name}`, which does not exist", quest.name)));
@@ -843,5 +847,14 @@ mod tests {
     fn a_quest_after_one_that_does_not_exist_is_refused() {
         let source = r#"(quests: [(name: "a", age: "nomad", branch: "main", title: "", why: "", tasks: [[Home]], after: ["nope"])])"#;
         assert!(QuestRegistry::new(vec![QuestRegistry::read("base", source).unwrap()]).is_err());
+    }
+
+    #[test]
+    fn a_quest_with_an_empty_task_is_refused() {
+        let quest = |tasks: &str| QuestRegistry::new(vec![QuestRegistry::read("base", &format!(r#"(quests: [(name: "a", age: "nomad", branch: "main", title: "", why: "", tasks: {tasks})])"#)).unwrap()]).err().map(|e| e.0);
+        assert_eq!(quest("[]"), Some("quest base:a has no task".into()));
+        assert_eq!(quest("[[Home], []]"), Some("quest base:a has a task with no part".into()));
+        assert_eq!(quest("[[Home, Craft(\"torch\", 1)]]"), None, "one task of two parts");
+        assert!(QuestRegistry::read("base", r#"(quests: [(name: "a", age: "nomad", branch: "main", title: "", why: "", tasks: [[Juggle(3)]])])"#).is_err(), "an unknown part");
     }
 }

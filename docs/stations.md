@@ -81,8 +81,8 @@ sets it smouldering (shot `clamp`).
 
 - **Hung to Dry** (Nomad, cooking, after Small Game): craft a drying rack, keep four jerky.
 - **Trail Rations** (Nomad, cooking, after it): a second rack, twelve jerky.
-- **A Compost Heap** (Farm, farming, after Carrot Patch): craft a compost heap, keep two compost.
-- **Rich Soil** (Farm, farming, after it): grow six crops with compost and one with a bone.
+- **A Compost Heap** (Farm, farming, after Roots in the Embers): craft a compost heap, then grow
+  six crops with compost and one with a bone (one quest in three parts since Oct 14).
 - **An Earth Clamp** (Farm, pottery, after A Pit Kiln): make a clamp and fire sixteen clay
   or char sixteen logs. Fire the Clay, Charcoal and Brick by Brick name it.
 
