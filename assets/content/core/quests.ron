@@ -8,5 +8,9 @@
         done_stays: 5.0,
         // How opaque the backing behind each pinned quest is, 0 to 1.
         backing_alpha: 0.5,
+        // A pinned quest that drops off done leaves the quests it opens pinned in its place
+        // (or, opening none, the next open quest of its age), so the next step is always on
+        // screen.
+        follow_on: true,
     ),
 )
