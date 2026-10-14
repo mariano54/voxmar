@@ -431,7 +431,7 @@
         ),
         (
             name: "brick_by_brick", age: "farm", branch: "main", title: "Brick by Brick",
-            why: "The Crucible Kiln is built of kiln bricks: nineteen for the kiln and its crucible. Four fired clay make a brick at the crafting grid (Crafting 5). Have nineteen in hand: A Kiln Load pays the first four, and the rest is still a lot of clay, so keep firing. An earth clamp fires sixteen at a time while you dig the next (An Earth Clamp).",
+            why: "The Crucible Kiln is built of kiln bricks: nineteen for the kiln and its crucible. Four fired clay make two bricks at the crafting grid (Crafting 5). Have nineteen in hand: A Kiln Load pays the first four, and the rest is still a lot of clay, so keep firing. An earth clamp fires sixteen at a time while you dig the next (An Earth Clamp).",
             tasks: [[Have("kiln_bricks", 19)]],
             after: ["the_potter"],
             rewards: [Xp("crafting", 300.0)],
