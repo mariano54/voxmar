@@ -1249,7 +1249,7 @@
     "quest.base.stockpile": "Stockpile",
     "quest.base.stockpile.why": "A home runs on common stock. Carry thirty-two logs and sixty-four cobblestone and nothing you want to build is a trip away. Woods give the logs fastest, and stone lies a few blocks under the dirt almost anywhere.",
     "quest.base.copper_kit": "Copper Kit",
-    "quest.base.copper_kit.why": "Copper works six times as fast as a bare hand, a step above stone, and finds more. An axe takes three ingots, a shovel one, a hoe two and a knife one: seven in all, each a copper ore over a coal or charcoal in the grid.",
+    "quest.base.copper_kit.why": "Copper works seven times as fast as a bare hand, a step above stone, and finds more; a tool's tooltip says how fast it works. An axe takes three ingots, a shovel one, a hoe two and a knife one: seven in all, each a copper ore over a coal or charcoal in the grid.",
     "quest.base.make_camp": "Make Camp",
     "quest.base.make_camp.why": "A camp is a bed and a light together. Put your sleeping bag down, set a torch beside it and sleep in it once: wherever you wake is your home, and a camp heals you a fifth faster.",
     "quest.base.snug_for_winter": "Snug for Winter",

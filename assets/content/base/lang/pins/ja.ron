@@ -422,7 +422,7 @@
     "quest.base.stockpile": ("Stockpile", "備蓄"),
     "quest.base.stockpile.why": ("A home runs on common stock. Carry thirty-two logs and sixty-four cobblestone and nothing you want to build is a trip away. Woods give the logs fastest, and stone lies a few blocks under the dirt almost anywhere.", "家は身近な資材で回る。原木32個と丸石64個を持っていれば、建てたいものがすぐ建てられる。原木は森がいちばん早く集まり、石はほとんどどこでも土を数ブロック掘った下にある。"),
     "quest.base.copper_kit": ("Copper Kit", "銅の道具一式"),
-    "quest.base.copper_kit.why": ("Copper works six times as fast as a bare hand, a step above stone, and finds more. An axe takes three ingots, a shovel one, a hoe two and a knife one: seven in all, each a copper ore over a coal or charcoal in the grid.", "銅は素手の6倍速く、石より一段上で、さらに多く見つかる。斧は延べ棒3本、シャベル1本、くわ2本、ナイフ1本。全部で7本。延べ棒は製作枠で銅鉱石の下に石炭か木炭を置いて作る。"),
+    "quest.base.copper_kit.why": ("Copper works seven times as fast as a bare hand, a step above stone, and finds more; a tool's tooltip says how fast it works. An axe takes three ingots, a shovel one, a hoe two and a knife one: seven in all, each a copper ore over a coal or charcoal in the grid.", "銅は素手の7倍速く、石より一段上で、さらに多く見つかる。道具の説明に、どれだけ速く使えるかが出る。斧は延べ棒3本、シャベル1本、くわ2本、ナイフ1本。全部で7本。延べ棒は製作枠で銅鉱石の下に石炭か木炭を置いて作る。"),
     "quest.base.make_camp": ("Make Camp", "野営地"),
     "quest.base.make_camp.why": ("A camp is a bed and a light together. Put your sleeping bag down, set a torch beside it and sleep in it once: wherever you wake is your home, and a camp heals you a fifth faster.", "野営地とは、寝床と明かりが一緒にあること。寝袋を置き、その隣に松明を立てて、一度眠ってみよう。目覚める場所があなたの家になり、野営地では回復が2割速くなる。"),
     "quest.base.snug_for_winter": ("Snug for Winter", "冬に備えて"),
