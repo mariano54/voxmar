@@ -379,13 +379,29 @@ pub(crate) struct Recordings {
 }
 
 /// The sound of one action: its clips, made at the loudness of [`ACTION_LOUDNESS`], and how
-/// loud to play them beside it.
-#[derive(Clone, Debug, Deserialize, PartialEq)]
-#[serde(deny_unknown_fields)]
+/// loud to play them beside it; or that it is meant to be silent, or is heard from another
+/// part of the game. Every action says one of the three.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
 pub(crate) struct ActionSound {
     pub(crate) sounds: Vec<String>,
     #[serde(default = "full")]
     pub(crate) volume: f32,
+    /// Makes no sound, on purpose.
+    pub(crate) silent: bool,
+    /// Heard from elsewhere instead.
+    pub(crate) heard: Option<HeardBy>,
+}
+
+/// Where an action's sound comes from when not from `sounds.ron`.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+pub(crate) enum HeardBy {
+    /// The block it touches, by its material's cues (mining, placing, sowing, picking).
+    Block,
+    /// The interface's clicks and taps (moving items about the screens).
+    Interface,
+    /// The fight's own sounds (swings, blows, dodges).
+    Combat,
 }
 
 fn full() -> f32 {
@@ -438,14 +454,27 @@ impl Recordings {
             if actions.id(name).is_none() {
                 return Err(format!("{RECORDINGS}: a sound for `{name}`, which is no action"));
             }
-            if sound.sounds.is_empty() {
-                return Err(format!("{RECORDINGS}: `{name}` lists no sounds"));
+            let says = [!sound.sounds.is_empty(), sound.silent, sound.heard.is_some()].into_iter().filter(|&s| s).count();
+            if says != 1 {
+                return Err(format!("{RECORDINGS}: `{name}` says {says} of sounds, silent and heard; it says one"));
             }
             if !(sound.volume > 0.0 && sound.volume <= 2.0) {
                 return Err(format!("{RECORDINGS}: `{name}` has volume {}, not above 0 and up to 2", sound.volume));
             }
         }
         Ok(())
+    }
+
+    /// Whether every action the content has says how it sounds (`actions`): its clips, or
+    /// that it is silent or heard from elsewhere, so a new action is never mute by
+    /// oversight.
+    pub(crate) fn covers(&self, actions: &voxmar_engine::action::ActionRegistry) -> Result<(), String> {
+        let missing: Vec<&str> = actions.names().filter(|name| !self.actions.contains_key(*name)).collect();
+        if missing.is_empty() {
+            Ok(())
+        } else {
+            Err(format!("{RECORDINGS}: no sound for {}; give each `sounds`, `silent: true` or `heard`", missing.join(", ")))
+        }
     }
 }
 
@@ -1095,12 +1124,27 @@ mod tests {
         let base = file("base", r#"(pickup: ["p.ogg"], actions: {"core:eat": (sounds: ["a.ogg", "b.ogg"]), "core:craft": (sounds: ["c.ogg"], volume: 0.5)})"#);
         let recorded = Recordings::load(&[base.clone(), file("mod", r#"(pickup: ["q.ogg"], actions: {"core:eat": (sounds: ["x.ogg"], volume: 1.5)})"#)]).unwrap();
         assert_eq!(recorded.pickup, ["content/mod/q.ogg"]);
-        assert_eq!(recorded.actions["core:eat"], ActionSound { sounds: vec!["content/mod/x.ogg".into()], volume: 1.5 });
-        assert_eq!(recorded.actions["core:craft"], ActionSound { sounds: vec!["content/base/c.ogg".into()], volume: 0.5 });
+        assert_eq!(recorded.actions["core:eat"], ActionSound { sounds: vec!["content/mod/x.ogg".into()], volume: 1.5, ..Default::default() });
+        assert_eq!(recorded.actions["core:craft"], ActionSound { sounds: vec!["content/base/c.ogg".into()], volume: 0.5, ..Default::default() });
         assert_eq!(recorded.check(&content.actions), Ok(()));
-        for wrong in [r#"(actions: {"core:juggle": (sounds: ["a.ogg"])})"#, r#"(actions: {"core:eat": (sounds: [])})"#, r#"(actions: {"core:eat": (sounds: ["a.ogg"], volume: 0.0)})"#] {
+        for wrong in [r#"(actions: {"core:juggle": (sounds: ["a.ogg"])})"#, r#"(actions: {"core:eat": (sounds: [])})"#, r#"(actions: {"core:eat": (sounds: ["a.ogg"], volume: 0.0)})"#, r#"(actions: {"core:eat": (sounds: ["a.ogg"], silent: true)})"#, r#"(actions: {"core:eat": (silent: true, heard: Some(Block))})"#] {
             assert!(Recordings::load(&[file("mod", wrong)]).unwrap().check(&content.actions).is_err(), "{wrong}");
         }
+        // Every action must say how it sounds: the base package's do; a package that adds
+        // an action and says nothing of it fails, until it does.
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content/base/sounds.ron");
+        let base = file("base", &std::fs::read_to_string(path).unwrap());
+        assert_eq!(Recordings::load(&[base.clone()]).unwrap().covers(&content.actions), Ok(()));
+        let mut more = voxmar_engine::action::ActionRegistry::default();
+        for (namespace, source) in [("core", "core/actions.ron"), ("base", "base/actions.ron")] {
+            let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+            more.extend(namespace, &std::fs::read_to_string(dir.join(source)).unwrap()).unwrap();
+        }
+        more.extend("zmod", r#"(actions: [(name: "juggle", duration: Instant, effects: [])])"#).unwrap();
+        let mute = Recordings::load(&[base.clone()]).unwrap().covers(&more);
+        assert!(mute.as_ref().is_err_and(|e| e.contains("zmod:juggle")), "{mute:?}");
+        let quiet = Recordings::load(&[base, file("zmod", r#"(actions: {"zmod:juggle": (silent: true)})"#)]).unwrap();
+        assert_eq!((quiet.check(&more), quiet.covers(&more)), (Ok(()), Ok(())));
     }
 
     /// The everyday actions of the first days are heard, from clips we ship, each made at
@@ -1111,7 +1155,23 @@ mod tests {
         let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
         let recorded = Recordings::load(&content.files).unwrap();
         recorded.check(&content.actions).unwrap();
-        for name in ["core:eat", "core:craft", "base:light", "base:open_store", "base:open", "base:cook", "base:sleep"] {
+        recorded.covers(&content.actions).unwrap();
+        for name in [
+            "core:eat",
+            "core:craft",
+            "core:drop",
+            "base:light",
+            "base:open_store",
+            "base:open",
+            "base:cook",
+            "base:sleep",
+            "base:tend",
+            "base:empty_pouch",
+            "base:use_machine",
+            "base:pick_lock",
+            "base:pray",
+            "base:fertilise",
+        ] {
             assert!(recorded.actions.contains_key(name), "no sound for {name}");
         }
         assert!(!recorded.pickup.is_empty(), "no pickup pop");
