@@ -291,6 +291,26 @@ does not know.
 These counts come from the quest data and twelve logs of the kiln bot; along the bot's run
 a Farm count includes every quest open since the hearth was lit.
 
+## Hooks for the new features (Oct 14)
+
+Each new feature has a quest that teaches it, in two parts the book counts one by one:
+
+| Quest | Age, path, after | Parts |
+|---|---|---|
+| A Chopping Block | Nomad, start; An Axe to It and A Bed of Your Own (Crafting 2 by then) | one set down; twelve planks split by it |
+| Set a Snare | Nomad, hunter; Twine and Thong | one set down; a catch taken from a trap |
+| Old Tusk | Nomad, hunter; Hide and Seek and Raise Your Guard | a flint spear made; Old Tusk killed |
+| Light in the Window | Farm, home; A Homely Home | two hide windows made; two set down |
+| A Trough for the Pen | Farm, husbandry; Hens in a Row | a feed trough set down; eight items put in it |
+
+Twine and Thong also takes ten twine carried, since a knife cuts twine from tall grass, and
+its text and A Sharp Edge's say so. Four goals came with them, each reading a tally:
+`Placed(block, n)` (a block set from the hand, by the item: `placed`), `Stocked(store, n)`
+(items an open store gained, by its block: `stocked`, in `push_store`; taking out stocks
+nothing), `CraftNear(item, near, n)` (made by a recipe with `near`, by that tag:
+`crafted_near:TAG`, beside `crafted`) and `Trapped(creature, n)` (a catch taken from a
+sprung trap: `trapped`). Nomad has 63 quests, Farm 97.
+
 ## Readable to a newcomer (Oct 13)
 
 Every Nomad and Farm quest was read as someone who has never played would: does its text

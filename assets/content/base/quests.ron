@@ -80,10 +80,17 @@
         ),
         (
             name: "twine_and_thong", age: "nomad", branch: "crafting", title: "Twine and Thong",
-            why: "Twine goes into fishing rods, pouches, candles and baskets. Three wheat twist into two twine. Wild wheat grows as lone golden tufts on open grassland, a tuft every twenty blocks or so on plains, steppe and meadows, and a village's fields grow it too. Make ten.",
-            tasks: [[Craft("twine", 10)]],
+            why: "Twine goes into fishing rods, pouches, candles and baskets. Three wheat twist into two twine. Wild wheat grows as lone golden tufts on open grassland, a tuft every twenty blocks or so on plains, steppe and meadows, and a village's fields grow it too. Or cut tall grass with a knife: about one cut in five gives a twine, one in four with a stone knife. Have ten.",
+            tasks: [[Craft("twine", 10)], [Have("twine", 10)]],
             after: ["a_handful_of_grain"],
             rewards: [Xp("crafting", 67.0)],
+        ),
+        (
+            name: "set_a_snare", age: "nomad", branch: "hunter", title: "Set a Snare",
+            why: "A snare catches small game while you do other work. Two twine over two sticks make one (Hunter 1). Set it on grass where rabbits, hares or field mice wander, and go about your day; a sprung snare holds its catch until you come back. Right-click it to take the catch and set it again.",
+            tasks: [[Placed("snare", 1), Trapped("any", 1)]],
+            after: ["twine_and_thong"],
+            rewards: [Xp("hunter", 60.0)],
         ),
         (
             name: "pockets", age: "nomad", branch: "qol", title: "Pockets",
@@ -111,6 +118,13 @@
             tasks: [[Craft("wooden_axe", 1), Have("tag:log", 8)]],
             after: ["crafting_table"],
             rewards: [Xp("engineering", 20.0), Item("stick", 4)],
+        ),
+        (
+            name: "a_chopping_block", age: "nomad", branch: "start", title: "A Chopping Block",
+            why: "Splitting logs in the grid wastes wood. A chopping block is a flint over a log (Crafting 2): dig gravel, by hand or with a shovel, and about one in eight gives a flint. Set the block down and split logs within reach of it: each gives six planks there, two more than the grid's four. Split two logs by it.",
+            tasks: [[Placed("chopping_block", 1), CraftNear("tag:planks", "chopping_block", 12)]],
+            after: ["an_axe_to_it", "a_bed_of_your_own"],
+            rewards: [Xp("crafting", 40.0), Item("oak_log", 4)],
         ),
         (
             name: "first_ore", age: "nomad", branch: "mining", title: "Red Metal Underfoot",
@@ -166,6 +180,13 @@
             tasks: [[Have("hide", 4), Have("bone", 2)]],
             after: ["small_game", "a_sharp_edge"],
             rewards: [Xp("hunter", 60.0), Xp("crafting", 30.0)],
+        ),
+        (
+            name: "old_tusk", age: "nomad", branch: "hunter", title: "Old Tusk",
+            why: "A great boar roams the woods and the sagebrush steppe by day, alone among the boar: Old Tusk. He grazes until struck, then fights to the end, and his charge crushes. A flint spear (a flint and two sticks, Crafting 2) braces: with no shield in your off hand, right-click to raise it as he crouches, and he runs onto its point and stands dazed. A tree or a wall at your back does the same. Make a spear, then bring him down.",
+            tasks: [[Craft("flint_spear", 1), Kill("old_tusk", 1)]],
+            after: ["hide_and_seek", "raise_your_guard"],
+            rewards: [Xp("hunter", 150.0), Xp("attack", 100.0)],
         ),
         (
             name: "hide_wraps", age: "nomad", branch: "combat", title: "Hide Wraps",
@@ -281,7 +302,7 @@
         ),
         (
             name: "a_sharp_edge", age: "nomad", branch: "crafting", title: "A Sharp Edge",
-            why: "A knife is the hunter's tool: it makes a kill drop hide more often and cuts plants cleanly. A wooden knife is a plank over a stick, a stone knife a cobblestone over a stick; both fit the inventory grid.",
+            why: "A knife is the hunter's tool: it makes a kill drop hide more often, cuts plants cleanly, and cuts twine from tall grass. A wooden knife is a plank over a stick, a stone knife a cobblestone over a stick; both fit the inventory grid.",
             tasks: [[Craft("stone_knife", 1)], [Craft("wooden_knife", 1)]],
             after: ["stone_in_hand"],
             rewards: [Xp("engineering", 30.0)],
@@ -484,6 +505,13 @@
             tasks: [[Tame("junglefowl", 3)]],
             after: ["first_harvest"],
             rewards: [Xp("farming", 100.0)],
+        ),
+        (
+            name: "a_trough_for_the_pen", age: "farm", branch: "husbandry", title: "A Trough for the Pen",
+            why: "Kept animals graze within seven blocks of home, and a full pen strips its grass and goes hungry. A feed trough is five planks in a low U (Construction 4). Set it by the pen and stock it with eight wheat: a hungry animal with nothing to graze walks to it and eats one of its foods, so the pen is fed while you are away.",
+            tasks: [[Placed("feed_trough", 1), Stocked("feed_trough", 8)]],
+            after: ["hens_in_a_row"],
+            rewards: [Xp("construction", 80.0), Xp("farming", 60.0)],
         ),
         (
             name: "fresh_eggs", age: "farm", branch: "husbandry", title: "Fresh Eggs",
@@ -743,6 +771,13 @@
             tasks: [[Built("home_homely", 1)], [Built("home_cosy", 1)], [Built("home_heart_of_the_home", 1)]],
             after: ["shut_the_door"],
             rewards: [Xp("construction", 200.0), Item("bread", 8)],
+        ),
+        (
+            name: "light_in_the_window", age: "farm", branch: "home", title: "Light in the Window",
+            why: "A lit home shows at night: a window glows by the light of the room behind it. A hide window is a hide in a frame of eight sticks (Construction 3), two at a time. Make two and set them in the walls of your lit home, then look back at it after dark.",
+            tasks: [[Craft("hide_window", 2), Placed("hide_window", 2)]],
+            after: ["a_homely_home"],
+            rewards: [Xp("construction", 120.0)],
         ),
         (
             name: "a_cosy_home", age: "farm", branch: "home", title: "A Cosy Home",
