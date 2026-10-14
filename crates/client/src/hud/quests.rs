@@ -979,8 +979,10 @@ pub(crate) fn follow_ons(content: &Content, pinned: &[String], gone: &[String], 
 
 impl Finished {
     /// Counts `seconds` for each pinned quest done, while the tracker is `shown`: those
-    /// shown done longer than `stays`, which then drop off.
+    /// shown done longer than `stays`, which then drop off. One unpinned meanwhile (its ×)
+    /// is forgotten, so it never drops off and pins what follows it.
     fn tick(&mut self, pinned: &[String], done: impl Fn(&str) -> bool, shown: bool, seconds: f32, stays: f32) -> Vec<String> {
+        self.0.retain(|(n, _)| pinned.contains(n));
         for name in pinned {
             if done(name) && !self.0.iter().any(|(n, _)| n == name) {
                 self.0.push((name.clone(), 0.0));
@@ -1208,6 +1210,13 @@ mod tests {
             assert!(finished.tick(&pinned, done, true, 0.5, 5.0).is_empty());
         }
         assert_eq!(finished.tick(&pinned, done, true, 0.5, 5.0), vec!["base:a".to_owned()]);
+        assert!(finished.0.is_empty());
+        // Done, then unpinned by its × before its time: it never drops off as done.
+        assert!(finished.tick(&pinned, done, true, 0.5, 5.0).is_empty());
+        let left = vec!["base:b".to_owned()];
+        for _ in 0..20 {
+            assert!(finished.tick(&left, done, true, 0.5, 5.0).is_empty());
+        }
         assert!(finished.0.is_empty());
     }
 
