@@ -112,6 +112,9 @@ pub struct Situation<'a> {
     pub home: Vec3,
     /// Its health as a share of its most.
     pub health: f32,
+    /// The phase of its fight it has reached (`moves::Phase`): a boss mended back over a
+    /// phase's line stays in it.
+    pub phase: u8,
     /// 0 at night .. 1 by day.
     pub daylight: f32,
     /// Players it can sense, nearest first.
@@ -466,7 +469,7 @@ pub(super) mod tests {
     pub(super) const BODY: &str = "body: (size: (0.6, 0.6), model: Blob(body: (0.5, 0.5, 0.5)), colours: [(1, 2, 3)])";
 
     pub(super) fn situation<'a>(players: &'a [Seen]) -> Situation<'a> {
-        Situation { position: Vec3::ZERO, home: Vec3::ZERO, health: 1.0, daylight: 1.0, players, kin: &[], food: None, mate: None, kept: false, errand: None, dt: 0.2, seed: 7 }
+        Situation { position: Vec3::ZERO, home: Vec3::ZERO, health: 1.0, phase: 0, daylight: 1.0, players, kin: &[], food: None, mate: None, kept: false, errand: None, dt: 0.2, seed: 7 }
     }
 
     pub(super) fn player(at: Vec3) -> Seen {

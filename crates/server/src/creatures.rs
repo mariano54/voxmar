@@ -395,6 +395,7 @@ impl Server {
                     position,
                     home: creature.home,
                     health: creature.health as f32 / species.def.health as f32,
+                    phase: creature.phase,
                     daylight,
                     players: &players,
                     kin: &kin,
