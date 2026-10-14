@@ -282,6 +282,11 @@ impl ActionRegistry {
         self.by_name.get(name).copied()
     }
 
+    /// Every action's name, in the order they were added.
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.defs.iter().map(|def| def.name.as_str())
+    }
+
     pub fn expect(&self, name: &str) -> ActionId {
         self.id(name).unwrap_or_else(|| panic!("content is missing required action `{name}`"))
     }

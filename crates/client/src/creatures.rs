@@ -442,6 +442,11 @@ impl Creatures {
         self.shown.iter().filter(|(_, shown)| shown.dying.is_none()).map(|(&id, shown)| (id, shown.view.species, shown.position))
     }
 
+    /// What the server last said of creature `id`, while it is shown.
+    pub(crate) fn view(&self, id: u32) -> Option<&CreatureView> {
+        self.shown.get(&id).filter(|shown| shown.dying.is_none()).map(|shown| &shown.view)
+    }
+
     pub fn sighting(&self, id: u32) -> Option<Sighting> {
         let shown = self.shown.get(&id)?;
         let health = if shown.dying.is_some() { 0 } else { shown.view.health };
@@ -1445,6 +1450,30 @@ fn show(
     }
 }
 
+/// What a right click on a creature does, by the action's name: with Shift on one of
+/// your own, let it go wild; holding what it takes (its food to tame it, to one of yours
+/// its food, feed or the tool for its product), tend it; else look closely at it, unless
+/// the button guards against it while it fights (`guarding`).
+pub(crate) fn creature_use(content: &voxmar_engine::content::Content, view: &CreatureView, held: Option<voxmar_engine::block::BlockId>, mine: bool, shift: bool, guarding: bool) -> Option<&'static str> {
+    let species = content.creatures.get(view.species);
+    let accepts = held.is_some_and(|item| {
+        let tags = &content.blocks.def(item).tags;
+        let tool = species.def.products.iter().any(|p| p.tool.as_ref().is_some_and(|t| tags.contains(t)));
+        // One of yours takes its food as a meal or to breed (the server judges which).
+        let food = species.tame_food.contains(&item) || species.breed_food.contains(&item) || tags.iter().any(|t| t == "breeding_feed");
+        (!view.kept && species.tame_food.contains(&item)) || (mine && (food || tool))
+    });
+    if shift && mine {
+        Some("base:release")
+    } else if accepts {
+        Some("base:tend")
+    } else if !guarding {
+        Some("base:inspect")
+    } else {
+        None
+    }
+}
+
 /// Finds the creature under the crosshair, nearer than any block, and strikes it on a
 /// left click. Runs between finding the block target and breaking, so aiming at a
 /// creature never mines the ground behind it.
@@ -1481,6 +1510,7 @@ pub fn aim(
         .filter(|&(_, d)| d <= weapon.reach.max(combat.feel.touch) && d < block)
         .min_by(|a, b| a.1.total_cmp(&b.1));
     target.creature = nearest.map(|(id, _)| id);
+    target.creature_touched = nearest.is_some_and(|(_, d)| d <= combat.feel.touch);
     let in_reach = nearest.is_some_and(|(_, d)| d <= weapon.reach);
     if target.creature.is_some() {
         target.hit = None;
@@ -1497,28 +1527,11 @@ pub fn aim(
         && mouse.just_pressed(MouseButton::Right)
         && let Some(view) = creatures.shown.get(&id).map(|s| s.view)
     {
-        let species = launch.content.creatures.get(view.species);
         let mine = view.kept && view.owner.is_some() && view.owner == creatures.me;
-        let accepts = held.is_some_and(|item| {
-            let tags = &launch.content.blocks.def(item).tags;
-            let tool = species.def.products.iter().any(|p| p.tool.as_ref().is_some_and(|t| tags.contains(t)));
-            // One of yours takes its food as a meal or to breed (the server judges which).
-            let food = species.tame_food.contains(&item) || species.breed_food.contains(&item) || tags.iter().any(|t| t == "breeding_feed");
-            (!view.kept && species.tame_food.contains(&item)) || (mine && (food || tool))
-        });
         let guards = combat.guard_of(held, &player.inventory.worn, |skill| launch.content.skills.level(player.skills.xp(skill))).is_some();
         let engaged = !view.kept && (view.pose == Pose::Attacking || fighting.engaged(id, time.elapsed_secs_f64(), &combat.feel));
         let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
-        let action = if shift && mine {
-            Some("base:release")
-        } else if accepts {
-            Some("base:tend")
-        } else if !(guards && engaged) {
-            Some("base:inspect")
-        } else {
-            None
-        };
-        if let Some(action) = action.and_then(|a| actions.0.id(a)) {
+        if let Some(action) = creature_use(&launch.content, &view, held, mine, shift, guards && engaged).and_then(|a| actions.0.id(a)) {
             net.propose_from(&player, action, ActionTarget::Creature(id));
             target.used_right = true;
         }

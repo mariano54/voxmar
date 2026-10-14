@@ -338,6 +338,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let look = hud::target::LookStyle::load(&content.files)?;
     sfx::Recordings::load(&content.files)?.check(&content.actions)?;
+    let prompts = hud::prompt::Prompts::load(&content.files)?;
+    prompts.check(&content.actions)?;
     let content_weather = content.weather.clone();
     let shader_packs = render::pack::ShaderPacks::load(&assets);
     let registry = content.blocks.clone();
@@ -477,7 +479,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         Screen::Title
     };
-    app.insert_resource(FirstScreen(first)).insert_resource(launch).insert_resource(interface).insert_resource(combat_marks).insert_resource(fight_look).insert_resource(creature_motion).insert_resource(look);
+    app.insert_resource(FirstScreen(first)).insert_resource(launch).insert_resource(interface).insert_resource(combat_marks).insert_resource(fight_look).insert_resource(creature_motion).insert_resource(look).insert_resource(prompts);
     if options.loading {
         app.insert_resource(menu::HoldCover);
     }

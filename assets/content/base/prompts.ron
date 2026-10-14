@@ -1,0 +1,33 @@
+// What a right click would do, said under the crosshair (see core's prompts.ron). `held`
+// words go with a tag of the item in hand, `target` words with a tag or name of the block
+// looked at, `ready` with a station whose work is done.
+(
+    actions: {
+        "base:use_table": (prompt: "prompt.base.craft"),
+        "base:open_store": (prompt: "prompt.base.open"),
+        "base:use_machine": (prompt: "prompt.base.use"),
+        "base:light": (prompt: "prompt.base.light"),
+        "base:sleep": (prompt: "prompt.base.sleep"),
+        "base:pick_lock": (prompt: "prompt.base.pick_lock"),
+        "base:tend_bees": (prompt: "prompt.base.tend"),
+        "base:use_station": (
+            prompt: "prompt.base.add",
+            target: { "base:drying_rack": "prompt.base.hang", "base:drying_rack_hung": "prompt.base.hang" },
+            ready: "prompt.base.take",
+        ),
+        "base:fertilise": (prompt: "prompt.base.fertilise"),
+        "base:open": (prompt: "prompt.base.open", target: { "door_open": "prompt.base.close" }),
+        "base:cook": (prompt: "prompt.base.cook"),
+        "base:pick": (prompt: "prompt.base.pick"),
+        "base:plant": (prompt: "prompt.base.sow"),
+        "base:till": (prompt: "prompt.base.till"),
+        "base:fish": (prompt: "prompt.base.fish"),
+        "base:empty_pouch": (prompt: "prompt.base.empty"),
+        "base:tend": (prompt: "prompt.base.feed", held: { "shears": "prompt.base.shear", "pail": "prompt.base.milk" }),
+        // Looking closely and letting go are there on every creature, and Shift's; praying
+        // is the prayer book's (the click proposes none).
+        "base:inspect": (none: true),
+        "base:release": (none: true),
+        "base:pray": (none: true),
+    },
+)

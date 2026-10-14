@@ -1,0 +1,21 @@
+// What a right click would do, said under the crosshair (client `hud::prompt`): every
+// action names the lang key of its word, or says `none: true` when it has nothing to say
+// there. Checked at launch both ways: a prompt for no action, or an action with neither,
+// fails it. Core's actions are the hand's own (mining, placing, eating, the inventory's
+// moves) and the fight's, which need no word at the crosshair.
+(
+    actions: {
+        "core:mine": (none: true),
+        "core:place": (none: true),
+        "core:transfer": (none: true),
+        "core:quick_move": (none: true),
+        "core:craft": (none: true),
+        "core:lay": (none: true),
+        "core:stow": (none: true),
+        "core:drop": (none: true),
+        "core:attack": (none: true),
+        "core:dodge": (none: true),
+        "core:eat": (none: true),
+        "core:respawn": (none: true),
+    },
+)

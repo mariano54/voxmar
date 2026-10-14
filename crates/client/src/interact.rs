@@ -5,7 +5,7 @@
 
 use bevy::input::mouse::AccumulatedMouseScroll;
 use bevy::prelude::*;
-use voxmar_engine::action::{ActionContext, ActionId, ActionTarget, Effect, Rejection, Requirement, placed_block, placement_cell, supported_by};
+use voxmar_engine::action::{ActionContext, ActionId, ActionRegistry, ActionTarget, Effect, Rejection, Requirement, placed_block, placement_cell, supported_by};
 use voxmar_engine::block::{BlockId, BlockInfo, BlockRegistry};
 use voxmar_engine::content::Content;
 use voxmar_engine::crop::CropRegistry;
@@ -50,6 +50,8 @@ pub struct Target {
     pub block_hit: Option<RayHit>,
     /// The creature under the crosshair, nearer than any block (see `creatures::aim`).
     pub creature: Option<u32>,
+    /// That creature is near enough to touch: tended, looked at closely, let go.
+    pub creature_touched: bool,
     /// The right press this frame did something (a table, a bed, cooking, eating), so it
     /// raises no guard (`fight`).
     pub used_right: bool,
@@ -236,6 +238,34 @@ fn eats(food: bool, placeable: bool, on_creature: bool, on_block: bool, sowing: 
     food && !on_creature && (!on_block || !placeable) && !sows
 }
 
+/// A block's uses a right click tries after a table, a store and a machine, the first
+/// that holds being done (`break_and_place`), and `cook` before any of them.
+const BLOCK_USES: [&str; 7] = ["base:light", "base:sleep", "base:pick_lock", "base:tend_bees", "base:use_station", "base:fertilise", "base:open"];
+
+/// What a right click on the block at `hit` does, as `break_and_place` decides it, for
+/// the prompt under the crosshair (`hud::prompt`): a table, a store or a machine is used;
+/// then the first of `BLOCK_USES` that holds, unless what is in hand cooks there; then
+/// cooking; then picking a ripe crop, sowing from a pouch, or the held item's own action.
+/// Eating, wearing and placing are what the hand does, not the block, and are left out.
+pub(crate) fn block_use(world: &ClientWorld, player: &LocalPlayer, content: &Content, actions: &ActionRegistry, hit: &RayHit) -> Option<ActionId> {
+    let context = ClientContext { world, player, content };
+    let at = ActionTarget::Block { block: hit.block, face: hit.face };
+    let holds = |name: &str| actions.id(name).filter(|&id| actions.get(id).is_some_and(|def| def.validate(&context, at).is_ok()));
+    if let Some(first) = ["base:use_table", "base:open_store", "base:use_machine"].into_iter().find_map(holds) {
+        return Some(first);
+    }
+    let cook = holds("base:cook");
+    if cook.is_none()
+        && let Some(used) = BLOCK_USES.into_iter().find_map(holds)
+    {
+        return Some(used);
+    }
+    let held = context.actor_held();
+    let pouch = held.is_some_and(|item| world.registry.def(item).has_tag("pouch"));
+    let own = held.and_then(|item| world.registry.def(item).action.as_deref());
+    cook.or_else(|| holds("base:pick")).or_else(|| holds("base:plant").filter(|_| pouch)).or_else(|| own.and_then(holds))
+}
+
 /// Mining proposes `core:mine` and shows progress over the same duration the server
 /// uses; releasing the button or looking away cancels it. Placing proposes `core:place`.
 /// Both are predicted locally and corrected by the server if it disagrees.
@@ -367,7 +397,7 @@ fn break_and_place(
         // swarm to a skep held up to them, or a full skep its honey; a home station is
         // loaded or emptied; a fertiliser is spread on a growing crop; a door is opened or
         // shut, as the server turns it (never predicted: it holds the collision).
-        for name in ["base:light", "base:sleep", "base:pick_lock", "base:tend_bees", "base:use_station", "base:fertilise", "base:open"] {
+        for name in BLOCK_USES {
             if let (Some(hit), Some(action)) = (hit, actions.0.id(name)) {
                 let context = ClientContext { world: &world, player: &player, content };
                 let action_target = ActionTarget::Block { block: hit.block, face: hit.face };

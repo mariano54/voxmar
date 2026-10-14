@@ -13,6 +13,7 @@ pub mod inventory;
 pub mod journal;
 pub mod levels;
 pub mod prayers;
+pub mod prompt;
 pub mod quests;
 pub mod screens;
 pub mod recipes;
@@ -45,7 +46,7 @@ pub struct HudPlugin;
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((console::ConsolePlugin, inventory::InventoryPlugin, skills::SkillHudPlugin, screens::ScreensPlugin, character::CharacterPlugin, target::TargetPlugin, recipes::RecipesPlugin, death::DeathPlugin, effects::EffectsPlugin, creative::CreativePlugin))
-            .add_plugins((tips::TipsPlugin, journal::JournalPlugin, levels::LevelsPlugin, quests::QuestsPlugin, combat::CombatHudPlugin, prayers::PrayersPlugin, home::HomePlugin))
+            .add_plugins((tips::TipsPlugin, journal::JournalPlugin, levels::LevelsPlugin, quests::QuestsPlugin, combat::CombatHudPlugin, prayers::PrayersPlugin, home::HomePlugin, prompt::PromptPlugin))
             .add_systems(PostStartup, spawn_hud)
             .add_systems(
                 Update,

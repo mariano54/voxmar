@@ -9084,6 +9084,67 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             } else {
                 Err(format!("only {count} puffs rose from the chimney's top over a hearthstone in {in_phase:.1} s, under {CHIMNEY_PARTICLES} with {owed:.1} owed ({why})"))
             });
+            // Something in hand that cooks nowhere, so the click would light, not cook.
+            let empty = (0..voxmar_engine::inventory::HOTBAR_SLOTS).find(|&slot| {
+                let (player, client) = (world.resource::<LocalPlayer>(), world.resource::<ClientWorld>());
+                player.inventory.get(slot).is_none_or(|s| client.registry.info(s.item).food == 0 && !client.registry.def(s.item).has_tag("rod"))
+            });
+            if let Some(slot) = empty {
+                world.resource_mut::<LocalPlayer>().selected = slot;
+            }
+            gate.advance(now);
+        }
+        // The hearthstone, cold, looked at: the prompt under the crosshair says what a
+        // right click does to it, and fits on the screen.
+        9 => {
+            aim_at(world, hearth.as_vec3() + Vec3::splat(0.5));
+            let (light, key) = {
+                let locale = world.resource::<Locale>();
+                (locale.get("prompt.base.light").to_owned(), locale.get("inventory.key.right_click").to_owned())
+            };
+            let shown = world.query_filtered::<&InheritedVisibility, With<crate::hud::prompt::UsePrompt>>().iter(world).any(|visible| visible.get());
+            let said = world.query_filtered::<&Text, With<crate::hud::prompt::PromptWord>>().iter(world).next().map(|text| text.0.clone());
+            if shown && said.as_deref() == Some(light.as_str()) {
+                if gate.shot(world, "hearth-prompt").is_none() {
+                    return;
+                }
+                // Every text of the prompt drawn whole inside its node, and the prompt on screen.
+                let window = world.query::<&Window>().iter(world).next().map(|window| Vec2::new(window.physical_width() as f32, window.physical_height() as f32));
+                let prompt = world.query_filtered::<Entity, With<crate::hud::prompt::UsePrompt>>().iter(world).next();
+                let mut spills = Vec::new();
+                let mut texts = world.query::<(Entity, &Text, &ComputedNode, &bevy::ui::UiGlobalTransform, &bevy::text::TextLayoutInfo)>();
+                for (entity, text, node, at, layout) in texts.iter(world) {
+                    let mut up = Some(entity);
+                    let mut inside = false;
+                    while let Some(e) = up {
+                        if Some(e) == prompt {
+                            inside = true;
+                            break;
+                        }
+                        up = world.get::<ChildOf>(e).map(ChildOf::parent);
+                    }
+                    if !inside {
+                        continue;
+                    }
+                    let rect = bevy::math::Rect::from_center_size(at.translation, node.size());
+                    let off = window.is_some_and(|w| rect.min.x < -0.5 || rect.min.y < -0.5 || rect.max.x > w.x + 0.5 || rect.max.y > w.y + 0.5);
+                    if layout.size.x > node.size().x + 0.5 || layout.size.y > node.size().y + 0.5 || off {
+                        spills.push(text.0.clone());
+                    }
+                }
+                gate.check("prompt: cold hearth", Ok(format!("looking at a cold hearthstone shows \"{key} {light}\" under the crosshair")));
+                gate.check("prompt: fits", if spills.is_empty() { Ok("the prompt's key and word are drawn whole, on screen".into()) } else { Err(format!("the hearth prompt's {spills:?} spill out of their place")) });
+                gate.advance(now);
+            } else if in_phase > 3.0 {
+                let held = {
+                    let (player, client) = (world.resource::<LocalPlayer>(), world.resource::<ClientWorld>());
+                    player.inventory.get(player.selected).map_or("nothing".to_owned(), |s| client.registry.def(s.item).name.clone())
+                };
+                gate.check("prompt: cold hearth", Err(format!("looking at a cold hearthstone, holding {held}, the prompt showed {shown} saying {said:?}, not {light:?}")));
+                gate.advance(now);
+            }
+        }
+        10 => {
             let net = world.resource::<Net>();
             for at in [hearth, chimney[0], chimney[1]] {
                 net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
