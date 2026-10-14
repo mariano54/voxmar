@@ -501,6 +501,7 @@
     "journal.hint.lives_in": "Lives in {biome}",
     "journal.hint.animals": "Look for animals in the wild.",
     "journal.hint.monsters": "Monsters come out in the dark.",
+    "journal.hint.bosses": "It waits in its lair: find it and win the fight.",
     "journal.hint.plants": "Pick it where it grows, or harvest it.",
     "journal.hint.fish": "Catch it with a rod.",
     "journal.hint.biomes": "Stand in it to find it.",

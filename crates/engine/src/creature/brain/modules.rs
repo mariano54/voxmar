@@ -545,12 +545,12 @@ impl Module for Defend {
 fn strike(ctx: &Ctx, mind: &mut Mind, target: Option<Seen>, stalks: bool) -> Decision {
     let Some(p) = target else { return Decision::default() };
     let def = &ctx.creature.def;
-    // Its longest reach in the phase it has reached, as its wind-up counts it: a boss with
-    // a volley strikes from afar, its wind-up choosing the move that fits
-    // (`moves::Creature::choose`).
-    let reach = ctx.creature.longest_reach(ctx.at.phase) + def.body.size.0 * 0.5 + 0.3;
+    // Close when an attack of the phase it has reached fits, measured as its wind-up
+    // measures it (from its body's edge, at its own size): a boss with a volley strikes
+    // from afar, and closes in where none of its moves fits (`moves::Creature::reaches`).
     let d = flat(p.position, ctx.at.position);
-    let close = d <= reach && (p.position.y - ctx.at.position.y).abs() < def.body.size.1 + 1.5;
+    let reaches = ctx.creature.reaches(ctx.at.phase, ctx.creature.edge(d, ctx.at.scale));
+    let close = reaches && (p.position.y - ctx.at.position.y).abs() < def.body.size.1 + 1.5;
     let mut decision = Decision { face: Some(p.position), ..Default::default() };
     let stalker = stalks && def.movement.style == Style::Stalker;
     if !close {

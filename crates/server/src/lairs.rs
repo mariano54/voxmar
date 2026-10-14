@@ -81,7 +81,11 @@ impl Server {
                 if floor.distance(at) > def.wakes || self.lairs.bosses.contains_key(&site.heart) || self.lairs.resting.contains_key(&site.heart) {
                     continue;
                 }
-                if self.world.contains(ColumnPos::of_block(site.heart)) && !wake.iter().any(|(h, _)| *h == site.heart) {
+                // Only in a hollow that was dug: land made before lairs were (an old save's)
+                // is solid where her heart would be, and no boss wakes inside the ground.
+                let open = |pos: IVec3| self.block(pos).is_some_and(|b| !self.content.blocks.info(b).solid);
+                let dug = open(site.heart) && open(site.heart + IVec3::Y);
+                if dug && self.world.contains(ColumnPos::of_block(site.heart)) && !wake.iter().any(|(h, _)| *h == site.heart) {
                     wake.push((site.heart, def.boss.clone()));
                 }
             }
@@ -308,6 +312,35 @@ mod tests {
         assert!([thrash, grasp].contains(&server.creatures.live[&id].attack), "beside her, the thrash or the grasp");
     }
 
+    /// She always comes to blows with a player who stands still: never stops where her
+    /// brain judges her close but no move of hers fits. A small Rootmother just past her
+    /// grasp (her brain once measured her at her species' size, her wind-up at her own), and
+    /// in her second phase a player between her thrash and her volley, both draw a wind-up.
+    #[test]
+    fn the_rootmother_never_stands_where_no_move_of_hers_fits() {
+        let her = |server: &Server| server.content.creatures.get(rootmother(server)).def.clone();
+        let edge_of_reach = {
+            let server = fixture(Vec3::ZERO);
+            let def = her(&server);
+            // Her grasp's reach from her edge, at her smallest, and a little past it.
+            def.moves.iter().map(|m| m.attack.reach).filter(|&r| r < 3.0).fold(0.0, f32::max) + def.body.size.0 * 0.88 * 0.5 + 0.3 + 0.05
+        };
+        for (health, gap) in [(120, edge_of_reach), (40, 3.0 + 0.9 + 0.3)] {
+            let mut server = fixture(Vec3::new(20.5, 200.0, 20.5 + gap));
+            server.day = day_at(|l| l <= 0.0);
+            let id = summon(&mut server, 20.5, 20.5, health);
+            let live = server.creatures.live.get_mut(&id).unwrap();
+            (live.scale, live.phase) = (0.88, if health < 60 { 1 } else { 0 });
+            let wound_up = (0..10 * TICKS_PER_SECOND).any(|_| {
+                server.tick += 1;
+                server.tick_creatures();
+                server.creatures.live.get(&id).is_some_and(|live| live.winding)
+            });
+            let at = server.creatures.live[&id].body.position;
+            assert!(wound_up, "at health {health}, {gap:.2} blocks off, she stood at {at:.2} and never wound up");
+        }
+    }
+
     /// A ward stops only `boss_ward` of a boss's blow (half), where it stops `ward` of
     /// another's (four fifths).
     #[test]
@@ -357,7 +390,12 @@ mod tests {
         server.wake_lairs();
         assert!(server.creatures.live.is_empty(), "too far to wake her");
         server.players.get_mut(&1).unwrap().position = site.heart.as_vec3() + Vec3::new(def.wakes - 8.0, 0.0, 0.0);
+        // Land generated before lairs were has no hollow: she does not wake in the stone.
+        let stone = server.content.blocks.expect("base:stone");
+        server.world.set_block(site.heart, stone);
         server.wake_lairs();
+        assert!(server.creatures.live.is_empty(), "no hollow dug, no boss");
+        server.world.set_block(site.heart, BlockId::AIR);
         server.wake_lairs();
         let bosses: Vec<u32> = server.creatures.live.keys().copied().collect();
         assert_eq!(bosses.len(), 1, "one boss in her lair");
