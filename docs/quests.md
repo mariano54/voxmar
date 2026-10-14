@@ -73,9 +73,15 @@ played by the client as the server's states change (not for the states a session
 with). A skill's new level rings too, and every tenth level a grander tune. They are
 recordings the base package's `sounds.ron` lists (`quest_done`, `quest_claim`, `level_up`,
 `level_milestone`), our own, composed by `tools/generate_jingles.py`; a later package that
-lists any for an event replaces them. Two tunes never start over each other: a quest
-finished by reaching a level chimes first, then the level rings (`ui/sound.rs`). They
-follow the sound volume, not the choice of click sounds.
+lists any for an event replaces them. They follow the sound volume, not the choice of click
+sounds.
+
+A quest finished and a level reached are each a moment (`hud/celebrate.rs`): a banner pops
+in at the top of the screen (the quest and where to claim it, or the skill, its level and
+what that opens), motes burst around the player, and the jingle plays as it shows. A
+milestone level (every tenth) is grander. All of it is `core/celebrations.ron`. Moments
+take turns: a quest finished by reaching a level shows first, and the level cuts in once
+the quest has held for its `hold`.
 
 The Nomad and Farm chapters (ages 1 and 2) have the quests the game can already do:
 Nomad runs from the first campfire to the lit Homestead Hearth, Farm from the first harvest
@@ -127,9 +133,9 @@ so that what the game already does is something the book points to:
 - **The altar** (`Offered`, `Prayed`). Altar Rites (three bones offered and Bark Skin turned
   on) and A Prayer in the Fight (Ember Arm and Bark Skin on, ten creatures defeated).
 - **Cooking**: A Varied Table (meat, fish and bread together).
-- **Batch 9 wanderers** (`Met` on one kind each). Nomad: To Market (sell wheat to the
-  market folk on the road, or walk with them to town: the arrival counts too, but only for
-  those who kept them company) and Caught in the Rain (warm the drenched travellers with a
+- **Batch 9 wanderers** (`Met` on one kind each). Nomad: the market folk (sell wheat to
+  them on the road, or walk with them to town: the arrival counts too, but only for those
+  who kept them company; now the first part of The Market Road) and Caught in the Rain (warm the drenched travellers with a
   torch, or share food). Farm: Neighbourly (the neighbours call once the hearth is lit),
   The Rain Dance (watch the rainmakers or pay them), Filled Again (the shrine bearer) and A
   Share of the Hunt (strike first at a hunting party's, trapper's or wolf hunters' quarry).
@@ -148,7 +154,7 @@ so that what the game already does is something the book points to:
   Crucible Kiln, and four copper ore) and A Hen of Your Own (the henwife's hen, kept near
   home). Three more from batch 16: Master and Journeyman (Farm: the apprentice
   who asks to learn your best skill at 15, then the journeyman), The Market Road (Nomad,
-  after To Market: the market folk, then beat the highwaymen's ambush; the win is the
+  after Something for Something: the market folk, then beat the highwaymen's ambush; the win is the
   dealing their tally counts) and Found and Thanked (Nomad, after A Kind Turn: the lost
   child brought to town, then the parents who come to your home).
 
@@ -159,12 +165,14 @@ so that what the game already does is something the book points to:
   two beeswax kept and six candles; pays a spare skep).
 
 - **What landed after** (Oct 14). Seven quests teach a rule no other quest says, in its
-  text, and ask for the sequence that shows it. Nomad: Stones Back (after A Stone's Throw: a
-  sling stone that hits is left lying one time in four; five creatures and Ranged 4) and
+  text, and ask for the sequence that shows it. Nomad: Stones Back (a
+  sling stone that hits is left lying one time in four; five creatures and Ranged 4; now
+  parts of A Stone's Throw) and
   Light Sleepers (after Under Lock and Key: four Nomad chests in ten wake cave bats; two
   chests in all and two bats). Farm: Every Arrow Counts (after Bow and Arrow: half the arrows
-  that hit are left lying; sixteen arrows in all and Ranged 8), What Sleeps Below (after
-  Deeper Down: a Farm chest may wake cave crawlers; two chests and a crawler), Heart of the
+  that hit are left lying; sixteen arrows in all and Ranged 8), What Sleeps Below (with
+  Deeper Down folded in: a Farm chest may wake cave crawlers; two chests and a crawler),
+  Heart of the
   Wood (after The Rootmother: Heartwood, ten minutes that another heartroot only starts
   again; eat one and keep two), Smoke That Clings (after Humming in the Meadow: a torch
   held or a fire within two leaves you Smoky; Smoky and four honey) and Sweet Relief (after
@@ -173,8 +181,8 @@ so that what the game already does is something the book points to:
 
 - **Home stations** (Oct 14, docs/stations.md). Nomad: Hung to Dry (a drying rack made and four
   jerky kept) and Trail Rations (a second rack, twelve jerky). Farm: A Compost Heap (a heap
-  made and two compost kept) and Rich Soil (six crops grown with compost, one with a bone;
-  the new goal `Fertilised(item, n)` counts the crops grown).
+  made, then six crops grown with compost and one with a bone, Rich Soil's old parts; the
+  goal `Fertilised(item, n)` counts the crops grown).
 
 ## Quick upgrades
 
@@ -208,7 +216,8 @@ wall of parallel starts. Now each of ten paths starts once off the hearth and ru
 layers, with forks inside a path and few links between paths: the main line (A Pit Kiln to
 the Crucible Kiln), pottery (Clay Banks), farming (First Harvest), cooking (Camp Cook),
 husbandry (Hens in a Row), hunting and fighting (Bigger Game), ranged (Bow and Arrow),
-fishing (Patient Angler), the road (Far Horizons), and the home (A Seat by the Fire).
+fishing (Patient Angler), the road (Far Horizons), and the home (A Seat by the Fire, now part of A Table
+for Two).
 Prayer opens off A Pit Kiln as before. Encounter quests sit inside their path: the
 hunters' and the poachers' after Bigger Game, the road's travellers after the Field Guide,
 the farming folk after A Field of Gold, the neighbours after a snug home. The book's
@@ -236,8 +245,53 @@ are a wandering party, and no chain waits on meeting one.
 | Columns, and the tallest | 8, 25 | 8, 21 | 11, 13 |
 
 Along the bot's run the open quests are one head per path: the next main quest, plus Camp
-Cook, Far Horizons, First Harvest, Patient Angler, A Seat by the Fire, Earthenware, Bigger
+Cook, Far Horizons, First Harvest, Patient Angler, A Table for Two, Earthenware, Bigger
 Game, First Metal, Fired Whole and A Place to Pray.
+
+### Nomad paths, and quests in parts (Oct 14)
+
+The Nomad tab opened ten quests at once on a new world (Wild Harvest, A Pile of Stone,
+Twine and Thong and the rest beside the first three), so a newcomer met a wall before
+their first tool. Now four quests open at the start, the three pinned ones (Look It Up,
+Timber, First Night) and the Crafting Table, and every other path starts from a step the
+main line reaches: the crafting table, the stone tools, the first night or the bed. Each path runs as a chain:
+mining runs A Pile of Stone, Dig In, Coal and Cinders, First Ore, Stockpile; fighting runs
+Something to Swing, Sharpening Up, Something Hostile, A Stone's Throw; the camp runs Make
+Camp, Company at Camp, Pantry Shelves, From the Shelves, with A Lit Corner and A Bench to
+Work At beside it; grain runs A Handful of Grain, Daily Bread, Wild Harvest, Herb Lore.
+
+Siblings that are one job are now one quest in parts. A task was already a list of parts
+that must all hold (Homestead Hearth asks a hearthstone, two chimneys and the home); the
+book lists each part with its own mark and count. Seven pairs became one:
+
+| Quest | Parts | Was |
+| --- | --- | --- |
+| A Stone's Throw (Nomad) | a sling, five creatures, Ranged 4 | A Stone's Throw, Stones Back |
+| Wild Harvest (Nomad) | five kinds of plant, five herbs | Wild Harvest, Herb Gatherer |
+| The Market Road (Nomad) | the market folk, the highwaymen | To Market, The Market Road |
+| A Compost Heap (Farm) | a heap, six crops grown with compost, one with a bone | A Compost Heap, Rich Soil |
+| A Table for Two (Farm) | two seats, a table | A Seat by the Fire, A Table for Two |
+| A Rug Underfoot (Farm) | two cloths, a rug | Wool and Dye, A Rug Underfoot |
+| What Sleeps Below (Farm) | two Farm chests, a cave crawler | Deeper Down, What Sleeps Below |
+
+Each keeps both texts and both rewards. Nomad has 60 quests, Farm 95 with A Pot on the Fire
+(after The Potter and Camp Cook: a cooking pot made, two porridge kept), A Hearty Stew
+(after it: Cooking 14, two stew kept) and A Well by the
+Field (after A Field of Gold: make a well and set it by tilled ground; the new goal
+`Watering(block, n)` counts a block tagged `waters` set down within four blocks of tilled
+ground, as `crop_conditions` reads it, `a_well_set_by_tilled_ground_counts_as_watering_it`). A task with no part
+is refused at load (`a_quest_with_an_empty_task_is_refused`), as is a part the engine
+does not know.
+
+| Measure | Nomad before | Nomad after | Farm before | Farm after |
+|---|---|---|---|---|
+| Open at once along the kiln bot's run (max, median) | 17, 14.5 | 9, 6.5 | 13, 8 | 13, 8 |
+| Open at once, clearing the age one quest at a time (max, median) | 16, 11 | 13, 9 | 15, 12 | 15, 11 |
+| Starts (quests after nothing in the age) | 10 | 4 | 8 | 8 |
+| Columns, and the tallest | 7, 14 | 8, 13 | 11, 13 | 10, 13 |
+
+These counts come from the quest data and twelve logs of the kiln bot; along the bot's run
+a Farm count includes every quest open since the hearth was lit.
 
 ## Readable to a newcomer (Oct 13)
 
@@ -296,7 +350,7 @@ levels open (core's `skills.ron` guide), and its first tool or station upgrade.
 Two new side quests fill the skills that had nothing before:
 - **Hard to Put Down** (Nomad, combat, after Hide Wraps) asks for Defence 3 and Hitpoints 12. Both
   skills train only in a fight, and nothing had pointed at either of them.
-- **Herb Lore** (Nomad, farming, after Herb Gatherer) asks the player to deal with a herb
+- **Herb Lore** (Nomad, farming, after Wild Harvest) asks the player to deal with a herb
   gatherer, a travelling alchemist or a wandering healer. These are the three wanderers that
   teach Alchemy for herbs, and they are the only Alchemy anything gives today.
 
@@ -321,18 +375,18 @@ that quest needs.
 
 | Wait | Length | Quest that sets it off | What its text offers meanwhile (all open by then) |
 | --- | --- | --- | --- |
-| Wheat ripening | 12 min | First Harvest | Patient Angler, Hens in a Row, A Seat by the Fire |
+| Wheat ripening | 12 min | First Harvest | Patient Angler, Hens in a Row, A Table for Two |
 | A field resown | 12 min a crop | A Field of Gold | Camp Cook, Herb Garden |
 | Carrots ripening | 14 min | Carrot Patch | A Kitchen Garden, which grows on the same crops |
 | A hen laying | 5 min an egg | Fresh Eggs | A Woolly Flock, A Full House |
-| Wool growing back | 6 min | Wool Gathering | Wool and Dye, The Milk Pail |
+| Wool growing back | 6 min | Wool Gathering | A Rug Underfoot, The Milk Pail |
 | Milk | 5 min | The Milk Pail | A Full Pen |
 | A herb growing back | Its regrowth | Herb Garden | A Kitchen Garden (opens with it) |
 | Night, which cannot be slept away | A third of each 20-minute day | Torchlight | Digging coal by torchlight; Meat on the Fire and crafting at home |
 | Long clay firing | 17 + 55 s of firing for the bot (was 68 + 80) | A Kiln Load | Earthenware, A Place to Pray (its stone fires in the same kiln), Fired Whole; An Earth Clamp smoulders beside it |
 | An earth clamp smouldering | 1 min a load | An Earth Clamp | Firing clay by hand at the pit kiln, digging the next load, Red Metal |
 | A drying rack drying | 10 min (5 by a fire) | Hung to Dry | Hunting for the next load; Trail Rations |
-| A compost heap rotting | 15 min (10 by water) | A Compost Heap | Sowing and tending the field it will feed (Rich Soil) |
+| A compost heap rotting | 15 min (10 by water) | A Compost Heap | Sowing and tending the field it will feed, the compost's next part |
 
 A script checked that every quest title written in parentheses in a why is a real quest's
 title, and every 「」 name in ja is a real ja title, apart from the Prayers menu.
