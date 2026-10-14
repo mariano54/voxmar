@@ -167,7 +167,7 @@ impl Server {
     }
 
     /// A shot that landed at `at` (hit or miss) stirs bees within `shot_reach` of it: unless
-    /// smoke calms them, they sting `shooter`.
+    /// smoke calms all of them, they sting `shooter`.
     pub(crate) fn stir_bees(&mut self, shooter: PlayerId, at: Vec3) {
         let Some(hive) = &self.content.bees.hive else { return };
         let reach = hive.def.shot_reach;
@@ -175,13 +175,14 @@ impl Server {
             return;
         }
         let (blocks, r, centre) = (&self.content.blocks, reach.ceil() as i32, at.floor().as_ivec3());
-        let near = (-r..=r)
+        // Any bees within reach that smoke does not calm are enough: a smoked hive beside an
+        // unsmoked nest leaves the nest's bees as they are.
+        let stirred = (-r..=r)
             .flat_map(|dy| (-r..=r).flat_map(move |dz| (-r..=r).map(move |dx| centre + IVec3::new(dx, dy, dz))))
             .filter(|cell| (cell.as_vec3() + Vec3::splat(0.5)).distance(at) <= reach)
-            .find(|&cell| self.block(cell).is_some_and(|b| blocks.def(b).has_tag(&hive.def.bees)));
-        if let Some(cell) = near
-            && !self.smoked(cell, Some(shooter))
-        {
+            .filter(|&cell| self.block(cell).is_some_and(|b| blocks.def(b).has_tag(&hive.def.bees)))
+            .any(|cell| !self.smoked(cell, Some(shooter)));
+        if stirred {
             self.sting(shooter);
         }
     }

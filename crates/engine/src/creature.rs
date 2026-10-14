@@ -437,6 +437,11 @@ pub struct CreatureDef {
     /// (`Boss` in `music.ron`).
     #[serde(default)]
     pub boss: bool,
+    /// The music a fight with a boss plays: tags of boss tracks (`biomes` in `music.ron`,
+    /// `forest` for the Rootmother). Tracks with none of them never play for it; the
+    /// boss tracks with no tags at all are every boss's.
+    #[serde(default)]
+    pub music: Vec<String>,
     /// Its combat level, RuneScape-style.
     #[serde(default = "first")]
     pub level: u8,
@@ -811,6 +816,9 @@ impl CreatureRegistry {
                 return Err(error("needs health, a size and at least one colour".into()));
             }
             moves::check(&def).map_err(error)?;
+            if !def.boss && !def.music.is_empty() {
+                return Err(error("has fight `music` but is no boss".into()));
+            }
             if def.genes.len() > crate::genes::MOST {
                 return Err(error(format!("has more than {} genes", crate::genes::MOST)));
             }

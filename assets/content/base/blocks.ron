@@ -382,6 +382,29 @@
         (name: "sea_lantern", sound: Glass, textures: All("sea_lantern"), light: 15, hardness: 0.3, color: (200, 225, 220), tags: ["light", "building"]),
         // Food made in the crafting grid (recipes.ron).
         (name: "bread", render: Plant, solid: false, item: true, textures: All("bread"), hardness: 0.0, color: (200, 140, 70), tags: ["edible", "heal:4", "baked", "flavour:savoury"]),
+        // Locked treasure chests, one an age (treasure.ron, blocks_treasure.ron's lockpicks):
+        // worldgen leaves them on floors under rock (hoards.ron), and nothing breaks one while
+        // it is locked.
+        (
+            name: "nomad_treasure_chest", sound: Wood, textures: Sides(top: "treasure_chest_top", bottom: "chest_top", side: "nomad_treasure_chest_side"),
+            hardness: -1.0, color: (130, 100, 70), tags: ["locked", "wood"],
+        ),
+        (
+            name: "farm_treasure_chest", sound: Wood, textures: Sides(top: "treasure_chest_top", bottom: "chest_top", side: "farm_treasure_chest_side"),
+            hardness: -1.0, color: (135, 105, 70), tags: ["locked", "wood"],
+        ),
+        (
+            name: "bronze_treasure_chest", sound: Wood, textures: Sides(top: "treasure_chest_top", bottom: "chest_top", side: "bronze_treasure_chest_side"),
+            hardness: -1.0, color: (150, 110, 65), tags: ["locked", "wood"],
+        ),
+        (
+            name: "iron_treasure_chest", sound: Wood, textures: Sides(top: "treasure_chest_top", bottom: "chest_top", side: "iron_treasure_chest_side"),
+            hardness: -1.0, color: (140, 130, 120), tags: ["locked", "wood"],
+        ),
+        (
+            name: "steam_treasure_chest", sound: Wood, textures: Sides(top: "treasure_chest_top", bottom: "chest_top", side: "steam_treasure_chest_side"),
+            hardness: -1.0, color: (120, 120, 125), tags: ["locked", "wood"],
+        ),
     ],
     families: [
         // Rocks. Deepslate and the sandstones show their layers on top.

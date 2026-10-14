@@ -464,6 +464,7 @@
     "quest.goal.met_kinds": "取引した旅人の種類",
     "quest.goal.prayed": "{prayer}をオンにする",
     "quest.goal.offered": "祭壇に{item}を捧げる",
+    "quest.goal.opened": "{item}の鍵を開ける",
     "multiblock.fuel": "{structure}に火を入れるには、いずれかの燃料を必要な数だけ手に持つ：{fuels}。",
     "multiblock.fuel_or": " または ",
     "multiblock.fuel_stack": "{item} × {count}",
