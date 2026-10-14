@@ -255,7 +255,7 @@ fn skill_words(locale: &Locale, content: &Content, name: &str) -> String {
 
 /// What a quest is drawn with: the item it gives, else the item it asks for, else the
 /// skill it trains.
-fn quest_icon(content: &Content, images: &HudImages, quest: &QuestDef) -> Handle<Image> {
+pub(crate) fn quest_icon(content: &Content, images: &HudImages, quest: &QuestDef) -> Handle<Image> {
     let package = package(quest);
     let item = |name: &str| item_id(content, package, name);
     let given = quest.rewards.iter().find_map(|r| if let Reward::Item(name, _) = r { item(name) } else { None });
@@ -574,9 +574,9 @@ fn claim(buttons: Query<&Interaction, (Changed<Interaction>, With<ClaimButton>)>
     }
 }
 
-/// The sounds of quests: a jingle as one is finished, and coins as its rewards are
-/// claimed, told by the server's next states against the last (not on joining, when the
-/// first states arrive).
+/// The sound of a quest's rewards claimed (coins), told by the server's next states against
+/// the last (not on joining, when the first states arrive). A quest finished is one of the
+/// HUD's moments, which plays its jingle (`celebrate`).
 fn hear_quests(player: Res<LocalPlayer>, mut sounds: MessageWriter<UiSound>, mut last: Local<(u32, Vec<QuestState>)>) {
     // Cleared on joining: the next states are the first of a session.
     if player.quests.is_empty() {
@@ -586,10 +586,7 @@ fn hear_quests(player: Res<LocalPlayer>, mut sounds: MessageWriter<UiSound>, mut
     if last.0 == player.quests_rev {
         return;
     }
-    let (done, claimed) = quest_changes(&last.1, &player.quests);
-    if done {
-        sounds.write(UiSound::QuestDone);
-    }
+    let (_, claimed) = quest_changes(&last.1, &player.quests);
     if claimed {
         sounds.write(UiSound::QuestClaim);
     }
