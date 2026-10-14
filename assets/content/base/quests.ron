@@ -725,6 +725,13 @@
             rewards: [Xp("construction", 120.0), Item("candle", 4)],
         ),
         (
+            name: "shut_the_door", age: "farm", branch: "home", title: "Shut the Door",
+            why: "The night is dark and anything may wander in. Six planks of any wood make a wooden door at a table (Construction 2). Set it in a doorway two blocks high and it fills both; right-click to open or shut it. Shut, nothing walks through, and no creature opens it. Indoors at home behind a shut door you heal a tenth faster and keep a degree warmer (Door shut). Make a door, hang it, and shut yourself in.",
+            tasks: [[Craft("wooden_door", 1), Felt("door_shut")]],
+            after: ["snug_for_winter"],
+            rewards: [Xp("construction", 60.0)],
+        ),
+        (
             name: "workshop_and_stove", age: "farm", branch: "home", title: "A Stove and a Quern",
             why: "A home that works for you. A stove is a campfire under a row of three cobblestones with one more on each side of it, five in all (Construction 5). For the workshop, make one of these: quern stones are four cobblestones in a square under a stick (Crafting 5); a spindle stand is an oak plank, two sticks and a twine in a square (Crafting 6); a loom frame is oak planks, sticks and a twine (Crafting 8). All at the crafting table.",
             tasks: [[Craft("cottage_stove", 1), Craft("tag:workshop", 1)]],

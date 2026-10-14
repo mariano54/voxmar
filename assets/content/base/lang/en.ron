@@ -1231,6 +1231,8 @@
     "quest.base.make_camp.why": "A camp is a bed and a light together. Put your sleeping bag down, set a torch beside it and sleep in it once: wherever you wake is your home, and a camp heals you a fifth faster.",
     "quest.base.snug_for_winter": "Snug for Winter",
     "quest.base.snug_for_winter.why": "Put a roof over the Hearth with your bed and two lights beside it, and the home turns snug: warm under a roof, you heal half as fast again there, and a night's sleep in it rests you better.",
+    "quest.base.shut_the_door": "Shut the Door",
+    "quest.base.shut_the_door.why": "The night is dark and anything may wander in. Six planks of any wood make a wooden door at a table (Construction 2). Set it in a doorway two blocks high and it fills both; right-click to open or shut it. Shut, nothing walks through, and no creature opens it. Indoors at home behind a shut door you heal a tenth faster and keep a degree warmer (Door shut). Make a door, hang it, and shut yourself in.",
     "quest.base.workshop_and_stove": "A Stove and a Quern",
     "quest.base.workshop_and_stove.why": "A home that works for you. A stove is a campfire under a row of three cobblestones with one more on each side of it, five in all (Construction 5). For the workshop, make one of these: quern stones are four cobblestones in a square under a stick (Crafting 5); a spindle stand is an oak plank, two sticks and a twine in a square (Crafting 6); a loom frame is oak planks, sticks and a twine (Crafting 8). All at the crafting table.",
     "quest.base.books_and_banners": "Books and Banners",
