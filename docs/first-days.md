@@ -217,7 +217,7 @@ Mining time is the block's hardness over the tool's speed (tools.ron), so a tool
 | Stone (1.5) | 1.5 s | Wooden pickaxe (13 s) | 3 planks, 2 sticks | x2 | Stone pickaxe at 44 s, x4; copper at 233 s, x7 |
 | Clay (0.6) | 0.6 s | Stone shovel (Dig In, about 100 s) | 1 cobblestone, 2 sticks | x4 | Copper shovel, x7 |
 | Coal ore (3.0) | none | Wooden pickaxe (13 s) | as above | needs a pickaxe | Stone pickaxe, x2 more |
-| Fibre (wild wheat, grass) | instant | none needed | | | Sown wheat in the Farm age |
+| Fibre (wild wheat, grass) | instant | none needed | | | Sown wheat in the Farm age; wild wheat gives an ear 6 in 10 |
 | Meat (hunting) | max hit 1 | Stone axe or sword (44 s) | 3 or 2 cobblestone, sticks | x3 max hit | Copper sword, max hit 5 |
 | Charcoal (a log in the fire) | 2 s each | none: coal ore instead (Charcoal's other route) | | | The Crucible pays 16 |
 
@@ -261,6 +261,19 @@ Stone in Hand 39 to 40 (the same each run, as the rest would be but for the hunt
 firing's cracks), First Night 52 to 60, Homestead Hearth lit 82 to 95, Fire the Clay 137 to
 148, Charcoal 196 to 207, Red Metal 205 to 216, A Kiln Load 292 to 316, Brick by Brick 381 to
 408, Crucible Kiln lit 392 to 418.
+
+### First-hour pacing (Oct 14)
+
+A pass over every Nomad quest for stretches of more than about three minutes of the same
+gathering, from the bot's main line (lit hearth at 81 s of action, nothing near three
+minutes) and, for side quests, drop chances, tool speeds and a census of the land around
+five spawns (the table is in the project's design/first-hour-pacing.md). Wild wheat is the
+one that was long: lone tufts some 25 blocks apart on grassland, none in most woods, and
+three ears in ten made Daily Bread's eight wheat about 27 tufts. Foraging now gives an ear
+six times in ten (`crops.ron`), about 13 tufts; sown wheat stays the bulk source
+(`wild_wheat_bakes_bread_in_a_short_walk`). A Varied Table (12 meat, 8 fish, 6 bread,
+about 11 minutes) and Trail Rations (12 jerky) were long by their counts, which the quest
+book's owners set.
 
 ## Measured pacing
 
