@@ -2104,16 +2104,16 @@ fn first_night_needs_a_crafted_campfire_and_food_cooked_on_it() {
     client.propose("core:craft", ActionTarget::Slot(0));
     client.pump_until(|c| done(c) && count(c, "base:campfire") == 1);
     client.wait_server(2);
-    assert_eq!(count(&client, "base:torch"), 0, "finishing paid the torches before they were claimed");
+    assert_eq!(count(&client, "base:feather"), 0, "finishing paid the feathers before they were claimed");
     drop(client);
     // The reward waits through a restart, in the save.
     let mut client = Client::join_with(config());
     client.pump_until(|c| done(c));
     client.wait_server(2);
     assert!(!client.claimed("base:first_night"), "rejoining claimed it");
-    assert_eq!(count(&client, "base:torch"), 0);
+    assert_eq!(count(&client, "base:feather"), 0);
     client.claim("base:first_night");
-    client.pump_until(|c| c.claimed("base:first_night") && count(c, "base:torch") == 4);
+    client.pump_until(|c| c.claimed("base:first_night") && count(c, "base:feather") == 2);
     drop(client);
     let mut client = Client::join_with(config());
     client.pump_until(|c| done(c));
@@ -2121,7 +2121,7 @@ fn first_night_needs_a_crafted_campfire_and_food_cooked_on_it() {
     assert!(client.claimed("base:first_night"), "the claim was not saved");
     client.claim("base:first_night");
     client.wait_server(2);
-    assert_eq!(count(&client, "base:torch"), 4, "rejoining or claiming again paid the quest twice");
+    assert_eq!(count(&client, "base:feather"), 2, "rejoining or claiming again paid the quest twice");
     drop(client);
     std::fs::remove_dir_all(dir).unwrap();
 }
