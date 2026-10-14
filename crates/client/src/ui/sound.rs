@@ -30,7 +30,7 @@ impl Plugin for UiSoundPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<UiSound>()
             .add_systems(Startup, (synthesize, jingle_clips))
-            .add_systems(Update, (click_buttons, play.in_set(Audible)).chain())
+            .add_systems(Update, ((click_buttons, hear_screens), play.in_set(Audible)).chain())
             .add_systems(Update, play_jingles.in_set(Audible));
     }
 }
@@ -42,6 +42,11 @@ pub enum UiSound {
     Click,
     /// An item picked up or put down.
     Item,
+    /// A screen opened (the inventory, the quest book, the character screen, the journal):
+    /// the set's item tap, a little higher.
+    Open,
+    /// The last such screen closed: the same tap, a little lower.
+    Close,
     /// A quest finished.
     QuestDone,
     /// A finished quest's rewards claimed: coins.
@@ -255,7 +260,7 @@ impl Jingles {
             UiSound::QuestClaim => (&self.claim, 0.3),
             UiSound::Milestone if !self.milestone.is_empty() => (&self.milestone, 0.5),
             UiSound::LevelUp | UiSound::Milestone => (&self.level, 0.5),
-            UiSound::Click | UiSound::Item => return None,
+            UiSound::Click | UiSound::Item | UiSound::Open | UiSound::Close => return None,
         };
         (!list.is_empty()).then_some((list.as_slice(), gain))
     }
@@ -308,18 +313,52 @@ fn play(mut commands: Commands, mut sounds: MessageReader<UiSound>, clips: Optio
         // One of each a frame, however many buttons or moves asked.
         let Some(set) = set.filter(|_| !played.contains(&sound) && volume > 0.0) else { continue };
         played.push(sound);
-        let (clip, gain) = match sound {
-            UiSound::Click => (&set[0], 0.4),
-            UiSound::Item => (&set[1], 0.32),
+        let (clip, gain, speed) = match sound {
+            UiSound::Click => (&set[0], 0.4, 1.0),
+            UiSound::Item => (&set[1], 0.32, 1.0),
+            UiSound::Open => (&set[1], 0.3, 1.15),
+            UiSound::Close => (&set[1], 0.24, 0.85),
             UiSound::QuestDone | UiSound::QuestClaim | UiSound::LevelUp | UiSound::Milestone => continue,
         };
-        commands.spawn((AudioPlayer(clip.clone()), PlaybackSettings::DESPAWN.with_volume(Volume::Linear(gain * volume))));
+        commands.spawn((AudioPlayer(clip.clone()), PlaybackSettings { speed, ..PlaybackSettings::DESPAWN.with_volume(Volume::Linear(gain * volume)) }));
     }
+}
+
+/// A screen opening sounds `Open`; the last one closing, `Close`. Switching from one screen
+/// to another in a frame is an opening.
+fn hear_screens(ui: Option<Res<crate::player::UiState>>, mut was: Local<[bool; 4]>, mut sounds: MessageWriter<UiSound>) {
+    let Some(ui) = ui else { return };
+    let now = [ui.inventory_open, ui.quests_open, ui.character_open, ui.journal_open];
+    if now.iter().zip(was.iter()).any(|(now, was)| *now && !was) {
+        sounds.write(UiSound::Open);
+    } else if was.iter().any(|w| *w) && !now.iter().any(|n| *n) {
+        sounds.write(UiSound::Close);
+    }
+    *was = now;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Opening a screen sounds once, switching straight to another opens again, and only
+    /// the last one closing closes.
+    #[test]
+    fn screens_open_and_close_aloud() {
+        let mut app = App::new();
+        app.add_message::<UiSound>().init_resource::<crate::player::UiState>().add_systems(Update, hear_screens);
+        let step = |app: &mut App, change: fn(&mut crate::player::UiState)| -> Vec<UiSound> {
+            change(&mut app.world_mut().resource_mut::<crate::player::UiState>());
+            app.update();
+            app.world_mut().resource_mut::<Messages<UiSound>>().drain().collect()
+        };
+        assert_eq!(step(&mut app, |_| {}), []);
+        assert_eq!(step(&mut app, |ui| ui.inventory_open = true), [UiSound::Open]);
+        assert_eq!(step(&mut app, |_| {}), []);
+        assert_eq!(step(&mut app, |ui| (ui.inventory_open, ui.quests_open) = (false, true)), [UiSound::Open]);
+        assert_eq!(step(&mut app, |ui| ui.quests_open = false), [UiSound::Close]);
+        assert_eq!(step(&mut app, |_| {}), []);
+    }
 
     #[test]
     fn recorded_sets_are_shipped() {

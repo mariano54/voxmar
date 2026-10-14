@@ -124,6 +124,8 @@ pub struct Settings {
     pub toggle_guard: bool,
     /// Whether a fight shows the number each blow did where it landed (hitsplats).
     pub damage_numbers: bool,
+    /// Whether a fight moves the view: a heavy blow's dip, a hurt's tip, a block's shake.
+    pub screen_shake: bool,
     /// How far the hotbar and hearts sit above the bottom edge, in HUD pixels.
     pub hud_raise: i32,
     /// Name of the shader pack in use (see `render::pack`).
@@ -352,6 +354,7 @@ impl Default for Settings {
             zoom_in_survival: false,
             toggle_guard: false,
             damage_numbers: true,
+            screen_shake: true,
             hud_raise: 3,
             shader_pack: DEFAULT_PACK.into(),
             shadows: ShadowQuality::default(),
@@ -667,6 +670,7 @@ enum Toggle {
     ZoomInSurvival,
     ToggleGuard,
     DamageNumbers,
+    ScreenShake,
     DoubleTapSprint,
     FovEffects,
     MinecraftAssets,
@@ -708,6 +712,7 @@ impl Toggle {
             Toggle::ZoomInSurvival => "settings.zoom_in_survival",
             Toggle::ToggleGuard => "settings.toggle_guard",
             Toggle::DamageNumbers => "settings.damage_numbers",
+            Toggle::ScreenShake => "settings.screen_shake",
             Toggle::DoubleTapSprint => "settings.double_tap_sprint",
             Toggle::FovEffects => "settings.fov_effects",
             Toggle::MinecraftAssets => "settings.minecraft_assets",
@@ -724,6 +729,7 @@ impl Toggle {
             Toggle::ZoomInSurvival => settings.zoom_in_survival,
             Toggle::ToggleGuard => settings.toggle_guard,
             Toggle::DamageNumbers => settings.damage_numbers,
+            Toggle::ScreenShake => settings.screen_shake,
             Toggle::DoubleTapSprint => settings.double_tap_sprint,
             Toggle::FovEffects => settings.fov_effects,
             Toggle::MinecraftAssets => settings.minecraft_assets,
@@ -747,6 +753,7 @@ impl Toggle {
             Toggle::ZoomInSurvival => &mut settings.zoom_in_survival,
             Toggle::ToggleGuard => &mut settings.toggle_guard,
             Toggle::DamageNumbers => &mut settings.damage_numbers,
+            Toggle::ScreenShake => &mut settings.screen_shake,
             Toggle::DoubleTapSprint => &mut settings.double_tap_sprint,
             Toggle::FovEffects => &mut settings.fov_effects,
             Toggle::MinecraftAssets => &mut settings.minecraft_assets,
@@ -1138,6 +1145,7 @@ const SECTIONS: [(&str, &[Control]); 6] = [
             Control::Choice(Choice::UiSounds),
             Control::Slider(Slider::HudRaise),
             Control::Switch(Toggle::DamageNumbers),
+            Control::Switch(Toggle::ScreenShake),
             Control::Switch(Toggle::DebugOverlay),
         ],
     ),
