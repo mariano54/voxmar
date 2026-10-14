@@ -27,6 +27,7 @@ mod player;
 mod prayers;
 mod process;
 mod rules;
+mod stations;
 mod stores;
 mod treasure;
 pub mod save;
@@ -509,6 +510,8 @@ pub(crate) struct Server {
     planter_grown: FxHashSet<IVec3>,
     /// Kept hives with bees, and how far each is toward its honey (`apiary`).
     apiary: apiary::Apiary,
+    /// What is on each loaded home station, and when it is done (`stations`).
+    stations: stations::Loads,
     /// When the player message being handled arrived (see `actions`).
     arrival: Instant,
     /// The moment before which every player message has been handled: the last time all
@@ -620,6 +623,7 @@ impl Server {
         let lairs = lairs::Lairs::restore(&meta.lairs);
         let planter_grown = meta.planter_grown.iter().map(|&p| IVec3::from_array(p)).collect();
         let apiary = apiary::Apiary::restore(&meta.hives);
+        let stations = stations::Loads::restore(&meta.stations, |name| content.blocks.id(name));
         let lit = meta.lit.iter().filter(|fire| fire.until > tick && content.multiblocks.get(&fire.structure).is_some())
             .map(|fire| (IVec3::from_array(fire.position), fire.clone())).collect();
         let survival = Arc::new(rules::SurvivalRules::load(&content.files, &content.blocks, &mut Vec::new()).expect("checked by load_content"));
@@ -643,6 +647,7 @@ impl Server {
             regrowing,
             planter_grown,
             apiary,
+            stations,
             arrival: Instant::now(),
             heard: None,
             creatures: creatures::Creatures::default(),
@@ -954,6 +959,7 @@ impl Server {
         meta.planter_grown = grown;
         meta.lairs = self.lairs.saved();
         meta.hives = self.apiary.saved();
+        meta.stations = self.stations.saved(|item| self.content.blocks.def(item).name.clone());
         meta.lit = self.lit.values().filter(|fire| fire.until > self.tick).cloned().collect();
         meta.lit.sort_by_key(|fire| fire.position);
         meta.day = Some(self.day as u64);
@@ -1075,6 +1081,7 @@ impl Server {
                 done.push((pos, block));
                 self.machine_changed(pos, old, block);
                 self.hive_changed(pos, old, block);
+                self.station_changed(pos, old, block);
                 self.fire_changed(pos);
             }
         }
@@ -1110,6 +1117,7 @@ impl Server {
             self.forget_placed(pos);
             self.machine_changed(pos, old, block);
             self.hive_changed(pos, old, block);
+            self.station_changed(pos, old, block);
             self.fire_changed(pos);
             for player in self.players.values().filter(|p| p.joined && p.sent.contains(&column)) {
                 player.connection.send(ServerMessage::BlockChanged { pos, block });

@@ -109,6 +109,10 @@ pub struct WorldMeta {
     /// have none: their skeps start over.
     #[serde(default)]
     pub hives: Vec<crate::apiary::SavedHive>,
+    /// Loaded home stations: what is on each and the tick it is done (`stations`). Older
+    /// worlds have none.
+    #[serde(default)]
+    pub stations: Vec<crate::stations::SavedLoad>,
     /// Fuelled multiblocks and the server tick when their fire goes out. Older worlds
     /// open cold; completed quests stay completed in the player's own file.
     #[serde(default)]
@@ -157,6 +161,7 @@ impl WorldMeta {
             regrowing: Vec::new(),
             planter_grown: Vec::new(),
             hives: Vec::new(),
+            stations: Vec::new(),
             lit: Vec::new(),
             generation: 0,
             worldgen_content: None,

@@ -123,6 +123,12 @@ pub enum Requirement {
     /// Something can be taken from the target's bees with what the actor holds (a swarm
     /// into a skep, honey from a full one: `bees.ron`).
     Bees,
+    /// The target is a home station (`stations.ron`): an empty one with something it works
+    /// in hand, or one working or ready.
+    Station,
+    /// The actor holds a fertiliser and the target is a crop still growing
+    /// (`stations.ron`'s `fertilisers`).
+    Fertilisable,
     /// The target is a store (a bin that does not feed: a chest, a cupboard, a jar), and
     /// the actor holds no machine to lay against it.
     Store,
@@ -200,6 +206,11 @@ pub enum Effect {
     /// Take from the target's bees with what the actor holds (`bees.ron`): calmly under
     /// smoke, stung without it.
     TendBees,
+    /// Use the target home station (`stations.ron`): load it with what is in hand, take
+    /// what it made, or be told how it goes.
+    UseStation,
+    /// Spread one held fertiliser on the target crop: the crops within its reach grow.
+    Fertilise,
     /// Open the target store beside the actor's inventory, its slots theirs to move items
     /// in and out of until the screen closes (`inventory::STORE`).
     OpenStore,
@@ -330,6 +341,10 @@ pub trait ActionContext {
     }
     /// What bees give, where the context knows.
     fn bees(&self) -> Option<&crate::bees::Bees> {
+        None
+    }
+    /// The home stations and fertilisers, where the context knows.
+    fn stations(&self) -> Option<&crate::station::Stations> {
         None
     }
     /// Whether the creature with that id takes `item` from the actor's hand.
@@ -544,6 +559,18 @@ impl ActionDef {
                 let (block, _) = block_target()?;
                 let Some(bees) = ctx.bees() else { return Ok(false) };
                 ctx.block(block).is_some_and(|b| bees.take(b, ctx.actor_held()).is_some())
+            }
+            Requirement::Station => {
+                let (block, _) = block_target()?;
+                let Some(stations) = ctx.stations() else { return Ok(false) };
+                ctx.block(block).is_some_and(|b| stations.usable(b, ctx.actor_held()))
+            }
+            Requirement::Fertilisable => {
+                let (block, _) = block_target()?;
+                let Some(stations) = ctx.stations() else { return Ok(false) };
+                let crops = ctx.crops();
+                let growing = ctx.block(block).and_then(|b| crops.stage_of(b)).is_some_and(|(crop, stage)| stage < crops.get(crop).ripe_stage());
+                growing && ctx.actor_held().is_some_and(|item| stations.fertiliser(item).is_some())
             }
             Requirement::MultiblockCore => {
                 let (block, _) = block_target()?;

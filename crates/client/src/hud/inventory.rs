@@ -110,16 +110,22 @@ fn worn_glyph(slot: usize) -> Option<Piece> {
 /// What packages restyle of the interface (`interface.ron`, in `core`); a later package
 /// changes what it gives. Read with the rest of the content at launch, which a bad value
 /// fails.
-#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+#[derive(Resource, Clone, Debug, PartialEq)]
 pub struct InterfaceStyle {
     /// How strongly an empty worn well shows what it takes, 0 to 1.
     pub worn_glyph_alpha: f32,
+    /// Blocks from home within which the way home is not shown (`hud::home`).
+    pub home_hidden_within: f32,
+    /// The item whose icon marks home, if a package names one.
+    pub home_icon: Option<String>,
 }
 
 #[derive(Default, serde::Deserialize)]
 #[serde(default, deny_unknown_fields)]
 struct InterfaceFile {
     worn_glyph_alpha: Option<f32>,
+    home_hidden_within: Option<f32>,
+    home_icon: Option<String>,
 }
 
 impl InterfaceStyle {
@@ -127,16 +133,22 @@ impl InterfaceStyle {
 
     pub fn load(files: &[voxmar_engine::content::ContentFile]) -> Result<Self, String> {
         let options = ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME);
-        let mut alpha = None;
+        let (mut alpha, mut hidden, mut icon) = (None, None, None);
         for file in files.iter().filter(|f| f.name == Self::FILE) {
             let given: InterfaceFile = options.from_str(&file.source).map_err(|e| format!("{}/{}: {e}", file.package, Self::FILE))?;
             alpha = given.worn_glyph_alpha.or(alpha);
+            hidden = given.home_hidden_within.or(hidden);
+            icon = given.home_icon.or(icon);
         }
         let worn_glyph_alpha = alpha.ok_or(format!("no package's {} gives worn_glyph_alpha", Self::FILE))?;
         if !(0.0..=1.0).contains(&worn_glyph_alpha) {
             return Err(format!("{}: worn_glyph_alpha {worn_glyph_alpha} is not from 0 to 1", Self::FILE));
         }
-        Ok(InterfaceStyle { worn_glyph_alpha })
+        let home_hidden_within = hidden.ok_or(format!("no package's {} gives home_hidden_within", Self::FILE))?;
+        if !(home_hidden_within >= 0.0 && home_hidden_within.is_finite()) {
+            return Err(format!("{}: home_hidden_within {home_hidden_within} is not 0 or more", Self::FILE));
+        }
+        Ok(InterfaceStyle { worn_glyph_alpha, home_hidden_within, home_icon: icon })
     }
 }
 
@@ -229,7 +241,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
             });
             // The crafting grid and what it makes, above the pack.
             let crafting = Node { align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), margin: UiRect::bottom(Val::Px(space::GAP)), ..default() };
-            card.spawn((crafting, CraftRow)).with_children(|row| {
+            card.spawn(crafting).with_children(|row| {
                 // What is worn: head and body, legs and hands, feet and shield.
                 let worn = Node {
                     display: Display::Grid,
@@ -240,35 +252,40 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
                     ..default()
                 };
                 row.spawn(worn).with_children(|grid| (WORN..=LAST).for_each(|slot| spawn_slot(grid, slot)));
-                let square = Node {
-                    display: Display::Grid,
-                    grid_template_columns: RepeatedGridTrack::px(2, SLOT),
-                    row_gap: Val::Px(PX),
-                    column_gap: Val::Px(PX),
-                    ..default()
-                };
-                // Two by two, or three by three at a crafting table (`fit_grid`).
-                row.spawn((square, CraftSquare)).with_children(|grid| {
-                    for cell in 0..GRID {
-                        let node = Node { width: Val::Px(SLOT), height: Val::Px(SLOT), ..default() };
-                        grid.spawn((Button, Silent, InventorySlot(CRAFT + cell), CraftCell(cell), RelativeCursorPosition::default(), node, Piece::Well.image()))
-                            .with_children(|slot| slot_contents(slot, font, CRAFT + cell));
-                    }
-                });
-                row.spawn(shadowed(font, "→", LARGE, GOLD));
-                let node = Node { width: Val::Px(SLOT + 4.0 * PX), height: Val::Px(SLOT + 4.0 * PX), ..default() };
-                row.spawn((Button, Silent, OutputSlot, RelativeCursorPosition::default(), node, Piece::Frame.image())).with_children(|cell| {
-                    let inset = (SLOT + 4.0 * PX - 16.0 * PX) / 2.0;
-                    let icon = Node { position_type: PositionType::Absolute, left: Val::Px(inset), top: Val::Px(inset), width: Val::Px(16.0 * PX), height: Val::Px(16.0 * PX), ..default() };
-                    cell.spawn((icon, ImageNode::default(), Visibility::Hidden, OutputIcon));
-                    let corner = Node { position_type: PositionType::Absolute, right: Val::Px(super::COUNT_INSET + 2.0 * PX), bottom: Val::Px(super::COUNT_INSET + 2.0 * PX), ..default() };
-                    super::spawn_count(cell, font, corner, OutputCount);
-                });
-                // What the grid makes and how to take it, or how to find a recipe.
-                let words = Node { width: Val::Px(CRAFT_WORDS), flex_direction: FlexDirection::Column, row_gap: Val::Px(space::HAIR), ..default() };
-                row.spawn(words).with_children(|words| {
-                    words.spawn((shadowed(font, "", BODY, TEXT), CraftName));
-                    words.spawn((text(font, "", BODY, MUTED), CraftHint));
+                // The grid, its arrow, what it makes and its words: an open store's slots
+                // take their place (`fit_store`), while what is worn stays.
+                let craft = Node { align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), ..default() };
+                row.spawn((craft, CraftRow)).with_children(|craft| {
+                    let square = Node {
+                        display: Display::Grid,
+                        grid_template_columns: RepeatedGridTrack::px(2, SLOT),
+                        row_gap: Val::Px(PX),
+                        column_gap: Val::Px(PX),
+                        ..default()
+                    };
+                    // Two by two, or three by three at a crafting table (`fit_grid`).
+                    craft.spawn((square, CraftSquare)).with_children(|grid| {
+                        for cell in 0..GRID {
+                            let node = Node { width: Val::Px(SLOT), height: Val::Px(SLOT), ..default() };
+                            grid.spawn((Button, Silent, InventorySlot(CRAFT + cell), CraftCell(cell), RelativeCursorPosition::default(), node, Piece::Well.image()))
+                                .with_children(|slot| slot_contents(slot, font, CRAFT + cell));
+                        }
+                    });
+                    craft.spawn(shadowed(font, "→", LARGE, GOLD));
+                    let node = Node { width: Val::Px(SLOT + 4.0 * PX), height: Val::Px(SLOT + 4.0 * PX), ..default() };
+                    craft.spawn((Button, Silent, OutputSlot, RelativeCursorPosition::default(), node, Piece::Frame.image())).with_children(|cell| {
+                        let inset = (SLOT + 4.0 * PX - 16.0 * PX) / 2.0;
+                        let icon = Node { position_type: PositionType::Absolute, left: Val::Px(inset), top: Val::Px(inset), width: Val::Px(16.0 * PX), height: Val::Px(16.0 * PX), ..default() };
+                        cell.spawn((icon, ImageNode::default(), Visibility::Hidden, OutputIcon));
+                        let corner = Node { position_type: PositionType::Absolute, right: Val::Px(super::COUNT_INSET + 2.0 * PX), bottom: Val::Px(super::COUNT_INSET + 2.0 * PX), ..default() };
+                        super::spawn_count(cell, font, corner, OutputCount);
+                    });
+                    // What the grid makes and how to take it, or how to find a recipe.
+                    let words = Node { width: Val::Px(CRAFT_WORDS), flex_direction: FlexDirection::Column, row_gap: Val::Px(space::HAIR), ..default() };
+                    craft.spawn(words).with_children(|words| {
+                        words.spawn((shadowed(font, "", BODY, TEXT), CraftName));
+                        words.spawn((text(font, "", BODY, MUTED), CraftHint));
+                    });
                 });
             });
             card.spawn(grid(0.0)).with_children(|grid| (HOTBAR_SLOTS..SLOTS).for_each(|slot| spawn_slot(grid, slot)));
@@ -446,7 +463,8 @@ fn fit_grid(player: Res<LocalPlayer>, mut square: Query<&mut Node, With<CraftSqu
     }
 }
 
-/// The crafting grid's row, which an open store's slots take the place of.
+/// The crafting grid, its arrow, what it makes and its words: an open store's slots take
+/// their place, while what is worn stays beside them.
 #[derive(Component)]
 struct CraftRow;
 #[derive(Component)]
@@ -1163,6 +1181,11 @@ mod tests {
         let file = |source: &str| voxmar_engine::content::ContentFile { package: "mod".into(), name: InterfaceStyle::FILE.into(), source: source.into() };
         files.push(file("(worn_glyph_alpha: 0.5)"));
         assert_eq!(InterfaceStyle::load(&files).unwrap().worn_glyph_alpha, 0.5);
+        let style = InterfaceStyle::load(&files).unwrap();
+        assert_eq!((style.home_hidden_within, style.home_icon.as_deref()), (24.0, Some("base:hearthstone")), "core's distance, base's icon");
+        files.push(file("(home_hidden_within: -1.0)"));
+        assert!(InterfaceStyle::load(&files).is_err());
+        files.pop();
         files.push(file("(worn_glyph_alpha: 2.0)"));
         assert!(InterfaceStyle::load(&files).is_err());
     }

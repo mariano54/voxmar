@@ -3,9 +3,12 @@
 //! blocks.ron, [`Emission`]), so a mod's braziers and candles can smoke and spark as well.
 //!
 //! Twice a second, and whenever the camera has moved a few blocks, the chunks around the
-//! camera are searched for the nearest [`MAX_EMITTERS`] emitting blocks within [`RANGE`]. A
-//! chunk whose palette holds no emitting block is passed over without reading its blocks,
-//! so away from fires the search costs next to nothing. Every frame those emitters spawn
+//! camera are searched for the nearest [`MAX_EMITTERS`] emitting blocks within [`RANGE`], or
+//! an emission's own `range` (a chimney's smoke is seen from afar), nearness counted as a
+//! share of that range. A chunk whose palette holds no block seen from that far is passed
+//! over without reading its blocks, so away from fires the search costs next to nothing.
+//! An emission `over` a tag is given off only with such a block below and open air above
+//! (a chimney smokes over a hearth, from its top). Every frame those emitters spawn
 //! particles into the shared ring (`render::particles`), which moves, grows, cools and
 //! fades them on the GPU, so the CPU only writes each particle once. Nothing here allocates
 //! once its two lists have grown to their size.
@@ -62,18 +65,24 @@ struct Emitter {
     /// Its share of its particles, by how far it is from the camera: fewer far off, where
     /// they are small.
     share: f32,
+    /// Which of its emissions it gives off now, a bit each (the first eight): those seen
+    /// from this far, and with what they need below them.
+    giving: u8,
 }
 
 #[derive(Resource, Default)]
 pub(crate) struct Emitters {
     /// The registry `emits` was made from.
     registry: Option<Arc<BlockRegistry>>,
-    /// Per block id, whether it gives off particles.
-    emits: Vec<bool>,
+    /// Per block id, how far off its particles are seen, in blocks (0: it gives off none),
+    /// and the farthest of them.
+    emits: Vec<i32>,
+    far: i32,
     /// The nearest emitters, nearest first.
     near: Vec<Emitter>,
-    /// The last search's finds by squared distance, kept for its capacity.
-    found: Vec<(i32, IVec3, BlockId)>,
+    /// The last search's finds by squared distance as a share of their range's (scaled to
+    /// `RANGE`), with their squared distance, kept for its capacity.
+    found: Vec<(i64, IVec3, BlockId, i32)>,
     /// Seconds since the last search, and the camera's cell then.
     since: f32,
     searched_at: Option<IVec3>,
@@ -88,8 +97,9 @@ impl Emitters {
     /// Finds the nearest emitting blocks around `eye`.
     fn search(&mut self, world: &ClientWorld, eye: IVec3) {
         self.found.clear();
-        let low = (eye - RANGE).max(IVec3::new(i32::MIN, 0, i32::MIN));
-        let high = (eye + RANGE).min(IVec3::new(i32::MAX, WORLD_HEIGHT - 1, i32::MAX));
+        let far = self.far.max(RANGE);
+        let low = (eye - far).max(IVec3::new(i32::MIN, 0, i32::MIN));
+        let high = (eye + far).min(IVec3::new(i32::MAX, WORLD_HEIGHT - 1, i32::MAX));
         if low.y > high.y {
             self.near.clear();
             return;
@@ -100,24 +110,27 @@ impl Emitters {
                 let Some(column) = world.voxels.column(ColumnPos::new(cx, cz)) else { continue };
                 for cy in chunks.0.y..=chunks.1.y {
                     let chunk = &column.chunks[cy as usize];
-                    if !chunk.palette().iter().any(|b| self.emits.get(b.0 as usize).copied().unwrap_or(false)) {
+                    let origin = IVec3::new(cx, cy, cz) << CHUNK_BITS;
+                    let nearest = (eye.clamp(origin, origin + (CHUNK_SIZE - 1)) - eye).length_squared();
+                    if !chunk.palette().iter().any(|b| self.emits.get(b.0 as usize).is_some_and(|&r| r > 0 && r * r >= nearest)) {
                         continue;
                     }
                     // The part of the search box inside this chunk, in the chunk's order.
-                    let origin = IVec3::new(cx, cy, cz) << CHUNK_BITS;
                     let (from, to) = (low.max(origin) - origin, high.min(origin + (CHUNK_SIZE - 1)) - origin);
                     for y in from.y..=to.y {
                         for z in from.z..=to.z {
                             for x in from.x..=to.x {
                                 let local = IVec3::new(x, y, z);
                                 let block = chunk.get(local_index(local));
-                                if !self.emits[block.0 as usize] {
+                                let range = self.emits[block.0 as usize];
+                                if range == 0 {
                                     continue;
                                 }
                                 let pos = origin + local;
                                 let distance = (pos - eye).length_squared();
-                                if distance <= RANGE * RANGE {
-                                    self.found.push((distance, pos, block));
+                                if distance <= range * range {
+                                    let share = distance as i64 * (RANGE * RANGE) as i64 / (range * range) as i64;
+                                    self.found.push((share, pos, block, distance));
                                 }
                             }
                         }
@@ -125,18 +138,23 @@ impl Emitters {
                 }
             }
         }
-        self.found.sort_unstable_by_key(|&(distance, ..)| distance);
-        self.found.truncate(MAX_EMITTERS);
+        self.found.sort_unstable_by_key(|&(share, ..)| share);
         self.near.clear();
-        for &(distance, pos, block) in &self.found {
-            let far = ((distance as f32).sqrt() - NEAR) / (RANGE as f32 - NEAR);
+        for &(scaled, pos, block, distance) in &self.found {
+            if self.near.len() == MAX_EMITTERS {
+                break;
+            }
+            let far = ((scaled as f32).sqrt() - NEAR) / (RANGE as f32 - NEAR);
             let share = 1.0 - (1.0 - FAR_SHARE) * far.clamp(0.0, 1.0);
             let above = pos + IVec3::Y;
             let headroom = (1..=HEADROOM)
                 .find(|&dy| world.block(pos + IVec3::Y * dy).is_none_or(|b| world.registry.info(b).solid))
                 .unwrap_or(HEADROOM + 1)
                 - 1;
-            self.near.push(Emitter { pos, block, sky: sky_light(world, above), headroom: headroom as f32 + 0.5, share });
+            let giving = giving(world, pos, block, distance, headroom);
+            if giving != 0 {
+                self.near.push(Emitter { pos, block, sky: sky_light(world, above), headroom: headroom as f32 + 0.5, share, giving });
+            }
         }
     }
 
@@ -170,7 +188,8 @@ fn emit(
 ) {
     let Ok(camera) = camera.single() else { return };
     if !emitters.registry.as_ref().is_some_and(|r| Arc::ptr_eq(r, &world.registry)) {
-        emitters.emits = (0..world.registry.len()).map(|id| !world.registry.def(BlockId(id as u16)).particles.is_empty()).collect();
+        emitters.emits = (0..world.registry.len()).map(|id| world.registry.def(BlockId(id as u16)).particles.iter().map(reach).max().unwrap_or(0)).collect();
+        emitters.far = emitters.emits.iter().copied().max().unwrap_or(0);
         emitters.registry = Some(world.registry.clone());
         emitters.searched_at = None;
     }
@@ -197,7 +216,10 @@ fn emit(
         }
         let def = world.registry.def(emitter.block);
         let light = world.registry.info(emitter.block).emission;
-        for emission in &def.particles {
+        for (i, emission) in def.particles.iter().enumerate() {
+            if i >= 8 || emitter.giving & (1 << i) == 0 {
+                continue;
+            }
             // On average `rate` a second, at random moments.
             let owed = emission.rate.max(0.0) * dt * amount * emitter.share + emitters.roll();
             for _ in 0..owed as u32 {
@@ -211,6 +233,31 @@ fn emit(
             }
         }
     }
+}
+
+/// How far off an emission is seen, in whole blocks.
+fn reach(emission: &Emission) -> i32 {
+    emission.range.map_or(RANGE, |range| range.round() as i32)
+}
+
+/// Which of `block`'s emissions at `pos`, `distance` squared from the camera with
+/// `headroom` blocks of air above, it gives off: those seen from this far, and with what
+/// they are `over` below them and open air above.
+fn giving(world: &ClientWorld, pos: IVec3, block: BlockId, distance: i32, headroom: i32) -> u8 {
+    let mut giving = 0;
+    for (i, emission) in world.registry.def(block).particles.iter().enumerate().take(8) {
+        let seen = reach(emission).pow(2) >= distance;
+        let over = emission.over.as_ref().is_none_or(|(tag, reach)| {
+            headroom > 0
+                && (1..=*reach as i32).any(|dy| {
+                    (-1..=1).any(|dx| (-1..=1).any(|dz| world.block(pos + IVec3::new(dx, -dy, dz)).is_some_and(|b| world.registry.def(b).has_tag(tag))))
+                })
+        });
+        if seen && over {
+            giving |= 1 << i;
+        }
+    }
+    giving
 }
 
 /// One particle of `emission` from `emitter`, as its style makes it.
@@ -335,10 +382,36 @@ mod tests {
         Emission { style, ..default() }
     }
 
+    /// A hearth's chimney smokes from its top, seen from far beyond a torch's flame, and
+    /// stops when the hearthstone goes.
+    #[test]
+    fn a_chimney_smokes_over_a_hearth_from_afar() {
+        use voxmar_engine::world::Column;
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let block = |name: &str| content.blocks.expect(name);
+        let mut world = ClientWorld::new(content.blocks.clone(), 2, crate::render::terrain::Terrain::detached());
+        world.insert_column(ColumnPos::of_block(IVec3::ZERO), Arc::new(Column::default()));
+        let (hearth, low, top) = (IVec3::new(5, 100, 5), IVec3::new(4, 101, 4), IVec3::new(4, 102, 4));
+        world.set_block(hearth, block("base:hearthstone"));
+        world.set_block(low, block("base:chimney"));
+        world.set_block(top, block("base:chimney"));
+        world.set_block(IVec3::new(7, 100, 7), block("base:torch"));
+        let mut emitters = Emitters::default();
+        emitters.emits = (0..world.registry.len()).map(|id| world.registry.def(BlockId(id as u16)).particles.iter().map(reach).max().unwrap_or(0)).collect();
+        emitters.far = emitters.emits.iter().copied().max().unwrap_or(0);
+        let found = |emitters: &mut Emitters, world: &ClientWorld| {
+            emitters.search(world, IVec3::new(80, 102, 4));
+            emitters.near.iter().map(|e| e.pos).collect::<Vec<_>>()
+        };
+        assert_eq!(found(&mut emitters, &world), vec![top], "the top smokes, 76 blocks off; the torch is too far");
+        world.set_block(hearth, BlockId::AIR);
+        assert!(found(&mut emitters, &world).is_empty(), "no hearth, no smoke");
+    }
+
     #[test]
     fn smoke_fades_under_a_ceiling() {
         let mut dice = Emitters::default();
-        let emitter = Emitter { pos: IVec3::new(3, 60, -2), block: BlockId(1), sky: 15, headroom: 1.5, share: 1.0 };
+        let emitter = Emitter { pos: IVec3::new(3, 60, -2), block: BlockId(1), sky: 15, headroom: 1.5, share: 1.0, giving: 1 };
         for _ in 0..50 {
             let smoke = particle(&emission(ParticleStyle::Smoke), &emitter, 13, Vec3::ZERO, &mut dice);
             // It rises at most about its speed times its life.
@@ -350,7 +423,7 @@ mod tests {
     #[test]
     fn particles_start_where_the_emission_says() {
         let mut dice = Emitters::default();
-        let emitter = Emitter { pos: IVec3::new(10, 70, 10), block: BlockId(1), sky: 0, headroom: 9.0, share: 1.0 };
+        let emitter = Emitter { pos: IVec3::new(10, 70, 10), block: BlockId(1), sky: 0, headroom: 9.0, share: 1.0, giving: 1 };
         let spark = Emission { style: ParticleStyle::Spark, at: [0.5, 0.25, 0.5], spread: 0.2, color: Some([1, 2, 3]), ..default() };
         for _ in 0..50 {
             let p = particle(&spark, &emitter, 13, Vec3::ZERO, &mut dice);
@@ -364,7 +437,7 @@ mod tests {
     #[test]
     fn taller_flames_rise_further() {
         let mut dice = Emitters::default();
-        let emitter = Emitter { pos: IVec3::ZERO, block: BlockId(1), sky: 0, headroom: 9.0, share: 1.0 };
+        let emitter = Emitter { pos: IVec3::ZERO, block: BlockId(1), sky: 0, headroom: 9.0, share: 1.0, giving: 1 };
         let reach = |emission: &Emission, dice: &mut Emitters| {
             (0..200).map(|_| particle(emission, &emitter, 13, Vec3::ZERO, dice)).map(|p| p.velocity.y * p.life).sum::<f32>() / 200.0
         };

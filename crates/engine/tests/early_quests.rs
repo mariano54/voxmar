@@ -74,7 +74,7 @@ fn every_early_quest_names_things_the_content_has() {
                 Goal::Level(name, _) => skill(name),
                 Goal::Met(name, _) => name == "Kinds" || name == "any" || content.wandering.find(name).is_some(),
                 Goal::Prayed(name, _) => qualified(package, name).iter().any(|name| content.prayers.id(name).is_some()),
-                Goal::Offered(name, _) | Goal::Opened(name, _) | Goal::Ate(name, _) => item(name),
+                Goal::Offered(name, _) | Goal::Opened(name, _) | Goal::Ate(name, _) | Goal::Fertilised(name, _) => item(name),
                 Goal::Felt(name) => qualified(package, name).iter().any(|name| content.effects.find(name).is_some()),
                 _ => true,
             };
@@ -133,9 +133,11 @@ fn reachable(content: &Content) -> rustc_hash::FxHashMap<voxmar_engine::block::B
             }
         }
     };
+    // A home station's loaded blocks come only from loading the station, never from the land.
+    let loaded = |block: BlockId| content.stations.of(block).is_some_and(|(_, phase)| phase != voxmar_engine::station::Phase::Empty);
     for block in blocks.ids() {
         let def = blocks.def(block);
-        if !def.item && !made.contains(&blocks.item_of(block)) && blocks.info(block).drops != BlockId(0) {
+        if !def.item && !made.contains(&blocks.item_of(block)) && blocks.info(block).drops != BlockId(0) && !loaded(block) {
             give(&mut ways, blocks.info(block).drops, free);
         }
     }
@@ -191,6 +193,17 @@ fn reachable(content: &Content) -> rustc_hash::FxHashMap<voxmar_engine::block::B
                 grew |= give(&mut ways, recipe.output, way);
             }
         }
+        // What home stations make (stations.ron): from any input they work, once the
+        // station itself can be come by.
+        for station in &content.stations.stations {
+            let Some(&built) = ways.get(&blocks.item_of(station.empty)) else { continue };
+            for work in &station.works {
+                if let Some(input) = work.accepts.iter().filter_map(|b| ways.get(&blocks.item_of(*b)).copied()).min_by_key(|w| w.level) {
+                    let way = worst(worst(input, built), Way { level: work.level, skill: Some(work.skill) });
+                    grew |= give(&mut ways, work.output, way);
+                }
+            }
+        }
         if !grew {
             return ways;
         }
@@ -210,7 +223,7 @@ fn every_early_quest_asks_for_what_the_land_and_recipes_give() {
         let package = package(&quest.name);
         for goal in quest.tasks.iter().flatten() {
             let name = match goal {
-                Goal::Craft(name, _) | Goal::Cook(name, _) | Goal::CookAt(name, _, _) | Goal::Have(name, _) | Goal::Offered(name, _) => name,
+                Goal::Craft(name, _) | Goal::Cook(name, _) | Goal::CookAt(name, _, _) | Goal::Have(name, _) | Goal::Offered(name, _) | Goal::Fertilised(name, _) => name,
                 _ => continue,
             };
             let found: Vec<_> = match name.strip_prefix("tag:") {

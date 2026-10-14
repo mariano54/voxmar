@@ -910,10 +910,40 @@
         ),
         (
             name: "a_herb_nook", age: "farm", branch: "home", title: "A Herb Nook",
-            why: "Tie two herbs with twine and they hang to dry (Crafting 4). Two bunches and a jar, basket or crate at home make a herb nook: there you farm and brew as if a level higher, so a kitchen garden at the door takes seed a level early, and a meal's good lasts a tenth longer.",
+            why: "Tie two herbs with twine and they hang to dry (Crafting 4); a drying rack hung with meat counts as a bunch. Two bunches and a jar, basket or crate at home make a herb nook: there you farm and brew as if a level higher, so a kitchen garden at the door takes seed a level early, and a meal's good lasts a tenth longer.",
             tasks: [[Built("home_herb_nook", 1)]],
             after: ["homestead_hearth"],
             rewards: [Xp("farming", 80.0), Xp("crafting", 40.0)],
+        ),
+        // Home stations (stations.ron, docs/stations.md): a drying rack for the Nomad age
+        // and a compost heap for the Farm age, loaded and left to work while you gather.
+        (
+            name: "hung_to_dry", age: "nomad", branch: "cooking", title: "Hung to Dry",
+            why: "Meat keeps if you dry it. Lash four sticks and three twine into a drying rack (Crafting 3) and stand it under open sky. Right-click it with raw meat or fish in hand to hang up to eight; go gathering, and ten minutes later it is jerky, which heals 2 and, unlike cooked food, stacks in your pack. A fire within three blocks dries it twice as fast; a roof over it stops it. Make a rack and bring home four jerky.",
+            tasks: [[Craft("drying_rack", 1), Have("jerky", 4)]],
+            after: ["small_game"],
+            rewards: [Xp("cooking", 80.0), Xp("crafting", 20.0)],
+        ),
+        (
+            name: "trail_rations", age: "nomad", branch: "cooking", title: "Trail Rations",
+            why: "A pack of jerky carries you far from the fire: it never spoils and twelve fit in one slot. Stand a second rack by your campfire, keep both hung while you work, and gather twelve jerky for a long trip. A hung rack is homely too: it counts as a bunch of herbs drying for a herb nook.",
+            tasks: [[Craft("drying_rack", 2), Have("jerky", 12)]],
+            after: ["hung_to_dry"],
+            rewards: [Xp("cooking", 150.0)],
+        ),
+        (
+            name: "a_compost_heap", age: "farm", branch: "farming", title: "A Compost Heap",
+            why: "Nothing from the field need go to waste. Nail planks into an open box (Construction 5) for a compost heap. Right-click it with greens in hand (wheat, seed, carrots, fruit or burnt food) to fork them in by fours, up to sixteen (Farming 5); fifteen minutes later each four have rotted to one compost, and half as fast again with water within two blocks. Make a heap by your field and keep two compost.",
+            tasks: [[Craft("compost_heap", 1), Have("compost", 2)]],
+            after: ["carrot_patch"],
+            rewards: [Xp("farming", 150.0), Xp("construction", 40.0)],
+        ),
+        (
+            name: "rich_soil", age: "farm", branch: "farming", title: "Rich Soil",
+            why: "Spread compost on a growing crop (right-click with it in hand) and that crop and the ones beside it grow a stage at once; a bone crushed over a crop grows that one alone. A ripe crop takes nothing, so the compost stays in hand. Grow six crops with compost and one with a bone, then let them ripen.",
+            tasks: [[Fertilised("compost", 6), Fertilised("bone", 1)]],
+            after: ["a_compost_heap"],
+            rewards: [Xp("farming", 200.0), Item("wheat_seeds", 6)],
         ),
         // Bees (bees.ron, docs/bees.md): a swarm from a wild nest, a bee garden at home, and
         // the beekeeper with wax candles. The hive fills over a few days' foraging, so the
