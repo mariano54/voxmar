@@ -10,7 +10,7 @@
         (age: "nomad", branch: "home", title: "Home", icon: "wooden_door"),
         (age: "nomad", branch: "cooking", title: "Cooking", icon: "cooked_beef"),
         (age: "nomad", branch: "farming", title: "Farming", icon: "wheat"),
-        (age: "nomad", branch: "hunter", title: "Hunting", icon: "raw_rabbit"),
+        (age: "nomad", branch: "hunter", title: "Hunting", icon: "raw_small_game"),
         (age: "nomad", branch: "combat", title: "Combat", icon: "stone_sword"),
         (age: "nomad", branch: "fishing", title: "Fishing", icon: "fishing_rod"),
         (age: "nomad", branch: "mining", title: "Mining", icon: "stone_pickaxe"),
