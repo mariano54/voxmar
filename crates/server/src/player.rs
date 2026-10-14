@@ -74,6 +74,9 @@ pub struct Player {
     pub home: Option<Vec3>,
     /// The bed (a sleeping bag) last slept in, where they wake without a home.
     pub bed: Option<Vec3>,
+    /// Whether their home hearth needs no lighting again from an older save
+    /// (`hearth::kindle_home`): new players' and those already seen to.
+    pub kindled: bool,
     pub buried: bool,
     /// Everything the player has discovered (`journal`).
     pub journal: voxmar_engine::journal::Journal,
@@ -170,6 +173,7 @@ impl Player {
             health_base: 0,
             home: None,
             bed: None,
+            kindled: true,
             buried: false,
             journal: Default::default(),
             quests_done: Vec::new(),
@@ -275,6 +279,7 @@ impl Player {
             effects: self.timed_effects.iter().map(|&(id, left)| (effects.get(id).name.clone(), left)).collect(),
             home: self.home.map(|h| h.to_array()),
             bed: self.bed.map(|b| b.to_array()),
+            kindled: self.kindled,
             journal: self.journal.entries().cloned().collect(),
             quests: self.quests_done.clone(),
             quests_claimed: self.quests_claimed.clone(),
@@ -519,6 +524,7 @@ impl Server {
                 player.skills = restore_skills(&saved.skills, &skill_ids);
                 player.home = saved.home.map(Vec3::from_array);
                 player.bed = saved.bed.map(Vec3::from_array);
+                player.kindled = saved.kindled;
                 player.journal = voxmar_engine::journal::Journal::from_entries(saved.journal);
                 player.quests_done = saved.quests;
                 player.quests_claimed = saved.quests_claimed;
@@ -529,6 +535,7 @@ impl Server {
             Some(saved) => {
                 player.home = saved.home.map(Vec3::from_array);
                 player.bed = saved.bed.map(Vec3::from_array);
+                player.kindled = saved.kindled;
                 if let Some(home) = player.home.or(player.bed) {
                     player.position = home;
                 }
