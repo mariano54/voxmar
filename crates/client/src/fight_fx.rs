@@ -111,17 +111,19 @@ pub fn strike_stance(strike: &StrikeLook, coil: Option<f32>, striking: Option<f3
             return (strike.coil.scaled(1.0 - p).plus(strike.strike.scaled(p)), false);
         }
         let after = s - strike.snap;
-        let settled = strike.strike.scaled(1.0 - ease(after / strike.settle));
         if strike.recover == Stance::default() {
+            let settled = strike.strike.scaled(1.0 - ease(after / strike.settle));
             return if after < strike.settle { (settled, false) } else { (Stance::default(), true) };
         }
-        // Into the recover stance and out of it again, each over `settle`, or over half of
-        // what the recovery leaves if that is shorter.
+        // Out of the strike into the recover stance and out of that again, each over `settle`,
+        // or over half of what the recovery leaves if that is shorter: the strike is gone by
+        // the time the recover stance is whole, so a short recovery still reads.
         let room = (recovery - strike.snap).max(strike.settle);
         let ramp = strike.settle.min(room * 0.5);
         if after >= room {
             return (Stance::default(), true);
         }
+        let settled = strike.strike.scaled(1.0 - ease(after / ramp));
         let held = ease(after / ramp).min(ease((room - after) / ramp));
         return (settled.plus(strike.recover.scaled(held)), false);
     }
@@ -690,6 +692,11 @@ mod tests {
             assert!(strike.recover != Stance::default(), "{style:?} shows its recovery");
             let middle = strike.snap + room * 0.5;
             assert!(recover_share(&strike, middle, RECOVERY) > 0.95, "{style:?} stands in its recover stance halfway through");
+            // A short recovery (a fox's) still shows its recover stance whole, the strike gone.
+            let short = 0.4;
+            let room = (short - strike.snap).max(strike.settle);
+            let (peak, _) = strike_stance(&strike, None, Some(strike.snap + room * 0.5), short);
+            assert!((peak.lean - strike.recover.lean).abs() < 1e-3 && (peak.nod - strike.recover.nod).abs() < 1e-3, "{style:?}: {peak:?}");
             // Its feet plant to coil and the lunge darts.
             assert!(strike.plant < 0.5 && strike.dart > 1.5, "{style:?}");
             // Every strike lunges forward from a coil drawn back.

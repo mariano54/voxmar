@@ -318,6 +318,8 @@ struct Shown {
     coil_slid: f32,
     coil_deepest: f32,
     recover_most: f32,
+    /// Whether its blow has struck and what its wind-up showed is still to be written down.
+    read_due: bool,
     /// Whether its puff of smoke has gone up as it vanishes.
     poofed: bool,
     /// The move (`moves`, from 1) it winds up and strikes with, 0 for its plain attack:
@@ -326,16 +328,14 @@ struct Shown {
 }
 
 
-/// What one strike showed. Its wind-up: how far its body slid while it coiled, and how far
-/// it might have with its feet planted as `combat_fx.ron` says (it follows where the server
-/// has it that much more slowly), and how deep it coiled (0 to 1). Its recovery, if it stood
-/// it out whole: how much of its recover stance showed at most (0 to 1).
+/// What one strike's wind-up showed, written down as its blow struck: how far its body slid
+/// while it coiled, how far it might have with its feet planted as `combat_fx.ron` says (it
+/// follows where the server has it that much more slowly), and how deep it coiled (0 to 1).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct StrikeRead {
     pub slid: f32,
     pub planted: f32,
     pub coiled: f32,
-    pub recovered: Option<f32>,
 }
 
 impl Shown {
@@ -346,7 +346,7 @@ impl Shown {
     /// the frames.
     fn coil_read(&self, plant: f32, windup: f32) -> StrikeRead {
         let planted = self.coil_far * (1.0 - (-1.5 * FOLLOW * plant * windup).exp()) + 0.02;
-        StrikeRead { slid: self.coil_slid, planted, coiled: self.coil_deepest, recovered: None }
+        StrikeRead { slid: self.coil_slid, planted, coiled: self.coil_deepest }
     }
 }
 
@@ -373,6 +373,9 @@ pub struct Creatures {
     /// What each of those strikes showed (`StrikeRead`), for the gate's check that a strike
     /// reads: planted and coiled deep, then standing out its recovery.
     pub reads: Vec<StrikeRead>,
+    /// How much of its recover stance each strike that stood its recovery out showed at
+    /// most (0 to 1).
+    pub recoveries: Vec<f32>,
     /// The creature whose stride the gate watches, and what it saw; and the step of game
     /// time it is drawn on each frame, whatever the frame took, so a slow machine sees as
     /// many poses in a stride as a fast one (the gate moves it that far a frame).
@@ -901,6 +904,7 @@ fn show(
             } else if !attacking(view.pose) && attacking(shown.view.pose) {
                 if !shown.coil_struck && shown.coiling.is_some() && shown.dying.is_none() {
                     shown.striking = Some(0.0);
+                    shown.read_due = true;
                     creatures.strikes += 1;
                 }
                 shown.coiling = None;
@@ -986,6 +990,7 @@ fn show(
                 coil_slid: 0.0,
                 coil_deepest: 0.0,
                 recover_most: 0.0,
+                read_due: false,
                 poofed: false,
                 move_shown: 0,
             },
@@ -994,7 +999,7 @@ fn show(
 
     let me = creatures.me;
     let mut finished = Vec::new();
-    let (mut poofs, mut strikes, mut reads) = (Vec::new(), 0, Vec::new());
+    let (mut poofs, mut strikes, mut reads, mut recoveries) = (Vec::new(), 0, Vec::new(), Vec::new());
     let feel = &launch.content.combat.feel;
     for (&id, shown) in creatures.shown.iter_mut() {
         let def = &registry.get(shown.view.species).def;
@@ -1098,6 +1103,7 @@ fn show(
             if *coil >= windup && !shown.coil_struck && shown.dying.is_none() {
                 shown.coil_struck = true;
                 shown.striking = Some(0.0);
+                shown.read_due = true;
                 strikes += 1;
             }
         }
@@ -1112,8 +1118,14 @@ fn show(
         if let (Some(strike), Some(s)) = (strike, shown.striking) {
             shown.recover_most = shown.recover_most.max(crate::fight_fx::recover_share(&strike, s, recovery));
         }
-        if struck_out && let Some(strike) = strike.filter(|_| shown.striking.is_some()) {
-            reads.push(StrikeRead { recovered: (strike.recover != Default::default()).then_some(shown.recover_most), ..shown.coil_read(strike.plant, windup) });
+        // Its wind-up is written down as the blow strikes, whatever comes after (it may die
+        // or wind up again before its recovery is out); its recovery once it has stood it out.
+        if let Some(strike) = strike.filter(|_| shown.read_due) {
+            reads.push(shown.coil_read(strike.plant, windup));
+            shown.read_due = false;
+        }
+        if struck_out && let Some(strike) = strike.filter(|s| shown.striking.is_some() && s.recover != Default::default()) {
+            recoveries.push(shown.recover_most);
         }
         if struck_out {
             shown.striking = None;
@@ -1498,6 +1510,7 @@ fn show(
     creatures.poofs.extend(poofs);
     creatures.strikes += strikes;
     creatures.reads.extend(reads);
+    creatures.recoveries.extend(recoveries);
     for id in finished {
         if let Some(shown) = creatures.shown.remove(&id) {
             creatures.falls.push(Fall { strayed: shown.death_strayed, around_eye: shown.death_around_eye, spread: shown.death_spread, scale: shown.death_scale, samples: shown.death_samples, joints: shown.joints.len() as u32, slowest: shown.death_slowest });
