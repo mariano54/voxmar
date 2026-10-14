@@ -993,6 +993,7 @@
     "block.base.well": "Well",
     "block.base.compost_heap_full": "Rotting Compost Heap",
     "block.base.compost_heap_ready": "Ripe Compost Heap",
+    "block.base.feed_trough": "Feed Trough",
     "block.base.jerky": "Jerky",
     "block.base.cooking_pot": "Cooking Pot",
     "block.base.cooking_pot_simmering": "Simmering Cooking Pot",

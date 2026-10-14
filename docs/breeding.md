@@ -81,7 +81,8 @@ Condition walks toward the target by at most 0.15 an in-game day up and 0.25 dow
 wet night or a missed meal shows only over days. An animal whose land, or home, is not
 loaded is paused with it: it neither hungers, changes nor lays while nobody is near.
 
-- Food: fed (grazing its food, or its food by hand) within a day, partly within two. A
+- Food: fed (grazing its food, its food by hand, or its food from a feed trough within its
+  leash of home once a day unfed, docs/home.md) within a day, partly within two. A
   hungry kept animal takes its food from your hand as a meal; one that is fed takes only
   breeding food, and only when that could ready it.
 - Water: water within its leash (7 blocks) of its home. Until troughs come, a dug channel
