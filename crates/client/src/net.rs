@@ -16,6 +16,7 @@ use crate::drops::Drops;
 use crate::hud::skills::SkillToasts;
 use crate::session::Launch;
 use crate::breaking::{BlockBroken, SHOWN_WITHIN, shows_breaking};
+use crate::sfx::{SoundCue, station_cue};
 use crate::hud::console::Console;
 use crate::menu::{Notice, Screen};
 use crate::player::LocalPlayer;
@@ -46,6 +47,11 @@ pub struct Net {
     /// which saves the world.
     server: Option<ServerHandle>,
     input_timer: f32,
+    /// Actions proposed since `sfx` last took them, to be heard as they are done.
+    proposed: std::sync::Mutex<Vec<ActionId>>,
+    /// The integrated server's ticks as `receive` began: every message of those ticks had
+    /// been sent, and was taken in (`taken_ticks`).
+    taken: std::sync::atomic::AtomicU64,
 }
 
 impl Net {
@@ -55,13 +61,20 @@ impl Net {
         let tokens = std::env::var("VOXMAR_ADMIN_TOKENS").unwrap_or_default();
         let admin_token = address.and_then(|address| admin_token_for(address, &tokens));
         connection.send(ClientMessage::Hello { name, protocol: voxmar_protocol::PROTOCOL_VERSION, content, admin_token });
-        Self { connection, server, input_timer: 0.0 }
+        Self { connection, server, input_timer: 0.0, proposed: Default::default(), taken: Default::default() }
     }
 
     /// The next message from the server, for tests that play without the app.
     #[cfg(test)]
     pub fn try_recv(&self) -> Result<Option<voxmar_protocol::ServerMessage>, voxmar_protocol::Disconnected> {
         self.connection.try_recv()
+    }
+
+    /// How many of the integrated server's ticks this client has taken in: every message
+    /// they sent has been read (`receive`). Unlike `ServerHandle::ticks`, which runs on while
+    /// a long frame draws, it never counts a tick whose news is still waiting to be read.
+    pub fn taken_ticks(&self) -> Option<u64> {
+        self.server.as_ref().map(|_| self.taken.load(std::sync::atomic::Ordering::Relaxed))
     }
 
     /// Whether this is a remote server rather than singleplayer's own.
@@ -76,6 +89,13 @@ impl Net {
 
     pub fn propose(&self, action: ActionId, target: ActionTarget) {
         self.connection.send(ClientMessage::Propose { action, target });
+        self.proposed.lock().unwrap_or_else(|e| e.into_inner()).push(action);
+    }
+
+    /// The actions proposed since the last call: the client proposes only what it has
+    /// checked the server will allow, so each is heard as it is done (`sfx::play_actions`).
+    pub fn take_proposed(&self) -> Vec<ActionId> {
+        std::mem::take(&mut *self.proposed.lock().unwrap_or_else(|e| e.into_inner()))
     }
 
     /// Proposes an action aimed into the world (mining, placing, throwing), telling the
@@ -201,12 +221,17 @@ pub(crate) fn receive(
     mut notice: ResMut<Notice>,
     mut next: ResMut<NextState<Screen>>,
     mut weather: ResMut<ClientWeather>,
-    (time, mut clock, mut console, mut air): (Res<Time>, ResMut<Clock>, ResMut<Console>, ResMut<ClientAtmosphere>),
+    (time, mut clock, mut console, mut air, mut cues): (Res<Time>, ResMut<Clock>, ResMut<Console>, ResMut<ClientAtmosphere>, MessageWriter<SoundCue>),
     (mut drops, mut toasts, launch, locale, mut creatures): (ResMut<Drops>, ResMut<SkillToasts>, Res<Launch>, Res<Locale>, ResMut<crate::creatures::Creatures>),
     mut broken: MessageWriter<BlockBroken>,
     mut fighting: ResMut<crate::fight::Fighting>,
 ) {
     let menu = if net.is_remote() { Screen::Join } else { Screen::Title };
+    // Counted before reading: a tick's messages are all sent before it counts, so this many
+    // ticks' are all read below.
+    if let Some(server) = &net.server {
+        net.taken.store(server.ticks(), std::sync::atomic::Ordering::Relaxed);
+    }
     loop {
         let message = match net.connection.try_recv() {
             Ok(Some(message)) => message,
@@ -255,6 +280,13 @@ pub(crate) fn receive(
                         && pos.as_vec3().distance(player.position) < SHOWN_WITHIN
                     {
                         broken.write(BlockBroken { pos, block: old });
+                    }
+                    // A home station loaded or emptied, nearby: the stir or the pop.
+                    if let Some(old) = old
+                        && pos.as_vec3().distance(player.position) < SHOWN_WITHIN
+                        && let Some(cue) = station_cue(&launch.content.stations, &world.registry, old, block)
+                    {
+                        cues.write(cue.at(pos.as_vec3() + Vec3::splat(0.5)));
                     }
                     world.set_block(pos, block);
                 }
@@ -347,7 +379,7 @@ pub(crate) fn receive(
             ServerMessage::Items { changed, gone } => drops.receive(changed, gone, time.elapsed_secs()),
             ServerMessage::Creatures { changed, gone } => creatures.receive(changed, gone),
             ServerMessage::Struck { creature, damage, killed, blow, pips } => {
-                creatures.struck(creature, damage, killed, time.elapsed_secs());
+                creatures.struck(creature, damage, blow, killed, time.elapsed_secs());
                 fighting.struck(creature, damage, blow, pips, killed, time.elapsed_secs_f64());
             }
             ServerMessage::Hurt { creature, damage, defended } => fighting.hurt(creature, damage, defended, time.elapsed_secs_f64()),

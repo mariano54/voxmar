@@ -23,4 +23,31 @@
     level_up: ["sounds/level_up_1.ogg"],
     // A milestone level (every tenth, as celebrations.ron says): the grander one, instead.
     level_milestone: ["sounds/level_milestone_1.ogg"],
+    // Our own (tools/generate_sfx.py), made at the loudness the game expects of them.
+    // An item picked up off the ground: a soft pop, when the player's Minecraft sounds are
+    // off.
+    pickup: ["sounds/pickup_1.ogg", "sounds/pickup_2.ogg", "sounds/pickup_3.ogg", "sounds/pickup_4.ogg"],
+    // What the player does, heard as they do it, by action: about as loud as placing a
+    // block, times `volume`. A package that names an action replaces its sound.
+    actions: {
+        // Three bites and their chews.
+        "core:eat": (sounds: ["sounds/eat_1.ogg", "sounds/eat_2.ogg", "sounds/eat_3.ogg"], volume: 0.8),
+        // A scrape and two knocks: parts fitted together at the grid.
+        "core:craft": (sounds: ["sounds/craft_1.ogg", "sounds/craft_2.ogg", "sounds/craft_3.ogg"], volume: 0.8),
+        // Loading or emptying a home station (a drying rack, a compost bin) sounds the same.
+        "base:use_station": (sounds: ["sounds/craft_1.ogg", "sounds/craft_2.ogg", "sounds/craft_3.ogg"], volume: 0.6),
+        // Flint struck, sparks, and the tinder catching: a fire or a kiln lit.
+        "base:light": (sounds: ["sounds/light_1.ogg", "sounds/light_2.ogg"]),
+        // A lid lifted: a short creak and the lid knocking back.
+        "base:open_store": (sounds: ["sounds/store_open_1.ogg", "sounds/store_open_2.ogg"], volume: 0.8),
+        // The latch, then a slow creak on the hinges; quieter than the rest at its loudest, so
+        // played louder.
+        "base:open": (sounds: ["sounds/door_1.ogg", "sounds/door_2.ogg"], volume: 1.3),
+        // A hiss settling into a sizzle as food meets the fire.
+        "base:cook": (sounds: ["sounds/cook_1.ogg", "sounds/cook_2.ogg"], volume: 0.9),
+        // Lying down: rustles of cloth and straw.
+        "base:sleep": (sounds: ["sounds/sleep_1.ogg"], volume: 0.7),
+        // A line whipped out over the water (the plop is the water's own).
+        "base:fish": (sounds: ["sounds/cast_1.ogg", "sounds/cast_2.ogg"], volume: 0.7),
+    },
 )
