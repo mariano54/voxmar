@@ -3297,36 +3297,46 @@ mod tests {
     /// under more of its own column, as the game requires of blocks with `support: Above`.
     #[test]
     fn hanging_blocks_hang_from_rock() {
+        use rayon::prelude::*;
         use voxmar_engine::block::Support;
         let registry = registry();
-        let mut hanging = 0;
-        // Lush caves, glowroot hollows and dripstone caves near spawn (see `cave_sights`).
-        for (seed, place) in [(1, (-271, 38)), (7, (261, 150)), (1, (-47, -126)), (42, (-43, -354))] {
-            let world = Overworld::new(seed, registry.clone());
-            let first = ColumnPos::of_block(IVec3::new(place.0, 0, place.1)).offset(-3, -3);
-            let columns = generate_area(&world, first, 6);
-            let origin = first.origin();
-            let block = |p: IVec3| {
-                let (cx, cz) = ((p.x - origin.x) >> 5, (p.z - origin.z) >> 5);
-                columns[(cz * 6 + cx) as usize].block(IVec3::new(p.x & 31, p.y, p.z & 31))
-            };
-            for z in origin.z..origin.z + 192 {
-                for x in origin.x..origin.x + 192 {
-                    for y in 1..voxmar_engine::coords::WORLD_HEIGHT - 1 {
-                        let p = IVec3::new(x, y, z);
-                        if registry.info(block(p)).support != Support::Above {
-                            continue;
+        // Lush caves, glowroot hollows and dripstone caves near spawn (see `cave_sights`),
+        // side by side, and each place's rows of block columns side by side.
+        let places = [(1, (-271, 38)), (7, (261, 150)), (1, (-47, -126)), (42, (-43, -354))];
+        let hanging: usize = places
+            .into_par_iter()
+            .map(|(seed, place)| {
+                let world = Overworld::new(seed, registry.clone());
+                let first = ColumnPos::of_block(IVec3::new(place.0, 0, place.1)).offset(-3, -3);
+                let columns = generate_area(&world, first, 6);
+                let origin = first.origin();
+                let block = |p: IVec3| {
+                    let (cx, cz) = ((p.x - origin.x) >> 5, (p.z - origin.z) >> 5);
+                    columns[(cz * 6 + cx) as usize].block(IVec3::new(p.x & 31, p.y, p.z & 31))
+                };
+                (origin.z..origin.z + 192)
+                    .into_par_iter()
+                    .map(|z| {
+                        let mut hanging = 0;
+                        for x in origin.x..origin.x + 192 {
+                            for y in 1..voxmar_engine::coords::WORLD_HEIGHT - 1 {
+                                let p = IVec3::new(x, y, z);
+                                if registry.info(block(p)).support != Support::Above {
+                                    continue;
+                                }
+                                hanging += 1;
+                                let mut up = p + IVec3::Y;
+                                while registry.info(block(up)).support == Support::Above {
+                                    up += IVec3::Y;
+                                }
+                                assert!(registry.info(block(up)).solid, "seed {seed}: {} at {p} hangs from {} at {up}", registry.def(block(p)).name, registry.def(block(up)).name);
+                            }
                         }
-                        hanging += 1;
-                        let mut up = p + IVec3::Y;
-                        while registry.info(block(up)).support == Support::Above {
-                            up += IVec3::Y;
-                        }
-                        assert!(registry.info(block(up)).solid, "seed {seed}: {} at {p} hangs from {} at {up}", registry.def(block(p)).name, registry.def(block(up)).name);
-                    }
-                }
-            }
-        }
+                        hanging
+                    })
+                    .sum::<usize>()
+            })
+            .sum();
         assert!(hanging > 100, "only {hanging} hanging blocks");
     }
 
