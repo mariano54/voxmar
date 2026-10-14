@@ -6570,9 +6570,12 @@ impl Fresh {
         let placed = self.waited(5.0, |c| c.world.block(cell).is_some_and(|b| b != BlockId::AIR));
         assert!(
             placed,
-            "placing {item} on {ground}: not done within 5 server seconds (now {:.1} s into the run), from {:.2}, holding slot {} ({:?}), refused since: {:?}",
+            "placing {item} on {ground}: not done within 5 server seconds (now {:.1} s into the run), from {:.2} ({:.2} from the eye to the cell), ground {:?} and cell {:?} as the client sees them, holding slot {} ({:?}), refused since: {:?}",
             self.secs(),
             self.at,
+            (self.at + Vec3::Y * voxmar_engine::physics::player::EYE_HEIGHT).distance(cell.as_vec3() + 0.5),
+            self.c.world.block(ground).map(|b| self.c.content.blocks.def(b).name.clone()),
+            self.c.world.block(cell).map(|b| self.c.content.blocks.def(b).name.clone()),
             self.held,
             self.c.inventory.get(self.held as usize).map(|s| self.c.content.blocks.def(s.item).name.clone()),
             &self.c.refused[refused.min(self.c.refused.len())..]
