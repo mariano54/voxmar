@@ -50,7 +50,19 @@ The data has one shape for every creature (see [creature-data.md](creature-data.
   how they move between them is behaviour (see [creature-ai.md](creature-ai.md)).
 - **Animation.** Procedural: legs swing with ground speed, heads turn toward what the
   creature attends to, tails and ears follow the drives (an alarmed rabbit's ears go up).
-  No keyframes needed for the first creatures.
+  No keyframes needed for the first creatures. How each movement style walks and runs is
+  data (`creature_motion.ron`, client only; a species may give its own gaits). The stride
+  is worked out from the legs' length and swing, so a foot on the ground stays where it was
+  put: through the share of a stride it is down (`duty`) it moves back under the hip at the
+  body's speed, then lifts and swings forward. Below a walk the swing shrinks rather than
+  the cadence slowing to a crawl; between walk and run the gaits blend, legs moving from
+  in turn to in pairs (a bound). A body turns no faster than its species' `turn` allows,
+  easing in, its head leading and its body leaning into the turn; turning on the spot it
+  steps round. Standing about it glances aside, sniffs the ground, flicks its tail and
+  shifts its weight; running away it lays its ears back, lifts its tail and stretches out.
+  A boss's wind-up shows its move's own strike (the Rootmother's lash winds round and
+  sweeps, her grasp trembles and lifts her front legs). The gate walks a deer this side
+  alone and measures how far its feet slide.
 
 ## Stats
 

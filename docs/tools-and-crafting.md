@@ -137,8 +137,9 @@ you wake after dying until a hearth gives you a home: right click it to sleep
 vials and kiln bricks are made of at the grid. The Crucible Kiln, the Farm age's gate, is a multiblock:
 a crucible (kiln bricks round a clay pot) ringed with kiln bricks, with a pillar on each
 corner. A crucible smelts only in a standing kiln with an unexpired paid fire:
-copper ore into ingots, and a bronze blend (three copper ingots and a tin ore) into
-bronze, all Engineering, never burnt (`stop_burning: 0`). To light a cold kiln,
+copper ore into ingots, and three copper ingots held with a tin ore carried into four
+bronze (a station recipe may take several of what is held, `uses`, and other items
+besides, `with`, and make several, `count`), all Engineering, never burnt (`stop_burning: 0`). To light a cold kiln,
 hold 32 charcoal or 24 coal and right-click the crucible. Lighting consumes the charge
 and quests count it (`Lit("crucible_kiln", 1)`). Its fire uses the fuel times in
 `machines.ron`, survives reload, and goes out when it expires or a required piece is
@@ -156,12 +157,18 @@ Mariano, 2026-10-07: one item per material or part, each with several ways to ge
 thing. Every warm pelt is fur (a bear gives two), rabbit hide is hide, duck eggs are eggs,
 bear fat is lard, bright feathers are feathers, claws are fangs, glimmer dust is moon dust;
 fired clay replaces unfired pots, unfired vials and fired bricks, and tin ore goes straight
-into the bronze blend. Flint comes from gravel, one break in eight (tools.ron's `instead`;
+into bronze at the crucible (Oct 14: the bronze blend between them is gone). Flint comes from gravel, one break in eight (tools.ron's `instead`;
 gravel a player placed gives none). Twine comes from tall grass cut with a knife, one cut in
 five, and a better knife finds more (`by: "knife"`: the knife's yield adds to the chance, so
 a stone knife is 1 in 4, copper 3 in 10, iron 7 in 20); by hand, tall grass gives nothing.
 The recipe book shows both: each `instead` is a way to get its item ("Cut from Tall Grass
 with a Wooden Knife or better (20%+)"), and each knife lists twine among its uses.
+
+Raw and cooked rabbit and chicken were the same meat (Cooking 1, the same experience and
+healing) and are **small game** now (Oct 14). A package's blocks file lists what it renamed
+or merged, old name to new (`renamed: {"raw_rabbit": "raw_small_game"}`), and an older save
+loads those items, in slots, pouches, on the ground and on stations, as the new one. Load
+refuses a rename to a block that does not exist, or of a name a block still has.
 
 ## Dying
 

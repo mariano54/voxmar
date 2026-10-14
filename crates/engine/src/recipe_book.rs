@@ -22,8 +22,9 @@ pub enum Method {
     /// near, if any.
     Craft { variants: Vec<[Option<BlockId>; GRID]>, shapeless: bool, first: usize, near: Option<String> },
     /// Cooked (or fired, or smelted) at a station (blocks with the station's tag), from
-    /// `level` in `skill`; what is left when it burns, if anything.
-    Cook { input: BlockId, station: String, skill: Option<crate::skill::SkillId>, level: u8, burnt: Option<BlockId> },
+    /// `level` in `skill`: `uses` of the held `input` and the other items `with` it; what
+    /// is left when it burns, if anything.
+    Cook { input: BlockId, uses: u8, with: Vec<(BlockId, u8)>, station: String, skill: Option<crate::skill::SkillId>, level: u8, burnt: Option<BlockId> },
     /// Taken from a kept creature with a tool (items with the tool's tag), or left by it
     /// without one (eggs).
     Product { creature: CreatureId, tool: Option<String> },
@@ -87,8 +88,10 @@ impl RecipeBook {
             let station = recipe.def.station.clone();
             let stations: Vec<BlockId> = content.blocks.tagged(&station).collect();
             let input = blocks.item_of(input);
-            let method = Method::Cook { input, station, skill: recipe.skill, level: recipe.def.level, burnt: recipe.burnt };
-            book.add(blocks, Entry { method, output: recipe.output, count: (1, 1) }, [input].into_iter().chain(stations).collect());
+            let with: Vec<(BlockId, u8)> = recipe.with.iter().map(|&(item, n)| (blocks.item_of(item), n)).collect();
+            let uses = [input].into_iter().chain(with.iter().map(|&(item, _)| item)).chain(stations).collect();
+            let method = Method::Cook { input, uses: recipe.def.uses, with, station, skill: recipe.skill, level: recipe.def.level, burnt: recipe.burnt };
+            book.add(blocks, Entry { method, output: recipe.output, count: (recipe.def.count, recipe.def.count) }, uses);
         }
         for (rule, block) in content.tools.givers() {
             let Some((given, chance)) = rule.instead else { continue };
