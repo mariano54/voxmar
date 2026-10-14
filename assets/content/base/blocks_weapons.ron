@@ -4,6 +4,10 @@
     families: [
         (template: "drop", name: "bone_club", tags: ["weapon", "stack:1", "bone"], all: (color: (225, 215, 190))),
         (template: "drop", name: "stone_sword", tags: ["weapon", "stack:1", "sword"], all: (color: (120, 120, 125))),
+        // Ranged: a sling shoots cobbled stone, a short bow arrows (combat.ron).
+        (template: "drop", name: "sling", tags: ["weapon", "stack:1", "sling"], all: (color: (150, 110, 75))),
+        (template: "drop", name: "short_bow", tags: ["weapon", "stack:1", "bow"], all: (color: (160, 120, 70))),
+        (template: "drop", name: "arrow", tags: ["ammo", "arrow"], all: (color: (175, 150, 110))),
         (template: "drop", name: "copper_sword", tags: ["weapon", "stack:1", "sword", "metal:copper"], all: (color: (190, 110, 70))),
         (template: "drop", name: "fang_dagger", tags: ["weapon", "stack:1", "dagger"], all: (color: (235, 228, 205))),
         (template: "drop", name: "bronze_sword", tags: ["weapon", "stack:1", "sword", "metal:bronze"], all: (color: (200, 140, 70))),

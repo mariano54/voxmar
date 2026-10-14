@@ -4072,6 +4072,142 @@ fn a_swing_is_dropped_when_its_weapon_leaves_the_hand() {
     client.pump_until(|c| c.blows == 1);
 }
 
+/// How many of `item` the player carries.
+fn carried_of(client: &Client, item: voxmar_engine::block::BlockId) -> u32 {
+    (0..voxmar_engine::inventory::SLOTS).filter_map(|s| client.inventory.get(s)).filter(|s| s.item == item).map(|s| s.count as u32).sum()
+}
+
+#[test]
+fn a_sling_shoots_a_stone_a_clear_line_away_and_trains_ranged() {
+    real_time("combat is judged on the clock: blows by when they arrived, wind-ups and rhythm in seconds, not in ticks");
+    let mut client = Client::join();
+    let (sling, stone) = (client.content.blocks.expect("base:sling"), client.content.blocks.expect("base:cobblestone"));
+    let ranged = client.content.skills.id("core:ranged").expect("a ranged skill");
+    let bear = client.content.creatures.find("brown_bear").expect("a brown bear in the content");
+    // Creative, so the bear's blows pass us by, on a wide flat floor.
+    client.ok("/gamemode creative");
+    client.ok("/fill ~-12 ~-1 ~-12 ~12 ~-1 ~12 stone");
+    client.ok("/fill ~-12 ~ ~-12 ~12 ~4 ~12 air");
+    client.ok("/clear");
+    client.ok("/skill ranged 10");
+    client.ok("/give sling 1");
+    client.pump_until(|c| carried_of(c, sling) == 1);
+    let slot = (0..voxmar_engine::inventory::HOTBAR_SLOTS).find(|&s| client.inventory.get(s).is_some_and(|s| s.item == sling)).expect("the sling on the hotbar");
+    client.drain();
+    let before: std::collections::HashSet<_> = client.creatures.keys().copied().collect();
+    client.ok("/summon brown_bear 1 ~ ~ ~");
+    client.pump_until(|c| c.creatures.values().any(|v| v.species == bear && !before.contains(&v.id)));
+    let id = client.creatures.values().find(|v| v.species == bear && !before.contains(&v.id)).unwrap().id;
+    client.ok("/creatures hold");
+    // Eight blocks off, out of any sword's reach, inside the sling's twelve.
+    let at = client.creatures[&id].position;
+    let aim = |client: &mut Client| {
+        let yaw = yaw_toward(client.position, at);
+        client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw, pitch: 0.0, selected_slot: slot as u8, flying: true }));
+    };
+    client.ok(&format!("/tp {} {} {}", at.x + 8.0, at.y, at.z));
+    aim(&mut client);
+    client.wait_server(1);
+    // Nothing to shoot: no swing, and the player is told what the sling needs.
+    client.chat.clear();
+    client.propose("core:attack", ActionTarget::Creature(id));
+    client.pump_until(|c| c.chat.iter().any(|(_, line)| line.contains("Nothing to shoot")));
+    client.wait_server(1);
+    assert_eq!(client.blows, 0, "a sling with no stone still swung");
+    // With stones: each shot takes one, hit or miss, and a hit trains Ranged.
+    client.ok("/give cobblestone 16");
+    client.pump_until(|c| carried_of(c, stone) == 16);
+    let xp = client.skills.xp(ranged);
+    let mut shots = 0;
+    while client.damage.iter().all(|&d| d == 0) {
+        assert!(shots < 16, "sixteen sling shots from eight blocks never hit: {:?}", client.damage);
+        client.propose("core:attack", ActionTarget::Creature(id));
+        shots += 1;
+        client.pump_until(|c| c.blows == shots);
+        client.pump_until(|c| carried_of(c, stone) == 16 - shots);
+        client.wait_server(1);
+    }
+    client.pump_until(|c| c.skills.xp(ranged) > xp);
+    // A wall between is a miss, and the stone is still spent.
+    let x = at.x + 4.0;
+    client.ok(&format!("/fill {} {} {} {} {} {} stone", x.floor(), at.y.floor(), at.z.floor() - 3.0, x.floor(), at.y.floor() + 4.0, at.z.floor() + 3.0));
+    client.wait_server(1);
+    // Two shots, the second on the sling's beat (0.53 s): both are at the air, so off the
+    // beat, and earn no pip.
+    let (blows, left, pips) = (client.blows, carried_of(&client, stone), client.pips.last().copied().unwrap_or(0));
+    let start = Instant::now();
+    for k in 0..2u32 {
+        client.propose_at("core:attack", ActionTarget::Creature(id), start + Duration::from_secs_f32(0.53 * k as f32 - if k == 0 { 0.0 } else { 0.06 }));
+        client.pump_until(|c| c.blows == blows + k + 1);
+        assert_eq!(client.damage.last(), Some(&0), "a shot through a wall hit");
+    }
+    let kinds = &client.kinds[client.kinds.len() - 2..];
+    assert_eq!(kinds, [voxmar_engine::combat::Blow::Plain; 2], "shots into a wall counted as {kinds:?}");
+    assert!(client.pips.last().copied().unwrap_or(0) <= pips, "shots into a wall earned a pip: {:?}", client.pips);
+    client.pump_until(|c| carried_of(c, stone) == left - 2);
+    // The last stone gone while a shot winds up: still answered, as a miss at the air, and
+    // the player told why.
+    let slots: Vec<(usize, u8)> = (0..voxmar_engine::inventory::SLOTS).filter_map(|s| client.inventory.get(s).filter(|k| k.item == stone).map(|k| (s, k.count))).collect();
+    for &(slot, count) in &slots[1..] {
+        client.propose("core:drop", ActionTarget::Stack { slot: slot as u8, count });
+    }
+    let (last, count) = slots[0];
+    if count > 1 {
+        client.propose("core:drop", ActionTarget::Stack { slot: last as u8, count: count - 1 });
+    }
+    client.pump_until(|c| carried_of(c, stone) == 1);
+    client.wait_server(1);
+    client.chat.clear();
+    let blows = client.blows;
+    client.propose("core:attack", ActionTarget::Creature(id));
+    client.propose("core:drop", ActionTarget::Stack { slot: last as u8, count: 1 });
+    client.pump_until(|c| c.blows == blows + 1);
+    assert_eq!(client.damage.last(), Some(&0), "a shot with no stone left hit");
+    client.pump_until(|c| c.chat.iter().any(|(_, line)| line.contains("Nothing to shoot")));
+}
+
+#[test]
+fn an_arrow_that_hits_may_be_left_by_the_target_to_pick_up_again() {
+    real_time("combat is judged on the clock: blows by when they arrived, wind-ups and rhythm in seconds, not in ticks");
+    let mut client = Client::join();
+    let (bow, arrow) = (client.content.blocks.expect("base:short_bow"), client.content.blocks.expect("base:arrow"));
+    let bear = client.content.creatures.find("brown_bear").expect("a brown bear in the content");
+    let recover = client.content.combat.recover(&client.content.combat.wielded(Some(bow), |_| 10));
+    assert!(recover >= 0.5, "a bow leaves its arrow by what it hit at least half the time, not {recover}");
+    client.ok("/gamemode creative");
+    client.ok("/fill ~-12 ~-1 ~-12 ~12 ~-1 ~12 stone");
+    client.ok("/fill ~-12 ~ ~-12 ~12 ~4 ~12 air");
+    client.ok("/clear");
+    client.ok("/skill ranged 10");
+    client.ok("/give short_bow 1");
+    client.ok("/give arrow 48");
+    client.pump_until(|c| carried_of(c, bow) == 1 && carried_of(c, arrow) == 48);
+    let slot = (0..voxmar_engine::inventory::HOTBAR_SLOTS).find(|&s| client.inventory.get(s).is_some_and(|s| s.item == bow)).expect("the bow on the hotbar");
+    let before: std::collections::HashSet<_> = client.creatures.keys().copied().collect();
+    client.ok("/summon brown_bear 1 ~ ~ ~");
+    client.pump_until(|c| c.creatures.values().any(|v| v.species == bear && !before.contains(&v.id)));
+    let id = client.creatures.values().find(|v| v.species == bear && !before.contains(&v.id)).unwrap().id;
+    client.ok("/creatures hold");
+    let at = client.creatures[&id].position;
+    client.ok(&format!("/tp {} {} {}", at.x + 10.0, at.y, at.z));
+    let yaw = yaw_toward(client.position, at);
+    client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw, pitch: 0.0, selected_slot: slot as u8, flying: true }));
+    client.wait_server(1);
+    // Shot until an arrow lies by the bear: a hit leaves one half the time, so a forty-health
+    // bear dies only after a dozen or more hits, by which one has all but surely been left.
+    let lying = |c: &Client| c.items.values().any(|v| v.stack.item == arrow && v.position.distance(at) < 3.0);
+    let mut shots = 0;
+    while !lying(&client) {
+        assert!(client.creatures.contains_key(&id) && shots < 48, "no arrow left by the bear after {shots} shots: {:?}", client.damage);
+        client.propose("core:attack", ActionTarget::Creature(id));
+        shots += 1;
+        client.pump_until(|c| c.blows == shots || !c.creatures.contains_key(&id));
+        client.wait_server(1);
+    }
+    let hits = client.damage.iter().filter(|&&d| d > 0).count();
+    assert!(hits >= 1, "an arrow lay by the bear with no hit: {:?}", client.damage);
+}
+
 /// Whether a dodge proposed now is taken: a second one at once must then be refused by its
 /// cooldown, so exactly one Teleport comes back (two: the first was refused too; none: the
 /// cooldown did not hold).
