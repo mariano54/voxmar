@@ -7468,6 +7468,13 @@ fn the_first_days(f: &mut Fresh) -> Site {
     // In by the open end to five blocks short of the nearest junglefowl (they huddle at the
     // far end, and the seeds tempt from ten), where it can walk up the rest.
     f.walk_toward(Fresh::middle(f.rel(-9, 0, 2)), 0.3);
+    // One may have stepped out by the open end while the player walked in: another is let in.
+    let origin = f.origin;
+    let in_lane = |c: &Client| lane(c, origin).iter().any(|&(_, _, species)| species == fowl);
+    if !in_lane(&f.c) {
+        f.stock("junglefowl", -4);
+        assert!(f.waited(2.0, in_lane), "the junglefowl let into the lane never showed");
+    }
     let near = lane(&f.c, f.origin).into_iter().filter(|&(_, _, species)| species == fowl).map(|(_, p, _)| p.z).fold(f32::MIN, f32::max);
     let lane_x = f.rel(-9, 0, 0).x as f32 + 0.5;
     f.walk_toward(Vec3::new(lane_x, f.at.y, (near + 5.0).min(f.rel(0, 0, 0).z as f32 + 0.5)), 0.3);
