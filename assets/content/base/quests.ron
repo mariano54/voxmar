@@ -571,7 +571,7 @@
         ),
         (
             name: "bigger_game", age: "farm", branch: "hunter", title: "Bigger Game",
-            why: "Sheep, deer, boar and cattle give more meat and better hides, but they fight back: wear your hide wraps and keep your sword sharp. Deer and boar keep to the woods, aurochs to the plains, mouflon to the mountains. Cook the haunch: mutton at Cooking 5, pork at 8, venison at 15.",
+            why: "Sheep, deer, boar and cattle give more meat and better hides, but they fight back: wear your hide wraps and keep your sword sharp. Red deer and wild boar keep to the woods, aurochs to the plains, mouflon to the mountains. Cook the haunch: mutton at Cooking 5, pork at 8, venison at 15.",
             tasks: [[Kill("mouflon", 2)], [Kill("red_deer", 1)], [Kill("wild_boar", 1)], [Kill("aurochs", 1)]],
             after: ["homestead_hearth"],
             rewards: [Xp("hunter", 200.0), Xp("attack", 100.0)],

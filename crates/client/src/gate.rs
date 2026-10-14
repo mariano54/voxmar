@@ -5412,6 +5412,63 @@ fn lay_done(world: &mut World, barrel: IVec3) {
     net.command("give oak_planks 64");
 }
 
+/// The quests a newcomer meets first: the Nomad's way to its lit hearth, and the Farm's
+/// opening ones after it.
+const NEWCOMER_GOAL: &str = "base:homestead_hearth";
+
+/// What a newcomer following only the quest book could not find on the way to the lit
+/// hearth and through the Farm's first quests: an item a goal asks for that has no recipe
+/// in the book and that neither its quest's words nor those of a quest before it name, or a
+/// creature none of them name. Each as "quest: thing".
+pub fn newcomer_misses(content: &voxmar_engine::content::Content, locale: &Locale) -> Vec<String> {
+    use voxmar_engine::quest::Goal;
+    let quests = &content.quests;
+    let book = voxmar_engine::recipe_book::RecipeBook::new(content);
+    // The way to the hearth, every quest before it, then the Farm quests that open with it.
+    let mut opening: Vec<&str> = Vec::new();
+    let mut todo = vec![NEWCOMER_GOAL];
+    while let Some(name) = todo.pop() {
+        if opening.contains(&name) {
+            continue;
+        }
+        opening.push(name);
+        todo.extend(quests.get(name).iter().flat_map(|q| q.after.iter().map(String::as_str)));
+    }
+    opening.extend(quests.iter().filter(|q| q.after.iter().any(|a| a == NEWCOMER_GOAL)).map(|q| q.name.as_str()));
+    let words = |name: &str| quests.get(name).map(|q| locale.get_or(&format!("{}.why", voxmar_engine::lang::def_key("quest", &q.name)), &q.why).to_lowercase()).unwrap_or_default();
+    let mut misses = Vec::new();
+    for &name in &opening {
+        let Some(quest) = quests.get(name) else { continue };
+        // Its own words and those of every quest it waits on.
+        let mut told = words(name);
+        let mut before: Vec<&str> = quest.after.iter().map(String::as_str).collect();
+        while let Some(earlier) = before.pop() {
+            told.push_str(&words(earlier));
+            before.extend(quests.get(earlier).iter().flat_map(|q| q.after.iter().map(String::as_str)));
+        }
+        for goal in quest.tasks.iter().flatten() {
+            let (thing, made) = match goal {
+                Goal::Craft(item, _) | Goal::Cook(item, _) | Goal::CookAt(item, _, _) | Goal::Have(item, _) | Goal::Pick(item, _) | Goal::Mine(item, _) | Goal::Placed(item, _) | Goal::CraftNear(item, _, _) | Goal::LookUp(item) => {
+                    let Some(id) = content.blocks.id(item) else { continue };
+                    // A crop or plant picked is found by what it gives (wheat for wheat crop).
+                    let gives = content.blocks.info(id).drops;
+                    let named = matches!(goal, Goal::Pick(..)) && !gives.is_air() && told.contains(&locale.block(content.blocks.def(gives)).to_lowercase());
+                    (locale.block(content.blocks.def(id)), named || !book.making(id).is_empty())
+                }
+                Goal::Kill(creature, _) | Goal::Tame(creature, _) | Goal::Lured(creature, _) | Goal::Trapped(creature, _) => {
+                    let Some(id) = content.creatures.find(creature) else { continue };
+                    (locale.creature(&content.creatures.get(id).def), false)
+                }
+                _ => continue,
+            };
+            if !made && !told.contains(&thing.to_lowercase()) {
+                misses.push(format!("{name}: {thing}"));
+            }
+        }
+    }
+    misses
+}
+
 /// The torch quest the tracker follows, and the quest it sees done.
 const TRACKED: &str = "base:torchlight";
 const DONE_QUEST: &str = "base:crafting_table";
@@ -11247,6 +11304,18 @@ fn finish(world: &mut World, gate: &Gate, now: f32) {
 
 #[cfg(test)]
 mod tests {
+    /// Every item and creature the opening quests ask for has a recipe in the book or is
+    /// named in the quest's words or an earlier one's, in English and Japanese.
+    #[test]
+    fn a_newcomer_finds_what_the_opening_quests_ask_for() {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        let content = voxmar_engine::content::Content::load(&assets).unwrap();
+        for code in ["en", "ja"] {
+            let misses = super::newcomer_misses(&content, &Locale::load(&assets, code));
+            assert!(misses.is_empty(), "{code}: {misses:?}");
+        }
+    }
+
     use super::{sling_next, SlingNext, BEAR, SLING, SLING_LEVEL, SLING_STONES, UNANSWERED};
 
     /// At the sling step's Ranged level, against its bear, every stone missing is a broken
