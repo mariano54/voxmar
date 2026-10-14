@@ -37,6 +37,7 @@ use rustc_hash::FxHashMap;
 use serde::Deserialize;
 use voxmar_engine::content::ContentFile;
 use voxmar_engine::block::{BlockId, BlockRegistry, RenderKind, Sound};
+use voxmar_engine::station::{Phase, Stations};
 use voxmar_engine::physics::player as dims;
 
 use self::dsp::{OnePole, Pink, Svf};
@@ -160,6 +161,23 @@ impl SoundCue {
     /// At `pitch` times the usual pitch.
     pub fn pitched(self, pitch: f32) -> Self {
         Self { pitch: self.pitch * pitch, ..self }
+    }
+}
+
+/// What a station changing from `old` to `new` sounds like, at the block: loaded (empty to
+/// working), its own sound or its working block's placing; emptied (ready or working back to
+/// empty), the pickup's pop. Played when the server says so, never predicted, so a refused
+/// load is silent.
+pub fn station_cue(stations: &Stations, registry: &BlockRegistry, old: BlockId, new: BlockId) -> Option<SoundCue> {
+    let (station, was) = stations.of(old)?;
+    let (_, now) = stations.of(new).filter(|(s, _)| std::ptr::eq(*s, station))?;
+    match (was, now) {
+        (Phase::Empty, Phase::Working) => Some(match station.sound {
+            Some(sound) => SoundCue::new(sound, Cue::Step),
+            None => SoundCue::of(registry, station.working, Cue::Place),
+        }),
+        (Phase::Working | Phase::Ready, Phase::Empty) => Some(SoundCue::new(Sound::Stone, Cue::Pickup)),
+        _ => None,
     }
 }
 
@@ -1029,6 +1047,23 @@ mod tests {
         assert_eq!(heard(step_cues(blocks, Some(id("stone")), Some(id("moss_carpet")), false))[0], (Sound::Moss, 1.0));
         // Wading: a splash over the ground.
         assert_eq!(heard(step_cues(blocks, Some(id("sand")), None, true)), [(Sound::Sand, 0.5), (Sound::Water, 0.7)]);
+    }
+
+    /// A pot loaded stirs, a rack loaded thumps like its wood, either emptied pops; a load
+    /// coming done, or a block that is no station, is silent.
+    #[test]
+    fn stations_stir_and_pop() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let blocks = &content.blocks;
+        let id = |name: &str| blocks.id(&format!("base:{name}")).unwrap_or_else(|| panic!("{name}"));
+        let cue = |old: &str, new: &str| station_cue(&content.stations, blocks, id(old), id(new)).map(|c| (c.sound, c.cue));
+        assert_eq!(cue("cooking_pot", "cooking_pot_simmering"), Some((Sound::Water, Cue::Step)));
+        assert_eq!(cue("drying_rack", "drying_rack_hung"), Some((blocks.info(id("drying_rack_hung")).sound, Cue::Place)));
+        assert_eq!(cue("cooking_pot_ready", "cooking_pot"), Some((Sound::Stone, Cue::Pickup)));
+        assert_eq!(cue("drying_rack_hung", "drying_rack"), Some((Sound::Stone, Cue::Pickup)));
+        assert_eq!(cue("cooking_pot_simmering", "cooking_pot_ready"), None);
+        assert_eq!(cue("stone", "cooking_pot"), None);
+        assert_eq!(cue("drying_rack", "cooking_pot_simmering"), None);
     }
 
     #[test]

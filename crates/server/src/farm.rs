@@ -34,7 +34,8 @@ use crate::save::SavedCrop;
 
 /// Ticks a crop that cannot grow waits before looking again.
 const RETRY: u64 = 60 * TICKS_PER_SECOND as u64;
-/// Blocks across within which water keeps a crop's ground moist (Minecraft's farmland).
+/// Blocks across within which water keeps a crop's ground moist (Minecraft's farmland), as
+/// does a block that waters (`waters`: a well) standing on the ground or sunk into it.
 const WATER_REACH: i32 = 4;
 /// Blocks within which a lamp's light reaches a crop.
 const LAMP_REACH: i32 = 7;
@@ -168,11 +169,13 @@ impl Server {
         let site = self.overworld.site(pos.x, pos.z);
         let fertile = self.block(pos - IVec3::Y).is_some_and(|b| blocks.def(b).has_tag("fertile"));
         let water = blocks.id("base:water").and_then(|b| blocks.fluid(b)).map(|f| f.fluid);
-        let watered = (-1..=0).any(|dy| {
+        let waters: Vec<BlockId> = blocks.tagged("waters").collect();
+        // Water level with the ground or below it; a well on the ground too.
+        let watered = (-1..=1).any(|dy| {
             (-WATER_REACH..=WATER_REACH).any(|dz| {
                 (-WATER_REACH..=WATER_REACH).any(|dx| {
                     let cell = pos + IVec3::new(dx, dy - 1, dz);
-                    self.block(cell).and_then(|b| blocks.fluid(b)).is_some_and(|f| Some(f.fluid) == water)
+                    self.block(cell).is_some_and(|b| waters.contains(&b) || (dy < 1 && blocks.fluid(b).is_some_and(|f| Some(f.fluid) == water)))
                 })
             })
         });
@@ -400,6 +403,31 @@ mod tests {
             }
         }
         assert!(nowhere.is_empty(), "nothing in survival gives these crops' seeds: {nowhere:?}");
+    }
+
+    /// A well waters crops as water does, four blocks across, standing on the ground by the
+    /// field or sunk level with it; no further.
+    #[test]
+    fn a_well_waters_the_field_about_it() {
+        let mut server = crate::test_server();
+        server.world = Default::default();
+        const FLOOR: i32 = 199;
+        let farmland = server.content.blocks.expect("base:farmland");
+        let well = server.content.blocks.expect("base:well");
+        let mut column = voxmar_engine::world::Column::default();
+        for x in 0..32 {
+            for z in 0..32 {
+                column.set_block(IVec3::new(x, FLOOR, z), farmland);
+            }
+        }
+        server.world.insert(ColumnPos::new(0, 0), std::sync::Arc::new(column));
+        let crop = IVec3::new(8, FLOOR + 1, 8);
+        assert!(!server.crop_conditions(crop).watered, "dry ground");
+        for (at, watered) in [(IVec3::new(12, FLOOR + 1, 8), true), (IVec3::new(12, FLOOR, 12), true), (IVec3::new(13, FLOOR + 1, 8), false), (IVec3::new(8, FLOOR + 2, 8), false)] {
+            server.set_block(at, well);
+            assert_eq!(server.crop_conditions(crop).watered, watered, "a well at {at}");
+            server.set_block(at, if at.y == FLOOR { farmland } else { BlockId::AIR });
+        }
     }
 
     #[test]
