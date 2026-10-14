@@ -1682,9 +1682,9 @@ fn a_rod_cast_into_water_catches_fish_by_level_and_teaches_fishing() {
     let nothing = |c: &Client| c.chat.iter().any(|(_, text)| *text == miss);
     // At level 80 with this rod, by day here, a cast lands six times in ten (the best fish
     // biting asks level 55: 0.35 + 0.008 a level above it + 0.05 for the rod tier,
-    // fishing.rs), so sixteen casts miss them all about once in two million runs. The roll
-    // is drawn from the tick a cast lands on, and casts land on much the same ticks every
-    // run, so six casts once failed in a third of runs on a busy machine.
+    // fishing.rs), so sixteen casts miss them all about once in two million worlds. The roll
+    // is drawn from the player's count of casts (once from the tick a cast landed on, when
+    // six casts failed in a third of runs on a busy machine), so every run lands the same.
     // A cast takes five seconds of the clock (`actions.ron`), judged by when the player's
     // messages arrive: each is proposed as if clicked at `at`, and a command stamped just
     // past its time is handled after the cast is done, so the casts follow one another

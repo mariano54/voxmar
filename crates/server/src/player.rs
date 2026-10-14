@@ -126,6 +126,8 @@ pub struct Player {
     pub last_blow: u64,
     /// Prayer points and the prayers on, and what the player was last told of them.
     pub praying: voxmar_engine::prayer::Praying,
+    /// Lines the player has cast, which numbers each cast's draw (`Server::fish`).
+    pub casts: u64,
     pub prayers_sent: Option<(u16, u16, Vec<voxmar_engine::prayer::PrayerId>)>,
     /// Owner-replicated traits changed since they were last sent.
     pub dirty: Vec<TraitDecl>,
@@ -200,6 +202,7 @@ impl Player {
             round_trip: None,
             last_blow: 0,
             praying: Default::default(),
+            casts: 0,
             prayers_sent: None,
             dirty: vec![traits::HEALTH, traits::INVENTORY, traits::SKILLS, traits::VITALS],
             sent: FxHashSet::default(),
@@ -284,6 +287,7 @@ impl Player {
             quests_claimed: self.quests_claimed.clone(),
             tallies: { let mut t: Vec<(String, u32)> = self.tallies.iter().map(|(k, &v)| (k.clone(), v)).collect(); t.sort(); t },
             prayer_points: Some(self.praying.points),
+            casts: self.casts,
         }
     }
 }
@@ -512,6 +516,8 @@ impl Server {
         // Returning players carry on where they left, prayer points and all (the dead with
         // them full); new ones start at spawn with a kit.
         let points = saved.as_ref().filter(|saved| saved.health.alive()).and_then(|saved| saved.prayer_points);
+        // Casts go on being numbered from where they were, alive or dead, so no cast is drawn twice.
+        player.casts = saved.as_ref().map_or(0, |saved| saved.casts);
         match saved {
             Some(saved) if saved.health.alive() => {
                 player.position = saved.position;
