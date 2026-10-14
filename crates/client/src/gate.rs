@@ -397,10 +397,10 @@ impl Step {
 
 impl Gate {
     /// Whether the server runs behind now: in a lagged step, but in the fight-feel step only
-    /// through its tries (the block, counter and dodge), not while the bear is summoned and
-    /// the sword given, nor while the bears are swept away after.
+    /// from the bear's coming (`FEEL_LAG_SETTLE`) through its tries (the block, counter and
+    /// dodge), not while it is summoned, nor while the bears are swept away after.
     fn lagging(&self) -> bool {
-        self.step.lagged() && (self.step != Step::Feel || (FEEL_BLOCK..=FEEL_DODGE).contains(&self.phase))
+        self.step.lagged() && (self.step != Step::Feel || (FEEL_COMING..=FEEL_DODGE).contains(&self.phase))
     }
 
     /// How many times the game's pace the server ticks now: the workshop's machine stages
@@ -6346,6 +6346,14 @@ const FEEL_SLOW_FRAME: f32 = 0.25;
 /// Server seconds the block, counter and dodge take at most together; past them the step
 /// fails what it is on and goes on to kill the bears, so none is left behind.
 const FEEL_LIMIT: f32 = 120.0;
+
+/// Server seconds of lag before the first blow is provoked. Guards and dodges are judged
+/// earlier by the player's round trip (`Server::lag_allowance`), smoothed by a quarter at
+/// each ping, one a second: put behind from calm, it is a tenth from where it settles eight
+/// pings on (0.75^8), about 0.02 s of a 0.2 s allowance, under the 0.05 s steps the tries
+/// take. With the lag on only from the block's phase, the block was found while the allowance
+/// still grew, and every dodge after it, at 0.40 to 0.65 s, was judged too late.
+const FEEL_LAG_SETTLE: f32 = 8.0;
 /// Bears the step summons at most, should provoking them and the counter kill one.
 const FEEL_BEARS: u32 = 3;
 
@@ -6367,6 +6375,8 @@ struct FeelRun {
     bears: u32,
     /// The server's clock when the step began, for `FEEL_LIMIT`.
     started: f32,
+    /// The server's clock when the step began to run behind, for `FEEL_LAG_SETTLE`.
+    lagged_from: Option<f32>,
     /// The moment the answer's search is centred on, and how far round it the dodge's
     /// search has gone (`after` is the moment tried next).
     centre: f32,
@@ -6485,6 +6495,9 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         }
         1 => {
             let roomy = world.resource::<LocalPlayer>().max_health >= 100;
+            if gate.feel.lagged_from.is_none() {
+                gate.feel.lagged_from = Some(gate.server_now);
+            }
             if roomy && view.is_some() && select(world, WEAPON) {
                 gate.advance(now);
             } else if gate.server_in_phase() > 10.0 {
@@ -6562,8 +6575,10 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             } else if !blocking {
                 key(world, dodge_key, false);
             }
-            // Provoked at most every few server seconds while it does not fight back.
-            if gate.feel.seen.is_none() && gate.server_now - gate.feel.poked > 3.0 && distance < 2.4 {
+            // Provoked at most every few server seconds while it does not fight back, and only
+            // once the lag has held long enough for the server's round trip to settle on it.
+            let settled = gate.feel.lagged_from.is_some_and(|from| gate.server_now - from >= FEEL_LAG_SETTLE);
+            if gate.feel.seen.is_none() && gate.server_now - gate.feel.poked > 3.0 && distance < 2.4 && settled {
                 if !gate.feel.facing_checked {
                     if gate.feel.facing_camera.is_none() {
                         let player = world.resource::<LocalPlayer>();
@@ -6726,7 +6741,9 @@ fn to_dodge(gate: &mut Gate, windup: f32, now: f32) {
     to_phase(gate, FEEL_DODGE, now);
 }
 
-/// The feel step's phases that are jumped to.
+/// The feel step's phases that are jumped to, and the one the bear comes in (from which the
+/// server runs behind).
+const FEEL_COMING: u32 = 1;
 const FEEL_BLOCK: u32 = 2;
 const FEEL_DODGE: u32 = 4;
 const FEEL_KILL: u32 = 5;
