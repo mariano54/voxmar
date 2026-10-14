@@ -411,7 +411,10 @@ impl Overworld {
             from,
             radius,
             climate::CELL,
-            |at| self.point(&self.geology.climate().regional_at(&self.geology, at)),
+            |ring| {
+                let at: Vec<(f32, f32)> = ring.iter().map(|p| (p.x as f32, p.y as f32)).collect();
+                self.geology.climate().regionals(&self.geology, &at).iter().map(|r| self.point(r)).collect()
+            },
             // Only a patch with ground at least `LOCATE_DEPTH` from its border near the
             // candidate: a sliver of the biome is passed over and the search goes on.
             |at| {
