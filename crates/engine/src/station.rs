@@ -22,7 +22,7 @@ pub enum Spot {
     OpenSky,
     /// A block with this tag within this many blocks (any way, diagonals too).
     Near(String, i32),
-    /// Water (any fluid but a hot one) within this many blocks.
+    /// Water (any fluid but a hot one, or a block that waters: a well) within this many blocks.
     Water(i32),
 }
 
