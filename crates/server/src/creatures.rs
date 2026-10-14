@@ -1565,10 +1565,11 @@ impl Server {
         Ground::of(self).water_at(cell)
     }
 
-    /// Whether any of `cells` holds water (`is_water`), looked at in order.
-    pub(crate) fn any_water(&self, mut cells: impl Iterator<Item = IVec3>) -> bool {
-        let ground = Ground::of(self);
-        cells.any(|cell| ground.water_at(cell))
+    /// Whether any of `cells` holds something to drink (a block tagged `drinking_water`:
+    /// water, a well, a trough), looked at in order.
+    pub(crate) fn any_drink(&self, mut cells: impl Iterator<Item = IVec3>) -> bool {
+        let (ground, blocks) = (Ground::of(self), &self.content.blocks);
+        cells.any(|cell| ground.block(cell).is_some_and(|b| blocks.def(b).has_tag(voxmar_engine::creature::condition::DRINK)))
     }
 }
 
