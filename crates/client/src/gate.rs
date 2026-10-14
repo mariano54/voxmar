@@ -401,7 +401,8 @@ enum Step {
     /// recipe fills the crafting grid from a barrel there.
     Home,
     /// A wooden door placed before the player goes in whole, both halves facing them, and a
-    /// right click on it opens it and another shuts it, as the server turns it.
+    /// right click on it opens it and another shuts it, as the server turns it. At midnight
+    /// a lit room's window glows, and a campfire lights the ground around it warm.
     Door,
     /// Ten twine crafted finish a quest; the quest key opens the book on a quest worth
     /// reading, W held with it open does not walk, Esc shuts it and W walks again; a quest pinned counts
@@ -1261,6 +1262,9 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         // Torches crafted for a pinned quest, waited on in the server's seconds, and a quest
         // done left to drop off.
         Step::Quests => 60.0,
+        // A door placed, opened and shut, a lit window and a campfire at midnight, each
+        // waited on.
+        Step::Door => STEP_LIMIT + 15.0,
         // A party walks in, is talked to, traded with and sent away, each in server seconds.
         Step::Party => 60.0,
         // The effects are judged once a second by the server, and a rest is a sleep away.
@@ -4864,12 +4868,16 @@ fn door_cells(world: &World, at: IVec3) -> Option<(bool, bool)> {
 
 /// A wooden door set in the ground two blocks before the player, opened and shut by right
 /// clicks the server answers (it holds the collision, so the client never guesses); then a
-/// hide window in a candle-lit nook, seen glowing at midnight (shot `window-night`).
+/// hide window in a candle-lit nook, seen glowing at midnight (shot `window-night`); then a
+/// campfire where the nook stood, its circle of ground lit warm against the night (shot
+/// `campfire-night`).
 fn door(world: &mut World, gate: &mut Gate, now: f32) {
     let stand = world.resource::<LocalPlayer>().position.floor().as_ivec3();
     let at = stand + IVec3::new(0, 0, -2);
     // The window's nook, standing on the ground a block beyond the door, and its pane.
     let (nook, pane) = (stand + IVec3::new(0, 1, -4), stand + IVec3::new(0, 1, -3));
+    // The campfire, on the ground where the pane stood.
+    let fire = stand + IVec3::new(0, 0, -3);
     let waited = gate.server_in_phase();
     let leave = |world: &mut World, gate: &mut Gate| {
         let net = world.resource::<Net>();
@@ -4953,7 +4961,7 @@ fn door(world: &mut World, gate: &mut Gate, now: f32) {
             _ => {}
         },
         // The window seen from outside at midnight: warm with the candle's light through it.
-        _ => {
+        5 => {
             aim_at(world, pane.as_vec3() + Vec3::splat(0.5));
             let client = world.resource::<ClientWorld>();
             let window = client.block(pane).map(|b| client.registry.def(b)).filter(|d| d.name == "base:hide_window").map(|d| d.lit_through);
@@ -4966,18 +4974,39 @@ fn door(world: &mut World, gate: &mut Gate, now: f32) {
                     let net = world.resource::<Net>();
                     let (low, high) = (nook - IVec3::ONE, nook + IVec3::ONE);
                     net.command(&format!("fill {} {} {} {} {} {} air", low.x, low.y, low.z, high.x, high.y, high.z));
-                    net.command("time set noon");
-                    gate.next(Step::Quests, now);
+                    net.command(&format!("fill {} {} {} {} {} {} campfire", fire.x, fire.y, fire.z, fire.x, fire.y, fire.z));
+                    gate.advance(now);
                 }
                 _ if waited > 10.0 => {
                     gate.check("window: glows", Err(format!("{waited:.1} server s after building the nook, its window is {window:?} and its candle is there: {lit}")));
                     let net = world.resource::<Net>();
                     let (low, high) = (nook - IVec3::ONE, nook + IVec3::ONE);
                     net.command(&format!("fill {} {} {} {} {} {} air", low.x, low.y, low.z, high.x, high.y, high.z));
-                    net.command("time set noon");
-                    gate.next(Step::Quests, now);
+                    net.command(&format!("fill {} {} {} {} {} {} campfire", fire.x, fire.y, fire.z, fire.x, fire.y, fire.z));
+                    gate.advance(now);
                 }
                 _ => {}
+            }
+        }
+        // A campfire at midnight, seen from three blocks off: the ground between it and the
+        // player lit warm and well above the night around.
+        _ => {
+            aim_at(world, fire.as_vec3() + Vec3::new(0.5, 0.3, 0.5));
+            let client = world.resource::<ClientWorld>();
+            let burning = client.block(fire).is_some_and(|b| client.registry.def(b).name == "base:campfire");
+            let done = |world: &mut World, gate: &mut Gate| {
+                let net = world.resource::<Net>();
+                net.command(&format!("fill {} {} {} {} {} {} air", fire.x, fire.y, fire.z, fire.x, fire.y, fire.z));
+                net.command("time set noon");
+                gate.next(Step::Quests, now);
+            };
+            if burning && waited > 2.0 {
+                let Some(shot) = gate.shot(world, "campfire-night") else { return };
+                gate.check("night: campfire", fire_circle(&shot));
+                done(world, gate);
+            } else if waited > 10.0 {
+                gate.check("night: campfire", Err(format!("{waited:.1} server s after setting a campfire down, it is there on the client: {burning}")));
+                done(world, gate);
             }
         }
     }
@@ -5013,6 +5042,39 @@ fn warm_window(shot: &Image) -> Result<String, String> {
 /// shows in a shot, of 255.
 const WINDOW_WARMTH: f64 = 12.0;
 const WINDOW_LIFT: f64 = 15.0;
+
+/// Whether a shot aimed at a campfire three blocks off at midnight shows the ground before
+/// it in its light: the bottom middle of the screen (the ground between the player and the
+/// fire, a block or two from it) redder than it is blue and well above the night around
+/// (the shot's top corners).
+fn fire_circle(shot: &Image) -> Result<String, String> {
+    let (w, h, data) = pixels(shot)?;
+    let mean = |x0: usize, y0: usize, size: usize| {
+        let mut sum = [0.0f64; 3];
+        for y in y0..y0 + size {
+            for x in x0..x0 + size {
+                let i = (y * w + x) * 4;
+                (0..3).for_each(|c| sum[c] += data[i + c] as f64);
+            }
+        }
+        sum.map(|v| v / (size * size) as f64)
+    };
+    let size = (w.min(h) / 12).max(1);
+    let ground = mean(w / 2 - size / 2, h * 3 / 4 - size / 2, size);
+    let night = [mean(0, 0, size), mean(w - size, 0, size)].map(|m| m.iter().sum::<f64>() / 3.0);
+    let (bright, dark) = (ground.iter().sum::<f64>() / 3.0, night[0].max(night[1]));
+    if ground[0] > ground[2] + FIRE_WARMTH && bright > dark + FIRE_LIFT {
+        Ok(format!("the ground by the fire is warm (rgb {:.0} {:.0} {:.0}) against the night ({dark:.0})", ground[0], ground[1], ground[2]))
+    } else {
+        Err(format!("the ground by the fire is rgb {:.0} {:.0} {:.0} against the night's {dark:.0}: no warm working circle", ground[0], ground[1], ground[2]))
+    }
+}
+
+/// How much redder than blue, and brighter than the night around, the ground a block or two
+/// from a campfire shows in a shot, of 255: a circle to work in (by the light model, about
+/// 100 of 255 near the fire against a night sky of about 20).
+const FIRE_WARMTH: f64 = 15.0;
+const FIRE_LIFT: f64 = 25.0;
 
 /// How many planks the home barrel holds for the table laid from it.
 const LAY_PLANKS: u32 = 4;

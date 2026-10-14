@@ -40,11 +40,11 @@ impl Default for NightLight {
     /// The base package's nights, for tests and anything drawn before content loads.
     fn default() -> Self {
         Self {
-            moon: Vec3::new(0.025, 0.034, 0.060),
-            ambient: Vec3::new(0.0425, 0.056, 0.098),
+            moon: Vec3::new(0.05, 0.068, 0.12),
+            ambient: Vec3::new(0.05, 0.066, 0.115),
             zenith: Vec3::new(0.0012, 0.0018, 0.0045),
-            horizon: Vec3::new(0.0062, 0.0088, 0.0175),
-            moonless: 0.5,
+            horizon: Vec3::new(0.010, 0.014, 0.028),
+            moonless: 0.6,
         }
     }
 }
