@@ -480,6 +480,8 @@ struct Gate {
     highest: f32,
     /// Teleport sequence before returning weather/sky views to the open test ground.
     scene_teleport: u32,
+    /// The server's clock when `open_scene_pose` last sent its teleport.
+    scene_sent: f32,
     /// Where `/locate gorge` sent the player: the column, one block above its water.
     gorge: IVec3,
     /// Whether the player has arrived there: the river's current may carry them off while
@@ -638,6 +640,7 @@ impl Gate {
             machines_held: f32::MIN,
             highest: f32::MIN,
             scene_teleport: 0,
+            scene_sent: 0.0,
             gorge: IVec3::ZERO,
             gorge_reached: false,
             tarn: None,
@@ -5164,30 +5167,62 @@ fn watch_weather(world: &mut World, gate: &mut Gate, now: f32) {
 /// Returns each view test to the same open ground, including after a failed swim.
 /// Wait for a new server teleport and grounded client pose before asking for a shot;
 /// looking from inside the pool's walls cannot judge weather or the morning sky.
+///
+/// A player found off the spot once the teleport is in, on the ground and out of water, was
+/// moved by something on it (a creature on the spot puts the player out of its body,
+/// `player.rs`): the wild creatures around are sent away and the player back, until they
+/// stay put. Twice under load the player stood 0.16 and 0.97 blocks off in +x at the start
+/// of Depths, and the pose never settled.
 fn open_scene_pose(world: &mut World, gate: &mut Gate) -> bool {
     let position = gate.feet.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
-    if gate.settled == 0 {
+    let send = |world: &mut World, gate: &mut Gate, disperse: bool| {
         gate.scene_teleport = world.resource::<LocalPlayer>().teleports;
+        gate.scene_sent = gate.server_now;
+        let net = world.resource::<Net>();
+        if disperse {
+            net.command("creatures disperse");
+        }
+        net.command(&format!("tp {} {} {}", position.x, position.y, position.z));
+    };
+    if gate.settled == 0 {
         key(world, KeyCode::KeyW, false);
         key(world, KeyCode::Space, false);
         world.resource_mut::<LocalPlayer>().flying = false;
-        world.resource::<Net>().command(&format!("tp {} {} {}", position.x, position.y, position.z));
+        send(world, gate, false);
         gate.settled = 1;
         return false;
     }
     let player = world.resource::<LocalPlayer>();
-    let ready = player.teleports != gate.scene_teleport && player.on_ground && !player.in_water
-        && player.position.distance(position) < 0.05;
+    let arrived = player.teleports != gate.scene_teleport && player.on_ground && !player.in_water;
+    let off = player.position.distance(position) >= 0.05;
+    if arrived && off && gate.server_now - gate.scene_sent > SCENE_RESEND {
+        info!("gate: pose: {}; sending the wild creatures away and the player back", unsettled(world, gate));
+        send(world, gate, true);
+        gate.settled = 1;
+        return false;
+    }
+    let ready = arrived && !off;
     gate.settled = if ready { gate.settled + 1 } else { 1 };
     ready && gate.settled >= 3
 }
+
+/// Server seconds `open_scene_pose` lets a player who is off the spot after its teleport
+/// stand before it sends them back.
+const SCENE_RESEND: f32 = 1.0;
 
 /// Why `open_scene_pose` has not settled, for its checks' failures.
 fn unsettled(world: &World, gate: &Gate) -> String {
     let player = world.resource::<LocalPlayer>();
     let position = gate.feet.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
+    let launch = world.resource::<Launch>();
+    let near: Vec<String> = world
+        .resource::<crate::creatures::Creatures>()
+        .views()
+        .filter(|v| v.position.distance(position) < 4.0)
+        .map(|v| format!("{} at {:.2}", launch.content.creatures.get(v.species).def.name, v.position))
+        .collect();
     format!(
-        "the open test-ground teleport did not settle: teleported {}, on the ground {}, in water {}, {:.2} from the spot at {:.2}",
+        "the open test-ground teleport did not settle: teleported {}, on the ground {}, in water {}, {:.2} from the spot at {:.2}; creatures within 4: {near:?}",
         player.teleports != gate.scene_teleport,
         player.on_ground,
         player.in_water,
