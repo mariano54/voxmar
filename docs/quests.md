@@ -228,7 +228,9 @@ Fresh Eggs names A Woolly Flock). Examples: the bees run Humming in the Meadow, 
 Garden, then Smoke That Clings beside Sweet Relief and The Beekeeper Calls; the home runs A Table for
 Two, Shelves and Cupboards, A Proper Bed, Candlelight, Snug for Winter, then the door and
 the workshop; the road runs Field Guide, Many Travellers, Safe Home, The Rain Dance, the
-wedding; ores run Copper Kit, Tin Find, Rock Collector, Ore Run.
+wedding; ores run Copper Kit, Tin Find, Rock Collector, Ore Run. Copper Kit follows Red
+Metal, the copper the main line already asks for, not First Metal: the bloomery smelters
+are a wandering party, and no chain waits on meeting one.
 
 | Measure | Main before | Ten starts | Chains |
 |---|---|---|---|
