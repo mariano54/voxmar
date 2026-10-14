@@ -93,10 +93,11 @@ const LOCKSTEP_SPEEDUP: u32 = 1000;
 
 /// Makes this test's servers tick only as far as its player has taken in
 /// (`ServerConfig::lockstep`), as quick as the player goes, for a test that plays a bot
-/// whose messages carry the game's clock (`Fresh::now`; `why` says what it plays). A bot
-/// starved of the cores on a busy machine then never finds the server ticks ahead of it,
-/// and every tick it waits on is one it saw. The first player to join drives it: only for
-/// a test with one player.
+/// whose messages carry the game's clock (`Fresh::now`), or that bounds what it waits for
+/// in the server's seconds while nothing it judges reads the clock (machines, which work
+/// by ticks; `why` says what it plays). A player starved of the cores on a busy machine
+/// then never finds the server ticks ahead of it, and every tick it waits on is one it
+/// saw. The first player to join drives it: only for a test with one player.
 fn lockstep(why: &str) {
     assert!(!why.is_empty());
     LOCKSTEP.set(true);
@@ -5083,7 +5084,7 @@ fn a_processing_array_works_only_inside_its_cube_of_hv_casing() {
 
 #[test]
 fn a_turbine_hall_gives_hv_from_steam_only_while_its_hall_stands_and_transformers_bring_it_to_lv() {
-    real_time("it asserts the macerator loses power within two server seconds of the break, which a client busy on a loaded machine outlasts when ticks run twenty times quicker");
+    lockstep("the macerator loses power within two server seconds of the break, counted while the player asks after it");
     let mut client = Client::join();
     let p = client.position.floor().as_ivec3();
     let at = |v: IVec3| format!("{} {} {}", v.x, v.y, v.z);
@@ -5176,6 +5177,7 @@ fn a_turbine_hall_gives_hv_from_steam_only_while_its_hall_stands_and_transformer
 #[test]
 fn chests_keep_what_they_hold_across_restarts_and_an_unreadable_machines_file_is_kept_aside() {
     let dir = world_dir("machines");
+    lockstep("what machines hold within so many server seconds of asking, across restarts");
     let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
     let mut client = Client::join_with(config());
     let chest = client.position.floor().as_ivec3() + IVec3::new(2, 0, 0);
@@ -5191,6 +5193,8 @@ fn chests_keep_what_they_hold_across_restarts_and_an_unreadable_machines_file_is
     assert!(std::fs::read_to_string(dir.join("machines.ron")).unwrap().contains("chest"));
 
     let mut client = Client::join_with(config());
+    // Its column may load after the player's: the server's seconds count from there.
+    client.pump_until(|c| c.world.block(chest) == c.content.blocks.id("base:chest"));
     machine_says(&mut client, &at, "holds 5 items", 10);
 
     // Work half done is not done again after a restart.
@@ -5225,6 +5229,7 @@ fn chests_keep_what_they_hold_across_restarts_and_an_unreadable_machines_file_is
     let save = std::fs::read_to_string(dir.join("machines.ron")).unwrap();
     assert!(save.contains("base:iron_dust"), "the save keeps the work: {save}");
     let mut client = Client::join_with(config());
+    client.pump_until(|c| c.world.block(crusher) == c.content.blocks.id("base:steam_crusher"));
     // Until its first step it says it is idle; then it goes on from where it was.
     let said = machine_says(&mut client, &crusher_at, "making", 20);
     assert!(progress(&said).is_some_and(|p| p >= done), "the crusher began again: {said}, was {done}% done");
