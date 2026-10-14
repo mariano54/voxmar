@@ -6167,7 +6167,9 @@ mod tests {
         let mut server = fixture();
         server.day = (0..40).map(|i| TICKS_PER_DAY as f64 * (4.0 + i as f64 / 40.0)).find(|&day| (0.1..0.5).contains(&voxmar_engine::creature::daylight(day as u64))).expect("an evening");
         let home = IVec3::new(128, 200, 128);
-        server.players.get_mut(&1).unwrap().home = Some(home.as_vec3());
+        // A hearth home, not burning, and the bed beside it: callers judge the bed's home.
+        let player = server.players.get_mut(&1).unwrap();
+        (player.home, player.bed) = (Some(home.as_vec3()), Some(home.as_vec3()));
         let spot = IVec3::new(128, 200, 150);
         let bare = ["base:hearthstone", "base:sleeping_bag", "base:candle"];
         for (i, name) in bare.iter().enumerate() {
@@ -6186,7 +6188,8 @@ mod tests {
         assert!(comes_at(&server, "fireside_guests", spot), "a homely home has callers");
         assert!(!comes_at(&server, "hedgehog_lodger", spot), "homely is not yet cosy");
         // Far from home, nobody calls there.
-        server.players.get_mut(&1).unwrap().home = Some(Vec3::new(600.0, 200.0, 600.0));
+        let player = server.players.get_mut(&1).unwrap();
+        (player.home, player.bed) = (Some(Vec3::new(600.0, 200.0, 600.0)), Some(Vec3::new(600.0, 200.0, 600.0)));
         assert!(!comes_at(&server, "fireside_guests", spot));
     }
 
@@ -6197,7 +6200,9 @@ mod tests {
         let mut server = fixture();
         server.day = (0..40).map(|i| TICKS_PER_DAY as f64 * (4.0 + i as f64 / 40.0)).find(|&day| voxmar_engine::creature::daylight(day as u64) >= 1.0).expect("midday");
         let home = IVec3::new(128, 200, 128);
-        server.players.get_mut(&1).unwrap().home = Some(home.as_vec3());
+        // A hearth home, not burning, and the bed beside it: callers judge the bed's home.
+        let player = server.players.get_mut(&1).unwrap();
+        (player.home, player.bed) = (Some(home.as_vec3()), Some(home.as_vec3()));
         let spot = IVec3::new(128, 200, 150);
         for (i, name) in ["base:hearthstone", "base:sleeping_bag", "base:dandelion", "base:dandelion", "base:dandelion"].iter().enumerate() {
             place(&mut server, name, home + IVec3::new(i as i32 + 1, 0, 0));
