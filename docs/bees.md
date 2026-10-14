@@ -58,6 +58,9 @@ and honey in `blocks.ron`, which generation reads alone), the server's apiary in
   Garden and Herb Garden to do while the skep fills.
 - **The Beekeeper Calls** (home, after it): meet the beekeeper and make three candles, or keep
   two beeswax and make six; pays a spare skep.
+- **Smoke That Clings** (farming, after Humming in the Meadow): be Smoky (`Felt`) and carry
+  four honey; the text says what Smoky calms.
+- **Sweet Relief** (cooking, after A Bee Garden): eat three honey (`Ate`) and keep three.
 
 ## Saves
 

@@ -410,6 +410,8 @@ impl Server {
                     let player = self.players.get_mut(&agent).unwrap();
                     let selected = player.selected;
                     let Some(item) = player.inventory.take_one(selected) else { continue };
+                    // Quests count what was eaten (`Ate`).
+                    *player.tallies.entry(format!("ate:{}", blocks.def(item).name)).or_default() += 1;
                     // Food heals, the same food a little less each time in a row.
                     let share = player.recent_food.share(item);
                     player.recent_food.eat(item);

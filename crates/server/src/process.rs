@@ -180,6 +180,10 @@ impl Process for Survival {
             situation.felt = cold_air + heat + effects.modifiers(&first).warmth;
             let active = effects.active(&situation, &player.timed_effects);
             let modifiers = effects.modifiers(&active);
+            // Quests ask whether an effect was ever felt (`Felt`), not how often.
+            for a in &active {
+                player.tallies.entry(format!("felt:{}", effects.get(a.effect).name)).or_insert(1);
+            }
             player.modifiers = modifiers;
             let rates = vitals::rates(&modifiers);
             // Twice the Hitpoints level, and what effects add: a level gained brings health

@@ -39,6 +39,8 @@ reward, shown first), tasks, after, rewards. Goals:
 | `Met(kind, n)`, `Met("Kinds", n)` | dealings with wandering parties (docs/wandering.md), tallied `met:<kind>`: a line said that gave or took something, a show watched, a share of a hunt, a captive's or a guided one's thanks, a lure followed to its end; a greeting alone is none. `any` counts every kind; `Kinds` counts the kinds dealt with at least once |
 | `Prayed(prayer, n)` | prayers turned on (`prayed:<prayer>`); one already on is not turned on again |
 | `Offered(item, n)` | what was offered at an altar (`offered:<item>`), an item, `any` or a `tag:TAG` |
+| `Ate(food, n)` | food eaten (`ate:<item>`), an item, `any` or a `tag:TAG` |
+| `Felt(effect)` | whether the player has ever been under an effect, whatever gave it (`felt:<effect>`, set once by the survival tick) |
 
 Items and creatures may be `any` or `tag:TAG`. Rewards are `Xp(skill, xp)` and
 `Item(item, count)`. Titles and reasons are translated as `quest.<package>.<name>` and
@@ -152,6 +154,19 @@ so that what the game already does is something the book points to:
   Garden (the home step and three honey; it names the Kitchen Garden and Herb Garden for the
   wait while the skep fills) and The Beekeeper Calls (the beekeeper met and three candles, or
   two beeswax kept and six candles; pays a spare skep).
+
+- **What landed after** (Oct 14). Seven quests teach a rule no other quest says, in its
+  text, and ask for the sequence that shows it. Nomad: Stones Back (after A Stone's Throw: a
+  sling stone that hits is left lying one time in four; five creatures and Ranged 4) and
+  Light Sleepers (after Under Lock and Key: four Nomad chests in ten wake cave bats; two
+  chests in all and two bats). Farm: Every Arrow Counts (after Bow and Arrow: half the arrows
+  that hit are left lying; sixteen arrows in all and Ranged 8), What Sleeps Below (after
+  Deeper Down: a Farm chest may wake cave crawlers; two chests and a crawler), Heart of the
+  Wood (after The Rootmother: Heartwood, ten minutes that another heartroot only starts
+  again; eat one and keep two), Smoke That Clings (after Humming in the Meadow: a torch
+  held or a fire within two leaves you Smoky; Smoky and four honey) and Sweet Relief (after
+  A Bee Garden: honey heals 2 and stacks, the same food in a row heals less; eat three and
+  keep three). The reach test counts a boss's loot, since its lairs place it.
 
 ## Quick upgrades
 
