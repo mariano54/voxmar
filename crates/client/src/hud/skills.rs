@@ -170,10 +170,9 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
         justify_content: JustifyContent::Center,
         ..default()
     };
-    // A band across the middle of the screen, so it never takes a pointer from what is under it.
-    commands.spawn((under, GlobalZIndex(1), Pickable::IGNORE)).with_children(|under| {
+    commands.spawn((under, GlobalZIndex(1))).with_children(|under| {
         let line = Node { max_width: Val::Percent(60.0), ..default() };
-        under.spawn((line, shadowed(font, "", BODY, ERROR), TextLayout::default().with_justify(Justify::Center), WhyLine, Visibility::Hidden, Pickable::IGNORE));
+        under.spawn((line, shadowed(font, "", BODY, ERROR), TextLayout::default().with_justify(Justify::Center), WhyLine, Visibility::Hidden));
     });
 }
 
