@@ -73,7 +73,7 @@
         ),
         (
             name: "bare_hands", age: "nomad", branch: "fishing", title: "First Catch",
-            why: "Fish are the easiest food near water. Hold your rod, right-click water and wait for a bite: shrimp and minnows come first. Land five; cooked fish heal well.",
+            why: "Fish are the easiest food near water. Hold your rod, right-click water and wait for a bite: minnows come first. Land five; cooked fish heal well.",
             tasks: [[Catch("any", 5)]],
             after: ["rod_and_line"],
             rewards: [Xp("fishing", 130.0)],
@@ -204,7 +204,7 @@
         ),
         (
             name: "meat_and_fire", age: "nomad", branch: "cooking", title: "Meat on the Fire",
-            why: "Raw meat heals little and leaves you Queasy; cooked meat heals far more. Cook six pieces of meat at a campfire: rabbit, chicken, duck or frog. Ducks and frogs live by rivers and in swamps. A higher Cooking level burns less. Six good meals will also take you to Cooking 2.",
+            why: "Raw meat heals little and leaves you Queasy; cooked meat heals far more. Cook six pieces of meat at a campfire: small game or duck. Ducks live by rivers and in swamps. A higher Cooking level burns less. Six good meals will also take you to Cooking 2.",
             tasks: [[Cook("tag:meat", 6), Level("cooking", 2)]],
             after: ["first_night"],
             rewards: [Xp("cooking", 120.0)],
@@ -655,8 +655,8 @@
         ),
         (
             name: "many_kinds", age: "farm", branch: "fishing", title: "Many Kinds of Fish",
-            why: "Rivers, lakes and the sea bite differently: shrimp anywhere, minnows in fresh water, sardines in the sea, perch in lakes from Fishing 10. Land three different kinds. Cook six of your catch: the best fish are worth a fire.",
-            tasks: [[Catch("Kinds", 3), Cook("tag:fish", 6)]],
+            why: "Rivers, lakes and the sea bite differently: minnows in fresh water, sardines in the sea, perch in lakes from Fishing 10. Land two different kinds. Cook six of your catch: the best fish are worth a fire.",
+            tasks: [[Catch("Kinds", 2), Cook("tag:fish", 6)]],
             after: ["patient_angler"],
             rewards: [Xp("fishing", 150.0)],
         ),
