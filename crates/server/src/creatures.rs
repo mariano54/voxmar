@@ -113,6 +113,9 @@ pub struct Live {
     pub winding: bool,
     /// Following the player it winds up at, until a tick, before its aim locks (`fight`).
     pub tracking: Option<(PlayerId, u64)>,
+    /// Running a charge it wound up (`fight`, `creature::moves::Charge`): straight on, held
+    /// from thinking until it ends.
+    pub charging: Option<crate::fight::Charging>,
     /// The attack it winds up or last used (`Creature::attack_at`): 0 its plain one, then
     /// its moves (`fight`).
     pub attack: u8,
@@ -147,7 +150,7 @@ pub struct Live {
 impl Live {
     /// Its pose as players see it: attacking all through a wind-up.
     fn pose(&self) -> brain::Pose {
-        if self.winding { brain::Pose::Attacking } else { self.decision.pose }
+        if self.winding || self.charging.is_some() { brain::Pose::Attacking } else { self.decision.pose }
     }
 
     /// The tell it shows (`CreatureView::tell`): its move while it winds one up, `REARING`
@@ -408,7 +411,7 @@ impl Server {
                     seed: mix(creature.seed, self.tick),
                 };
                 let creature = self.creatures.live.get_mut(&id).expect("listed");
-                let decision = if self.tick < creature.held_until {
+                let decision = if self.tick < creature.held_until || creature.charging.is_some() {
                     brain::Decision { pose: brain::Pose::Idle, ..Default::default() }
                 } else {
                     // Done rearing into a new phase: it fights on.
@@ -511,15 +514,18 @@ impl Server {
     }
 
     /// Moves one creature's body a tick along its decision.
-    fn move_creature(&mut self, id: u32, dt: f32) {
+    pub(crate) fn move_creature(&mut self, id: u32, dt: f32) {
         let Some(creature) = self.creatures.live.get(&id) else { return };
         let species = self.content.creatures.get(creature.species);
         let mut body = creature.body;
         let decision = creature.decision;
         let held = self.tick < creature.held_until;
-        // Winding up, it still turns and walks at its target until its aim locks.
+        // Winding up, it still turns and walks at its target until its aim locks; charging,
+        // it runs straight on.
+        let charging = creature.charging;
         let tracking = if held { self.tracking_drive(id) } else { None };
         let drive = match decision.goal {
+            _ if charging.is_some() => charging.map(|c| c.drive(creature.scale)).unwrap_or_default(),
             _ if held => tracking.unwrap_or_default(),
             Some(goal) if goal.with_y(0.0).distance(body.position.with_y(0.0)) > 0.4 => {
                 let wish = (goal - body.position).with_y(if species.def.habitat.water == Water::Swim { goal.y - body.position.y } else { 0.0 });
@@ -527,7 +533,7 @@ impl Server {
             }
             _ => Drive { wish: Vec3::ZERO, speed: 0.0, face: decision.face.map(|f| f - body.position) },
         };
-        if held && tracking.is_none() {
+        if held && tracking.is_none() && charging.is_none() {
             // Held still: nothing carries it along, neither its legs nor a neighbour's push.
             body.velocity.x = 0.0;
             body.velocity.z = 0.0;
@@ -552,6 +558,10 @@ impl Server {
             creature.body = body;
             creature.changed = true;
         }
+        if charging.is_some() {
+            self.charge_ran(id, before);
+        }
+        let Some(body) = self.creatures.live.get(&id).map(|c| c.body) else { return };
         if body.position.y < -64.0 {
             self.creatures.live.remove(&id);
             self.creatures.gone.push(CreatureGone { id, died: false });
@@ -962,6 +972,7 @@ impl Server {
             attack: 0,
             phase: 0,
             rearing: false,
+            charging: None,
             mended: 0,
             genome,
             traits,

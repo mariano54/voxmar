@@ -127,8 +127,10 @@ struct Music {
     /// The track playing (or being read).
     current: Option<usize>,
     /// The species that are bosses, and the blocks of bosses' rooms, each with its boss's
-    /// music tags (the creature's `music`).
-    bosses: Vec<(CreatureId, Vec<String>)>,
+    /// music tags (the creature's `music`). A boss that roams the land rather than keeping
+    /// to a room (no `party_only`, Old Tusk) carries its most health: its music waits until
+    /// it is in a fight (`Creatures::stirred`), not merely grazing near.
+    bosses: Vec<(CreatureId, Vec<String>, Option<u16>)>,
     room_blocks: Vec<(BlockId, Vec<String>)>,
     /// The music tags of the boss whose room was near when last looked, and when that was.
     room: (Option<Vec<String>>, Option<Duration>),
@@ -230,7 +232,9 @@ fn load_tracks(mut commands: Commands, assets: Res<AssetServer>, settings: Res<S
         }));
     }
     let content = launch.as_ref().map(|launch| &launch.content);
-    let bosses = content.map(|content| content.creatures.iter().filter(|(_, c)| c.def.boss).map(|(id, c)| (id, c.def.music.clone())).collect()).unwrap_or_default();
+    let bosses = content
+        .map(|content| content.creatures.iter().filter(|(_, c)| c.def.boss).map(|(id, c)| (id, c.def.music.clone(), (!c.def.habitat.party_only).then_some(c.def.health))).collect())
+        .unwrap_or_default();
     let room_blocks = content
         .map(|content| {
             rules
@@ -440,7 +444,10 @@ fn in_boss_fight(music: &mut Music, time: &Time, feet: Vec3, creatures: Option<&
     let near = creatures.and_then(|creatures| {
         creatures
             .living()
-            .filter_map(|(_, species, at)| music.bosses.iter().find(|(id, _)| *id == species).map(|(_, tags)| (at.distance(feet), tags)))
+            .filter_map(|(id, species, at)| {
+                let (_, tags, roams) = music.bosses.iter().find(|(boss, ..)| *boss == species)?;
+                roams.is_none_or(|most| creatures.stirred(id, most)).then_some((at.distance(feet), tags))
+            })
             .filter(|(distance, _)| *distance <= boss.within)
             .min_by(|a, b| a.0.total_cmp(&b.0))
             .map(|(_, tags)| tags.clone())

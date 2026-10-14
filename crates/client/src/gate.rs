@@ -296,6 +296,11 @@ enum Step {
     /// boss fight and plays a boss's track; in survival she winds up a move of her own, its
     /// tell shown. Every exit sweeps her away.
     Boss,
+    /// Old Tusk, a boss who roams rather than keeps a room, summoned on the pad: drawn; no
+    /// fight music while he grazes unhurt; a flint spear in hand, struck once he fights
+    /// back, and from eight blocks off he winds up his charge, its tell shown, and the music
+    /// is his fight. Every exit sweeps him away.
+    Tusk,
     /// A torch held a moment leaves the player Smoky (smoke that clings): its chip shows,
     /// timed; then the hand is emptied.
     Smoke,
@@ -1360,6 +1365,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Sling => sling(world, gate, now, in_phase),
         Step::Feel => feel(world, gate, now, in_phase),
         Step::Boss => boss(world, gate, now),
+        Step::Tusk => tusk(world, gate, now),
         Step::Smoke => smoke(world, gate, now),
         Step::Wear => wear(world, gate, now, in_phase),
         Step::CombatHud => combat_hud(world, gate, now, in_phase),
@@ -7451,6 +7457,149 @@ fn end_boss(world: &mut World, gate: &mut Gate, now: f32) {
     let net = world.resource::<Net>();
     net.command("gamemode survival");
     net.command("skill hitpoints 10");
+    net.command(&format!("tp {} {} {}", feet.x as f32 + 0.5, feet.y, feet.z as f32 + 0.5));
+    gate.next(Step::Tusk, now);
+}
+
+/// The roaming boss the tusk step summons, and what he is struck with.
+const TUSK: &str = "base:old_tusk";
+const TUSK_SPEAR: &str = "base:flint_spear";
+/// The tusk step's sweep, which every exit comes to.
+const TUSK_SWEEP: u32 = 6;
+
+/// Old Tusk on the pad: drawn; calm music while he grazes; struck, then charging from afar
+/// with his fight music on; then swept away.
+fn tusk(world: &mut World, gate: &mut Gate, now: f32) {
+    let found = {
+        let content = &world.resource::<Launch>().content;
+        content.creatures.find(TUSK).map(|id| {
+            let def = &content.creatures.get(id).def;
+            let charges: Vec<u8> = def.moves.iter().enumerate().filter(|(_, m)| m.attack.charge.is_some()).map(|(i, _)| i as u8 + 1).collect();
+            (id, def.health, charges)
+        })
+    };
+    let Some((species, most, charges)) = found else {
+        gate.check("tusk", Err(format!("no `{TUSK}` in the content")));
+        end_tusk(world, gate, now);
+        return;
+    };
+    let pad = gate.feet + IVec3::new(0, 0, 14);
+    let view = {
+        let creatures = world.resource::<crate::creatures::Creatures>();
+        match gate.boss_id {
+            Some(id) => creatures.views().find(|v| v.id == id).copied(),
+            None => creatures.views().find(|v| v.species == species && !gate.boss_before.contains(&v.id)).copied(),
+        }
+    };
+    let waited = gate.server_in_phase() > BOSS_WAIT;
+    let sweep = |world: &mut World, gate: &mut Gate, now: f32| {
+        mouse(world, MouseButton::Left, false);
+        world.resource::<Net>().command("gamemode creative");
+        gate.sweep = Sweep::default();
+        to_phase(gate, TUSK_SWEEP, now);
+    };
+    match gate.phase {
+        0 => {
+            gate.boss_before = world.resource::<crate::creatures::Creatures>().views().filter(|v| v.species == species).map(|v| v.id).collect();
+            gate.boss_id = None;
+            let net = world.resource::<Net>();
+            net.command("gamemode creative");
+            net.command("skill attack 10");
+            net.command(&format!("give {} 1", TUSK_SPEAR.trim_start_matches("base:")));
+            net.command(&format!("summon {} 1 {} {} {}", TUSK.trim_start_matches("base:"), pad.x, pad.y, pad.z + 1));
+            gate.settled = 0;
+            gate.advance(now);
+        }
+        1 => {
+            if let Some(view) = view {
+                gate.boss_id = Some(view.id);
+                gate.check("tusk drawn", Ok(format!("Old Tusk reached the client at {:.1} (creature {}; {} others seen before)", view.position, view.id, gate.boss_before.len())));
+                gate.advance(now);
+            } else if waited {
+                gate.check("tusk drawn", Err(format!("a summoned {TUSK} never reached the client in {BOSS_WAIT} server seconds")));
+                sweep(world, gate, now);
+            }
+        }
+        2 => {
+            // A boss that roams is no fight while he grazes, unhurt: the calm track plays on.
+            if gate.server_in_phase() > 2.0 {
+                let result = match crate::music::boss_music(world) {
+                    Some((true, track)) => Err(format!("a boss fight while he grazed unhurt ({track:?})")),
+                    _ => Ok("no boss fight while he grazes unhurt".to_owned()),
+                };
+                gate.check("tusk calm", result);
+                gate.advance(now);
+            }
+        }
+        3 => {
+            if select(world, TUSK_SPEAR) {
+                let net = world.resource::<Net>();
+                net.command("skill hitpoints 60");
+                net.command(&format!("tp {} {} {}", pad.x as f32 + 0.5, pad.y, pad.z as f32 - 1.0));
+                net.command("gamemode survival");
+                gate.advance(now);
+            } else if waited {
+                gate.check("tusk provoked", Err(format!("the {TUSK_SPEAR} never came to hand")));
+                sweep(world, gate, now);
+            }
+        }
+        4 => {
+            // Struck until he fights back (a blow that hurts him, or one he winds up).
+            let Some(view) = view else {
+                gate.check("tusk provoked", Err("he went out of sight".to_owned()));
+                sweep(world, gate, now);
+                return;
+            };
+            if view.health < most || view.tell != 0 {
+                mouse(world, MouseButton::Left, false);
+                gate.check("tusk provoked", Ok(format!("struck, he fights back (health {} of {most}, tell {})", view.health, view.tell)));
+                // Eight blocks off, past his gore: he charges.
+                let me = world.resource::<LocalPlayer>().position;
+                let away = me + (me - view.position).with_y(0.0).normalize_or_zero() * 8.0;
+                world.resource::<Net>().command(&format!("tp {} {} {}", away.x, me.y, away.z));
+                gate.advance(now);
+            } else if waited {
+                gate.check("tusk provoked", Err(format!("no blow of the spear's provoked him in {BOSS_WAIT} server seconds (health {})", view.health)));
+                sweep(world, gate, now);
+            } else {
+                aim_at(world, view.position + Vec3::Y * 0.6);
+                let swing = ((now - gate.since) / (voxmar_engine::combat::FULL_CHARGE + 0.05)).fract() < 0.1;
+                mouse(world, MouseButton::Left, swing);
+            }
+        }
+        5 => {
+            let charging = view.filter(|v| charges.contains(&v.tell));
+            if let Some(view) = charging {
+                gate.check("tusk charge", Ok(format!("from afar he wound up his charge, its tell shown (move {})", view.tell)));
+                let result = match crate::music::boss_music(world) {
+                    Some((true, Some((track, true)))) => Ok(format!("his fight, with his own track: {track}")),
+                    music => Err(format!("no fight music of his own once he fought ({music:?})")),
+                };
+                gate.check("tusk fight music", result);
+                sweep(world, gate, now);
+            } else if waited || view.is_none() {
+                let said = view.map_or("not seen".to_owned(), |v| format!("at {:.1}, pose {:?}, tell {}, health {}", v.position, v.pose, v.tell, v.health));
+                gate.check("tusk charge", Err(format!("no charge wound up in {BOSS_WAIT} server seconds: he is {said}")));
+                sweep(world, gate, now);
+            }
+        }
+        _ => {
+            if sweep_bears(world, gate, species, pad) {
+                end_tusk(world, gate, now);
+            }
+        }
+    }
+}
+
+/// Back to survival at the first levels with the hands free, on the test ground.
+fn end_tusk(world: &mut World, gate: &mut Gate, now: f32) {
+    mouse(world, MouseButton::Left, false);
+    let feet = gate.feet;
+    let net = world.resource::<Net>();
+    net.command("gamemode survival");
+    net.command("skill attack 1");
+    net.command("skill hitpoints 10");
+    net.command(&format!("clear {}", TUSK_SPEAR.trim_start_matches("base:")));
     net.command(&format!("tp {} {} {}", feet.x as f32 + 0.5, feet.y, feet.z as f32 + 0.5));
     gate.next(Step::Smoke, now);
 }
