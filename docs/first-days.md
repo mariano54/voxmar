@@ -77,6 +77,9 @@ screen, stopped at these points; each is fixed in the words (en and ja):
 | First Harvest | seeds named without a source | wild wheat gives them |
 | Bigger Game | asks for red deer and wild boar, while its words said "deer and boar" | names them as the game does |
 | Copper Kit | "six times as fast", where the tool tiers now give seven | seven, and a tool's tooltip says how fast it works |
+| A Varied Table (pacing audit) | 12 cooked meat, 8 fish, 6 bread: about 11 min of the same few actions | 6 meat, 4 fish, 3 bread, about 4 min |
+| Trail Rations (pacing audit) | 12 jerky | 8 jerky |
+| A Handful of Grain (pacing audit) | "the odd ear of wheat" | "often an ear of wheat" (wild wheat now gives an ear 6 times in 10) |
 
 A check keeps it so: `gate::newcomer_misses` walks every quest before the lit hearth and the
 Farm quests that open with it, and lists any item or creature a goal asks for that has no

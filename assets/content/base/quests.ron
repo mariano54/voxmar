@@ -211,7 +211,7 @@
         ),
         (
             name: "a_handful_of_grain", age: "nomad", branch: "farming", title: "A Handful of Grain",
-            why: "Wild wheat grows as lone golden tufts on open grassland: look on plains, steppe and meadows, where there is a tuft every twenty blocks or so, or break the wheat in a village's fields. Break it for seeds and the odd ear of wheat: wheat makes bread and twine, and the seeds are your first crop.",
+            why: "Wild wheat grows as lone golden tufts on open grassland: look on plains, steppe and meadows, where there is a tuft every twenty blocks or so, or break the wheat in a village's fields. Break it for seeds and often an ear of wheat: wheat makes bread and twine, and the seeds are your first crop.",
             tasks: [[Pick("wild_wheat", 3)], [Have("wheat", 3)]],
             after: ["first_night"],
             rewards: [Xp("farming", 40.0)],
@@ -874,8 +874,8 @@
         ),
         (
             name: "a_varied_table", age: "nomad", branch: "cooking", title: "A Varied Table",
-            why: "One food grows dull and heals little. Cook twelve meat at a fire, cook eight fish, and bake six bread: every kind comes from a different part of the land, and together they keep you going.",
-            tasks: [[Cook("tag:meat", 12), Cook("tag:fish", 8), Craft("bread", 6)]],
+            why: "One food grows dull and heals little. Cook six meat at a fire, cook four fish, and bake three bread: every kind comes from a different part of the land, and together they keep you going.",
+            tasks: [[Cook("tag:meat", 6), Cook("tag:fish", 4), Craft("bread", 3)]],
             after: ["a_fish_supper", "daily_bread", "trail_rations"],
             rewards: [Xp("cooking", 180.0), Xp("hitpoints", 40.0)],
         ),
@@ -981,8 +981,8 @@
         ),
         (
             name: "trail_rations", age: "nomad", branch: "cooking", title: "Trail Rations",
-            why: "A pack of jerky carries you far from the fire: it never spoils and twelve fit in one slot. Stand a second rack by your campfire, keep both hung while you work, and gather twelve jerky for a long trip. A hung rack is homely too: it counts as a bunch of herbs drying for a herb nook.",
-            tasks: [[Craft("drying_rack", 2), Have("jerky", 12)]],
+            why: "A pack of jerky carries you far from the fire: it never spoils and twelve fit in one slot. Stand a second rack by your campfire, keep both hung while you work, and gather eight jerky for a long trip. A hung rack is homely too: it counts as a bunch of herbs drying for a herb nook.",
+            tasks: [[Craft("drying_rack", 2), Have("jerky", 8)]],
             after: ["hung_to_dry"],
             rewards: [Xp("cooking", 150.0)],
         ),
