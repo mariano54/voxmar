@@ -240,7 +240,7 @@ fn eats(food: bool, placeable: bool, on_creature: bool, on_block: bool, sowing: 
 
 /// A block's uses a right click tries after a table, a store and a machine, the first
 /// that holds being done (`break_and_place`), and `cook` before any of them.
-const BLOCK_USES: [&str; 7] = ["base:light", "base:sleep", "base:pick_lock", "base:tend_bees", "base:use_station", "base:fertilise", "base:open"];
+const BLOCK_USES: [&str; 8] = ["base:light", "base:sleep", "base:pick_lock", "base:tend_bees", "base:pray", "base:use_station", "base:fertilise", "base:open"];
 
 /// What a right click on the block at `hit` does, as `break_and_place` decides it, for
 /// the prompt under the crosshair (`hud::prompt`): a table, a store or a machine is used;
@@ -264,6 +264,24 @@ pub(crate) fn block_use(world: &ClientWorld, player: &LocalPlayer, content: &Con
     let pouch = held.is_some_and(|item| world.registry.def(item).has_tag("pouch"));
     let own = held.and_then(|item| world.registry.def(item).action.as_deref());
     cook.or_else(|| holds("base:pick")).or_else(|| holds("base:plant").filter(|_| pouch)).or_else(|| own.and_then(holds))
+}
+
+/// Whether the hand holds a rod, which casts instead of placing or using.
+fn holds_rod(world: &ClientWorld, player: &LocalPlayer) -> bool {
+    player.inventory.get(player.selected).is_some_and(|s| world.registry.def(s.item).has_tag("rod"))
+}
+
+/// Where a rod in hand would cast, and the action, when it may: the first solid block or
+/// water along the look within the cast's reach, if the fishing action holds there. The
+/// click (`break_and_place`) casts there; the prompt says Cast.
+pub(crate) fn cast_use(world: &ClientWorld, player: &LocalPlayer, content: &Content, actions: &ActionRegistry) -> Option<(ActionId, RayHit)> {
+    let fish = actions.id("base:fish").filter(|_| holds_rod(world, player))?;
+    let water = raycast(player.eye(), player.look_direction(), voxmar_engine::action::CAST, |p| {
+        world.block(p).is_some_and(|b| world.registry.info(b).solid || world.registry.info(b).fluid.is_some())
+    })?;
+    let context = ClientContext { world, player, content };
+    let at = ActionTarget::Block { block: water.block, face: water.face };
+    actions.get(fish).is_some_and(|def| def.validate(&context, at).is_ok()).then_some((fish, water))
 }
 
 /// Mining proposes `core:mine` and shows progress over the same duration the server
@@ -394,7 +412,8 @@ fn break_and_place(
         }
         // A multiblock's core is lit (the server says whether the structure around it
         // stands); a sleeping bag is slept in; a locked chest's lock is picked; bees give a
-        // swarm to a skep held up to them, or a full skep its honey; a home station is
+        // swarm to a skep held up to them, or a full skep its honey; at an altar, an
+        // offering in hand is given for Magic, else prayer points come back; a home station is
         // loaded or emptied; a fertiliser is spread on a growing crop; a door is opened or
         // shut, as the server turns it (never predicted: it holds the collision).
         for name in BLOCK_USES {
@@ -491,20 +510,14 @@ fn break_and_place(
     // the button is held.
     if mouse.pressed(MouseButton::Right) && ui.cursor_locked && !player.dead && time.elapsed_secs() >= target.fishing_until {
         let content = &launch.content;
-        let fish = actions.0.id("base:fish").filter(|_| player.inventory.get(player.selected).is_some_and(|s| world.registry.def(s.item).has_tag("rod")));
-        if let Some(fish) = fish {
-            let water = raycast(player.eye(), player.look_direction(), voxmar_engine::action::CAST, |p| {
-                world.block(p).is_some_and(|b| world.registry.info(b).solid || world.registry.info(b).fluid.is_some())
-            });
-            let context = ClientContext { world: &world, player: &player, content };
-            if let Some(water) = water {
+        if holds_rod(&world, &player) {
+            if let Some((fish, water)) = cast_use(&world, &player, content, &actions.0) {
+                let context = ClientContext { world: &world, player: &player, content };
                 let action_target = ActionTarget::Block { block: water.block, face: water.face };
-                if actions.0.get(fish).is_some_and(|def| def.validate(&context, action_target).is_ok()) {
-                    let seconds = actions.0.get(fish).map_or(5.0, |def| def.seconds(&context, action_target));
-                    net.propose_from(&player, fish, action_target);
-                    target.fishing_until = time.elapsed_secs() + seconds + 0.2;
-                    cues.write(SoundCue::for_block(&world, water_block(&world, water.block), Cue::Hit));
-                }
+                let seconds = actions.0.get(fish).map_or(5.0, |def| def.seconds(&context, action_target));
+                net.propose_from(&player, fish, action_target);
+                target.fishing_until = time.elapsed_secs() + seconds + 0.2;
+                cues.write(SoundCue::for_block(&world, water_block(&world, water.block), Cue::Hit));
             }
             return;
         }

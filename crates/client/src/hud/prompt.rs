@@ -1,8 +1,8 @@
 //! What a right click would do, shown under the crosshair while it rests on something to
 //! use: the key and the action, "Right-click Light" at a cold hearth, "Open" at a door,
-//! "Feed" at one of your animals with its food in hand. The action is the one the click
-//! would propose (`interact::block_use`, `creatures::creature_use`); its words come from
-//! `prompts.ron`, where every action names a prompt or says it has none, so a mod's action
+//! "Feed" at one of your animals with its food in hand, "Pray" at an altar, "Cast" with a
+//! rod at water. The action is the one the click would propose (`interact::block_use`,
+//! `interact::cast_use`, `creatures::creature_use`); its words come from `prompts.ron`, where every action names a prompt or says it has none, so a mod's action
 //! is never silently promptless.
 
 use std::collections::BTreeMap;
@@ -14,7 +14,7 @@ use voxmar_engine::content::ContentFile;
 
 use crate::Actions;
 use crate::creatures::{Creatures, creature_use};
-use crate::interact::{Target, block_use};
+use crate::interact::{Target, block_use, cast_use};
 use crate::lang::{Locale, TightLine};
 use crate::menu::Screen;
 use crate::player::{LocalPlayer, UiState};
@@ -175,8 +175,9 @@ fn show(
             prompts.key(action, &held_tags, &[], false)
         }
         None => {
-            let hit = target.hit?;
-            let action = block_use(&world, &player, content, &actions.0, &hit)?;
+            // What the block looked at is used for; else, a rod in hand casts at water.
+            let used = target.hit.and_then(|hit| Some((block_use(&world, &player, content, &actions.0, &hit)?, hit)));
+            let (action, hit) = used.or_else(|| cast_use(&world, &player, content, &actions.0))?;
             let name = &actions.0.get(action)?.name;
             let block = world.block(hit.block)?;
             let def = world.registry.def(block);

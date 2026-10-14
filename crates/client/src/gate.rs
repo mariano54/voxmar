@@ -491,6 +491,10 @@ struct Gate {
     dug: Vec<(IVec3, BlockId)>,
     /// How many of an item the inventory held before a step that changes it.
     count_before: u32,
+    /// The fishing phase saw the prompt say Cast.
+    prompt_seen: bool,
+    /// Where the prayers step set its altar, until it goes again.
+    altar: Option<IVec3>,
     natural_before: Vec<u32>,
     natural_home: Vec3,
     /// The way home's hiding distance, while the Home step shows the mark close up.
@@ -709,6 +713,8 @@ impl Gate {
             digging: None,
             dug: Vec::new(),
             count_before: 0,
+            prompt_seen: false,
+            altar: None,
             natural_before: Vec::new(),
             natural_home: Vec3::ZERO,
             home_hidden_within: None,
@@ -1267,6 +1273,9 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         Step::Home => 70.0,
         // A rack hung, then a pot set simmering, each answer waited on.
         Step::Dry => 5.0 * DRY_WAIT + STEP_LIMIT,
+        // The book, a prayer on and off, each waited on; then the altar set down, its prompt
+        // and an offering on it, waited on.
+        Step::Prayers => 4.0 * UNANSWERED + STEP_LIMIT,
         // The refusal waited on, then a well set down by the plot.
         Step::Refusal => UNANSWERED + 3.0 * REFUSAL_WAIT + STEP_LIMIT,
         // A fresh area around the settlement to generate: up to `SETTLEMENT_LOAD` of the
@@ -1956,6 +1965,12 @@ const MOVE_UNANSWERED: f32 = 2.0;
 /// Takes item `name` in hand: selects its hotbar slot, or moves it into `TOOL_SLOT` and
 /// selects that. True once it is in the hotbar as the server last said; false while there
 /// is none, and while a move into the hand waits for the server's word (see `Moving`).
+/// What the prompt under the crosshair says, while it shows (`hud::prompt`).
+fn prompt_says(world: &mut World) -> Option<String> {
+    let shown = world.query_filtered::<&InheritedVisibility, With<crate::hud::prompt::UsePrompt>>().iter(world).any(|visible| visible.get());
+    shown.then(|| world.query_filtered::<&Text, With<crate::hud::prompt::PromptWord>>().iter(world).next().map(|text| text.0.clone())).flatten()
+}
+
 fn select(world: &mut World, name: &str) -> bool {
     let Some(slot) = holding(world, name).1 else { return false };
     let states = world.resource::<LocalPlayer>().states;
@@ -2237,8 +2252,18 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
             aim(world, feet + IVec3::new(4, -1, 0));
             mouse(world, MouseButton::Right, true);
+            // The prompt says the rod casts, as long as it is held at the water.
+            let cast = world.resource::<Locale>().get("prompt.base.cast").to_owned();
+            let says = prompt_says(world);
+            if says.as_deref() == Some(cast.as_str()) && !gate.prompt_seen {
+                gate.prompt_seen = true;
+                gate.check("prompt: rod at water", Ok(format!("a rod held at the pool shows {cast} under the crosshair")));
+            }
             if let Some(caught) = fish(world) {
                 mouse(world, MouseButton::Right, false);
+                if !std::mem::take(&mut gate.prompt_seen) {
+                    gate.check("prompt: rod at water", Err(format!("a rod held at the pool until a fish bit never showed {cast}: the prompt said {says:?}")));
+                }
                 gate.check("workshop: fishing", Ok(format!("casting into the pool caught {caught} in {in_phase:.1}s")));
                 // The crafting table made earlier finished the quest that asks for one.
                 let quests = &world.resource::<LocalPlayer>().quests;
@@ -4630,7 +4655,7 @@ fn prayers(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             key(world, quick, true);
             gate.advance(now);
         }
-        _ => {
+        5 => {
             key(world, quick, false);
             if on {
                 if gate.server_in_phase() < UNANSWERED {
@@ -4641,7 +4666,77 @@ fn prayers(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 return;
             }
             gate.check("prayers: quick key", Ok("the quick key turned Bark Skin off again".into()));
-            gate.next(Step::Home, now);
+            // An altar beside the player and a bone to offer on it.
+            let at = world.resource::<LocalPlayer>().position.floor().as_ivec3() + ALTAR_FROM;
+            let net = world.resource::<Net>();
+            net.command(&format!("setblock {} {} {} stone_altar", at.x, at.y, at.z));
+            net.command("give bone 1");
+            gate.altar = Some(at);
+            gate.advance(now);
+        }
+        _ => altar(world, gate, now, in_phase),
+    }
+}
+
+/// Where the prayers step sets its altar, from the player's feet.
+const ALTAR_FROM: IVec3 = IVec3::new(2, 0, 0);
+
+/// At the altar, a bone in hand: the prompt says Pray, and a right click offers the bone
+/// for Magic experience, as the server says. The altar goes again after.
+fn altar(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    let Some(at) = gate.altar else {
+        gate.next(Step::Home, now);
+        return;
+    };
+    let magic = world.resource::<Launch>().content.skills.id("core:magic");
+    let xp = |world: &World| magic.map_or(0, |magic| world.resource::<LocalPlayer>().skills.xp(magic));
+    let leave = |world: &mut World, gate: &mut Gate| {
+        mouse(world, MouseButton::Right, false);
+        world.resource::<Net>().command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
+        gate.altar = None;
+        gate.next(Step::Home, now);
+    };
+    match gate.phase {
+        6 => {
+            let placed = {
+                let client = world.resource::<ClientWorld>();
+                client.registry.id("base:stone_altar").is_some_and(|altar| client.block(at) == Some(altar))
+            };
+            if placed && select(world, "base:bone") {
+                gate.count_before = xp(world);
+                gate.advance(now);
+            } else if gate.server_in_phase() > UNANSWERED {
+                gate.check("altar: offering", Err(format!("the altar ({placed}) or the bone in hand never came")));
+                leave(world, gate);
+            }
+        }
+        7 => {
+            aim(world, at);
+            let pray = world.resource::<Locale>().get("prompt.base.pray").to_owned();
+            let says = prompt_says(world);
+            if says.as_deref() == Some(pray.as_str()) {
+                if gate.shot(world, "altar-prompt").is_none() {
+                    return;
+                }
+                gate.check("prompt: altar", Ok(format!("a bone in hand at an altar shows {pray} under the crosshair")));
+                gate.advance(now);
+            } else if in_phase > 3.0 {
+                gate.check("prompt: altar", Err(format!("a bone in hand at an altar, the prompt said {says:?}, not {pray}")));
+                gate.advance(now);
+            }
+        }
+        _ => {
+            aim(world, at);
+            let gained = xp(world).saturating_sub(gate.count_before);
+            if gained > 0 {
+                gate.check("altar: offering", Ok(format!("a right click at the altar offered the bone for {:.1} Magic experience", gained as f32 / 10.0)));
+                leave(world, gate);
+            } else if gate.waited_out(UNANSWERED) {
+                gate.check("altar: offering", Err(format!("{} right clicks at the altar with a bone in hand gave no Magic experience", gate.taps)));
+                leave(world, gate);
+            } else {
+                gate.tap(world, true, now);
+            }
         }
     }
 }

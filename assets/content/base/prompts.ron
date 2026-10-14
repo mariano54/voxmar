@@ -10,6 +10,7 @@
         "base:sleep": (prompt: "prompt.base.sleep"),
         "base:pick_lock": (prompt: "prompt.base.pick_lock"),
         "base:tend_bees": (prompt: "prompt.base.tend"),
+        "base:pray": (prompt: "prompt.base.pray"),
         "base:use_station": (
             prompt: "prompt.base.add",
             target: { "base:drying_rack": "prompt.base.hang", "base:drying_rack_hung": "prompt.base.hang" },
@@ -21,13 +22,11 @@
         "base:pick": (prompt: "prompt.base.pick"),
         "base:plant": (prompt: "prompt.base.sow"),
         "base:till": (prompt: "prompt.base.till"),
-        "base:fish": (prompt: "prompt.base.fish"),
+        "base:fish": (prompt: "prompt.base.cast"),
         "base:empty_pouch": (prompt: "prompt.base.empty"),
         "base:tend": (prompt: "prompt.base.feed", held: { "shears": "prompt.base.shear", "pail": "prompt.base.milk" }),
-        // Looking closely and letting go are there on every creature, and Shift's; praying
-        // is the prayer book's (the click proposes none).
+        // Looking closely is there on every creature, and letting go is Shift's.
         "base:inspect": (none: true),
         "base:release": (none: true),
-        "base:pray": (none: true),
     },
 )

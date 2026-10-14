@@ -49,5 +49,7 @@
         "base:sleep": (sounds: ["sounds/sleep_1.ogg"], volume: 0.7),
         // A line whipped out over the water (the plop is the water's own).
         "base:fish": (sounds: ["sounds/cast_1.ogg", "sounds/cast_2.ogg"], volume: 0.7),
+        // A stone bowl struck soft at the altar, its hum swelling under it.
+        "base:pray": (sounds: ["sounds/pray_1.ogg", "sounds/pray_2.ogg"], volume: 0.8),
     },
 )

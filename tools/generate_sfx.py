@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Synthesizes the everyday action sounds: eating, crafting, lighting a fire, opening a
-chest or a door, cooking, lying down to sleep, casting a line, and picking an item up.
+chest or a door, cooking, lying down to sleep, casting a line, praying at an altar, and
+picking an item up.
 
 Our own work, built from noise, resonators and decaying modes (no samples). Run once
 offline; the clips are written to assets/content/base/sounds/ as Ogg Vorbis and listed in
 sounds.ron, so a package can replace any of them. Needs numpy and ffmpeg.
 
-    python3 tools/generate_sfx.py
+    python3 tools/generate_sfx.py          # every clip
+    python3 tools/generate_sfx.py pray     # only these
 """
 
 import sys
@@ -222,6 +224,19 @@ def cast(rng):
     return out
 
 
+def pray(rng):
+    """A prayer at the altar: a low stone bowl struck soft, its hum swelling and fading,
+    and a breath of air over it."""
+    root = rng.uniform(196, 208)
+    bowl = modes(root, 1.0, [(1.0, 1.0, 0.22), (2.76, 0.35, 0.14), (5.4, 0.12, 0.08)], attack=0.004)
+    n = len(bowl)
+    t = np.arange(n) / RATE
+    swell = np.minimum(t / 0.2, 1.0) * np.exp(-t / 0.25)
+    hum = np.sin(2 * np.pi * root * 0.5 * t) * swell * 0.35
+    air = lowpass(rng.standard_normal(n), 0.03) * swell * 0.25
+    return bowl + hum + air / (np.abs(air).max() + 1e-9) * 0.2
+
+
 def pickup(rng):
     """An item taken up into the pack: a small, round, rising pop."""
     seconds = 0.12
@@ -263,12 +278,17 @@ SOUNDS = {
     "cook": (cook, 2),
     "sleep": (sleep, 1),
     "cast": (cast, 2),
+    "pray": (pray, 2),
     "pickup": (pickup, 4),
 }
 
 
 def main() -> None:
+    # Names given on the command line make only those (`generate_sfx.py pray`).
+    only = set(sys.argv[1:])
     for name, (make, takes) in SOUNDS.items():
+        if only and name not in only:
+            continue
         for take in range(1, takes + 1):
             rng = np.random.default_rng(7000 + 1000 * take + sum(map(ord, name)))
             stereo = finish(make(rng), rng)
