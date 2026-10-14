@@ -365,8 +365,9 @@ fn break_and_place(
         // A multiblock's core is lit (the server says whether the structure around it
         // stands); a sleeping bag is slept in; a locked chest's lock is picked; bees give a
         // swarm to a skep held up to them, or a full skep its honey; a home station is
-        // loaded or emptied; a fertiliser is spread on a growing crop.
-        for name in ["base:light", "base:sleep", "base:pick_lock", "base:tend_bees", "base:use_station", "base:fertilise"] {
+        // loaded or emptied; a fertiliser is spread on a growing crop; a door is opened or
+        // shut, as the server turns it (never predicted: it holds the collision).
+        for name in ["base:light", "base:sleep", "base:pick_lock", "base:tend_bees", "base:use_station", "base:fertilise", "base:open"] {
             if let (Some(hit), Some(action)) = (hit, actions.0.id(name)) {
                 let context = ClientContext { world: &world, player: &player, content };
                 let action_target = ActionTarget::Block { block: hit.block, face: hit.face };
@@ -525,6 +526,9 @@ fn break_and_place(
             net.propose_from(&player, place, action_target);
             cues.write(SoundCue::for_block(&world, item, Cue::Place));
             world.set_block(cell, placed);
+            if let Some(upper) = content.blocks.upper(placed) {
+                world.set_block(cell + IVec3::Y, upper);
+            }
             let selected = player.selected;
             player.inventory.take_one(selected);
         }
