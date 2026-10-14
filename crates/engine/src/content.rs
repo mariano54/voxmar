@@ -57,6 +57,8 @@ pub struct Content {
     pub machines: Arc<crate::machine::MachineRegistry>,
     /// The quest book.
     pub quests: Arc<crate::quest::QuestRegistry>,
+    /// The quest book's lanes, one per age and branch (`quest_paths.ron`).
+    pub quest_paths: Arc<crate::quest_path::QuestPaths>,
     /// What it takes to study and master the journal's entries.
     pub journal: Arc<crate::journal::JournalRules>,
     /// Which wild plants come back where they were picked, and how soon.
@@ -65,6 +67,8 @@ pub struct Content {
     pub bees: Arc<crate::bees::Bees>,
     /// Home stations left to work, and fertilisers (`stations.ron`).
     pub stations: Arc<crate::station::Stations>,
+    /// Traps set for small animals (`traps.ron`).
+    pub traps: Arc<crate::trap::Traps>,
     /// Locked chests, the lockpicks that open them and what they hold.
     pub treasure: Arc<crate::treasure::Treasure>,
     /// What things are worth (`value`).
@@ -229,12 +233,14 @@ impl Content {
         let mut regrowth = Vec::new();
         let mut bees = Vec::new();
         let mut stations = Vec::new();
+        let mut traps = Vec::new();
         let mut treasure = Vec::new();
         let mut journal = Vec::new();
         let mut multiblocks = Vec::new();
         let mut machines = Vec::new();
         let mut processes = Vec::new();
         let mut quests = Vec::new();
+        let mut quest_paths = Vec::new();
         let mut wandering = Vec::new();
         let mut wander_rules = Setting::<crate::wander::Rules>::default();
         let mut shapes = Vec::new();
@@ -308,6 +314,10 @@ impl Content {
                         quests.push(crate::quest::QuestRegistry::read(package, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
+                    crate::quest_path::QuestPaths::FILE => {
+                        quest_paths.push((package.clone(), crate::quest_path::QuestPaths::read(package, &source)?));
+                        files.push(ContentFile { package: package.clone(), name, source });
+                    }
                     // `multiblocks.ron`, and `multiblocks_<topic>.ron` for a system's own (machines).
                     topic if topic.starts_with("multiblocks") => {
                         multiblocks.push(crate::multiblock::MultiblockRegistry::read(package, &source)?);
@@ -335,6 +345,10 @@ impl Content {
                     }
                     "stations.ron" => {
                         stations.push(crate::station::Stations::read(package, &source)?);
+                        files.push(ContentFile { package: package.clone(), name, source });
+                    }
+                    "traps.ron" => {
+                        traps.push(crate::trap::Traps::read(package, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
                     "treasure.ron" => {
@@ -388,6 +402,7 @@ impl Content {
                 }
             }
         }
+        let renames = BlockRegistry::renames(&blocks);
         let blocks = BlockRegistry::expand(blocks)?;
         weather.validate()?;
         notes.extend(weather.notes().iter().cloned());
@@ -396,7 +411,8 @@ impl Content {
         }
         let movement = movement.ok_or_else(|| RegistryError("no package sets movement (movement.ron)".to_owned()))?.value;
         skills.validate()?;
-        let blocks = BlockRegistry::with_shapes(blocks, &crate::shape::Shapes::gather(shapes, shape_limits.value)?)?;
+        let mut blocks = BlockRegistry::with_shapes(blocks, &crate::shape::Shapes::gather(shapes, shape_limits.value)?)?;
+        blocks.rename(renames)?;
         let crops = CropRegistry::new(crops, &blocks, &skills)?;
         let rules = Rules { limits: creature_limits.value, defence: defence.value, condition: condition.value };
         let creatures = CreatureRegistry::new(creatures, rules, &blocks, &skills)?;
@@ -412,6 +428,8 @@ impl Content {
         if let Some(tag) = effects.near_asks().iter().map(|(tag, _)| tag).chain(effects.held_tags()).find(|tag| !blocks.ids().any(|id| blocks.def(id).has_tag(tag))) {
             return Err(RegistryError(format!("effects.ron: an effect asks for a block or held item tagged `{tag}`, which no block carries")));
         }
+        // Every kept animal needs water, met by a block tagged `drink` near its home.
+        crate::creature::condition::check_drink(&blocks, !creatures.is_empty())?;
         let tools = ToolRegistry::new(tools, &blocks, &skills)?;
         let combat = crate::combat::CombatRegistry::new(combat, &blocks, &skills)?;
         let prayers = crate::prayer::PrayerRegistry::new(prayers, &blocks, &skills)?;
@@ -450,9 +468,11 @@ impl Content {
         }
         let bees = crate::bees::Bees::new(bees, &blocks, &skills, &effects, &creatures)?;
         let stations = crate::station::Stations::new(stations, &blocks, &skills)?;
+        let traps = crate::trap::Traps::new(traps, &blocks, &creatures, &skills)?;
         let wandering = crate::wander::WanderRegistry::new(wandering, wander_rules.value, &creatures, &blocks, &skills, &effects, &cooking, &weather)?;
         let mut quests = crate::quest::QuestRegistry::new(quests)?;
         quests.resolve(&crate::quest::Named { blocks: &blocks, skills: &skills, creatures: &creatures, fishing: &fishing, multiblocks: &multiblocks, steps: &effects.steps(), events: &wandering.iter().map(|(_, e)| e.def.name.clone()).collect::<Vec<_>>(), prayers: &prayers.all().map(|(_, p)| p.name.clone()).collect::<Vec<_>>(), effects: &effects.ids().map(|id| effects.get(id).name.clone()).collect::<Vec<_>>() })?;
+        let quest_paths = crate::quest_path::QuestPaths::new(quest_paths, &quests, &blocks)?;
         // An effect that waits on a quest nobody can finish would never come on.
         if let Some(quest) = effects.quests().iter().find(|quest| quests.get(quest).is_none()) {
             return Err(RegistryError(format!("effects.ron: an effect waits for the quest `{quest}`, which no package has")));
@@ -496,12 +516,14 @@ impl Content {
             regrowth: Arc::new(regrowth),
             bees: Arc::new(bees),
             stations: Arc::new(stations),
+            traps: Arc::new(traps),
             treasure: Arc::new(treasure),
             value: Arc::new(value),
             wandering: Arc::new(wandering),
             multiblocks: Arc::new(multiblocks),
             machines: Arc::new(machines),
             quests: Arc::new(quests),
+            quest_paths: Arc::new(quest_paths),
             journal: Arc::new(crate::journal::JournalRules::merge(journal, &mut notes)),
             files: Arc::new(files),
             english: Arc::new(Lang::load(dir, ENGLISH)),
@@ -719,8 +741,11 @@ mod tests {
             };
             let cooked = || {
                 let r = content.cooking.iter().map(|(_, r)| r).filter(|r| r.output == id && match way { Way::CookedAt(station) => r.def.station == station, _ => true }).min_by_key(|r| r.def.level)?;
-                let inputs = content.cooking.iter().filter(|(_, other)| std::ptr::eq(*other, r)).map(|(input, _)| input).collect();
-                Some(Batch { skill: r.skill, level: r.def.level, xp: r.def.xp, count: 1, cells: vec![inputs], station: Some(r.def.station.clone()) })
+                let inputs: Vec<BlockId> = content.cooking.iter().filter(|(_, other)| std::ptr::eq(*other, r)).map(|(input, _)| input).collect();
+                // `uses` of the held input, then each item it takes besides, one cell an item.
+                let held = std::iter::repeat_n(inputs, r.def.uses as usize);
+                let with = r.with.iter().flat_map(|&(item, n)| std::iter::repeat_n(vec![item], n as usize));
+                Some(Batch { skill: r.skill, level: r.def.level, xp: r.def.xp, count: r.def.count as u32, cells: held.chain(with).collect(), station: Some(r.def.station.clone()) })
             };
             match way {
                 Way::Grid => grid(),
@@ -943,7 +968,7 @@ mod tests {
                             }
                         }
                         Goal::Visit(_) | Goal::LookUp(_) => {}
-                        Goal::Catch(..) | Goal::Pick(..) | Goal::Tame(..) | Goal::Kill(..) | Goal::Discover(..) | Goal::Kinds(..) | Goal::Thriving(..) | Goal::Met(..) | Goal::Prayed(..) | Goal::Offered(..) | Goal::Opened(..) | Goal::Ate(..) | Goal::Felt(..) | Goal::Fertilised(..) => panic!("{}: the walk doesn't model {goal:?} yet", quest.name),
+                        Goal::Catch(..) | Goal::Pick(..) | Goal::Tame(..) | Goal::Lured(..) | Goal::Kill(..) | Goal::Discover(..) | Goal::Kinds(..) | Goal::Thriving(..) | Goal::Met(..) | Goal::Prayed(..) | Goal::Offered(..) | Goal::Opened(..) | Goal::Ate(..) | Goal::Felt(..) | Goal::Fertilised(..) | Goal::Laid(..) | Goal::Watering(..) => panic!("{}: the walk doesn't model {goal:?} yet", quest.name),
                     }
                 }
                 if route.walls.len() == walk.walls.len() {

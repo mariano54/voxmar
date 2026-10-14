@@ -22,7 +22,7 @@
 @group(0) @binding(1) var<uniform> globals: Globals;
 #else
 #import bevy_pbr::mesh_view_bindings::{view, globals, fog}
-#import voxmar::lighting::{NORMALS, shade, apply_fog, sun_direction, sun_color, sun_shadow, weathered, wet_sheen, self_glow}
+#import voxmar::lighting::{NORMALS, shade, apply_fog, sun_direction, sun_color, sun_shadow, weathered, wet_sheen, self_glow, light_curve}
 #ifdef TRANSLUCENT
 #import voxmar::water_surface::shade_water
 #endif
@@ -48,11 +48,16 @@ struct ShapeQuad {
 #ifndef PREPASS_PIPELINE
 // Each texture layer's overlay and glow (render/mod.rs, `layer_table`): r and g the layer
 // of an overlay drawn over it, tinted (a grass block side's fringe), plus one (0 for
-// none), b the overlay's tint, a how brightly the layer glows by itself.
+// none), b the overlay's tint, a how brightly the layer glows by itself (its low seven
+// bits) and whether it glows by the block light through it (`THROUGH`), a lit window.
 @group(2) @binding(7) var block_layers: texture_2d<f32>;
 // The tint byte's bits for a layer whose texture is a strip of frames, and for one its
 // pack gives other drawings of.
 const ANIMATED: u32 = 32u;
+// The glow byte's bit for a layer that glows by the block light passing through it.
+const THROUGH: u32 = 128u;
+// How brightly a window glows, at full block light behind it.
+const THROUGH_GLOW: f32 = 0.7;
 const VARIED: u32 = 16u;
 // How bright a glowing block's brightest channel gets: the display transform rolls off
 // gently up to here, and turns colours white past it.
@@ -895,7 +900,13 @@ fn fragment(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @loc
 #ifndef TRANSLUCENT
     color = wet_sheen(color, in.world_position, NORMALS[face], surface.a, in.light.y);
 #endif
-    let glow = entry.a;
+    // A window glows by the light of the room behind it (the light reaching its face has
+    // come through it): warm panes in a lit home, standing out at night as a lantern does.
+    let glow_byte = u32(entry.a * 255.0 + 0.5);
+    var glow = f32(glow_byte & 127u) / 127.0;
+    if (glow_byte & THROUGH) != 0u {
+        glow = max(glow, THROUGH_GLOW * light_curve(in.light.z));
+    }
     if glow > 0.0 {
         color += self_glow(base, albedo.rgb, glow);
         // Its colour kept: the brightest channel held a little past where the display

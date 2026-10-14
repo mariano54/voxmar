@@ -59,7 +59,7 @@
         ),
         (
             name: "chest", sound: Wood, textures: Sides(top: "chest_top", bottom: "chest_top", side: "chest_side"),
-            hardness: 2.0, color: (150, 115, 75), tags: ["machine", "wood", "building"],
+            hardness: 2.0, color: (150, 115, 75), tags: ["machine", "storage", "wood", "building"],
         ),
         (
             name: "chute", sound: Wood, textures: Column(end: "chute_end", side: "chute_side"),

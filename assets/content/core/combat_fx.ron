@@ -1,0 +1,354 @@
+// How a fight looks and sounds beyond its marks (crates/client/src/fight_fx.rs,
+// docs/combat.md "Feel on screen"): what a blow does to the creature it lands on, how a
+// creature winds up and strikes, how it dies, what the camera and the hand do, and every
+// fight sound. None of it changes what the server decides: it is all drawn and heard here.
+// Read and checked at launch with the rest of the content; a later package replaces each
+// part whole, and each entry of `blows`, `strikes` and `sounds` by its own name.
+// Times are seconds, distances blocks, turns degrees, colours (red, green, blue) 0 to 255.
+(
+    // A blow that lands on a creature. Everything freezes for a moment (`stop`, more for a
+    // larger share of its health, never past `stop_most`), shaking by `shake`; the creature
+    // flashes white for `white` and then red for `red`, and flinches away from the striker
+    // for `flinch`: pushed back `recoil` of its own height and tipped `tilt` away, squashed by
+    // `squash` (its own position never moves: there is no knockback). Sparks burst where it
+    // was struck, and tufts of its own coat fly. A shelled creature's chips are its shell's.
+    hit: (
+        stop: 0.045, stop_per_share: 0.12, stop_most: 0.11, shake: 0.035,
+        white: 0.08, red: 0.26,
+        flinch: 0.22, recoil: 0.2, tilt: 16.0, squash: 0.14,
+        sparks: (count: 5, speed: 4.5, life: 0.22, size: 0.07, color: Some((255, 244, 214))),
+        tufts: (count: 5, speed: 2.6, life: 0.55, size: 0.07),
+    ),
+    // Each kind of blow scales the hit: its freeze, its sparks, and how far the camera
+    // dips with it (`punch`, degrees). On the beat a blow is crisper; a flourish and a
+    // counter land hard.
+    blows: {
+        "plain": (stop: 1.0, sparks: 1.0, punch: 0.0),
+        "beat": (stop: 1.25, sparks: 1.6, punch: 0.35),
+        "flourish": (stop: 2.0, sparks: 3.0, punch: 1.1),
+        "counter": (stop: 1.8, sparks: 2.6, punch: 0.9),
+        "bleed": (stop: 0.0, sparks: 0.0, punch: 0.0),
+    },
+    // A killing blow: a longer freeze and a heavier dip, then the body tips over (each
+    // creature's `death` says how) and, over the last `shrink` of its death, shrinks into a
+    // puff of smoke where it lay.
+    death: (
+        stop: 0.12, punch: 0.8, shrink: 0.22,
+        poof: (count: 14, speed: 1.4, life: 0.8, size: 0.32, color: Some((236, 236, 232))),
+    ),
+    // How a creature winds up and strikes, by how it attacks (`attack.style`). Through its
+    // wind-up it coils into `coil` (head `nod` down in radians, `crouch` of its height down,
+    // `rear` up from 0 to 1, `lean` of its length forward, front limbs `paw` radians forward,
+    // the body turned aside `twist` radians, to its left positive);
+    // as the blow lands it snaps to `strike` over `snap` and settles back over `settle`, into
+    // `recover`: head low, weight back, as the server holds it still for its attack's
+    // `recovery` (the player's moment to hit back), eased out by the recovery's end.
+    // Coiling it plants its feet, following where the server has it only `plant` as closely
+    // as walking (0 rooted, 1 not planted at all), and as the blow snaps out it darts the rest
+    // of the way `dart` times as quickly, so the lunge is a lunge rather than a slide.
+    // A bite pulls the head back and snaps it forward; claws rear and swipe down; horns and
+    // hooves drop the head and drive through; a spell rears and flares.
+    strikes: {
+        "stab": (coil: (nod: -0.65, crouch: 0.22, rear: 0.0, lean: -0.22, paw: 0.0),
+                 strike: (nod: 0.6, crouch: 0.0, rear: 0.0, lean: 0.4, paw: 0.0), snap: 0.07, settle: 0.26,
+                 recover: (nod: 0.35, crouch: 0.08, rear: 0.0, lean: -0.12, paw: 0.0), plant: 0.1, dart: 3.0),
+        "slash": (coil: (nod: -0.35, crouch: 0.0, rear: 0.85, lean: -0.12, paw: -1.1, twist: 0.45),
+                  strike: (nod: 0.35, crouch: 0.08, rear: 0.0, lean: 0.3, paw: 1.1, twist: -0.3), snap: 0.08, settle: 0.3,
+                  recover: (nod: 0.25, crouch: 0.1, rear: 0.0, lean: -0.1, paw: 0.2, twist: -0.15), plant: 0.1, dart: 3.0),
+        "crush": (coil: (nod: 0.75, crouch: 0.22, rear: 0.0, lean: -0.24, paw: 0.0),
+                  strike: (nod: -0.35, crouch: 0.0, rear: 0.2, lean: 0.42, paw: 0.0), snap: 0.09, settle: 0.32,
+                  recover: (nod: 0.3, crouch: 0.1, rear: 0.0, lean: -0.14, paw: 0.0), plant: 0.1, dart: 3.0),
+        "ranged": (coil: (nod: -0.35, crouch: 0.1, rear: 0.4, lean: -0.12, paw: 0.0),
+                   strike: (nod: 0.25, crouch: 0.0, rear: 0.0, lean: 0.12, paw: 0.0), snap: 0.07, settle: 0.26,
+                   recover: (nod: 0.2, crouch: 0.06, rear: 0.0, lean: -0.08, paw: 0.0), plant: 0.1, dart: 2.0),
+        "magic": (coil: (nod: -0.5, crouch: 0.0, rear: 1.0, lean: -0.08, paw: -0.7),
+                  strike: (nod: 0.3, crouch: 0.0, rear: 0.1, lean: 0.15, paw: 0.6), snap: 0.10, settle: 0.32,
+                  recover: (nod: 0.3, crouch: 0.08, rear: 0.0, lean: -0.08, paw: 0.1), plant: 0.1, dart: 2.0),
+    },
+    // The camera and the hand. A blow that hurts the player tips the view `hurt_roll` toward
+    // the side it came from and back over `hurt_seconds`, and reddens the edges of the screen
+    // (`vignette`, up to `vignette_alpha`, fading over `vignette_seconds`). A blocked blow jolts
+    // the hand back `block_jolt` and shakes the view `block_shake` degrees; a perfect block
+    // flashes sparks before the eyes. A blow of the player's that lands knocks the hand back
+    // `recoil`. Dips and tips ease back over `punch_seconds`. Screen Shake in the settings
+    // turns every movement of the view off; the hand and the screen's edges stay.
+    camera: (
+        hurt_roll: 4.0, hurt_seconds: 0.42,
+        vignette: (176, 18, 12), vignette_alpha: 0.42, vignette_seconds: 0.55,
+        block_shake: 0.7, block_jolt: 0.07, recoil: 0.05,
+        punch_seconds: 0.22,
+        perfect_sparks: (count: 12, speed: 3.2, life: 0.28, size: 0.035, color: Some((255, 236, 170))),
+        // The view leans into a dodge, the way the player goes (degrees, seconds).
+        dodge_lean: 3.0, dodge_seconds: 0.3,
+    ),
+    // Fight sounds, each synthesized from layers (nothing is shipped), or played from
+    // recordings in the package where a package lists any for it (`recordings`, paths in
+    // the package, like sounds.ron's). Layers:
+    //   Click(gain)                                  a contact transient of a few milliseconds
+    //   Tone(from, to, seconds, gain)                a sine gliding from one pitch to the other as
+    //                                                it dies away: a body's thump, a beat's tick
+    //   Noise(low, high, attack, seconds, gain)      a band of noise: a slap, a crunch's bite, a
+    //                                                rustle
+    //   Sweep(from, to, seconds, gain)               noise swept up through a band and back as it
+    //                                                swells and fades: a blade through the air
+    //   Ring(freq, partials, seconds, gain)          struck metal or wood: partials as ratios
+    //   Crackle(low, high, grains, seconds, gain)    sparse grains of noise: bone, bark, gravel
+    // `drive` saturates the sum (punch without loudness), `room` adds a short small-room tail.
+    // Each sound has `variants` takes, nudged in pitch and time, and is played a little
+    // higher or lower each time. Names: `swing.<class>` (else `swing`), `hit.<style>` (else
+    // `hit`), `hit.shell` over a hit on a shelled creature; `beat`, `flourish`, `counter` and
+    // `kill` play over a hit of that kind; `miss`, `bleed`, `hurt`, `blocked`, `perfect`,
+    // `dodge` and `guard` for the rest.
+    sounds: {
+        // Whooshes: lighter weapons quicker and higher, heavy ones lower and longer; a sword
+        // swings the plain one, which any other class without its own falls back to.
+        "swing": (gain: 0.32, layers: [Sweep(from: 500, to: 2300, seconds: 0.2, gain: 1.0)]),
+        "swing.fist": (gain: 0.24, layers: [Sweep(from: 380, to: 1500, seconds: 0.14, gain: 1.0)]),
+        "swing.dagger": (gain: 0.28, layers: [Sweep(from: 900, to: 3600, seconds: 0.13, gain: 1.0)]),
+        "swing.spear": (gain: 0.3, layers: [Sweep(from: 600, to: 2600, seconds: 0.17, gain: 1.0)]),
+        "swing.axe": (gain: 0.36, layers: [Sweep(from: 320, to: 1500, seconds: 0.26, gain: 1.0)]),
+        "swing.mace": (gain: 0.38, layers: [Sweep(from: 240, to: 1100, seconds: 0.3, gain: 1.0)]),
+        "swing.sling": (gain: 0.28, layers: [Sweep(from: 700, to: 2000, seconds: 0.12, gain: 0.7), Sweep(from: 900, to: 2400, seconds: 0.24, gain: 0.8)]),
+        "swing.bow": (gain: 0.34, variants: 3, layers: [Tone(from: 210, to: 150, seconds: 0.16, gain: 0.5), Noise(low: 2200, high: 6500, attack: 0.001, seconds: 0.04, gain: 0.5), Sweep(from: 1400, to: 4200, seconds: 0.18, gain: 0.6)]),
+        // Hits: a contact click, a body's thump and the slap of what struck it.
+        "hit": (gain: 0.72, drive: 1.6, room: 0.12, layers: [
+            Click(gain: 0.5),
+            Tone(from: 165, to: 58, seconds: 0.13, gain: 1.0),
+            Noise(low: 700, high: 2600, attack: 0.001, seconds: 0.07, gain: 0.55),
+        ]),
+        "hit.stab": (gain: 0.66, drive: 1.5, room: 0.1, layers: [
+            Click(gain: 0.7),
+            Tone(from: 240, to: 90, seconds: 0.08, gain: 0.8),
+            Noise(low: 1500, high: 4200, attack: 0.0005, seconds: 0.04, gain: 0.5),
+        ]),
+        "hit.slash": (gain: 0.72, drive: 1.7, room: 0.12, layers: [
+            Click(gain: 0.5),
+            Tone(from: 180, to: 62, seconds: 0.12, gain: 0.95),
+            Noise(low: 1900, high: 6000, attack: 0.001, seconds: 0.09, gain: 0.6),
+            Noise(low: 500, high: 1400, attack: 0.001, seconds: 0.05, gain: 0.35),
+        ]),
+        "hit.crush": (gain: 0.82, drive: 2.0, room: 0.16, layers: [
+            Click(gain: 0.4),
+            Tone(from: 130, to: 42, seconds: 0.2, gain: 1.0),
+            Noise(low: 260, high: 1100, attack: 0.002, seconds: 0.1, gain: 0.6),
+            Crackle(low: 900, high: 3200, grains: 9, seconds: 0.06, gain: 0.35),
+        ]),
+        "hit.ranged": (gain: 0.6, drive: 1.4, room: 0.1, layers: [
+            Click(gain: 0.7),
+            Tone(from: 200, to: 80, seconds: 0.09, gain: 0.8),
+            Noise(low: 1200, high: 3600, attack: 0.0005, seconds: 0.05, gain: 0.45),
+        ]),
+        "hit.magic": (gain: 0.6, room: 0.25, layers: [
+            Tone(from: 520, to: 260, seconds: 0.25, gain: 0.6),
+            Ring(freq: 880, partials: [1.0, 1.5, 2.01], seconds: 0.4, gain: 0.35),
+            Noise(low: 2500, high: 6500, attack: 0.004, seconds: 0.16, gain: 0.3),
+        ]),
+        // Over a hit on a shelled creature: the clack of horn and plate.
+        "hit.shell": (gain: 0.5, layers: [
+            Ring(freq: 1180, partials: [1.0, 2.31, 3.9], seconds: 0.1, gain: 0.7),
+            Crackle(low: 1600, high: 5200, grains: 6, seconds: 0.04, gain: 0.5),
+        ]),
+        // On the beat: a bright tick over the hit, the rhythm heard as well as seen.
+        "beat": (gain: 0.3, variants: 2, layers: [
+            Tone(from: 1760, to: 1740, seconds: 0.09, gain: 0.7),
+            Tone(from: 2637, to: 2620, seconds: 0.06, gain: 0.35),
+        ]),
+        // A flourish: a heavy crunch and a rising shimmer.
+        "flourish": (gain: 0.62, drive: 2.2, room: 0.22, layers: [
+            Tone(from: 110, to: 36, seconds: 0.3, gain: 1.0),
+            Crackle(low: 700, high: 3000, grains: 14, seconds: 0.09, gain: 0.5),
+            Ring(freq: 1320, partials: [1.0, 1.5, 2.0], seconds: 0.45, gain: 0.3),
+        ]),
+        // A counter after a perfect block: a clash and a ring.
+        "counter": (gain: 0.55, drive: 1.6, room: 0.2, layers: [
+            Click(gain: 0.8),
+            Ring(freq: 1560, partials: [1.0, 2.76, 5.4], seconds: 0.35, gain: 0.5),
+            Tone(from: 150, to: 50, seconds: 0.18, gain: 0.8),
+        ]),
+        // The killing blow: a deep thump and a soft breath of air.
+        "kill": (gain: 0.62, drive: 1.8, room: 0.26, layers: [
+            Tone(from: 95, to: 30, seconds: 0.38, gain: 1.0),
+            Noise(low: 120, high: 700, attack: 0.03, seconds: 0.35, gain: 0.45),
+            Tone(from: 523, to: 784, seconds: 0.22, gain: 0.12),
+        ]),
+        // A blow that missed, either way: air.
+        "miss": (gain: 0.26, layers: [Sweep(from: 700, to: 1800, seconds: 0.16, gain: 1.0)]),
+        // Bleeding: a soft drip.
+        "bleed": (gain: 0.35, variants: 3, layers: [Tone(from: 1100, to: 520, seconds: 0.05, gain: 1.0)]),
+        // Hurt: a dull blow to the body, muffled.
+        "hurt": (gain: 0.7, drive: 1.6, room: 0.1, layers: [
+            Tone(from: 120, to: 46, seconds: 0.18, gain: 1.0),
+            Noise(low: 180, high: 800, attack: 0.002, seconds: 0.12, gain: 0.7),
+            Click(gain: 0.25),
+        ]),
+        // A guard took it: a knock of wood and leather.
+        "blocked": (gain: 0.6, drive: 1.3, room: 0.14, layers: [
+            Click(gain: 0.6),
+            Tone(from: 230, to: 170, seconds: 0.08, gain: 0.7),
+            Ring(freq: 480, partials: [1.0, 1.52, 2.4], seconds: 0.12, gain: 0.5),
+            Noise(low: 900, high: 3000, attack: 0.001, seconds: 0.04, gain: 0.35),
+        ]),
+        // A perfect block: a bright parry's clang.
+        "perfect": (gain: 0.55, room: 0.3, layers: [
+            Click(gain: 0.9),
+            Ring(freq: 1250, partials: [1.0, 2.76, 5.4, 8.93], seconds: 0.7, gain: 0.7),
+            Ring(freq: 1875, partials: [1.0], seconds: 0.5, gain: 0.25),
+            Noise(low: 3000, high: 6800, attack: 0.0005, seconds: 0.05, gain: 0.4),
+        ]),
+        "dodge": (gain: 0.3, layers: [Sweep(from: 300, to: 1300, seconds: 0.22, gain: 0.8), Noise(low: 150, high: 500, attack: 0.01, seconds: 0.08, gain: 0.3)]),
+        "guard": (gain: 0.45, variants: 3, layers: [Noise(low: 900, high: 3200, attack: 0.012, seconds: 0.08, gain: 1.0)]),
+        // Bosses' wind-ups (`tells`), each swelling to its loudest as the blow lands. A
+        // blow to block winds up with a creak and cracks like a whip; a blow to dodge
+        // groans up from under the ground and lands with a thud; a volley rattles.
+        "tell.lash": (gain: 0.5, room: 0.18, variants: 3, layers: [
+            Crackle(low: 260, high: 1300, grains: 12, seconds: 0.42, gain: 0.5),
+            Noise(low: 220, high: 900, attack: 0.36, seconds: 0.5, gain: 0.7),
+            Later(at: 0.38, layer: Sweep(from: 320, to: 1900, seconds: 0.2, gain: 1.0)),
+        ]),
+        "tell.thrash": (gain: 0.5, room: 0.16, variants: 3, layers: [
+            Crackle(low: 300, high: 1500, grains: 10, seconds: 0.3, gain: 0.5),
+            Noise(low: 240, high: 1000, attack: 0.24, seconds: 0.34, gain: 0.7),
+            Later(at: 0.26, layer: Sweep(from: 380, to: 2200, seconds: 0.16, gain: 1.0)),
+        ]),
+        "tell.grasp": (gain: 0.62, drive: 1.4, variants: 3, layers: [
+            Crackle(low: 180, high: 900, grains: 18, seconds: 0.55, gain: 0.45),
+            Noise(low: 50, high: 320, attack: 0.64, seconds: 0.82, gain: 1.0),
+            Later(at: 0.66, layer: Tone(from: 90, to: 38, seconds: 0.18, gain: 0.9)),
+        ]),
+        "tell.volley": (gain: 0.6, room: 0.2, variants: 3, layers: [
+            Crackle(low: 1400, high: 5200, grains: 30, seconds: 0.5, gain: 0.7),
+            Noise(low: 900, high: 3800, attack: 0.46, seconds: 0.6, gain: 0.6),
+            Later(at: 0.5, layer: Click(gain: 0.8)),
+        ]),
+        // A beast's: a snort and a hoof's scrape before a gore; before a charge, hooves
+        // pawing the ground and a rising snort.
+        "tell.gore": (gain: 0.55, room: 0.12, variants: 3, layers: [
+            Noise(low: 300, high: 1600, attack: 0.04, seconds: 0.18, gain: 0.7),
+            Noise(low: 120, high: 600, attack: 0.3, seconds: 0.42, gain: 0.8),
+            Later(at: 0.34, layer: Tone(from: 140, to: 60, seconds: 0.14, gain: 0.8)),
+        ]),
+        "tell.charge": (gain: 0.6, drive: 1.3, variants: 3, layers: [
+            Crackle(low: 300, high: 1800, grains: 16, seconds: 0.5, gain: 0.6),
+            Noise(low: 90, high: 700, attack: 0.6, seconds: 0.8, gain: 1.0),
+            Later(at: 0.62, layer: Tone(from: 120, to: 50, seconds: 0.22, gain: 0.9)),
+        ]),
+        // Every other creature's wind-up: a sound swelling as it gathers itself and
+        // snapping as the blow lands. A wolf snarls and snaps; a badger hisses and
+        // chuffs; a fox yips; an aurochs bellows up from deep down; a bear roars. A creature
+        // with none of its own growls by the style it strikes in.
+        "tell.snarl": (gain: 0.5, room: 0.1, variants: 3, layers: [
+            Noise(low: 140, high: 700, attack: 0.4, seconds: 0.5, gain: 0.8),
+            Crackle(low: 200, high: 900, grains: 14, seconds: 0.4, gain: 0.4),
+            Later(at: 0.42, layer: Noise(low: 1200, high: 3800, attack: 0.002, seconds: 0.05, gain: 0.9)),
+        ]),
+        "tell.hiss": (gain: 0.5, variants: 3, layers: [
+            Noise(low: 2500, high: 7000, attack: 0.26, seconds: 0.34, gain: 0.8),
+            Later(at: 0.28, layer: Tone(from: 220, to: 110, seconds: 0.06, gain: 0.7)),
+        ]),
+        "tell.yip": (gain: 0.45, variants: 3, layers: [
+            Noise(low: 1500, high: 4500, attack: 0.27, seconds: 0.33, gain: 0.6),
+            Later(at: 0.28, layer: Tone(from: 900, to: 1300, seconds: 0.07, gain: 0.6)),
+        ]),
+        "tell.bellow": (gain: 0.55, drive: 1.3, variants: 3, layers: [
+            Noise(low: 80, high: 400, attack: 0.55, seconds: 0.68, gain: 1.0),
+            Crackle(low: 200, high: 1000, grains: 12, seconds: 0.5, gain: 0.35),
+            Later(at: 0.58, layer: Tone(from: 110, to: 50, seconds: 0.16, gain: 0.9)),
+        ]),
+        "tell.roar": (gain: 0.55, drive: 1.4, variants: 3, layers: [
+            Noise(low: 90, high: 600, attack: 0.56, seconds: 0.7, gain: 1.0),
+            Crackle(low: 150, high: 800, grains: 20, seconds: 0.6, gain: 0.5),
+            Later(at: 0.58, layer: Tone(from: 160, to: 70, seconds: 0.16, gain: 0.9)),
+        ]),
+        "tell.growl": (gain: 0.5, variants: 3, layers: [
+            Noise(low: 160, high: 800, attack: 0.26, seconds: 0.34, gain: 0.8),
+            Later(at: 0.28, layer: Noise(low: 1000, high: 3200, attack: 0.002, seconds: 0.05, gain: 0.7)),
+        ]),
+        "tell.draw": (gain: 0.45, variants: 3, layers: [
+            Noise(low: 1200, high: 4000, attack: 0.26, seconds: 0.32, gain: 0.6),
+            Later(at: 0.28, layer: Click(gain: 0.7)),
+        ]),
+        "tell.hum": (gain: 0.45, room: 0.2, variants: 3, layers: [
+            Noise(low: 600, high: 2400, attack: 0.26, seconds: 0.34, gain: 0.6),
+            Later(at: 0.28, layer: Tone(from: 880, to: 660, seconds: 0.1, gain: 0.5)),
+        ]),
+        // Shots arriving (`shots`): a stone's dull smack into a body and its knock and
+        // skitter on the ground; an arrow's sharp thock into a body, and its thunk and
+        // quiver where it sticks in the ground.
+        "shot.thud": (gain: 0.42, drive: 1.3, variants: 3, layers: [
+            Click(gain: 0.5),
+            Tone(from: 210, to: 85, seconds: 0.07, gain: 0.9),
+            Noise(low: 400, high: 1500, attack: 0.001, seconds: 0.05, gain: 0.5),
+        ]),
+        "shot.clatter": (gain: 0.7, variants: 4, layers: [
+            Click(gain: 0.8),
+            Tone(from: 380, to: 210, seconds: 0.04, gain: 0.6),
+            Crackle(low: 900, high: 3600, grains: 7, seconds: 0.14, gain: 0.6),
+        ]),
+        "shot.thock": (gain: 0.4, drive: 1.2, variants: 3, layers: [
+            Click(gain: 0.8),
+            Noise(low: 1800, high: 5200, attack: 0.0005, seconds: 0.03, gain: 0.5),
+            Tone(from: 280, to: 120, seconds: 0.06, gain: 0.8),
+        ]),
+        "shot.stick": (gain: 0.4, variants: 3, layers: [
+            Click(gain: 0.7),
+            Tone(from: 330, to: 190, seconds: 0.05, gain: 0.7),
+            Ring(freq: 190, partials: [1.0, 2.7], seconds: 0.16, gain: 0.35),
+        ]),
+    },
+    // How a creature's wind-up is told beyond its stance, by its name and its move's (its
+    // name alone for its plain attack); every boss blow must have its own, and every other
+    // creature's blow its own or its style's. Its `sound` is played so
+    // its loudest moment (`peak` seconds in) lands with the blow, and the music dips under
+    // it. A blow whose reach the body cannot show draws a `marker`: a ring on the ground as
+    // far as it reaches, filling in as the wind-up runs out, in `colour` up to `alpha`,
+    // `width` blocks wide. The Rootmother's lash and thrash are blocked (the swipe shows
+    // them); her grasp goes through a guard and reaches far, so its ring says how far to
+    // dodge; her volley's rearing shows it.
+    tells: {
+        "rootmother": (sound: "tell.lash", peak: 0.4),
+        "rootmother.lash": (sound: "tell.lash", peak: 0.4),
+        "rootmother.thrash": (sound: "tell.thrash", peak: 0.28),
+        "rootmother.grasp": (sound: "tell.grasp", peak: 0.68, marker: (colour: (226, 70, 34), alpha: 0.55, width: 0.22)),
+        "rootmother.volley": (sound: "tell.volley", peak: 0.5),
+        // Old Tusk (the Nomad age's boss): his gore is blocked, his charge dodged; his
+        // lowered head shows which.
+        "old_tusk": (sound: "tell.gore", peak: 0.36),
+        "old_tusk.gore": (sound: "tell.gore", peak: 0.36),
+        "old_tusk.charge": (sound: "tell.charge", peak: 0.66),
+        "old_tusk.frenzy": (sound: "tell.charge", peak: 0.66),
+        // Every other creature that strikes: its own, else its style's (`style.<style>`).
+        // Only a boss's dips the music; these are fainter further off.
+        "wolf": (sound: "tell.snarl", peak: 0.44, ducks: false),
+        "badger": (sound: "tell.hiss", peak: 0.3, ducks: false),
+        "fox": (sound: "tell.yip", peak: 0.3, ducks: false),
+        "aurochs": (sound: "tell.bellow", peak: 0.6, ducks: false),
+        "brown_bear": (sound: "tell.roar", peak: 0.6, ducks: false),
+        "style.stab": (sound: "tell.growl", peak: 0.3, ducks: false),
+        "style.slash": (sound: "tell.growl", peak: 0.3, ducks: false),
+        "style.crush": (sound: "tell.growl", peak: 0.3, ducks: false),
+        "style.ranged": (sound: "tell.draw", peak: 0.3, ducks: false),
+        "style.magic": (sound: "tell.hum", peak: 0.3, ducks: false),
+    },
+    // Shots by the weapon class that looses them (every class that takes ammunition needs
+    // one). Loosed from the hand as the draw lets go, timed to reach the creature as the
+    // blow is judged, the missile (`length` by `width` blocks, in `colour`) flies at `speed`
+    // blocks a second, rising `arc` blocks over the middle of a 10-block flight (more over a
+    // longer one), and leaves a `trail`: a speck every `every` blocks, `size` wide, fading
+    // over `life` at `alpha`. The hand kicks back `kick` as it lets go. Where it arrives it
+    // throws a `puff` (of the creature's coat, else in its colour) and plays `hit` on a
+    // creature or `land` on anything else; one the server says missed sails on past to
+    // land beyond. A stone is quick and flat with a faint grey streak; an arrow is long and
+    // quicker, arcing a little, with a pale streak.
+    shots: {
+        "sling": (speed: 34.0, arc: 0.15, length: 0.09, width: 0.09, colour: (128, 124, 118),
+            trail: (every: 0.35, size: 0.035, life: 0.18, colour: (205, 200, 192), alpha: 0.5),
+            kick: 0.05,
+            puff: (count: 6, speed: 1.8, life: 0.4, size: 0.06, color: Some((168, 156, 136))),
+            hit: "shot.thud", land: "shot.clatter"),
+        "bow": (speed: 52.0, arc: 0.3, length: 0.62, width: 0.05, colour: (150, 112, 70),
+            trail: (every: 0.25, size: 0.04, life: 0.3, colour: (236, 232, 220), alpha: 0.6),
+            kick: 0.08,
+            puff: (count: 7, speed: 2.0, life: 0.4, size: 0.05, color: Some((168, 156, 136))),
+            hit: "shot.thock", land: "shot.stick"),
+    },
+)

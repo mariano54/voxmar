@@ -553,7 +553,7 @@ impl Surroundings for Around<'_> {
     }
 }
 
-fn follow_camera(
+pub(crate) fn follow_camera(
     player: Res<LocalPlayer>,
     world: Res<ClientWorld>,
     mut cycle: ResMut<DayCycle>,

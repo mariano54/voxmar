@@ -133,6 +133,8 @@ pub enum Requirement {
     /// The target is a home station (`stations.ron`): an empty one with something it works
     /// in hand, or one working or ready.
     Station,
+    /// The target is a sprung trap (`traps.ron`), with what it caught to take.
+    SprungTrap,
     /// The actor holds a fertiliser and the target is a crop still growing
     /// (`stations.ron`'s `fertilisers`).
     Fertilisable,
@@ -227,6 +229,8 @@ pub enum Effect {
     /// Use the target home station (`stations.ron`): load it with what is in hand, take
     /// what it made, or be told how it goes.
     UseStation,
+    /// Take what the target sprung trap caught (`traps.ron`), and set it again.
+    TakeFromTrap,
     /// Spread one held fertiliser on the target crop: the crops within its reach grow.
     Fertilise,
     /// Open the target store beside the actor's inventory, its slots theirs to move items
@@ -285,6 +289,11 @@ impl ActionRegistry {
 
     pub fn id(&self, name: &str) -> Option<ActionId> {
         self.by_name.get(name).copied()
+    }
+
+    /// Every action's full name (`core:eat`), in the order they were added.
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.defs.iter().map(|def| def.name.as_str())
     }
 
     pub fn expect(&self, name: &str) -> ActionId {
@@ -367,6 +376,10 @@ pub trait ActionContext {
     }
     /// The home stations and fertilisers, where the context knows.
     fn stations(&self) -> Option<&crate::station::Stations> {
+        None
+    }
+    /// The traps, where the context knows them.
+    fn traps(&self) -> Option<&crate::trap::Traps> {
         None
     }
     /// Whether the creature with that id takes `item` from the actor's hand.
@@ -625,6 +638,11 @@ impl ActionDef {
                 let (block, _) = block_target()?;
                 let Some(stations) = ctx.stations() else { return Ok(false) };
                 ctx.block(block).is_some_and(|b| stations.usable(b, ctx.actor_held()))
+            }
+            Requirement::SprungTrap => {
+                let (block, _) = block_target()?;
+                let Some(traps) = ctx.traps() else { return Ok(false) };
+                ctx.block(block).is_some_and(|b| traps.sprung(b).is_some())
             }
             Requirement::Fertilisable => {
                 let (block, _) = block_target()?;

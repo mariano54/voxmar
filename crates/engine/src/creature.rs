@@ -21,6 +21,7 @@ pub mod husbandry;
 pub mod model;
 pub mod motion;
 pub mod moves;
+pub mod path;
 pub mod skin;
 pub mod volume;
 
@@ -861,7 +862,12 @@ impl CreatureRegistry {
             let products = def
                 .products
                 .iter()
-                .map(|p| blocks.id(&p.item).ok_or_else(|| error(format!("gives `{}`, which does not exist", p.item))))
+                .map(|p| {
+                    if p.nests && p.tool.is_some() {
+                        return Err(error(format!("`{}` nests, but is taken with a tool: only what it lays by itself goes to the stores", p.item)));
+                    }
+                    blocks.id(&p.item).ok_or_else(|| error(format!("gives `{}`, which does not exist", p.item)))
+                })
                 .collect::<Result<Vec<_>, _>>()?;
             let xp_skill = match &def.xp.skill {
                 Some(name) => Some(skills.id(name).ok_or_else(|| error(format!("no skill `{name}`")))?),
@@ -1075,6 +1081,26 @@ mod tests {
         .unwrap();
         let defs = CreatureRegistry::read("base", &source).unwrap().defs;
         assert!(CreatureRegistry::new(defs, Rules::default(), &blocks, &SkillRegistry::default()).is_err());
+    }
+
+    /// Only what an animal lays by itself may go to the home's stores: a product taken with
+    /// a tool that `nests` is refused as it loads.
+    #[test]
+    fn only_what_is_laid_nests() {
+        let blocks = BlockRegistry::new(vec![
+            BlockDef { name: "base:short_grass".into(), ..Default::default() },
+            BlockDef { name: "base:carrot".into(), ..Default::default() },
+        ])
+        .unwrap();
+        let load = |product: &str| {
+            let defs = CreatureRegistry::read("base", &RABBIT.replace("loot:", &format!("products: [{product}], loot:"))).unwrap().defs;
+            CreatureRegistry::new(defs, Rules::default(), &blocks, &SkillRegistry::default())
+        };
+        let laid = load(r#"(item: "carrot", every: 5.0, nests: true)"#).unwrap();
+        assert!(laid.get(CreatureId(0)).def.products[0].nests);
+        assert!(!load(r#"(item: "carrot", every: 5.0)"#).unwrap().get(CreatureId(0)).def.products[0].nests, "nests is off unless asked");
+        let error = load(r#"(item: "carrot", every: 5.0, tool: "shears", nests: true)"#).unwrap_err();
+        assert!(error.0.contains("nests"), "{error:?}");
     }
 
     #[test]

@@ -8,8 +8,10 @@
 //! falls in a straight line. Burnt food gives no experience. Levels never make it faster
 //! (docs/skills.md, decision 4).
 //!
-//! This first slice cooks one thing at a time over a fire. Recipes of several kinds,
-//! stations that take time and the dish computation come next (docs/food-and-cooking.md).
+//! A recipe cooks what is held, `uses` of it at a time (one unless it says), and may take
+//! other items from the inventory too (`with`): a crucible makes four bronze from three
+//! copper ingots in hand and a tin ore carried. It makes `count` of its output. Stations
+//! that take time and the dish computation come next (docs/food-and-cooking.md).
 
 use rustc_hash::FxHashMap;
 use serde::Deserialize;
@@ -46,6 +48,19 @@ pub struct RecipeDef {
     /// Crafting, a crucible's metal Engineering).
     #[serde(default)]
     pub skill: Option<String>,
+    /// How many of the held input one go takes.
+    #[serde(default = "one")]
+    pub uses: u8,
+    /// Other items one go takes from the inventory, by name, with how many of each.
+    #[serde(default)]
+    pub with: Vec<(String, u8)>,
+    /// How many of `output` one go makes (what burns leaves one `burnt`).
+    #[serde(default = "one")]
+    pub count: u8,
+}
+
+fn one() -> u8 {
+    1
 }
 
 fn campfire() -> String {
@@ -77,9 +92,16 @@ pub struct Recipe {
     pub output: BlockId,
     pub burnt: Option<BlockId>,
     pub skill: Option<SkillId>,
+    /// The other items it takes (`RecipeDef::with`), resolved.
+    pub with: Vec<(BlockId, u8)>,
 }
 
 impl Recipe {
+    /// Everything one go takes when `input` is held: that many of it, then the rest.
+    pub fn ingredients(&self, input: BlockId) -> Vec<(BlockId, u8)> {
+        std::iter::once((input, self.def.uses)).chain(self.with.iter().copied()).collect()
+    }
+
     /// The chance of burning it at `level`.
     pub fn burn_chance(&self, level: u8) -> f32 {
         if self.def.stop_burning == Some(0) {
@@ -123,6 +145,7 @@ impl CookingRegistry {
                 if let Some(burnt) = &mut def.burnt {
                     qualify(burnt);
                 }
+                def.with.iter_mut().for_each(|(name, _)| qualify(name));
                 def
             })
             .collect())
@@ -149,11 +172,25 @@ impl CookingRegistry {
             if inputs.is_empty() {
                 return Err(error("nothing has that tag".into()));
             }
+            if def.uses == 0 || def.count == 0 {
+                return Err(error("it uses and makes at least one".into()));
+            }
+            let mut with = Vec::new();
+            for (name, n) in &def.with {
+                if name.starts_with("tag:") {
+                    return Err(error(format!("`with` names items, not a tag (`{name}`)")));
+                }
+                let item = block(name)?;
+                if *n == 0 || inputs.contains(&item) || with.iter().any(|&(other, _)| other == item) {
+                    return Err(error(format!("`with` takes `{name}` no times, twice, or as well as the input: count it once")));
+                }
+                with.push((item, *n));
+            }
             let index = registry.recipes.len();
             for input in inputs {
                 registry.by_input.entry(input).or_default().push(index);
             }
-            registry.recipes.push(Recipe { def, output, burnt, skill });
+            registry.recipes.push(Recipe { def, output, burnt, skill, with });
         }
         Ok(registry)
     }
@@ -223,6 +260,31 @@ mod tests {
         assert!(registry.for_item(raw, &["campfire".into()]).is_some());
         assert!(registry.for_item(raw, &["oven".into()]).is_none());
         assert!(registry.for_item(BlockId(2), &["campfire".into()]).is_none());
+    }
+
+    /// A recipe may take several of what is held and other items besides, and make several:
+    /// three copper ingots and a tin ore make four bronze. Load refuses what could not be
+    /// counted.
+    #[test]
+    fn a_recipe_takes_several_inputs_and_makes_several() {
+        let blocks = BlockRegistry::new(vec![
+            BlockDef { name: "base:copper_ingot".into(), ..Default::default() },
+            BlockDef { name: "base:tin_ore".into(), ..Default::default() },
+            BlockDef { name: "base:bronze_ingot".into(), ..Default::default() },
+        ])
+        .unwrap();
+        let build = |extra: &str| {
+            let source = format!(r#"(recipes: [(input: "copper_ingot", output: "bronze_ingot", station: "crucible", xp: 88.0, stop_burning: 0, {extra})])"#);
+            CookingRegistry::new(CookingRegistry::read("base", &source).unwrap(), &blocks, &SkillRegistry::default())
+        };
+        let registry = build(r#"uses: 3, with: [("tin_ore", 1)], count: 4"#).unwrap();
+        let (copper, tin) = (BlockId(1), BlockId(2));
+        let recipe = registry.for_item(copper, &["crucible".into()]).unwrap();
+        assert_eq!((recipe.ingredients(copper), recipe.def.count), (vec![(copper, 3), (tin, 1)], 4));
+        assert!(registry.for_item(tin, &["crucible".into()]).is_none(), "what goes with it is not held to cook");
+        for refused in [r#"with: [("tin_ore", 0)]"#, r#"with: [("copper_ingot", 1)]"#, r#"with: [("tin_ore", 1), ("tin_ore", 1)]"#, r#"with: [("tag:ore", 1)]"#, r#"with: [("zinc", 1)]"#, "uses: 0", "count: 0"] {
+            assert!(build(refused).is_err(), "{refused}");
+        }
     }
 
     #[test]
