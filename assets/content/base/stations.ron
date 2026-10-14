@@ -1,0 +1,39 @@
+// Home stations (engine/src/station.rs, docs/stations.md): blocks a player loads and leaves
+// to work while they are away. `empty`, `working` and `ready` are the station's three
+// blocks; a load is up to `holds` of one thing it `works`: `takes` of the input become
+// `gives` of the output, `minutes` after the load went on, by the world's clock, near or
+// far. What `needs` asks of the spot is asked when it is loaded and when it is taken; what
+// `faster` notices about the spot when it is loaded makes the work that many times as quick.
+// The skill named is asked to load it and trained (`xp` each) when what it made is taken.
+//
+// `fertilisers`: an item held to a growing crop grows the crops within `reach` a stage.
+(
+    stations: [
+        // A drying rack (Nomad): raw meat or fish hung in the open air dries to jerky, which
+        // stacks where cooked food does not. A fire near smokes it, twice as fast.
+        (
+            empty: "drying_rack", working: "drying_rack_hung", ready: "drying_rack_dry", holds: 8,
+            works: [
+                (input: "tag:raw+meat", output: "jerky", minutes: 10.0, skill: "core:cooking", xp: 6.0),
+                (input: "tag:raw+fish", output: "jerky", minutes: 10.0, skill: "core:cooking", xp: 6.0),
+            ],
+            needs: [OpenSky],
+            faster: [(Near("fire", 3), 2.0)],
+        ),
+        // A compost heap (Farm): crops, greens, fruit, spare seed and burnt food rot down,
+        // four to one, half as fast again with water near to keep it damp.
+        (
+            empty: "compost_heap", working: "compost_heap_full", ready: "compost_heap_ready", holds: 16,
+            works: [
+                (input: "tag:produce|tag:vegetable|tag:fruit|tag:seed|tag:compost", takes: 4, output: "compost", minutes: 15.0, skill: "core:farming", level: 5, xp: 8.0),
+            ],
+            faster: [(Water(2), 1.5)],
+        ),
+    ],
+    fertilisers: [
+        // Compost spread on a bed: the crops within a block and a half grow a stage.
+        (item: "compost", reach: 1.5, xp: 4.0),
+        // A bone crushed into the soil: the one crop.
+        (item: "bone", reach: 0.5, xp: 2.0),
+    ],
+)

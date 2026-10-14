@@ -55,7 +55,7 @@ announced in chat with a **Next:** line, and the better one hides the other:
 | Pantry | 2 storage, a hearth or any heat block | the good effects of a meal last x1.25 (`meal_time`) |
 | Larder | + roof, 4 storage, a stove or cauldron, a table | meals also heal x1.2 (`meal_heal`) and last x1.5 |
 | Bedside | a bed, a seat, 2 lights (no roof needed) | 2° warmer, and sleeping there is a Well rested sleep |
-| Herb nook | 2 hanging herbs (`drying`), 1 storage | farming and alchemy count 1 level higher, a meal's good lasts x1.1 |
+| Herb nook | 2 hanging herbs or hung drying racks (`drying`), 1 storage | farming and alchemy count 1 level higher, a meal's good lasts x1.1 |
 
 Bedside is a Nomad's first comfort: a stool (Construction 1) and two candles (Crafting 3)
 beside the sleeping bag. Before any roof or hearth it is the warmer night and the better rest
@@ -81,6 +81,8 @@ A home also answers other content, as plain effects with a condition, no code of
 | Full house | 4 such animals (hides Company) | heal x1.2, learn x1.05 |
 | Kitchen garden | 4 crop plants (any stage) within reach | meals heal x1.1 (`meal_heal`, stacks with a larder) |
 | Bee garden | a skep of bees (`hive`) and 3 flowers within reach | heal x1.1; the hive's bees make crops within 8 blocks grow x1.25 (docs/bees.md) |
+
+Stations that work while you are away (a drying rack, a compost heap) are in docs/stations.md; a hung rack counts toward the herb nook.
 
 How they work, for mod authors: `Condition::Sheltered(inner)` holds under a roof while `inner`
 (a weather condition, which is normally true only out in the open) holds in the open, so the

@@ -469,6 +469,7 @@
     "quest.goal.prayed": "{prayer}をオンにする",
     "quest.goal.offered": "祭壇に{item}を捧げる",
     "quest.goal.opened": "{item}の鍵を開ける",
+    "quest.goal.fertilised": "{item}で作物を育てる",
     "quest.goal.ate": "{item}を食べる",
     "quest.goal.felt": "「{effect}」の効果を受ける",
     "multiblock.fuel": "{structure}に火を入れるには、いずれかの燃料を必要な数だけ手に持つ：{fuels}。",

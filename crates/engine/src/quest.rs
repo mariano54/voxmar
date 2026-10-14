@@ -77,6 +77,9 @@ pub enum Goal {
     Offered(String, u32),
     /// Opened this many locked chests (a chest block, `any`, or a `tag:TAG`) by picking the lock.
     Opened(String, u32),
+    /// Grew this many crops by spreading a fertiliser on them (an item, `any`, or a
+    /// `tag:TAG`): one compost on three crops is three.
+    Fertilised(String, u32),
     /// Ate this many of a food (an item, `any`, or a `tag:TAG`).
     Ate(String, u32),
     /// Was under an effect (by name) at least once, whatever gave it: a food, smoke, a
@@ -226,6 +229,7 @@ impl Progress<'_> {
             Goal::Prayed(prayer, n) => (tally("prayed", prayer), *n),
             Goal::Offered(item, n) => (tally("offered", item), *n),
             Goal::Opened(chest, n) => (tally("opened", chest), *n),
+            Goal::Fertilised(item, n) => (tally("fertilised", item), *n),
             Goal::Ate(food, n) => (tally("ate", food), *n),
             Goal::Felt(effect) => (tally("felt", effect).min(1), 1),
         }
@@ -410,6 +414,7 @@ impl QuestRegistry {
                     Goal::Prayed(name, _) => find(name, &prayer)?,
                     Goal::Offered(name, _) => find(name, &made)?,
                     Goal::Opened(name, _) => find(name, &rock)?,
+                    Goal::Fertilised(name, _) => find(name, &made)?,
                     Goal::Ate(name, _) => find(name, &made)?,
                     Goal::Felt(name) => find(name, &effect)?,
                 }
@@ -638,7 +643,7 @@ mod tests {
     fn wanderers_prayers_and_offerings_count_from_their_tallies() {
         let journal = Journal::default();
         let mut tallies = FxHashMap::default();
-        for (key, n) in [("met:base:pedlar", 2), ("met:base:smith", 1), ("met:base:hermit", 0), ("prayed:base:bark_skin", 3), ("offered:base:bone", 4), ("crafted:base:bone", 9), ("opened:base:nomad_treasure_chest", 2), ("ate:base:honey", 3), ("felt:base:smoky", 5)] {
+        for (key, n) in [("met:base:pedlar", 2), ("met:base:smith", 1), ("met:base:hermit", 0), ("prayed:base:bark_skin", 3), ("offered:base:bone", 4), ("crafted:base:bone", 9), ("opened:base:nomad_treasure_chest", 2), ("ate:base:honey", 3), ("felt:base:smoky", 5), ("fertilised:base:compost", 5)] {
             tallies.insert(key.to_owned(), n);
         }
         let level = |_: &str| 1u8;
@@ -657,6 +662,8 @@ mod tests {
         assert_eq!(goal(Goal::Offered("tag:offering".into(), 3)), (4, 3));
         assert_eq!(goal(Goal::Opened("any".into(), 1)), (2, 1), "locked chests opened count by chest or all together");
         assert_eq!(goal(Goal::Opened("base:farm_treasure_chest".into(), 1)), (0, 1));
+        assert_eq!(goal(Goal::Fertilised("base:compost".into(), 4)), (5, 4), "crops grown by compost spread");
+        assert_eq!(goal(Goal::Fertilised("base:bone".into(), 1)), (0, 1));
         assert_eq!(goal(Goal::Ate("base:honey".into(), 2)), (3, 2));
         assert_eq!(goal(Goal::Ate("tag:sweet".into(), 4)), (3, 4), "food eaten counts by tag");
         assert_eq!(goal(Goal::Ate("base:bone".into(), 1)), (0, 1), "what was made is not what was eaten");

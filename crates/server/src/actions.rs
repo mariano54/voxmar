@@ -160,6 +160,9 @@ impl ActionContext for Context<'_> {
     fn bees(&self) -> Option<&voxmar_engine::bees::Bees> {
         Some(&self.server.content.bees)
     }
+    fn stations(&self) -> Option<&voxmar_engine::station::Stations> {
+        Some(&self.server.content.stations)
+    }
 
     fn creature_accepts(&self, id: u32, item: BlockId) -> bool {
         self.server.creature_accepts(self.agent, id, item)
@@ -314,6 +317,8 @@ impl Server {
                 (Effect::Strike, ActionTarget::Creature(id)) => self.player_strikes(agent, id),
                 (Effect::Dodge, _) => self.dodge(agent),
                 (Effect::Cook, ActionTarget::Block { block, .. }) => self.cook(agent, block),
+                (Effect::UseStation, ActionTarget::Block { block, .. }) => self.use_station(agent, block),
+                (Effect::Fertilise, ActionTarget::Block { block, .. }) => self.fertilise(agent, block),
                 (Effect::Tend, ActionTarget::Creature(id)) => self.tend(agent, id),
                 (Effect::Inspect, ActionTarget::Creature(id)) => self.inspect(agent, id),
                 (Effect::Release, ActionTarget::Creature(id)) => self.release(agent, id),

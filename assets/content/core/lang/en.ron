@@ -482,6 +482,7 @@
     "quest.goal.prayed": "Turn on {prayer}",
     "quest.goal.offered": "Offer {item} at an altar",
     "quest.goal.opened": "Pick the lock of {item}",
+    "quest.goal.fertilised": "Grow crops with {item}",
     "quest.goal.ate": "Eat {item}",
     "quest.goal.felt": "Have {effect} on you",
     "multiblock.fuel": "Hold one complete fuel charge to light the {structure}: {fuels}.",

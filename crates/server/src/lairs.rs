@@ -325,20 +325,24 @@ mod tests {
             // Her grasp's reach from her edge, at her smallest, and a little past it.
             def.moves.iter().map(|m| m.attack.reach).filter(|&r| r < 3.0).fold(0.0, f32::max) + def.body.size.0 * 0.88 * 0.5 + 0.3 + 0.05
         };
-        for (health, gap) in [(120, edge_of_reach), (40, 3.0 + 0.9 + 0.3)] {
+        let mut failed = Vec::new();
+        for scale in [0.88, 1.0, 1.12] {
+        for (health, gap) in [(120, edge_of_reach), (40, 3.0 + 0.9 + 0.3), (120, 3.0), (120, 3.5), (120, 4.0), (120, 4.5), (120, 5.0), (120, 5.5), (120, 6.0), (40, 5.0), (40, 6.0)] {
             let mut server = fixture(Vec3::new(20.5, 200.0, 20.5 + gap));
             server.day = day_at(|l| l <= 0.0);
             let id = summon(&mut server, 20.5, 20.5, health);
             let live = server.creatures.live.get_mut(&id).unwrap();
-            (live.scale, live.phase) = (0.88, if health < 60 { 1 } else { 0 });
+            (live.scale, live.phase) = (scale, if health < 60 { 1 } else { 0 });
             let wound_up = (0..10 * TICKS_PER_SECOND).any(|_| {
                 server.tick += 1;
                 server.tick_creatures();
                 server.creatures.live.get(&id).is_some_and(|live| live.winding)
             });
             let at = server.creatures.live[&id].body.position;
-            assert!(wound_up, "at health {health}, {gap:.2} blocks off, she stood at {at:.2} and never wound up");
+            if !wound_up { failed.push(format!("scale {scale} health {health} gap {gap:.2}: at {at:.2}")); }
         }
+        }
+        assert!(failed.is_empty(), "{failed:#?}");
     }
 
     /// A ward stops only `boss_ward` of a boss's blow (half), where it stops `ward` of

@@ -168,6 +168,11 @@ so that what the game already does is something the book points to:
   A Bee Garden: honey heals 2 and stacks, the same food in a row heals less; eat three and
   keep three). The reach test counts a boss's loot, since its lairs place it.
 
+- **Home stations** (Oct 14, docs/stations.md). Nomad: Hung to Dry (a drying rack made and four
+  jerky kept) and Trail Rations (a second rack, twelve jerky). Farm: A Compost Heap (a heap
+  made and two compost kept) and Rich Soil (six crops grown with compost, one with a bone;
+  the new goal `Fertilised(item, n)` counts the crops grown).
+
 ## Quick upgrades
 
 Oct 13 (docs/first-days.md, "Quick upgrades on common resources"): Timber asks for four logs
