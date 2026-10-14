@@ -8609,9 +8609,9 @@ const MEAT_SHOWS: f32 = 0.08;
 /// once the renderer has it), raw rabbit selected: right clicks on it hang the rabbit
 /// (`base:use_station`), so the server sends the hung rack back, and once the renderer has
 /// that too (shot `rack`) the meat must show in the middle of the shot; looked at, the
-/// plate under its name says what hangs and what it makes (shot `rack_readout`). Then the rack goes,
-/// letting the rabbit fall as a broken rack does. Then a cooking pot against the fire, water
-/// near, is set simmering with wheat (shot `pot`).
+/// plate under its name says what hangs and what it makes (shot `rack_readout`). Then the
+/// rack goes, letting the rabbit fall as a broken rack does. Then a cooking pot against the
+/// fire, water near, is set simmering with wheat (shot `pot`).
 fn dry(world: &mut World, gate: &mut Gate, now: f32) {
     let rack = gate.feet + IVec3::new(0, 0, 14) + RACK_FROM_FIRE;
     let waited = gate.server_in_phase() > DRY_WAIT;
