@@ -2186,7 +2186,7 @@ fn kiln_fuel_and_lighting_progress_survive_reload_without_free_refuelling() {
     client.pump_until(|c| count(c, "base:copper_ore") == 1);
     client.chat.clear();
     client.propose("base:cook", ActionTarget::Block { block: core, face: Face::PosY });
-    client.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("is cold")));
+    client.pump_until(|c| c.refused.iter().any(|t| t.contains("is cold")));
     assert_eq!(count(&client, "base:copper_ore"), 1);
     assert_eq!(count(&client, "base:copper_ingot"), 0);
     assert_eq!(lit(&client), 1, "dismantling erased historical quest progress");
@@ -2482,7 +2482,7 @@ fn a_crucible_smelts_only_in_its_lit_kiln_and_makes_bronze() {
     }
     client.pump_until(|c| c.world.block(core) == Some(crucible) && c.world.block(core + IVec3::new(1, 1, 1)) == c.content.blocks.id("base:kiln_bricks"));
     smelt(&mut client);
-    client.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("is cold")));
+    client.pump_until(|c| c.refused.iter().any(|t| t.contains("is cold")));
     assert_eq!(count(&client, ore), 2, "a standing but cold kiln consumed ore");
     client.clear();
     client.ok("/give coal_ore 24");
