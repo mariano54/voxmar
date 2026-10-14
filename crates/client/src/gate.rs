@@ -3793,6 +3793,9 @@ const CHOP_WAIT: f32 = 10.0;
 fn chop(world: &mut World, gate: &mut Gate, now: f32) {
     let block = gate.feet + IVec3::new(0, 0, 14) + CHOP_FROM_FIRE;
     let waited = gate.server_in_phase() > CHOP_WAIT;
+    // What the client itself does (drawing, finding the block near) is given up only once
+    // its own seconds have passed too: frames starved behind a running server had no time.
+    let outwaited = waited && now - gate.phase_since > CHOP_WAIT;
     let content = world.resource::<Launch>().content.clone();
     let (log, planks) = (content.blocks.id("base:oak_log"), content.blocks.id("base:oak_planks"));
     let carried = |world: &World, item: Option<BlockId>| world.resource::<LocalPlayer>().inventory.slots.iter().flatten().filter(|s| Some(s.item) == item).map(|s| s.count as u32).sum::<u32>();
@@ -3822,8 +3825,8 @@ fn chop(world: &mut World, gate: &mut Gate, now: f32) {
             if stood && there && carried(world, log) == 2 && drawn(world, block) && gate.shot(world, "chopping_block").is_some() {
                 world.resource_mut::<UiState>().inventory_open = true;
                 gate.advance(now);
-            } else if waited {
-                gate.check("chopping block", Err(format!("the chopping block ({stood}), the spot ({there}) or two oak logs never came in {CHOP_WAIT} server seconds")));
+            } else if outwaited {
+                gate.check("chopping block", Err(format!("the chopping block ({stood}), the spot ({there}) or two oak logs never came, or it never drew, in {CHOP_WAIT} seconds")));
                 end(world, gate);
             }
         }
@@ -3839,8 +3842,8 @@ fn chop(world: &mut World, gate: &mut Gate, now: f32) {
                     world.resource::<Net>().propose(actions.expect("core:transfer"), target);
                     gate.advance(now);
                 }
-            } else if waited {
-                gate.check("chopping block", Err(format!("with the inventory open the client never found the chopping block within reach in {CHOP_WAIT} server seconds")));
+            } else if outwaited {
+                gate.check("chopping block", Err(format!("with the inventory open the client never found the chopping block within reach in {CHOP_WAIT} seconds")));
                 end(world, gate);
             }
         }
