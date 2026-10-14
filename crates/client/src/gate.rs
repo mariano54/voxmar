@@ -4651,8 +4651,8 @@ fn prayers(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 }
 
 /// A sleeping bag and a torch beside the player, slept in: the bed is their home and it has
-/// a light, so the Camp step (docs/home.md) comes on as a chip, the chat names it and what to
-/// add next, and the sleep gives a rest. Then the way home: with the mark's hiding distance
+/// a light, so the Camp step (docs/home.md) comes on as a chip, each chip with its own icon
+/// (shot `home-chips`), the chat names it and what to add next, and the sleep gives a rest. Then the way home: with the mark's hiding distance
 /// set to nothing, the hearth mark shows how far the bag is. Then crafting at home: four
 /// planks shift clicked into a barrel beside the bag, none left in the pack, Lay on the
 /// crafting table's recipe fills the grid from the barrel. The blocks go again after, and
@@ -4715,7 +4715,16 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
                 (lines.iter().any(|l| l.contains("Camp:") && l.contains("Next:")), lines.iter().any(|l| l.contains("You sleep soundly")))
             };
             if camp && rested && announced && slept {
+                if gate.shot(world, "home-chips").is_none() {
+                    return;
+                }
                 gate.check("home: camp", Ok("a bed and a light slept in showed the Camp chip, the chat named it with its next step, and the sleep was a rest".into()));
+                // Each with its own icon, not the plain buff's both would share.
+                let icons = {
+                    let (images, effects) = (world.resource::<crate::hud::HudImages>(), &world.resource::<Launch>().content.effects);
+                    ["base:camp", "base:rested"].map(|name| effects.id(name).map(|id| images.effect(id)))
+                };
+                gate.check("home: icons", if icons[0].is_some() && icons[0] != icons[1] { Ok("the Camp and Rested chips each show an icon of their own".into()) } else { Err(format!("the Camp and Rested chips share an icon: {icons:?}")) });
                 let mut style = world.resource_mut::<crate::hud::inventory::InterfaceStyle>();
                 gate.home_hidden_within = Some(style.home_hidden_within);
                 style.home_hidden_within = 0.0;
