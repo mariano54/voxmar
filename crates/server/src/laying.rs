@@ -1,9 +1,10 @@
 //! Laying a recipe (`core:lay`, from the recipe viewer, as NEI's "+" does): the crafting
 //! grid is filled with what a recipe for an item takes, `count` sets of it, from the pack
-//! and, while the player stands in their home (`home_reach`), from the stores in it: a
-//! home's barrels and cupboards are a larder and a woodshed to craft from. What the grid
-//! held goes back into the pack first. A recipe that needs a table, or a level the player
-//! lacks, is passed over; with nothing to lay from, the player is told what is short.
+//! (its pouches too) and, while the player stands in their home (`home_reach`), from the
+//! stores in it: a home's barrels and cupboards are a larder and a woodshed to craft from.
+//! What the grid held goes back into the pack first. A recipe that needs a table, or a
+//! level the player lacks, is passed over; with nothing to lay from, the player is told
+//! what is short.
 
 use rustc_hash::FxHashMap;
 use voxmar_engine::block::BlockId;
@@ -40,6 +41,10 @@ impl Server {
         let mut have: FxHashMap<BlockId, u32> = FxHashMap::default();
         for stack in trial.slots.iter().flatten() {
             *have.entry(stack.item).or_default() += stack.count as u32;
+        }
+        // What the pouches carry (herbs and seeds, and what the grid gave back into them).
+        for &(item, n) in &trial.pouched {
+            *have.entry(item).or_default() += n as u32;
         }
         for &pos in &stores {
             for stack in self.factory.get(pos).map(|(_, state)| state.bin.as_slice()).unwrap_or_default().iter().flatten() {
@@ -80,6 +85,12 @@ impl Server {
                     break;
                 }
             }
+            for (_, n) in trial.pouched.iter_mut().filter(|(pouched, _)| *pouched == item) {
+                let took = (left as u16).min(*n);
+                *n -= took;
+                left -= took as u8;
+            }
+            trial.pouched.retain(|&(_, n)| n > 0);
             for &pos in &stores {
                 if left == 0 {
                     break;
@@ -246,6 +257,26 @@ mod tests {
         assert_eq!(grid(&server), vec![(log, 3)]);
         let pack = &server.players[&1].inventory.slots;
         assert!(pack.iter().flatten().any(|s| s.item == dirt && s.count == 2) && pack.iter().flatten().any(|s| s.item == log && s.count == 2));
+    }
+
+    /// Herbs carried in a pouch are laid from too, and taken out of it.
+    #[test]
+    fn a_recipe_lays_from_the_pouches() {
+        let mut server = fixture();
+        let (twine, lavender) = (id(&server, "base:twine"), id(&server, "base:lavender"));
+        let crafting = server.content.skills.id("core:crafting").unwrap();
+        let xp = server.content.skills.xp_for(5);
+        let player = server.players.get_mut(&1).unwrap();
+        player.skills.grant(crafting, xp);
+        player.inventory.slots[0] = Some(ItemStack { item: twine, count: 2 });
+        player.inventory.pouched.push((lavender, 3));
+        lay(&mut server, "base:hanging_herbs", 1);
+        let mut laid = grid(&server);
+        laid.sort();
+        let mut want = vec![(twine, 1), (twine, 1), (lavender, 1), (lavender, 1)];
+        want.sort();
+        assert_eq!(laid, want);
+        assert_eq!(server.players[&1].inventory.pouched, vec![(lavender, 1)]);
     }
 
     /// At home, the home's stores are laid from too; away from it, they are not, and the
