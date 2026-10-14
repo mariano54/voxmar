@@ -159,7 +159,9 @@ Raw and cooked rabbit and chicken were the same meat (Cooking 1, the same experi
 healing) and are **small game** now (Oct 14). A package's blocks file lists what it renamed
 or merged, old name to new (`renamed: {"raw_rabbit": "raw_small_game"}`), and an older save
 loads those items, in slots, pouches, on the ground and on stations, as the new one. Load
-refuses a rename to a block that does not exist, or of a name a block still has.
+refuses a rename to a block that does not exist, or of a name a block still has. Shrimp, which
+were minnows in all but name (level, experience, healing, weight), are minnows too, and
+minnows bite in any water.
 
 ## Dying
 
