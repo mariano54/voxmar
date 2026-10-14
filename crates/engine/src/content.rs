@@ -63,6 +63,8 @@ pub struct Content {
     pub regrowth: Arc<crate::regrowth::Regrowth>,
     /// Wild nests, skeps and what bees do (`bees.ron`).
     pub bees: Arc<crate::bees::Bees>,
+    /// Home stations left to work, and fertilisers (`stations.ron`).
+    pub stations: Arc<crate::station::Stations>,
     /// Locked chests, the lockpicks that open them and what they hold.
     pub treasure: Arc<crate::treasure::Treasure>,
     /// What things are worth (`value`).
@@ -226,6 +228,7 @@ impl Content {
         let mut fishing = Vec::new();
         let mut regrowth = Vec::new();
         let mut bees = Vec::new();
+        let mut stations = Vec::new();
         let mut treasure = Vec::new();
         let mut journal = Vec::new();
         let mut multiblocks = Vec::new();
@@ -328,6 +331,10 @@ impl Content {
                     }
                     "bees.ron" => {
                         bees.push(crate::bees::Bees::read(package, &source)?);
+                        files.push(ContentFile { package: package.clone(), name, source });
+                    }
+                    "stations.ron" => {
+                        stations.push(crate::station::Stations::read(package, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
                     "treasure.ron" => {
@@ -442,6 +449,7 @@ impl Content {
             }
         }
         let bees = crate::bees::Bees::new(bees, &blocks, &skills, &effects, &creatures)?;
+        let stations = crate::station::Stations::new(stations, &blocks, &skills)?;
         let wandering = crate::wander::WanderRegistry::new(wandering, wander_rules.value, &creatures, &blocks, &skills, &effects, &cooking, &weather)?;
         let mut quests = crate::quest::QuestRegistry::new(quests)?;
         quests.resolve(&crate::quest::Named { blocks: &blocks, skills: &skills, creatures: &creatures, fishing: &fishing, multiblocks: &multiblocks, steps: &effects.steps(), events: &wandering.iter().map(|(_, e)| e.def.name.clone()).collect::<Vec<_>>(), prayers: &prayers.all().map(|(_, p)| p.name.clone()).collect::<Vec<_>>() })?;
@@ -478,6 +486,7 @@ impl Content {
             fishing: Arc::new(fishing),
             regrowth: Arc::new(regrowth),
             bees: Arc::new(bees),
+            stations: Arc::new(stations),
             treasure: Arc::new(treasure),
             value: Arc::new(value),
             wandering: Arc::new(wandering),
@@ -925,7 +934,7 @@ mod tests {
                             }
                         }
                         Goal::Visit(_) | Goal::LookUp(_) => {}
-                        Goal::Catch(..) | Goal::Pick(..) | Goal::Tame(..) | Goal::Kill(..) | Goal::Discover(..) | Goal::Kinds(..) | Goal::Thriving(..) | Goal::Met(..) | Goal::Prayed(..) | Goal::Offered(..) | Goal::Opened(..) => panic!("{}: the walk doesn't model {goal:?} yet", quest.name),
+                        Goal::Catch(..) | Goal::Pick(..) | Goal::Tame(..) | Goal::Kill(..) | Goal::Discover(..) | Goal::Kinds(..) | Goal::Thriving(..) | Goal::Met(..) | Goal::Prayed(..) | Goal::Offered(..) | Goal::Opened(..) | Goal::Fertilised(..) => panic!("{}: the walk doesn't model {goal:?} yet", quest.name),
                     }
                 }
                 if route.walls.len() == walk.walls.len() {

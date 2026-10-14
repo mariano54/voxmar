@@ -478,6 +478,7 @@
     "quest.goal.prayed": "Turn on {prayer}",
     "quest.goal.offered": "Offer {item} at an altar",
     "quest.goal.opened": "Pick the lock of {item}",
+    "quest.goal.fertilised": "Grow crops with {item}",
     "multiblock.fuel": "Hold one complete fuel charge to light the {structure}: {fuels}.",
     "multiblock.fuel_or": " or ",
     "multiblock.fuel_stack": "{count} {item}",

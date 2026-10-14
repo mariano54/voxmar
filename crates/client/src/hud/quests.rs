@@ -316,6 +316,7 @@ pub fn goal_words(locale: &Locale, content: &Content, quest: &QuestDef, goal: &G
         }
         Goal::Offered(item, _) => locale.format("quest.goal.offered", &[("item", &item_words(locale, content, package, item))]),
         Goal::Opened(chest, _) => locale.format("quest.goal.opened", &[("item", &item_words(locale, content, package, chest))]),
+        Goal::Fertilised(item, _) => locale.format("quest.goal.fertilised", &[("item", &item_words(locale, content, package, item))]),
         Goal::Built(name, _) => match qualified(package, name).iter().find_map(|name| content.effects.step(name)) {
             // A step of a ladder (a home's) is reached, not built.
             Some(step) => locale.format("quest.goal.step", &[("step", &locale.get_or(&def_key("effect", &step.name), &step.title))]),
