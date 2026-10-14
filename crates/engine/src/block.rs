@@ -237,6 +237,9 @@ pub struct BlockDef {
     /// How its textures vary from block to block, so a large motif does not repeat in a
     /// grid across a wall or a floor. Opaque blocks only.
     pub texture_variety: TextureVariety,
+    /// Its bright texels glow by the block light passing through it, as a window of a lit
+    /// room does at night (a pane of oiled hide, glass). Not by its own light.
+    pub lit_through: bool,
     /// The shape a plant is drawn as (`render: Plant`).
     pub model: PlantModel,
     /// How tall a plant stands, as a share of its usual height (each plant also varies a
@@ -528,6 +531,7 @@ impl Default for BlockDef {
             item: false,
             action: None,
             texture_variety: TextureVariety::default(),
+            lit_through: false,
             model: PlantModel::Cross,
             plant_height: 1.0,
             host: None,
