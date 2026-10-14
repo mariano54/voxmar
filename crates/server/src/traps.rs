@@ -54,6 +54,7 @@ impl Catches {
         Self { caught: saved.iter().filter_map(|c| Some((IVec3::from_array(c.position), Catch { species: id(&c.species)?, seed: c.seed }))).collect() }
     }
 
+    #[cfg(test)]
     pub fn get(&self, pos: IVec3) -> Option<Catch> {
         self.caught.get(&pos).copied()
     }
