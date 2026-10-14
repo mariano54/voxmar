@@ -6,9 +6,11 @@
 //! Each sound is a few decaying sine partials, which may glide in pitch, be frequency
 //! modulated or blip twice, and may carry a breath of high noise.
 //!
-//! A quest finished chimes, and its rewards claimed ring softer. These do not follow the
-//! set chosen: they are events, not clicks. Synthesized unless a package's `sounds.ron`
-//! lists recordings for them (`quest_done`, `quest_claim`), which replace the synthesis.
+//! Events play jingles instead, whatever the set chosen: a quest finished, its rewards
+//! claimed (coins), a skill's level reached, and a grander one every tenth level. They are
+//! recordings each package's `sounds.ron` lists (the base package's are our own, from
+//! `tools/generate_jingles.py`). Two tunes never start over each other: one arriving while
+//! another opens waits its turn, so a quest finished by reaching a level chimes, then rings.
 
 use std::f32::consts::TAU;
 use std::sync::Arc;
@@ -27,9 +29,9 @@ pub struct UiSoundPlugin;
 impl Plugin for UiSoundPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<UiSound>()
-            .add_systems(Startup, (synthesize, quest_clips))
+            .add_systems(Startup, (synthesize, jingle_clips))
             .add_systems(Update, (click_buttons, play.in_set(Audible)).chain())
-            .add_systems(Update, play_quest.in_set(Audible));
+            .add_systems(Update, play_jingles.in_set(Audible));
     }
 }
 
@@ -40,10 +42,12 @@ pub enum UiSound {
     Click,
     /// An item picked up or put down.
     Item,
-    /// A quest finished: a rising two-note chime.
+    /// A quest finished.
     QuestDone,
-    /// A finished quest's rewards claimed: a softer, brighter ring of coins.
+    /// A finished quest's rewards claimed: coins.
     QuestClaim,
+    /// A skill reached this level.
+    LevelUp(u8),
 }
 
 /// Buttons that make no click of their own, such as inventory slots, which tap instead.
@@ -141,25 +145,6 @@ impl UiSounds {
 
 const PLAIN: Sound = Sound { partials: &[], seconds: 0.05, attack: 0.001, glide: 0.0, fm: None, noise: None, echo: None };
 
-/// The quest chime: a bell (its partials not whole multiples, as a struck bell's are) and the
-/// same bell a fifth above a moment later.
-const QUEST_DONE: Sound = Sound {
-    partials: &[(784.0, 784.0, 1.0, 0.45), (1568.0, 1568.0, 0.35, 0.26), (2163.0, 2163.0, 0.16, 0.15), (3190.0, 3190.0, 0.07, 0.08)],
-    seconds: 1.1,
-    attack: 0.003,
-    echo: Some((0.14, 1.5)),
-    ..PLAIN
-};
-
-/// Rewards claimed: two quick, high, small rings.
-const QUEST_CLAIM: Sound = Sound {
-    partials: &[(1568.0, 1568.0, 1.0, 0.1), (2349.0, 2349.0, 0.4, 0.07), (4698.0, 4698.0, 0.1, 0.03)],
-    seconds: 0.45,
-    attack: 0.002,
-    echo: Some((0.07, 1.335)),
-    ..PLAIN
-};
-
 /// A short synthesized sound, as `UiSounds::recipe` describes.
 struct Sound {
     /// Sine partials: starting and ending frequency (Hz), level and decay time (s).
@@ -250,46 +235,123 @@ fn synthesize(mut commands: Commands, mut sources: ResMut<Assets<AudioSource>>) 
     commands.insert_resource(Clips(clips));
 }
 
-#[allow(clippy::type_complexity)]
-/// The quest sounds: a package's recordings where it lists any, else the synthesized chimes.
+/// The jingles, as the packages list them.
 #[derive(Resource)]
-struct QuestClips {
+struct Jingles {
     done: Vec<Handle<AudioSource>>,
     claim: Vec<Handle<AudioSource>>,
+    level: Vec<Handle<AudioSource>>,
+    milestone: Vec<Handle<AudioSource>>,
+    /// Levels this many apart (a multiple of it) play the milestone instead; 0 for never.
+    every: u8,
 }
 
-fn quest_clips(mut commands: Commands, mut sources: ResMut<Assets<AudioSource>>, assets: Res<AssetServer>, launch: Res<Launch>) {
-    let recorded = Recordings::load(&launch.content.files).unwrap_or_else(|e| {
-        error!("no recorded sounds: {e}");
-        Recordings::default()
-    });
-    let mut pick = |paths: &[String], synthesized: &Sound, seed| -> Vec<Handle<AudioSource>> {
-        if paths.is_empty() {
-            vec![sources.add(AudioSource { bytes: Arc::from(wav(&synthesized.render(seed))) })]
-        } else {
-            paths.iter().map(|path| assets.load::<AudioSource>(path.clone())).collect()
-        }
-    };
-    commands.insert_resource(QuestClips { done: pick(&recorded.quest_done, &QUEST_DONE, 3), claim: pick(&recorded.quest_claim, &QUEST_CLAIM, 5) });
-}
-
-/// Plays the quest chimes, taking turns among a package's recordings if it lists several.
-fn play_quest(mut commands: Commands, mut sounds: MessageReader<UiSound>, clips: Option<Res<QuestClips>>, settings: Res<Settings>, mut turn: Local<usize>) {
-    let volume = MASTER * settings.sound_volume as f32 / 100.0;
-    for &sound in sounds.read() {
-        let (Some(clips), true) = (&clips, volume > 0.0) else { continue };
+impl Jingles {
+    /// The clips `sound` takes turns among and how loud it plays, or `None` for no jingle.
+    fn of(&self, sound: UiSound) -> Option<(&[Handle<AudioSource>], f32)> {
         let (list, gain) = match sound {
-            UiSound::QuestDone => (&clips.done, 0.5),
-            UiSound::QuestClaim => (&clips.claim, 0.3),
-            UiSound::Click | UiSound::Item => continue,
+            UiSound::QuestDone => (&self.done, 0.5),
+            UiSound::QuestClaim => (&self.claim, 0.3),
+            UiSound::LevelUp(level) if self.milestone_at(level) => (&self.milestone, 0.5),
+            UiSound::LevelUp(_) => (&self.level, 0.5),
+            UiSound::Click | UiSound::Item => return None,
         };
-        *turn += 1;
-        if let Some(clip) = list.get(*turn % list.len().max(1)) {
-            commands.spawn((AudioPlayer(clip.clone()), PlaybackSettings::DESPAWN.with_volume(Volume::Linear(gain * volume))));
+        (!list.is_empty()).then_some((list.as_slice(), gain))
+    }
+
+    fn milestone_at(&self, level: u8) -> bool {
+        self.every > 0 && level.is_multiple_of(self.every) && !self.milestone.is_empty()
+    }
+
+    /// Seconds `sound` holds the stage before another tune may start: its opening, not its
+    /// ringing tail. Coins never hold it.
+    fn holds(&self, sound: UiSound) -> f32 {
+        match sound {
+            UiSound::LevelUp(level) if self.milestone_at(level) => 1.9,
+            UiSound::QuestDone | UiSound::LevelUp(_) => 1.2,
+            _ => 0.0,
         }
     }
 }
 
+fn jingle_clips(mut commands: Commands, assets: Res<AssetServer>, launch: Res<Launch>) {
+    let recorded = Recordings::load(&launch.content.files).unwrap_or_else(|e| {
+        error!("no jingles: {e}");
+        Recordings::default()
+    });
+    let load = |paths: &[String]| paths.iter().map(|path| assets.load::<AudioSource>(path.clone())).collect();
+    commands.insert_resource(Jingles {
+        done: load(&recorded.quest_done),
+        claim: load(&recorded.quest_claim),
+        level: load(&recorded.level_up),
+        milestone: load(&recorded.level_milestone.sounds),
+        every: recorded.level_milestone.every,
+    });
+}
+
+/// Tunes waiting for the stage, and when it is free (real seconds).
+#[derive(Default)]
+struct Stage {
+    free_at: f32,
+    waiting: Vec<UiSound>,
+}
+
+impl Stage {
+    /// `sound` asked for. Coins play at once (`true`); a tune waits its turn, once: two
+    /// quests finished together chime once, and levels reached together ring once, as the
+    /// grandest of them.
+    fn ask(&mut self, sound: UiSound, jingles: &Jingles) -> bool {
+        match sound {
+            UiSound::QuestClaim => return true,
+            UiSound::LevelUp(level) => match self.waiting.iter_mut().find(|w| matches!(w, UiSound::LevelUp(_))) {
+                Some(UiSound::LevelUp(was)) if jingles.milestone_at(*was) || (!jingles.milestone_at(level) && *was >= level) => {}
+                Some(waiting) => *waiting = sound,
+                None => self.waiting.push(sound),
+            },
+            UiSound::QuestDone if !self.waiting.contains(&sound) => self.waiting.push(sound),
+            _ => {}
+        }
+        false
+    }
+
+    /// The tune to start `now`, if the stage is free and one waits.
+    fn next(&mut self, now: f32, jingles: &Jingles) -> Option<UiSound> {
+        if now < self.free_at || self.waiting.is_empty() {
+            return None;
+        }
+        let sound = self.waiting.remove(0);
+        self.free_at = now + jingles.holds(sound);
+        Some(sound)
+    }
+}
+
+/// Plays the jingles, taking turns among a package's clips where it lists several.
+fn play_jingles(
+    mut commands: Commands,
+    mut sounds: MessageReader<UiSound>,
+    jingles: Option<Res<Jingles>>,
+    settings: Res<Settings>,
+    time: Res<Time<Real>>,
+    mut stage: Local<Stage>,
+    mut turn: Local<usize>,
+) {
+    let Some(jingles) = jingles else { return };
+    let volume = MASTER * settings.sound_volume as f32 / 100.0;
+    let mut start = Vec::new();
+    for &sound in sounds.read() {
+        if stage.ask(sound, &jingles) {
+            start.push(sound);
+        }
+    }
+    start.extend(stage.next(time.elapsed_secs(), &jingles));
+    for sound in start {
+        let Some((list, gain)) = jingles.of(sound).filter(|_| volume > 0.0) else { continue };
+        *turn += 1;
+        commands.spawn((AudioPlayer(list[*turn % list.len()].clone()), PlaybackSettings::DESPAWN.with_volume(Volume::Linear(gain * volume))));
+    }
+}
+
+#[allow(clippy::type_complexity)]
 fn click_buttons(
     buttons: Query<&Interaction, (Changed<Interaction>, With<Button>, Without<Disabled>, Without<Silent>)>,
     mut sounds: MessageWriter<UiSound>,
@@ -311,7 +373,7 @@ fn play(mut commands: Commands, mut sounds: MessageReader<UiSound>, clips: Optio
         let (clip, gain) = match sound {
             UiSound::Click => (&set[0], 0.4),
             UiSound::Item => (&set[1], 0.32),
-            UiSound::QuestDone | UiSound::QuestClaim => continue,
+            UiSound::QuestDone | UiSound::QuestClaim | UiSound::LevelUp(_) => continue,
         };
         commands.spawn((AudioPlayer(clip.clone()), PlaybackSettings::DESPAWN.with_volume(Volume::Linear(gain * volume))));
     }
@@ -331,16 +393,54 @@ mod tests {
         }
     }
 
-    /// The quest chimes sound, fade out, and the claim is the shorter and softer of the two.
+    fn jingles(every: u8) -> Jingles {
+        let clip = || vec![Handle::<AudioSource>::default()];
+        Jingles { done: clip(), claim: clip(), level: clip(), milestone: clip(), every }
+    }
+
+    /// Every tenth level rings the milestone, the rest the level-up, and none without a
+    /// spacing.
     #[test]
-    fn the_quest_chimes_sound_and_end_quietly() {
-        let (done, claim) = (QUEST_DONE.render(3), QUEST_CLAIM.render(5));
-        for samples in [&done, &claim] {
-            assert!(samples.iter().any(|s| s.abs() > 0.7), "silent");
-            assert!(samples.iter().all(|s| s.is_finite() && s.abs() <= 0.81));
-            assert!(samples.last().unwrap().abs() < 1e-3, "ends with a click");
+    fn every_tenth_level_is_a_milestone() {
+        let tenth = jingles(10);
+        assert!(tenth.milestone_at(10) && tenth.milestone_at(40));
+        assert!(!tenth.milestone_at(9) && !tenth.milestone_at(11));
+        assert!(!jingles(0).milestone_at(10));
+        assert_eq!(tenth.holds(UiSound::LevelUp(20)), 1.9);
+        assert_eq!(tenth.holds(UiSound::LevelUp(21)), 1.2);
+    }
+
+    /// A quest finished by reaching a level chimes, then the level rings once the chime has
+    /// opened: never both at once. Coins play straight away.
+    #[test]
+    fn tunes_take_turns_and_coins_do_not_wait() {
+        let jingles = jingles(10);
+        let mut stage = Stage::default();
+        assert!(!stage.ask(UiSound::QuestDone, &jingles));
+        assert!(!stage.ask(UiSound::LevelUp(5), &jingles));
+        assert!(stage.ask(UiSound::QuestClaim, &jingles));
+        assert_eq!(stage.next(0.0, &jingles), Some(UiSound::QuestDone));
+        assert_eq!(stage.next(1.0, &jingles), None);
+        assert_eq!(stage.next(1.2, &jingles), Some(UiSound::LevelUp(5)));
+        assert_eq!(stage.next(9.0, &jingles), None);
+    }
+
+    /// Levels reached together ring once, as the grandest: a milestone over a higher level.
+    #[test]
+    fn levels_together_ring_once_as_the_grandest() {
+        let jingles = jingles(10);
+        let mut stage = Stage::default();
+        for level in [4, 7, 10, 12] {
+            stage.ask(UiSound::LevelUp(level), &jingles);
         }
-        assert!(claim.len() < done.len());
+        stage.ask(UiSound::QuestDone, &jingles);
+        stage.ask(UiSound::QuestDone, &jingles);
+        assert_eq!(stage.waiting, [UiSound::LevelUp(10), UiSound::QuestDone]);
+        let mut stage = Stage::default();
+        for level in [3, 8, 5] {
+            stage.ask(UiSound::LevelUp(level), &jingles);
+        }
+        assert_eq!(stage.waiting, [UiSound::LevelUp(8)]);
     }
 
     #[test]

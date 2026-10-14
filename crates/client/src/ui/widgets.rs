@@ -273,29 +273,31 @@ fn light_hovered(mut lights: Query<(Entity, &mut ImageNode), With<HoverLight>>, 
     }
 }
 
-/// A vertically scrolling container, scrolled with the mouse wheel while hovered.
+/// A scrolling container, scrolled with the mouse wheel (or a trackpad, either way) while
+/// hovered.
 #[derive(Component)]
 #[require(RelativeCursorPosition, ScrollPosition)]
 pub struct ScrollList;
 
-fn scroll_lists(
+pub(crate) fn scroll_lists(
     mut wheel: MessageReader<MouseWheel>,
     mut lists: Query<(&mut ScrollPosition, &RelativeCursorPosition, &ComputedNode), With<ScrollList>>,
 ) {
-    let delta: f32 = wheel
+    let delta: Vec2 = wheel
         .read()
         .map(|event| match event.unit {
-            MouseScrollUnit::Line => event.y * 32.0,
-            MouseScrollUnit::Pixel => event.y,
+            MouseScrollUnit::Line => Vec2::new(event.x, event.y) * 32.0,
+            MouseScrollUnit::Pixel => Vec2::new(event.x, event.y),
         })
         .sum();
-    if delta == 0.0 {
+    if delta == Vec2::ZERO {
         return;
     }
     for (mut scroll, cursor, node) in &mut lists {
         if cursor.cursor_over() {
-            let max = (node.content_size().y - node.size().y).max(0.0) * node.inverse_scale_factor();
-            scroll.0.y = (scroll.0.y - delta).clamp(0.0, max);
+            // A list only as wide as itself has nowhere to go across.
+            let max = (node.content_size() - node.size()).max(Vec2::ZERO) * node.inverse_scale_factor();
+            scroll.0 = (scroll.0 - delta).clamp(Vec2::ZERO, max);
         }
     }
 }

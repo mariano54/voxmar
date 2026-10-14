@@ -68,6 +68,12 @@ struct Client {
     hurt: Vec<(u16, voxmar_engine::combat::Defended)>,
     hurt_by: Vec<(u32, u16)>,
     hurt_at: Vec<Instant>,
+    /// When the server sent each creature's attacking pose now shown (in process, a
+    /// message's stamp is when it was sent): a wind-up's start, however late this thread
+    /// read it.
+    attacking_since: std::collections::HashMap<u32, Instant>,
+    /// The stamp of the message being applied.
+    stamp: Option<Instant>,
     journal: voxmar_engine::journal::Journal,
     quests: Vec<voxmar_engine::quest::QuestState>,
     /// The server, for the first player to join it (dropping it stops the server).
@@ -83,6 +89,24 @@ thread_local! {
     static REAL_TIME: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Set by a test whose server may tick quicker still (`quicker`).
     static SPEEDUP: std::cell::Cell<u32> = const { std::cell::Cell::new(TICK_SPEEDUP) };
+    /// Set by a test whose server ticks in step with its player (`lockstep`).
+    static LOCKSTEP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// How many times quicker than the clock a server in lockstep may tick at most: in practice
+/// as quick as its player takes the ticks in.
+const LOCKSTEP_SPEEDUP: u32 = 1000;
+
+/// Makes this test's servers tick only as far as its player has taken in
+/// (`ServerConfig::lockstep`), as quick as the player goes, for a test that plays a bot
+/// whose messages carry the game's clock (`Fresh::now`), or that bounds what it waits for
+/// in the server's seconds while nothing it judges reads the clock (machines, which work
+/// by ticks; `why` says what it plays). A player starved of the cores on a busy machine
+/// then never finds the server ticks ahead of it, and every tick it waits on is one it
+/// saw. The first player to join drives it: only for a test with one player.
+fn lockstep(why: &str) {
+    assert!(!why.is_empty());
+    LOCKSTEP.set(true);
 }
 
 /// Makes this test's servers tick `speedup` times as quick as the clock, for a long test
@@ -110,6 +134,10 @@ fn spawn(mut config: ServerConfig, content: Content) -> std::io::Result<ServerHa
     config.wandering_starts = false;
     if config.lag == voxmar_server::Lag::default() && !REAL_TIME.get() {
         config.tick_speedup = SPEEDUP.get();
+        if LOCKSTEP.get() {
+            config.lockstep = true;
+            config.tick_speedup = LOCKSTEP_SPEEDUP;
+        }
     }
     keep_world(config.seed, &content);
     voxmar_server::spawn(config, content)
@@ -230,6 +258,8 @@ impl Client {
             hurt: Vec::new(),
             hurt_by: Vec::new(),
             hurt_at: Vec::new(),
+            attacking_since: Default::default(),
+            stamp: None,
             journal: Default::default(),
             quests: Vec::new(),
             _server: server,
@@ -250,34 +280,66 @@ impl Client {
     /// seconds, and the check then ran before the messages waiting for it were read, failing
     /// random tests with "20 s since its last message". A pause between two looks at the
     /// connection longer than `AWAY` moves both limits on by it.
+    ///
+    /// Nor is a server at work silent: its thread's CPU time going up says it is working,
+    /// told or not (`ServerHandle::cpu_time`), and only a server that has neither sent
+    /// anything nor worked for `SERVER_SILENT` is taken for stuck. Before its first tick it
+    /// is opening the world and generating where the player stands, never idle, so until
+    /// then the time in all is the CPU time its thread had: at load 120 a server starting
+    /// with a share of a core sent no welcome for 60 s while it worked all along.
     fn pump_until(&mut self, done: impl Fn(&Self) -> bool) {
         const AWAY: Duration = Duration::from_millis(500);
-        let mut start = Instant::now();
-        let mut heard = start;
-        let mut looked = start;
+        let mut looked = Instant::now();
+        let mut heard = looked;
+        let mut worked = looked;
+        let mut in_all = Duration::ZERO;
+        let mut cpu = self._server.as_ref().and_then(ServerHandle::cpu_time);
         while !done(self) {
+            // In lockstep, the tick this player has taken in once nothing is left to read:
+            // its messages are all sent before the tick counts.
+            let taken = self._server.as_ref().filter(|s| s.lockstep()).map(|s| s.ticks());
             let now = Instant::now();
             let away = now - looked;
             looked = now;
             if away > AWAY {
                 eprintln!("pump_until: this thread was away {:.1}s", away.as_secs_f32());
-                start += away;
                 heard += away;
+                worked += away;
                 continue;
             }
+            let starting = self._server.as_ref().is_some_and(|s| s.ticks() == 0);
+            let now_cpu = self._server.as_ref().and_then(ServerHandle::cpu_time);
+            let work = cpu.zip(now_cpu).map(|(then, now)| now.saturating_sub(then));
+            if work.is_some_and(|w| w > Duration::ZERO) {
+                worked = now;
+            }
+            in_all += match work {
+                Some(work) if starting => work,
+                _ => away,
+            };
+            cpu = now_cpu.or(cpu);
             assert!(
-                now - heard < SERVER_SILENT && now - start < SERVER_WAIT,
-                "{name:?} (id {id}, {phase}, tick {tick}, local {local}): timed out waiting for server: {:.1}s in all, {:.1}s since its last message",
-                (now - start).as_secs_f32(),
+                now - heard.max(worked) < SERVER_SILENT && in_all < SERVER_WAIT,
+                "{name:?} (id {id}, {phase}, tick {tick}, local {local}): timed out waiting for server: {:.1}s in all, {:.1}s since its last message, {:.1}s since its thread last worked",
+                in_all.as_secs_f32(),
                 (now - heard).as_secs_f32(),
+                (now - worked).as_secs_f32(),
                 name = self.name, id = self.id, phase = self.phase, tick = self.server_tick, local = self.connection.is_local()
             );
-            match self.connection.try_recv() {
-                Ok(Some(message)) => {
+            match self.connection.try_recv_at() {
+                Ok(Some((stamp, message))) => {
                     heard = now;
+                    self.stamp = Some(stamp);
                     self.apply(message);
                 }
-                Ok(None) => std::thread::sleep(Duration::from_millis(1)),
+                Ok(None) => match taken {
+                    Some(taken) => {
+                        let server = self._server.as_ref().expect("in lockstep");
+                        server.allow_tick(taken + 1);
+                        server.wait_past(taken, Duration::from_millis(1));
+                    }
+                    None => std::thread::sleep(Duration::from_millis(1)),
+                },
                 Err(_) => panic!("{:?} (id {}, {}, tick {}, local {}): server disconnected", self.name, self.id, self.phase, self.server_tick, self.connection.is_local()),
             }
         }
@@ -335,9 +397,16 @@ impl Client {
             }
             ServerMessage::Creatures { changed, gone } => {
                 for view in changed {
+                    let attacking = |v: &voxmar_protocol::CreatureView| v.pose == voxmar_engine::creature::brain::Pose::Attacking;
+                    if !attacking(&view) {
+                        self.attacking_since.remove(&view.id);
+                    } else if !self.creatures.get(&view.id).is_some_and(attacking) {
+                        self.attacking_since.insert(view.id, self.stamp.unwrap_or_else(Instant::now));
+                    }
                     self.creatures.insert(view.id, view);
                 }
                 for gone in gone {
+                    self.attacking_since.remove(&gone.id);
                     self.creatures.remove(&gone.id);
                     self.deaths += gone.died as u32;
                 }
@@ -388,7 +457,8 @@ impl Client {
 
     /// Applies every message waiting.
     fn drain(&mut self) {
-        while let Ok(Some(message)) = self.connection.try_recv() {
+        while let Ok(Some((stamp, message))) = self.connection.try_recv_at() {
+            self.stamp = Some(stamp);
             self.apply(message);
         }
     }
@@ -679,6 +749,9 @@ fn falling_hurts() {
     let height = fall_from_open_sky(&mut client);
     let expected = 20 - (height - 3) as u8;
     assert_eq!(client.health, expected, "a {height} block fall should cost {} health", height - 3);
+    // An admin heals to full at once.
+    assert_eq!(client.ok("/heal"), "You are at full health.");
+    client.pump_until(|c| c.health == 20);
 }
 
 /// Falls from as high as the open sky above spawn allows, so the player lands hurt, and
@@ -1770,7 +1843,10 @@ fn prayers_drain_ward_off_blows_and_fill_at_an_altar() {
     // Off; at an altar they come back in full, and a bone in hand is offered for Magic
     // experience (16 a bone).
     client.connection.send(ClientMessage::Pray { prayer: ward, on: false });
-    client.ok("/creatures kill");
+    // The bear sent off, not killed: its loot would fall in a second or two of the server's
+    // and come into our hands whenever it lands, on a busy machine after the `/clear` below,
+    // and what we carry would never come to the 36 given.
+    client.ok("/creatures disperse");
     let altar = client.position.floor().as_ivec3() + IVec3::new(0, 0, 2);
     client.ok("/setblock ~ ~ ~2 stone_altar");
     client.ok("/give bone 1");
@@ -4352,30 +4428,48 @@ fn a_perfect_block_staggers_a_bear_and_a_dodge_lets_its_blow_pass() {
     let (windup, recovery) = (attack.windup.unwrap_or(feel.creature_windup), attack.recovery.unwrap_or(feel.creature_recovery));
     // Waits for the bear to wind up at us (standing beside it, facing it, striking it every
     // few seconds only while it does not fight back), then answers `respond` `after`
-    // seconds later; returns the selected bear's answered blow index.
-    let fight = |client: &mut Client, after: f32, respond: &dyn Fn(&Client)| -> usize {
+    // seconds after the server sent the wind-up (its pose's stamp: on a busy machine this
+    // thread may read it long after); returns the selected bear's answered blow index, and
+    // how late past that moment the answer went.
+    let fight = |client: &mut Client, after: f32, respond: &dyn Fn(&Client)| -> (usize, f32) {
         let before = provoke_until_it_winds_up(client, id, slot, "bear");
-        std::thread::sleep(Duration::from_secs_f32(after));
+        let due = client.attacking_since[&id] + Duration::from_secs_f32(after);
+        if let Some(wait) = due.checked_duration_since(Instant::now()) {
+            std::thread::sleep(wait);
+        }
+        let sent = Instant::now();
         respond(client);
-        wait_for_blow(client, id, before)
+        (wait_for_blow(client, id, before), sent.saturating_duration_since(due).as_secs_f32())
     };
     // Each answer's moment moves by what came of the last, so a slow machine is met where
-    // its blows fall: a block not perfect was too soon, a hit too late.
+    // its blows fall: a block not perfect was too soon, a hit too late. An answer that went
+    // more than a step past its moment (the wind-up read after it, or this thread kept off
+    // its cores while it waited) says nothing of the moment: it is set aside and the search
+    // stays, `LATE_ANSWERS` of them at most.
+    const STEP: f32 = 0.05;
+    const LATE_ANSWERS: u32 = 24;
     let answer = |client: &mut Client, want: Defended, respond: &dyn Fn(&Client), undo: &dyn Fn(&Client)| {
         let mut after = windup - 0.1;
         let mut outcomes = Vec::new();
-        for _ in 0..8 {
-            let struck = fight(client, after.max(0.0), respond);
+        let mut late = Vec::new();
+        while outcomes.len() < 8 {
+            let (struck, sent_late) = fight(client, after.max(0.0), respond);
             let outcome = client.hurt[struck].1;
             undo(client);
-            outcomes.push(outcome);
             if outcome == want {
                 return struck;
             }
-            after += if outcome == Defended::Blocked { 0.05 } else { -0.05 };
             client.wait_server(1);
+            if sent_late > STEP {
+                late.push(sent_late);
+                assert!(late.len() < LATE_ANSWERS as usize, "{} answers went more than {STEP} s past their moment ({late:.2?} s late), so none could say when the bear's blow is met; the rest came to {outcomes:?}", late.len());
+                eprintln!("answer: set aside, sent {sent_late:.2} s past its moment ({outcome:?})");
+                continue;
+            }
+            outcomes.push(outcome);
+            after += if outcome == Defended::Blocked { STEP } else { -STEP };
         }
-        panic!("answers to the bear's blows came to {outcomes:?}");
+        panic!("answers to the bear's blows came to {outcomes:?}, {} more set aside as late", late.len());
     };
     // Raised just before the blow: a perfect block, and the next blow a counter.
     let raise = |c: &Client| {
@@ -5052,7 +5146,7 @@ fn a_processing_array_works_only_inside_its_cube_of_hv_casing() {
 
 #[test]
 fn a_turbine_hall_gives_hv_from_steam_only_while_its_hall_stands_and_transformers_bring_it_to_lv() {
-    real_time("it asserts the macerator loses power within two server seconds of the break, which a client busy on a loaded machine outlasts when ticks run twenty times quicker");
+    lockstep("the macerator loses power within two server seconds of the break, counted while the player asks after it");
     let mut client = Client::join();
     let p = client.position.floor().as_ivec3();
     let at = |v: IVec3| format!("{} {} {}", v.x, v.y, v.z);
@@ -5145,6 +5239,7 @@ fn a_turbine_hall_gives_hv_from_steam_only_while_its_hall_stands_and_transformer
 #[test]
 fn chests_keep_what_they_hold_across_restarts_and_an_unreadable_machines_file_is_kept_aside() {
     let dir = world_dir("machines");
+    lockstep("what machines hold within so many server seconds of asking, across restarts");
     let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
     let mut client = Client::join_with(config());
     let chest = client.position.floor().as_ivec3() + IVec3::new(2, 0, 0);
@@ -5160,6 +5255,8 @@ fn chests_keep_what_they_hold_across_restarts_and_an_unreadable_machines_file_is
     assert!(std::fs::read_to_string(dir.join("machines.ron")).unwrap().contains("chest"));
 
     let mut client = Client::join_with(config());
+    // Its column may load after the player's: the server's seconds count from there.
+    client.pump_until(|c| c.world.block(chest) == c.content.blocks.id("base:chest"));
     machine_says(&mut client, &at, "holds 5 items", 10);
 
     // Work half done is not done again after a restart.
@@ -5194,6 +5291,7 @@ fn chests_keep_what_they_hold_across_restarts_and_an_unreadable_machines_file_is
     let save = std::fs::read_to_string(dir.join("machines.ron")).unwrap();
     assert!(save.contains("base:iron_dust"), "the save keeps the work: {save}");
     let mut client = Client::join_with(config());
+    client.pump_until(|c| c.world.block(crusher) == c.content.blocks.id("base:steam_crusher"));
     // Until its first step it says it is idle; then it goes on from where it was.
     let said = machine_says(&mut client, &crusher_at, "making", 20);
     assert!(progress(&said).is_some_and(|p| p >= done), "the crusher began again: {said}, was {done}% done");
@@ -7101,6 +7199,7 @@ impl Fresh {
 /// again rather than standing on it by its own reckoning while the server has it out of reach.
 #[test]
 fn the_bot_closes_on_a_drop_from_where_the_server_put_it() {
+    lockstep("a bot closing on a drop");
     let c = on_a_test_floor();
     let (feet, ticks) = (c.position, c.ticks());
     let origin = feet.floor().as_ivec3();
@@ -7137,11 +7236,29 @@ fn the_bot_collects_while_the_server_ticks_far_ahead_of_it() {
     assert_eq!(f.have("base:cobblestone"), 6);
 }
 
+/// In lockstep the server ticks once for each tick its bot lets pass, however quick it may
+/// tick and however slowly the bot goes: never a tick the bot did not see.
+#[test]
+fn a_server_in_lockstep_ticks_once_for_each_tick_its_bot_lets_pass() {
+    lockstep("counting the server's ticks against the bot's");
+    let c = on_a_test_floor();
+    let (feet, ticks) = (c.position, c.ticks());
+    let origin = feet.floor().as_ivec3();
+    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0 };
+    for _ in 0..200 {
+        let t = f.c.ticks();
+        f.send();
+        f.tick();
+        assert_eq!(f.c.ticks(), t + 1, "the server ticked past what the bot let pass");
+    }
+}
+
 /// A drop that fell below the ground (dug clay that rolled into the hole it came from, on a
 /// busy Mac: "no room near the drop" two blocks under the floor) is taken from inside its
 /// pit: the bot steps down into it, as a player would, and climbs back out.
 #[test]
 fn the_bot_steps_down_into_a_pit_for_a_drop_and_back_out() {
+    lockstep("a bot stepping into a pit for a drop");
     let c = on_a_test_floor();
     let (feet, ticks) = (c.position, c.ticks());
     let origin = feet.floor().as_ivec3();
@@ -7168,6 +7285,7 @@ fn the_bot_steps_down_into_a_pit_for_a_drop_and_back_out() {
 /// beside a trunk it had just cut: "no way round ... and no room near it").
 #[test]
 fn the_bot_takes_a_drop_under_a_cut_trunk_from_beside_it() {
+    lockstep("a bot taking a drop under a trunk");
     let c = on_a_test_floor();
     let (feet, ticks) = (c.position, c.ticks());
     let origin = feet.floor().as_ivec3();
@@ -7187,6 +7305,7 @@ fn the_bot_takes_a_drop_under_a_cut_trunk_from_beside_it() {
 /// it was for digs another block for the one lost rather than waiting it out.
 #[test]
 fn the_bot_leaves_a_drop_no_one_can_reach_and_digs_another() {
+    lockstep("a bot leaving a drop it cannot reach");
     let c = on_a_test_floor();
     let (feet, ticks) = (c.position, c.ticks());
     let origin = feet.floor().as_ivec3();
@@ -7220,6 +7339,7 @@ fn the_bot_leaves_a_drop_no_one_can_reach_and_digs_another() {
 /// pickaxe still in hand and refused unseen.
 #[test]
 fn the_bot_places_from_the_slot_it_holds_after_a_correction() {
+    lockstep("a bot placing after a correction");
     let c = on_a_test_floor();
     let (feet, ticks) = (c.position, c.ticks());
     let origin = feet.floor().as_ivec3();
@@ -7514,7 +7634,7 @@ impl Fresh {
 /// server seconds of each quest and the run's wall time, for the test-time budgets.
 #[test]
 fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
-    quicker(60, "some eleven minutes of game time, from bare hands to the lit Crucible Kiln");
+    lockstep("some eleven minutes of game time, from bare hands to the lit Crucible Kiln");
     let wall = Instant::now();
     let c = Client::join_with(ServerConfig { view_distance: 2, ..Default::default() });
     let mut f = Fresh::lay_out(c);

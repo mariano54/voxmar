@@ -119,7 +119,7 @@ Named dishes (data) match exact ingredients and override the name and add an eff
 | Station | Technique | Needs | Level |
 | --- | --- | --- | --- |
 | Campfire | roast | fuel | 1 |
-| Pot (on a fire) | boil, stew, soup, porridge, jam | water | 3 |
+| Pot (on a fire) | porridge and stew (built: the cooking pot, docs/stations.md); later boil, soup, jam | a hob under or beside it, water within 4 | 3 |
 | Quern | mill grain to flour | | 5 |
 | Oven | bake bread, pies, cakes | fuel | 10 |
 | Pan (on a fire) | fry | a fat (butter, lard, bear fat, olive oil) | 12 |
