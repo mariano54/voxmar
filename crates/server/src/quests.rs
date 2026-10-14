@@ -20,6 +20,19 @@ impl Server {
         }
     }
 
+    /// Takes `times` back off a tally (never below nothing): what was undone, such as an
+    /// item taken back out of a store.
+    pub(crate) fn untally(&mut self, agent: PlayerId, kind: &str, name: &str, times: u32) {
+        let Some(player) = self.players.get_mut(&agent) else { return };
+        let key = format!("{kind}:{name}");
+        if let Some(n) = player.tallies.get_mut(&key) {
+            *n = n.saturating_sub(times);
+            if *n == 0 {
+                player.tallies.remove(&key);
+            }
+        }
+    }
+
     /// How many animals `keeper` keeps, in the world or waiting in the save, with a condition
     /// of at least `least` (0 to 1).
     fn thriving(&self, keeper: &str, least: f32) -> u32 {
@@ -180,6 +193,36 @@ mod tests {
         p.selected = 0;
         p.inventory.clear(|_| true);
         assert_eq!(p.inventory.add(item, count), 0);
+    }
+
+    /// A block set down counts for a quest's `Placed` only while it stands: broken, it comes
+    /// off; a snare sprung (its block changed, not gone) still counts; a block no quest
+    /// asks to be set down is never tallied.
+    #[test]
+    fn a_placed_block_counts_while_it_stands() {
+        use voxmar_engine::action::ActionTarget;
+        use voxmar_engine::block::BlockId;
+        use voxmar_engine::coords::Face;
+        let mut server = fixture();
+        let place = server.content.actions.expect("core:place");
+        let set = |server: &mut Server, item: &str, x: i32| {
+            hold(server, item, 1);
+            server.propose(1, place, ActionTarget::Block { block: IVec3::new(x, 199, 130), face: Face::PosY }, std::time::Instant::now());
+            assert!(server.block(IVec3::new(x, 200, 130)) != Some(BlockId::AIR), "{item} set down");
+            IVec3::new(x, 200, 130)
+        };
+        let trough = set(&mut server, "base:feed_trough", 127);
+        assert_eq!(tally(&server, "placed:base:feed_trough"), 1);
+        server.set_block(trough, BlockId::AIR);
+        assert_eq!(tally(&server, "placed:base:feed_trough"), 0, "broken, it no longer counts");
+        set(&mut server, "base:feed_trough", 127);
+        assert_eq!(tally(&server, "placed:base:feed_trough"), 1, "set down again, once");
+        let snare = set(&mut server, "base:snare", 129);
+        let sprung = server.content.traps.traps.iter().find(|t| server.block(snare) == Some(t.set)).expect("a set snare").sprung;
+        server.set_block(snare, sprung);
+        assert_eq!(tally(&server, "placed:base:snare"), 1, "sprung is still standing");
+        set(&mut server, "base:cobblestone", 131);
+        assert_eq!(tally(&server, "placed:base:cobblestone"), 0, "no quest asks for cobblestone set down");
     }
 
     /// Starts a party of `kind` beside the player and gives back its first member.
