@@ -24,7 +24,10 @@
 //!   player's do, softer and higher for small ones; a voice's own step clips (a crab's
 //!   claws) are layered on top.
 //! - Light. A creature never talks over itself, the quietest requests are dropped first,
-//!   and at most [`MAX_VOICES`] creature sounds play at once.
+//!   and at most the mix's cap of creature sounds play at once (`sounds.ron`), the
+//!   farthest, then the oldest, making room for a new one (`mix`).
+//! - A boss's own voice (its calls, roars and cries, not its steps) is one the music dips
+//!   under.
 
 use bevy::audio::{AudioPlayer, AudioSource, GlobalVolume, PlaybackSettings, SpatialListener, SpatialScale, Volume};
 use bevy::prelude::*;
@@ -33,6 +36,7 @@ use voxmar_engine::creature::CreatureId;
 
 use crate::session::Launch;
 use crate::settings::Settings;
+use crate::mix::{Category, Mix, PAN_SCALE, Voice, falloff};
 use crate::sfx::{self, Cue, MASTER, SoundCue};
 use crate::world::ClientWorld;
 
@@ -41,15 +45,10 @@ pub mod defs;
 
 pub use defs::Bank;
 
-/// Creature sounds playing at once, at most; more would muddy and cost mixing time.
-pub const MAX_VOICES: usize = 14;
 /// Seconds a creature waits after one vocal sound before another (hurt and death excepted).
 const BREATH: f32 = 0.35;
 /// Sounds quieter than this are not played at all.
 const FAINTEST: f32 = 0.004;
-/// Positions are scaled by this for Bevy's panning, so that every sound within reach
-/// keeps its full volume there and only its side changes; our own fall-off sets loudness.
-const PAN_SCALE: f32 = 1.0 / 96.0;
 /// Shimmered clips made per frame, so a supernatural species arriving costs no hitch.
 const SHIMMERS_PER_FRAME: usize = 3;
 
@@ -302,11 +301,9 @@ struct Voiced {
     speed: f32,
     id: u32,
     vocal: bool,
+    /// A boss's voice, which the music dips under.
+    boss: bool,
 }
-
-/// Marks a creature sound while it plays.
-#[derive(Component)]
-struct Playing;
 
 #[allow(clippy::too_many_arguments)]
 fn play(
@@ -320,7 +317,7 @@ fn play(
     global: Option<Res<GlobalVolume>>,
     time: Res<Time>,
     listener: Query<&GlobalTransform, With<SpatialListener>>,
-    playing: Query<(), With<Playing>>,
+    mix: Option<Res<Mix>>,
     mut cues: MessageWriter<SoundCue>,
 ) {
     let asked = std::mem::take(&mut asked.0);
@@ -359,10 +356,10 @@ fn play(
         if event.chance < 1.0 && random(counter) > event.chance {
             continue;
         }
-        let fall = (1.0 - distance / event.range).max(0.0);
+        let fall = falloff(distance, event.range);
         // Big animals are louder than small ones, their steps most of all.
         let presence = if sound.kind == Kind::Step { heft } else { 0.55 + 0.45 * heft.min(1.2) };
-        let volume = event.gain * voice.gain * presence * fall * fall;
+        let volume = event.gain * voice.gain * presence * fall;
         if volume < FAINTEST {
             continue;
         }
@@ -373,14 +370,14 @@ fn play(
         let loudness = 0.9 + 0.2 * random(counter);
         // From about its mouth, or its feet for a step.
         let at = sound.position + Vec3::Y * if sound.kind == Kind::Step { 0.1 } else { height * scale * 0.7 };
-        wanted.push(Voiced { clip, at, volume: volume * loudness, speed, id: sound.id, vocal: sound.kind.vocal() && !sound.kind.urgent() });
+        wanted.push(Voiced { clip, at, volume: volume * loudness, speed, id: sound.id, vocal: sound.kind.vocal() && !sound.kind.urgent(), boss: creature.boss && sound.kind.vocal() });
         if sound.kind.urgent() {
             last.insert(sound.id, now);
         }
     }
-    // The loudest first, while there is room.
+    // The loudest first, no more at once than may play; older and farther ones make room.
     wanted.sort_by(|a, b| b.volume.total_cmp(&a.volume));
-    let mut room = MAX_VOICES.saturating_sub(playing.iter().count());
+    let mut room = mix.map_or(usize::MAX, |mix| mix.0.cap(Category::Creatures));
     for voiced in wanted {
         if room == 0 {
             break;
@@ -400,7 +397,8 @@ fn play(
             spatial_scale: Some(SpatialScale::new(PAN_SCALE)),
             ..PlaybackSettings::DESPAWN.with_volume(Volume::Linear(voiced.volume * master))
         };
-        commands.spawn((AudioPlayer(voiced.clip), settings, Transform::from_translation(voiced.at), Playing));
+        let voice = Voice { ducks: voiced.boss, ..Voice::at(Category::Creatures, voiced.at) };
+        commands.spawn((AudioPlayer(voiced.clip), settings, Transform::from_translation(voiced.at), voice));
     }
     // Forget creatures long quiet, so the map stays small.
     if last.len() > 512 {

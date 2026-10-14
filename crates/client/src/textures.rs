@@ -485,6 +485,20 @@ impl Source {
         [load("grass", [110, 180, 70]), load("foliage", [80, 160, 50])]
     }
 
+    /// The empty hand's textures (`held.ron`'s `bare`), `size`×`size` each; a skin-coloured
+    /// placeholder for one no pack draws.
+    pub fn held_textures(&mut self, names: &[String], size: u32) -> Vec<Rgba> {
+        names
+            .iter()
+            .map(|name| {
+                self.read(name).map(|t| t.square(size)).unwrap_or_else(|| {
+                    bevy::log::warn!("{}: no pack draws `{name}` for the empty hand", crate::held::FILE);
+                    placeholder(size, [196, 146, 108], name)
+                })
+            })
+            .collect()
+    }
+
     /// A HUD sprite, or a flat fallback.
     pub fn sprite(&mut self, name: &str, fallback: (u32, u32, [u8; 4])) -> Rgba {
         self.read(&format!("gui/sprites/hud/{name}")).unwrap_or_else(|| Rgba::solid(fallback.0, fallback.1, fallback.2))
