@@ -478,6 +478,8 @@ struct Gate {
     kiln_since: f32,
     /// Where the shapes step sets its row of shaped blocks: in the air before the player.
     shapes_row: IVec3,
+    /// Times the held step sent wild creatures away and began its shots of the sky again.
+    held_cleared: u32,
     /// When (server seconds) the kiln was last asked to light.
     kiln_asked: f32,
     /// The machines' stage (coal in the boiler, ore in the crusher, dust out), and when
@@ -648,6 +650,7 @@ impl Gate {
             kiln: IVec3::ZERO,
             kiln_since: 0.0,
             shapes_row: IVec3::ZERO,
+            held_cleared: 0,
             kiln_asked: f32::MIN,
             machines_stage: 0,
             machines_since: 0.0,
@@ -5712,16 +5715,33 @@ const OUT_OF_HAND: [f32; 4] = [0.5, 0.8, 0.0, 0.35];
 /// the two empty-hand shots), and differ from each other. Then in a
 /// stone box with no light, the sword in hand is much darker (the hand takes the light where
 /// the player stands).
+///
+/// The sky shots are of one scene: a wild creature near when one is taken (a bear once
+/// filled the bottom of the first and stood at the top right of the block's) sends the
+/// wild ones away and begins them again, `HELD_CLEARS` times at most.
 fn held(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     const SWORD: &str = "base:iron_sword";
     const BLOCK: &str = "base:stone";
     let feet = world.resource::<LocalPlayer>().position.floor().as_ivec3();
     let hold = |world: &mut World, name: &str| select(world, name);
+    // (Looked for once a shot's wait is nearly over, when the views of those sent away are gone.)
+    if (2..=5).contains(&gate.phase) && in_phase > 0.5 && gate.held_cleared < HELD_CLEARS && let Some(near) = wild_near(world, HELD_CLEAR) {
+        gate.held_cleared += 1;
+        info!("gate: held: {near} near the sky shots; sending the wild creatures away and taking them again");
+        world.resource::<Net>().command("creatures disperse");
+        empty_hand(world);
+        gate.phase = 1;
+        gate.advance(now);
+        return;
+    }
     match gate.phase {
         0 => {
             let net = world.resource::<Net>();
             net.command("gamemode creative");
             net.command("time set noon");
+            // Nothing wild to walk through the shots of the sky.
+            net.command("creatures disperse");
+            gate.held_cleared = 0;
             // The full gate's earlier steps fill the hotbar: start from an empty pack, as the
             // steps that give their own items do.
             net.command("clear");
@@ -5830,6 +5850,26 @@ fn held(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 /// most the rest of the view may, beyond the sky's drift between the empty-hand shots.
 const HELD_SEEN: f32 = 1.0;
 const HELD_ELSEWHERE: f32 = 0.5;
+/// Blocks round the player within which a wild creature may walk into the held step's
+/// shots, and the times the step sends them away and begins those shots again.
+const HELD_CLEAR: f32 = 32.0;
+const HELD_CLEARS: u32 = 3;
+
+/// The nearest wild creature shown within `reach` of the player (none kept by anyone, and
+/// no villager: what `/creatures disperse` sends away), by name and distance.
+fn wild_near(world: &World, reach: f32) -> Option<String> {
+    let at = world.resource::<LocalPlayer>().position;
+    let launch = world.resource::<Launch>();
+    let villager = |v: &voxmar_protocol::CreatureView| launch.content.creatures.get(v.species).def.kind == voxmar_engine::creature::Kind::Villager;
+    world
+        .resource::<crate::creatures::Creatures>()
+        .views()
+        .filter(|v| !v.kept && v.owner.is_none() && !villager(v))
+        .map(|v| (v.position.distance(at), v.species))
+        .filter(|&(d, _)| d < reach)
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(d, species)| format!("{} {d:.1} blocks off", launch.content.creatures.get(species).def.name))
+}
 
 /// Births through ordinary spawning, driven through admin console inputs. The clear
 /// pad makes view-cone rejection observable from replicated birth poses; positive dark
