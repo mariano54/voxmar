@@ -10,7 +10,7 @@
         far: ["sounds/thunder_far_1.mp3", "sounds/thunder_far_2.mp3", "sounds/thunder_far_3.mp3"],
     ),
     // Strokes while swimming.
-    swim: ["sounds/swim_1.mp3", "sounds/swim_2.mp3", "sounds/swim_3.mp3", "sounds/swim_4.mp3", "sounds/swim_5.mp3", "sounds/swim_6.mp3"],
+    swim: ["sounds/swim_2.mp3", "sounds/swim_3.mp3", "sounds/swim_4.mp3", "sounds/swim_6.mp3"],
     // Jumping or falling into water.
     splash: ["sounds/splash_1.mp3", "sounds/splash_2.mp3", "sounds/splash_3.mp3"],
     // Jingles for events, our own (tools/generate_jingles.py). A package that lists any for
@@ -58,14 +58,23 @@
         // the volume the game plays it at, every volume setting at 100%. Tests measure every
         // clip we ship against these.
         bands: {
-            Music: (-60, -1),
-            Ambience: (-60, -1),
-            Ui: (-60, -1),
-            Everyday: (-60, -1),
-            Combat: (-60, -1),
-            Jingles: (-60, -1),
-            Creatures: (-60, -1),
-            Weather: (-60, -1),
+            // Every own track is levelled to one loudness (music.ron's `levels`).
+            Music: (-31, -28.5),
+            // Wide: beds and one-shots are tuned place by place (ambience.ron and its tests);
+            // this only catches one far off the rest.
+            Ambience: (-47, -19),
+            // A soft open or close of the quietest set (Tap) up to the brightest click.
+            Ui: (-35, -17),
+            // A mining tap and a step in the leaves up to a block of water broken.
+            Everyday: (-35, -14),
+            // Blows, blocks and dodges: above the everyday, below a near thunderclap.
+            Combat: (-30, -10),
+            // The coins of a claim, softer, up to the milestone tune.
+            Jingles: (-24, -15),
+            // A munch at rest up to a call carrying far.
+            Creatures: (-30.5, -6.5),
+            // Far thunder rolling up to a strike overhead.
+            Weather: (-22, -6),
         },
         // Sounds of a kind playing at once, at most; past it, the farthest, then the oldest,
         // fades out at once to make room.

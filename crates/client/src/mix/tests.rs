@@ -28,6 +28,12 @@ pub(crate) fn within(category: Category, heard: impl IntoIterator<Item = (String
     assert!(!heard.is_empty(), "nothing {category:?} measured");
     let outside: Vec<String> =
         heard.iter().filter(|(_, d)| !(low..=high).contains(d)).map(|(name, d)| format!("  {name}: {d:.1} dB")).collect();
+    // VOXMAR_MIX_LIST=1 lists every sound measured, for tuning.
+    if std::env::var_os("VOXMAR_MIX_LIST").is_some() {
+        for (name, d) in &heard {
+            println!("mix {category:?} {d:.1} {name}");
+        }
+    }
     let quietest = heard.iter().min_by(|a, b| a.1.total_cmp(&b.1)).unwrap();
     let loudest = heard.iter().max_by(|a, b| a.1.total_cmp(&b.1)).unwrap();
     println!("{category:?}: {} sounds from {:.1} dB ({}) to {:.1} dB ({}), band {low} to {high}", heard.len(), quietest.1, quietest.0, loudest.1, loudest.0);
@@ -108,7 +114,7 @@ fn the_music_dips_under_a_jingle_and_comes_back() {
 }
 
 /// An app with the mix and a listener at the origin.
-fn app() -> App {
+fn mixing() -> App {
     let mut app = App::new();
     app.add_plugins(MinimalPlugins)
         .insert_resource(Mix(base()))
@@ -122,7 +128,7 @@ fn app() -> App {
 /// be.
 #[test]
 fn past_its_cap_the_farthest_then_oldest_voice_makes_room() {
-    let mut app = app();
+    let mut app = mixing();
     let cap = base().cap(Category::Creatures);
     let far = app.world_mut().spawn(Voice::at(Category::Creatures, Vec3::X * 30.0)).id();
     let near: Vec<Entity> = (0..cap).map(|i| app.world_mut().spawn(Voice::at(Category::Creatures, Vec3::X * (1.0 + i as f32 * 0.01))).id()).collect();
@@ -134,22 +140,24 @@ fn past_its_cap_the_farthest_then_oldest_voice_makes_room() {
 
     // At one distance, the oldest goes first.
     let ui_cap = base().cap(Category::Ui);
-    let mut app = app();
-    let all: Vec<Entity> = (0..=ui_cap).map(|_| {
-        let e = app.world_mut().spawn(Voice::of(Category::Ui)).id();
-        app.update();
-        e
-    }).collect();
-    app.update();
-    assert!(app.world().get_entity(all[0]).is_err(), "the oldest click still plays");
-    assert!(all[1..].iter().all(|&e| app.world().get_entity(e).is_ok()));
+    let mut clicks = mixing();
+    let all: Vec<Entity> = (0..=ui_cap)
+        .map(|_| {
+            let e = clicks.world_mut().spawn(Voice::of(Category::Ui)).id();
+            clicks.update();
+            e
+        })
+        .collect();
+    clicks.update();
+    assert!(clicks.world().get_entity(all[0]).is_err(), "the oldest click still plays");
+    assert!(all[1..].iter().all(|&e| clicks.world().get_entity(e).is_ok()));
 }
 
 /// The music dips while a jingle or a boss's voice plays, not for a click.
 #[test]
 fn the_music_makes_room_for_jingles_and_bosses_only() {
     for (voice, dips) in [(Voice::of(Category::Ui), false), (Voice::of(Category::Jingles), true), (Voice { ducks: true, ..Voice::at(Category::Creatures, Vec3::X) }, true), (Voice::at(Category::Creatures, Vec3::X), false)] {
-        let mut app = app();
+        let mut app = mixing();
         app.world_mut().spawn(voice);
         for _ in 0..3 {
             app.update();

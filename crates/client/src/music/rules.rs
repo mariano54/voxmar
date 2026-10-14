@@ -232,7 +232,10 @@ impl MusicRules {
                 ($($field:ident),*) => {$(if let Some(value) = read.$field { rules.$field = value; })*};
             }
             rules.levels.extend(read.levels);
-            replace!(volume, borrowed_volume, loudness, first_menu_delay, gap, menu_gap, now_playing, boss, fade_out, retry_after, resume_after, own_share, recent, underground, prism);
+            if read.loudness.is_some() {
+                rules.loudness = read.loudness;
+            }
+            replace!(volume, borrowed_volume, first_menu_delay, gap, menu_gap, now_playing, boss, fade_out, retry_after, resume_after, own_share, recent, underground, prism);
             for category in read.categories {
                 check_category(&category).map_err(|e| format!("{}/{FILE}: {e}", file.package))?;
                 match rules.categories.iter_mut().find(|known| known.name == category.name) {
@@ -359,7 +362,7 @@ mod tests {
         assert!(rules.rule("minecraft:dig/grass1").is_none());
         // Patterns see the path, not the namespace.
         assert!(rules.rule("musicmod:dig/grass1").is_none());
-        assert!(MusicRules::load(&[package("bad", "(loudness: 2.0)")]).unwrap_err().contains("bad/music.ron"));
+        assert!(MusicRules::load(&[package("bad", "(loudest: 2.0)")]).unwrap_err().contains("bad/music.ron"));
     }
 
     /// A rule's category must be listed, and a category's name and folder must be safe to
