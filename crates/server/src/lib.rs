@@ -107,6 +107,12 @@ pub struct ServerConfig {
     /// the clock. What the server judges by arrival stamps (a break, a blow) keeps the
     /// clock's pace, since players' messages carry theirs.
     pub tick_speedup: u32,
+    /// Whether the server ticks only as far as its test's player allows
+    /// (`ServerHandle::allow_tick`): one tick past the last the player has taken in, so a
+    /// player starved of the cores on a busy machine is never left behind by a quick
+    /// server, and every tick the player waits on is one it saw. Off but in tests; off,
+    /// the server ticks at its pace alone.
+    pub lockstep: bool,
     /// Whether wandering events start by chance near players (`try_wandering`). Off only
     /// in tests, whose quick ticks would otherwise bring a party beside the player some
     /// game days in, when a test slowed by load is still running; `/wander start` and
@@ -225,6 +231,7 @@ impl Default for ServerConfig {
             lag: Lag::default(),
             cut_saves: false,
             tick_speedup: 1,
+            lockstep: false,
             wandering_starts: true,
         }
     }
@@ -312,6 +319,17 @@ pub struct ServerHandle {
     ticks: Arc<AtomicU64>,
     lagging: Arc<AtomicBool>,
     hurried: Arc<AtomicU32>,
+    /// The tick the server may tick up to, in lockstep (`ServerConfig::lockstep`).
+    leash: Option<Arc<Leash>>,
+}
+
+/// A server in lockstep with its test's player (`ServerConfig::lockstep`): the ticks it may
+/// make, and the ticks made, which the player waits on.
+#[derive(Default)]
+struct Leash {
+    allowed: AtomicU64,
+    made: Mutex<u64>,
+    ticked: std::sync::Condvar,
 }
 
 /// Ticks whose times a server keeps, for `ServerHandle::tick_times`: the last minute.
@@ -342,6 +360,33 @@ impl ServerHandle {
     /// machine steps, whose bloom and dust take their recipes' full server time.
     pub fn set_hurried(&self, times: u32) {
         self.hurried.store(times.max(1), Ordering::Relaxed);
+    }
+
+    /// In lockstep (`ServerConfig::lockstep`), lets the server tick until it has made
+    /// `ticks` ticks: a player who has taken in every message of tick `n` allows `n + 1`.
+    /// Whatever the player sent before allowing it is handled before that tick. Nothing,
+    /// out of lockstep.
+    pub fn allow_tick(&self, ticks: u64) {
+        if let Some(leash) = &self.leash {
+            leash.allowed.fetch_max(ticks, Ordering::Release);
+            if let Some(thread) = &self.thread {
+                thread.thread().unpark();
+            }
+        }
+    }
+
+    /// In lockstep, waits up to `wait` for the server to have made more than `ticks` ticks.
+    /// Out of lockstep, returns at once.
+    pub fn wait_past(&self, ticks: u64, wait: Duration) {
+        if let Some(leash) = &self.leash {
+            let made = leash.made.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let _ = leash.ticked.wait_timeout_while(made, wait, |made| *made <= ticks);
+        }
+    }
+
+    /// Whether the server ticks in lockstep with its test's player (`ServerConfig::lockstep`).
+    pub fn lockstep(&self) -> bool {
+        self.leash.is_some()
     }
 
     /// Sender for new connections (local or accepted by a TCP listener).
@@ -391,8 +436,9 @@ pub fn spawn(mut config: ServerConfig, content: Content) -> std::io::Result<Serv
     let ticks = Arc::new(AtomicU64::new(0));
     let lagging = Arc::new(AtomicBool::new(true));
     let hurried = Arc::new(AtomicU32::new(1));
+    let leash = config.lockstep.then(|| Arc::new(Leash::default()));
     let thread = {
-        let (stop, tick_times, ticks, lagging, hurried) = (stop.clone(), tick_times.clone(), ticks.clone(), lagging.clone(), hurried.clone());
+        let (stop, tick_times, ticks, lagging, hurried, leash) = (stop.clone(), tick_times.clone(), ticks.clone(), lagging.clone(), hurried.clone(), leash.clone());
         std::thread::Builder::new()
             .name("server".into())
             .spawn(move || {
@@ -400,10 +446,11 @@ pub fn spawn(mut config: ServerConfig, content: Content) -> std::io::Result<Serv
                 server.generation_changed = generation_changed;
                 server.lagging = lagging;
                 server.hurried = hurried;
+                server.leash = leash;
                 server.run(&stop, &tick_times, &ticks)
             })?
     };
-    Ok(ServerHandle { connections, console, stop, thread: Some(thread), tick_times, ticks, lagging, hurried })
+    Ok(ServerHandle { connections, console, stop, thread: Some(thread), tick_times, ticks, lagging, hurried, leash })
 }
 
 /// The world `config` asks for: the one saved in `config.world` (created if missing), or
@@ -562,6 +609,8 @@ pub(crate) struct Server {
     /// How many times the game's pace the server ticks now, on top of
     /// `ServerConfig::tick_speedup` (`ServerHandle::set_hurried`).
     hurried: Arc<AtomicU32>,
+    /// The tick the server may tick up to, in lockstep (`ServerHandle::allow_tick`).
+    leash: Option<Arc<Leash>>,
     /// When each address's new players had the starting kit, in ticks (`Server::grant_kit`).
     /// Kept only while the server runs.
     kits: FxHashMap<std::net::IpAddr, Vec<u64>>,
@@ -675,6 +724,7 @@ impl Server {
             generation_changed: false,
             lagging: Arc::new(AtomicBool::new(true)),
             hurried: Arc::new(AtomicU32::new(1)),
+            leash: None,
             kits: FxHashMap::default(),
             generating: FxHashSet::default(),
             generated_tx,
@@ -698,6 +748,9 @@ impl Server {
         let real_tick = Duration::from_secs(1) / TICKS_PER_SECOND;
         let mut next_tick = Instant::now();
         while !stop.load(Ordering::Relaxed) {
+            // In lockstep, the tick its player allows, read before its messages: what the
+            // player sent before allowing it is then handled before the tick.
+            let allowed = self.leash.as_ref().map(|leash| leash.allowed.load(Ordering::Acquire));
             self.accept_connections();
             self.receive_generated();
             // Timed actions due by now complete after the messages that came before now,
@@ -709,9 +762,20 @@ impl Server {
                 self.console(&line);
             }
             let now = Instant::now();
+            let held = allowed.is_some_and(|allowed| ticks.load(Ordering::Relaxed) >= allowed);
+            if held {
+                // Waiting on the player, not behind: its next tick goes as soon as allowed.
+                next_tick = now;
+                std::thread::park_timeout(Duration::from_millis(2));
+                continue;
+            }
             if now >= next_tick {
                 self.tick();
                 ticks.fetch_add(1, Ordering::Relaxed);
+                if let Some(leash) = &self.leash {
+                    *leash.made.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = ticks.load(Ordering::Relaxed);
+                    leash.ticked.notify_all();
+                }
                 if let Ok(mut times) = tick_times.lock() {
                     if times.len() == TICK_TIMES {
                         times.pop_front();
