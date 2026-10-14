@@ -284,7 +284,7 @@ enum Step {
     /// An iron sword in hand at Attack 20, a brown bear struck until it dies takes harder
     /// blows than a fist could deal.
     Weapon,
-    /// A sling at Ranged 10 against a held brown bear seven blocks off, out of a sword's
+    /// A sling at Ranged 70 against a held brown bear seven blocks off, out of a sword's
     /// reach: shot with left clicks until a stone hits, each shot spends one cobblestone,
     /// and the hit trains Ranged.
     Sling,
@@ -451,6 +451,9 @@ struct Gate {
     /// Shots asked for, and those that arrived.
     requested: Vec<&'static str>,
     shots: Arc<Mutex<FxHashMap<&'static str, Image>>>,
+    /// Times each shot was forgotten: one asked for before its latest forgetting is
+    /// dropped when it arrives, so a retake never keeps an image of the scene it replaces.
+    forgotten: Arc<Mutex<FxHashMap<&'static str, u32>>>,
     placed: Vec<IVec3>,
     /// The block being dug, and those dug with what they were.
     digging: Option<(IVec3, BlockId)>,
@@ -527,6 +530,10 @@ struct Gate {
     blows_seen: u32,
     /// The sling step's run (`sling`).
     sling: SlingRun,
+    /// The Rootmothers seen before the Boss step summoned its own, and the one it summoned:
+    /// another (a lair's, woken near the test ground) is never the one judged.
+    boss_before: Vec<u32>,
+    boss_id: Option<u32>,
     /// Whether the target readout has shown the struck creature's health.
     readout_seen: bool,
     /// Whether the creatures step could release its butterfly.
@@ -636,6 +643,7 @@ impl Gate {
             identity_id: None,
             requested: Vec::new(),
             shots: default(),
+            forgotten: default(),
             placed: Vec::new(),
             digging: None,
             dug: Vec::new(),
@@ -678,6 +686,8 @@ impl Gate {
             weapon_fallen_since: None,
             blows_seen: 0,
             sling: SlingRun::default(),
+            boss_before: Vec::new(),
+            boss_id: None,
             readout_seen: false,
             butterfly: false,
             fall_judged: false,
@@ -794,14 +804,30 @@ impl Gate {
         if !self.requested.contains(&name) {
             self.requested.push(name);
             let shots = self.shots.clone();
+            let forgotten = self.forgotten.clone();
+            let round = forgotten.lock().expect("gate shots").get(name).copied();
             world
                 .spawn(Screenshot::image(self.target.clone()))
                 .observe(save_to_disk(self.dir.join(format!("{name}.png"))))
                 .observe(move |captured: On<ScreenshotCaptured>| {
-                    shots.lock().expect("gate shots").insert(name, captured.image.clone());
+                    if forgotten.lock().expect("gate shots").get(name).copied() == round {
+                        shots.lock().expect("gate shots").insert(name, captured.image.clone());
+                    }
                 });
         }
         self.shots.lock().expect("gate shots").get(name).cloned()
+    }
+
+    /// Forgets the shots called `names`, those still on their way included, so the next
+    /// `shot` of each takes it again.
+    fn forget(&mut self, names: &[&'static str]) {
+        let mut forgotten = self.forgotten.lock().expect("gate shots");
+        for &name in names {
+            *forgotten.entry(name).or_default() += 1;
+        }
+        drop(forgotten);
+        self.requested.retain(|n| !names.contains(n));
+        self.shots.lock().expect("gate shots").retain(|n, _| !names.contains(n));
     }
 
     fn earlier_shot(&self, name: &str) -> Option<Image> {
@@ -5792,6 +5818,7 @@ fn held(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         info!("gate: held: {near} near the sky shots; sending the wild creatures away and taking them again");
         world.resource::<Net>().command("creatures disperse");
         empty_hand(world);
+        gate.forget(&HELD_SKY);
         gate.phase = 1;
         gate.advance(now);
         return;
@@ -5869,7 +5896,7 @@ fn held(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let Some(empty_dark) = gate.shot(world, "held-empty-dark") else { return };
             let (x, y, z) = (feet.x, feet.y, feet.z);
             world.resource::<Net>().command(&format!("fill {} {y} {} {} {} {} air", x - 3, z - 3, x + 3, y + 5, z + 3));
-            let shots: Vec<Option<Image>> = ["held-empty", "held-sword", "held-block", "held-empty-after", "held-sword-dark"].map(|n| gate.earlier_shot(n)).into();
+            let shots: Vec<Option<Image>> = [HELD_SKY[0], HELD_SKY[1], HELD_SKY[2], HELD_SKY[3], "held-sword-dark"].map(|n| gate.earlier_shot(n)).into();
             let [Some(empty), Some(sword), Some(block), Some(empty_after), Some(sword_dark)] = shots.as_slice() else {
                 gate.check("held", Err("a shot of the hand was never taken".into()));
                 gate.next(Step::NaturalSpawns, now);
@@ -5916,6 +5943,8 @@ const HELD_ELSEWHERE: f32 = 0.5;
 /// shots, and the times the step sends them away and begins those shots again.
 const HELD_CLEAR: f32 = 32.0;
 const HELD_CLEARS: u32 = 3;
+/// The sky shots a retake takes again.
+const HELD_SKY: [&str; 4] = ["held-empty", "held-sword", "held-block", "held-empty-after"];
 
 /// The nearest wild creature shown within `reach` of the player (none kept by anyone, and
 /// no villager: what `/creatures disperse` sends away), by name and distance.
@@ -6420,9 +6449,12 @@ fn weapon(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
     }
 }
 
-/// The sling, the Ranged level it is shot at, and what it shoots.
+/// The sling, the Ranged level it is shot at, and what it shoots. The level is high enough
+/// that a stone hits the bear about four times in five, so twelve misses in a row are
+/// never luck (`twelve_misses_are_never_luck`); at Ranged 10 a third hit, and one gate in a
+/// hundred or so missed with all twelve.
 const SLING: &str = "base:sling";
-const SLING_LEVEL: u8 = 10;
+const SLING_LEVEL: u8 = 70;
 const SLING_STONES: u32 = 12;
 /// Seconds between shots (past the sling's 0.53 s cooldown), by the game's clock.
 const SLING_EVERY: f32 = 1.0;
@@ -6520,7 +6552,7 @@ fn sling_next(shots: u32, answered: u32, landed: u32, xp_gained: u32, stones: u3
     shoot()
 }
 
-/// A sling at Ranged 10 against a held brown bear seven blocks off: shot a second apart
+/// A sling at Ranged 70 against a held brown bear seven blocks off: shot a second apart
 /// until a stone hits, every shot answered spends one cobblestone, and the hit trains Ranged.
 /// Every way out (a hit, a failure, a bear that never came) sweeps the bears away.
 fn sling(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
@@ -7298,7 +7330,13 @@ fn boss(world: &mut World, gate: &mut Gate, now: f32) {
         return;
     };
     let pad = gate.feet + IVec3::new(0, 0, 14);
-    let view = world.resource::<crate::creatures::Creatures>().views().find(|v| v.species == species).copied();
+    let view = {
+        let creatures = world.resource::<crate::creatures::Creatures>();
+        match gate.boss_id {
+            Some(id) => creatures.views().find(|v| v.id == id).copied(),
+            None => creatures.views().find(|v| v.species == species && !gate.boss_before.contains(&v.id)).copied(),
+        }
+    };
     let waited = gate.server_in_phase() > BOSS_WAIT;
     let sweep = |gate: &mut Gate, now: f32| {
         gate.sweep = Sweep::default();
@@ -7307,6 +7345,8 @@ fn boss(world: &mut World, gate: &mut Gate, now: f32) {
     match gate.phase {
         0 => {
             // In creative, so she does not fight before the music is judged.
+            gate.boss_before = world.resource::<crate::creatures::Creatures>().views().filter(|v| v.species == species).map(|v| v.id).collect();
+            gate.boss_id = None;
             let net = world.resource::<Net>();
             net.command("gamemode creative");
             net.command(&format!("summon {} 1 {} {} {}", BOSS.trim_start_matches("base:"), pad.x, pad.y, pad.z + 1));
@@ -7314,7 +7354,9 @@ fn boss(world: &mut World, gate: &mut Gate, now: f32) {
         }
         1 => {
             if let Some(view) = view {
-                gate.check("boss drawn", Ok(format!("the Rootmother reached the client at {:.1}", view.position)));
+                gate.boss_id = Some(view.id);
+                let others = gate.boss_before.len();
+                gate.check("boss drawn", Ok(format!("the Rootmother reached the client at {:.1} (creature {}; {others} other Rootmothers seen before)", view.position, view.id)));
                 gate.advance(now);
             } else if waited {
                 gate.check("boss drawn", Err(format!("a summoned {BOSS} never reached the client in {BOSS_WAIT} server seconds")));
@@ -7351,13 +7393,24 @@ fn boss(world: &mut World, gate: &mut Gate, now: f32) {
             // What she was doing as the wait began, and when it gave up.
             let doing = |world: &World| {
                 let me = world.resource::<LocalPlayer>().position;
+                let (client, blocks) = (world.resource::<ClientWorld>(), &world.resource::<Launch>().content.blocks);
+                let name = |cell: IVec3| client.block(cell).map_or_else(|| "unloaded".to_owned(), |b| blocks.def(b).name.clone());
                 view.map_or("not seen".to_owned(), |v| {
                     let flat = (v.position - me).with_y(0.0).length();
-                    format!("at {:.1}, {flat:.2} blocks from the player across the ground, pose {:?}, tell {}, health {}, scale {:.2}, moving {:.1}", v.position, v.pose, v.tell, v.health, v.scale, v.velocity.with_y(0.0).length())
+                    let feet = v.position.floor().as_ivec3();
+                    format!(
+                        "creature {} at {:.1}, {flat:.2} blocks from the player across the ground, pose {:?}, tell {}, health {}, scale {:.2}, moving {:.1}, in {} over {}",
+                        v.id, v.position, v.pose, v.tell, v.health, v.scale, v.velocity.with_y(0.0).length(), name(feet), name(feet - IVec3::Y)
+                    )
                 })
             };
             if gate.settled == 1 && gate.server_in_phase() > 1.0 {
                 info!("gate: boss tell wait began: she is {}", doing(world));
+                // Any other Rootmother about, for the record.
+                let me = world.resource::<LocalPlayer>().position;
+                for other in world.resource::<crate::creatures::Creatures>().views().filter(|v| v.species == species && Some(v.id) != gate.boss_id) {
+                    info!("gate: another Rootmother {} at {:.1}, {:.1} blocks off, pose {:?}", other.id, other.position, other.position.distance(me), other.pose);
+                }
                 gate.settled = 2;
             }
             let told = view.filter(|v| v.tell != 0 && v.tell != voxmar_protocol::REARING);
@@ -9771,7 +9824,21 @@ fn finish(world: &mut World, gate: &Gate, now: f32) {
 
 #[cfg(test)]
 mod tests {
-    use super::{sling_next, SlingNext, SLING_STONES, UNANSWERED};
+    use super::{sling_next, SlingNext, BEAR, SLING, SLING_LEVEL, SLING_STONES, UNANSWERED};
+
+    /// At the sling step's Ranged level, against its bear, every stone missing is a broken
+    /// shot, not a bad run of rolls: under one gate in ten million.
+    #[test]
+    fn twelve_misses_are_never_luck() {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+        let content = voxmar_server::load_content(&assets).unwrap();
+        let bear = &content.creatures.get(content.creatures.find(BEAR).unwrap()).def;
+        let sling = content.combat.weapon(content.blocks.expect(SLING)).unwrap();
+        let defence = voxmar_engine::combat::defence_against(bear.defence, bear.weak, sling.style);
+        let hits = voxmar_engine::combat::hit_chance(SLING_LEVEL, sling.accuracy, defence, 0);
+        let all_miss = (1.0 - hits as f64).powi(SLING_STONES as i32);
+        assert!(all_miss < 1e-7, "a stone hits {hits:.2} of the time: all {SLING_STONES} miss {all_miss:.1e} of the time");
+    }
 
     #[test]
     fn the_sling_step_never_fails_before_a_shot_and_judges_misses_by_shots_answered() {
