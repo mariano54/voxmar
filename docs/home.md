@@ -178,7 +178,8 @@ sits on a stool under a block two up, by a campfire (shot `seat-fire`), and step
 
 Sat with a table within 2, the player is **At the Table** (`at_table`): a meal eaten there
 heals a quarter more and its good lasts a quarter longer (`meal_heal`, `meal_time`, as the
-pantry and larder rooms give; they multiply). A supper at the kitchen table is worth sitting
+pantry and larder rooms give; they multiply, up to core `survival.ron`'s `meal_most`, 2: with
+every meal effect on, the heal is 1.82 times and the good's length 2.27, held to 2). A supper at the kitchen table is worth sitting
 down for. Test: `a_meal_at_the_table_does_more`. The gate's Seat step sets a table by the
 stool ("seat: at the table").
 

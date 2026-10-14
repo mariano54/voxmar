@@ -126,3 +126,34 @@ fn a_meal_at_the_table_does_more() {
     let modifiers = server.players[&1].modifiers;
     assert_eq!((modifiers.meal_heal, modifiers.meal_time), (1.25, 1.25));
 }
+
+/// Every meal effect on at once (the larder, the herb nook, the kitchen garden, home
+/// cooking, the table) would make a meal's good last 2.27 times as long: survival's
+/// meal_most holds it to 2. The heal (1.82 times) is under it and stays whole.
+#[test]
+fn every_meal_effect_together_stops_at_meal_most() {
+    let mut server = fixture();
+    let effects = server.content.effects.clone();
+    let all: Vec<_> = ["larder", "herb_nook", "kitchen_garden", "home_cooking", "at_table"]
+        .iter()
+        .map(|name| voxmar_engine::effect::ActiveEffect { effect: effects.id(&format!("base:{name}")).expect(name), seconds_left: None })
+        .collect();
+    let together = effects.modifiers(&all);
+    assert!(together.meal_time > 2.2 && together.meal_heal < 2.0, "the meal effects together: heal {} and time {}", together.meal_heal, together.meal_time);
+    assert_eq!(server.survival.meal_most, 2.0);
+    let stew = server.content.blocks.expect("base:stew");
+    let warm_meal = effects.id("base:warm_meal").expect("base's warm_meal");
+    let player = server.players.get_mut(&1).unwrap();
+    player.modifiers = together;
+    player.inventory.slots[0] = Some(ItemStack { item: stew, count: 1 });
+    player.selected = 0;
+    player.health.current = 2;
+    let eat = server.content.actions.expect("core:eat");
+    let at = Instant::now();
+    server.propose(1, eat, ActionTarget::None, at);
+    server.finished_action(1, ActionTarget::None, at + std::time::Duration::from_secs(2));
+    let player = &server.players[&1];
+    let left = player.timed_effects.iter().find(|(e, _)| *e == warm_meal).map(|&(_, s)| s);
+    assert_eq!(left, Some(480.0 * 2.0), "a stew's Warm meal under every meal effect");
+    assert_eq!(player.health.current, 2 + (6.0 * together.meal_heal).round() as u8, "the heal, under the ceiling, is whole");
+}

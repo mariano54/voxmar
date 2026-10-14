@@ -427,6 +427,7 @@ impl Server {
                 }
                 (Effect::EatHeld, _) => {
                     let (blocks, effects) = (self.content.blocks.clone(), self.content.effects.clone());
+                    let most = self.survival.meal_most;
                     let player = self.players.get_mut(&agent).unwrap();
                     let selected = player.selected;
                     let Some(item) = player.inventory.take_one(selected) else { continue };
@@ -435,8 +436,9 @@ impl Server {
                     // Food heals, the same food a little less each time in a row.
                     let share = player.recent_food.share(item);
                     player.recent_food.eat(item);
-                    // A pantry or larder at home makes more of a meal (effects.ron's meal_heal, meal_time).
-                    let (meal_heal, meal_time) = (player.modifiers.meal_heal, player.modifiers.meal_time);
+                    // A pantry or larder at home makes more of a meal (effects.ron's meal_heal, meal_time),
+                    // all together up to survival's meal_most.
+                    let (meal_heal, meal_time) = (player.modifiers.meal_heal.min(most), player.modifiers.meal_time.min(most));
                     let heal = (blocks.info(item).food as f32 * share * meal_heal).round().min(u8::MAX as f32) as u8;
                     // What it does besides (content's effects.ron): hearty, queasy and so on.
                     let mut given = effects.given_by(&blocks.def(item).tags);
