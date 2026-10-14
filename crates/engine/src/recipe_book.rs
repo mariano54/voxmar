@@ -17,8 +17,9 @@ pub enum Method {
     /// Laid into the crafting grid, cell by cell, row by row; shapeless recipes take
     /// their ingredients in any arrangement. A family of recipes making the same thing
     /// from different woods (or stones) is one entry with each way laid out, as NEI
-    /// cycles them.
-    Craft { variants: Vec<[Option<BlockId>; GRID]>, shapeless: bool },
+    /// cycles them. `first` is the first of its recipes, in content order (its variants
+    /// follow), for laying one into the grid.
+    Craft { variants: Vec<[Option<BlockId>; GRID]>, shapeless: bool, first: usize },
     /// Cooked (or fired, or smelted) at a station (blocks with the station's tag), from
     /// `level` in `skill`; what is left when it burns, if anything.
     Cook { input: BlockId, station: String, skill: Option<crate::skill::SkillId>, level: u8, burnt: Option<BlockId> },
@@ -49,7 +50,7 @@ impl RecipeBook {
     pub fn new(content: &Content) -> Self {
         let mut book = Self::default();
         let blocks = &content.blocks;
-        for recipe in content.recipes.iter() {
+        for (index, recipe) in content.recipes.iter().enumerate() {
             // A merged-away plant in a cell is shown as the item it merged into.
             let cells = recipe.cells().map(|cell| cell.map(|b| blocks.item_of(b)));
             let items: Vec<BlockId> = cells.iter().flatten().copied().collect();
@@ -57,7 +58,7 @@ impl RecipeBook {
             if let Some(last) = book.entries.last_mut()
                 && last.output == recipe.output
                 && last.count == (recipe.count, recipe.count)
-                && let Method::Craft { variants, shapeless } = &mut last.method
+                && let Method::Craft { variants, shapeless, .. } = &mut last.method
                 && *shapeless == recipe.shapeless()
                 && variants[0].map(|c| c.is_some()) == cells.map(|c| c.is_some())
             {
@@ -71,7 +72,7 @@ impl RecipeBook {
                 }
                 continue;
             }
-            let method = Method::Craft { variants: vec![cells], shapeless: recipe.shapeless() };
+            let method = Method::Craft { variants: vec![cells], shapeless: recipe.shapeless(), first: index };
             book.add(blocks, Entry { method, output: recipe.output, count: (recipe.count, recipe.count) }, items);
         }
         for (input, recipe) in content.cooking.iter() {

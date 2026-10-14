@@ -3,7 +3,9 @@
 //! it and U everything it goes into. Each way is drawn as it happens in the game: the
 //! crafting grid, a station, a creature with the tool that takes its product, a creature
 //! that drops it. Pages turn with the arrows; clicking an item looks up its recipes (a
-//! right click, its uses), and Back retraces the steps.
+//! right click, its uses), and Back retraces the steps. Over the inventory, a crafting
+//! way has a Lay button: the grid is laid with what it takes, from the pack and, at home,
+//! the home's stores (shift: as many sets as a stack holds; `core:lay`).
 //!
 //! The book comes from the game's content (`voxmar_engine::recipe_book`), so a package's
 //! recipes show here as soon as it adds them.
@@ -72,7 +74,7 @@ pub struct RecipeViewer {
     pub trail: Vec<Lookup>,
     book: Option<Arc<RecipeBook>>,
     /// What was drawn last, to draw again only on a change.
-    drawn: Option<(Lookup, String, u32)>,
+    drawn: Option<(Lookup, String, u32, bool)>,
     /// Items reported in this game, bounded by the content registry, cleared on leaving.
     reported: HashSet<BlockId>,
 }
@@ -120,6 +122,14 @@ pub(crate) enum ViewerButton {
     Previous,
     Next,
     Back,
+}
+/// A crafting way's button that lays its recipe into the grid: the item it makes, and its
+/// recipes (the first, in content order, and how many variants follow it).
+#[derive(Component)]
+pub(crate) struct LayButton {
+    pub output: BlockId,
+    first: u16,
+    ways: u8,
 }
 /// An item drawn in the viewer: hover to look it up, click for its recipes.
 #[derive(Component)]
@@ -199,8 +209,11 @@ fn look_up(
     ui.recipes_open = !viewer.trail.is_empty();
 }
 
+#[allow(clippy::too_many_arguments)]
 fn click(
     buttons: Query<(&ViewerButton, &Interaction, &InheritedVisibility), Changed<Interaction>>,
+    lays: Query<(&LayButton, &Interaction, &InheritedVisibility), Changed<Interaction>>,
+    (keys, net, player, actions): (Res<ButtonInput<KeyCode>>, Res<crate::net::Net>, Res<crate::player::LocalPlayer>, Res<crate::Actions>),
     items: Query<(&ViewerItem, &Interaction, &InheritedVisibility), Changed<Interaction>>,
     mouse: Res<ButtonInput<MouseButton>>,
     hovered_items: Query<(&ViewerItem, &RelativeCursorPosition, &InheritedVisibility)>,
@@ -237,6 +250,18 @@ fn click(
         if visible.get() && *interaction == Interaction::Pressed {
             viewer.open(item.0, false);
             ui.recipes_open = true;
+        }
+    }
+    // Laid, the viewer closes onto the grid.
+    for (lay, interaction, visible) in &lays {
+        if visible.get() && *interaction == Interaction::Pressed
+            && let Some(action) = actions.0.id("core:lay")
+        {
+            let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+            let count = if shift { voxmar_engine::inventory::MAX_STACK } else { 1 };
+            net.propose_from(&player, action, voxmar_engine::action::ActionTarget::Recipe { first: lay.first, ways: lay.ways, count });
+            viewer.trail.clear();
+            ui.recipes_open = false;
         }
     }
     // A right click on an item looks up its uses (Interaction answers only the left).
@@ -304,7 +329,7 @@ fn draw(
     // Families of recipes show each of their variants in turn, a second each.
     let cycles = viewer.found().iter().skip(lookup.page * PER_PAGE).take(PER_PAGE).any(|e| matches!(&e.method, Method::Craft { variants, .. } if variants.len() > 1));
     let tick = time.elapsed_secs() as u32;
-    let key = (lookup, locale.code().to_owned(), if cycles { tick } else { 0 });
+    let key = (lookup, locale.code().to_owned(), if cycles { tick } else { 0 }, ui.inventory_open);
     if viewer.drawn.as_ref() == Some(&key) {
         return;
     }
@@ -347,6 +372,15 @@ fn draw(
                         words.spawn(text(font, line, BODY, colour));
                     }
                 });
+                // Over the inventory, where its grid is, a crafting way can be laid in it.
+                if ui.inventory_open
+                    && let Method::Craft { variants, first, .. } = &entry.method
+                {
+                    let lay = LayButton { output: entry.output, first: *first as u16, ways: variants.len().min(u8::MAX as usize) as u8 };
+                    card.spawn(Node { width: Val::Px(36.0 * PX), ..default() }).with_children(|cell| {
+                        spawn_button(cell, font, "recipes.lay", ButtonStyle::Secondary, lay);
+                    });
+                }
             });
         }
     });
