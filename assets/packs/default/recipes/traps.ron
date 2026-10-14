@@ -1,0 +1,43 @@
+// Traps (content/base/blocks_traps.ron), for this pack and Voxmar HD alike: a snare set, a
+// loop of twine held open low between two pegs, and sprung, the loop pulled tight about a
+// tuft of fur.
+(
+    textures: {
+        "block/snare": (size: (16, 16), layers: [Grid(legend: {'p': "#6e4e2c", 'q': "#8e6a40", 't': "#cbb48a"}, rows: [
+            "................",
+            "................",
+            "................",
+            "................",
+            "................",
+            "................",
+            "....tttttttt....",
+            "...t........t...",
+            "..t..........t..",
+            "..t..........t..",
+            "...t........t...",
+            ".q..tttttttt..q.",
+            ".pq..........qp.",
+            ".pp..........pp.",
+            ".pp..........pp.",
+            "................",
+        ])]),
+        "block/snare_sprung": (size: (16, 16), layers: [Grid(legend: {'p': "#6e4e2c", 'q': "#8e6a40", 't': "#cbb48a", 'f': "#8a7a66", 'g': "#c8b8a0"}, rows: [
+            "................",
+            "................",
+            "................",
+            "................",
+            "................",
+            "................",
+            "................",
+            ".......gg.......",
+            "......gffg......",
+            ".....gfttfg.....",
+            "....gffttffg....",
+            ".q...fttttf...q.",
+            ".pqtttt..ttttqp.",
+            ".pp..........pp.",
+            ".pp..........pp.",
+            "................",
+        ])]),
+    },
+)
