@@ -203,7 +203,8 @@ impl Needs {
 /// The tag of a block a kept animal drinks from: water itself, and anything a package
 /// says holds water for it (a well, a feed trough). Within its leash of its home, its
 /// water need is met.
-pub const DRINK: &str = "drink";
+/// (Not `drink`, which marks a drinkable item, milk, and stacks it singly.)
+pub const DRINK: &str = "drinking_water";
 
 /// Whether kept animals can drink anywhere: with any creatures at all, some block must carry
 /// [`DRINK`], or no pen could ever be kept well.

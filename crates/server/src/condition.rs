@@ -139,7 +139,7 @@ impl Server {
         })
     }
 
-    /// Whether something to drink (a block tagged `drink`: water, a well, a trough) lies
+    /// Whether something to drink (a block tagged `drinking_water`: water, a well, a trough) lies
     /// within `reach` blocks of `at` across and a few up and down.
     fn water_near(&self, at: Vec3, reach: i32) -> bool {
         let centre = at.floor().as_ivec3();

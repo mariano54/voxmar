@@ -63,7 +63,7 @@ An animal's **condition** (0..1) is the product of what its species needs:
 | Need | Met by |
 | --- | --- |
 | Food | grazing its food blocks within its leash, or feed in a trough |
-| Water | water, a well or a feed trough within its leash (`drink` tag) |
+| Water | water, a well or a feed trough within its leash (`drinking_water` tag) |
 | Shelter | a roof within a few blocks when it rains or snows (except ducks) |
 | Space | blocks of room per animal (chickens 2, sheep 6, cattle 12); crowding lowers condition and raises disease |
 | Climate | its comfort range (the temperature field): cold coats thrive in the north, zebu in the heat; a heated barn or a shaded one fixes a misfit |
@@ -86,9 +86,9 @@ loaded is paused with it: it neither hungers, changes nor lays while nobody is n
   hungry kept animal takes its food from your hand as a meal; one that is fed takes only
   breeding food, and only when that could ready it.
 - Water: something to drink within its leash (7 blocks) of its home: any block tagged
-  `drink`, which is water itself, a well and a feed trough in the game's own content
+  `drinking_water`, which is water itself, a well and a feed trough in the game's own content
   (a mod's water station is one tag away). A dug channel does too; an animal with no
-  water near can't breed. Loading refuses creatures when no block carries `drink`.
+  water near can't breed. Loading refuses creatures when no block carries `drinking_water`.
 - Shelter: rain or snow on it under open sky is met if within 3 blocks there is a spot it
   could stand in with something solid a few blocks over it, partly met otherwise; snow is unmet unless its kind's comfort reaches −10 °C (reindeer,
   arctic fox, mountain goat, wolf). Ducks don't mind.
