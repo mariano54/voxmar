@@ -42,6 +42,10 @@ pub struct RuleDef {
     /// eight (item name, chance).
     #[serde(default)]
     pub instead: Option<(String, f32)>,
+    /// The kind of tool `instead` waits on: tall grass gives twine only to a knife, and a
+    /// better one of the kind finds it more often (its `yield` adds to the chance).
+    #[serde(default)]
+    pub by: Option<String>,
 }
 
 fn first_level() -> u8 {
@@ -68,6 +72,8 @@ pub struct Rule {
     pub tier: u8,
     pub xp: f32,
     pub instead: Option<(BlockId, f32)>,
+    /// The kind of tool `instead` waits on, by index.
+    pub by: Option<usize>,
 }
 
 /// What a held item is as a tool.
@@ -123,7 +129,12 @@ impl ToolRegistry {
                     }
                     None => None,
                 };
-                Ok(Rule { tags: def.tags, skill, level: def.level, tool, tier: def.tier, xp: def.xp, instead })
+                let by = match &def.by {
+                    Some(_) if instead.is_none() => return Err(RegistryError(format!("tools.ron: {:?} names a tool for `by` but nothing `instead`", def.tags))),
+                    Some(name) => Some(kind_of(name).ok_or_else(|| RegistryError(format!("tools.ron: no kind of tool `{name}`")))?),
+                    None => None,
+                };
+                Ok(Rule { tags: def.tags, skill, level: def.level, tool, tier: def.tier, xp: def.xp, instead, by })
             })
             .collect::<Result<Vec<_>, RegistryError>>()?;
         let number = |tags: &[String], prefix: &str| tags.iter().find_map(|t| t.strip_prefix(prefix)?.parse::<f32>().ok());
@@ -183,6 +194,29 @@ impl ToolRegistry {
         let Some(kind) = rule.tool else { return true };
         let tool = self.tool(item);
         tool.kind == Some(kind) && tool.tier >= rule.tier
+    }
+
+    /// The chance breaking `block` with `item` gives its rule's `instead`, and what: none
+    /// when the rule waits on another kind of tool.
+    pub fn instead(&self, item: Option<BlockId>, block: BlockId) -> Option<(BlockId, f32)> {
+        let rule = self.rule(block)?;
+        let (given, chance) = rule.instead?;
+        match rule.by {
+            None => Some((given, chance)),
+            Some(kind) => {
+                let tool = self.tool(item);
+                (tool.kind == Some(kind)).then(|| (given, chance + tool.yield_))
+            }
+        }
+    }
+
+    /// Every rule that gives something instead, with the first block it covers (in
+    /// registry order) to show it by: for the recipe book.
+    pub fn givers(&self) -> impl Iterator<Item = (&Rule, BlockId)> {
+        self.rules.iter().enumerate().filter(|(_, rule)| rule.instead.is_some()).filter_map(|(i, rule)| {
+            let first = self.covered.iter().position(|&c| c == Some(i))?;
+            Some((rule, BlockId(first as u16)))
+        })
     }
 
     /// The first item, in registry order, that is a `kind` of at least `tier`: what to name
@@ -275,6 +309,38 @@ mod tests {
             .map(|b| content.blocks.def(b).name.as_str())
             .collect();
         assert!(others.is_empty(), "only dead logs break to sticks, not {others:?}");
+    }
+
+    /// Tall grass gives twine only to a knife, and a better knife finds it more often; by
+    /// hand or with another tool it gives nothing instead. A rule's `by` must name a kind
+    /// and come with an `instead`.
+    #[test]
+    fn tall_grass_gives_twine_to_a_knife() {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        let content = crate::content::Content::load(&assets).unwrap();
+        let id = |n: &str| content.blocks.expect(&format!("base:{n}"));
+        let twine = id("twine");
+        for grass in [id("tall_grass"), id("tall_grass_top")] {
+            assert_eq!(content.tools.instead(None, grass), None, "by hand");
+            assert_eq!(content.tools.instead(Some(id("stone_axe")), grass), None, "with an axe");
+            let chances: Vec<f32> = ["wooden_knife", "stone_knife", "copper_knife", "iron_knife"]
+                .iter()
+                .map(|knife| content.tools.instead(Some(id(knife)), grass).filter(|&(given, _)| given == twine).expect("twine with a knife").1)
+                .collect();
+            assert!(chances.windows(2).all(|w| w[0] < w[1]) && chances[0] >= 0.2, "{chances:?}");
+        }
+        assert_eq!(content.tools.instead(None, id("short_grass")), None, "short grass gives no twine");
+        assert_eq!(content.tools.instead(None, id("wild_wheat")), None, "wild wheat forages as before");
+        assert_eq!(content.tools.instead(None, id("gravel")).map(|(given, _)| given), Some(id("flint")), "gravel's flint needs no tool");
+
+        let (blocks, skills, _) = setup();
+        for (source, error) in [
+            (r#"(kinds: [(name: "knife", mines: [])], blocks: [(tags: ["log"], by: "knife")])"#, "nothing `instead`"),
+            (r#"(kinds: [], blocks: [(tags: ["log"], instead: ("t:stone", 0.5), by: "sickle")])"#, "no kind of tool `sickle`"),
+        ] {
+            let err = ToolRegistry::new(vec![ToolRegistry::read("t", source).unwrap()], &blocks, &skills).unwrap_err();
+            assert!(err.0.contains(error), "{}", err.0);
+        }
     }
 
     /// What Mining teaches rises with the level it asks (design draft 63): nothing a lower

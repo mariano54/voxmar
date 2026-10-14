@@ -553,7 +553,7 @@ impl Server {
             self.grant_xp(agent, skill, rule.xp);
         }
         let [other, ..] = crate::items::random3(self.tick, pos, agent ^ 0x1257);
-        match rule.instead {
+        match tools.instead(held, block) {
             Some((item, chance)) if other < chance => {
                 let body = voxmar_engine::dropped::popped(pos, [kick, other, roll]);
                 self.items.spawn(voxmar_engine::inventory::ItemStack { item, count: 1 }, body, voxmar_engine::dropped::PICKUP_DELAY);

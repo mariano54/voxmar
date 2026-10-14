@@ -29,6 +29,10 @@ pub enum Method {
     Product { creature: CreatureId, tool: Option<String> },
     /// Dropped by a creature when it dies, `chance` of the time.
     Drop { creature: CreatureId, chance: f32 },
+    /// Given in place of a block's own drop when it is broken (gravel's flint), `chance` of
+    /// the time, maybe only with a kind of tool (tall grass's twine, with a knife): `tool`
+    /// is the first of that kind, to show it by.
+    Break { block: BlockId, tool: Option<BlockId>, chance: f32 },
 }
 
 /// One way to get an item: how, what comes out, and how many (at least, at most).
@@ -85,6 +89,13 @@ impl RecipeBook {
             let input = blocks.item_of(input);
             let method = Method::Cook { input, station, skill: recipe.skill, level: recipe.def.level, burnt: recipe.burnt };
             book.add(blocks, Entry { method, output: recipe.output, count: (1, 1) }, [input].into_iter().chain(stations).collect());
+        }
+        for (rule, block) in content.tools.givers() {
+            let Some((given, chance)) = rule.instead else { continue };
+            let tools: Vec<BlockId> = rule.by.map(|kind| blocks.ids().filter(|&b| content.tools.tool(Some(b)).kind == Some(kind)).collect()).unwrap_or_default();
+            let tool = rule.by.and_then(|kind| content.tools.first_of(kind, 0));
+            let method = Method::Break { block, tool, chance };
+            book.add(blocks, Entry { method, output: given, count: (1, 1) }, [block].into_iter().chain(tools).collect());
         }
         for (id, creature) in content.creatures.iter() {
             for (product, &item) in creature.def.products.iter().zip(&creature.products) {
@@ -174,6 +185,25 @@ mod tests {
         // And the game's own book never mentions one.
         let book = RecipeBook::new(&content);
         assert!(blocks.ids().filter(|&id| blocks.merged_away(id)).all(|id| book.making(id).is_empty() && book.using(id).is_empty()));
+    }
+
+    /// What breaking gives in place of a block (gravel's flint, tall grass's twine with a
+    /// knife) is in the book, with the block and the tool it waits on, and each knife lists
+    /// twine among its uses.
+    #[test]
+    fn what_breaking_gives_is_in_the_book() {
+        let content = content();
+        let book = RecipeBook::new(&content);
+        let id = |name: &str| content.blocks.id(name).unwrap_or_else(|| panic!("no {name}"));
+        let twine = book.making(id("base:twine"));
+        assert!(
+            twine.iter().any(|e| matches!(e.method, Method::Break { block, tool: Some(tool), chance } if block == id("base:tall_grass") && tool == id("base:wooden_knife") && chance > 0.0)),
+            "{twine:?}"
+        );
+        assert!(book.making(id("base:flint")).iter().any(|e| matches!(e.method, Method::Break { block, tool: None, .. } if block == id("base:gravel"))));
+        for knife in ["base:wooden_knife", "base:stone_knife", "base:iron_knife"] {
+            assert!(book.using(id(knife)).iter().any(|e| e.output == id("base:twine")), "{knife} lists no twine");
+        }
     }
 
     #[test]

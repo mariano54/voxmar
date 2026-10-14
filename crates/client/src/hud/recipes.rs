@@ -422,6 +422,13 @@ pub(super) fn way_inputs(card: &mut ChildSpawnerCommands, font: &Handle<Font>, i
             }
         }
         Method::Drop { .. } => {}
+        Method::Break { block, tool, .. } => {
+            item_cell(card, font, images, Some(*block), None);
+            if let Some(tool) = tool {
+                card.spawn(text(font, "+", BODY, MUTED));
+                item_cell(card, font, images, Some(*tool), None);
+            }
+        }
     }
 }
 
@@ -461,6 +468,15 @@ fn describe(locale: &Locale, launch: &Launch, method: &Method) -> Vec<(String, C
         Method::Drop { creature: id, chance } => {
             let percent = (chance.min(1.0) * 100.0).round() as u32;
             vec![(locale.format("recipes.drop", &[("creature", &creature(*id)), ("chance", &percent)]), MUTED)]
+        }
+        Method::Break { block, tool, chance } => {
+            let percent = (chance.min(1.0) * 100.0).round() as u32;
+            let block = locale.block(content.blocks.def(*block));
+            let line = match tool {
+                Some(tool) => locale.format("recipes.break.tool", &[("block", &block), ("tool", &locale.block(content.blocks.def(*tool))), ("chance", &percent)]),
+                None => locale.format("recipes.break", &[("block", &block), ("chance", &percent)]),
+            };
+            vec![(line, MUTED)]
         }
     }
 }

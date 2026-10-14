@@ -304,6 +304,8 @@
     "recipes.product": "飼育中の{creature}が残す",
     "recipes.product.tool": "飼育中の{creature}から{tool}で",
     "recipes.drop": "{creature}が落とす({chance}%)",
+    "recipes.break": "{block}を壊すと出る({chance}%)",
+    "recipes.break.tool": "{tool}以上で{block}を刈ると出る({chance}%以上)",
     "target.kept": "飼育中",
     "target.kept_by": "{owner}が飼育",
     "target.young": "子ども",

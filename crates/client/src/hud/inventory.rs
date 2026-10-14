@@ -888,6 +888,7 @@ pub fn origins_and_uses(locale: &Locale, content: &voxmar_engine::content::Conte
             Method::Craft { .. } => add(locale.get("tooltip.from.craft").to_owned()),
             Method::Cook { .. } => add(locale.get("tooltip.from.cook").to_owned()),
             Method::Product { creature, .. } | Method::Drop { creature, .. } => add(locale.creature(&content.creatures.get(*creature).def)),
+            Method::Break { block, .. } => add(locale.block(content.blocks.def(*block))),
         }
     }
     if content.crops.iter().any(|(_, crop)| crop.harvest.iter().any(|(got, _)| *got == item)) {
