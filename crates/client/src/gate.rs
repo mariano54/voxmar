@@ -11285,6 +11285,10 @@ mod tests {
         assert!(!FeelRun { longest: (0.2, 0.2), ..default() }.starved(true));
         // Waiting summed over threads can pass the frame's length: our part is then none.
         assert!(FeelRun { longest: (0.9, 3.0), ..default() }.starved(true));
+        // A frame our threads were busy for all along, held back by nothing: on macOS its
+        // 0.9 s runnable (in ms) were all running, so it waited nothing and is not excused.
+        let busy = crate::slow_frames::queued(900, 600, 300) as f32 / 1000.0;
+        assert!(!FeelRun { longest: (0.9, busy), ..default() }.starved(true));
     }
 
     #[test]
