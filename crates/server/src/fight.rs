@@ -891,6 +891,9 @@ mod tests {
         let view = server.creatures.live[&bear].view(bear);
         assert!(server.creatures.live[&bear].held_until > server.tick, "the perfect block holds it");
         assert_eq!((view.tell, view.pose), (voxmar_protocol::STAGGERED, brain::Pose::Idle), "and shows it staggered");
+        // It thinks only where its ground is loaded.
+        let cell = server.creatures.live[&bear].body.position.floor().as_ivec3();
+        server.load_area(cell - voxmar_engine::glam::IVec3::new(16, 0, 16), cell + voxmar_engine::glam::IVec3::new(16, 0, 16));
         let held_until = server.creatures.live[&bear].held_until;
         let over = (0..held_until - server.tick + 10 * TICKS_PER_SECOND as u64)
             .find(|_| {
