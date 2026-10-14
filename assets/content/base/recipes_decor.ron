@@ -71,6 +71,8 @@
         (pattern: [["wheat", "wheat", "wheat"], ["wheat", "twine", "wheat"], ["twine", "", "twine"]], output: "skep", skill: "core:crafting", level: 6, xp: 10.0),
         // A drying rack (stations.ron): two sticks a side and a row of twine to hang meat on.
         (pattern: [["stick", "", "stick"], ["twine", "twine", "twine"], ["stick", "", "stick"]], output: "drying_rack", skill: "core:crafting", level: 3, xp: 8.0),
+        // A snare (traps.ron): a loop of twine on two pegs.
+        (pattern: [["twine", "twine"], ["stick", "stick"]], output: "snare", skill: "core:hunter", level: 1, xp: 4.0),
         // A compost heap (stations.ron): boards round three sides and the bottom.
         (pattern: [["tag:planks", "", "tag:planks"], ["tag:planks", "", "tag:planks"], ["tag:planks", "tag:planks", "tag:planks"]], output: "compost_heap", skill: "core:construction", level: 5, xp: 12.0),
         // An earth clamp (stations.ron): dirt heaped over a log.

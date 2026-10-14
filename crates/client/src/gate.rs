@@ -366,6 +366,10 @@ enum Step {
     /// rack the server sends back is the hung one, and chat says where it stands makes it quicker.
     /// Then an earth clamp in its place, clay in hand: a right click sets it smouldering.
     Dry,
+    /// A snare set by the trail with a rabbit summoned into it springs (the server's word:
+    /// the sprung block); a right click takes the catch, raw rabbit to hand, and the snare
+    /// is set again.
+    Snare,
     /// A junglefowl fed wheat by right clicks comes to trust the player and is theirs.
     Tame,
     /// `/wander start tinker_camp` brings a travelling party: its trader and hound reach the
@@ -1642,6 +1646,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::FirstFights => first_fights(world, gate),
         Step::Cook => cook(world, gate, now, in_phase),
         Step::Dry => dry(world, gate, now),
+        Step::Snare => snare(world, gate, now),
         Step::Tame => tame(world, gate, now, in_phase),
         Step::Party => party(world, gate, now),
         Step::Gorge => gorge(world, gate, now, in_phase),
@@ -6383,6 +6388,9 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     return;
                 }
                 gate.check("quests: current", Ok(format!("Current Quest turned the book back to {picked:?}, picked and inside the well")));
+                let pins = world.resource::<crate::settings::Settings>().pinned_quests.len();
+                let tracker = tracker_lines(world);
+                gate.check("quests: tracker behind book", if tracker.is_none() { Ok(format!("with the book open the tracker is hidden ({pins} pinned)")) } else { Err(format!("with the book open the tracker shows {tracker:?}")) });
             } else if in_phase < 2.0 {
                 return;
             } else {
@@ -10939,7 +10947,7 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
                 gate.advance(now);
             } else if waited {
                 gate.check("drying rack", Err(format!("the rack ({stood}) or raw rabbit in hand never came in {DRY_WAIT} server seconds")));
-                gate.next(Step::Tame, now);
+                gate.next(Step::Snare, now);
             }
         }
         2 => {
@@ -10952,7 +10960,7 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
             } else if gate.waited_out(DRY_WAIT) {
                 mouse(world, MouseButton::Right, false);
                 gate.check("drying rack", Err(format!("right clicks with raw rabbit in hand never hung the rack in {DRY_WAIT} server seconds")));
-                gate.next(Step::Tame, now);
+                gate.next(Step::Snare, now);
             } else {
                 gate.tap(world, true, now);
             }
@@ -11082,9 +11090,72 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
             net.command(&format!("setblock {} {} {} air", pot.x, pot.y, pot.z));
             net.command(&format!("setblock {} {} {} {ground}", water.x, water.y, water.z));
             net.command("clear wheat");
-            gate.next(Step::Tame, now);
+            gate.next(Step::Snare, now);
         }
         _ => {}
+    }
+}
+
+/// Where the snare step sets its snare, from where the dry step's rack stood.
+const SNARE_FROM_RACK: IVec3 = IVec3::new(3, 0, 0);
+
+fn snare(world: &mut World, gate: &mut Gate, now: f32) {
+    let snare = gate.feet + IVec3::new(0, 0, 14) + RACK_FROM_FIRE + SNARE_FROM_RACK;
+    let waited = gate.server_in_phase() > DRY_WAIT;
+    let client = world.resource::<ClientWorld>();
+    let is = |name: &str| client.registry.id(name).is_some_and(|b| client.block(snare) == Some(b));
+    let (set, sprung) = (is("base:snare"), is("base:snare_sprung"));
+    let rabbit = client.registry.id("base:raw_small_game");
+    let carried = world.resource::<LocalPlayer>().inventory.slots.iter().flatten().filter(|s| Some(s.item) == rabbit).map(|s| s.count as u32).sum::<u32>();
+    let end = |world: &mut World, gate: &mut Gate| {
+        gate.tap(world, false, now);
+        world.resource::<Net>().command(&format!("setblock {} {} {} air", snare.x, snare.y, snare.z));
+        gate.next(Step::Tame, now);
+    };
+    match gate.phase {
+        0 => {
+            let net = world.resource::<Net>();
+            net.command("clear raw_small_game");
+            net.command(&format!("setblock {} {} {} snare", snare.x, snare.y, snare.z));
+            net.command(&format!("tp {} {} {}", snare.x as f32 + 0.5, snare.y, snare.z as f32 - 2.5));
+            gate.advance(now);
+        }
+        1 => {
+            // Set, by the server's word: a rabbit is put in it.
+            if set {
+                // `/summon` takes a block cell and stands its first creature 1.8 blocks west
+                // of the cell's middle (the first of a row of four): two cells east of the
+                // snare puts it 0.7 into the snare's own cell.
+                world.resource::<Net>().command(&format!("summon rabbit 1 {} {} {}", snare.x + 2, snare.y, snare.z));
+                gate.advance(now);
+            } else if waited {
+                gate.check("snare", Err(format!("the snare never stood in {DRY_WAIT} server seconds")));
+                end(world, gate);
+            }
+        }
+        2 => {
+            aim_at(world, snare.as_vec3() + Vec3::new(0.5, 0.3, 0.5));
+            if sprung && drawn(world, snare) && gate.shot(world, "snare_sprung").is_some() {
+                gate.check("snare", Ok("a rabbit summoned into a set snare was caught: the server sprang it".to_owned()));
+                gate.advance(now);
+            } else if waited {
+                gate.check("snare", Err(format!("a rabbit in the snare never sprang it in {DRY_WAIT} server seconds")));
+                end(world, gate);
+            }
+        }
+        _ => {
+            // Right clicks on the sprung snare, until the server answers one.
+            aim_at(world, snare.as_vec3() + Vec3::new(0.5, 0.3, 0.5));
+            if set && carried > 0 {
+                gate.check("snare taken", Ok(format!("a right click took {carried} raw small game from the snare, set again ({} clicks)", gate.taps)));
+                end(world, gate);
+            } else if gate.waited_out(DRY_WAIT) {
+                gate.check("snare taken", Err(format!("{} right clicks on the sprung snare: set again {set}, raw small game carried {carried}", gate.taps)));
+                end(world, gate);
+            } else {
+                gate.tap(world, true, now);
+            }
+        }
     }
 }
 
