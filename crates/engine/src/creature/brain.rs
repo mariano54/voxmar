@@ -34,6 +34,9 @@ const HUNGER_RATE: f32 = 1.0 / 240.0;
 const FEAR_FADE: f32 = 0.12;
 /// How long a creature that gave up a chase leaves players be (`Mind::give_up`).
 pub const GAVE_UP: f32 = 45.0;
+/// How long a blow counts as just landed (`Memory::Struck`): a hunter past its leash
+/// struck within it fights back rather than go home.
+pub const STRUCK_LATELY: f32 = 3.0;
 /// How long a creature that gave up a chase makes for home (`Memory::Homeward`).
 pub const HOMEWARD: f32 = 20.0;
 const ANGER_FADE: f32 = 1.0 / 45.0;
@@ -220,6 +223,8 @@ pub enum Memory {
     GaveUp,
     /// Having given up a chase, it makes for home.
     Homeward,
+    /// A player's blow (not a bleed) landed on it within `STRUCK_LATELY` seconds.
+    Struck,
 }
 
 /// A creature's state of mind, kept between decisions.

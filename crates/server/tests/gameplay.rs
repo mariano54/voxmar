@@ -6695,6 +6695,13 @@ impl Fresh {
         self.origin + IVec3::new(x, y, z)
     }
 
+    /// The dirt standing above the plot's ground (its level is y -1), as the client sees it
+    /// now: what is left of the banks laid out for digging.
+    fn raised_dirt(&self) -> Vec<IVec3> {
+        let dirt = self.c.content.blocks.id("base:dirt");
+        (-13..=30).flat_map(|x| (-11..=13).map(move |z| (x, z))).map(|(x, z)| self.rel(x, 0, z)).filter(|&p| self.c.world.block(p) == dirt).collect()
+    }
+
     /// The middle of `cell`'s floor.
     fn middle(cell: IVec3) -> Vec3 {
         cell.as_vec3() + Vec3::new(0.5, 0.0, 0.5)
@@ -7284,7 +7291,10 @@ impl Fresh {
         c.fill(origin, v(-9, 0, -10), v(-9, 1, 0), "air");
         // Wild wheat growing by the lane's mouth, for A Tempting Bite.
         c.fill(origin, v(-7, 0, 2), v(-7, 0, 2), "wild_wheat");
-        let probes = [(v(7, 3, -5), "base:oak_log"), (v(17, 0, 4), "base:stone"), (v(-2, -1, 11), "base:water"), (v(-8, 1, 0), "base:stone"), (v(-7, 0, 2), "base:wild_wheat")];
+        // A low bank of dirt, eight blocks, for the earth clamp: the only dirt above the
+        // ground, so the bot finds it by looking (`Fresh::raised_dirt`).
+        c.fill(origin, v(-7, 0, 8), v(-4, 0, 9), "dirt");
+        let probes = [(v(7, 3, -5), "base:oak_log"), (v(17, 0, 4), "base:stone"), (v(-2, -1, 11), "base:water"), (v(-8, 1, 0), "base:stone"), (v(-7, 0, 2), "base:wild_wheat"), (v(-4, 0, 9), "base:dirt")];
         c.pump_until(|c| probes.iter().all(|&(at, name)| c.world.block(origin + at) == c.content.blocks.id(name)) && c.world.block(origin + v(-9, 1, 0)) == Some(BlockId::AIR));
         let (at, t0) = (c.position, c.ticks());
         let epoch = (t0, Instant::now());
@@ -7565,20 +7575,27 @@ fn the_first_days(f: &mut Fresh) -> Site {
     f.wait(5.0, "picking the wild wheat", |c| c.world.block(wheat) == Some(BlockId::AIR));
     f.collect("base:wheat_seeds", 1);
     let fowl = f.c.content.creatures.find("junglefowl").expect("junglefowl in the content");
-    if !lane(&f.c, f.origin).iter().any(|&(_, _, species)| species == fowl) {
+    // Only one the night's hunt never hurt comes to seeds: a wounded one holds its grudge
+    // (`Tempted`) and runs, as a player sees it do. So one never struck is looked for, and
+    // let in if there is none.
+    let whole = f.c.content.creatures.get(fowl).def.health;
+    let origin = f.origin;
+    let unhurt = move |c: &Client| -> Vec<f32> {
+        lane(c, origin).into_iter().filter(|&(id, _, species)| species == fowl && c.creatures.get(&id).is_some_and(|v| v.health >= whole)).map(|(_, p, _)| p.z).collect()
+    };
+    if unhurt(&f.c).is_empty() {
         f.stock("junglefowl", -4);
     }
     // In by the open end to five blocks short of the nearest junglefowl (they huddle at the
     // far end, and the seeds tempt from ten), where it can walk up the rest.
     f.walk_toward(Fresh::middle(f.rel(-9, 0, 2)), 0.3);
     // One may have stepped out by the open end while the player walked in: another is let in.
-    let origin = f.origin;
-    let in_lane = |c: &Client| lane(c, origin).iter().any(|&(_, _, species)| species == fowl);
+    let in_lane = |c: &Client| !unhurt(c).is_empty();
     if !in_lane(&f.c) {
         f.stock("junglefowl", -4);
         assert!(f.waited(2.0, in_lane), "the junglefowl let into the lane never showed");
     }
-    let near = lane(&f.c, f.origin).into_iter().filter(|&(_, _, species)| species == fowl).map(|(_, p, _)| p.z).fold(f32::MIN, f32::max);
+    let near = unhurt(&f.c).into_iter().fold(f32::MIN, f32::max);
     let lane_x = f.rel(-9, 0, 0).x as f32 + 0.5;
     f.walk_toward(Vec3::new(lane_x, f.at.y, (near + 5.0).min(f.rel(0, 0, 0).z as f32 + 0.5)), 0.3);
     f.hold("base:wheat_seeds");
@@ -7648,12 +7665,13 @@ fn the_first_days(f: &mut Fresh) -> Site {
     // plot round a log at the table (Construction 3), set down by the kiln and loaded with
     // sixteen clay. It fires them, none cracked, while clay is fired by hand toward the
     // twelve; what it gives goes to The Potter.
-    let o = f.origin;
-    let ground: Vec<IVec3> = (24..=27).flat_map(|x| (-4..=-3).map(move |z| o + v(x, 0, z))).collect();
+    let ground = f.raised_dirt();
+    assert!(ground.len() >= 8, "the plot's dirt bank: {} blocks left of 8", ground.len());
     f.gather("base:stone_shovel", ground, "base:dirt", 8);
     f.at_table(table);
     f.craft(&[(0, "base:dirt", 1), (1, "base:dirt", 1), (2, "base:dirt", 1), (3, "base:dirt", 1), (4, log, 1), (5, "base:dirt", 1), (6, "base:dirt", 1), (7, "base:dirt", 1), (8, "base:dirt", 1)], "base:earth_clamp", 1);
-    f.walk_toward(Fresh::middle(f.rel(4, 0, 1)), 2.0);
+    // Set down from two blocks south of it, wherever the dirt was dug: never from the cell itself.
+    f.walk_toward(Fresh::middle(f.rel(4, 0, 3)), 0.3);
     let clamp = f.place("base:earth_clamp", f.rel(4, -1, 1));
     f.mark("earth_clamp");
     f.gather_from("base:stone_shovel", &banks, bed.clone(), clay, 28);
@@ -7710,9 +7728,7 @@ impl Fresh {
             }
         }
         self.c.fill(o, v(18, 0, 7), v(19, 0, 11), "copper_ore");
-        // A low bank of dirt, eight blocks, for the earth clamp.
-        self.c.fill(o, v(24, 0, -4), v(27, 0, -3), "dirt");
-        let probes = [(v(27, -1, 11), "base:water"), (v(15, 3, -9), "base:oak_log"), (v(19, 0, 11), "base:copper_ore"), (v(27, 0, -3), "base:dirt")];
+        let probes = [(v(27, -1, 11), "base:water"), (v(15, 3, -9), "base:oak_log"), (v(19, 0, 11), "base:copper_ore")];
         self.c.pump_until(|c| probes.iter().all(|&(at, name)| c.world.block(o + at) == c.content.blocks.id(name)));
     }
 
