@@ -6512,6 +6512,8 @@ enum View {
     Hud,
     /// The HUD with the debug overlay on.
     Debug,
+    /// The HUD with the quests whose tracker cards say the most pinned.
+    Tracker,
     Inventory,
     Character,
     /// The prayer book over the character screen, and the strip over the hotbar naming as
@@ -6581,7 +6583,7 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     } else if gate.step == Step::FitMenus {
         [View::Title, View::Worlds, View::Create, View::Join].into_iter().chain((0..crate::settings::TABS).map(View::Settings)).collect()
     } else {
-        [View::Hud, View::Debug, View::Dead, View::Console, View::Inventory, View::Recipes(0), View::Recipes(1), View::Recipes(2), View::Recipes(3), View::Character, View::Prayers]
+        [View::Hud, View::Debug, View::Tracker, View::Dead, View::Console, View::Inventory, View::Recipes(0), View::Recipes(1), View::Recipes(2), View::Recipes(3), View::Character, View::Prayers]
             .into_iter()
             .chain((0..skills).map(View::Guide))
             .chain([View::Quests, View::FirstNight])
@@ -6648,6 +6650,29 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         gate.unbroken.push(format!("{language}, {view:?}"));
     }
     gate.advance(now);
+}
+
+/// The player's own pins while [`fit_pins`] pins others.
+#[derive(Resource)]
+struct KeptPins(Vec<String>);
+
+/// With `full`, the tracker shows the quests whose cards say the most in the language shown;
+/// without, the player's own pins come back.
+fn fit_pins(world: &mut World, full: bool) {
+    if !full {
+        if let Some(KeptPins(kept)) = world.remove_resource::<KeptPins>() {
+            world.resource_mut::<crate::settings::Settings>().pinned_quests = kept;
+        }
+        return;
+    }
+    let wordiest = crate::hud::quests::wordiest(&world.resource::<Launch>().content, world.resource::<Locale>());
+    if !world.contains_resource::<KeptPins>() {
+        let kept = world.resource::<crate::settings::Settings>().pinned_quests.clone();
+        world.insert_resource(KeptPins(kept));
+    }
+    if world.resource::<crate::settings::Settings>().pinned_quests != wordiest {
+        world.resource_mut::<crate::settings::Settings>().pinned_quests = wordiest;
+    }
 }
 
 /// The player's own prayers while [`fit_prayers`] shows others, and those it shows.
@@ -6719,6 +6744,7 @@ fn show_view(world: &mut World, view: Option<View>, now: f32) {
         world.resource_mut::<crate::hud::prayers::PrayerBook>().0 = book;
     }
     fit_prayers(world, book);
+    fit_pins(world, matches!(view, Some(View::Tracker)));
     if let Some(View::Quests) = view {
         // A quest still waiting on another, so its page reads so, beside those done and open.
         use crate::hud::quests::{QuestView, Standing, standing};

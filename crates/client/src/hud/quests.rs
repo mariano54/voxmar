@@ -490,6 +490,18 @@ fn goal_line(locale: &Locale, content: &Content, quest: &QuestDef, goal: &Goal, 
     format!("{mark} {}", goal_words(locale, content, quest, goal, progress))
 }
 
+/// The quests whose tracker cards say the most in `locale`, as many as the tracker pins: the
+/// tracker at its tallest, for the gate's text-fit tour.
+pub fn wordiest(content: &Content, locale: &Locale) -> Vec<String> {
+    let words = |quest: &QuestDef| {
+        let goals: usize = best_task(quest, None).iter().map(|(goal, progress)| goal_line(locale, content, quest, goal, *progress, false).chars().count()).sum();
+        title(locale, quest).chars().count() + goals
+    };
+    let mut quests: Vec<&QuestDef> = content.quests.iter().collect();
+    quests.sort_by_key(|quest| std::cmp::Reverse(words(quest)));
+    quests.into_iter().take(content.quests.tracker().pins).map(|quest| quest.name.clone()).collect()
+}
+
 /// Each goal of the task nearest done, with its progress: (have, need).
 fn best_task<'a>(quest: &'a QuestDef, state: Option<&QuestState>) -> Vec<(&'a Goal, (u32, u32))> {
     let progress = |t: usize, g: usize| state.and_then(|s| s.tasks.get(t)?.get(g).copied()).unwrap_or((0, 1));
