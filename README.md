@@ -900,6 +900,14 @@ writes about twenty seconds of each of seventeen typical places to `target/ambie
 `weather_sound_preview -- --ignored` writes the thunder, swimming and splashes to
 `target/sound_preview/`, as the game plays them.
 
+What the player does is heard as they do it: eating, crafting at the grid, loading a home
+station, lighting a fire or a kiln, opening a chest or a door, putting food on to cook,
+lying down to sleep and casting a line. `sounds.ron`'s `actions` gives each action, by name,
+its clips (one picked at random, at a slightly different pitch) and a volume, around the
+loudness of placing a block; a later package replaces an action's sound, and the launch
+fails on one for an action the content lacks. The clips, and the pop of an item picked up
+when Minecraft's own sounds are off, are our own, synthesized by `tools/generate_sfx.py`.
+
 Creatures are heard: footsteps on whatever block they walk, bleats, grunts and clucks while
 they wander, munching, sighs and purrs at rest, barks and snorts of alarm, calls carrying far,
 mating calls, snarls when they strike, and cries when hurt or dying. `creature_sounds.ron` in

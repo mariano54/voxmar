@@ -330,6 +330,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let interface = hud::inventory::InterfaceStyle::load(&content.files)?;
     let combat_marks = hud::combat::CombatStyle::load(&content.files)?;
     let look = hud::target::LookStyle::load(&content.files)?;
+    sfx::Recordings::load(&content.files)?.check(&content.actions)?;
     let content_weather = content.weather.clone();
     let shader_packs = render::pack::ShaderPacks::load(&assets);
     let registry = content.blocks.clone();
