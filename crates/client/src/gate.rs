@@ -5460,8 +5460,12 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         20 => {
             let scroll = world.query_filtered::<&ScrollPosition, With<crate::hud::quests::Web>>().iter(world).next().map_or(Vec2::ZERO, |s| s.0);
             let heads: Vec<(Entity, Option<String>, Vec2)> = world.query::<(Entity, &crate::hud::quests::LaneHead)>().iter(world).map(|(e, h)| (e, h.head.clone(), h.at)).collect();
-            let Some((header, head, at)) = heads.iter().rev().find(|(_, head, at)| head.is_some() && at.distance(scroll) > 1.0).cloned() else {
-                return quit(world, gate, "quests: path", format!("{} lane headers, none with a quest away from the canvas at {scroll}", heads.len()));
+            // A web that fits its well never moves, so there any header whose head is not
+            // the quest picked will do: it must still pick its head, inside the well.
+            let picked = world.resource::<crate::hud::quests::QuestView>().picked.clone();
+            let moving = heads.iter().rev().find(|(_, head, at)| head.is_some() && at.distance(scroll) > 1.0);
+            let Some((header, head, at)) = moving.or_else(|| heads.iter().rev().find(|(_, head, _)| head.is_some() && *head != picked)).cloned() else {
+                return quit(world, gate, "quests: path", format!("{} lane headers, none with a quest away from the canvas at {scroll} or other than {picked:?}", heads.len()));
             };
             gate.web_head = head;
             gate.web_scroll = at;
