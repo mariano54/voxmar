@@ -990,6 +990,7 @@
     "block.base.drying_rack_hung": "肉をかけた干し台",
     "block.base.drying_rack_dry": "干し肉の干し台",
     "block.base.compost_heap": "堆肥枠",
+    "block.base.well": "井戸",
     "block.base.compost_heap_full": "発酵中の堆肥枠",
     "block.base.compost_heap_ready": "熟した堆肥枠",
     "block.base.feed_trough": "餌桶",
