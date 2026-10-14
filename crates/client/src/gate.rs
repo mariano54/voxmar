@@ -5107,8 +5107,10 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             else {
                 return quit(world, gate, "quests: drag", "the quest book has no web".into());
             };
-            // The canvas as drawn moves under the pointer, as far as its edges let it.
-            let wanted = ((gate.web_scroll + WEB_DRAG).clamp(Vec2::ZERO, max) - gate.web_scroll.clamp(Vec2::ZERO, max)) / scale;
+            // The canvas as drawn moves with the pointer, pixel for pixel, as far as its edges
+            // let it: the pointer's points are `UiScale` interface pixels.
+            let travel = WEB_DRAG / world.resource::<UiScale>().0;
+            let wanted = ((gate.web_scroll + travel).clamp(Vec2::ZERO, max) - gate.web_scroll.clamp(Vec2::ZERO, max)) / scale;
             let moved = gate.web_canvas - canvas_at(world);
             gate.check(
                 "quests: drag",

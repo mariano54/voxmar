@@ -970,8 +970,11 @@ struct Drag {
 
 /// Dragging the web's empty canvas with the left button held moves it under the pointer,
 /// within its edges, so the web never leaves the well; a press on a quest picks it instead.
+/// The pointer moves in the window's points, the canvas in the interface's, `UiScale` of
+/// them to a point.
 fn drag_web(
     buttons: Res<ButtonInput<MouseButton>>,
+    scale: Res<UiScale>,
     mut moved: MessageReader<CursorMoved>,
     quests: Query<&Interaction, With<QuestNode>>,
     mut web: Query<(&mut ScrollPosition, &bevy::ui::RelativeCursorPosition, &ComputedNode), With<Web>>,
@@ -993,7 +996,7 @@ fn drag_web(
     }
     if drag.held && delta != Vec2::ZERO {
         let max = (computed.content_size() - computed.size()).max(Vec2::ZERO) * computed.inverse_scale_factor();
-        let next = (scroll.0 - delta).clamp(Vec2::ZERO, max);
+        let next = (scroll.0 - delta / scale.0).clamp(Vec2::ZERO, max);
         if scroll.0 != next {
             scroll.0 = next;
         }
