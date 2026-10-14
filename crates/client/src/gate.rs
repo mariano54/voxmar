@@ -533,6 +533,8 @@ struct Gate {
     held_cleared: u32,
     /// When (server seconds) the kiln was last asked to light.
     kiln_asked: f32,
+    /// When the lit kiln's bronze smelt began, in server and game seconds (0 before).
+    bronze_since: (f32, f32),
     /// The machines' stage (coal in the boiler, ore in the crusher, dust out), and when
     /// (server seconds) it began and the machine was last used.
     machines_stage: u8,
@@ -737,6 +739,7 @@ impl Gate {
             shapes_row: IVec3::ZERO,
             held_cleared: 0,
             kiln_asked: f32::MIN,
+            bronze_since: (0.0, 0.0),
             machines_stage: 0,
             machines_since: 0.0,
             machines_asked: f32::MIN,
@@ -2350,6 +2353,7 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
         }
         // Right clicking the crucible lights the kiln: the quest that asks for it counts it in its last part.
+        15 if gate.bronze_since.0 > 0.0 => bronze(world, gate, now, in_phase),
         15 => {
             let kiln = gate.kiln;
             let lit = |world: &World| {
@@ -2391,28 +2395,24 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if done && coal != 0 && !late {
                 return;
             }
-            if done || late {
-                // Taken down again either way, so the pool's bank is clear for the swim.
-                let (a, b) = (kiln - IVec3::new(1, 0, 1), kiln + IVec3::new(1, 1, 1));
-                world.resource::<Net>().command(&format!("fill {} {} {} {} {} {} air", a.x, a.y, a.z, b.x, b.y, b.z));
+            if late && !done {
+                // Taken down, so the pool's bank is clear for the swim. A kiln lit late
+                // still smelts its bronze first (`bronze` takes it down).
+                kiln_down(world, kiln);
             }
             if done {
                 if coal != 0 {
+                    kiln_down(world, kiln);
                     return fail(world, gate, "kiln", format!("lighting left {coal} coal of its 24-item charge"));
                 }
                 gate.check("workshop: kiln", Ok("a complete coal charge lit the standing Crucible Kiln and counted its lighting goal".into()));
-                // Where the kiln stood, a boiler with a steam crusher beside it, and nothing in
-                // hand but coal to fire it.
-                let at = |d: IVec3| { let p = kiln + d; format!("{} {} {}", p.x, p.y, p.z) };
-                let net = world.resource::<Net>();
-                for line in ["clear".to_owned(), format!("setblock {} boiler", at(IVec3::ZERO)), format!("setblock {} steam_crusher", at(IVec3::X)), "give coal_ore 2".to_owned()] {
-                    net.command(&line);
+                // The lit kiln smelts bronze before it comes down: three copper ingots in
+                // hand and a tin ore in the pack make four, in one go.
+                for line in ["clear", "skill engineering 12", "give copper_ingot 3", "give tin_ore 1"] {
+                    world.resource::<Net>().command(line);
                 }
-                gate.machines_stage = 0;
-                gate.machines_since = gate.server_now;
-                gate.machines_asked = f32::MIN;
-                gate.machines_seen = false;
-                gate.advance(now);
+                gate.bronze_since = (gate.server_now, in_phase);
+                gate.kiln_asked = f32::MIN;
             } else if late {
                 let quests = &world.resource::<LocalPlayer>().quests;
                 let state = quests.iter().find(|q| q.name == "base:crucible_kiln").cloned();
@@ -5664,7 +5664,7 @@ enum View {
 
 /// What the text-fit tour looks up in the recipe viewer, and whether its uses: a crafted
 /// item, an ingredient, and a creature's product with a range of amounts.
-const FIT_LOOKUPS: [(&str, bool); 4] = [("base:campfire", false), ("base:oak_log", true), ("base:wool", false), ("base:cooked_rabbit", false)];
+const FIT_LOOKUPS: [(&str, bool); 4] = [("base:campfire", false), ("base:oak_log", true), ("base:wool", false), ("base:cooked_small_game", false)];
 
 /// The languages the text-fit tour checks, and how long it leaves each view to lay out.
 const FIT_LANGUAGES: [&str; 2] = ["en", "ja"];
@@ -9130,6 +9130,52 @@ fn creature_motion(world: &mut World, gate: &mut Gate, stage: u32) {
 /// A campfire on the pad, raw rabbit in hand: a right click on the fire cooks one, which
 /// comes back two seconds later as cooked rabbit or, at a low Cooking level, sometimes
 /// burnt. Waited for by the server's clock.
+/// Takes the workshop's Crucible Kiln down, so the pool's bank is clear for the swim.
+fn kiln_down(world: &mut World, kiln: IVec3) {
+    let (a, b) = (kiln - IVec3::new(1, 0, 1), kiln + IVec3::new(1, 1, 1));
+    world.resource::<Net>().command(&format!("fill {} {} {} {} {} {} air", a.x, a.y, a.z, b.x, b.y, b.z));
+}
+
+/// The lit kiln's bronze: three copper ingots in hand and a tin ore in the pack, used on
+/// the crucible, make four bronze in one go and leave neither. Then the kiln comes down
+/// and a boiler with a steam crusher beside it goes where it stood.
+fn bronze(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    let kiln = gate.kiln;
+    let (copper, slot) = holding(world, "base:copper_ingot");
+    let (tin, bronze) = (holding(world, "base:tin_ore").0, holding(world, "base:bronze_ingot").0);
+    if bronze >= 4 && copper == 0 && tin == 0 {
+        gate.check("workshop: bronze", Ok(format!("three copper ingots and a tin ore made {bronze} bronze at the lit crucible in one go")));
+        kiln_down(world, kiln);
+        // Where the kiln stood, a boiler with a steam crusher beside it, and nothing in
+        // hand but coal to fire it.
+        let at = |d: IVec3| { let p = kiln + d; format!("{} {} {}", p.x, p.y, p.z) };
+        let net = world.resource::<Net>();
+        for line in ["clear".to_owned(), format!("setblock {} boiler", at(IVec3::ZERO)), format!("setblock {} steam_crusher", at(IVec3::X)), "give coal_ore 2".to_owned()] {
+            net.command(&line);
+        }
+        gate.machines_stage = 0;
+        gate.machines_since = gate.server_now;
+        gate.machines_asked = f32::MIN;
+        gate.machines_seen = false;
+        gate.advance(now);
+        return;
+    }
+    // Both clocks: a loaded server is slow to answer, a starved client slow to see it.
+    if gate.server_now - gate.bronze_since.0 > 20.0 && in_phase - gate.bronze_since.1 > 20.0 {
+        kiln_down(world, kiln);
+        gate.check("workshop: bronze", Err(format!("the crucible never made bronze: holding {copper} copper ingots, {tin} tin ore, {bronze} bronze")));
+        return end_workshop(world, gate, now);
+    }
+    if let Some(slot) = slot.filter(|_| copper >= 3 && tin >= 1) {
+        world.resource_mut::<LocalPlayer>().selected = slot;
+        if gate.server_now - gate.kiln_asked >= 3.0 {
+            gate.kiln_asked = gate.server_now;
+            let actions = world.resource::<crate::Actions>().0.clone();
+            world.resource::<Net>().propose(actions.expect("base:cook"), voxmar_engine::action::ActionTarget::Block { block: kiln, face: voxmar_engine::coords::Face::NegY });
+        }
+    }
+}
+
 fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let fire = gate.feet + IVec3::new(0, 0, 14);
     let hearth = fire + IVec3::new(3, 0, 0);
@@ -9174,14 +9220,14 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             // up behind the menus' text check.
             net.command("creatures kill");
             net.command(&format!("setblock {} {} {} campfire", fire.x, fire.y, fire.z));
-            net.command("give raw_rabbit 3");
+            net.command("give raw_small_game 3");
             // In reach of it, wherever the steps before left the player.
             net.command(&format!("tp {} {} {}", fire.x as f32 + 0.5, fire.y, fire.z as f32 - 1.5));
             gate.advance(now);
         }
         3 => {
             let client = world.resource::<ClientWorld>();
-            let (Some(raw), Some(campfire)) = (client.registry.id("base:raw_rabbit"), client.registry.id("base:campfire")) else {
+            let (Some(raw), Some(campfire)) = (client.registry.id("base:raw_small_game"), client.registry.id("base:campfire")) else {
                 gate.check("cook", Err("no raw rabbit or campfire in the content".into()));
                 gate.next(Step::Ore, now);
                 return;
@@ -9193,7 +9239,7 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             match (lit, slot) {
                 (true, Some(slot)) => {
                     world.resource_mut::<LocalPlayer>().selected = slot;
-                    gate.count_before = item_count(world, "base:cooked_rabbit") + item_count(world, "base:burnt_food");
+                    gate.count_before = item_count(world, "base:cooked_small_game") + item_count(world, "base:burnt_food");
                     gate.advance(now);
                 }
                 _ if gate.server_in_phase() > 10.0 => {
@@ -9205,7 +9251,7 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         }
         4 => {
             aim_at(world, fire.as_vec3() + Vec3::new(0.5, 0.3, 0.5));
-            let cooked = item_count(world, "base:cooked_rabbit") + item_count(world, "base:burnt_food");
+            let cooked = item_count(world, "base:cooked_small_game") + item_count(world, "base:burnt_food");
             let first_night = world.resource::<LocalPlayer>().quests.iter().any(|q| q.name == "base:first_night" && q.done);
             if cooked > gate.count_before && first_night {
                 mouse(world, MouseButton::Right, false);
@@ -9342,7 +9388,7 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
         0 => {
             let net = world.resource::<Net>();
             net.command(&format!("setblock {} {} {} drying_rack", rack.x, rack.y, rack.z));
-            net.command("give raw_rabbit 2");
+            net.command("give raw_small_game 2");
             net.command(&format!("tp {} {} {}", rack.x as f32 + 0.5, rack.y, rack.z as f32 - 2.5));
             gate.advance(now);
         }
@@ -9351,7 +9397,7 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
             let client = world.resource::<ClientWorld>();
             let stood = client.registry.id("base:drying_rack").is_some_and(|r| client.block(rack) == Some(r));
             let there = world.resource::<LocalPlayer>().position.distance(Vec3::new(rack.x as f32 + 0.5, rack.y as f32, rack.z as f32 - 2.5)) < 0.5;
-            if stood && there && drawn(world, rack) && gate.shot(world, "rack_bare").is_some() && select(world, "base:raw_rabbit") {
+            if stood && there && drawn(world, rack) && gate.shot(world, "rack_bare").is_some() && select(world, "base:raw_small_game") {
                 gate.advance(now);
             } else if waited {
                 gate.check("drying rack", Err(format!("the rack ({stood}) or raw rabbit in hand never came in {DRY_WAIT} server seconds")));

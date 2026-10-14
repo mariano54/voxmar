@@ -7430,7 +7430,7 @@ fn the_first_days(f: &mut Fresh) -> Site {
     let fire = f.rel(6, 0, 2);
     f.craft(&[(0, log, 1), (1, log, 1), (3, cobble, 1), (4, cobble, 1)], "base:campfire", 1);
     f.place("base:campfire", fire - up);
-    let meats = [("base:raw_rabbit", "base:cooked_rabbit"), ("base:raw_chicken", "base:cooked_chicken")];
+    let meats = [("base:raw_small_game", "base:cooked_small_game")];
     let raw = |c: &Client| meats.iter().map(|(raw, _)| holding(c, raw) + loose(c, raw)).sum::<u32>();
     f.hunt(|_| "", |c| raw(c) >= 3);
     for (raw, _) in meats {
@@ -7661,7 +7661,7 @@ impl Fresh {
     /// takes nothing more in (a quest's reward, a craft, dug clay), and cooked food takes a
     /// slot each, so by the Farm age a player clears theirs out as this does.
     fn make_room(&mut self, free: usize) {
-        const SPARE: [&str; 9] = ["base:burnt_food", "base:feather", "base:wooden_pickaxe", "base:raw_rabbit", "base:raw_chicken", "base:cooked_rabbit", "base:cooked_chicken", "base:oak_planks", "base:bread"];
+        const SPARE: [&str; 7] = ["base:burnt_food", "base:feather", "base:wooden_pickaxe", "base:raw_small_game", "base:cooked_small_game", "base:oak_planks", "base:bread"];
         let slots = voxmar_engine::inventory::SLOTS;
         let empty = |c: &Client| (0..slots).filter(|&s| c.inventory.get(s).is_none()).count();
         if empty(&self.c) >= free {
