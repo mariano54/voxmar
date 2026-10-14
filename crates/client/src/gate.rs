@@ -9971,7 +9971,9 @@ fn bronze(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let fire = gate.feet + IVec3::new(0, 0, 14);
     let hearth = fire + IVec3::new(3, 0, 0);
-    let chimney = [hearth + IVec3::new(-1, 1, -1), hearth + IVec3::new(-1, 2, -1)];
+    // At the corner away from the fire, so it stands behind the hearthstone as the player
+    // by the fire sees it: at the near corner it is in the way of a click on its top.
+    let chimney = [hearth + IVec3::new(1, 1, 1), hearth + IVec3::new(1, 2, 1)];
     // A cottage stove the other side of the fire, cooked at after the hearth.
     let stove = fire + IVec3::new(-2, 0, 0);
     match gate.phase {
@@ -10186,7 +10188,12 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 }
             } else if gate.waited_out(15.0) {
                 mouse(world, MouseButton::Right, false);
-                gate.check(check, Err(format!("right clicks on the {name} with raw small game cooked nothing in 15 server seconds ({in_phase:.1} game s)")));
+                // What the clicks landed on, if not the station.
+                let on = {
+                    let (target, cells) = (world.resource::<crate::interact::Target>(), world.resource::<ClientWorld>());
+                    target.block_hit.map_or_else(|| "nothing".to_owned(), |hit| format!("{} at {}", cells.block(hit.block).map_or("an unloaded block", |b| cells.registry.def(b).name.as_str()), hit.block))
+                };
+                gate.check(check, Err(format!("right clicks on the {name} at {at} with raw small game cooked nothing in 15 server seconds ({in_phase:.1} game s); the crosshair was on {on}")));
                 gate.cook_started = false;
                 hearth_done(world, gate, now, hearth, chimney, stove);
             } else {
