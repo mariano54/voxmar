@@ -68,6 +68,12 @@ struct Client {
     hurt: Vec<(u16, voxmar_engine::combat::Defended)>,
     hurt_by: Vec<(u32, u16)>,
     hurt_at: Vec<Instant>,
+    /// When the server sent each creature's attacking pose now shown (in process, a
+    /// message's stamp is when it was sent): a wind-up's start, however late this thread
+    /// read it.
+    attacking_since: std::collections::HashMap<u32, Instant>,
+    /// The stamp of the message being applied.
+    stamp: Option<Instant>,
     journal: voxmar_engine::journal::Journal,
     quests: Vec<voxmar_engine::quest::QuestState>,
     /// The server, for the first player to join it (dropping it stops the server).
@@ -252,6 +258,8 @@ impl Client {
             hurt: Vec::new(),
             hurt_by: Vec::new(),
             hurt_at: Vec::new(),
+            attacking_since: Default::default(),
+            stamp: None,
             journal: Default::default(),
             quests: Vec::new(),
             _server: server,
@@ -272,11 +280,20 @@ impl Client {
     /// seconds, and the check then ran before the messages waiting for it were read, failing
     /// random tests with "20 s since its last message". A pause between two looks at the
     /// connection longer than `AWAY` moves both limits on by it.
+    ///
+    /// Nor is a server at work silent: its thread's CPU time going up says it is working,
+    /// told or not (`ServerHandle::cpu_time`), and only a server that has neither sent
+    /// anything nor worked for `SERVER_SILENT` is taken for stuck. Before its first tick it
+    /// is opening the world and generating where the player stands, never idle, so until
+    /// then the time in all is the CPU time its thread had: at load 120 a server starting
+    /// with a share of a core sent no welcome for 60 s while it worked all along.
     fn pump_until(&mut self, done: impl Fn(&Self) -> bool) {
         const AWAY: Duration = Duration::from_millis(500);
-        let mut start = Instant::now();
-        let mut heard = start;
-        let mut looked = start;
+        let mut looked = Instant::now();
+        let mut heard = looked;
+        let mut worked = looked;
+        let mut in_all = Duration::ZERO;
+        let mut cpu = self._server.as_ref().and_then(ServerHandle::cpu_time);
         while !done(self) {
             // In lockstep, the tick this player has taken in once nothing is left to read:
             // its messages are all sent before the tick counts.
@@ -286,20 +303,33 @@ impl Client {
             looked = now;
             if away > AWAY {
                 eprintln!("pump_until: this thread was away {:.1}s", away.as_secs_f32());
-                start += away;
                 heard += away;
+                worked += away;
                 continue;
             }
+            let starting = self._server.as_ref().is_some_and(|s| s.ticks() == 0);
+            let now_cpu = self._server.as_ref().and_then(ServerHandle::cpu_time);
+            let work = cpu.zip(now_cpu).map(|(then, now)| now.saturating_sub(then));
+            if work.is_some_and(|w| w > Duration::ZERO) {
+                worked = now;
+            }
+            in_all += match work {
+                Some(work) if starting => work,
+                _ => away,
+            };
+            cpu = now_cpu.or(cpu);
             assert!(
-                now - heard < SERVER_SILENT && now - start < SERVER_WAIT,
-                "{name:?} (id {id}, {phase}, tick {tick}, local {local}): timed out waiting for server: {:.1}s in all, {:.1}s since its last message",
-                (now - start).as_secs_f32(),
+                now - heard.max(worked) < SERVER_SILENT && in_all < SERVER_WAIT,
+                "{name:?} (id {id}, {phase}, tick {tick}, local {local}): timed out waiting for server: {:.1}s in all, {:.1}s since its last message, {:.1}s since its thread last worked",
+                in_all.as_secs_f32(),
                 (now - heard).as_secs_f32(),
+                (now - worked).as_secs_f32(),
                 name = self.name, id = self.id, phase = self.phase, tick = self.server_tick, local = self.connection.is_local()
             );
-            match self.connection.try_recv() {
-                Ok(Some(message)) => {
+            match self.connection.try_recv_at() {
+                Ok(Some((stamp, message))) => {
                     heard = now;
+                    self.stamp = Some(stamp);
                     self.apply(message);
                 }
                 Ok(None) => match taken {
@@ -367,9 +397,16 @@ impl Client {
             }
             ServerMessage::Creatures { changed, gone } => {
                 for view in changed {
+                    let attacking = |v: &voxmar_protocol::CreatureView| v.pose == voxmar_engine::creature::brain::Pose::Attacking;
+                    if !attacking(&view) {
+                        self.attacking_since.remove(&view.id);
+                    } else if !self.creatures.get(&view.id).is_some_and(attacking) {
+                        self.attacking_since.insert(view.id, self.stamp.unwrap_or_else(Instant::now));
+                    }
                     self.creatures.insert(view.id, view);
                 }
                 for gone in gone {
+                    self.attacking_since.remove(&gone.id);
                     self.creatures.remove(&gone.id);
                     self.deaths += gone.died as u32;
                 }
@@ -420,7 +457,8 @@ impl Client {
 
     /// Applies every message waiting.
     fn drain(&mut self) {
-        while let Ok(Some(message)) = self.connection.try_recv() {
+        while let Ok(Some((stamp, message))) = self.connection.try_recv_at() {
+            self.stamp = Some(stamp);
             self.apply(message);
         }
     }
@@ -711,6 +749,9 @@ fn falling_hurts() {
     let height = fall_from_open_sky(&mut client);
     let expected = 20 - (height - 3) as u8;
     assert_eq!(client.health, expected, "a {height} block fall should cost {} health", height - 3);
+    // An admin heals to full at once.
+    assert_eq!(client.ok("/heal"), "You are at full health.");
+    client.pump_until(|c| c.health == 20);
 }
 
 /// Falls from as high as the open sky above spawn allows, so the player lands hurt, and
@@ -4387,30 +4428,48 @@ fn a_perfect_block_staggers_a_bear_and_a_dodge_lets_its_blow_pass() {
     let (windup, recovery) = (attack.windup.unwrap_or(feel.creature_windup), attack.recovery.unwrap_or(feel.creature_recovery));
     // Waits for the bear to wind up at us (standing beside it, facing it, striking it every
     // few seconds only while it does not fight back), then answers `respond` `after`
-    // seconds later; returns the selected bear's answered blow index.
-    let fight = |client: &mut Client, after: f32, respond: &dyn Fn(&Client)| -> usize {
+    // seconds after the server sent the wind-up (its pose's stamp: on a busy machine this
+    // thread may read it long after); returns the selected bear's answered blow index, and
+    // how late past that moment the answer went.
+    let fight = |client: &mut Client, after: f32, respond: &dyn Fn(&Client)| -> (usize, f32) {
         let before = provoke_until_it_winds_up(client, id, slot, "bear");
-        std::thread::sleep(Duration::from_secs_f32(after));
+        let due = client.attacking_since[&id] + Duration::from_secs_f32(after);
+        if let Some(wait) = due.checked_duration_since(Instant::now()) {
+            std::thread::sleep(wait);
+        }
+        let sent = Instant::now();
         respond(client);
-        wait_for_blow(client, id, before)
+        (wait_for_blow(client, id, before), sent.saturating_duration_since(due).as_secs_f32())
     };
     // Each answer's moment moves by what came of the last, so a slow machine is met where
-    // its blows fall: a block not perfect was too soon, a hit too late.
+    // its blows fall: a block not perfect was too soon, a hit too late. An answer that went
+    // more than a step past its moment (the wind-up read after it, or this thread kept off
+    // its cores while it waited) says nothing of the moment: it is set aside and the search
+    // stays, `LATE_ANSWERS` of them at most.
+    const STEP: f32 = 0.05;
+    const LATE_ANSWERS: u32 = 24;
     let answer = |client: &mut Client, want: Defended, respond: &dyn Fn(&Client), undo: &dyn Fn(&Client)| {
         let mut after = windup - 0.1;
         let mut outcomes = Vec::new();
-        for _ in 0..8 {
-            let struck = fight(client, after.max(0.0), respond);
+        let mut late = Vec::new();
+        while outcomes.len() < 8 {
+            let (struck, sent_late) = fight(client, after.max(0.0), respond);
             let outcome = client.hurt[struck].1;
             undo(client);
-            outcomes.push(outcome);
             if outcome == want {
                 return struck;
             }
-            after += if outcome == Defended::Blocked { 0.05 } else { -0.05 };
             client.wait_server(1);
+            if sent_late > STEP {
+                late.push(sent_late);
+                assert!(late.len() < LATE_ANSWERS as usize, "{} answers went more than {STEP} s past their moment ({late:.2?} s late), so none could say when the bear's blow is met; the rest came to {outcomes:?}", late.len());
+                eprintln!("answer: set aside, sent {sent_late:.2} s past its moment ({outcome:?})");
+                continue;
+            }
+            outcomes.push(outcome);
+            after += if outcome == Defended::Blocked { STEP } else { -STEP };
         }
-        panic!("answers to the bear's blows came to {outcomes:?}");
+        panic!("answers to the bear's blows came to {outcomes:?}, {} more set aside as late", late.len());
     };
     // Raised just before the blow: a perfect block, and the next blow a counter.
     let raise = |c: &Client| {
@@ -6414,6 +6473,7 @@ const FRESH_BUDGETS: &[(&str, f32)] = &[
     ("crafting_table", 60.0),
     ("stone_in_hand", 120.0),
     ("first_night", 180.0),
+    ("a_tempting_bite", 190.0),
     ("a_bed_of_your_own", 200.0),
     ("torchlight", 220.0),
     ("hearth_materials", 300.0),
@@ -7119,7 +7179,9 @@ impl Fresh {
         // where the animals cannot get past the player.
         c.fill(origin, v(-10, 0, -11), v(-8, 1, 0), "stone");
         c.fill(origin, v(-9, 0, -10), v(-9, 1, 0), "air");
-        let probes = [(v(7, 3, -5), "base:oak_log"), (v(17, 0, 4), "base:stone"), (v(-2, -1, 11), "base:water"), (v(-8, 1, 0), "base:stone")];
+        // Wild wheat growing by the lane's mouth, for A Tempting Bite.
+        c.fill(origin, v(-7, 0, 2), v(-7, 0, 2), "wild_wheat");
+        let probes = [(v(7, 3, -5), "base:oak_log"), (v(17, 0, 4), "base:stone"), (v(-2, -1, 11), "base:water"), (v(-8, 1, 0), "base:stone"), (v(-7, 0, 2), "base:wild_wheat")];
         c.pump_until(|c| probes.iter().all(|&(at, name)| c.world.block(origin + at) == c.content.blocks.id(name)) && c.world.block(origin + v(-9, 1, 0)) == Some(BlockId::AIR));
         let (at, t0) = (c.position, c.ticks());
         let epoch = (t0, Instant::now());
@@ -7309,6 +7371,7 @@ fn a_fresh_survival_player_reaches_each_nomad_milestone() {
 }
 
 /// What the first days leave standing on the plot, which the Farm age comes back to.
+#[derive(Clone)]
 struct Site {
     table: IVec3,
     /// The campfire First Night set down, and the pit kiln.
@@ -7317,6 +7380,8 @@ struct Site {
     /// The ponds' clay and the banks it is dug from.
     bed: Vec<IVec3>,
     banks: Vec<Vec3>,
+    /// The earth clamp, once An Earth Clamp has the player make one.
+    clamp: Option<IVec3>,
 }
 
 /// The Nomad age's main line, played with legitimate actions only, and the Farm age's first
@@ -7365,7 +7430,7 @@ fn the_first_days(f: &mut Fresh) -> Site {
     let fire = f.rel(6, 0, 2);
     f.craft(&[(0, log, 1), (1, log, 1), (3, cobble, 1), (4, cobble, 1)], "base:campfire", 1);
     f.place("base:campfire", fire - up);
-    let meats = [("base:raw_rabbit", "base:cooked_rabbit"), ("base:raw_chicken", "base:cooked_chicken")];
+    let meats = [("base:raw_small_game", "base:cooked_small_game")];
     let raw = |c: &Client| meats.iter().map(|(raw, _)| holding(c, raw) + loose(c, raw)).sum::<u32>();
     f.hunt(|_| "", |c| raw(c) >= 3);
     for (raw, _) in meats {
@@ -7386,6 +7451,41 @@ fn the_first_days(f: &mut Fresh) -> Site {
         f.cook(fire, raw, cooked);
     }
     f.mark("first_night");
+
+    // A Tempting Bite: the wild wheat by the lane broken by hand for its seeds, and the seeds
+    // held in the lane until a junglefowl comes up to them (one is let in if the
+    // night's hunt took them all).
+    let wheat = f.rel(-7, 0, 2);
+    f.walk_toward(Fresh::middle(wheat), 1.3);
+    // `mine` waits for a solid block to go; a plant is picked at a touch.
+    f.propose("core:mine", ActionTarget::Block { block: wheat, face: Face::PosY });
+    f.wait(5.0, "picking the wild wheat", |c| c.world.block(wheat) == Some(BlockId::AIR));
+    f.collect("base:wheat_seeds", 1);
+    let fowl = f.c.content.creatures.find("junglefowl").expect("junglefowl in the content");
+    if !lane(&f.c, f.origin).iter().any(|&(_, _, species)| species == fowl) {
+        f.stock("junglefowl", -4);
+    }
+    // In by the open end to five blocks short of the nearest junglefowl (they huddle at the
+    // far end, and the seeds tempt from ten), where it can walk up the rest.
+    f.walk_toward(Fresh::middle(f.rel(-9, 0, 2)), 0.3);
+    let near = lane(&f.c, f.origin).into_iter().filter(|&(_, _, species)| species == fowl).map(|(_, p, _)| p.z).fold(f32::MIN, f32::max);
+    let lane_x = f.rel(-9, 0, 0).x as f32 + 0.5;
+    f.walk_toward(Vec3::new(lane_x, f.at.y, (near + 5.0).min(f.rel(0, 0, 0).z as f32 + 0.5)), 0.3);
+    f.hold("base:wheat_seeds");
+    // A lane crowded at its end can jam them in a heap that none walks out of (the wild
+    // has no dead ends so tight): then one more is let in nearer the open end, where it
+    // walks up as any does.
+    let mut drawn = f.waited(10.0, |c| quest_status(c, "a_tempting_bite").0);
+    if !drawn {
+        f.walk_toward(Fresh::middle(f.rel(-9, 0, 2)), 0.3);
+        f.stock("junglefowl", -3);
+        f.hold("base:wheat_seeds");
+        drawn = f.waited(20.0, |c| quest_status(c, "a_tempting_bite").0);
+    }
+    let fowls: Vec<_> = f.c.creatures.values().filter(|v| v.species == fowl && v.position.distance(f.at) < 12.0).map(|v| (v.id, v.position, v.pose, v.health)).collect();
+    let cells: Vec<_> = (-11..=1).map(|z| (z, [-1, 0, 1].map(|y| f.c.world.block(f.rel(-9, y, z)).map(|b| f.c.content.blocks.def(b).name.clone())))).collect();
+    assert!(drawn, "no junglefowl drawn up to the seeds: at {:?} holding {:?}, lane {:?}, fowl near (pose, health) {fowls:?}, cells {cells:?}, origin {:?}, quest {:?}", f.at, f.c.inventory.get(f.held as usize), lane(&f.c, f.origin), f.origin, f.c.quests.iter().find(|q| q.name == "base:a_tempting_bite").map(|q| (q.done, q.tasks.clone())));
+    f.mark("a_tempting_bite");
 
     // A Bed of Your Own: two feathers (junglefowl) and two hides (rabbits) for a sleeping
     // bag, crafted in the two by two grid.
@@ -7442,7 +7542,20 @@ fn the_first_days(f: &mut Fresh) -> Site {
     let kiln = f.rel(2, 0, 1);
     f.walk_toward(Fresh::middle(kiln), 3.0);
     f.place("base:pit_kiln", kiln - up);
+    // An Earth Clamp, which Fire the Clay names: eight dirt dug from a bank of it on the farm
+    // plot round a log at the table (Construction 3), set down by the kiln and loaded with
+    // sixteen clay. It fires them, none cracked, while clay is fired by hand toward the
+    // twelve; what it gives goes to The Potter.
+    let o = f.origin;
+    let ground: Vec<IVec3> = (24..=27).flat_map(|x| (-4..=-3).map(move |z| o + v(x, 0, z))).collect();
+    f.gather("base:stone_shovel", ground, "base:dirt", 8);
+    f.at_table(table);
+    f.craft(&[(0, "base:dirt", 1), (1, "base:dirt", 1), (2, "base:dirt", 1), (3, "base:dirt", 1), (4, log, 1), (5, "base:dirt", 1), (6, "base:dirt", 1), (7, "base:dirt", 1), (8, "base:dirt", 1)], "base:earth_clamp", 1);
+    f.walk_toward(Fresh::middle(f.rel(4, 0, 1)), 2.0);
+    let clamp = f.place("base:earth_clamp", f.rel(4, -1, 1));
+    f.mark("earth_clamp");
     f.gather_from("base:stone_shovel", &banks, bed.clone(), clay, 28);
+    f.tend_clamp(clamp, Some(clay));
     f.walk_toward(Fresh::middle(kiln), 3.0);
     let fired = "base:fired_clay";
     while f.have(fired) < 12 {
@@ -7453,7 +7566,7 @@ fn the_first_days(f: &mut Fresh) -> Site {
         f.cook(kiln, clay, fired);
     }
     f.mark("fire_the_clay");
-    Site { table, fire, kiln, bed, banks }
+    Site { table, fire, kiln, bed, banks, clamp: Some(clamp) }
 }
 
 /// The quests a new player follows from nothing to the lit Crucible Kiln, in the order the
@@ -7495,14 +7608,18 @@ impl Fresh {
             }
         }
         self.c.fill(o, v(18, 0, 7), v(19, 0, 11), "copper_ore");
-        let probes = [(v(27, -1, 11), "base:water"), (v(15, 3, -9), "base:oak_log"), (v(19, 0, 11), "base:copper_ore")];
+        // A low bank of dirt, eight blocks, for the earth clamp.
+        self.c.fill(o, v(24, 0, -4), v(27, 0, -3), "dirt");
+        let probes = [(v(27, -1, 11), "base:water"), (v(15, 3, -9), "base:oak_log"), (v(19, 0, 11), "base:copper_ore"), (v(27, 0, -3), "base:dirt")];
         self.c.pump_until(|c| probes.iter().all(|&(at, name)| c.world.block(o + at) == c.content.blocks.id(name)));
     }
 
     /// Waits for the server to count `quest` done (it looks once a second), and claims its
     /// rewards in the quest screen.
     fn claim(&mut self, quest: &str) {
-        self.wait(5.0, &format!("the quest book showing {quest} done (done, a task holding: {:?})", quest_status(&self.c, quest)), |c| quest_status(c, quest).0);
+        // Each task's (have, need), as the server counted them, for a failure to say which fell short.
+        let tasks = self.c.quests.iter().find(|q| q.name == format!("base:{quest}")).map(|q| q.tasks.clone());
+        self.wait(5.0, &format!("the quest book showing {quest} done (done, a task holding: {:?}; tasks {tasks:?})", quest_status(&self.c, quest)), |c| quest_status(c, quest).0);
         let name = format!("base:{quest}");
         self.c.connection.send_at(ClientMessage::ClaimQuest { name: name.clone() }, self.now());
         self.wait(5.0, &format!("claiming {quest}"), |c| c.quests.iter().any(|q| q.name == name && q.claimed));
@@ -7513,6 +7630,21 @@ impl Fresh {
     fn fire_clay(&mut self, site: &Site, need: u32) {
         let (clay, fired) = ("base:clay", "base:fired_clay");
         while self.have(fired) < need {
+            if let Some(clamp) = site.clamp {
+                // An empty clamp is loaded first: clay dug for it and for the hands.
+                let empty = self.c.world.block(clamp) == self.c.content.blocks.id("base:earth_clamp");
+                // Not for the last few: a load not taken before the line goes on is wasted.
+                let worth = need - self.have(fired) >= 16;
+                if empty && worth && self.have(clay) < 16 {
+                    // The ponds hold a little over what the line fires: no more than is wanted.
+                    let more = 16 + (need - self.have(fired) - 16).min(16);
+                    self.gather_from("base:stone_shovel", &site.banks, site.bed.clone(), clay, more);
+                }
+                self.tend_clamp(clamp, worth.then_some(clay));
+                if self.have(fired) >= need {
+                    break;
+                }
+            }
             if self.have(clay) == 0 {
                 let more = (need - self.have(fired)).min(32);
                 self.gather_from("base:stone_shovel", &site.banks, site.bed.clone(), clay, more);
@@ -7529,7 +7661,7 @@ impl Fresh {
     /// takes nothing more in (a quest's reward, a craft, dug clay), and cooked food takes a
     /// slot each, so by the Farm age a player clears theirs out as this does.
     fn make_room(&mut self, free: usize) {
-        const SPARE: [&str; 9] = ["base:burnt_food", "base:feather", "base:wooden_pickaxe", "base:raw_rabbit", "base:raw_chicken", "base:cooked_rabbit", "base:cooked_chicken", "base:oak_planks", "base:bread"];
+        const SPARE: [&str; 7] = ["base:burnt_food", "base:feather", "base:wooden_pickaxe", "base:raw_small_game", "base:cooked_small_game", "base:oak_planks", "base:bread"];
         let slots = voxmar_engine::inventory::SLOTS;
         let empty = |c: &Client| (0..slots).filter(|&s| c.inventory.get(s).is_none()).count();
         if empty(&self.c) >= free {
@@ -7549,6 +7681,32 @@ impl Fresh {
         assert!(empty(&self.c) >= free, "only {} slots empty after throwing away the spare", empty(&self.c));
         self.c.tp(back);
         self.at = back;
+    }
+
+    /// Tends the earth clamp at `clamp` (stations.ron) on the way past: takes what it made
+    /// once it shows cooled, and loads it, empty, with `load` when sixteen are in hand (and a
+    /// load is still worth it). It smoulders a minute with nobody by it, so the player goes on
+    /// meanwhile.
+    fn tend_clamp(&mut self, clamp: IVec3, load: Option<&str>) {
+        let at = |c: &Client| c.world.block(clamp).map(|b| c.content.blocks.def(b).name.clone()).unwrap_or_default();
+        let here = at(&self.c);
+        let cooled = here == "base:earth_clamp_cooled";
+        let load = load.filter(|item| (cooled || here == "base:earth_clamp") && self.have(item) >= 16);
+        if !cooled && load.is_none() {
+            return;
+        }
+        if across(self.at, Self::middle(clamp)) > 3.5 {
+            self.walk_toward(Self::middle(clamp), 3.0);
+        }
+        if cooled {
+            self.propose("base:use_station", ActionTarget::Block { block: clamp, face: Face::PosY });
+            self.wait(5.0, "taking what the clamp made", |c| at(c) == "base:earth_clamp");
+        }
+        if let Some(load) = load {
+            self.hold(load);
+            self.propose("base:use_station", ActionTarget::Block { block: clamp, face: Face::PosY });
+            self.wait(5.0, &format!("loading the clamp with {load}"), |c| at(c) == "base:earth_clamp_lit");
+        }
     }
 
     /// Burns logs down at the campfire until `need` charcoal are in hand.
@@ -7612,7 +7770,20 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     // sixteen (three more), and a log for sticks: twenty-four is a few to spare.
     let trunks: Vec<IVec3> = [-7, -9].into_iter().flat_map(|z| [1, 3, 5, 7, 11, 13, 15].into_iter().flat_map(move |x| (0..4).map(move |y| o + IVec3::new(x, y, z)))).collect();
     f.gather("base:stone_axe", trunks, log, 24);
-    f.burn_charcoal(&site, 16);
+    // The earth clamp from Fire the Clay, taken of its clay and loaded with sixteen logs. It
+    // chars them while clay is fired by hand toward A Kiln Load; Charcoal is done when it
+    // is taken.
+    let clamp = site.clamp.expect("the clamp set down for Fire the Clay");
+    f.tend_clamp(clamp, Some(log));
+    while f.have(charcoal) < 16 {
+        let more = f.have(fired) + 1;
+        f.fire_clay(&Site { clamp: None, ..site.clone() }, more);
+        f.tend_clamp(clamp, Some(log));
+        // The charcoal must come from taking it (which counts it cooked), not from a clamp
+        // broken open.
+        let stands = f.c.world.block(clamp).map(|b| f.c.content.blocks.def(b).name.clone()).unwrap_or_default();
+        assert!(stands.starts_with("base:earth_clamp"), "the clamp at {clamp} is {stands} at {:.1} s, with {} charcoal", f.secs(), f.have(charcoal));
+    }
     f.mark("charcoal");
     f.make_room(8);
 
@@ -7704,6 +7875,7 @@ const FRESH_QUESTS: &[(&str, &str)] = &[
     ("an_axe_to_it", "an_axe_to_it"),
     ("stone_in_hand", "stone_in_hand"),
     ("first_night", "first_night"),
+    ("a_tempting_bite", "a_tempting_bite"),
     ("a_bed_of_your_own", "a_bed_of_your_own"),
     ("torchlight", "torchlight"),
     ("hearth_lit", "homestead_hearth"),
