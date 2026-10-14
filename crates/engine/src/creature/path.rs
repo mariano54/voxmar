@@ -7,7 +7,7 @@
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
-use glam::IVec3;
+use glam::{IVec3, Vec3};
 use rustc_hash::FxHashMap;
 
 use super::motion::{SAFE_DROP, Surroundings};
@@ -21,9 +21,10 @@ pub struct Walker {
     pub climbs: bool,
     /// Whether water two deep is a wall to it (a land animal).
     pub wary: bool,
-    /// Whether its body is wider than a block (a bear, an aurochs): it needs a square two
-    /// blocks across about a cell to get through it, not the cell alone.
-    pub wide: bool,
+    /// Blocks across its body takes up (`span_of` its width): a bear or an aurochs takes a
+    /// square two across, the Rootmother three. A way for it is a way of such squares,
+    /// each named by its corner cell (least x and z).
+    pub span: i32,
 }
 
 /// The most cells a search looks at, and how far from where it starts it looks: a short way
@@ -32,47 +33,147 @@ pub const BUDGET: usize = 1500;
 pub const RANGE: i32 = 24;
 
 impl Walker {
-    /// Whether it can stand with its feet in `cell`.
+    /// Blocks across a body `width` wide takes up.
+    pub fn span_of(width: f32) -> i32 {
+        (width - 1e-3).ceil().max(1.0) as i32
+    }
+
+    /// The corner cell of the square a body centred at `at` stands in.
+    pub fn corner(&self, at: Vec3) -> IVec3 {
+        let half = (self.span - 1) as f32 * 0.5;
+        IVec3::new((at.x - half).floor() as i32, at.y.floor() as i32, (at.z - half).floor() as i32)
+    }
+
+    /// Where a body stands in the middle of the square with corner `cell`, at its feet.
+    pub fn middle(&self, cell: IVec3) -> Vec3 {
+        let half = self.span as f32 * 0.5;
+        cell.as_vec3() + Vec3::new(half, 0.0, half)
+    }
+
+    /// Whether it can stand in the square with corner `cell`.
     pub fn stands(&self, world: &impl Surroundings, cell: IVec3) -> bool {
-        if !world.solid(cell - IVec3::Y) && !(world.water(cell) && !self.wary) {
-            return false;
-        }
-        if self.wary && world.water(cell) && world.water(cell - IVec3::Y) {
-            return false;
-        }
-        self.clear(world, cell)
+        Looker::new(world, *self, None).stands(cell)
+    }
+}
+
+/// What a search has learnt of one cell, as bits: `OPEN_KNOWN` and `OPEN` (the column from
+/// it up is open as high as the walker stands), `GROUND_KNOWN` and the rest (what is in it
+/// and under it).
+const OPEN_KNOWN: u8 = 1;
+const OPEN: u8 = 2;
+const GROUND_KNOWN: u8 = 4;
+/// Solid under the cell.
+const FLOOR: u8 = 8;
+/// Water in the cell.
+const WET: u8 = 16;
+/// Water in the cell and under it (two deep for a land animal).
+const DEEP: u8 = 32;
+
+/// How far up and down from where a search starts it keeps what it learns; beyond that it
+/// looks again each time.
+const DEPTH: i32 = 8;
+
+/// A walker in a world, keeping what it has looked at for the length of a search in a grid
+/// about where it started, so a column is looked at once however many squares hold it.
+struct Looker<'a, W> {
+    world: &'a W,
+    walker: Walker,
+    /// The grid's least corner, and what it holds of each cell.
+    origin: IVec3,
+    known: Vec<std::cell::Cell<u8>>,
+}
+
+/// Cells across the grid a search keeps.
+const ACROSS: i32 = 2 * (RANGE + 2) + 4;
+
+impl<'a, W: Surroundings> Looker<'a, W> {
+    /// A looker keeping what it learns about `about` (none kept for `None`).
+    fn new(world: &'a W, walker: Walker, about: Option<IVec3>) -> Self {
+        let span = walker.span.max(1);
+        let origin = about.map_or(IVec3::ZERO, |at| at - IVec3::new(RANGE + 2, DEPTH, RANGE + 2));
+        let size = about.map_or(0, |_| ((ACROSS + span) * (ACROSS + span) * 2 * DEPTH) as usize);
+        Self { world, walker, origin, known: vec![std::cell::Cell::new(0); size] }
     }
 
-    /// Whether its body fits upright with its feet in `cell`: for a wide one, in one of
-    /// the four squares two across that hold the cell.
-    fn clear(&self, world: &impl Surroundings, cell: IVec3) -> bool {
-        let open = |c: IVec3| (0..self.height).all(|h| !world.solid(c + IVec3::Y * h));
-        if !self.wide {
-            return open(cell);
+    /// Where the grid keeps `cell`, if it does.
+    fn slot(&self, cell: IVec3) -> Option<&std::cell::Cell<u8>> {
+        let across = ACROSS + self.walker.span.max(1);
+        let d = cell - self.origin;
+        if d.x < 0 || d.z < 0 || d.y < 0 || d.x >= across || d.z >= across || d.y >= 2 * DEPTH {
+            return None;
         }
-        open(cell)
-            && [(-1, -1), (-1, 0), (0, -1), (0, 0)].iter().any(|&(x, z)| {
-                let corner = cell + IVec3::new(x, 0, z);
-                [(0, 0), (1, 0), (0, 1), (1, 1)].iter().all(|&(dx, dz)| open(corner + IVec3::new(dx, 0, dz)))
-            })
+        self.known.get(((d.y * across + d.z) * across + d.x) as usize)
     }
 
-    /// Where it can go in one step from `cell` toward (dx, dz): level, a block up, or down
-    /// a short drop; diagonals only where both sides are open, so it cuts no corner.
-    fn step(&self, world: &impl Surroundings, cell: IVec3, dx: i32, dz: i32) -> Option<IVec3> {
-        if dx != 0 && dz != 0 && !(self.clear(world, cell + IVec3::new(dx, 0, 0)) && self.clear(world, cell + IVec3::new(0, 0, dz))) {
+    /// Whether the column from `cell` up is open as high as it stands.
+    fn open(&self, cell: IVec3) -> bool {
+        let slot = self.slot(cell);
+        if let Some(bits) = slot.map(|s| s.get()).filter(|b| b & OPEN_KNOWN != 0) {
+            return bits & OPEN != 0;
+        }
+        let open = (0..self.walker.height).all(|h| !self.world.solid(cell + IVec3::Y * h));
+        if let Some(slot) = slot {
+            slot.set(slot.get() | OPEN_KNOWN | if open { OPEN } else { 0 });
+        }
+        open
+    }
+
+    /// What is in `cell` and under it (`FLOOR`, `WET`, `DEEP`).
+    fn ground(&self, cell: IVec3) -> u8 {
+        let slot = self.slot(cell);
+        if let Some(bits) = slot.map(|s| s.get()).filter(|b| b & GROUND_KNOWN != 0) {
+            return bits;
+        }
+        let wet = self.world.water(cell);
+        let deep = wet && self.world.water(cell - IVec3::Y);
+        let bits = if self.world.solid(cell - IVec3::Y) { FLOOR } else { 0 } | if wet { WET } else { 0 } | if deep { DEEP } else { 0 };
+        if let Some(slot) = slot {
+            slot.set(slot.get() | GROUND_KNOWN | bits);
+        }
+        bits
+    }
+
+    /// The cells of the square with corner `cell`.
+    fn square(&self, cell: IVec3) -> impl Iterator<Item = IVec3> + use<W> {
+        let span = self.walker.span;
+        (0..span).flat_map(move |x| (0..span).map(move |z| cell + IVec3::new(x, 0, z)))
+    }
+
+    /// Whether its body fits upright in the square with corner `cell`.
+    fn clear(&self, cell: IVec3) -> bool {
+        self.square(cell).all(|c| self.open(c))
+    }
+
+    /// Whether it can stand in the square with corner `cell`: the square clear, something
+    /// under one of its columns to stand on (or water to swim in, for one not wary of it),
+    /// and, for a land animal, none of it over water two deep. Across a ditch narrower than
+    /// it, a wide body stands on the banks.
+    fn stands(&self, cell: IVec3) -> bool {
+        let wary = self.walker.wary;
+        self.clear(cell)
+            && self.square(cell).any(|c| self.ground(c) & if wary { FLOOR } else { FLOOR | WET } != 0)
+            && !(wary && self.square(cell).any(|c| self.ground(c) & DEEP != 0))
+    }
+
+    /// Where it can go in one step from the square at `cell` toward (dx, dz): level, a
+    /// block up, or down a short drop; diagonals only where the squares to either side are
+    /// clear, so it cuts no corner.
+    fn step(&self, cell: IVec3, dx: i32, dz: i32) -> Option<IVec3> {
+        if dx != 0 && dz != 0 && !(self.clear(cell + IVec3::new(dx, 0, 0)) && self.clear(cell + IVec3::new(0, 0, dz))) {
             return None;
         }
         let flat = cell + IVec3::new(dx, 0, dz);
-        if self.stands(world, flat) {
+        if self.stands(flat) {
             return Some(flat);
         }
-        if world.solid(flat) {
+        if self.square(flat).any(|c| self.world.solid(c)) {
+            // Up a block: room over its head where it stands to jump, and the square up.
             let up = flat + IVec3::Y;
-            return (self.climbs && dx * dz == 0 && !world.solid(cell + IVec3::Y * self.height) && self.stands(world, up)).then_some(up);
+            let headroom = || self.square(cell).all(|c| !self.world.solid(c + IVec3::Y * self.walker.height));
+            return (self.walker.climbs && dx * dz == 0 && headroom() && self.stands(up)).then_some(up);
         }
-        // Over the edge: it drops while the column is open, as far as a short drop.
-        (1..=SAFE_DROP).map(|d| flat - IVec3::Y * d).take_while(|&c| self.clear(world, c)).find(|&c| self.stands(world, c))
+        // Over the edge: it drops while the square is clear, as far as a short drop.
+        (1..=SAFE_DROP).map(|d| flat - IVec3::Y * d).take_while(|&c| self.clear(c)).find(|&c| self.stands(c))
     }
 }
 
@@ -96,9 +197,11 @@ impl PartialOrd for Open {
     }
 }
 
-/// The cells, after `from`, that take a walker to within a block of `to`, if there is such
-/// a way near `from` (within `RANGE`, looking at no more than `BUDGET` cells).
+/// The squares (by corner cell, see `Walker`), after `from`, that take a walker to within
+/// a block of `to`, if there is such a way near `from` (within `RANGE`, looking at no more
+/// than `BUDGET` squares).
 pub fn find(world: &impl Surroundings, walker: &Walker, from: IVec3, to: IVec3) -> Option<Vec<IVec3>> {
+    let looker = Looker::new(world, *walker, Some(from));
     let near = |c: IVec3| (c.x - to.x).abs() <= 1 && (c.z - to.z).abs() <= 1 && (c.y - to.y).abs() <= 1;
     let guess = |c: IVec3| {
         let (dx, dz) = ((c.x - to.x).abs() as f32, (c.z - to.z).abs() as f32);
@@ -124,7 +227,7 @@ pub fn find(world: &impl Surroundings, walker: &Walker, from: IVec3, to: IVec3) 
         }
         let cost = came[&cell].1;
         for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)] {
-            let Some(next) = walker.step(world, cell, dx, dz) else { continue };
+            let Some(next) = looker.step(cell, dx, dz) else { continue };
             if (next.x - from.x).abs() > RANGE || (next.z - from.z).abs() > RANGE {
                 continue;
             }
@@ -157,7 +260,7 @@ mod tests {
         }
     }
 
-    const WOLF: Walker = Walker { height: 1, climbs: true, wary: true, wide: false };
+    const WOLF: Walker = Walker { height: 1, climbs: true, wary: true, span: 1 };
 
     #[test]
     fn a_way_goes_through_the_door_and_up_the_step() {
@@ -182,11 +285,85 @@ mod tests {
 
     #[test]
     fn a_wide_body_takes_no_way_through_a_doorway_one_block_across_but_does_through_two() {
-        let bear = Walker { wide: true, ..WOLF };
+        let bear = Walker { span: 2, ..WOLF };
         assert_eq!(find(&Yard { door: Some(5) }, &bear, IVec3::new(-3, 0, 0), IVec3::new(3, 0, 0)), None);
         assert!(find(&Yard { door: Some(5) }, &WOLF, IVec3::new(-3, 0, 0), IVec3::new(3, 0, 0)).is_some());
         let way = find(&Wide, &bear, IVec3::new(-3, 0, 0), IVec3::new(3, 0, 0)).expect("a way through the wide door");
         assert!(way.iter().any(|c| c.x == 0), "it never went through the door: {way:?}");
+    }
+
+    /// A wall two thick, its doorways a block apart: two across through the near side
+    /// (z = 2, 3) and through the far side (z = 3, 4). Each cell of either is in some square
+    /// two across that is open, but no square two across goes through both.
+    struct Staggered;
+
+    impl Surroundings for Staggered {
+        fn solid(&self, c: IVec3) -> bool {
+            c.y < 0 || (c.y < 3 && ((c.x == 0 && !(2..=3).contains(&c.z)) || (c.x == 1 && !(3..=4).contains(&c.z))))
+        }
+        fn water(&self, _: IVec3) -> bool {
+            false
+        }
+    }
+
+    #[test]
+    fn a_wide_body_takes_no_way_through_a_staggered_wall_two_thick() {
+        let bear = Walker { height: 2, span: 2, ..WOLF };
+        assert_eq!(find(&Staggered, &bear, IVec3::new(-4, 0, 3), IVec3::new(5, 0, 3)), None);
+        assert!(find(&Staggered, &WOLF, IVec3::new(-4, 0, 3), IVec3::new(5, 0, 3)).is_some());
+    }
+
+    /// Flat ground with a ditch a block across and a block deep along x = 0, dry or with
+    /// water in it.
+    struct Ditch {
+        wet: bool,
+    }
+
+    impl Surroundings for Ditch {
+        fn solid(&self, c: IVec3) -> bool {
+            c.y < if c.x == 0 { -1 } else { 0 }
+        }
+        fn water(&self, c: IVec3) -> bool {
+            self.wet && c.x == 0 && c.y == -1
+        }
+    }
+
+    #[test]
+    fn a_wide_body_steps_over_a_ditch_a_block_across() {
+        let bear = Walker { height: 2, span: 2, ..WOLF };
+        for wet in [false, true] {
+            for walker in [WOLF, bear] {
+                let way = find(&Ditch { wet }, &walker, IVec3::new(-4, 0, 0), IVec3::new(4, 0, 0));
+                assert!(way.is_some(), "no way over the ditch (wet: {wet}) for {walker:?}");
+            }
+            let way = find(&Ditch { wet }, &bear, IVec3::new(-4, 0, 0), IVec3::new(4, 0, 0)).unwrap();
+            assert!(way.iter().all(|c| c.y == 0), "it went down into the ditch (wet: {wet}): {way:?}");
+        }
+    }
+
+    /// Flat ground, a step a block up from x = 3, and (`beams`) a beam two blocks up at
+    /// x = 1 over every other z.
+    struct Beams {
+        beams: bool,
+    }
+
+    impl Surroundings for Beams {
+        fn solid(&self, c: IVec3) -> bool {
+            c.y < 0 || (c.x >= 3 && c.y < 1) || (self.beams && c.x == 1 && c.y == 2 && c.z.rem_euclid(2) == 1)
+        }
+        fn water(&self, _: IVec3) -> bool {
+            false
+        }
+    }
+
+    /// A body two across and two tall jumps up the step only with headroom over all four
+    /// columns it stands in: under a beam over one of them, it would hit its head.
+    #[test]
+    fn a_wide_body_jumps_only_with_headroom_over_all_its_square() {
+        let bear = Walker { height: 2, span: 2, ..WOLF };
+        let (from, to) = (IVec3::new(-3, 0, 0), IVec3::new(5, 1, 0));
+        assert!(find(&Beams { beams: false }, &bear, from, to).is_some());
+        assert_eq!(find(&Beams { beams: true }, &bear, from, to), None);
     }
 
     /// A wall along x = 0 with a doorway two blocks across at z = 4 and 5.
@@ -198,6 +375,64 @@ mod tests {
         }
         fn water(&self, _: IVec3) -> bool {
             false
+        }
+    }
+}
+
+#[cfg(test)]
+mod cost {
+    use std::cell::Cell;
+
+    use super::*;
+
+    /// Counts the block lookups a search makes.
+    struct Counted<'a, W>(&'a W, Cell<u64>);
+
+    impl<W: Surroundings> Surroundings for Counted<'_, W> {
+        fn solid(&self, c: IVec3) -> bool {
+            self.1.set(self.1.get() + 1);
+            self.0.solid(c)
+        }
+        fn water(&self, c: IVec3) -> bool {
+            self.1.set(self.1.get() + 1);
+            self.0.water(c)
+        }
+    }
+
+    /// A wall along x = 0, a doorway `door` blocks across at z = 4 and on.
+    struct Door(i32);
+
+    impl Surroundings for Door {
+        fn solid(&self, c: IVec3) -> bool {
+            c.y < 0 || (c.x == 0 && c.y < 3 && !(4..4 + self.0).contains(&c.z))
+        }
+        fn water(&self, _: IVec3) -> bool {
+            false
+        }
+    }
+
+    /// Block lookups and time per search, for a body a block across and one two across,
+    /// at a wall with no doorway (a failed search), one a block across (failed for the wide
+    /// one) and one two across.
+    /// `cargo test -p voxmar_engine --release search_cost -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn search_cost() {
+        let wolf = Walker { height: 1, climbs: true, wary: true, span: 1 };
+        let bear = Walker { height: 2, span: 2, ..wolf };
+        for (name, walker) in [("wolf", wolf), ("bear", bear)] {
+            for door in [0, 1, 2] {
+                let world = Counted(&Door(door), Cell::new(0));
+                let found = find(&world, &walker, IVec3::new(-3, 0, 0), IVec3::new(3, 0, 0)).is_some();
+                let lookups = world.1.get();
+                let runs = 50;
+                let at = std::time::Instant::now();
+                for _ in 0..runs {
+                    std::hint::black_box(find(&Door(door), &walker, IVec3::new(-3, 0, 0), IVec3::new(3, 0, 0)));
+                }
+                let ms = at.elapsed().as_secs_f64() * 1000.0 / runs as f64;
+                println!("{name} door {door}: found {found}, {lookups} lookups, {ms:.3} ms");
+            }
         }
     }
 }

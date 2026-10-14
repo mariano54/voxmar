@@ -620,7 +620,7 @@ impl Server {
     /// where a body `height` blocks tall stands.
     fn shore_for(&self, at: Vec3, height: i32) -> Option<IVec3> {
         let ground = Ground::of(self);
-        let walker = path::Walker { height, climbs: true, wary: true, wide: false };
+        let walker = path::Walker { height, climbs: true, wary: true, span: 1 };
         let feet = at.floor().as_ivec3();
         (1..=SHORE_RANGE).find_map(|r| {
             (-r..=r)
@@ -692,9 +692,11 @@ impl Server {
                 // goal moved. A search that found nothing is tried again a second on, from
                 // wherever it has got to.
                 let going_round = creature.detour != 0.0 || creature.stuck > 0.5;
+                // Its way is of squares as wide as it is, and it makes for each one's middle.
+                let span = path::Walker::span_of(body.size.0);
+                let walker = path::Walker { height: body.size.1.ceil() as i32, climbs: movement.jump > 0.0, wary: water == Water::Land, span };
                 if (going_round || !cells.is_empty()) && stale && self.tick >= creature.way_at + TICKS_PER_SECOND as u64 {
-                    let walker = path::Walker { height: body.size.1.ceil() as i32, climbs: movement.jump > 0.0, wary: water == Water::Land, wide: body.size.0 > 1.0 };
-                    let found = path::find(&Ground::of(self), &walker, (body.position + Vec3::Y * 0.01).floor().as_ivec3(), to);
+                    let found = path::find(&Ground::of(self), &walker, walker.corner(body.position + Vec3::Y * 0.01), walker.corner(goal));
                     #[cfg(test)]
                     tick_cost_tests::SEARCHES.with(|n| n.set((n.get().0 + 1, n.get().1 + found.is_none() as u64)));
                     searched = Some((found.is_some().then_some(to), self.tick));
@@ -702,7 +704,7 @@ impl Server {
                 }
                 // At a cell (beside it, at its level), or already nearer the one after: on to
                 // the next, so it never turns back for a cell it brushed past.
-                let off = |cell: &IVec3| (cell.as_vec3() + Vec3::new(0.5, 0.0, 0.5) - body.position).with_y(0.0).length();
+                let off = |cell: &IVec3| (walker.middle(*cell) - body.position).with_y(0.0).length();
                 while let Some(cell) = cells.first() {
                     let level = (cell.y as f32 - body.position.y).abs() < 1.2;
                     if !(level && (off(cell) < 0.6 || cells.get(1).is_some_and(|after| off(after) < 1.0))) {
@@ -710,7 +712,7 @@ impl Server {
                     }
                     cells.remove(0);
                 }
-                let wish = cells.first().map_or(drive.wish, |cell| (cell.as_vec3() + Vec3::new(0.5, 0.0, 0.5) - body.position).with_y(0.0).normalize_or_zero());
+                let wish = cells.first().map_or(drive.wish, |cell| (walker.middle(*cell) - body.position).with_y(0.0).normalize_or_zero());
                 let (heading, side) = motion::steer(&body, &Ground::of(self), movement, water, wish, creature.detour);
                 way = cells;
                 (Drive { wish: heading, ..drive }, side)
@@ -730,7 +732,9 @@ impl Server {
                 creature.stuck = creature.stuck.max(NO_WAY_STUCK);
             }
         }
-        let mut balked = false;
+        let (mut balked, mut no_way) = (false, false);
+        // Its last look for a way, lately, found none.
+        let no_way_lately = creature.way_to.is_none() && creature.way_at != 0 && self.tick < creature.way_at + 3 * TICKS_PER_SECOND as u64;
         // Stuck against something for two seconds, or going round it for four: give up the
         // goal.
         let gained = body.position.distance(before) >= drive.speed * dt * 0.2;
@@ -754,10 +758,13 @@ impl Server {
                         creature.balked = 0;
                         creature.gave_up_at = Some(self.tick);
                         balked = true;
+                        no_way = no_way_lately;
                     }
                 }
             }
-        } else {
+        } else if !no_way_lately {
+            // A tick's headway does not clear the clock of one that lately found no way:
+            // jostled along the wall in a doorway too narrow for it, it is getting nowhere.
             creature.stuck = 0.0;
         }
         if body != creature.body {
@@ -766,7 +773,10 @@ impl Server {
         }
         let handoff = self.overworld.settlement_people().live.handoff;
         if balked && self.villagers.errand(id, handoff).is_none() && self.wandering.errand(id).is_none() {
-            self.creatures.live.get_mut(&id).expect("still there").mind.give_up();
+            // With no way to its target at all, struck again soon it runs rather than come
+            // back to the fence (`Memory::NoWay`).
+            let mind = &mut self.creatures.live.get_mut(&id).expect("still there").mind;
+            if no_way { mind.find_no_way() } else { mind.give_up() }
         }
         if body.position.y < -64.0 {
             self.creatures.live.remove(&id);
@@ -3180,6 +3190,48 @@ pub(crate) mod tick_cost_tests {
             measure(&mut server, biome, 60);
         }
     }
+
+    /// Counts the block lookups a search makes.
+    struct Counted<'a>(Ground<'a>, std::cell::Cell<u64>);
+
+    impl motion::Surroundings for Counted<'_> {
+        fn solid(&self, c: IVec3) -> bool {
+            self.1.set(self.1.get() + 1);
+            self.0.solid(c)
+        }
+        fn water(&self, c: IVec3) -> bool {
+            self.1.set(self.1.get() + 1);
+            self.0.water(c)
+        }
+    }
+
+    /// Block lookups and time per path search on the server's own ground, in a pen with a
+    /// wall across it: no doorway (a search that finds nothing), one a block across (none
+    /// for a body two across) and one two across; for a body a block across and one two.
+    /// `cargo test -p voxmar_server --release search_cost_on_the_ground -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn search_cost_on_the_ground() {
+        let wolf = path::Walker { height: 1, climbs: true, wary: true, span: 1 };
+        let bear = path::Walker { height: 2, span: 2, ..wolf };
+        for door in [0, 1, 2] {
+            let mut server = crate::test_server();
+            let c = pen(&mut server, 30);
+            super::cornered_tests::wall(&mut server, (-29..=29).filter(|z| !(0..door).contains(z)).map(|z| c + IVec3::new(0, 0, z)), 3);
+            for (name, walker) in [("wolf", wolf), ("bear", bear)] {
+                let (from, to) = (c + IVec3::new(-4, 0, 0), c + IVec3::new(4, 0, 0));
+                let counted = Counted(Ground::of(&server), std::cell::Cell::new(0));
+                let found = path::find(&counted, &walker, from, to).is_some();
+                let runs = 50;
+                let at = Instant::now();
+                for _ in 0..runs {
+                    std::hint::black_box(path::find(&Ground::of(&server), &walker, from, to));
+                }
+                let ms = at.elapsed().as_secs_f64() * 1000.0 / runs as f64;
+                println!("{name} door {door}: found {found}, {} lookups, {ms:.3} ms", counted.1.get());
+            }
+        }
+    }
 }
 
 /// The gate's boss step: the Rootmother summoned on the creatures' pad (stone underfoot,
@@ -3268,7 +3320,9 @@ mod fight_tests {
     use super::cornered_tests::{join, pen, put, wall};
     use super::*;
 
-    pub(super) const FIGHTERS: [&str; 4] = ["base:wolf", "base:brown_bear", "base:badger", "base:aurochs"];
+    pub(super) const FIGHTERS: [&str; 5] = ["base:wolf", "base:brown_bear", "base:badger", "base:aurochs", "base:bison"];
+    /// The fighters wider than a block, which take no way through a doorway a block across.
+    pub(super) const WIDE: [&str; 3] = ["base:brown_bear", "base:aurochs", "base:bison"];
     pub(super) const PREY: [&str; 5] = ["base:red_deer", "base:mouflon", "base:wild_boar", "base:rabbit", "base:junglefowl"];
 
     #[derive(Debug, Default)]
@@ -3288,7 +3342,7 @@ mod fight_tests {
     /// creature starts.
     pub(super) type Scene = fn(&mut Server, IVec3) -> (Vec3, Vec3);
 
-    pub(super) fn scenes() -> [(&'static str, Scene); 6] {
+    pub(super) fn scenes() -> [(&'static str, Scene); 8] {
         [
             ("wall back", |_, c| {
                 // The player with their back to the pen's wall.
@@ -3302,6 +3356,18 @@ mod fight_tests {
             ("past door", |s, c| {
                 wall(s, (-13..=13).filter(|&z| z != 3).map(|z| c + IVec3::new(1, 0, z)), 3);
                 (c.as_vec3() + Vec3::new(3.0, 0.0, 3.5), c.as_vec3() + Vec3::new(-4.5, 0.0, 0.5))
+            }),
+            ("past wide door", |s, c| {
+                // The doorway two across (z = 3 and 4): wide enough for a bear.
+                wall(s, (-13..=13).filter(|z| !(3..=4).contains(z)).map(|z| c + IVec3::new(1, 0, z)), 3);
+                (c.as_vec3() + Vec3::new(3.0, 0.0, 4.0), c.as_vec3() + Vec3::new(-4.5, 0.0, 0.5))
+            }),
+            ("staggered", |s, c| {
+                // A wall two thick, its doorways two across a block apart (z = 2, 3 through
+                // the near side, 3, 4 through the far): a way a block across, none wider.
+                wall(s, (-13..=13).filter(|z| !(2..=3).contains(z)).map(|z| c + IVec3::new(1, 0, z)), 3);
+                wall(s, (-13..=13).filter(|z| !(3..=4).contains(z)).map(|z| c + IVec3::new(2, 0, z)), 3);
+                (c.as_vec3() + Vec3::new(4.0, 0.0, 3.5), c.as_vec3() + Vec3::new(-4.5, 0.0, 0.5))
             }),
             ("wall end", |s, c| {
                 // A wall along x = 1 from the pen's edge to z = 2; the player just round its end.
@@ -3384,34 +3450,28 @@ mod fight_tests {
     }
 
     /// Every fighter, in every scene it fits, strikes back within 3 s and presses a wall for
-    /// under 2 s of the 20. Too wide for the doorway (a bear, an aurochs, with the player
-    /// past it), it tries for a few seconds and gives up out of the player's reach. Before:
-    /// those two pressed the wall beside the doorway 19 s of the 20 under the player's
-    /// blows, their way round planned through a gap their bodies could not pass.
+    /// under 2 s of the 20. Too wide for the way to the player (a bear, an aurochs, a bison,
+    /// with the player past a doorway a block across or a staggered wall), it presses for
+    /// under 4 s, gives up, and struck again runs (`Memory::NoWay`). Before: those pressed
+    /// the wall beside the doorway 19 s of the 20 under the player's blows, their way round
+    /// planned through a gap their bodies could not pass; and a bison jostled in the near
+    /// doorway of the staggered wall pressed it 17.7 s, each tick's headway clearing its
+    /// stuck clock.
     #[test]
     fn fighters_at_walls_and_doorways_strike_back_or_give_up_rather_than_press() {
         for (scene, set) in scenes() {
             for name in FIGHTERS {
                 let f = fight(name, set, 20.0);
-                let wide = matches!(name, "base:brown_bear" | "base:aurochs");
-                if scene == "past door" && wide {
-                    assert!(f.pressing < 6.0, "{scene}: {name} pressed the wall {:.1} s", f.pressing);
-                    assert!(f.strikes == 0, "{scene}: {name} struck through a doorway it cannot pass");
+                if matches!(scene, "past door" | "staggered") && WIDE.contains(&name) {
+                    assert!(f.pressing < 4.0, "{scene}: {name} pressed the wall {:.1} s", f.pressing);
+                    assert!(f.strikes == 0, "{scene}: {name} struck through a way it cannot pass");
+                    assert!(f.last > 3.5, "{scene}: {name} ended {:.2} blocks from the player, in their reach", f.last);
                 } else {
                     assert!(f.first.is_some_and(|s| s < 3.0), "{scene}: {name} first struck at {:?}", f.first);
                     assert!(f.pressing < 2.0, "{scene}: {name} pressed the wall {:.1} s", f.pressing);
                 }
             }
         }
-    }
-
-    /// The bear too wide for the doorway, with the player past it striking it whenever it is
-    /// within reach: it ends out of their reach, not at the wall.
-    #[test]
-    fn a_bear_too_wide_for_a_doorway_ends_out_of_reach() {
-        let (_, set) = scenes().into_iter().find(|(s, _)| *s == "past door").expect("the scene");
-        let f = fight("base:brown_bear", set, 20.0);
-        assert!(f.last > 3.5, "the bear ended {:.2} blocks from the player", f.last);
     }
 
     /// Prints the table (`cargo test -p voxmar_server --lib fight_table -- --ignored --nocapture`).
