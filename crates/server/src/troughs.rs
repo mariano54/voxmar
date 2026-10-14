@@ -132,7 +132,7 @@ mod tests {
         let (server, fox, _) = pen(&[("base:wheat", 4)]);
         assert_eq!(server.trough_for(fox), None, "a fox went to wheat");
         // Its meat it eats, one, and is fed.
-        let (mut server, fox, trough) = pen(&[("base:wheat", 4), ("base:raw_chicken", 2)]);
+        let (mut server, fox, trough) = pen(&[("base:wheat", 4), ("base:raw_small_game", 2)]);
         assert_eq!(server.needs_of(fox).food, Met::No);
         assert_eq!(server.trough_for(fox), Some(trough));
         assert!(server.eat_from_trough(fox, trough));
@@ -158,7 +158,7 @@ mod tests {
     /// straight off is not.
     #[test]
     fn a_trough_in_the_pens_far_corner_is_past_the_leash() {
-        let (mut server, fox, trough) = pen(&[("base:raw_chicken", 2)]);
+        let (mut server, fox, trough) = pen(&[("base:raw_small_game", 2)]);
         let middle = trough.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
         server.creatures.live.get_mut(&fox).unwrap().home = middle - Vec3::new(6.0, 0.0, 6.0);
         assert_eq!(server.trough_for(fox), None, "a trough past the leash's reach was chosen");
