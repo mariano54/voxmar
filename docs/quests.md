@@ -278,9 +278,9 @@ does not know.
 | Measure | Nomad before | Nomad after | Farm before | Farm after |
 |---|---|---|---|---|
 | Open at once along the kiln bot's run (max, median) | 17, 14.5 | 9, 6.5 | 13, 8 | 13, 8 |
-| Open at once, clearing the age one quest at a time (max, median) | 16, 11 | 13, 9 | 15, 12 | 14, 11 |
+| Open at once, clearing the age one quest at a time (max, median) | 16, 11 | 13, 9 | 15, 12 | 15, 11 |
 | Starts (quests after nothing in the age) | 10 | 4 | 8 | 8 |
-| Columns, and the tallest | 7, 14 | 8, 13 | 11, 13 | 10, 12 |
+| Columns, and the tallest | 7, 14 | 8, 13 | 11, 13 | 10, 13 |
 
 These counts come from the quest data and twelve logs of the kiln bot; along the bot's run
 a Farm count includes every quest open since the hearth was lit.
