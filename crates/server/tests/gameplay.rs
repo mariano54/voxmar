@@ -7411,8 +7411,7 @@ fn the_first_days(f: &mut Fresh) -> Site {
     let mut drawn = f.waited(10.0, |c| quest_status(c, "a_tempting_bite").0);
     if !drawn {
         f.walk_toward(Fresh::middle(f.rel(-9, 0, 2)), 0.3);
-        let at = f.rel(-9, 0, -3);
-        f.c.ok(&format!("/summon junglefowl 1 {} {} {}", at.x, at.y, at.z));
+        f.stock("junglefowl", -3);
         f.hold("base:wheat_seeds");
         drawn = f.waited(20.0, |c| quest_status(c, "a_tempting_bite").0);
     }
