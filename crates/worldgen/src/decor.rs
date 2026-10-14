@@ -972,3 +972,72 @@ fn lerp((lo, hi): (f32, f32), t: f32) -> f32 {
 fn unit(bits: u64) -> f32 {
     (bits & 0xff_ffff) as f32 / (1u32 << 24) as f32
 }
+
+#[cfg(test)]
+mod bee_tests {
+    use std::collections::HashMap;
+
+    use voxmar_engine::content::Content;
+
+    use super::*;
+
+    /// The Humming in the Meadow quest tells where wild bees nest; it names every biome the
+    /// nest decoration grows in, by the biome's own English name, so the hint stays true
+    /// to the world data.
+    #[test]
+    fn the_bee_quest_names_every_biome_wild_bees_nest_in() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        let content = Content::load(&dir).unwrap();
+        let world = WorldContent::load(&content).unwrap();
+        let english: HashMap<String, String> = ron::from_str(&std::fs::read_to_string(dir.join("base/lang/en.ron")).unwrap()).unwrap();
+        let hint = &english["quest.base.humming_in_the_meadow.why"];
+        let nest = world.decorations.iter().find(|d| d.name == "base:bee_nest").expect("the nest decoration");
+        let mut found = Vec::new();
+        for biome in &world.biomes {
+            let selects = biome.flora.decorations.clone().unwrap_or_else(|| biome.tags.iter().map(|t| Select::Tag(t.clone(), 1.0)).collect());
+            if selected(&selects, &biome.flora.exclude, &nest.name, nest.tags.iter().map(String::as_str)) <= 0.0 {
+                continue;
+            }
+            let key = format!("biome.{}", biome.name.replacen(':', ".", 1));
+            let name = english.get(&key).unwrap_or_else(|| panic!("no English name for {}", biome.name));
+            assert!(hint.contains(name.as_str()), "wild bees nest in the {name}, which the quest does not name");
+            found.push(name.clone());
+        }
+        assert!(!found.is_empty(), "wild bees nest nowhere");
+    }
+}
+
+/// How many wild nests generation makes: flowering columns on a few seeds, nests counted.
+/// Slow; run by hand (`--ignored --nocapture`) after changing the nest decoration.
+#[cfg(test)]
+#[test]
+#[ignore]
+fn wild_nest_census() {
+    use voxmar_engine::coords::ColumnPos;
+    use crate::Generator;
+    let registry = std::sync::Arc::new(crate::test_registry());
+    let nest = registry.expect("base:bee_nest");
+    for seed in [1u64, 2, 3] {
+        let world = crate::Overworld::new(seed, registry.clone());
+        let (mut columns, mut nests) = (0, 0);
+        for cz in -40..40 {
+            for cx in -40..40 {
+                let site = world.site(cx * 32 + 16, cz * 32 + 16);
+                let biome = world.biomes().get(site.biome);
+                if !biome.tags.iter().any(|t| t == "flowers" || t == "blossom") {
+                    continue;
+                }
+                columns += 1;
+                let column = world.generate(ColumnPos::new(cx, cz));
+                for y in 40..voxmar_engine::coords::WORLD_HEIGHT {
+                    for z in 0..32 {
+                        for x in 0..32 {
+                            nests += usize::from(column.block(voxmar_engine::glam::IVec3::new(x, y, z)) == nest);
+                        }
+                    }
+                }
+            }
+        }
+        println!("seed {seed}: {columns} flowering columns, {nests} nests");
+    }
+}

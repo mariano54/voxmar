@@ -1,0 +1,35 @@
+// Bees (engine/src/bees.rs, server apiary.rs, docs/bees.md). Wild bees nest at the foot of
+// trees where flowers grow thick (decorations.ron's `bee_nest`); a skep held up to a nest
+// under smoke takes the swarm home, and a kept skep fills with honey while its bees forage.
+(
+    // What a right click on bees takes (`base:tend_bees`), the first that fits what is in
+    // hand: what the held item and the block become, what it gives (a crop's harvest), and
+    // the Farming level it asks (skills.ron: bees at 12) and teaches. Without smoke near,
+    // the bees sting; a swarm then stays put, while honey is taken all the same.
+    takes: [
+        (block: "bee_nest", holding: Some("skep"), held_becomes: Some("bee_skep"), becomes: "core:air", level: 12, xp: 60.0, needs_smoke: true),
+        (
+            block: "honey_skep", becomes: "bee_skep", level: 12, xp: 45.0,
+            gives: [(item: "honey", count: (2, 3)), (item: "beeswax", chance: 0.5, rarity: Uncommon)],
+        ),
+    ],
+    // Kept hives. They fill after `minutes` of foraging at full pace, which `nectar_full`
+    // worth of flowers and crops within reach give (a honeydew lily counts as four
+    // flowers, a crop half of one); never at night (daylight under `dusk`) or while more
+    // than `rain` falls. Crops within `pollinate_reach` of a hive with bees grow
+    // `pollinate` times as fast. A campfire or torch (`smoke` tags) within `smoke_reach`
+    // calms them, or one in hand; one within `scorch_reach` of a kept hive drives its
+    // bees off. Creatures within `creature_reach` are stung, but for people; a bear eats a
+    // full hive's honey. Bees never take a player's or creature's last health.
+    hive: Some((
+        empty: "skep", busy: "bee_skep", full: "honey_skep",
+        minutes: 20.0, forage_reach: 6, forage_height: 3,
+        nectar: [("nectar", 4.0), ("flower", 1.0), ("crop", 0.5)], nectar_full: 12.0,
+        pollinate_reach: 8.0, pollinate: 1.25,
+        survey_seconds: 10.0,
+        smoke: ["fire"], smoke_reach: 4, scorch_reach: 1,
+        rain: 0.1, dusk: 0.25,
+        sting: 2, stung: "stung", stung_seconds: 60.0,
+        creature_reach: 2.5, creature_sting: 1, unstung: ["villager"], raiders: ["brown_bear"],
+    )),
+)

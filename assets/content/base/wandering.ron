@@ -1477,6 +1477,19 @@
                 (name: "supper", wants: ("tag:cooked", 1), gives: [Item("candle", (2, 2)), Xp("cooking", 10.0)], once: Player),
             ])],
         ),
+        // The beekeeper, by day, to a home with a bee garden (`home_is`): looks over the
+        // skeps and walks the garden with the player (the crops near them grow on), and a
+        // spare skep for three honey, for a second hive.
+        (
+            name: "beekeeper", weight: 1.5,
+            daylight: (0.5, 1.0), needs: (days: 3.0, home: Some(true), near_home: Some(40.0), home_is: Some("bee_garden")),
+            cast: [(species: "villager")],
+            script: Camp(near: 10.0, stay: (300.0, 420.0), mill: 3.0, away: 100.0),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "hives", gives: [Grow(16.0, 1), Xp("farming", 25.0)], once: Player),
+                (name: "skep", wants: ("honey", 3), gives: [Item("skep", (1, 1)), Xp("farming", 15.0)], once: Party),
+            ])],
+        ),
         // A hedgehog in from the dark to a cosy home's door, after the crumbs. It is as wild
         // as any: a mushroom or a strawberry at a time (Hunter 3) and it stays, one of the
         // animals about the house.

@@ -718,4 +718,11 @@
     "block.base.hollow_floor": "うろのゆか",
     "creature.base.rootmother": "ねのはは",
     "quest.base.the_rootmother": "ねのはは",
+    "block.base.honey_skep": "はちみつのつまったすばこ",
+    "block.base.skep": "わらすばこ",
+    "effect.base.stung": "はちさされ",
+    "block.base.bee_skep": "みつばちのいるすばこ",
+    "effect.base.bee_garden": "みつばちのにわ",
+    "block.base.beeswax": "みつろう",
+    "block.base.bee_nest": "やせいのみつばちのす",
 }

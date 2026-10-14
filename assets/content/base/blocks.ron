@@ -306,6 +306,16 @@
         (name: "fern", render: Plant, solid: false, sound: Grass, textures: All("fern"), tint: Grass, hardness: 0.0, drops: "core:air", color: (130, 130, 130), tags: ["plant", "fern", "forest_floor", "shade"]),
         (name: "large_fern", render: Plant, solid: false, sound: Grass, textures: All("large_fern_bottom"), tint: Grass, hardness: 0.0, drops: "core:air", color: (130, 130, 130), tags: ["plant", "fern", "forest_floor", "shade", "tall"]),
         (name: "large_fern_top", render: Plant, solid: false, sound: Grass, textures: All("large_fern_top"), tint: Grass, hardness: 0.0, drops: "core:air", color: (130, 130, 130)),
+        // A wild nest: a papery comb in a hollow at a trunk's foot, bees about it. Broken,
+        // it gives a little honey and is gone; a skep held up to it under smoke takes the
+        // swarm home.
+        (
+            name: "bee_nest", render: Model, shape: "bee_nest", solid: false, sound: Grass, textures: All("bee_nest"),
+            hardness: 0.4, drops: "honey", color: (190, 150, 80), tags: ["bees", "wild_nest"],
+            particles: [(style: Ember, rate: 3.0, at: (0.5, 0.5, 0.5), spread: 0.4, size: 0.35, height: 0.8, color: Some((70, 52, 14)), blend: Some(Cutout))],
+        ),
+        // Honey: heals as fruit does and keeps (raw, so it stacks: core/stacking.ron).
+        (name: "honey", render: Plant, solid: false, item: true, textures: All("honey"), hardness: 0.0, color: (230, 170, 40), rarity: Uncommon, tags: ["edible", "honey", "flavour:sweet", "heal:2", "alchemy:healing"]),
         (name: "dead_bush", render: Plant, solid: false, sound: Grass, textures: All("dead_bush"), hardness: 0.0, drops: "core:air", color: (148, 104, 40), tags: ["plant", "bush", "desert", "dry", "fuel"]),
         (name: "sweet_berry_bush", render: Plant, solid: false, sound: Leaves, textures: All("sweet_berry_bush_stage3"), hardness: 0.0, drops: "sweet_berry", color: (60, 100, 50), tags: ["merged", "plant", "bush", "berry", "edible", "flavour:sweet", "forest_floor", "cold"]),
         (name: "sugar_cane", render: Plant, solid: false, sound: Grass, textures: All("sugar_cane"), tint: Grass, hardness: 0.0, color: (150, 190, 120), tags: ["plant", "reed", "riverbank", "warm", "flavour:sweet", "fibre"]),

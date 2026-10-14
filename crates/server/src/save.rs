@@ -105,6 +105,10 @@ pub struct WorldMeta {
     pub regrowing: Vec<SavedRegrowing>,
     #[serde(default)]
     pub planter_grown: Vec<[i32; 3]>,
+    /// Kept hives with bees and the seconds each has foraged (`apiary`). Older worlds
+    /// have none: their skeps start over.
+    #[serde(default)]
+    pub hives: Vec<crate::apiary::SavedHive>,
     /// Fuelled multiblocks and the server tick when their fire goes out. Older worlds
     /// open cold; completed quests stay completed in the player's own file.
     #[serde(default)]
@@ -152,6 +156,7 @@ impl WorldMeta {
             placed: Vec::new(),
             regrowing: Vec::new(),
             planter_grown: Vec::new(),
+            hives: Vec::new(),
             lit: Vec::new(),
             generation: 0,
             worldgen_content: None,
