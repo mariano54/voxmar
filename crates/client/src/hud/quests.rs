@@ -1430,8 +1430,9 @@ fn track(
             toggle_pin(&mut settings, content, &unpin.0);
         }
     }
-    // Out of the way of a screen, but for the quest book itself.
-    let screen = ui.inventory_open || ui.character_open || ui.journal_open || ui.menu_open || ui.recipes_open || player.dead;
+    // Out of the way of a screen, the quest book's too: the book's Current Quest finds what
+    // the tracker would, and the tracker would peek past the book's edge.
+    let screen = ui.inventory_open || ui.character_open || ui.journal_open || ui.quests_open || ui.menu_open || ui.recipes_open || player.dead;
     if let Ok(mut shown) = visibility.single_mut() {
         shown.set_if_neq(if screen || settings.pinned_quests.is_empty() { Visibility::Hidden } else { Visibility::Inherited });
     }
