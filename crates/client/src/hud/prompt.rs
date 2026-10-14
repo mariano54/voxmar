@@ -164,28 +164,34 @@ fn show(
     let held = player.inventory.get(player.selected).map(|s| s.item);
     let held_tags = held.map(|item| content.blocks.def(item).tags.clone()).unwrap_or_default();
     let free = ui.cursor_locked && !player.dead && !(ui.inventory_open || ui.character_open || ui.journal_open || ui.quests_open || ui.menu_open || ui.console_open);
-    let said = free.then(|| match target.creature {
-        Some(id) => {
-            let view = creatures.view(id).filter(|_| target.creature_touched)?;
-            let mine = view.kept && view.owner.is_some() && view.owner == creatures.me;
-            let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
-            // Whether the button would guard instead is the fight's to say: a prompt is
-            // shown only for a use, and a fight's guard has none.
-            let action = creature_use(content, view, held, mine, shift, false)?;
-            prompts.key(action, &held_tags, &[], false)
-        }
-        None => {
-            // What the block looked at is used for; else, a rod in hand casts at water.
-            let used = target.hit.and_then(|hit| Some((block_use(&world, &player, content, &actions.0, &hit)?, hit)));
-            let (action, hit) = used.or_else(|| cast_use(&world, &player, content, &actions.0))?;
-            let name = &actions.0.get(action)?.name;
-            let block = world.block(hit.block)?;
-            let def = world.registry.def(block);
-            let mut named: Vec<&str> = def.tags.iter().map(String::as_str).collect();
-            named.push(&def.name);
-            let ready = content.stations.of(block).is_some_and(|(_, phase)| phase == voxmar_engine::station::Phase::Ready);
-            prompts.key(name, &held_tags, &named, ready)
-        }
+    // A rod in hand casts at the water looked at whatever stands in the way, as the click
+    // does (`interact::break_and_place`): what is said when nothing else is.
+    let cast = || {
+        let (action, hit) = cast_use(&world, &player, content, &actions.0)?;
+        Some((action, Some(hit)))
+    };
+    let said = free.then(|| {
+        let used = match target.creature {
+            Some(id) => creatures.view(id).filter(|_| target.creature_touched).and_then(|view| {
+                let mine = view.kept && view.owner.is_some() && view.owner == creatures.me;
+                let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+                // Whether the button would guard instead is the fight's to say: a prompt is
+                // shown only for a use, and a fight's guard has none.
+                let action = creature_use(content, view, held, mine, shift, false)?;
+                Some((actions.0.id(action)?, None))
+            }),
+            // What the block looked at is used for.
+            None => target.hit.and_then(|hit| Some((block_use(&world, &player, content, &actions.0, &hit)?, Some(hit)))),
+        };
+        let (action, hit) = used.or_else(cast)?;
+        let name = &actions.0.get(action)?.name;
+        let Some(hit) = hit else { return prompts.key(name, &held_tags, &[], false) };
+        let block = world.block(hit.block)?;
+        let def = world.registry.def(block);
+        let mut named: Vec<&str> = def.tags.iter().map(String::as_str).collect();
+        named.push(&def.name);
+        let ready = content.stations.of(block).is_some_and(|(_, phase)| phase == voxmar_engine::station::Phase::Ready);
+        prompts.key(name, &held_tags, &named, ready)
     });
     let Some(Some(said)) = said else {
         visibility.set_if_neq(Visibility::Hidden);
