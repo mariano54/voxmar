@@ -344,7 +344,7 @@ enum Step {
     LookUp,
     /// Rice sown on farmland with no water near is refused by the server, and the refusal
     /// shows by the hotbar, as a level the player lacks does (the server sends it as a
-    /// refusal, not a console line).
+    /// refusal, not a console line). Then a well from the hand goes down by the plot.
     Refusal,
     /// A wild plant whose item merged (oregano into kitchen herbs) is given as the merged
     /// item, and the catalogues (creative, journal, recipe book) list the item, not the plant.
@@ -1113,6 +1113,8 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         Step::Party => 60.0,
         // The effects are judged once a second by the server, and a rest is a sleep away.
         Step::Home => 70.0,
+        // The refusal waited on, then a well set down by the plot.
+        Step::Refusal => UNANSWERED + 3.0 * REFUSAL_WAIT + STEP_LIMIT,
         // A fresh area around the settlement to generate: up to `SETTLEMENT_LOAD` of the
         // server's seconds.
         Step::Settlements => SETTLEMENT_LOAD + SETTLEMENT_PEOPLE + STEP_LIMIT,
@@ -3817,6 +3819,8 @@ fn look_up(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 const DRY_PLOT: IVec3 = IVec3::new(-2, -1, 2);
 /// Server seconds the refusal may take to come, inside the step's own limit.
 const REFUSAL_WAIT: f32 = 8.0;
+/// The ground beside the dry plot where the well goes, from the plot.
+const WELL_BY: IVec3 = IVec3::new(1, 0, 0);
 
 /// Rice (which grows only with water near) sown on a dry plot: the server refuses it and
 /// says why as a refusal, which shows by the hotbar with the others, naming the crop as
@@ -3908,9 +3912,47 @@ fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 }
             }
         }
+        // A well set down by the plot, from the hand, as a player would by a field far
+        // from water (it waters it: `a_well_waters_the_field_about_it`).
+        3 => {
+            if gate.settled == 0 {
+                world.resource::<Net>().command("give well 1");
+                gate.settled = 1;
+            }
+            if select(world, "base:well") {
+                let actions = world.resource::<crate::Actions>().0.clone();
+                world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("core:place"), voxmar_engine::action::ActionTarget::Block { block: plot + WELL_BY, face: voxmar_engine::coords::Face::PosY });
+                gate.settled = 0;
+                gate.advance(now);
+            } else if gate.server_in_phase() > REFUSAL_WAIT {
+                gate.check("well", Err(format!("no well came to hand {:.1} server s after it was given (carried, first slot: {:?})", gate.server_in_phase(), holding(world, "base:well"))));
+                to_phase(gate, 5, now);
+            }
+        }
+        4 => {
+            let cell = plot + WELL_BY + IVec3::Y;
+            let placed = {
+                let client = world.resource::<ClientWorld>();
+                client.block(cell).map(|b| client.registry.def(b).name.clone())
+            };
+            if placed.as_deref().is_some_and(|name| name.starts_with("base:well")) {
+                if gate.shot(world, "well").is_none() {
+                    return;
+                }
+                let solid = world.resource::<ClientWorld>().is_solid(cell);
+                gate.check("well", if solid { Ok("a well from the hand stands on the ground by the plot, drawn in the shot `well`".into()) } else { Err("the well stands, but not solid on the client".into()) });
+                gate.advance(now);
+            } else if gate.server_in_phase() > REFUSAL_WAIT {
+                gate.check("well", Err(format!("{:.1} server s after placing, the well's cell holds {placed:?}", gate.server_in_phase())));
+                gate.advance(now);
+            }
+        }
         _ => {
             let net = world.resource::<Net>();
+            let well = plot + WELL_BY + IVec3::Y;
             net.command("clear rice");
+            net.command("clear well");
+            net.command(&format!("setblock {} {} {} air", well.x, well.y, well.z));
             net.command(&format!("setblock {} {} {} dirt", plot.x, plot.y, plot.z));
             gate.next(Step::Merged, now);
         }

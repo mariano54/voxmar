@@ -178,8 +178,23 @@ by the door and the cupboard of wool are a woodshed and a larder to craft from, 
 trips to fetch. A recipe that needs a table counts only at one; one above the player's
 level is passed over; with nothing to lay from, the chat says what is short. Server side in
 server/src/laying.rs (`core:lay`, an `ActionTarget::Item`, protocol 39), the grid choice in
-`Recipe::lay` (an alternative with enough for every alike cell). The gate's Home step puts
-four planks in a barrel beside the bag and lays a crafting table from it ("home: lay").
+`Recipe::lay` (an alternative with enough for every alike cell). Laid with a store open,
+the store's screen closes, since its slots stand where the grid is drawn. The gate's Home
+step puts four planks in a barrel beside the bag, shoots the table's recipe with its Lay
+button ("home-lay-recipe"), presses it, and shoots the grid laid from the barrel
+("home-lay"; check "home: lay").
+
+## A well by the field
+
+Crops grow best with water within four blocks, and rice not at all without it, so a home
+far from a river had no field worth the name. A **Well** (Construction 8, Farm age: a ring of
+cobbles about a pail, under sticks and a plank) is one block that waters as water does: any
+block tagged `waters` within `WATER_REACH` of a crop, standing on the ground by the field or
+sunk level with it, keeps its ground moist (farm.rs `crop_conditions`), and a station's
+`Water` spot counts it too, so a compost heap beside a well rots as fast as one by a stream.
+A mod's rain barrel or cistern is the same tag. Tests: `a_well_waters_the_field_about_it`,
+`a_heap_rots_greens_four_to_one`. The gate's Refusal step sets one down from the hand by its
+dry plot ("well", shot "well").
 
 ## Smoke over home
 
