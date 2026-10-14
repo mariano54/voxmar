@@ -4,9 +4,10 @@
 //! every package's `celebrations.ron`, read and checked at launch.
 //!
 //! Moments take turns: one arriving while another shows waits until that one has held the
-//! stage for its `hold`, then cuts in, so a quest finished by reaching a level shows and
-//! chimes, then the level rings. Levels reached together in one skill show once, as the
-//! highest. Nothing here takes the pointer or the keys: play goes on underneath.
+//! stage for its `hold`, then cuts in. A quest goes ahead of levels still waiting (a quest
+//! finished by reaching a level is the bigger news; its level often arrives first, the
+//! server checking quests once a second). Levels reached together in one skill show once,
+//! as the highest. Nothing here takes the pointer or the keys: play goes on underneath.
 
 use std::collections::VecDeque;
 
@@ -24,11 +25,11 @@ use crate::render::particles::{Motion, Particle, Particles};
 use crate::session::Launch;
 use crate::ui::skin::{PX, Piece};
 use crate::ui::sound::UiSound;
-use crate::ui::widgets::{ACCENT, BODY, GOLD, SHADOW, TEXT, UiFont, shadowed, space};
+use crate::ui::widgets::{ACCENT, BODY, GOLD, LARGE, SHADOW, TEXT, UiFont, shadowed, space};
 use voxmar_engine::block::ParticleBlend;
 
 pub const FILE: &str = "celebrations.ron";
-/// Moments waiting at most; past it the oldest is let go.
+/// Moments waiting at most; past it the last in line is let go.
 const WAITING: usize = 4;
 /// Seconds the banner takes to grow and settle.
 const POP_SECONDS: f32 = 0.35;
@@ -42,7 +43,7 @@ impl Plugin for CelebratePlugin {
         app.init_resource::<Stage>()
             .add_systems(PostStartup, spawn)
             .add_systems(Update, ((take_levels, take_quests), advance, burst, draw).chain().run_if(in_state(Screen::InGame)))
-            .add_systems(OnExit(Screen::InGame), |mut stage: ResMut<Stage>| *stage = Stage::default());
+            .add_systems(OnExit(Screen::InGame), leave);
     }
 }
 
@@ -215,9 +216,19 @@ impl Stage {
         }
     }
 
-    /// `moment` asks for its turn. A level in a skill already waiting raises that one
-    /// instead, and a quest already waiting is not asked twice.
+    /// `moment` asks for its turn: a quest ahead of any level waiting, a level behind all.
+    /// A level in a skill already waiting raises that one instead; a quest already waiting,
+    /// or what is showing now (a level no higher in that skill, the same quest), is not
+    /// asked twice.
     fn ask(&mut self, moment: Moment) {
+        let shown = match (&self.showing, &moment) {
+            (Some((Moment::Level(a, was), _)), Moment::Level(b, level)) => a == b && level <= was,
+            (Some((showing, _)), moment) => showing == moment,
+            (None, _) => false,
+        };
+        if shown {
+            return;
+        }
         let same = |w: &Moment| match (w, &moment) {
             (Moment::Level(a, _), Moment::Level(b, _)) => a == b,
             (a, b) => a == b,
@@ -230,9 +241,13 @@ impl Stage {
             }
             Some(_) => {}
             None => {
-                self.waiting.push_back(moment);
+                let at = match moment {
+                    Moment::Quest(_) => self.waiting.iter().position(|w| matches!(w, Moment::Level(..))).unwrap_or(self.waiting.len()),
+                    Moment::Level(..) => self.waiting.len(),
+                };
+                self.waiting.insert(at, moment);
                 if self.waiting.len() > WAITING {
-                    self.waiting.pop_front();
+                    self.waiting.pop_back();
                 }
             }
         }
@@ -248,6 +263,15 @@ impl Stage {
         let moment = self.waiting.pop_front()?;
         self.showing = Some((moment, now));
         self.showing.as_ref().map(|(moment, _)| moment)
+    }
+}
+
+/// Leaving the game clears the stage and takes the banner down with it (`draw` runs only in
+/// the game).
+fn leave(mut stage: ResMut<Stage>, mut row: Query<&mut Visibility, With<BannerRow>>) {
+    *stage = Stage::default();
+    for mut visibility in &mut row {
+        *visibility = Visibility::Hidden;
     }
 }
 
@@ -386,10 +410,10 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
     };
     commands.spawn((row, GlobalZIndex(1), BannerRow, Visibility::Hidden)).with_children(|row| {
         row.spawn((plate, Piece::Tooltip.image(), BannerPlate)).with_children(|plate| {
-            plate.spawn((Node { width: Val::Px(16.0 * PX), height: Val::Px(16.0 * PX), ..default() }, ImageNode::default(), BannerIcon));
+            plate.spawn((Node { width: Val::Px(24.0 * PX), height: Val::Px(24.0 * PX), ..default() }, ImageNode::default(), BannerIcon));
             plate.spawn(Node { flex_direction: FlexDirection::Column, align_items: AlignItems::Center, ..default() }).with_children(|lines| {
-                for (line, color) in [(BannerText::Heading, ACCENT), (BannerText::Title, GOLD), (BannerText::Detail, TEXT), (BannerText::Opens, ACCENT)] {
-                    lines.spawn((Node { max_width: Val::Px(160.0 * PX), ..default() }, shadowed(font, "", BODY, color), line));
+                for (line, size, color) in [(BannerText::Heading, BODY, ACCENT), (BannerText::Title, LARGE, GOLD), (BannerText::Detail, BODY, TEXT), (BannerText::Opens, BODY, ACCENT)] {
+                    lines.spawn((Node { max_width: Val::Px(160.0 * PX), ..default() }, shadowed(font, "", size, color), line));
                 }
             });
         });
@@ -538,29 +562,49 @@ mod tests {
         assert!(Celebrations::load(&[file("mod", "(milestone_every: 10)")]).is_err());
     }
 
-    /// A quest finished by reaching a level shows first; the level cuts in once the quest has
-    /// held its turn, and nothing more waits after.
+    /// A quest finished by reaching a level shows first, even when the level was told first;
+    /// the level cuts in once the quest has held its turn, and nothing more waits after.
     #[test]
     fn moments_take_turns() {
         let looks = base();
         let mut stage = Stage::default();
-        stage.ask(Moment::Quest("first_fire".into()));
         stage.ask(Moment::Level(SkillId(2), 5));
+        stage.ask(Moment::Quest("first_fire".into()));
         assert_eq!(stage.next(0.0, &looks), Some(&Moment::Quest("first_fire".into())));
         assert_eq!(stage.next(looks.quest.hold - 0.01, &looks), None);
         assert_eq!(stage.next(looks.quest.hold, &looks), Some(&Moment::Level(SkillId(2), 5)));
         assert_eq!(stage.next(100.0, &looks), None);
+        // The level showing, told again (or lower), does not come round a second time.
+        stage.ask(Moment::Level(SkillId(2), 5));
+        stage.ask(Moment::Level(SkillId(2), 4));
+        assert!(stage.waiting.is_empty());
+        stage.ask(Moment::Level(SkillId(2), 6));
+        assert_eq!(stage.waiting, [Moment::Level(SkillId(2), 6)]);
+    }
+
+    /// Leaving the game takes a showing banner down and forgets what waited.
+    #[test]
+    fn leaving_takes_the_banner_down() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        let mut stage = Stage::default();
+        stage.ask(Moment::Quest("a".into()));
+        world.insert_resource(stage);
+        let row = world.spawn((BannerRow, Visibility::Inherited)).id();
+        world.run_system_once(leave).unwrap();
+        assert_eq!(world.get::<Visibility>(row), Some(&Visibility::Hidden));
+        assert!(world.resource::<Stage>().waiting.is_empty());
     }
 
     /// Levels in one skill reached together show once, as the highest; other skills and a
-    /// quest asked twice keep their own single turn.
+    /// quest asked twice keep their own single turn, the quest ahead.
     #[test]
     fn levels_together_show_once() {
         let mut stage = Stage::default();
         for moment in [Moment::Level(SkillId(1), 4), Moment::Level(SkillId(1), 6), Moment::Level(SkillId(3), 2), Moment::Level(SkillId(1), 5), Moment::Quest("a".into()), Moment::Quest("a".into())] {
             stage.ask(moment);
         }
-        assert_eq!(stage.waiting, [Moment::Level(SkillId(1), 6), Moment::Level(SkillId(3), 2), Moment::Quest("a".into())]);
+        assert_eq!(stage.waiting, [Moment::Quest("a".into()), Moment::Level(SkillId(1), 6), Moment::Level(SkillId(3), 2)]);
     }
 
     /// Only quests that turn done between two states are moments, and none on joining.

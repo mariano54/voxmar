@@ -4131,13 +4131,13 @@ fn tips(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     }
 }
 
-/// A tenth Woodcutting level, as the server would say it, pops the milestone banner (its
+/// A tenth Mining level, as the server would say it, pops the milestone banner (its
 /// words checked) and throws motes; then a quest and a level asked together show in turn.
 fn celebrate(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     use crate::hud::celebrate::{BannerText, Celebrations, Stage};
     let launch = world.resource::<Launch>().clone();
     let skills = &launch.content.skills;
-    let Some(skill) = skills.named("core", "woodcutting").or_else(|| skills.ids().next()) else {
+    let Some(skill) = skills.named("core", "mining").or_else(|| skills.ids().next()) else {
         gate.check("celebrate", Err("no skill in the content".into()));
         gate.next(Step::Look, now);
         return;
