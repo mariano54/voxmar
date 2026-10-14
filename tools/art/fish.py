@@ -430,37 +430,6 @@ def _():
     return s
 
 
-@fish('shrimp')
-def _():
-    # A shrimp curled on itself: banded segments from its head round to a fanned tail, long
-    # feelers and a row of little legs.
-    s = Sprite()
-    cells = set()
-    seg = []
-    for i in range(60):
-        t = i / 59
-        a = math.pi * (1.05 + 1.25 * t)
-        x, y = 16 + 8 * math.cos(a), 15 + 8 * math.sin(a)
-        r = 4.2 - 2.2 * t
-        part = {(cx, cy) for cx in range(int(x - r) - 1, int(x + r) + 2) for cy in range(int(y - r) - 1, int(y + r) + 2) if (cx + 0.5 - x) ** 2 + (cy + 0.5 - y) ** 2 <= r * r}
-        cells |= part
-        seg.append((x, y))
-    fan = poly([(seg[-1][0] - 1, seg[-1][1]), (seg[-1][0] - 6, seg[-1][1] + 3), (seg[-1][0] - 4, seg[-1][1] - 2)])
-    s.fill(cells | fan)
-    for i in range(6, 56, 8):
-        x, y = seg[i]
-        for d in range(-4, 5):
-            ang = math.pi * (1.05 + 1.25 * i / 59)
-            on(s, x + d * math.cos(ang), y + d * math.sin(ang), 0)
-    hx, hy = seg[0]
-    eye(s, int(hx) - 1, int(hy) - 2)
-    s.ink()
-    for i in range(10):
-        s.put(hx - 2 - i, hy - 3 - i * 0.6, INK)
-        s.put(hx - 1 - i * 0.8, hy - 4 - i, INK)
-    return s
-
-
 def main():
     root = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..')
     out = ['''// Fish with their own shape at 32×32, drawn by tools/art/fish.py: each raw in its own
