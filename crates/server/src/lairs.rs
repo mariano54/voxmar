@@ -352,6 +352,25 @@ mod tests {
         assert!(failed.is_empty(), "{failed:#?}");
     }
 
+    /// A boss always fights whoever comes to her: never leaves be a player who has stood
+    /// about one spot past `TOLERANCE` (the gate's session, long on a busy machine, once
+    /// met her so and she stood idle), whatever their combat level.
+    #[test]
+    fn a_boss_never_tolerates_a_player() {
+        let mut server = fixture(Vec3::new(20.5, 200.0, 24.5));
+        server.day = day_at(|l| l <= 0.0);
+        // Ten minutes and more within a few blocks of here.
+        server.creatures.settled.insert(1, (Vec3::new(20.5, 200.0, 28.5), server.tick));
+        server.tick += crate::creatures::TOLERANCE + 1;
+        let id = summon(&mut server, 20.5, 20.5, 120);
+        let wound_up = (0..10 * TICKS_PER_SECOND).any(|_| {
+            server.tick += 1;
+            server.tick_creatures();
+            server.creatures.live.get(&id).is_some_and(|live| live.winding)
+        });
+        assert!(wound_up, "she left a settled player be: {:?}", server.creatures.live[&id].mind);
+    }
+
     /// A ward stops only `boss_ward` of a boss's blow (half), where it stops `ward` of
     /// another's (four fifths).
     #[test]
