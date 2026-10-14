@@ -7779,7 +7779,7 @@ fn end_boss(world: &mut World, gate: &mut Gate, now: f32) {
 const TUSK: &str = "base:old_tusk";
 const TUSK_SPEAR: &str = "base:flint_spear";
 /// The tusk step's sweep, which every exit comes to.
-const TUSK_SWEEP: u32 = 6;
+const TUSK_SWEEP: u32 = 7;
 /// Blocks from his middle the spear step stands, closes in past, and is put back from.
 const TUSK_BESIDE: f32 = 1.8;
 const TUSK_CLOSE: f32 = 2.0;
@@ -7924,16 +7924,27 @@ fn tusk(world: &mut World, gate: &mut Gate, now: f32) {
             let charging = view.filter(|v| charges.contains(&v.tell));
             if let Some(view) = charging {
                 gate.check("tusk charge", Ok(format!("from afar he wound up his charge, its tell shown (move {})", view.tell)));
-                let result = match crate::music::boss_music(world) {
-                    Some((true, Some((track, true)))) => Ok(format!("his fight, with his own track: {track}")),
-                    music => Err(format!("no fight music of his own once he fought ({music:?})")),
-                };
-                gate.check("tusk fight music", result);
-                sweep(world, gate, now);
+                gate.advance(now);
             } else if waited || view.is_none() {
                 let said = view.map_or("not seen".to_owned(), |v| format!("at {:.1}, pose {:?}, tell {}, health {}", v.position, v.pose, v.tell, v.health));
                 gate.check("tusk charge", Err(format!("no charge wound up in {BOSS_WAIT} server seconds: he is {said}")));
                 sweep(world, gate, now);
+            }
+        }
+        6 => {
+            // Fighting, the calm track fades and one of his own starts: waited for, as the
+            // Rootmother's is, since the fade takes its own seconds after the first blow.
+            match crate::music::boss_music(world) {
+                Some((true, Some((track, ours)))) => {
+                    let result = if ours { Ok(format!("his fight, with his own track: {track}")) } else { Err(format!("a boss fight, but with another boss's track: {track}")) };
+                    gate.check("tusk fight music", result);
+                    sweep(world, gate, now);
+                }
+                music if waited => {
+                    gate.check("tusk fight music", Err(format!("no fight music of his own in {BOSS_WAIT} server seconds once he fought ({music:?})")));
+                    sweep(world, gate, now);
+                }
+                _ => {}
             }
         }
         _ => {
