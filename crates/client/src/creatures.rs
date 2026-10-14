@@ -331,9 +331,19 @@ struct Shown {
     /// how much of its recover stance its strike has shown.
     coil_from: Vec3,
     coil_far: f32,
+    /// How much of the way to where the server has it a body planted as `combat_fx.ron`
+    /// says would still have to go, frame by frame through this wind-up (1 at its start).
+    coil_kept: f32,
     coil_slid: f32,
     coil_deepest: f32,
     recover_most: f32,
+    /// Seconds into its wind-up by the game's clock when its blow struck: how deep its coil
+    /// had got, whatever frames drew it (a slow frame may skip the deepest of it).
+    coil_reached: f32,
+    /// Whether the server's word struck it rather than the wind-up's own time.
+    coil_word: bool,
+    /// Whether its blow has struck and what its wind-up showed is still to be written down.
+    read_due: bool,
     /// Whether its puff of smoke has gone up as it vanishes.
     poofed: bool,
     /// The move (`moves`, from 1) it winds up and strikes with, 0 for its plain attack:
@@ -342,27 +352,33 @@ struct Shown {
 }
 
 
-/// What one strike showed. Its wind-up: how far its body slid while it coiled, and how far
-/// it might have with its feet planted as `combat_fx.ron` says (it follows where the server
-/// has it that much more slowly), and how deep it coiled (0 to 1). Its recovery, if it stood
-/// it out whole: how much of its recover stance showed at most (0 to 1).
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+/// What one strike's wind-up showed, written down as its blow struck: how far its body slid
+/// while it coiled, how far it might have with its feet planted as `combat_fx.ron` says (it
+/// follows where the server has it that much more slowly), and how deep it had coiled (0 to
+/// 1) by the game's clock as the blow struck.
+/// Which creature and strike it was (its kind's name and the strike's style), its wind-up
+/// and how far into it the blow struck (seconds), and whether the server's word struck it
+/// before the wind-up's own time did.
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct StrikeRead {
     pub slid: f32,
     pub planted: f32,
     pub coiled: f32,
-    pub recovered: Option<f32>,
+    pub who: String,
+    pub style: &'static str,
+    pub windup: f32,
+    pub reached: f32,
+    pub by_word: bool,
 }
 
 impl Shown {
-    /// What its wind-up showed: how far it slid, and how far it might have planted
-    /// `plant` (`StrikeLook::plant`) through a wind-up of `windup` seconds: following where
-    /// the server had it (never further from where it began than `coil_far`) that much
-    /// more slowly than `FOLLOW`, it gets no nearer than this, with a little to spare for
-    /// the frames.
-    fn coil_read(&self, plant: f32, windup: f32) -> StrikeRead {
-        let planted = self.coil_far * (1.0 - (-1.5 * FOLLOW * plant * windup).exp()) + 0.02;
-        StrikeRead { slid: self.coil_slid, planted, coiled: self.coil_deepest, recovered: None }
+    /// What its wind-up showed: how far it slid, and how far it might have planted as
+    /// `combat_fx.ron` says: following where the server had it (never further from where it
+    /// began than `coil_far`) that much more slowly than `FOLLOW`, frame by frame as they
+    /// came (`coil_kept`), it gets no further than this, with a little to spare.
+    fn coil_read(&self, who: &str, style: &'static str, windup: f32) -> StrikeRead {
+        let planted = self.coil_far * (1.0 - self.coil_kept) + 0.02;
+        StrikeRead { slid: self.coil_slid, planted, coiled: self.coil_deepest, who: who.into(), style, windup, reached: self.coil_reached, by_word: self.coil_word }
     }
 }
 
@@ -391,6 +407,9 @@ pub struct Creatures {
     /// What each of those strikes showed (`StrikeRead`), for the gate's check that a strike
     /// reads: planted and coiled deep, then standing out its recovery.
     pub reads: Vec<StrikeRead>,
+    /// How much of its recover stance each strike that stood its recovery out showed at
+    /// most (0 to 1).
+    pub recoveries: Vec<f32>,
     /// The creature whose stride the gate watches, and what it saw; and the step of game
     /// time it is drawn on each frame, whatever the frame took, so a slow machine sees as
     /// many poses in a stride as a fast one (the gate moves it that far a frame).
@@ -789,6 +808,26 @@ fn sound(kind: Sound, id: u32, view: &CreatureView, position: Vec3, speed: f32) 
 #[derive(SystemSet, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ShowCreatures;
 
+/// One frame of `dt` on a creature's clocks: a hit-stop (`stopped`) holds its body still,
+/// but not its wind-up, whose blow comes by the server's clock whatever is drawn meanwhile
+/// (a freeze rounds up to whole frames, so on slow ones blows landing through a wind-up
+/// would otherwise leave it barely coiled as it struck). The time its body moves by.
+fn frame_clocks(stopped: &mut f32, coiling: Option<&mut f32>, dt: f32) -> f32 {
+    let frozen = *stopped > 0.0;
+    *stopped = (*stopped - dt).max(0.0);
+    if let Some(coil) = coiling {
+        *coil += dt;
+    }
+    if frozen { 0.0 } else { dt }
+}
+
+/// How far into its wind-up a creature was when the server's word that its blow came
+/// arrived, on a frame `dt` after the last: the word came in somewhere over that frame, which
+/// its coil has not counted yet.
+fn word_reached(coil: f32, dt: f32) -> f32 {
+    coil + dt
+}
+
 #[allow(clippy::too_many_arguments)]
 fn show(
     mut commands: Commands,
@@ -939,6 +978,8 @@ fn show(
             } else if !attacking(view.pose) && attacking(shown.view.pose) {
                 if !shown.coil_struck && shown.coiling.is_some() && shown.dying.is_none() {
                     shown.striking = Some(0.0);
+                    shown.coil_reached = word_reached(shown.coiling.unwrap_or(0.0), dt);
+                    (shown.read_due, shown.coil_word) = (true, true);
                     creatures.strikes += 1;
                 }
                 shown.coiling = None;
@@ -1021,9 +1062,13 @@ fn show(
                 coil_struck: false,
                 coil_from: Vec3::ZERO,
                 coil_far: 0.0,
+                coil_kept: 1.0,
                 coil_slid: 0.0,
                 coil_deepest: 0.0,
                 recover_most: 0.0,
+                coil_reached: 0.0,
+                coil_word: false,
+                read_due: false,
                 poofed: false,
                 move_shown: 0,
             },
@@ -1039,7 +1084,7 @@ fn show(
 
     let me = creatures.me;
     let mut finished = Vec::new();
-    let (mut poofs, mut strikes, mut reads) = (Vec::new(), 0, Vec::new());
+    let (mut poofs, mut strikes, mut reads, mut recoveries) = (Vec::new(), 0, Vec::new(), Vec::new());
     let feel = &launch.content.combat.feel;
     for (&id, shown) in creatures.shown.iter_mut() {
         let def = &registry.get(shown.view.species).def;
@@ -1047,10 +1092,8 @@ fn show(
         let dt = stepped.unwrap_or(dt);
         // A blow freezes it a moment (a hit-stop): it holds still where it was, shaking,
         // and its flinch, flash and fall wait for the freeze to end.
-        let frozen = shown.stopped > 0.0;
-        let shake = if frozen { shown.stopped / shown.stop_from.max(1e-3) } else { 0.0 };
-        shown.stopped = (shown.stopped - dt).max(0.0);
-        let dt = if frozen { 0.0 } else { dt };
+        let shake = if shown.stopped > 0.0 { shown.stopped / shown.stop_from.max(1e-3) } else { 0.0 };
+        let dt = frame_clocks(&mut shown.stopped, shown.coiling.as_mut(), dt);
         // Carry on along its velocity a little past the last word, then ease toward it.
         let ahead = if stepped.is_some() { 0.0 } else { (now - shown.told_at).min(AHEAD) };
         let target = shown.view.position + shown.view.velocity.with_y(0.0) * ahead;
@@ -1074,6 +1117,8 @@ fn show(
         };
         shown.position = shown.position.lerp(target, (follow * dt).min(1.0));
         if coiled {
+            let plant = strike.map_or(1.0, |strike| strike.plant);
+            shown.coil_kept *= 1.0 - (FOLLOW * plant * dt).min(1.0);
             shown.coil_far = shown.coil_far.max(target.distance(shown.coil_from));
             shown.coil_slid = shown.coil_slid.max(shown.position.distance(shown.coil_from));
         }
@@ -1138,14 +1183,16 @@ fn show(
         // through the wind-up, snapping forward as the blow lands (the wind-up's time, or
         // the server's word, whichever comes first), settling back and standing out its
         // recovery.
-        if let Some(coil) = shown.coiling.as_mut() {
-            *coil += dt;
-            if *coil >= windup && !shown.coil_struck && shown.dying.is_none() {
+        if let Some(coil) = shown.coiling {
+            if coil >= windup && !shown.coil_struck && shown.dying.is_none() {
                 shown.coil_struck = true;
                 shown.striking = Some(0.0);
+                shown.coil_reached = coil;
+                (shown.read_due, shown.coil_word) = (true, false);
                 strikes += 1;
             }
         }
+        let struck_before = shown.striking;
         if let Some(striking) = shown.striking.as_mut() {
             *striking += dt;
         }
@@ -1155,10 +1202,23 @@ fn show(
             shown.coil_deepest = shown.coil_deepest.max(crate::fight_fx::coil_share(&strike, c));
         }
         if let (Some(strike), Some(s)) = (strike, shown.striking) {
-            shown.recover_most = shown.recover_most.max(crate::fight_fx::recover_share(&strike, s, recovery));
+            // As drawn this frame, and at its deepest if that came between this frame and
+            // the last (a slow frame steps over it).
+            let peak = crate::fight_fx::recover_peak(&strike, recovery);
+            let passed = struck_before.unwrap_or(0.0) < peak && s >= peak;
+            let at = if passed { peak } else { s };
+            shown.recover_most = shown.recover_most.max(crate::fight_fx::recover_share(&strike, at, recovery));
         }
-        if struck_out && let Some(strike) = strike.filter(|_| shown.striking.is_some()) {
-            reads.push(StrikeRead { recovered: (strike.recover != Default::default()).then_some(shown.recover_most), ..shown.coil_read(strike.plant, windup) });
+        // Its wind-up is written down as the blow strikes, whatever comes after (it may die
+        // or wind up again before its recovery is out); its recovery once it has stood it out.
+        if let Some(strike) = strike.filter(|_| shown.read_due) {
+            shown.coil_deepest = shown.coil_deepest.max(crate::fight_fx::coil_share(&strike, (shown.coil_reached / windup).min(1.0)));
+            let style = attack.map_or("", |a| a.style.key());
+            reads.push(shown.coil_read(&def.name, style, windup));
+            shown.read_due = false;
+        }
+        if struck_out && strike.is_some_and(|s| shown.striking.is_some() && s.recover != Default::default()) {
+            recoveries.push(shown.recover_most);
         }
         if struck_out {
             shown.striking = None;
@@ -1543,6 +1603,7 @@ fn show(
     creatures.poofs.extend(poofs);
     creatures.strikes += strikes;
     creatures.reads.extend(reads);
+    creatures.recoveries.extend(recoveries);
     for id in finished {
         if let Some(shown) = creatures.shown.remove(&id) {
             creatures.falls.push(Fall { strayed: shown.death_strayed, around_eye: shown.death_around_eye, spread: shown.death_spread, scale: shown.death_scale, samples: shown.death_samples, joints: shown.joints.len() as u32, slowest: shown.death_slowest });
@@ -1652,7 +1713,7 @@ pub fn aim(
 /// for a boss's far reach, a ring on the ground (`fight_fx`).
 fn wind_up(shown: &mut Shown, view: &voxmar_protocol::CreatureView, registry: &creature::CreatureRegistry, creature_windup: f32, late: bool, told: &mut Vec<Told>) {
     (shown.coiling, shown.striking, shown.coil_struck) = (Some(0.0), None, false);
-    (shown.coil_from, shown.coil_far, shown.coil_slid, shown.coil_deepest, shown.recover_most) = (shown.position, 0.0, 0.0, 0.0, 0.0);
+    (shown.coil_from, shown.coil_far, shown.coil_kept, shown.coil_slid, shown.coil_deepest, shown.recover_most) = (shown.position, 0.0, 1.0, 0.0, 0.0, 0.0);
     shown.move_shown = if view.tell == voxmar_protocol::REARING { 0 } else { view.tell };
     let species = registry.get(view.species);
     let name = species.def.name.rsplit(':').next().unwrap_or(&species.def.name);
@@ -1701,6 +1762,51 @@ mod tests {
             ear_lean: 0.0,
         }
         .parts(1.0)
+    }
+
+    /// A 0.6 s wind-up the player's blows land on twice, each freezing it 0.09 s (a heavy
+    /// blow's hit-stop), frame by frame at 60 frames a second and at 2, 3 and 4 times as long
+    /// a frame: how far into it the blow struck, its own time or the server's word (which
+    /// comes the wind-up after it was seen begin) first. `frozen_clock` as the coil once ran,
+    /// standing still through a freeze and counting nothing of the frame the word came on.
+    fn wind_up_reached(dt: f32, frozen_clock: bool) -> f32 {
+        let (windup, freeze, blows) = (0.6, 0.09, [0.1, 0.4]);
+        let (mut coil, mut stopped, mut struck) = (0.0f32, 0.0f32, 0);
+        for frame in 0.. {
+            let t = frame as f32 * dt;
+            if t >= windup {
+                return if frozen_clock { coil } else { word_reached(coil, dt) };
+            }
+            if struck < blows.len() && t >= blows[struck] {
+                (stopped, struck) = (stopped.max(freeze), struck + 1);
+            }
+            if frozen_clock {
+                let moved = frame_clocks(&mut stopped, None, dt);
+                coil += moved;
+            } else {
+                frame_clocks(&mut stopped, Some(&mut coil), dt);
+            }
+            if coil >= windup {
+                return coil;
+            }
+        }
+        unreachable!()
+    }
+
+    #[test]
+    fn a_wind_up_coils_whole_by_the_game_clock_at_any_frame_rate() {
+        let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/content/core/combat_fx.ron")).unwrap();
+        let file = voxmar_engine::content::ContentFile { package: "core".into(), name: crate::fight_fx::style::FILE.into(), source };
+        let strike = crate::fight_fx::FightLook::load(&[file]).unwrap().strike(voxmar_engine::combat::Style::Crush);
+        let share = |reached: f32| crate::fight_fx::coil_share(&strike, (reached / 0.6).min(1.0));
+        for slower in [1.0, 2.0, 3.0, 4.0] {
+            let dt = slower / 60.0;
+            let coiled = share(wind_up_reached(dt, false));
+            assert!(coiled >= 0.99, "{slower}x frames: coiled {coiled:.2} deep as the blow struck");
+        }
+        // As it was: deep enough at 60 frames a second, and barely coiled at 15.
+        assert!(share(wind_up_reached(1.0 / 60.0, true)) >= 0.6);
+        assert!(share(wind_up_reached(4.0 / 60.0, true)) < 0.6);
     }
 
     #[test]

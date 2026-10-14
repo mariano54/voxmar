@@ -829,7 +829,7 @@
             xp: (kill: 4.0, skill: "hunter"),
             taming: (level: 2, xp: 10.0),
             breeding: (level: 2, litter: (1, 2), growth: 7.0, xp: 12.0),
-            products: [(item: "egg", every: 5.0, xp: 3.0)],
+            products: [(item: "egg", every: 5.0, xp: 3.0, nests: true)],
             loot: [(item: "raw_small_game"), (item: "feather", count: (1, 3))],
         ),
         (
