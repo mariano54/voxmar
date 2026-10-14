@@ -7907,6 +7907,8 @@ fn first_fights_measured() {
 fn first_age_fights_balanced() {
     real_time("combat is judged on the clock: chases, wind-ups and guards in seconds, not in ticks");
     use voxmar_engine::combat::Defended;
+    /// A run: killed, died, seconds, seconds chasing, blows back, damage taken, health left.
+    type Run = (bool, bool, f32, f32, usize, u32, f32);
     let only = std::env::var("FIGHT_ONLY").ok();
     let runs: u32 = std::env::var("FIGHT_RUNS").ok().and_then(|r| r.parse().ok()).unwrap_or(3);
     let weapon = std::env::var("FIGHT_WEAPON").unwrap_or_else(|_| "stone_sword".into());
@@ -7918,7 +7920,7 @@ fn first_age_fights_balanced() {
     let mut lines = Vec::new();
     for name in ["wild_boar", "badger", "fox", "aurochs", "wolf", "brown_bear"].into_iter().filter(|n| only.as_deref().is_none_or(|o| o == *n)) {
         for &guarding in &modes {
-            let mut results = Vec::new();
+            let mut results: Vec<Run> = Vec::new();
             for run in 0..runs {
                 let mut client = Client::join();
                 client.ok("/gamemode survival");
@@ -8030,7 +8032,7 @@ fn first_age_fights_balanced() {
                 results.push((killed, died, start.elapsed().as_secs_f32(), chasing, back.len(), taken, left));
             }
             let n = results.len() as f32;
-            let mean = |f: &dyn Fn(&(bool, bool, f32, f32, usize, u32, f32)) -> f32| results.iter().map(f).sum::<f32>() / n;
+            let mean = |f: &dyn Fn(&Run) -> f32| results.iter().map(f).sum::<f32>() / n;
             let line = format!(
                 "{name:<11} {:<8} {}/{} killed, {} died; kill {:>5.1} s (chase {:>4.1} s); {:>4.1} blows back for {:>4.1}; {:>3.0}% health left (worst {:.0}%)",
                 if guarding { "guarding" } else { "open" },
