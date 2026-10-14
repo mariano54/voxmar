@@ -29,11 +29,12 @@
         "counter": (stop: 1.8, sparks: 2.6, punch: 0.9),
         "bleed": (stop: 0.0, sparks: 0.0, punch: 0.0),
     },
-    // A killing blow: a longer freeze and a heavier dip, then the body tips over (each
-    // creature's `death` says how) and, over the last `shrink` of its death, shrinks into a
-    // puff of smoke where it lay.
+    // A killing blow: a longer freeze and a heavier dip, then the body tips over and lies
+    // there a beat (each creature's `death` says how long), and over the last `shrink` of its
+    // death sinks and shrinks away, going up in a puff of smoke where it lay as its loot
+    // bursts out.
     death: (
-        stop: 0.12, punch: 0.8, shrink: 0.22,
+        stop: 0.12, punch: 0.8, shrink: 0.12,
         poof: (count: 14, speed: 1.4, life: 0.8, size: 0.32, color: Some((236, 236, 232))),
     ),
     // How a creature winds up and strikes, by how it attacks (`attack.style`). Through its

@@ -449,8 +449,10 @@ pub struct Fall {
     /// Joint samples taken while it tipped over, and how many joints it has.
     pub samples: u32,
     pub joints: u32,
-    /// The longest step of game time, in seconds, any frame took while it tipped over.
+    /// The longest step of game time, in seconds, any frame took while it tipped over, and
+    /// how long its tip over lasts (its `death.fall`).
     pub slowest: f32,
+    pub tip: f32,
 }
 
 /// A creature as the target readout shows it.
@@ -1340,33 +1342,37 @@ fn show(
             // One that died in the air rolls over as it falls, and sinks away only once it is
             // down, however high it flew.
             let death = &def.death;
-            if *dying < death.seconds * 0.5 {
+            if *dying < death.fall {
                 shown.death_slowest = shown.death_slowest.max(dt);
             }
-            *dying = if falling { (*dying + dt).min(death.seconds * 0.5) } else { *dying + dt };
+            *dying = if falling { (*dying + dt).min(death.fall) } else { *dying + dt };
             // It falls away from the eye: rolled toward the eye at melee range, its back
             // came through the camera and showed the inside of the body.
             if shown.fall_side == 0.0 {
                 let local = Quat::from_rotation_y(shown.yaw).inverse() * (eye - shown.position);
                 shown.fall_side = if local.x >= 0.0 { 1.0 } else { -1.0 };
             }
+            // It topples, quicker as it goes, and lies there.
             let t = (*dying / death.seconds.max(0.05)).min(1.0);
-            root.rotation *= Quat::from_rotation_z(shown.fall_side * (t * 2.0).min(1.0) * death.roll.to_radians());
+            let over = (*dying / death.fall.max(0.01)).min(1.0);
+            root.rotation *= Quat::from_rotation_z(shown.fall_side * over * over * death.roll.to_radians());
             // How far it strays from where it stood as it falls, in heights, for the gate
             // (before it sinks away, which is meant to take it out of sight).
             let middle = root.translation + root.rotation * Vec3::Y * height * 0.5;
             let strayed = middle.distance(shown.position + Vec3::Y * height * 0.5) / height.max(0.1);
-            root.translation.y -= (t * 2.0 - 1.0).max(0.0) * death.sink * height;
             shown.death_strayed = shown.death_strayed.max(strayed);
-            // Over the last of its death it shrinks away into a puff of smoke where it lay.
+            // Over the last of its death it sinks and shrinks away, and as it goes it is a
+            // puff of smoke where it lay, its loot bursting out (the server's `drops_after`).
             let shrink = fx.map_or(0.0, |fx| fx.death.shrink);
             if shrink > 0.0 && t > 1.0 - shrink {
-                root.scale *= ((1.0 - t) / shrink).clamp(0.02, 1.0);
-                if !shown.poofed {
-                    shown.poofed = true;
-                    let coat = def.body.colours.first().copied().unwrap_or([200, 200, 200]);
-                    poofs.push((shown.position + Vec3::Y * height * 0.4, height, coat));
-                }
+                let going = ((t - (1.0 - shrink)) / shrink).min(1.0);
+                root.translation.y -= going * death.sink * height;
+                root.scale *= (1.0 - going).clamp(0.02, 1.0);
+            }
+            if t >= 1.0 && !shown.poofed {
+                shown.poofed = true;
+                let coat = def.body.colours.first().copied().unwrap_or([200, 200, 200]);
+                poofs.push((shown.position + Vec3::Y * height * 0.4, height, coat));
             }
             if t >= 1.0 {
                 finished.push(id);
@@ -1408,9 +1414,9 @@ fn show(
             *transform = root;
         }
         // What the last frame drew of a falling body, joint by joint, for the gate: while it
-        // tips over, before it starts to sink away.
-        let sinking = shown.dying.is_some_and(|d| d >= def.death.seconds * 0.5);
-        if shown.dying.is_some() && !sinking {
+        // tips over, before it lies there.
+        let fallen = shown.dying.is_some_and(|d| d >= def.death.fall);
+        if shown.dying.is_some() && !fallen {
             let middle = shown.position + Vec3::Y * height * 0.5;
             for (joint, _) in &shown.joints {
                 if let Ok(global) = drawn.globals.get(*joint) {
@@ -1606,7 +1612,8 @@ fn show(
     creatures.recoveries.extend(recoveries);
     for id in finished {
         if let Some(shown) = creatures.shown.remove(&id) {
-            creatures.falls.push(Fall { strayed: shown.death_strayed, around_eye: shown.death_around_eye, spread: shown.death_spread, scale: shown.death_scale, samples: shown.death_samples, joints: shown.joints.len() as u32, slowest: shown.death_slowest });
+            let tip = registry.get(shown.view.species).def.death.fall;
+            creatures.falls.push(Fall { strayed: shown.death_strayed, around_eye: shown.death_around_eye, spread: shown.death_spread, scale: shown.death_scale, samples: shown.death_samples, joints: shown.joints.len() as u32, slowest: shown.death_slowest, tip });
             despawn(&mut commands, &shown);
             if shown.painting.is_none() {
                 images.remove(&shown.skin);
