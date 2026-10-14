@@ -544,6 +544,9 @@ struct Gate {
     shapes_row: IVec3,
     /// Times the held step sent wild creatures away and began its shots of the sky again.
     held_cleared: u32,
+    /// The weather step's snow left for the depths step to clear with its fog: the sky's
+    /// clearing is judged once, as the fog lifts at its end (`depths`).
+    weather_clear_owed: bool,
     /// When (server seconds) the kiln was last asked to light.
     kiln_asked: f32,
     /// When the lit kiln's bronze smelt began, in server and game seconds (0 before).
@@ -755,6 +758,7 @@ impl Gate {
             kiln_since: 0.0,
             shapes_row: IVec3::ZERO,
             held_cleared: 0,
+            weather_clear_owed: false,
             kiln_asked: f32::MIN,
             bronze_since: (0.0, 0.0),
             machines_stage: 0,
@@ -6428,11 +6432,20 @@ fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 Err(format!("it barely shows: the view changed by {change:.1} levels"))
             };
             gate.check(&format!("weather: {kind}"), result);
-            let next = kinds.get(phase as usize).map_or_else(|| "weather clear 600".to_owned(), |(kind, ..)| format!("weather {kind} 120"));
-            world.resource::<Net>().command(&next);
-            gate.advance(now);
+            match kinds.get(phase as usize) {
+                Some((kind, ..)) => {
+                    world.resource::<Net>().command(&format!("weather {kind} 120"));
+                    gate.advance(now);
+                }
+                // The depths step brings its fog straight over the snow and clears both at
+                // its end: one clearing waited for, not two back to back.
+                None => {
+                    gate.weather_clear_owed = true;
+                    gate.next(Step::Depths, now);
+                }
+            }
         }
-        3 if shown.precipitation < 0.05 && shown.cover < 0.2 => {
+        3 if sky_clear(&shown) => {
             eased(gate);
             gate.next(Step::Depths, now);
         }
@@ -6505,6 +6518,7 @@ fn depths(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if !open_scene_pose(world, gate) {
                 if gate.server_in_phase() > 15.0 {
                     gate.check("depths: pose", Err(unsettled(world, gate)));
+                    clear_owed(world, gate);
                     gate.next(Step::Sky, now);
                 }
                 return;
@@ -6671,6 +6685,7 @@ fn depths(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if !open_scene_pose(world, gate) {
                 if gate.server_in_phase() > 15.0 {
                     gate.check("depths: back", Err(unsettled(world, gate)));
+                    clear_owed(world, gate);
                     gate.next(Step::Sky, now);
                 }
                 return;
@@ -6678,15 +6693,44 @@ fn depths(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.phase = 9;
             gate.advance(now);
         }
-        // The fog lifts before the sky is judged.
+        // The fog lifts before the sky is judged, and the weather step's snow has gone with it.
         _ => {
-            if shown.fog < 0.02 && shown.ground_fog < 0.02 {
+            let lifted = shown.fog < 0.02 && shown.ground_fog < 0.02;
+            let cleared = !gate.weather_clear_owed || sky_clear(&shown);
+            if lifted && cleared {
+                if gate.weather_clear_owed {
+                    gate.weather_clear_owed = false;
+                    eased(gate);
+                }
                 gate.next(Step::Sky, now);
             } else if gate.server_in_phase() > 20.0 {
-                gate.check("depths: clear", Err(format!("the fog did not lift: {}", shown.summary())));
+                if !lifted {
+                    gate.check("depths: clear", Err(format!("the fog did not lift: {}", shown.summary())));
+                }
+                if !cleared {
+                    gate.check("weather: clear", Err(format!("the sky did not clear: {}", shown.summary())));
+                }
+                if std::mem::take(&mut gate.weather_clear_owed) {
+                    eased(gate);
+                }
                 gate.next(Step::Sky, now);
             }
         }
+    }
+}
+
+/// Whether the sky has cleared: no rain or snow to speak of, and little cloud.
+fn sky_clear(shown: &voxmar_engine::weather::Weather) -> bool {
+    shown.precipitation < 0.05 && shown.cover < 0.2
+}
+
+/// A depths step ended before its last phase clears the sky for the weather step: cleared
+/// now, its clearing unjudged (a failure, as the step's own is).
+fn clear_owed(world: &mut World, gate: &mut Gate) {
+    if std::mem::take(&mut gate.weather_clear_owed) {
+        world.resource::<Net>().command("weather clear 600");
+        gate.check("weather: clear", Err("the depths step ended before the sky could clear after the snow".into()));
+        eased(gate);
     }
 }
 
