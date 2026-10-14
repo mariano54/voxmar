@@ -89,11 +89,13 @@ pub enum Synth {
     Creak,
     /// A bubble of lava bursting: a thick, low blurp and a spatter.
     LavaPop,
+    /// A pot on the boil: a run of small, round bubbles breaking at the top.
+    Simmer,
 }
 
 impl Synth {
     #[cfg(test)]
-    pub const ALL: [Synth; 27] = [
+    pub const ALL: [Synth; 28] = [
         Synth::Wind,
         Synth::Gale,
         Synth::Rustle,
@@ -121,6 +123,7 @@ impl Synth {
         Synth::Rumble,
         Synth::Creak,
         Synth::LavaPop,
+        Synth::Simmer,
     ];
 
     /// Whether it makes a continuous bed rather than one-shots.
@@ -189,6 +192,7 @@ pub fn one_shot(synth: Synth, variant: usize) -> (Vec<f32>, [Vec<f32>; 2]) {
         Synth::Rumble => rumble(&mut noise),
         Synth::Creak => creak(&mut noise),
         Synth::LavaPop => lava_pop(&mut noise),
+        Synth::Simmer => simmer(&mut noise),
         bed => panic!("{bed:?} makes a bed, not one-shots"),
     };
     let scale = loudness(&dry, 0.14, 0.8);
@@ -880,6 +884,20 @@ fn lava_pop(noise: &mut Noise) -> Vec<f32> {
         let length = between(noise, 0.004, 0.012);
         add_at(&mut out, t, seconds(length * 5.0), |j| gain * band.band(noise.next()) * (-(j as f32 / SR) / length).exp());
         t += between(noise, 0.02, 0.09);
+    }
+    out
+}
+
+/// A pot simmering: bubbles smaller and higher than lava's, in a quick, uneven run, the
+/// first ones the fullest.
+fn simmer(noise: &mut Noise) -> Vec<f32> {
+    let mut out = vec![0.0f32; seconds(0.9)];
+    let mut t = between(noise, 0.01, 0.03);
+    let mut gain = 1.0;
+    for _ in 0..5 + (noise.unit() * 5.0) as usize {
+        bubble(&mut out, t, between(noise, 260.0, 620.0), gain * between(noise, 0.5, 1.0), between(noise, 0.3, 0.6));
+        t += between(noise, 0.03, 0.09);
+        gain *= 0.85;
     }
     out
 }

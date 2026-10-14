@@ -358,7 +358,6 @@ fn craft(
     mut name: Query<&mut Text, (With<CraftName>, Without<OutputCount>, Without<CraftHint>)>,
     mut hint: Query<&mut Text, (With<CraftHint>, Without<OutputCount>, Without<CraftName>)>,
     (locale, settings): (Res<Locale>, Res<Settings>),
-    mut sounds: MessageWriter<UiSound>,
 ) {
     if !ui.inventory_open {
         return;
@@ -424,8 +423,8 @@ fn craft(
     let mut inventory = player.inventory.clone();
     if craft_grid(&mut inventory, &recipes, allowed, all) > 0 {
         player.inventory = inventory;
+        // Heard as crafting (`sounds.ron`), not as a click.
         net.propose(craft, ActionTarget::Slot(if all { 0 } else { 1 }));
-        sounds.write(UiSound::Click);
     }
 }
 
