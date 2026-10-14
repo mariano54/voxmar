@@ -381,6 +381,9 @@ enum Step {
     /// chat says so with what to add next, and the sleep is a rest. At home, Lay on a
     /// recipe fills the crafting grid from a barrel there.
     Home,
+    /// A Homestead Hearth built and lit is home; lit again, the chat says what the home has
+    /// reached and what the next step needs.
+    Hearth,
     /// A wooden door placed before the player goes in whole, both halves facing them, and a
     /// right click on it opens it and another shuts it, as the server turns it.
     Door,
@@ -476,6 +479,8 @@ struct Gate {
     natural_home: Vec3,
     /// The way home's hiding distance, while the Home step shows the mark close up.
     home_hidden_within: Option<f32>,
+    /// Where the hearth step built its hearthstone (from the feet at its start).
+    hearth: Option<IVec3>,
     /// Puffs the watched chimney owed so far (its rate times the seconds watched).
     chimney_owed: f32,
     /// What the dry step's pot water replaced, put back after.
@@ -682,6 +687,7 @@ impl Gate {
             natural_before: Vec::new(),
             natural_home: Vec3::ZERO,
             home_hidden_within: None,
+            hearth: None,
             chimney_owed: 0.0,
             pot_ground: None,
             marked: None,
@@ -1500,6 +1506,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Journal => journal(world, gate, now, in_phase),
         Step::Prayers => prayers(world, gate, now, in_phase),
         Step::Home => home(world, gate, now),
+        Step::Hearth => hearth(world, gate, now),
         Step::Door => door(world, gate, now),
         Step::Quests => quests(world, gate, now, in_phase),
         Step::Catalogue => catalogue(world, gate, now, in_phase),
@@ -4596,7 +4603,7 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
         net.command("effect clear");
         let style = &mut world.resource_mut::<crate::hud::inventory::InterfaceStyle>();
         style.home_hidden_within = gate.home_hidden_within.take().unwrap_or(style.home_hidden_within);
-        gate.next(Step::Door, now);
+        gate.next(Step::Hearth, now);
     };
     match gate.phase {
         0 => {
@@ -4777,6 +4784,74 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
             } else if waited > 10.0 {
                 gate.check("home: lay", Err(format!("{waited:.1} server s after Lay: {laid} planks in the grid, {held} in the pack, barrel screen open {open}, inventory open {inventory}, viewer open {viewer}")));
                 lay_done(world, barrel);
+                leave(world, gate);
+            }
+        }
+    }
+}
+
+/// Server seconds the hearth step waits on each answer (built, lit, lit again).
+const HEARTH_WAIT: f32 = 10.0;
+
+/// A Homestead Hearth four blocks north of the feet (a ring of cobblestone about a
+/// hearthstone, a chimney two tall at its corner), lit by a right click: it is home. Lit
+/// again, the chat names the step the home has reached and what the next one needs.
+fn hearth(world: &mut World, gate: &mut Gate, now: f32) {
+    let stand = world.resource::<LocalPlayer>().position.floor().as_ivec3();
+    let core = gate.hearth.get_or_insert(stand + IVec3::new(0, 0, -4)).to_owned();
+    let (low, high) = (core - IVec3::new(1, 0, 1), core + IVec3::new(1, 3, 1));
+    let leave = |world: &mut World, gate: &mut Gate| {
+        world.resource::<Net>().command(&format!("fill {} {} {} {} {} {} air", low.x, low.y, low.z, high.x, high.y, high.z));
+        gate.hearth = None;
+        gate.next(Step::Door, now);
+    };
+    let light = |world: &World| {
+        let actions = world.resource::<crate::Actions>().0.clone();
+        world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("base:light"), voxmar_engine::action::ActionTarget::Block { block: core, face: voxmar_engine::coords::Face::PosY });
+    };
+    let said = |world: &World, gate: &Gate, what: &[&str]| world.resource::<crate::hud::console::Console>().since(gate.phase_since).any(|l| what.iter().all(|w| l.contains(w)));
+    let waited = gate.server_in_phase();
+    match gate.phase {
+        0 => {
+            let net = world.resource::<Net>();
+            net.command(&format!("fill {} {} {} {} {} {} air", low.x, low.y, low.z, high.x, high.y, high.z));
+            net.command(&format!("fill {} {} {} {} {} {} cobblestone", low.x, low.y, low.z, core.x + 1, core.y, core.z + 1));
+            net.command(&format!("setblock {} {} {} hearthstone", core.x, core.y, core.z));
+            net.command(&format!("fill {} {} {} {} {} {} chimney", low.x, core.y + 1, low.z, low.x, core.y + 2, low.z));
+            gate.advance(now);
+        }
+        // Lit once the client has it all: home now.
+        1 => {
+            let built = {
+                let client = world.resource::<ClientWorld>();
+                let named = |at: IVec3| client.block(at).map(|b| client.registry.def(b).name.clone());
+                named(core).as_deref() == Some("base:hearthstone") && named(IVec3::new(low.x, core.y + 2, low.z)).as_deref() == Some("base:chimney")
+            };
+            if built {
+                light(world);
+                gate.advance(now);
+            } else if waited > HEARTH_WAIT {
+                gate.check("hearth: home", Err(format!("the hearth was not on the client {waited:.1} server s after it was built")));
+                leave(world, gate);
+            }
+        }
+        2 => {
+            if said(world, gate, &["your home now"]) {
+                light(world);
+                gate.advance(now);
+            } else if waited > HEARTH_WAIT {
+                gate.check("hearth: home", Err(format!("{waited:.1} server s after lighting the built hearth, no line said it was home")));
+                leave(world, gate);
+            }
+        }
+        // Lit again: the step reached and what the next needs.
+        _ => {
+            if said(world, gate, &["Hearthside reached", "Next,", "needs"]) {
+                gate.check("hearth: home", Ok("a built hearth lit was home, and lit again the chat said Hearthside was reached and what the next step needs".into()));
+                leave(world, gate);
+            } else if waited > HEARTH_WAIT {
+                let lines: Vec<String> = world.resource::<crate::hud::console::Console>().since(gate.phase_since).map(str::to_owned).collect();
+                gate.check("hearth: home", Err(format!("{waited:.1} server s after lighting the hearth again, no line named the step and the next: {lines:?}")));
                 leave(world, gate);
             }
         }

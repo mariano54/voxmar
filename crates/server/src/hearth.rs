@@ -58,8 +58,16 @@ impl Server {
         } else if structure.fuels.is_empty() {
             self.tally(agent, "lit", &structure.name, 1);
         }
+        let home = core.as_vec3() + Vec3::new(0.5, 1.0, 0.5);
+        // Lit again by the one whose home it already is: what the home has reached and what
+        // its next steps need, as `/home` says, so the way up is learnt at the hearth.
+        if structure.home && self.players.get(&agent).is_some_and(|p| p.home == Some(home)) {
+            let first = Words::key("multiblock.home_again").with("structure", structure_words(structure));
+            self.structure_reply(agent, Words::Lines(std::iter::once(first).chain(self.home_steps(agent, core + IVec3::Y)).collect()));
+            return;
+        }
         if structure.home && let Some(player) = self.players.get_mut(&agent) {
-            player.home = Some(core.as_vec3() + Vec3::new(0.5, 1.0, 0.5));
+            player.home = Some(home);
         }
         let key = if structure.home { "multiblock.home" } else { "multiblock.lit" };
         self.structure_reply(agent, Words::key(key).with("structure", structure_words(structure)));

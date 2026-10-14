@@ -139,7 +139,11 @@ the workbench and the larder), the highest step reached and what the next one la
 as if you stood in it: "Camp reached. Next, Hearthside: it needs hearth 0/1." What a step
 lacks is read off its own condition (`Condition::lacks`), so a mod's steps are covered with no
 extra work; a block tag shows by `home.tag.<tag>` in the language files, else as the tag.
-It is a console command, so it needs no protocol change.
+It is a console command, so it needs no protocol change. The same lines come at the hearth: a right click on the
+Homestead Hearth that is already your home ("Your home's Homestead Hearth.") says them, so a
+player learns the way up where they live, not from a command (hearth.rs `light`,
+`Server::home_steps`). Test: `a_lit_homestead_hearth_is_home_and_the_dead_wake_there`. The
+gate's Hearth step builds one, lights it and lights it again ("hearth: home").
 
 ## The way home
 

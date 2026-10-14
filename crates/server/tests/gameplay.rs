@@ -1965,6 +1965,9 @@ fn a_lit_homestead_hearth_is_home_and_the_dead_wake_there() {
     assert!(light(&mut client).contains("needs"), "no chimney yet");
     client.ok("/fill ~5 ~1 ~1 ~5 ~2 ~1 chimney");
     assert!(light(&mut client).contains("your home"));
+    // Lit again, it says what the home has reached and what the next step needs.
+    let again = light(&mut client);
+    assert!(again.contains("Your home's") && again.contains("Hearthside reached. Next,") && again.contains("needs"), "lit again: {again}");
     // Dying far off, they wake on the hearthstone.
     client.ok("/tp ~-20 ~ ~");
     client.ok("/kill");

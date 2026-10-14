@@ -330,6 +330,7 @@
     "farming.too_dark": "It is too dark here for {crop} to grow.",
     "farming.needs_water": "{crop} grows only with water close by.",
     "multiblock.home": "The {structure} is lit: this is your home now, and you will wake here.",
+    "multiblock.home_again": "Your home's {structure}.",
     "multiblock.lit": "The {structure} is lit.",
     "machine.put": "Put in {count} × {item}.",
     "machine.took": "Took {items}.",
