@@ -397,10 +397,10 @@ impl Step {
 
 impl Gate {
     /// Whether the server runs behind now: in a lagged step, but in the fight-feel step only
-    /// through its tries (the block, counter and dodge), not while the bear is summoned and
-    /// the sword given, nor while the bears are swept away after.
+    /// from the bear's coming (`FEEL_LAG_SETTLE`) through its tries (the block, counter and
+    /// dodge), not while it is summoned, nor while the bears are swept away after.
     fn lagging(&self) -> bool {
-        self.step.lagged() && (self.step != Step::Feel || (FEEL_BLOCK..=FEEL_DODGE).contains(&self.phase))
+        self.step.lagged() && (self.step != Step::Feel || (FEEL_COMING..=FEEL_DODGE).contains(&self.phase))
     }
 
     /// How many times the game's pace the server ticks now: the workshop's machine stages
@@ -480,6 +480,8 @@ struct Gate {
     highest: f32,
     /// Teleport sequence before returning weather/sky views to the open test ground.
     scene_teleport: u32,
+    /// The server's clock when `open_scene_pose` last sent its teleport.
+    scene_sent: f32,
     /// Where `/locate gorge` sent the player: the column, one block above its water.
     gorge: IVec3,
     /// Whether the player has arrived there: the river's current may carry them off while
@@ -638,6 +640,7 @@ impl Gate {
             machines_held: f32::MIN,
             highest: f32::MIN,
             scene_teleport: 0,
+            scene_sent: 0.0,
             gorge: IVec3::ZERO,
             gorge_reached: false,
             tarn: None,
@@ -5164,30 +5167,62 @@ fn watch_weather(world: &mut World, gate: &mut Gate, now: f32) {
 /// Returns each view test to the same open ground, including after a failed swim.
 /// Wait for a new server teleport and grounded client pose before asking for a shot;
 /// looking from inside the pool's walls cannot judge weather or the morning sky.
+///
+/// A player found off the spot once the teleport is in, on the ground and out of water, was
+/// moved by something on it (a creature on the spot puts the player out of its body,
+/// `player.rs`): the wild creatures around are sent away and the player back, until they
+/// stay put. Twice under load the player stood 0.16 and 0.97 blocks off in +x at the start
+/// of Depths, and the pose never settled.
 fn open_scene_pose(world: &mut World, gate: &mut Gate) -> bool {
     let position = gate.feet.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
-    if gate.settled == 0 {
+    let send = |world: &mut World, gate: &mut Gate, disperse: bool| {
         gate.scene_teleport = world.resource::<LocalPlayer>().teleports;
+        gate.scene_sent = gate.server_now;
+        let net = world.resource::<Net>();
+        if disperse {
+            net.command("creatures disperse");
+        }
+        net.command(&format!("tp {} {} {}", position.x, position.y, position.z));
+    };
+    if gate.settled == 0 {
         key(world, KeyCode::KeyW, false);
         key(world, KeyCode::Space, false);
         world.resource_mut::<LocalPlayer>().flying = false;
-        world.resource::<Net>().command(&format!("tp {} {} {}", position.x, position.y, position.z));
+        send(world, gate, false);
         gate.settled = 1;
         return false;
     }
     let player = world.resource::<LocalPlayer>();
-    let ready = player.teleports != gate.scene_teleport && player.on_ground && !player.in_water
-        && player.position.distance(position) < 0.05;
+    let arrived = player.teleports != gate.scene_teleport && player.on_ground && !player.in_water;
+    let off = player.position.distance(position) >= 0.05;
+    if arrived && off && gate.server_now - gate.scene_sent > SCENE_RESEND {
+        info!("gate: pose: {}; sending the wild creatures away and the player back", unsettled(world, gate));
+        send(world, gate, true);
+        gate.settled = 1;
+        return false;
+    }
+    let ready = arrived && !off;
     gate.settled = if ready { gate.settled + 1 } else { 1 };
     ready && gate.settled >= 3
 }
+
+/// Server seconds `open_scene_pose` lets a player who is off the spot after its teleport
+/// stand before it sends them back.
+const SCENE_RESEND: f32 = 1.0;
 
 /// Why `open_scene_pose` has not settled, for its checks' failures.
 fn unsettled(world: &World, gate: &Gate) -> String {
     let player = world.resource::<LocalPlayer>();
     let position = gate.feet.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
+    let launch = world.resource::<Launch>();
+    let near: Vec<String> = world
+        .resource::<crate::creatures::Creatures>()
+        .views()
+        .filter(|v| v.position.distance(position) < 4.0)
+        .map(|v| format!("{} at {:.2}", launch.content.creatures.get(v.species).def.name, v.position))
+        .collect();
     format!(
-        "the open test-ground teleport did not settle: teleported {}, on the ground {}, in water {}, {:.2} from the spot at {:.2}",
+        "the open test-ground teleport did not settle: teleported {}, on the ground {}, in water {}, {:.2} from the spot at {:.2}; creatures within 4: {near:?}",
         player.teleports != gate.scene_teleport,
         player.on_ground,
         player.in_water,
@@ -5633,8 +5668,9 @@ const HAND_AREA: [f32; 4] = [0.5, 1.0, 0.45, 1.0];
 const OUT_OF_HAND: [f32; 4] = [0.5, 0.8, 0.0, 0.35];
 
 /// The item in the hand, seen in first person: looking up at the open sky, an empty hand,
-/// an iron sword and a stone block each give a shot; the sword and the block each change
-/// the lower right and leave the upper left alone, and differ from each other. Then in a
+/// an iron sword, a stone block and the empty hand again each give a shot; the sword and the
+/// block each change the lower right and leave the sky alone (beyond what it drifted between
+/// the two empty-hand shots), and differ from each other. Then in a
 /// stone box with no light, the sword in hand is much darker (the hand takes the light where
 /// the player stands).
 fn held(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
@@ -5678,6 +5714,14 @@ fn held(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         }
         4 if in_phase > 0.8 => {
             if gate.shot(world, "held-block").is_some() {
+                empty_hand(world);
+                gate.advance(now);
+            }
+        }
+        // The empty hand again, for how far the sky drifted (clouds go by in the wind) over
+        // the shots of the sword and the block between.
+        5 if in_phase > 0.8 => {
+            if gate.shot(world, "held-empty-after").is_some() {
                 let (x, y, z) = (feet.x, feet.y, feet.z);
                 let net = world.resource::<Net>();
                 net.command(&format!("fill {} {y} {} {} {} {} stone", x - 3, z - 3, x + 3, y + 5, z + 3));
@@ -5687,25 +5731,25 @@ fn held(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
         }
         // Sealed in: a roof over the eye and nothing alight.
-        5 => {
+        6 => {
             let roof = feet + IVec3::new(0, 5, 0);
             let sealed = world.resource::<ClientWorld>().block(roof).is_some_and(|b| !b.is_air());
             if (sealed && in_phase > SETTLE) || gate.server_in_phase() > 10.0 {
                 gate.advance(now);
             }
         }
-        6 if in_phase > 1.0 => {
+        7 if in_phase > 1.0 => {
             if gate.shot(world, "held-sword-dark").is_some() {
                 empty_hand(world);
                 gate.advance(now);
             }
         }
-        7 if in_phase > 0.8 => {
+        8 if in_phase > 0.8 => {
             let Some(empty_dark) = gate.shot(world, "held-empty-dark") else { return };
             let (x, y, z) = (feet.x, feet.y, feet.z);
             world.resource::<Net>().command(&format!("fill {} {y} {} {} {} {} air", x - 3, z - 3, x + 3, y + 5, z + 3));
-            let shots: Vec<Option<Image>> = ["held-empty", "held-sword", "held-block", "held-sword-dark"].map(|n| gate.earlier_shot(n)).into();
-            let [Some(empty), Some(sword), Some(block), Some(sword_dark)] = shots.as_slice() else {
+            let shots: Vec<Option<Image>> = ["held-empty", "held-sword", "held-block", "held-empty-after", "held-sword-dark"].map(|n| gate.earlier_shot(n)).into();
+            let [Some(empty), Some(sword), Some(block), Some(empty_after), Some(sword_dark)] = shots.as_slice() else {
                 gate.check("held", Err("a shot of the hand was never taken".into()));
                 gate.next(Step::NaturalSpawns, now);
                 return;
@@ -5713,7 +5757,11 @@ fn held(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let in_hand = |a: &Image, b: &Image| change_in(a, b, HAND_AREA);
             let (sword_seen, block_seen) = (in_hand(empty, sword), in_hand(empty, block));
             let apart = in_hand(sword, block);
-            let (left_sword, left_block) = (change_in(empty, sword, OUT_OF_HAND), change_in(empty, block, OUT_OF_HAND));
+            // Against whichever empty-hand shot it is nearer to, beyond the sky's own drift between
+            // the two: what holding does to the sky shows against both, however it drifts.
+            let drift = change_in(empty, empty_after, OUT_OF_HAND);
+            let left = |held: &Image| change_in(empty, held, OUT_OF_HAND).min(change_in(empty_after, held, OUT_OF_HAND));
+            let (left_sword, left_block) = (left(sword), left(block));
             let dark_seen = in_hand(&empty_dark, sword_dark);
             let result = if sword_seen < HELD_SEEN {
                 Err(format!("the sword barely shows in the lower right: it changed the view there by {sword_seen:.2} levels"))
@@ -5721,13 +5769,15 @@ fn held(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 Err(format!("the block barely shows in the lower right: it changed the view there by {block_seen:.2} levels"))
             } else if apart < HELD_SEEN {
                 Err(format!("the sword and the block look alike in hand: they differ by {apart:.2} levels"))
-            } else if left_sword > HELD_ELSEWHERE || left_block > HELD_ELSEWHERE {
-                Err(format!("holding something changed the rest of the view: by {left_sword:.2} (sword) and {left_block:.2} (block) levels"))
+            } else if left_sword > HELD_ELSEWHERE + drift || left_block > HELD_ELSEWHERE + drift {
+                Err(format!(
+                    "holding something changed the rest of the view: by {left_sword:.2} (sword) and {left_block:.2} (block) levels, where the sky drifted {drift:.2} between the empty-hand shots"
+                ))
             } else if dark_seen > sword_seen * 0.5 {
                 Err(format!("the sword is as bright in a sealed dark box ({dark_seen:.2} levels from the empty hand) as under the sky ({sword_seen:.2})"))
             } else {
                 Ok(format!(
-                    "sword {sword_seen:.1} and block {block_seen:.1} levels in the lower right (differing by {apart:.1}), the rest unchanged ({left_sword:.2}, {left_block:.2}); in the dark box the sword shows {dark_seen:.1}"
+                    "sword {sword_seen:.1} and block {block_seen:.1} levels in the lower right (differing by {apart:.1}), the rest unchanged ({left_sword:.2}, {left_block:.2}, the sky drifting {drift:.2}); in the dark box the sword shows {dark_seen:.1}"
                 ))
             };
             gate.check("held", result);
@@ -5738,7 +5788,7 @@ fn held(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 }
 
 /// Levels the lower right must change by for the item in hand to count as drawn, and the
-/// most the rest of the view may.
+/// most the rest of the view may, beyond the sky's drift between the empty-hand shots.
 const HELD_SEEN: f32 = 1.0;
 const HELD_ELSEWHERE: f32 = 0.5;
 
@@ -6311,6 +6361,14 @@ const FEEL_SLOW_FRAME: f32 = 0.25;
 /// Server seconds the block, counter and dodge take at most together; past them the step
 /// fails what it is on and goes on to kill the bears, so none is left behind.
 const FEEL_LIMIT: f32 = 120.0;
+
+/// Server seconds of lag before the first blow is provoked. Guards and dodges are judged
+/// earlier by the player's round trip (`Server::lag_allowance`), smoothed by a quarter at
+/// each ping, one a second: put behind from calm, it is a tenth from where it settles eight
+/// pings on (0.75^8), about 0.02 s of a 0.2 s allowance, under the 0.05 s steps the tries
+/// take. With the lag on only from the block's phase, the block was found while the allowance
+/// still grew, and every dodge after it, at 0.40 to 0.65 s, was judged too late.
+const FEEL_LAG_SETTLE: f32 = 8.0;
 /// Bears the step summons at most, should provoking them and the counter kill one.
 const FEEL_BEARS: u32 = 3;
 
@@ -6332,6 +6390,8 @@ struct FeelRun {
     bears: u32,
     /// The server's clock when the step began, for `FEEL_LIMIT`.
     started: f32,
+    /// The server's clock when the step began to run behind, for `FEEL_LAG_SETTLE`.
+    lagged_from: Option<f32>,
     /// The moment the answer's search is centred on, and how far round it the dodge's
     /// search has gone (`after` is the moment tried next).
     centre: f32,
@@ -6450,6 +6510,9 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         }
         1 => {
             let roomy = world.resource::<LocalPlayer>().max_health >= 100;
+            if gate.feel.lagged_from.is_none() {
+                gate.feel.lagged_from = Some(gate.server_now);
+            }
             if roomy && view.is_some() && select(world, WEAPON) {
                 gate.advance(now);
             } else if gate.server_in_phase() > 10.0 {
@@ -6527,8 +6590,10 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             } else if !blocking {
                 key(world, dodge_key, false);
             }
-            // Provoked at most every few server seconds while it does not fight back.
-            if gate.feel.seen.is_none() && gate.server_now - gate.feel.poked > 3.0 && distance < 2.4 {
+            // Provoked at most every few server seconds while it does not fight back, and only
+            // once the lag has held long enough for the server's round trip to settle on it.
+            let settled = gate.feel.lagged_from.is_some_and(|from| gate.server_now - from >= FEEL_LAG_SETTLE);
+            if gate.feel.seen.is_none() && gate.server_now - gate.feel.poked > 3.0 && distance < 2.4 && settled {
                 if !gate.feel.facing_checked {
                     if gate.feel.facing_camera.is_none() {
                         let player = world.resource::<LocalPlayer>();
@@ -6691,7 +6756,9 @@ fn to_dodge(gate: &mut Gate, windup: f32, now: f32) {
     to_phase(gate, FEEL_DODGE, now);
 }
 
-/// The feel step's phases that are jumped to.
+/// The feel step's phases that are jumped to, and the one the bear comes in (from which the
+/// server runs behind).
+const FEEL_COMING: u32 = 1;
 const FEEL_BLOCK: u32 = 2;
 const FEEL_DODGE: u32 = 4;
 const FEEL_KILL: u32 = 5;
