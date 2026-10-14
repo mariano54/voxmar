@@ -153,12 +153,39 @@ It is a console command, so it needs no protocol change.
 Away from home (the lit hearth, else the bed last slept in), a small hearth mark at the top
 of the screen sits over where home lies, with how far it is ("Home 140 m"). Turned away from
 it, the mark waits at the screen's edge on the side to turn to, so a player lost at night
-turns until it is in the middle and walks. Within `home_hidden_within` blocks (core
-`interface.ron`, 24) nothing shows; the mark's icon is the item a package names as
+turns until it is in the middle and walks. The mark's icon is the item a package names as
 `home_icon` (base: the hearthstone). The server sends home in the player's vitals
-(`Vitals::home`, protocol 38) once a second when it changes. With no hearth lit and no bed
-slept in, there is no mark. The gate's Home step checks it after the camp: the bag named as
-home and the mark showing its distance.
+(`Vitals::home`, protocol 38) once a second when it changes, so the way home needs no new
+protocol. With no hearth lit and no bed slept in, there is no mark.
+
+**When it shows (Oct 14, thirteenth pass).** The first nights are where a player gets lost.
+They wander off at dusk, the hearth is a dot of light among dark trees, and nights stay dark
+with no torches before coal. More light is not the answer; the mark is. It used to show
+whenever the player was over 24 blocks from home, all day long. Now:
+
+- **Never inside the home.** Within `home_hidden_within` (8) blocks either way (a square, as
+  the home's own box is, `home_reach` 7, and a step), nothing shows, corners included.
+- **From dusk to dawn** (`home_dusk` 16500 to `home_dawn` 23500 ticks after sunrise, the
+  times `/time set dusk` and `dawn` name) it shows everywhere past that. A night can wrap
+  past midnight (a dusk later than its dawn).
+- **By day** it shows only farther than `home_shown_beyond` (48) blocks. A day spent working
+  round the home is not cluttered, and a long trip still has its way back.
+- It **fades** in and out over `home_fade` (0.5) seconds instead of popping.
+- The **"Way Home Marker"** setting (Interface tab, on by default, en+ja) turns it off.
+
+All five numbers live in core `interface.ron`, where a later package changes what it gives.
+They are checked as they load: the distances are 0 or more and the day distance is not under
+the inside one; both times are under a day and differ; the fade is 0 to 5 s. The rule is
+`hud::home::wanted`, with its own test (`the_way_home_shows_at_night_or_far_off`).
+
+**Gate.** The Home step checks the mark itself after the camp: named home, its distance, the
+edge, and gone near home. It does this with the distances set to 0 so it shows at any hour.
+The **WayHome** step then plays the rule at dusk. It sets `/time set dusk` and stands on a
+pad 20 blocks out, past the box and short of the day distance. It waits, in server and game
+seconds both, for the mark to fade in. It turns home 20° to one side and reads back the
+bearing the mark draws from where it sits, which must be within 3° of home's
+("way home: dusk"). Back at the camp it waits for the mark to fade out ("way home:
+inside"). It then sets the time back and leaves the camp to the Nest step, which takes it down.
 
 ## Sleeping
 

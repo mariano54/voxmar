@@ -387,12 +387,13 @@ fn draw(
 }
 
 /// What goes into a way, as it is laid out in the game: the crafting grid (two by two, or
-/// three by three for what takes a crafting table), a cooked item and its station, or the
+/// three by three for what takes a crafting table) and any block it is made near, a cooked
+/// item and its station, or the
 /// tool that takes a creature's product. A family of recipes shows the variant with `using`
 /// if it has one, else each in turn by `tick`.
 pub(super) fn way_inputs(card: &mut ChildSpawnerCommands, font: &Handle<Font>, images: &HudImages, content: &voxmar_engine::content::Content, method: &Method, using: Option<BlockId>, tick: u32) {
     match method {
-        Method::Craft { variants, .. } => {
+        Method::Craft { variants, near, .. } => {
             let wanted = |cells: &&[Option<BlockId>; GRID]| using.is_some_and(|item| cells.contains(&Some(item)));
             let cells = variants.iter().find(wanted).unwrap_or(&variants[tick as usize % variants.len()]);
             let side = if variants.iter().any(|v| (0..GRID).any(|i| v[i].is_some() && (i % SIDE == 2 || i / SIDE == 2))) { SIDE } else { 2 };
@@ -402,9 +403,20 @@ pub(super) fn way_inputs(card: &mut ChildSpawnerCommands, font: &Handle<Font>, i
                     item_cell(grid, font, images, cells[i], None);
                 }
             });
+            // Made near a block: that block beside the grid, as a cooking station is.
+            if let Some(block) = near.as_deref().and_then(|tag| content.blocks.tagged(tag).next()) {
+                card.spawn(text(font, "+", BODY, MUTED));
+                item_cell(card, font, images, Some(block), None);
+            }
         }
-        Method::Cook { input, station, .. } => {
-            item_cell(card, font, images, Some(*input), None);
+        Method::Cook { input, uses, with, station, .. } => {
+            // What is held, then what else it takes, each with how many if more than one.
+            let count = |n: u8| (n > 1).then(|| n.to_string());
+            item_cell(card, font, images, Some(*input), count(*uses));
+            for &(item, n) in with {
+                card.spawn(text(font, "+", BODY, MUTED));
+                item_cell(card, font, images, Some(item), count(n));
+            }
             if let Some(fire) = content.blocks.tagged(station).next() {
                 card.spawn(text(font, "+", BODY, MUTED));
                 item_cell(card, font, images, Some(fire), None);
@@ -424,7 +436,14 @@ fn describe(locale: &Locale, launch: &Launch, method: &Method) -> Vec<(String, C
     let content = &launch.content;
     let creature = |id| locale.creature(&content.creatures.get(id).def);
     match method {
-        Method::Craft { shapeless, .. } => vec![(locale.get(if *shapeless { "recipes.shapeless" } else { "recipes.craft" }).to_owned(), MUTED)],
+        Method::Craft { shapeless, near, .. } => {
+            let mut lines = vec![(locale.get(if *shapeless { "recipes.shapeless" } else { "recipes.craft" }).to_owned(), MUTED)];
+            if let Some(tag) = near {
+                let block = content.blocks.tagged(tag).next().map_or_else(|| tag.clone(), |block| locale.block(content.blocks.def(block)));
+                lines.push((locale.format("recipes.near", &[("block", &block)]), SOFT));
+            }
+            lines
+        }
         Method::Cook { station, skill, level, burnt, .. } => {
             let station = content.blocks.tagged(station).next().map_or_else(|| station.clone(), |block| locale.block(content.blocks.def(block)));
             let mut lines = vec![(locale.format("recipes.cook", &[("station", &station)]), MUTED)];
