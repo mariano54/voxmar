@@ -4,8 +4,15 @@
     // How strongly an empty worn well shows what it takes (the pack's `ui/slot/*` marks),
     // from 0 (not at all) to 1 (as drawn).
     worn_glyph_alpha: 0.25,
-    // The way home: a mark at the top of the screen toward home (the lit hearth, else the
-    // bed last slept in) and how far it is, once the player is farther than this many
-    // blocks from it.
-    home_hidden_within: 24.0,
+    // The way home (docs/home.md): a mark at the top of the screen toward home (the lit
+    // hearth, else the bed last slept in) and how far it is. It never shows within
+    // `home_hidden_within` blocks of home (the home's own box, survival.ron's home_reach
+    // of 7, and a step). From `home_dusk` to `home_dawn` (ticks after sunrise, as /time
+    // names them) it shows beyond that; by day only beyond `home_shown_beyond`. It fades
+    // in and out over `home_fade` seconds.
+    home_hidden_within: 8.0,
+    home_shown_beyond: 48.0,
+    home_dusk: 16500,
+    home_dawn: 23500,
+    home_fade: 0.5,
 )

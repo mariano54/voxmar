@@ -90,6 +90,11 @@ impl Stance {
         Stance { nod: self.nod * by, crouch: self.crouch * by, rear: self.rear * by, lean: self.lean * by, paw: self.paw * by, twist: self.twist * by }
     }
 
+    /// How far it is from standing, every part together.
+    pub fn size(self) -> f32 {
+        self.nod.abs() + self.crouch.abs() + self.rear.abs() + self.lean.abs() + self.paw.abs() + self.twist.abs()
+    }
+
     pub fn plus(self, other: Stance) -> Stance {
         Stance { nod: self.nod + other.nod, crouch: self.crouch + other.crouch, rear: self.rear + other.rear, lean: self.lean + other.lean, paw: self.paw + other.paw, twist: self.twist + other.twist }
     }
@@ -103,6 +108,23 @@ pub struct StrikeLook {
     pub strike: Stance,
     pub snap: f32,
     pub settle: f32,
+    /// The stance it stands in as it recovers after the blow (the server holds it still for
+    /// its attack's `recovery`): the player's moment to hit back. None: it settles straight
+    /// back.
+    #[serde(default)]
+    pub recover: Stance,
+    /// How closely it follows where the server has it while it winds up (1: as it does
+    /// walking, 0: rooted to the spot), so it plants its feet to coil.
+    #[serde(default = "one")]
+    pub plant: f32,
+    /// How much faster than walking it closes on where the server has it as the blow
+    /// snaps out, so the lunge darts rather than slides.
+    #[serde(default = "one")]
+    pub dart: f32,
+}
+
+fn one() -> f32 {
+    1.0
 }
 
 /// How a creature's wind-up is told beyond its stance: a sound whose loudest moment
@@ -332,7 +354,10 @@ impl FightLook {
             if !(strike.snap > 0.0 && strike.snap <= 1.0 && strike.settle > 0.0 && strike.settle <= 2.0) {
                 return Err(format!("{FILE}: the {name} strike snaps over 0 to 1 s and settles over 0 to 2 s"));
             }
-            for stance in [strike.coil, strike.strike] {
+            if !(0.0..=1.0).contains(&strike.plant) || !(1.0..=8.0).contains(&strike.dart) {
+                return Err(format!("{FILE}: the {name} strike plants from 0 to 1 and darts from 1 to 8 times its walk's pace (plant {}, dart {})", strike.plant, strike.dart));
+            }
+            for stance in [strike.coil, strike.strike, strike.recover] {
                 let parts = [stance.nod, stance.crouch, stance.rear, stance.lean, stance.paw, stance.twist];
                 if parts.iter().any(|v| !v.is_finite() || v.abs() > 2.0) || !(0.0..=1.0).contains(&stance.rear) {
                     return Err(format!("{FILE}: the {name} strike's stances turn at most 2 radians, move at most 2 heights, and rear from 0 to 1"));

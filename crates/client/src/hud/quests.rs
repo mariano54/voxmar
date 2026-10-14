@@ -322,6 +322,7 @@ pub fn goal_words(locale: &Locale, content: &Content, quest: &QuestDef, goal: &G
         Goal::Fertilised(item, _) => locale.format("quest.goal.fertilised", &[("item", &item_words(locale, content, package, item))]),
         Goal::Ate(food, _) => locale.format("quest.goal.ate", &[("item", &item_words(locale, content, package, food))]),
         Goal::Laid(item, _) => locale.format("quest.goal.laid", &[("item", &item_words(locale, content, package, item))]),
+        Goal::Watering(block, _) => locale.format("quest.goal.watering", &[("item", &item_words(locale, content, package, block))]),
         Goal::Felt(effect) => {
             let words = qualified(package, effect).iter().find_map(|name| content.effects.find(name)).map(|id| content.effects.get(id)).map_or_else(|| title_from_id(effect), |def| locale.get_or(&def_key("effect", &def.name), &def.title).to_owned());
             return locale.format("quest.goal.felt", &[("effect", &words)]);
