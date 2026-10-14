@@ -278,6 +278,7 @@ fn place(effect: &Effect, target: ActionTarget, player: &LocalPlayer, world: &Cl
 }
 
 /// Every action proposed shows its effect, the first burst at once.
+#[allow(clippy::too_many_arguments)]
 fn show_actions(net: Option<Res<Net>>, shown: Option<Res<Shown>>, player: Res<LocalPlayer>, world: Res<ClientWorld>, time: Res<Time>, mut pending: ResMut<Pending>, mut glints: Commands, slots: Query<Entity, With<crate::hud::inventory::OutputSlot>>) {
     let (Some(net), Some(shown)) = (net, shown) else { return };
     let now = time.elapsed_secs();
