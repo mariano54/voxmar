@@ -82,13 +82,14 @@ pub fn across(angle: f32, fov: f32) -> (f32, Option<f32>) {
     }
 }
 
-/// Whether the way home is wanted `away` blocks from home at `tick` of the day (ticks after
-/// sunrise): never within `home_hidden_within`, from dusk to dawn beyond it, and by day
-/// beyond `home_shown_beyond`.
-pub fn wanted(style: &super::inventory::InterfaceStyle, away: f32, tick: u64) -> bool {
+/// Whether the way home is wanted `way` (x, z) blocks from home at `tick` of the day
+/// (ticks after sunrise): never within `home_hidden_within` blocks either way, which is a
+/// square as the home's own box is (its corners are inside too), from dusk to dawn beyond
+/// it, and by day farther than `home_shown_beyond`.
+pub fn wanted(style: &super::inventory::InterfaceStyle, way: Vec2, tick: u64) -> bool {
     let (dusk, dawn) = (style.home_dusk, style.home_dawn);
     let night = if dusk < dawn { (dusk..dawn).contains(&tick) } else { tick >= dusk || tick < dawn };
-    away > style.home_hidden_within && (night || away > style.home_shown_beyond)
+    way.abs().max_element() > style.home_hidden_within && (night || way.length() > style.home_shown_beyond)
 }
 
 /// The bearing to `to` from `from`, in radians to the right of a view turned `yaw`.
@@ -117,9 +118,10 @@ fn show(
 ) {
     let Ok((mut mark, mut node, mut visibility)) = mark.single_mut() else { return };
     let home = player.vitals.home.map(|at| at.as_vec3() + Vec3::new(0.5, 0.0, 0.5));
-    let away = home.map(|home| (home - player.position).with_y(0.0).length());
+    let way = home.map(|home| Vec2::new(home.x - player.position.x, home.z - player.position.z));
+    let away = way.map(Vec2::length);
     let tick = cycle.ticks.max(0.0) as u64 % voxmar_protocol::TICKS_PER_DAY;
-    let want = settings.way_home_marker && ui.cursor_locked && !player.dead && away.is_some_and(|away| wanted(&style, away, tick));
+    let want = settings.way_home_marker && ui.cursor_locked && !player.dead && way.is_some_and(|way| wanted(&style, way, tick));
     // Faded in and out, at once with no fade; gone at once with no home or on dying.
     let step = if style.home_fade > 0.0 { time.delta_secs() / style.home_fade } else { 1.0 };
     let shown = if home.is_none() || player.dead { 0.0 } else { (mark.shown + if want { step } else { -step }).clamp(0.0, 1.0) };
@@ -185,9 +187,12 @@ mod tests {
         let files: Vec<_> = content.files.iter().cloned().collect();
         let mut style = super::super::inventory::InterfaceStyle::load(&files).unwrap();
         let (noon, dusk, midnight, dawn) = (8000, style.home_dusk, 20000, style.home_dawn);
-        let (inside, near, far) = (style.home_hidden_within - 1.0, style.home_hidden_within + 2.0, style.home_shown_beyond + 2.0);
+        let along = |d: f32| Vec2::new(d, 0.0);
+        let (inside, near, far) = (along(style.home_hidden_within - 1.0), along(style.home_hidden_within + 2.0), along(style.home_shown_beyond + 2.0));
+        // In a corner of the home's square box, farther than its side but still inside.
+        let corner = Vec2::splat(style.home_hidden_within - 0.5);
         for tick in [noon, dusk, midnight, dawn] {
-            assert!(!wanted(&style, inside, tick), "never inside the home, {tick}");
+            assert!(!wanted(&style, inside, tick) && !wanted(&style, corner, tick), "never inside the home, {tick}");
             assert!(wanted(&style, far, tick), "always far off, {tick}");
         }
         assert!(wanted(&style, near, dusk) && wanted(&style, near, midnight));

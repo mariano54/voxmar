@@ -163,8 +163,8 @@ They wander off at dusk, the hearth is a dot of light among dark trees, and nigh
 with no torches before coal. More light is not the answer; the mark is. It used to show
 whenever the player was over 24 blocks from home, all day long. Now:
 
-- **Never inside the home.** Within `home_hidden_within` (8) blocks, which is the home's own
-  box (`home_reach` 7) and a step, nothing shows.
+- **Never inside the home.** Within `home_hidden_within` (8) blocks either way (a square, as
+  the home's own box is, `home_reach` 7, and a step), nothing shows, corners included.
 - **From dusk to dawn** (`home_dusk` 16500 to `home_dawn` 23500 ticks after sunrise, the
   times `/time set dusk` and `dawn` name) it shows everywhere past that. A night can wrap
   past midnight (a dusk later than its dawn).

@@ -4678,7 +4678,14 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
         if let Some(style) = gate.home_style.take() {
             *world.resource_mut::<crate::hud::inventory::InterfaceStyle>() = style;
         }
-        // The camp stays home for the way home step, which takes it down.
+        // The camp stays home for the way home step, which takes it down; one the server
+        // never named home that step cannot find, so it goes here.
+        if world.resource::<LocalPlayer>().vitals.home != Some(bag) {
+            let net = world.resource::<Net>();
+            for at in [bag, torch] {
+                net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
+            }
+        }
         gate.next(Step::WayHome, now);
     };
     match gate.phase {
@@ -4894,7 +4901,10 @@ fn way_home(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
             }
         }
-        net.command(&format!("time set {}", gate.way_time));
+        // The time it was, once it was moved.
+        if gate.phase > 0 {
+            net.command(&format!("time set {}", gate.way_time));
+        }
         gate.next(Step::Door, now);
     };
     let Some(home) = home else {
@@ -4924,7 +4934,7 @@ fn way_home(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let dusk = {
                 let style = world.resource::<crate::hud::inventory::InterfaceStyle>();
                 let tick = world.resource::<crate::render::DayCycle>().ticks.max(0.0) as u64 % voxmar_protocol::TICKS_PER_DAY;
-                crate::hud::home::wanted(style, (WAY_OUT as f32) - 0.5, tick)
+                crate::hud::home::wanted(style, Vec2::new((WAY_OUT as f32) - 0.5, 0.0), tick)
             };
             if at(out) && dusk && mark.is_some_and(|(faded, ..)| faded >= 1.0) {
                 let eye = world.resource::<LocalPlayer>().eye();
