@@ -295,6 +295,9 @@ enum Step {
     /// boss fight and plays a boss's track; in survival she winds up a move of her own, its
     /// tell shown. Every exit sweeps her away.
     Boss,
+    /// A torch held a moment leaves the player Smoky (smoke that clings): its chip shows,
+    /// timed; then the hand is emptied.
+    Smoke,
     /// A chainmail shirt and a wooden shield in hand, each right click puts one on in its
     /// own worn slot, and with the shield on the guard is the shield's; the inventory
     /// shows both in its worn wells, and their tooltips the armour lines.
@@ -1321,6 +1324,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Sling => sling(world, gate, now, in_phase),
         Step::Feel => feel(world, gate, now, in_phase),
         Step::Boss => boss(world, gate, now),
+        Step::Smoke => smoke(world, gate, now),
         Step::Wear => wear(world, gate, now, in_phase),
         Step::CombatHud => combat_hud(world, gate, now, in_phase),
         Step::Cook => cook(world, gate, now, in_phase),
@@ -7168,16 +7172,21 @@ fn boss(world: &mut World, gate: &mut Gate, now: f32) {
             }
         }
         2 => {
-            // A boss within the rules' reach is a boss fight: the calm track fades and a
-            // boss's starts (silently, `music::Rehearse`).
-            let music = crate::music::boss_music(world);
-            if music.is_some_and(|(fighting, track)| fighting && track) {
-                gate.check("boss music", Ok("a boss fight, with a boss's track playing".into()));
-                gate.advance(now);
-            } else if waited {
-                let said = music.map_or("no music running".to_owned(), |(fighting, track)| format!("in a boss fight: {fighting}, a boss's track: {track}"));
-                gate.check("boss music", Err(format!("not a boss fight with its track after {BOSS_WAIT} server seconds ({said})")));
-                gate.advance(now);
+            // A boss within the rules' reach is a boss fight: the calm track fades and one
+            // of this boss's own starts (her `music` tags, wherever she is met; silently,
+            // `music::Rehearse`), never another biome's boss's.
+            match crate::music::boss_music(world) {
+                Some((true, Some((track, ours)))) => {
+                    let result = if ours { Ok(format!("a boss fight, with her own track: {track}")) } else { Err(format!("a boss fight, but with another boss's track: {track}")) };
+                    gate.check("boss music", result);
+                    gate.advance(now);
+                }
+                music if waited => {
+                    let said = music.map_or("no music running".to_owned(), |(fighting, _)| format!("in a boss fight: {fighting}, no boss's track"));
+                    gate.check("boss music", Err(format!("not a boss fight with her track after {BOSS_WAIT} server seconds ({said})")));
+                    gate.advance(now);
+                }
+                _ => {}
             }
         }
         3 => {
@@ -7216,7 +7225,56 @@ fn end_boss(world: &mut World, gate: &mut Gate, now: f32) {
     net.command("gamemode survival");
     net.command("skill hitpoints 10");
     net.command(&format!("tp {} {} {}", feet.x as f32 + 0.5, feet.y, feet.z as f32 + 0.5));
-    gate.next(Step::Wear, now);
+    gate.next(Step::Smoke, now);
+}
+
+/// What the smoke step holds, and the effect it leaves.
+const SMOKE_ITEM: &str = "base:torch";
+const SMOKY: &str = "base:smoky";
+
+/// A torch held a moment: the Smoky chip shows, with its time; then the hand is emptied.
+fn smoke(world: &mut World, gate: &mut Gate, now: f32) {
+    let Some(smoky) = world.resource::<Launch>().content.effects.find(SMOKY) else {
+        gate.check("smoky chip", Err(format!("no `{SMOKY}` in the content")));
+        gate.next(Step::Wear, now);
+        return;
+    };
+    let waited = gate.server_in_phase() > BOSS_WAIT;
+    match gate.phase {
+        0 => {
+            let net = world.resource::<Net>();
+            net.command("effect clear");
+            net.command(&format!("give {} 1", SMOKE_ITEM.trim_start_matches("base:")));
+            gate.advance(now);
+        }
+        1 => {
+            if select(world, SMOKE_ITEM) {
+                gate.advance(now);
+            } else if waited {
+                gate.check("smoky chip", Err(format!("no {SMOKE_ITEM} came to hand in {BOSS_WAIT} server seconds")));
+                gate.next(Step::Wear, now);
+            }
+        }
+        2 => {
+            // The chip is drawn for the effect, with a timer: smoke that clings is timed.
+            let chip = world.query::<&crate::hud::effects::EffectHover>().iter(world).any(|hover| hover.0 == smoky);
+            let timed = world.query::<&crate::hud::EffectTimer>().iter(world).any(|timer| timer.0 == smoky);
+            if chip && timed {
+                let left = world.resource::<LocalPlayer>().vitals.effects.iter().find(|a| a.effect == smoky).and_then(|a| a.seconds_left);
+                gate.check("smoky chip", Ok(format!("a torch in hand: the Smoky chip shows, {} s left", left.unwrap_or(0))));
+                gate.advance(now);
+            } else if waited {
+                gate.check("smoky chip", Err(format!("with a torch in hand for {BOSS_WAIT} server seconds: chip {chip}, timed {timed}")));
+                gate.advance(now);
+            }
+        }
+        _ => {
+            if empty_hand(world) || waited {
+                world.resource::<Net>().command("effect clear");
+                gate.next(Step::Wear, now);
+            }
+        }
+    }
 }
 
 /// What the wear step puts on, and where (`inventory::WORN` on).
