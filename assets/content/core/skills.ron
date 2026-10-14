@@ -185,7 +185,7 @@
                 (level: 10, text: "20 health; it trains with every blow you land"),
                 (level: 20, text: "40 health"),
                 (level: 25, text: "Healing by yourself is a quarter faster (to come)"),
-                (level: 35, text: "Cooked food heals a tenth more", icon: "cooked_rabbit"),
+                (level: 35, text: "Cooked food heals a tenth more", icon: "cooked_small_game"),
                 (level: 50, text: "100 health"),
             ],
         ),
