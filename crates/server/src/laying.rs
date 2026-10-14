@@ -158,7 +158,11 @@ impl Server {
 
     /// The stores in `agent`'s home, while they stand in it, nearest first.
     pub(crate) fn home_stores(&self, agent: PlayerId) -> Vec<IVec3> {
-        let Some(anchor) = self.at_home(agent) else { return Vec::new() };
+        self.at_home(agent).map_or_else(Vec::new, |anchor| self.stores_around(anchor))
+    }
+
+    /// The stores in the home box around `anchor`, nearest first.
+    pub(crate) fn stores_around(&self, anchor: IVec3) -> Vec<IVec3> {
         let rules = &self.survival;
         let mut found = Vec::new();
         for dy in -rules.home_down..=rules.home_up {
