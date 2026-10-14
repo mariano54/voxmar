@@ -38,15 +38,16 @@
     ),
     // How a creature winds up and strikes, by how it attacks (`attack.style`). Through its
     // wind-up it coils into `coil` (head `nod` down in radians, `crouch` of its height down,
-    // `rear` up from 0 to 1, `lean` of its length forward, front limbs `paw` radians forward);
+    // `rear` up from 0 to 1, `lean` of its length forward, front limbs `paw` radians forward,
+    // the body turned aside `twist` radians, to its left positive);
     // as the blow lands it snaps to `strike` over `snap` and settles back over `settle`.
     // A bite pulls the head back and snaps it forward; claws rear and swipe down; horns and
     // hooves drop the head and drive through; a spell rears and flares.
     strikes: {
         "stab": (coil: (nod: -0.45, crouch: 0.10, rear: 0.0, lean: -0.10, paw: 0.0),
                  strike: (nod: 0.55, crouch: 0.0, rear: 0.0, lean: 0.28, paw: 0.0), snap: 0.07, settle: 0.32),
-        "slash": (coil: (nod: -0.30, crouch: 0.0, rear: 0.75, lean: -0.06, paw: -0.9),
-                  strike: (nod: 0.35, crouch: 0.08, rear: 0.0, lean: 0.22, paw: 1.1), snap: 0.08, settle: 0.36),
+        "slash": (coil: (nod: -0.30, crouch: 0.0, rear: 0.75, lean: -0.06, paw: -0.9, twist: 0.35),
+                  strike: (nod: 0.35, crouch: 0.08, rear: 0.0, lean: 0.22, paw: 1.1, twist: -0.3), snap: 0.08, settle: 0.36),
         "crush": (coil: (nod: 0.55, crouch: 0.14, rear: 0.0, lean: -0.14, paw: 0.0),
                   strike: (nod: -0.35, crouch: 0.0, rear: 0.2, lean: 0.34, paw: 0.0), snap: 0.09, settle: 0.40),
         "ranged": (coil: (nod: -0.25, crouch: 0.06, rear: 0.3, lean: -0.08, paw: 0.0),

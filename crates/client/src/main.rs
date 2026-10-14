@@ -40,6 +40,7 @@ mod creatures;
 mod drops;
 mod emitters;
 mod fight;
+mod creature_motion;
 mod fight_fx;
 mod gate;
 mod held;
@@ -331,6 +332,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let interface = hud::inventory::InterfaceStyle::load(&content.files)?;
     let combat_marks = hud::combat::CombatStyle::load(&content.files)?;
     let fight_look = fight_fx::FightLook::load(&content.files)?;
+    let creature_motion = creature_motion::Motion::load(&content.files)?;
+    if let Some(name) = creature_motion.unknown_species(|name| content.creatures.find(name).is_some()).next() {
+        return Err(format!("{}: gaits for `{name}`, which is no creature", creature_motion::FILE).into());
+    }
     let look = hud::target::LookStyle::load(&content.files)?;
     sfx::Recordings::load(&content.files)?.check(&content.actions)?;
     let content_weather = content.weather.clone();
@@ -472,7 +477,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         Screen::Title
     };
-    app.insert_resource(FirstScreen(first)).insert_resource(launch).insert_resource(interface).insert_resource(combat_marks).insert_resource(fight_look).insert_resource(look);
+    app.insert_resource(FirstScreen(first)).insert_resource(launch).insert_resource(interface).insert_resource(combat_marks).insert_resource(fight_look).insert_resource(creature_motion).insert_resource(look);
     if options.loading {
         app.insert_resource(menu::HoldCover);
     }

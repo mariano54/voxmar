@@ -37,6 +37,7 @@ use voxmar_engine::physics::Aabb;
 use voxmar_protocol::{CreatureGone, CreatureView};
 
 use crate::Actions;
+use crate::creature_motion::{self as motion, Motion};
 use crate::creature_sounds::{CreatureSound, CreatureSounds, Kind as Sound};
 use crate::breaking::sky_light;
 use crate::drops::block_light;
@@ -193,6 +194,38 @@ struct SpeciesBody {
     dims: [u32; 3],
 }
 
+/// How the watched creature (`Creatures::watch`) was drawn moving, for the gate: how far
+/// its feet slid while they were down (blocks, every foot added up, over `planted` foot
+/// frames), how far its body went (over `frames`), the fastest it turned (radians a
+/// second), its yaw, and how far it showed running away.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Watched {
+    pub slid: f32,
+    pub planted: u32,
+    pub went: f32,
+    pub frames: u32,
+    pub fastest_turn: f32,
+    pub yaw: f32,
+    pub flee: f32,
+}
+
+impl Watched {
+    /// How far a foot slid while down for each block the body went: 0 for feet that stay
+    /// where they are put.
+    pub fn slip(&self) -> f32 {
+        let slid = self.slid / self.planted.max(1) as f32;
+        let went = self.went / self.frames.max(1) as f32;
+        slid / went.max(1e-4)
+    }
+}
+
+/// Where one foot is held (`Shown::holds`).
+#[derive(Clone, Copy, Default)]
+struct Hold {
+    down: Option<(Vec3, i64)>,
+    lifted: Option<(f32, i64)>,
+}
+
 /// A creature as the client shows it.
 struct Shown {
     view: CreatureView,
@@ -211,6 +244,23 @@ struct Shown {
     skin: Handle<Image>,
     /// Stride phase, in cycles.
     stride: f32,
+    /// How fast it is turning, radians a second (to its left positive).
+    spin: f32,
+    /// How far it shows running away, 0 ..= 1.
+    flee: f32,
+    /// Its pace over the ground, blocks a second, smoothed.
+    pace: f32,
+    /// While the gate watches it: which of its strides each joint's foot was down in, in
+    /// the pose written last frame and the one before (a slow frame can step over a whole
+    /// swing, from one stride's footfall to the next's), and where the frame before drew
+    /// each foot and the body.
+    planted: Vec<Option<i64>>,
+    /// Each joint's foot: the ground it is down on and in which stride, and the turn it was
+    /// lifted at and in which stride.
+    holds: Vec<Hold>,
+    planted_before: Vec<Option<i64>>,
+    feet: Vec<Option<Vec3>>,
+    drawn_at: Option<Vec3>,
     /// Seconds until it may make an idle noise or call again.
     quiet: f32,
     flash: f32,
@@ -262,6 +312,9 @@ struct Shown {
     coil_struck: bool,
     /// Whether its puff of smoke has gone up as it vanishes.
     poofed: bool,
+    /// The move (`moves`, from 1) it winds up and strikes with, 0 for its plain attack:
+    /// what it showed as the wind-up began, kept through the strike after.
+    move_shown: u8,
 }
 
 
@@ -285,6 +338,12 @@ pub struct Creatures {
     /// Blows creatures were seen to strike since joining (their wind-up ended in a snap),
     /// for the gate.
     pub strikes: u32,
+    /// The creature whose stride the gate watches, and what it saw; and the step of game
+    /// time it is drawn on each frame, whatever the frame took, so a slow machine sees as
+    /// many poses in a stride as a fast one (the gate moves it that far a frame).
+    pub watch: Option<u32>,
+    pub watch_step: Option<f32>,
+    pub watched: Watched,
     /// How each creature seen to die fell, for the gate's check.
     pub falls: Vec<Fall>,
     /// Each species' body, made when the first of it is seen.
@@ -594,6 +653,8 @@ struct Drawn<'w, 's> {
     inspect: Option<Res<'w, InspectEyes>>,
     /// How blows, strikes and deaths show (`combat_fx.ron`); without it, they show plainly.
     look: Option<Res<'w, crate::fight_fx::FightLook>>,
+    /// How bodies walk, run, turn, stand about and flee (`creature_motion.ron`).
+    motion: Res<'w, Motion>,
 }
 
 /// The light creatures are lit by and the air they are fogged by, as the terrain's.
@@ -601,6 +662,24 @@ struct Drawn<'w, 's> {
 struct Air<'w> {
     light: Res<'w, crate::render::SceneLight>,
     atmosphere: Res<'w, crate::render::atmosphere::SharedAtmosphere>,
+}
+
+/// How long its legs are, at full size: the mean height of its walking legs' hips (feet
+/// stand at the origin), or a crawler's legs' (which reach out as far as they are high).
+fn legs_length(parts: &[Part]) -> f32 {
+    let (sum, n) = parts
+        .iter()
+        .filter_map(|p| match (p.swing, p.role) {
+            (Swing::Leg { .. }, creature::Role::Leg) | (Swing::Scuttle { .. }, creature::Role::Leg) => Some(p.pivot.y),
+            _ => None,
+        })
+        .fold((0.0, 0), |(s, n), y| (s + y, n + 1));
+    if n == 0 { 0.0 } else { sum / n as f32 }
+}
+
+/// Its shortest walking leg's length, at full size.
+fn shortest_leg(parts: &[Part]) -> f32 {
+    parts.iter().filter(|p| matches!(p.swing, Swing::Leg { .. }) && p.role == creature::Role::Leg).map(|p| p.pivot.y).fold(f32::INFINITY, f32::min).min(1e3)
 }
 
 /// The near plane's reach: a box this much closer than the eye is already cut open.
@@ -730,6 +809,7 @@ fn show(
     // the share of its health the blow took (`combat_fx.ron`'s `hit`). Bleeding only reddens.
     let eye = player.eye();
     let fx = drawn.look.as_deref();
+    let moves = &*drawn.motion;
     let red_seconds = fx.map_or(FLASH, |fx| fx.hit.red.max(1e-3));
     for (id, damage, blow, killed) in std::mem::take(&mut creatures.jolts) {
         let (Some(look), Some(shown)) = (fx, creatures.shown.get_mut(&id)) else { continue };
@@ -781,6 +861,7 @@ fn show(
             let attacking = |pose| pose == Pose::Attacking;
             if attacking(view.pose) && !attacking(shown.view.pose) {
                 (shown.coiling, shown.striking, shown.coil_struck) = (Some(0.0), None, false);
+                shown.move_shown = if view.tell == voxmar_protocol::REARING { 0 } else { view.tell };
             } else if !attacking(view.pose) && attacking(shown.view.pose) {
                 if !shown.coil_struck && shown.coiling.is_some() && shown.dying.is_none() {
                     shown.striking = Some(0.0);
@@ -830,6 +911,14 @@ fn show(
                 painting,
                 skin,
                 stride: 0.0,
+                spin: 0.0,
+                flee: 0.0,
+                pace: 0.0,
+                planted: Vec::new(),
+                holds: Vec::new(),
+                planted_before: Vec::new(),
+                feet: Vec::new(),
+                drawn_at: None,
                 quiet: 2.0 + creature::unit_from(creature::mix(view.seed as u64, 77)) * 8.0,
                 flash: 0.0,
                 dying: None,
@@ -857,6 +946,7 @@ fn show(
                 striking: None,
                 coil_struck: false,
                 poofed: false,
+                move_shown: 0,
             },
         );
     }
@@ -867,6 +957,8 @@ fn show(
     let feel = &launch.content.combat.feel;
     for (&id, shown) in creatures.shown.iter_mut() {
         let def = &registry.get(shown.view.species).def;
+        let stepped = creatures.watch_step.filter(|_| creatures.watch == Some(id));
+        let dt = stepped.unwrap_or(dt);
         // A blow freezes it a moment (a hit-stop): it holds still where it was, shaking,
         // and its flinch, flash and fall wait for the freeze to end.
         let frozen = shown.stopped > 0.0;
@@ -874,20 +966,54 @@ fn show(
         shown.stopped = (shown.stopped - dt).max(0.0);
         let dt = if frozen { 0.0 } else { dt };
         // Carry on along its velocity a little past the last word, then ease toward it.
-        let ahead = (now - shown.told_at).min(AHEAD);
+        let ahead = if stepped.is_some() { 0.0 } else { (now - shown.told_at).min(AHEAD) };
         let target = shown.view.position + shown.view.velocity.with_y(0.0) * ahead;
         let before = shown.position;
         shown.position = shown.position.lerp(target, (FOLLOW * dt).min(1.0));
         if shown.position.distance(target) > 6.0 {
             shown.position = target;
         }
-        let turn = (shown.view.yaw - shown.yaw + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
-        shown.yaw += turn * (10.0 * dt).min(1.0);
-        let speed = (shown.position - before).with_y(0.0).length() / dt.max(1e-4);
+        // It turns smoothly, no faster than its kind can (a little faster, to keep up with
+        // the server), its head ahead of the turn and its body leaning into it.
+        let most = def.movement.turn.to_radians() * moves.turn.share;
+        (shown.yaw, shown.spin) = motion::turn_toward(shown.yaw, shown.spin, shown.view.yaw, most, moves.turn.ease, dt);
+        let turn_left = (shown.view.yaw - shown.yaw + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+        // Its pace, smoothed (the shown position eases after the server's, a little
+        // unevenly), and held through a freeze so its legs hold where they were.
+        let moved = (shown.position - before).with_y(0.0).length();
+        if dt > 0.0 {
+            shown.pace += (moved / dt - shown.pace) * (10.0 * dt).min(1.0);
+        }
+        let speed = shown.pace;
         let scale = shown.view.scale;
         let height = def.body.size.1 * scale;
+        // Its stride, worked out from its legs, so a foot on the ground stays put: the
+        // ground it covered this frame over a stride's length (`creature_motion`). Turning
+        // on the spot, it steps round.
+        let gaits = moves.gaits(&def.name, def.movement.style);
+        let parts = &registry.get(shown.view.species).parts;
+        let hip = legs_length(parts) * scale;
+        let stretched = 1.0 + moves.flee.stretch * shown.flee;
+        let fleeing = motion::run_share(speed, def.movement.walk) > 0.5
+            && shown.view.pose != Pose::Attacking
+            && shown.coiling.is_none()
+            && shown.dying.is_none()
+            && (def.attack.is_none() || shown.view.velocity.with_y(0.0).dot((shown.position - eye).with_y(0.0)) > 0.0);
+        shown.flee += (f32::from(u8::from(fleeing)) - shown.flee) * (6.0 * dt).min(1.0);
+        if shown.dying.is_some() {
+            shown.flee = 0.0;
+        }
+        let pivoting = shown.spin.abs() * def.body.size.0.max(0.3) * scale * moves.turn.step;
+        let going = speed + pivoting * (1.0 - (speed / def.movement.walk.max(0.2)).min(1.0));
+        let (gait, paired) = motion::gait_at(&gaits, going, def.movement.walk, 1.0 + (moves.flee.reach - 1.0) * shown.flee);
+        // Half the ground each foot covers while it is down; never more than its shortest
+        // leg can reach, so no leg is asked to reach past straight out (and slide).
+        let travel = (hip * gait.swing.sin()).min(shortest_leg(parts) * scale * stretched * 0.95);
         let before_step = (shown.stride * 2.0).floor();
-        shown.stride += speed * dt / (def.body.size.0.max(0.3) * 1.6 * scale);
+        if travel > 1e-3 {
+            let turned = going - speed;
+            shown.stride += (moved + turned * dt) / motion::stride_length(travel, &gait);
+        }
         // A footfall each half stride, while it walks on something.
         if (shown.stride * 2.0).floor() != before_step && speed > 0.3 && shown.dying.is_none() && def.movement.style != Style::Drifter {
             sounds.push(sound(Sound::Step, id, &shown.view, shown.position, speed));
@@ -904,7 +1030,12 @@ fn show(
         // Its wind-up and strike (`combat_fx.ron`'s `strikes`, by how it attacks): coiled
         // through the wind-up, snapping forward as the blow lands (the wind-up's time, or
         // the server's word, whichever comes first) and settling back.
-        let attack = def.attack.as_ref();
+        // A boss's move strikes in its own time and style: the lash a swipe, the grasp a
+        // heavy crush.
+        let attack = match shown.move_shown {
+            0 => def.attack.as_ref(),
+            index => def.moves.get(index as usize - 1).map(|m| &m.attack).or(def.attack.as_ref()),
+        };
         let windup = attack.and_then(|a| a.windup).unwrap_or(feel.creature_windup).max(0.05);
         if let Some(coil) = shown.coiling.as_mut() {
             *coil += dt;
@@ -953,6 +1084,11 @@ fn show(
                 (tell.nod, tell.crouch * 0.3, tell.rear)
             }
         };
+        // Standing about, now and then it sniffs at the ground; running away, its head
+        // goes out low.
+        let idle = shown.view.pose == Pose::Idle && speed < 0.2 && shown.coiling.is_none() && shown.dying.is_none();
+        let sniff = motion::now_and_then(&moves.idle.sniff, now, shown.view.seed, 2).filter(|_| idle).map_or(0.0, |t| (t * std::f32::consts::TAU * 2.0).sin().abs());
+        let nod = nod + sniff * moves.idle.sniff.size + moves.flee.head * shown.flee;
         shown.nod += (nod - shown.nod) * (6.0 * dt).min(1.0);
         shown.crouch += (crouch - shown.crouch) * (6.0 * dt).min(1.0);
         shown.rear += (rear - shown.rear) * (5.0 * dt).min(1.0);
@@ -962,9 +1098,15 @@ fn show(
         let look = if watching {
             let facing = (-to_eye.x).atan2(-to_eye.z);
             ((facing - shown.yaw + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI).clamp(-WATCH_TURN, WATCH_TURN)
+        } else if let Some(t) = motion::now_and_then(&moves.idle.glance, now, shown.view.seed, 1).filter(|_| idle) {
+            // Standing about, it glances aside now and then, one way or the other.
+            let side = if creature::unit_from(creature::mix(shown.view.seed as u64, (now / moves.idle.glance.every) as u64)) < 0.5 { -1.0 } else { 1.0 };
+            side * moves.idle.glance.size * (t * std::f32::consts::PI).sin().min(0.6) / 0.6
         } else {
             0.0
         };
+        // Its head goes ahead of a turn.
+        let look = (look + turn_left * moves.turn.head_lead).clamp(-WATCH_TURN, WATCH_TURN);
         shown.look += (look - shown.look) * (4.0 * dt).min(1.0);
 
         // A flier spreads its wings off the ground, and falls when it dies in the air.
@@ -978,12 +1120,13 @@ fn show(
             shown.view.position = shown.position;
             shown.view.velocity = Vec3::ZERO;
         }
-        let moving = (speed / (def.movement.walk.max(0.5) * 1.5)).min(1.0) * (1.0 - shown.spread);
+        let moving = (going / (def.movement.walk.max(0.5) * 1.5)).min(1.0) * (1.0 - shown.spread);
         let running = speed > def.movement.walk * 1.6;
-        // Hoppers hop, and anything running bounds: pairs together. Otherwise diagonal pairs.
-        let paired = def.movement.style == Style::Hopper || (running && def.movement.style != Style::Creeper);
-        let step = shown.stride * std::f32::consts::TAU;
-        let bob = if paired { (step.sin().abs() * 0.12 - 0.02).max(0.0) * moving } else { step.sin().abs() * 0.025 * moving };
+        // The body rides high as each foot passes under it, or in the air of a hop or a
+        // bound, and a running body rocks nose to tail.
+        let lifts = motion::bob(shown.stride, &gait, paired);
+        let bob = gait.bob * lifts * moving;
+        let pitch = gait.pitch * (shown.stride * std::f32::consts::TAU).sin() * moving * (1.0 - shown.spread);
         let bob = match def.movement.style {
             Style::Drifter => (now * 1.7 + id as f32).sin() * 0.06,
             // Small birds rise and dip as they fly, a burst of wingbeats and a glide.
@@ -992,9 +1135,25 @@ fn show(
         };
 
         let rear = (shown.rear + stance.rear).clamp(0.0, 1.0);
+        // Leaning into a turn, and standing about, its weight shifting side to side.
+        let lean = (shown.spin * speed * moves.turn.lean).clamp(-moves.turn.lean_most, moves.turn.lean_most);
+        let still = 1.0 - moving.max(shown.flee);
+        let shift = (now * 0.55 + id as f32 * 1.3).sin() * moves.idle.shift * still * f32::from(u8::from(shown.dying.is_none()));
         let mut root = Transform::from_translation(shown.position + Vec3::Y * height * (bob - shown.crouch - stance.crouch))
-            .with_rotation(Quat::from_rotation_y(shown.yaw) * Quat::from_rotation_x(rear * REAR))
-            .with_scale(Vec3::splat(scale));
+            .with_rotation(Quat::from_rotation_y(shown.yaw + stance.twist) * Quat::from_rotation_x(rear * REAR + pitch) * Quat::from_rotation_z(lean + shift))
+            .with_scale(Vec3::splat(scale) * Vec3::new(1.0, 1.0, 1.0 + moves.flee.stretch * shown.flee));
+        // A running body rocks about its hips, not its feet: the hips stay over the ground
+        // the feet are planted on.
+        if pitch != 0.0 {
+            let hips = root.scale * Vec3::Y * legs_length(parts);
+            let level = Quat::from_rotation_y(shown.yaw + stance.twist) * Quat::from_rotation_x(rear * REAR) * Quat::from_rotation_z(lean + shift);
+            root.translation += (level * hips - root.rotation * hips).with_y(0.0);
+        }
+        // A heavy blow's wind-up trembles, so it reads as one to get out of the way of.
+        if attack.is_some_and(|a| a.heavy) && coil.is_some() {
+            let shiver = Vec3::new((now * 61.0 + id as f32).sin(), 0.0, (now * 47.0).cos());
+            root.translation += shiver * moves.tells.heavy_tremble * height * coil.unwrap_or(0.0);
+        }
         let forward = Quat::from_rotation_y(shown.yaw) * Vec3::NEG_Z;
         root.translation += forward * stance.lean * def.body.size.0.max(def.body.size.1) * scale;
         if let Some(fx) = fx.filter(|_| flinch > 0.0) {
@@ -1043,6 +1202,38 @@ fn show(
             if t >= 1.0 {
                 finished.push(id);
             }
+        }
+        // The gate's watch: where last frame drew its feet and body, against the frame
+        // before, a foot that was down in both counting how far it slid.
+        let watched = creatures.watch == Some(id);
+        if watched {
+            let w = &mut creatures.watched;
+            if let Ok(body) = drawn.globals.get(shown.entity) {
+                let at = body.translation();
+                if let Some(before) = shown.drawn_at {
+                    w.went += (at - before).with_y(0.0).length();
+                    w.frames += 1;
+                }
+                shown.drawn_at = Some(at);
+            }
+            shown.feet.resize(shown.joints.len(), None);
+            for (i, (joint, part)) in shown.joints.iter().enumerate() {
+                let Ok(global) = drawn.globals.get(*joint) else { continue };
+                let foot = global.transform_point(Vec3::new(0.0, -part.pivot.y, 0.0));
+                let down = |planted: &[Option<i64>]| planted.get(i).copied().flatten();
+                if let Some(before) = shown.feet[i]
+                    && let Some(stride) = down(&shown.planted)
+                    && down(&shown.planted_before) == Some(stride)
+                {
+                    w.slid += (foot - before).with_y(0.0).length();
+                    w.planted += 1;
+                }
+                shown.feet[i] = Some(foot);
+            }
+            w.fastest_turn = w.fastest_turn.max(shown.spin.abs());
+            w.yaw = shown.yaw;
+            w.flee = shown.flee;
+            shown.planted_before = std::mem::replace(&mut shown.planted, vec![None; shown.joints.len()]);
         }
         if let Ok(mut transform) = transforms.get_mut(shown.entity) {
             *transform = root;
@@ -1120,21 +1311,76 @@ fn show(
                 *shows = want;
             }
         }
-        for (child, part) in &shown.joints {
+        // Each foot travels the same ground in a stride, however long its leg: half of it
+        // either way from under the hip.
+        // (Drawn stretched long when it flees, its legs' reach is stretched with it.)
+        let travel = travel * (1.0 - shown.spread) / stretched;
+        let front = parts.iter().filter(|p| matches!(p.swing, Swing::Scuttle { .. })).map(|p| p.pivot.z).fold(f32::INFINITY, f32::min);
+        let crawler_lift = stance.paw.abs() * moves.tells.crawler_front;
+        let dead = shown.dying.is_some();
+        shown.holds.resize(shown.joints.len(), Hold::default());
+        for (index, (child, part)) in shown.joints.iter().enumerate() {
             let (rotation, stretch) = match part.swing {
                 Swing::Leg { phase, hind } => {
-                    let phase = if paired { if hind { 0.0 } else { 0.5 } } else { phase };
-                    let reach = if paired { 0.9 } else { 0.7 };
+                    let phase = motion::leg_phase(phase, hind, paired);
+                    if watched && part.role != creature::Role::Arm {
+                        let at = shown.stride + phase;
+                        shown.planted[index] = (at.rem_euclid(1.0) < gait.duty && moving > 0.0).then_some(at.floor() as i64);
+                    }
+                    // A leg's own length sets how far it turns for the same ground; an arm
+                    // swings as the legs do.
+                    let length = if part.role == creature::Role::Arm { hip } else { part.pivot.y * scale };
+                    let at = shown.stride + phase;
+                    let (mut angle, lift) = motion::leg(at, &gait, travel / length.max(0.01));
+                    // A foot that is down holds the ground it was put on, whatever the body
+                    // does meanwhile (speeding up, slowing, a flinch), and swings off from
+                    // where it was lifted.
+                    if part.role != creature::Role::Arm && !dead && gait.swing > 0.05 && moving > 0.05 {
+                        let stride = at.floor() as i64;
+                        let hip_at = root.transform_point(part.pivot);
+                        let forward = (root.rotation * Vec3::NEG_Z).with_y(0.0).normalize_or_zero();
+                        let reaches = length * stretched;
+                        let hold = &mut shown.holds[index];
+                        let into = at.rem_euclid(1.0);
+                        if into < gait.duty {
+                            let ground = match hold.down {
+                                Some((ground, at)) if at == stride => ground,
+                                _ => {
+                                    let ground = hip_at + forward * reaches * angle.sin();
+                                    hold.down = Some((ground, stride));
+                                    ground
+                                }
+                            };
+                            // (Less the body's own tip nose to tail, which turns the legs with it.)
+                            angle = ((ground - hip_at).dot(forward) / reaches.max(0.01)).clamp(-0.99, 0.99).asin() - (rear * REAR + pitch);
+                            hold.lifted = Some((angle, stride));
+                        } else if let Some((from, _)) = hold.lifted.filter(|&(_, at)| at == stride) {
+                            let w = ((into - gait.duty) / (1.0 - gait.duty).max(1e-3) * 3.0).min(1.0);
+                            angle = from + (angle - from) * w * w * (3.0 - 2.0 * w);
+                        }
+                    }
                     // Front limbs reach with a strike (claws swipe, a spell's caster raises them).
                     let paw = if hind { 0.0 } else { stance.paw };
-                    (Quat::from_rotation_x(((shown.stride + phase) * std::f32::consts::TAU).sin() * reach * moving + paw), Vec3::ONE)
+                    let lifted = if part.role == creature::Role::Arm || dead { 0.0 } else { lift * moving };
+                    (Quat::from_rotation_x(angle + paw), Vec3::new(1.0, 1.0 - lifted, 1.0))
                 }
-                Swing::Scuttle { phase } => (Quat::from_rotation_y(((shown.stride * 1.5 + phase) * std::f32::consts::TAU).sin() * 0.45 * moving), Vec3::ONE),
+                Swing::Scuttle { phase } => {
+                    // A crawler's legs sweep fore and aft about the hip, its front pair
+                    // raised as it winds up and strikes.
+                    let (angle, lift) = motion::leg(shown.stride + phase, &gait, travel / (part.pivot.y * scale * 1.2).max(0.01));
+                    let side = (part.centre.x - part.pivot.x).signum();
+                    let raised = if part.pivot.z <= front + 1e-3 { crawler_lift } else { 0.0 };
+                    (Quat::from_rotation_y(angle * side) * Quat::from_rotation_z(side * (lift * 0.6 + raised)), Vec3::ONE)
+                }
                 Swing::Head => (Quat::from_rotation_y(shown.look) * Quat::from_rotation_x(-(shown.nod + stance.nod)), Vec3::ONE),
-                Swing::Ear { side } => (Quat::from_rotation_x(twitch(side)) * Quat::from_rotation_y(shown.look), Vec3::ONE),
+                Swing::Ear { side } => (Quat::from_rotation_x(twitch(side) + moves.flee.ears * shown.flee) * Quat::from_rotation_y(shown.look), Vec3::ONE),
                 Swing::Tail => {
                     let (rate, sway) = if keeper_near { (11.0, 0.45) } else { (2.5, 0.3) };
-                    (Quat::from_rotation_y((now * rate + id as f32).sin() * sway + speed.min(4.0) * 0.05), Vec3::ONE)
+                    // Now and then a flick, standing about; up and stiff running away.
+                    let flick = motion::now_and_then(&moves.idle.flick, now, shown.view.seed, 3).filter(|_| idle).map_or(0.0, |t| (t * std::f32::consts::TAU).sin());
+                    let sway = sway * (1.0 - shown.flee * 0.7);
+                    let turn = (now * rate + id as f32).sin() * sway + flick * moves.idle.flick.size - shown.spin * 0.08;
+                    (Quat::from_rotation_y(turn) * Quat::from_rotation_x(moves.flee.tail * shown.flee), Vec3::ONE)
                 }
                 Swing::Wing { side } if flier => {
                     // Spread out to the sides and lengthened in flight, beating in bursts.
