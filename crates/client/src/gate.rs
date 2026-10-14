@@ -10700,9 +10700,19 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     world.resource_mut::<LocalPlayer>().selected = slot;
                     gate.count_before = cooked;
                     gate.cook_started = true;
-                } else if gate.server_in_phase() > 10.0 {
-                    // No taps go before the cook starts, so the wait is the server's seconds
-                    // alone (`waited_out` would also want taps).
+                    // The looks were not clicks: the cook's own wait counts its clicks.
+                    gate.taps = 0;
+                } else {
+                    // No click goes before the cook starts: each look at the setup, once
+                    // every `TAP_EVERY` of the game's time, is what `waited_out` counts, so
+                    // it gives up only once both the server and this client have waited.
+                    if now - gate.tap_at >= TAP_EVERY {
+                        gate.tap_at = now;
+                        gate.taps += 1;
+                    }
+                    if !gate.waited_out(10.0) {
+                        return;
+                    }
                     gate.check(check, Err(format!("the {name} ({placed}) or raw small game in the hotbar ({slot:?}) never came")));
                     hearth_done(world, gate, now, hearth, chimney, stove);
                 }
