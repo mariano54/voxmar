@@ -258,12 +258,19 @@ fi
 # cores, build 21) still drew the fight-feel step's frames a quarter second or more apart,
 # past the bear's 0.7 s wind-up. Not background QoS: that also throttles timers, and a test
 # that times a break by the clock then failed.
+# Nor does the session share the tests' QoS: memcap runs the pair as his game would
+# (`VOXMAR_FOREGROUND=1`), and the tests alone are clamped to utility QoS here. Under
+# memcap's utility clamp the session had it too, and nice 19 bought it little against
+# them: at load 55 on 18 cores (T3, 2026-10-14) its frames ran 0.5 to 2 s, its threads
+# waiting up to 8.5 s for a core within one, and the perfect block judged nothing in ten
+# tries. PLAYING still pauses both, so neither takes a core from his game.
 run='
   out=$1 session=$2; shift 2
   if [[ $session == 1 ]]; then
     (VOXMAR_MUTE=1 $GATE_PREFIX target/iter/voxmar --gate "$out" $GATE_ARGS >"$out/game.txt" 2>&1; echo $? >"$out/game.status") &
   fi
   lower=(nice -n 19 env RAYON_NUM_THREADS=$TEST_POOL)
+  [[ $(uname -s) == Darwin ]] && command -v taskpolicy >/dev/null && lower=(taskpolicy -c utility "${lower[@]}")
   while IFS=$(printf "\t") read -r dir exe; do
     (cd "$dir" && RUSTC_BOOTSTRAP=1 "${lower[@]}" "$exe" -Z unstable-options --report-time "$@" >"$out/test-${exe##*/}.txt" 2>&1; echo $? >"$out/test-${exe##*/}.status") &
   done <"$out/tests.list"
@@ -305,7 +312,7 @@ sampler=$!
 TEST_POOL=$(( $(getconf _NPROCESSORS_ONLN) / 2 > 1 ? $(getconf _NPROCESSORS_ONLN) / 2 : 1 ))
 export TEST_POOL
 VOXMAR_CONFIG=$out/config VOXMAR_GATE_FULL=$full GATE_ARGS=$( ((full)) || echo --view-distance 4) RUST_TEST_THREADS=${RUST_TEST_THREADS:-8} \
-  $memcap 24 -- bash -c "$run" --gate "$out" "$session" ${skips[@]+"${skips[@]}"} >"$out/run.txt" 2>&1
+  VOXMAR_FOREGROUND=1 $memcap 24 -- bash -c "$run" --gate "$out" "$session" ${skips[@]+"${skips[@]}"} >"$out/run.txt" 2>&1
 kill "$sampler" 2>/dev/null
 
 # A check the session skipped (a hitch, on a machine too loaded for a long frame to say
@@ -327,7 +334,7 @@ if ((session)) && [[ -n $(skipped) ]]; then
   rm -f "$out/game.status"
   mv "$out/tests.list" "$out/tests.list.ran" && : >"$out/tests.list"
   VOXMAR_CONFIG=$out/config VOXMAR_GATE_FULL=$full GATE_ARGS=$( ((full)) || echo --view-distance 4) \
-    $memcap 24 -- bash -c "$run" --gate "$out" 1 >"$out/rerun.txt" 2>&1
+    VOXMAR_FOREGROUND=1 $memcap 24 -- bash -c "$run" --gate "$out" 1 >"$out/rerun.txt" 2>&1
   mv "$out/tests.list.ran" "$out/tests.list"
   if [[ -n $(skipped) ]]; then
     skipped
