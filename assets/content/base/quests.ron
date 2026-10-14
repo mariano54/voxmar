@@ -434,7 +434,7 @@
             name: "carrot_patch", age: "farm", branch: "farming", title: "Carrot Patch",
             why: "Carrots need Farming 5 and cool, moist soil. A carrot is its own seed: forage wild carrots (white-flowered, thickest in flower meadows, a few on plains), plant what you get, and harvest four. Rabbits love them too. Keep the four carrots you harvest. Carrots take a little longer than wheat; four crops sown by your home also make a kitchen garden (A Kitchen Garden) while they grow.",
             tasks: [[Pick("carrot_crop", 4), Have("carrot", 4)]],
-            after: ["a_field_of_gold"],
+            after: ["herb_garden"],
             rewards: [Xp("farming", 150.0), Item("carrot", 4)],
         ),
         (
@@ -469,7 +469,7 @@
             name: "hens_in_a_row", age: "farm", branch: "husbandry", title: "Hens in a Row",
             why: "Hold wheat seeds (wild wheat and your own field give them), walk up slowly (no sprinting, no hitting) and right-click a junglefowl until it trusts you; they keep to warm grassland and jungle. A kept hen needs room, grass or feed, and water nearby, and lays an egg about every five minutes. Tame three.",
             tasks: [[Tame("junglefowl", 3)]],
-            after: ["homestead_hearth"],
+            after: ["first_harvest"],
             rewards: [Xp("farming", 100.0)],
         ),
         (
@@ -483,7 +483,7 @@
             name: "a_proper_breakfast", age: "farm", branch: "cooking", title: "A Proper Breakfast",
             why: "A fried egg is the quickest cooking there is: hold an egg and right-click a campfire. Fry three.",
             tasks: [[Cook("fried_egg", 3)]],
-            after: ["fresh_eggs"],
+            after: ["a_full_house"],
             rewards: [Xp("cooking", 100.0)],
         ),
         (
@@ -504,7 +504,7 @@
             name: "ducks_on_the_pond", age: "farm", branch: "husbandry", title: "Ducks on the Pond",
             why: "Mallards need Hunter 3, lay eggs, and do not mind rain. They keep to rivers and wetlands. Hold wheat seeds or wheat, their favourite, approach one by the water without sprinting or hitting, and right-click it.",
             tasks: [[Tame("mallard", 1)]],
-            after: ["fresh_eggs"],
+            after: ["a_proper_breakfast"],
             rewards: [Xp("hunter", 100.0)],
         ),
         (
@@ -539,14 +539,14 @@
             name: "copper_arms", age: "farm", branch: "combat", title: "Copper Arms",
             why: "Copper hits harder and lasts longer than stone. Smelt ingots (ore over charcoal in the grid, Engineering 5), then at the crafting table make a copper sword (two ingots over a stick) and a copper shield (six ingots round a plank, as the recipe shows).",
             tasks: [[Craft("copper_sword", 1), Craft("copper_shield", 1)]],
-            after: ["red_metal"],
+            after: ["copper_kit"],
             rewards: [Xp("engineering", 200.0), Xp("attack", 100.0)],
         ),
         (
             name: "bow_and_arrow", age: "farm", branch: "combat", title: "Bow and Arrow",
             why: "A short bow reaches twenty blocks and hits twice as hard as a sling. At the crafting table, three sticks bent down one side and three twine down the other make it (Crafting 5). An arrow is a flint or a cobblestone over a stick over a feather, four at a time (Crafting 5): flint comes one gravel in eight, and feathers from junglefowl. The bow needs Ranged 5 to shoot (below it, it strikes as a fist), so keep slinging stones until then. Make the bow and eight arrows, and reach Ranged 5.",
             tasks: [[Craft("short_bow", 1), Craft("arrow", 8), Level("ranged", 5)]],
-            after: ["homestead_hearth"],
+            after: ["full_hide_wraps"],
             rewards: [Xp("ranged", 120.0), Xp("crafting", 60.0)],
         ),
         (
@@ -588,14 +588,14 @@
             name: "tin_find", age: "farm", branch: "mining", title: "A Silvery Ore",
             why: "Tin is the other half of bronze. It needs Mining 10 and a pickaxe, so keep digging coal and copper to get there. Tin lies in the lower part of copper veins: where you found copper, dig below it. Mine three tin ore. Take three copper from the same seam: bronze wants both.",
             tasks: [[Mine("tin_ore", 3), Mine("copper_ore", 3)]],
-            after: ["red_metal"],
+            after: ["copper_kit"],
             rewards: [Xp("mining", 200.0)],
         ),
         (
             name: "rock_collector", age: "farm", branch: "mining", title: "Rock Collector",
             why: "Stone comes in many kinds, each with its own ore. The rock underfoot changes every few kilometres (granite, limestone, basalt, sandstone, slate), so dig down in different lands. Break six different rocks and ores, and your journal's Ores page fills in.",
             tasks: [[Discover(Ores, 6)]],
-            after: ["clay_banks"],
+            after: ["tin_find"],
             rewards: [Xp("mining", 120.0)],
         ),
         (
@@ -672,7 +672,7 @@
             name: "wool_and_dye", age: "farm", branch: "home", title: "Wool and Dye",
             why: "A cloth is a wool and a flower of the colour you want, side by side in the grid (Crafting 2): white from a daisy, yellow from a dandelion, red from a poppy. Daisies grow on plains, dandelions in flower meadows, poppies on the steppe. Make two.",
             tasks: [[Craft("tag:cloth", 2)]],
-            after: ["a_woolly_flock"],
+            after: ["wool_gathering"],
             rewards: [Xp("crafting", 100.0)],
         ),
         (
@@ -686,14 +686,14 @@
             name: "earthenware", age: "farm", branch: "home", title: "Earthenware",
             why: "Fired clay makes plates, bowls, jars and jugs for the shelf. Two fired clay side by side make two plates, and three in a V make two bowls (Crafting 2); a jar takes three and a jug five (Crafting 3), and a basket is five twine. Make three pieces of crockery at the crafting table.",
             tasks: [[Craft("tag:crockery", 3)]],
-            after: ["the_potter"],
+            after: ["a_kiln_load"],
             rewards: [Xp("crafting", 120.0)],
         ),
         (
             name: "candlelight", age: "farm", branch: "home", title: "Candlelight",
             why: "Twine and two hides make two candles (Crafting 3): a softer light than a torch for a table or shelf.",
             tasks: [[Craft("candle", 2)]],
-            after: ["a_table_for_two"],
+            after: ["a_proper_bed"],
             rewards: [Xp("crafting", 60.0)],
         ),
         (
@@ -707,7 +707,7 @@
             name: "copper_kit", age: "farm", branch: "mining", title: "Copper Kit",
             why: "Copper works six times as fast as a bare hand, a step above stone, and finds more. An axe takes three ingots, a shovel one, a hoe two and a knife one: seven in all, each a copper ore over a coal or charcoal in the grid.",
             tasks: [[Craft("copper_axe", 1), Craft("copper_shovel", 1), Craft("copper_hoe", 1), Craft("copper_knife", 1)]],
-            after: ["red_metal"],
+            after: ["first_metal"],
             rewards: [Xp("engineering", 60.0), Item("coal_ore", 8)],
         ),
         (
@@ -721,7 +721,7 @@
             name: "snug_for_winter", age: "farm", branch: "home", title: "Snug for Winter",
             why: "Put a roof over the Hearth with your bed and two lights beside it, and the home turns snug: warm under a roof, you heal half as fast again there, and a night's sleep in it rests you better.",
             tasks: [[Built("home_snug", 1)], [Built("home_homely", 1)], [Built("home_cosy", 1)], [Built("home_heart_of_the_home", 1)]],
-            after: ["a_seat_by_the_fire"],
+            after: ["candlelight"],
             rewards: [Xp("construction", 120.0), Item("candle", 4)],
         ),
         (
@@ -735,14 +735,14 @@
             name: "workshop_and_stove", age: "farm", branch: "home", title: "A Stove and a Quern",
             why: "A home that works for you. A stove is a campfire under a row of three cobblestones with one more on each side of it, five in all (Construction 5). For the workshop, make one of these: quern stones are four cobblestones in a square under a stick (Crafting 5); a spindle stand is an oak plank, two sticks and a twine in a square (Crafting 6); a loom frame is oak planks, sticks and a twine (Crafting 8). All at the crafting table.",
             tasks: [[Craft("cottage_stove", 1), Craft("tag:workshop", 1)]],
-            after: ["candlelight"],
+            after: ["snug_for_winter"],
             rewards: [Xp("construction", 80.0), Xp("crafting", 80.0)],
         ),
         (
             name: "books_and_banners", age: "farm", branch: "home", title: "Books and Banners",
             why: "A bookshelf (planks and hides, Construction 8) and a banner (cloth and a stick, Crafting 5) say whose home this is. Make one of each.",
             tasks: [[Craft("tag:books", 1), Craft("tag:banner", 1)]],
-            after: ["wool_and_dye"],
+            after: ["a_rug_underfoot"],
             rewards: [Xp("construction", 120.0), Xp("crafting", 80.0)],
         ),
         (
@@ -770,7 +770,7 @@
             name: "ore_run", age: "farm", branch: "mining", title: "An Ore Run",
             why: "Bronze needs a good store of ore. With a copper kit you dig fast: bring up twenty-four copper, nine tin and twelve coal, and the crucible will not wait on you. Copper lies below sea level with tin in the lower part of the same vein, coal in seams near sea level; small copper and coal stones lying on the ground mark the veins below.",
             tasks: [[Mine("copper_ore", 24), Mine("tin_ore", 9), Mine("coal_ore", 12)]],
-            after: ["tin_find", "copper_kit"],
+            after: ["rock_collector"],
             rewards: [Xp("mining", 400.0), Item("coal_ore", 16)],
         ),
         (
@@ -784,7 +784,7 @@
             name: "bones_for_the_altar", age: "farm", branch: "prayer", title: "Bones for the Altar",
             why: "Each bone offered at the altar is 16 Magic experience. At Magic 4 Ember Arm opens, a little more melee damage; at Magic 10, Mending, which brings your health back twice as fast.",
             tasks: [[Level("magic", 4)]],
-            after: ["a_place_to_pray"],
+            after: ["altar_rites"],
             rewards: [Xp("magic", 100.0)],
         ),
         // Quests that meet the rest of the game: wanderers dealt with (`Met`), the home's rooms
@@ -856,14 +856,14 @@
             name: "a_larder", age: "farm", branch: "home", title: "A Larder",
             why: "Four places to store things, a stove or cauldron and a table, under a roof by the fire: meals eaten here heal a fifth more and their good lasts half again as long.",
             tasks: [[Built("home_larder", 1)]],
-            after: ["workshop_and_stove", "a_table_for_two"],
+            after: ["a_herb_nook"],
             rewards: [Xp("cooking", 150.0), Item("bread", 4)],
         ),
         (
             name: "kitchen_garden", age: "farm", branch: "farming", title: "A Kitchen Garden",
             why: "Sow four crops within reach of your home, at any stage of growth: meals eaten at home heal a tenth more. Water carriers on the road sometimes pour their pails on a field near water.",
             tasks: [[Built("home_kitchen_garden", 1)]],
-            after: ["a_field_of_gold"],
+            after: ["herb_garden"],
             rewards: [Xp("farming", 120.0), Item("wheat_seeds", 4)],
         ),
         (
@@ -884,7 +884,7 @@
             name: "farmers_on_the_road", age: "farm", branch: "farming", title: "Farmers on the Road",
             why: "Farming folk pass by those with a home. A harvest family trades each crop for the next you can sow, a goose girl gives feathers for four wheat seeds, a cowherd fills a pail held out, and a shepherd teaches a beginner who offers food. Deal with one of them.",
             tasks: [[Met("harvest_family", 1)], [Met("goose_girl", 1)], [Met("cowherd", 1)], [Met("water_carriers", 1)], [Met("shepherd_and_flock", 1)]],
-            after: ["a_field_of_gold"],
+            after: ["roots_in_the_embers"],
             rewards: [Xp("farming", 150.0), Item("seed_mix", 6)],
         ),
         (
@@ -905,7 +905,7 @@
             name: "a_prayer_in_the_fight", age: "farm", branch: "prayer", title: "A Prayer in the Fight",
             why: "At Magic 4 Ember Arm opens: a little more melee damage while it is on. Turn it on before a fight, and Bark Skin with it (three times in all), and have ten creatures defeated. Turn them off when the fight is done: points come back only while no prayer is on.",
             tasks: [[Prayed("ember_arm", 1), Prayed("bark_skin", 3), Kill("any", 10)]],
-            after: ["altar_rites"],
+            after: ["bones_for_the_altar"],
             rewards: [Xp("magic", 100.0), Xp("attack", 80.0)],
         ),
         (
@@ -926,7 +926,7 @@
             name: "neighbourly", age: "farm", branch: "home", title: "Neighbourly",
             why: "Once your hearth is lit, neighbours from over the hill may call while you are near home. The first to call bring a plate for the house, crockery toward a cosy home; share a cooked meal and they leave seed for the garden.",
             tasks: [[Met("neighbours", 1)]],
-            after: ["snug_for_winter"],
+            after: ["shut_the_door"],
             rewards: [Xp("construction", 100.0), Xp("cooking", 60.0)],
         ),
         (
@@ -940,7 +940,7 @@
             name: "a_herb_nook", age: "farm", branch: "home", title: "A Herb Nook",
             why: "Tie two herbs with twine and they hang to dry (Crafting 4); a drying rack hung with meat counts as a bunch. Two bunches and a jar, basket or crate at home make a herb nook: there you farm and brew as if a level higher, so a kitchen garden at the door takes seed a level early, and a meal's good lasts a tenth longer.",
             tasks: [[Built("home_herb_nook", 1)]],
-            after: ["candlelight"],
+            after: ["a_proper_workshop"],
             rewards: [Xp("farming", 80.0), Xp("crafting", 40.0)],
         ),
         // Home stations (stations.ron, docs/stations.md): a drying rack for the Nomad age
@@ -963,7 +963,7 @@
             name: "a_compost_heap", age: "farm", branch: "farming", title: "A Compost Heap",
             why: "Nothing from the field need go to waste. Nail planks into an open box (Construction 5) for a compost heap. Right-click it with greens in hand (wheat, seed, carrots, fruit or burnt food) to fork them in by fours, up to sixteen (Farming 5); fifteen minutes later each four have rotted to one compost, and half as fast again with water within two blocks. Make a heap by your field and keep two compost.",
             tasks: [[Craft("compost_heap", 1), Have("compost", 2)]],
-            after: ["kitchen_garden"],
+            after: ["food_enough"],
             rewards: [Xp("farming", 150.0), Xp("construction", 40.0)],
         ),
         (
@@ -980,7 +980,7 @@
             name: "humming_in_the_meadow", age: "farm", branch: "farming", title: "Humming in the Meadow",
             why: "Wild bees nest in hollows at the foot of broadleaf, fruit and blossom trees in a Flower Meadow, a Cherry Grove or Lavender Fields: listen for the hum and look for bees about the roots. Coil a skep from seven wheat and three twine (Crafting 6), light a campfire within four blocks of the nest so the smoke calms them (or hold a torch a moment: its smoke clings to you for half a minute), then hold the skep up to it and right-click (Farming 12). Without smoke they only sting.",
             tasks: [[Level("farming", 12), Craft("skep", 1), Have("bee_skep", 1)]],
-            after: ["a_field_of_gold"],
+            after: ["herb_garden"],
             rewards: [Xp("farming", 300.0), Xp("crafting", 60.0)],
         ),
         (
@@ -1001,14 +1001,14 @@
             name: "sweet_relief", age: "farm", branch: "cooking", title: "Sweet Relief",
             why: "Honey heals 2, as fruit does, and unlike cooked food it stacks, so a pouch of it goes a long way. The same food heals a little less each time you eat it in a row, and a minute of other things brings it back: eat honey between other meals. Eat three honey and keep three more.",
             tasks: [[Ate("honey", 3), Have("honey", 3)]],
-            after: ["a_bee_garden"],
+            after: ["smoke_that_clings"],
             rewards: [Xp("cooking", 80.0), Xp("farming", 60.0)],
         ),
         (
             name: "the_beekeeper_calls", age: "farm", branch: "home", title: "The Beekeeper Calls",
             why: "A home with bees draws the beekeeper by day, to look over your skeps and walk your garden with you; three honey buys a spare skep for a second hive. Beeswax makes the best light a Farm home has before coal: a wick of twine over a cake of wax gives three candles. Meet the beekeeper and make three candles, or, with no visit yet, keep two cakes of wax and make six.",
             tasks: [[Met("beekeeper", 1), Craft("candle", 3)], [Have("beeswax", 2), Craft("candle", 6)]],
-            after: ["a_bee_garden"],
+            after: ["sweet_relief"],
             rewards: [Xp("farming", 200.0), Xp("crafting", 60.0), Item("skep", 1)],
         ),
         (
@@ -1029,7 +1029,7 @@
             name: "filled_again", age: "farm", branch: "prayer", title: "Filled Again",
             why: "A priest bearing a little shrine walks the roads with pilgrims. Spend some prayer first: one short of it is filled again, once. A beginner at Magic is shown the first prayer.",
             tasks: [[Met("shrine_bearer", 1)]],
-            after: ["a_place_to_pray"],
+            after: ["a_prayer_in_the_fight"],
             rewards: [Xp("magic", 80.0)],
         ),
         (
@@ -1043,7 +1043,7 @@
             name: "fired_whole", age: "farm", branch: "pottery", title: "Fired Whole",
             why: "A potter and an apprentice dig clay at river banks and wet ground near folk's homes. Hand them clay and it comes back fired in their kiln, none cracked, one kept, up to eight; a beginner who shows a fired piece learns to throw a pot. Have clay fired by them, and fire twenty-four clay in all. The reward is a dozen clay for the next kiln load.",
             tasks: [[Met("clay_diggers", 1), Cook("fired_clay", 24)]],
-            after: ["a_pit_kiln"],
+            after: ["a_kiln_load"],
             rewards: [Xp("crafting", 150.0), Item("clay", 12)],
         ),
         (
@@ -1085,7 +1085,7 @@
             name: "wedding_to_christening", age: "farm", branch: "explore", title: "From Wedding to Christening",
             why: "A wedding party walks the open country behind a priest: a flower for the bride, and they share bread and good cheer. Some days later the same folk may pass again with a child to be christened. Bring a loaf for the feast, and the priest's blessing restores your prayer. Meet both.",
             tasks: [[Met("wedding", 1), Met("christening", 1)]],
-            after: ["safe_home"],
+            after: ["the_rain_dance"],
             rewards: [Xp("magic", 60.0), Xp("cooking", 60.0)],
         ),
         (
@@ -1106,14 +1106,14 @@
             name: "a_hen_of_your_own", age: "farm", branch: "husbandry", title: "A Hen of Your Own",
             why: "A henwife drifts over the grassland with her hens. Once you have a home and Farming 3, six wheat seeds buy a hen she hands to you; four feathers buy two eggs. Keep the hen near your home, as company there.",
             tasks: [[Met("henwife", 1), Built("home_company", 1)], [Met("henwife", 1), Built("home_full_house", 1)]],
-            after: ["farmers_on_the_road"],
+            after: ["the_last_sheaf"],
             rewards: [Xp("farming", 100.0), Item("wheat_seeds", 6)],
         ),
         (
             name: "master_and_journeyman", age: "farm", branch: "crafting", title: "Master and Journeyman",
             why: "A child may tag along behind you for a while, watching you work. Once you are good at something (Farming, Mining or Crafting 15), they ask to learn it and pay a coin for the lesson. Days later they pass again as a journeyman, with a gift for their old teacher. Teach them, then meet the journeyman.",
             tasks: [[Met("apprentice", 1), Met("journeyman", 1)]],
-            after: ["earthenware"],
+            after: ["fired_whole"],
             rewards: [Xp("crafting", 150.0), Xp("mining", 100.0)],
         ),
         (
