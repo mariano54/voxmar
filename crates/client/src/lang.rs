@@ -562,6 +562,9 @@ mod tests {
             own.push((format!("{key}.why"), quest.why.clone()));
             own.push((key, quest.title.clone()));
         }
+        // The quest book's paths, on the first-party quests' ages.
+        let ages: Vec<&str> = content.quests.iter().filter(|quest| first_party(&quest.name)).map(|quest| quest.age.as_str()).collect();
+        own.extend(content.quest_paths.iter().filter(|path| ages.contains(&path.age.as_str())).map(|path| (path.key(), path.title.clone())));
         for structure in content.multiblocks.iter().filter(|structure| first_party(&structure.name)) {
             let key = def_key("multiblock", &structure.name);
             own.push((format!("{key}.hint"), structure.hint.clone()));
