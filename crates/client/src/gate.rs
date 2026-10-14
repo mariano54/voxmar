@@ -7748,7 +7748,9 @@ fn slow_try(gate: &mut Gate, late: f32, blocking: bool, windup: f32, perfect: f3
     gate.feel.slowest = gate.feel.slowest.max(late);
     if gate.feel.slow >= FEEL_TRIES {
         let detail = format!("{} answers came on frames up to {:.2} s late or long, past a {windup} s wind-up, so none says whether the game judges the moment", gate.feel.slow, gate.feel.slowest);
-        gate.known(if blocking { "perfect block" } else { "dodge" }, Err(detail), "frames slower than a wind-up, as on a loaded machine");
+        // A block already found leaves only the counter owed, so that is what goes unjudged.
+        let name = if blocking && gate.feel.found.is_some() { "counter" } else if blocking { "perfect block" } else { "dodge" };
+        gate.known(name, Err(detail), "frames slower than a wind-up, as on a loaded machine");
         gate.feel.slow = 0;
         gate.feel.slowest = 0.0;
         if blocking {
