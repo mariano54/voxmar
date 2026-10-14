@@ -50,6 +50,9 @@ counter, no knockback. What it adds, in `creature.rs` and `creature/moves.rs`:
   set, the sky over it is open and the day is that bright.
 - A boss never flees, a perfect block staggers it for `boss_stagger` (combat.ron), a daze
   does not hold it, and a ward stops only `boss_ward` of its blows (prayers.ron).
+- A boss always fights whoever comes near: RuneScape's tolerance (a player settled ten
+  minutes in one place) and its level rule (a player of more than twice its level) leave
+  other hunters' prey be, never a boss's.
 - The journal's Bosses page lists the bosses seen; the music plays a boss's track while a
   boss is within 32 blocks or a block of a boss's room (`music.ron`'s `rooms`: the block and
   whose room it is) is near. Which track is the boss's own: its creature's `music` tags
@@ -146,6 +149,7 @@ Defence 10, then her death. Its text names the four biomes her hollows lie under
 | A ward prayer stops half a boss's blow | `a_ward_stops_half_a_bosss_blow` |
 | No wild creature is born in a lair's quiet | `a_lair_wakes_its_boss_and_rests_once_she_falls` |
 | A boss never flees | `a_boss_fights_to_the_end` |
+| A boss fights a settled or strong player | `a_boss_never_tolerates_a_player`, `hunters_attack_in_reach_but_leave_strong_and_settled_players_alone_unless_a_boss` |
 
 Pets and companions do not fight yet, so they have no rule here.
 
