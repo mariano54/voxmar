@@ -285,8 +285,10 @@ enum Step {
     NaturalSpawns,
     /// Creatures summoned on a pad beside the test ground reach the client and draw.
     Creatures,
-    /// Struck with left clicks until it dies, a lumen snail drops its slime, which walking
-    /// over picks up.
+    /// Struck with left clicks of the empty hand until it dies, a lumen snail drops its
+    /// slime, which walking over picks up. The first punch, watched in the hand on the
+    /// gate's clock, peaks as the server judges its blow (the fist's wind-up), comes back to
+    /// rest, is answered and is drawn as the fist and arm; shot as it connects.
     Strike,
     /// An iron sword in hand at Attack 20, a brown bear struck until it dies takes harder
     /// blows than a fist could deal. The first swing, watched in the hand on the gate's
@@ -6892,6 +6894,12 @@ fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.strike_answered(strikes);
             }
             let stalled = gate.unanswered(strikes);
+            // Struck with the empty hand, its first punch watched in the hand once the hand
+            // is up (`watch_swing`).
+            if gate.swing_watch.name.is_empty() {
+                gate.swing_watch = SwingWatch::of("player punch", "player-punch-connect", "the snail");
+                empty_hand(world);
+            }
             match snail(world) {
                 Some(view) if !stalled && blows < MOST_BLOWS => {
                     gate.quarry = view.position;
@@ -6903,7 +6911,9 @@ fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     let far = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz()) > 1.6;
                     key(world, KeyCode::KeyW, far);
                     aim_at(world, view.position + Vec3::Y * 0.2);
-                    gate.swing(world, now);
+                    if now - gate.since < PUNCH_AFTER || !watch_swing(world, gate, far, now) {
+                        gate.swing(world, now);
+                    }
                 }
                 Some(view) => {
                     mouse(world, MouseButton::Left, false);
@@ -6912,11 +6922,18 @@ fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     let distance = view.position.distance(world.resource::<LocalPlayer>().eye());
                     let why = if stalled { format!("the server answered none of {} strikes in {UNANSWERED}s", gate.unanswered_strikes(strikes)) } else { format!("{blows} blows ({landed} landed) did not kill it") };
                     gate.check("creature struck", Err(format!("{why} (aimed at it: {aimed}, {distance:.1} blocks from the eye)")));
+                    if gate.swing_watch.stage < 2 {
+                        judge_swing(world, gate, false);
+                    }
                     gate.next(Step::Ore, now);
                 }
                 None => {
                     mouse(world, MouseButton::Left, false);
                     key(world, KeyCode::KeyW, false);
+                    if gate.swing_watch.stage < 2 {
+                        let answered = world.resource::<crate::creatures::Creatures>().blows > gate.swing_watch.pressed.1;
+                        judge_swing(world, gate, answered);
+                    }
                     let deaths = world.resource::<crate::creatures::Creatures>().deaths;
                     let (blows, landed) = {
                         let creatures = world.resource::<crate::creatures::Creatures>();
@@ -7035,6 +7052,10 @@ fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     }
 }
 
+/// Game seconds into the strike step before its first punch is watched: the empty hand
+/// comes up from below in a quarter of a second.
+const PUNCH_AFTER: f32 = 0.5;
+
 /// The weapon the gate strikes with, and the level that wields it.
 const WEAPON: &str = "base:iron_sword";
 const WEAPON_LEVEL: u8 = 20;
@@ -7061,7 +7082,7 @@ fn weapon(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             net.command(&format!("summon {} 1 {} {} {}", BEAR.trim_start_matches("base:"), pad.x, pad.y, pad.z + 1));
             gate.blows_seen = world.resource::<crate::creatures::Creatures>().blows;
             gate.feel = FeelRun::default();
-            gate.swing_watch = SwingWatch::default();
+            gate.swing_watch = SwingWatch::of("player swing", "player-swing-connect", "the bear");
             gate.advance(now);
         }
         1 => {
@@ -7434,6 +7455,10 @@ fn end_weapon(world: &mut World, gate: &mut Gate, now: f32) {
 /// gate's clock (`held::HeldClock`), so a slow machine sees the same stroke.
 #[derive(Default)]
 struct SwingWatch {
+    /// The check's name, the shot's and what is struck.
+    name: &'static str,
+    shot_name: &'static str,
+    quarry: &'static str,
     /// 0 before its press, 1 watching, 2 judged.
     stage: u8,
     /// Each new weighing of its stroke: seconds in, the seconds in at which it connects and
@@ -7443,8 +7468,15 @@ struct SwingWatch {
     pressed: (f32, u32),
     /// Its stroke has run its course, back to rest.
     ended: bool,
-    /// The shot taken as it connects.
+    /// The shot taken as it connects, and the models the hand was drawn with then.
     shot: bool,
+    drawn: usize,
+}
+
+impl SwingWatch {
+    fn of(name: &'static str, shot_name: &'static str, quarry: &'static str) -> Self {
+        SwingWatch { name, shot_name, quarry, ..SwingWatch::default() }
+    }
 }
 
 /// The gate's frame for the watched swing (game seconds).
@@ -7487,10 +7519,12 @@ fn watch_swing(world: &mut World, gate: &mut Gate, far: bool, now: f32) -> bool 
             // Held where it connects (the hand's clock stopped) until the shot is taken.
             if !watch.shot && !watch.ended && watch.frames.last().is_some_and(|&(t, connect, _)| t >= connect) {
                 world.resource_mut::<crate::held::HeldClock>().step = Some(0.0);
-                if gate.shot(world, "player-swing-connect").is_none() {
+                let name = gate.swing_watch.shot_name;
+                if gate.shot(world, name).is_none() {
                     return true;
                 }
                 gate.swing_watch.shot = true;
+                gate.swing_watch.drawn = world.resource::<crate::held::Motion>().drawn();
                 world.resource_mut::<crate::held::HeldClock>().step = Some(SWING_FRAME);
             }
             let answered = world.resource::<crate::creatures::Creatures>().blows > gate.swing_watch.pressed.1;
@@ -7508,31 +7542,40 @@ fn watch_swing(world: &mut World, gate: &mut Gate, far: bool, now: f32) -> bool 
 /// is the frame's own again.
 fn judge_swing(world: &mut World, gate: &mut Gate, answered: bool) {
     world.resource_mut::<crate::held::HeldClock>().step = None;
-    let watch = std::mem::replace(&mut gate.swing_watch, SwingWatch { stage: 2, ..SwingWatch::default() });
-    let windup = {
+    let judged = SwingWatch { stage: 2, ..SwingWatch::of(gate.swing_watch.name, gate.swing_watch.shot_name, gate.swing_watch.quarry) };
+    let watch = std::mem::replace(&mut gate.swing_watch, judged);
+    let quarry = watch.quarry;
+    let (windup, held) = {
         let (launch, player) = (world.resource::<Launch>(), world.resource::<LocalPlayer>());
         let combat = &launch.content.combat;
         let held = player.inventory.get(player.selected).map(|s| s.item);
         let level = |skill| launch.content.skills.level(player.skills.xp(skill));
-        combat.timing(&combat.wielded(held, level)).windup
+        (combat.timing(&combat.wielded(held, level)).windup, held)
+    };
+    // The hand is drawn as one model holding something, and as the empty hand's pieces
+    // holding nothing.
+    let models = match held {
+        Some(_) => 1,
+        None => world.resource::<crate::held::Handled>().0.as_ref().and_then(|h| h.bare.as_ref()).map_or(0, |bare| bare.pieces.len()),
     };
     let peak = watch.frames.iter().copied().max_by(|a, b| a.2.total_cmp(&b.2));
     let result = match peak {
-        _ if watch.stage == 0 => Err("the bear was never in reach and aimed at for the watched swing".to_string()),
-        None => Err("the swing at the bear never played in the hand".to_string()),
-        Some((_, connect, _)) if (connect - windup).abs() > 1e-4 => Err(format!("the swing was timed to connect {connect:.3} s in, not at the sword's wind-up of {windup:.3} s")),
+        _ if watch.stage == 0 => Err(format!("{quarry} was never in reach and aimed at for the watched swing")),
+        None => Err(format!("the swing at {quarry} never played in the hand")),
+        Some((_, connect, _)) if (connect - windup).abs() > 1e-4 => Err(format!("the swing was timed to connect {connect:.3} s in, not at the wind-up of {windup:.3} s")),
         Some((at, _, _)) if (at - windup).abs() > SWING_FRAME + 1e-3 => Err(format!("the swing peaked {at:.3} s in, where the server judges its blow at {windup:.3} s")),
         Some((_, _, weight)) if weight < 0.9 => Err(format!("the swing went only {weight:.2} of the way out")),
         Some(_) if !watch.ended => Err(format!("the swing never came back to rest in {SWING_WAIT} server s ({} frames)", watch.frames.len())),
         Some(_) if !answered => Err(format!("the server answered no blow for the swing in {SWING_WAIT} s")),
         Some(_) if !watch.shot => Err("the swing was never shot as it connected".to_string()),
+        Some(_) if watch.drawn != models || models == 0 => Err(format!("the hand was drawn with {} models as it connected, where it takes {models}", watch.drawn)),
         Some((at, _, weight)) => Ok(format!(
-            "{} frames of 1/60 s: out {weight:.2} at {at:.3} s, the blow judged at {windup:.3} s; at rest {:.2} s in; its blow answered",
+            "{} frames of 1/60 s: out {weight:.2} at {at:.3} s, the blow judged at {windup:.3} s; at rest {:.2} s in; its blow answered; drawn with {models} models",
             watch.frames.len(),
             watch.frames.last().map_or(0.0, |f| f.0)
         )),
     };
-    gate.check("player swing", result);
+    gate.check(watch.name, result);
 }
 
 /// The bear a fight step is about, as shown: the one first seen since the step summoned it,
