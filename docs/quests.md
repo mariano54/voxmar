@@ -219,7 +219,7 @@ Ten starts still fanned out a few steps in: one column held 21 quests. Now each 
 as a chain, with a fork only where a quest's text sends the player two ways (A Kiln Load
 names Earthenware and Fired Whole; Herb Garden names Carrot Patch and A Kitchen Garden;
 Fresh Eggs names A Woolly Flock). Examples: the bees run Humming in the Meadow, A Bee
-Garden, Smoke That Clings, Sweet Relief, The Beekeeper Calls; the home runs A Table for
+Garden, then Smoke That Clings beside Sweet Relief and The Beekeeper Calls; the home runs A Table for
 Two, Shelves and Cupboards, A Proper Bed, Candlelight, Snug for Winter, then the door and
 the workshop; the road runs Field Guide, Many Travellers, Safe Home, The Rain Dance, the
 wedding; ores run Copper Kit, Tin Find, Rock Collector, Ore Run.
@@ -228,7 +228,7 @@ wedding; ores run Copper Kit, Tin Find, Rock Collector, Ore Run.
 |---|---|---|---|
 | Farm quests open at once along the kiln bot's run (max, median) | 33, 31 | 17, 15 | 12, 11 |
 | Open at once, clearing the whole age one quest at a time, oldest first (max, median) | 34, 19 | 25, 15 | 15, 11 |
-| Columns, and the tallest | 8, 25 | 8, 21 | 11, 12 |
+| Columns, and the tallest | 8, 25 | 8, 21 | 11, 13 |
 
 Along the bot's run the open quests are one head per path: the next main quest, plus Camp
 Cook, Far Horizons, First Harvest, Patient Angler, A Seat by the Fire, Earthenware, Bigger

@@ -1001,7 +1001,7 @@
             name: "sweet_relief", age: "farm", branch: "cooking", title: "Sweet Relief",
             why: "Honey heals 2, as fruit does, and unlike cooked food it stacks, so a pouch of it goes a long way. The same food heals a little less each time you eat it in a row, and a minute of other things brings it back: eat honey between other meals. Eat three honey and keep three more.",
             tasks: [[Ate("honey", 3), Have("honey", 3)]],
-            after: ["smoke_that_clings"],
+            after: ["a_bee_garden"],
             rewards: [Xp("cooking", 80.0), Xp("farming", 60.0)],
         ),
         (
