@@ -487,7 +487,7 @@
     "quest.goal.laid": "家の蓄えから{item}を並べる",
     "quest.goal.watering": "{item}を耕地のそばに置いて水をやる",
     "quest.goal.placed": "{item}を置く",
-    "quest.goal.stocked": "{item}に入れる",
+    "quest.goal.stocked": "{item}を{store}に入れる",
     "quest.goal.craft_near": "{near}で{item}を作る",
     "quest.goal.trapped": "罠から{creature}を取る",
     "quest.goal.felt": "「{effect}」の効果を受ける",

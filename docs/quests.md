@@ -308,11 +308,17 @@ Each new feature has a quest that teaches it, in two parts the book counts one b
 
 Twine and Thong also takes ten twine carried, since a knife cuts twine from tall grass, and
 its text and A Sharp Edge's say so. First Harvest says a stone hoe reaps the ripe crops around the one cut, and A Full Granary is the harvest that pays for it. Four goals came with them, each reading a tally:
-`Placed(block, n)` (a block set from the hand, by the item: `placed`), `Stocked(store, n)`
-(items an open store gained, by its block: `stocked`, in `push_store`; taking out stocks
-nothing), `CraftNear(item, near, n)` (made by a recipe with `near`, by that tag:
-`crafted_near:TAG`, beside `crafted`) and `Trapped(creature, n)` (a catch taken from a
-sprung trap: `trapped`). Nomad has 63 quests, Farm 98.
+`Placed(block, n)` (blocks set from the hand that still stand, by the item: `placed`,
+tallied only for a block some `Placed` names, and taken off when its cell is broken; a
+snare sprung still stands; kept for one run, so one broken after a restart stays counted),
+`Stocked(item, store, n)` (that item put in a store of that block and left there:
+`stocked:STORE:ITEM`, in `push_store`, net of what is taken back out), `CraftNear(item,
+near, n)` (made by a recipe with `near`, by that tag: `crafted_near:TAG`, beside `crafted`)
+and `Trapped(creature, n)` (a catch taken from a sprung trap: `trapped`; whoever empties
+the snare gets the credit and the catch, as with a shared lit fire, until traps have
+owners). Loading refuses a `Stocked` store that is not a store, a `CraftNear` tag no
+recipe is made near, and a `Trapped` creature no trap catches. A tally goal naming one
+full name reads its one key; only `any` and `tag:` look across a kind's keys. Nomad has 63 quests, Farm 98.
 
 ## Readable to a newcomer (Oct 13)
 
