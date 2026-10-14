@@ -143,7 +143,11 @@ thing. Every warm pelt is fur (a bear gives two), rabbit hide is hide, duck eggs
 bear fat is lard, bright feathers are feathers, claws are fangs, glimmer dust is moon dust;
 fired clay replaces unfired pots, unfired vials and fired bricks, and tin ore goes straight
 into the bronze blend. Flint comes from gravel, one break in eight (tools.ron's `instead`;
-gravel a player placed gives none).
+gravel a player placed gives none). Twine comes from tall grass cut with a knife, one cut in
+five, and a better knife finds more (`by: "knife"`: the knife's yield adds to the chance, so
+a stone knife is 1 in 4, copper 3 in 10, iron 7 in 20); by hand, tall grass gives nothing.
+The recipe book shows both: each `instead` is a way to get its item ("Cut from Tall Grass
+with a Wooden Knife or better (20%+)"), and each knife lists twine among its uses.
 
 ## Dying
 

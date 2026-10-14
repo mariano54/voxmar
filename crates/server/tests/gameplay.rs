@@ -2759,6 +2759,42 @@ fn gravel_sometimes_breaks_to_flint_instead() {
     assert!(flints > 0, "sixty gravel broke without a flint");
 }
 
+/// Tall grass gives twine one time in five to a knife (a stone one, a quarter), and never
+/// by hand: the first upgrade on twine, which otherwise waits on wild wheat.
+#[test]
+fn a_knife_cuts_twine_from_tall_grass() {
+    let mut client = Client::join();
+    let cell = client.position.floor().as_ivec3() + IVec3::X;
+    client.ok("/clear");
+    let (grass, twine) = (client.content.blocks.expect("base:tall_grass"), client.content.blocks.expect("base:twine"));
+    let twines = |c: &Client| c.items.values().filter(|i| i.stack.item == twine).count() as u32 + c.inventory.slots.iter().flatten().filter(|s| s.item == twine).map(|s| s.count as u32).sum::<u32>();
+    let cut = |client: &mut Client| {
+        client.ok("/setblock ~1 ~ ~ tall_grass");
+        client.pump_until(|c| c.world.block(cell) == Some(grass));
+        client.propose("core:mine", ActionTarget::Block { block: cell, face: Face::NegX });
+        client.pump_until(|c| c.world.block(cell) == Some(BlockId::AIR));
+        // The drop comes just after the block goes.
+        client.after_server_ticks(2);
+        twines(client)
+    };
+    for _ in 0..30 {
+        assert_eq!(cut(&mut client), 0, "bare hands cut twine from tall grass");
+    }
+    client.ok("/give stone_knife 1");
+    let knife = client.content.blocks.expect("base:stone_knife");
+    client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == knife));
+    client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    // A quarter of the time: in sixty, all but certainly some.
+    let mut found = 0;
+    for _ in 0..60 {
+        found = cut(&mut client);
+        if found > 0 {
+            break;
+        }
+    }
+    assert!(found > 0, "sixty tall grasses cut with a stone knife gave no twine");
+}
+
 // Seed 3 has a village at (368, 135, 784), 421 blocks from spawn (432, 134, 368).
 // Keeping the locate radius small avoids planning hundreds of squares on the server.
 const VILLAGE_SEED: u64 = 3;

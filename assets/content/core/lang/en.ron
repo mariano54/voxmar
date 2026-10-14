@@ -313,6 +313,8 @@
     "recipes.product": "Left by a kept {creature}",
     "recipes.product.tool": "From a kept {creature}, with {tool}",
     "recipes.drop": "Dropped by a {creature} ({chance}%)",
+    "recipes.break": "From breaking {block} ({chance}%)",
+    "recipes.break.tool": "Cut from {block} with a {tool} or better ({chance}%+)",
     "target.kept": "Kept",
     "target.kept_by": "Kept by {owner}",
     "target.young": "Young",
