@@ -15,7 +15,7 @@ use std::f32::consts::{PI, TAU};
 
 use serde::Deserialize;
 
-use crate::sfx::dsp::{Drift, Pink, Svf, between, bubble, gap, seconds};
+use crate::sfx::dsp::{Drift, Pink, Svf, between, bubble, gap, seconds, tap};
 use crate::sfx::{Noise, RATE, mix};
 
 const SR: f32 = RATE as f32;
@@ -61,6 +61,9 @@ pub enum Synth {
     /// A waterfall: a broad, steady roar with a low thunder of the plunge and a hiss of
     /// spray, surging a little.
     Waterfall,
+    /// A wood fire: a soft breathing of flame over a warm low roar, busy with small dry
+    /// crackles and the odd louder tick.
+    Fire,
     /// A quick songbird: trills and twitters.
     Warbler,
     /// A fluting songbird that repeats its phrases.
@@ -89,13 +92,16 @@ pub enum Synth {
     Creak,
     /// A bubble of lava bursting: a thick, low blurp and a spatter.
     LavaPop,
+    /// A log in a fire snapping: a sharp crack, a few smaller ones after, and a breath of
+    /// flame.
+    Snap,
     /// A pot on the boil: a run of small, round bubbles breaking at the top.
     Simmer,
 }
 
 impl Synth {
     #[cfg(test)]
-    pub const ALL: [Synth; 28] = [
+    pub const ALL: [Synth; 30] = [
         Synth::Wind,
         Synth::Gale,
         Synth::Rustle,
@@ -109,6 +115,7 @@ impl Synth {
         Synth::Sandstorm,
         Synth::Lava,
         Synth::Waterfall,
+        Synth::Fire,
         Synth::Warbler,
         Synth::Thrush,
         Synth::Whistler,
@@ -123,6 +130,7 @@ impl Synth {
         Synth::Rumble,
         Synth::Creak,
         Synth::LavaPop,
+        Synth::Snap,
         Synth::Simmer,
     ];
 
@@ -143,6 +151,7 @@ impl Synth {
                 | Synth::Sandstorm
                 | Synth::Lava
                 | Synth::Waterfall
+                | Synth::Fire
         )
     }
 
@@ -192,6 +201,7 @@ pub fn one_shot(synth: Synth, variant: usize) -> (Vec<f32>, [Vec<f32>; 2]) {
         Synth::Rumble => rumble(&mut noise),
         Synth::Creak => creak(&mut noise),
         Synth::LavaPop => lava_pop(&mut noise),
+        Synth::Snap => snap(&mut noise),
         Synth::Simmer => simmer(&mut noise),
         bed => panic!("{bed:?} makes a bed, not one-shots"),
     };
@@ -217,6 +227,7 @@ fn render_bed(synth: Synth, noise: &mut Noise, len: usize) -> Vec<f32> {
         Synth::Sandstorm => sandstorm(noise, len),
         Synth::Lava => lava(noise, len),
         Synth::Waterfall => waterfall(noise, len),
+        Synth::Fire => fire(noise, len),
         one_shot => panic!("{one_shot:?} makes one-shots, not a bed"),
     }
 }
@@ -661,6 +672,71 @@ fn lava(noise: &mut Noise, len: usize) -> Vec<f32> {
         t += gap(noise, 4.0);
     }
     out
+}
+
+/// A wood fire: low, flickering air (the flame drawing), a soft hiss of burning, and
+/// crackles: many tiny dry ticks in bursts as the wood spits, and now and then a fuller
+/// one. Kept warm and low, so it sits under the music by the hearth.
+fn fire(noise: &mut Noise, len: usize) -> Vec<f32> {
+    let breath = Drift::new(noise, 0.35);
+    let flicker = Drift::new(noise, 3.0);
+    let mut roar = Svf::new(160.0, 0.6);
+    let mut hiss = Svf::new(1800.0, 0.5);
+    let mut out: Vec<f32> = (0..len)
+        .map(|i| {
+            let t = i as f32 / SR;
+            let white = noise.next();
+            let (b, f) = (breath.unit(t), flicker.unit(t));
+            roar.low(white) * (0.5 + 0.35 * b) * (0.8 + 0.2 * f) + hiss.band(white) * 0.03 * (0.4 + 0.6 * b)
+        })
+        .collect();
+    // Crackles: bursts of small ticks, the wood spitting, thicker while the fire breathes in.
+    let mut t = between(noise, 0.0, 0.3);
+    while t < len as f32 / SR {
+        let burst = 1 + (noise.unit().powi(2) * 6.0) as usize;
+        let mut at = t;
+        for _ in 0..burst {
+            let gain = 0.08 + 0.3 * noise.unit().powi(3);
+            crack(&mut out, noise, at, (0.0015, 0.005), (1500.0, 4500.0), gain);
+            at += between(noise, 0.008, 0.05);
+        }
+        t = at + gap(noise, 2.2 + 2.0 * breath.unit(t));
+    }
+    // Now and then a fuller tick, lower and woodier.
+    let mut t = between(noise, 0.5, 2.0);
+    while t < len as f32 / SR {
+        let gain = between(noise, 0.25, 0.45);
+        crack(&mut out, noise, t, (0.004, 0.009), (700.0, 1400.0), gain);
+        t += gap(noise, 0.45);
+    }
+    out
+}
+
+/// A log snapping in a fire: a sharp, bright crack with a woody knock under it, two to
+/// five smaller cracks after as the split runs on, and a short breath of flame.
+fn snap(noise: &mut Noise) -> Vec<f32> {
+    let mut out = vec![0.0f32; seconds(0.6)];
+    crack(&mut out, noise, 0.005, (0.002, 0.004), (2500.0, 4000.0), 1.0);
+    crack(&mut out, noise, 0.006, (0.006, 0.012), (600.0, 1100.0), 0.6);
+    let mut t = between(noise, 0.03, 0.08);
+    for _ in 0..2 + (noise.unit() * 4.0) as usize {
+        let gain = between(noise, 0.15, 0.45);
+        crack(&mut out, noise, t, (0.0015, 0.004), (1800.0, 4500.0), gain);
+        t += between(noise, 0.02, 0.1);
+    }
+    let mut flame = Svf::new(400.0, 0.7);
+    let length = out.len() as f32;
+    for (i, sample) in out.iter_mut().enumerate() {
+        let x = i as f32 / length;
+        *sample += 0.06 * flame.band(noise.next()) * (PI * x).sin().powi(2);
+    }
+    out
+}
+
+/// A tap of noise (`tap`) whose length and pitch are drawn from ranges.
+fn crack(out: &mut [f32], noise: &mut Noise, at: f32, length: (f32, f32), center: (f32, f32), gain: f32) {
+    let (length, center) = (between(noise, length.0, length.1), between(noise, center.0, center.1));
+    tap(out, noise, at, length, center, gain);
 }
 
 /// A waterfall: pink noise roaring through a broad band, the low thunder of the plunge
