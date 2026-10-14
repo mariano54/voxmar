@@ -36,14 +36,14 @@ impl Default for Vitals {
     }
 }
 
-/// How high a seated player's eye is over the floor of their seat's cell: a stool's top
-/// and a body sat on it.
-pub const SEATED_EYE: f32 = 1.4;
+/// How high a seated player's eye is over their feet: a stool's top and a body sat on it,
+/// a third of a block under a standing eye.
+pub const SEATED_EYE: f32 = 1.3;
 /// How far across from their seat's middle a player may be and still sit on it.
 pub const SEATED_WITHIN: f32 = 0.45;
 
-/// Where a player sitting on the seat at `seat` stands: on top of a solid one (a stool),
-/// in a soft one (a cushion), in its middle.
+/// Where a player sitting on the seat at `seat` stands: in one that is not solid (base's
+/// stools, chairs, benches and cushions), on top of a solid one (a mod's), in its middle.
 pub fn seated_feet(seat: glam::IVec3, solid: bool) -> glam::Vec3 {
     seat.as_vec3() + glam::Vec3::new(0.5, if solid { 1.0 } else { 0.0 }, 0.5)
 }
@@ -52,7 +52,7 @@ pub fn seated_feet(seat: glam::IVec3, solid: bool) -> glam::Vec3 {
 /// them: lower while they sit on `seated` and are still on it.
 pub fn eye(feet: glam::Vec3, standing: f32, seated: Option<glam::IVec3>) -> glam::Vec3 {
     match seated.filter(|&seat| still_seated(feet, seat)) {
-        Some(seat) => glam::Vec3::new(feet.x, seat.y as f32 + SEATED_EYE, feet.z),
+        Some(_) => feet + glam::Vec3::Y * SEATED_EYE,
         None => feet + glam::Vec3::Y * standing,
     }
 }

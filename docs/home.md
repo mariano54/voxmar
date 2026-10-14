@@ -166,14 +166,15 @@ online only.
 
 Seats were only props the ladder counted. Now a right click on one (a stool, chair, bench or
 cushion: anything tagged `seat`), with no block to place in hand and room above it, sits the
-player on it (`base:sit`, `Requirement::Seat`, `Effect::Sit`): the server sets them on top
-of a solid seat or in a soft one, and their eye drops to `vitals::SEATED_EYE` (1.4) over the
-seat's floor, on the server and the client alike (`vitals::eye`; `Vitals::seated`, protocol
+player on it (`base:sit`, `Requirement::Seat`, `Effect::Sit`): the server sets them in it
+(base's seats are not solid, so one under a roof two blocks up is sat on; a mod's solid seat
+sets them on top, and wants two free cells over it), and their eye drops to
+`vitals::SEATED_EYE` (1.3) over their feet, on the server and the client alike (`vitals::eye`; `Vitals::seated`, protocol
 40). They sit until they move off it or it goes (`vitals::still_seated`, checked once a
 second). Effects can ask `Seated`; base's **By the Fire** (`fireside`: heal x1.5, 4° warmer)
 holds sat with a fire or the hearth within 3, so a Nomad's stool at the campfire and a chair
 at home both rest the player after a day out. Tests: server `seats.rs`. The gate's Seat step
-sits on a stool by a campfire (shot `seat-fire`) and steps off it.
+sits on a stool under a block two up, by a campfire (shot `seat-fire`), and steps off it.
 
 ## Numbers and tuning
 

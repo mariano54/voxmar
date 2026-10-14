@@ -4792,8 +4792,8 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
 const SEAT_WAIT: f32 = 8.0;
 
 /// A stool two blocks south of the test ground's feet (the door stood north), a campfire
-/// beside it; sat on from the feet by right clicks with a hand that places nothing, then
-/// stood up from with a step back.
+/// beside it and a block over it two up, a house's roof; sat on from the feet by right
+/// clicks with a hand that places nothing, then stood up from with a step back.
 fn seat(world: &mut World, gate: &mut Gate, now: f32) {
     let stand = gate.feet;
     let (stool, fire) = (stand + IVec3::new(0, 0, 2), stand + IVec3::new(1, 0, 2));
@@ -4801,7 +4801,7 @@ fn seat(world: &mut World, gate: &mut Gate, now: f32) {
         key(world, KeyCode::KeyS, false);
         mouse(world, MouseButton::Right, false);
         let net = world.resource::<Net>();
-        net.command(&format!("fill {} {} {} {} {} {} air", stool.x, stool.y, stool.z, fire.x, fire.y, fire.z));
+        net.command(&format!("fill {} {} {} {} {} {} air", stool.x, stool.y, stool.z, fire.x, fire.y + 2, fire.z));
         net.command(&format!("tp {} {} {}", stand.x as f32 + 0.5, stand.y, stand.z as f32 + 0.5));
         gate.next(Step::Quests, now);
     };
@@ -4829,6 +4829,7 @@ fn seat(world: &mut World, gate: &mut Gate, now: f32) {
             let net = world.resource::<Net>();
             net.command(&format!("setblock {} {} {} oak_stool", stool.x, stool.y, stool.z));
             net.command(&format!("setblock {} {} {} campfire", fire.x, fire.y, fire.z));
+            net.command(&format!("setblock {} {} {} stone", stool.x, stool.y + 2, stool.z));
             gate.advance(now);
         }
         // Right clicks on the stool's seat until the server sets the player on it.
@@ -4854,12 +4855,12 @@ fn seat(world: &mut World, gate: &mut Gate, now: f32) {
         // Sat by the fire: the eye drops below standing, and By the Fire comes on.
         2 => {
             let (eye, standing) = (world.resource::<LocalPlayer>().eye().y, standing_eye(world));
-            let lower = eye < standing - 0.5;
+            let lower = eye < standing - 0.25;
             if lower && fireside(world) {
                 if gate.shot(world, "seat-fire").is_none() {
                     return;
                 }
-                gate.check("seat: by the fire", Ok(format!("sat on a stool by a campfire: the eye dropped {:.2} below standing there, and By the Fire came on", standing - eye)));
+                gate.check("seat: by the fire", Ok(format!("sat on a stool under a roof two up, by a campfire: the eye dropped {:.2} below standing there, and By the Fire came on", standing - eye)));
                 gate.advance(now);
             } else if gate.server_in_phase() > SEAT_WAIT {
                 gate.check("seat: by the fire", Err(format!("{SEAT_WAIT} server s sat on the stool: eye {eye:.2} against {standing:.2} standing, By the Fire {}", fireside(world))));

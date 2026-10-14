@@ -66,8 +66,8 @@ fn a_stool_by_the_fire_is_sat_on_and_rests_until_stepped_off() {
     sit(&mut server, STOOL);
     let player = &server.players[&1];
     assert_eq!(player.vitals.seated, Some(STOOL), "not sat on the stool");
-    assert_eq!(player.position, Vec3::new(9.5, (FLOOR + 2) as f32, 8.5), "not set on top of the stool");
-    assert!(player.eye().y < standing + 0.5, "the eye sat on a stool ({}) is as high as standing beside it ({standing}) and more", player.eye().y);
+    assert_eq!(player.position, Vec3::new(9.5, (FLOOR + 1) as f32, 8.5), "not set in the stool");
+    assert!(player.eye().y < standing - 0.25, "the eye sat on a stool ({}) is not lower than standing beside it ({standing})", player.eye().y);
     crate::process::Survival.run(&mut server);
     assert_eq!(server.players[&1].vitals.seated, Some(STOOL));
     assert!(!by_the_fire(&server), "By the Fire with no fire");
@@ -99,10 +99,12 @@ fn a_seat_wants_room_and_an_empty_hand() {
     sit(&mut server, STOOL);
     assert_eq!(server.players[&1].vitals.seated, None, "sat with a block to place in hand");
     server.players.get_mut(&1).unwrap().inventory.slots[0] = None;
-    server.set_block(STOOL + IVec3::new(0, 2, 0), stone);
+    server.set_block(STOOL + IVec3::Y, stone);
     sit(&mut server, STOOL);
     assert_eq!(server.players[&1].vitals.seated, None, "sat under a block, with no room");
-    server.set_block(STOOL + IVec3::new(0, 2, 0), BlockId::AIR);
+    server.set_block(STOOL + IVec3::Y, BlockId::AIR);
+    // A roof two blocks over the floor, as a house's is: room enough to sit.
+    server.set_block(STOOL + IVec3::new(0, 2, 0), stone);
     sit(&mut server, STOOL);
-    assert_eq!(server.players[&1].vitals.seated, Some(STOOL));
+    assert_eq!(server.players[&1].vitals.seated, Some(STOOL), "not sat on a stool under a roof two blocks up");
 }
