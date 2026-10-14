@@ -58,7 +58,7 @@ impl Walker {
 
 /// What a search has learnt of one cell, as bits: `OPEN_KNOWN` and `OPEN` (the column from
 /// it up is open as high as the walker stands), `GROUND_KNOWN` and the rest (what is in it
-/// and under it).
+/// and under it), and `STANDS_KNOWN` and `STANDS` (of the square it is the corner of).
 const OPEN_KNOWN: u8 = 1;
 const OPEN: u8 = 2;
 const GROUND_KNOWN: u8 = 4;
@@ -66,8 +66,12 @@ const GROUND_KNOWN: u8 = 4;
 const FLOOR: u8 = 8;
 /// Water in the cell.
 const WET: u8 = 16;
-/// Water in the cell and under it (two deep for a land animal).
+/// Water in the cell and under or over it (two deep for a land animal, from its top or
+/// from its bed).
 const DEEP: u8 = 32;
+/// Whether it stands in the square with its corner at the cell, once known.
+const STANDS_KNOWN: u8 = 64;
+const STANDS: u8 = 128;
 
 /// How far up and down from where a search starts it keeps what it learns; beyond that it
 /// looks again each time.
@@ -125,7 +129,7 @@ impl<'a, W: Surroundings> Looker<'a, W> {
             return bits;
         }
         let wet = self.world.water(cell);
-        let deep = wet && self.world.water(cell - IVec3::Y);
+        let deep = wet && (self.world.water(cell - IVec3::Y) || self.world.water(cell + IVec3::Y));
         let bits = if self.world.solid(cell - IVec3::Y) { FLOOR } else { 0 } | if wet { WET } else { 0 } | if deep { DEEP } else { 0 };
         if let Some(slot) = slot {
             slot.set(slot.get() | GROUND_KNOWN | bits);
@@ -146,20 +150,28 @@ impl<'a, W: Surroundings> Looker<'a, W> {
 
     /// Whether it can stand in the square with corner `cell`: the square clear, something
     /// under one of its columns to stand on (or water to swim in, for one not wary of it),
-    /// and, for a land animal, none of it over water two deep. Across a ditch narrower than
+    /// and, for a land animal, none of it in water two deep. Across a ditch narrower than
     /// it, a wide body stands on the banks.
     fn stands(&self, cell: IVec3) -> bool {
+        let slot = self.slot(cell);
+        if let Some(bits) = slot.map(|s| s.get()).filter(|b| b & STANDS_KNOWN != 0) {
+            return bits & STANDS != 0;
+        }
         let wary = self.walker.wary;
-        self.clear(cell)
+        let stands = self.clear(cell)
             && self.square(cell).any(|c| self.ground(c) & if wary { FLOOR } else { FLOOR | WET } != 0)
-            && !(wary && self.square(cell).any(|c| self.ground(c) & DEEP != 0))
+            && !(wary && self.square(cell).any(|c| self.ground(c) & DEEP != 0));
+        if let Some(slot) = slot {
+            slot.set(slot.get() | STANDS_KNOWN | if stands { STANDS } else { 0 });
+        }
+        stands
     }
 
     /// Where it can go in one step from the square at `cell` toward (dx, dz): level, a
-    /// block up, or down a short drop; diagonals only where the squares to either side are
-    /// clear, so it cuts no corner.
+    /// block up, or down a short drop; diagonals only where it could stand in the squares to
+    /// either side, so it cuts no corner of a wall or of a pit.
     fn step(&self, cell: IVec3, dx: i32, dz: i32) -> Option<IVec3> {
-        if dx != 0 && dz != 0 && !(self.clear(cell + IVec3::new(dx, 0, 0)) && self.clear(cell + IVec3::new(0, 0, dz))) {
+        if dx != 0 && dz != 0 && !(self.stands(cell + IVec3::new(dx, 0, 0)) && self.stands(cell + IVec3::new(0, 0, dz))) {
             return None;
         }
         let flat = cell + IVec3::new(dx, 0, dz);
@@ -375,6 +387,46 @@ mod tests {
         }
         fn water(&self, _: IVec3) -> bool {
             false
+        }
+    }
+
+    /// Flat ground with a pond two deep sunk in it (its bed at y = -2, x and z in 0..4),
+    /// shelving to a block deep along its far side (x = 3), and a pit four deep beside it
+    /// (x in 0..4, z in -4..0). Along the bed and up the shelf is the short way across.
+    struct Pond;
+
+    impl Surroundings for Pond {
+        fn solid(&self, c: IVec3) -> bool {
+            let sunk = (0..4).contains(&c.x) && (-4..4).contains(&c.z);
+            if sunk && c.z < 0 {
+                c.y < -4
+            } else if sunk && c.x == 3 {
+                c.y < -1
+            } else if sunk {
+                c.y < -2
+            } else {
+                c.y < 0
+            }
+        }
+        fn water(&self, c: IVec3) -> bool {
+            (0..4).contains(&c.x) && (0..4).contains(&c.z) && (-2..0).contains(&c.y) && !self.solid(c)
+        }
+    }
+
+    #[test]
+    fn a_way_round_a_pond_keeps_off_its_bed_and_cuts_no_corner_of_a_pit() {
+        let way = find(&Pond, &WOLF, IVec3::new(-2, 0, 2), IVec3::new(6, 0, 2)).expect("a way round the pond");
+        let mut at = IVec3::new(-2, 0, 2);
+        for &cell in &way {
+            assert!(!Pond.water(cell + IVec3::Y), "it went along the pond's bed: {way:?}");
+            assert!(!Pond.water(cell), "it went through the pond: {way:?}");
+            let d = cell - at;
+            if d.x != 0 && d.z != 0 {
+                for side in [at + IVec3::new(d.x, 0, 0), at + IVec3::new(0, 0, d.z)] {
+                    assert!(WOLF.stands(&Pond, side), "it cut a corner by {side} going from {at} to {cell}: {way:?}");
+                }
+            }
+            at = cell;
         }
     }
 }

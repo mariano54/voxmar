@@ -544,6 +544,8 @@ struct Gate {
     /// canvas stood in the window.
     web_scroll: Vec2,
     web_canvas: Vec2,
+    /// The quest a lane's header was pressed to bring into view.
+    web_head: Option<String>,
     /// Where the player died in the workshop, the most items carried since waking, and when
     /// (in server seconds) that last went up.
     fell: Vec3,
@@ -568,6 +570,8 @@ struct Gate {
     machines_stage: u8,
     machines_since: f32,
     machines_asked: f32,
+    /// Where the Tame step set its feed trough.
+    trough: Option<IVec3>,
     /// Whether the player has been seen holding what this machine stage puts in.
     machines_seen: bool,
     /// When the aurochs at the treadwheel was last told to hold still, by the server's clock.
@@ -767,6 +771,7 @@ impl Gate {
             quest_pinned: 0.0,
             web_scroll: Vec2::ZERO,
             web_canvas: Vec2::ZERO,
+            web_head: None,
             fell: Vec3::ZERO,
             gathered: (0, 0.0),
             kiln: IVec3::ZERO,
@@ -779,6 +784,7 @@ impl Gate {
             machines_stage: 0,
             machines_since: 0.0,
             machines_asked: f32::MIN,
+            trough: None,
             machines_seen: false,
             machines_held: f32::MIN,
             highest: f32::MIN,
@@ -1336,6 +1342,8 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         Step::Dry => 5.0 * DRY_WAIT + STEP_LIMIT,
         // The refusal waited on, then a well set down by the plot.
         Step::Refusal => UNANSWERED + 3.0 * REFUSAL_WAIT + STEP_LIMIT,
+        // Taming, then a feed trough opened, waited on up to `TROUGH_WAIT`.
+        Step::Tame => STEP_LIMIT + TROUGH_WAIT,
         // A fresh area around the settlement to generate: up to `SETTLEMENT_LOAD` of the
         // server's seconds.
         Step::Settlements => SETTLEMENT_LOAD + SETTLEMENT_PEOPLE + STEP_LIMIT,
@@ -3418,8 +3426,10 @@ fn swim(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 /// cores a shot alone can take seconds.
 const SCREEN_WAIT: f32 = 10.0;
 
-/// How long PostUpdate is timed with the debug overlay closed and then open, in seconds
-/// (after a moment to settle), and the least number of frames each.
+/// How long PostUpdate is timed with the debug overlay open, in seconds (after a moment to
+/// settle), and the least number of frames timed open and closed. Its text's rewrites are
+/// counted over the open time, which must be long enough that the rate a second is judged
+/// fairly; closed, the frames are only timed for the comparison, so the least will do.
 const OVERLAY_TIMED: f32 = 2.0;
 const OVERLAY_FRAMES: usize = 60;
 
@@ -3446,7 +3456,7 @@ fn music_fades(world: &mut World, gate: &mut Gate, now: f32) {
 fn overlay(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let shown = world.resource::<Settings>().debug_overlay;
     let ms = world.resource::<PostUpdateTime>().ms;
-    let timed = |gate: &Gate, i: usize| in_phase > OVERLAY_TIMED + 0.5 && gate.overlay_ms[i].len() >= OVERLAY_FRAMES;
+    let timed = |gate: &Gate, i: usize| (i == 0 || in_phase > OVERLAY_TIMED + 0.5) && gate.overlay_ms[i].len() >= OVERLAY_FRAMES;
     match gate.phase {
         0 => {
             if shown {
@@ -4610,7 +4620,8 @@ fn celebrate(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.advance(now);
         }
         // Drawn the frame after it is asked for; the motes' bursts all thrown within a second.
-        1 if in_phase > 1.0 => {
+        // Judged as soon as both show, or at that second.
+        1 => {
             let locale = world.resource::<Locale>().clone();
             let every = world.resource::<Celebrations>().milestone_every.max(1);
             let wanted = [locale.get("celebrate.milestone").to_owned(), locale.skill(skills.get(skill)), locale.format("skills.level_up", &[("level", &every)])];
@@ -4618,6 +4629,9 @@ fn celebrate(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let missing: Vec<_> = wanted.iter().filter(|w| !lines.iter().any(|(_, text)| text == *w)).collect();
             let thrown = world.resource::<Stage>().thrown;
             let amount = world.resource::<crate::render::particles::Particles>().amount;
+            if in_phase <= 1.0 && !(missing.is_empty() && (amount <= 0.0 || thrown > 0)) {
+                return;
+            }
             gate.check(
                 "celebrate: milestone",
                 if !missing.is_empty() {
@@ -6085,8 +6099,49 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.advance(now);
         }
         19 => {
-            if gate.shot(world, "quests-dragged").is_none() {
+            if gate.shot(world, "quests-dragged").is_some() {
+                gate.advance(now);
+            }
+        }
+        // A path's lane header pressed, the lowest one that would move the canvas, brings
+        // the canvas to that path's next quest and picks it. Only the client moves, so the
+        // wait is the game's seconds, not the server's.
+        20 => {
+            let scroll = world.query_filtered::<&ScrollPosition, With<crate::hud::quests::Web>>().iter(world).next().map_or(Vec2::ZERO, |s| s.0);
+            let heads: Vec<(Entity, Option<String>, Vec2)> = world.query::<(Entity, &crate::hud::quests::LaneHead)>().iter(world).map(|(e, h)| (e, h.head.clone(), h.at)).collect();
+            // A web that fits its well never moves, so there any header whose head is not
+            // the quest picked will do: it must still pick its head, inside the well.
+            let picked = world.resource::<crate::hud::quests::QuestView>().picked.clone();
+            let moving = heads.iter().rev().find(|(_, head, at)| head.is_some() && at.distance(scroll) > 1.0);
+            let Some((header, head, at)) = moving.or_else(|| heads.iter().rev().find(|(_, head, _)| head.is_some() && *head != picked)).cloned() else {
+                return quit(world, gate, "quests: path", format!("{} lane headers, none with a quest away from the canvas at {scroll} or other than {picked:?}", heads.len()));
+            };
+            gate.web_head = head;
+            gate.web_scroll = at;
+            world.resource_mut::<UiClicks>().next = Some((header, MouseButton::Left));
+            gate.advance(now);
+        }
+        21 => {
+            let picked = world.resource::<crate::hud::quests::QuestView>().picked.clone();
+            let scroll = world.query_filtered::<&ScrollPosition, With<crate::hud::quests::Web>>().iter(world).next().map_or(Vec2::ZERO, |s| s.0);
+            let (well, max) = world
+                .query_filtered::<(&ComputedNode, &bevy::ui::UiGlobalTransform), With<crate::hud::quests::Web>>()
+                .iter(world)
+                .next()
+                .map_or((None, Vec2::ZERO), |(c, at)| (Some(Rect::from_center_size(at.translation, c.size())), (c.content_size() - c.size()).max(Vec2::ZERO) * c.inverse_scale_factor()));
+            // Where the header asked for, as far as the canvas moves.
+            let wanted = gate.web_scroll.clamp(Vec2::ZERO, max);
+            let node = world.query::<(&crate::hud::quests::QuestNode, &bevy::ui::UiGlobalTransform)>().iter(world).find(|(n, _)| Some(&n.0) == gate.web_head.as_ref()).map(|(_, at)| at.translation);
+            let shown = matches!((well, node), (Some(well), Some(node)) if well.contains(node));
+            if picked == gate.web_head && scroll.distance(wanted) < 1.0 && shown {
+                if gate.shot(world, "quests-path").is_none() {
+                    return;
+                }
+                gate.check("quests: path", Ok(format!("a lane header brought the canvas to {scroll} and picked {picked:?}, inside the well")));
+            } else if in_phase < 2.0 {
                 return;
+            } else {
+                gate.check("quests: path", Err(format!("2 s after a lane header was pressed for {:?} (canvas wanted at {wanted}): picked {picked:?}, canvas at {scroll}, the quest at {node:?} in the well {well:?}", gate.web_head)));
             }
             world.resource_mut::<UiState>().quests_open = false;
             gate.next(Step::Catalogue, now);
@@ -7082,7 +7137,7 @@ fn held(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     // (Looked for once a shot's wait is nearly over, when the views of those sent away are gone.)
     if (2..=5).contains(&gate.phase) && in_phase > 0.5 && gate.held_cleared < HELD_CLEARS && let Some(near) = wild_near(world, HELD_CLEAR) {
         gate.held_cleared += 1;
-        info!("gate: held: {near} near the sky shots; sending the wild creatures away and taking them again");
+        info!("gate: held: {near} before the sky shots; sending the wild creatures away and taking them again");
         world.resource::<Net>().command("creatures disperse");
         empty_hand(world);
         gate.forget(&HELD_SKY);
@@ -7219,22 +7274,32 @@ fn held(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 const HELD_SEEN: f32 = 1.0;
 const HELD_ELSEWHERE: f32 = 0.5;
 /// Blocks round the player within which a wild creature may walk into the held step's
-/// shots, and the times the step sends them away and begins those shots again.
+/// shots, and the times the step sends them away and begins those shots again. Only one
+/// before the eye counts: within the angle of the look that the server keeps births out
+/// of (`spawn_unseen_angle`, wider than the view). Sending the wild away makes room near
+/// the player, so births follow within seconds, 20 to 40 blocks off and out of sight:
+/// counted too, they retook the shots every run.
 const HELD_CLEAR: f32 = 32.0;
 const HELD_CLEARS: u32 = 3;
 /// The sky shots a retake takes again.
 const HELD_SKY: [&str; 4] = ["held-empty", "held-sword", "held-block", "held-empty-after"];
 
-/// The nearest wild creature shown within `reach` of the player (none kept by anyone, and
-/// no villager: what `/creatures disperse` sends away), by name and distance.
+/// The nearest wild creature shown within `reach` of the player and before their eye (none
+/// kept by anyone, and no villager: what `/creatures disperse` sends away), by name and
+/// distance.
 fn wild_near(world: &World, reach: f32) -> Option<String> {
-    let at = world.resource::<LocalPlayer>().position;
+    let player = world.resource::<LocalPlayer>();
+    let (at, eye, look) = (player.position, player.eye(), player.look_direction());
     let launch = world.resource::<Launch>();
+    // An angle of 0 lets births come in sight: then any counts.
+    let angle = launch.content.creatures.limits().spawn_unseen_angle;
+    let cos = if angle == 0.0 { -1.0 } else { angle.to_radians().cos() };
     let villager = |v: &voxmar_protocol::CreatureView| launch.content.creatures.get(v.species).def.kind == voxmar_engine::creature::Kind::Villager;
+    let before = |v: &voxmar_protocol::CreatureView| look.dot((v.position + Vec3::Y * 0.5 - eye).normalize_or_zero()) >= cos;
     world
         .resource::<crate::creatures::Creatures>()
         .views()
-        .filter(|v| !v.kept && v.owner.is_none() && !villager(v))
+        .filter(|v| !v.kept && v.owner.is_none() && !villager(v) && before(v))
         .map(|v| (v.position.distance(at), v.species))
         .filter(|&(d, _)| d < reach)
         .min_by(|a, b| a.0.total_cmp(&b.0))
@@ -9666,22 +9731,29 @@ fn combat_feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let reads = &creatures.reads;
             let slid = reads.iter().find(|r| r.slid > r.planted);
             let shallow = reads.iter().find(|r| r.coiled < STRIKE_COILED);
-            let stood: Vec<f32> = reads.iter().filter_map(|r| r.recovered).collect();
+            let stood = &creatures.recoveries;
             let result = if strikes == 0 {
                 Err("no creature was seen to strike in the fights".into())
+            } else if reads.is_empty() {
+                Err(format!("{strikes} strikes seen and none of their wind-ups written down"))
             } else if let Some(read) = slid {
-                Err(format!("a creature slid {:.2} blocks as it wound up, where planted it would have moved {:.2} at most", read.slid, read.planted))
+                Err(format!("a {} ({}) slid {:.2} blocks as it wound up, where planted it would have moved {:.2} at most", read.who, read.style, read.slid, read.planted))
             } else if let Some(read) = shallow {
-                Err(format!("a creature struck coiled only {:.2} deep ({STRIKE_COILED} wanted)", read.coiled))
+                let by = if read.by_word { "the server's word" } else { "its own time" };
+                Err(format!(
+                    "a {} struck ({}) coiled only {:.2} deep ({STRIKE_COILED} wanted), struck by {by} {:.3} s into a {:.3} s wind-up",
+                    read.who, read.style, read.coiled, read.reached, read.windup
+                ))
             } else if let Some(most) = stood.iter().copied().find(|&most| most < STRIKE_RECOVERED) {
                 Err(format!("a creature stood out its recovery showing only {most:.2} of its recover stance ({STRIKE_RECOVERED} wanted)"))
             } else if deaths > 0 && poofs == 0 {
                 Err(format!("{deaths} creatures died in view and none went up in smoke"))
             } else {
                 let deepest = reads.iter().map(|r| r.coiled).fold(0.0, f32::max);
+                let least = reads.iter().min_by(|a, b| a.coiled.total_cmp(&b.coiled)).map_or(String::new(), |r| format!("{:.2} ({} {})", r.coiled, r.who, r.style));
                 let most = reads.iter().map(|r| r.slid).fold(0.0, f32::max);
                 Ok(format!(
-                    "{strikes} strikes snapped out of their wind-ups ({} read: coiled up to {deepest:.2} deep, slid at most {most:.2} blocks coiling; {} stood out their recovery), {poofs} of {deaths} fallen gone in smoke",
+                    "{strikes} strikes snapped out of their wind-ups ({} read: coiled {least} up to {deepest:.2} deep, slid at most {most:.2} blocks coiling; {} stood out their recovery), {poofs} of {deaths} fallen gone in smoke",
                     reads.len(),
                     stood.len()
                 ))
@@ -10314,7 +10386,8 @@ const CHIMNEY_OWED: f32 = 20.0;
 const CHIMNEY_WAIT: f32 = 12.0;
 
 /// A junglefowl on the pad, wheat in hand: right clicks feed it until it trusts the
-/// player and is theirs (kept, with them as its owner).
+/// player and is theirs (kept, with them as its owner); then a feed trough set before the
+/// player opens into its slots (shot `trough`).
 fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let pad = gate.feet + IVec3::new(0, 0, 14);
     let Some(species) = world.resource::<Launch>().content.creatures.find("base:junglefowl") else { return };
@@ -10469,7 +10542,11 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 key(world, KeyCode::ShiftLeft, false);
                 key(world, KeyCode::KeyW, false);
                 gate.check("release", Ok(format!("the junglefowl went wild again after {in_phase:.1}s")));
-                gate.next(Step::Party, now);
+                // Then a feed trough for the pen, two blocks before the player.
+                let at = world.resource::<LocalPlayer>().position.floor().as_ivec3() + IVec3::new(0, 0, -2);
+                gate.trough = Some(at);
+                world.resource::<Net>().command(&format!("fill {} {} {} {} {} {} feed_trough", at.x, at.y, at.z, at.x, at.y, at.z));
+                gate.advance(now);
             } else if gate.waited_out(8.0) {
                 mouse(world, MouseButton::Right, false);
                 key(world, KeyCode::ShiftLeft, false);
@@ -10486,9 +10563,58 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.tap(world, aimed, now);
             }
         }
-        _ => {}
+        // A feed trough opens into its nine slots, the server's word of it (shot `trough`).
+        _ => {
+            let Some(at) = gate.trough else {
+                gate.next(Step::Party, now);
+                return;
+            };
+            aim_at(world, at.as_vec3() + Vec3::new(0.5, 0.4, 0.5));
+            let trough = {
+                let client = world.resource::<ClientWorld>();
+                client.block(at).is_some_and(|b| client.registry.def(b).name == "base:feed_trough")
+            };
+            let slots = world.resource::<LocalPlayer>().inventory.store.as_ref().map(|s| s.slots.len());
+            let done = |world: &mut World, gate: &mut Gate| {
+                world.resource_mut::<UiState>().inventory_open = false;
+                world.resource::<Net>().command(&format!("fill {} {} {} {} {} {} air", at.x, at.y, at.z, at.x, at.y, at.z));
+                gate.trough = None;
+                gate.next(Step::Party, now);
+            };
+            match slots {
+                Some(n) if trough => {
+                    world.resource_mut::<UiState>().inventory_open = true;
+                    if gate.server_in_phase() < 1.0 || gate.shot(world, "trough").is_none() {
+                        return;
+                    }
+                    let judged = if n == TROUGH_SLOTS { Ok(format!("a feed trough opened into its {n} slots")) } else { Err(format!("a feed trough opened into {n} slots, not {TROUGH_SLOTS}")) };
+                    gate.check("trough: opens", judged);
+                    done(world, gate);
+                }
+                // Each ask counts as a tap, so a client starved of frames is not judged by
+                // the server's clock alone.
+                _ if gate.waited_out(TROUGH_WAIT) => {
+                    gate.check("trough: opens", Err(format!("{TROUGH_WAIT} server s after setting a trough: there {trough}, its store {slots:?}")));
+                    done(world, gate);
+                }
+                // Whatever is in hand: a store opens to anything but a machine.
+                _ if trough && gate.server_now - gate.machines_asked >= 2.0 => {
+                    world.resource_mut::<LocalPlayer>().store_asked = true;
+                    let actions = world.resource::<crate::Actions>().0.clone();
+                    world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("base:open_store"), voxmar_engine::action::ActionTarget::Block { block: at, face: voxmar_engine::coords::Face::PosY });
+                    gate.machines_asked = gate.server_now;
+                    gate.taps += 1;
+                }
+                _ => {}
+            }
+        }
     }
 }
+
+/// The slots a feed trough opens into (machines.ron).
+const TROUGH_SLOTS: usize = 9;
+/// Longest the Tame step waits for its trough to open, in the server's seconds.
+const TROUGH_WAIT: f32 = 10.0;
 
 /// A tinker's camp started on the pad's far side: its trader and hound must reach the client
 /// and draw, a right click on the trader gets a greeting, four hides held out are swapped
