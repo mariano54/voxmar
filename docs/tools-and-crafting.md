@@ -161,7 +161,8 @@ or merged, old name to new (`renamed: {"raw_rabbit": "raw_small_game"}`), and an
 loads those items, in slots, pouches, on the ground and on stations, as the new one. Load
 refuses a rename to a block that does not exist, or of a name a block still has. Shrimp, which
 were minnows in all but name (level, experience, healing, weight), are minnows too, and
-minnows bite in any water.
+minnows bite in any water. Frog, also Cooking 1 and healing 4 but teaching less, is small
+game too: a frog drops it and a heron still favours it.
 
 ## Dying
 
