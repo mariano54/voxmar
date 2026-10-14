@@ -50,4 +50,36 @@
         // A line whipped out over the water (the plop is the water's own).
         "base:fish": (sounds: ["sounds/cast_1.ogg", "sounds/cast_2.ogg"], volume: 0.7),
     },
+    // The mix (crates/client/src/mix.rs). A later package's bands and caps replace those it
+    // names; its ducking replaces the whole.
+    mix: (
+        // How loud each kind of sound is heard, low to high, in dB below full scale: the RMS
+        // of a clip's loudest 50 ms (of all of it, for music and the ambience's beds) times
+        // the volume the game plays it at, every volume setting at 100%. Tests measure every
+        // clip we ship against these.
+        bands: {
+            Music: (-60, -1),
+            Ambience: (-60, -1),
+            Ui: (-60, -1),
+            Everyday: (-60, -1),
+            Combat: (-60, -1),
+            Jingles: (-60, -1),
+            Creatures: (-60, -1),
+            Weather: (-60, -1),
+        },
+        // Sounds of a kind playing at once, at most; past it, the farthest, then the oldest,
+        // fades out at once to make room.
+        voices: {
+            Ambience: 8,
+            Ui: 3,
+            Everyday: 10,
+            Combat: 8,
+            Jingles: 2,
+            Creatures: 14,
+            Weather: 3,
+        },
+        // The music dips while a jingle plays, or a boss calls, roars or cries, and comes
+        // back after.
+        duck: Some((under: [Jingles], bosses: true, to: 0.4, fall: 0.15, rise: 1.2)),
+    ),
 )

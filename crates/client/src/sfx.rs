@@ -31,7 +31,7 @@
 use std::f32::consts::{PI, TAU};
 use std::sync::Arc;
 
-use bevy::audio::{AudioPlayer, AudioSource, GlobalVolume, PlaybackSettings, Volume};
+use bevy::audio::{AudioPlayer, AudioSource, GlobalVolume, PlaybackSettings, SpatialScale, Volume};
 use bevy::prelude::*;
 use rustc_hash::FxHashMap;
 use serde::Deserialize;
@@ -41,6 +41,7 @@ use voxmar_engine::physics::player as dims;
 
 use self::dsp::{OnePole, Pink, Svf};
 use self::minecraft::SoundStore;
+use crate::mix::{Category, PAN_SCALE, Voice, falloff};
 use crate::player::LocalPlayer;
 use crate::session::Launch;
 use crate::settings::Settings;
@@ -64,7 +65,8 @@ const FAR_LIGHTNING: f32 = 900.0;
 /// The file listing a package's recorded sounds.
 const RECORDINGS: &str = "sounds.ron";
 /// Cues placed in the world fade out over this many blocks from the listener, as
-/// Minecraft's block sounds do.
+/// Minecraft's block sounds do, along the curve every sound in the world fades by
+/// ([`falloff`]).
 const HEARD_WITHIN: f32 = 16.0;
 /// Seconds of the loudest stretch of a clip, by which clips are levelled.
 const LOUDNESS_WINDOW: f32 = 0.05;
@@ -371,6 +373,9 @@ pub(crate) struct Recordings {
     /// What the player does, heard as they do it, by the action's name (`core:eat`): the
     /// clips take turns at random. A later package that names an action replaces its sound.
     pub(crate) actions: std::collections::BTreeMap<String, ActionSound>,
+    /// How loud each kind of sound is, how many play at once and what the music makes
+    /// room for (`mix`).
+    pub(crate) mix: crate::mix::MixDef,
 }
 
 /// The sound of one action: its clips, made at the loudness of [`ACTION_LOUDNESS`], and how
@@ -421,6 +426,7 @@ impl Recordings {
             for (name, sound) in def.actions {
                 all.actions.insert(name, ActionSound { sounds: path(sound.sounds).collect(), ..sound });
             }
+            all.mix.merge(def.mix);
         }
         Ok(all)
     }
@@ -445,7 +451,7 @@ impl Recordings {
 
 /// How loud a clip is: the RMS of its loudest stretch of [`LOUDNESS_WINDOW`], so short
 /// clicks and long tails compare fairly. `samples` interleave `channels`.
-fn loudness(samples: &[f32], channels: usize) -> f32 {
+pub(crate) fn loudness(samples: &[f32], channels: usize) -> f32 {
     let window = ((LOUDNESS_WINDOW * RATE as f32) as usize * channels).max(1);
     let hop = (window / 4).max(1);
     let mut loudest = 0.0f32;
@@ -461,6 +467,12 @@ fn loudness(samples: &[f32], channels: usize) -> f32 {
         start += hop;
     }
     loudest.sqrt()
+}
+
+/// How loud a sound that goes on is (music, a bed): the RMS of all of it.
+#[cfg(test)]
+pub(crate) fn mean_loudness(samples: &[f32]) -> f32 {
+    (samples.iter().map(|s| (s * s) as f64).sum::<f64>() / samples.len().max(1) as f64).sqrt() as f32
 }
 
 /// The loudness of an encoded clip, decoding it once.
@@ -493,6 +505,12 @@ impl Reach {
 }
 
 
+/// How loud thunder is from lightning `distance` blocks off: half as loud 400 blocks away,
+/// and on, never quite gone.
+fn thunder_gain(distance: f32) -> f32 {
+    THUNDER_GAIN / (1.0 + distance / 400.0)
+}
+
 /// Plays thunder as it reaches the player, quieter the farther the lightning.
 fn thunder(mut commands: Commands, mut heard: MessageReader<Thunder>, sfx: Option<ResMut<Sfx>>, settings: Res<Settings>) {
     let Some(mut sfx) = sfx else { return };
@@ -502,8 +520,8 @@ fn thunder(mut commands: Commands, mut heard: MessageReader<Thunder>, sfx: Optio
         let clips = &sfx.thunder[Reach::of(thunder.distance) as usize];
         let Some(clip) = clips.get((pick * clips.len() as f32) as usize).cloned() else { continue };
         let speed = 0.95 + jitter * 0.1;
-        let volume = Volume::Linear(THUNDER_GAIN / (1.0 + thunder.distance / 400.0) * master);
-        commands.spawn((AudioPlayer(clip), PlaybackSettings { speed, ..PlaybackSettings::DESPAWN.with_volume(volume) }));
+        let volume = Volume::Linear(thunder_gain(thunder.distance) * master);
+        commands.spawn((AudioPlayer(clip), PlaybackSettings { speed, ..PlaybackSettings::DESPAWN.with_volume(volume) }, Voice::of(Category::Weather)));
     }
 }
 
@@ -519,7 +537,7 @@ fn play_cues(
     let listener = listener.single().map(|t| t.translation()).ok();
     for cue in cues.read() {
         let distance = cue.at.zip(listener).map_or(0.0, |(at, ear)| at.distance(ear));
-        let gain = cue.gain * (1.0 - distance / HEARD_WITHIN).max(0.0);
+        let gain = cue.gain * falloff(distance, HEARD_WITHIN);
         if gain <= 0.0 {
             continue;
         }
@@ -530,7 +548,16 @@ fn play_cues(
         };
         let speed = clip.speed * cue.pitch * (0.94 + 0.12 * jitter);
         let playback = PlaybackSettings { speed, ..PlaybackSettings::DESPAWN.with_volume(Volume::Linear(clip.gain * gain * master)) };
-        commands.spawn((AudioPlayer(clip.source.clone()), playback));
+        match cue.at {
+            // Placed in the world: panned to the nearer ear, as a creature's call is.
+            Some(at) => commands.spawn((
+                AudioPlayer(clip.source.clone()),
+                PlaybackSettings { spatial: true, spatial_scale: Some(SpatialScale::new(PAN_SCALE)), ..playback },
+                Transform::from_translation(at),
+                Voice::at(Category::Everyday, at),
+            )),
+            None => commands.spawn((AudioPlayer(clip.source.clone()), playback, Voice::of(Category::Everyday))),
+        };
     }
 }
 
@@ -553,7 +580,7 @@ fn play_actions(
         let Some(clip) = sfx.actions.get(&action).and_then(|clips| clips.get((pick * clips.len() as f32) as usize)) else { continue };
         let speed = clip.speed * (0.96 + 0.08 * jitter);
         let playback = PlaybackSettings { speed, ..PlaybackSettings::DESPAWN.with_volume(Volume::Linear(clip.gain * master)) };
-        commands.spawn((AudioPlayer(clip.source.clone()), playback));
+        commands.spawn((AudioPlayer(clip.source.clone()), playback, Voice::of(Category::Everyday)));
     }
 }
 
@@ -1096,6 +1123,44 @@ mod tests {
             assert!((0.5..=1.25).contains(&heard), "{path} is heard at {heard:.2} of the loudness of the rest");
             assert!(left.len() as f32 / (RATE as f32) < 1.5, "{path} is longer than an action");
         }
+    }
+
+    /// Everything the player does and touches is heard within the everyday band (blocks'
+    /// cues as synthesized, the water's and our own recordings as levelled to them), and
+    /// thunder within the weather's, from overhead and from each reach's nearest.
+    #[test]
+    fn everyday_sounds_and_thunder_are_heard_within_their_bands() {
+        use crate::mix::tests::{measure, within};
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let recorded = Recordings::load(&content.files).unwrap();
+        let mut heard = Vec::new();
+        let mut target: FxHashMap<Cue, (f32, f32)> = FxHashMap::default();
+        for sound in Sound::ALL {
+            for cue in Cue::ALL {
+                for v in 0..VARIANTS {
+                    let samples = render(sound, cue, mix(sound as u64 * 131 + cue as u64 * 17 + v));
+                    let level = loudness(&samples, 1);
+                    let entry = target.entry(cue).or_default();
+                    *entry = (entry.0 + level, entry.1 + 1.0);
+                    heard.push((format!("{sound:?} {cue:?} {v}"), level * cue.gain()));
+                }
+            }
+        }
+        for (cue, paths) in [(Cue::Step, &recorded.swim), (Cue::Land, &recorded.splash)] {
+            heard.extend(paths.iter().map(|path| (path.clone(), measure(path)[0] * cue.gain() * RECORDED_GAIN)));
+        }
+        let pickup = Cue::Pickup.gain() * level(&target, Cue::Pickup) / ACTION_LOUDNESS;
+        heard.extend(recorded.pickup.iter().map(|path| (path.clone(), measure(path)[0] * pickup)));
+        for sound in recorded.actions.values() {
+            let gain = sound.volume * Cue::Place.gain() * level(&target, Cue::Place) / ACTION_LOUDNESS;
+            heard.extend(sound.sounds.iter().map(|path| (path.clone(), measure(path)[0] * gain)));
+        }
+        let everyday = within(crate::mix::Category::Everyday, heard);
+        let thunder = [(&recorded.thunder.near, 0.0), (&recorded.thunder.middle, NEAR_LIGHTNING), (&recorded.thunder.far, FAR_LIGHTNING)]
+            .into_iter()
+            .flat_map(|(paths, distance)| paths.iter().map(move |path| (path.clone(), measure(path)[0] * thunder_gain(distance))));
+        let weather = within(crate::mix::Category::Weather, thunder);
+        crate::mix::tests::all([everyday, weather]);
     }
 
     /// Each action proposed is heard once, and only with sound on; proposals made while it

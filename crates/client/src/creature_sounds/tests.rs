@@ -127,3 +127,30 @@ fn creature_sound_preview() {
     std::fs::write(dir.join("all.wav"), sfx::wav(&all)).unwrap();
     println!("wrote {}", dir.display());
 }
+
+/// Every clip, at each volume a species plays it (a sheep's call, a lamb's the same), is
+/// heard within the creatures' band: a far quieter one is lost in the rest, a far louder
+/// one startles.
+#[test]
+fn creature_voices_are_heard_within_their_band() {
+    let content = content();
+    let bank = Bank::load(&content.files, &content.creatures).unwrap();
+    let mut uses: std::collections::BTreeSet<(usize, u32)> = Default::default();
+    for voice in bank.species.iter().flatten() {
+        for event in voice.events.iter().flatten() {
+            for &clip in &event.clips {
+                uses.insert((clip, (event.gain * voice.gain * 1000.0).round() as u32));
+            }
+        }
+    }
+    let mut measured: FxHashMap<&str, f32> = FxHashMap::default();
+    let heard: Vec<(String, f32)> = uses
+        .into_iter()
+        .map(|(clip, gain)| {
+            let path = bank.clips[clip].path.as_str();
+            let level = *measured.entry(path).or_insert_with(|| crate::mix::tests::measure(path)[0]);
+            (format!("{path} at {}", gain as f32 / 1000.0), level * gain as f32 / 1000.0)
+        })
+        .collect();
+    crate::mix::tests::all([crate::mix::tests::within(Category::Creatures, heard)]);
+}

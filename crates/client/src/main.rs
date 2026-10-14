@@ -47,6 +47,7 @@ mod interact;
 mod keys;
 mod lang;
 mod menu;
+mod mix;
 mod music;
 mod net;
 mod player;
@@ -331,7 +332,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let combat_marks = hud::combat::CombatStyle::load(&content.files)?;
     let look = hud::target::LookStyle::load(&content.files)?;
     let celebrations = hud::celebrate::Celebrations::load(&content.files)?;
-    sfx::Recordings::load(&content.files)?.check(&content.actions)?;
+    let recorded = sfx::Recordings::load(&content.files)?;
+    recorded.check(&content.actions)?;
+    recorded.mix.check().map_err(|e| format!("sounds.ron: {e}"))?;
     let content_weather = content.weather.clone();
     let shader_packs = render::pack::ShaderPacks::load(&assets);
     let registry = content.blocks.clone();
@@ -421,7 +424,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         weather::WeatherPlugin,
         ui::UiPlugin,
     ))
-    .add_plugins(lang::LangPlugin);
+    .add_plugins((lang::LangPlugin, mix::MixPlugin));
     app.add_plugins((creatures::CreaturesPlugin, creature_sounds::CreatureSoundsPlugin, butterflies::ButterfliesPlugin));
     app.add_plugins(emitters::EmittersPlugin);
     app.add_plugins(held::HeldPlugin);
