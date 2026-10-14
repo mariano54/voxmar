@@ -28,6 +28,13 @@ first reached in a session (with a **Next:** line). Reaching one counts as
 `Built("home_NAME", 1)` for quests (`home_camp`, `home_hearthside`, `home_snug`, `home_homely`,
 `home_cosy`, `home_heart_of_the_home`).
 
+Each step's chip has its own icon, so the HUD shows the home climbing at a glance: a tent
+(Camp), a hearth fire (Hearthside), a quilt (Snug), a house (Homely), its window lit and its
+chimney smoking (Cosy), a heart at its middle (Heart of the Home); and a moon for Rested, a
+moon and star for Well Rested, a full moon for Deep Rest (default pack
+`recipes/effects.ron`, `ui/effect/<name>`; test `the_homes_steps_and_rest_have_their_own_icons`;
+the gate's Home step, "home: icons", shot `home-chips`).
+
 | Step | Age | Needs (tags) | Gives while at home |
 | --- | --- | --- | --- |
 | Camp | Nomad | a bed (sleeping bag) slept in, 1 light | heal x1.2 |
