@@ -18,7 +18,8 @@
     // flowers, a crop half of one); never at night (daylight under `dusk`) or while more
     // than `rain` falls. Crops within `pollinate_reach` of a hive with bees grow
     // `pollinate` times as fast. A campfire or torch (`smoke` tags) within `smoke_reach`
-    // calms them, or one in hand; one within `scorch_reach` of a kept hive drives its
+    // calms them, as does a player `smoky` (effects.ron: smoke clings a while after a
+    // torch in hand or a fire close by); one within `scorch_reach` of a kept hive drives its
     // bees off. Creatures within `creature_reach` are stung, but for people; a bear eats a
     // full hive's honey. A shot that lands within `shot_reach` of a nest or hive (tagged
     // `bees`) stirs them, and unless smoked they sting the shooter. Bees never take a
@@ -29,7 +30,7 @@
         nectar: [("nectar", 4.0), ("flower", 1.0), ("crop", 0.5)], nectar_full: 12.0,
         pollinate_reach: 8.0, pollinate: 1.25,
         survey_seconds: 10.0,
-        smoke: ["fire"], smoke_reach: 4, scorch_reach: 1,
+        smoke: ["fire"], smoke_reach: 4, scorch_reach: 1, smoky: Some("smoky"),
         rain: 0.1, dusk: 0.25,
         sting: 2, stung: "stung", stung_seconds: 60.0,
         creature_reach: 2.5, creature_sting: 1, unstung: ["villager"], raiders: ["brown_bear"],

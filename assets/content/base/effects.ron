@@ -23,6 +23,12 @@
             modifiers: (warmth: -8.0)),
         (name: "queasy", kind: Debuff, title: "Queasy", description: "Raw meat: slower to heal and a little slower going. Cook it.",
             modifiers: (heal: 0.5, speed: 0.95)),
+        // Smoke that clings (bees.ron's `smoky`): a torch in hand, or a fire close by,
+        // leaves it on the player, and it lingers half a minute after, so a torch held a
+        // moment and put away still calms bees while the skep is taken up. A fire within
+        // the bees' own smoke_reach calms them anyway, so the player's needs to be close.
+        (name: "smoky", kind: Buff, title: "Smoky", description: "Smoke clings to you: bees take you for a fire and stay calm.",
+            when: Some(Any([Holding("fire"), Near("fire", 2)])), lingers: 30.0),
         // Taking from bees without smoke (bees.ron).
         (name: "stung", kind: Debuff, title: "Stung", description: "Bee stings: slower to heal for a while. Smoke them calm first.",
             modifiers: (heal: 0.75)),

@@ -79,10 +79,14 @@ pub struct HiveDef {
     pub pollinate: f32,
     /// Seconds between the apiary's looks at each hive.
     pub survey_seconds: f32,
-    /// Tags of blocks within `smoke_reach` of the bees, or of the item in hand, that
-    /// smoke them calm.
+    /// Tags of blocks within `smoke_reach` of the bees that smoke them calm.
     pub smoke: Vec<String>,
     pub smoke_reach: i32,
+    /// An effect on a player that smokes the bees around them, as a fire near would: smoke
+    /// that clings (effects.ron's `smoky`, which a torch in hand or a fire close by gives
+    /// and which lingers). None: only a fire near the bees calms them.
+    #[serde(default)]
+    pub smoky: Option<String>,
     /// One of the smoking blocks this near a kept hive (any way) drives its bees off.
     pub scorch_reach: i32,
     /// The bees stay in while more than this much falls, and while the daylight is below
@@ -147,6 +151,7 @@ pub struct Hive {
     pub busy: BlockId,
     pub full: BlockId,
     pub stung: EffectId,
+    pub smoky: Option<EffectId>,
     pub unstung: Vec<CreatureId>,
     pub raiders: Vec<CreatureId>,
 }
@@ -168,7 +173,7 @@ impl Hive {
         precipitation <= self.def.rain && daylight >= self.def.dusk
     }
 
-    /// Whether a block, or an item in hand, smokes bees.
+    /// Whether a block smokes bees.
     pub fn smokes(&self, blocks: &BlockRegistry, block: BlockId) -> bool {
         let def = blocks.def(block);
         self.def.smoke.iter().any(|tag| def.has_tag(tag))
@@ -203,7 +208,7 @@ impl Bees {
             qualify(&mut take.skill);
         }
         if let Some(hive) = &mut file.hive {
-            for name in [&mut hive.empty, &mut hive.busy, &mut hive.full, &mut hive.stung] {
+            for name in [&mut hive.empty, &mut hive.busy, &mut hive.full, &mut hive.stung].into_iter().chain(hive.smoky.as_mut()) {
                 qualify(name);
             }
             hive.unstung.iter_mut().chain(hive.raiders.iter_mut()).for_each(qualify);
@@ -253,11 +258,13 @@ impl Bees {
                 return Err(RegistryError("bees.ron: no block carries a tag the bees forage".to_owned()));
             }
             let stung = effects.id(&def.stung).ok_or_else(|| RegistryError(format!("bees.ron: no effect `{}`", def.stung)))?;
+            let smoky = def.smoky.as_deref().map(|name| effects.id(name).ok_or_else(|| RegistryError(format!("bees.ron: no effect `{name}`")))).transpose()?;
             bees.hive = Some(Hive {
                 empty: block(&def.empty)?,
                 busy: block(&def.busy)?,
                 full: block(&def.full)?,
                 stung,
+                smoky,
                 unstung: def.unstung.iter().map(creature).collect::<Result<_, _>>()?,
                 raiders: def.raiders.iter().map(creature).collect::<Result<_, _>>()?,
                 def,

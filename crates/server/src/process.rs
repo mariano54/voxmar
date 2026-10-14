@@ -114,7 +114,7 @@ impl Process for Falling {
 /// health and how fast they mine and learn. There is no hunger: food heals (`actions`).
 /// Once a second; creative players are never hurt.
 #[derive(Default)]
-struct Survival;
+pub(crate) struct Survival;
 
 impl Process for Survival {
     fn tier(&self) -> Tier {
@@ -144,6 +144,13 @@ impl Process for Survival {
             let cold_air = air - if wet { server.survival.water_chill } else { 0.0 };
             let warmed = heat > 0.5 && cold_air < vitals::CHILLY;
             let home = server.home_survey(id);
+            // What effects ask of the item in hand (`Holding`) and of the blocks near
+            // (`Near`).
+            let held: Vec<String> = player.held().map_or_else(Vec::new, |item| {
+                let def = server.content.blocks.def(item);
+                effects.held_tags().iter().filter(|tag| def.has_tag(tag)).cloned().collect()
+            });
+            let near: Vec<(String, i32)> = effects.near_asks().iter().filter(|(tag, reach)| server.tagged_within(feet, tag, *reach)).cloned().collect();
             let max_level = hitpoints.map(|skill| server.content.skills.level(server.players[&id].skills.xp(skill)));
             // Mending (a prayer) brings health back faster.
             let mending = server.content.prayers.mending(&server.players[&id].praying.on);
@@ -165,7 +172,9 @@ impl Process for Survival {
             // Warmth from what was eaten and the weather counts before the bands of warmth
             // are judged: soaked through, a mild day feels chilly.
             let biome = server.overworld.biome_at(feet.x, feet.z);
-            let mut situation = Situation { felt: cold_air + heat, warmed, outdoors, weather: &weather, biome: &biome.name, biome_tags: &biome.tags, home: home.as_ref(), done: &player.quests_done };
+            let mut situation = Situation { felt: cold_air + heat, warmed, outdoors, weather: &weather, biome: &biome.name, biome_tags: &biome.tags, home: home.as_ref(), done: &player.quests_done, held: &held, near: &near };
+            // What clings (smoke) is topped up while it holds, and lasts after.
+            effects.linger(&situation, &mut player.timed_effects);
             let first = effects.active(&situation, &player.timed_effects);
             situation.felt = cold_air + heat + effects.modifiers(&first).warmth;
             let active = effects.active(&situation, &player.timed_effects);
@@ -238,6 +247,12 @@ impl Process for Survival {
 }
 
 impl Server {
+    /// Whether a block tagged `tag` lies within `reach` blocks of `at`, every way.
+    pub(crate) fn tagged_within(&self, at: IVec3, tag: &str, reach: i32) -> bool {
+        let blocks = &self.content.blocks;
+        (-reach..=reach).any(|dy| (-reach..=reach).any(|dz| (-reach..=reach).any(|dx| self.block(at + IVec3::new(dx, dy, dz)).is_some_and(|b| blocks.def(b).has_tag(tag)))))
+    }
+
     /// What lies around player `id`'s home (the lit hearth, else the bed last slept in),
     /// counted by the tags effects ask of it, if they stand within its reach.
     pub(crate) fn home_survey(&self, id: PlayerId) -> Option<HomeSurvey> {

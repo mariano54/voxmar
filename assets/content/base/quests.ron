@@ -864,7 +864,7 @@
         // second names quests to do by it meanwhile.
         (
             name: "humming_in_the_meadow", age: "farm", branch: "farming", title: "Humming in the Meadow",
-            why: "Wild bees nest in hollows at the foot of broadleaf, fruit and blossom trees in a Flower Meadow, a Cherry Grove or Lavender Fields: listen for the hum and look for bees about the roots. Coil a skep from seven wheat and three twine (Crafting 6), light a campfire within four blocks of the nest so the smoke calms them, then hold the skep up to it and right-click (Farming 12). Without smoke they only sting.",
+            why: "Wild bees nest in hollows at the foot of broadleaf, fruit and blossom trees in a Flower Meadow, a Cherry Grove or Lavender Fields: listen for the hum and look for bees about the roots. Coil a skep from seven wheat and three twine (Crafting 6), light a campfire within four blocks of the nest so the smoke calms them (or hold a torch a moment: its smoke clings to you for half a minute), then hold the skep up to it and right-click (Farming 12). Without smoke they only sting.",
             tasks: [[Level("farming", 12), Craft("skep", 1), Have("bee_skep", 1)]],
             after: ["a_field_of_gold"],
             rewards: [Xp("farming", 300.0), Xp("crafting", 60.0)],
