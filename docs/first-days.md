@@ -289,7 +289,8 @@ husbandry and the home quests are open.
 
 ### Level pacing (Oct 14)
 
-The quest-book bot's timeline now shows all ten skills the first two ages gate on. The
+The quest-book bot's timeline now shows all thirteen skills the first two ages gate on,
+the combat ones (Attack, Ranged, Defence, Hitpoints) and Magic included. The
 main line alone trains five of them (Mining, Crafting, Engineering, Cooking,
 Construction), and every recipe, tool and crop level on it is met when it is reached. The
 gates that stall are side quests whose chains do not train the skill they ask for: A Woolly
