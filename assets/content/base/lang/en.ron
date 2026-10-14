@@ -31,6 +31,8 @@
     "effect.base.queasy.description": "Raw meat: slower to heal and a little slower going. Cook it.",
     "effect.base.smoky": "Smoky",
     "effect.base.smoky.description": "Smoke clings to you: bees take you for a fire and stay calm.",
+    "effect.base.fireside": "By the Fire",
+    "effect.base.fireside.description": "Sat by a fire: you heal half as fast again, and it warms you.",
     "effect.base.stung": "Stung",
     "effect.base.stung.description": "Bee stings: slower to heal for a while. Smoke them calm first.",
     "effect.base.waterside": "Waterside",

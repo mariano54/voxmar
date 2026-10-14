@@ -34,6 +34,9 @@
         // swap for, unless someone stands where it would shut.
         (name: "open", duration: Instant, requires: [Alive, InReach, Swaps], effects: [Swap]),
         (name: "sleep", duration: Instant, requires: [Alive, InReach, Bed], effects: [Sleep]),
+        // Sit on a seat (a stool, chair, bench or cushion), with nothing to place in hand:
+        // sat until you move off it (effects ask `Seated`).
+        (name: "sit", duration: Instant, requires: [Alive, InReach, Seat], effects: [Sit]),
         (name: "light", duration: Instant, requires: [Alive, InReach, MultiblockCore], effects: [Light]),
         // Use a machine (machines.ron): what is in hand goes in, if it burns it or works it;
         // with nothing it takes, what the machine made comes out.

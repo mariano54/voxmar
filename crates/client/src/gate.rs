@@ -382,6 +382,10 @@ enum Step {
     /// A wooden door placed before the player goes in whole, both halves facing them, and a
     /// right click on it opens it and another shuts it, as the server turns it.
     Door,
+    /// A stool by a campfire, right-clicked with nothing to place in hand, is sat on: the
+    /// eye drops, the server says so, and By the Fire comes on (shot `seat-fire`); a step
+    /// forward stands the player up, the eye back where it was.
+    Seat,
     /// Ten twine crafted finish a quest; the quest key opens the book on a quest worth
     /// reading, W held with it open does not walk, Esc shuts it and W walks again; a quest pinned counts
     /// torches crafted for it as the server counts them, and a quest done reads so, then
@@ -1463,6 +1467,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Prayers => prayers(world, gate, now, in_phase),
         Step::Home => home(world, gate, now),
         Step::Door => door(world, gate, now),
+        Step::Seat => seat(world, gate, now),
         Step::Quests => quests(world, gate, now, in_phase),
         Step::Catalogue => catalogue(world, gate, now, in_phase),
         Step::Screenshot => screenshot(world, gate, now, in_phase),
@@ -4690,6 +4695,102 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
     }
 }
 
+/// Server seconds the seat step waits on each answer (sat, By the Fire, stood up).
+const SEAT_WAIT: f32 = 8.0;
+
+/// A stool two blocks south of the test ground's feet (the door stood north), a campfire
+/// beside it; sat on from the feet by right clicks with a hand that places nothing, then
+/// stood up from with a step back.
+fn seat(world: &mut World, gate: &mut Gate, now: f32) {
+    let stand = gate.feet;
+    let (stool, fire) = (stand + IVec3::new(0, 0, 2), stand + IVec3::new(1, 0, 2));
+    let leave = |world: &mut World, gate: &mut Gate| {
+        key(world, KeyCode::KeyS, false);
+        mouse(world, MouseButton::Right, false);
+        let net = world.resource::<Net>();
+        net.command(&format!("fill {} {} {} {} {} {} air", stool.x, stool.y, stool.z, fire.x, fire.y, fire.z));
+        net.command(&format!("tp {} {} {}", stand.x as f32 + 0.5, stand.y, stand.z as f32 + 0.5));
+        gate.next(Step::Quests, now);
+    };
+    let fireside = |world: &World| {
+        let (player, launch) = (world.resource::<LocalPlayer>(), world.resource::<Launch>());
+        launch.content.effects.id("base:fireside").is_some_and(|id| player.vitals.effects.iter().any(|a| a.effect == id))
+    };
+    let standing_eye = |world: &World| {
+        let player = world.resource::<LocalPlayer>();
+        player.position.y + voxmar_engine::physics::player::EYE_HEIGHT
+    };
+    match gate.phase {
+        0 => {
+            // A hand that places nothing: an empty hotbar slot, or one with an item.
+            let free = {
+                let (player, client) = (world.resource::<LocalPlayer>(), world.resource::<ClientWorld>());
+                (0..voxmar_engine::inventory::HOTBAR_SLOTS).find(|&s| player.inventory.get(s).is_none_or(|stack| !client.registry.info(stack.item).placeable))
+            };
+            let Some(free) = free else {
+                gate.check("seat: sat", Err("every hotbar slot holds a block to place".into()));
+                leave(world, gate);
+                return;
+            };
+            world.resource_mut::<LocalPlayer>().selected = free;
+            let net = world.resource::<Net>();
+            net.command(&format!("setblock {} {} {} oak_stool", stool.x, stool.y, stool.z));
+            net.command(&format!("setblock {} {} {} campfire", fire.x, fire.y, fire.z));
+            gate.advance(now);
+        }
+        // Right clicks on the stool's seat until the server sets the player on it.
+        1 => {
+            let sat = world.resource::<LocalPlayer>().vitals.seated == Some(stool);
+            if sat {
+                mouse(world, MouseButton::Right, false);
+                gate.advance(now);
+            } else if gate.waited_out(SEAT_WAIT) {
+                let (held, seated) = {
+                    let player = world.resource::<LocalPlayer>();
+                    (player.inventory.get(player.selected).map(|s| s.item), player.vitals.seated)
+                };
+                let shown = world.resource::<ClientWorld>().block(stool).map(|b| world.resource::<ClientWorld>().registry.def(b).name.clone());
+                gate.check("seat: sat", Err(format!("{SEAT_WAIT} server s of right clicks on the stool ({shown:?}) did not seat the player (seated {seated:?}, holding {held:?})")));
+                leave(world, gate);
+            } else if open_scene_pose(world, gate) {
+                aim_at(world, stool.as_vec3() + Vec3::new(0.5, 0.6, 0.5));
+                let aimed = world.resource::<crate::interact::Target>().hit.as_ref().is_some_and(|hit| hit.block == stool);
+                gate.tap(world, aimed, now);
+            }
+        }
+        // Sat by the fire: the eye drops below standing, and By the Fire comes on.
+        2 => {
+            let (eye, standing) = (world.resource::<LocalPlayer>().eye().y, standing_eye(world));
+            let lower = eye < standing - 0.5;
+            if lower && fireside(world) {
+                if gate.shot(world, "seat-fire").is_none() {
+                    return;
+                }
+                gate.check("seat: by the fire", Ok(format!("sat on a stool by a campfire: the eye dropped {:.2} below standing there, and By the Fire came on", standing - eye)));
+                gate.advance(now);
+            } else if gate.server_in_phase() > SEAT_WAIT {
+                gate.check("seat: by the fire", Err(format!("{SEAT_WAIT} server s sat on the stool: eye {eye:.2} against {standing:.2} standing, By the Fire {}", fireside(world))));
+                leave(world, gate);
+            }
+        }
+        // A step back off it stands the player up: the eye is a standing one again, and
+        // the server no longer has them sat.
+        _ => {
+            let (eye, standing) = (world.resource::<LocalPlayer>().eye().y, standing_eye(world));
+            let off = (world.resource::<LocalPlayer>().position.z - (stool.z as f32 + 0.5)).abs() > 0.6;
+            let up = (eye - standing).abs() < 0.01 && world.resource::<LocalPlayer>().vitals.seated.is_none();
+            key(world, KeyCode::KeyS, !off);
+            if off && up {
+                gate.check("seat: stand", Ok("a step off the stool stood the player up, the eye back at standing height".into()));
+                leave(world, gate);
+            } else if gate.server_in_phase() > SEAT_WAIT {
+                gate.check("seat: stand", Err(format!("{SEAT_WAIT} server s stepping off the stool: off it {off}, eye {eye:.2} against {standing:.2} standing, still seated on the server {:?}", world.resource::<LocalPlayer>().vitals.seated)));
+                leave(world, gate);
+            }
+        }
+    }
+}
+
 /// The door step's two cells, as the client has them: (shut, open) when both halves are
 /// a door's, shut or open alike.
 fn door_cells(world: &World, at: IVec3) -> Option<(bool, bool)> {
@@ -4710,7 +4811,7 @@ fn door(world: &mut World, gate: &mut Gate, now: f32) {
         let net = world.resource::<Net>();
         net.command(&format!("fill {} {} {} {} {} {} air", at.x, at.y, at.z, at.x, at.y + 1, at.z));
         net.command("clear wooden_door");
-        gate.next(Step::Quests, now);
+        gate.next(Step::Seat, now);
     };
     let use_door = |world: &mut World| {
         let actions = world.resource::<crate::Actions>().0.clone();
