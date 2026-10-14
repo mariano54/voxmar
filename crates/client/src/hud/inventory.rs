@@ -48,10 +48,11 @@ impl Plugin for InventoryPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ShownInventory>()
             .init_resource::<Gesture>()
+            .init_resource::<NearTags>()
             .add_systems(PostStartup, spawn)
             .add_systems(
                 Update,
-                ((toggle, fit_grid, fit_store, click, craft, number_keys, preview).chain().in_set(InventorySystems).after(super::screens::ScreenSystems), (follow_pointer, tooltip, tap, hover_item, show_worn_glyphs).after(InventorySystems))
+                ((toggle, fit_grid, fit_store, click, find_near, craft, number_keys, preview).chain().in_set(InventorySystems).after(super::screens::ScreenSystems), (follow_pointer, tooltip, tap, hover_item, show_worn_glyphs).after(InventorySystems))
                     .run_if(in_state(Screen::InGame)),
             )
             .add_systems(OnExit(Screen::InGame), |mut gesture: ResMut<Gesture>, mut tips: Query<&mut Visibility, With<Tooltip>>| {
@@ -60,6 +61,28 @@ impl Plugin for InventoryPlugin {
                     *tip = Visibility::Hidden;
                 }
             });
+    }
+}
+
+/// The tags recipes are made near (a chopping block's) that some block within the player's
+/// reach has, as the server judges it: kept while the inventory is open.
+#[derive(Resource, Default)]
+pub(crate) struct NearTags(pub Vec<String>);
+
+impl NearTags {
+    pub(crate) fn has(&self, tag: &str) -> bool {
+        self.0.iter().any(|t| t == tag)
+    }
+}
+
+fn find_near(ui: Res<UiState>, world: Res<ClientWorld>, player: Res<LocalPlayer>, launch: Res<Launch>, mut near: ResMut<NearTags>) {
+    if !ui.inventory_open {
+        return;
+    }
+    let tags = launch.content.recipes.near_tags();
+    let found = voxmar_engine::craft::tags_near(&tags, &launch.content.blocks, player.eye(), |pos| world.block(pos));
+    if near.0 != found {
+        near.0 = found;
     }
 }
 
@@ -116,6 +139,13 @@ pub struct InterfaceStyle {
     pub worn_glyph_alpha: f32,
     /// Blocks from home within which the way home is not shown (`hud::home`).
     pub home_hidden_within: f32,
+    /// Blocks from home beyond which the way home shows by day too.
+    pub home_shown_beyond: f32,
+    /// When the night it shows through starts and ends, in ticks after sunrise.
+    pub home_dusk: u64,
+    pub home_dawn: u64,
+    /// Seconds the mark takes to fade in or out.
+    pub home_fade: f32,
     /// The item whose icon marks home, if a package names one.
     pub home_icon: Option<String>,
 }
@@ -125,6 +155,10 @@ pub struct InterfaceStyle {
 struct InterfaceFile {
     worn_glyph_alpha: Option<f32>,
     home_hidden_within: Option<f32>,
+    home_shown_beyond: Option<f32>,
+    home_dusk: Option<u64>,
+    home_dawn: Option<u64>,
+    home_fade: Option<f32>,
     home_icon: Option<String>,
 }
 
@@ -134,10 +168,15 @@ impl InterfaceStyle {
     pub fn load(files: &[voxmar_engine::content::ContentFile]) -> Result<Self, String> {
         let options = ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME);
         let (mut alpha, mut hidden, mut icon) = (None, None, None);
+        let (mut beyond, mut dusk, mut dawn, mut fade) = (None, None, None, None);
         for file in files.iter().filter(|f| f.name == Self::FILE) {
             let given: InterfaceFile = options.from_str(&file.source).map_err(|e| format!("{}/{}: {e}", file.package, Self::FILE))?;
             alpha = given.worn_glyph_alpha.or(alpha);
             hidden = given.home_hidden_within.or(hidden);
+            beyond = given.home_shown_beyond.or(beyond);
+            dusk = given.home_dusk.or(dusk);
+            dawn = given.home_dawn.or(dawn);
+            fade = given.home_fade.or(fade);
             icon = given.home_icon.or(icon);
         }
         let worn_glyph_alpha = alpha.ok_or(format!("no package's {} gives worn_glyph_alpha", Self::FILE))?;
@@ -148,7 +187,23 @@ impl InterfaceStyle {
         if !(home_hidden_within >= 0.0 && home_hidden_within.is_finite()) {
             return Err(format!("{}: home_hidden_within {home_hidden_within} is not 0 or more", Self::FILE));
         }
-        Ok(InterfaceStyle { worn_glyph_alpha, home_hidden_within, home_icon: icon })
+        fn given<T>(value: Option<T>, name: &str) -> Result<T, String> {
+            value.ok_or(format!("no package's {} gives {name}", InterfaceStyle::FILE))
+        }
+        let home_shown_beyond: f32 = given(beyond, "home_shown_beyond")?;
+        if !(home_shown_beyond >= home_hidden_within && home_shown_beyond.is_finite()) {
+            return Err(format!("{}: home_shown_beyond {home_shown_beyond} is not home_hidden_within ({home_hidden_within}) or more", Self::FILE));
+        }
+        let (home_dusk, home_dawn): (u64, u64) = (given(dusk, "home_dusk")?, given(dawn, "home_dawn")?);
+        let day = voxmar_protocol::TICKS_PER_DAY;
+        if home_dusk >= day || home_dawn >= day || home_dusk == home_dawn {
+            return Err(format!("{}: home_dusk {home_dusk} and home_dawn {home_dawn} are not two times of day under {day}", Self::FILE));
+        }
+        let home_fade: f32 = given(fade, "home_fade")?;
+        if !(0.0..=5.0).contains(&home_fade) {
+            return Err(format!("{}: home_fade {home_fade} is not from 0 to 5 seconds", Self::FILE));
+        }
+        Ok(InterfaceStyle { worn_glyph_alpha, home_hidden_within, home_shown_beyond, home_dusk, home_dawn, home_fade, home_icon: icon })
     }
 }
 
@@ -290,6 +345,8 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
             });
             card.spawn(grid(0.0)).with_children(|grid| (HOTBAR_SLOTS..SLOTS).for_each(|slot| spawn_slot(grid, slot)));
             card.spawn(grid(5.0 * PX)).with_children(|grid| (0..HOTBAR_SLOTS).for_each(|slot| spawn_slot(grid, slot)));
+            // What the pack can make, ready first.
+            super::makeable::spawn(card, font, HOTBAR_SLOTS);
             spawn_legend(card, font);
         });
         super::screens::spawn_hotkeys(root, super::screens::GameScreen::Inventory);
@@ -352,6 +409,7 @@ fn craft(
     net: Res<Net>,
     actions: Res<Actions>,
     mut player: ResMut<LocalPlayer>,
+    near: Res<NearTags>,
     output: Query<&RelativeCursorPosition, With<OutputSlot>>,
     mut icon: Query<(&mut ImageNode, &mut Visibility), With<OutputIcon>>,
     mut count: Query<&mut Text, (With<OutputCount>, Without<CraftName>, Without<CraftHint>)>,
@@ -374,7 +432,8 @@ fn craft(
         })
     };
     let allowed = |r: &voxmar_engine::craft::Recipe| (at_table || !r.needs_table()) && short(r).is_none();
-    let found = recipes.find(&player.inventory.grid());
+    let near = |tag: &str| near.has(tag);
+    let found = recipes.find_near(&player.inventory.grid(), near);
     let lacking = found.and_then(|r| short(r).map(|skill| (skill, r.level)));
     let made = found.filter(|r| allowed(r)).map(|r| (r.output, r.count));
     let filled = player.inventory.grid().iter().any(Option::is_some);
@@ -421,7 +480,7 @@ fn craft(
     let all = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
     let Some(craft) = actions.named("core:craft") else { return };
     let mut inventory = player.inventory.clone();
-    if craft_grid(&mut inventory, &recipes, allowed, all) > 0 {
+    if craft_grid(&mut inventory, &recipes, allowed, near, all) > 0 {
         player.inventory = inventory;
         // Heard as crafting (`sounds.ron`), not as a click.
         net.propose(craft, ActionTarget::Slot(if all { 0 } else { 1 }));
@@ -429,11 +488,11 @@ fn craft(
 }
 
 /// Crafts what `inventory`'s grid makes (all it can if `all`), as the server will: only a
-/// recipe `allowed`, and crafting all only while the grid still makes the recipe it made
-/// first. Returns how many were made.
-fn craft_grid(inventory: &mut Inventory, recipes: &voxmar_engine::craft::RecipeRegistry, allowed: impl Fn(&voxmar_engine::craft::Recipe) -> bool, all: bool) -> u32 {
-    let first = recipes.find(&inventory.grid()).filter(|r| allowed(r));
-    inventory.craft(recipes.while_making(first), all)
+/// recipe `allowed`, one made near a block only `near` it, and crafting all only while the
+/// grid still makes the recipe it made first. Returns how many were made.
+fn craft_grid(inventory: &mut Inventory, recipes: &voxmar_engine::craft::RecipeRegistry, allowed: impl Fn(&voxmar_engine::craft::Recipe) -> bool, near: impl Fn(&str) -> bool + Copy, all: bool) -> u32 {
+    let first = recipes.find_near(&inventory.grid(), near).filter(|r| allowed(r));
+    inventory.craft(recipes.while_making(first, near), all)
 }
 
 /// The crafting grid's square, and each of its cells by number (`craft::GRID`).
@@ -1032,12 +1091,13 @@ fn hover_item(
     mut over: ResMut<super::recipes::HoveredItem>,
     window: Query<&Window, With<PrimaryWindow>>,
     catalogue: Res<super::creative::Catalogue>,
+    near: Res<NearTags>,
 ) {
     // Without a pointer (no window: `--gate`, `--capture`) nothing is under it to change.
     if ui.recipes_open || window.single().ok().and_then(Window::cursor_position).is_none() {
         return;
     }
-    let made = || output.iter().any(RelativeCursorPosition::cursor_over).then(|| launch.content.recipes.find(&player.inventory.grid()).map(|r| r.output)).flatten();
+    let made = || output.iter().any(RelativeCursorPosition::cursor_over).then(|| launch.content.recipes.find_near(&player.inventory.grid(), |tag| near.has(tag)).map(|r| r.output)).flatten();
     let item = if ui.inventory_open { hovered(&slots).and_then(|slot| player.inventory.get(slot)).map(|stack| stack.item).or_else(made).or(catalogue.hovered) } else { None };
     if over.0 != item {
         over.0 = item;
@@ -1181,10 +1241,14 @@ mod tests {
         files.push(file("(worn_glyph_alpha: 0.5)"));
         assert_eq!(InterfaceStyle::load(&files).unwrap().worn_glyph_alpha, 0.5);
         let style = InterfaceStyle::load(&files).unwrap();
-        assert_eq!((style.home_hidden_within, style.home_icon.as_deref()), (24.0, Some("base:hearthstone")), "core's distance, base's icon");
-        files.push(file("(home_hidden_within: -1.0)"));
-        assert!(InterfaceStyle::load(&files).is_err());
-        files.pop();
+        assert_eq!((style.home_hidden_within, style.home_icon.as_deref()), (8.0, Some("base:hearthstone")), "core's distance, base's icon");
+        assert_eq!((style.home_shown_beyond, style.home_dusk, style.home_dawn, style.home_fade), (48.0, 16500, 23500, 0.5));
+        // Each way home number is checked as it loads.
+        for bad in ["(home_hidden_within: -1.0)", "(home_shown_beyond: 4.0)", "(home_dusk: 24000)", "(home_dawn: 16500)", "(home_fade: -0.5)", "(home_fade: 9.0)"] {
+            files.push(file(bad));
+            assert!(InterfaceStyle::load(&files).is_err(), "{bad}");
+            files.pop();
+        }
         files.push(file("(worn_glyph_alpha: 2.0)"));
         assert!(InterfaceStyle::load(&files).is_err());
     }
@@ -1238,17 +1302,32 @@ mod tests {
     /// client makes as many as the server does, and nothing else.
     #[test]
     fn crafting_all_here_makes_what_the_server_makes_when_the_grid_turns_into_another_recipe() {
-        use std::time::{Duration, Instant};
+        use std::time::Duration;
         let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
         let server = voxmar_server::spawn(voxmar_server::ServerConfig { view_distance: 2, ..Default::default() }, content.clone()).unwrap();
         let (connection, server_side) = voxmar_protocol::local_pair();
         server.connections().send(server_side).unwrap();
         let net = Net::new(connection, Some(server), "crafter".into(), content.fingerprint(), None);
         let mut seen = Inventory::default();
+        // Given up after 60 of the server's seconds: its ticks, and before its first its
+        // thread's CPU time, as it opens the world. By the wall's clock, a server starting
+        // with a share of a core on a loaded machine ran out of it before it had begun.
+        let server = net.server().expect("singleplayer");
         let mut wait_for = |done: &dyn Fn(&Inventory) -> bool| -> Inventory {
-            let deadline = Instant::now() + Duration::from_secs(60);
+            let (ticks, mut cpu) = (server.ticks(), server.cpu_time());
+            let mut starting = Duration::ZERO;
+            // A server that neither ticks nor works would never use up its seconds: ten
+            // times them by the wall's clock fail the wait too.
+            let began = std::time::Instant::now();
             while !done(&seen) {
-                assert!(Instant::now() < deadline, "the server never sent that inventory: {seen:?}");
+                assert!(began.elapsed() < Duration::from_secs(600), "the server neither ticked nor worked its way to that inventory in 600 s of the wall's clock: {seen:?}");
+                if server.ticks() == 0 {
+                    let now = server.cpu_time();
+                    starting += cpu.zip(now).map_or(Duration::ZERO, |(then, now)| now.saturating_sub(then));
+                    cpu = now.or(cpu);
+                }
+                let waited = starting.as_secs_f32() + (server.ticks() - ticks) as f32 / voxmar_protocol::TICKS_PER_SECOND as f32;
+                assert!(waited < 60.0, "the server never sent that inventory in 60 of its seconds: {seen:?}");
                 match net.try_recv() {
                     Ok(Some(voxmar_protocol::ServerMessage::PlayerState { inventory, .. })) => seen = inventory,
                     Ok(_) => std::thread::sleep(Duration::from_millis(1)),
@@ -1269,7 +1348,7 @@ mod tests {
         }
         let before = wait_for(&|i| i.grid().iter().flatten().count() == 4 && i.get(0).is_none());
         let mut predicted = before.clone();
-        let made = craft_grid(&mut predicted, &content.recipes, |r: &voxmar_engine::craft::Recipe| !r.needs_table(), true);
+        let made = craft_grid(&mut predicted, &content.recipes, |r: &voxmar_engine::craft::Recipe| !r.needs_table(), |_| false, true);
         net.propose(content.actions.expect("core:craft"), ActionTarget::Slot(0));
         let crafted = wait_for(&|i| *i != before);
         assert_eq!(made, 1, "one table");

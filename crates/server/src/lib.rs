@@ -33,6 +33,7 @@ mod laying;
 mod stations;
 mod stores;
 mod treasure;
+mod troughs;
 pub mod save;
 mod villagers;
 mod wandering;
@@ -331,6 +332,44 @@ struct Leash {
     ticked: std::sync::Condvar,
 }
 
+#[cfg(target_os = "linux")]
+fn thread_cpu_time(thread: &JoinHandle<()>) -> Option<Duration> {
+    use std::os::unix::thread::JoinHandleExt;
+    let mut clock: libc::clockid_t = 0;
+    let mut time = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    // SAFETY: the thread is not joined (the handle holds it), so its pthread_t is valid; the
+    // calls write only the clock id and the time they are given.
+    unsafe {
+        if libc::pthread_getcpuclockid(thread.as_pthread_t(), &mut clock) != 0 || libc::clock_gettime(clock, &mut time) != 0 {
+            return None;
+        }
+    }
+    Some(Duration::new(time.tv_sec as u64, time.tv_nsec as u32))
+}
+
+#[cfg(target_os = "macos")]
+fn thread_cpu_time(thread: &JoinHandle<()>) -> Option<Duration> {
+    use std::os::unix::thread::JoinHandleExt;
+    let mut info = std::mem::MaybeUninit::<libc::thread_basic_info>::zeroed();
+    let mut count = libc::THREAD_BASIC_INFO_COUNT;
+    // SAFETY: the thread is not joined, so its pthread_t is valid; thread_info writes at
+    // most `count` integers into the buffer, read only when it says it succeeded.
+    let info = unsafe {
+        let port = libc::pthread_mach_thread_np(thread.as_pthread_t());
+        if libc::thread_info(port, libc::THREAD_BASIC_INFO as libc::thread_flavor_t, info.as_mut_ptr().cast(), &mut count) != libc::KERN_SUCCESS {
+            return None;
+        }
+        info.assume_init()
+    };
+    let time = |t: libc::time_value_t| Duration::new(t.seconds as u64, t.microseconds as u32 * 1000);
+    Some(time(info.user_time) + time(info.system_time))
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn thread_cpu_time(_: &JoinHandle<()>) -> Option<Duration> {
+    None
+}
+
 /// Ticks whose times a server keeps, for `ServerHandle::tick_times`: the last minute.
 const TICK_TIMES: usize = 60 * TICKS_PER_SECOND as usize;
 
@@ -341,10 +380,20 @@ impl ServerHandle {
         self.tick_times.lock().map(|t| t.iter().copied().collect()).unwrap_or_default()
     }
 
+    /// How much CPU time the server's thread has had: work it has done, whether or not it has
+    /// a tick or a message to show for it yet (opening the world, generating the spawn
+    /// column). A test's wait on a silent server tells by it a server at work on a busy
+    /// machine from a stuck one. `None` once the thread has ended, or where the system does
+    /// not say.
+    pub fn cpu_time(&self) -> Option<Duration> {
+        let thread = self.thread.as_ref().filter(|t| !t.is_finished())?;
+        thread_cpu_time(thread)
+    }
+
     /// How many ticks the server has simulated: its own clock, which a server running behind
     /// on a busy machine keeps, where wall-clock seconds do not.
     pub fn ticks(&self) -> u64 {
-        self.ticks.load(Ordering::Relaxed)
+        self.ticks.load(Ordering::Acquire)
     }
 
     /// Whether a server made to run behind (`ServerConfig::lag`) does so from now on: it
@@ -548,8 +597,11 @@ pub(crate) struct Server {
     farm: farm::Farm,
     /// Machines players built, and the power between them.
     factory: voxmar_engine::factory::Factory,
-    /// Multiblocks burning their initial fuel charge, by core cell.
+    /// Lit multiblocks, by core cell: a kiln burning its fuel charge, a hearth (which needs
+    /// none) until it breaks.
     lit: FxHashMap<IVec3, hearth::Lit>,
+    /// The burning fires players were last told of (`ServerMessage::Fires`).
+    fires_sent: Vec<IVec3>,
     /// Cells whose block a player placed: ores, which then teach nothing; plants, which
     /// don't regrow by themselves; and furnishings, which give themselves back only from
     /// these cells (see `WorldMeta::placed`).
@@ -675,7 +727,7 @@ impl Server {
         let lairs = lairs::Lairs::restore(&meta.lairs);
         let planter_grown = meta.planter_grown.iter().map(|&p| IVec3::from_array(p)).collect();
         let apiary = apiary::Apiary::restore(&meta.hives);
-        let stations = stations::Loads::restore(&meta.stations, |name| content.blocks.id(name));
+        let stations = stations::Loads::restore(&meta.stations, |name| content.blocks.item_named(name));
         let lit = meta.lit.iter().filter(|fire| fire.until > tick && content.multiblocks.get(&fire.structure).is_some())
             .map(|fire| (IVec3::from_array(fire.position), fire.clone())).collect();
         let survival = Arc::new(rules::SurvivalRules::load(&content.files, &content.blocks, &mut Vec::new()).expect("checked by load_content"));
@@ -695,6 +747,7 @@ impl Server {
             farm,
             factory: voxmar_engine::factory::Factory::default(),
             lit,
+            fires_sent: Vec::new(),
             placed,
             regrowing,
             planter_grown,
@@ -766,7 +819,9 @@ impl Server {
             }
             if now >= next_tick {
                 self.tick();
-                ticks.fetch_add(1, Ordering::Relaxed);
+                // Released after the tick's messages are sent: whoever reads this count
+                // finds them waiting (`ServerHandle::ticks`).
+                ticks.fetch_add(1, Ordering::Release);
                 if let Some(leash) = &self.leash {
                     *leash.made.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = ticks.load(Ordering::Relaxed);
                     leash.ticked.notify_all();
@@ -928,6 +983,10 @@ impl Server {
         self.broadcast_players();
         if self.tick.is_multiple_of(TICKS_PER_SECOND as u64) {
             self.broadcast(self.time_message());
+            for id in self.players.iter().filter(|(_, p)| !p.kindled).map(|(&id, _)| id).collect::<Vec<_>>() {
+                self.kindle_home(id);
+            }
+            self.send_fires();
         }
         if self.tick.is_multiple_of(SAVE_INTERVAL) {
             self.save();
@@ -1296,6 +1355,31 @@ mod tests {
             bob = join(&mut server);
             answer(&bob).unwrap_or_else(|reason| panic!("round {round}: same-loop rejoin rejected: {reason:?}"));
         }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn a_threads_cpu_time_counts_its_work_and_not_its_sleep() {
+        let (go, wait) = std::sync::mpsc::channel::<()>();
+        let (done, spun) = std::sync::mpsc::channel::<()>();
+        let worker = std::thread::spawn(move || {
+            // A fixed amount of work, however long a busy machine takes to give it.
+            let mut spin = 0u64;
+            for _ in 0..20_000_000 {
+                spin = std::hint::black_box(spin.wrapping_add(1));
+            }
+            done.send(()).unwrap();
+            let _ = wait.recv();
+        });
+        // Asleep on the channel after its spin, it does no more work.
+        spun.recv().unwrap();
+        let worked = thread_cpu_time(&worker).expect("the system tells a thread's CPU time");
+        assert!(worked > Duration::ZERO, "no CPU time for its spin");
+        std::thread::sleep(Duration::from_millis(50));
+        let later = thread_cpu_time(&worker).unwrap();
+        assert!(later - worked < Duration::from_millis(10), "{worked:?} then {later:?} while it slept");
+        go.send(()).unwrap();
+        worker.join().unwrap();
     }
 
     /// Preparation can happen before connecting; an accepted peer still has to say

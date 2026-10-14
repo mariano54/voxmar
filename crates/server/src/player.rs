@@ -74,6 +74,9 @@ pub struct Player {
     pub home: Option<Vec3>,
     /// The bed (a sleeping bag) last slept in, where they wake without a home.
     pub bed: Option<Vec3>,
+    /// Whether their home hearth needs no lighting again from an older save
+    /// (`hearth::kindle_home`): new players' and those already seen to.
+    pub kindled: bool,
     pub buried: bool,
     /// Everything the player has discovered (`journal`).
     pub journal: voxmar_engine::journal::Journal,
@@ -132,13 +135,24 @@ pub struct Player {
     pub sent: FxHashSet<ColumnPos>,
     /// Dropped items this player has been told about.
     pub items_seen: FxHashSet<u32>,
+    /// What their kept animals laid into the home's stores (`Product::nests`), by item
+    /// name, not yet told: they are told once home.
+    pub nested: Vec<(String, u32)>,
 }
 
 impl Player {
-    /// The home block as `Vitals::home` tells it: the lit hearth, else the bed last slept
-    /// in, stored as the point a block above where the player stands on waking.
-    pub fn home_block(&self) -> Option<voxmar_engine::glam::IVec3> {
-        self.home.or(self.bed).map(|at| (at - Vec3::Y).floor().as_ivec3())
+    /// Where home is, the point a block above where the player stands on waking: the
+    /// hearth they made home while it burns (in `lit`, by its core), else the bed they last
+    /// slept in. A hearth broken or gone cold is no home; one from a save made before
+    /// hearths kept their fire is home until it is lit again for them (`kindle_home`).
+    /// Respawn, `/home`, the HUD, home effects and stores and wanderers all ask here.
+    pub fn home_spot(&self, lit: &rustc_hash::FxHashMap<voxmar_engine::glam::IVec3, crate::hearth::Lit>) -> Option<Vec3> {
+        self.home.filter(|&at| !self.kindled || lit.contains_key(&(at - Vec3::new(0.5, 1.0, 0.5)).round().as_ivec3())).or(self.bed)
+    }
+
+    /// The block home stands on (`home_spot`), as `Vitals::home` tells it.
+    pub fn home_block(&self, lit: &rustc_hash::FxHashMap<voxmar_engine::glam::IVec3, crate::hearth::Lit>) -> Option<voxmar_engine::glam::IVec3> {
+        self.home_spot(lit).map(|at| (at - Vec3::Y).floor().as_ivec3())
     }
 
     pub fn new(id: PlayerId, connection: ServerConnection, spawn: Vec3, view_distance: i32, tick: u64, max_health: u8, limits: &Limits) -> Self {
@@ -170,6 +184,7 @@ impl Player {
             health_base: 0,
             home: None,
             bed: None,
+            kindled: true,
             buried: false,
             journal: Default::default(),
             quests_done: Vec::new(),
@@ -201,6 +216,7 @@ impl Player {
             dirty: vec![traits::HEALTH, traits::INVENTORY, traits::SKILLS, traits::VITALS],
             sent: FxHashSet::default(),
             items_seen: FxHashSet::default(),
+            nested: Vec::new(),
         }
     }
 
@@ -275,6 +291,7 @@ impl Player {
             effects: self.timed_effects.iter().map(|&(id, left)| (effects.get(id).name.clone(), left)).collect(),
             home: self.home.map(|h| h.to_array()),
             bed: self.bed.map(|b| b.to_array()),
+            kindled: self.kindled,
             journal: self.journal.entries().cloned().collect(),
             quests: self.quests_done.clone(),
             quests_claimed: self.quests_claimed.clone(),
@@ -519,6 +536,7 @@ impl Server {
                 player.skills = restore_skills(&saved.skills, &skill_ids);
                 player.home = saved.home.map(Vec3::from_array);
                 player.bed = saved.bed.map(Vec3::from_array);
+                player.kindled = saved.kindled;
                 player.journal = voxmar_engine::journal::Journal::from_entries(saved.journal);
                 player.quests_done = saved.quests;
                 player.quests_claimed = saved.quests_claimed;
@@ -529,7 +547,8 @@ impl Server {
             Some(saved) => {
                 player.home = saved.home.map(Vec3::from_array);
                 player.bed = saved.bed.map(Vec3::from_array);
-                if let Some(home) = player.home.or(player.bed) {
+                player.kindled = saved.kindled;
+                if let Some(home) = player.home_spot(&self.lit) {
                     player.position = home;
                 }
                 player.inventory = saved.inventory;
@@ -570,6 +589,8 @@ impl Server {
         self.players[&id].connection.send(time);
         let entries = self.players[&id].journal.entries().cloned().collect();
         self.players[&id].connection.send(ServerMessage::Journal { entries });
+        self.kindle_home(id);
+        self.players[&id].connection.send(ServerMessage::Fires { lit: self.fires() });
         if let Some(file) = set_aside {
             let text = Words::key("save.player_set_aside").with("file", Words::text(file));
             self.players[&id].connection.send(ServerMessage::Chat { kind: ChatKind::Error, text });

@@ -1155,6 +1155,22 @@ mod tests {
         Arc::new(crate::test_registry())
     }
 
+    /// The world of `seed` on the test registry, one for every test that only reads what it
+    /// generates: each new world would trace its rivers, trails and caches from nothing
+    /// again. What a world generates depends on neither which column nor which test asks
+    /// first, nor on what its caches hold (`rivers_never_depend_on_generation_order`,
+    /// `decorations_never_depend_on_generation_order`), and those tests, the timing ones
+    /// and the golden hashes still make worlds of their own.
+    fn shared_world(seed: u64) -> Arc<Overworld> {
+        static WORLDS: std::sync::OnceLock<std::sync::Mutex<rustc_hash::FxHashMap<u64, Arc<Overworld>>>> = std::sync::OnceLock::new();
+        let worlds = WORLDS.get_or_init(Default::default);
+        if let Some(world) = worlds.lock().unwrap().get(&seed) {
+            return world.clone();
+        }
+        let world = Arc::new(Overworld::new(seed, registry()));
+        worlds.lock().unwrap().entry(seed).or_insert(world).clone()
+    }
+
     #[test]
     fn generation_is_deterministic_and_meshable() {
         let registry = registry();
@@ -1363,7 +1379,7 @@ mod tests {
     #[test]
     fn forests_have_trees() {
         for seed in [42, 7] {
-            let world = Overworld::new(seed, registry());
+            let world = shared_world(seed);
             let sampler = world.sampler(IVec2::splat(-2048), IVec2::splat(2048));
             let (mut forested, mut bare) = (0, Vec::new());
             let mut chances = Vec::new();
@@ -1393,7 +1409,7 @@ mod tests {
     fn grass_is_kept_in_check() {
         let registry = registry();
         let grass = registry.expect("base:grass_block");
-        let world = Overworld::new(42, registry.clone());
+        let world = shared_world(42);
         for biome in ["plains", "forest", "savanna"] {
             let id = world.biomes.id(&format!("base:{biome}")).unwrap();
             let at = world.locate_biome(biome, IVec2::ZERO, 8000).unwrap_or_else(|| panic!("no {biome}"));
@@ -1437,7 +1453,7 @@ mod tests {
     /// in a variant within it (on seed 24301 dark forest once sent players to cherry trees).
     #[test]
     fn locate_lands_inside_the_biome() {
-        let world = Overworld::new(24301, registry());
+        let world = shared_world(24301);
         let spawn = world.spawn_point();
         for name in ["dark_forest", "forest", "taiga"] {
             let Some(at) = world.locate_biome(name, IVec2::new(spawn.x, spawn.z), 4000) else { continue };
@@ -1472,7 +1488,7 @@ mod tests {
             // are its sampler's pick, which needs no ground: only a place that passes them
             // has its ground found.
             let found = seeds.iter().find_map(|&seed| {
-                let world = Overworld::new(seed, registry.clone());
+                let world = shared_world(seed);
                 let id = world.biomes.id(&format!("base:{biome}")).unwrap();
                 let at = (0..6000 / 64)
                     .flat_map(|ring| (0..(ring * 8).max(1)).map(move |step| spiral(ring, step)))
@@ -1751,7 +1767,7 @@ mod tests {
     #[test]
     fn trees_keep_off_the_rims_of_cave_mouths() {
         let registry = registry();
-        let world = Overworld::new(22, registry.clone());
+        let world = shared_world(22);
         let first = ColumnPos::of_block(IVec3::new(319, 0, 2061)).offset(-2, -2);
         let floating = floating_wood(&world, &registry, first, 5);
         assert!(floating.is_empty(), "wood floats at the sinkhole's rim: {floating:?}");
@@ -1764,7 +1780,7 @@ mod tests {
     fn ground_plants_require_actual_earth() {
         use crate::ecology::Plant;
         let registry = registry();
-        let world = Overworld::new(1, registry.clone());
+        let world = shared_world(1);
         let meadow = world.biomes.id("base:alpine_meadow").unwrap();
         let site = Site { height: 201, water: 200, body: Body::Lake, home: meadow, biome: meadow,
             forest: 0.0, trail: 0.0, ..world.site(0, 0) };
@@ -1802,7 +1818,7 @@ mod tests {
     #[test]
     fn ground_plants_keep_off_carved_mouths() {
         let registry = registry();
-        let world = Overworld::new(22, registry.clone());
+        let world = shared_world(22);
         let first = ColumnPos::of_block(IVec3::new(319, 0, 2061)).offset(-1, -1);
         let area = generate_area(&world, first, 3);
         let origin = first.origin();
@@ -1843,7 +1859,7 @@ mod tests {
         let seeds: Vec<(Vec<String>, usize)> = [1u64, 7, 22, 42, 0x5eed]
             .into_par_iter()
             .map(|seed| {
-                let world = Overworld::new(seed, registry.clone());
+                let world = shared_world(seed);
                 let spawn = world.spawn_point();
                 let mut at: Vec<(String, IVec2)> = vec![("spawn".into(), IVec2::new(spawn.x, spawn.z))];
                 for (name, x, z) in world.caves.sights((spawn.x, spawn.z), 1500) {
@@ -2103,10 +2119,9 @@ mod tests {
     /// including wet banks and crag tops; these fields choose the denominator and block.
     #[test]
     fn biome_census_keeps_site_fields() {
-        let registry = registry();
         let (mut wet, mut crags) = (0, 0);
         for (seed, at) in [(2, IVec2::new(820, 124)), (2, IVec2::new(-2660, -564)), (42, IVec2::new(-306, -70)), (22, IVec2::new(319, 2061))] {
-            let world = Overworld::new(seed, registry.clone());
+            let world = shared_world(seed);
             let crag = (0..160 * 160).map(|i| IVec2::new(i % 160 * 50 - 4000, i / 160 * 50 - 4000)).find(|p| world.ground(p.x, p.y).crag.amplitude > 6.0);
             for at in std::iter::once(at).chain(crag) {
                 let corner = ColumnPos::of_block(IVec3::new(at.x, 0, at.y)).origin();
@@ -2169,12 +2184,11 @@ mod tests {
     /// their patches. One world at a time, its land generated once for all the plants of a
     /// biome. Returns (plant, biome, rate, plants a patch, plants, columns).
     fn plant_counts(seeds: &[u64], chunks: i32, plants: &[&str], biomes: &[&str]) -> Vec<(String, String, f64, f64, usize, u64)> {
-        let registry = registry();
         let looks = plant_looks(plants);
         // Per biome: columns, and per plant its plants, patches and biggest patch (with its seed).
         let mut tally: Vec<(u64, Vec<(usize, usize, Option<(usize, u64, (i32, i32))>)>)> = vec![(0, vec![(0, 0, None); plants.len()]); biomes.len()];
         for &seed in seeds {
-            let world = Overworld::new(seed, registry.clone());
+            let world = shared_world(seed);
             for (b, biome) in biomes.iter().enumerate() {
                 for &from in PLACES.iter().take(places()) {
                     let Some((columns, placed)) = biome_area(&world, biome, from, chunks, &looks, plants.len()) else { continue };
@@ -2639,7 +2653,7 @@ mod tests {
         let mut seeds = 0;
         while seeds < 16 && (0..biomes.len()).any(|b| !done(&tally, b)) {
             seeds += 1;
-            let world = Overworld::new(seeds, registry.clone());
+            let world = shared_world(seeds);
             let open: Vec<usize> = (0..biomes.len()).filter(|&b| !done(&tally, b)).collect();
             println!("seed {seeds}: counting {}", open.iter().map(|&b| biomes[b].as_str()).collect::<Vec<_>>().join(", "));
             // Every place of every open biome side by side, counted in order.
@@ -2702,7 +2716,7 @@ mod tests {
         let (grass, air) = (registry.expect("base:grass_block"), BlockId::AIR);
         let (mut open, mut planted, mut flowers, mut implied) = (0, 0, 0, 0);
         for seed in [1, 42] {
-            let world = Overworld::new(seed, registry.clone());
+            let world = shared_world(seed);
             let at = world.locate_biome("plains", IVec2::ZERO, 6000).unwrap();
             let first = ColumnPos::of_block(IVec3::new(at.x, 0, at.y)).offset(-1, -1);
             for (i, column) in generate_area(&world, first, 3).iter().enumerate() {
@@ -3077,9 +3091,8 @@ mod tests {
     /// water and crags near spawn on two seeds.
     #[test]
     fn a_grid_of_ground_is_the_ground_at_each_position() {
-        let registry = registry();
         for seed in [1, 5] {
-            let world = Overworld::new(seed, registry.clone());
+            let world = shared_world(seed);
             let spawn = world.spawn_point();
             let sights = world.water_sights(IVec2::new(spawn.x, spawn.z), 300);
             let mut origins = vec![IVec2::new(spawn.x, spawn.z) - 150];
@@ -3103,7 +3116,7 @@ mod tests {
         let registry = registry();
         let mut faces = 0;
         for seed in [1, 3, 7, 42] {
-            let world = Overworld::new(seed, registry.clone());
+            let world = shared_world(seed);
             let spawn = world.spawn_point();
             let sights = world.water_sights(IVec2::new(spawn.x, spawn.z), 600);
             let Some(&(_, fall)) = sights.iter().find(|(s, _)| *s == WaterSight::Waterfall) else { continue };
@@ -3150,10 +3163,9 @@ mod tests {
     /// same however it is asked for, alone or with its area, and holds its top block.
     #[test]
     fn crags_overhang_and_keep_their_tops() {
-        let registry = registry();
         let mut overhangs = 0;
         for seed in [7, 3, 42] {
-            let world = Overworld::new(seed, registry.clone());
+            let world = shared_world(seed);
             let Some(at) = (0..160 * 160).map(|i| IVec2::new(i % 160 * 50 - 4000, i / 160 * 50 - 4000)).find(|p| world.geo(p.x, p.y).crag.amplitude > 6.0) else {
                 continue;
             };
@@ -3192,7 +3204,7 @@ mod tests {
         use rayon::prelude::*;
         // The seeds and their places side by side.
         let counted: Vec<(usize, usize)> = [(1, (0, 0)), (42, (3000, -2000)), (0x5eed, (-4100, 900)), (7, (1500, 5200))].into_par_iter().map(|(seed, place)| {
-            let world = Overworld::new(seed, registry.clone());
+            let world = shared_world(seed);
             // Some coast too, where caves meet the sea.
             let coast = (0..4000).map(|i| (place.0 + i % 64 * 48, place.1 + i / 64 * 48)).find(|&(x, z)| (world.height(x, z) - SEA_LEVEL).abs() <= 2).unwrap();
             // Creeks with waterfalls and confluences, and a highland lake.
@@ -3265,7 +3277,7 @@ mod tests {
         let decoration_only = decorations.len() - 2;
         let mut found = vec![0; decorations.len()];
         for (seed, place) in [(1, (0, 0)), (7, (200, 150)), (42, (-300, -100))] {
-            let world = Overworld::new(seed, registry.clone());
+            let world = shared_world(seed);
             let first = ColumnPos::of_block(IVec3::new(place.0, 0, place.1)).offset(-4, -4);
             let columns = generate_area(&world, first, 8);
             let origin = first.origin();
@@ -3302,7 +3314,7 @@ mod tests {
         let mut hanging = 0;
         // Lush caves, glowroot hollows and dripstone caves near spawn (see `cave_sights`).
         for (seed, place) in [(1, (-271, 38)), (7, (261, 150)), (1, (-47, -126)), (42, (-43, -354))] {
-            let world = Overworld::new(seed, registry.clone());
+            let world = shared_world(seed);
             let first = ColumnPos::of_block(IVec3::new(place.0, 0, place.1)).offset(-3, -3);
             let columns = generate_area(&world, first, 6);
             let origin = first.origin();
@@ -3337,7 +3349,7 @@ mod tests {
         let crystal = [registry.expect("base:crystal_block")];
         let mut checked = 0;
         for seed in [5, 1, 42, 7, 3, 11] {
-            let world = Overworld::new(seed, registry.clone());
+            let world = shared_world(seed);
             // Around spawn, which is on land, as geodes are.
             let spawn = ColumnPos::of_block(world.spawn_point());
             for i in 0..32 * 32 {
@@ -3572,10 +3584,9 @@ mod tests {
     /// next to none is pushed down; near the origin next to nothing changes.
     #[test]
     fn distance_makes_higher_levels_likelier() {
-        let registry = registry();
         let (mut far, mut raised, mut lowered, mut sum, mut plain_sum, mut gentle, mut near_moved) = (0, 0, 0, 0u32, 0u32, 0, 0);
         for seed in 1..=3 {
-            let world = Overworld::new(seed, registry.clone());
+            let world = shared_world(seed);
             let mut rng = rng::Rng::new(seed, 0x1e7e1, 0, 0);
             for _ in 0..1500 {
                 let (angle, distance) = (rng.unit() * std::f32::consts::TAU, 10_000.0 + 10_000.0 * rng.unit());
@@ -4215,7 +4226,7 @@ mod tests {
         let scale = env("SCALE", 8);
         let centre = IVec2::new(env("X", 0), env("Z", 0));
         let registry = registry();
-        let world = Overworld::new(seed, registry.clone());
+        let world = shared_world(seed);
         let half = SIZE * scale / 2;
         let sampler = world.sampler(centre - half - scale, centre + half + scale);
         let (ax, az) = (|i: i32| centre.x + i * scale - half, |i: i32| centre.y + i * scale - half);
@@ -4645,7 +4656,7 @@ mod tests {
 
     #[test]
     fn temperature_changes_smoothly_and_in_order() {
-        let world = Overworld::new(11, registry());
+        let world = shared_world(11);
         for x in [-2000, 0, 3000] {
             let sampler = world.sampler(IVec2::new(x, -8000), IVec2::new(x, 8000));
             // Sea-level temperature: what the site would have without cooling with height.
@@ -4678,7 +4689,7 @@ mod tests {
         let half = SIZE * STEP / 2;
         // Each world on its own core, and each of its columns of samples.
         let worlds: Vec<(u64, Vec<bool>, Vec<i32>, Vec<(i32, i32, i32)>)> = [1u64, 3, 0x5eed].into_par_iter().map(|seed| {
-            let world = Overworld::new(seed, registry.clone());
+            let world = shared_world(seed);
             let sampler = world.sampler(IVec2::splat(-half - 1), IVec2::splat(half + 1));
             let rows: Vec<Vec<(bool, i32, bool)>> = (0..SIZE).into_par_iter().map(|i| {
                 (0..SIZE).map(|j| {
@@ -4729,7 +4740,7 @@ mod tests {
 
     #[test]
     fn selection_fields_are_smooth_and_evenly_spread() {
-        let world = Overworld::new(5, registry());
+        let world = shared_world(5);
         let sampler = world.sampler(IVec2::splat(-6000), IVec2::splat(6000));
         let sites: Vec<Site> = (0..150 * 150).map(|i| sampler.site(i % 150 * 80 - 6000, i / 150 * 80 - 6000)).collect();
         // Evenly spread fields put a tenth of the land in each tenth of their range. Those
@@ -4793,7 +4804,7 @@ mod tests {
 
     #[test]
     fn borders_blend_smoothly() {
-        let world = Overworld::new(3, registry());
+        let world = shared_world(3);
         let sampler = world.sampler(IVec2::new(-4000, -4000), IVec2::new(4000, 4000));
         let (mut borders, mut crossings, mut steps, mut jumps) = (0, 0, 0, 0);
         for x in [-2500, -300, 1700] {
@@ -4831,7 +4842,7 @@ mod tests {
 
     #[test]
     fn biomes_can_be_located() {
-        let world = Overworld::new(3, registry());
+        let world = shared_world(3);
         for name in ["taiga", "base:plains", "ocean"] {
             let at = world.locate_biome(name, IVec2::ZERO, 6000).unwrap_or_else(|| panic!("no {name} within 6 km"));
             let id = world.biomes().id(&format!("base:{}", name.trim_start_matches("base:"))).unwrap();
@@ -4847,7 +4858,7 @@ mod tests {
         let (world, desert) = [3, 7, 42, 1, 2, 5, 9, 11, 13]
             .into_iter()
             .find_map(|seed| {
-                let world = Overworld::new(seed, registry());
+                let world = shared_world(seed);
                 let id = world.biomes().id("base:desert").unwrap();
                 let sampler = world.sampler(IVec2::splat(-4000), IVec2::splat(4000));
                 let desert = (0..200 * 200).map(|i| IVec2::new(i % 200 * 40 - 4000, i / 200 * 40 - 4000)).find(|p| {
@@ -4882,7 +4893,7 @@ mod tests {
         let axes = [content::Axis::Temperature, content::Axis::Moisture, content::Axis::Continentalness, content::Axis::Erosion];
         let (mut shaped, mut features, mut highest) = (vec![0; content.shapes.len()], 0, 0.0f32);
         for seed in [3, 11] {
-            let world = Overworld::new(seed, registry.clone());
+            let world = shared_world(seed);
             let shapes = world.geology.shapes();
             for i in 0..160 * 160 {
                 let (x, z) = (i % 160 * 50 - 4000, i / 160 * 50 - 4000);
@@ -4925,7 +4936,7 @@ mod tests {
 
     #[test]
     fn sampler_matches_single_sites() {
-        let world = Overworld::new(3, registry());
+        let world = shared_world(3);
         let sampler = world.sampler(IVec2::new(-300, 200), IVec2::new(100, 700));
         for (x, z) in [(-300, 200), (-1, 450), (37, 699), (100, 700)] {
             assert_eq!(sampler.site(x, z), world.site(x, z));

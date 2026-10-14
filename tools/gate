@@ -258,6 +258,14 @@ fi
 # cores, build 21) still drew the fight-feel step's frames a quarter second or more apart,
 # past the bear's 0.7 s wind-up. Not background QoS: that also throttles timers, and a test
 # that times a break by the clock then failed.
+# Nor any QoS clamp: memcap runs the pair as his game would (`VOXMAR_FOREGROUND=1`). Under
+# memcap's utility clamp the session had it too, and nice 19 bought it little against the
+# tests: at load 55 on 18 cores (T3, 2026-10-14) its frames ran 0.5 to 2 s, its threads
+# waiting up to 8.5 s for a core within one, and the perfect block judged nothing in ten
+# tries. The tests alone at utility QoS kept to the efficiency cores (12 of the 18): the
+# worldgen binary alone took 115 s there and 33 s at nice 19 without it (twice the CPU
+# time too, 613 s against 301; T7b, 2026-10-14), so nice 19 is all that keeps them under
+# the session. PLAYING still pauses both, so neither takes a core from his game.
 run='
   out=$1 session=$2; shift 2
   if [[ $session == 1 ]]; then
@@ -265,7 +273,29 @@ run='
   fi
   lower=(nice -n 19 env RAYON_NUM_THREADS=$TEST_POOL)
   while IFS=$(printf "\t") read -r dir exe; do
-    (cd "$dir" && RUSTC_BOOTSTRAP=1 "${lower[@]}" "$exe" -Z unstable-options --report-time "$@" >"$out/test-${exe##*/}.txt" 2>&1; echo $? >"$out/test-${exe##*/}.status") &
+    (
+      cd "$dir" || exit
+      RUSTC_BOOTSTRAP=1 "${lower[@]}" "$exe" -Z unstable-options --report-time "$@" >"$out/test-${exe##*/}.txt" 2>&1 &
+      pid=$!
+      # A test binary still running after $TEST_TIMEOUT s is stopped and fails the gate
+      # (a gameplay test once waited 39 minutes on a fight that never came, holding the
+      # landing). Counted in steps of ten seconds while it runs: memcap pausing it for
+      # Mariano playing pauses this count too.
+      ( ran=0
+        while kill -0 "$pid" 2>/dev/null; do
+          sleep 10
+          [[ $(ps -o state= -p "$pid" 2>/dev/null) == T* ]] || ran=$((ran + 10))
+          if ((ran >= TEST_TIMEOUT)) && kill -0 "$pid" 2>/dev/null; then
+            echo "$ran" >"$out/test-${exe##*/}.timeout"
+            kill "$pid"
+            break
+          fi
+        done ) &
+      watch=$!
+      wait "$pid"
+      echo $? >"$out/test-${exe##*/}.status"
+      kill "$watch" 2>/dev/null
+    ) &
   done <"$out/tests.list"
   wait'
 : >"$out/tests.list"
@@ -303,9 +333,13 @@ sampler=$!
 # the other half. With every core to each binary, the worldgen tests took 106 s, then 159
 # and 194 s on the Mac as the session sped up (and the Mac was busy besides).
 TEST_POOL=$(( $(getconf _NPROCESSORS_ONLN) / 2 > 1 ? $(getconf _NPROCESSORS_ONLN) / 2 : 1 ))
-export TEST_POOL
+# Seconds a test binary may run (not counting time paused for Mariano playing) before it
+# is stopped and fails the gate. A loaded Mac's slowest, the full gate's worldgen binary,
+# took about 11 minutes; past 30 a binary is stuck, not slow.
+TEST_TIMEOUT=${VOXMAR_TEST_TIMEOUT:-1800}
+export TEST_POOL TEST_TIMEOUT
 VOXMAR_CONFIG=$out/config VOXMAR_GATE_FULL=$full GATE_ARGS=$( ((full)) || echo --view-distance 4) RUST_TEST_THREADS=${RUST_TEST_THREADS:-8} \
-  $memcap 24 -- bash -c "$run" --gate "$out" "$session" ${skips[@]+"${skips[@]}"} >"$out/run.txt" 2>&1
+  VOXMAR_FOREGROUND=1 $memcap 24 -- bash -c "$run" --gate "$out" "$session" ${skips[@]+"${skips[@]}"} >"$out/run.txt" 2>&1
 kill "$sampler" 2>/dev/null
 
 # A check the session skipped (a hitch, on a machine too loaded for a long frame to say
@@ -327,7 +361,7 @@ if ((session)) && [[ -n $(skipped) ]]; then
   rm -f "$out/game.status"
   mv "$out/tests.list" "$out/tests.list.ran" && : >"$out/tests.list"
   VOXMAR_CONFIG=$out/config VOXMAR_GATE_FULL=$full GATE_ARGS=$( ((full)) || echo --view-distance 4) \
-    $memcap 24 -- bash -c "$run" --gate "$out" 1 >"$out/rerun.txt" 2>&1
+    VOXMAR_FOREGROUND=1 $memcap 24 -- bash -c "$run" --gate "$out" 1 >"$out/rerun.txt" 2>&1
   mv "$out/tests.list.ran" "$out/tests.list"
   if [[ -n $(skipped) ]]; then
     skipped
@@ -345,6 +379,17 @@ for f in "$out"/test-*.status; do
   cat "${f%.status}.txt" >>"$out/tests.txt"
   [[ $(cat "$f") == 0 ]] || tests_failed=1
 done
+# A binary stopped for running too long: named, with the tests it left running (libtest
+# names each one past 60 seconds; those with no result line had not finished).
+for f in "$out"/test-*.timeout; do
+  [[ -e $f ]] || continue
+  txt=${f%.timeout}.txt
+  running=$(sed -nE 's/^test (.*) has been running for over 60 seconds$/\1/p' "$txt" | while read -r name; do
+    grep -qF "test $name ... " "$txt" || echo "$name"
+  done | paste -sd, -)
+  echo "gate: ${f##*/test-} stopped after $(cat "$f") s, still running: ${running:-no test past 60 s}" | sed 's/\.timeout / /'
+  tests_failed=1
+done
 if ((tests_failed)); then
   grep -E '^test .* FAILED|^failures:|panicked|^error' "$out/tests.txt" | head -40
   fail "tests (all output in $out/tests.txt)"
@@ -354,8 +399,9 @@ fi
 # on the Linux box running the gate (every binary side by side); a busier machine scales them
 # by the load it averaged while the tests ran, and a slower one by its slowdown.
 #
-# The Mac's slowdown: it runs the tests at nice 19 (nice 10 when it was measured) and utility QoS beside the played session,
-# which keeps them mostly on its efficiency cores, so a calm Mac's landing gate (home #61,
+# The Mac's slowdown, measured when it ran the tests at nice 10 and utility QoS beside the
+# played session (nice 19 now, without the QoS),
+# which kept them mostly on its efficiency cores, so a calm Mac's landing gate (home #61,
 # 2026-10-13, load under the core count) took 3 to 8 times the Linux box's times for the same
 # tests, the gate's own build and tests being all its load: at most 3.5 times their budgets
 # (the glyph tests 17.4 s against 5), past the rod cast's 81 s (a wall-clock wait, since

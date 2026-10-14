@@ -193,6 +193,9 @@ pub struct SavedPlayer {
     /// slept in.
     pub home: Option<[f32; 3]>,
     pub bed: Option<[f32; 3]>,
+    /// Whether their home hearth has been kept lit since hearths kept their fire; a save
+    /// from before has its standing hearth lit again once (`hearth::kindle_home`).
+    pub kindled: bool,
     /// Everything they have discovered.
     pub journal: Vec<voxmar_engine::journal::Entry>,
     /// Quests finished, those of them whose rewards were claimed, and the tallies quests
@@ -202,6 +205,27 @@ pub struct SavedPlayer {
     pub tallies: Vec<(String, u32)>,
     /// Prayer points left; none in older saves, which come back full.
     pub prayer_points: Option<f32>,
+}
+
+/// Tallies quests count (`kind:name`, or `kind:station:name`) under the names items have
+/// now: what an older save counted as cooked rabbit counts as cooked small game, added to
+/// any it already had, so a quest half done keeps its progress.
+fn renamed_tallies(tallies: Vec<(String, u32)>, registry: &BlockRegistry) -> Vec<(String, u32)> {
+    let mut merged: Vec<(String, u32)> = Vec::with_capacity(tallies.len());
+    for (key, count) in tallies {
+        // The item's name is the key's last two parts (`base:cooked_rabbit`).
+        let name_at = key.rmatch_indices(':').nth(1).map_or(0, |(i, _)| i + 1);
+        let (prefix, name) = key.split_at(name_at);
+        let key = match registry.id(name) {
+            None if !prefix.is_empty() => registry.saved_id(name).map_or(key.clone(), |id| format!("{prefix}{}", registry.def(id).name)),
+            _ => key.clone(),
+        };
+        match merged.iter_mut().find(|(have, _)| *have == key) {
+            Some((_, n)) => *n = n.saturating_add(count),
+            None => merged.push((key, count)),
+        }
+    }
+    merged
 }
 
 /// A player file. Items are stored by name, like column blocks.
@@ -229,6 +253,8 @@ struct PlayerFile {
     home: Option<[f32; 3]>,
     #[serde(default)]
     bed: Option<[f32; 3]>,
+    #[serde(default)]
+    kindled: bool,
     /// What pouches hold, by item name.
     #[serde(default)]
     pouched: Vec<(String, u16)>,
@@ -404,7 +430,7 @@ impl WorldSave {
             .blocks
             .iter()
             .map(|(id, name)| {
-                let current = registry.id(name).unwrap_or_else(|| {
+                let current = registry.saved_id(name).unwrap_or_else(|| {
                     tracing::warn!("{}: unknown block `{name}` becomes air", path.display());
                     BlockId::AIR
                 });
@@ -523,7 +549,7 @@ impl WorldSave {
         }
         let health = Health { current: file.health.current.min(file.health.max), max: file.health.max };
         let yaw = if file.yaw.is_finite() { file.yaw } else { 0.0 };
-        Ok(Some(SavedPlayer { position, yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills, effects: file.effects, home: file.home, bed: file.bed, journal: merge_journal(file.journal, registry), quests_claimed: file.quests_claimed.unwrap_or_else(|| file.quests.clone()), quests: file.quests, tallies: file.tallies, prayer_points: file.prayer_points }))
+        Ok(Some(SavedPlayer { position, yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills, effects: file.effects, home: file.home, bed: file.bed, kindled: file.kindled, journal: merge_journal(file.journal, registry), quests_claimed: file.quests_claimed.unwrap_or_else(|| file.quests.clone()), quests: file.quests, tallies: renamed_tallies(file.tallies, registry), prayer_points: file.prayer_points }))
     }
 
     /// Moves the file of the player called `name` aside, as unreadable (`set_aside`).
@@ -559,6 +585,7 @@ impl WorldSave {
             effects: player.effects.clone(),
             home: player.home,
             bed: player.bed,
+            kindled: player.kindled,
             pouched: held.pouched.iter().map(|&(item, count)| (registry.def(item).name.clone(), count)).collect(),
             journal: player.journal.clone(),
             quests: player.quests.clone(),
@@ -581,6 +608,13 @@ fn merge_journal(entries: Vec<voxmar_engine::journal::Entry>, registry: &BlockRe
     for mut entry in entries {
         if entry.page == voxmar_engine::journal::Page::Plants
             && let Some(item) = registry.item_named(&entry.name)
+        {
+            entry.name = registry.def(item).name.clone();
+        }
+        // A fish whose item was renamed (shrimp, now minnows) counts as the new one.
+        if entry.page == voxmar_engine::journal::Page::Fish
+            && registry.id(&entry.name).is_none()
+            && let Some(item) = registry.saved_id(&entry.name)
         {
             entry.name = registry.def(item).name.clone();
         }
@@ -1073,6 +1107,7 @@ mod tests {
             effects: Vec::new(),
             home: None,
             bed: None,
+            kindled: true,
             journal: Vec::new(),
             quests: vec!["base:a".into(), "base:b".into()],
             quests_claimed: vec!["base:a".into()],
@@ -1115,6 +1150,7 @@ mod tests {
             effects: vec![("base:hearty".into(), 120.5)],
             home: Some([3.5, 70.0, -2.5]),
             bed: Some([1.5, 64.0, 9.5]),
+            kindled: true,
             journal: vec![voxmar_engine::journal::Entry { page: voxmar_engine::journal::Page::Fish, name: "base:trout".into(), stage: voxmar_engine::journal::Stage::Studied, count: 12, found: 400 }],
             quests: vec!["base:first_night".into(), "base:stone_in_hand".into()],
             quests_claimed: vec!["base:first_night".into()],
@@ -1187,6 +1223,7 @@ mod tests {
             effects: Vec::new(),
             home: None,
             bed: None,
+            kindled: true,
             journal: Vec::new(),
             quests: Vec::new(),
             quests_claimed: Vec::new(),
@@ -1199,6 +1236,39 @@ mod tests {
         assert_eq!(loaded.inventory.slots.iter().flatten().find(|s| s.item == herbs).map(|s| s.count), Some(7));
         assert_eq!(loaded.inventory.slots.iter().flatten().find(|s| s.item == registry.expect("base:cobblestone")).map(|s| s.count), Some(5));
         assert_eq!(loaded.inventory.pouched, vec![(herbs, 10)]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// An older save's raw and cooked rabbit and chicken (merged into small game, Oct 14)
+    /// come back as small game, in its slots, pouches, dropped items and drying racks, so
+    /// nothing a player held is lost.
+    #[test]
+    fn renamed_items_in_an_older_save_come_back_under_their_new_name() {
+        let dir = temp_dir("renamed");
+        let save = WorldSave::new(&dir);
+        let blocks = crate::test_content().blocks;
+        std::fs::create_dir_all(dir.join("players")).unwrap();
+        let file = r#"(position: (0.5, 80.0, 0.5), yaw: 0.0, flying: false, health: (current: 20, max: 20),
+            inventory: [Some(("base:raw_rabbit", 3)), Some(("base:raw_chicken", 2)), Some(("base:cooked_chicken", 4)), None],
+            pouched: [("base:raw_rabbit", 5), ("base:raw_chicken", 6)])"#;
+        std::fs::write(dir.join("players/hunter.ron"), file).unwrap();
+        let loaded = save.read_player("hunter", &blocks).unwrap().unwrap();
+        let (raw, cooked) = (blocks.expect("base:raw_small_game"), blocks.expect("base:cooked_small_game"));
+        let slots: Vec<(BlockId, u8)> = loaded.inventory.slots.iter().flatten().map(|s| (s.item, s.count)).collect();
+        assert_eq!(slots, [(raw, 3), (raw, 2), (cooked, 4)]);
+        assert_eq!(loaded.inventory.pouched, [(raw, 11)], "pouched rabbit and chicken add up");
+        assert_eq!(blocks.item_named("base:cooked_rabbit"), Some(cooked), "dropped items and station loads resolve the same way");
+        assert_eq!(blocks.saved_id("base:raw_chicken"), Some(raw), "and a column's block names");
+        assert_eq!(blocks.id("base:raw_rabbit"), None, "the old names are no items now");
+        assert!(!loaded.kindled, "a save from before hearths kept their fire is not yet kindled");
+        assert_eq!(blocks.item_named("base:cooked_shrimp"), Some(blocks.expect("base:cooked_minnow")), "shrimp are minnows now");
+        assert_eq!(blocks.item_named("base:raw_frog"), Some(blocks.expect("base:raw_small_game")), "frog is small game now");
+        assert_eq!(blocks.item_named("base:bronze_blend"), Some(blocks.expect("base:bronze_ingot")), "a blend is the bronze it smelted into");
+        // What quests counted under the old names counts under the new one.
+        let tallies = vec![("cooked:base:cooked_rabbit".into(), 2), ("cooked:base:cooked_chicken".into(), 1), ("cooked_at:campfire:base:cooked_rabbit".into(), 3), ("lit:base:crucible_kiln".into(), 1)];
+        let mut tallies = renamed_tallies(tallies, &blocks);
+        tallies.sort();
+        assert_eq!(tallies, [("cooked:base:cooked_small_game".to_owned(), 3), ("cooked_at:campfire:base:cooked_small_game".to_owned(), 3), ("lit:base:crucible_kiln".to_owned(), 1)]);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -1224,6 +1294,19 @@ mod tests {
         assert_eq!(merged.iter().filter(|e| e.page == Page::Plants && e.name.contains("oregano")).count(), 0);
         assert!(merged.iter().any(|e| e.name == "base:poppy" && e.stage == Stage::Studied), "an unmerged plant is kept");
         assert_eq!(merged.len(), 3, "{merged:?}");
+    }
+
+    /// Shrimp caught before they became minnows are minnows in the journal: one kind, the
+    /// counts added, so a fish tally or a kinds count does not lose or double them.
+    #[test]
+    fn journal_fish_that_were_renamed_fold_into_the_new_fish() {
+        use voxmar_engine::journal::{Entry, Page, Stage};
+        let registry = crate::test_content().blocks;
+        let fish = |name: &str, stage, count, found| Entry { page: Page::Fish, name: name.into(), stage, count, found };
+        let merged = merge_journal(vec![fish("base:raw_shrimp", Stage::Studied, 5, 40), fish("base:raw_minnow", Stage::Seen, 2, 90)], &registry);
+        assert_eq!(merged.len(), 1, "{merged:?}");
+        let minnow = &merged[0];
+        assert_eq!((minnow.name.as_str(), minnow.stage, minnow.count, minnow.found), ("base:raw_minnow", Stage::Studied, 7, 40));
     }
 
     #[test]
