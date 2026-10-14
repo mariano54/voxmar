@@ -508,8 +508,8 @@ struct Gate {
     weapon_fallen_since: Option<f32>,
     /// Blows the server has answered, as last counted.
     blows_seen: u32,
-    /// Blows landed, Ranged experience and cobblestone carried as the sling step began.
-    sling_from: (u32, u32, u32),
+    /// The sling step's run (`sling`).
+    sling: SlingRun,
     /// Whether the target readout has shown the struck creature's health.
     readout_seen: bool,
     /// Whether the creatures step could release its butterfly.
@@ -657,7 +657,7 @@ impl Gate {
             fallen_since: None,
             weapon_fallen_since: None,
             blows_seen: 0,
-            sling_from: (0, 0, 0),
+            sling: SlingRun::default(),
             readout_seen: false,
             butterfly: false,
             fall_judged: false,
@@ -6234,9 +6234,69 @@ fn weapon(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
 const SLING: &str = "base:sling";
 const SLING_LEVEL: u8 = 10;
 const SLING_STONES: u32 = 12;
+/// Seconds between shots (past the sling's 0.53 s cooldown), by the game's clock.
+const SLING_EVERY: f32 = 1.0;
+
+/// The sling step's run: what stood before it began, its bear, and its shots.
+#[derive(Default)]
+struct SlingRun {
+    /// Bears in view before the step summoned its own, which it never takes for it.
+    before: Vec<u32>,
+    bear: Option<u32>,
+    /// Blows landed, blows answered, Ranged experience and cobblestone as shooting began.
+    landed: u32,
+    blows: u32,
+    xp: u32,
+    stones: u32,
+    /// Shots clicked, frames the bear has been aimed at, and when the last shot went (the
+    /// game's clock, the server's).
+    shots: u32,
+    aimed: u32,
+    shot_at: Option<(f32, f32)>,
+    /// Whether the look step's wall stood on the pad, between the sling and its bear: taken
+    /// down for the shots and put back after.
+    wall: bool,
+}
+
+/// The look step's wall on the pad (`look`), which stands between the sling and its bear.
+fn look_wall(pad: IVec3, block: &str) -> String {
+    format!("fill {} {} {} {} {} {} {block}", pad.x - 1, pad.y, pad.z, pad.x + 1, pad.y + 2, pad.z)
+}
+
+/// What the sling step does next.
+#[derive(Debug, PartialEq)]
+enum SlingNext {
+    /// A stone hit and trained Ranged.
+    Hit,
+    /// Click once more.
+    Shoot,
+    /// A shot is on its way.
+    Wait,
+    Fail(String),
+}
+
+/// The sling step's verdict from counts alone, so its logic is tested without a session.
+/// Nothing fails before the first shot: every miss verdict counts shots answered, and an
+/// unanswered shot is judged by both clocks since it went, never by the stage's clock.
+fn sling_next(shots: u32, answered: u32, landed: u32, xp_gained: u32, stones: u32, unanswered_for: f32) -> SlingNext {
+    if landed > 0 && xp_gained > 0 {
+        return SlingNext::Hit;
+    }
+    if shots == 0 {
+        return SlingNext::Shoot;
+    }
+    if answered < shots {
+        return if unanswered_for > UNANSWERED { SlingNext::Fail(format!("shot {shots} went unanswered for {unanswered_for:.1} s ({answered} answered)")) } else { SlingNext::Wait };
+    }
+    if answered >= SLING_STONES || stones == 0 {
+        return SlingNext::Fail(format!("no stone hit in {answered} shots answered ({landed} landed, {xp_gained} Ranged xp, {stones} stones left)"));
+    }
+    SlingNext::Shoot
+}
 
 /// A sling at Ranged 10 against a held brown bear seven blocks off: shot a second apart
 /// until a stone hits, every shot answered spends one cobblestone, and the hit trains Ranged.
+/// Every way out (a hit, a failure, a bear that never came) sweeps the bears away.
 fn sling(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
     let Some(species) = world.resource::<Launch>().content.creatures.find(BEAR) else {
         gate.check("sling", Err(format!("no `{BEAR}` in the content")));
@@ -6244,11 +6304,27 @@ fn sling(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
         return;
     };
     let pad = gate.feet + IVec3::new(0, 0, 14);
-    let view = the_bear(world, gate, species);
     let stones = item_count(world, "base:cobblestone");
+    let (blows, landed) = {
+        let creatures = world.resource::<crate::creatures::Creatures>();
+        (creatures.blows, creatures.landed)
+    };
+    let view = {
+        let creatures = world.resource::<crate::creatures::Creatures>();
+        match gate.sling.bear {
+            Some(id) => creatures.views().find(|v| v.id == id).copied(),
+            None => creatures.views().find(|v| v.species == species && !gate.sling.before.contains(&v.id)).copied(),
+        }
+    };
     match gate.phase {
         0 => {
+            let before = world.resource::<crate::creatures::Creatures>().views().filter(|v| v.species == species).map(|v| v.id).collect();
+            let wall = world.resource::<ClientWorld>().block(pad + IVec3::Y).is_some_and(|b| !b.is_air());
+            gate.sling = SlingRun { before, wall, ..default() };
             let net = world.resource::<Net>();
+            if wall {
+                net.command(&look_wall(pad, "air"));
+            }
             net.command("gamemode creative");
             net.command(&format!("skill ranged {SLING_LEVEL}"));
             net.command(&format!("give {} 1", SLING.trim_start_matches("base:")));
@@ -6256,62 +6332,83 @@ fn sling(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             net.command(&format!("summon {} 1 {} {} {}", BEAR.trim_start_matches("base:"), pad.x, pad.y, pad.z + 1));
             // Seven blocks back from it, past any blow's reach and inside the sling's.
             net.command(&format!("tp {} {} {}", pad.x as f32 + 0.5, pad.y, pad.z as f32 - 6.5));
-            gate.feel = FeelRun::default();
             gate.advance(now);
         }
         1 => {
-            let ready = skill_level(world, "core:ranged").0 >= SLING_LEVEL && view.is_some() && stones >= SLING_STONES;
+            // Its own bear in sight, the sling in hand at the level that wields it, and the
+            // stones given (on top of any the player had).
+            let open = world.resource::<ClientWorld>().block(pad + IVec3::Y).is_none_or(|b| b.is_air());
+            let ready = skill_level(world, "core:ranged").0 >= SLING_LEVEL && view.is_some() && stones >= SLING_STONES && open;
             if ready && select(world, SLING) {
+                let bear = view.map(|v| v.id);
+                info!("gate: sling in hand, bear {bear:?} in sight, {stones} cobblestone, Ranged {}", skill_level(world, "core:ranged").0);
                 world.resource::<Net>().command(&format!("creatures hold {}", BEAR.trim_start_matches("base:")));
-                let landed = world.resource::<crate::creatures::Creatures>().landed;
-                gate.blows_seen = world.resource::<crate::creatures::Creatures>().blows;
-                gate.sling_from = (landed, skill_level(world, "core:ranged").1, stones);
+                let xp = skill_level(world, "core:ranged").1;
+                gate.sling = SlingRun { before: std::mem::take(&mut gate.sling.before), bear, landed, blows, xp, stones, ..default() };
                 gate.advance(now);
-            } else if gate.server_in_phase() > 10.0 {
-                gate.check("sling", Err(format!("the sling, Ranged {SLING_LEVEL}, the stones or the bear never came (bear seen: {}, stones {stones})", view.is_some())));
+            } else if gate.server_in_phase().min(now - gate.phase_since) > 10.0 {
+                let held = holding(world, SLING).1;
+                gate.check("sling", Err(format!("the sling, Ranged {SLING_LEVEL}, the stones, the bear or a clear pad never came (bear seen: {}, stones {stones}, sling in slot {held:?}, pad open {open})", view.is_some())));
                 end_weapon(world, gate, now);
             }
         }
         2 => {
-            let (blows, landed) = {
-                let creatures = world.resource::<crate::creatures::Creatures>();
-                (creatures.blows, creatures.landed)
-            };
-            if blows > gate.blows_seen {
-                gate.blows_seen = blows;
-                gate.phase_since = now;
-                gate.phase_server = gate.server_now;
-            }
-            let (landed_from, xp_from, stones_from) = gate.sling_from;
-            let xp = skill_level(world, "core:ranged").1;
             let Some(view) = view else {
                 gate.check("sling shot", Err("the bear went out of sight".into()));
                 end_weapon(world, gate, now);
                 return;
             };
-            if landed > landed_from && xp > xp_from {
-                // Every shot the server answered spent a stone: the hit, and any misses before it.
-                let spent = stones_from.saturating_sub(stones);
-                let distance = world.resource::<LocalPlayer>().eye().distance(view.position + Vec3::Y * 0.6);
-                let result = if spent >= 1 {
-                    Ok(format!("a stone hit from {distance:.1} blocks; Ranged xp {xp_from} -> {xp}, {spent} stones spent"))
-                } else {
-                    Err(format!("a stone hit from {distance:.1} blocks, but no cobblestone was spent ({stones} left)"))
-                };
-                gate.check("sling shot", result);
-                end_weapon(world, gate, now);
-            } else if stones == 0 || gate.server_in_phase() > UNANSWERED {
-                gate.check("sling shot", Err(format!("no stone hit: {} landed, Ranged xp {xp_from} -> {xp}, {stones} stones left", landed - landed_from)));
-                end_weapon(world, gate, now);
-            } else {
-                // Held still, aimed at its middle, and shot a second apart, past the sling's cooldown.
-                key(world, KeyCode::KeyW, false);
-                aim_at(world, view.position + Vec3::Y * 0.6);
-                let shoot = ((now - gate.since) / 1.0).fract() < 0.1;
-                mouse(world, MouseButton::Left, shoot);
+            key(world, KeyCode::KeyW, false);
+            aim_at(world, view.position + Vec3::Y * 0.6);
+            gate.sling.aimed += 1;
+            let run = &gate.sling;
+            let xp = skill_level(world, "core:ranged").1;
+            let unanswered = run.shot_at.map_or(0.0, |(game, server)| (now - game).min(gate.server_now - server));
+            let next = sling_next(run.shots, blows.saturating_sub(run.blows), landed.saturating_sub(run.landed), xp.saturating_sub(run.xp), stones, unanswered);
+            // The press of the shot before is let go first, so each shot is its own click.
+            mouse(world, MouseButton::Left, false);
+            match next {
+                SlingNext::Hit => {
+                    // Every shot the server answered spent a stone: the hit, and any misses before it.
+                    let spent = run.stones.saturating_sub(stones);
+                    let distance = world.resource::<LocalPlayer>().eye().distance(view.position + Vec3::Y * 0.6);
+                    let result = if spent >= 1 {
+                        Ok(format!("a stone hit from {distance:.1} blocks in {} shots; Ranged xp {} -> {xp}, {spent} stones spent", run.shots, run.xp))
+                    } else {
+                        Err(format!("a stone hit from {distance:.1} blocks, but no cobblestone was spent ({stones} left)"))
+                    };
+                    gate.check("sling shot", result);
+                    end_weapon(world, gate, now);
+                }
+                SlingNext::Fail(why) => {
+                    let distance = world.resource::<LocalPlayer>().eye().distance(view.position + Vec3::Y * 0.6);
+                    gate.check("sling shot", Err(format!("{why}; the bear {distance:.1} blocks off")));
+                    end_weapon(world, gate, now);
+                }
+                SlingNext::Shoot if run.aimed > 2 && run.shot_at.is_none_or(|(game, _)| now - game >= SLING_EVERY) => {
+                    mouse(world, MouseButton::Left, true);
+                    gate.sling.shots += 1;
+                    gate.sling.shot_at = Some((now, gate.server_now));
+                    // What the crosshair is on as it shoots, so a shot that never goes says why.
+                    let target = world.resource::<crate::interact::Target>();
+                    let distance = world.resource::<LocalPlayer>().eye().distance(view.position + Vec3::Y * 0.6);
+                    info!(
+                        "gate: sling shot {} at bear {} {distance:.1} blocks off: crosshair on creature {:?}, block {:?}; {} answered",
+                        gate.sling.shots,
+                        view.id,
+                        target.creature,
+                        target.block_hit.map(|hit| (hit.block, hit.distance)),
+                        blows.saturating_sub(gate.sling.blows)
+                    );
+                }
+                SlingNext::Shoot | SlingNext::Wait => {}
             }
         }
         _ => {
+            // The look step's wall back where it stood, then the bears swept away.
+            if std::mem::take(&mut gate.sling.wall) {
+                world.resource::<Net>().command(&look_wall(pad, "stone"));
+            }
             if sweep_bears(world, gate, species, pad) {
                 gate.next(Step::Feel, now);
             }
@@ -9048,6 +9145,24 @@ fn finish(world: &mut World, gate: &Gate, now: f32) {
 
 #[cfg(test)]
 mod tests {
+    use super::{sling_next, SlingNext, SLING_STONES, UNANSWERED};
+
+    #[test]
+    fn the_sling_step_never_fails_before_a_shot_and_judges_misses_by_shots_answered() {
+        // The first frame of shooting: however long the stage has stood, it shoots.
+        assert_eq!(sling_next(0, 0, 0, 0, SLING_STONES, 0.0), SlingNext::Shoot);
+        assert_eq!(sling_next(0, 0, 0, 0, SLING_STONES, UNANSWERED * 10.0), SlingNext::Shoot);
+        // A shot on its way waits, then fails only once unanswered past UNANSWERED.
+        assert_eq!(sling_next(1, 0, 0, 0, SLING_STONES - 1, 1.0), SlingNext::Wait);
+        assert!(matches!(sling_next(1, 0, 0, 0, SLING_STONES - 1, UNANSWERED + 1.0), SlingNext::Fail(_)));
+        // Answered misses shoot again, until every stone is spent.
+        assert_eq!(sling_next(3, 3, 0, 0, SLING_STONES - 3, 0.5), SlingNext::Shoot);
+        assert!(matches!(sling_next(SLING_STONES, SLING_STONES, 0, 0, 0, 0.5), SlingNext::Fail(_)));
+        // A hit needs the landing and the experience both.
+        assert_eq!(sling_next(2, 2, 1, 20, SLING_STONES - 2, 0.0), SlingNext::Hit);
+        assert_eq!(sling_next(2, 2, 1, 0, SLING_STONES - 2, 0.0), SlingNext::Shoot);
+    }
+
     use super::*;
 
     /// A shot of grey pixels, `grey(x, y)` each.
