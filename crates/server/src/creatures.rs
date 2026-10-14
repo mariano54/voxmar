@@ -541,12 +541,23 @@ impl Server {
                 // new pen), its home goes with it: once the player puts the food away it
                 // stays where it was led rather than walk back. A land animal led through water
                 // keeps the last dry place as its home.
-                let wading = species.def.habitat.water == Water::Land && (creature.body.in_water || wet);
+                let land = species.def.habitat.water == Water::Land;
+                let wading = land && (creature.body.in_water || wet || !creature.body.on_ground);
                 if situation.errand.is_none() && !wading && creature.mind.doing.is_some_and(|i| species.modules[i].0.name() == "tempted") {
                     creature.home = creature.body.position;
                 }
+                let wandering = creature.mind.doing.is_some_and(|i| species.modules[i].0.name() == "wander");
                 creature.decision = decision;
                 creature.changed = true;
+                // A land animal does not wander off into a lake: a stroll that would end over
+                // water is dropped, and the next look picks another.
+                let mut decision = decision;
+                let ground = Ground::of(self);
+                if land && wandering && decision.goal.is_some_and(|g| ground.water_at(g.floor().as_ivec3()) || ground.water_at(g.floor().as_ivec3() - IVec3::Y)) {
+                    decision.goal = None;
+                    let creature = self.creatures.live.get_mut(&id).expect("listed");
+                    (creature.mind.goal, creature.decision) = (None, decision);
+                }
                 actions.push((id, decision));
             }
             self.move_creature(id, dt);
@@ -667,7 +678,10 @@ impl Server {
         // Once making for it, it keeps on through the shallows until it is out of the water.
         let land = !held && species.def.habitat.water == Water::Land && body.in_water;
         let mut looked_for_shore = false;
-        let deep = land && Ground::of(self).water_at(body.position.floor().as_ivec3() - IVec3::Y);
+        // Out of its depth is two blocks of water under it: bobbing at the top of a ford one
+        // deep, its feet a little over the water, it is still in its depth.
+        let surface = (body.position + Vec3::Y * 0.5).floor().as_ivec3();
+        let deep = land && (1..=2).all(|down| Ground::of(self).water_at(surface - IVec3::Y * down));
         let shore = if !deep && !(land && creature.shore.is_some()) {
             None
         } else if creature.shore_at.is_some_and(|at| self.tick < at + TICKS_PER_SECOND as u64) {
@@ -732,7 +746,8 @@ impl Server {
                 let off = |cell: &IVec3| (cell.as_vec3() + Vec3::new(0.5, 0.0, 0.5) - body.position).with_y(0.0).length();
                 while let Some(cell) = cells.first() {
                     // Level with it: a cell a block up is not reached until it has climbed.
-                    let level = (cell.y as f32 - body.position.y).abs() < 0.6;
+                    // In water its feet bob at the surface, a block over a ford's cells.
+                    let level = (-1.2..0.6).contains(&(cell.y as f32 - body.position.y));
                     if !(level && (off(cell) < 0.6 || cells.get(1).is_some_and(|after| off(after) < 1.0))) {
                         break;
                     }
@@ -1020,6 +1035,10 @@ impl Server {
         }
         if !calm {
             creature.mind.hurt(species, Some(player), creature.health as f32 / species.def.health as f32);
+            // A blow, not a bleed, keeps a hunter past its leash fighting (`Memory::Struck`).
+            if !matches!(blow, voxmar_engine::combat::Blow::Bleed) {
+                creature.mind.remember(brain::Memory::Struck, brain::STRUCK_LATELY);
+            }
         }
         // RuneScape: four experience a point of damage in the style's skill, a third of
         // that in Hitpoints; by the species' share.
@@ -2886,13 +2905,9 @@ mod herd_tests {
                     }
                 }
                 let id = put(&mut server, name, c.as_vec3() + Vec3::new(-1.5, -1.5, 0.5), Vec3::X);
-                // In the water over the deep part: its bed two down is water too. (Not water
-                // under its feet: climbing out of the shallows it is in the water with the
-                // shallows' top below it.)
                 let deep = |server: &Server| {
                     let body = &server.creatures.live[&id].body;
-                    let feet = body.position.floor().as_ivec3();
-                    body.in_water && Ground::of(server).water_at(IVec3::new(feet.x, c.y - 2, feet.z))
+                    body.in_water && Ground::of(server).water_at(body.position.floor().as_ivec3() - IVec3::Y)
                 };
                 let out = (0..12 * TICKS_PER_SECOND as u64).find(|_| {
                     server.tick += 1;
@@ -3118,6 +3133,34 @@ mod chase_tests {
                 struck |= server.creatures.live[&id].decision.attack.is_some();
             }
             assert!(struck, "{name} never struck back past its leash: {}", doing(&server, id));
+        }
+    }
+
+    /// The same, but bleeding from a flourish with the player gone: bleeding is no blow, and
+    /// it goes home. Before: each bleed tick counted as a fresh blow and it chased on.
+    #[test]
+    fn a_hunter_past_its_leash_bleeding_goes_home() {
+        for name in ["base:wolf", "base:brown_bear", "base:badger"] {
+            let mut server = crate::test_server();
+            let c = pen(&mut server, 12);
+            let at = c.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
+            let player = join(&mut server, at + Vec3::new(1.6, 0.0, 0.0));
+            let id = put(&mut server, name, at, Vec3::X);
+            let leash = server.content.creatures.get(server.creatures.live[&id].species).def.leash;
+            server.creatures.live.get_mut(&id).unwrap().home = at - Vec3::X * (leash + 10.0);
+            server.hurt_creature(player, id, 0, None, voxmar_engine::combat::Blow::Plain);
+            // The player steps back out of its reach and on; it bleeds each second.
+            server.players.get_mut(&player).unwrap().position = at + Vec3::new(9.0, 0.0, 0.0);
+            for t in 0..8 * TICKS_PER_SECOND as u64 {
+                server.tick += 1;
+                if t % TICKS_PER_SECOND as u64 == 0 {
+                    server.hurt_creature(player, id, 0, None, voxmar_engine::combat::Blow::Bleed);
+                }
+                server.think_and_move();
+                heal(&mut server, player);
+            }
+            let doing = doing(&server, id);
+            assert!(doing.starts_with("return_home"), "{name} bleeding past its leash is still at it: {doing}");
         }
     }
 }
@@ -3439,6 +3482,37 @@ mod review_tests {
         assert_eq!(creature.way.first(), Some(&up[0]), "it passed the cell up the step from below");
     }
 
+    /// A wall with its doorway (two across, wide enough for a crocodile) sunk a block and
+    /// flooded (a ford): a capybara, a crocodile and a mouflon on a way through it follow it
+    /// across. Before: the bobbing body's feet stood at the water's top, a block over the
+    /// ford's cells, so no cell counted as reached and it hovered at the first (a crocodile
+    /// stood still 230 of 400 ticks); and a mouflon bobbing there counted itself out of its
+    /// depth, made for the shore behind it and pressed the wall.
+    #[test]
+    fn a_way_through_a_ford_is_followed_across() {
+        for name in ["base:capybara", "base:crocodile", "base:mouflon"] {
+            let mut server = crate::test_server();
+            let c = pen(&mut server, 14);
+            wall(&mut server, (-13..=13).filter(|z| !(3..=4).contains(z)).map(|z| c + IVec3::new(1, 0, z)), 3);
+            let (stone, water) = (server.content.blocks.expect("base:stone"), server.content.blocks.expect("base:water"));
+            for (x, z) in (-1..=3).flat_map(|x| (3..=4).map(move |z| (x, z))) {
+                server.world.set_block(c + IVec3::new(x, -1, z), water);
+                server.world.set_block(c + IVec3::new(x, -2, z), stone);
+            }
+            let id = put(&mut server, name, c.as_vec3() + Vec3::new(-3.5, 0.0, 0.5), Vec3::X);
+            let goal = c.as_vec3() + Vec3::new(5.5, 0.0, 0.5);
+            let walk = server.content.creatures.get(server.creatures.live[&id].species).def.movement.walk;
+            server.tick = 1000;
+            let across = (0..10 * TICKS_PER_SECOND as u64).find(|_| {
+                server.tick += 1;
+                server.creatures.live.get_mut(&id).unwrap().decision = Decision { goal: Some(goal), speed: walk, ..Default::default() };
+                server.move_creature(id, 1.0 / TICKS_PER_SECOND as f32);
+                server.creatures.live[&id].body.position.x > c.x as f32 + 2.5
+            });
+            assert!(across.is_some(), "{name} never got across the ford: at {}", server.creatures.live[&id].body.position - c.as_vec3());
+        }
+    }
+
     /// A mouflon in the middle of a lake two deep with no shore in its range looks for one
     /// once a second, not every tick. Before: a search that found nothing was tried again
     /// the next tick.
@@ -3499,7 +3573,8 @@ mod review_tests {
             let creature = &server.creatures.live[&id];
             waded |= creature.body.in_water;
             let home = creature.home.floor().as_ivec3();
-            assert!(!Ground::of(&server).water_at(home), "its home went into the water at {} (tick {t})", creature.home - c.as_vec3());
+            let ground = Ground::of(&server);
+            assert!(!ground.water_at(home) && !ground.water_at(home - IVec3::Y), "its home went over the water at {} (tick {t})", creature.home - c.as_vec3());
         }
         assert!(waded, "the fixture means it to be led through the pool: at {}", server.creatures.live[&id].body.position - c.as_vec3());
     }

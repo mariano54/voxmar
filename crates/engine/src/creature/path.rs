@@ -171,16 +171,25 @@ mod tests {
     }
 
     /// Flat ground with a pond two deep sunk in it (its bed at y = -2, x and z in 0..4),
-    /// and a pit four deep beside it (x in 0..4, z in -4..0).
+    /// shelving to a block deep along its far side (x = 3), and a pit four deep beside it
+    /// (x in 0..4, z in -4..0). Along the bed and up the shelf is the short way across.
     struct Pond;
 
     impl Surroundings for Pond {
         fn solid(&self, c: IVec3) -> bool {
             let sunk = (0..4).contains(&c.x) && (-4..4).contains(&c.z);
-            if sunk && c.z < 0 { c.y < -4 } else if sunk { c.y < -2 } else { c.y < 0 }
+            if sunk && c.z < 0 {
+                c.y < -4
+            } else if sunk && c.x == 3 {
+                c.y < -1
+            } else if sunk {
+                c.y < -2
+            } else {
+                c.y < 0
+            }
         }
         fn water(&self, c: IVec3) -> bool {
-            (0..4).contains(&c.x) && (0..4).contains(&c.z) && (-2..0).contains(&c.y)
+            (0..4).contains(&c.x) && (0..4).contains(&c.z) && (-2..0).contains(&c.y) && !self.solid(c)
         }
     }
 
@@ -189,6 +198,7 @@ mod tests {
         let way = find(&Pond, &WOLF, IVec3::new(-2, 0, 2), IVec3::new(6, 0, 2)).expect("a way round the pond");
         let mut at = IVec3::new(-2, 0, 2);
         for &cell in &way {
+            assert!(!Pond.water(cell + IVec3::Y), "it went along the pond's bed: {way:?}");
             assert!(!Pond.water(cell), "it went through the pond: {way:?}");
             let d = cell - at;
             if d.x != 0 && d.z != 0 {
