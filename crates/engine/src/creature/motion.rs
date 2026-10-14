@@ -183,7 +183,10 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
         return true;
     };
     let ahead = body.size.0 + body.velocity.with_y(0.0).length() * 0.3;
-    let wary = water == Water::Land && !body.in_water;
+    // A land animal shies from deep water (two deep) unless it is already out of its depth:
+    // wading in the shallows, it does not walk on into the deep.
+    let feet = body.position.floor().as_ivec3();
+    let wary = water == Water::Land && !(body.in_water && world.water(feet - IVec3::Y));
     // Along the way it really goes, sliding along a wall as its box would, a step at a
     // time; ahead of its middle by half its width.
     let samples = (ahead / 0.4).ceil().max(1.0) as i32;
@@ -522,6 +525,23 @@ mod tests {
         assert!(open(&Edge { drop: 1, wet: 1 }, Water::Land), "a puddle was a wall");
         assert!(!open(&Edge { drop: 3, wet: 3 }, Water::Land), "a land animal walked into deep water");
         assert!(open(&Edge { drop: 3, wet: 3 }, Water::Amphibious), "a duck kept out of the pond");
+        // Wading in the shallows, it keeps out of the deep as on the bank; out of its depth,
+        // nothing is worse ahead.
+        struct Shelf;
+        impl Surroundings for Shelf {
+            fn solid(&self, cell: IVec3) -> bool {
+                cell.y < if cell.x < 3 { -1 } else { -3 }
+            }
+            fn water(&self, cell: IVec3) -> bool {
+                (-3..0).contains(&cell.y) && !self.solid(cell)
+            }
+        }
+        let mut wading = Body::new(Vec3::new(2.6, -1.0, 0.5), yaw_of(Vec3::X), (0.6, 0.8));
+        (wading.on_ground, wading.in_water) = (true, true);
+        assert!(!open_way(&wading, &Shelf, &movement, Water::Land, Vec3::X), "wading, it walked on into deep water");
+        let mut swimming = Body::new(Vec3::new(3.5, -2.0, 0.5), yaw_of(Vec3::X), (0.6, 0.8));
+        swimming.in_water = true;
+        assert!(open_way(&swimming, &Shelf, &movement, Water::Land, Vec3::X), "out of its depth, deeper water was a wall");
         // Steered at the edge, it goes along it; boxed in by cliffs, it stands.
         let cliff = Edge { drop: 8, wet: 0 };
         let (heading, side) = steer(&body, &cliff, &movement, Water::Land, Vec3::X, 0.0);
