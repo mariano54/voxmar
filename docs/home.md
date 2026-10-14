@@ -271,6 +271,21 @@ A mod's rain barrel or cistern is the same tag. Tests: `a_well_waters_the_field_
 dry plot ("well", shot "well"). The Farm quest A Well by the Field (after A Field of Gold)
 asks for one made and set down where it keeps tilled ground moist (`Watering`).
 
+## The hearth is a fire
+
+Lit, the Homestead Hearth cooks what a campfire cooks: raw meat, fish or an egg in hand, a right
+click on the standing hearth (its ring and chimney whole, `station_stands`) cooks one, with an
+empty hand still lighting it. The Cottage Stove (Farm, five cobblestone round a campfire) is
+the campfire built in: it cooks the same, holds a cooking pot (`hob`), and warms and lights the
+room as a fire does (`heat`, `fire`, light 12, which survival.ron's `heat_emission` counts),
+smoking from its flue. So the home's own fire is where supper is made, and nobody keeps a
+campfire on the floor. Data only: the `campfire` tag the cooking recipes ask for, on the
+hearthstone and the stove (blocks_tools.ron, blocks_furnishings.ron); a loose hearthstone
+does not cook, and says what the hearth lacks. Cooking at either counts as campfire cooking
+for quests (First Night). Test `the_hearth_and_the_stove_cook_as_a_campfire_does`; the gate's
+Cook step rings its hearthstone with stone and cooks small game at it ("hearth: cooks"), then at a
+stove ("stove: cooks").
+
 ## Smoke over home
 
 The Homestead Hearth's chimney smokes from its top while the hearth below it is lit, a
@@ -331,6 +346,21 @@ any block tagged `drinking_water` (water itself, a well, a feed trough) meets it
 is watered by the trough that feeds it, a Construction 4 piece any age can make, and a mod's
 water station is a tag on its block. Loading refuses creatures when no block carries
 `drinking_water` (`check_drink`). Test: `a_pen_drinks_from_water_a_well_or_a_trough`.
+
+## Moving the furniture
+
+A home is rearranged, not rebuilt: whatever a player placed to furnish it (the wood
+furniture, the dyed cloth, the crockery, a candle) comes back whole when broken, so a bed
+moved to the other wall, or a whole home moved to a better spot, costs nothing. It is one
+tag: a block tagged `furnishing` gives its drop only from a cell a player set
+(`Server::placed`, kept in the save), and one a village placed gives nothing, as its props
+do (design draft 80), so a settlement is still no free store of goods. Since a piece drops
+itself, breaking one is no way to make planks or dye, and a placed cell teaches no skill
+when broken. Loading refuses a `furnishing` that drops nothing. Tests: the engine's
+`a_placed_piece_gives_itself_back_and_a_village_one_nothing`, the server's
+`a_village_rug_gives_nothing_but_a_players_comes_back_whole_across_restarts` (and the crate
+stack's). The gate's Nest step places a rug and a stool, breaks them and finds both back in
+the pack ("furnishings: come back").
 
 ## Quest hooks (written, in base/quests.ron)
 
