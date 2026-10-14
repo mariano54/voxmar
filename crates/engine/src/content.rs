@@ -719,8 +719,11 @@ mod tests {
             };
             let cooked = || {
                 let r = content.cooking.iter().map(|(_, r)| r).filter(|r| r.output == id && match way { Way::CookedAt(station) => r.def.station == station, _ => true }).min_by_key(|r| r.def.level)?;
-                let inputs = content.cooking.iter().filter(|(_, other)| std::ptr::eq(*other, r)).map(|(input, _)| input).collect();
-                Some(Batch { skill: r.skill, level: r.def.level, xp: r.def.xp, count: 1, cells: vec![inputs], station: Some(r.def.station.clone()) })
+                let inputs: Vec<BlockId> = content.cooking.iter().filter(|(_, other)| std::ptr::eq(*other, r)).map(|(input, _)| input).collect();
+                // `uses` of the held input, then each item it takes besides, one cell an item.
+                let held = std::iter::repeat_n(inputs, r.def.uses as usize);
+                let with = r.with.iter().flat_map(|&(item, n)| std::iter::repeat_n(vec![item], n as usize));
+                Some(Batch { skill: r.skill, level: r.def.level, xp: r.def.xp, count: r.def.count as u32, cells: held.chain(with).collect(), station: Some(r.def.station.clone()) })
             };
             match way {
                 Way::Grid => grid(),
