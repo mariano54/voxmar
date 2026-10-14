@@ -89,8 +89,9 @@ mesa-vulkan-drivers`), as a look: frames take half a second, so the steps that t
    with messages waiting, and a 600 ms stall as every other action is proposed) in the
    steps that play against it: placing, digging, breaking and the fight's guard and dodge
    (`Gate::lagging`: the fight lags from the bear's coming through its tries, not its summons
-   and sweep, and provokes no blow until the lag has held `FEEL_LAG_SETTLE` server seconds, so
-   the round trip the server judges guards by has settled before the block is searched); the
+   and sweep, and provokes no blow until `FEEL_LAG_SETTLE` pings have been answered under the
+   lag, a lagging server pinging every tick, so the round trip the server judges guards by has
+   settled before the block is searched); the
    rest run at full speed, three times sooner. It also
    fails when placing or digging hitches (a frame over 150 ms, or six times the median: the
    first break once compiled three pipelines on the spot); on a machine asked for more
