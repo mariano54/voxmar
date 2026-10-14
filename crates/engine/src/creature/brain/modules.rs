@@ -507,8 +507,11 @@ impl Module for Hunt {
             return Want::at(2.5 * ctx.mind.anger.max(personality.aggression), *p);
         }
         let radius = self.radius * (0.6 + 0.4 * ctx.lively) * (0.7 + 0.6 * ctx.mind.hunger) * (0.7 + 0.6 * personality.aggression);
+        // RuneScape's rules leave be a player who has settled long in one place, or one of
+        // more than twice the creature's level; a boss always fights.
         let prey = ctx.at.players.iter().find(|p| {
-            !p.creative && !p.tolerated && !p.friend && ctx.distance(p.position) < radius.min(ctx.sight) && p.combat_level as u16 <= def.level as u16 * 2 + 1
+            !p.creative && !p.friend && ctx.distance(p.position) < radius.min(ctx.sight)
+                && (def.boss || (!p.tolerated && p.combat_level as u16 <= def.level as u16 * 2 + 1))
         })?;
         Want::at(2.5 * personality.aggression, *prey)
     }
