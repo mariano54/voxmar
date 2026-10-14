@@ -75,6 +75,7 @@ impl Plugin for FightFxPlugin {
             .add_systems(Update, play.after(Reacted).in_set(Audible))
             // What `react` set going shows the same frame.
             .add_systems(Update, (kick_camera.after(crate::player::follow_camera), vignette).after(Reacted).run_if(in_state(Screen::InGame)))
+            .add_systems(OnEnter(Screen::InGame), warm_markers)
             .add_systems(OnExit(Screen::InGame), reset);
     }
 }
@@ -453,6 +454,14 @@ fn tell(
             pending.0.push((at, sound, id, blow));
         }
     }
+}
+
+/// A tell's ground ring and disc compile as the world loads (`render::warm`), not the first
+/// time a boss winds up a blow that reaches past its body: drawn as `tell` draws them, see-
+/// through, unlit and two-sided.
+fn warm_markers(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>) {
+    let material = materials.add(StandardMaterial { base_color: Color::WHITE.with_alpha(0.0), unlit: true, alpha_mode: AlphaMode::Blend, cull_mode: None, ..default() });
+    crate::render::warm::warm(&mut commands, meshes.add(annulus(1.0, 0.5)), material, false, DespawnOnExit(Screen::InGame));
 }
 
 /// A flat ring on the ground, `outer` blocks across from its middle to its edge and open
