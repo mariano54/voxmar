@@ -9065,7 +9065,7 @@ fn boss_tells(world: &mut World, gate: &mut Gate) {
         2 => {
             let before = |name: &str| gate.feel_asked.get(name).copied().unwrap_or(0);
             let grew = asked(world, "tell.grasp") > before("tell.grasp");
-            let waiting = world.resource::<Pending>().0.iter().find(|(_, name, _)| name == "tell.grasp").map(|(due, ..)| due - now);
+            let waiting = world.resource::<Pending>().0.iter().find(|(_, name, ..)| name == "tell.grasp").map(|(due, ..)| due - now);
             let shown = rings(world);
             let ring = shown.iter().find(|m| !m.fill);
             let result = if !grew {

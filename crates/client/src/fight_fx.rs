@@ -284,10 +284,10 @@ pub struct Heard {
 struct Queued(Vec<(String, f32, f32, bool)>);
 
 /// Tells' sounds waiting for their moment (app seconds), so each one's loudest lands with
-/// its blow, and whose wind-up they tell: one whose wind-up ended first (the creature died,
-/// went, or struck sooner) is dropped.
+/// its blow, whose wind-up they tell and when that wind-up ends (its blow): one whose
+/// wind-up ended well before its blow (the creature died, went, or stopped) is dropped.
 #[derive(Resource, Default, Debug)]
-pub struct Pending(pub Vec<(f32, String, u32)>);
+pub struct Pending(pub Vec<(f32, String, u32, f32)>);
 
 /// A ring on the ground telling how far a boss's blow reaches: whose, when its wind-up
 /// began, how long it lasts, how far it reaches, and whether this is the filling disc
@@ -393,7 +393,7 @@ fn tell(
     for told in told {
         let Some(tell) = look.tells.get(&told.key) else { continue };
         *heard.asked.entry(tell.sound.clone()).or_default() += 1;
-        pending.0.push((now + (told.windup - tell.peak).max(0.0), tell.sound.clone(), told.id));
+        pending.0.push((now + (told.windup - tell.peak).max(0.0), tell.sound.clone(), told.id, now + told.windup));
         let Some(marker) = tell.marker else { continue };
         let Some((_, at, _)) = creatures.body(told.id) else { continue };
         heard.markers += 1;
@@ -413,15 +413,17 @@ fn tell(
     }
     // A wind-up that stops near its end was the blow: a tell still to come plays with it.
     // One that stops sooner, or whose boss falls or goes, was cut short: its tell is dropped.
-    for (at, sound, id) in std::mem::take(&mut pending.0) {
+    // Judged by the time left to the blow, not to the cue (which starts its sound's peak
+    // before the blow).
+    for (at, sound, id, blow) in std::mem::take(&mut pending.0) {
         let struck = !creatures.winding(id);
-        if struck && !(creatures.standing(id) && at - now <= BLOW_SLACK) {
+        if struck && !(creatures.standing(id) && blow - now <= BLOW_SLACK) {
             continue;
         }
         if struck || at <= now {
             queued.0.push((sound, 1.0, 1.0, true));
         } else {
-            pending.0.push((at, sound, id));
+            pending.0.push((at, sound, id, blow));
         }
     }
 }
