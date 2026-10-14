@@ -902,10 +902,13 @@ writes about twenty seconds of each of seventeen typical places to `target/ambie
 
 What the player does is heard as they do it: eating, crafting at the grid, loading a home
 station, lighting a fire or a kiln, opening a chest or a door, putting food on to cook,
-lying down to sleep and casting a line. `sounds.ron`'s `actions` gives each action, by name,
-its clips (one picked at random, at a slightly different pitch) and a volume, around the
-loudness of placing a block; a later package replaces an action's sound, and the launch
-fails on one for an action the content lacks. The clips, and the pop of an item picked up
+lying down to sleep, casting a line, feeding an animal, emptying a pouch, feeding a machine,
+picking a lock, praying at an altar, spreading fertiliser and throwing something down.
+`sounds.ron`'s `actions` gives each action, by name, its clips (one picked at random, at a
+slightly different pitch) and a volume, around the loudness of placing a block, or says it is
+`silent` on purpose or `heard` elsewhere (by the block touched, the interface or the fight). A
+later package replaces an action's sound; the launch fails on a sound for an action the content
+lacks, and on an action, a mod's too, that says nothing of how it sounds. The clips, and the pop of an item picked up
 when Minecraft's own sounds are off, are our own, synthesized by `tools/generate_sfx.py`.
 
 Creatures are heard: footsteps on whatever block they walk, bleats, grunts and clucks while

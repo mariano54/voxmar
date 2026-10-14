@@ -28,7 +28,9 @@
     // off.
     pickup: ["sounds/pickup_1.ogg", "sounds/pickup_2.ogg", "sounds/pickup_3.ogg", "sounds/pickup_4.ogg"],
     // What the player does, heard as they do it, by action: about as loud as placing a
-    // block, times `volume`. A package that names an action replaces its sound.
+    // block, times `volume`. A package that names an action replaces its sound. Every
+    // action says how it sounds, or the game does not start: its `sounds`, `silent: true`,
+    // or `heard` elsewhere (Block, Interface or Combat).
     actions: {
         // Three bites and their chews.
         "core:eat": (sounds: ["sounds/eat_1.ogg", "sounds/eat_2.ogg", "sounds/eat_3.ogg"], volume: 0.8),
@@ -49,6 +51,43 @@
         "base:sleep": (sounds: ["sounds/sleep_1.ogg"], volume: 0.7),
         // A line whipped out over the water (the plop is the water's own).
         "base:fish": (sounds: ["sounds/cast_1.ogg", "sounds/cast_2.ogg"], volume: 0.7),
+        // A handful of grain shaken out to an animal, and a pat.
+        "base:tend": (sounds: ["sounds/tend_1.ogg", "sounds/tend_2.ogg"], volume: 0.7),
+        // A pouch tipped out: cloth and a few small things clinking.
+        "base:empty_pouch": (sounds: ["sounds/pouch_1.ogg", "sounds/pouch_2.ogg"], volume: 0.6),
+        // Stepping up to the crafting table: the same parts fitted, softer.
+        "base:use_table": (sounds: ["sounds/craft_1.ogg", "sounds/craft_2.ogg", "sounds/craft_3.ogg"], volume: 0.6),
+        // Something fed into a machine: a scrape and a heavy clunk inside.
+        "base:use_machine": (sounds: ["sounds/machine_1.ogg", "sounds/machine_2.ogg"], volume: 0.9),
+        // Metal ticks in the lock, then the bolt giving.
+        "base:pick_lock": (sounds: ["sounds/lock_1.ogg", "sounds/lock_2.ogg"], volume: 0.7),
+        // A skep's lid lifted, as a store's is.
+        "base:tend_bees": (sounds: ["sounds/store_open_1.ogg", "sounds/store_open_2.ogg"], volume: 0.7),
+        // A soft bell swelling at the altar.
+        "base:pray": (sounds: ["sounds/pray_1.ogg"], volume: 0.8),
+        // Fertiliser scattered over the soil.
+        "base:fertilise": (sounds: ["sounds/sprinkle_1.ogg", "sounds/sprinkle_2.ogg"], volume: 0.8),
+        // Something thrown down: a swish and a soft landing.
+        "core:drop": (sounds: ["sounds/toss_1.ogg", "sounds/toss_2.ogg"], volume: 0.6),
+        // Heard by the block touched: its material's tap, break or placing.
+        "core:mine": (heard: Some(Block)),
+        "core:place": (heard: Some(Block)),
+        "base:plant": (heard: Some(Block)),
+        "base:pick": (heard: Some(Block)),
+        "base:till": (heard: Some(Block)),
+        // Heard by the interface: an item's tap as it moves, a screen closing.
+        "core:transfer": (heard: Some(Interface)),
+        "core:quick_move": (heard: Some(Interface)),
+        "core:lay": (heard: Some(Interface)),
+        "core:stow": (heard: Some(Interface)),
+        // Heard by the fight's own sounds.
+        "core:attack": (heard: Some(Combat)),
+        "core:dodge": (heard: Some(Combat)),
+        // Quiet on purpose: looking an animal over, letting one go (its own sounds say
+        // it), and coming back to life (the screen says it).
+        "base:inspect": (silent: true),
+        "base:release": (silent: true),
+        "core:respawn": (silent: true),
     },
     // The mix (crates/client/src/mix.rs). A later package's bands and caps replace those it
     // names; its ducking replaces the whole.
