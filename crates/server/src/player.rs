@@ -140,8 +140,15 @@ pub struct Player {
 impl Player {
     /// The home block as `Vitals::home` tells it: the lit hearth, else the bed last slept
     /// in, stored as the point a block above where the player stands on waking.
-    pub fn home_block(&self) -> Option<voxmar_engine::glam::IVec3> {
-        self.home.or(self.bed).map(|at| (at - Vec3::Y).floor().as_ivec3())
+    /// Where home is: the hearth they made home while it burns (`lit` says, by its core),
+    /// else the bed they last slept in. A hearth broken or gone cold is no home.
+    pub fn home_spot(&self, lit: impl Fn(voxmar_engine::glam::IVec3) -> bool) -> Option<Vec3> {
+        self.home.filter(|&at| lit((at - Vec3::new(0.5, 1.0, 0.5)).round().as_ivec3())).or(self.bed)
+    }
+
+    /// The block home stands on (`home_spot`).
+    pub fn home_block(&self, lit: impl Fn(voxmar_engine::glam::IVec3) -> bool) -> Option<voxmar_engine::glam::IVec3> {
+        self.home_spot(lit).map(|at| (at - Vec3::Y).floor().as_ivec3())
     }
 
     pub fn new(id: PlayerId, connection: ServerConnection, spawn: Vec3, view_distance: i32, tick: u64, max_health: u8, limits: &Limits) -> Self {

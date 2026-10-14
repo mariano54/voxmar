@@ -504,6 +504,8 @@ struct Gate {
     chimney_owed: f32,
     /// What the dry step's pot water replaced, put back after.
     pot_ground: Option<String>,
+    /// Raw rabbit carried as the dry step hangs the rack, so its readout can count what hung.
+    rack_rabbits: u32,
     /// The creature the combat-marks step tells its blows at, when (game time) it last told
     /// them, and how many runs it has told.
     marked: Option<u32>,
@@ -722,6 +724,7 @@ impl Gate {
             home_hidden_within: None,
             chimney_owed: 0.0,
             pot_ground: None,
+            rack_rabbits: 0,
             marked: None,
             marked_at: 0.0,
             marked_tries: 0,
@@ -9359,6 +9362,7 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
             let stood = client.registry.id("base:drying_rack").is_some_and(|r| client.block(rack) == Some(r));
             let there = world.resource::<LocalPlayer>().position.distance(Vec3::new(rack.x as f32 + 0.5, rack.y as f32, rack.z as f32 - 2.5)) < 0.5;
             if stood && there && drawn(world, rack) && gate.shot(world, "rack_bare").is_some() && select(world, "base:raw_rabbit") {
+                gate.rack_rabbits = holding(world, "base:raw_rabbit").0;
                 gate.advance(now);
             } else if waited {
                 gate.check("drying rack", Err(format!("the rack ({stood}) or raw rabbit in hand never came in {DRY_WAIT} server seconds")));
@@ -9424,7 +9428,8 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
                 let (locale, launch, client) = (world.resource::<Locale>(), world.resource::<Launch>(), world.resource::<ClientWorld>());
                 let (raw, hung) = (client.registry.id("base:raw_rabbit"), client.registry.id("base:drying_rack_hung"));
                 let output = hung.zip(raw).and_then(|(hung, raw)| Some(launch.content.stations.of(hung)?.0.work(raw)?.1.output));
-                let count = 2 - holding(world, "base:raw_rabbit").0.min(2);
+                // What hung: what was carried before, less what is carried now.
+                let count = gate.rack_rabbits.saturating_sub(holding(world, "base:raw_rabbit").0);
                 let name = |item: BlockId| locale.block(launch.content.blocks.def(item));
                 (raw.map(|raw| locale.format("target.station.holds", &[("count", &count), ("item", &name(raw))])), output.map(name))
             };

@@ -225,7 +225,7 @@ impl Process for Survival {
             // The felt temperature is sent to the degree, so it does not resend every tick.
             player.vitals.felt = situation.felt.round();
             player.vitals.effects = effects.active(&situation, &player.timed_effects);
-            player.vitals.home = player.home_block();
+            player.vitals.home = player.home_block(|core| server.lit.contains_key(&core));
             // The steps of a ladder say so when first reached.
             let gained: Vec<EffectId> = player.vitals.effects.iter().map(|a| a.effect).filter(|&e| effects.get(e).announce && !player.announced.contains(&e)).collect();
             player.announced.extend(&gained);
@@ -367,7 +367,7 @@ impl Server {
             debug_assert!(player.dirty.iter().all(|d| d.replication == Replication::Owner));
             player.dirty.clear();
             // Joining and sleeping send vitals before the next survival pass would.
-            player.vitals.home = player.home_block();
+            player.vitals.home = player.home_block(|core| self.lit.contains_key(&core));
             player
                 .connection
                 .send(ServerMessage::PlayerState {

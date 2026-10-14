@@ -218,6 +218,32 @@ mod tests {
         assert!(!server.lit.contains_key(&core));
     }
 
+    /// Home is the hearth lit as home while it burns, else the last bed: a hearth broken
+    /// sends its player home to their bed, and lit again it is home again.
+    #[test]
+    fn home_is_the_burning_hearth_else_the_last_bed() {
+        let mut server = crate::test_server();
+        player(&mut server);
+        let core = ColumnPos::of_block(server.spawn.floor().as_ivec3()).origin() + IVec3::new(8, server.spawn.y as i32 + 4, 8);
+        let (stone, chimney) = (server.content.blocks.expect("base:cobblestone"), server.content.blocks.expect("base:chimney"));
+        for x in -1..=1 { for z in -1..=1 {
+            server.set_block(core + IVec3::new(x, 0, z), stone);
+        }}
+        server.set_block(core, server.content.blocks.expect("base:hearthstone"));
+        for y in 1..=2 { server.set_block(core + IVec3::new(-1, y, -1), chimney); }
+        let bed = core + IVec3::new(5, 0, 0);
+        server.players.get_mut(&1).unwrap().bed = Some(bed.as_vec3() + Vec3::new(0.5, 1.0, 0.5));
+        let home = |server: &Server| server.players[&1].home_block(|core| server.lit.contains_key(&core));
+        assert_eq!(home(&server), Some(bed), "with no hearth lit, home is the bed");
+        server.light(1, core);
+        assert_eq!(home(&server), Some(core), "the lit hearth is home");
+        server.set_block(core + IVec3::new(1, 0, 1), BlockId::AIR);
+        assert_eq!(home(&server), Some(bed), "a broken hearth is still home");
+        server.set_block(core + IVec3::new(1, 0, 1), stone);
+        server.light(1, core);
+        assert_eq!(home(&server), Some(core), "the hearth lit again is home again");
+    }
+
     /// A hearth is cold until lit: then it burns, and players are told, until a piece of it
     /// is taken away, and players are told it went out. A home hearth from a world saved
     /// before hearths kept their fire is lit again when its player joins and its land is loaded, once.

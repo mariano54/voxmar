@@ -383,7 +383,7 @@ impl Server {
                     // world spawn. What they carried is left where they fell first.
                     self.bury_if_dead(agent);
                     let player = self.players.get_mut(&agent).unwrap();
-                    let spawn = player.home.or(player.bed).unwrap_or(self.spawn);
+                    let spawn = player.home_spot(|core| self.lit.contains_key(&core)).unwrap_or(self.spawn);
                     player.buried = false;
                     player.health.heal(u8::MAX);
                     // Where they wake is where a grave goes until they stand elsewhere,
