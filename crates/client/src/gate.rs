@@ -492,6 +492,8 @@ struct Gate {
     dug: Vec<(IVec3, BlockId)>,
     /// How many of an item the inventory held before a step that changes it.
     count_before: u32,
+    /// The window step's lit pane, kept to judge against it snuffed.
+    window_lit: Option<[f64; 3]>,
     natural_before: Vec<u32>,
     natural_home: Vec3,
     /// The way home's hiding distance, while the Home step shows the mark close up.
@@ -710,6 +712,7 @@ impl Gate {
             digging: None,
             dug: Vec::new(),
             count_before: 0,
+            window_lit: None,
             natural_before: Vec::new(),
             natural_home: Vec3::ZERO,
             home_hidden_within: None,
@@ -1545,7 +1548,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Journal => journal(world, gate, now, in_phase),
         Step::Prayers => prayers(world, gate, now, in_phase),
         Step::Home => home(world, gate, now),
-        Step::Door => door(world, gate, now),
+        Step::Door => door(world, gate, now, in_phase),
         Step::Quests => quests(world, gate, now, in_phase),
         Step::Catalogue => catalogue(world, gate, now, in_phase),
         Step::Screenshot => screenshot(world, gate, now, in_phase),
@@ -4865,8 +4868,9 @@ fn door_cells(world: &World, at: IVec3) -> Option<(bool, bool)> {
 
 /// A wooden door set in the ground two blocks before the player, opened and shut by right
 /// clicks the server answers (it holds the collision, so the client never guesses); then a
-/// hide window in a candle-lit nook, seen glowing at midnight (shot `window-night`).
-fn door(world: &mut World, gate: &mut Gate, now: f32) {
+/// hide window in a candle-lit nook, seen glowing at midnight (shot `window-night`) against
+/// the same pane with the candle snuffed (`window-night-unlit`).
+fn door(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let stand = world.resource::<LocalPlayer>().position.floor().as_ivec3();
     let at = stand + IVec3::new(0, 0, -2);
     // The window's nook, standing on the ground a block beyond the door, and its pane.
@@ -4953,8 +4957,10 @@ fn door(world: &mut World, gate: &mut Gate, now: f32) {
             }
             _ => {}
         },
-        // The window seen from outside at midnight: warm with the candle's light through it.
-        _ => {
+        // The window seen from outside at midnight, lit by the candle: its pane is kept, then
+        // the candle is snuffed and the same pane, a moment later under the same sky, is the
+        // reference the lit one is judged against.
+        5 => {
             aim_at(world, pane.as_vec3() + Vec3::splat(0.5));
             let client = world.resource::<ClientWorld>();
             let window = client.block(pane).map(|b| client.registry.def(b)).filter(|d| d.name == "base:hide_window").map(|d| d.lit_through);
@@ -4962,58 +4968,97 @@ fn door(world: &mut World, gate: &mut Gate, now: f32) {
             match window {
                 Some(through) if lit && waited > 2.0 => {
                     let Some(shot) = gate.shot(world, "window-night") else { return };
-                    let judged = if through { warm_window(&shot) } else { Err("the hide window is not `lit_through`".into()) };
-                    gate.check("window: glows", judged);
-                    let net = world.resource::<Net>();
-                    let (low, high) = (nook - IVec3::ONE, nook + IVec3::ONE);
-                    net.command(&format!("fill {} {} {} {} {} {} air", low.x, low.y, low.z, high.x, high.y, high.z));
-                    net.command("time set noon");
-                    gate.next(Step::Quests, now);
+                    if !through {
+                        gate.check("window: glows", Err("the hide window is not `lit_through`".into()));
+                        return window_done(world, gate, nook, now);
+                    }
+                    match pane_colour(&shot) {
+                        Ok(colour) => {
+                            gate.window_lit = Some(colour);
+                            world.resource::<Net>().command(&format!("setblock {} {} {} air", nook.x, nook.y, nook.z));
+                            gate.advance(now);
+                        }
+                        Err(why) => {
+                            gate.check("window: glows", Err(why));
+                            window_done(world, gate, nook, now);
+                        }
+                    }
                 }
                 _ if waited > 10.0 => {
                     gate.check("window: glows", Err(format!("{waited:.1} server s after building the nook, its window is {window:?} and its candle is there: {lit}")));
-                    let net = world.resource::<Net>();
-                    let (low, high) = (nook - IVec3::ONE, nook + IVec3::ONE);
-                    net.command(&format!("fill {} {} {} {} {} {} air", low.x, low.y, low.z, high.x, high.y, high.z));
-                    net.command("time set noon");
-                    gate.next(Step::Quests, now);
+                    window_done(world, gate, nook, now);
                 }
                 _ => {}
             }
         }
-    }
-}
-
-/// Whether a shot aimed at a lit room's window at midnight shows it warm and bright: the
-/// middle of the screen (the pane) redder than it is blue and well above the night around
-/// it (the shot's top corners, the sky over the nook).
-fn warm_window(shot: &Image) -> Result<String, String> {
-    let (w, h, data) = pixels(shot)?;
-    let mean = |x0: usize, y0: usize, size: usize| {
-        let mut sum = [0.0f64; 3];
-        for y in y0..y0 + size {
-            for x in x0..x0 + size {
-                let i = (y * w + x) * 4;
-                (0..3).for_each(|c| sum[c] += data[i + c] as f64);
+        // Snuffed: once the client has the nook dark and has drawn it for a while, the same
+        // pane unlit.
+        _ => {
+            aim_at(world, pane.as_vec3() + Vec3::splat(0.5));
+            let snuffed = world.resource::<ClientWorld>().block(nook).is_some_and(|b| b == BlockId::AIR);
+            if snuffed && waited > 2.0 && in_phase > WINDOW_SETTLE {
+                let Some(shot) = gate.shot(world, "window-night-unlit") else { return };
+                let judged = match (gate.window_lit.take(), pane_colour(&shot)) {
+                    (Some(lit), Ok(unlit)) => warm_window(lit, unlit),
+                    (None, _) => Err("the lit pane was not kept".into()),
+                    (_, Err(why)) => Err(why),
+                };
+                gate.check("window: glows", judged);
+                window_done(world, gate, nook, now);
+            } else if waited > 10.0 && in_phase > 10.0 {
+                gate.check("window: glows", Err(format!("{waited:.1} server s and {in_phase:.1} game s after the candle was snuffed, the client has it gone: {snuffed}")));
+                window_done(world, gate, nook, now);
             }
         }
-        sum.map(|v| v / (size * size) as f64)
-    };
-    let size = (w.min(h) / 16).max(1);
-    let pane = mean(w / 2 - size / 2, h / 2 - size / 2, size);
-    let night = [mean(0, 0, size), mean(w - size, 0, size)].map(|m| m.iter().sum::<f64>() / 3.0);
-    let (bright, dark) = (pane.iter().sum::<f64>() / 3.0, night[0].max(night[1]));
-    if pane[0] > pane[2] + WINDOW_WARMTH && bright > dark + WINDOW_LIFT {
-        Ok(format!("the pane is warm (rgb {:.0} {:.0} {:.0}) against the night ({dark:.0})", pane[0], pane[1], pane[2]))
-    } else {
-        Err(format!("the pane is rgb {:.0} {:.0} {:.0} against the night's {dark:.0}: not a warm, lit window", pane[0], pane[1], pane[2]))
     }
 }
 
-/// How much redder than blue, and brighter than the night around it, a lit window's pane
-/// shows in a shot, of 255.
+/// The window step's end: the nook taken down, noon again, on to the quests.
+fn window_done(world: &mut World, gate: &mut Gate, nook: IVec3, now: f32) {
+    let net = world.resource::<Net>();
+    let (low, high) = (nook - IVec3::ONE, nook + IVec3::ONE);
+    net.command(&format!("fill {} {} {} {} {} {} air", low.x, low.y, low.z, high.x, high.y, high.z));
+    net.command("time set noon");
+    gate.window_lit = None;
+    gate.next(Step::Quests, now);
+}
+
+/// The mean colour, of 255, of the middle of a shot aimed at a window's pane.
+fn pane_colour(shot: &Image) -> Result<[f64; 3], String> {
+    let (w, h, data) = pixels(shot)?;
+    let size = (w.min(h) / 16).max(1);
+    let (x0, y0) = (w / 2 - size / 2, h / 2 - size / 2);
+    let mut sum = [0.0f64; 3];
+    for y in y0..y0 + size {
+        for x in x0..x0 + size {
+            let i = (y * w + x) * 4;
+            (0..3).for_each(|c| sum[c] += data[i + c] as f64);
+        }
+    }
+    Ok(sum.map(|v| v / (size * size) as f64))
+}
+
+/// Whether a lit room's window glows warm at midnight: what the candle adds to its pane
+/// (the pane lit, less the same pane a moment later with the candle snuffed, under the
+/// same sky and moon) is redder than it is blue and brightens it well. The night's own
+/// light on the pane, whatever the moon, is in both and cancels; the sky (its moon, stars
+/// and clouds) is not looked at.
+fn warm_window(lit: [f64; 3], unlit: [f64; 3]) -> Result<String, String> {
+    let added = [0, 1, 2].map(|c| lit[c] - unlit[c]);
+    let brighter = added.iter().sum::<f64>() / 3.0;
+    let said = format!("the pane is rgb {:.0} {:.0} {:.0} lit and {:.0} {:.0} {:.0} with the candle snuffed: the candle adds {:.0} {:.0} {:.0}", lit[0], lit[1], lit[2], unlit[0], unlit[1], unlit[2], added[0], added[1], added[2]);
+    if added[0] > added[2] + WINDOW_WARMTH && brighter > WINDOW_LIFT {
+        Ok(format!("{said}, warm and bright"))
+    } else {
+        Err(format!("{said}: not a warm, lit window"))
+    }
+}
+
+/// How much redder than blue the candle's light makes a window's pane, and how much
+/// brighter, of 255; and the game seconds the snuffed nook is drawn before its shot.
 const WINDOW_WARMTH: f64 = 12.0;
 const WINDOW_LIFT: f64 = 15.0;
+const WINDOW_SETTLE: f32 = 1.5;
 
 /// How many planks the home barrel holds for the table laid from it.
 const LAY_PLANKS: u32 = 4;
@@ -10961,7 +11006,21 @@ fn finish(world: &mut World, gate: &Gate, now: f32) {
 
 #[cfg(test)]
 mod tests {
-    use super::{sling_next, SlingNext, BEAR, SLING, SLING_LEVEL, SLING_STONES, UNANSWERED};
+    use super::{sling_next, warm_window, SlingNext, BEAR, SLING, SLING_LEVEL, SLING_STONES, UNANSWERED};
+
+    /// The window is judged by what the candle adds to its pane, so a brighter night (a
+    /// full moon lighting the pane too) changes nothing; a pane the candle leaves as it was,
+    /// or brightens blue, is not a lit window.
+    #[test]
+    fn a_lit_window_is_judged_against_itself_snuffed() {
+        // The T5 pane, lit, against a dark night and a moonlit one lighting it evenly.
+        let lit = [77.0, 44.0, 16.0];
+        assert!(warm_window(lit, [14.0, 15.0, 19.0]).is_ok());
+        let moon = 12.0;
+        assert!(warm_window(lit.map(|c| c + moon), [14.0 + moon, 15.0 + moon, 19.0 + moon]).is_ok(), "a brighter moon cancels");
+        assert!(warm_window(lit, lit).is_err(), "the candle added nothing");
+        assert!(warm_window([30.0, 40.0, 70.0], [10.0, 10.0, 12.0]).is_err(), "bright but blue");
+    }
 
     /// At the sling step's Ranged level, against its bear, every stone missing is a broken
     /// shot, not a bad run of rolls: under one gate in ten million.
