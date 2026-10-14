@@ -1,4 +1,5 @@
-//! Sound effects for block materials, thunder, and swimming and splashing.
+//! Sound effects for block materials, thunder, swimming and splashing, and what the player
+//! does (eating, crafting, lighting a fire, opening a door: `sounds.ron`'s `actions`).
 //!
 //! A block declares what it is made of (`sound: Wood`); every cue for that material (a
 //! step, landing, placing, a tap while mining, breaking) comes from the player's own
@@ -36,6 +37,7 @@ use rustc_hash::FxHashMap;
 use serde::Deserialize;
 use voxmar_engine::content::ContentFile;
 use voxmar_engine::block::{BlockId, BlockRegistry, RenderKind, Sound};
+use voxmar_engine::station::{Phase, Stations};
 use voxmar_engine::physics::player as dims;
 
 use self::dsp::{OnePole, Pink, Svf};
@@ -75,7 +77,7 @@ impl Plugin for SfxPlugin {
         app.add_message::<SoundCue>()
             .configure_sets(Update, Audible.run_if(sound_on))
             .add_systems(Startup, synthesize)
-            .add_systems(Update, ((footsteps, play_cues.in_set(Audible)).chain(), thunder.in_set(Audible)));
+            .add_systems(Update, ((footsteps, play_cues.in_set(Audible)).chain(), thunder.in_set(Audible), play_actions));
     }
 }
 
@@ -160,6 +162,23 @@ impl SoundCue {
     }
 }
 
+/// What a station changing from `old` to `new` sounds like, at the block: loaded (empty to
+/// working), its own sound or its working block's placing; emptied (ready or working back to
+/// empty), the pickup's pop. Played when the server says so, never predicted, so a refused
+/// load is silent.
+pub fn station_cue(stations: &Stations, registry: &BlockRegistry, old: BlockId, new: BlockId) -> Option<SoundCue> {
+    let (station, was) = stations.of(old)?;
+    let (_, now) = stations.of(new).filter(|(s, _)| std::ptr::eq(*s, station))?;
+    match (was, now) {
+        (Phase::Empty, Phase::Working) => Some(match station.sound {
+            Some(sound) => SoundCue::new(sound, Cue::Step),
+            None => SoundCue::of(registry, station.working, Cue::Place),
+        }),
+        (Phase::Working | Phase::Ready, Phase::Empty) => Some(SoundCue::new(Sound::Stone, Cue::Pickup)),
+        _ => None,
+    }
+}
+
 /// One clip a cue may play, and how loud and fast.
 struct Clip {
     source: Handle<AudioSource>,
@@ -172,6 +191,8 @@ struct Sfx {
     clips: FxHashMap<(Sound, Cue), Vec<Clip>>,
     /// Thunder from near, middling and far lightning, a few variants each.
     thunder: [Vec<Handle<AudioSource>>; 3],
+    /// What actions sound like as the player does them.
+    actions: FxHashMap<voxmar_engine::action::ActionId, Vec<Clip>>,
     counter: u64,
 }
 
@@ -295,7 +316,12 @@ fn synthesize(
                     variants.push(Clip { source, gain: gain * clip.volume * volume, speed: pitch * clip.pitch });
                 }
             }
-            if recorded_here {
+            // Our own pop for a pickup Minecraft's sounds do not give, as loud as the one
+            // synthesized.
+            if variants.is_empty() && cue == Cue::Pickup && !recorded.pickup.is_empty() {
+                let gain = cue.gain() * level(&target, cue) / ACTION_LOUDNESS;
+                variants = load(&recorded.pickup).into_iter().map(|source| Clip { source, gain, speed: 1.0 }).collect();
+            } else if recorded_here {
             } else if variants.is_empty() {
                 variants = synthesized[&(sound, cue)]
                     .iter()
@@ -313,8 +339,27 @@ fn synthesize(
         started.elapsed().as_millis()
     );
     let thunder = [&recorded.thunder.near, &recorded.thunder.middle, &recorded.thunder.far].map(|paths| load(paths));
-    commands.insert_resource(Sfx { clips, thunder, counter: 0 });
+    // What the player does sounds about as loud as placing a block, times its volume.
+    let actions = recorded
+        .actions
+        .iter()
+        .filter_map(|(name, sound)| {
+            let gain = sound.volume * Cue::Place.gain() * level(&target, Cue::Place) / ACTION_LOUDNESS;
+            Some((launch.content.actions.id(name)?, load(&sound.sounds).into_iter().map(|source| Clip { source, gain, speed: 1.0 }).collect()))
+        })
+        .collect();
+    commands.insert_resource(Sfx { clips, thunder, actions, counter: 0 });
 }
+
+/// How loud a synthesized cue's clips are on average.
+fn level(target: &FxHashMap<Cue, (f32, f32)>, cue: Cue) -> f32 {
+    let (sum, count) = target[&cue];
+    sum / count.max(1.0)
+}
+
+/// How loud our own action and pickup clips are made (tools/generate_sfx.py), by
+/// [`loudness`]; a package's own should be made as loud.
+pub(crate) const ACTION_LOUDNESS: f32 = 0.22;
 
 /// Recorded swimming strokes and splashes are levelled to a peak of -3 dBFS; this brings
 /// them to the loudness of the synthesized cues.
@@ -337,6 +382,26 @@ pub(crate) struct Recordings {
     pub(crate) quest_claim: Vec<String>,
     pub(crate) level_up: Vec<String>,
     pub(crate) level_milestone: Milestone,
+    /// An item picked up off the ground, played when the player's Minecraft sounds are not.
+    /// A later package that lists any replaces these.
+    pickup: Vec<String>,
+    /// What the player does, heard as they do it, by the action's name (`core:eat`): the
+    /// clips take turns at random. A later package that names an action replaces its sound.
+    pub(crate) actions: std::collections::BTreeMap<String, ActionSound>,
+}
+
+/// The sound of one action: its clips, made at the loudness of [`ACTION_LOUDNESS`], and how
+/// loud to play them beside it.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ActionSound {
+    pub(crate) sounds: Vec<String>,
+    #[serde(default = "full")]
+    pub(crate) volume: f32,
+}
+
+fn full() -> f32 {
+    1.0
 }
 
 /// The grander jingle played instead of the level-up one when a level is a multiple of
@@ -378,6 +443,10 @@ impl Recordings {
             replace(&mut all.quest_claim, def.quest_claim);
             replace(&mut all.level_up, def.level_up);
             replace(&mut all.level_milestone.sounds, def.level_milestone.sounds);
+            replace(&mut all.pickup, def.pickup);
+            for (name, sound) in def.actions {
+                all.actions.insert(name, ActionSound { sounds: path(sound.sounds).collect(), ..sound });
+            }
             if def.level_milestone.every > 0 {
                 all.level_milestone.every = def.level_milestone.every;
             }
@@ -386,6 +455,23 @@ impl Recordings {
             return Err(format!("{RECORDINGS}: level_milestone lists sounds but not how many levels apart (every)"));
         }
         Ok(all)
+    }
+
+    /// Whether every action given a sound is one the content has, with clips, at a volume
+    /// from above nothing to twice the usual.
+    pub(crate) fn check(&self, actions: &voxmar_engine::action::ActionRegistry) -> Result<(), String> {
+        for (name, sound) in &self.actions {
+            if actions.id(name).is_none() {
+                return Err(format!("{RECORDINGS}: a sound for `{name}`, which is no action"));
+            }
+            if sound.sounds.is_empty() {
+                return Err(format!("{RECORDINGS}: `{name}` lists no sounds"));
+            }
+            if !(sound.volume > 0.0 && sound.volume <= 2.0) {
+                return Err(format!("{RECORDINGS}: `{name}` has volume {}, not above 0 and up to 2", sound.volume));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -476,6 +562,29 @@ fn play_cues(
         };
         let speed = clip.speed * cue.pitch * (0.94 + 0.12 * jitter);
         let playback = PlaybackSettings { speed, ..PlaybackSettings::DESPAWN.with_volume(Volume::Linear(clip.gain * gain * master)) };
+        commands.spawn((AudioPlayer(clip.source.clone()), playback));
+    }
+}
+
+/// Plays what the player's proposed actions sound like (`sounds.ron`'s `actions`): eating,
+/// crafting, lighting a fire, opening a chest or a door. Proposals are taken every frame,
+/// so none pile up while sound is off; muted, none is heard.
+fn play_actions(
+    mut commands: Commands,
+    net: Option<Res<crate::net::Net>>,
+    sfx: Option<ResMut<Sfx>>,
+    settings: Res<Settings>,
+    global: Option<Res<GlobalVolume>>,
+) {
+    let Some(net) = net else { return };
+    let proposed = net.take_proposed();
+    let (Some(mut sfx), true) = (sfx, sound_on(global)) else { return };
+    let master = MASTER * settings.sound_volume as f32 / 100.0;
+    for action in proposed {
+        let (pick, jitter) = (sfx.random(), sfx.random());
+        let Some(clip) = sfx.actions.get(&action).and_then(|clips| clips.get((pick * clips.len() as f32) as usize)) else { continue };
+        let speed = clip.speed * (0.96 + 0.08 * jitter);
+        let playback = PlaybackSettings { speed, ..PlaybackSettings::DESPAWN.with_volume(Volume::Linear(clip.gain * master)) };
         commands.spawn((AudioPlayer(clip.source.clone()), playback));
     }
 }
@@ -898,7 +1007,7 @@ mod tests {
             let rolls = [vec![Handle::default()], vec![Handle::default()], vec![Handle::default()]];
             app.insert_resource(GlobalVolume::new(global))
                 .insert_resource(Settings::default())
-                .insert_resource(Sfx { clips, thunder: rolls, counter: 0 })
+                .insert_resource(Sfx { clips, thunder: rolls, actions: FxHashMap::default(), counter: 0 })
                 .add_message::<SoundCue>()
                 .add_message::<Thunder>()
                 .configure_sets(Update, Audible.run_if(sound_on))
@@ -925,6 +1034,23 @@ mod tests {
         assert_eq!(heard(step_cues(blocks, Some(id("stone")), Some(id("moss_carpet")), false))[0], (Sound::Moss, 1.0));
         // Wading: a splash over the ground.
         assert_eq!(heard(step_cues(blocks, Some(id("sand")), None, true)), [(Sound::Sand, 0.5), (Sound::Water, 0.7)]);
+    }
+
+    /// A pot loaded stirs, a rack loaded thumps like its wood, either emptied pops; a load
+    /// coming done, or a block that is no station, is silent.
+    #[test]
+    fn stations_stir_and_pop() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let blocks = &content.blocks;
+        let id = |name: &str| blocks.id(&format!("base:{name}")).unwrap_or_else(|| panic!("{name}"));
+        let cue = |old: &str, new: &str| station_cue(&content.stations, blocks, id(old), id(new)).map(|c| (c.sound, c.cue));
+        assert_eq!(cue("cooking_pot", "cooking_pot_simmering"), Some((Sound::Water, Cue::Step)));
+        assert_eq!(cue("drying_rack", "drying_rack_hung"), Some((blocks.info(id("drying_rack_hung")).sound, Cue::Place)));
+        assert_eq!(cue("cooking_pot_ready", "cooking_pot"), Some((Sound::Stone, Cue::Pickup)));
+        assert_eq!(cue("drying_rack_hung", "drying_rack"), Some((Sound::Stone, Cue::Pickup)));
+        assert_eq!(cue("cooking_pot_simmering", "cooking_pot_ready"), None);
+        assert_eq!(cue("stone", "cooking_pot"), None);
+        assert_eq!(cue("drying_rack", "cooking_pot_simmering"), None);
     }
 
     #[test]
@@ -982,6 +1108,74 @@ mod tests {
         assert_eq!(recorded.level_up, ["content/base/b.ogg"]);
         assert_eq!((recorded.level_milestone.every, recorded.level_milestone.sounds.as_slice()), (5, &["content/base/c.ogg".to_string()][..]));
         assert!(Recordings::load(&[file("mod", r#"(level_milestone: (sounds: ["c.ogg"]))"#)]).is_err());
+    }
+
+    /// A later package replaces an action's sound and the pickup pop, and adds actions; a
+    /// sound for no action, with no clips, or at no volume fails the launch check.
+    #[test]
+    fn action_sounds_are_checked_and_a_later_package_replaces_them() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let file = |package: &str, source: &str| ContentFile { package: package.into(), name: RECORDINGS.into(), source: source.into() };
+        let base = file("base", r#"(pickup: ["p.ogg"], actions: {"core:eat": (sounds: ["a.ogg", "b.ogg"]), "core:craft": (sounds: ["c.ogg"], volume: 0.5)})"#);
+        let recorded = Recordings::load(&[base.clone(), file("mod", r#"(pickup: ["q.ogg"], actions: {"core:eat": (sounds: ["x.ogg"], volume: 1.5)})"#)]).unwrap();
+        assert_eq!(recorded.pickup, ["content/mod/q.ogg"]);
+        assert_eq!(recorded.actions["core:eat"], ActionSound { sounds: vec!["content/mod/x.ogg".into()], volume: 1.5 });
+        assert_eq!(recorded.actions["core:craft"], ActionSound { sounds: vec!["content/base/c.ogg".into()], volume: 0.5 });
+        assert_eq!(recorded.check(&content.actions), Ok(()));
+        for wrong in [r#"(actions: {"core:juggle": (sounds: ["a.ogg"])})"#, r#"(actions: {"core:eat": (sounds: [])})"#, r#"(actions: {"core:eat": (sounds: ["a.ogg"], volume: 0.0)})"#] {
+            assert!(Recordings::load(&[file("mod", wrong)]).unwrap().check(&content.actions).is_err(), "{wrong}");
+        }
+    }
+
+    /// The everyday actions of the first days are heard, from clips we ship, each made at
+    /// [`ACTION_LOUDNESS`] (a clip far quieter or louder would sound wrong beside the
+    /// rest), and so is an item picked up.
+    #[test]
+    fn everyday_actions_are_heard_at_one_loudness() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let recorded = Recordings::load(&content.files).unwrap();
+        recorded.check(&content.actions).unwrap();
+        for name in ["core:eat", "core:craft", "base:light", "base:open_store", "base:open", "base:cook", "base:sleep"] {
+            assert!(recorded.actions.contains_key(name), "no sound for {name}");
+        }
+        assert!(!recorded.pickup.is_empty(), "no pickup pop");
+        let clips = recorded.actions.values().flat_map(|sound| sound.sounds.iter().map(|path| (path, sound.volume))).chain(recorded.pickup.iter().map(|path| (path, 1.0)));
+        for (path, volume) in clips {
+            let [left, right] = crate::ambience::tests::decode(path);
+            let stereo: Vec<f32> = left.iter().zip(&right).flat_map(|(l, r)| [*l, *r]).collect();
+            let heard = loudness(&stereo, 2) * volume / ACTION_LOUDNESS;
+            assert!((0.5..=1.25).contains(&heard), "{path} is heard at {heard:.2} of the loudness of the rest");
+            assert!(left.len() as f32 / (RATE as f32) < 1.5, "{path} is longer than an action");
+        }
+    }
+
+    /// Each action proposed is heard once, and only with sound on; proposals made while it
+    /// is off are let go, not saved up.
+    #[test]
+    fn proposed_actions_are_heard_once_and_never_muted() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let eat = content.actions.expect("core:eat");
+        let craft = content.actions.expect("core:craft");
+        for (global, started) in [(Volume::SILENT, 0), (Volume::Linear(1.0), 1)] {
+            let (connection, _server_side) = voxmar_protocol::local_pair();
+            let net = crate::net::Net::new(connection, None, "tester".into(), content.fingerprint(), None);
+            let mut actions = FxHashMap::default();
+            actions.insert(eat, vec![Clip { source: Handle::default(), gain: 1.0, speed: 1.0 }]);
+            let mut app = App::new();
+            app.insert_resource(GlobalVolume::new(global))
+                .insert_resource(Settings::default())
+                .insert_resource(Sfx { clips: FxHashMap::default(), thunder: Default::default(), actions, counter: 0 })
+                .insert_resource(net)
+                .add_systems(Update, play_actions);
+            // Crafting has no sound here: nothing plays for it.
+            app.world().resource::<crate::net::Net>().propose(eat, voxmar_engine::action::ActionTarget::None);
+            app.world().resource::<crate::net::Net>().propose(craft, voxmar_engine::action::ActionTarget::Slot(1));
+            app.update();
+            app.update();
+            let playing = app.world_mut().query::<&AudioPlayer>().iter(app.world()).count();
+            assert_eq!(playing, started, "volume {global:?}");
+            assert!(app.world().resource::<crate::net::Net>().take_proposed().is_empty());
+        }
     }
 
     /// `cargo test -p voxmar_client minecraft_sounds_decode -- --ignored` checks that every

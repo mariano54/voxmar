@@ -479,6 +479,8 @@ struct Gate {
     home_hidden_within: Option<f32>,
     /// Puffs the watched chimney owed so far (its rate times the seconds watched).
     chimney_owed: f32,
+    /// What the dry step's pot water replaced, put back after.
+    pot_ground: Option<String>,
     /// The creature the combat-marks step tells its blows at, when (game time) it last told
     /// them, and how many runs it has told.
     marked: Option<u32>,
@@ -682,6 +684,7 @@ impl Gate {
             natural_home: Vec3::ZERO,
             home_hidden_within: None,
             chimney_owed: 0.0,
+            pot_ground: None,
             marked: None,
             marked_at: 0.0,
             marked_tries: 0,
@@ -1223,6 +1226,8 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         Step::Party => 60.0,
         // The effects are judged once a second by the server, and a rest is a sleep away.
         Step::Home => 70.0,
+        // A rack hung, then a pot set simmering, each answer waited on.
+        Step::Dry => 5.0 * DRY_WAIT + STEP_LIMIT,
         // The refusal waited on, then a well set down by the plot.
         Step::Refusal => UNANSWERED + 3.0 * REFUSAL_WAIT + STEP_LIMIT,
         // A fresh area around the settlement to generate: up to `SETTLEMENT_LOAD` of the
@@ -8563,6 +8568,10 @@ const RACK_FROM_FIRE: IVec3 = IVec3::new(2, 0, 0);
 
 /// Server seconds the dry step waits on each answer.
 const DRY_WAIT: f32 = 10.0;
+/// The cooking pot, from the rack: against the campfire on its other side.
+const POT_FROM_RACK: IVec3 = IVec3::new(-3, 0, 0);
+/// The water the pot needs near, sunk in the ground, from the pot.
+const POT_WATER: IVec3 = IVec3::new(-2, -1, 0);
 
 /// Share of a rack shot's middle that must turn meat-coloured once the rabbit hangs, over
 /// the bare rack's: the strips cover about half the middle of the hung rack.
@@ -8573,7 +8582,8 @@ const MEAT_SHOWS: f32 = 0.08;
 /// (`base:use_station`), so the server sends the hung rack back, and once the renderer has
 /// that too (shot `rack`) the meat must show in the middle of the shot. Then the rack goes,
 /// letting the rabbit fall as a broken rack does, and an earth clamp loaded with clay in its
-/// place smoulders (shot `clamp`, once drawn) until it goes too.
+/// place smoulders (shot `clamp`, once drawn) until it goes too. Then a cooking pot against the
+/// fire, water near, is set simmering with wheat (shot `pot`).
 fn dry(world: &mut World, gate: &mut Gate, now: f32) {
     let rack = gate.feet + IVec3::new(0, 0, 14) + RACK_FROM_FIRE;
     let waited = gate.server_in_phase() > DRY_WAIT;
@@ -8659,7 +8669,8 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
                 gate.advance(now);
             } else if waited {
                 gate.check("earth clamp", Err(format!("the clamp ({stood}) or clay in hand never came in {DRY_WAIT} server seconds")));
-                gate.next(Step::Tame, now);
+                world.resource::<Net>().command(&format!("setblock {} {} {} air", rack.x, rack.y, rack.z));
+                to_phase(gate, 7, now);
             }
         }
         5 => {
@@ -8672,7 +8683,8 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
             } else if waited {
                 mouse(world, MouseButton::Right, false);
                 gate.check("earth clamp", Err(format!("right clicks with clay in hand never lit the clamp in {DRY_WAIT} server seconds")));
-                gate.next(Step::Tame, now);
+                world.resource::<Net>().command(&format!("setblock {} {} {} air", rack.x, rack.y, rack.z));
+                to_phase(gate, 7, now);
             } else {
                 mouse(world, MouseButton::Right, ((now - gate.since) * 2.0).fract() < 0.2);
             }
@@ -8682,8 +8694,60 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
             if (drawn(world, rack) || waited) && gate.shot(world, "clamp").is_some() {
                 gate.check("earth clamp", Ok("clay loaded into an earth clamp: the server sent back the smouldering clamp".into()));
                 world.resource::<Net>().command(&format!("setblock {} {} {} air", rack.x, rack.y, rack.z));
-                gate.next(Step::Tame, now);
+                gate.advance(now);
             }
+        }
+        // A cooking pot beside the campfire, water sunk in the ground near it, wheat in hand.
+        7 => {
+            let pot = rack + POT_FROM_RACK;
+            let water = pot + POT_WATER;
+            let ground = {
+                let client = world.resource::<ClientWorld>();
+                client.block(water).map(|b| client.registry.def(b).name.clone())
+            };
+            gate.pot_ground = ground.filter(|name| name != "base:water").map(|name| name.trim_start_matches("base:").to_owned());
+            let net = world.resource::<Net>();
+            net.command(&format!("setblock {} {} {} cooking_pot", pot.x, pot.y, pot.z));
+            net.command(&format!("setblock {} {} {} water", water.x, water.y, water.z));
+            // Cooking stays as the Cook step left it (99), past the porridge's 3.
+            net.command("give wheat 2");
+            net.command(&format!("tp {} {} {}", pot.x as f32 + 0.5, pot.y, pot.z as f32 - 2.5));
+            gate.advance(now);
+        }
+        // Right clicks put the wheat on to simmer: the server sends back the simmering pot.
+        8 => {
+            let pot = rack + POT_FROM_RACK;
+            aim_at(world, pot.as_vec3() + Vec3::new(0.5, 0.5, 0.5));
+            let (stood, simmering) = {
+                let client = world.resource::<ClientWorld>();
+                let is = |name: &str| client.registry.id(name).is_some_and(|b| client.block(pot) == Some(b));
+                (is("base:cooking_pot"), is("base:cooking_pot_simmering"))
+            };
+            if simmering && drawn(world, pot) {
+                mouse(world, MouseButton::Right, false);
+                if gate.shot(world, "pot").is_none() {
+                    return;
+                }
+                gate.check("cooking pot", Ok("wheat put in a cooking pot beside the campfire, water near, set it simmering (shot `pot`)".into()));
+                gate.advance(now);
+            } else if waited {
+                mouse(world, MouseButton::Right, false);
+                let held = holding(world, "base:wheat");
+                gate.check("cooking pot", Err(format!("right clicks with wheat never set the pot simmering in {DRY_WAIT} server seconds (pot standing {stood}, wheat carried and first slot {held:?})")));
+                gate.advance(now);
+            } else if select(world, "base:wheat") {
+                mouse(world, MouseButton::Right, ((now - gate.since) * 2.0).fract() < 0.2);
+            }
+        }
+        9 => {
+            let pot = rack + POT_FROM_RACK;
+            let water = pot + POT_WATER;
+            let ground = gate.pot_ground.take().unwrap_or_else(|| "stone".to_owned());
+            let net = world.resource::<Net>();
+            net.command(&format!("setblock {} {} {} air", pot.x, pot.y, pot.z));
+            net.command(&format!("setblock {} {} {} {ground}", water.x, water.y, water.z));
+            net.command("clear wheat");
+            gate.next(Step::Tame, now);
         }
         _ => {}
     }
