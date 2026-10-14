@@ -238,7 +238,7 @@ mod tests {
     fn a_rabbit_summoned_into_a_set_snare_springs_it() {
         let (mut server, snare) = field(1);
         server.players.get_mut(&1).unwrap().position = snare.as_vec3() + Vec3::new(0.5, 0.0, -2.5);
-        server.console(&format!("summon rabbit 1 {} {} {}", snare.x, snare.y, snare.z));
+        server.console(&format!("summon rabbit 1 {} {} {}", snare.x + 2, snare.y, snare.z));
         let rabbit = server.creatures.live.iter().find(|(_, c)| c.owner.is_none()).map(|(&id, c)| (id, c.body.position));
         let (_, at) = rabbit.expect("a rabbit was summoned");
         assert_eq!(at.floor().as_ivec3(), snare, "summoned into the snare's cell, not {at}");

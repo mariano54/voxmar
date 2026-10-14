@@ -522,9 +522,7 @@ impl Server {
             if self.wild_room() == 0 {
                 break;
             }
-            // Up to four to a row, the row centred on the spot: one alone stands on it.
-            let row = count.min(4) as f32;
-            let offset = Vec3::new((i % 4) as f32 - (row - 1.0) / 2.0, 0.0, (i / 4) as f32) * 1.2;
+            let offset = Vec3::new((i % 4) as f32 - 1.5, 0.0, (i / 4) as f32) * 1.2;
             let cell = (at + offset).floor().as_ivec3();
             // Commands may run before the land around a player has loaded (a capture's,
             // just after joining): load the column first, as /drop does.

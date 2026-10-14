@@ -10869,8 +10869,10 @@ fn snare(world: &mut World, gate: &mut Gate, now: f32) {
         1 => {
             // Set, by the server's word: a rabbit is put in it.
             if set {
-                // `/summon` takes a block cell, and one creature alone stands in it.
-                world.resource::<Net>().command(&format!("summon rabbit 1 {} {} {}", snare.x, snare.y, snare.z));
+                // `/summon` takes a block cell and stands its first creature 1.8 blocks west
+                // of the cell's middle (the first of a row of four): two cells east of the
+                // snare puts it 0.7 into the snare's own cell.
+                world.resource::<Net>().command(&format!("summon rabbit 1 {} {} {}", snare.x + 2, snare.y, snare.z));
                 gate.advance(now);
             } else if waited {
                 gate.check("snare", Err(format!("the snare never stood in {DRY_WAIT} server seconds")));
