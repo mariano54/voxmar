@@ -21,6 +21,6 @@
     quest_claim: ["sounds/quest_claim_1.ogg", "sounds/quest_claim_2.ogg", "sounds/quest_claim_3.ogg"],
     // A skill's level reached: a harp run up onto a bright chord.
     level_up: ["sounds/level_up_1.ogg"],
-    // Every tenth level (10, 20, ...): the grander one, played instead.
-    level_milestone: (every: 10, sounds: ["sounds/level_milestone_1.ogg"]),
+    // A milestone level (every tenth, as celebrations.ron says): the grander one, instead.
+    level_milestone: ["sounds/level_milestone_1.ogg"],
 )
