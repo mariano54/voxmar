@@ -83,10 +83,16 @@ fn spills(past: &[f32; 4], vertical: bool, slack: f32) -> bool {
     past[..2].iter().any(|&by| by > slack) || (vertical && past[2..].iter().any(|&by| by > slack))
 }
 
-/// A node's border box, in logical pixels.
+/// A node's border box as drawn, in logical pixels: scaled as its transform scales it (a
+/// banner popping in), about its centre.
 fn rect(node: &ComputedNode, transform: &UiGlobalTransform) -> Rect {
     let scale = node.inverse_scale_factor();
-    Rect::from_center_size(transform.translation * scale, node.size() * scale)
+    Rect::from_center_size(transform.translation * scale, node.size() * scale * drawn_scale(transform))
+}
+
+/// How much a node's transform (its own and its parents') scales it as drawn.
+fn drawn_scale(transform: &UiGlobalTransform) -> Vec2 {
+    Vec2::new(transform.matrix2.x_axis.length(), transform.matrix2.y_axis.length())
 }
 
 type Boxes<'a> = (&'a ComputedNode, &'a UiGlobalTransform, &'a Node, Has<ImageNode>, Option<&'a BackgroundColor>, &'a InheritedVisibility);
@@ -132,7 +138,8 @@ pub fn find(world: &mut World) -> Vec<Spill> {
         .iter(world)
         .filter(|(_, text, layout, node, _, visible)| shown(text, layout, node, visible))
         .filter_map(|(entity, text, layout, node, transform, _)| {
-            let scale = node.inverse_scale_factor();
+            // Layout units to logical pixels, times what the transform scales it by as drawn.
+            let scale = node.inverse_scale_factor() * drawn_scale(transform);
             let own = rect(node, transform);
             let inset = Vec2::new(node.border.min_inset.x + node.padding.min_inset.x, node.border.min_inset.y + node.padding.min_inset.y) * scale;
             // Its ink: the glyphs as drawn, so a space left at the end of a wrapped line
@@ -288,6 +295,17 @@ pub fn find(world: &mut World) -> Vec<Spill> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A box is measured as drawn: a banner shrunk to pop in is smaller on screen, about its
+    /// centre, than its layout.
+    #[test]
+    fn boxes_are_measured_as_drawn() {
+        let node = ComputedNode { size: Vec2::new(100.0, 40.0), inverse_scale_factor: 1.0, ..Default::default() };
+        let plain = UiGlobalTransform::from(bevy::math::Affine2::from_translation(Vec2::new(200.0, 100.0)));
+        assert_eq!(rect(&node, &plain), Rect::from_center_size(Vec2::new(200.0, 100.0), Vec2::new(100.0, 40.0)));
+        let shrunk = UiGlobalTransform::from(bevy::math::Affine2::from_scale_angle_translation(Vec2::splat(0.5), 0.0, Vec2::new(200.0, 100.0)));
+        assert_eq!(rect(&node, &shrunk), Rect::from_center_size(Vec2::new(200.0, 100.0), Vec2::new(50.0, 20.0)));
+    }
 
     /// What [`find`] says of one Japanese text laid out with its glyphs on `lines`, in a node
     /// of `size` with a layout of `laid_out`, and how many texts' line breaks it checked.
