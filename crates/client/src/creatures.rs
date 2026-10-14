@@ -557,6 +557,11 @@ impl Creatures {
         self.shown.get(&id).is_some_and(|shown| shown.dying.is_none() && shown.coiling.is_some())
     }
 
+    /// Whether creature `id` is shown and alive, not falling.
+    pub fn standing(&self, id: u32) -> bool {
+        self.shown.get(&id).is_some_and(|shown| shown.dying.is_none())
+    }
+
     /// Creature `id` while it is shown, alive or falling: its species, where its feet are
     /// and its scale.
     pub fn body(&self, id: u32) -> Option<(CreatureId, Vec3, f32)> {

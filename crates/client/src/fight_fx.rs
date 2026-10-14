@@ -297,6 +297,10 @@ pub struct Marker {
 /// Seconds a tell's ring stays after the blow lands.
 const MARKER_AFTER: f32 = 0.12;
 
+/// How long before its end a wind-up seen to stop is its blow, not cut short: the pose is
+/// seen late by up to the round trip, so the blow can end it this much early to the eye.
+const BLOW_SLACK: f32 = 0.25;
+
 /// What has been seen of the fight so far, to find what is new.
 #[derive(Resource, Default)]
 struct Seen {
@@ -399,11 +403,18 @@ fn tell(
             ));
         }
     }
-    pending.0.retain(|&(_, _, id)| creatures.winding(id));
-    let (due, waiting): (Vec<_>, Vec<_>) = pending.0.drain(..).partition(|(at, ..)| *at <= now);
-    pending.0 = waiting;
-    for (_, sound, _) in due {
-        queued.0.push((sound, 1.0, 1.0, true));
+    // A wind-up that stops near its end was the blow: a tell still to come plays with it.
+    // One that stops sooner, or whose boss falls or goes, was cut short: its tell is dropped.
+    for (at, sound, id) in std::mem::take(&mut pending.0) {
+        let struck = !creatures.winding(id);
+        if struck && !(creatures.standing(id) && at - now <= BLOW_SLACK) {
+            continue;
+        }
+        if struck || at <= now {
+            queued.0.push((sound, 1.0, 1.0, true));
+        } else {
+            pending.0.push((at, sound, id));
+        }
     }
 }
 
@@ -444,14 +455,16 @@ fn markers(
     for (entity, marker, mut transform, material) in &mut rings {
         let t = now - marker.from;
         let body = creatures.body(marker.id);
-        // Gone with its wind-up: run out, or ended first (died, went, or struck sooner).
-        let ended = t < marker.windup && !creatures.winding(marker.id);
+        // Its blow fills it at once; a wind-up cut short (it fell, went, or stopped well
+        // before its end) takes it away.
+        let struck = !creatures.winding(marker.id);
+        let ended = struck && (!creatures.standing(marker.id) || t < marker.windup - BLOW_SLACK);
         if t > marker.windup + MARKER_AFTER || body.is_none() || ended {
             materials.remove(&material.0);
             commands.entity(entity).despawn();
             continue;
         }
-        let filled = marker_fill(t, marker.windup);
+        let filled = if struck { 1.0 } else { marker_fill(t, marker.windup) };
         if let Some((_, at, _)) = body {
             transform.translation = at + Vec3::Y * 0.04;
         }
