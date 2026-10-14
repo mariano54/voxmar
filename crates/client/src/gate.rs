@@ -5429,11 +5429,6 @@ fn nest(world: &mut World, gate: &mut Gate, now: f32) {
     let (torch, barrel, hen) = (bag + IVec3::X, stand + IVec3::new(0, 0, 2), stand + IVec3::new(0, 0, -3));
     // Where a rug and a stool are set down and broken again, either side of the barrel.
     let (rug, stool) = (stand + IVec3::new(1, 0, 1), stand + IVec3::new(-1, 0, 1));
-    let block_is = |world: &World, gate: &Gate, at: IVec3, name: &str| {
-        let client = world.resource::<ClientWorld>();
-        let want = client.registry.id(name);
-        client.block(at) == want && gate.observer.as_ref().is_none_or(|o| o.world.block(at) == want)
-    };
     let waited = gate.server_in_phase();
     let leave = |world: &mut World, gate: &mut Gate| {
         world.resource_mut::<UiState>().inventory_open = false;
@@ -5507,37 +5502,63 @@ fn nest(world: &mut World, gate: &mut Gate, now: f32) {
                 leave(world, gate);
             }
         }
-        // Each set down by the player, the rug first.
-        3 | 4 => {
-            let (name, at) = if gate.phase == 3 { ("base:red_rug", rug) } else { ("base:oak_stool", stool) };
-            if select(world, name) {
+        // Each set down by the player, the rug first, the stool once the rug stands. Seen on
+        // this client: the pack below says what the server held.
+        3 | 4 | 5 => {
+            let place = |world: &mut World, name: &str, at: IVec3| {
+                if !select(world, name) {
+                    return false;
+                }
                 let actions = world.resource::<crate::Actions>().0.clone();
                 world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("core:place"), voxmar_engine::action::ActionTarget::Block { block: at - IVec3::Y, face: voxmar_engine::coords::Face::PosY });
-                gate.advance(now);
-            } else if waited > 10.0 {
-                gate.check("home: furnishings", Err(format!("no {name} came to hand {waited:.1} server s after it was given")));
-                leave(world, gate);
+                true
+            };
+            let stands = |world: &World, at: IVec3, name: &str| {
+                let client = world.resource::<ClientWorld>();
+                client.registry.id(name).is_some_and(|want| client.block(at) == Some(want))
+            };
+            let (placing, at) = match gate.phase {
+                3 => (Some("base:red_rug"), rug),
+                4 => (stands(world, rug, "base:red_rug").then_some("base:oak_stool"), rug),
+                _ => (stands(world, stool, "base:oak_stool").then_some(""), stool),
+            };
+            match placing {
+                Some("") => gate.advance(now),
+                Some(name) => {
+                    if place(world, name, if gate.phase == 3 { rug } else { stool }) {
+                        gate.advance(now);
+                    } else if waited > 10.0 {
+                        gate.check("home: furnishings", Err(format!("no {name} came to hand {waited:.1} server s after it was given")));
+                        leave(world, gate);
+                    }
+                }
+                None if waited > 10.0 => {
+                    let piece = if gate.phase == 4 { "base:red_rug" } else { "base:oak_stool" };
+                    let (client, held) = (world.resource::<ClientWorld>(), world.resource::<LocalPlayer>().inventory.get(world.resource::<LocalPlayer>().selected).map(|s| s.item));
+                    let name = |b: Option<BlockId>| b.map_or("an unloaded cell".to_owned(), |b| client.registry.def(b).name.clone());
+                    let (there, below, held) = (name(client.block(at)), name(client.block(at - IVec3::Y)), name(held));
+                    let refused = world.resource::<crate::hud::console::Console>().since(gate.phase_since).last().unwrap_or("").to_owned();
+                    gate.check("home: furnishings", Err(format!("{waited:.1} server s after the player set a {piece} on the {below} at {}, its cell {at} holds {there} (holding {held}; last chat \"{refused}\")", at - IVec3::Y)));
+                    leave(world, gate);
+                }
+                None => {}
             }
         }
         // Both in, then broken by hand one after the other.
-        5 | 6 => {
-            let (name, at, height) = if gate.phase == 5 { ("base:red_rug", rug, 0.03) } else { ("base:oak_stool", stool, 0.4) };
-            if gate.phase == 5 && !(block_is(world, gate, rug, "base:red_rug") && block_is(world, gate, stool, "base:oak_stool")) {
-                if waited > 10.0 {
-                    gate.check("home: furnishings", Err(format!("{waited:.1} server s after placing, the rug and stool did not both stand")));
-                    leave(world, gate);
-                }
-                return;
-            }
+        6 | 7 => {
+            let (name, at, height) = if gate.phase == 6 { ("base:red_rug", rug, 0.03) } else { ("base:oak_stool", stool, 0.4) };
             aim_at(world, at.as_vec3() + Vec3::new(0.5, height, 0.5));
             mouse(world, MouseButton::Left, true);
-            let gone = world.resource::<ClientWorld>().block(at).is_some_and(|b| b.is_air()) && gate.observer.as_ref().is_none_or(|o| o.world.block(at).is_some_and(|b| b.is_air()));
-            if gone {
+            if world.resource::<ClientWorld>().block(at).is_some_and(|b| b.is_air()) {
                 mouse(world, MouseButton::Left, false);
                 gate.advance(now);
             } else if waited > 10.0 {
                 mouse(world, MouseButton::Left, false);
-                gate.check("home: furnishings", Err(format!("{waited:.1} server s of breaking, the {name} still stands")));
+                let on = {
+                    let (target, cells) = (world.resource::<crate::interact::Target>(), world.resource::<ClientWorld>());
+                    target.block_hit.map_or_else(|| "nothing".to_owned(), |hit| format!("{} at {}", cells.block(hit.block).map_or("an unloaded block", |b| cells.registry.def(b).name.as_str()), hit.block))
+                };
+                gate.check("home: furnishings", Err(format!("{waited:.1} server s of breaking, the {name} at {at} still stands; the crosshair was on {on}")));
                 leave(world, gate);
             }
         }
