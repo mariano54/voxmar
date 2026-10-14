@@ -3,7 +3,8 @@
 //! view. It bobs as the player breathes and walks, comes up from below when the player
 //! switches to it, and swings when they dig, strike or use something, timed by the same
 //! things that time those (the mining in progress, the fight's rhythm, the right button).
-//! The empty hand shows nothing.
+//! The empty hand shows the player's own fist and forearm (`bare`), which punches, works
+//! at blocks, uses things and guards as anything held does.
 //!
 //! It is drawn by `render::items`, as a dropped item is, except that it is placed in the
 //! view and always in front, so no wall comes between it and the eye. It takes the light
@@ -141,6 +142,41 @@ pub struct Kind {
     pub moves: Moves,
 }
 
+/// The empty hand: the fist and forearm, drawn as a row of cubes (the fist first, at
+/// `pose`, then each piece of the arm `spacing` widths further back along it, toward the
+/// elbow), each with one texture on every face.
+#[derive(Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Bare {
+    pub pose: Pose,
+    #[serde(default)]
+    pub moves: Moves,
+    /// The pieces' textures in the packs (`block/...`), the fist first.
+    pub pieces: Vec<String>,
+    pub spacing: f32,
+}
+
+impl Bare {
+    /// Its pose and moves as a kind of thing held, labelled `bare`.
+    pub fn kind(&self) -> Kind {
+        Kind { tag: "bare".to_owned(), pose: self.pose, moves: self.moves }
+    }
+
+    /// Where each piece's middle is (right, up and forward of the eye) for the fist at `at`
+    /// turned by `turn` (degrees), `size` wide: the fist first.
+    pub fn pieces_at(&self, at: Vec3, turn: Vec3, size: f32) -> Vec<Vec3> {
+        let rotation = Quat::from_scaled_axis(turn_vector(turn));
+        // The view looks down -z; the model's +z is back toward the eye.
+        let fist = Vec3::new(at.x, at.y, -at.z);
+        (0..self.pieces.len())
+            .map(|i| {
+                let p = fist + rotation * Vec3::new(0.0, 0.0, i as f32 * self.spacing * size);
+                Vec3::new(p.x, p.y, -p.z)
+            })
+            .collect()
+    }
+}
+
 /// The hand's own motion, in blocks and seconds.
 #[derive(Deserialize, Clone, Copy, Debug, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -177,6 +213,8 @@ pub struct Book {
     pub kinds: Vec<Kind>,
     pub cube: Option<Kind>,
     pub sprite: Option<Kind>,
+    /// The empty hand; none, and it draws nothing.
+    pub bare: Option<Bare>,
 }
 
 impl Book {
@@ -205,6 +243,7 @@ impl Book {
         put(&mut self.moves.flinch, later.moves.flinch, "the flinch stroke", note);
         put(&mut self.cube, later.cube, "the pose of a block", note);
         put(&mut self.sprite, later.sprite, "the pose of any other item", note);
+        put(&mut self.bare, later.bare, "the empty hand", note);
         for kind in later.kinds {
             match self.kinds.iter().position(|k| k.tag == kind.tag) {
                 Some(at) => {
@@ -239,7 +278,7 @@ impl Book {
         else {
             return Err(problems);
         };
-        let handling = Handling { hand, moves: AllMoves { attack, dig, place, guard, eat, dodge, flinch }, kinds: self.kinds, cube, sprite };
+        let handling = Handling { hand, moves: AllMoves { attack, dig, place, guard, eat, dodge, flinch }, kinds: self.kinds, cube, sprite, bare: self.bare, bare_layers: Vec::new() };
         let problems = handling.problems();
         if problems.is_empty() { Ok(handling) } else { Err(problems) }
     }
@@ -265,6 +304,10 @@ pub struct Handling {
     pub kinds: Vec<Kind>,
     pub cube: Kind,
     pub sprite: Kind,
+    pub bare: Option<Bare>,
+    /// The texture layers of the empty hand's pieces, once the textures are loaded (none
+    /// before, and the empty hand is not drawn).
+    pub bare_layers: Vec<u16>,
 }
 
 /// The pack's handling of things, or none if no pack gave a whole one (then nothing is
@@ -313,13 +356,19 @@ impl Handling {
             check(&format!("the {name} stroke must take 0.05 to 3 seconds"), stroke.seconds.is_finite() && (0.05..=3.0).contains(&stroke.seconds));
             check(&format!("the {name} stroke's wind-up must take 0 to 0.6 of it, in finite numbers"), stroke.wind.is_none_or(|w| (0.0..=0.6).contains(&w.share) && finite(&w.at) && finite(&w.turn)));
         }
+        if let Some(bare) = &self.bare {
+            check("the empty hand must have 1 to 8 pieces", (1..=8).contains(&bare.pieces.len()));
+            check("the empty hand's pieces must each name a texture", bare.pieces.iter().all(|p| !p.trim().is_empty()));
+            check("the empty hand's pieces must be 0.3 to 1.5 widths apart", bare.spacing.is_finite() && (0.3..=1.5).contains(&bare.spacing));
+        }
+        let bare = self.bare.as_ref().map(Bare::kind);
         let mut tags = std::collections::BTreeSet::new();
-        for (label, kind) in self.kinds.iter().map(|k| (k.tag.as_str(), k)).chain([("cube", &self.cube), ("sprite", &self.sprite)]) {
+        for (label, kind) in self.kinds.iter().map(|k| (k.tag.as_str(), k)).chain([("cube", &self.cube), ("sprite", &self.sprite)]).chain(bare.iter().map(|k| ("bare", k))) {
             let own = kind.moves;
             let all = self.moves_of(kind);
             let named = format!("`{label}`");
             check(&format!("{named} has an empty tag"), !kind.tag.is_empty());
-            check(&format!("{named} is listed twice"), label == "cube" || label == "sprite" || tags.insert(label.to_owned()));
+            check(&format!("{named} is listed twice"), ["cube", "sprite", "bare"].contains(&label) || tags.insert(label.to_owned()));
             let p = &kind.pose;
             check(&format!("{named} has numbers that are not finite"), finite(&p.at) && finite(&p.turn) && finite(&[p.size]));
             check(&format!("{named} must be 0.05 to 1.5 blocks wide"), (0.05..=1.5).contains(&p.size));
@@ -445,6 +494,9 @@ pub struct Motion {
     hurt_seen: Option<u32>,
     /// The swing as last weighed: seconds into it, when it connects and its weight.
     swung: Option<(f32, f32, f32)>,
+    /// The models the hand was drawn with last frame: the item's one, the empty hand's
+    /// pieces, or none.
+    drawn: usize,
     /// The light the hand has, as it follows the light where the player stands.
     light: Option<[f32; 2]>,
     /// The light measured where the player's eye is, the block it was measured at and when.
@@ -577,6 +629,11 @@ impl Motion {
         self.swung
     }
 
+    /// The models the hand was drawn with last frame.
+    pub fn drawn(&self) -> usize {
+        self.drawn
+    }
+
     /// Whether a swing began: the rhythm's seconds into its swing dropped (a click starts
     /// the meter again from 0), not for a switch of what is held.
     pub fn swing_began(&mut self, since: f32, switched: bool) -> bool {
@@ -696,15 +753,24 @@ fn show(
         speed: player.velocity.xz().length(),
         frozen: stop.is_some_and(|stop| stop.holds(now)),
     };
-    // The kind comes first, for the moves its strokes time.
-    let Some(item) = item else {
-        motion.step(doing, dt, &handling.hand, &handling.moves);
-        return;
-    };
+    // The kind comes first, for the moves its strokes time: the item's, or the empty
+    // hand's (none while dead or not yet in the world).
     let eye_cell = player.eye().floor().as_ivec3();
-    let look = look_of(&world, pieces.as_deref(), item, eye_cell);
-    let def = world.registry.def(item);
-    let kind = handling.kind_of(|tag| def.has_tag(tag), look.shape);
+    let bare = handling.bare.as_ref().filter(|_| item.is_none() && !player.dead && player.joined && !handling.bare_layers.is_empty());
+    let bare_kind = bare.map(Bare::kind);
+    let (kind, look) = match (item, &bare_kind) {
+        (Some(item), _) => {
+            let look = look_of(&world, pieces.as_deref(), item, eye_cell);
+            let def = world.registry.def(item);
+            (handling.kind_of(|tag| def.has_tag(tag), look.shape), Some(look))
+        }
+        (None, Some(kind)) => (kind, None),
+        (None, None) => {
+            motion.step(doing, dt, &handling.hand, &handling.moves);
+            motion.drawn = 0;
+            return;
+        }
+    };
     let moves = handling.moves_of(kind);
     let weights = motion.step(doing, dt, &handling.hand, &moves);
     let (mut at, turn, size) = compose(&kind.pose, &moves, &handling.hand, &weights);
@@ -725,6 +791,29 @@ fn show(
     let light = motion.light(measured, dt, handling.hand.light_rate);
     // First, not last: the renderer keeps the first `CAPACITY` models, and when drops fill
     // the list it is the furthest of them that go, not the hand.
+    let (Some(look), None) = (look, bare) else {
+        // The empty hand: the fist, then the arm back toward the eye. All of it is drawn at
+        // one depth in front of the world, so each piece covers those before it: the
+        // nearest goes last.
+        let Some(bare) = bare else { return };
+        let turned = turn_vector(turn);
+        let arm = bare.pieces_at(at, turn, size).into_iter().zip(&handling.bare_layers).map(|(at, &layer)| ItemModel {
+            center: Vec3::ZERO,
+            phase: 0.0,
+            offset: Vec3::ZERO,
+            size,
+            shape: Shape::Cube,
+            layers: [layer; 6],
+            tinted: 0,
+            tint: [255; 3],
+            light,
+            held: Some(Held { at, turn: turned }),
+        });
+        models.0.splice(0..0, arm);
+        motion.drawn = handling.bare_layers.len().min(bare.pieces.len());
+        return;
+    };
+    motion.drawn = 1;
     models.0.insert(0, ItemModel {
         center: Vec3::ZERO,
         phase: 0.0,
@@ -793,8 +882,9 @@ mod tests {
     #[test]
     fn every_pose_stays_in_the_lower_right_of_the_view_at_rest_and_in_frame_through_every_move() {
         let handling = shipped();
+        let bare = handling.bare.as_ref().map(Bare::kind);
         for aspect in [4.0 / 3.0, 16.0 / 9.0, 21.0 / 9.0] {
-            for kind in handling.kinds.iter().chain([&handling.cube, &handling.sprite]) {
+            for kind in handling.kinds.iter().chain([&handling.cube, &handling.sprite]).chain(&bare) {
                 let moves = handling.moves_of(kind);
                 let name = &kind.tag;
                 let (at, turn, size) = compose(&kind.pose, &moves, &handling.hand, &weights());
@@ -820,6 +910,13 @@ mod tests {
                     let (middle, _) = face(at, turn, size, aspect);
                     assert!(at.z > 0.15, "{name}'s {move_name} goes behind the eye");
                     assert!(middle.x.abs() < 1.0 && middle.y.abs() < 1.0, "{name}'s {move_name} leaves the screen: its middle is at {middle}");
+                    // The empty hand's arm runs back toward the eye and down out of the view,
+                    // never past the eye.
+                    if let Some(arm) = handling.bare.as_ref().filter(|_| kind.tag == "bare") {
+                        let pieces = arm.pieces_at(at, turn, size);
+                        assert!(pieces.iter().all(|p| p.z > 0.1), "the empty hand's {move_name} brings its arm past the eye: {pieces:?}");
+                        assert!(pieces.windows(2).all(|p| p[1].z < p[0].z), "the empty hand's arm must run back toward the eye in its {move_name}: {pieces:?}");
+                    }
                 }
             }
         }
@@ -892,8 +989,10 @@ mod tests {
     #[test]
     fn a_swing_peaks_as_its_blow_is_judged_however_long_the_frames() {
         let handling = shipped();
-        for kind in handling.kinds.iter().chain([&handling.cube, &handling.sprite]) {
-            for connect in [0.06, 0.1, 0.15, 0.2] {
+        let bare = handling.bare.as_ref().map(Bare::kind);
+        assert!(bare.is_some(), "the default pack draws the empty hand");
+        for kind in handling.kinds.iter().chain([&handling.cube, &handling.sprite]).chain(&bare) {
+            for connect in [0.06, 0.08, 0.1, 0.15, 0.2] {
                 let fine = swing(&handling, kind, connect, 1.0 / 480.0);
                 let (peak, top) = fine.iter().copied().fold((0.0, 0.0), |best, (t, w)| if w > best.1 { (t, w) } else { best });
                 assert!(top > 0.99, "{}'s swing never reaches its full stroke ({top})", kind.tag);
@@ -1027,7 +1126,7 @@ mod tests {
         assert!(wrong.iter().any(|p| p.contains("dodge stroke")) && wrong.iter().any(|p| p.contains("flinch stroke")), "{wrong:?}");
         let source = std::fs::read_to_string(assets().join("packs/default").join(FILE)).unwrap();
         let book = Book::parse(&source).unwrap();
-        let changes: [(fn(&mut Book), &str); 7] = [
+        let changes: [(fn(&mut Book), &str); 11] = [
             (|b: &mut Book| b.kinds[0].pose.size = 0.0, "wide"),
             (|b: &mut Book| b.kinds[0].pose.at[2] = -0.5, "forward"),
             (|b: &mut Book| b.kinds[0].pose.at[0] = f32::NAN, "finite"),
@@ -1035,6 +1134,10 @@ mod tests {
             (|b: &mut Book| b.hand.as_mut().unwrap().raise_seconds = 0.0, "raise_seconds"),
             (|b: &mut Book| b.kinds[1].tag = b.kinds[0].tag.clone(), "twice"),
             (|b: &mut Book| b.moves.dodge.as_mut().unwrap().seconds = 9.0, "dodge stroke must take"),
+            (|b: &mut Book| b.bare.as_mut().unwrap().pieces.clear(), "1 to 8 pieces"),
+            (|b: &mut Book| b.bare.as_mut().unwrap().pieces[0] = " ".into(), "each name a texture"),
+            (|b: &mut Book| b.bare.as_mut().unwrap().spacing = 3.0, "widths apart"),
+            (|b: &mut Book| b.bare.as_mut().unwrap().pose.at[2] = 0.0, "`bare` must be 0.15 to 1.5 blocks forward"),
         ];
         for (change, wanted) in changes {
             let mut broken = book.clone();
@@ -1079,6 +1182,137 @@ mod tests {
         pixels
     }
 
+    /// A rendering of cubes held in the view, each at `at` turned `turn`, `size` wide, with
+    /// its texture on every face, over sky and grass with the crosshair: RGB bytes. Drawn as
+    /// the shader draws held models, all at one depth, so each covers those before it.
+    fn boxes(cubes: &[(Vec3, Vec3, f32, Option<&voxmar_texgen::Image>)], w: usize, h: usize) -> Vec<u8> {
+        let f = 1.0 / (75f32.to_radians() / 2.0).tan();
+        let mut pixels = flat(None, Vec3::Z, Vec3::ZERO, 0.0, w, h);
+        for &(at, turn, size, image) in cubes {
+            let rotation = Quat::from_scaled_axis(turn_vector(turn));
+            let inverse = rotation.inverse();
+            let centre = Vec3::new(at.x, at.y, -at.z);
+            for y in 0..h {
+                for x in 0..w {
+                    let (nx, ny) = ((x as f32 + 0.5) / w as f32 * 2.0 - 1.0, 1.0 - (y as f32 + 0.5) / h as f32 * 2.0);
+                    let direction = Vec3::new(nx * (w as f32 / h as f32) / f, ny / f, -1.0);
+                    // Into the cube's own unit box, centred on 0.
+                    let (o, d) = (inverse * -centre / size, inverse * direction / size);
+                    let (mut near, mut far, mut axis) = (f32::MIN, f32::MAX, 0);
+                    for a in 0..3 {
+                        if d[a].abs() < 1e-9 {
+                            if o[a].abs() > 0.5 {
+                                far = f32::MIN;
+                            }
+                            continue;
+                        }
+                        let (t0, t1) = ((-0.5 - o[a]) / d[a], (0.5 - o[a]) / d[a]);
+                        let (t0, t1) = (t0.min(t1), t0.max(t1));
+                        if t0 > near {
+                            (near, axis) = (t0, a);
+                        }
+                        far = far.min(t1);
+                    }
+                    if near > far || near <= 0.0 {
+                        continue;
+                    }
+                    let hit = o + d * near + Vec3::splat(0.5);
+                    let (u, v) = match axis {
+                        0 => (hit.z, hit.y),
+                        1 => (hit.x, hit.z),
+                        _ => (hit.x, hit.y),
+                    };
+                    let mut normal = Vec3::ZERO;
+                    normal[axis] = -d[axis].signum();
+                    let n = rotation * normal;
+                    // The shader's light by the face's way: tops brightest, bottoms darkest.
+                    let shade = n.x * n.x * 0.62 + n.z * n.z * 0.8 + n.y * n.y * if n.y > 0.0 { 1.0 } else { 0.5 };
+                    let rgb = match image {
+                        Some(image) => {
+                            let (tx, ty) = (((u * image.width as f32) as u32).min(image.width - 1), (((1.0 - v) * image.height as f32) as u32).min(image.height - 1));
+                            let [r, g, b, _] = image.get(tx, ty);
+                            [r, g, b]
+                        }
+                        None => [200, 150, 110],
+                    };
+                    pixels[(y * w + x) * 3..][..3].copy_from_slice(&rgb.map(|c| (c as f32 * shade).min(255.0) as u8));
+                }
+            }
+        }
+        pixels
+    }
+
+    /// The empty hand frame by frame (`bare.png`), as `held_swing_strip`: a punch with the
+    /// frame its blow is judged in red and its peak in yellow, a jab at a block, a use, the
+    /// guard raised (with a shield worn), a dodge, a blow taken and the hand coming up.
+    #[test]
+    #[ignore]
+    fn bare_hand_strip() {
+        let Some(out) = std::env::var_os("VOXMAR_HELD_PREVIEW") else { return };
+        let out = std::path::PathBuf::from(out);
+        std::fs::create_dir_all(&out).unwrap();
+        let handling = shipped();
+        let content = voxmar_server::load_content(&assets()).unwrap();
+        let library = voxmar_texgen::Library::load(&assets().join("packs/default")).unwrap();
+        let bare = handling.bare.clone().unwrap();
+        let images: Vec<Option<voxmar_texgen::Image>> = bare.pieces.iter().map(|p| library.render(p).and_then(Result::ok)).collect();
+        let kind = bare.kind();
+        let moves = handling.moves_of(&kind);
+        let windup = content.combat.timing(&content.combat.wielded(None, |_| 1)).windup;
+        const FRAMES: usize = 14;
+        const STEP: f32 = 1.0 / 30.0;
+        let (w, h) = (274usize, 154usize);
+        let rows = ["punch", "dig", "use", "guard", "dodge right", "flinch", "raise"];
+        let mut sheet = image::RgbImage::new((FRAMES * w) as u32, (rows.len() * h) as u32);
+        for (row, what) in rows.iter().enumerate() {
+            let mut motion = Motion::default();
+            let rest = Doing { item: None, connect: windup, ..Doing::default() };
+            if *what != "raise" {
+                motion.step(rest, 1.0, &handling.hand, &moves);
+            } else {
+                motion.step(Doing { item: Some(BlockId(5)), ..rest }, 1.0, &handling.hand, &moves);
+            }
+            let mut frames = Vec::new();
+            for frame in 0..FRAMES {
+                let doing = match *what {
+                    "punch" => Doing { swung: frame == 0, ..rest },
+                    "dig" => Doing { digging: true, ..rest },
+                    "use" => Doing { using: frame < 2, ..rest },
+                    "guard" => Doing { guarding: true, ..rest },
+                    "dodge right" => Doing { dodged: (frame == 0).then_some(1.0), ..rest },
+                    "flinch" => Doing { flinched: frame == 0, ..rest },
+                    _ => rest,
+                };
+                frames.push(motion.step(doing, if frame == 0 { 0.0 } else { STEP }, &handling.hand, &moves));
+            }
+            let punching = *what == "punch";
+            let peak = if punching { (0..FRAMES).max_by(|&a, &b| frames[a].attack.total_cmp(&frames[b].attack)).unwrap() } else { FRAMES };
+            let judged = if punching { (windup / STEP).round() as usize } else { FRAMES };
+            println!("row {row}: bare {what}: wind-up {windup:.2} s (frame {judged}), stroke peaks at frame {peak} ({:.2} s)", peak as f32 * STEP);
+            for (frame, weights) in frames.iter().enumerate() {
+                let (at, turn, size) = compose(&kind.pose, &moves, &handling.hand, weights);
+                let cubes: Vec<_> = bare.pieces_at(at, turn, size).into_iter().zip(&images).map(|(at, image)| (at, turn, size, image.as_ref())).collect();
+                let pixels = boxes(&cubes, w, h);
+                let (ox, oy) = (frame * w, row * h);
+                for y in 0..h {
+                    for x in 0..w {
+                        let p = &pixels[(y * w + x) * 3..][..3];
+                        let edge = x < 4 || y < 4 || x >= w - 4 || y >= h - 4;
+                        let inner = (4..8).contains(&x) || (4..8).contains(&y) || (w - 8..w - 4).contains(&x) || (h - 8..h - 4).contains(&y);
+                        let rgb = match (frame == judged, frame == peak) {
+                            (true, _) if edge => [230, 40, 40],
+                            (_, true) if edge || inner && frame == judged => [250, 210, 40],
+                            _ if x == 0 || y == 0 => [30, 30, 30],
+                            _ => [p[0], p[1], p[2]],
+                        };
+                        sheet.put_pixel((ox + x) as u32, (oy + y) as u32, image::Rgb(rgb));
+                    }
+                }
+            }
+        }
+        sheet.save(out.join("bare.png")).unwrap();
+    }
+
     /// Draws the hand as the player would see it, for looking at: `cargo test -p voxmar_client
     /// held_preview -- --ignored` with `VOXMAR_HELD_PREVIEW` the folder to write to. A flat
     /// sprite through the very pose maths, as the shader places it (no thickness).
@@ -1106,7 +1340,7 @@ mod tests {
             ("wooden_hoe", "hoe", vec![("rest", weights())]),
             ("fishing_rod", "rod", vec![("rest", weights())]),
             ("torch_lit", "light", vec![("rest", weights())]),
-            ("cooked_rabbit", "edible", vec![("rest", weights()), ("eat", Weights { eat: 1.0, ..weights() })]),
+            ("cooked_small_game", "edible", vec![("rest", weights()), ("eat", Weights { eat: 1.0, ..weights() })]),
         ];
         let panels: Vec<(String, Vec<u8>)> = sheet
             .iter()

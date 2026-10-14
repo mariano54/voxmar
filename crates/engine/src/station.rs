@@ -334,7 +334,7 @@ mod tests {
     fn the_games_stations_read_as_their_rules_say() {
         let content = crate::content::Content::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).expect("content loads");
         let (blocks, stations) = (&content.blocks, &content.stations);
-        let (rack, hung, meat) = (blocks.expect("base:drying_rack"), blocks.expect("base:drying_rack_hung"), blocks.expect("base:raw_rabbit"));
+        let (rack, hung, meat) = (blocks.expect("base:drying_rack"), blocks.expect("base:drying_rack_hung"), blocks.expect("base:raw_small_game"));
         let (station, phase) = stations.of(rack).expect("the rack is a station");
         assert_eq!(phase, Phase::Empty);
         assert_eq!(stations.of(hung).map(|(_, p)| p), Some(Phase::Working));
@@ -342,7 +342,7 @@ mod tests {
         assert_eq!(work.output, blocks.expect("base:jerky"));
         assert!(station.needs.contains(&Spot::OpenSky), "air dries it");
         assert!(station.faster.iter().any(|(s, t)| matches!(s, Spot::Near(tag, _) if tag == "fire") && *t > 1.0), "smoke dries it faster");
-        assert!(station.work(blocks.expect("base:cooked_rabbit")).is_none(), "cooked meat is no work for it");
+        assert!(station.work(blocks.expect("base:cooked_small_game")).is_none(), "cooked meat is no work for it");
         assert!(station.work(blocks.expect("base:jerky")).is_none() && station.work(blocks.expect("base:egg")).is_none(), "nor jerky, nor a raw egg");
         assert!(station.work(blocks.expect("base:raw_trout")).is_some(), "fish dries too");
         assert!(stations.usable(rack, Some(meat)) && !stations.usable(rack, None) && stations.usable(hung, None));

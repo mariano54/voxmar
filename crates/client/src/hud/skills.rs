@@ -1,7 +1,7 @@
 //! Skills on the HUD, RuneScape-style: each bit of experience earned rises at the right of
 //! the screen as "+18 Farming" and fades (gains close together add up into one line), a
-//! new level rings and is noted in a small plate above them with the skill's icon, and an
-//! action refused for want of a level says what it needs (all of them waiting under the quest book
+//! new level is handed to the HUD's moments (`celebrate`: a banner, motes and a jingle),
+//! and an action refused for want of a level says what it needs (all of them waiting under the quest book
 //! and the journal while one is open). The character screen lists every
 //! skill's level and how far it is to the next.
 
@@ -12,9 +12,8 @@ use crate::lang::Locale;
 use crate::menu::Screen;
 use crate::player::UiState;
 use crate::session::Launch;
-use crate::ui::skin::{PX, Piece};
-use crate::ui::sound::UiSound;
-use crate::ui::widgets::{ACCENT, BODY, ERROR, GOLD, SHADOW, TEXT, UiFont, shadowed};
+use crate::ui::skin::PX;
+use crate::ui::widgets::{ACCENT, BODY, ERROR, SHADOW, UiFont, shadowed};
 use crate::ui::widgets::space;
 
 /// Seconds a line stays, the last of them fading out as it rises.
@@ -24,9 +23,6 @@ const FADE: f32 = 0.6;
 const MERGE: f32 = 1.2;
 /// How far a line rises over its life, in HUD pixels.
 const RISE: f32 = 10.0;
-/// Seconds a new level is noted for, and how long its plate takes to appear.
-const LEVEL_SECONDS: f32 = 4.0;
-const APPEAR: f32 = 0.2;
 /// Lines shown at once at most.
 const LINES: usize = 6;
 /// How long a refusal's reason shows under the crosshair, and how far below its middle
@@ -40,7 +36,7 @@ impl Plugin for SkillHudPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<SkillToasts>()
             .add_systems(PostStartup, spawn)
-            .add_systems(Update, (show, move_aside, hear_levels).run_if(in_state(Screen::InGame)))
+            .add_systems(Update, (show, move_aside).run_if(in_state(Screen::InGame)))
             .add_systems(OnExit(Screen::InGame), |mut toasts: ResMut<SkillToasts>| *toasts = SkillToasts::default());
     }
 }
@@ -62,10 +58,8 @@ enum LineKind {
 #[derive(Resource, Default)]
 pub struct SkillToasts {
     lines: Vec<Line>,
-    /// A level just reached, and when.
-    level: Option<(SkillId, u8, f32)>,
-    /// Levels reached and not yet heard (`hear_levels`).
-    unheard: Vec<u8>,
+    /// Levels reached that the HUD's moments have not yet taken (`celebrate`).
+    reached: Vec<(SkillId, u8)>,
     /// Why the last action was refused, and when, shown under the crosshair.
     why: Option<(String, f32)>,
     /// The clock of the last `show`, so a refusal is showing only while it would be drawn.
@@ -84,10 +78,14 @@ impl SkillToasts {
         self.push(Line { kind: LineKind::Gain { skill, tenths }, at: now });
     }
 
-    /// `skill` reached `level` at `now`.
-    pub fn level_up(&mut self, skill: SkillId, level: u8, now: f32) {
-        self.level = Some((skill, level, now));
-        self.unheard.push(level);
+    /// `skill` reached `level`.
+    pub fn level_up(&mut self, skill: SkillId, level: u8) {
+        self.reached.push((skill, level));
+    }
+
+    /// The levels reached since last asked.
+    pub fn take_reached(&mut self) -> Vec<(SkillId, u8)> {
+        std::mem::take(&mut self.reached)
     }
 
     /// Whether a refusal saying `why` is showing.
@@ -125,20 +123,8 @@ struct ToastLine(usize);
 /// Why the last action was refused, under the crosshair.
 #[derive(Component)]
 pub struct WhyLine;
-/// The plate noting a new level, and its parts.
-#[derive(Component)]
-struct LevelPlate;
-#[derive(Component)]
-struct LevelIcon;
-#[derive(Component)]
-struct LevelSkill;
-#[derive(Component)]
-struct LevelReached;
-/// What the level opens, from the skill's guide.
-#[derive(Component)]
-struct LevelOpens;
 
-/// The toasts' and the level plate's places, at the right of the screen, or its left while
+/// The toasts' place, at the right of the screen, or its left while
 /// creative mode's catalogue fills the right.
 #[derive(Component)]
 struct Corner;
@@ -188,40 +174,16 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
         let line = Node { max_width: Val::Percent(60.0), ..default() };
         under.spawn((line, shadowed(font, "", BODY, ERROR), TextLayout::default().with_justify(Justify::Center), WhyLine, Visibility::Hidden));
     });
-    // Just above the experience lines, so the two read as one quiet corner.
-    let corner = Node { position_type: PositionType::Absolute, right: Val::Px(space::SECTION), bottom: Val::Percent(63.0), ..default() };
-    let plate = Node {
-        align_items: AlignItems::Center,
-        column_gap: Val::Px(space::INNER),
-        padding: UiRect::axes(Val::Px(space::GAP), Val::Px(space::INNER)),
-        ..default()
-    };
-    commands.spawn((corner, GlobalZIndex(1), Corner)).with_children(|corner| {
-        corner.spawn((plate, Piece::Tooltip.image(), LevelPlate, Visibility::Hidden)).with_children(|plate| {
-            plate.spawn((Node { width: Val::Px(16.0 * PX), height: Val::Px(16.0 * PX), ..default() }, ImageNode::default(), LevelIcon));
-            plate.spawn(Node { flex_direction: FlexDirection::Column, ..default() }).with_children(|lines| {
-                lines.spawn((shadowed(font, "", BODY, GOLD), LevelSkill));
-                lines.spawn((shadowed(font, "", BODY, TEXT), LevelReached));
-                lines.spawn((Node { max_width: Val::Px(140.0 * PX), ..default() }, shadowed(font, "", BODY, ACCENT), LevelOpens));
-            });
-        });
-    });
 }
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+#[allow(clippy::type_complexity)]
 fn show(
     time: Res<Time>,
     launch: Res<Launch>,
     locale: Res<Locale>,
-    images: Option<Res<super::HudImages>>,
     mut toasts: ResMut<SkillToasts>,
-    mut lines: Query<(&ToastLine, &mut Text, &mut TextColor, &mut TextShadow, &mut Node, &mut Visibility), Without<LevelPlate>>,
-    mut plate: Query<(&mut Visibility, &mut ImageNode), (With<LevelPlate>, Without<LevelIcon>)>,
-    mut icon: Query<&mut ImageNode, (With<LevelIcon>, Without<LevelPlate>)>,
-    mut skill_text: Query<(&mut Text, &mut TextColor, &mut TextShadow), (With<LevelSkill>, Without<ToastLine>, Without<LevelReached>)>,
-    mut reached_text: Query<(&mut Text, &mut TextColor, &mut TextShadow), (With<LevelReached>, Without<ToastLine>, Without<LevelSkill>)>,
-    mut opens_text: Query<(&mut Text, &mut TextColor, &mut TextShadow, &mut Node), (With<LevelOpens>, Without<ToastLine>, Without<LevelSkill>, Without<LevelReached>)>,
-    mut why_line: Query<(&mut Text, &mut TextColor, &mut TextShadow, &mut Visibility), (With<WhyLine>, Without<ToastLine>, Without<LevelSkill>, Without<LevelReached>, Without<LevelOpens>, Without<LevelPlate>)>,
+    mut lines: Query<(&ToastLine, &mut Text, &mut TextColor, &mut TextShadow, &mut Node, &mut Visibility)>,
+    mut why_line: Query<(&mut Text, &mut TextColor, &mut TextShadow, &mut Visibility), (With<WhyLine>, Without<ToastLine>)>,
 ) {
     let now = time.elapsed_secs();
     let skills = &launch.content.skills;
@@ -263,61 +225,6 @@ fn show(
         shadow.color = SHADOW.with_alpha(SHADOW.alpha() * alpha);
         node.top = Val::Px(-RISE * PX * (since / LINE_SECONDS));
         visibility.set_if_neq(Visibility::Inherited);
-    }
-    let Ok((mut visibility, mut backing)) = plate.single_mut() else { return };
-    let Some((skill, reached, at)) = toasts.level.filter(|&(_, _, at)| now - at < LEVEL_SECONDS) else {
-        visibility.set_if_neq(Visibility::Hidden);
-        return;
-    };
-    // In quickly, out slowly.
-    let since = now - at;
-    let alpha = (since / APPEAR).min(1.0) * fade(since, LEVEL_SECONDS);
-    backing.color = Color::WHITE.with_alpha(alpha);
-    if let Ok(mut icon) = icon.single_mut() {
-        if let Some(image) = images.as_ref().and_then(|images| images.skills.get(skill.0 as usize))
-            && icon.image != *image
-        {
-            icon.image = image.clone();
-        }
-        icon.color = Color::WHITE.with_alpha(alpha);
-    }
-    let words = [
-        (locale.skill(skills.get(skill)), GOLD),
-        (locale.format("skills.level_up", &[("level", &reached)]), TEXT),
-    ];
-    for (query_text, (words, base)) in [skill_text.single_mut().ok(), reached_text.single_mut().ok()].into_iter().zip(words) {
-        let Some((mut text, mut color, mut shadow)) = query_text else { continue };
-        if text.0 != words {
-            text.0 = words;
-        }
-        color.set_if_neq(TextColor(base.with_alpha(alpha)));
-        shadow.color = SHADOW.with_alpha(SHADOW.alpha() * alpha);
-    }
-    // What it opens: the guide's lines at that level, the first and how many more.
-    if let Ok((mut text, mut color, mut shadow, mut node)) = opens_text.single_mut() {
-        let opened: Vec<String> = super::guide::entries(&locale, &launch, skill).into_iter().filter(|e| e.level == reached).map(|e| e.words).collect();
-        let words = match opened.as_slice() {
-            [] => String::new(),
-            [one] => locale.format("skills.opens", &[("what", one)]),
-            [first, rest @ ..] => locale.format("skills.opens_more", &[("what", first), ("count", &rest.len())]),
-        };
-        let display = if words.is_empty() { Display::None } else { Display::Flex };
-        if node.display != display {
-            node.display = display;
-        }
-        if text.0 != words {
-            text.0 = words;
-        }
-        color.set_if_neq(TextColor(ACCENT.with_alpha(alpha)));
-        shadow.color = SHADOW.with_alpha(SHADOW.alpha() * alpha);
-    }
-    visibility.set_if_neq(Visibility::Inherited);
-}
-
-/// A level reached rings (the interface's jingles take it from there).
-fn hear_levels(mut toasts: ResMut<SkillToasts>, mut sounds: MessageWriter<UiSound>) {
-    for level in toasts.unheard.drain(..) {
-        sounds.write(UiSound::LevelUp(level));
     }
 }
 

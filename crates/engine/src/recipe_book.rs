@@ -18,11 +18,13 @@ pub enum Method {
     /// their ingredients in any arrangement. A family of recipes making the same thing
     /// from different woods (or stones) is one entry with each way laid out, as NEI
     /// cycles them. `first` is the first of its recipes, in content order (its variants
-    /// follow), for laying one into the grid.
-    Craft { variants: Vec<[Option<BlockId>; GRID]>, shapeless: bool, first: usize },
+    /// follow), for laying one into the grid. `near` is the tag of a block it is made
+    /// near, if any.
+    Craft { variants: Vec<[Option<BlockId>; GRID]>, shapeless: bool, first: usize, near: Option<String> },
     /// Cooked (or fired, or smelted) at a station (blocks with the station's tag), from
-    /// `level` in `skill`; what is left when it burns, if anything.
-    Cook { input: BlockId, station: String, skill: Option<crate::skill::SkillId>, level: u8, burnt: Option<BlockId> },
+    /// `level` in `skill`: `uses` of the held `input` and the other items `with` it; what
+    /// is left when it burns, if anything.
+    Cook { input: BlockId, uses: u8, with: Vec<(BlockId, u8)>, station: String, skill: Option<crate::skill::SkillId>, level: u8, burnt: Option<BlockId> },
     /// Taken from a kept creature with a tool (items with the tool's tag), or left by it
     /// without one (eggs).
     Product { creature: CreatureId, tool: Option<String> },
@@ -58,8 +60,9 @@ impl RecipeBook {
             if let Some(last) = book.entries.last_mut()
                 && last.output == recipe.output
                 && last.count == (recipe.count, recipe.count)
-                && let Method::Craft { variants, shapeless, .. } = &mut last.method
+                && let Method::Craft { variants, shapeless, near, .. } = &mut last.method
                 && *shapeless == recipe.shapeless()
+                && *near == recipe.near
                 && variants[0].map(|c| c.is_some()) == cells.map(|c| c.is_some())
             {
                 variants.push(cells);
@@ -72,15 +75,19 @@ impl RecipeBook {
                 }
                 continue;
             }
-            let method = Method::Craft { variants: vec![cells], shapeless: recipe.shapeless(), first: index };
-            book.add(blocks, Entry { method, output: recipe.output, count: (recipe.count, recipe.count) }, items);
+            let method = Method::Craft { variants: vec![cells], shapeless: recipe.shapeless(), first: index, near: recipe.near.clone() };
+            // The blocks it is made near are among what it uses, as a cooking station is.
+            let stations: Vec<BlockId> = recipe.near.as_deref().map(|tag| blocks.tagged(tag).collect()).unwrap_or_default();
+            book.add(blocks, Entry { method, output: recipe.output, count: (recipe.count, recipe.count) }, items.into_iter().chain(stations).collect());
         }
         for (input, recipe) in content.cooking.iter() {
             let station = recipe.def.station.clone();
             let stations: Vec<BlockId> = content.blocks.tagged(&station).collect();
             let input = blocks.item_of(input);
-            let method = Method::Cook { input, station, skill: recipe.skill, level: recipe.def.level, burnt: recipe.burnt };
-            book.add(blocks, Entry { method, output: recipe.output, count: (1, 1) }, [input].into_iter().chain(stations).collect());
+            let with: Vec<(BlockId, u8)> = recipe.with.iter().map(|&(item, n)| (blocks.item_of(item), n)).collect();
+            let uses = [input].into_iter().chain(with.iter().map(|&(item, _)| item)).chain(stations).collect();
+            let method = Method::Cook { input, uses: recipe.def.uses, with, station, skill: recipe.skill, level: recipe.def.level, burnt: recipe.burnt };
+            book.add(blocks, Entry { method, output: recipe.output, count: (recipe.def.count, recipe.def.count) }, uses);
         }
         for (id, creature) in content.creatures.iter() {
             for (product, &item) in creature.def.products.iter().zip(&creature.products) {
@@ -111,6 +118,12 @@ impl RecipeBook {
             self.uses.entry(item).or_default().push(index);
         }
         self.entries.push(entry);
+    }
+
+    /// Every entry, in the order the content gives them (crafting, then cooking, then
+    /// creatures).
+    pub fn entries(&self) -> &[Entry] {
+        &self.entries
     }
 
     /// Every way to get `item`.
