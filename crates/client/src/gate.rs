@@ -7215,12 +7215,12 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
             if passed {
                 let detail = format!("{defended:?} for {damage} damage, requested {:.2}s after the wind-up showed, try {}", gate.feel.after, gate.feel.tries + 1);
-                let result = if damage == 0 { Ok(detail) } else { Err(format!("{detail}: it still did damage")) };
                 // A block again, for a counter that came too late (phase 3): the perfect
                 // block was judged at its first, so this one only opens the counter's window.
                 if blocking && damage == 0 && gate.feel.found.is_some() {
                     info!("gate: combat block again for the counter: {detail}");
                 } else {
+                    let result = if damage == 0 { Ok(detail) } else { Err(format!("{detail}: it still did damage")) };
                     gate.check(if blocking { "perfect block" } else { "dodge" }, result);
                 }
                 gate.feel.struck = world.resource::<crate::fight::Fighting>().struck_count;
