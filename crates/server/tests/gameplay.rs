@@ -1757,8 +1757,8 @@ fn prayers_drain_ward_off_blows_and_fill_at_an_altar() {
     assert!(let_through < high as u16 / 2, "a ward lets {let_through} of a bear's {high} through");
     for _ in 0..3 {
         let before = provoke_until_it_winds_up(&mut client, id, slot, "bear");
-        client.pump_until(|c| c.hurt.len() > before);
-        let (damage, defended) = client.hurt[before];
+        let blow = wait_for_blow(&mut client, id, before);
+        let (damage, defended) = client.hurt[blow];
         assert!(defended != Defended::Hit || damage <= let_through, "a warded bear's blow did {damage}");
     }
     // Ward Melee drains 24 a minute: some are gone.
@@ -3932,6 +3932,7 @@ fn provoke_until(client: &mut Client, id: u32, slot: usize, name: &str, noticed:
     // short attacking pose must not turn an active fight into repeated damaging pokes.
     let mut poked = client.hurt_by.iter().any(|&(by, _)| by == id).then_some(client.server_tick);
     let mut heard = before;
+    let mut unseen = 0;
     let mut last_health = client.creatures.get(&id).map(|v| v.health);
     eprintln!("provoke: {name} id {id}, health {last_health:?}, tick {}, player damage {:?}, creature blows {before}, deaths {}", client.server_tick, client.damage, client.deaths);
     loop {
@@ -3942,6 +3943,12 @@ fn provoke_until(client: &mut Client, id: u32, slot: usize, name: &str, noticed:
         last_health = Some(client.creatures[&id].health);
         if client.hurt_by[heard..].iter().any(|&(by, _)| by == id) {
             poked = Some(client.server_tick);
+            // A blow heard with its wind-up unseen: shown, the first few, so a wait that
+            // never sees one tells a fight it keeps missing from a creature that stopped.
+            unseen += 1;
+            if unseen <= 5 || unseen % 20 == 0 {
+                eprintln!("provoke: {name} id {id} blow {unseen} heard with its wind-up unseen, tick {}, pose {:?}, creature blows {}", client.server_tick, client.creatures[&id].pose, client.hurt.len());
+            }
         }
         heard = client.hurt.len();
         if poked.is_none_or(|at| client.server_tick >= at + 3 * TICKS_PER_SECOND as u64) {
@@ -3965,7 +3972,22 @@ fn blow_from(hurts: &[(u32, u16)], id: u32, after: usize) -> Option<usize> {
 }
 
 fn wait_for_blow(client: &mut Client, id: u32, after: usize) -> usize {
-    client.pump_until(|c| blow_from(&c.hurt_by, id, after).is_some());
+    // Each change of the creature's pose while waiting is shown (the first twenty), with
+    // how far it stands: a wait that times out then tells a wind-up that never ended from
+    // one that ended with no blow heard, or a creature that went off.
+    let seen = |c: &Client| c.creatures.get(&id).map(|v| (v.pose, v.position.with_y(0.0).distance(c.position.with_y(0.0)), v.position.y - c.position.y));
+    let shown = std::cell::Cell::new(0);
+    let last = std::cell::Cell::new(seen(client).map(|(pose, ..)| pose));
+    eprintln!("wait: id {id} after {after} creature blows, tick {}, seen {:?}", client.server_tick, seen(client));
+    client.pump_until(|c| {
+        let now = seen(c);
+        if now.map(|(pose, ..)| pose) != last.get() && shown.get() < 20 {
+            shown.set(shown.get() + 1);
+            eprintln!("wait: id {id} now {now:?}, tick {}, creature blows {}", c.server_tick, c.hurt.len());
+        }
+        last.set(now.map(|(pose, ..)| pose));
+        blow_from(&c.hurt_by, id, after).is_some()
+    });
     blow_from(&client.hurt_by, id, after).expect("the selected creature answered")
 }
 
