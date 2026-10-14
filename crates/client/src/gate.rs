@@ -7260,6 +7260,12 @@ fn creatures(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     },
                 );
                 gate.check("creature voices", crate::creature_sounds::loaded(world));
+                // Struck bare-handed at the weapon step's level (it sets the same next), sent
+                // once the shot is taken so its reply is not in it: a fist there lands about
+                // five blows in six for up to 3, so the snail's 4 health goes in two or three
+                // blows. At Attack 1 it took four landed blows at even odds, 4 to 12 swings
+                // from run to run.
+                world.resource::<Net>().command(&format!("skill attack {WEAPON_LEVEL}"));
                 gate.advance(now);
             }
         }
