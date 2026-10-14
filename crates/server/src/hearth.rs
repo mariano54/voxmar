@@ -55,8 +55,9 @@ impl Server {
             let until = self.tick.saturating_add((seconds * TICKS_PER_SECOND as f32).ceil() as u64);
             self.lit.insert(core, Lit { position: core.to_array(), structure: structure.name.clone(), until });
             self.tally(agent, "lit", &structure.name, 1);
-        } else if structure.fuels.is_empty() {
-            // A fire that needs no fuel burns until the structure breaks.
+        } else if structure.fuels.is_empty() && !self.lit.contains_key(&core) {
+            // A fire that needs no fuel burns until the structure breaks; lit again while it
+            // burns, it is the same fire (and the same lighting, for quests).
             self.lit.insert(core, Lit { position: core.to_array(), structure: structure.name.clone(), until: u64::MAX });
             self.tally(agent, "lit", &structure.name, 1);
         }
@@ -268,6 +269,10 @@ mod tests {
         server.light(1, core);
         assert_eq!(server.fires(), [core], "the hearth was not lit");
         assert_eq!(told(&client), [vec![core]]);
+        server.light(1, core);
+        let lightings: u32 = server.players[&1].tallies.iter().filter(|(name, _)| name.starts_with("lit:")).map(|(_, &n)| n).sum();
+        assert_eq!(lightings, 1, "lighting a burning hearth again counted as another lighting");
+        assert!(told(&client).is_empty());
         server.tick += 1_000_000;
         server.send_fires();
         assert_eq!(server.fires(), [core], "a hearth burned out");
