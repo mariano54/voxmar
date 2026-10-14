@@ -138,6 +138,13 @@ pub struct TellLook {
     pub peak: f32,
     #[serde(default)]
     pub marker: Option<MarkerLook>,
+    /// Whether the music dips under it: a boss's, not every wolf's.
+    #[serde(default = "dips")]
+    pub ducks: bool,
+}
+
+fn dips() -> bool {
+    true
 }
 
 /// A ring on the ground: its colour, how opaque at its fullest, and how wide (blocks).
@@ -284,15 +291,28 @@ impl FightLook {
     /// Reads every package's file in order, a later one replacing what it gives, and
     /// refuses a look missing a part, a kind of blow, a style or a sound, or with a number
     /// that cannot be.
-    /// Boss blows with no tell: every boss's plain attack and moves need one.
+    /// Blows with no tell: every boss's plain attack and moves need their own, and every
+    /// other creature's blow one of its own or its style's (`style.<style>`).
     pub fn untold(&self, creatures: &voxmar_engine::creature::CreatureRegistry) -> Vec<String> {
         let mut missing = Vec::new();
-        for (_, creature) in creatures.iter().filter(|(_, c)| c.def.boss) {
+        for (_, creature) in creatures.iter() {
             let name = creature.def.name.rsplit(':').next().unwrap_or(&creature.def.name);
-            let keys = creature.def.attack.iter().map(|_| name.to_owned()).chain(creature.def.moves.iter().map(|m| format!("{name}.{}", m.name)));
-            missing.extend(keys.filter(|key| !self.tells.contains_key(key)));
+            let blows = creature.def.attack.iter().map(|a| (name.to_owned(), a.style)).chain(creature.def.moves.iter().map(|m| (format!("{name}.{}", m.name), m.attack.style)));
+            for (key, style) in blows {
+                let told = if creature.def.boss { self.tells.contains_key(&key) } else { self.tell_for(&key, style).is_some() };
+                if !told {
+                    missing.push(key);
+                }
+            }
         }
         missing
+    }
+
+    /// The tell of the blow `key` (`name.move`, or `name` for a plain attack) struck in
+    /// `style`: its own, else its creature's, else its style's.
+    pub fn tell_for(&self, key: &str, style: Style) -> Option<&TellLook> {
+        let name = key.split('.').next().unwrap_or(key);
+        self.tells.get(key).or_else(|| self.tells.get(name)).or_else(|| self.tells.get(&format!("style.{}", style.key())))
     }
 
     /// Weapon classes that shoot (take ammunition) with no shot to show.

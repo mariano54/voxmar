@@ -203,6 +203,11 @@ pub struct Told {
     pub key: String,
     pub windup: f32,
     pub reach: f32,
+    /// The style its blow is struck in, whose tell any creature without one of its own
+    /// gives.
+    pub style: voxmar_engine::combat::Style,
+    /// First seen already winding up, some of it gone already.
+    pub late: bool,
 }
 
 /// How the watched creature (`Creatures::watch`) was drawn moving, for the gate: how far
@@ -969,7 +974,7 @@ fn show(
             // own time struck it already.
             let attacking = |pose| pose == Pose::Attacking;
             if attacking(view.pose) && !attacking(shown.view.pose) {
-                wind_up(shown, &view, registry, launch.content.combat.feel.creature_windup, &mut creatures.told);
+                wind_up(shown, &view, registry, launch.content.combat.feel.creature_windup, false, &mut creatures.told);
             } else if !attacking(view.pose) && attacking(shown.view.pose) {
                 if !shown.coil_struck && shown.coiling.is_some() && shown.dying.is_none() {
                     shown.striking = Some(0.0);
@@ -1069,11 +1074,11 @@ fn show(
             },
         );
         // One first seen already winding up (come into view, or joined, mid-blow) coils and
-        // is told from here.
+        // is told at once.
         if view.pose == Pose::Attacking
             && let Some(shown) = creatures.shown.get_mut(&view.id)
         {
-            wind_up(shown, &view, registry, launch.content.combat.feel.creature_windup, &mut creatures.told);
+            wind_up(shown, &view, registry, launch.content.combat.feel.creature_windup, true, &mut creatures.told);
         }
     }
 
@@ -1704,16 +1709,13 @@ pub fn aim(
     }
 }
 
-/// A wind-up begun: the coil starts (its end is the blow), and a boss's is told by sound
-/// and, for a far reach, a ring on the ground (`fight_fx`).
-fn wind_up(shown: &mut Shown, view: &voxmar_protocol::CreatureView, registry: &creature::CreatureRegistry, creature_windup: f32, told: &mut Vec<Told>) {
+/// A wind-up begun: the coil starts (its end is the blow), and it is told by sound and,
+/// for a boss's far reach, a ring on the ground (`fight_fx`).
+fn wind_up(shown: &mut Shown, view: &voxmar_protocol::CreatureView, registry: &creature::CreatureRegistry, creature_windup: f32, late: bool, told: &mut Vec<Told>) {
     (shown.coiling, shown.striking, shown.coil_struck) = (Some(0.0), None, false);
     (shown.coil_from, shown.coil_far, shown.coil_kept, shown.coil_slid, shown.coil_deepest, shown.recover_most) = (shown.position, 0.0, 1.0, 0.0, 0.0, 0.0);
     shown.move_shown = if view.tell == voxmar_protocol::REARING { 0 } else { view.tell };
     let species = registry.get(view.species);
-    if !species.def.boss {
-        return;
-    }
     let name = species.def.name.rsplit(':').next().unwrap_or(&species.def.name);
     let (key, attack) = match shown.move_shown {
         0 => (name.to_owned(), species.def.attack.as_ref()),
@@ -1724,7 +1726,7 @@ fn wind_up(shown: &mut Shown, view: &voxmar_protocol::CreatureView, registry: &c
     };
     if let Some(attack) = attack {
         let windup = attack.windup.unwrap_or(creature_windup);
-        told.push(Told { id: view.id, key, windup, reach: species.reach * view.scale + attack.reach });
+        told.push(Told { id: view.id, key, windup, reach: species.reach * view.scale + attack.reach, style: attack.style, late });
     }
 }
 

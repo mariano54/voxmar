@@ -334,7 +334,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let combat_marks = hud::combat::CombatStyle::load(&content.files)?;
     let fight_look = fight_fx::FightLook::load(&content.files)?;
     if let Some(blow) = fight_look.untold(&content.creatures).first() {
-        return Err(format!("{}: no tell for the boss blow `{blow}`", fight_fx::style::FILE).into());
+        return Err(format!("{}: no tell for the blow `{blow}`", fight_fx::style::FILE).into());
     }
     if let Some(class) = fight_look.unshot(content.combat.classes()).first() {
         return Err(format!("{}: no shot for the {class} class, which shoots", fight_fx::style::FILE).into());

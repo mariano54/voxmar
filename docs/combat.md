@@ -96,6 +96,7 @@ and sound is `core/combat_fx.ron`'s, and the hand's strokes are the texture pack
 | 6 | The player | A blow that hurts tips the view 4° toward the side it came from and reddens the screen's edges; a block jolts the hand and shakes the view; a perfect block throws sparks before the eyes. A flourish, counter or kill dips the view. Screen shake in the settings turns every movement of the view off. |
 | 7 | The hand | Every attack stroke winds up before it cuts (`wind` in `held.ron`): a sword draws back and slashes across, a dagger and a spear draw back and thrust, a club and an axe rise overhead and come down, a bow draws to the cheek and looses, a sling swings up behind the shoulder and whips forward overhand. |
 | 8 | Shots | The server judges a sling or bow shot as its wind-up ends, along a clear line from the eye (no missile exists there). On this side the missile is loosed from the hand as the draw lets go, timed so it reaches the creature as the blow is judged (never before half the draw), and kicks the hand back. It flies with a slight arc (a stone 34 blocks a second, flat; an arrow 52, arcing more), leaving a fading streak, and where it arrives throws a puff (the creature's coat, else dust) with its own sound: a stone smacks a body and clatters on the ground, an arrow thocks into a body and sticks quivering in the ground. A shot the server says missed sails on past the creature to land beyond. Each class that takes ammunition must have its shot (`shots` in `combat_fx.ron`, checked at launch). |
+| 9 | Every blow told | Oct 14 (the first fights audit). Every creature's wind-up is told by ear as well as by its coil: its own sound if it has one (a wolf snarls, a badger hisses, a fox yips, an aurochs bellows, a bear roars), else its style's growl, draw or hum. Each swells to its loudest as the blow lands. Only a boss's dips the music; the rest are fainter further off (full within 6 blocks). Every blow must have one, checked at launch, and every wind-up is at least 0.3 s (`fight_fx::READABLE`), with its sound peaking no later than the blow. |
 
 ## Armour and shields
 
@@ -149,3 +150,18 @@ lose the Keepsake.
 
 Still to come in phase 4, in order: food timing; ranged weapons, ammunition and projectiles; then modifications (P42). The
 vows come with the temple rites.
+
+## First fights audit
+
+Oct 14, 2026. The bot is `first_fights_measured` in `server/tests/gameplay.rs`; run it by hand with `--ignored --nocapture`. It plays a new player with a stone sword at Attack 5 and 60 health, swinging on the sword's 0.6 s cooldown and never guarding or dodging, against each first-age creature until it dies. The cloud run:
+
+| Creature | Wind-up | Kill | Swings | Blows back (damage) | Read 0.3 s or more |
+| --- | --- | --- | --- | --- | --- |
+| Wild boar | none (it flees) | 21.8 s | 11 | 0 (0) | none to read |
+| Badger | 0.35 s | 5.6 s | 10 | 5 (8) | 5 of 5, shortest 0.40 s |
+| Fox | 0.35 s | 2.0 s | 4 | 1 (0) | 1 of 1, shortest 0.40 s |
+| Aurochs | 0.70 s | 5.0 s | 9 | 3 (6) | 3 of 3, shortest 0.75 s |
+| Wolf | 0.50 s | 15.8 s | 27 | 13 (27) | 13 of 13, shortest 0.55 s |
+| Brown bear | 0.70 s | 61.5 s | 103 | 35 (85) | 35 of 35, shortest 0.74 s |
+
+Every wind-up was on screen 0.4 s or more before its blow; the server sends a new pose at once. The gap was sound: before this change only bosses' wind-ups made a sound, so a blow from a creature at the edge of the view or behind came with no warning. Now every blow is told (decision 9 above). Wind-up times, and so the server's timing, are unchanged. The wolf (27 damage over 16 s, more than a new player's 20 health) and the bear are not fights for a new player who stands and trades blows. Their numbers are left for balance.
