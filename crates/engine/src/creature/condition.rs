@@ -200,6 +200,21 @@ impl Needs {
     }
 }
 
+/// The tag of a block a kept animal drinks from: water itself, and anything a package
+/// says holds water for it (a well, a feed trough). Within its leash of its home, its
+/// water need is met.
+/// (Not `drink`, which marks a drinkable item, milk, and stacks it singly.)
+pub const DRINK: &str = "drinking_water";
+
+/// Whether kept animals can drink anywhere: with any creatures at all, some block must carry
+/// [`DRINK`], or no pen could ever be kept well.
+pub fn check_drink(blocks: &crate::block::BlockRegistry, creatures: bool) -> Result<(), RegistryError> {
+    if creatures && !blocks.ids().any(|id| blocks.def(id).has_tag(DRINK)) {
+        return Err(RegistryError(format!("blocks: kept animals drink from blocks tagged `{DRINK}`, which no block carries")));
+    }
+    Ok(())
+}
+
 /// What a species needs when kept, beyond food, water and its climate, which every one
 /// needs. Unset, its room comes from its size and its want of company from how social it is.
 #[derive(Clone, Copy, Debug, Default, Deserialize)]
@@ -365,5 +380,15 @@ mod tests {
         for rules in bad {
             assert!(rules.check().is_err(), "{rules:?} loaded");
         }
+    }
+
+    #[test]
+    fn creatures_want_a_block_to_drink_from() {
+        use crate::block::{BlockDef, BlockRegistry};
+        let block = |name: &str, tags: &[&str]| BlockDef { name: name.into(), tags: tags.iter().map(|t| t.to_string()).collect(), ..Default::default() };
+        let dry = BlockRegistry::new(vec![block("t:air", &[]), block("t:stone", &["stone"])]).unwrap();
+        let wet = BlockRegistry::new(vec![block("t:air", &[]), block("t:well", &[DRINK])]).unwrap();
+        assert!(check_drink(&dry, true).is_err(), "creatures loaded with nothing to drink");
+        assert!(check_drink(&dry, false).is_ok() && check_drink(&wet, true).is_ok());
     }
 }
