@@ -56,7 +56,11 @@ with Engineering 30.
 
 - A **hoe** tills soil into **farmland** (right click); crops are sown on farmland only
   (`ground` in crops.ron says otherwise for a crop that wants something else). A hoe over a
-  ripe crop adds its yield to rarer finds.
+  ripe crop adds its yield to rarer finds. A stone or copper hoe also **reaps**: cutting a
+  ripe crop takes every ripe crop of the same kind in the three by three patch about it, an
+  iron hoe the five by five (`reap:N` on the tool, at most 2, checked at load). Each crop
+  reaped gives its harvest and experience as if cut on its own, so a field goes faster, not
+  richer. The tooltip says so ("Reaps ripe crops in a 3×3 patch").
 - A **taming treat** (Cooking 27) is taken by any animal you are skilled enough to tame,
   and wins its trust twice as fast as its own food (`taming_treat`, `trust:2`).
 - **Seed mix** (Cooking 8) readies any kept animal to breed (`breeding_feed`).

@@ -302,18 +302,14 @@ impl Server {
                     player.changed(traits::INVENTORY);
                 }
                 (Effect::DropLoot, ActionTarget::Block { block, .. }) => {
-                    // What a player put there teaches, counts and forages nothing: taken
-                    // before `picked` and `reward_break` clear the mark.
-                    let plants = supported_by(&Context { server: self, agent }, block);
-                    let placed: Vec<IVec3> = std::iter::once(block).chain(plants.iter().copied()).filter(|p| self.placed.contains(p)).collect();
-                    if let Some(broken) = self.block(block).filter(|_| !placed.contains(&block)) {
-                        self.discover_broken(agent, broken);
+                    // A hoe that reaps takes the ripe crops like this one about it too, each
+                    // as if broken on its own; found before this one is gone.
+                    let reaped = self.reaped(agent, block);
+                    self.break_loot(agent, block);
+                    for cell in reaped {
+                        self.break_loot(agent, cell);
+                        self.set_block(cell, BlockId::AIR);
                     }
-                    self.picked(agent, block);
-                    let instead = self.reward_break(agent, block);
-                    // A block that gave something else instead (gravel's flint) drops nothing of its own.
-                    let cells: Vec<IVec3> = std::iter::once(block).filter(|_| !instead).chain(plants).collect();
-                    self.drop_loot(agent, &cells, &placed);
                 }
                 (Effect::Throw, ActionTarget::Stack { slot, count }) => self.throw(agent, slot as usize, count),
                 (Effect::Plant, ActionTarget::Block { block, .. }) => self.plant(agent, block),
@@ -510,6 +506,33 @@ impl Server {
             let name = self.content.blocks.def(output).name.clone();
             self.tally(agent, "crafted", &name, made * count as u32);
         }
+    }
+
+    /// What breaking the block at `block` gives and teaches: its drop or harvest, the
+    /// plants it held up, the journal, the regrowth.
+    fn break_loot(&mut self, agent: PlayerId, block: IVec3) {
+        // What a player put there teaches, counts and forages nothing: taken before
+        // `picked` and `reward_break` clear the mark.
+        let plants = supported_by(&Context { server: self, agent }, block);
+        let placed: Vec<IVec3> = std::iter::once(block).chain(plants.iter().copied()).filter(|p| self.placed.contains(p)).collect();
+        if let Some(broken) = self.block(block).filter(|_| !placed.contains(&block)) {
+            self.discover_broken(agent, broken);
+        }
+        self.picked(agent, block);
+        let instead = self.reward_break(agent, block);
+        // A block that gave something else instead (gravel's flint) drops nothing of its own.
+        let cells: Vec<IVec3> = std::iter::once(block).filter(|_| !instead).chain(plants).collect();
+        self.drop_loot(agent, &cells, &placed);
+    }
+
+    /// The ripe crops of the same kind and stage round the ripe crop at `at`, on its level,
+    /// that `agent`'s held tool reaps with it (`reap:N`, tools.ron): none for anything else.
+    fn reaped(&self, agent: PlayerId, at: IVec3) -> Vec<IVec3> {
+        let Some(crop) = self.block(at).filter(|&b| self.ripe_crop(b).is_some()) else { return Vec::new() };
+        let held = self.players.get(&agent).and_then(|p| p.held());
+        let reach = self.content.tools.reap(held, crop) as i32;
+        let around = (-reach..=reach).flat_map(|dx| (-reach..=reach).map(move |dz| IVec3::new(dx, 0, dz)));
+        around.filter(|&d| d != IVec3::ZERO).map(|d| at + d).filter(|&cell| self.block(cell) == Some(crop)).collect()
     }
 
     /// What breaking the block at `pos` teaches (`tools.ron`), and sometimes an extra drop:

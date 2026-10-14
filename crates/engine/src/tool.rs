@@ -44,6 +44,9 @@ pub struct RuleDef {
     pub instead: Option<(String, f32)>,
 }
 
+/// The farthest a tool reaps round a crop (`reap:N`): 2 is a five by five patch.
+pub const MAX_REAP: u8 = 2;
+
 fn first_level() -> u8 {
     1
 }
@@ -78,6 +81,9 @@ pub struct Tool {
     pub tier: u8,
     pub speed: f32,
     pub yield_: f32,
+    /// How far round a ripe crop it cuts the ripe crops of the same kind with it
+    /// (`reap:N`: 1 is the eight about it), for a tool made for crops.
+    pub reap: u8,
 }
 
 /// Every kind of tool and every block rule, with each item's tool worked out once.
@@ -134,11 +140,17 @@ impl ToolRegistry {
             let tags = &blocks.def(id).tags;
             let has = |tag: &String| tags.contains(tag);
             let kind = tags.iter().any(|t| t == "tool").then(|| kinds.iter().position(|k| has(&k.name))).flatten();
+            let reap = number(tags, "reap:").unwrap_or(0.0);
+            if !(0.0..=MAX_REAP as f32).contains(&reap) || reap.fract() != 0.0 {
+                return Err(RegistryError(format!("{}: `reap:{reap}` is not a whole number from 0 to {MAX_REAP}", blocks.def(id).name)));
+            }
+            let reap = reap as u8;
             tools.push(Tool {
                 kind,
                 tier: number(tags, "tier:").unwrap_or(0.0) as u8,
                 speed: number(tags, "speed:").unwrap_or(1.0).max(0.1),
                 yield_: number(tags, "yield:").unwrap_or(0.0).max(0.0),
+                reap,
             });
             covered.push(rules.iter().position(|rule| rule.tags.iter().all(has)));
             suited.push(kinds.iter().enumerate().filter(|(_, k)| k.mines.iter().any(has)).map(|(i, _)| i).collect());
@@ -169,6 +181,13 @@ impl ToolRegistry {
     pub fn speed(&self, item: Option<BlockId>, block: BlockId) -> f32 {
         let tool = self.tool(item);
         if self.suits(&tool, block) { tool.speed } else { 1.0 }
+    }
+
+    /// How far round `block` (a ripe crop) `item` reaps the ripe crops like it: none for a
+    /// tool not made for it.
+    pub fn reap(&self, item: Option<BlockId>, block: BlockId) -> u8 {
+        let tool = self.tool(item);
+        if self.suits(&tool, block) { tool.reap } else { 0 }
     }
 
     /// What `item` adds to the chance of an extra or rarer find from `block`.
@@ -275,6 +294,32 @@ mod tests {
             .map(|b| content.blocks.def(b).name.as_str())
             .collect();
         assert!(others.is_empty(), "only dead logs break to sticks, not {others:?}");
+    }
+
+    /// A stone or better hoe reaps the ripe crops about the one it cuts, an iron one a
+    /// wider patch; a wooden hoe, a bare hand and other tools reap only the one.
+    #[test]
+    fn better_hoes_reap_round_a_crop() {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        let content = crate::content::Content::load(&assets).unwrap();
+        let id = |n: &str| content.blocks.expect(&format!("base:{n}"));
+        let wheat = id("wheat_crop");
+        let reaps: Vec<u8> = ["wooden_hoe", "stone_hoe", "copper_hoe", "iron_hoe"].iter().map(|hoe| content.tools.reap(Some(id(hoe)), wheat)).collect();
+        assert_eq!(reaps, [0, 1, 1, 2]);
+        assert_eq!(content.tools.reap(None, wheat), 0, "by hand");
+        assert_eq!(content.tools.reap(Some(id("iron_hoe")), id("stone")), 0, "a hoe reaps only what it is made for");
+        assert_eq!(content.tools.reap(Some(id("iron_axe")), wheat), 0, "an axe reaps nothing");
+        assert!(content.blocks.ids().all(|b| content.tools.tool(Some(b)).reap <= MAX_REAP));
+
+        // Wider than MAX_REAP, or a fraction, is refused at load.
+        let (_, skills, _) = setup();
+        for tag in ["reap:3", "reap:1.5"] {
+            let hoe = BlockDef { name: "t:hoe".into(), tags: ["hoe", "tool", tag].iter().map(|t| t.to_string()).collect(), ..Default::default() };
+            let blocks = BlockRegistry::new(vec![BlockDef { name: "t:air".into(), ..Default::default() }, hoe]).unwrap();
+            let file = ToolRegistry::read("t", r#"(kinds: [(name: "hoe", mines: ["crop"])])"#).unwrap();
+            let err = ToolRegistry::new(vec![file], &blocks, &skills).unwrap_err();
+            assert!(err.0.contains("not a whole number"), "{tag}: {}", err.0);
+        }
     }
 
     /// What Mining teaches rises with the level it asks (design draft 63): nothing a lower

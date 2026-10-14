@@ -354,6 +354,9 @@ enum Step {
     /// server sends it as a refusal, not a console line). Then a well from the hand goes
     /// down by the plot.
     Refusal,
+    /// Nine ripe wheat on farmland, a stone hoe in hand: its tooltip says what it reaps, and
+    /// cutting the middle one takes all nine, on both sides.
+    Reap,
     /// A wild plant whose item merged (oregano into kitchen herbs) is given as the merged
     /// item, and the catalogues (creative, journal, recipe book) list the item, not the plant.
     Merged,
@@ -1229,6 +1232,8 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         Step::Dry => 5.0 * DRY_WAIT + STEP_LIMIT,
         // The refusal waited on, then a well set down by the plot.
         Step::Refusal => UNANSWERED + 3.0 * REFUSAL_WAIT + STEP_LIMIT,
+        // The patch set, the hoe in hand, the cut and the reaped patch, each waited on.
+        Step::Reap => 4.0 * REAP_WAIT + STEP_LIMIT,
         // A fresh area around the settlement to generate: up to `SETTLEMENT_LOAD` of the
         // server's seconds.
         Step::Settlements => SETTLEMENT_LOAD + SETTLEMENT_PEOPLE + STEP_LIMIT,
@@ -1491,6 +1496,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Recipes => recipes(world, gate, now, in_phase),
         Step::LookUp => look_up(world, gate, now, in_phase),
         Step::Refusal => refusal(world, gate, now, in_phase),
+        Step::Reap => reap(world, gate, now),
         Step::Merged => merged(world, gate, now, in_phase),
         Step::Identity => identity(world, gate, now),
         Step::Effects => effects(world, gate, now, in_phase),
@@ -3947,7 +3953,7 @@ fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
     let rice = world.resource::<ClientWorld>().registry.id("base:rice");
     let Some(rice) = rice else {
         gate.check("refusal", Err("no rice in the content".into()));
-        gate.next(Step::Merged, now);
+        gate.next(Step::Reap, now);
         return;
     };
     match gate.phase {
@@ -3984,7 +3990,7 @@ fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 _ if gate.server_in_phase() > UNANSWERED => {
                     let at = if posed { "stood at the feet".to_owned() } else { unsettled(world, gate) };
                     gate.check("refusal", Err(format!("the farmland ({tilled}), Farming 10 ({level}) or rice in the hotbar never came, or {at}")));
-                    gate.next(Step::Merged, now);
+                    gate.next(Step::Reap, now);
                 }
                 (ready, slot) => {
                     if gate.frames % 120 == 0 {
@@ -4077,7 +4083,115 @@ fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             net.command("clear well");
             net.command(&format!("setblock {} {} {} air", well.x, well.y, well.z));
             net.command(&format!("setblock {} {} {} dirt", plot.x, plot.y, plot.z));
-            gate.next(Step::Merged, now);
+            gate.next(Step::Reap, now);
+        }
+    }
+}
+
+/// The middle of the patch `reap` cuts, from the test ground's middle: nine wheat on the
+/// dirt `refusal` laid, two blocks ahead of where the player stands to cut, so the look
+/// down to the middle passes over the near row.
+const REAP_AT: IVec3 = IVec3::new(-2, 0, 3);
+const REAP_STAND: IVec3 = IVec3::new(-2, 0, 1);
+/// Longest the reap step waits on one answer, in seconds of the server's clock and the game's.
+const REAP_WAIT: f32 = 8.0;
+
+/// A patch of nine ripe wheat cut in the middle with a stone hoe: the hoe's tooltip line
+/// says it reaps a three by three patch, and the cut takes all nine on the client and the
+/// server alike (`reap:1` in blocks_tools.ron).
+fn reap(world: &mut World, gate: &mut Gate, now: f32) {
+    let (centre, stand) = (gate.feet + REAP_AT, gate.feet + REAP_STAND);
+    let cells: Vec<IVec3> = (-1..=1).flat_map(|dx| (-1..=1).map(move |dz| centre + IVec3::new(dx, 0, dz))).collect();
+    // Given up on only once the server's seconds and the game's have both passed.
+    let waited = gate.server_in_phase() > REAP_WAIT && now - gate.phase_since > REAP_WAIT;
+    let content = world.resource::<Launch>().content.clone();
+    let (ripe, hoe) = (content.blocks.id("base:wheat_crop"), content.blocks.id("base:stone_hoe"));
+    let end = |world: &mut World, gate: &mut Gate| {
+        mouse(world, MouseButton::Left, false);
+        let net = world.resource::<Net>();
+        let (low, high) = (centre - IVec3::new(1, 1, 1), centre + IVec3::new(1, 0, 1));
+        net.command(&format!("fill {} {} {} {} {} {} air", low.x, centre.y, low.z, high.x, high.y, high.z));
+        net.command(&format!("fill {} {} {} {} {} {} dirt", low.x, low.y, low.z, high.x, low.y, high.z));
+        for item in ["stone_hoe", "wheat", "wheat_seeds"] {
+            net.command(&format!("clear {item}"));
+        }
+        gate.next(Step::Merged, now);
+    };
+    let (Some(ripe), Some(hoe)) = (ripe, hoe) else {
+        gate.check("reap", Err("no ripe wheat or stone hoe in the content".into()));
+        end(world, gate);
+        return;
+    };
+    let standing = |side: &dyn Fn(IVec3) -> Option<BlockId>| cells.iter().filter(|&&cell| side(cell) == Some(ripe)).count();
+    match gate.phase {
+        0 => {
+            let net = world.resource::<Net>();
+            let (low, high) = (centre - IVec3::new(2, 1, 3), centre + IVec3::new(2, 3, 2));
+            for line in [
+                format!("fill {} {} {} {} {} {} dirt", low.x, low.y, low.z, high.x, low.y, high.z),
+                format!("fill {} {} {} {} {} {} air", low.x, centre.y, low.z, high.x, high.y, high.z),
+                format!("fill {} {} {} {} {} {} farmland", centre.x - 1, centre.y - 1, centre.z - 1, centre.x + 1, centre.y - 1, centre.z + 1),
+                format!("fill {} {} {} {} {} {} wheat_crop", centre.x - 1, centre.y, centre.z - 1, centre.x + 1, centre.y, centre.z + 1),
+                "clear stone_hoe".to_owned(),
+                "give stone_hoe 1".to_owned(),
+                format!("tp {} {} {}", stand.x as f32 + 0.5, stand.y, stand.z as f32 + 0.5),
+            ] {
+                net.command(&line);
+            }
+            gate.advance(now);
+        }
+        1 => {
+            let client = standing(&|p| world.resource::<ClientWorld>().block(p));
+            let server = gate.observer.as_ref().map_or(9, |o| standing(&|p| o.world.block(p)));
+            let there = world.resource::<LocalPlayer>().position.distance(stand.as_vec3() + Vec3::new(0.5, 0.0, 0.5)) < 0.5;
+            let has = world.resource::<LocalPlayer>().inventory.slots.iter().flatten().any(|s| s.item == hoe);
+            if has {
+                hold(world, Holder::Tool(hoe));
+            }
+            let player = world.resource::<LocalPlayer>();
+            let held = player.inventory.get(player.selected).map(|s| s.item) == Some(hoe);
+            if client == 9 && server == 9 && there && held {
+                let said = crate::hud::inventory::reap_line(world.resource::<Locale>(), &content, hoe).map(|(line, _)| line);
+                let wanted = world.resource::<Locale>().format("item.reaps", &[("side", &3)]);
+                if said.as_deref() != Some(wanted.as_str()) {
+                    gate.check("reap", Err(format!("the stone hoe's tooltip says {said:?}, not \"{wanted}\"")));
+                    end(world, gate);
+                    return;
+                }
+                gate.advance(now);
+            } else if waited {
+                gate.check("reap", Err(format!("of nine ripe wheat {client} stood on the client and {server} on the server, the spot ({there}) or the stone hoe in hand ({has}, {held}) never came in {REAP_WAIT} seconds")));
+                end(world, gate);
+            }
+        }
+        2 => {
+            // Just under the middle crop's top, looking down over the near row.
+            aim_at(world, centre.as_vec3() + Vec3::new(0.5, 0.6, 0.5));
+            let aimed = world.resource::<crate::interact::Target>().hit.as_ref().map(|hit| hit.block);
+            if world.resource::<ClientWorld>().block(centre).is_some_and(|b| b.is_air()) {
+                mouse(world, MouseButton::Left, false);
+                gate.advance(now);
+            } else if waited {
+                gate.check("reap", Err(format!("the middle wheat at {centre} never broke with a stone hoe in hand in {REAP_WAIT} seconds (aimed at {aimed:?})")));
+                end(world, gate);
+            } else {
+                mouse(world, MouseButton::Left, aimed == Some(centre));
+            }
+        }
+        _ => {
+            mouse(world, MouseButton::Left, false);
+            let server = gate.observer.as_ref().map_or(0, |o| cells.iter().filter(|&&cell| !o.world.block(cell).is_some_and(|b| b.is_air())).count());
+            let client_left = cells.iter().filter(|&&cell| !world.resource::<ClientWorld>().block(cell).is_some_and(|b| b.is_air())).count();
+            if client_left == 0 && server == 0 {
+                if gate.shot(world, "reaped").is_none() {
+                    return;
+                }
+                gate.check("reap", Ok("the stone hoe says it reaps a 3×3 patch, and one cut in the middle of nine ripe wheat took all nine on both sides (shot `reaped`)".into()));
+                end(world, gate);
+            } else if waited {
+                gate.check("reap", Err(format!("one cut with a stone hoe left {client_left} of nine ripe wheat on the client and {server} on the server in {REAP_WAIT} seconds")));
+                end(world, gate);
+            }
         }
     }
 }

@@ -899,6 +899,13 @@ fn seed_line(
     Some((words, if ready { SOFT } else { ERROR }))
 }
 
+/// A reaping hoe's patch: the ripe crops it takes with the one it cuts (`reap:N`).
+pub(crate) fn reap_line(locale: &Locale, content: &voxmar_engine::content::Content, item: voxmar_engine::block::BlockId) -> Option<(String, Color)> {
+    let reach = content.tools.tool(Some(item)).reap;
+    let side = 2 * reach as u32 + 1;
+    (reach > 0).then(|| (locale.format("item.reaps", &[("side", &side)]), SOFT))
+}
+
 /// How a weapon fights: its class, style and the level that wields it (red while the
 /// player's is short of it), then its max hit at their level and how often it strikes, and
 /// its reach if it is not the usual.
@@ -1132,6 +1139,7 @@ fn tooltip(
                 .chain(weapon_lines(&locale, &launch.content, &player, item))
                 .chain(armour_lines(&locale, &launch.content, &player, item))
                 .chain(pouch_lines(&locale, &world.registry, &player, item))
+                .chain(reap_line(&locale, &launch.content, item))
                 .chain(book.into_iter().map(|line| (line, SOFT)))
                 .chain(details(&locale, def, settings.debug_overlay));
             for (line, color) in lines_after {
