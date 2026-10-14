@@ -200,6 +200,18 @@ mining and speed wherever you go, and a bed always works as a bed (it sets where
 while one lasts, so the buff is a once-a-day habit, not a button to hold. Timed effects count down
 online only.
 
+## Drying off
+
+Rain soaks you (Soaked, Drenched in a downpour), and a roof alone no longer dries you: wet
+through, you stay so for two minutes under cover (three if drenched), colder and, drenched,
+slower to heal, unless you dry off within three blocks of a fire or a hearth (or warmed on a
+cold day). So coming in from the rain, you dry by your own hearth. It is data: an effect
+that `lingers` can name what `ends` it early (core effects.ron's `ends: Some(Any([Warmed,
+Near("fire", 3), Near("hearth", 3)]))`), and loading refuses `ends` on one that does not
+linger. Tests: the engine's `wet_through_you_dry_off_by_a_fire_and_not_before`, the
+server's `health_is_twice_hitpoints_and_a_downpour_drenches_those_out_in_it`; the gate's
+Weather step dries the player by a campfire after its storm ("weather: dries by a fire").
+
 ## Numbers and tuning
 
 All of it is data. Multipliers stack with food buffs; xp stops at `MAX_XP_BOOST` (1.25).

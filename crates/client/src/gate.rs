@@ -673,6 +673,8 @@ struct Gate {
     food_moved: bool,
     /// The Cook step's hearth or stove has raw rabbit selected and is being clicked.
     cook_started: bool,
+    /// The campfire the weather step dries the player by, while it stands.
+    dry_fire: Option<IVec3>,
     /// While taming, frames the junglefowl was under the crosshair, another creature was,
     /// or none was, and the nearest the player came to it.
     tame_aim: [u32; 3],
@@ -856,6 +858,7 @@ impl Gate {
             font: None,
             food_moved: false,
             cook_started: false,
+            dry_fire: None,
             tame_aim: [0; 3],
             tame_nearest: f32::MAX,
             party_after: 0,
@@ -1384,6 +1387,8 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         // A fresh area around the settlement to generate: up to `SETTLEMENT_LOAD` of the
         // server's seconds.
         Step::Settlements => SETTLEMENT_LOAD + SETTLEMENT_PEOPLE + STEP_LIMIT,
+        // A storm and snow, each waited on, then drying off by a campfire.
+        Step::Weather => STEP_LIMIT + 10.0,
         _ => STEP_LIMIT,
     };
     // A step in the world is too long only by both the server's clock, as its own waits
@@ -6921,7 +6926,7 @@ fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 if gate.server_in_phase() > 12.0 {
                     gate.check(&format!("weather: {kind}"), Err(format!("it did not come: {}", shown.summary())));
                     world.resource::<Net>().command("weather clear 600");
-                    gate.phase = 3;
+                    gate.phase = 4;
                 }
                 return;
             }
@@ -6950,19 +6955,45 @@ fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     world.resource::<Net>().command(&format!("weather {kind} 120"));
                     gate.advance(now);
                 }
-                // The depths step brings its fog straight over the snow and clears both at
-                // its end: one clearing waited for, not two back to back.
+                // Wet through from the storm, and the rain gone (snow is not rain): a
+                // campfire beside the player dries them off.
                 None => {
-                    gate.weather_clear_owed = true;
-                    gate.next(Step::Depths, now);
+                    let at = world.resource::<LocalPlayer>().position.floor().as_ivec3() + IVec3::new(2, 0, 0);
+                    world.resource::<Net>().command(&format!("setblock {} {} {} campfire", at.x, at.y, at.z));
+                    gate.dry_fire = Some(at);
+                    gate.advance(now);
                 }
             }
         }
-        3 if sky_clear(&shown) => {
+        3 => {
+            let wet: Vec<String> = {
+                let (player, launch) = (world.resource::<LocalPlayer>(), world.resource::<Launch>());
+                player.vitals.effects.iter().map(|a| launch.content.effects.get(a.effect)).filter(|def| def.lingers > 0.0 && def.ends.is_some()).map(|def| def.title.to_lowercase()).collect()
+            };
+            let dried = wet.is_empty();
+            if !dried && !gate.waited_out(10.0) {
+                // Each look at the player, once every `TAP_EVERY` of the game's time, counts
+                // for `waited_out`, so both clocks bound the wait.
+                if now - gate.tap_at >= TAP_EVERY {
+                    gate.tap_at = now;
+                    gate.taps += 1;
+                }
+                return;
+            }
+            gate.check("weather: dries by a fire", if dried { Ok("wet through from the storm, the player dried off beside a campfire once the rain had gone".into()) } else { Err(format!("{:.1} server s beside a campfire, out of the rain, the player is still {}", gate.server_in_phase(), wet.join(", "))) });
+            if let Some(at) = gate.dry_fire.take() {
+                world.resource::<Net>().command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
+            }
+            // The depths step brings its fog straight over the snow and clears both at its
+            // end: one clearing waited for, not two back to back.
+            gate.weather_clear_owed = true;
+            gate.next(Step::Depths, now);
+        }
+        4 if sky_clear(&shown) => {
             eased(gate);
             gate.next(Step::Depths, now);
         }
-        3 if gate.server_in_phase() > 12.0 => {
+        4 if gate.server_in_phase() > 12.0 => {
             gate.check("weather: clear", Err(format!("the sky did not clear: {}", shown.summary())));
             eased(gate);
             gate.next(Step::Depths, now);
