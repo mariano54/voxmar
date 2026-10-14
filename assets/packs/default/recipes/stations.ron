@@ -1,6 +1,7 @@
 // Home stations (content/base/blocks_stations.ron), for this pack and Voxmar HD alike: a
 // drying rack empty, hung and dried, jerky, a compost heap's boards and its three tops, and
-// a handful of compost. Each loaded and each done station looks so from every side.
+// a handful of compost, and a well's water. Each loaded and each done station looks so from
+// every side.
 (
     textures: {
         // A rack of two posts and a line of twine: empty, hung with raw strips, hung with jerky.
@@ -205,6 +206,25 @@
             "ebabacacacbcbcbe",
             "ecccccbbbbbaaaae",
             "gggggggggggggggg",
+        ])]),
+        // A well's water, deep and still under the ring, a glint here and there.
+        "block/well_water": (size: (16, 16), layers: [Grid(legend: {'a': "#1c2c44", 'b': "#24385a", 'c': "#5a7aa0"}, rows: [
+            "bbabaacacabbaabb",
+            "aaaaacabbbbabaaa",
+            "abcbaabaabaabaaa",
+            "ababaabacaaaabaa",
+            "aaaaaabaaaabaaca",
+            "bbcabbaabaaaaaba",
+            "aaabbbbaabcaaaaa",
+            "aaacaaaaaababbbb",
+            "bccbbacaabbbabaa",
+            "aabbbbabcaabacaa",
+            "aababaaabbaaaaaa",
+            "baaccbbaaaaaaabb",
+            "bbaaaaaabaaaaaba",
+            "baaaaaabbbaabaaa",
+            "aabcaaaaaaabbbba",
+            "babaaaaaaaaaacab",
         ])]),
     },
 )

@@ -122,6 +122,9 @@ impl Server {
         }
         let Some(player) = self.players.get_mut(&agent) else { return };
         player.inventory = trial;
+        // Laid, the grid shows: an open store's screen, in its place, closes.
+        player.store = None;
+        player.inventory.close_store();
         player.changed(traits::INVENTORY);
     }
 
@@ -309,10 +312,14 @@ mod tests {
         assert!(grid(&server).is_empty());
         // Slept here, it is home.
         server.players.get_mut(&1).unwrap().bed = Some(Vec3::new(8.5, (FLOOR + 1) as f32, 8.5));
+        // Laid with the barrel open, its screen closes onto the grid.
+        server.open_store(1, BARREL);
+        assert!(server.players[&1].inventory.store.is_some());
         lay(&mut server, "base:crafting_table", 1);
         assert_eq!(grid(&server), vec![(planks, 1); 4]);
         assert_eq!(server.players[&1].inventory.slots[0], None, "the pack's plank first");
         assert_eq!(barrel(&server), 3);
+        assert!(server.players[&1].inventory.store.is_none() && server.players[&1].store.is_none(), "the barrel's screen hid the grid");
         // Walked off past its reach, the barrel is out of reach again.
         server.players.get_mut(&1).unwrap().inventory.craft = [None; GRID];
         server.players.get_mut(&1).unwrap().position = Vec3::new(28.5, (FLOOR + 1) as f32, 28.5);
