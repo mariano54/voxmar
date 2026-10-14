@@ -200,6 +200,11 @@ fn a_charge_into_a_wall_dazes_the_charger_and_hops_a_step() {
     let at = field.at();
     assert!(at.z > 41.0 && at.z < 47.0, "he hopped the step and stopped at the wall: {at}");
     assert!(field.held() >= field.charge().stun, "the wall dazed him ({} s)", field.held());
+    // Then he waits out only the rest of the charge's `every`, as after a blow that lands.
+    let live = &field.server.creatures.live[&field.tusk];
+    let attack = field.server.content.creatures.get(live.species).attack_at(live.attack).unwrap();
+    let rest = attack.every - attack.windup.unwrap() - attack.recovery.unwrap();
+    assert!((live.mind.cooldown - rest).abs() < 1e-4, "cooldown {} after the daze, not {rest}", live.mind.cooldown);
 }
 
 /// A charge runs off a cliff blind, and the fall costs the charger a tenth of its health
