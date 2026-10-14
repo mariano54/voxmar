@@ -284,6 +284,28 @@ impl Stations {
 mod tests {
     use super::*;
 
+    /// A player sees at a glance that a station is loaded and that it is done: its
+    /// working and ready blocks each look different from the other phases on every
+    /// face but the bottom.
+    #[test]
+    fn every_station_looks_loaded_and_done_from_every_side() {
+        use crate::coords::Face;
+        let content = crate::content::Content::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).expect("content loads");
+        let blocks = &content.blocks;
+        assert!(!content.stations.stations.is_empty());
+        for station in &content.stations.stations {
+            let phases = [station.empty, station.working, station.ready];
+            for face in Face::ALL.into_iter().filter(|f| *f != Face::NegY) {
+                let looks: Vec<_> = phases.iter().map(|b| blocks.def(*b).textures.face(face)).collect();
+                for a in 0..3 {
+                    for b in a + 1..3 {
+                        assert_ne!(looks[a], looks[b], "{} and {} look alike from {face:?}", blocks.def(phases[a]).name, blocks.def(phases[b]).name);
+                    }
+                }
+            }
+        }
+    }
+
     /// The game's stations load: the rack dries meat faster by a fire and only under the
     /// open sky; the heap rots greens down four to one, faster by water; compost reaches
     /// further than a bone.
