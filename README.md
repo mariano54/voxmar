@@ -893,7 +893,13 @@ near and far and rumbles in caves, lava bursting bubbles, logs snapping in a fir
 (`assets/content/base/sounds/`, credited in THIRD_PARTY_NOTICES.md), as are thunder near to
 far, swimming strokes and splashes (`sounds.ron`). One-shots sound from real blocks the fill found,
 panned by direction, with a reverb as wet as the place is enclosed. Every condition is a soft
-range with a fade, and rain ducks layers rather than silencing them. Captures run it silently
+range with a fade, and rain ducks layers rather than silencing them. Indoors is asked apart
+(the fill leaks out of an open door): a roof over the eye and walls met by short rays around it
+make the `shelter` axis, and a roof close overhead the `roof` axis. Outdoor layers duck by
+shelter and their one-shots are muffled with a low-pass as far as they duck, rain drums on the
+roof, a fire's layers never duck, and thunder is quieter (`ambience.ron` `shelter`;
+`indoor_preview -- --ignored` writes a wood and a storm heard outside and then from a home by
+its hearth to `target/indoor_preview.wav`). Captures run it silently
 and log which beds would play. `cargo test -p voxmar_client ambience_preview -- --ignored`
 writes about twenty seconds of each of seventeen typical places to `target/ambience_preview.wav`, and
 `ambience_survey -- --ignored` prints what the scan makes of real places in a world (`SEED`).

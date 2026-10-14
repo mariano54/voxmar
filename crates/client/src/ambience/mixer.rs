@@ -11,7 +11,7 @@
 
 use bevy::math::{IVec3, Vec3};
 
-use super::defs::{Ambience, DuckBy, Environment, Placement};
+use super::defs::{Ambience, DuckBy, Environment, Fixed, OPEN_AIR_HZ, Placement};
 use super::synth::{OVERLAP, SEGMENT};
 use crate::sfx::mix;
 
@@ -29,8 +29,9 @@ pub enum Cue {
     Segment { bed: usize, variant: usize },
     /// The bed has faded out: stop its segments.
     Stop { bed: usize },
-    /// Play a one-shot at a place (`None`: at the listener), at a volume and speed.
-    Sound { sound: usize, variant: usize, at: Option<Vec3>, volume: f32, speed: f32 },
+    /// Play a one-shot at a place (`None`: at the listener), at a volume and speed, muffled
+    /// by 0..1 (heard from indoors: [`muffle`]).
+    Sound { sound: usize, variant: usize, at: Option<Vec3>, volume: f32, speed: f32, muffle: f32 },
 }
 
 #[derive(Clone, Copy, Default)]
@@ -92,6 +93,12 @@ impl Mixer {
                 1.0 - amount * strength
             })
             .product()
+    }
+
+    /// How muffled a one-shot is, 0..1: as far as it ducks indoors.
+    fn muffling(&self, env: &Environment, duck: &[(DuckBy, f32)]) -> f32 {
+        let shelter = env.get(Fixed::Shelter).clamp(0.0, 1.0);
+        duck.iter().filter(|(by, _)| *by == DuckBy::Axis(Fixed::Shelter as usize)).map(|&(_, amount)| amount * shelter).fold(0.0, f32::max)
     }
 
     /// Advances by `dt` seconds. `samples` are the scan's blocks per group, `listener` the
@@ -161,7 +168,8 @@ impl Mixer {
             let variant = self.pick(sound_variants, None);
             self.ready_at[i] = now + sound.cooldown as f64;
             self.sounding.push(now + (length(i, variant) / speed) as f64);
-            cues.push(Cue::Sound { sound: i, variant, at, volume, speed });
+            let muffle = self.muffling(env, &sound.duck);
+            cues.push(Cue::Sound { sound: i, variant, at, volume, speed, muffle });
         }
     }
 }
@@ -190,9 +198,29 @@ pub fn place(dry: &[f32], wet: &[Vec<f32>; 2], at: Option<Vec3>, ears: Vec3, rig
     [channel(left_gain, &wet[0]), channel(right_gain, &wet[1])]
 }
 
+/// Muffles a placed one-shot by `amount` (0: as it is, 1: down to `cutoff` Hz) with a gentle
+/// low-pass, as a wall between makes it: the cutoff falls evenly in pitch from open air.
+pub fn muffle(channels: &mut [Vec<f32>; 2], amount: f32, cutoff: f32) {
+    if amount <= 0.0 || cutoff >= OPEN_AIR_HZ {
+        return;
+    }
+    let hz = OPEN_AIR_HZ * (cutoff / OPEN_AIR_HZ).powf(amount.min(1.0));
+    let a = 1.0 - (-std::f32::consts::TAU * hz / crate::sfx::RATE as f32).exp();
+    for channel in channels {
+        // Two one-pole passes: 12 dB an octave, soft enough to keep the sound's shape.
+        for _ in 0..2 {
+            let mut y = 0.0;
+            for s in channel.iter_mut() {
+                y += a * (*s - y);
+                *s = y;
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::super::defs::{Fixed, FILE};
+    use super::super::defs::FILE;
     use super::*;
     use voxmar_engine::content::ContentFile;
 
@@ -282,5 +310,25 @@ mod tests {
         assert_eq!(l.len(), 20);
         let [l, r] = place(&dry, &wet, None, Vec3::ZERO, Vec3::X, Vec3::NEG_Z, 0.0);
         assert!((l[0] - r[0]).abs() < 1e-6);
+    }
+
+    /// Indoors an outdoor one-shot loses its brightness, not its body; out in the open it
+    /// is left as it is.
+    #[test]
+    fn muffling_darkens_without_silencing() {
+        let tone = |hz: f32| -> [Vec<f32>; 2] {
+            let wave: Vec<f32> = (0..crate::sfx::RATE as usize / 2).map(|i| (i as f32 * std::f32::consts::TAU * hz / crate::sfx::RATE as f32).sin()).collect();
+            [wave.clone(), wave]
+        };
+        let rms = |c: &[Vec<f32>; 2]| (c[0][c[0].len() / 2..].iter().map(|s| s * s).sum::<f32>() / (c[0].len() / 2) as f32).sqrt();
+        let heard = |hz: f32, amount: f32| {
+            let mut c = tone(hz);
+            muffle(&mut c, amount, 700.0);
+            rms(&c) / rms(&tone(hz))
+        };
+        assert_eq!(heard(5000.0, 0.0), 1.0);
+        assert!(heard(150.0, 1.0) > 0.9, "the body: {}", heard(150.0, 1.0));
+        assert!(heard(5000.0, 1.0) < 0.05, "the brightness: {}", heard(5000.0, 1.0));
+        assert!(heard(5000.0, 0.5) > heard(5000.0, 1.0) && heard(5000.0, 0.5) < 0.9, "half indoors, half muffled");
     }
 }

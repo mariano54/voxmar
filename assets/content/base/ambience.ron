@@ -24,8 +24,20 @@
 // (below the ground surface here), rain (heard falling, less under a roof), raining
 // (falling at all), wetness (of the ground), snow, storm (0..1), wind (blocks/s, gusts
 // included), gusts (how gusty, 0..1), hail, sleet, dust (0..1, as heard here), cover,
-// underwater, and the groups below.
+// underwater, shelter (0 outdoors .. 1 indoors: a roof overhead and walls around, a door
+// open or not; caves too, not trees), roof (a roof close overhead the sky falls on, walls
+// or not), and the groups below.
+//
+// shelter: how indoors is told and heard. `walls`: blocks from the eye a wall may be and
+//   count; `roof`: blocks above it a roof may be for the `roof` axis; `muffle`: Hz an outdoor
+//   one-shot is muffled down to fully indoors (a layer is outdoor when it ducks by
+//   `shelter`, and one-shots are muffled as far as they duck); `thunder`: how loud thunder
+//   is fully indoors, against out in the open.
 (
+    // Indoors is cozy: the weather and the wild outside fall to a murmur through the walls,
+    // the rain drums on the roof, and the hearth crackles clear (fire layers never duck by
+    // shelter).
+    shelter: (walls: 6, roof: 8, muffle: 700, thunder: 0.5),
     groups: [
         (name: "leaves", tags: ["leaves"], range: (20, 300)),
         (name: "wood", tags: ["log"], range: (5, 60)),
@@ -50,67 +62,73 @@
     beds: [
         // Rain, recorded (CC0; see THIRD_PARTY_NOTICES.md) and layered the AmbientSounds
         // way. Out in the open, a patter on leaves and ground that grows with the rain, then
-        // gives way to the roar of a downpour; under a roof, the drumming on it; under trees
-        // while they are wet, drops falling from the leaves.
+        // gives way to the roar of a downpour; under a roof close overhead, indoors or on a
+        // porch, the drumming on it; under trees while they are wet, drops falling from the
+        // leaves.
         (
             name: "rain", recording: ["sounds/rain_light_1.mp3", "sounds/rain_light_2.mp3", "sounds/rain_light_3.mp3"], volume: 0.5, fade: 3,
             when: {"rain": (min: 0.45, max: 0.75, fade: 0.42)},
-            duck: {"hail": 0.7, "sleet": 0.4},
+            duck: {"shelter": 0.75, "hail": 0.7, "sleet": 0.4},
         ),
         (
             name: "downpour", recording: ["sounds/rain_heavy_1.mp3", "sounds/rain_heavy_2.mp3", "sounds/rain_heavy_3.mp3"], volume: 0.75, fade: 3,
             when: {"rain": (min: 0.85, fade: 0.4)},
-            duck: {"hail": 0.7},
+            duck: {"shelter": 0.75, "hail": 0.7},
         ),
         (
             name: "rain_on_roof", recording: ["sounds/rain_roof_1.mp3", "sounds/rain_roof_2.mp3", "sounds/rain_roof_3.mp3"], volume: 0.4, fade: 2,
-            when: {"raining": (min: 0.3, fade: 0.25), "sky": (max: 0.15, fade: 0.2), "air": (min: 0.03, fade: 0.05)},
+            when: {"raining": (min: 0.3, fade: 0.25), "roof": (min: 0.55, fade: 0.35)},
         ),
         (
             name: "dripping_trees", recording: ["sounds/drips_1.mp3", "sounds/drips_2.mp3", "sounds/drips_3.mp3"], volume: 0.35, fade: 8,
             when: {"wetness": (min: 0.45, fade: 0.3), "leaves": (min: 0.35, fade: 0.3), "air": (min: 0.05, fade: 0.1)},
-            duck: {"downpour": 0.8},
+            duck: {"shelter": 0.8, "downpour": 0.8},
         ),
         // A soft breeze anywhere outdoors, stronger with the wind.
         (
             name: "breeze", sound: Wind, volume: 0.2,
             when: {"sky": (min: 0.4, fade: 0.4), "air": (min: 0.3, fade: 0.3), "wind": (min: 8, fade: 12)},
-            duck: {"rain": 0.5, "high_wind": 0.7},
+            duck: {"shelter": 0.85, "rain": 0.5, "high_wind": 0.7},
         ),
         // Wind on peaks and ridges, and in storms.
         (
             name: "high_wind", sound: Gale, volume: 0.4, fade: 6,
             when: {"relief": (min: 30, fade: 25), "sky": (min: 0.6, fade: 0.3), "wind": (min: 10, fade: 14)},
+            duck: {"shelter": 0.8},
         ),
         (
             name: "storm_wind", sound: Gale, volume: 0.32,
             when: {"storm": (min: 0.6, fade: 0.5), "sky": (min: 0.3, fade: 0.4)},
+            duck: {"shelter": 0.75},
         ),
         // Ice falling: hail rattling on everything, sleet's fine patter.
         (
             name: "hail", recording: ["sounds/hail_1.mp3", "sounds/hail_2.mp3", "sounds/hail_3.mp3"], volume: 0.55, fade: 2,
             when: {"hail": (min: 0.25, fade: 0.25)},
+            duck: {"shelter": 0.6},
         ),
         (
             name: "sleet", sound: Sleet, volume: 0.3, fade: 3,
             when: {"sleet": (min: 0.2, fade: 0.2)},
+            duck: {"shelter": 0.7},
         ),
         // Sand and dust driven by a strong wind.
         (
             name: "sandstorm", sound: Sandstorm, volume: 0.45, fade: 4,
             when: {"dust": (min: 0.4, fade: 0.35)},
-            duck: {"rain": 0.5},
+            duck: {"shelter": 0.8, "rain": 0.5},
         ),
         // Snow driven hard: a blizzard's howl.
         (
             name: "blizzard", sound: Gale, volume: 0.36, fade: 5,
             when: {"snow": (min: 0.4, fade: 0.3), "wind": (min: 8, fade: 6), "sky": (min: 0.3, fade: 0.4)},
+            duck: {"shelter": 0.75},
         ),
         // Leaves in the breeze, under and among trees.
         (
             name: "leaves", sound: Rustle, volume: 0.24,
             when: {"leaves": (min: 0.4, fade: 0.4), "sky": (min: 0.4, fade: 0.4), "wind": (min: 6, fade: 10)},
-            duck: {"rain": 0.6, "high_wind": 0.5},
+            duck: {"shelter": 0.85, "rain": 0.6, "high_wind": 0.5},
         ),
         // Grasshoppers on a mild or warm day in open grassland. Temperatures are yearly
         // means, so insects sing from fairly cool climates up.
@@ -118,33 +136,33 @@
             name: "meadow", sound: Meadow, volume: 0.16,
             when: {"grass": (min: 0.4, fade: 0.4), "sun": (min: 0.15, fade: 0.15), "temperature": (min: 10, fade: 6), "sky": (min: 0.7, fade: 0.3), "leaves": (max: 0.15, fade: 0.25)},
             not_biome: ["desert", "frozen"],
-            duck: {"rain": 0.9, "high_wind": 0.6, "hail": 0.95, "sleet": 0.9, "dust": 0.95},
+            duck: {"shelter": 0.85, "rain": 0.9, "high_wind": 0.6, "hail": 0.95, "sleet": 0.9, "dust": 0.95},
         ),
         // Crickets on warm nights wherever there is grass or trees.
         (
             name: "crickets", sound: Crickets, volume: 0.12, fade: 8,
             when: {"sun": (max: -0.1, fade: 0.1), "temperature": (min: 9, fade: 6), "grass": (min: 0.35, fade: 0.3), "sky": (min: 0.4, fade: 0.4)},
             not_biome: ["desert", "frozen"],
-            duck: {"rain": 0.9, "high_wind": 0.6, "hail": 0.95, "sleet": 0.9, "dust": 0.95},
+            duck: {"shelter": 0.75, "rain": 0.9, "high_wind": 0.6, "hail": 0.95, "sleet": 0.9, "dust": 0.95},
         ),
         // Running water, recorded: a creek's babble, louder the more the place is by the
         // water (a wide fade on `flowing`, so it grows from the edge of the valley in).
         (
             name: "stream", recording: ["sounds/brook_1.mp3", "sounds/brook_2.mp3", "sounds/brook_3.mp3"], volume: 0.45,
             when: {"water": (min: 0.3, fade: 0.25), "flowing": (min: 0.9, fade: 0.6), "air": (min: 0.05, fade: 0.1)},
-            duck: {"rain": 0.4, "downpour": 0.5},
+            duck: {"shelter": 0.75, "rain": 0.4, "downpour": 0.5},
         ),
         // Small waves lapping at the shore of a lake.
         (
             name: "lake", recording: ["sounds/lake_1.mp3", "sounds/lake_2.mp3", "sounds/lake_3.mp3"], volume: 0.35, fade: 5,
             when: {"water": (min: 0.4, fade: 0.3), "still": (min: 0.7, fade: 0.45), "air": (min: 0.05, fade: 0.1)},
-            duck: {"rain": 0.5, "high_wind": 0.4},
+            duck: {"shelter": 0.75, "rain": 0.5, "high_wind": 0.4},
         ),
         // Surf on the coast.
         (
             name: "surf", sound: Surf, volume: 0.36, fade: 6,
             when: {"water": (min: 0.4, fade: 0.4), "continentalness": (max: 0.05, fade: 0.15), "height": (max: 12, fade: 25), "sky": (min: 0.4, fade: 0.4)},
-            duck: {"rain": 0.3},
+            duck: {"shelter": 0.75, "rain": 0.3},
         ),
         // The still air of caves, recorded in a quarry tunnel: a slight room tone with drips
         // far off.
@@ -167,7 +185,7 @@
         (
             name: "waterfall", recording: ["sounds/waterfall_1.mp3", "sounds/waterfall_2.mp3", "sounds/waterfall_3.mp3"], volume: 0.4, fade: 3,
             when: {"falls": (min: 0.5, fade: 0.45), "air": (min: 0.05, fade: 0.1)},
-            duck: {"stream": 0.6},
+            duck: {"shelter": 0.7, "stream": 0.6},
         ),
     ],
     sounds: [
@@ -177,20 +195,20 @@
             pitch: (0.9, 1.1), reach: 14,
             when: {"sun": (min: 0.05, fade: 0.15), "temperature": (min: 3, max: 32, fade: 6), "leaves": (min: 0.35, fade: 0.3)},
             not_biome: ["frozen"],
-            duck: {"rain": 0.85, "high_wind": 0.6, "storm_wind": 0.8},
+            duck: {"shelter": 0.8, "rain": 0.85, "high_wind": 0.6, "storm_wind": 0.8},
         ),
         (
             name: "thrush", sound: Thrush, volume: 0.45, at: Block("leaves"), per_minute: 2, cooldown: 18,
             pitch: (0.95, 1.05), reach: 18,
             when: {"sun": (min: 0.05, fade: 0.15), "temperature": (min: 3, max: 28, fade: 6), "leaves": (min: 0.3, fade: 0.3)},
             biome: ["forest"],
-            duck: {"rain": 0.85, "high_wind": 0.6},
+            duck: {"shelter": 0.8, "rain": 0.85, "high_wind": 0.6},
         ),
         (
             name: "whistler", sound: Whistler, volume: 0.38, at: Block("leaves"), per_minute: 1, cooldown: 25,
             reach: 16,
             when: {"sun": (min: 0.05, fade: 0.15), "temperature": (min: -10, max: 15, fade: 6), "leaves": (min: 0.35, fade: 0.3)},
-            duck: {"rain": 0.85, "high_wind": 0.6},
+            duck: {"shelter": 0.8, "rain": 0.85, "high_wind": 0.6},
         ),
         // The dawn chorus: many birds while the sun comes up.
         (
@@ -198,21 +216,21 @@
             pitch: (0.85, 1.2), reach: 14,
             when: {"sun": (min: -0.08, max: 0.12, fade: 0.06), "temperature": (min: 3, fade: 6), "leaves": (min: 0.35, fade: 0.3)},
             not_biome: ["frozen"],
-            duck: {"rain": 0.85, "high_wind": 0.6},
+            duck: {"shelter": 0.8, "rain": 0.85, "high_wind": 0.6},
         ),
         // Doves in warm country, in trees.
         (
             name: "dove", sound: Dove, volume: 0.38, at: Block("leaves"), per_minute: 1, cooldown: 30,
             reach: 16,
             when: {"sun": (min: 0.0, fade: 0.15), "temperature": (min: 16, fade: 5), "leaves": (min: 0.25, fade: 0.2)},
-            duck: {"rain": 0.85},
+            duck: {"shelter": 0.8, "rain": 0.85},
         ),
         // Brighter, faster birds in the tropics.
         (
             name: "tropical_bird", sound: Thrush, volume: 0.45, at: Block("leaves"), per_minute: 2.5, cooldown: 10,
             pitch: (1.2, 1.4), reach: 18,
             when: {"sun": (min: 0.0, fade: 0.15), "temperature": (min: 22, fade: 4), "moisture": (min: 1.2, fade: 0.3), "leaves": (min: 0.3, fade: 0.3)},
-            duck: {"rain": 0.7},
+            duck: {"shelter": 0.8, "rain": 0.7},
         ),
         // A woodpecker now and then, on a trunk.
         (
@@ -220,7 +238,7 @@
             pitch: (0.9, 1.1), reach: 20,
             when: {"sun": (min: 0.1, fade: 0.15), "temperature": (min: 0, fade: 5), "wood": (min: 0.35, fade: 0.3)},
             biome: ["forest"],
-            duck: {"rain": 0.9},
+            duck: {"shelter": 0.8, "rain": 0.9},
         ),
         // Owls in the woods at night.
         (
@@ -228,7 +246,7 @@
             reach: 24,
             when: {"sun": (max: -0.1, fade: 0.1), "leaves": (min: 0.3, fade: 0.3)},
             biome: ["forest"],
-            duck: {"rain": 0.8},
+            duck: {"shelter": 0.75, "rain": 0.8},
         ),
         // A cricket close by in the grass at night.
         (
@@ -236,7 +254,7 @@
             pitch: (0.95, 1.05), reach: 6,
             when: {"sun": (max: -0.1, fade: 0.1), "temperature": (min: 9, fade: 6), "grass": (min: 0.35, fade: 0.3)},
             not_biome: ["desert", "frozen"],
-            duck: {"rain": 0.9},
+            duck: {"shelter": 0.8, "rain": 0.9},
         ),
         // Frogs by water on warm evenings and nights, most in wetlands.
         (
@@ -244,26 +262,28 @@
             pitch: (0.85, 1.15), reach: 12,
             when: {"sun": (max: 0.1, fade: 0.15), "temperature": (min: 12, fade: 5), "water": (min: 0.25, fade: 0.2), "continentalness": (min: 0.05, fade: 0.1)},
             biome: ["wetland", "river"],
-            duck: {"rain": 0.3},
+            duck: {"shelter": 0.8, "rain": 0.3},
         ),
         // Gusts on heights.
         (
             name: "gust", sound: Gust, volume: 0.38, at: Around(distance: (6, 16), height: (2, 8)), per_minute: 2, cooldown: 12,
             pitch: (0.85, 1.15), reach: 16,
             when: {"relief": (min: 20, fade: 20), "sky": (min: 0.6, fade: 0.3), "wind": (min: 6, fade: 10)},
+            duck: {"shelter": 0.8},
         ),
         // Gusts anywhere out in the open on a gusty day, as often as the wind gusts.
         (
             name: "gusty", sound: Gust, volume: 0.3, at: Around(distance: (8, 20), height: (1, 6)), per_minute: 3, cooldown: 9,
             pitch: (0.8, 1.2), reach: 18,
             when: {"gusts": (min: 0.45, fade: 0.25), "wind": (min: 5, fade: 4), "sky": (min: 0.5, fade: 0.3)},
-            duck: {"high_wind": 0.5, "storm_wind": 0.5},
+            duck: {"shelter": 0.8, "high_wind": 0.5, "storm_wind": 0.5},
         ),
         // Trees creaking in strong wind.
         (
             name: "creak", sound: Creak, volume: 0.3, at: Block("wood"), per_minute: 1.5, cooldown: 12,
             pitch: (0.8, 1.2), reach: 10,
             when: {"wind": (min: 9, fade: 6), "wood": (min: 0.35, fade: 0.3)},
+            duck: {"shelter": 0.75},
         ),
         // Drips and distant rumbles underground; the reverb comes from the cave itself.
         (

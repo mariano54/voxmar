@@ -82,10 +82,15 @@ pub enum Fixed {
     Cover,
     /// 1 with the head under water.
     Underwater,
+    /// How indoors the player is, 0..1: a roof overhead and walls around, a door open or
+    /// not. Outdoor layers duck by it, and one-shots that do are muffled as much.
+    Shelter,
+    /// A roof close overhead that the sky falls on, 0..1, walls or not: rain drums on it.
+    Roof,
 }
 
 impl Fixed {
-    pub const ALL: [Fixed; 27] = [
+    pub const ALL: [Fixed; 29] = [
         Fixed::Air,
         Fixed::Sky,
         Fixed::Canopy,
@@ -113,6 +118,8 @@ impl Fixed {
         Fixed::Dust,
         Fixed::Cover,
         Fixed::Underwater,
+        Fixed::Shelter,
+        Fixed::Roof,
     ];
 
     fn name(self) -> &'static str {
@@ -144,6 +151,8 @@ impl Fixed {
             Fixed::Dust => "dust",
             Fixed::Cover => "cover",
             Fixed::Underwater => "underwater",
+            Fixed::Shelter => "shelter",
+            Fixed::Roof => "roof",
         }
     }
 }
@@ -302,9 +311,34 @@ pub struct OneShot {
     pub duck: Vec<(DuckBy, f32)>,
 }
 
+/// How being indoors is told and heard (a file's `shelter`; a later package's replaces it).
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Shelter {
+    /// Blocks out from the eye a wall may be and still count.
+    pub walls: i32,
+    /// Blocks above the eye a roof may be for rain to be heard drumming on it.
+    pub roof: i32,
+    /// Hz an outdoor one-shot is muffled down to when fully indoors: a one-shot is outdoor
+    /// when it ducks by `shelter`, and muffled as far as it ducks.
+    pub muffle: f32,
+    /// How loud thunder is fully indoors, against out in the open.
+    pub thunder: f32,
+}
+
+impl Default for Shelter {
+    fn default() -> Self {
+        Self { walls: 6, roof: 8, muffle: OPEN_AIR_HZ, thunder: 1.0 }
+    }
+}
+
+/// A cutoff that leaves a sound as it is.
+pub const OPEN_AIR_HZ: f32 = 20_000.0;
+
 /// Every package's ambience.
 #[derive(Clone, Debug, Default)]
 pub struct Ambience {
+    pub shelter: Shelter,
     pub groups: Vec<Group>,
     /// Which blocks each group counts: tags and materials, matched against the registry,
     /// and whether only falling fluid of them (a waterfall's curtain).
@@ -316,6 +350,8 @@ pub struct Ambience {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct FileDef {
+    #[serde(default)]
+    shelter: Option<Shelter>,
     #[serde(default)]
     groups: Vec<GroupDef>,
     #[serde(default)]
@@ -415,6 +451,15 @@ impl Ambience {
             parsed.push((file.package.as_str(), def));
         }
         let mut ambience = Ambience::default();
+        for (package, def) in &parsed {
+            if let Some(shelter) = def.shelter {
+                let sane = shelter.walls >= 1 && shelter.roof >= 1 && (20.0..=OPEN_AIR_HZ).contains(&shelter.muffle) && (0.0..=1.0).contains(&shelter.thunder);
+                if !sane {
+                    return Err(format!("{package}/{FILE}: shelter wants walls and roof of a block or more, muffle 20..20000 Hz, thunder 0..1"));
+                }
+                ambience.shelter = shelter;
+            }
+        }
         // Groups first, so every file's conditions may name any group.
         for (package, def) in &mut parsed {
             for group in def.groups.drain(..) {
@@ -588,5 +633,8 @@ mod tests {
         assert!(error(r#"(beds: [(name: "x", sound: Warbler, volume: 1)])"#).contains("not a bed"));
         assert!(error(r#"(sounds: [(name: "x", sound: Owl, volume: 1, at: Block("trees"), per_minute: 1)])"#).contains("no group trees"));
         assert!(error(r#"(beds: [(name: "x", sound: Wind, volume: 1, duck: {"thunder": 1})])"#).contains("thunder"));
+        assert!(error(r#"(shelter: (muffle: 5))"#).contains("shelter"));
+        assert!(error(r#"(shelter: (walls: 0))"#).contains("shelter"));
+        assert!(error(r#"(shelter: (thunder: 1.5))"#).contains("shelter"));
     }
 }
