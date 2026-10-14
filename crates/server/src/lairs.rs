@@ -204,7 +204,12 @@ mod tests {
     /// A flat stone floor at y 199 over a few columns from the origin, and player 1
     /// standing on it at `at`.
     fn fixture(at: Vec3) -> Server {
-        let mut server = crate::test_server();
+        fixture_on(crate::test_content(), at)
+    }
+
+    /// As `fixture`, on content already loaded.
+    fn fixture_on(content: voxmar_engine::content::Content, at: Vec3) -> Server {
+        let mut server = crate::test_server_on(content);
         server.world = Default::default();
         let stone = server.content.blocks.expect("base:stone");
         for cx in 0..3 {
@@ -319,8 +324,10 @@ mod tests {
     #[test]
     fn the_rootmother_never_stands_where_no_move_of_hers_fits() {
         let her = |server: &Server| server.content.creatures.get(rootmother(server)).def.clone();
+        // The content loaded once for all the cases' servers.
+        let content = crate::test_content();
         let edge_of_reach = {
-            let server = fixture(Vec3::ZERO);
+            let server = fixture_on(content.clone(), Vec3::ZERO);
             let def = her(&server);
             // Her grasp's reach from her edge, at her smallest, and a little past it.
             def.moves.iter().map(|m| m.attack.reach).filter(|&r| r < 3.0).fold(0.0, f32::max) + def.body.size.0 * 0.88 * 0.5 + 0.3 + 0.05
@@ -328,7 +335,7 @@ mod tests {
         let mut failed = Vec::new();
         for scale in [0.88, 1.0, 1.12] {
         for (health, gap) in [(120, edge_of_reach), (40, 3.0 + 0.9 + 0.3), (120, 3.0), (120, 3.5), (120, 4.0), (120, 4.5), (120, 5.0), (120, 5.5), (120, 6.0), (40, 5.0), (40, 6.0)] {
-            let mut server = fixture(Vec3::new(20.5, 200.0, 20.5 + gap));
+            let mut server = fixture_on(content.clone(), Vec3::new(20.5, 200.0, 20.5 + gap));
             server.day = day_at(|l| l <= 0.0);
             let id = summon(&mut server, 20.5, 20.5, health);
             let live = server.creatures.live.get_mut(&id).unwrap();
