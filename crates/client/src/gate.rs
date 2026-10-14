@@ -546,6 +546,8 @@ struct Gate {
     /// canvas stood in the window.
     web_scroll: Vec2,
     web_canvas: Vec2,
+    /// The quest a lane's header was pressed to bring into view.
+    web_head: Option<String>,
     /// Where the player died in the workshop, the most items carried since waking, and when
     /// (in server seconds) that last went up.
     fell: Vec3,
@@ -770,6 +772,7 @@ impl Gate {
             quest_pinned: 0.0,
             web_scroll: Vec2::ZERO,
             web_canvas: Vec2::ZERO,
+            web_head: None,
             fell: Vec3::ZERO,
             gathered: (0, 0.0),
             kiln: IVec3::ZERO,
@@ -6088,8 +6091,49 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.advance(now);
         }
         19 => {
-            if gate.shot(world, "quests-dragged").is_none() {
+            if gate.shot(world, "quests-dragged").is_some() {
+                gate.advance(now);
+            }
+        }
+        // A path's lane header pressed, the lowest one that would move the canvas, brings
+        // the canvas to that path's next quest and picks it. Only the client moves, so the
+        // wait is the game's seconds, not the server's.
+        20 => {
+            let scroll = world.query_filtered::<&ScrollPosition, With<crate::hud::quests::Web>>().iter(world).next().map_or(Vec2::ZERO, |s| s.0);
+            let heads: Vec<(Entity, Option<String>, Vec2)> = world.query::<(Entity, &crate::hud::quests::LaneHead)>().iter(world).map(|(e, h)| (e, h.head.clone(), h.at)).collect();
+            // A web that fits its well never moves, so there any header whose head is not
+            // the quest picked will do: it must still pick its head, inside the well.
+            let picked = world.resource::<crate::hud::quests::QuestView>().picked.clone();
+            let moving = heads.iter().rev().find(|(_, head, at)| head.is_some() && at.distance(scroll) > 1.0);
+            let Some((header, head, at)) = moving.or_else(|| heads.iter().rev().find(|(_, head, _)| head.is_some() && *head != picked)).cloned() else {
+                return quit(world, gate, "quests: path", format!("{} lane headers, none with a quest away from the canvas at {scroll} or other than {picked:?}", heads.len()));
+            };
+            gate.web_head = head;
+            gate.web_scroll = at;
+            world.resource_mut::<UiClicks>().next = Some((header, MouseButton::Left));
+            gate.advance(now);
+        }
+        21 => {
+            let picked = world.resource::<crate::hud::quests::QuestView>().picked.clone();
+            let scroll = world.query_filtered::<&ScrollPosition, With<crate::hud::quests::Web>>().iter(world).next().map_or(Vec2::ZERO, |s| s.0);
+            let (well, max) = world
+                .query_filtered::<(&ComputedNode, &bevy::ui::UiGlobalTransform), With<crate::hud::quests::Web>>()
+                .iter(world)
+                .next()
+                .map_or((None, Vec2::ZERO), |(c, at)| (Some(Rect::from_center_size(at.translation, c.size())), (c.content_size() - c.size()).max(Vec2::ZERO) * c.inverse_scale_factor()));
+            // Where the header asked for, as far as the canvas moves.
+            let wanted = gate.web_scroll.clamp(Vec2::ZERO, max);
+            let node = world.query::<(&crate::hud::quests::QuestNode, &bevy::ui::UiGlobalTransform)>().iter(world).find(|(n, _)| Some(&n.0) == gate.web_head.as_ref()).map(|(_, at)| at.translation);
+            let shown = matches!((well, node), (Some(well), Some(node)) if well.contains(node));
+            if picked == gate.web_head && scroll.distance(wanted) < 1.0 && shown {
+                if gate.shot(world, "quests-path").is_none() {
+                    return;
+                }
+                gate.check("quests: path", Ok(format!("a lane header brought the canvas to {scroll} and picked {picked:?}, inside the well")));
+            } else if in_phase < 2.0 {
                 return;
+            } else {
+                gate.check("quests: path", Err(format!("2 s after a lane header was pressed for {:?} (canvas wanted at {wanted}): picked {picked:?}, canvas at {scroll}, the quest at {node:?} in the well {well:?}", gate.web_head)));
             }
             world.resource_mut::<UiState>().quests_open = false;
             gate.next(Step::Catalogue, now);
@@ -7085,7 +7129,7 @@ fn held(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     // (Looked for once a shot's wait is nearly over, when the views of those sent away are gone.)
     if (2..=5).contains(&gate.phase) && in_phase > 0.5 && gate.held_cleared < HELD_CLEARS && let Some(near) = wild_near(world, HELD_CLEAR) {
         gate.held_cleared += 1;
-        info!("gate: held: {near} near the sky shots; sending the wild creatures away and taking them again");
+        info!("gate: held: {near} before the sky shots; sending the wild creatures away and taking them again");
         world.resource::<Net>().command("creatures disperse");
         empty_hand(world);
         gate.forget(&HELD_SKY);
@@ -7222,22 +7266,32 @@ fn held(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 const HELD_SEEN: f32 = 1.0;
 const HELD_ELSEWHERE: f32 = 0.5;
 /// Blocks round the player within which a wild creature may walk into the held step's
-/// shots, and the times the step sends them away and begins those shots again.
+/// shots, and the times the step sends them away and begins those shots again. Only one
+/// before the eye counts: within the angle of the look that the server keeps births out
+/// of (`spawn_unseen_angle`, wider than the view). Sending the wild away makes room near
+/// the player, so births follow within seconds, 20 to 40 blocks off and out of sight:
+/// counted too, they retook the shots every run.
 const HELD_CLEAR: f32 = 32.0;
 const HELD_CLEARS: u32 = 3;
 /// The sky shots a retake takes again.
 const HELD_SKY: [&str; 4] = ["held-empty", "held-sword", "held-block", "held-empty-after"];
 
-/// The nearest wild creature shown within `reach` of the player (none kept by anyone, and
-/// no villager: what `/creatures disperse` sends away), by name and distance.
+/// The nearest wild creature shown within `reach` of the player and before their eye (none
+/// kept by anyone, and no villager: what `/creatures disperse` sends away), by name and
+/// distance.
 fn wild_near(world: &World, reach: f32) -> Option<String> {
-    let at = world.resource::<LocalPlayer>().position;
+    let player = world.resource::<LocalPlayer>();
+    let (at, eye, look) = (player.position, player.eye(), player.look_direction());
     let launch = world.resource::<Launch>();
+    // An angle of 0 lets births come in sight: then any counts.
+    let angle = launch.content.creatures.limits().spawn_unseen_angle;
+    let cos = if angle == 0.0 { -1.0 } else { angle.to_radians().cos() };
     let villager = |v: &voxmar_protocol::CreatureView| launch.content.creatures.get(v.species).def.kind == voxmar_engine::creature::Kind::Villager;
+    let before = |v: &voxmar_protocol::CreatureView| look.dot((v.position + Vec3::Y * 0.5 - eye).normalize_or_zero()) >= cos;
     world
         .resource::<crate::creatures::Creatures>()
         .views()
-        .filter(|v| !v.kept && v.owner.is_none() && !villager(v))
+        .filter(|v| !v.kept && v.owner.is_none() && !villager(v) && before(v))
         .map(|v| (v.position.distance(at), v.species))
         .filter(|&(d, _)| d < reach)
         .min_by(|a, b| a.0.total_cmp(&b.0))

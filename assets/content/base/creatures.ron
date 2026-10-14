@@ -483,7 +483,7 @@
             leash: 12.0,
             diet: (eats: ["short_grass"]),
             xp: (kill: 2.0, skill: "hunter"),
-            loot: [(item: "raw_frog", chance: 0.8)],
+            loot: [(item: "raw_small_game", chance: 0.8)],
         ),
         (
             name: "hedgehog", level: 1, health: 3,
@@ -846,7 +846,7 @@
             senses: (sight: 8.0, hearing: 10.0),
             leash: 10.0,
             xp: (kill: 2.0, skill: "hunter"),
-            loot: [(item: "raw_frog", chance: 0.6)],
+            loot: [(item: "raw_small_game", chance: 0.6)],
         ),
         (
             name: "garden_snail", level: 1, health: 1,
@@ -911,7 +911,7 @@
             temperament: (fear: 0.7, nervousness: 0.4, curiosity: 0.2, sociability: 0.1, energy: 0.2),
             senses: (sight: 26.0, hearing: 16.0),
             leash: 14.0,
-            diet: (favourite: ["raw_frog"]),
+            diet: (favourite: ["raw_small_game"]),
             xp: (kill: 7.0, skill: "hunter"),
             loot: [(item: "raw_small_game"), (item: "feather", count: (1, 3))],
         ),
