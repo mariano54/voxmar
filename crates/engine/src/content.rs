@@ -61,6 +61,8 @@ pub struct Content {
     pub journal: Arc<crate::journal::JournalRules>,
     /// Which wild plants come back where they were picked, and how soon.
     pub regrowth: Arc<crate::regrowth::Regrowth>,
+    /// Wild nests, skeps and what bees do (`bees.ron`).
+    pub bees: Arc<crate::bees::Bees>,
     /// Locked chests, the lockpicks that open them and what they hold.
     pub treasure: Arc<crate::treasure::Treasure>,
     /// What things are worth (`value`).
@@ -223,6 +225,7 @@ impl Content {
         let mut stacking = Vec::new();
         let mut fishing = Vec::new();
         let mut regrowth = Vec::new();
+        let mut bees = Vec::new();
         let mut treasure = Vec::new();
         let mut journal = Vec::new();
         let mut multiblocks = Vec::new();
@@ -321,6 +324,10 @@ impl Content {
                     }
                     "regrowth.ron" => {
                         regrowth.push(crate::regrowth::Regrowth::read(package, &source)?);
+                        files.push(ContentFile { package: package.clone(), name, source });
+                    }
+                    "bees.ron" => {
+                        bees.push(crate::bees::Bees::read(package, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
                     "treasure.ron" => {
@@ -430,6 +437,7 @@ impl Content {
                 return Err(RegistryError(format!("treasure.ron: `{}` opens to a bin of {room} stacks, but its table gives up to {most}", blocks.def(block).name)));
             }
         }
+        let bees = crate::bees::Bees::new(bees, &blocks, &skills, &effects, &creatures)?;
         let wandering = crate::wander::WanderRegistry::new(wandering, wander_rules.value, &creatures, &blocks, &skills, &effects, &cooking, &weather)?;
         let mut quests = crate::quest::QuestRegistry::new(quests)?;
         quests.resolve(&crate::quest::Named { blocks: &blocks, skills: &skills, creatures: &creatures, fishing: &fishing, multiblocks: &multiblocks, steps: &effects.steps(), events: &wandering.iter().map(|(_, e)| e.def.name.clone()).collect::<Vec<_>>(), prayers: &prayers.all().map(|(_, p)| p.name.clone()).collect::<Vec<_>>() })?;
@@ -465,6 +473,7 @@ impl Content {
             prayers: Arc::new(prayers),
             fishing: Arc::new(fishing),
             regrowth: Arc::new(regrowth),
+            bees: Arc::new(bees),
             treasure: Arc::new(treasure),
             value: Arc::new(value),
             wandering: Arc::new(wandering),

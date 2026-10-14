@@ -23,6 +23,9 @@
             modifiers: (warmth: -8.0)),
         (name: "queasy", kind: Debuff, title: "Queasy", description: "Raw meat: slower to heal and a little slower going. Cook it.",
             modifiers: (heal: 0.5, speed: 0.95)),
+        // Taking from bees without smoke (bees.ron).
+        (name: "stung", kind: Debuff, title: "Stung", description: "Bee stings: slower to heal for a while. Smoke them calm first.",
+            modifiers: (heal: 0.75)),
         // Where you stand (InBiome: a biome tag or name). Each place gives a reason to go
         // there, or to leave: the water for fishing, the woods to heal.
         (name: "waterside", kind: Buff, title: "Waterside", description: "By the sea, a river or a marsh: casts land a fifth more often.",
@@ -99,6 +102,12 @@
         (name: "herb_nook", kind: Buff, title: "Herb nook", description: "Herbs drying overhead: you farm and brew as if a level higher here, and a meal's good lasts a tenth longer.", announce: true,
             when: Some(All([AtHome, HomeHas("drying", 2), HomeHas("storage", 1)])),
             replaces: [], boosts: [("farming", 1), ("alchemy", 1)], modifiers: (meal_time: 1.1)),
+        // A bee garden, the Farm age's: a skep with bees in it among flowers at home
+        // (bees.ron). Its bees make the crops about it grow a quarter faster, which the
+        // apiary does; the home itself heals a tenth faster and is sweeter to come back to.
+        (name: "bee_garden", kind: Buff, title: "Bee garden", description: "Bees at work among your flowers: you heal a tenth faster here, and crops near the hive grow a quarter faster.", announce: true,
+            when: Some(All([AtHome, HomeHas("hive", 1), HomeHas("flower", 3)])),
+            replaces: [], modifiers: (heal: 1.1)),
         // Reactions: a home answers what is around it. A roof and a fire in a storm, animals
         // kept in the yard (`kept` counts those within reach) and crops growing by the door
         // each give something, with no code of their own.

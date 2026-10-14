@@ -120,6 +120,9 @@ pub enum Requirement {
     Fishable,
     /// The target is a locked chest (tagged `locked`, `treasure.ron`).
     Locked,
+    /// Something can be taken from the target's bees with what the actor holds (a swarm
+    /// into a skep, honey from a full one: `bees.ron`).
+    Bees,
 }
 
 /// Engine-owned effects that actions compile down to.
@@ -191,6 +194,9 @@ pub enum Effect {
     /// Pray at the target altar: offer one held offering for Magic experience, or with none
     /// in hand have prayer points back in full (`prayer`).
     Pray,
+    /// Take from the target's bees with what the actor holds (`bees.ron`): calmly under
+    /// smoke, stung without it.
+    TendBees,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -314,6 +320,10 @@ pub trait ActionContext {
     }
     /// The machines, where the context knows them.
     fn machines(&self) -> Option<&crate::machine::MachineRegistry> {
+        None
+    }
+    /// What bees give, where the context knows.
+    fn bees(&self) -> Option<&crate::bees::Bees> {
         None
     }
     /// Whether the creature with that id takes `item` from the actor's hand.
@@ -523,6 +533,11 @@ impl ActionDef {
             Requirement::Locked => {
                 let (block, _) = block_target()?;
                 ctx.block(block).is_some_and(|b| ctx.blocks().def(b).has_tag(crate::treasure::LOCKED_TAG))
+            }
+            Requirement::Bees => {
+                let (block, _) = block_target()?;
+                let Some(bees) = ctx.bees() else { return Ok(false) };
+                ctx.block(block).is_some_and(|b| bees.take(b, ctx.actor_held()).is_some())
             }
             Requirement::MultiblockCore => {
                 let (block, _) = block_target()?;

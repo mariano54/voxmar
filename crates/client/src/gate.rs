@@ -6354,6 +6354,10 @@ fn sweep_bears(world: &mut World, gate: &mut Gate, species: voxmar_engine::creat
 /// step of 0.05 cannot jump one.
 const FEEL_TRIES: u32 = 10;
 const FEEL_STEP: f32 = 0.05;
+/// Frames before the moment tried that an answer is pressed (`FeelRun::answer`): one for the
+/// frame the game takes to send it, and half of one so the frame that sends it is the
+/// nearest to the moment, not the first past it.
+const FEEL_AIM: f32 = 1.5;
 /// Seconds past the moment tried that a frame may come late with the try still saying
 /// something of the moment: a frame that late answered after the blow could have landed
 /// (the wind-up is 0.7 s), and said nothing, as on a machine drawing a frame a second.
@@ -6362,13 +6366,15 @@ const FEEL_SLOW_FRAME: f32 = 0.25;
 /// fails what it is on and goes on to kill the bears, so none is left behind.
 const FEEL_LIMIT: f32 = 120.0;
 
-/// Server seconds of lag before the first blow is provoked. Guards and dodges are judged
+/// Pings answered under lag before the first blow is provoked. Guards and dodges are judged
 /// earlier by the player's round trip (`Server::lag_allowance`), smoothed by a quarter at
-/// each ping, one a second: put behind from calm, it is a tenth from where it settles eight
-/// pings on (0.75^8), about 0.02 s of a 0.2 s allowance, under the 0.05 s steps the tries
-/// take. With the lag on only from the block's phase, the block was found while the allowance
-/// still grew, and every dodge after it, at 0.40 to 0.65 s, was judged too late.
-const FEEL_LAG_SETTLE: f32 = 8.0;
+/// each ping: put behind from calm, it is a tenth from where it settles eight pings on
+/// (0.75^8), about 0.02 s of a 0.2 s allowance, under the 0.05 s steps the tries take; the
+/// ninth, as the first may have been sent before the lag. With the lag on only from the
+/// block's phase, the block was found while the allowance still grew, and every dodge after
+/// it, at 0.40 to 0.65 s, was judged too late. A lagging server pings every tick, so this
+/// takes ticks, where at a ping a second it took 44 s of the game's clock on the Mac.
+const FEEL_LAG_SETTLE: u32 = 9;
 /// Bears the step summons at most, should provoking them and the counter kill one.
 const FEEL_BEARS: u32 = 3;
 
@@ -6390,8 +6396,8 @@ struct FeelRun {
     bears: u32,
     /// The server's clock when the step began, for `FEEL_LIMIT`.
     started: f32,
-    /// The server's clock when the step began to run behind, for `FEEL_LAG_SETTLE`.
-    lagged_from: Option<f32>,
+    /// The server's pings answered when the step began to run behind, for `FEEL_LAG_SETTLE`.
+    lagged_from: Option<u32>,
     /// The moment the answer's search is centred on, and how far round it the dodge's
     /// search has gone (`after` is the moment tried next).
     centre: f32,
@@ -6435,9 +6441,16 @@ impl FeelRun {
 
     /// Queue a real input only while this observed wind-up remains unanswered by the
     /// server. A result already received cannot be defended by a next-frame input edge.
+    ///
+    /// The gate presses in `Last` and the game sends the press a frame on, so the press is
+    /// queued on the frame that sends it nearest the moment tried: from `FEEL_AIM` frames
+    /// before it, by the frame just drawn. With frames of a few milliseconds that is the
+    /// moment itself; on a loaded machine drawing a frame a tenth of a second, waiting for
+    /// the moment sent every answer up to two frames late, past a perfect window.
     fn answer(&mut self, world: &mut World, blocking: bool, dodge_key: KeyCode, received: bool) -> bool {
         let Some(seen) = self.seen else { return false };
-        if received || self.answered || seen.elapsed().as_secs_f32() < self.after {
+        let frame = world.get_resource::<Time>().map_or(0.0, |t| t.delta_secs());
+        if received || self.answered || seen.elapsed().as_secs_f32() + FEEL_AIM * frame < self.after {
             return false;
         }
         self.answered = true;
@@ -6511,7 +6524,7 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         1 => {
             let roomy = world.resource::<LocalPlayer>().max_health >= 100;
             if gate.feel.lagged_from.is_none() {
-                gate.feel.lagged_from = Some(gate.server_now);
+                gate.feel.lagged_from = Some(world.resource::<crate::fight::Fighting>().pings);
             }
             if roomy && view.is_some() && select(world, WEAPON) {
                 gate.advance(now);
@@ -6564,6 +6577,10 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             // A wind-up is timed from its pose coming on: one still shown from the blow just
             // judged (its end not yet heard) is not a new one.
             if gate.feel.observe(view.pose == Pose::Attacking, ours.is_some()) {
+                // The pose came in some time during the frame just drawn: on average half of
+                // it before this moment, which a slow frame makes worth counting.
+                let half = std::time::Duration::from_secs_f32(world.resource::<Time>().delta_secs() / 2.0);
+                gate.feel.seen = gate.feel.seen.map(|seen| seen.checked_sub(half).unwrap_or(seen));
                 if !gate.feel.facing_checked {
                     let target = gate.observer.as_ref().and_then(|o| o.others.values().next().copied()).unwrap_or(world.resource::<LocalPlayer>().position);
                     let to = (target - view.position).with_y(0.0).normalize_or_zero();
@@ -6584,7 +6601,8 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
             if gate.feel.answer(world, blocking, dodge_key, ours.is_some()) {
                 let seen = gate.feel.seen.expect("answered an observed wind-up");
-                gate.feel.late = seen.elapsed().as_secs_f32() - gate.feel.after;
+                // When the game sends it, a frame on, past the moment tried.
+                gate.feel.late = seen.elapsed().as_secs_f32() + world.resource::<Time>().delta_secs() - gate.feel.after;
                 let player = world.resource::<LocalPlayer>();
                 info!("gate: combat response phase {} try {} bear {}, requested {:.3}s, queued {:.3}s after wind-up, grounded {}, flying {}, frame {:.3}s", gate.phase, gate.feel.tries + 1, view.id, gate.feel.after, seen.elapsed().as_secs_f32(), player.on_ground, player.flying, world.resource::<Time>().delta_secs());
             } else if !blocking {
@@ -6592,7 +6610,8 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
             // Provoked at most every few server seconds while it does not fight back, and only
             // once the lag has held long enough for the server's round trip to settle on it.
-            let settled = gate.feel.lagged_from.is_some_and(|from| gate.server_now - from >= FEEL_LAG_SETTLE);
+            let pings = world.resource::<crate::fight::Fighting>().pings;
+            let settled = gate.feel.lagged_from.is_some_and(|from| pings - from >= FEEL_LAG_SETTLE);
             if gate.feel.seen.is_none() && gate.server_now - gate.feel.poked > 3.0 && distance < 2.4 && settled {
                 if !gate.feel.facing_checked {
                     if gate.feel.facing_camera.is_none() {

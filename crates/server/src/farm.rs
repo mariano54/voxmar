@@ -156,9 +156,10 @@ impl Server {
         self.tick + (ticks * jitter).round().max(1.0) as u64
     }
 
-    /// How fast the crop grows at `pos` (see `crop::rate`).
+    /// How fast the crop grows at `pos` (see `crop::rate`), faster near a hive's bees
+    /// (`pollination`).
     fn crop_rate(&self, crop: CropId, pos: IVec3) -> f32 {
-        crop::rate(&self.content.crops.get(crop).def, self.crop_conditions(pos))
+        crop::rate(&self.content.crops.get(crop).def, self.crop_conditions(pos)) * self.pollination(pos)
     }
 
     /// The climate, light, ground and water a crop at `pos` grows in.

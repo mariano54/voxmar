@@ -479,8 +479,8 @@ fortune: one true thing among several), and a new species, the poacher.
 | holds a weapon | nothing | a fighter sends him off | a beginner is drilled |
 | strikes one | scatter | he runs | they fight |
 
-The beekeeper waits for bees: honey only comes with the farming age's skeps, as one item
-that both heals and goes into a recipe, not before.
+The beekeeper came with the Farm age's skeps (Oct 14, docs/bees.md): by day, to a home whose
+bee garden stands, never before.
 
 ## Batch 9 (implemented, six kinds): roads to town, rain and the settled
 
@@ -759,7 +759,7 @@ are the mechanics later batches add, each used by several kinds.
 | 56 | miners' shift | a row of miners with lamps walk to a mine mouth | March | 3 | later |
 | 57 | stonecutters | haul a block; leave a cut stone | Haul | 3 | later |
 | 58 | lamplighter | at dusk lights lamps along a road | Errand | 3 | later |
-| 59 | beekeeper | smoke and bees; honey for a comb | Camp | 2 | later |
+| 59 | beekeeper | see docs/bees.md: to a home with bees (`home_is: "bee_garden"`); walks the garden, a skep for three honey | Camp | 2 | done |
 | 60 | truffle hunter | see batch 7 | Forage | 2 | done |
 | 61 | goblin raiders | a small band that rushes a farm at dusk | Ambush | 2 | later |
 | 62 | goblin scouts | a pair that slips away if seen, then returns with more | Chase | 2 | later |

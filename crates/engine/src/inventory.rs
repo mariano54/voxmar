@@ -244,6 +244,19 @@ impl Inventory {
         Some(item)
     }
 
+    /// Turns one item of `slot` into `item` (a skep that took a swarm): in the same slot
+    /// if it was the last there, else wherever it fits. Returns how many did not fit.
+    pub fn replace_one(&mut self, slot: usize, item: BlockId) -> u8 {
+        if self.take_one(slot).is_none() {
+            return 1;
+        }
+        if self.slots.get(slot).is_some_and(|s| s.is_none()) {
+            self.slots[slot] = Some(ItemStack { item, count: 1 });
+            return 0;
+        }
+        self.add(item, 1)
+    }
+
     pub fn get(&self, slot: usize) -> Option<ItemStack> {
         match slot {
             CURSOR => self.cursor,

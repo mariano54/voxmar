@@ -8,6 +8,7 @@
 //! headless and the client turns its output into GPU resources.
 
 pub mod action;
+pub mod bees;
 pub mod block;
 pub mod calendar;
 pub mod chunk;
