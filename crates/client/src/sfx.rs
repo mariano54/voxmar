@@ -189,6 +189,9 @@ struct Clip {
     speed: f32,
 }
 
+/// Result sounds by action: each with the tag its items must carry (none: any item).
+type Brings = FxHashMap<voxmar_engine::action::ActionId, Vec<(Option<String>, Vec<Clip>)>>;
+
 #[derive(Resource)]
 struct Sfx {
     clips: FxHashMap<(Sound, Cue), Vec<Clip>>,
@@ -197,7 +200,7 @@ struct Sfx {
     /// What actions sound like as the player does them.
     actions: FxHashMap<voxmar_engine::action::ActionId, Vec<Clip>>,
     /// What their results sound like landing in the pack, by tag (none: anything).
-    brings: FxHashMap<voxmar_engine::action::ActionId, Vec<(Option<String>, Vec<Clip>)>>,
+    brings: Brings,
     /// Actions done whose results may yet land, and until when (seconds).
     awaiting: Vec<(voxmar_engine::action::ActionId, f32)>,
     counter: u64,
@@ -714,7 +717,7 @@ fn gained(before: &FxHashMap<BlockId, u32>, now: &FxHashMap<BlockId, u32>) -> Ve
 /// first awaited whose rules take it, by its first rule whose tag the item has.
 fn answered<'a>(
     awaiting: &[(voxmar_engine::action::ActionId, f32)],
-    brings: &'a FxHashMap<voxmar_engine::action::ActionId, Vec<(Option<String>, Vec<Clip>)>>,
+    brings: &'a Brings,
     has: impl Fn(&str) -> bool,
 ) -> Option<(usize, &'a [Clip])> {
     awaiting.iter().enumerate().find_map(|(i, (action, _))| {
