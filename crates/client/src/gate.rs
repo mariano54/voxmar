@@ -6875,6 +6875,8 @@ struct FeelRun {
     /// `Last` to tell of it).
     sent: Option<f32>,
     slow: u32,
+    /// Whether this wind-up's moment came with no press, already told (`answer`).
+    held: bool,
 }
 
 impl FeelRun {
@@ -6904,7 +6906,15 @@ impl FeelRun {
     fn answer(&mut self, world: &mut World, blocking: bool, dodge_key: KeyCode, received: bool) -> bool {
         let Some(seen) = self.seen else { return false };
         let frame = world.get_resource::<Time>().map_or(0.0, |t| t.delta_secs());
-        if received || self.answered || seen.elapsed().as_secs_f32() + (FEEL_AIM * frame).min(self.room) < self.after {
+        let due = seen.elapsed().as_secs_f32() + (FEEL_AIM * frame).min(self.room) >= self.after;
+        if due && (received || self.answered) {
+            // Told once a wind-up, for a try that ends with no response queued.
+            if !self.held && !self.answered {
+                info!("gate: combat response due {:.3}s after wind-up and not pressed: its result came first, frame {frame:.3}s", seen.elapsed().as_secs_f32());
+            }
+            self.held = true;
+        }
+        if received || self.answered || !due {
             return false;
         }
         self.answered = true;
@@ -7050,6 +7060,8 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 // it before this moment, which a slow frame makes worth counting.
                 let half = std::time::Duration::from_secs_f32(world.resource::<Time>().delta_secs() / 2.0);
                 gate.feel.seen = gate.feel.seen.map(|seen| seen.checked_sub(half).unwrap_or(seen));
+                gate.feel.held = false;
+                info!("gate: combat wind-up seen phase {} try {} bear {}, frame {:.3}s, server {:.2}s", gate.phase, gate.feel.tries + 1, view.id, world.resource::<Time>().delta_secs(), gate.server_now);
                 if !gate.feel.facing_checked {
                     let target = gate.observer.as_ref().and_then(|o| o.others.values().next().copied()).unwrap_or(world.resource::<LocalPlayer>().position);
                     let to = (target - view.position).with_y(0.0).normalize_or_zero();
