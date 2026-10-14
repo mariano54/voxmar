@@ -5,7 +5,7 @@
 // meeting: right click one to hear it and, with something in hand, to swap or be taught.
 // Their words are lang keys `wander.base.EVENT.LINE` (`title`, `greet` and each line).
 //
-// Rare by design: one party near a player at a time, ten minutes between them, the far
+// Rare by design: one party near a player at a time, fifteen minutes between them, the far
 // ones (`away`) only far from where the world began, and the creature caps of the land
 // count their animals and monsters. A party with a `halt` stops for a player who comes
 // near; what a party does when struck is its `hurt`. What it teaches or sells is gated on
@@ -15,7 +15,7 @@
     rules: (
         scan_every: 20.0,
         chance: 0.25,
-        gap: 600.0,
+        gap: 900.0,
         most_near: 1,
         near: 110.0,
         most_total: 8,
@@ -29,6 +29,7 @@
         speak_reach: 4.0,
         repeat_weight: 0.15,
         repeat_memory: 1800.0,
+        follow_after: 45.0,
     ),
     // How kinds of creature answer what a player holds, in any event (docs/wandering.md,
     // "Reactions"): one rule here is every party's, now and in the events to come. The
@@ -120,14 +121,15 @@
             hurt: Ignore,
         ),
         // A hooded stranger who keeps their distance and stands still when watched. Walk up
-        // to them and they are not so shy.
+        // to them and they are not so shy: a lump of coal for a torch of your own (the torch
+        // itself is the player's to make, the main line's Torchlight).
         (
             name: "hooded_stranger", weight: 0.4,
             daylight: (0.0, 0.35), needs: (days: 1.5),
             cast: [(species: "stranger")],
             script: Shadow(keep: (12.0, 20.0), seconds: 150.0),
             meetings: [(who: 0, lines: [
-                (name: "light", gives: [Item("torch", (1, 2))], once: Player),
+                (name: "light", gives: [Item("coal_ore", (1, 1))], once: Player),
             ])],
         ),
         // A tinker's camp: a trader, a helper or two and a dog, resting a while by the road.
@@ -185,7 +187,7 @@
         (
             name: "shepherd_and_flock", weight: 0.9,
             biomes: [("tag:grassland", 1.0), ("tag:open", 0.5)],
-            daylight: (0.35, 0.95), needs: (days: 0.8),
+            daylight: (0.35, 1.0), needs: (days: 0.8),
             cast: [(species: "herder"), (species: "mouflon", count: (4, 6), role: Herd), (species: "hound", role: Pet(0))],
             script: Drift(leg: (7.0, 14.0), pause: (6.0, 20.0), seconds: 420.0),
             halt: (near: 6.0, seconds: (15.0, 25.0)),
@@ -200,7 +202,7 @@
         (
             name: "lost_child", weight: 0.5,
             biomes: [("tag:open", 1.0), ("tag:forest", 0.7)],
-            daylight: (0.35, 0.9), needs: (days: 0.8, away: Some((60.0, 100000.0))),
+            daylight: (0.35, 1.0), needs: (days: 0.8, away: Some((60.0, 100000.0))),
             cast: [(species: "child")],
             script: Roam(radius: 14.0, pause: (4.0, 12.0), rest: false, seconds: 600.0),
             guide: (follow_for: 900.0, arrive: Town, thanks: [Item("gold_coin", (1, 2)), Item("bread", (2, 3))]),
@@ -280,7 +282,7 @@
         (
             name: "white_stag", weight: 0.3,
             biomes: [("tag:forest", 1.0), ("tag:grassland", 0.4)],
-            daylight: (0.3, 0.75), needs: (days: 1.5, away: Some((60.0, 100000.0))),
+            daylight: (0.3, 1.0), needs: (days: 1.5, away: Some((60.0, 100000.0))),
             cast: [(species: "white_stag")],
             script: Lure(keep: (6.0, 16.0), length: 130.0, pace: 1.0, patience: 150.0, linger: 6.0),
             hurt: Scatter,
@@ -305,7 +307,7 @@
         (
             name: "fox_and_farmer", weight: 0.6,
             biomes: [("tag:grassland", 1.0), ("tag:open", 0.8), ("tag:forest", 0.4)],
-            daylight: (0.3, 0.9), needs: (days: 0.8, away: Some((40.0, 100000.0))),
+            daylight: (0.3, 1.0), needs: (days: 0.8, away: Some((40.0, 100000.0))),
             cast: [(species: "fox"), (species: "farmer", role: Chaser)],
             script: Chase(pass: (4.0, 14.0), length: 130.0, pace: 1.8, gain: 1.2, hold: (8.0, 14.0)),
             hurt: Ignore,
@@ -324,7 +326,7 @@
         (
             name: "berry_pickers", weight: 0.9,
             biomes: [("tag:forest", 1.0), ("base:forest_steppe", 1.0), ("tag:grassland", 0.6), ("tag:open", 0.6)],
-            daylight: (0.3, 0.9), needs: (days: 0.4),
+            daylight: (0.3, 1.0), needs: (days: 0.4),
             cast: [(species: "villager"), (species: "villager", count: (1, 2), role: Follow), (species: "child", count: (0, 1), role: Follow)],
             script: Gather(reach: 20.0, work: (8.0, 16.0), visits: 10),
             seek: ["tag:berry"],
@@ -341,7 +343,7 @@
         (
             name: "herb_gatherer", weight: 0.6,
             biomes: [("tag:grassland", 1.0), ("tag:open", 0.8), ("base:forest_steppe", 0.8), ("tag:forest", 0.5), ("tag:wetland", 0.6)],
-            daylight: (0.3, 0.85), needs: (days: 0.6, away: Some((30.0, 100000.0))),
+            daylight: (0.3, 1.0), needs: (days: 0.6, away: Some((30.0, 100000.0))),
             cast: [(species: "elder")],
             script: Gather(reach: 24.0, work: (10.0, 20.0), visits: 6),
             seek: ["tag:herb"],
@@ -359,7 +361,7 @@
         (
             name: "fisher_folk", weight: 0.8,
             biomes: [("tag:river", 1.5), ("tag:wetland", 1.0), ("tag:open", 0.6), ("tag:forest", 0.5), ("tag:grassland", 0.5)],
-            daylight: (0.2, 0.85), needs: (days: 0.4),
+            daylight: (0.2, 1.0), needs: (days: 0.4),
             cast: [(species: "fisher"), (species: "fisher", count: (0, 1), role: Follow), (species: "child", count: (0, 1), role: Follow)],
             script: Gather(reach: 24.0, work: (20.0, 40.0), visits: 6),
             seek: ["water"],
@@ -379,7 +381,7 @@
         (
             name: "boar_sounder", weight: 0.7,
             biomes: [("tag:forest", 1.0), ("tag:broadleaf", 1.0), ("base:forest_steppe", 0.6), ("tag:grassland", 0.3)],
-            daylight: (0.15, 0.85), needs: (days: 0.6),
+            daylight: (0.15, 1.0), needs: (days: 0.6),
             cast: [(species: "wild_sow"), (species: "wild_boar", count: (2, 4), role: Herd, young: true)],
             script: Drift(leg: (5.0, 10.0), pause: (8.0, 20.0), seconds: 480.0),
             guard: (near: 9.0, warn: 3.0, calm: 16.0),
@@ -391,18 +393,18 @@
         (
             name: "deer_herd", weight: 0.7,
             biomes: [("tag:forest", 1.0), ("tag:grassland", 0.8), ("base:forest_steppe", 1.0)],
-            daylight: (0.1, 0.6), needs: (days: 0.5),
+            daylight: (0.0, 0.6), needs: (days: 0.5),
             cast: [(species: "red_deer"), (species: "red_deer", count: (2, 4), role: Herd), (species: "red_deer", count: (0, 2), role: Herd, young: true)],
             script: Drift(leg: (6.0, 12.0), pause: (6.0, 18.0), seconds: 480.0),
             startle: (near: 22.0, least: 8.0, still: 6.0, stalk: Some(("hunter", 0.35))),
         ),
-        // A travelling cook camps at dusk with a pot on. Hand over raw meat or fish and it
+        // A travelling cook camps from dusk on, a pot on. Hand over raw meat or fish and it
         // comes back cooked (the cook keeps one for the pot); show them what you cooked
         // yourself and a beginner learns a thing or two; the hurt are sat down and fed.
         (
             name: "travelling_cook", weight: 0.6,
             biomes: [("tag:open", 1.0), ("tag:grassland", 0.8), ("tag:forest", 0.6)],
-            daylight: (0.1, 0.55), needs: (days: 0.8),
+            daylight: (0.0, 0.55), needs: (days: 0.8),
             cast: [(species: "baker"), (species: "villager", count: (0, 1), role: Follow), (species: "hound", role: Pet(0))],
             script: Camp(near: 24.0, stay: (240.0, 360.0), mill: 4.0, away: 120.0),
             meetings: [(who: 0, greets: 2, lines: [
@@ -418,7 +420,7 @@
         (
             name: "cowherd", weight: 0.6,
             biomes: [("tag:grassland", 1.0), ("tag:open", 0.8)],
-            daylight: (0.3, 0.9), needs: (days: 1.5, home: true),
+            daylight: (0.3, 1.0), needs: (days: 1.5, home: true),
             cast: [(species: "herder"), (species: "aurochs", count: (2, 3), role: Herd), (species: "aurochs", role: Herd, young: true), (species: "hound", role: Pet(0))],
             script: Drift(leg: (6.0, 12.0), pause: (10.0, 24.0), seconds: 480.0),
             halt: (near: 6.0, seconds: (16.0, 28.0)),
@@ -436,7 +438,7 @@
         (
             name: "woodcutters", weight: 0.6,
             biomes: [("tag:forest", 1.2), ("base:forest_steppe", 1.0), ("tag:open", 0.3)],
-            daylight: (0.25, 0.85), needs: (days: 0.8),
+            daylight: (0.25, 1.0), needs: (days: 0.8),
             cast: [(species: "woodcutter"), (species: "woodcutter", count: (0, 1), role: Follow), (species: "hound", count: (0, 1), role: Pet(0))],
             script: Gather(reach: 20.0, work: (10.0, 18.0), visits: 6, carry: Some((set: (2.0, 4.0)))),
             seek: ["tag:log"],
@@ -453,7 +455,7 @@
         (
             name: "water_carriers", weight: 0.8,
             biomes: [("tag:open", 1.0), ("tag:grassland", 1.0), ("tag:river", 1.0), ("tag:forest", 0.4)],
-            daylight: (0.2, 0.85), needs: (days: 1.0, home: true),
+            daylight: (0.2, 1.0), needs: (days: 1.0, home: true),
             cast: [(species: "farmer"), (species: "farmer", count: (0, 1), role: Follow), (species: "child", count: (0, 1), role: Follow)],
             script: Gather(reach: 24.0, work: (3.0, 6.0), visits: 8, carry: Some((set: (3.0, 5.0), tend: Some((2.5, 1))))),
             seek: ["water"],
@@ -470,7 +472,7 @@
         (
             name: "harvest_family", weight: 0.6,
             biomes: [("tag:grassland", 1.0), ("tag:open", 1.0), ("base:steppe", 0.6)],
-            daylight: (0.3, 0.85), needs: (days: 1.2, home: true),
+            daylight: (0.3, 1.0), needs: (days: 1.2, home: true),
             cast: [(species: "farmer"), (species: "farmer", count: (0, 1), role: Follow), (species: "child", count: (1, 2), role: Follow), (species: "hound", count: (0, 1), role: Pet(0))],
             script: March(pass: (14.0, 26.0), length: 160.0, pace: 0.75),
             halt: (near: 6.0, seconds: (14.0, 24.0)),
@@ -508,12 +510,12 @@
                 (name: "salve", wants: ("tag:herb", 3), gives: [Effect("soothed", 600.0), Xp("alchemy", 6.0)], once: Player),
             ])],
         ),
-        // A story teller camps at dusk with listeners. The tale is of something strange
+        // A story teller camps from dusk on with listeners. The tale is of something strange
         // and near, true to the land (once), and a listener leaves focused.
         (
             name: "story_teller", weight: 0.5,
             biomes: [("tag:open", 1.0), ("tag:grassland", 0.8), ("tag:forest", 0.6)],
-            daylight: (0.05, 0.45), needs: (days: 1.0),
+            daylight: (0.0, 0.45), needs: (days: 1.0),
             cast: [(species: "elder"), (species: "child", count: (1, 2), role: Follow), (species: "villager", count: (0, 1), role: Follow)],
             script: Camp(near: 24.0, stay: (240.0, 360.0), mill: 3.0, away: 120.0),
             meetings: [(who: 0, greets: 2, lines: [
@@ -540,7 +542,7 @@
         (
             name: "goose_girl", weight: 0.6,
             biomes: [("tag:grassland", 1.0), ("tag:open", 1.0), ("tag:wetland", 1.0), ("tag:river", 1.0)],
-            daylight: (0.3, 0.85), needs: (days: 0.8),
+            daylight: (0.3, 1.0), needs: (days: 0.8),
             cast: [(species: "child"), (species: "mallard", count: (3, 5), role: Herd), (species: "mallard", role: Herd, young: true)],
             script: Drift(leg: (5.0, 10.0), pause: (8.0, 18.0), seconds: 420.0),
             halt: (near: 6.0, seconds: (12.0, 20.0)),
@@ -554,7 +556,7 @@
         (
             name: "prospector", weight: 0.6,
             biomes: [("tag:mountain", 1.2), ("tag:open", 0.6), ("tag:forest", 0.5), ("base:steppe", 0.8)],
-            daylight: (0.25, 0.85), needs: (days: 1.0),
+            daylight: (0.25, 1.0), needs: (days: 1.0),
             cast: [(species: "smith"), (species: "hound", count: (0, 1), role: Pet(0))],
             script: Gather(reach: 24.0, work: (8.0, 14.0), visits: 4),
             seek: ["tag:ore_sample"],
@@ -569,7 +571,7 @@
         (
             name: "travelling_alchemist", weight: 0.5,
             biomes: [("tag:open", 1.0), ("tag:forest", 0.8), ("tag:grassland", 0.8), ("tag:wetland", 0.6)],
-            daylight: (0.3, 0.9), needs: (days: 1.0, away: Some((40.0, 100000.0))),
+            daylight: (0.3, 1.0), needs: (days: 1.0, away: Some((40.0, 100000.0))),
             cast: [(species: "elder"), (species: "hound", role: Pet(0))],
             script: March(pass: (14.0, 26.0), length: 160.0, pace: 0.7),
             halt: (near: 6.0, seconds: (12.0, 22.0)),
@@ -594,7 +596,7 @@
         (
             name: "funeral", weight: 0.3,
             biomes: [("tag:open", 1.0), ("tag:grassland", 1.0), ("tag:forest", 0.5)],
-            daylight: (0.2, 0.8), needs: (days: 2.0),
+            daylight: (0.2, 1.0), needs: (days: 2.0),
             cast: [(species: "priest"), (species: "villager", count: (2, 4), role: Follow), (species: "elder", count: (0, 1), role: Rear)],
             script: March(pass: (14.0, 26.0), length: 120.0, pace: 0.45),
             meetings: [(who: 0, greets: 2, lines: [
@@ -620,7 +622,7 @@
         (
             name: "truffle_hunter", weight: 0.5,
             biomes: [("tag:forest", 1.0), ("tag:broadleaf", 1.0)],
-            daylight: (0.3, 0.9), needs: (days: 1.0),
+            daylight: (0.3, 1.0), needs: (days: 1.0),
             cast: [(species: "villager"), (species: "wild_boar", role: Pet(0))],
             script: Gather(reach: 20.0, work: (6.0, 12.0), visits: 8),
             seek: ["tag:fungus"],
@@ -719,7 +721,7 @@
             biomes: [("tag:forest", 1.0), ("tag:broadleaf", 1.0), ("tag:grassland", 0.5), ("tag:scrubland", 0.5)],
             daylight: (0.3, 1.0), needs: (days: 1.0),
             cast: [(species: "hunter"), (species: "villager", role: Follow), (species: "hound", count: (1, 2), role: Pet(0))],
-            script: Hunt(reach: 48.0, strike: 2.5, takes: 2, seconds: 420.0),
+            script: Hunt(reach: 64.0, strike: 2.5, takes: 2, seconds: 420.0),
             quarry: ["wild_boar", "red_deer"],
             share: [Xp("hunter", 10.0)],
             meetings: [(who: 0, greets: 2, lines: [
@@ -727,15 +729,15 @@
                 (name: "took", needs: [When(Took)]),
             ])],
         ),
-        // A poacher after deer at dusk, alone and quick about it. Keep quiet about what you
+        // A poacher after deer from dusk on, alone and quick about it. Keep quiet about what you
         // saw and there is a cut of venison in it; a fighter with a weapon in hand is not
         // to be argued with, and the deer lives. Strike him and he runs.
         (
             name: "poacher", weight: 0.4,
             biomes: [("tag:forest", 1.0), ("tag:broadleaf", 1.0), ("tag:grassland", 0.4)],
-            daylight: (0.05, 0.45), needs: (days: 1.5),
+            daylight: (0.0, 0.45), needs: (days: 1.5),
             cast: [(species: "poacher")],
-            script: Hunt(reach: 40.0, strike: 2.0, takes: 1, seconds: 300.0),
+            script: Hunt(reach: 64.0, strike: 2.0, takes: 1, seconds: 300.0),
             quarry: ["red_deer"],
             meetings: [(who: 0, greets: 2, lines: [
                 (name: "cut", needs: [When(Took)], gives: [Item("raw_venison", (1, 1))], once: Player),
@@ -750,7 +752,7 @@
             biomes: [("tag:grassland", 1.0), ("tag:forest", 0.7), ("tag:scrubland", 0.6)],
             daylight: (0.2, 1.0), needs: (days: 0.8),
             cast: [(species: "hunter")],
-            script: Hunt(reach: 36.0, strike: 2.0, takes: 3, seconds: 360.0),
+            script: Hunt(reach: 56.0, strike: 2.0, takes: 3, seconds: 360.0),
             quarry: ["rabbit", "hare", "pheasant"],
             share: [Xp("hunter", 4.0)],
             meetings: [(who: 0, greets: 2, lines: [
@@ -791,7 +793,7 @@
         (
             name: "fortune_teller", weight: 0.4,
             biomes: [("tag:open", 1.0), ("tag:grassland", 1.0), ("tag:forest", 0.5)],
-            daylight: (0.05, 0.6), needs: (days: 1.0),
+            daylight: (0.0, 0.6), needs: (days: 1.0),
             cast: [(species: "elder"), (species: "child", count: (0, 1), role: Follow)],
             script: Camp(near: 22.0, stay: (300.0, 480.0), mill: 2.0, away: 120.0),
             meetings: [(who: 0, greets: 2, lines: [
@@ -803,7 +805,7 @@
         (
             name: "market_folk", weight: 0.7, lifetime: 1500.0,
             biomes: [("tag:open", 1.0), ("tag:grassland", 1.0), ("tag:forest", 0.5)],
-            daylight: (0.3, 0.9), needs: (days: 0.8),
+            daylight: (0.3, 1.0), needs: (days: 0.8),
             cast: [(species: "trader"), (species: "farmer", count: (1, 2), role: Follow), (species: "hound", count: (0, 1), role: Pet(0))],
             script: Journey(reach: 600.0, pace: 0.9, near: 16.0),
             halt: (near: 6.0, seconds: (6.0, 10.0), cooldown: 45.0),
@@ -859,7 +861,7 @@
         // plate for the house.
         (
             name: "neighbours", weight: 0.6,
-            daylight: (0.3, 0.9), needs: (days: 1.5, home: Some(true), near_home: Some(48.0)),
+            daylight: (0.3, 1.0), needs: (days: 1.5, home: Some(true), near_home: Some(48.0)),
             cast: [(species: "villager"), (species: "farmer", role: Follow), (species: "child", count: (0, 1), role: Follow)],
             script: Camp(near: 16.0, stay: (300.0, 420.0), mill: 2.5, away: 100.0),
             meetings: [(who: 0, greets: 2, lines: [
@@ -874,7 +876,7 @@
             biomes: [("tag:forest", 1.0), ("tag:cold", 1.0), ("tag:grassland", 0.6)],
             daylight: (0.0, 0.35), needs: (days: 2.0, home: Some(true), near_home: Some(160.0)),
             cast: [(species: "guard"), (species: "hunter", role: Follow), (species: "hound", count: (1, 2), role: Pet(0))],
-            script: Hunt(reach: 56.0, strike: 2.5, takes: 2, seconds: 420.0),
+            script: Hunt(reach: 64.0, strike: 2.5, takes: 2, seconds: 420.0),
             quarry: ["wolf"],
             share: [Xp("attack", 10.0)],
             meetings: [(who: 0, greets: 2, lines: [
@@ -888,7 +890,7 @@
         (
             name: "clay_diggers", weight: 0.7,
             biomes: [("tag:river", 1.2), ("tag:wetland", 1.0), ("tag:grassland", 0.6), ("tag:open", 0.5)],
-            daylight: (0.25, 0.85), needs: (days: 1.5, home: Some(true)),
+            daylight: (0.25, 1.0), needs: (days: 1.5, home: Some(true)),
             cast: [(species: "villager"), (species: "child", count: (0, 1), role: Follow)],
             script: Gather(reach: 24.0, work: (8.0, 14.0), visits: 6, carry: Some((set: (2.0, 4.0)))),
             seek: ["clay"],
@@ -904,7 +906,7 @@
         (
             name: "harvest_home", weight: 0.6,
             biomes: [("tag:grassland", 1.0), ("tag:open", 1.0), ("base:steppe", 0.6), ("tag:forest", 0.3)],
-            daylight: (0.3, 0.9), needs: (days: 2.0, home: Some(true), near_home: Some(40.0)),
+            daylight: (0.3, 1.0), needs: (days: 2.0, home: Some(true), near_home: Some(40.0)),
             cast: [(species: "farmer"), (species: "villager", count: (1, 2), role: Follow), (species: "child", count: (1, 2), role: Follow)],
             script: March(pass: (5.0, 12.0), length: 140.0, pace: 0.6),
             halt: (near: 7.0, seconds: (20.0, 30.0)),
@@ -919,7 +921,7 @@
         (
             name: "coal_carters", weight: 0.6, lifetime: 1500.0,
             biomes: [("tag:mountain", 1.0), ("tag:open", 0.8), ("tag:forest", 0.6), ("tag:grassland", 0.6)],
-            daylight: (0.3, 0.9), needs: (days: 0.8),
+            daylight: (0.3, 1.0), needs: (days: 0.8),
             cast: [(species: "villager"), (species: "villager", count: (1, 2), role: Follow)],
             script: Journey(reach: 600.0, pace: 0.8, near: 16.0),
             halt: (near: 6.0, seconds: (6.0, 10.0), cooldown: 45.0),
@@ -936,7 +938,7 @@
         (
             name: "tanner", weight: 0.5,
             biomes: [("tag:open", 1.0), ("tag:forest", 0.8), ("tag:grassland", 0.8)],
-            daylight: (0.3, 0.9), needs: (days: 1.2),
+            daylight: (0.3, 1.0), needs: (days: 1.2),
             cast: [(species: "tanner"), (species: "hound", count: (0, 1), role: Pet(0))],
             script: Camp(near: 22.0, stay: (240.0, 360.0), mill: 3.0, away: 120.0),
             meetings: [(who: 0, greets: 2, lines: [
@@ -944,13 +946,13 @@
                 (name: "buy", wants: ("hide", 4), gives: [Item("gold_coin", (2, 2))], once: Player),
             ])],
         ),
-        // A piper at dusk near folk's homes with the field mice of their stores at his heels.
+        // A piper from dusk on, near folk's homes with the field mice of their stores at his heels.
         // He waits to be seen, then leads them off; follow him to the end of his tune and he
         // leaves the seed they would have eaten. Strike him and he and the mice scatter.
         (
             name: "rat_catcher", weight: 0.4,
             biomes: [("tag:grassland", 1.0), ("tag:open", 1.0), ("tag:forest", 0.5)],
-            daylight: (0.15, 0.45), needs: (days: 1.5, home: Some(true), near_home: Some(80.0)),
+            daylight: (0.0, 0.45), needs: (days: 1.5, home: Some(true), near_home: Some(80.0)),
             cast: [(species: "bard"), (species: "field_mouse", count: (3, 5), role: Follow)],
             script: Lure(keep: (5.0, 16.0), length: 110.0, pace: 0.8, patience: 150.0, linger: 6.0),
             hurt: Scatter,
@@ -978,7 +980,7 @@
         (
             name: "sparring_master", weight: 0.5,
             biomes: [("tag:open", 1.0), ("tag:grassland", 1.0), ("tag:forest", 0.5)],
-            daylight: (0.3, 0.9), needs: (days: 1.0),
+            daylight: (0.3, 1.0), needs: (days: 1.0),
             cast: [(species: "guard"), (species: "villager", count: (0, 1), role: Follow)],
             script: Camp(near: 20.0, stay: (240.0, 360.0), mill: 3.0, away: 120.0),
             hurt: Avenge,
@@ -993,7 +995,7 @@
         // they fight a bout to half health; win and the wager comes back doubled.
         (
             name: "village_champion", weight: 0.5,
-            daylight: (0.35, 0.9), needs: (days: 1.5, town: Some(220.0)),
+            daylight: (0.35, 1.0), needs: (days: 1.5, town: Some(220.0)),
             cast: [(species: "constable"), (species: "villager", count: (1, 3), role: Follow)],
             script: Camp(near: 20.0, stay: (240.0, 360.0), mill: 2.0, away: 120.0),
             hurt: Avenge,
@@ -1021,7 +1023,7 @@
         // luck, once: a coin found, a lighter step, or word of a wonder near.
         (
             name: "chimney_sweep", weight: 0.5,
-            daylight: (0.3, 0.9), needs: (days: 1.5, home: Some(true), near_home: Some(48.0)),
+            daylight: (0.3, 1.0), needs: (days: 1.5, home: Some(true), near_home: Some(48.0)),
             cast: [(species: "villager"), (species: "child", role: Follow)],
             script: March(pass: (5.0, 12.0), length: 130.0, pace: 0.8),
             halt: (near: 6.0, seconds: (12.0, 20.0)),
@@ -1033,7 +1035,7 @@
         // it does, nobody knows until it is drunk, but it does no harm.
         (
             name: "quack_doctor", weight: 0.5,
-            daylight: (0.3, 0.9), needs: (days: 1.0, town: Some(300.0)),
+            daylight: (0.3, 1.0), needs: (days: 1.0, town: Some(300.0)),
             cast: [(species: "trader"), (species: "villager", count: (0, 1), role: Follow)],
             script: Camp(near: 20.0, stay: (240.0, 360.0), mill: 2.5, away: 120.0),
             meetings: [(who: 0, greets: 3, lines: [
@@ -1045,7 +1047,7 @@
         (
             name: "stuck_cart", weight: 0.6,
             biomes: [("tag:open", 1.0), ("tag:grassland", 1.0), ("tag:forest", 0.6)],
-            daylight: (0.25, 0.9), needs: (days: 0.8, wet: Some(true)),
+            daylight: (0.25, 1.0), needs: (days: 0.8, wet: Some(true)),
             cast: [(species: "farmer"), (species: "villager", count: (0, 1), role: Follow)],
             script: Camp(near: 18.0, stay: (180.0, 300.0), mill: 1.0, away: 100.0),
             show: (near: 4.0, seconds: 12.0, gives: [Item("gold_coin", (1, 1)), Item("bread", (1, 1))]),
@@ -1067,7 +1069,7 @@
         (
             name: "thatchers", weight: 0.5,
             biomes: [("tag:grassland", 1.0), ("tag:open", 0.8), ("tag:forest", 0.4)],
-            daylight: (0.3, 0.9), needs: (days: 1.5, near_home: Some(64.0)),
+            daylight: (0.3, 1.0), needs: (days: 1.5, near_home: Some(64.0)),
             cast: [(species: "villager"), (species: "villager", role: Follow)],
             script: March(pass: (6.0, 14.0), length: 140.0, pace: 0.8),
             meetings: [(who: 0, greets: 2, lines: [
@@ -1081,7 +1083,7 @@
         (
             name: "seed_swappers", weight: 0.5,
             biomes: [("tag:grassland", 1.0), ("tag:open", 0.8), ("tag:temperate", 0.6)],
-            daylight: (0.3, 0.9), needs: (days: 2.0),
+            daylight: (0.3, 1.0), needs: (days: 2.0),
             cast: [(species: "farmer"), (species: "child", count: (0, 1), role: Follow)],
             script: Camp(near: 20.0, stay: (240.0, 360.0), mill: 2.0, away: 120.0),
             meetings: [(who: 0, greets: 2, lines: [
@@ -1095,7 +1097,7 @@
         (
             name: "flint_knappers", weight: 0.5,
             biomes: [("tag:rocky", 1.0), ("tag:mountain", 0.7), ("tag:open", 0.6), ("tag:water", 0.4)],
-            daylight: (0.25, 0.9), needs: (days: 0.5),
+            daylight: (0.25, 1.0), needs: (days: 0.5),
             cast: [(species: "hunter"), (species: "child", count: (0, 1), role: Follow)],
             script: Camp(near: 20.0, stay: (200.0, 320.0), mill: 1.5, away: 100.0),
             meetings: [(who: 0, greets: 2, lines: [
@@ -1111,7 +1113,7 @@
             biomes: [("tag:wetland", 1.0), ("tag:wet", 0.8), ("tag:water", 0.5)],
             daylight: (0.0, 0.3), needs: (days: 1.0),
             cast: [(species: "hunter"), (species: "child", count: (0, 1), role: Follow)],
-            script: Hunt(reach: 32.0, strike: 2.0, takes: 3, seconds: 360.0),
+            script: Hunt(reach: 48.0, strike: 2.0, takes: 3, seconds: 360.0),
             quarry: ["common_frog", "toad"],
             share: [Xp("hunter", 3.0)],
             meetings: [(who: 0, greets: 2, lines: [
@@ -1124,7 +1126,7 @@
         (
             name: "messenger", weight: 0.5, lifetime: 900.0,
             biomes: [("tag:open", 1.0), ("tag:grassland", 1.0), ("tag:forest", 0.5)],
-            daylight: (0.3, 0.9), needs: (days: 1.0),
+            daylight: (0.3, 1.0), needs: (days: 1.0),
             cast: [(species: "traveller")],
             script: Journey(reach: 500.0, pace: 1.5, near: 12.0),
             halt: (near: 4.0, seconds: (3.0, 4.0), cooldown: 60.0),
@@ -1151,7 +1153,7 @@
         (
             name: "ore_assayer", weight: 0.5,
             biomes: [("tag:mountain", 1.2), ("tag:rocky", 1.0), ("tag:open", 0.5)],
-            daylight: (0.25, 0.85), needs: (days: 1.5),
+            daylight: (0.25, 1.0), needs: (days: 1.5),
             cast: [(species: "smith"), (species: "villager", count: (0, 1), role: Follow)],
             script: Camp(near: 20.0, stay: (240.0, 360.0), mill: 2.0, away: 120.0),
             meetings: [(who: 0, greets: 2, lines: [
@@ -1165,7 +1167,7 @@
         (
             name: "bloomery_smelters", weight: 0.4,
             biomes: [("tag:forest", 1.0), ("tag:mountain", 0.8), ("tag:open", 0.6)],
-            daylight: (0.25, 0.85), needs: (days: 3.0, home: true),
+            daylight: (0.25, 1.0), needs: (days: 3.0, home: true),
             cast: [(species: "smith"), (species: "villager", role: Follow)],
             script: Camp(near: 22.0, stay: (240.0, 360.0), mill: 2.0, away: 120.0),
             meetings: [(who: 0, greets: 2, lines: [
@@ -1190,7 +1192,7 @@
         (
             name: "potter", weight: 0.5,
             biomes: [("tag:open", 1.0), ("tag:grassland", 1.0), ("tag:forest", 0.5)],
-            daylight: (0.3, 0.9), needs: (days: 2.0),
+            daylight: (0.3, 1.0), needs: (days: 2.0),
             cast: [(species: "trader"), (species: "hound", count: (0, 1), role: Pet(0))],
             script: March(pass: (6.0, 14.0), length: 140.0, pace: 0.7),
             halt: (near: 6.0, seconds: (12.0, 20.0)),
@@ -1204,7 +1206,7 @@
         (
             name: "snail_racers", weight: 0.5,
             biomes: [("tag:grassland", 1.0), ("tag:forest", 0.8), ("tag:open", 0.8)],
-            daylight: (0.3, 0.9), needs: (days: 1.0, wet: Some(true)),
+            daylight: (0.3, 1.0), needs: (days: 1.0, wet: Some(true)),
             cast: [(species: "child"), (species: "child", count: (1, 2), role: Follow), (species: "garden_snail", count: (2, 3), role: Pet(0))],
             script: Camp(near: 16.0, stay: (180.0, 300.0), mill: 1.0, away: 100.0),
             show: (near: 5.0, seconds: 20.0, gives: [Effect("refreshed", 600.0)]),
@@ -1218,7 +1220,7 @@
         (
             name: "henwife", weight: 0.5,
             biomes: [("tag:grassland", 1.0), ("tag:open", 1.0), ("tag:forest", 0.4)],
-            daylight: (0.3, 0.9), needs: (days: 1.5),
+            daylight: (0.3, 1.0), needs: (days: 1.5),
             cast: [(species: "villager"), (species: "junglefowl", count: (2, 3), role: Herd)],
             script: Drift(leg: (6.0, 12.0), pause: (6.0, 12.0), seconds: 420.0),
             meetings: [(who: 0, greets: 2, lines: [
@@ -1233,7 +1235,7 @@
         (
             name: "mushroom_pickers", weight: 0.6,
             biomes: [("tag:forest", 1.2), ("tag:wetland", 0.6)],
-            daylight: (0.2, 0.9), needs: (days: 1.0, wet: Some(true)),
+            daylight: (0.2, 1.0), needs: (days: 1.0, wet: Some(true)),
             cast: [(species: "villager"), (species: "child", count: (0, 2), role: Follow)],
             script: Gather(reach: 24.0, work: (6.0, 10.0), visits: 5),
             seek: ["tag:fungus"],
@@ -1250,7 +1252,7 @@
         (
             name: "woodcarver", weight: 0.5,
             biomes: [("tag:forest", 1.2), ("tag:open", 0.5)],
-            daylight: (0.25, 0.9), needs: (days: 0.8),
+            daylight: (0.25, 1.0), needs: (days: 0.8),
             cast: [(species: "woodcutter"), (species: "hound", count: (0, 1), role: Pet(0))],
             script: Camp(near: 20.0, stay: (240.0, 360.0), mill: 1.5, away: 120.0),
             meetings: [(who: 0, greets: 2, lines: [
@@ -1264,7 +1266,7 @@
         (
             name: "shearers", weight: 0.5,
             biomes: [("tag:grassland", 1.2), ("tag:open", 0.8), ("tag:highland", 0.8)],
-            daylight: (0.3, 0.9), needs: (days: 2.0),
+            daylight: (0.3, 1.0), needs: (days: 2.0),
             cast: [(species: "herder"), (species: "villager", role: Follow), (species: "hound", role: Pet(0))],
             script: March(pass: (6.0, 14.0), length: 140.0, pace: 0.8),
             halt: (near: 6.0, seconds: (10.0, 16.0)),
@@ -1279,7 +1281,7 @@
         (
             name: "apprentice", weight: 0.4,
             biomes: [("tag:open", 1.0), ("tag:grassland", 1.0), ("tag:forest", 0.6)],
-            daylight: (0.3, 0.9), needs: (days: 3.0),
+            daylight: (0.3, 1.0), needs: (days: 3.0),
             cast: [(species: "child")],
             script: Shadow(keep: (4.0, 9.0), seconds: 300.0),
             meetings: [(who: 0, greets: 2, lines: [
@@ -1308,7 +1310,7 @@
         (
             name: "gamekeepers", weight: 0.8,
             biomes: [("tag:forest", 1.0), ("tag:grassland", 0.8), ("tag:open", 0.6)],
-            daylight: (0.05, 0.6), needs: (days: 1.5, after: Some(("poacher", 160.0))),
+            daylight: (0.0, 0.6), needs: (days: 1.5, after: Some(("poacher", 160.0))),
             cast: [(species: "guard"), (species: "hound", role: Pet(0))],
             script: March(pass: (6.0, 14.0), length: 140.0, pace: 0.9),
             halt: (near: 6.0, seconds: (8.0, 12.0)),
@@ -1336,7 +1338,7 @@
         (
             name: "gossip", weight: 0.5,
             biomes: [("tag:open", 1.0), ("tag:grassland", 1.0), ("tag:forest", 0.5)],
-            daylight: (0.3, 0.9), needs: (days: 1.0, town: Some(260.0)),
+            daylight: (0.3, 1.0), needs: (days: 1.0, town: Some(260.0)),
             cast: [(species: "villager")],
             script: Roam(radius: 12.0, pause: (6.0, 12.0), rest: false, seconds: 480.0),
             meetings: [(who: 0, greets: 2, lines: [
@@ -1345,9 +1347,9 @@
         ),
         // Kin of refugees a player took in come by to thank them, with seed from home.
         (
-            name: "refugee_kin", weight: 1.0,
+            name: "refugee_kin", weight: 2.5,
             biomes: [("tag:open", 1.0), ("tag:grassland", 1.0), ("tag:forest", 0.6)],
-            daylight: (0.3, 0.9), needs: (days: 3.0, near_home: Some(64.0), met: Some("refugees")),
+            daylight: (0.3, 1.0), needs: (days: 3.0, near_home: Some(64.0), met: Some("refugees")),
             cast: [(species: "villager"), (species: "child", count: (0, 2), role: Follow)],
             script: Camp(near: 16.0, stay: (180.0, 300.0), mill: 2.0, away: 120.0),
             meetings: [(who: 0, greets: 2, lines: [
@@ -1357,7 +1359,7 @@
         // A christening: the couple from a wedding a player met, with their child, walking to
         // be blessed. A loaf for the feast and they share the blessing.
         (
-            name: "christening", weight: 1.0,
+            name: "christening", weight: 2.5,
             biomes: [("tag:open", 1.0), ("tag:grassland", 1.0), ("tag:forest", 0.5)],
             daylight: (0.4, 1.0), needs: (days: 6.0, met: Some("wedding")),
             cast: [(species: "priest"), (species: "villager", count: (2, 2), role: Follow), (species: "child", role: Follow)],
@@ -1370,9 +1372,9 @@
         // The poacher's friends, who heard who crossed him: they lie in wait by a road for a
         // player who met him, his snares for bait. Beat them and they pay to be let go.
         (
-            name: "poachers_gang", weight: 0.5,
+            name: "poachers_gang", weight: 1.5,
             biomes: [("tag:forest", 1.0), ("tag:open", 0.6)],
-            daylight: (0.05, 0.45), needs: (days: 3.0, combat: (5, 60), met: Some("poacher")),
+            daylight: (0.0, 0.45), needs: (days: 3.0, combat: (5, 60), met: Some("poacher")),
             cast: [(species: "poacher"), (species: "raider", count: (1, 2), role: Lurk)],
             script: Ambush(near: 22.0, trigger: 7.0, delay: (6.0, 10.0), patience: 300.0, away: 120.0, hold: (30.0, 60.0)),
             hurt: Avenge,
@@ -1383,9 +1385,9 @@
         // Batch 16: more parties that answer others. The parents of a lost child a player
         // met come by their home with thanks.
         (
-            name: "grateful_parents", weight: 1.0,
+            name: "grateful_parents", weight: 2.5,
             biomes: [("tag:open", 1.0), ("tag:grassland", 1.0), ("tag:forest", 0.6)],
-            daylight: (0.3, 0.9), needs: (days: 2.0, near_home: Some(64.0), met: Some("lost_child")),
+            daylight: (0.3, 1.0), needs: (days: 2.0, near_home: Some(64.0), met: Some("lost_child")),
             cast: [(species: "villager"), (species: "villager", role: Follow), (species: "child", role: Follow)],
             script: Camp(near: 16.0, stay: (150.0, 240.0), mill: 2.0, away: 120.0),
             meetings: [(who: 0, greets: 2, lines: [
@@ -1395,9 +1397,9 @@
         // The apprentice a player taught, come back days later a journeyman with a gift of
         // the trade, and a lesson of their own.
         (
-            name: "journeyman", weight: 1.0,
+            name: "journeyman", weight: 2.5,
             biomes: [("tag:open", 1.0), ("tag:grassland", 1.0), ("tag:forest", 0.6)],
-            daylight: (0.3, 0.9), needs: (days: 5.0, met: Some("apprentice")),
+            daylight: (0.3, 1.0), needs: (days: 5.0, met: Some("apprentice")),
             cast: [(species: "villager")],
             script: March(pass: (6.0, 14.0), length: 140.0, pace: 0.8),
             halt: (near: 6.0, seconds: (10.0, 16.0)),
@@ -1410,7 +1412,7 @@
         (
             name: "highwaymen", weight: 0.8,
             biomes: [("tag:open", 1.0), ("tag:grassland", 1.0), ("tag:forest", 0.8)],
-            daylight: (0.3, 0.9), needs: (days: 2.0, combat: (4, 60), after: Some(("market_folk", 200.0))),
+            daylight: (0.3, 1.0), needs: (days: 2.0, combat: (4, 60), after: Some(("market_folk", 200.0))),
             cast: [(species: "thief"), (species: "raider", count: (1, 2), role: Lurk)],
             script: Ambush(near: 22.0, trigger: 7.0, delay: (6.0, 10.0), patience: 300.0, away: 120.0, hold: (30.0, 60.0)),
             hurt: Avenge,
@@ -1459,6 +1461,43 @@
                 (name: "bargain", wants: ("gold_coin", 1), gives: [OneOf([Item("bread", (2, 2)), Item("seed_mix", (3, 3)), Item("flint", (3, 3))])], once: Player),
                 (name: "sneer", gives: [Toward("pedlar_and_hound", 200.0)], once: Player),
             ])],
+        ),
+        // Callers for a home that has come far (`home_is`: the home step its hearth has
+        // reached, judged as `/home` judges it; docs/home.md, "Callers"). A homely home, with
+        // seats, a table and stores, draws folk in of an evening to sit by its fire: a long
+        // talk leaves you thinking clearer, and a cooked supper shared, candles toward a
+        // brighter home.
+        (
+            name: "fireside_guests", weight: 1.0,
+            daylight: (0.0, 0.6), needs: (days: 3.0, home: Some(true), near_home: Some(40.0), home_is: Some("homely")),
+            cast: [(species: "villager"), (species: "villager", role: Follow)],
+            script: Camp(near: 10.0, stay: (300.0, 420.0), mill: 2.0, away: 100.0),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "talk", gives: [Effect("focused", 900.0)], once: Player),
+                (name: "supper", wants: ("tag:cooked", 1), gives: [Item("candle", (2, 2)), Xp("cooking", 10.0)], once: Player),
+            ])],
+        ),
+        // The beekeeper, by day, to a home with a bee garden (`home_is`): looks over the
+        // skeps and walks the garden with the player (the crops near them grow on), and a
+        // spare skep for three honey, for a second hive.
+        (
+            name: "beekeeper", weight: 1.5,
+            daylight: (0.5, 1.0), needs: (days: 3.0, home: Some(true), near_home: Some(40.0), home_is: Some("bee_garden")),
+            cast: [(species: "villager")],
+            script: Camp(near: 10.0, stay: (300.0, 420.0), mill: 3.0, away: 100.0),
+            meetings: [(who: 0, greets: 2, lines: [
+                (name: "hives", gives: [Grow(16.0, 1), Xp("farming", 25.0)], once: Player),
+                (name: "skep", wants: ("honey", 3), gives: [Item("skep", (1, 1)), Xp("farming", 15.0)], once: Party),
+            ])],
+        ),
+        // A hedgehog in from the dark to a cosy home's door, after the crumbs. It is as wild
+        // as any: a mushroom or a strawberry at a time (Hunter 3) and it stays, one of the
+        // animals about the house.
+        (
+            name: "hedgehog_lodger", weight: 1.0,
+            daylight: (0.0, 0.35), needs: (days: 3.0, home: Some(true), near_home: Some(40.0), home_is: Some("cosy")),
+            cast: [(species: "hedgehog")],
+            script: Camp(near: 8.0, stay: (400.0, 600.0), mill: 3.0, away: 60.0),
         ),
     ],
 )

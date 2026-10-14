@@ -2055,7 +2055,8 @@ fn kiln_fuel_and_lighting_progress_survive_reload_without_free_refuelling() {
     let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
     let mut client = Client::join_with(config());
     let core = client.position.floor().as_ivec3() + IVec3::new(4, 0, 0);
-    let lit = |c: &Client| c.quests.iter().find(|q| q.name == "base:crucible_kiln").unwrap().tasks[0][0].0;
+    // The kiln lit, the quest's last part.
+    let lit = |c: &Client| c.quests.iter().find(|q| q.name == "base:crucible_kiln").unwrap().tasks[0].last().unwrap().0;
     let light = |c: &Client| c.propose("base:light", ActionTarget::Block { block: core, face: Face::PosY });
     let count = |c: &Client, name: &str| {
         let item = c.content.blocks.expect(name);
@@ -6571,9 +6572,12 @@ impl Fresh {
         let placed = self.waited(5.0, |c| c.world.block(cell).is_some_and(|b| b != BlockId::AIR));
         assert!(
             placed,
-            "placing {item} on {ground}: not done within 5 server seconds (now {:.1} s into the run), from {:.2}, holding slot {} ({:?}), refused since: {:?}",
+            "placing {item} on {ground}: not done within 5 server seconds (now {:.1} s into the run), from {:.2} ({:.2} from the eye to the cell), ground {:?} and cell {:?} as the client sees them, holding slot {} ({:?}), refused since: {:?}",
             self.secs(),
             self.at,
+            (self.at + Vec3::Y * voxmar_engine::physics::player::EYE_HEIGHT).distance(cell.as_vec3() + 0.5),
+            self.c.world.block(ground).map(|b| self.c.content.blocks.def(b).name.clone()),
+            self.c.world.block(cell).map(|b| self.c.content.blocks.def(b).name.clone()),
             self.held,
             self.c.inventory.get(self.held as usize).map(|s| self.c.content.blocks.def(s.item).name.clone()),
             &self.c.refused[refused.min(self.c.refused.len())..]

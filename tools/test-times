@@ -56,7 +56,7 @@ def read(directory):
 
 def parse_budget(text):
     """The budget file's TOML: `key = number | "string"`, `[[allow]]` tables, and
-    `tests = [ "name", ... ]` lists, one string to a line."""
+    `tests = [ "name", ... ]` lists, one string to a line or all on one."""
     budget, table, listing = {"allow": []}, None, None
     for line in text.splitlines():
         line = line.strip()
@@ -75,6 +75,9 @@ def parse_budget(text):
             target = budget if table is None else table
             if value == "[":
                 target[key] = listing = []
+            elif value.startswith("[") and value.endswith("]"):
+                # A list on one line: `tests = ["a", "b"]`.
+                target[key] = [item.strip().strip('"') for item in value[1:-1].split(",") if item.strip()]
             elif value.startswith('"'):
                 target[key] = value.strip('"')
             else:

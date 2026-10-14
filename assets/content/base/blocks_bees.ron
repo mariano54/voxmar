@@ -1,0 +1,30 @@
+// Bees (bees.ron, docs/bees.md): the straw skep a swarm is taken into, the same skep
+// with bees in it and full of honey, and beeswax. The wild nest and honey are in
+// blocks.ron, which generation reads alone. Art is in the default pack's bees.ron, boxes
+// in shapes.ron.
+(
+    blocks: [
+        // A skep: coiled straw bound into a dome, wheat over a ring of twine. Empty until a
+        // swarm is taken into it; with bees in it, it fills with honey while they forage,
+        // and full, a right click under smoke takes the honey and leaves the bees.
+        (
+            name: "skep", render: Model, shape: "skep", solid: false, sound: Grass, textures: All("skep"),
+            hardness: 0.5, color: (200, 165, 85), tags: ["skep", "decor"],
+        ),
+        (
+            name: "bee_skep", render: Model, shape: "skep", solid: false, sound: Grass, textures: All("skep"),
+            hardness: 0.5, color: (200, 165, 85), tags: ["skep", "hive", "bees"],
+            particles: [(style: Ember, rate: 2.5, at: (0.5, 0.25, 0.5), spread: 0.45, size: 0.35, height: 0.9, color: Some((70, 52, 14)), blend: Some(Cutout))],
+        ),
+        (
+            name: "honey_skep", render: Model, shape: "skep", solid: false, sound: Grass, textures: All("honey_skep"),
+            hardness: 0.5, drops: "bee_skep", color: (214, 160, 50), tags: ["skep", "hive", "bees"],
+            particles: [(style: Ember, rate: 4.0, at: (0.5, 0.25, 0.5), spread: 0.45, size: 0.35, height: 0.9, color: Some((70, 52, 14)), blend: Some(Cutout))],
+        ),
+    ],
+    families: [
+        // Beeswax makes the best candles, a few at a time. (Honey and the wild nest are
+        // in blocks.ron, which generation reads alone.)
+        (template: "drop", name: "beeswax", tags: ["wax"], all: (color: (232, 200, 110), rarity: Uncommon)),
+    ],
+)

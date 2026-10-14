@@ -221,6 +221,20 @@
             (from: (3, 6, 7), to: (13, 10, 9)),
         ]),
 
+        // A straw skep: coils narrowing to a dome on a low base, a dark doorway at its foot
+        // (bees.ron). A wild nest: a lumpy comb in a hollow at a trunk's foot.
+        "skep": (boxes: [
+            (from: (2, 0, 2), to: (14, 4, 14)),
+            (from: (3, 4, 3), to: (13, 8, 13)),
+            (from: (4, 8, 4), to: (12, 11, 12)),
+            (from: (6, 11, 6), to: (10, 13, 10)),
+        ]),
+        "bee_nest": (boxes: [
+            (from: (3, 0, 4), to: (12, 5, 12)),
+            (from: (4, 5, 5), to: (11, 8, 11)),
+            (from: (6, 8, 6), to: (10, 10, 10)),
+        ]),
+
         // Singles: lights, a hearth's pieces, a loom and its kin, graves and columns.
         "candle": (boxes: [
             (from: (7, 0, 7), to: (9, 5, 9)),

@@ -248,6 +248,13 @@ pub(crate) struct Report {
 }
 
 impl WeatherState {
+    /// Brings the cells about `around` up to `tick`, for a test that moves time on without
+    /// the whole server (the wandering audit).
+    #[cfg(test)]
+    pub(crate) fn advance(&mut self, temperature: &mut Field, around: &[IVec2], tick: u64, day: f64) {
+        self.update(temperature, around, tick, day);
+    }
+
     /// `wind` is the direction (x, z) the world's prevailing wind blows towards. `chances`
     /// holds each of `table`'s effects' chance to occur (see `chances`).
     pub fn new(world_seed: u64, wind: Vec2, land: Arc<dyn Land>, table: Arc<WeatherTable>, chances: Vec<f32>) -> Self {

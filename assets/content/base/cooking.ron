@@ -40,6 +40,9 @@
         // Fired in a pit kiln (Crafting): clay into fired clay, which pots, vials and kiln
         // bricks are made of; it cracks now and then until Crafting 12.
         (input: "clay", output: "fired_clay", station: "pit_kiln", skill: "core:crafting", level: 1, xp: 6.0, stop_burning: 12, burnt: "clay"),
+        // Cobblestone fired smooth again (Construction): the stone that stone bricks, an
+        // altar, lanterns and graves are cut from. It never cracks.
+        (input: "cobblestone", output: "stone", station: "pit_kiln", skill: "core:construction", level: 1, xp: 1.0, stop_burning: 0),
         // Smelted in the Crucible Kiln (Engineering), which must stand round its crucible:
         // copper and tin, and bronze from their blend. Metal never burns.
         (input: "copper_ore", output: "copper_ingot", station: "crucible", skill: "core:engineering", level: 5, xp: 8.0, stop_burning: 0),

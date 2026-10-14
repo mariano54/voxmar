@@ -98,3 +98,131 @@ fn every_early_quest_names_things_the_content_has() {
     }
     assert!(wrong.is_empty(), "{wrong:#?}");
 }
+
+/// Where an item comes from, for the reach check below: the most any one skill must be
+/// at along the cheapest way there, and that skill.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Way {
+    level: u8,
+    skill: Option<voxmar_engine::skill::SkillId>,
+}
+
+/// Every item a player can come by, and the cheapest way: what breaking the land gives
+/// (any block no recipe makes), what crops, catches, animals and bees give, and what crafting
+/// and cooking make from those at a station that can itself be come by.
+fn reachable(content: &Content) -> rustc_hash::FxHashMap<voxmar_engine::block::BlockId, Way> {
+    use voxmar_engine::block::BlockId;
+    let blocks = &content.blocks;
+    let mut made = rustc_hash::FxHashSet::default();
+    for recipe in content.recipes.iter() {
+        made.insert(blocks.item_of(recipe.output));
+    }
+    for (_, recipe) in content.cooking.iter() {
+        made.insert(blocks.item_of(recipe.output));
+    }
+    let mut ways: rustc_hash::FxHashMap<BlockId, Way> = rustc_hash::FxHashMap::default();
+    let free = Way { level: 0, skill: None };
+    let give = |ways: &mut rustc_hash::FxHashMap<BlockId, Way>, item: BlockId, way: Way| -> bool {
+        let item = blocks.item_of(item);
+        match ways.get(&item) {
+            Some(had) if had.level <= way.level => false,
+            _ => {
+                ways.insert(item, way);
+                true
+            }
+        }
+    };
+    for block in blocks.ids() {
+        let def = blocks.def(block);
+        if !def.item && !made.contains(&blocks.item_of(block)) && blocks.info(block).drops != BlockId(0) {
+            give(&mut ways, blocks.info(block).drops, free);
+        }
+    }
+    for (_, crop) in content.crops.iter() {
+        for (item, _) in crop.harvest.iter().chain(&crop.forage) {
+            give(&mut ways, *item, free);
+        }
+    }
+    for catch in content.fishing.iter() {
+        give(&mut ways, catch.item, free);
+    }
+    for (_, creature) in content.creatures.iter() {
+        if creature.def.habitat.party_only {
+            continue;
+        }
+        for drop in &creature.loot {
+            give(&mut ways, drop.item, free);
+        }
+        for &item in &creature.products {
+            give(&mut ways, item, free);
+        }
+    }
+    // What bees give (bees.ron): a swarm into the skep in hand, honey and wax from a full
+    // one, at the level each take asks.
+    for take in &content.bees.takes {
+        let way = Way { level: take.level, skill: Some(take.skill) };
+        for item in take.gives.iter().map(|(item, _)| *item).chain(take.held_becomes) {
+            give(&mut ways, item, way);
+        }
+    }
+    let worst = |a: Way, b: Way| if b.level > a.level { b } else { a };
+    loop {
+        let mut grew = false;
+        for recipe in content.recipes.iter() {
+            let mut way = Some(Way { level: recipe.level, skill: recipe.skill });
+            for cell in recipe.alternatives().into_iter().flatten() {
+                let best = cell.iter().filter_map(|b| ways.get(&blocks.item_of(*b)).copied()).min_by_key(|w| w.level);
+                way = match (way, best) {
+                    (Some(way), Some(best)) => Some(worst(way, best)),
+                    _ => None,
+                };
+            }
+            if let Some(way) = way {
+                grew |= give(&mut ways, recipe.output, way);
+            }
+        }
+        for (input, recipe) in content.cooking.iter() {
+            let station = blocks.tagged(&recipe.def.station).filter_map(|b| ways.get(&blocks.item_of(b)).copied()).min_by_key(|w| w.level);
+            if let (Some(input), Some(station)) = (ways.get(&blocks.item_of(input)).copied(), station) {
+                let way = worst(worst(input, station), Way { level: recipe.def.level, skill: recipe.skill });
+                grew |= give(&mut ways, recipe.output, way);
+            }
+        }
+        if !grew {
+            return ways;
+        }
+    }
+}
+
+/// Everything a Nomad or Farm quest asks to be made, cooked, held or offered can be come
+/// by from the land and the recipes: a quest for something nothing gives is a dead end.
+#[test]
+fn every_early_quest_asks_for_what_the_land_and_recipes_give() {
+    let content = content();
+    let ways = reachable(&content);
+    let blocks = &content.blocks;
+    let mut wrong = Vec::new();
+    let mut table = Vec::new();
+    for quest in content.quests.iter().filter(|q| q.age == "nomad" || q.age == "farm") {
+        let package = package(&quest.name);
+        for goal in quest.tasks.iter().flatten() {
+            let name = match goal {
+                Goal::Craft(name, _) | Goal::Cook(name, _) | Goal::CookAt(name, _, _) | Goal::Have(name, _) | Goal::Offered(name, _) => name,
+                _ => continue,
+            };
+            let found: Vec<_> = match name.strip_prefix("tag:") {
+                Some(tag) => blocks.tagged(tag).filter_map(|b| ways.get(&blocks.item_of(b))).collect(),
+                None if name == "any" => continue,
+                None => qualified(package, name).iter().filter_map(|n| blocks.item_named(n)).filter_map(|b| ways.get(&b)).collect(),
+            };
+            match found.into_iter().min_by_key(|w| w.level) {
+                Some(way) => table.push(format!("{} {}: {name} at {:?} {}", quest.age, quest.name, way.skill.map(|s| content.skills.get(s).name.clone()), way.level)),
+                None => wrong.push(format!("{}: {name}", quest.name)),
+            }
+        }
+    }
+    if std::env::var_os("VOXMAR_QUEST_REACH").is_some() {
+        println!("{}", table.join("\n"));
+    }
+    assert!(wrong.is_empty(), "nothing gives {wrong:#?}");
+}

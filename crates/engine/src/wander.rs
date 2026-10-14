@@ -59,6 +59,10 @@ pub struct Rules {
     /// weight), for as many seconds.
     pub repeat_weight: f32,
     pub repeat_memory: f32,
+    /// Seconds after a party began before one that comes after it (`needs.after`) may
+    /// join it near the same player: such a follower comes through the `gap` and past
+    /// `most_near`, once for each party it follows, or a chain could never be met alone.
+    pub follow_after: f32,
 }
 
 impl Default for Rules {
@@ -80,6 +84,7 @@ impl Default for Rules {
             speak_reach: 4.0,
             repeat_weight: 0.15,
             repeat_memory: 1800.0,
+            follow_after: 90.0,
         }
     }
 }
@@ -90,7 +95,7 @@ crate::content::settable! {
         scan_every: f32, chance: f32, gap: f32, most_near: usize, near: f32, most_total: usize, people_most: usize,
         companions_most: usize,
         appear_near: f32, appear_far: f32, leave: f32, errand_every: f32, first_days: f32, speak_reach: f32,
-        repeat_weight: f32, repeat_memory: f32,
+        repeat_weight: f32, repeat_memory: f32, follow_after: f32,
     }
 }
 
@@ -103,6 +108,9 @@ impl Rules {
         }
         if !(0.0..=1.0).contains(&self.chance) || !(0.0..=1.0).contains(&self.repeat_weight) {
             return error("`chance` and `repeat_weight` are shares from 0 to 1".into());
+        }
+        if !(self.follow_after.is_finite() && self.follow_after >= 0.0) {
+            return error(format!("`follow_after` ({}) must be 0 seconds or more", self.follow_after));
         }
         if !(self.errand_every.is_finite() && self.errand_every >= 0.1) {
             return error(format!("`errand_every` ({}) must be at least 0.1 seconds", self.errand_every));
@@ -182,7 +190,9 @@ pub struct EventDef {
     /// is anywhere.
     #[serde(default)]
     pub biomes: Vec<(String, f32)>,
-    /// The daylight (0 at night, 1 by day) it comes in, least and most.
+    /// The daylight (0 at night, 1 by day) it comes in, least and most. Daylight is a full
+    /// 1 for more than half the day and 0 for most of the night, so a day party's window
+    /// ends at 1: one that ends short of it comes only at dawn and dusk.
     #[serde(default = "any_light")]
     pub daylight: (f32, f32),
     /// What the player must have reached.
@@ -299,6 +309,10 @@ pub struct Needs {
     /// It comes only to a player who has met a party of this kind before (spoken with it,
     /// walked with it, freed it): one visit sets up the next.
     pub met: Option<String>,
+    /// It comes only to a player whose home has reached this step: an effect (a home step
+    /// such as `homely`) whose condition holds at their home, judged as `/home` judges it.
+    /// Callers who come only to a cosy home.
+    pub home_is: Option<String>,
 }
 
 /// A party that stops for a player: when one comes within `near` blocks of its leader, it
@@ -711,6 +725,8 @@ pub struct Event {
     /// What a `Hunt` party hunts, and what it gives the one who drew first blood.
     pub quarry: Vec<CreatureId>,
     pub share: Vec<ResolvedReward>,
+    /// The home step a player's home must have reached (`needs.home_is`).
+    pub home_is: Option<EffectId>,
 }
 
 /// A meeting with its lines resolved.
@@ -973,6 +989,9 @@ impl WanderRegistry {
             }
             if let Some(met) = &mut event.needs.met {
                 qualify(met);
+            }
+            if let Some(step) = &mut event.needs.home_is {
+                qualify(step);
             }
             event.cast.iter_mut().for_each(|g| qualify(&mut g.species));
             event.seek.iter_mut().for_each(qualify);
@@ -1405,7 +1424,15 @@ impl WanderRegistry {
                 meetings.push(ResolvedMeeting { who: meeting.who, greet: meeting.greet.clone(), greets: meeting.greets, lines });
             }
             registry.by_name.insert(def.name.clone(), registry.events.len());
-            registry.events.push(Event { def, groups, meetings, thanks, guide_thanks, reveal, seek, deliver, stalk, show, quarry, share });
+            let home_is = match &def.needs.home_is {
+                None => None,
+                Some(step) => match effects.find(step) {
+                    Some(id) if effects.get(id).when.is_some() => Some(id),
+                    Some(_) => return Err(error(format!("home_is: `{step}` holds anywhere, not a home step"))),
+                    None => return Err(error(format!("home_is: no effect `{step}`"))),
+                },
+            };
+            registry.events.push(Event { def, groups, meetings, thanks, guide_thanks, reveal, seek, deliver, stalk, show, quarry, share, home_is });
         }
         // Parties that come after, or tell of, another kind: that kind must be one read.
         for event in &registry.events {
