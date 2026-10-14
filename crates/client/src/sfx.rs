@@ -330,10 +330,22 @@ pub(crate) struct Recordings {
     swim: Vec<String>,
     /// Jumping or falling into water.
     splash: Vec<String>,
-    /// A quest finished, and a quest's rewards claimed. Without any, the interface
-    /// synthesizes a chime (`ui::sound`); a package that lists some replaces it.
+    /// The jingles of events (`ui::sound`): a quest finished, a quest's rewards claimed, a
+    /// skill's level reached, and a milestone level reached. A later package that lists any
+    /// for an event replaces the earlier ones: a jingle is one tune, not a pool to add to.
     pub(crate) quest_done: Vec<String>,
     pub(crate) quest_claim: Vec<String>,
+    pub(crate) level_up: Vec<String>,
+    pub(crate) level_milestone: Milestone,
+}
+
+/// The grander jingle played instead of the level-up one when a level is a multiple of
+/// `every` (10, 20, ...).
+#[derive(Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub(crate) struct Milestone {
+    pub(crate) every: u8,
+    pub(crate) sounds: Vec<String>,
 }
 
 /// Thunder by how far off the lightning struck (see [`Reach`]).
@@ -357,8 +369,21 @@ impl Recordings {
             all.thunder.far.extend(path(def.thunder.far));
             all.swim.extend(path(def.swim));
             all.splash.extend(path(def.splash));
-            all.quest_done.extend(path(def.quest_done));
-            all.quest_claim.extend(path(def.quest_claim));
+            let replace = |all: &mut Vec<String>, list: Vec<String>| {
+                if !list.is_empty() {
+                    *all = path(list).collect();
+                }
+            };
+            replace(&mut all.quest_done, def.quest_done);
+            replace(&mut all.quest_claim, def.quest_claim);
+            replace(&mut all.level_up, def.level_up);
+            replace(&mut all.level_milestone.sounds, def.level_milestone.sounds);
+            if def.level_milestone.every > 0 {
+                all.level_milestone.every = def.level_milestone.every;
+            }
+        }
+        if !all.level_milestone.sounds.is_empty() && all.level_milestone.every == 0 {
+            return Err(format!("{RECORDINGS}: level_milestone lists sounds but not how many levels apart (every)"));
         }
         Ok(all)
     }
@@ -929,6 +954,34 @@ mod tests {
                 assert!(left.len() > RATE as usize / 2 && left.iter().all(|s| s.is_finite() && s.abs() <= 1.0), "{path}");
             }
         }
+        // The jingles: each there, as loud as one another at their loudest (within 3 dB, so
+        // none jumps out), fading out rather than stopping, and over within five seconds.
+        assert_eq!(recorded.level_milestone.every, 10);
+        for list in [&recorded.quest_done, &recorded.quest_claim, &recorded.level_up, &recorded.level_milestone.sounds] {
+            assert!(!list.is_empty());
+            for path in list {
+                let [left, right] = crate::ambience::tests::decode(path);
+                let both: Vec<f32> = left.iter().zip(&right).flat_map(|(l, r)| [*l, *r]).collect();
+                let level = loudness(&both, 2);
+                assert!((0.21..0.42).contains(&level), "{path}: loudest {level}");
+                assert!(both.iter().all(|s| s.is_finite() && s.abs() <= 0.95), "{path} clips");
+                assert!(left.len() < 5 * RATE as usize, "{path} runs on");
+                let tail = &both[both.len() - 400..];
+                assert!(tail.iter().all(|s| s.abs() < 0.01), "{path} ends with a click");
+            }
+        }
+    }
+
+    /// A later package's jingle replaces the earlier one, and a milestone needs its spacing.
+    #[test]
+    fn a_later_jingle_replaces_the_earlier() {
+        let file = |package: &str, source: &str| ContentFile { package: package.into(), name: RECORDINGS.into(), source: source.into() };
+        let base = file("base", r#"(quest_done: ["a.ogg"], level_up: ["b.ogg"], level_milestone: (every: 10, sounds: ["c.ogg"]))"#);
+        let recorded = Recordings::load(&[base.clone(), file("mod", r#"(quest_done: ["x.ogg"], level_milestone: (every: 5))"#)]).unwrap();
+        assert_eq!(recorded.quest_done, ["content/mod/x.ogg"]);
+        assert_eq!(recorded.level_up, ["content/base/b.ogg"]);
+        assert_eq!((recorded.level_milestone.every, recorded.level_milestone.sounds.as_slice()), (5, &["content/base/c.ogg".to_string()][..]));
+        assert!(Recordings::load(&[file("mod", r#"(level_milestone: (sounds: ["c.ogg"]))"#)]).is_err());
     }
 
     /// `cargo test -p voxmar_client minecraft_sounds_decode -- --ignored` checks that every
