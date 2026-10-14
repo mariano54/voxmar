@@ -43,6 +43,7 @@ and honey in `blocks.ron`, which generation reads alone), the server's apiary in
 | Crops (`pollinate_reach` 8, `pollinate` 1.25) | crops near a hive with bees grow a quarter faster (`farm::crop_rate`) | `crops_near_a_hive_with_bees_grow_faster` |
 | Pets and creatures (`creature_reach` 2.5) | creatures that come close are stung 1 a look, never to death; people (`unstung`) are not | `creatures_by_a_hive_are_stung_and_a_bear_eats_its_honey` |
 | Bears (`raiders`) | a brown bear by a full hive eats its honey (the bees stay) | same |
+| Shots (`shot_reach` 3) | a sling stone or arrow that lands within 3 blocks of a nest or hive (tagged `bees`), hit or miss, stirs them: unless smoked, they sting the shooter | `a_shot_by_a_bees_nest_stirs_the_bees_unless_smoke_calms_them` (gameplay) |
 | Home (`effects.ron` `bee_garden`) | a skep of bees and three flowers at home: heal ×1.1 there, a home step (`Built("home_bee_garden")`) | `a_skep_of_bees_among_flowers_makes_a_bee_garden_at_home` |
 | Wanderers (`wandering.ron` `beekeeper`, `home_is: "bee_garden"`) | the beekeeper comes by day to a home with bees: walks the garden (crops within 16 grow a stage, 25 Farming XP) and sells a spare skep for three honey | `the_beekeeper_comes_only_to_a_home_with_bees` |
 

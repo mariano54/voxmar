@@ -4208,6 +4208,51 @@ fn an_arrow_that_hits_may_be_left_by_the_target_to_pick_up_again() {
     assert!(hits >= 1, "an arrow lay by the bear with no hit: {:?}", client.damage);
 }
 
+/// A shot that lands by a wild bees' nest stirs the bees, and they sting the shooter; with a
+/// campfire beside the nest, smoke keeps them calm (bees.ron, `shot_reach`).
+#[test]
+fn a_shot_by_a_bees_nest_stirs_the_bees_unless_smoke_calms_them() {
+    real_time("combat is judged on the clock: blows by when they arrived, wind-ups and rhythm in seconds, not in ticks");
+    let mut client = Client::join();
+    let (bow, arrow) = (client.content.blocks.expect("base:short_bow"), client.content.blocks.expect("base:arrow"));
+    let bear = client.content.creatures.find("brown_bear").expect("a brown bear in the content");
+    // Bees sting only those who can be hurt: no creative here.
+    client.ok("/gamemode survival");
+    client.ok("/fill ~-12 ~-1 ~-12 ~12 ~-1 ~12 stone");
+    client.ok("/fill ~-12 ~ ~-12 ~12 ~4 ~12 air");
+    client.ok("/clear");
+    client.ok("/skill ranged 10");
+    client.ok("/give short_bow 1");
+    client.ok("/give arrow 8");
+    client.pump_until(|c| carried_of(c, bow) == 1 && carried_of(c, arrow) == 8);
+    let slot = (0..voxmar_engine::inventory::HOTBAR_SLOTS).find(|&s| client.inventory.get(s).is_some_and(|s| s.item == bow)).expect("the bow on the hotbar");
+    let before: std::collections::HashSet<_> = client.creatures.keys().copied().collect();
+    client.ok("/summon brown_bear 1 ~ ~ ~");
+    client.pump_until(|c| c.creatures.values().any(|v| v.species == bear && !before.contains(&v.id)));
+    let id = client.creatures.values().find(|v| v.species == bear && !before.contains(&v.id)).unwrap().id;
+    client.ok("/creatures hold");
+    let at = client.creatures[&id].position;
+    let nest = at.floor().as_ivec3() + IVec3::new(0, 0, 2);
+    client.ok(&format!("/setblock {} {} {} bee_nest", nest.x, nest.y, nest.z));
+    client.ok(&format!("/tp {} {} {}", at.x + 10.0, at.y, at.z));
+    let yaw = yaw_toward(client.position, at);
+    client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw, pitch: 0.0, selected_slot: slot as u8, flying: false }));
+    client.wait_server(1);
+    let stung = |c: &Client| c.chat.iter().any(|(_, line)| line.starts_with("Stung!"));
+    client.chat.clear();
+    client.propose("core:attack", ActionTarget::Creature(id));
+    client.pump_until(|c| c.blows == 1);
+    client.wait_server(1);
+    assert!(stung(&client), "a shot by the nest stirs its bees: {:?}", client.chat);
+    // A campfire beside the nest: the next shot leaves them calm.
+    client.ok(&format!("/setblock {} {} {} campfire", nest.x + 1, nest.y, nest.z));
+    client.chat.clear();
+    client.propose("core:attack", ActionTarget::Creature(id));
+    client.pump_until(|c| c.blows == 2);
+    client.wait_server(1);
+    assert!(!stung(&client), "smoked bees stay calm: {:?}", client.chat);
+}
+
 /// Whether a dodge proposed now is taken: a second one at once must then be refused by its
 /// cooldown, so exactly one Teleport comes back (two: the first was refused too; none: the
 /// cooldown did not hold).
