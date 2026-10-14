@@ -258,7 +258,8 @@ fn toward(level: f32, under: bool, duck: &DuckDef, dt: f32) -> f32 {
     }
 }
 
-/// Loudness `linear` in dB below full scale.
+/// Loudness `linear` in dB below full scale (the tests' measure).
+#[cfg(test)]
 pub(crate) fn db(linear: f32) -> f32 {
     20.0 * linear.max(1e-6).log10()
 }
