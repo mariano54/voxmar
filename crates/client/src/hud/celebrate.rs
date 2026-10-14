@@ -197,7 +197,7 @@ pub struct Stage {
     showing: Option<(Moment, f32)>,
     waiting: VecDeque<Moment>,
     /// Bursts still to come: when, around where, and how.
-    bursts: Vec<(f32, Vec3, Burst)>,
+    bursts: Vec<(f32, Burst)>,
     /// Motes thrown so far (the gate's count).
     pub thrown: u32,
 }
@@ -309,7 +309,7 @@ fn finished<'a>(before: &[QuestState], now: &'a [QuestState]) -> Vec<&'a str> {
 
 /// Starts the next moment when its turn comes: its jingle, and its bursts around the
 /// player.
-fn advance(time: Res<Time>, celebrations: Res<Celebrations>, player: Res<LocalPlayer>, mut stage: ResMut<Stage>, mut sounds: MessageWriter<UiSound>) {
+fn advance(time: Res<Time>, celebrations: Res<Celebrations>, mut stage: ResMut<Stage>, mut sounds: MessageWriter<UiSound>) {
     let now = time.elapsed_secs();
     let Some(moment) = stage.next(now, &celebrations).cloned() else { return };
     sounds.write(match moment {
@@ -317,17 +317,18 @@ fn advance(time: Res<Time>, celebrations: Res<Celebrations>, player: Res<LocalPl
         Moment::Level(_, level) if celebrations.milestone_at(level) => UiSound::Milestone,
         Moment::Level(..) => UiSound::LevelUp,
     });
-    let at = player.position;
-    let bursts: Vec<_> = celebrations.look(&moment).bursts.iter().map(|burst| (now + burst.delay, at, burst.clone())).collect();
+    let bursts: Vec<_> = celebrations.look(&moment).bursts.iter().map(|burst| (now + burst.delay, burst.clone())).collect();
     stage.bursts.extend(bursts);
 }
 
-/// Bursts whose time has come throw their motes.
-fn burst(time: Res<Time>, mut stage: ResMut<Stage>, mut particles: ResMut<Particles>, mut seed: Local<u32>) {
+/// Bursts whose time has come throw their motes, around where the player is then (a later
+/// wave rings them where they have walked to, not where the moment began).
+fn burst(time: Res<Time>, player: Res<LocalPlayer>, mut stage: ResMut<Stage>, mut particles: ResMut<Particles>, mut seed: Local<u32>) {
     let now = time.elapsed_secs();
+    let around = player.position;
     let share = particles.amount;
     let mut thrown = 0;
-    stage.bursts.retain(|(at, around, burst)| {
+    stage.bursts.retain(|(at, burst)| {
         if *at > now {
             return true;
         }
@@ -338,7 +339,7 @@ fn burst(time: Res<Time>, mut stage: ResMut<Stage>, mut particles: ResMut<Partic
             // Spread evenly round the ring, a little at random so no two look alike.
             let turn = (i as f32 + random(0) * 0.6) / count.max(1) as f32 * std::f32::consts::TAU;
             let across = Vec3::new(turn.cos(), 0.0, turn.sin());
-            particles.spawn(&mote(burst, *around, across, [random(1), random(2), random(3)]));
+            particles.spawn(&mote(burst, around, across, [random(1), random(2), random(3)]));
         }
         thrown += count;
         false
@@ -444,6 +445,12 @@ fn words(moment: &Moment, celebrations: &Celebrations, locale: &Locale, launch: 
     }
 }
 
+/// Whether something is up that the banner must not sit over: a screen (the chat line
+/// excepted, at the bottom), death's, or the debug overlay.
+fn covered(ui: &UiState, dead: bool, debug: bool) -> bool {
+    ui.inventory_open || ui.character_open || ui.journal_open || ui.quests_open || ui.menu_open || ui.recipes_open || dead || debug
+}
+
 /// How the banner shows `since` seconds into its moment: its opacity and size.
 fn banner_at(banner: &Banner, since: f32) -> (f32, f32) {
     let alpha = (since / 0.12).clamp(0.0, 1.0) * ((banner.seconds - since) / banner.fade.max(1e-3)).clamp(0.0, 1.0);
@@ -457,6 +464,8 @@ fn banner_at(banner: &Banner, since: f32) -> (f32, f32) {
 fn draw(
     time: Res<Time>,
     ui: Res<UiState>,
+    player: Res<LocalPlayer>,
+    settings: Res<crate::settings::Settings>,
     celebrations: Res<Celebrations>,
     launch: Res<Launch>,
     locale: Res<Locale>,
@@ -471,8 +480,9 @@ fn draw(
     let Ok(mut visibility) = row.single_mut() else { return };
     let now = time.elapsed_secs();
     let showing = stage.showing.as_ref().filter(|(moment, at)| now - at < celebrations.look(moment).banner.seconds);
-    // Under the screens that fill the view, as the experience notes are.
-    let Some((moment, at)) = showing.filter(|_| !(ui.quests_open || ui.journal_open)) else {
+    // Never over an open screen or the debug overlay: it waits under them, and shows what is
+    // left of its time when they close.
+    let Some((moment, at)) = showing.filter(|_| !covered(&ui, player.dead, settings.debug_overlay)) else {
         visibility.set_if_neq(Visibility::Hidden);
         return;
     };
@@ -594,6 +604,26 @@ mod tests {
         world.run_system_once(leave).unwrap();
         assert_eq!(world.get::<Visibility>(row), Some(&Visibility::Hidden));
         assert!(world.resource::<Stage>().waiting.is_empty());
+    }
+
+    /// The banner keeps off every screen and the debug overlay; play and the chat line
+    /// leave it up.
+    #[test]
+    fn the_banner_keeps_off_open_screens() {
+        assert!(!covered(&UiState::default(), false, false));
+        assert!(!covered(&UiState { console_open: true, ..default() }, false, false));
+        for ui in [
+            UiState { inventory_open: true, ..default() },
+            UiState { character_open: true, ..default() },
+            UiState { journal_open: true, ..default() },
+            UiState { quests_open: true, ..default() },
+            UiState { menu_open: true, ..default() },
+            UiState { recipes_open: true, ..default() },
+        ] {
+            assert!(covered(&ui, false, false));
+        }
+        assert!(covered(&UiState::default(), true, false), "dead");
+        assert!(covered(&UiState::default(), false, true), "debug overlay");
     }
 
     /// Levels in one skill reached together show once, as the highest; other skills and a

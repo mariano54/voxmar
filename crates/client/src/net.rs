@@ -16,6 +16,7 @@ use crate::drops::Drops;
 use crate::hud::skills::SkillToasts;
 use crate::session::Launch;
 use crate::breaking::{BlockBroken, SHOWN_WITHIN, shows_breaking};
+use crate::sfx::{SoundCue, station_cue};
 use crate::hud::console::Console;
 use crate::menu::{Notice, Screen};
 use crate::player::LocalPlayer;
@@ -210,7 +211,7 @@ pub(crate) fn receive(
     mut notice: ResMut<Notice>,
     mut next: ResMut<NextState<Screen>>,
     mut weather: ResMut<ClientWeather>,
-    (time, mut clock, mut console, mut air): (Res<Time>, ResMut<Clock>, ResMut<Console>, ResMut<ClientAtmosphere>),
+    (time, mut clock, mut console, mut air, mut cues): (Res<Time>, ResMut<Clock>, ResMut<Console>, ResMut<ClientAtmosphere>, MessageWriter<SoundCue>),
     (mut drops, mut toasts, launch, locale, mut creatures): (ResMut<Drops>, ResMut<SkillToasts>, Res<Launch>, Res<Locale>, ResMut<crate::creatures::Creatures>),
     mut broken: MessageWriter<BlockBroken>,
     mut fighting: ResMut<crate::fight::Fighting>,
@@ -264,6 +265,13 @@ pub(crate) fn receive(
                         && pos.as_vec3().distance(player.position) < SHOWN_WITHIN
                     {
                         broken.write(BlockBroken { pos, block: old });
+                    }
+                    // A home station loaded or emptied, nearby: the stir or the pop.
+                    if let Some(old) = old
+                        && pos.as_vec3().distance(player.position) < SHOWN_WITHIN
+                        && let Some(cue) = station_cue(&launch.content.stations, &world.registry, old, block)
+                    {
+                        cues.write(cue.at(pos.as_vec3() + Vec3::splat(0.5)));
                     }
                     world.set_block(pos, block);
                 }
