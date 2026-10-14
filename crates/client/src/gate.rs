@@ -340,6 +340,12 @@ enum Step {
     /// The deer, standing, is told to face a quarter turn round: it turns no faster than its
     /// kind may and ends facing that way.
     CreatureTurn,
+    /// A boss's wind-ups told (`fight_fx`'s tells): a Rootmother this side alone winds up
+    /// her grasp and then her lash, as the server's word would show them. The grasp asks for
+    /// its sound, timed to swell to its loudest as the blow lands, and draws a ring on the
+    /// ground as far as it reaches; the lash asks for its own sound and draws none (the
+    /// swipe shows its reach). Shot with the ring filling.
+    BossTells,
     /// Raw rabbit used on a campfire comes back cooked (or burnt) into the inventory, and
     /// smoke and embers rise from the fire.
     Cook,
@@ -730,6 +736,8 @@ struct Gate {
     /// The deer walked by the CreatureWalk, CreatureRun and CreatureTurn steps: where it
     /// is, frames into its stage, and whether its shot is taken.
     puppet: (Vec3, u32, bool),
+    /// Rings drawn for bosses' blows before the BossTells step's lash.
+    markers_before: u32,
 }
 
 impl Gate {
@@ -865,6 +873,7 @@ impl Gate {
             feel_asked: Default::default(),
             feel_counts: (0, 0, 0),
             puppet: (Vec3::ZERO, 0, false),
+            markers_before: 0,
         }
     }
 
@@ -1600,6 +1609,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::CreatureWalk => creature_motion(world, gate, gate.phase.min(1)),
         Step::CreatureRun => creature_motion(world, gate, 2),
         Step::CreatureTurn => creature_motion(world, gate, 3),
+        Step::BossTells => boss_tells(world, gate),
         Step::Cook => cook(world, gate, now, in_phase),
         Step::Dry => dry(world, gate, now),
         Step::Tame => tame(world, gate, now, in_phase),
@@ -9906,8 +9916,116 @@ fn creature_motion(world: &mut World, gate: &mut Gate, stage: u32) {
                 creatures.receive(vec![], vec![voxmar_protocol::CreatureGone { id: PUPPET, died: false }]);
                 creatures.watch = None;
                 creatures.watch_step = None;
-                gate.next(Step::Cook, now);
+                gate.next(Step::BossTells, now);
             }
+        }
+        _ => {}
+    }
+}
+
+/// The Rootmother the BossTells step winds up, an id the server never gives.
+const TELLER: u32 = u32::MAX - 8;
+const TELLER_SPECIES: &str = "rootmother";
+
+fn boss_tells(world: &mut World, gate: &mut Gate) {
+    use crate::creatures::Creatures;
+    use crate::fight_fx::{Heard, Marker, Pending};
+    use voxmar_engine::creature::brain::Pose;
+    let now = world.resource::<Time>().elapsed_secs();
+    let launch = world.resource::<Launch>();
+    let Some(species) = launch.content.creatures.find(TELLER_SPECIES) else {
+        gate.check("boss tells", Err(format!("no {TELLER_SPECIES} in the content")));
+        gate.next(Step::Cook, now);
+        return;
+    };
+    let creature = launch.content.creatures.get(species);
+    let index = |name: &str| creature.def.moves.iter().position(|m| m.name == name).map(|i| i as u8 + 1);
+    let (Some(grasp), Some(lash)) = (index("grasp"), index("lash")) else {
+        gate.check("boss tells", Err("the Rootmother has no grasp or no lash".into()));
+        gate.next(Step::Cook, now);
+        return;
+    };
+    let reach = |name: &str| creature.reach + creature.def.moves.iter().find(|m| m.name == name).map_or(0.0, |m| m.attack.reach);
+    let (grasp_reach, health) = (reach("grasp"), creature.def.health);
+    let at = gate.feet.as_vec3() + Vec3::new(0.0, 0.0, 6.0);
+    let view = |pose: Pose, tell: u8| voxmar_protocol::CreatureView {
+        id: TELLER,
+        species,
+        position: at,
+        velocity: Vec3::ZERO,
+        yaw: 0.0,
+        pose,
+        tell,
+        health,
+        scale: 1.0,
+        seed: 3,
+        kept: false,
+        owner: None,
+        young: false,
+        ready: false,
+        trust: 0,
+        genes: [0; voxmar_engine::genes::MOST],
+    };
+    let say = |world: &mut World, pose: Pose, tell: u8| world.resource_mut::<Creatures>().receive(vec![view(pose, tell)], vec![]);
+    let asked = |world: &World, name: &str| world.resource::<Heard>().asked.get(name).copied().unwrap_or(0);
+    let rings = |world: &mut World| world.query::<&Marker>().iter(world).filter(|m| m.id == TELLER).copied().collect::<Vec<_>>();
+    aim_at(world, at + Vec3::Y * 0.5);
+    match gate.phase {
+        // Standing, then the next frame winding up the grasp.
+        0 => {
+            say(world, Pose::Idle, 0);
+            gate.feel_asked = world.resource::<Heard>().asked.clone();
+            gate.advance(now);
+        }
+        1 => {
+            say(world, Pose::Attacking, grasp);
+            gate.advance(now);
+        }
+        // Once it showed (the frame after): the sound waits for its moment, the ring is out.
+        2 => {
+            let before = |name: &str| gate.feel_asked.get(name).copied().unwrap_or(0);
+            let grew = asked(world, "tell.grasp") > before("tell.grasp");
+            let waiting = world.resource::<Pending>().0.iter().find(|(_, name, ..)| name == "tell.grasp").map(|(due, ..)| due - now);
+            let shown = rings(world);
+            let ring = shown.iter().find(|m| !m.fill);
+            let result = if !grew {
+                Err("the grasp's wind-up asked for no tell.grasp".into())
+            } else if !waiting.is_some_and(|wait| wait > 0.0) {
+                Err(format!("the grasp's sound is not waiting to land with the blow: {waiting:?}"))
+            } else if shown.len() != 2 || ring.is_none_or(|r| (r.reach - grasp_reach).abs() > 0.01) {
+                Err(format!("the grasp drew {} ring parts reaching {:?}, {grasp_reach:.2} wanted", shown.len(), ring.map(|r| r.reach)))
+            } else {
+                Ok(format!("the grasp's sound waits {:.2} s to land with the blow, its ring reaches {grasp_reach:.2} blocks", waiting.unwrap_or(0.0)))
+            };
+            gate.check("boss tells: grasp", result);
+            gate.advance(now);
+        }
+        3 => {
+            if gate.shot(world, "boss-tells").is_some() {
+                say(world, Pose::Idle, 0);
+                gate.feel_asked = world.resource::<Heard>().asked.clone();
+                gate.advance(now);
+            }
+        }
+        4 => {
+            say(world, Pose::Attacking, lash);
+            gate.markers_before = world.resource::<Heard>().markers;
+            gate.advance(now);
+        }
+        5 => {
+            let before = gate.feel_asked.get("tell.lash").copied().unwrap_or(0);
+            let grew = asked(world, "tell.lash") > before;
+            let drawn = world.resource::<Heard>().markers - gate.markers_before;
+            let result = if !grew {
+                Err("the lash's wind-up asked for no tell.lash".into())
+            } else if drawn > 0 {
+                Err(format!("the lash drew {drawn} rings; its swipe shows its reach"))
+            } else {
+                Ok("the lash asked for its own sound and drew no ring".into())
+            };
+            gate.check("boss tells: lash", result);
+            world.resource_mut::<Creatures>().receive(vec![], vec![voxmar_protocol::CreatureGone { id: TELLER, died: false }]);
+            gate.next(Step::Cook, now);
         }
         _ => {}
     }

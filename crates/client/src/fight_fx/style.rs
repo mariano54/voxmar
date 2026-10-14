@@ -127,6 +127,28 @@ fn one() -> f32 {
     1.0
 }
 
+/// How a creature's wind-up is told beyond its stance: a sound whose loudest moment
+/// (`peak` seconds in) lands as the blow does, so the ear knows when to block or dodge;
+/// and, for a blow whose reach the body cannot show, a ring on the ground as far as it
+/// reaches, filling as the wind-up runs out.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TellLook {
+    pub sound: String,
+    pub peak: f32,
+    #[serde(default)]
+    pub marker: Option<MarkerLook>,
+}
+
+/// A ring on the ground: its colour, how opaque at its fullest, and how wide (blocks).
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MarkerLook {
+    pub colour: Rgb,
+    pub alpha: f32,
+    pub width: f32,
+}
+
 /// The camera and the hand.
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -156,6 +178,8 @@ pub enum Layer {
     Sweep { from: f32, to: f32, seconds: f32, gain: f32 },
     Ring { freq: f32, partials: Vec<f32>, seconds: f32, gain: f32 },
     Crackle { low: f32, high: f32, grains: u32, seconds: f32, gain: f32 },
+    /// Another layer, starting `at` seconds in: a tell's snap at the end of its wind-up.
+    Later { at: f32, layer: Box<Layer> },
 }
 
 impl Layer {
@@ -164,6 +188,7 @@ impl Layer {
         match self {
             Layer::Click { .. } => 0.006,
             Layer::Tone { seconds, .. } | Layer::Noise { seconds, .. } | Layer::Sweep { seconds, .. } | Layer::Ring { seconds, .. } | Layer::Crackle { seconds, .. } => *seconds,
+            Layer::Later { at, layer } => at + layer.seconds(),
         }
     }
 }
@@ -199,6 +224,7 @@ struct FxFile {
     strikes: BTreeMap<String, StrikeLook>,
     camera: Option<CameraLook>,
     sounds: BTreeMap<String, SoundDef>,
+    tells: BTreeMap<String, TellLook>,
 }
 
 /// How fights look and sound, from every package's `combat_fx.ron`.
@@ -210,6 +236,9 @@ pub struct FightLook {
     pub strikes: BTreeMap<String, StrikeLook>,
     pub camera: CameraLook,
     pub sounds: BTreeMap<String, SoundDef>,
+    /// Wind-ups told by sound and marker, by the creature's name and its move's
+    /// (`rootmother.grasp`), or its name alone for its plain attack.
+    pub tells: BTreeMap<String, TellLook>,
 }
 
 const BLOWS: [Blow; 5] = [Blow::Plain, Blow::Beat, Blow::Flourish, Blow::Counter, Blow::Bleed];
@@ -219,6 +248,17 @@ impl FightLook {
     /// Reads every package's file in order, a later one replacing what it gives, and
     /// refuses a look missing a part, a kind of blow, a style or a sound, or with a number
     /// that cannot be.
+    /// Boss blows with no tell: every boss's plain attack and moves need one.
+    pub fn untold(&self, creatures: &voxmar_engine::creature::CreatureRegistry) -> Vec<String> {
+        let mut missing = Vec::new();
+        for (_, creature) in creatures.iter().filter(|(_, c)| c.def.boss) {
+            let name = creature.def.name.rsplit(':').next().unwrap_or(&creature.def.name);
+            let keys = creature.def.attack.iter().map(|_| name.to_owned()).chain(creature.def.moves.iter().map(|m| format!("{name}.{}", m.name)));
+            missing.extend(keys.filter(|key| !self.tells.contains_key(key)));
+        }
+        missing
+    }
+
     pub fn load(files: &[ContentFile]) -> Result<Self, String> {
         let options = ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME);
         let mut all = FxFile::default();
@@ -235,6 +275,7 @@ impl FightLook {
             all.blows.extend(given.blows);
             all.strikes.extend(given.strikes);
             all.sounds.extend(given.sounds);
+            all.tells.extend(given.tells);
         }
         let look = FightLook {
             hit: all.hit.ok_or(format!("no package's {FILE} gives the hit"))?,
@@ -243,6 +284,7 @@ impl FightLook {
             strikes: all.strikes,
             camera: all.camera.ok_or(format!("no package's {FILE} gives the camera"))?,
             sounds: all.sounds,
+            tells: all.tells,
         };
         for blow in BLOWS.map(blow_name) {
             look.blows.get(blow).ok_or(format!("{FILE}: nothing for a {blow} blow"))?;
@@ -322,6 +364,18 @@ impl FightLook {
                 }
             }
         }
+        for (name, tell) in &self.tells {
+            let sound = self.sounds.get(&tell.sound).ok_or(format!("{FILE}: the {name} tell's sound `{}` is not given", tell.sound))?;
+            let longest = sound.layers.iter().map(Layer::seconds).fold(0.0, f32::max);
+            if !(0.0..=longest.max(0.0)).contains(&tell.peak) && sound.recordings.is_empty() {
+                return Err(format!("{FILE}: the {name} tell's sound peaks {} s in, past its end", tell.peak));
+            }
+            if let Some(marker) = tell.marker
+                && (!(0.05..=1.0).contains(&marker.alpha) || !(0.02..=1.0).contains(&marker.width))
+            {
+                return Err(format!("{FILE}: the {name} tell's ring is 0.05 to 1 opaque and 0.02 to 1 blocks wide"));
+            }
+        }
         for (name, sound) in &self.sounds {
             check_sound(name, sound)?;
         }
@@ -340,6 +394,18 @@ impl FightLook {
 }
 
 /// A sound that can be made: some layers or recordings, sensible gains, times and pitches.
+fn layer_ok(layer: &Layer) -> bool {
+    let audible = |hz: f32| (20.0..=12_000.0).contains(&hz);
+    match layer {
+        Layer::Click { gain } => (0.0..=2.0).contains(gain),
+        Layer::Tone { from, to, seconds, gain } | Layer::Sweep { from, to, seconds, gain } => audible(*from) && audible(*to) && *seconds > 0.0 && *seconds <= 3.0 && (0.0..=2.0).contains(gain),
+        Layer::Noise { low, high, attack, seconds, gain } => audible(*low) && audible(*high) && low < high && *attack >= 0.0 && attack < seconds && *seconds <= 3.0 && (0.0..=2.0).contains(gain),
+        Layer::Ring { freq, partials, seconds, gain } => audible(*freq) && !partials.is_empty() && partials.iter().all(|p| *p > 0.0 && audible(freq * p)) && *seconds > 0.0 && *seconds <= 3.0 && (0.0..=2.0).contains(gain),
+        Layer::Crackle { low, high, grains, seconds, gain } => audible(*low) && audible(*high) && low < high && (1..=200).contains(grains) && *seconds > 0.0 && *seconds <= 3.0 && (0.0..=2.0).contains(gain),
+        Layer::Later { at, layer } => (0.0..=2.0).contains(at) && layer_ok(layer),
+    }
+}
+
 fn check_sound(name: &str, sound: &SoundDef) -> Result<(), String> {
     if sound.layers.is_empty() && sound.recordings.is_empty() {
         return Err(format!("{FILE}: the {name} sound has no layers and no recordings"));
@@ -350,16 +416,8 @@ fn check_sound(name: &str, sound: &SoundDef) -> Result<(), String> {
     if !(1..=8).contains(&sound.variants) {
         return Err(format!("{FILE}: the {name} sound has 1 to 8 variants, not {}", sound.variants));
     }
-    let audible = |hz: f32| (20.0..=12_000.0).contains(&hz);
     for layer in &sound.layers {
-        let ok = match layer {
-            Layer::Click { gain } => (0.0..=2.0).contains(gain),
-            Layer::Tone { from, to, seconds, gain } | Layer::Sweep { from, to, seconds, gain } => audible(*from) && audible(*to) && *seconds > 0.0 && *seconds <= 3.0 && (0.0..=2.0).contains(gain),
-            Layer::Noise { low, high, attack, seconds, gain } => audible(*low) && audible(*high) && low < high && *attack >= 0.0 && attack < seconds && *seconds <= 3.0 && (0.0..=2.0).contains(gain),
-            Layer::Ring { freq, partials, seconds, gain } => audible(*freq) && !partials.is_empty() && partials.iter().all(|p| *p > 0.0 && audible(freq * p)) && *seconds > 0.0 && *seconds <= 3.0 && (0.0..=2.0).contains(gain),
-            Layer::Crackle { low, high, grains, seconds, gain } => audible(*low) && audible(*high) && low < high && (1..=200).contains(grains) && *seconds > 0.0 && *seconds <= 3.0 && (0.0..=2.0).contains(gain),
-        };
-        if !ok {
+        if !layer_ok(layer) {
             return Err(format!("{FILE}: a layer of the {name} sound cannot be made: {layer:?} (pitches 20 to 12000 Hz, times over 0 to 3 s, gains 0 to 2)"));
         }
     }
