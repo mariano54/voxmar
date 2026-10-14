@@ -641,9 +641,9 @@ fn react(
         for (name, gain) in struck_sounds(damage, blow, killed, weapon.style, shell) {
             say(&name, gain * loud, pitch, &mut heard);
         }
-        // A shot that missed sails on past.
-        if damage == 0 && shooting.is_some() {
-            shots.missed.push(id);
+        // A shot that missed sails on past; one that hit strikes home.
+        if shooting.is_some() {
+            if damage == 0 { shots.missed.push(id) } else { shots.hit.push(id) }
         }
         if damage == 0 || blow == Blow::Bleed {
             continue;
