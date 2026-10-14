@@ -390,7 +390,8 @@ impl Server {
                 let players = self.seen_from(position, range, &species.favourite, creature.owner.as_deref());
                 let mate = self.mate_for(id, &neighbours);
                 let kin = self.kin_of(id, &neighbours);
-                let food = if species.eats.is_empty() { None } else { self.food_near(position, &species.eats, id) };
+                // What it grazes, else, kept and hungry, a trough of its food by home.
+                let food = if species.eats.is_empty() { None } else { self.food_near(position, &species.eats, id) }.or_else(|| self.trough_for(id));
                 let situation = Situation {
                     position,
                     home: creature.home,
@@ -567,7 +568,9 @@ impl Server {
             // It winds up first; the blow lands after (`fight`).
             self.wind_up(id, player);
         }
-        if let Some(cell) = decision.eat {
+        if let Some(cell) = decision.eat.filter(|&cell| self.is_trough(cell)) {
+            self.eat_from_trough(id, cell);
+        } else if let Some(cell) = decision.eat {
             let day = self.day;
             if let Some(creature) = self.creatures.live.get_mut(&id) {
                 creature.fed = day;

@@ -23,6 +23,17 @@
             (from: (1.5, 12.5, 2.5), to: (14.5, 14, 13.5)),
             (from: (2.5, 12.5, 1.5), to: (13.5, 14, 14.5)),
         ]),
+        // A feed trough, long across the cell: a board floor raised on two cross pieces, two
+        // long sides and two ends, open at the top.
+        "trough": (boxes: [
+            (from: (0.5, 2, 3), to: (15.5, 3, 13)),
+            (from: (0.5, 3, 3), to: (15.5, 9, 4.5)),
+            (from: (0.5, 3, 11.5), to: (15.5, 9, 13)),
+            (from: (0.5, 3, 4.5), to: (2, 9, 11.5)),
+            (from: (14, 3, 4.5), to: (15.5, 9, 11.5)),
+            (from: (2, 0, 2), to: (4, 2, 14)),
+            (from: (12, 0, 2), to: (14, 2, 14)),
+        ]),
         // A slatted crate: its body a texel in from the cell's sides, and a post standing
         // proud at each corner, where its texture draws the frame.
         "crate": (boxes: [

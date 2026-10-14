@@ -71,6 +71,8 @@
         (pattern: [["stick", "", "stick"], ["twine", "twine", "twine"], ["stick", "", "stick"]], output: "drying_rack", skill: "core:crafting", level: 3, xp: 8.0),
         // A compost heap (stations.ron): boards round three sides and the bottom.
         (pattern: [["tag:planks", "", "tag:planks"], ["tag:planks", "", "tag:planks"], ["tag:planks", "tag:planks", "tag:planks"]], output: "compost_heap", skill: "core:construction", level: 5, xp: 12.0),
+        // A feed trough: planks in a low U.
+        (pattern: [["tag:planks", "", "tag:planks"], ["tag:planks", "tag:planks", "tag:planks"]], output: "feed_trough", skill: "core:construction", level: 4, xp: 8.0),
         // Two herbs tied up with twine, to hang and dry: a home's herb nook.
         (pattern: [["twine", "twine"], ["tag:herb", "tag:herb"]], output: "hanging_herbs", count: 2, skill: "core:crafting", level: 4, xp: 3.0),
         (pattern: [["copper_ingot"], ["torch"], ["copper_ingot"]], output: "copper_hanging_lantern", skill: "core:engineering", level: 5, xp: 12.0),
