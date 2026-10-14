@@ -340,6 +340,25 @@ enum Step {
     /// The deer, standing, is told to face a quarter turn round: it turns no faster than its
     /// kind may and ends facing that way.
     CreatureTurn,
+    /// A boss's wind-ups told (`fight_fx`'s tells): a Rootmother this side alone winds up
+    /// her grasp and then her lash, as the server's word would show them. The grasp asks for
+    /// its sound, timed to swell to its loudest as the blow lands, and draws a ring on the
+    /// ground as far as it reaches; the lash asks for its own sound and draws none (the
+    /// swipe shows its reach). Shot with the ring filling.
+    BossTells,
+    /// How shots and blows show on a creature (`fight_fx`'s shots, `creatures`): a deer this
+    /// side alone is struck and flinches, a bow's arrow loosed at it flies leaving a trail
+    /// and lands with a puff and its sound, then it is killed and falls over before going up
+    /// in smoke, each frame a fixed step of its time (`Creatures::watch_step`,
+    /// `Shots::step`), so nothing waits on the server or the machine. Shot mid-flinch with
+    /// the arrow in flight across the view.
+    RangedFeel,
+    /// Every creature's blow told (`fight_fx`'s tells): a wolf this side alone winds up in
+    /// reach and coils, its snarl waiting to land with the blow without dipping the music,
+    /// while the player swings at it (`Gate::swing`); then a creature with no tell of its own,
+    /// first seen already winding up, coils and is told by its style's. Each frame a fixed
+    /// step of their time (`Creatures::watch_step`). Shot with the wolf coiled.
+    FirstFights,
     /// Raw rabbit used on a campfire comes back cooked (or burnt) into the inventory, and
     /// smoke and embers rise from the fire.
     Cook,
@@ -730,6 +749,10 @@ struct Gate {
     /// The deer walked by the CreatureWalk, CreatureRun and CreatureTurn steps: where it
     /// is, frames into its stage, and whether its shot is taken.
     puppet: (Vec3, u32, bool),
+    /// Rings drawn for bosses' blows before the BossTells step's lash.
+    markers_before: u32,
+    /// Before the RangedFeel step's shot: shots loosed, trail specks and arrivals.
+    shots_before: (u32, u32, u32),
 }
 
 impl Gate {
@@ -865,6 +888,8 @@ impl Gate {
             feel_asked: Default::default(),
             feel_counts: (0, 0, 0),
             puppet: (Vec3::ZERO, 0, false),
+            markers_before: 0,
+            shots_before: (0, 0, 0),
         }
     }
 
@@ -1601,6 +1626,9 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::CreatureWalk => creature_motion(world, gate, gate.phase.min(1)),
         Step::CreatureRun => creature_motion(world, gate, 2),
         Step::CreatureTurn => creature_motion(world, gate, 3),
+        Step::BossTells => boss_tells(world, gate),
+        Step::RangedFeel => ranged_feel(world, gate),
+        Step::FirstFights => first_fights(world, gate),
         Step::Cook => cook(world, gate, now, in_phase),
         Step::Dry => dry(world, gate, now),
         Step::Tame => tame(world, gate, now, in_phase),
@@ -9972,8 +10000,412 @@ fn creature_motion(world: &mut World, gate: &mut Gate, stage: u32) {
                 creatures.receive(vec![], vec![voxmar_protocol::CreatureGone { id: PUPPET, died: false }]);
                 creatures.watch = None;
                 creatures.watch_step = None;
-                gate.next(Step::Cook, now);
+                gate.next(Step::BossTells, now);
             }
+        }
+        _ => {}
+    }
+}
+
+/// The Rootmother the BossTells step winds up, an id the server never gives.
+const TELLER: u32 = u32::MAX - 8;
+const TELLER_SPECIES: &str = "rootmother";
+
+fn boss_tells(world: &mut World, gate: &mut Gate) {
+    use crate::creatures::Creatures;
+    use crate::fight_fx::{Heard, Marker, Pending};
+    use voxmar_engine::creature::brain::Pose;
+    let now = world.resource::<Time>().elapsed_secs();
+    let launch = world.resource::<Launch>();
+    let Some(species) = launch.content.creatures.find(TELLER_SPECIES) else {
+        gate.check("boss tells", Err(format!("no {TELLER_SPECIES} in the content")));
+        gate.next(Step::RangedFeel, now);
+        return;
+    };
+    let creature = launch.content.creatures.get(species);
+    let index = |name: &str| creature.def.moves.iter().position(|m| m.name == name).map(|i| i as u8 + 1);
+    let (Some(grasp), Some(lash)) = (index("grasp"), index("lash")) else {
+        gate.check("boss tells", Err("the Rootmother has no grasp or no lash".into()));
+        gate.next(Step::RangedFeel, now);
+        return;
+    };
+    let reach = |name: &str| creature.reach + creature.def.moves.iter().find(|m| m.name == name).map_or(0.0, |m| m.attack.reach);
+    let (grasp_reach, health) = (reach("grasp"), creature.def.health);
+    let at = gate.feet.as_vec3() + Vec3::new(0.0, 0.0, 6.0);
+    let view = |pose: Pose, tell: u8| voxmar_protocol::CreatureView {
+        id: TELLER,
+        species,
+        position: at,
+        velocity: Vec3::ZERO,
+        yaw: 0.0,
+        pose,
+        tell,
+        health,
+        scale: 1.0,
+        seed: 3,
+        kept: false,
+        owner: None,
+        young: false,
+        ready: false,
+        trust: 0,
+        genes: [0; voxmar_engine::genes::MOST],
+    };
+    let say = |world: &mut World, pose: Pose, tell: u8| world.resource_mut::<Creatures>().receive(vec![view(pose, tell)], vec![]);
+    let asked = |world: &World, name: &str| world.resource::<Heard>().asked.get(name).copied().unwrap_or(0);
+    let rings = |world: &mut World| world.query::<&Marker>().iter(world).filter(|m| m.id == TELLER).copied().collect::<Vec<_>>();
+    aim_at(world, at + Vec3::Y * 0.5);
+    match gate.phase {
+        // Standing, then the next frame winding up the grasp.
+        0 => {
+            say(world, Pose::Idle, 0);
+            gate.feel_asked = world.resource::<Heard>().asked.clone();
+            gate.advance(now);
+        }
+        1 => {
+            say(world, Pose::Attacking, grasp);
+            gate.advance(now);
+        }
+        // Once it showed (the frame after): the sound waits for its moment, the ring is out.
+        2 => {
+            let before = |name: &str| gate.feel_asked.get(name).copied().unwrap_or(0);
+            let grew = asked(world, "tell.grasp") > before("tell.grasp");
+            let waiting = world.resource::<Pending>().0.iter().find(|cue| cue.sound == "tell.grasp").map(|cue| cue.due - now);
+            let shown = rings(world);
+            let ring = shown.iter().find(|m| !m.fill);
+            let result = if !grew {
+                Err("the grasp's wind-up asked for no tell.grasp".into())
+            } else if !waiting.is_some_and(|wait| wait > 0.0) {
+                Err(format!("the grasp's sound is not waiting to land with the blow: {waiting:?}"))
+            } else if shown.len() != 2 || ring.is_none_or(|r| (r.reach - grasp_reach).abs() > 0.01) {
+                Err(format!("the grasp drew {} ring parts reaching {:?}, {grasp_reach:.2} wanted", shown.len(), ring.map(|r| r.reach)))
+            } else {
+                Ok(format!("the grasp's sound waits {:.2} s to land with the blow, its ring reaches {grasp_reach:.2} blocks", waiting.unwrap_or(0.0)))
+            };
+            gate.check("boss tells: grasp", result);
+            gate.advance(now);
+        }
+        3 => {
+            if gate.shot(world, "boss-tells").is_some() {
+                say(world, Pose::Idle, 0);
+                gate.feel_asked = world.resource::<Heard>().asked.clone();
+                gate.advance(now);
+            }
+        }
+        4 => {
+            say(world, Pose::Attacking, lash);
+            gate.markers_before = world.resource::<Heard>().markers;
+            gate.advance(now);
+        }
+        5 => {
+            let before = gate.feel_asked.get("tell.lash").copied().unwrap_or(0);
+            let grew = asked(world, "tell.lash") > before;
+            let drawn = world.resource::<Heard>().markers - gate.markers_before;
+            let result = if !grew {
+                Err("the lash's wind-up asked for no tell.lash".into())
+            } else if drawn > 0 {
+                Err(format!("the lash drew {drawn} rings; its swipe shows its reach"))
+            } else {
+                Ok("the lash asked for its own sound and drew no ring".into())
+            };
+            gate.check("boss tells: lash", result);
+            world.resource_mut::<Creatures>().receive(vec![], vec![voxmar_protocol::CreatureGone { id: TELLER, died: false }]);
+            gate.next(Step::RangedFeel, now);
+        }
+        _ => {}
+    }
+}
+
+/// The deer the RangedFeel step shoots and kills, an id the server never gives; the class
+/// whose shot it looses; frames the arrow may take to arrive, and the death to end.
+const MARK: u32 = u32::MAX - 9;
+const MARK_CLASS: &str = "bow";
+const MARK_FLIGHT: u32 = 90;
+const MARK_DEATH: u32 = 120;
+/// Frames into the flinch and the flight the shot is taken, and the step of a death frame
+/// (a death is slower than a flinch and needs no finer look).
+const MARK_SHOT_AT: u32 = 6;
+const MARK_DEATH_STEP: f32 = 1.0 / 20.0;
+
+/// The RangedFeel step (see [`Step::RangedFeel`]).
+fn ranged_feel(world: &mut World, gate: &mut Gate) {
+    use crate::creatures::Creatures;
+    use crate::fight_fx::Heard;
+    use crate::fight_fx::shot::{Loose, Shot, Shots};
+    let now = world.resource::<Time>().elapsed_secs();
+    let launch = world.resource::<Launch>();
+    let Some(species) = launch.content.creatures.find(PUPPET_SPECIES) else {
+        gate.check("ranged feel", Err(format!("no {PUPPET_SPECIES} in the content")));
+        gate.next(Step::FirstFights, now);
+        return;
+    };
+    let Some(shot) = world.resource::<crate::fight_fx::FightLook>().shots.get(MARK_CLASS).cloned() else {
+        gate.check("ranged feel", Err(format!("no shot for the {MARK_CLASS}")));
+        gate.next(Step::FirstFights, now);
+        return;
+    };
+    let def = &launch.content.creatures.get(species).def;
+    let (health, height, death_seconds) = (def.health, def.body.size.1, def.death.seconds);
+    let at = gate.feet.as_vec3() + Vec3::new(1.5, 0.0, 6.0);
+    let middle = at + Vec3::Y * height * 0.5;
+    aim_at(world, middle);
+    let counts = |world: &World| {
+        let heard = world.resource::<Heard>();
+        (heard.shots, heard.trail, heard.impacts)
+    };
+    let asked = |world: &World, name: &str| world.resource::<Heard>().asked.get(name).copied().unwrap_or(0);
+    let done = |world: &mut World, gate: &mut Gate, now: f32| {
+        let mut creatures = world.resource_mut::<Creatures>();
+        creatures.receive(vec![], vec![voxmar_protocol::CreatureGone { id: MARK, died: false }]);
+        (creatures.watch, creatures.watch_step) = (None, None);
+        world.resource_mut::<Shots>().step = None;
+        gate.next(Step::FirstFights, now);
+    };
+    let frames = gate.puppet.1;
+    match gate.phase {
+        // The deer stands in view, each frame of it and of the shot a fixed step.
+        0 => {
+            let view = voxmar_protocol::CreatureView {
+                id: MARK,
+                species,
+                position: at,
+                velocity: Vec3::ZERO,
+                yaw: 0.0,
+                pose: voxmar_engine::creature::brain::Pose::Idle,
+                tell: 0,
+                health,
+                scale: 1.0,
+                seed: 5,
+                kept: false,
+                owner: None,
+                young: false,
+                ready: false,
+                trust: 0,
+                genes: [0; voxmar_engine::genes::MOST],
+            };
+            let mut creatures = world.resource_mut::<Creatures>();
+            creatures.receive(vec![view], vec![]);
+            (creatures.watch, creatures.watch_step) = (Some(MARK), Some(PUPPET_STEP));
+            world.resource_mut::<Shots>().step = Some(PUPPET_STEP);
+            gate.advance(now);
+        }
+        // Shown: struck, and an arrow loosed at it from the hand.
+        1 => {
+            gate.shots_before = counts(world);
+            gate.feel_asked = world.resource::<Heard>().asked.clone();
+            world.resource_mut::<Creatures>().struck(MARK, 2, voxmar_engine::combat::Blow::Plain, false, now);
+            let player = world.resource::<LocalPlayer>();
+            let (eye, right) = (player.eye(), player.rotation() * Vec3::X);
+            // Loosed from off to the left, so the shot shows its flight across the view
+            // (from the hand it flies straight away from the eye, end on).
+            let from = middle - right * 7.5 + Vec3::Y * 0.4 + (eye - middle).normalize() * 2.0;
+            world.resource_mut::<Shots>().loosed.push(Loose { class: MARK_CLASS.into(), from, to: middle, at: Some(MARK), beyond: middle + (middle - eye).normalize() * 6.0 });
+            gate.puppet.1 = 0;
+            gate.advance(now);
+        }
+        // A few frames on: flinching, the arrow in flight with a trail behind it; held there
+        // for the shot.
+        2 => {
+            gate.puppet.1 = frames + 1;
+            if frames < MARK_SHOT_AT {
+                return;
+            }
+            let flinch = world.resource::<Creatures>().flinching(MARK);
+            let flying: Vec<(f32, f32)> = world.query::<&Shot>().iter(world).filter(|s| s.at == Some(MARK)).map(|s| (s.gone, s.length)).collect();
+            let (shots, trail, _) = counts(world);
+            let (shots, trail) = (shots - gate.shots_before.0, trail - gate.shots_before.1);
+            let result = if flinch.is_none() {
+                Err("the struck deer is not flinching".into())
+            } else if shots != 1 || flying.len() != 1 {
+                Err(format!("{shots} shots loosed and {} flying, 1 wanted", flying.len()))
+            } else if trail == 0 {
+                Err(format!("the arrow flew {:.2} blocks and left no trail", flying[0].0))
+            } else {
+                Ok(format!("the deer flinches {:.2} s in; the arrow flew {:.2} of {:.2} blocks, leaving {trail} specks", flinch.unwrap_or(0.0), flying[0].0, flying[0].1))
+            };
+            gate.check("ranged feel: flinch and flight", result);
+            world.resource_mut::<Creatures>().watch_step = Some(0.0);
+            world.resource_mut::<Shots>().step = Some(0.0);
+            gate.advance(now);
+        }
+        3 => {
+            if gate.shot(world, "ranged-feel").is_some() {
+                world.resource_mut::<Creatures>().watch_step = Some(PUPPET_STEP);
+                world.resource_mut::<Shots>().step = Some(PUPPET_STEP);
+                gate.advance(now);
+            }
+        }
+        // The arrow arrives: a puff, and the sound of an arrow into a body.
+        4 => {
+            gate.puppet.1 = frames + 1;
+            let arrived = counts(world).2 > gate.shots_before.2;
+            if !arrived && frames < MARK_SHOT_AT + MARK_FLIGHT {
+                return;
+            }
+            let before = gate.feel_asked.get(&shot.hit).copied().unwrap_or(0);
+            let result = if !arrived {
+                Err(format!("the arrow never arrived in {MARK_FLIGHT} frames"))
+            } else if asked(world, &shot.hit) <= before {
+                Err(format!("the arrow arrived without asking for {}", shot.hit))
+            } else {
+                Ok(format!("the arrow arrived {} frames after it was loosed, with a puff and {}", frames, shot.hit))
+            };
+            gate.check("ranged feel: arrival", result);
+            // Killed: it falls over, then goes up in smoke.
+            world.resource_mut::<Creatures>().struck(MARK, health, voxmar_engine::combat::Blow::Plain, true, now);
+            let mut creatures = world.resource_mut::<Creatures>();
+            creatures.receive(vec![], vec![voxmar_protocol::CreatureGone { id: MARK, died: true }]);
+            creatures.watch_step = Some(MARK_DEATH_STEP);
+            gate.puppet.1 = 0;
+            gate.advance(now);
+        }
+        5 => {
+            gate.puppet.1 = frames + 1;
+            let dying = world.resource::<Creatures>().dying(MARK);
+            // Halfway through, it lies fallen and has not yet vanished.
+            if frames as f32 * MARK_DEATH_STEP < death_seconds * 0.5 {
+                if dying.is_none_or(|(_, poofed)| poofed) {
+                    gate.check("ranged feel: death", Err(format!("the deer was gone {frames} frames into its death, before it had fallen: {dying:?}")));
+                    done(world, gate, now);
+                }
+                return;
+            }
+            let gone = dying.is_none_or(|(_, poofed)| poofed);
+            if !gone && frames < MARK_DEATH {
+                return;
+            }
+            let result = if gone {
+                Ok(format!("the deer fell over its {death_seconds:.2} s death and went up in smoke"))
+            } else {
+                Err(format!("the deer still lay there {MARK_DEATH} frames ({:.1} s) into its {death_seconds:.2} s death", MARK_DEATH as f32 * MARK_DEATH_STEP))
+            };
+            gate.check("ranged feel: death", result);
+            done(world, gate, now);
+        }
+        _ => {}
+    }
+}
+
+/// The wolf the FirstFights step winds up, and the creature with no tell of its own after
+/// it, ids the server never gives.
+const FIGHTER: u32 = u32::MAX - 10;
+const FIGHTER_SPECIES: &str = "wolf";
+const FALLBACK: u32 = u32::MAX - 11;
+
+/// The FirstFights step (see [`Step::FirstFights`]).
+fn first_fights(world: &mut World, gate: &mut Gate) {
+    use crate::creatures::Creatures;
+    use crate::fight_fx::{FightLook, Heard, Pending};
+    use voxmar_engine::creature::brain::Pose;
+    let now = world.resource::<Time>().elapsed_secs();
+    let launch = world.resource::<Launch>();
+    let look = world.resource::<FightLook>();
+    // The wolf, and the first creature that strikes with no tell of its own: its style's.
+    let wolf = launch.content.creatures.find(FIGHTER_SPECIES);
+    let plain = launch.content.creatures.iter().find(|(_, c)| {
+        let name = c.def.name.rsplit(':').next().unwrap_or(&c.def.name);
+        !c.def.boss && c.def.attack.is_some() && !look.tells.contains_key(name)
+    });
+    let (Some(wolf), Some((plain, plain_creature))) = (wolf, plain) else {
+        gate.check("first fights", Err(format!("no {FIGHTER_SPECIES}, or every striking creature has its own tell")));
+        gate.next(Step::Cook, now);
+        return;
+    };
+    let plain_style = plain_creature.def.attack.map(|a| a.style).unwrap_or(voxmar_engine::combat::Style::Crush);
+    let plain_tell = look.tell_for("", plain_style).map(|t| t.sound.clone()).unwrap_or_default();
+    let wolf_tell = look.tells.get(FIGHTER_SPECIES).map(|t| (t.sound.clone(), t.ducks));
+    let health = |species| launch.content.creatures.get(species).def.health;
+    let (wolf_health, plain_health) = (health(wolf), health(plain));
+    let at = gate.feet.as_vec3() + Vec3::new(0.0, 0.0, 2.2);
+    let view = |id: u32, species, pose: Pose, health| voxmar_protocol::CreatureView {
+        id,
+        species,
+        position: at,
+        velocity: Vec3::ZERO,
+        yaw: std::f32::consts::PI,
+        pose,
+        tell: 0,
+        health,
+        scale: 1.0,
+        seed: 9,
+        kept: false,
+        owner: None,
+        young: false,
+        ready: false,
+        trust: 0,
+        genes: [0; voxmar_engine::genes::MOST],
+    };
+    let asked = |world: &World, name: &str| world.resource::<Heard>().asked.get(name).copied().unwrap_or(0);
+    let before = |gate: &Gate, name: &str| gate.feel_asked.get(name).copied().unwrap_or(0);
+    aim_at(world, at + Vec3::Y * 0.4);
+    match gate.phase {
+        // The wolf stands in reach, each frame a fixed step of its time.
+        0 => {
+            let mut creatures = world.resource_mut::<Creatures>();
+            creatures.receive(vec![view(FIGHTER, wolf, Pose::Idle, wolf_health)], vec![]);
+            (creatures.watch, creatures.watch_step) = (Some(FIGHTER), Some(PUPPET_STEP));
+            gate.advance(now);
+        }
+        // It winds up, and the player swings at it as it does.
+        1 => {
+            gate.feel_asked = world.resource::<Heard>().asked.clone();
+            world.resource_mut::<Creatures>().receive(vec![view(FIGHTER, wolf, Pose::Attacking, wolf_health)], vec![]);
+            gate.advance(now);
+        }
+        // The frame after: coiling, its snarl waiting to land with the blow, the music left
+        // alone; the swing goes out at it.
+        2 => {
+            gate.swing(world, now);
+            if gate.swings == 0 {
+                return;
+            }
+            let Some((sound, ducks)) = wolf_tell.clone() else {
+                gate.check("first fights: wolf", Err("the wolf has no tell of its own".into()));
+                gate.advance(now);
+                return;
+            };
+            let winding = world.resource::<Creatures>().winding(FIGHTER);
+            let cue = world.resource::<Pending>().0.iter().find(|c| c.id == FIGHTER).map(|c| (c.due - now, c.ducks));
+            let result = if !winding {
+                Err("the wolf shows no wind-up".into())
+            } else if asked(world, &sound) <= before(gate, &sound) {
+                Err(format!("the wolf's wind-up asked for no {sound}"))
+            } else if ducks || cue.is_some_and(|(_, ducks)| ducks) {
+                Err("the wolf's snarl dips the music, as only a boss's may".into())
+            } else {
+                Ok(format!("the wolf coils with {sound}, its loudest {:.2} s on as the blow lands, the music left alone", cue.map_or(0.0, |(wait, _)| wait.max(0.0))))
+            };
+            gate.check("first fights: wolf", result);
+            gate.advance(now);
+        }
+        3 => {
+            gate.swing(world, now);
+            if gate.shot(world, "first-fights").is_some() {
+                mouse(world, MouseButton::Left, false);
+                let swung = world.resource::<Heard>().asked.iter().any(|(name, &n)| name.starts_with("swing") && n > before(gate, name));
+                gate.check("first fights: swing", if swung { Ok("the swing at the winding wolf whooshed".into()) } else { Err("the swing at the wolf asked for no sound".into()) });
+                // The wolf goes; a creature with no tell of its own is first seen already
+                // winding up (come into view mid-blow).
+                gate.feel_asked = world.resource::<Heard>().asked.clone();
+                let mut creatures = world.resource_mut::<Creatures>();
+                creatures.receive(vec![view(FALLBACK, plain, Pose::Attacking, plain_health)], vec![voxmar_protocol::CreatureGone { id: FIGHTER, died: false }]);
+                creatures.watch = Some(FALLBACK);
+                gate.advance(now);
+            }
+        }
+        4 => {
+            let name = &world.resource::<Launch>().content.creatures.get(plain).def.name;
+            let result = if !world.resource::<Creatures>().winding(FALLBACK) {
+                Err(format!("{name}, first seen winding up, shows no wind-up"))
+            } else if asked(world, &plain_tell) <= before(gate, &plain_tell) {
+                Err(format!("{name}, with no tell of its own, asked for no {plain_tell} ({plain_style:?})"))
+            } else {
+                Ok(format!("{name}, first seen mid-wind-up, coils and is told by its style's {plain_tell}"))
+            };
+            gate.check("first fights: style tell", result);
+            let mut creatures = world.resource_mut::<Creatures>();
+            creatures.receive(vec![], vec![voxmar_protocol::CreatureGone { id: FALLBACK, died: false }]);
+            (creatures.watch, creatures.watch_step) = (None, None);
+            gate.next(Step::Cook, now);
         }
         _ => {}
     }
