@@ -42,6 +42,7 @@ use self::enclosure::{Enclosure, Kinds};
 use self::mixer::{Cue, Mixer};
 use self::synth::Synth;
 use crate::menu::Screen;
+use crate::mix::{Category, Voice};
 use crate::player::LocalPlayer;
 use crate::render::DayCycle;
 use crate::session::Launch;
@@ -526,7 +527,10 @@ fn play(
                 let [left, right] = placed;
                 let source = sources.add(AudioSource { bytes: Arc::from(sfx::wav_stereo(&left, &right)) });
                 let playback = PlaybackSettings { speed, ..PlaybackSettings::DESPAWN.with_volume(Volume::Linear(volume * master)) };
-                commands.spawn((AudioPlayer(source), playback));
+                // One-shots are voices of the ambience, capped with the rest of it (`mix`);
+                // beds are the mixer's own, crossfading, never cut off.
+                let voice = at.map_or(Voice::of(Category::Ambience), |at| Voice::at(Category::Ambience, at));
+                commands.spawn((AudioPlayer(source), playback, voice));
             }
         }
     }
