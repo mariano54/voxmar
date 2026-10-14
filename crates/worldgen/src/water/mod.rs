@@ -1061,6 +1061,14 @@ impl Rivers {
         (0..size * size).map(|i| self.sealed(land, &tiers, at(i).x, at(i).y, grounds[i as usize], &mut corners)).collect()
     }
 
+    /// As [`Rivers::grid`], with a crag's height the top of its density: the same as
+    /// sampling each with `crags`.
+    pub fn grid_with_crags(&self, land: Stages, origin: IVec2, step: i32, size: i32) -> Vec<GeoSample> {
+        let mut samples = self.grid(land, origin, step, size);
+        crag_tops(land.geology, &mut samples, |i| (origin.x + i as i32 % size * step, origin.y + i as i32 / size * step));
+        samples
+    }
+
     /// The geology of every column of a `size`×`size` square from `min`, with rivers and
     /// lakes; the same as sampling each alone, but sharing the work of sealing.
     pub fn area(&self, land: Stages, min: IVec2, size: i32) -> Vec<GeoSample> {
