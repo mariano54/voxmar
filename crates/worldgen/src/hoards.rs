@@ -289,11 +289,17 @@ mod tests {
     /// two seeds: every chest is one of the hoards' chests, on firm ground with headroom and
     /// rock over it, never in the open; at most one a column; Nomad chests outnumber Farm
     /// ones and both are found; and the land stays uncrowded.
+    ///
+    /// The seeds side by side, on a pool of the test's own: on the shared one, behind the
+    /// heavy worldgen tests' work, the columns waited two minutes on a loaded machine for
+    /// six seconds of work.
     #[test]
     fn chests_lie_under_rock_rarer_further_out_and_far_apart() {
+        use rayon::prelude::*;
         let registry = Arc::new(crate::test_registry());
         let ground = |b: BlockId| crate::terrain::earth(&registry, b);
-        for seed in [0x5eed, 1] {
+        let pool = rayon::ThreadPoolBuilder::new().num_threads(8).build().expect("the test's pool");
+        pool.install(|| [0x5eed, 1].into_par_iter().for_each(|seed| {
             let world = Overworld::new(seed, registry.clone());
             let hoards = &world.terrain.hoards;
             let spawn = world.spawn_point();
@@ -310,11 +316,10 @@ mod tests {
                     }
                 }
             }
-            let (mut nomad, mut farm) = (0u32, 0u32);
-            // The columns are made side by side, as the game makes them.
-            use rayon::prelude::*;
-            let made: Vec<_> = columns.into_values().collect::<Vec<_>>().into_par_iter().map(|pos| (pos, world.generate(pos))).collect();
-            for (pos, column) in made {
+            // The columns are made side by side, as the game makes them, and each looked
+            // over for its chests.
+            let found: Vec<Vec<String>> = columns.into_values().collect::<Vec<_>>().into_par_iter().map(|pos| {
+                let column = world.generate(pos);
                 let mut here = Vec::new();
                 for z in 0..CHUNK_SIZE {
                     for x in 0..CHUNK_SIZE {
@@ -328,12 +333,14 @@ mod tests {
                     }
                 }
                 assert!(here.len() <= 1, "seed {seed}: one chest a column, not {here:?} in {pos:?}");
-                for name in here {
-                    if name.ends_with("nomad_treasure_chest") {
-                        nomad += 1;
-                    } else if name.ends_with("farm_treasure_chest") {
-                        farm += 1;
-                    }
+                here
+            }).collect();
+            let (mut nomad, mut farm) = (0u32, 0u32);
+            for name in found.into_iter().flatten() {
+                if name.ends_with("nomad_treasure_chest") {
+                    nomad += 1;
+                } else if name.ends_with("farm_treasure_chest") {
+                    farm += 1;
                 }
             }
             println!("seed {seed}: {nomad} Nomad chests, {farm} Farm chests in a hundred squares");
@@ -341,6 +348,6 @@ mod tests {
             // A hundred squares of 128 blocks: about 1.3 km a side, a chest to every three or
             // more squares.
             assert!(nomad + farm <= 40, "seed {seed}: {} chests in a hundred squares", nomad + farm);
-        }
+        }));
     }
 }
