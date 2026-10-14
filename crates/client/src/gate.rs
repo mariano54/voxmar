@@ -373,6 +373,9 @@ enum Step {
     /// chat says so with what to add next, and the sleep is a rest. At home, Lay on a
     /// recipe fills the crafting grid from a barrel there.
     Home,
+    /// A wooden door placed before the player goes in whole, both halves facing them, and a
+    /// right click on it opens it and another shuts it, as the server turns it.
+    Door,
     /// Ten twine crafted finish a quest; the quest key opens the book on a quest worth
     /// reading, W held with it open does not walk, Esc shuts it and W walks again; a quest pinned counts
     /// torches crafted for it as the server counts them, and a quest done reads so, then
@@ -465,6 +468,8 @@ struct Gate {
     natural_home: Vec3,
     /// The way home's hiding distance, while the Home step shows the mark close up.
     home_hidden_within: Option<f32>,
+    /// Puffs the watched chimney owed so far (its rate times the seconds watched).
+    chimney_owed: f32,
     /// The creature the combat-marks step tells its blows at, when (game time) it last told
     /// them, and how many runs it has told.
     marked: Option<u32>,
@@ -652,6 +657,7 @@ impl Gate {
             natural_before: Vec::new(),
             natural_home: Vec3::ZERO,
             home_hidden_within: None,
+            chimney_owed: 0.0,
             marked: None,
             marked_at: 0.0,
             marked_tries: 0,
@@ -1384,6 +1390,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Journal => journal(world, gate, now, in_phase),
         Step::Prayers => prayers(world, gate, now, in_phase),
         Step::Home => home(world, gate, now),
+        Step::Door => door(world, gate, now),
         Step::Quests => quests(world, gate, now, in_phase),
         Step::Catalogue => catalogue(world, gate, now, in_phase),
         Step::Screenshot => screenshot(world, gate, now, in_phase),
@@ -4431,7 +4438,7 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
         net.command("effect clear");
         let style = &mut world.resource_mut::<crate::hud::inventory::InterfaceStyle>();
         style.home_hidden_within = gate.home_hidden_within.take().unwrap_or(style.home_hidden_within);
-        gate.next(Step::Quests, now);
+        gate.next(Step::Door, now);
     };
     match gate.phase {
         0 => {
@@ -4608,6 +4615,96 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
                 leave(world, gate);
             }
         }
+    }
+}
+
+/// The door step's two cells, as the client has them: (shut, open) when both halves are
+/// a door's, shut or open alike.
+fn door_cells(world: &World, at: IVec3) -> Option<(bool, bool)> {
+    let client = world.resource::<ClientWorld>();
+    let [low, high] = [at, at + IVec3::Y].map(|cell| client.block(cell).map(|b| client.registry.def(b)));
+    let (low, high) = (low?, high?);
+    let door = |tag: &str| low.has_tag(tag) && high.has_tag(tag);
+    door("door").then(|| (door("door_shut"), door("door_open")))
+}
+
+/// A wooden door set in the ground two blocks before the player, opened and shut by right
+/// clicks the server answers (it holds the collision, so the client never guesses).
+fn door(world: &mut World, gate: &mut Gate, now: f32) {
+    let stand = world.resource::<LocalPlayer>().position.floor().as_ivec3();
+    let at = stand + IVec3::new(0, 0, -2);
+    let waited = gate.server_in_phase();
+    let leave = |world: &mut World, gate: &mut Gate| {
+        let net = world.resource::<Net>();
+        net.command(&format!("fill {} {} {} {} {} {} air", at.x, at.y, at.z, at.x, at.y + 1, at.z));
+        net.command("clear wooden_door");
+        gate.next(Step::Quests, now);
+    };
+    let use_door = |world: &mut World| {
+        let actions = world.resource::<crate::Actions>().0.clone();
+        world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("base:open"), voxmar_engine::action::ActionTarget::Block { block: at, face: voxmar_engine::coords::Face::PosZ });
+    };
+    match gate.phase {
+        0 => {
+            let net = world.resource::<Net>();
+            net.command(&format!("fill {} {} {} {} {} {} air", at.x, at.y, at.z, at.x, at.y + 1, at.z));
+            net.command("clear wooden_door");
+            net.command("give wooden_door 1");
+            gate.advance(now);
+        }
+        // In hand, set on the ground before the player.
+        1 => {
+            if select(world, "base:wooden_door") {
+                let actions = world.resource::<crate::Actions>().0.clone();
+                world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("core:place"), voxmar_engine::action::ActionTarget::Block { block: at - IVec3::Y, face: voxmar_engine::coords::Face::PosY });
+                gate.advance(now);
+            } else if waited > 10.0 {
+                let held = holding(world, "base:wooden_door");
+                gate.check("door: placed", Err(format!("no wooden door came to hand {waited:.1} server s after it was given (carried, first slot: {held:?})")));
+                leave(world, gate);
+            }
+        }
+        2 => match door_cells(world, at) {
+            Some((true, false)) => {
+                gate.check("door: placed", Ok("a wooden door went in whole, both halves shut".into()));
+                aim_at(world, at.as_vec3() + Vec3::new(0.5, 1.0, 0.5));
+                use_door(world);
+                gate.advance(now);
+            }
+            _ if waited > 10.0 => {
+                gate.check("door: placed", Err(format!("{waited:.1} server s after placing, the door's cells are {:?}", door_cells(world, at))));
+                leave(world, gate);
+            }
+            _ => {}
+        },
+        3 => match door_cells(world, at) {
+            Some((false, true)) => {
+                if gate.shot(world, "door-open").is_none() {
+                    return;
+                }
+                let solid = world.resource::<ClientWorld>().is_solid(at);
+                gate.check("door: open", if solid { Err("the open door is still solid on the client".into()) } else { Ok("a right click opened both halves, as the server turned them".into()) });
+                use_door(world);
+                gate.advance(now);
+            }
+            _ if waited > 10.0 => {
+                gate.check("door: open", Err(format!("{waited:.1} server s after a right click, the door's cells are {:?}", door_cells(world, at))));
+                leave(world, gate);
+            }
+            _ => {}
+        },
+        _ => match door_cells(world, at) {
+            Some((true, false)) => {
+                let solid = world.resource::<ClientWorld>().is_solid(at) && world.resource::<ClientWorld>().is_solid(at + IVec3::Y);
+                gate.check("door: shut", if solid { Ok("another shut it, solid again".into()) } else { Err("the shut door is not solid on the client".into()) });
+                leave(world, gate);
+            }
+            _ if waited > 10.0 => {
+                gate.check("door: shut", Err(format!("{waited:.1} server s after a second right click, the door's cells are {:?}", door_cells(world, at))));
+                leave(world, gate);
+            }
+            _ => {}
+        },
     }
 }
 
@@ -7006,9 +7103,23 @@ struct FeelRun {
     slow: u32,
     /// Whether this wind-up's moment came with no press, already told (`answer`).
     held: bool,
+    /// Frames since this wind-up showed that could have pressed before its result came
+    /// (`answer`), and the tries set aside as unanswerable: the result came before any
+    /// frame at or after the moment tried (`feel`).
+    chances: u32,
+    unanswerable: u32,
 }
 
 impl FeelRun {
+    /// Whether this wind-up's result came before the client could answer it, with `answered`
+    /// whether a press went: none did, and its moment passed between two frames with the
+    /// result heard in the later (`held`), or no frame came at all between the wind-up
+    /// showing and the result. A frame before the moment that could have pressed says a
+    /// result after it came before the moment: that try counts, and the search moves earlier.
+    fn could_not_answer(&self, answered: bool) -> bool {
+        !answered && (self.held || self.chances == 0)
+    }
+
     /// Observe a pose edge only after a calm pose. Hurt can arrive before the server's
     /// next Idle replication; consuming it invalidates the still-shown attack pose.
     fn observe(&mut self, attacking: bool, received: bool) -> bool {
@@ -7019,6 +7130,7 @@ impl FeelRun {
         } else if self.calm && self.seen.is_none() && !self.answered {
             self.seen = Some(Instant::now());
             self.calm = false;
+            self.chances = 0;
             return true;
         }
         false
@@ -7044,6 +7156,11 @@ impl FeelRun {
             self.held = true;
         }
         if received || self.answered || !due {
+            // A frame before the moment, with the blow still to come: a press could have
+            // gone, so a result after it says the moment was late.
+            if !received && !self.answered {
+                self.chances += 1;
+            }
             return false;
         }
         self.answered = true;
@@ -7100,12 +7217,15 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         gate.feel.clicked = false;
     }
     if (1..=4).contains(&gate.phase) && gate.server_now - gate.feel.started > FEEL_LIMIT {
+        // In a block again for a late counter (phase 2 with the perfect block found), what is
+        // still owed is the counter: the perfect block passed at its first.
         let check = match gate.phase {
             3 => "counter",
+            2 if gate.feel.found.is_some() => "counter",
             4 => "dodge",
             _ => "perfect block",
         };
-        gate.check(check, Err(format!("not done in {FEEL_LIMIT} server seconds: {:?}", gate.feel.outcomes)));
+        gate.check(check, Err(format!("not done in {FEEL_LIMIT} server seconds: {:?}, {} set aside as unanswerable", gate.feel.outcomes, gate.feel.unanswerable)));
         clear_feel(gate, now);
         return;
     }
@@ -7259,6 +7379,19 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             // landed, whatever moment was tried: the try says nothing of the moment, so it is
             // set aside, not counted, and the search stays. Enough of them and the machine is
             // too slow to judge (as `creature falls` is when it draws too few frames).
+            // A result before any frame at or after the moment tried, with none before it
+            // that could have pressed (the wind-up first seen after it landed, or the moment
+            // passed between two frames, as frames of a second or more do on a loaded
+            // machine): no press could have answered it, so the try says nothing of the
+            // moment. It is set aside and the search stays; unlike a late frame it never
+            // excuses the step, which `FEEL_LIMIT` still bounds.
+            if !passed && gate.feel.could_not_answer(answered) {
+                gate.feel.outcomes.pop();
+                gate.feel.unanswerable += 1;
+                let why = if gate.feel.held { "the moment passed between two frames" } else { "no frame came between the wind-up showing and the blow landing" };
+                info!("gate: combat try set aside phase {} try {} bear {}: {defended:?} came before it could be answered ({why}), frame {:.3}s, {} set aside", gate.phase, gate.feel.tries + 1, view.id, world.resource::<Time>().delta_secs(), gate.feel.unanswerable);
+                return;
+            }
             let late = std::mem::take(&mut gate.feel.late);
             if !passed && answered && late > FEEL_SLOW_FRAME {
                 gate.feel.outcomes.pop();
@@ -7279,8 +7412,14 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
             if passed {
                 let detail = format!("{defended:?} for {damage} damage, requested {:.2}s after the wind-up showed, try {}", gate.feel.after, gate.feel.tries + 1);
-                let result = if damage == 0 { Ok(detail) } else { Err(format!("{detail}: it still did damage")) };
-                gate.check(if blocking { "perfect block" } else { "dodge" }, result);
+                // A block again, for a counter that came too late (phase 3): the perfect
+                // block was judged at its first, so this one only opens the counter's window.
+                if blocking && damage == 0 && gate.feel.found.is_some() {
+                    info!("gate: combat block again for the counter: {detail}");
+                } else {
+                    let result = if damage == 0 { Ok(detail) } else { Err(format!("{detail}: it still did damage")) };
+                    gate.check(if blocking { "perfect block" } else { "dodge" }, result);
+                }
                 gate.feel.struck = world.resource::<crate::fight::Fighting>().struck_count;
                 if blocking {
                     gate.feel.found = Some(gate.feel.after);
@@ -7313,7 +7452,13 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.feel.after = (gate.feel.centre + side * FEEL_STEP * k.div_ceil(2) as f32).clamp(0.0, windup);
             if gate.feel.tries >= FEEL_TRIES {
                 let outcomes = std::mem::take(&mut gate.feel.outcomes);
-                gate.check(if blocking { "perfect block" } else { "dodge" }, Err(format!("{FEEL_TRIES} answers to the bear's blows came to {outcomes:?}")));
+                // After a perfect block whose counter came too late, what is still owed is
+                // the counter: the perfect block passed at its first.
+                if blocking && gate.feel.found.is_some() {
+                    gate.check("counter", Err(format!("the click after the perfect block came too late, and the blocks after it came to {outcomes:?}, none perfect to counter from")));
+                } else {
+                    gate.check(if blocking { "perfect block" } else { "dodge" }, Err(format!("{FEEL_TRIES} answers to the bear's blows came to {outcomes:?}, {} more set aside as unanswerable", gate.feel.unanswerable)));
+                }
                 if blocking {
                     to_dodge(gate, windup, perfect, now);
                 } else {
@@ -7348,6 +7493,7 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 } else {
                     // Too late for the window (a server far behind): block again.
                     gate.feel.tries += 1;
+                    gate.feel.outcomes.clear();
                     to_phase(gate, FEEL_BLOCK, now);
                 }
             } else if gate.server_in_phase() > UNANSWERED {
@@ -7368,6 +7514,7 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 fn to_dodge(gate: &mut Gate, windup: f32, perfect: f32, now: f32) {
     gate.feel.tries = 0;
     gate.feel.slow = 0;
+    gate.feel.unanswerable = 0;
     gate.feel.slowest = 0.0;
     gate.feel.outcomes.clear();
     gate.feel.seen = None;
@@ -8216,15 +8363,28 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.phase = 8;
             }
         }
-        8 if in_phase > FIRE_WATCH => {
+        // Watched until enough puffs rose, or until so many were owed (by the chimney's
+        // rate, the particle amount and its share) that missing them is no chance.
+        8 => {
             let amount = world.resource::<crate::render::particles::Particles>().amount;
+            let owed = {
+                let (emitters, client) = (world.resource::<crate::emitters::Emitters>(), world.resource::<ClientWorld>());
+                gate.chimney_owed += emitters.rate_of(chimney[1], client, amount) * world.resource::<Time>().delta_secs().min(0.1);
+                gate.chimney_owed
+            };
+            let count = world.resource::<crate::emitters::Emitters>().watched;
+            let done = count >= CHIMNEY_PARTICLES;
+            if !done && owed < CHIMNEY_OWED && in_phase < CHIMNEY_WAIT {
+                return;
+            }
             let mut emitters = world.resource_mut::<crate::emitters::Emitters>();
-            let (count, why) = (emitters.watched, emitters.why_quiet(chimney[1], amount));
+            let why = emitters.why_quiet(chimney[1], amount);
             emitters.watch = None;
-            gate.check("chimney smoke", if count >= CHIMNEY_PARTICLES {
-                Ok(format!("{count} puffs rose from the chimney's top over the hearthstone in {FIRE_WATCH} s"))
+            gate.chimney_owed = 0.0;
+            gate.check("chimney smoke", if done {
+                Ok(format!("{count} puffs rose from the chimney's top over the hearthstone in {in_phase:.1} s ({owed:.1} owed)"))
             } else {
-                Err(format!("only {count} puffs rose from the chimney's top over a hearthstone in {FIRE_WATCH} s, under {CHIMNEY_PARTICLES} ({why})"))
+                Err(format!("only {count} puffs rose from the chimney's top over a hearthstone in {in_phase:.1} s, under {CHIMNEY_PARTICLES} with {owed:.1} owed ({why})"))
             });
             let net = world.resource::<Net>();
             for at in [hearth, chimney[0], chimney[1]] {
@@ -8364,9 +8524,15 @@ const FIRE_WATCH: f32 = 1.5;
 /// fewer than this means the fire gives off (almost) nothing.
 const FIRE_PARTICLES: u32 = 4;
 
-/// Puffs a chimney's top over a hearth must give off in `FIRE_WATCH` seconds: about three
-/// a second, so none means it gives off nothing.
-const CHIMNEY_PARTICLES: u32 = 1;
+/// Puffs a chimney's top over a hearth must give off: it smokes all the while, not once.
+const CHIMNEY_PARTICLES: u32 = 3;
+/// Puffs owed (its rate times the seconds watched) by when they must have risen. The count
+/// varies less than a Poisson's of that mean, so three or fewer of twenty owed is under one
+/// in a hundred thousand: a chimney that falls short gives off less than it says.
+const CHIMNEY_OWED: f32 = 20.0;
+/// Longest the chimney is watched, in the game's seconds, for one never found or never owed
+/// anything.
+const CHIMNEY_WAIT: f32 = 12.0;
 
 /// A junglefowl on the pad, wheat in hand: right clicks feed it until it trusts the
 /// player and is theirs (kept, with them as its owner).
@@ -10127,6 +10293,37 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn a_blow_heard_before_any_frame_could_answer_it_is_set_aside() {
+        let mut app = App::new();
+        app.add_plugins(bevy::input::InputPlugin);
+        let dodge = KeyCode::ShiftLeft;
+        // A wind-up seen, and the result heard at the next frame, before the moment tried
+        // (0.6 s): no frame could have pressed.
+        let mut feel = FeelRun { after: 0.6, calm: true, ..default() };
+        assert!(feel.observe(true, false));
+        assert!(!feel.answer(app.world_mut(), true, dodge, true));
+        assert!(feel.could_not_answer(false), "no frame came between the wind-up and its result");
+        // A frame before the moment came first, with the blow still to come: a press could
+        // have gone there, so the result after it says the moment was late, and counts.
+        let mut feel = FeelRun { after: 0.6, calm: true, ..default() };
+        assert!(feel.observe(true, false));
+        assert!(!feel.answer(app.world_mut(), true, dodge, false));
+        assert!(!feel.answer(app.world_mut(), true, dodge, true));
+        assert!(!feel.could_not_answer(false), "a frame before the moment could have answered");
+        // The moment passed between that frame and the next, which heard the result: the
+        // press would have gone in the next, after the blow, so this one is set aside too.
+        let mut feel = FeelRun { seen: Some(Instant::now() - std::time::Duration::from_secs(1)), after: 0.6, chances: 1, ..default() };
+        assert!(!feel.answer(app.world_mut(), true, dodge, true));
+        assert!(feel.held && feel.could_not_answer(false));
+        // An answered try is never set aside for this: it said something of its moment.
+        assert!(!feel.could_not_answer(true));
+        // A new wind-up starts with no frames.
+        let mut feel = FeelRun { chances: 3, calm: true, ..default() };
+        assert!(feel.observe(true, false));
+        assert_eq!(feel.chances, 0);
     }
 
     #[test]

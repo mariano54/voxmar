@@ -136,6 +136,9 @@ pub enum Requirement {
     /// The target is a store (a bin that does not feed: a chest, a cupboard, a jar), and
     /// the actor holds no machine to lay against it.
     Store,
+    /// The target turns into another block when used (`swaps`: a door), and nobody stands
+    /// where it would shut.
+    Swaps,
 }
 
 /// Engine-owned effects that actions compile down to.
@@ -190,6 +193,9 @@ pub enum Effect {
     LayRecipe,
     /// Till the target soil into farmland.
     Till,
+    /// Turn the target into what it swaps for, its upper or lower half with it: open or
+    /// shut a door (see [`swapping`]).
+    Swap,
     /// Work at the target crafting table: its three-by-three grid, until the actor walks away.
     UseTable,
     /// Empty the pouch in hand into the actor's inventory.
@@ -338,6 +344,10 @@ pub trait ActionContext {
     }
     /// Whether any agent's body overlaps the cell.
     fn occupied(&self, cell: IVec3) -> bool;
+    /// Whether a creature's body overlaps the cell; false where the context knows none.
+    fn creature_in(&self, _cell: IVec3) -> bool {
+        false
+    }
     /// The cooking recipes, where the context knows them.
     fn cooking(&self) -> Option<&crate::cooking::CookingRegistry> {
         None
@@ -428,9 +438,31 @@ pub fn crop_level_met(ctx: &impl ActionContext, cell: IVec3) -> bool {
     })
 }
 
+/// What using the block at `pos` changes (see [`crate::block::BlockDef::swaps`]): it and
+/// its other half (the upper half above a lower one, or the lower below an upper), each
+/// with what it turns into. Empty when it swaps for nothing.
+pub fn swapping(ctx: &impl ActionContext, pos: IVec3) -> Vec<(IVec3, BlockId)> {
+    let blocks = ctx.blocks();
+    let Some(here) = ctx.block(pos) else { return Vec::new() };
+    let Some(to) = blocks.swapped(here) else { return Vec::new() };
+    let mut changes = vec![(pos, to)];
+    let half = |lower: BlockId, upper: BlockId| blocks.upper(lower) == Some(upper);
+    if let Some(above) = ctx.block(pos + IVec3::Y).filter(|&up| half(here, up))
+        && let Some(to) = blocks.swapped(above)
+    {
+        changes.push((pos + IVec3::Y, to));
+    } else if let Some(below) = ctx.block(pos - IVec3::Y).filter(|&low| half(low, here))
+        && let Some(to) = blocks.swapped(below)
+    {
+        changes.push((pos - IVec3::Y, to));
+    }
+    changes
+}
+
 /// The blocks resting on `pos` that go when it is cleared: the plants standing on it (a
 /// flower, both halves of tall grass, a stalk of sugar cane), the column hanging from it
-/// (vines, roots, a stalactite) and what is fixed to its sides (wall torches).
+/// (vines, roots, a stalactite), what is fixed to its sides (wall torches), and the lower
+/// half of a block whose upper half it is (a door).
 pub fn supported_by(ctx: &impl ActionContext, pos: IVec3) -> Vec<IVec3> {
     let column = |step: i32, support: Support| {
         (1..).map(move |d| pos + IVec3::Y * (d * step)).take_while(move |&p| ctx.block(p).is_some_and(|b| ctx.info(b).support == support))
@@ -438,7 +470,8 @@ pub fn supported_by(ctx: &impl ActionContext, pos: IVec3) -> Vec<IVec3> {
     let walls = Facing::ALL.into_iter().map(move |f| pos + f.normal()).filter(move |&p| {
         ctx.block(p).is_some_and(|b| ctx.info(b).support == Support::Wall && ctx.info(b).facing.is_some_and(|f| p - f.normal() == pos))
     });
-    column(1, Support::Below).chain(column(-1, Support::Above)).chain(walls).collect()
+    let lower = ctx.block(pos).zip(ctx.block(pos - IVec3::Y)).filter(|&(here, below)| ctx.blocks().upper(below) == Some(here)).map(|_| pos - IVec3::Y);
+    column(1, Support::Below).chain(column(-1, Support::Above)).chain(walls).chain(lower).collect()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -536,6 +569,11 @@ impl ActionDef {
                 let rule = ctx.block(block).zip(ctx.tools()).and_then(|(b, tools)| tools.rule(b));
                 rule.is_none_or(|rule| rule.skill.is_none_or(|skill| ctx.actor_level(skill) >= rule.level))
             }
+            Requirement::Swaps => {
+                let (block, _) = block_target()?;
+                let changes = swapping(ctx, block);
+                !changes.is_empty() && changes.iter().all(|&(cell, to)| !ctx.info(to).solid || !(ctx.occupied(cell) || ctx.creature_in(cell)))
+            }
             Requirement::Tillable => {
                 let (block, _) = block_target()?;
                 let tilled = ctx.block(block).map(|b| ctx.blocks().def(b));
@@ -629,12 +667,17 @@ impl ActionDef {
             }
             Requirement::Replaceable => {
                 let (block, face) = block_target()?;
-                ctx.block(placement_cell(ctx, block, face)).is_some_and(|b| ctx.info(b).replaceable)
+                let cell = placement_cell(ctx, block, face);
+                // A block with an upper half needs the cell above free too.
+                let upper = ctx.actor_held().is_some_and(|b| ctx.info(b).upper.is_some());
+                ctx.block(cell).is_some_and(|b| ctx.info(b).replaceable) && (!upper || ctx.block(cell + IVec3::Y).is_some_and(|b| ctx.info(b).replaceable))
             }
             Requirement::Unobstructed => {
                 let (block, face) = block_target()?;
                 let solid = ctx.actor_held().is_some_and(|b| ctx.info(b).solid);
-                !solid || !ctx.occupied(placement_cell(ctx, block, face))
+                let cell = placement_cell(ctx, block, face);
+                let upper = ctx.actor_held().and_then(|b| ctx.info(b).upper).is_some_and(|up| ctx.info(up).solid);
+                (!solid || !ctx.occupied(cell)) && (!upper || !ctx.occupied(cell + IVec3::Y))
             }
             Requirement::Supported => {
                 let (block, face) = block_target()?;
