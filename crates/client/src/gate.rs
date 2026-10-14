@@ -2387,8 +2387,9 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if done && coal != 0 && !late {
                 return;
             }
-            if late {
-                // Taken down, so the pool's bank is clear for the swim.
+            if late && !done {
+                // Taken down, so the pool's bank is clear for the swim. A kiln lit late
+                // still smelts its bronze first (`bronze` takes it down).
                 kiln_down(world, kiln);
             }
             if done {
