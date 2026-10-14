@@ -14,6 +14,7 @@
 //! drop off a moment after they are done. The quests and their progress are the server's
 //! (`voxmar_engine::quest`, docs/quests.md).
 
+use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 use voxmar_engine::block::BlockId;
 use voxmar_engine::content::Content;
@@ -42,9 +43,11 @@ pub struct QuestsPlugin;
 impl Plugin for QuestsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<QuestView>()
+            .init_resource::<Recentre>()
+            .init_resource::<ZoomAt>()
             .add_systems(PostStartup, (spawn, spawn_tracker))
             .add_systems(OnEnter(Screen::InGame), keep_known_pins)
-            .add_systems(Update, ((open_start, choose_on_open, show, pick, go_to_path, claim, turn_ways, keep_web_in_range, drag_web, draw, fit_lines.after(crate::ui::widgets::scroll_lists)).chain().after(ScreenSystems), (seed_pins, retire, track).chain(), hear_quests).run_if(in_state(Screen::InGame)));
+            .add_systems(Update, ((open_start, choose_on_open, show, pick, go_to_path, claim, turn_ways, keep_web_in_range, drag_web, zoom_web, go_to_current, draw, fit_lines.after(crate::ui::widgets::scroll_lists)).chain().after(ScreenSystems), (seed_pins, retire, track).chain(), hear_quests).run_if(in_state(Screen::InGame)));
     }
 }
 
@@ -56,7 +59,21 @@ pub struct QuestView {
     /// Which way of making an item each goal's inline recipe shows (a goal by its quest,
     /// task and place), where it has several.
     pub ways: std::collections::BTreeMap<String, usize>,
+    /// How far the web is zoomed from its usual size, in steps of `ZOOMS`: below nought
+    /// out, above in.
+    pub zoom: i8,
 }
+
+/// Asks `draw` to bring the canvas to the quest picked when it next lays out the web, as
+/// on opening: set by Current Quest. A zoom instead keeps `ZoomAt`'s point under the pointer.
+#[derive(Resource, Default)]
+struct Recentre(bool);
+
+/// Where the pointer was in the well when the web was zoomed, and the point of the web
+/// there in steps between quests (across from the lanes' headers): drawn again at the
+/// next zoom, the canvas moves so that point stays under the pointer.
+#[derive(Resource, Default)]
+struct ZoomAt(Option<(Vec2, Vec2)>);
 
 /// A quest to open the book on (`--quests`, for captures).
 #[derive(Resource)]
@@ -143,11 +160,37 @@ fn choose_on_open(ui: Res<UiState>, player: Res<LocalPlayer>, launch: Res<Launch
         return;
     }
     let content = &launch.content;
-    let pinned = settings.pinned_quests.iter().filter_map(|name| content.quests.get(name)).find(|quest| standing(content, &player, quest) != Standing::Done);
-    let chosen = pinned.or_else(|| content.quests.iter().find(|quest| standing(content, &player, quest) == Standing::Open));
-    if let Some(quest) = chosen {
+    if let Some(quest) = current(content, &player, &settings) {
         view.chapter = chapters(content).iter().position(|age| *age == quest.age).unwrap_or(0);
         view.picked = Some(quest.name.clone());
+    }
+}
+
+/// The quest the player is on: the first pinned that is not done, else the first open in
+/// the book's order.
+pub(crate) fn current<'a>(content: &'a Content, player: &LocalPlayer, settings: &Settings) -> Option<&'a QuestDef> {
+    let pinned = settings.pinned_quests.iter().filter_map(|name| content.quests.get(name)).find(|quest| standing(content, player, quest) != Standing::Done);
+    pinned.or_else(|| content.quests.iter().find(|quest| standing(content, player, quest) == Standing::Open))
+}
+
+/// Current Quest turns the book to the quest the player is on, picks it, and brings the
+/// canvas to it.
+fn go_to_current(
+    buttons: Query<&Interaction, (Changed<Interaction>, With<CurrentButton>)>,
+    launch: Res<Launch>,
+    player: Res<LocalPlayer>,
+    settings: Res<Settings>,
+    mut view: ResMut<QuestView>,
+    mut recentre: ResMut<Recentre>,
+) {
+    if !buttons.iter().any(|i| *i == Interaction::Pressed) {
+        return;
+    }
+    let content = &launch.content;
+    if let Some(quest) = current(content, &player, &settings) {
+        view.chapter = chapters(content).iter().position(|age| *age == quest.age).unwrap_or(view.chapter);
+        view.picked = Some(quest.name.clone());
+        recentre.0 = true;
     }
 }
 
@@ -480,6 +523,16 @@ pub(crate) struct Web;
 #[derive(Component)]
 pub(crate) struct Canvas {
     margin: Vec2,
+    /// The step between quests across and down, as zoomed.
+    step: Vec2,
+}
+
+impl Canvas {
+    /// The point `at` on the canvas (in the interface's pixels from its corner) in steps
+    /// between quests, across from the lanes' headers.
+    pub(crate) fn grid(&self, at: Vec2) -> Vec2 {
+        Vec2::new((at.x - HEADER) / self.step.x, at.y / self.step.y)
+    }
 }
 /// A line from one quest to the next, between their centres on the canvas, drawn only as
 /// far as the well shows it: the interface clips only what is square to it, so a slanted
@@ -500,6 +553,9 @@ pub(crate) struct LaneHead {
 }
 #[derive(Component)]
 struct Detail;
+/// Turns the book to the quest the player is on.
+#[derive(Component)]
+pub(crate) struct CurrentButton;
 #[derive(Component)]
 struct PinButton;
 /// Claims the picked quest's rewards.
@@ -519,21 +575,32 @@ const SHARE: Vec2 = Vec2::new(92.0, 76.0);
 /// The chapters' column, and the sidebar at the right with the picked quest's page.
 const CHAPTERS: f32 = 80.0 * PX;
 const SIDEBAR: f32 = 180.0 * PX;
-/// A quest on the web: its cell, and the item or skill drawn in it at one and a half times
-/// a slot's (each of its 16 texels three screen pixels), small enough for a big chapter to
-/// show much of itself at once.
-const CELL: f32 = 28.0 * PX;
-const ICON: f32 = 24.0 * PX;
-/// The quests' least and most step across and down the web; it spreads to fill its well
-/// between them, and a web too big for the well is a canvas dragged about inside it.
-const STEP_LEAST: Vec2 = Vec2::new(CELL + 12.0 * PX, CELL + 6.0 * PX);
-const STEP_MOST: Vec2 = Vec2::new(CELL + 90.0 * PX, CELL + 40.0 * PX);
+/// A quest's icon on the web at each zoom, in interface pixels: whole multiples of its 16
+/// texels' half, so the pixel art stays sharp. `ZOOM_AT` is the usual one, one and a half
+/// times a slot's, small enough for a big chapter to show much of itself at once; zoomed
+/// all the way out, a whole chapter of a hundred quests fits a laptop's book.
+const ZOOMS: [f32; 4] = [16.0, 24.0, 32.0, 48.0];
+const ZOOM_AT: usize = 1;
+/// The frame around a quest's icon, each side.
+const RIM: f32 = 2.0 * PX;
+/// The quests' least and most step across and down the web, past a cell, at the usual
+/// zoom (and as much bigger or smaller as the zoom); it spreads to fill its well between
+/// them, and a web too big for the well is a canvas dragged about inside it.
+const GAP_LEAST: Vec2 = Vec2::new(12.0 * PX, 6.0 * PX);
+const GAP_MOST: Vec2 = Vec2::new(90.0 * PX, 40.0 * PX);
 /// How far the picked quest's glow reaches past it.
 const GLOW: f32 = 3.0 * PX;
-/// The width of a lane's header, at the left of the canvas, which stays as it is dragged.
-const HEADER: f32 = 74.0 * PX;
+/// Pinch a trackpad this much for one step of zoom.
+const PINCH_STEP: f32 = 0.15;
+/// The width of a lane's header, at the left of the canvas, which stays as it is dragged:
+/// room for the longest path name (First Steps) on one line, its count under it.
+const HEADER: f32 = 88.0 * PX;
 /// A lane's path icon in its header.
 const PATH_ICON: f32 = 14.0 * PX;
+/// The width of the Current Quest button.
+const CURRENT_WIDTH: f32 = 96.0 * PX;
+/// How strongly a line from one path to another shows, unless it ends at the quest picked.
+const ACROSS: f32 = 0.18;
 /// How thick the lines between quests are.
 const LINE: f32 = 2.0 * PX;
 
@@ -558,7 +625,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
                     padding: UiRect::all(Val::Px(space::GAP)),
                     ..default()
                 };
-                columns.spawn((Web, ScrollList, web, Piece::Well.image()));
+                columns.spawn((Web, bevy::ui::RelativeCursorPosition::default(), ScrollPosition::default(), web, Piece::Well.image()));
                 columns.spawn(Node { width: Val::Px(SIDEBAR), flex_shrink: 0.0, flex_direction: FlexDirection::Column, ..default() }).with_children(|side| {
                     let detail = Node { flex_grow: 1.0, min_height: Val::ZERO, flex_direction: FlexDirection::Column, row_gap: Val::Px(space::HAIR), overflow: Overflow::scroll_y(), ..default() };
                     let detail = side.spawn((Detail, ScrollList, detail)).id();
@@ -566,7 +633,12 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
                 });
             });
             spawn_rule(card, space::GAP);
-            card.spawn((Localized("quest.hint"), text(font, "", BODY, MUTED)));
+            card.spawn(Node { align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), ..default() }).with_children(|row| {
+                row.spawn((Node { flex_grow: 1.0, flex_basis: Val::ZERO, min_width: Val::ZERO, ..default() }, Localized("quest.hint"), text(font, "", BODY, MUTED)));
+                row.spawn(Node { width: Val::Px(CURRENT_WIDTH), flex_shrink: 0.0, ..default() }).with_children(|holder| {
+                    spawn_button(holder, font, "quest.current", ButtonStyle::Secondary, CurrentButton);
+                });
+            });
         });
         spawn_hotkeys(root, GameScreen::Quests);
     });
@@ -699,6 +771,7 @@ fn draw(
     chapters_column: Query<Entity, With<Chapters>>,
     mut web: Query<(Entity, &ComputedNode, &mut ScrollPosition), With<Web>>,
     detail: Query<Entity, With<Detail>>,
+    (mut recentre, mut zoom_at): (ResMut<Recentre>, ResMut<ZoomAt>),
     mut drawn: Local<Option<(QuestView, u32, Vec<String>, bool, IVec2)>>,
 ) {
     if !ui.quests_open {
@@ -709,12 +782,14 @@ fn draw(
     // window changes it.
     let room = web.single().map_or(Vec2::ZERO, |(_, computed, _)| (computed.size() * computed.inverse_scale_factor() - Vec2::splat(2.0 * space::GAP)).max(Vec2::ZERO));
     let wanted = (view.clone(), player.quests_rev, settings.pinned_quests.clone(), viewer.book().is_some(), room.as_ivec2());
-    if drawn.as_ref() == Some(&wanted) && !locale.is_changed() {
+    if drawn.as_ref() == Some(&wanted) && !locale.is_changed() && !recentre.0 {
         return;
     }
     // Opened, or turned to another chapter, the canvas comes to the quest picked: again
-    // once the well has its size, for the book's first frame has none to centre in.
-    let arrived = drawn.as_ref().is_none_or(|(was, .., was_room)| was.chapter != view.chapter || *was_room == IVec2::ZERO);
+    // once the well has its size, for the book's first frame has none to centre in; and
+    // when Current Quest asks.
+    let arrived = drawn.as_ref().is_none_or(|(was, .., was_room)| was.chapter != view.chapter || *was_room == IVec2::ZERO) || std::mem::take(&mut recentre.0);
+    let zoomed = zoom_at.0.take();
     *drawn = Some(wanted);
     let content = &launch.content;
     let font = &font.0;
@@ -753,9 +828,11 @@ fn draw(
     // Spread to fill the well beside the lanes' headers, within reason; a web too big for
     // it scrolls.
     let lanes_room = Vec2::new((room.x - HEADER).max(0.0), room.y);
-    let step = Vec2::new(lanes_room.x / columns as f32, lanes_room.y / tallest as f32).clamp(STEP_LEAST, STEP_MOST);
-    let place = |i: usize| Vec2::X * HEADER + cells[i] * step + (step - Vec2::splat(CELL)) / 2.0;
-    let centre = |i: usize| place(i) + Vec2::splat(CELL / 2.0);
+    let (icon, zoom) = zoom_of(view.zoom);
+    let side = icon + 2.0 * RIM;
+    let step = Vec2::new(lanes_room.x / columns as f32, lanes_room.y / tallest as f32).clamp(side + GAP_LEAST * zoom, side + GAP_MOST * zoom);
+    let place = |i: usize| Vec2::X * HEADER + cells[i] * step + (step - Vec2::splat(side)) / 2.0;
+    let centre = |i: usize| place(i) + Vec2::splat(side / 2.0);
     if let Ok((web, _, mut scroll)) = web.single_mut() {
         let size = Vec2::new(HEADER + columns as f32 * step.x, tallest as f32 * step.y);
         // Centred in the well by its margins; a web too big for the well has none that way,
@@ -765,6 +842,11 @@ fn draw(
         let brought = |i: usize| (centre(i) - Vec2::X * HEADER - lanes_room / 2.0).clamp(Vec2::ZERO, (size - room).max(Vec2::ZERO));
         if arrived {
             scroll.0 = view.picked.as_deref().and_then(|name| quests.iter().position(|q| q.name == name)).map_or(Vec2::ZERO, brought);
+        } else if let Some((pointer, point)) = zoomed {
+            // The point of the web that was under the pointer stays there: the well shows
+            // the canvas from `scroll - margin`.
+            let at = Vec2::new(HEADER + point.x * step.x, point.y * step.y);
+            scroll.0 = (at + margin - pointer).clamp(Vec2::ZERO, (size + margin - room).max(Vec2::ZERO));
         }
         commands.entity(web).despawn_children().with_children(|web| {
             if ours == 0 {
@@ -772,7 +854,7 @@ fn draw(
                 return;
             }
             let canvas = Node { width: Val::Px(size.x), height: Val::Px(size.y), flex_shrink: 0.0, margin: UiRect { left: Val::Px(margin.x), top: Val::Px(margin.y), ..default() }, ..default() };
-            web.spawn((canvas, Canvas { margin })).with_children(|area| {
+            web.spawn((canvas, Canvas { margin, step })).with_children(|area| {
                 // Every other lane faintly banded, so a path reads along its row.
                 for lane in lanes.iter().skip(1).step_by(2) {
                     let band = Node { position_type: PositionType::Absolute, left: Val::ZERO, top: Val::Px(lane.top as f32 * step.y), width: Val::Px(size.x), height: Val::Px(lane.rows as f32 * step.y), ..default() };
@@ -780,12 +862,18 @@ fn draw(
                 }
                 // The lines first, under the quests; each is fitted to what the well shows
                 // of it as the canvas moves (`fit_lines`).
+                // A line from one path to another is faint, so each path reads as its own
+                // and not everything as leading to everything, unless it ends at the quest
+                // picked, which shows all its ties in the accent.
+                let lane_of = |i: usize| lanes.iter().position(|lane| (lane.top..lane.top + lane.rows).contains(&(cells[i].y as usize)));
+                let picked_at = view.picked.as_deref().and_then(|name| quests.iter().position(|q| q.name == name));
                 for i in 0..ours {
                     for first in before(content, quests[i]) {
                         let Some(j) = quests.iter().position(|q| q.name == first.name) else { continue };
                         let done = standing(content, &player, quests[j]) == Standing::Done;
+                        let colour = line_colour(picked_at == Some(i) || picked_at == Some(j), lane_of(i) != lane_of(j), done);
                         let line = Node { position_type: PositionType::Absolute, display: Display::None, height: Val::Px(LINE), ..default() };
-                        area.spawn((line, UiTransform::default(), WebLine { from: centre(j), to: centre(i) }, BackgroundColor(if done { GOLD } else { MUTED.with_alpha(0.7) })));
+                        area.spawn((line, UiTransform::default(), WebLine { from: centre(j), to: centre(i) }, BackgroundColor(colour)));
                     }
                 }
                 for (i, quest) in quests.iter().enumerate() {
@@ -795,8 +883,8 @@ fn draw(
                         position_type: PositionType::Absolute,
                         left: Val::Px(at.x),
                         top: Val::Px(at.y),
-                        width: Val::Px(CELL),
-                        height: Val::Px(CELL),
+                        width: Val::Px(side),
+                        height: Val::Px(side),
                         justify_content: JustifyContent::Center,
                         align_items: AlignItems::Center,
                         ..default()
@@ -816,8 +904,8 @@ fn draw(
                             position_type: PositionType::Absolute,
                             left: Val::Px(at.x - GLOW),
                             top: Val::Px(at.y - GLOW),
-                            width: Val::Px(CELL + 2.0 * GLOW),
-                            height: Val::Px(CELL + 2.0 * GLOW),
+                            width: Val::Px(side + 2.0 * GLOW),
+                            height: Val::Px(side + 2.0 * GLOW),
                             ..default()
                         };
                         area.spawn((glow, BackgroundColor(GOLD.with_alpha(0.55))));
@@ -827,17 +915,17 @@ fn draw(
                             position_type: PositionType::Absolute,
                             left: Val::Px(at.x - GLOW),
                             top: Val::Px(at.y - GLOW),
-                            width: Val::Px(CELL + 2.0 * GLOW),
-                            height: Val::Px(CELL + 2.0 * GLOW),
+                            width: Val::Px(side + 2.0 * GLOW),
+                            height: Val::Px(side + 2.0 * GLOW),
                             ..default()
                         };
                         area.spawn((glow, BackgroundColor(ACCENT.with_alpha(0.45))));
                     }
                     area.spawn((Button, crate::ui::widgets::HoverLight, QuestNode(quest.name.clone()), node, piece.image())).with_children(|cell| {
-                        cell.spawn((Node { width: Val::Px(ICON), height: Val::Px(ICON), ..default() }, ImageNode::new(quest_icon(content, &images, quest)).with_color(tint)));
+                        cell.spawn((Node { width: Val::Px(icon), height: Val::Px(icon), ..default() }, ImageNode::new(quest_icon(content, &images, quest)).with_color(tint)));
                         // The quest picked, ringed.
                         if picked {
-                            let ring = Node { position_type: PositionType::Absolute, left: Val::Px(-2.0 * PX), top: Val::Px(-2.0 * PX), width: Val::Px(CELL + 4.0 * PX), height: Val::Px(CELL + 4.0 * PX), ..default() };
+                            let ring = Node { position_type: PositionType::Absolute, left: Val::Px(-2.0 * PX), top: Val::Px(-2.0 * PX), width: Val::Px(side + 4.0 * PX), height: Val::Px(side + 4.0 * PX), ..default() };
                             cell.spawn((ring, Piece::Selection.image()));
                         }
                     });
@@ -859,7 +947,7 @@ fn draw(
                         height: Val::Px(lane.rows as f32 * step.y),
                         flex_direction: FlexDirection::Column,
                         // Level with the lane's first row, where its chain runs.
-                        padding: UiRect { left: Val::Px(space::HAIR), right: Val::Px(space::HAIR), top: Val::Px((step.y - CELL) / 2.0), ..default() },
+                        padding: UiRect { left: Val::Px(space::HAIR), right: Val::Px(space::HAIR), top: Val::Px((step.y - side) / 2.0), ..default() },
                         ..default()
                     };
                     let head_name = head.map(|i| quests[i].name.clone());
@@ -871,8 +959,11 @@ fn draw(
                             top.spawn((Node { width: Val::Px(PATH_ICON), height: Val::Px(PATH_ICON), flex_shrink: 0.0, ..default() }, ImageNode::new(icon).with_color(Color::WHITE.with_alpha(faint))));
                             top.spawn((shadowed(font, locale.get_or(&path.key(), &path.title).to_owned(), BODY, words), TightLine));
                         });
-                        let count = locale.format("quest.chapter.count", &[("done", &done), ("all", &lane.quests.len())]);
-                        header.spawn((text(font, count, BODY, if finished { GOLD.with_alpha(0.6) } else { MUTED }), TightLine));
+                        // A lane of one row zoomed out is too low for its count under its name.
+                        if lane.rows as f32 * step.y >= ZOOMS[ZOOM_AT] * PX + 2.0 * RIM + GAP_LEAST.y {
+                            let count = locale.format("quest.chapter.count", &[("done", &done), ("all", &lane.quests.len())]);
+                            header.spawn((text(font, count, BODY, if finished { GOLD.with_alpha(0.6) } else { MUTED }), TightLine));
+                        }
                     });
                 }
             });
@@ -993,6 +1084,86 @@ fn draw(
             }
         });
     }
+}
+
+/// A line's colour on the web: in the accent when it ends at the quest picked; faint when
+/// it runs from one path to another; else gold once what it comes from is done.
+fn line_colour(picked: bool, across: bool, done: bool) -> Color {
+    let colour = if done { GOLD } else { MUTED.with_alpha(0.7) };
+    if picked {
+        ACCENT
+    } else if across {
+        colour.with_alpha(ACROSS)
+    } else {
+        colour
+    }
+}
+
+/// A quest's icon size at `zoom` steps from the usual, and how much bigger than the usual
+/// it is.
+fn zoom_of(zoom: i8) -> (f32, f32) {
+    let icon = ZOOMS[(ZOOM_AT as i32 + i32::from(zoom)).clamp(0, ZOOMS.len() as i32 - 1) as usize];
+    (icon * PX, icon / ZOOMS[ZOOM_AT])
+}
+
+/// The furthest the web zooms out and in from the usual, in steps.
+fn zoom_range() -> (i8, i8) {
+    (-(ZOOM_AT as i8), (ZOOMS.len() - 1 - ZOOM_AT) as i8)
+}
+
+/// Over the web, a mouse wheel's notches (or a trackpad's pinch) zoom it about the pointer
+/// a step at a time; a trackpad's two-finger scroll moves it, as a drag does.
+#[allow(clippy::type_complexity)]
+fn zoom_web(
+    mut wheel: MessageReader<MouseWheel>,
+    mut pinch: MessageReader<bevy::input::gestures::PinchGesture>,
+    mut web: Query<(&ComputedNode, &bevy::ui::RelativeCursorPosition, &mut ScrollPosition), With<Web>>,
+    canvas: Query<&Canvas>,
+    mut view: ResMut<QuestView>,
+    mut zoom_at: ResMut<ZoomAt>,
+    mut pinched: Local<f32>,
+) {
+    let (mut notches, mut slide) = (0.0, Vec2::ZERO);
+    for event in wheel.read() {
+        match event.unit {
+            MouseScrollUnit::Line => notches += event.y,
+            MouseScrollUnit::Pixel => slide += Vec2::new(event.x, event.y),
+        }
+    }
+    *pinched += pinch.read().map(|p| p.0).sum::<f32>();
+    let Ok((computed, cursor, mut scroll)) = web.single_mut() else { return };
+    let (Some(normal), true) = (cursor.normalized, cursor.cursor_over()) else {
+        *pinched = 0.0;
+        return;
+    };
+    let scale = computed.inverse_scale_factor();
+    if slide != Vec2::ZERO {
+        let max = (computed.content_size() - computed.size()).max(Vec2::ZERO) * scale;
+        let next = (scroll.0 - slide).clamp(Vec2::ZERO, max);
+        if scroll.0 != next {
+            scroll.0 = next;
+        }
+    }
+    let steps = if notches != 0.0 {
+        notches.signum() as i8
+    } else if pinched.abs() >= PINCH_STEP {
+        let steps = pinched.signum() as i8;
+        *pinched = 0.0;
+        steps
+    } else {
+        0
+    };
+    let (least, most) = zoom_range();
+    let zoom = (view.zoom + steps).clamp(least, most);
+    if zoom == view.zoom {
+        return;
+    }
+    let Ok(canvas) = canvas.single() else { return };
+    // The pointer in the well's room, and the point of the canvas under it, in steps.
+    let pointer = (normal + Vec2::splat(0.5)) * computed.size() * scale - Vec2::splat(space::GAP);
+    let at = scroll.0.clamp(Vec2::ZERO, ((computed.content_size() - computed.size()) * scale).max(Vec2::ZERO)) + pointer - canvas.margin;
+    zoom_at.0 = Some((pointer, canvas.grid(at)));
+    view.zoom = zoom;
 }
 
 /// The part of the line from `from` to `to` inside `view`, if any (Liang and Barsky's way:
@@ -1263,8 +1434,9 @@ fn track(
             toggle_pin(&mut settings, content, &unpin.0);
         }
     }
-    // Out of the way of a screen, but for the quest book itself.
-    let screen = ui.inventory_open || ui.character_open || ui.journal_open || ui.menu_open || ui.recipes_open || player.dead;
+    // Out of the way of a screen, the quest book's too: the book's Current Quest finds what
+    // the tracker would, and the tracker would peek past the book's edge.
+    let screen = ui.inventory_open || ui.character_open || ui.journal_open || ui.quests_open || ui.menu_open || ui.recipes_open || player.dead;
     if let Ok(mut shown) = visibility.single_mut() {
         shown.set_if_neq(if screen || settings.pinned_quests.is_empty() { Visibility::Hidden } else { Visibility::Inherited });
     }
@@ -1536,6 +1708,27 @@ mod tests {
 
     /// A path's header brings the first quest open along it, else the first not done, else
     /// its last.
+    /// A line between paths is faint unless it ends at the quest picked; a line along a
+    /// path is not.
+    #[test]
+    fn lines_between_paths_are_faint() {
+        assert!(line_colour(false, true, true).alpha() <= ACROSS);
+        assert!(line_colour(false, true, false).alpha() <= ACROSS);
+        assert!(line_colour(false, false, false).alpha() > 2.0 * ACROSS);
+        assert_eq!(line_colour(true, true, false), ACCENT);
+    }
+
+    /// Zoomed all the way out or in, the icon stays a whole number of half texels across.
+    #[test]
+    fn zoom_keeps_icons_sharp() {
+        let (least, most) = zoom_range();
+        for zoom in least - 1..=most + 1 {
+            let (icon, _) = zoom_of(zoom);
+            assert_eq!((icon / PX / 8.0).fract(), 0.0, "zoom {zoom}: icon {icon}");
+        }
+        assert_eq!(zoom_of(0).1, 1.0);
+    }
+
     #[test]
     fn a_path_head_is_its_next_quest() {
         use Standing::{Done, Open, Waiting};
