@@ -333,6 +333,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let interface = hud::inventory::InterfaceStyle::load(&content.files)?;
     let combat_marks = hud::combat::CombatStyle::load(&content.files)?;
     let fight_look = fight_fx::FightLook::load(&content.files)?;
+    if let Some(blow) = fight_look.untold(&content.creatures).first() {
+        return Err(format!("{}: no tell for the blow `{blow}`", fight_fx::style::FILE).into());
+    }
+    if let Some(class) = fight_look.unshot(content.combat.classes()).first() {
+        return Err(format!("{}: no shot for the {class} class, which shoots", fight_fx::style::FILE).into());
+    }
     let creature_motion = creature_motion::Motion::load(&content.files)?;
     if let Some(name) = creature_motion.unknown_species(|name| content.creatures.find(name).is_some()).next() {
         return Err(format!("{}: gaits for `{name}`, which is no creature", creature_motion::FILE).into());
