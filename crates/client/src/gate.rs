@@ -5291,10 +5291,16 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         21 => {
             let picked = world.resource::<crate::hud::quests::QuestView>().picked.clone();
             let scroll = world.query_filtered::<&ScrollPosition, With<crate::hud::quests::Web>>().iter(world).next().map_or(Vec2::ZERO, |s| s.0);
-            let well = world.query_filtered::<(&ComputedNode, &bevy::ui::UiGlobalTransform), With<crate::hud::quests::Web>>().iter(world).next().map(|(c, at)| Rect::from_center_size(at.translation, c.size()));
+            let (well, max) = world
+                .query_filtered::<(&ComputedNode, &bevy::ui::UiGlobalTransform), With<crate::hud::quests::Web>>()
+                .iter(world)
+                .next()
+                .map_or((None, Vec2::ZERO), |(c, at)| (Some(Rect::from_center_size(at.translation, c.size())), (c.content_size() - c.size()).max(Vec2::ZERO) * c.inverse_scale_factor()));
+            // Where the header asked for, as far as the canvas moves.
+            let wanted = gate.web_scroll.clamp(Vec2::ZERO, max);
             let node = world.query::<(&crate::hud::quests::QuestNode, &bevy::ui::UiGlobalTransform)>().iter(world).find(|(n, _)| Some(&n.0) == gate.web_head.as_ref()).map(|(_, at)| at.translation);
             let shown = matches!((well, node), (Some(well), Some(node)) if well.contains(node));
-            if picked == gate.web_head && scroll.distance(gate.web_scroll) < 1.0 && shown {
+            if picked == gate.web_head && scroll.distance(wanted) < 1.0 && shown {
                 if gate.shot(world, "quests-path").is_none() {
                     return;
                 }
@@ -5302,7 +5308,7 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             } else if in_phase < 2.0 {
                 return;
             } else {
-                gate.check("quests: path", Err(format!("2 s after a lane header was pressed for {:?} (canvas wanted at {}): picked {picked:?}, canvas at {scroll}, the quest at {node:?} in the well {well:?}", gate.web_head, gate.web_scroll)));
+                gate.check("quests: path", Err(format!("2 s after a lane header was pressed for {:?} (canvas wanted at {wanted}): picked {picked:?}, canvas at {scroll}, the quest at {node:?} in the well {well:?}", gate.web_head)));
             }
             world.resource_mut::<UiState>().quests_open = false;
             gate.next(Step::Catalogue, now);
