@@ -609,6 +609,13 @@ fn merge_journal(entries: Vec<voxmar_engine::journal::Entry>, registry: &BlockRe
         {
             entry.name = registry.def(item).name.clone();
         }
+        // A fish whose item was renamed (shrimp, now minnows) counts as the new one.
+        if entry.page == voxmar_engine::journal::Page::Fish
+            && registry.id(&entry.name).is_none()
+            && let Some(item) = registry.saved_id(&entry.name)
+        {
+            entry.name = registry.def(item).name.clone();
+        }
         match merged.iter_mut().find(|have| have.page == entry.page && have.name == entry.name) {
             Some(have) => {
                 have.stage = have.stage.max(entry.stage);
@@ -1248,6 +1255,8 @@ mod tests {
         assert_eq!(blocks.item_named("base:cooked_rabbit"), Some(cooked), "dropped items and station loads resolve the same way");
         assert_eq!(blocks.saved_id("base:raw_chicken"), Some(raw), "and a column's block names");
         assert_eq!(blocks.id("base:raw_rabbit"), None, "the old names are no items now");
+        assert_eq!(blocks.item_named("base:cooked_shrimp"), Some(blocks.expect("base:cooked_minnow")), "shrimp are minnows now");
+        assert_eq!(blocks.item_named("base:raw_frog"), Some(blocks.expect("base:raw_small_game")), "frog is small game now");
         assert_eq!(blocks.item_named("base:bronze_blend"), Some(blocks.expect("base:bronze_ingot")), "a blend is the bronze it smelted into");
         // What quests counted under the old names counts under the new one.
         let tallies = vec![("cooked:base:cooked_rabbit".into(), 2), ("cooked:base:cooked_chicken".into(), 1), ("cooked_at:campfire:base:cooked_rabbit".into(), 3), ("lit:base:crucible_kiln".into(), 1)];
@@ -1279,6 +1288,19 @@ mod tests {
         assert_eq!(merged.iter().filter(|e| e.page == Page::Plants && e.name.contains("oregano")).count(), 0);
         assert!(merged.iter().any(|e| e.name == "base:poppy" && e.stage == Stage::Studied), "an unmerged plant is kept");
         assert_eq!(merged.len(), 3, "{merged:?}");
+    }
+
+    /// Shrimp caught before they became minnows are minnows in the journal: one kind, the
+    /// counts added, so a fish tally or a kinds count does not lose or double them.
+    #[test]
+    fn journal_fish_that_were_renamed_fold_into_the_new_fish() {
+        use voxmar_engine::journal::{Entry, Page, Stage};
+        let registry = crate::test_content().blocks;
+        let fish = |name: &str, stage, count, found| Entry { page: Page::Fish, name: name.into(), stage, count, found };
+        let merged = merge_journal(vec![fish("base:raw_shrimp", Stage::Studied, 5, 40), fish("base:raw_minnow", Stage::Seen, 2, 90)], &registry);
+        assert_eq!(merged.len(), 1, "{merged:?}");
+        let minnow = &merged[0];
+        assert_eq!((minnow.name.as_str(), minnow.stage, minnow.count, minnow.found), ("base:raw_minnow", Stage::Studied, 7, 40));
     }
 
     #[test]
