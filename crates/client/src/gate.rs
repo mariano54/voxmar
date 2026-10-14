@@ -544,6 +544,9 @@ struct Gate {
     shapes_row: IVec3,
     /// Times the held step sent wild creatures away and began its shots of the sky again.
     held_cleared: u32,
+    /// The weather step's snow left for the depths step to clear with its fog: the sky's
+    /// clearing is judged once, as the fog lifts at its end (`depths`).
+    weather_clear_owed: bool,
     /// When (server seconds) the kiln was last asked to light.
     kiln_asked: f32,
     /// When the lit kiln's bronze smelt began, in server and game seconds (0 before).
@@ -755,6 +758,7 @@ impl Gate {
             kiln_since: 0.0,
             shapes_row: IVec3::ZERO,
             held_cleared: 0,
+            weather_clear_owed: false,
             kiln_asked: f32::MIN,
             bronze_since: (0.0, 0.0),
             machines_stage: 0,
@@ -2304,8 +2308,10 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.check("workshop: seed pouch", Ok(format!("50 seeds given went into the pouch ({pouched} there)")));
                 let net = world.resource::<Net>();
                 net.command("clear seed_pouch");
-                net.command("give fishing_rod 1");
-                net.command("skill fishing 80");
+                // The best rod at the top level lands about 0.85 of casts (0.6 with the
+                // first rod at 80), so a catch mostly takes one cast rather than two.
+                net.command("give fine_rod 1");
+                net.command("skill fishing 99");
                 gate.advance(now);
             } else if gate.server_in_phase() > WORKSHOP_WAIT {
                 fail(world, gate, "seed pouch", format!("50 seeds given with a seed pouch carried, the pouch holds {pouched}"));
@@ -2317,7 +2323,7 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 let (player, client) = (world.resource::<LocalPlayer>(), world.resource::<ClientWorld>());
                 player.inventory.slots.iter().flatten().find(|s| client.registry.def(s.item).has_tag("fish")).map(|s| client.registry.def(s.item).name.clone())
             };
-            if !select(world, "base:fishing_rod") {
+            if !select(world, "base:fine_rod") {
                 if gate.server_in_phase() > WORKSHOP_WAIT {
                     fail(world, gate, "fishing", "the rod never came".into());
                 }
@@ -2344,7 +2350,7 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.advance(now);
             } else if gate.server_in_phase() > 40.0 {
                 mouse(world, MouseButton::Right, false);
-                fail(world, gate, "fishing", "40 server seconds of casting into the pool at Fishing 80 caught nothing".into());
+                fail(world, gate, "fishing", "40 server seconds of casting into the pool at Fishing 99 with a fine rod caught nothing".into());
             }
         }
         12 => {
@@ -2460,7 +2466,10 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if gate.server_now - gate.kiln_asked >= 3.0 {
                 gate.kiln_asked = gate.server_now;
                 let actions = world.resource::<crate::Actions>().0.clone();
-                world.resource::<Net>().propose(actions.expect("base:light"), voxmar_engine::action::ActionTarget::Block { block: kiln, face: voxmar_engine::coords::Face::NegY });
+                // With the player's input first (the coal just selected), as the machines'
+                // use goes: sent alone, the first ask can reach the server with the slot held
+                // before, be refused, and leave the lighting to the next, three seconds on.
+                world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("base:light"), voxmar_engine::action::ActionTarget::Block { block: kiln, face: voxmar_engine::coords::Face::NegY });
             }
             // Quests are checked once a second of the server's time, which a loaded machine
             // stretches: the wait is by its clock.
@@ -3300,7 +3309,7 @@ fn end_workshop(world: &mut World, gate: &mut Gate, now: f32) {
     mouse(world, MouseButton::Right, false);
     world.resource_mut::<UiState>().inventory_open = false;
     let net = world.resource::<Net>();
-    for tool in ["stone_pickaxe", "wooden_hoe", "crafting_table", "stick", "bread", "fishing_rod"] {
+    for tool in ["stone_pickaxe", "wooden_hoe", "crafting_table", "stick", "bread", "fine_rod"] {
         net.command(&format!("clear {tool}"));
     }
     let feet = gate.feet;
@@ -6428,11 +6437,20 @@ fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 Err(format!("it barely shows: the view changed by {change:.1} levels"))
             };
             gate.check(&format!("weather: {kind}"), result);
-            let next = kinds.get(phase as usize).map_or_else(|| "weather clear 600".to_owned(), |(kind, ..)| format!("weather {kind} 120"));
-            world.resource::<Net>().command(&next);
-            gate.advance(now);
+            match kinds.get(phase as usize) {
+                Some((kind, ..)) => {
+                    world.resource::<Net>().command(&format!("weather {kind} 120"));
+                    gate.advance(now);
+                }
+                // The depths step brings its fog straight over the snow and clears both at
+                // its end: one clearing waited for, not two back to back.
+                None => {
+                    gate.weather_clear_owed = true;
+                    gate.next(Step::Depths, now);
+                }
+            }
         }
-        3 if shown.precipitation < 0.05 && shown.cover < 0.2 => {
+        3 if sky_clear(&shown) => {
             eased(gate);
             gate.next(Step::Depths, now);
         }
@@ -6505,6 +6523,7 @@ fn depths(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if !open_scene_pose(world, gate) {
                 if gate.server_in_phase() > 15.0 {
                     gate.check("depths: pose", Err(unsettled(world, gate)));
+                    clear_owed(world, gate);
                     gate.next(Step::Sky, now);
                 }
                 return;
@@ -6671,6 +6690,7 @@ fn depths(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if !open_scene_pose(world, gate) {
                 if gate.server_in_phase() > 15.0 {
                     gate.check("depths: back", Err(unsettled(world, gate)));
+                    clear_owed(world, gate);
                     gate.next(Step::Sky, now);
                 }
                 return;
@@ -6678,15 +6698,44 @@ fn depths(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.phase = 9;
             gate.advance(now);
         }
-        // The fog lifts before the sky is judged.
+        // The fog lifts before the sky is judged, and the weather step's snow has gone with it.
         _ => {
-            if shown.fog < 0.02 && shown.ground_fog < 0.02 {
+            let lifted = shown.fog < 0.02 && shown.ground_fog < 0.02;
+            let cleared = !gate.weather_clear_owed || sky_clear(&shown);
+            if lifted && cleared {
+                if gate.weather_clear_owed {
+                    gate.weather_clear_owed = false;
+                    eased(gate);
+                }
                 gate.next(Step::Sky, now);
             } else if gate.server_in_phase() > 20.0 {
-                gate.check("depths: clear", Err(format!("the fog did not lift: {}", shown.summary())));
+                if !lifted {
+                    gate.check("depths: clear", Err(format!("the fog did not lift: {}", shown.summary())));
+                }
+                if !cleared {
+                    gate.check("weather: clear", Err(format!("the sky did not clear: {}", shown.summary())));
+                }
+                if std::mem::take(&mut gate.weather_clear_owed) {
+                    eased(gate);
+                }
                 gate.next(Step::Sky, now);
             }
         }
+    }
+}
+
+/// Whether the sky has cleared: no rain or snow to speak of, and little cloud.
+fn sky_clear(shown: &voxmar_engine::weather::Weather) -> bool {
+    shown.precipitation < 0.05 && shown.cover < 0.2
+}
+
+/// A depths step ended before its last phase clears the sky for the weather step: cleared
+/// now, its clearing unjudged (a failure, as the step's own is).
+fn clear_owed(world: &mut World, gate: &mut Gate) {
+    if std::mem::take(&mut gate.weather_clear_owed) {
+        world.resource::<Net>().command("weather clear 600");
+        gate.check("weather: clear", Err("the depths step ended before the sky could clear after the snow".into()));
+        eased(gate);
     }
 }
 
@@ -9347,15 +9396,32 @@ fn combat_feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 Ok(format!("sounds asked for, the creature jolted, {bursts} bursts of sparks, the hand knocked back {:.3}, the view turned {:.2} degrees, the edges reddened", -hand.z, turned.length().to_degrees()))
             };
             gate.check("combat feel: blows", result);
-            // What the fights before showed: creatures coiling into strikes, and the fallen
-            // going up in smoke as they vanish.
+            // What the fights before showed: creatures planting and coiling deep into their
+            // strikes, standing out their recovery, and the fallen going up in smoke as they
+            // vanish.
             let (strikes, deaths, poofs) = (creatures.strikes, creatures.deaths, heard.poofs);
+            let reads = &creatures.reads;
+            let slid = reads.iter().find(|r| r.slid > r.planted);
+            let shallow = reads.iter().find(|r| r.coiled < STRIKE_COILED);
+            let stood: Vec<f32> = reads.iter().filter_map(|r| r.recovered).collect();
             let result = if strikes == 0 {
                 Err("no creature was seen to strike in the fights".into())
+            } else if let Some(read) = slid {
+                Err(format!("a creature slid {:.2} blocks as it wound up, where planted it would have moved {:.2} at most", read.slid, read.planted))
+            } else if let Some(read) = shallow {
+                Err(format!("a creature struck coiled only {:.2} deep ({STRIKE_COILED} wanted)", read.coiled))
+            } else if let Some(most) = stood.iter().copied().find(|&most| most < STRIKE_RECOVERED) {
+                Err(format!("a creature stood out its recovery showing only {most:.2} of its recover stance ({STRIKE_RECOVERED} wanted)"))
             } else if deaths > 0 && poofs == 0 {
                 Err(format!("{deaths} creatures died in view and none went up in smoke"))
             } else {
-                Ok(format!("{strikes} strikes snapped out of their wind-ups, {poofs} of {deaths} fallen gone in smoke"))
+                let deepest = reads.iter().map(|r| r.coiled).fold(0.0, f32::max);
+                let most = reads.iter().map(|r| r.slid).fold(0.0, f32::max);
+                Ok(format!(
+                    "{strikes} strikes snapped out of their wind-ups ({} read: coiled up to {deepest:.2} deep, slid at most {most:.2} blocks coiling; {} stood out their recovery), {poofs} of {deaths} fallen gone in smoke",
+                    reads.len(),
+                    stood.len()
+                ))
             };
             gate.check("combat feel: fights", result);
             gate.advance(now);
@@ -9367,6 +9433,13 @@ fn combat_feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         }
     }
 }
+
+/// How deep (of its coil in `combat_fx.ron`) a creature seen to strike must have coiled
+/// first, short of the whole for a server's word that comes a little early; and how much of
+/// its recover stance one that stood out its recovery must have shown, short of the whole
+/// for a slow machine's frames.
+const STRIKE_COILED: f32 = 0.6;
+const STRIKE_RECOVERED: f32 = 0.5;
 
 /// The deer the creature motion steps walk, an id the server never gives, and its species.
 const PUPPET: u32 = u32::MAX - 7;
@@ -9549,7 +9622,8 @@ fn bronze(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         if gate.server_now - gate.kiln_asked >= 3.0 {
             gate.kiln_asked = gate.server_now;
             let actions = world.resource::<crate::Actions>().0.clone();
-            world.resource::<Net>().propose(actions.expect("base:cook"), voxmar_engine::action::ActionTarget::Block { block: kiln, face: voxmar_engine::coords::Face::NegY });
+            // The copper just selected goes first, as for the kiln's lighting.
+            world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("base:cook"), voxmar_engine::action::ActionTarget::Block { block: kiln, face: voxmar_engine::coords::Face::NegY });
         }
     }
 }

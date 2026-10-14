@@ -91,6 +91,9 @@ pub enum Goal {
     /// Laid a recipe for this item (or `any`, or a `tag:TAG`) into the crafting grid this
     /// many times with the recipe viewer's Lay, taking from a store in the home.
     Laid(String, u32),
+    /// Set down this many blocks that water crops (a block, `any` or a `tag:TAG`, such as a
+    /// well) by tilled ground, near enough to keep it moist.
+    Watering(String, u32),
 }
 
 /// One way to finish a quest: every goal must hold.
@@ -245,6 +248,7 @@ impl Progress<'_> {
             Goal::Ate(food, n) => (tally("ate", food), *n),
             Goal::Felt(effect) => (tally("felt", effect).min(1), 1),
             Goal::Laid(item, n) => (tally("laid", item), *n),
+            Goal::Watering(block, n) => (tally("watering", block), *n),
         }
     }
 
@@ -318,6 +322,10 @@ impl QuestRegistry {
         for quest in &quests {
             if quest.tasks.is_empty() {
                 return Err(RegistryError(format!("quest {} has no task", quest.name)));
+            }
+            // A task is its parts, all to be done; one with none would be done at once.
+            if quest.tasks.iter().any(Vec::is_empty) {
+                return Err(RegistryError(format!("quest {} has a task with no part", quest.name)));
             }
             for name in quest.after.iter().flat_map(|a| a.split('|')) {
                 if !quests.iter().any(|q| q.name == name) {
@@ -432,6 +440,7 @@ impl QuestRegistry {
                     Goal::Ate(name, _) => find(name, &made)?,
                     Goal::Felt(name) => find(name, &effect)?,
                     Goal::Laid(name, _) => find(name, &made)?,
+                    Goal::Watering(name, _) => find(name, &made)?,
                 }
             }
             for given in &mut quest.rewards {
@@ -658,7 +667,7 @@ mod tests {
     fn wanderers_prayers_and_offerings_count_from_their_tallies() {
         let journal = Journal::default();
         let mut tallies = FxHashMap::default();
-        for (key, n) in [("met:base:pedlar", 2), ("met:base:smith", 1), ("met:base:hermit", 0), ("prayed:base:bark_skin", 3), ("offered:base:bone", 4), ("crafted:base:bone", 9), ("opened:base:nomad_treasure_chest", 2), ("ate:base:honey", 3), ("felt:base:smoky", 5), ("fertilised:base:compost", 5), ("laid:base:oak_planks", 2), ("lured:base:rabbit", 2)] {
+        for (key, n) in [("met:base:pedlar", 2), ("met:base:smith", 1), ("met:base:hermit", 0), ("prayed:base:bark_skin", 3), ("offered:base:bone", 4), ("crafted:base:bone", 9), ("opened:base:nomad_treasure_chest", 2), ("ate:base:honey", 3), ("felt:base:smoky", 5), ("fertilised:base:compost", 5), ("laid:base:oak_planks", 2), ("lured:base:rabbit", 2), ("watering:base:well", 1)] {
             tallies.insert(key.to_owned(), n);
         }
         let level = |_: &str| 1u8;
@@ -687,6 +696,8 @@ mod tests {
         assert_eq!(goal(Goal::Laid("base:bone".into(), 1)), (0, 1), "what was made is not what was laid");
         assert_eq!(goal(Goal::Lured("any".into(), 1)), (2, 1), "creatures drawn up close by their favourite food");
         assert_eq!(goal(Goal::Lured("base:junglefowl".into(), 1)), (0, 1), "a rabbit lured is no junglefowl");
+        assert_eq!(goal(Goal::Watering("base:well".into(), 1)), (1, 1), "a well set by the field");
+        assert_eq!(goal(Goal::Watering("base:bone".into(), 1)), (0, 1));
         assert_eq!(goal(Goal::Felt("base:heartwood".into())), (0, 1));
     }
 
@@ -849,5 +860,14 @@ mod tests {
     fn a_quest_after_one_that_does_not_exist_is_refused() {
         let source = r#"(quests: [(name: "a", age: "nomad", branch: "main", title: "", why: "", tasks: [[Home]], after: ["nope"])])"#;
         assert!(QuestRegistry::new(vec![QuestRegistry::read("base", source).unwrap()]).is_err());
+    }
+
+    #[test]
+    fn a_quest_with_an_empty_task_is_refused() {
+        let quest = |tasks: &str| QuestRegistry::new(vec![QuestRegistry::read("base", &format!(r#"(quests: [(name: "a", age: "nomad", branch: "main", title: "", why: "", tasks: {tasks})])"#)).unwrap()]).err().map(|e| e.0);
+        assert_eq!(quest("[]"), Some("quest base:a has no task".into()));
+        assert_eq!(quest("[[Home], []]"), Some("quest base:a has a task with no part".into()));
+        assert_eq!(quest("[[Home, Craft(\"torch\", 1)]]"), None, "one task of two parts");
+        assert!(QuestRegistry::read("base", r#"(quests: [(name: "a", age: "nomad", branch: "main", title: "", why: "", tasks: [[Juggle(3)]])])"#).is_err(), "an unknown part");
     }
 }
