@@ -316,6 +316,13 @@ no grazing); tests `a_hungry_kept_animal_eats_its_food_from_a_trough`,
 `a_kept_grazer_left_alone_feeds_itself_at_the_trough`. The gate's Tame step sets a trough
 and opens it ("trough: opens", shot `trough`).
 
+A kept animal also needs water within its leash of home, and that need reads one tag:
+any block tagged `drinking_water` (water itself, a well, a feed trough) meets it (server
+`condition.rs` `water_near`; the engine's `condition::DRINK`). So a pen away from the river
+is watered by the trough that feeds it, a Construction 4 piece any age can make, and a mod's
+water station is a tag on its block. Loading refuses creatures when no block carries
+`drinking_water` (`check_drink`). Test: `a_pen_drinks_from_water_a_well_or_a_trough`.
+
 ## Quest hooks (written, in base/quests.ron)
 
 `Built("home_camp", 1)` and the other steps are real goals (a step is tallied as
