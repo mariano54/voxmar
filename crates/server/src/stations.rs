@@ -192,7 +192,13 @@ impl Server {
         }
         self.grant_xp(agent, work.skill, work.xp * made as f32);
         if let Some(kind) = &work.counts {
-            self.tally(agent, kind, &self.content.blocks.def(work.output).name.clone(), made as u32);
+            let output = self.content.blocks.def(work.output).name.clone();
+            self.tally(agent, kind, &output, made as u32);
+            // Cooked at this station too, by its empty block's name, for a quest's `CookAt`.
+            if kind == "cooked" {
+                let at = self.content.blocks.def(station.empty).name.rsplit(':').next().unwrap_or_default().to_owned();
+                self.tally(agent, &format!("cooked_at:{at}"), &output, made as u32);
+            }
         }
         let words = Words::key("station.took").with("count", Words::text(made)).with("item", Words::Block(self.content.blocks.def(work.output).name.clone()));
         self.tell_station(agent, words);
@@ -495,6 +501,7 @@ mod tests {
         server.use_station(1, AT);
         assert_eq!(carried(&server, "base:fired_clay"), 16, "none cracked");
         assert_eq!(server.players[&1].tallies.get("cooked:base:fired_clay"), Some(&16), "Fire the Clay and A Kiln Load count it");
+        assert_eq!(server.players[&1].tallies.get("cooked_at:earth_clamp:base:fired_clay"), Some(&16), "An Earth Clamp counts it as fired in the clamp");
 
         hold(&mut server, "base:oak_log", 16);
         server.use_station(1, AT);
