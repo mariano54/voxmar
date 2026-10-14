@@ -271,6 +271,7 @@
     "item.light": "Gives light",
     "item.alchemy": "Alchemy: {property}",
     "item.plants": "Plants {crop} · {skill} {level}",
+    "item.reaps": "Reaps ripe crops in a {side}×{side} patch",
     "item.weapon": "{class} · {style} · {skill} {level}",
     "item.weapon_hit": "Max hit {hit} · a blow every {seconds} s",
     "item.weapon_reach": "Reaches {reach} blocks",

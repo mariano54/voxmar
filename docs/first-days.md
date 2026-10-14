@@ -218,6 +218,7 @@ Mining time is the block's hardness over the tool's speed (tools.ron), so a tool
 | Clay (0.6) | 0.6 s | Stone shovel (Dig In, about 100 s) | 1 cobblestone, 2 sticks | x4 | Copper shovel, x6 |
 | Coal ore (3.0) | none | Wooden pickaxe (13 s) | as above | needs a pickaxe | Stone pickaxe, x2 more |
 | Twine (wild wheat) | 3 wheat for 2; wild wheat gives wheat 3 times in 10, a tuft in about 400 columns | Any knife on tall grass (Oct 14) | a plank or cobblestone over a stick | 10 twine (Twine and Thong) from about 50 tufts to about 40 cuts with a stone knife | Sown wheat in the Farm age |
+| Wheat (a sown field) | a cut each | Stone hoe reaps 3×3 (Oct 14) | 1 cobblestone, 2 sticks | up to x9 cuts | Iron hoe, 5×5 |
 | Meat (hunting) | max hit 1 | Stone axe or sword (44 s) | 3 or 2 cobblestone, sticks | x3 max hit | Copper sword, max hit 5 |
 | Charcoal (a log in the fire) | 2 s each | none: coal ore instead (Charcoal's other route) | | | The Crucible pays 16 |
 

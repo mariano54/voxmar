@@ -2795,6 +2795,39 @@ fn a_knife_cuts_twine_from_tall_grass() {
     assert!(found > 0, "sixty tall grasses cut with a stone knife gave no twine");
 }
 
+/// A stone hoe cutting a ripe wheat in a patch of nine reaps all nine, each giving its
+/// harvest; a wooden hoe cuts only the one.
+#[test]
+fn a_stone_hoe_reaps_the_ripe_crops_about_one() {
+    let mut client = Client::join();
+    let centre = client.position.floor().as_ivec3() + IVec3::new(2, 0, 0);
+    let (ripe, wheat, seeds) = (client.content.blocks.expect("base:wheat_crop"), client.content.blocks.expect("base:wheat"), client.content.blocks.expect("base:wheat_seeds"));
+    let cells: Vec<IVec3> = (-1..=1).flat_map(|dx| (-1..=1).map(move |dz| centre + IVec3::new(dx, 0, dz))).collect();
+    let got = |c: &Client| -> u32 {
+        let lying: u32 = c.items.values().filter(|i| i.stack.item == wheat || i.stack.item == seeds).map(|i| i.stack.count as u32).sum();
+        lying + c.inventory.slots.iter().flatten().filter(|s| s.item == wheat || s.item == seeds).map(|s| s.count as u32).sum::<u32>()
+    };
+    for (hoe, reaped) in [("wooden_hoe", 1), ("stone_hoe", 9)] {
+        client.ok("/clear");
+        client.ok(&format!("/give {hoe} 1"));
+        let item = client.content.blocks.expect(&format!("base:{hoe}"));
+        client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == item));
+        client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+        client.ok(&format!("/fill {} {} {} {} {} {} farmland", centre.x - 1, centre.y - 1, centre.z - 1, centre.x + 1, centre.y - 1, centre.z + 1));
+        client.ok(&format!("/fill {} {} {} {} {} {} wheat_crop", centre.x - 1, centre.y, centre.z - 1, centre.x + 1, centre.y, centre.z + 1));
+        client.pump_until(|c| cells.iter().all(|&cell| c.world.block(cell) == Some(ripe)));
+        client.propose("core:mine", ActionTarget::Block { block: centre, face: Face::PosY });
+        client.pump_until(|c| c.world.block(centre) == Some(BlockId::AIR));
+        // The rest go in the same tick as the one cut.
+        client.after_server_ticks(2);
+        let gone = cells.iter().filter(|&&cell| client.world.block(cell) == Some(BlockId::AIR)).count();
+        assert_eq!(gone, reaped, "a {hoe} cut {gone} of the nine ripe wheat");
+        // Each foraged (an unsown ripe wheat): at least a seed from every one.
+        client.after_server_ticks(4);
+        assert!(got(&client) >= reaped as u32, "{reaped} wheat cut with a {hoe} gave {} seeds and wheat", got(&client));
+    }
+}
+
 // Seed 3 has a village at (368, 135, 784), 421 blocks from spawn (432, 134, 368).
 // Keeping the locate radius small avoids planning hundreds of squares on the server.
 const VILLAGE_SEED: u64 = 3;
