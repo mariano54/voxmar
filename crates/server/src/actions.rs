@@ -387,6 +387,7 @@ impl Server {
                     player.teleport(spawn);
                 }
                 (Effect::Craft, ActionTarget::Slot(times)) => self.craft(agent, times == 0),
+                (Effect::LayRecipe, ActionTarget::Recipe { first, ways, count }) => self.lay_recipe(agent, first as usize, ways as usize, count),
                 (Effect::Fish, ActionTarget::Block { block, .. }) => self.fish(agent, block),
                 (Effect::Till, ActionTarget::Block { block, .. }) => {
                     if let Some(farmland) = self.content.blocks.id("base:farmland") {
@@ -478,20 +479,9 @@ impl Server {
     /// recipe's skill level is met, and for a recipe bigger than two by two, at a crafting
     /// table within reach. Experience comes for every one made.
     fn craft(&mut self, agent: PlayerId, all: bool) {
-        let (recipes, skills) = (self.content.recipes.clone(), self.content.skills.clone());
-        let at_table = self.at_table(agent);
-        let (effects, blocks) = (self.content.effects.clone(), self.content.blocks.clone());
+        let recipes = self.content.recipes.clone();
+        let allowed = self.allowed_recipes(agent);
         let player = self.players.get_mut(&agent).unwrap();
-        // Each skill's level, own and boosted, taken before the grid changes.
-        let levels: rustc_hash::FxHashMap<SkillId, (u8, u8)> = skills
-            .ids()
-            .map(|skill| (skill, (skills.level(player.skills.xp(skill)), voxmar_engine::level::check_level(&skills, &effects, &player.skills, &player.vitals.effects, skill))))
-            .collect();
-        let inventory = player.inventory.clone();
-        let allowed = |r: &voxmar_engine::craft::Recipe| {
-            (at_table || !r.needs_table())
-                && r.skill.is_none_or(|s| levels.get(&s).is_some_and(|&(own, boosted)| voxmar_engine::level::meets_recipe(r, own, boosted, &inventory, &blocks)))
-        };
         // Crafting all goes on only while the grid still makes the same recipe: experience
         // and tallies are this recipe's, once for each one made.
         let first = recipes.find(&player.inventory.grid()).filter(|r| allowed(r));

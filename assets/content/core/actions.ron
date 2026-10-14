@@ -21,6 +21,7 @@
         (name: "quick_move", duration: Instant, requires: [Alive], effects: [QuickMove]),
         // The crafting grid: once onto the pointer, or (shift) as many as fit.
         (name: "craft", duration: Instant, requires: [Alive], effects: [Craft]),
+        (name: "lay", duration: Instant, requires: [Alive], effects: [LayRecipe]),
         (name: "stow", duration: Instant, effects: [StowCursor]),
         // Throwing items from the hand (Q, or Ctrl+Q for the whole stack), or the stack on
         // the pointer by clicking outside the inventory.
