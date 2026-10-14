@@ -8408,8 +8408,10 @@ fn combat_feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 /// The deer the creature motion steps walk, an id the server never gives, and its species.
 const PUPPET: u32 = u32::MAX - 7;
 const PUPPET_SPECIES: &str = "red_deer";
-/// Frames it walks (and runs, and turns) for, after `PUPPET_WARM` to get going: counted in
-/// frames, so a slow machine draws as many strides to judge.
+/// Frames it walks (and runs, and turns) for, after `PUPPET_WARM` to get going, each frame
+/// `PUPPET_STEP` seconds of its time whatever the frame took (`Creatures::watch_step`), so a
+/// slow or loaded machine judges the same poses a fast one does.
+const PUPPET_STEP: f32 = 1.0 / 60.0;
 const PUPPET_FRAMES: u32 = 72;
 const PUPPET_WARM: u32 = 12;
 /// The most a foot that is down may slide, for each block the body goes.
@@ -8428,7 +8430,7 @@ fn creature_motion(world: &mut World, gate: &mut Gate, stage: u32) {
     let def = &launch.content.creatures.get(species).def;
     let (walk, run, turn, health) = (def.movement.walk, def.movement.run, def.movement.turn.to_radians(), def.health);
     let most_turn = turn * world.resource::<crate::creature_motion::Motion>().turn.share;
-    let dt = world.resource::<Time>().delta_secs();
+    let dt = PUPPET_STEP;
     let now = world.resource::<Time>().elapsed_secs();
     let facing = |d: Vec3| (-d.x).atan2(-d.z);
     let view = |at: Vec3, velocity: Vec3, yaw: f32| voxmar_protocol::CreatureView {
@@ -8476,6 +8478,7 @@ fn creature_motion(world: &mut World, gate: &mut Gate, stage: u32) {
             let mut creatures = world.resource_mut::<Creatures>();
             creatures.receive(vec![view(start, Vec3::ZERO, facing(across))], vec![]);
             creatures.watch = Some(PUPPET);
+            creatures.watch_step = Some(PUPPET_STEP);
             gate.advance(now);
         }
         1 => {
@@ -8531,6 +8534,7 @@ fn creature_motion(world: &mut World, gate: &mut Gate, stage: u32) {
                 gate.check("creature motion: turn", result);
                 creatures.receive(vec![], vec![voxmar_protocol::CreatureGone { id: PUPPET, died: false }]);
                 creatures.watch = None;
+                creatures.watch_step = None;
                 gate.next(Step::Cook, now);
             }
         }

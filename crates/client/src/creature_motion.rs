@@ -259,9 +259,10 @@ pub fn gait_at(gaits: &Gaits, speed: f32, walk: f32, reach: f32) -> (Gait, f32) 
 }
 
 /// Blocks the body goes in one whole stride: each foot is down for `duty` of it and moves
-/// back under the body the width of its swing (`2 · leg · sin swing`) while it is.
-pub fn stride_length(leg: f32, gait: &Gait) -> f32 {
-    2.0 * leg * gait.swing.sin() / gait.duty.max(0.05)
+/// back under the body `2 · travel` while it is (`travel` is `leg · sin swing`, or less for
+/// a body whose shortest leg reaches less).
+pub fn stride_length(travel: f32, gait: &Gait) -> f32 {
+    2.0 * travel / gait.duty.max(0.05)
 }
 
 /// A leg `at` (0 ..= 1) of the way through its stride: its turn forward (radians, positive
@@ -370,7 +371,7 @@ mod tests {
             for (walk, speed) in [(1.5, 0.6), (1.5, 1.5), (1.5, 2.4), (1.5, 6.0), (2.4, 9.0)] {
                 for hip in [0.25, 0.9] {
                     let (gait, _) = gait_at(&gaits, speed, walk, 1.0);
-                    let length = stride_length(hip, &gait);
+                    let length = stride_length(hip * gait.swing.sin(), &gait);
                     // The body's way along and the foot's place on the ground, over a stance.
                     let foot = |at: f32| {
                         let body = at * length;
@@ -398,7 +399,7 @@ mod tests {
         let gaits = motion.gaits("nobody", Style::Trotter);
         let cadence = |speed: f32| {
             let (gait, _) = gait_at(&gaits, speed, 2.0, 1.0);
-            speed / stride_length(0.5, &gait)
+            speed / stride_length(0.5 * gait.swing.sin(), &gait)
         };
         assert!(cadence(1.0) < cadence(2.0) && cadence(2.0) < cadence(7.0), "{} {} {}", cadence(1.0), cadence(2.0), cadence(7.0));
         let (still, _) = gait_at(&gaits, 0.0, 2.0, 1.0);
