@@ -697,17 +697,10 @@ impl Server {
     /// highest step of each chain it has reached (the ladder, the rooms) and what the next
     /// one lacks, judged as if the player stood in it.
     fn home_command(&self, id: Source) -> Reply {
-        let player = self.players.get(&Self::me(id)?).ok_or_else(|| Words::key("command.error.nobody_to_give_to"))?;
+        let me = Self::me(id)?;
+        let player = self.players.get(&me).ok_or_else(|| Words::key("command.error.nobody_to_give_to"))?;
         let Some(home) = player.home.or(player.bed) else { return Err(Words::key("home.none")) };
         let anchor = home.floor().as_ivec3();
-        let survey = self.survey_around(anchor, Some(Self::me(id)?));
-        let calm = voxmar_engine::weather::Weather::NONE;
-        let situation = voxmar_engine::effect::Situation { felt: 0.0, warmed: false, outdoors: self.open_sky(anchor + IVec3::Y * 2), weather: &calm, biome: "", biome_tags: &[], home: Some(&survey), done: &player.quests_done, held: &[], near: &[] };
-        let effects = &self.content.effects;
-        let name = |effect| {
-            let def = effects.get(effect);
-            Words::Own(voxmar_engine::lang::def_key("effect", &def.name), def.title.clone())
-        };
         let away = player.position.distance(home).round();
         let mut lines = vec![Words::key("home.at").with("x", Words::text(anchor.x)).with("y", Words::text(anchor.y)).with("z", Words::text(anchor.z)).with("away", Words::text(away))];
         // Out of the loaded world its blocks read as nothing: say so rather than misjudge it.
@@ -715,15 +708,33 @@ impl Server {
             lines.push(Words::key("home.far"));
             return Ok(Words::Lines(lines));
         }
-        for chain in effects.home_progress(&situation) {
-            lines.push(match (chain.reached, chain.next) {
-                (Some(reached), Some((next, lacks))) => Words::key("home.step").with("step", name(reached)).with("next", name(next)).with("needs", home_needs(&lacks)),
-                (Some(reached), None) => Words::key("home.step_last").with("step", name(reached)),
-                (None, Some((next, lacks))) => Words::key("home.step_first").with("next", name(next)).with("needs", home_needs(&lacks)),
-                (None, None) => continue,
-            });
-        }
+        lines.extend(self.home_steps(me, anchor));
         Ok(Words::Lines(lines))
+    }
+
+    /// For each chain of home steps (the ladder, the rooms), the highest that player `id`'s
+    /// home at `anchor` has reached and what the next one lacks, judged as if they stood in
+    /// it: what `/home` and a right click on their lit hearth say.
+    pub(crate) fn home_steps(&self, id: PlayerId, anchor: IVec3) -> Vec<Words> {
+        let Some(player) = self.players.get(&id) else { return Vec::new() };
+        let survey = self.survey_around(anchor, Some(id));
+        let calm = voxmar_engine::weather::Weather::NONE;
+        let situation = voxmar_engine::effect::Situation { felt: 0.0, warmed: false, outdoors: self.open_sky(anchor + IVec3::Y * 2), weather: &calm, biome: "", biome_tags: &[], home: Some(&survey), done: &player.quests_done, held: &[], near: &[] };
+        let effects = &self.content.effects;
+        let name = |effect| {
+            let def = effects.get(effect);
+            Words::Own(voxmar_engine::lang::def_key("effect", &def.name), def.title.clone())
+        };
+        effects
+            .home_progress(&situation)
+            .into_iter()
+            .filter_map(|chain| match (chain.reached, chain.next) {
+                (Some(reached), Some((next, lacks))) => Some(Words::key("home.step").with("step", name(reached)).with("next", name(next)).with("needs", home_needs(&lacks))),
+                (Some(reached), None) => Some(Words::key("home.step_last").with("step", name(reached))),
+                (None, Some((next, lacks))) => Some(Words::key("home.step_first").with("next", name(next)).with("needs", home_needs(&lacks))),
+                (None, None) => None,
+            })
+            .collect()
     }
 
     fn biome(&self, id: Source) -> Words {

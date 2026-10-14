@@ -317,6 +317,7 @@
     "farming.too_dark": "ここは暗すぎて{crop}は育たない。",
     "farming.needs_water": "{crop}は近くに水がないと育たない。",
     "multiblock.home": "{structure}に火が灯った。ここが家になり、倒れてもここで目覚める。",
+    "multiblock.home_again": "あなたの家の{structure}。",
     "multiblock.lit": "{structure}に火が灯った。",
     "machine.put": "{item}を{count}個入れた。",
     "machine.took": "{items}を取り出した。",
