@@ -3181,3 +3181,79 @@ pub(crate) mod tick_cost_tests {
         }
     }
 }
+
+/// The gate's boss step: the Rootmother summoned on the creatures' pad (stone underfoot,
+/// walled two high, a campfire in its middle), left to wander while the player is in
+/// creative, then the player put a block before the pad's middle in survival. She must wind
+/// up a told move within the step's 10 server seconds.
+#[cfg(test)]
+mod boss_tests {
+    use super::*;
+
+    /// The pad, high over spawn in empty columns; returns its middle at feet level.
+    fn gate_pad(server: &mut Server) -> IVec3 {
+        let pad = server.spawn.floor().as_ivec3() + IVec3::Y * 40;
+        let (from, to) = (ColumnPos::of_block(pad - IVec3::splat(8)), ColumnPos::of_block(pad + IVec3::splat(8)));
+        for z in from.0.y..=to.0.y {
+            for x in from.0.x..=to.0.x {
+                server.world.insert(ColumnPos::new(x, z), std::sync::Arc::new(voxmar_engine::world::Column::default()));
+            }
+        }
+        let stone = server.content.blocks.expect("base:stone");
+        for z in -6i32..=6 {
+            for x in -6i32..=6 {
+                for y in -1..=1 {
+                    if y == -1 || x.abs() == 6 || z.abs() == 6 {
+                        server.world.set_block(pad + IVec3::new(x, y, z), stone);
+                    }
+                }
+            }
+        }
+        server.world.set_block(pad, server.content.blocks.expect("base:campfire"));
+        pad
+    }
+
+    /// Seconds until she winds up a told move at the player, if she does within 10; after
+    /// `wander` seconds about the pad with the player in creative. `run` sets the tick
+    /// (and so her seed).
+    fn told(run: u64, wander: u64) -> Option<f32> {
+        let mut server = crate::test_server();
+        server.tick = 1000 + run * 7919;
+        let pad = gate_pad(&mut server);
+        let (_client, connection) = voxmar_protocol::local_pair();
+        let mut player = crate::player::Player::new(1, connection, pad.as_vec3() + Vec3::new(0.5, 0.0, 4.5), 2, server.tick, server.survival.max_health, &server.config.limits);
+        (player.joined, player.allow_flight) = (true, true);
+        server.players.insert(1, player);
+        let species = server.content.creatures.find("base:rootmother").expect("the Rootmother");
+        // Where `/summon rootmother 1` at the pad's front puts her.
+        let id = server.spawn_creature(species, pad.as_vec3() + Vec3::new(-1.3, 0.0, 1.5), server.tick).expect("room");
+        for _ in 0..wander * TICKS_PER_SECOND as u64 {
+            server.tick += 1;
+            server.tick_creatures();
+        }
+        let player = server.players.get_mut(&1).unwrap();
+        (player.allow_flight, player.position) = (false, pad.as_vec3() + Vec3::new(0.5, 0.0, -1.0));
+        (0..10 * TICKS_PER_SECOND as u64)
+            .find(|_| {
+                server.tick += 1;
+                server.tick_creatures();
+                server.players.get_mut(&1).unwrap().health = traits::Health::full(server.survival.max_health);
+                let tell = server.creatures.live[&id].tell();
+                tell != 0 && tell != voxmar_protocol::REARING
+            })
+            .map(|t| t as f32 / TICKS_PER_SECOND as f32)
+    }
+
+    /// Runs that failed. Before: on main, 12 runs of 48 left her by the pad's wall,
+    /// hopping at it with her head to it (she could not turn without sweeping it into the
+    /// wall), never closing on the player; as the gate saw one run in six ("Idle, moving
+    /// 0.0", standing 0.2 to 0.6 blocks up). With the movement fixes, one of 48 had her
+    /// pressed against the player, inside her moves' reach from her edge, where she struck
+    /// with a plain blow that has no tell.
+    #[test]
+    fn the_rootmother_on_the_gate_pad_always_winds_up_a_told_move() {
+        for (run, wander) in [(1, 9), (7, 15), (11, 19), (13, 8), (41, 10), (0, 8)] {
+            assert!(told(run, wander).is_some(), "run {run}: no told move of hers wound up in 10 s");
+        }
+    }
+}
