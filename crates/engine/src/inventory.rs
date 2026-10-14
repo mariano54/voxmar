@@ -8,8 +8,10 @@
 //! [`Inventory::stow_cursor`] when the screen closes. The crafting grid is nine more slots
 //! ([`CRAFT`]; two by two of them away from a crafting table, see `craft::SMALL`), and [`Inventory::craft`] turns what it holds into a recipe's
 //! output. Six more slots ([`WORN`]) hold the armour worn and a shield, each only the piece
-//! made for it (`combat::Slot`). The client works out which moves a gesture means; the server checks and
-//! applies each the same way.
+//! made for it (`combat::Slot`). While a store is open (a chest, a cupboard: `machine::Role::Bin`),
+//! its slots follow ([`STORE`]), a copy of what it holds that the server keeps in step with it.
+//! The client works out which moves a gesture means; the server checks and applies each the
+//! same way.
 
 use serde::{Deserialize, Serialize};
 
@@ -68,8 +70,26 @@ pub const CRAFT: usize = CURSOR + 1;
 /// shield (`combat::Slot`).
 pub const WORN: usize = CRAFT + GRID;
 pub const WORN_SLOTS: usize = 6;
-/// The last slot number there is.
+/// The last slot number of the player's own.
 pub const LAST: usize = WORN + WORN_SLOTS - 1;
+/// The first slot of an open store, after the player's own; a store has at most
+/// [`STORE_SLOTS`].
+pub const STORE: usize = LAST + 1;
+pub const STORE_SLOTS: usize = 54;
+
+/// What each store takes, by its block id: `None` (or no entry), anything; else only these
+/// items, sorted (`machines.ron`'s `holds`: a jar what is edible).
+static STORE_HOLDS: std::sync::RwLock<Vec<Option<Vec<BlockId>>>> = std::sync::RwLock::new(Vec::new());
+
+/// Sets what each store takes, by block id.
+pub fn set_store_holds(holds: Vec<Option<Vec<BlockId>>>) {
+    *STORE_HOLDS.write().unwrap_or_else(|e| e.into_inner()) = holds;
+}
+
+/// Whether the store `store` (a block) takes `item`.
+pub fn store_takes(store: BlockId, item: BlockId) -> bool {
+    STORE_HOLDS.read().unwrap_or_else(|e| e.into_inner()).get(store.0 as usize).and_then(Option::as_ref).is_none_or(|holds| holds.binary_search(&item).is_ok())
+}
 
 /// Each item's worn slot, by block id (`WORN` + it), as content's armour sets say.
 static WORN_AT: std::sync::RwLock<Vec<Option<u8>>> = std::sync::RwLock::new(Vec::new());
@@ -122,11 +142,22 @@ pub struct Inventory {
     /// pouch (see [`pouch_for`]). It stays with the player; a pouch is needed to put more in.
     #[serde(default)]
     pub pouched: Vec<(BlockId, u16)>,
+    /// The store open beside the inventory, slots [`STORE`] on, if one is.
+    #[serde(default)]
+    pub store: Option<Store>,
+}
+
+/// An open store, as the player sees it: which block it is (what it takes) and what it
+/// holds. Never the player's: it is not saved with them, and it closes with the screen.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Store {
+    pub block: BlockId,
+    pub slots: Vec<Option<ItemStack>>,
 }
 
 impl Default for Inventory {
     fn default() -> Self {
-        Self { slots: vec![None; SLOTS], cursor: None, craft: [None; GRID], worn: [None; WORN_SLOTS], pouched: Vec::new() }
+        Self { slots: vec![None; SLOTS], cursor: None, craft: [None; GRID], worn: [None; WORN_SLOTS], pouched: Vec::new(), store: None }
     }
 }
 
@@ -262,6 +293,7 @@ impl Inventory {
             CURSOR => self.cursor,
             CRAFT..WORN => self.craft[slot - CRAFT],
             WORN..=LAST => self.worn[slot - WORN],
+            STORE.. => self.store.as_ref()?.slots.get(slot - STORE).copied().flatten(),
             _ => self.slots.get(slot).copied().flatten(),
         }
     }
@@ -272,8 +304,29 @@ impl Inventory {
             CURSOR => self.cursor = stack,
             CRAFT..WORN => self.craft[slot - CRAFT] = stack,
             WORN..=LAST => self.worn[slot - WORN] = stack,
+            STORE.. => {
+                if let Some(at) = self.store.as_mut().and_then(|store| store.slots.get_mut(slot - STORE)) {
+                    *at = stack;
+                }
+            }
             _ => self.slots[slot] = stack,
         }
+    }
+
+    /// The last slot number there is now: the player's own, and an open store's.
+    pub fn last(&self) -> usize {
+        LAST + self.store.as_ref().map_or(0, |store| store.slots.len())
+    }
+
+    /// Whether `stack` may be in `slot`: [`fits`], and in a store only what it takes.
+    fn may_hold(&self, slot: usize, stack: Option<ItemStack>, worn: &impl Fn(BlockId) -> Option<usize>) -> bool {
+        let store = |item: BlockId| self.store.as_ref().is_some_and(|store| store_takes(store.block, item));
+        fits(slot, stack, worn) && (slot < STORE || stack.is_none_or(|s| store(s.item)))
+    }
+
+    /// Closes the open store, if one is. Returns whether one was.
+    pub fn close_store(&mut self) -> bool {
+        self.store.take().is_some()
     }
 
     /// What the crafting grid holds, item by item.
@@ -328,14 +381,14 @@ impl Inventory {
 
     /// [`Inventory::move_items`], with `worn` saying where each item is worn.
     fn move_worn(&mut self, from: usize, to: usize, count: u8, worn: &impl Fn(BlockId) -> Option<usize>) -> bool {
-        if from == to || from > LAST || to > LAST || count == 0 {
+        if from == to || from > self.last() || to > self.last() || count == 0 {
             return false;
         }
         let Some(source) = self.get(from) else { return false };
         match self.get(to) {
             None => {
                 let moved = count.min(source.count).min(holds(to, source.item));
-                if !fits(to, Some(ItemStack { count: moved, ..source }), worn) {
+                if !self.may_hold(to, Some(ItemStack { count: moved, ..source }), worn) {
                     return false;
                 }
                 self.set(to, Some(ItemStack { count: moved, ..source }));
@@ -349,7 +402,7 @@ impl Inventory {
                 self.set(to, Some(ItemStack { count: target.count + moved, ..target }));
                 self.set(from, Some(ItemStack { count: source.count - moved, ..source }));
             }
-            Some(target) if count >= source.count && fits(to, Some(source), worn) && fits(from, Some(target), worn) => {
+            Some(target) if count >= source.count && self.may_hold(to, Some(source), worn) && self.may_hold(from, Some(target), worn) => {
                 self.set(to, Some(source));
                 self.set(from, Some(target));
             }
@@ -359,14 +412,38 @@ impl Inventory {
     }
 
     /// Shift-click: moves a stack from the hotbar into the rest of the inventory or back,
-    /// topping up stacks of the same item first, then into the first empty slots. Returns
-    /// whether anything moved.
+    /// topping up stacks of the same item first, then into the first empty slots; while a
+    /// store is open, between it and the pack. Returns whether anything moved.
     pub fn quick_move(&mut self, slot: usize) -> bool {
         self.quick_move_worn(slot, &worn_slot)
     }
 
     /// [`Inventory::quick_move`], with `worn` saying where each item is worn.
     fn quick_move_worn(&mut self, slot: usize, worn: &impl Fn(BlockId) -> Option<usize>) -> bool {
+        // An open store's stacks go into the pack, and the pack's into the store.
+        if let Some(stack) = self.get(slot).filter(|_| self.store.is_some() && (slot < SLOTS || slot >= STORE)) {
+            if slot >= STORE {
+                let left = self.add(stack.item, stack.count);
+                self.set(slot, Some(ItemStack { count: left, ..stack }));
+                return left != stack.count;
+            }
+            let Some(store) = self.store.as_mut().filter(|store| store_takes(store.block, stack.item)) else { return false };
+            let mut left = stack.count;
+            for target in store.slots.iter_mut().flatten().filter(|t| t.item == stack.item) {
+                let moved = left.min(max_stack(stack.item).saturating_sub(target.count));
+                target.count += moved;
+                left -= moved;
+            }
+            for target in store.slots.iter_mut().filter(|t| t.is_none()) {
+                if left == 0 {
+                    break;
+                }
+                *target = Some(ItemStack { count: left, ..stack });
+                left = 0;
+            }
+            self.set(slot, Some(ItemStack { count: left, ..stack }));
+            return left != stack.count;
+        }
         // Armour goes on, into its worn slot, if that is empty.
         if let Some(stack) = self.get(slot).filter(|_| slot < SLOTS) {
             if let Some(at) = worn(stack.item).filter(|&at| self.worn[at].is_none()) {
@@ -629,5 +706,33 @@ mod tests {
         assert_eq!(inv.get(WORN), None);
         inv.worn[0] = stack(HELM, 1);
         assert_eq!(inv.clear(|i| i == HELM), 4);
+    }
+
+    /// An open store's slots follow the player's: clicks move stacks in and out, shift
+    /// click sends them between it and the pack, nothing past its last slot is there,
+    /// and closing it leaves the player what they took and no more.
+    #[test]
+    fn an_open_store_is_slots_after_the_players_own() {
+        // A block no content has, so it takes anything.
+        let chest = BlockId(u16::MAX);
+        let mut inv = Inventory::default();
+        inv.slots[0] = stack(DIRT, 10);
+        inv.slots[12] = stack(SAND, 64);
+        assert!(!inv.move_items(0, STORE, 1), "no store open, no store slots");
+        inv.store = Some(Store { block: chest, slots: vec![None, stack(SAND, 60), None] });
+        assert_eq!(inv.last(), LAST + 3);
+        assert!(inv.move_items(0, STORE, 4));
+        assert_eq!((inv.get(0), inv.get(STORE)), (stack(DIRT, 6), stack(DIRT, 4)));
+        assert!(!inv.move_items(0, STORE + 3, 1), "past its last slot");
+        // Shift click from the pack tops up its stack of sand, then takes an empty slot.
+        assert!(inv.quick_move(12));
+        assert_eq!((inv.get(STORE + 1), inv.get(STORE + 2), inv.get(12)), (stack(SAND, 64), stack(SAND, 60), None));
+        // And from the store, into the pack.
+        assert!(inv.quick_move(STORE));
+        assert_eq!((inv.get(STORE), inv.get(0)), (None, stack(DIRT, 10)));
+        assert!(inv.move_items(STORE + 2, CURSOR, 60));
+        assert!(inv.close_store() && !inv.close_store());
+        assert_eq!((inv.get(STORE + 1), inv.last()), (None, LAST));
+        assert_eq!(inv.cursor, stack(SAND, 60), "what was taken stays the player's");
     }
 }
