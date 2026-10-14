@@ -1801,7 +1801,10 @@ fn prayers_drain_ward_off_blows_and_fill_at_an_altar() {
     // Off; at an altar they come back in full, and a bone in hand is offered for Magic
     // experience (16 a bone).
     client.connection.send(ClientMessage::Pray { prayer: ward, on: false });
-    client.ok("/creatures kill");
+    // The bear sent off, not killed: its loot would fall in a second or two of the server's
+    // and come into our hands whenever it lands, on a busy machine after the `/clear` below,
+    // and what we carry would never come to the 36 given.
+    client.ok("/creatures disperse");
     let altar = client.position.floor().as_ivec3() + IVec3::new(0, 0, 2);
     client.ok("/setblock ~ ~ ~2 stone_altar");
     client.ok("/give bone 1");
