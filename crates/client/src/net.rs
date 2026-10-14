@@ -47,6 +47,8 @@ pub struct Net {
     /// which saves the world.
     server: Option<ServerHandle>,
     input_timer: f32,
+    /// Actions proposed since `sfx` last took them, to be heard as they are done.
+    proposed: std::sync::Mutex<Vec<ActionId>>,
 }
 
 impl Net {
@@ -56,7 +58,7 @@ impl Net {
         let tokens = std::env::var("VOXMAR_ADMIN_TOKENS").unwrap_or_default();
         let admin_token = address.and_then(|address| admin_token_for(address, &tokens));
         connection.send(ClientMessage::Hello { name, protocol: voxmar_protocol::PROTOCOL_VERSION, content, admin_token });
-        Self { connection, server, input_timer: 0.0 }
+        Self { connection, server, input_timer: 0.0, proposed: Default::default() }
     }
 
     /// The next message from the server, for tests that play without the app.
@@ -77,6 +79,13 @@ impl Net {
 
     pub fn propose(&self, action: ActionId, target: ActionTarget) {
         self.connection.send(ClientMessage::Propose { action, target });
+        self.proposed.lock().unwrap_or_else(|e| e.into_inner()).push(action);
+    }
+
+    /// The actions proposed since the last call: the client proposes only what it has
+    /// checked the server will allow, so each is heard as it is done (`sfx::play_actions`).
+    pub fn take_proposed(&self) -> Vec<ActionId> {
+        std::mem::take(&mut *self.proposed.lock().unwrap_or_else(|e| e.into_inner()))
     }
 
     /// Proposes an action aimed into the world (mining, placing, throwing), telling the
