@@ -501,6 +501,8 @@ struct Gate {
     machines_stage: u8,
     machines_since: f32,
     machines_asked: f32,
+    /// Where the Tame step set its feed trough.
+    trough: Option<IVec3>,
     /// Whether the player has been seen holding what this machine stage puts in.
     machines_seen: bool,
     /// When the aurochs at the treadwheel was last told to hold still, by the server's clock.
@@ -675,6 +677,7 @@ impl Gate {
             machines_stage: 0,
             machines_since: 0.0,
             machines_asked: f32::MIN,
+            trough: None,
             machines_seen: false,
             machines_held: f32::MIN,
             highest: f32::MIN,
@@ -1122,6 +1125,8 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         Step::Home => 70.0,
         // The refusal waited on, then a well set down by the plot.
         Step::Refusal => UNANSWERED + 3.0 * REFUSAL_WAIT + STEP_LIMIT,
+        // Taming, then a feed trough opened, waited on up to `TROUGH_WAIT`.
+        Step::Tame => STEP_LIMIT + TROUGH_WAIT,
         // A fresh area around the settlement to generate: up to `SETTLEMENT_LOAD` of the
         // server's seconds.
         Step::Settlements => SETTLEMENT_LOAD + SETTLEMENT_PEOPLE + STEP_LIMIT,
@@ -7161,9 +7166,23 @@ struct FeelRun {
     slow: u32,
     /// Whether this wind-up's moment came with no press, already told (`answer`).
     held: bool,
+    /// Frames since this wind-up showed that could have pressed before its result came
+    /// (`answer`), and the tries set aside as unanswerable: the result came before any
+    /// frame at or after the moment tried (`feel`).
+    chances: u32,
+    unanswerable: u32,
 }
 
 impl FeelRun {
+    /// Whether this wind-up's result came before the client could answer it, with `answered`
+    /// whether a press went: none did, and its moment passed between two frames with the
+    /// result heard in the later (`held`), or no frame came at all between the wind-up
+    /// showing and the result. A frame before the moment that could have pressed says a
+    /// result after it came before the moment: that try counts, and the search moves earlier.
+    fn could_not_answer(&self, answered: bool) -> bool {
+        !answered && (self.held || self.chances == 0)
+    }
+
     /// Observe a pose edge only after a calm pose. Hurt can arrive before the server's
     /// next Idle replication; consuming it invalidates the still-shown attack pose.
     fn observe(&mut self, attacking: bool, received: bool) -> bool {
@@ -7174,6 +7193,7 @@ impl FeelRun {
         } else if self.calm && self.seen.is_none() && !self.answered {
             self.seen = Some(Instant::now());
             self.calm = false;
+            self.chances = 0;
             return true;
         }
         false
@@ -7199,6 +7219,11 @@ impl FeelRun {
             self.held = true;
         }
         if received || self.answered || !due {
+            // A frame before the moment, with the blow still to come: a press could have
+            // gone, so a result after it says the moment was late.
+            if !received && !self.answered {
+                self.chances += 1;
+            }
             return false;
         }
         self.answered = true;
@@ -7255,12 +7280,15 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         gate.feel.clicked = false;
     }
     if (1..=4).contains(&gate.phase) && gate.server_now - gate.feel.started > FEEL_LIMIT {
+        // In a block again for a late counter (phase 2 with the perfect block found), what is
+        // still owed is the counter: the perfect block passed at its first.
         let check = match gate.phase {
             3 => "counter",
+            2 if gate.feel.found.is_some() => "counter",
             4 => "dodge",
             _ => "perfect block",
         };
-        gate.check(check, Err(format!("not done in {FEEL_LIMIT} server seconds: {:?}", gate.feel.outcomes)));
+        gate.check(check, Err(format!("not done in {FEEL_LIMIT} server seconds: {:?}, {} set aside as unanswerable", gate.feel.outcomes, gate.feel.unanswerable)));
         clear_feel(gate, now);
         return;
     }
@@ -7414,6 +7442,19 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             // landed, whatever moment was tried: the try says nothing of the moment, so it is
             // set aside, not counted, and the search stays. Enough of them and the machine is
             // too slow to judge (as `creature falls` is when it draws too few frames).
+            // A result before any frame at or after the moment tried, with none before it
+            // that could have pressed (the wind-up first seen after it landed, or the moment
+            // passed between two frames, as frames of a second or more do on a loaded
+            // machine): no press could have answered it, so the try says nothing of the
+            // moment. It is set aside and the search stays; unlike a late frame it never
+            // excuses the step, which `FEEL_LIMIT` still bounds.
+            if !passed && gate.feel.could_not_answer(answered) {
+                gate.feel.outcomes.pop();
+                gate.feel.unanswerable += 1;
+                let why = if gate.feel.held { "the moment passed between two frames" } else { "no frame came between the wind-up showing and the blow landing" };
+                info!("gate: combat try set aside phase {} try {} bear {}: {defended:?} came before it could be answered ({why}), frame {:.3}s, {} set aside", gate.phase, gate.feel.tries + 1, view.id, world.resource::<Time>().delta_secs(), gate.feel.unanswerable);
+                return;
+            }
             let late = std::mem::take(&mut gate.feel.late);
             if !passed && answered && late > FEEL_SLOW_FRAME {
                 gate.feel.outcomes.pop();
@@ -7434,8 +7475,14 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
             if passed {
                 let detail = format!("{defended:?} for {damage} damage, requested {:.2}s after the wind-up showed, try {}", gate.feel.after, gate.feel.tries + 1);
-                let result = if damage == 0 { Ok(detail) } else { Err(format!("{detail}: it still did damage")) };
-                gate.check(if blocking { "perfect block" } else { "dodge" }, result);
+                // A block again, for a counter that came too late (phase 3): the perfect
+                // block was judged at its first, so this one only opens the counter's window.
+                if blocking && damage == 0 && gate.feel.found.is_some() {
+                    info!("gate: combat block again for the counter: {detail}");
+                } else {
+                    let result = if damage == 0 { Ok(detail) } else { Err(format!("{detail}: it still did damage")) };
+                    gate.check(if blocking { "perfect block" } else { "dodge" }, result);
+                }
                 gate.feel.struck = world.resource::<crate::fight::Fighting>().struck_count;
                 if blocking {
                     gate.feel.found = Some(gate.feel.after);
@@ -7468,7 +7515,13 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.feel.after = (gate.feel.centre + side * FEEL_STEP * k.div_ceil(2) as f32).clamp(0.0, windup);
             if gate.feel.tries >= FEEL_TRIES {
                 let outcomes = std::mem::take(&mut gate.feel.outcomes);
-                gate.check(if blocking { "perfect block" } else { "dodge" }, Err(format!("{FEEL_TRIES} answers to the bear's blows came to {outcomes:?}")));
+                // After a perfect block whose counter came too late, what is still owed is
+                // the counter: the perfect block passed at its first.
+                if blocking && gate.feel.found.is_some() {
+                    gate.check("counter", Err(format!("the click after the perfect block came too late, and the blocks after it came to {outcomes:?}, none perfect to counter from")));
+                } else {
+                    gate.check(if blocking { "perfect block" } else { "dodge" }, Err(format!("{FEEL_TRIES} answers to the bear's blows came to {outcomes:?}, {} more set aside as unanswerable", gate.feel.unanswerable)));
+                }
                 if blocking {
                     to_dodge(gate, windup, perfect, now);
                 } else {
@@ -7503,6 +7556,7 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 } else {
                     // Too late for the window (a server far behind): block again.
                     gate.feel.tries += 1;
+                    gate.feel.outcomes.clear();
                     to_phase(gate, FEEL_BLOCK, now);
                 }
             } else if gate.server_in_phase() > UNANSWERED {
@@ -7523,6 +7577,7 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 fn to_dodge(gate: &mut Gate, windup: f32, perfect: f32, now: f32) {
     gate.feel.tries = 0;
     gate.feel.slow = 0;
+    gate.feel.unanswerable = 0;
     gate.feel.slowest = 0.0;
     gate.feel.outcomes.clear();
     gate.feel.seen = None;
@@ -8543,7 +8598,8 @@ const CHIMNEY_OWED: f32 = 20.0;
 const CHIMNEY_WAIT: f32 = 12.0;
 
 /// A junglefowl on the pad, wheat in hand: right clicks feed it until it trusts the
-/// player and is theirs (kept, with them as its owner).
+/// player and is theirs (kept, with them as its owner); then a feed trough set before the
+/// player opens into its slots (shot `trough`).
 fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let pad = gate.feet + IVec3::new(0, 0, 14);
     let Some(species) = world.resource::<Launch>().content.creatures.find("base:junglefowl") else { return };
@@ -8698,7 +8754,11 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 key(world, KeyCode::ShiftLeft, false);
                 key(world, KeyCode::KeyW, false);
                 gate.check("release", Ok(format!("the junglefowl went wild again after {in_phase:.1}s")));
-                gate.next(Step::Party, now);
+                // Then a feed trough for the pen, two blocks before the player.
+                let at = world.resource::<LocalPlayer>().position.floor().as_ivec3() + IVec3::new(0, 0, -2);
+                gate.trough = Some(at);
+                world.resource::<Net>().command(&format!("fill {} {} {} {} {} {} feed_trough", at.x, at.y, at.z, at.x, at.y, at.z));
+                gate.advance(now);
             } else if gate.server_in_phase() > 8.0 {
                 mouse(world, MouseButton::Right, false);
                 key(world, KeyCode::ShiftLeft, false);
@@ -8715,9 +8775,55 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 mouse(world, MouseButton::Right, aimed && ((now - gate.phase_since) * 2.0).fract() < 0.2);
             }
         }
-        _ => {}
+        // A feed trough opens into its nine slots, the server's word of it (shot `trough`).
+        _ => {
+            let Some(at) = gate.trough else {
+                gate.next(Step::Party, now);
+                return;
+            };
+            aim_at(world, at.as_vec3() + Vec3::new(0.5, 0.4, 0.5));
+            let trough = {
+                let client = world.resource::<ClientWorld>();
+                client.block(at).is_some_and(|b| client.registry.def(b).name == "base:feed_trough")
+            };
+            let slots = world.resource::<LocalPlayer>().inventory.store.as_ref().map(|s| s.slots.len());
+            let done = |world: &mut World, gate: &mut Gate| {
+                world.resource_mut::<UiState>().inventory_open = false;
+                world.resource::<Net>().command(&format!("fill {} {} {} {} {} {} air", at.x, at.y, at.z, at.x, at.y, at.z));
+                gate.trough = None;
+                gate.next(Step::Party, now);
+            };
+            match slots {
+                Some(n) if trough => {
+                    world.resource_mut::<UiState>().inventory_open = true;
+                    if gate.server_in_phase() < 1.0 || gate.shot(world, "trough").is_none() {
+                        return;
+                    }
+                    let judged = if n == TROUGH_SLOTS { Ok(format!("a feed trough opened into its {n} slots")) } else { Err(format!("a feed trough opened into {n} slots, not {TROUGH_SLOTS}")) };
+                    gate.check("trough: opens", judged);
+                    done(world, gate);
+                }
+                _ if gate.server_in_phase() > TROUGH_WAIT => {
+                    gate.check("trough: opens", Err(format!("{TROUGH_WAIT} server s after setting a trough: there {trough}, its store {slots:?}")));
+                    done(world, gate);
+                }
+                // Whatever is in hand: a store opens to anything but a machine.
+                _ if trough && gate.server_now - gate.machines_asked >= 2.0 => {
+                    world.resource_mut::<LocalPlayer>().store_asked = true;
+                    let actions = world.resource::<crate::Actions>().0.clone();
+                    world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("base:open_store"), voxmar_engine::action::ActionTarget::Block { block: at, face: voxmar_engine::coords::Face::PosY });
+                    gate.machines_asked = gate.server_now;
+                }
+                _ => {}
+            }
+        }
     }
 }
+
+/// The slots a feed trough opens into (machines.ron).
+const TROUGH_SLOTS: usize = 9;
+/// Longest the Tame step waits for its trough to open, in the server's seconds.
+const TROUGH_WAIT: f32 = 10.0;
 
 /// A tinker's camp started on the pad's far side: its trader and hound must reach the client
 /// and draw, a right click on the trader gets a greeting, four hides held out are swapped
@@ -10301,6 +10407,37 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn a_blow_heard_before_any_frame_could_answer_it_is_set_aside() {
+        let mut app = App::new();
+        app.add_plugins(bevy::input::InputPlugin);
+        let dodge = KeyCode::ShiftLeft;
+        // A wind-up seen, and the result heard at the next frame, before the moment tried
+        // (0.6 s): no frame could have pressed.
+        let mut feel = FeelRun { after: 0.6, calm: true, ..default() };
+        assert!(feel.observe(true, false));
+        assert!(!feel.answer(app.world_mut(), true, dodge, true));
+        assert!(feel.could_not_answer(false), "no frame came between the wind-up and its result");
+        // A frame before the moment came first, with the blow still to come: a press could
+        // have gone there, so the result after it says the moment was late, and counts.
+        let mut feel = FeelRun { after: 0.6, calm: true, ..default() };
+        assert!(feel.observe(true, false));
+        assert!(!feel.answer(app.world_mut(), true, dodge, false));
+        assert!(!feel.answer(app.world_mut(), true, dodge, true));
+        assert!(!feel.could_not_answer(false), "a frame before the moment could have answered");
+        // The moment passed between that frame and the next, which heard the result: the
+        // press would have gone in the next, after the blow, so this one is set aside too.
+        let mut feel = FeelRun { seen: Some(Instant::now() - std::time::Duration::from_secs(1)), after: 0.6, chances: 1, ..default() };
+        assert!(!feel.answer(app.world_mut(), true, dodge, true));
+        assert!(feel.held && feel.could_not_answer(false));
+        // An answered try is never set aside for this: it said something of its moment.
+        assert!(!feel.could_not_answer(true));
+        // A new wind-up starts with no frames.
+        let mut feel = FeelRun { chances: 3, calm: true, ..default() };
+        assert!(feel.observe(true, false));
+        assert_eq!(feel.chances, 0);
     }
 
     #[test]

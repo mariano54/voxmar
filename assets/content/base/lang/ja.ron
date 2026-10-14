@@ -993,6 +993,7 @@
     "block.base.well": "井戸",
     "block.base.compost_heap_full": "発酵中の堆肥枠",
     "block.base.compost_heap_ready": "熟した堆肥枠",
+    "block.base.feed_trough": "餌桶",
     "block.base.jerky": "干し肉",
     "block.base.compost": "堆肥",
     "block.base.hearthstone": "炉石",

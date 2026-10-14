@@ -64,7 +64,7 @@ const _: () = assert!(KIN_RANGE + 1.0 <= CELL && voxmar_engine::creature::husban
 const FOOD_RANGE: i32 = 6;
 /// Seconds a player must keep within `SETTLE_RADIUS` blocks of one spot before hunters
 /// there leave them be (RuneScape's ten minutes in 21 × 21 squares).
-const TOLERANCE: u64 = 600 * TICKS_PER_SECOND as u64;
+pub(crate) const TOLERANCE: u64 = 600 * TICKS_PER_SECOND as u64;
 const SETTLE_RADIUS: f32 = 10.0;
 /// Light from blocks within this many blocks keeps monsters away underground.
 const LIT_REACH: i32 = 5;
@@ -209,7 +209,7 @@ pub struct Creatures {
     /// Those that died or went since players were last told.
     pub(crate) gone: Vec<CreatureGone>,
     /// Where each player settled and since when (RuneScape's tolerance).
-    settled: FxHashMap<PlayerId, (Vec3, u64)>,
+    pub(crate) settled: FxHashMap<PlayerId, (Vec3, u64)>,
     /// Kept creatures from the save that could not be put back yet (their species is gone
     /// from the content, or the world was full): kept in the save and tried again, never
     /// lost.
@@ -390,7 +390,8 @@ impl Server {
                 let players = self.seen_from(position, range, &species.favourite, creature.owner.as_deref());
                 let mate = self.mate_for(id, &neighbours);
                 let kin = self.kin_of(id, &neighbours);
-                let food = if species.eats.is_empty() { None } else { self.food_near(position, &species.eats, id) };
+                // What it grazes, else, kept and hungry, a trough of its food by home.
+                let food = if species.eats.is_empty() { None } else { self.food_near(position, &species.eats, id) }.or_else(|| self.trough_for(id));
                 let situation = Situation {
                     position,
                     home: creature.home,
@@ -567,7 +568,9 @@ impl Server {
             // It winds up first; the blow lands after (`fight`).
             self.wind_up(id, player);
         }
-        if let Some(cell) = decision.eat {
+        if let Some(cell) = decision.eat.filter(|&cell| self.is_trough(cell)) {
+            self.eat_from_trough(id, cell);
+        } else if let Some(cell) = decision.eat {
             let day = self.day;
             if let Some(creature) = self.creatures.live.get_mut(&id) {
                 creature.fed = day;
