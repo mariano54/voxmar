@@ -321,6 +321,7 @@ enum Step {
     Cook,
     /// A drying rack stood by the campfire, raw rabbit in hand: a right click hangs it, the
     /// rack the server sends back is the hung one, and chat says where it stands makes it quicker.
+    /// Then an earth clamp in its place, clay in hand: a right click sets it smouldering.
     Dry,
     /// A junglefowl fed wheat by right clicks comes to trust the player and is theirs.
     Tame,
@@ -348,9 +349,10 @@ enum Step {
     /// pickaxe shows its recipe inline, an item clicked there opens the viewer, and Back
     /// returns to the book.
     LookUp,
-    /// Rice sown on farmland with no water near is refused by the server, and the refusal
-    /// shows by the hotbar, as a level the player lacks does (the server sends it as a
-    /// refusal, not a console line).
+    /// Rice sown on the test ground, too cold for it, is refused by the server for that
+    /// reason, and the refusal shows by the hotbar, as a level the player lacks does (the
+    /// server sends it as a refusal, not a console line). Then a well from the hand goes
+    /// down by the plot.
     Refusal,
     /// A wild plant whose item merged (oregano into kitchen herbs) is given as the merged
     /// item, and the catalogues (creative, journal, recipe book) list the item, not the plant.
@@ -1197,6 +1199,8 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         Step::Party => 60.0,
         // The effects are judged once a second by the server, and a rest is a sleep away.
         Step::Home => 70.0,
+        // The refusal waited on, then a well set down by the plot.
+        Step::Refusal => UNANSWERED + 3.0 * REFUSAL_WAIT + STEP_LIMIT,
         // A fresh area around the settlement to generate: up to `SETTLEMENT_LOAD` of the
         // server's seconds.
         Step::Settlements => SETTLEMENT_LOAD + SETTLEMENT_PEOPLE + STEP_LIMIT,
@@ -3902,10 +3906,14 @@ fn look_up(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 const DRY_PLOT: IVec3 = IVec3::new(-2, -1, 2);
 /// Server seconds the refusal may take to come, inside the step's own limit.
 const REFUSAL_WAIT: f32 = 8.0;
+/// The ground beside the dry plot where the well goes, from the plot.
+const WELL_BY: IVec3 = IVec3::new(1, 0, 0);
 
-/// Rice (which grows only with water near) sown on a dry plot: the server refuses it and
-/// says why as a refusal, which shows by the hotbar with the others, naming the crop as
-/// the player holds it ("Rice"), not its growing stage.
+/// Rice sown on the test ground, about 10 °C where it wants 18 to 34: the server refuses
+/// it and says why, too cold, as a refusal, which shows by the hotbar with the others,
+/// naming the crop as the player holds it ("Rice"), not its growing stage. The reason is
+/// judged word for word, so a refusal for another cause (no water: the plot is dry too)
+/// fails it.
 fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
     let plot = gate.feet + DRY_PLOT;
     let rice = world.resource::<ClientWorld>().registry.id("base:rice");
@@ -3964,10 +3972,16 @@ fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 let (locale, launch) = (world.resource::<Locale>(), world.resource::<Launch>());
                 locale.block(launch.content.blocks.def(rice))
             };
+            let cold = {
+                let (locale, launch) = (world.resource::<Locale>(), world.resource::<Launch>());
+                let blocks = &launch.content.blocks;
+                locale.render(&voxmar_engine::lang::Words::key("farming.too_cold").with("crop", voxmar_engine::lang::Words::Block(blocks.def(rice).name.clone())), blocks)
+            };
             let said = world.resource::<crate::hud::skills::SkillToasts>().refusals().find(|why| why.contains(&name)).map(str::to_owned);
             if let Some(said) = said {
                 mouse(world, MouseButton::Right, false);
-                gate.check("refusal", Ok(format!("sowing rice on a dry plot was refused: \"{said}\"")));
+                let result = if said == cold { Ok(format!("sowing rice where it is too cold was refused for that: \"{said}\"")) } else { Err(format!("sowing rice was refused, but not as too cold (\"{cold}\"): \"{said}\"")) };
+                gate.check("refusal", result);
                 gate.advance(now);
             } else if gate.waited_out(REFUSAL_WAIT) {
                 mouse(world, MouseButton::Right, false);
@@ -3976,7 +3990,7 @@ fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                     (target.hit.as_ref().map(|hit| (hit.block - gate.feet, hit.face)), player.inventory.get(player.selected).map(|s| s.item))
                 };
                 let from = world.resource::<LocalPlayer>().position - gate.feet.as_vec3();
-                gate.check("refusal", Err(format!("sowing rice on a dry plot showed no refusal naming {name} (aimed at {target:?} from the feet, standing at {from:.2} from them, holding {held:?})")));
+                gate.check("refusal", Err(format!("sowing rice showed no refusal naming {name} (aimed at {target:?} from the feet, standing at {from:.2} from them, holding {held:?})")));
                 gate.advance(now);
             } else {
                 gate.tap(world, true, now);
@@ -3993,9 +4007,47 @@ fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 }
             }
         }
+        // A well set down by the plot, from the hand, as a player would by a field far
+        // from water (it waters it: `a_well_waters_the_field_about_it`).
+        3 => {
+            if gate.settled == 0 {
+                world.resource::<Net>().command("give well 1");
+                gate.settled = 1;
+            }
+            if select(world, "base:well") {
+                let actions = world.resource::<crate::Actions>().0.clone();
+                world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("core:place"), voxmar_engine::action::ActionTarget::Block { block: plot + WELL_BY, face: voxmar_engine::coords::Face::PosY });
+                gate.settled = 0;
+                gate.advance(now);
+            } else if gate.server_in_phase() > REFUSAL_WAIT {
+                gate.check("well", Err(format!("no well came to hand {:.1} server s after it was given (carried, first slot: {:?})", gate.server_in_phase(), holding(world, "base:well"))));
+                to_phase(gate, 5, now);
+            }
+        }
+        4 => {
+            let cell = plot + WELL_BY + IVec3::Y;
+            let placed = {
+                let client = world.resource::<ClientWorld>();
+                client.block(cell).map(|b| client.registry.def(b).name.clone())
+            };
+            if placed.as_deref().is_some_and(|name| name.starts_with("base:well")) {
+                if gate.shot(world, "well").is_none() {
+                    return;
+                }
+                let solid = world.resource::<ClientWorld>().is_solid(cell);
+                gate.check("well", if solid { Ok("a well from the hand stands on the ground by the plot, drawn in the shot `well`".into()) } else { Err("the well stands, but not solid on the client".into()) });
+                gate.advance(now);
+            } else if gate.server_in_phase() > REFUSAL_WAIT {
+                gate.check("well", Err(format!("{:.1} server s after placing, the well's cell holds {placed:?}", gate.server_in_phase())));
+                gate.advance(now);
+            }
+        }
         _ => {
             let net = world.resource::<Net>();
+            let well = plot + WELL_BY + IVec3::Y;
             net.command("clear rice");
+            net.command("clear well");
+            net.command(&format!("setblock {} {} {} air", well.x, well.y, well.z));
             net.command(&format!("setblock {} {} {} dirt", plot.x, plot.y, plot.z));
             gate.next(Step::Merged, now);
         }
@@ -4660,6 +4712,10 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
         7 => {
             let button = world.query::<(Entity, &crate::hud::recipes::LayButton, &InheritedVisibility)>().iter(world).find(|(_, lay, visible)| visible.get() && world.resource::<ClientWorld>().registry.id("base:crafting_table") == Some(lay.output)).map(|(entity, ..)| entity);
             if let Some(button) = button {
+                // The table's recipe drawn, with its Lay button, before it is pressed.
+                if gate.shot(world, "home-lay-recipe").is_none() {
+                    return;
+                }
                 world.resource_mut::<UiClicks>().next = Some((button, MouseButton::Left));
                 gate.advance(now);
             } else if waited > 10.0 {
@@ -4677,18 +4733,21 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
             let planks = world.resource::<ClientWorld>().registry.id("base:oak_planks");
             let player = world.resource::<LocalPlayer>();
             let laid: u32 = player.inventory.craft.iter().flatten().filter(|x| Some(x.item) == planks).map(|x| x.count as u32).sum();
-            let stored: u32 = player.inventory.store.as_ref().map_or(0, |s| s.slots.iter().flatten().filter(|x| Some(x.item) == planks).map(|x| x.count as u32).sum());
-            if laid == LAY_PLANKS && stored == 0 {
+            let open = player.inventory.store.is_some();
+            let held = holding(world, "base:oak_planks").0;
+            let ui = world.resource::<UiState>();
+            let (inventory, viewer) = (ui.inventory_open, ui.recipes_open);
+            // Laid, the barrel's screen closes onto the grid, drawn with the planks in it;
+            // the pack held none, so they came from the barrel.
+            if laid == LAY_PLANKS && held == 0 && !open && inventory && !viewer {
                 if gate.shot(world, "home-lay").is_none() {
                     return;
                 }
-                gate.check("home: lay", Ok(format!("Lay on the crafting table's recipe filled the grid with {laid} planks from the home barrel")));
+                gate.check("home: lay", Ok(format!("home-lay-recipe shows the crafting table's recipe with its Lay button; pressed, home-lay shows the inventory's grid holding the {laid} planks from the home barrel (its screen closed, none in the pack)")));
                 lay_done(world, barrel);
                 leave(world, gate);
             } else if waited > 10.0 {
-                let viewer = world.resource::<UiState>().recipes_open;
-                let held = holding(world, "base:oak_planks").0;
-                gate.check("home: lay", Err(format!("{waited:.1} server s after Lay: {laid} planks in the grid, {stored} left in the barrel, {held} in the pack, viewer open {viewer}")));
+                gate.check("home: lay", Err(format!("{waited:.1} server s after Lay: {laid} planks in the grid, {held} in the pack, barrel screen open {open}, inventory open {inventory}, viewer open {viewer}")));
                 lay_done(world, barrel);
                 leave(world, gate);
             }
@@ -8561,7 +8620,8 @@ const MEAT_SHOWS: f32 = 0.08;
 /// once the renderer has it), raw rabbit selected: right clicks on it hang the rabbit
 /// (`base:use_station`), so the server sends the hung rack back, and once the renderer has
 /// that too (shot `rack`) the meat must show in the middle of the shot. Then the rack goes,
-/// letting the rabbit fall as a broken rack does.
+/// letting the rabbit fall as a broken rack does, and an earth clamp loaded with clay in its
+/// place smoulders (shot `clamp`, once drawn) until it goes too.
 fn dry(world: &mut World, gate: &mut Gate, now: f32) {
     let rack = gate.feet + IVec3::new(0, 0, 14) + RACK_FROM_FIRE;
     let waited = gate.server_in_phase() > DRY_WAIT;
@@ -8632,6 +8692,43 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
                     }
                 };
                 gate.check("drying rack", result);
+                // The rack goes, and an earth clamp stands in its place with clay to load it.
+                let net = world.resource::<Net>();
+                net.command(&format!("setblock {} {} {} air", rack.x, rack.y, rack.z));
+                net.command(&format!("setblock {} {} {} earth_clamp", rack.x, rack.y, rack.z));
+                net.command("give clay 16");
+                gate.advance(now);
+            }
+        }
+        4 => {
+            let client = world.resource::<ClientWorld>();
+            let stood = client.registry.id("base:earth_clamp").is_some_and(|c| client.block(rack) == Some(c));
+            if stood && select(world, "base:clay") {
+                gate.advance(now);
+            } else if waited {
+                gate.check("earth clamp", Err(format!("the clamp ({stood}) or clay in hand never came in {DRY_WAIT} server seconds")));
+                gate.next(Step::Tame, now);
+            }
+        }
+        5 => {
+            aim_at(world, rack.as_vec3() + Vec3::new(0.5, 0.5, 0.5));
+            let client = world.resource::<ClientWorld>();
+            let lit = client.registry.id("base:earth_clamp_lit").is_some_and(|c| client.block(rack) == Some(c));
+            if lit {
+                mouse(world, MouseButton::Right, false);
+                gate.advance(now);
+            } else if waited {
+                mouse(world, MouseButton::Right, false);
+                gate.check("earth clamp", Err(format!("right clicks with clay in hand never lit the clamp in {DRY_WAIT} server seconds")));
+                gate.next(Step::Tame, now);
+            } else {
+                mouse(world, MouseButton::Right, ((now - gate.since) * 2.0).fract() < 0.2);
+            }
+        }
+        6 => {
+            aim_at(world, rack.as_vec3() + Vec3::new(0.5, 0.5, 0.5));
+            if (drawn(world, rack) || waited) && gate.shot(world, "clamp").is_some() {
+                gate.check("earth clamp", Ok("clay loaded into an earth clamp: the server sent back the smouldering clamp".into()));
                 world.resource::<Net>().command(&format!("setblock {} {} {} air", rack.x, rack.y, rack.z));
                 gate.next(Step::Tame, now);
             }
