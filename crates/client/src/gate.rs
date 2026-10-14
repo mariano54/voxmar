@@ -7780,6 +7780,18 @@ const TUSK: &str = "base:old_tusk";
 const TUSK_SPEAR: &str = "base:flint_spear";
 /// The tusk step's sweep, which every exit comes to.
 const TUSK_SWEEP: u32 = 6;
+/// Blocks from his middle the spear step stands, closes in past, and is put back from.
+const TUSK_BESIDE: f32 = 1.8;
+const TUSK_CLOSE: f32 = 2.0;
+const TUSK_FAR: f32 = 4.0;
+
+/// Where the spear step stands: `TUSK_BESIDE` blocks from him toward the player, on his
+/// level.
+fn tusk_beside(world: &World, at: Vec3) -> Vec3 {
+    let me = world.resource::<LocalPlayer>().position;
+    let toward = (me - at).with_y(0.0).normalize_or(Vec3::NEG_Z);
+    at + toward * TUSK_BESIDE
+}
 
 /// Old Tusk on the pad: drawn; calm music while he grazes; struck, then charging from afar
 /// with his fight music on; then swept away.
@@ -7808,6 +7820,7 @@ fn tusk(world: &mut World, gate: &mut Gate, now: f32) {
     let waited = gate.server_in_phase() > BOSS_WAIT;
     let sweep = |world: &mut World, gate: &mut Gate, now: f32| {
         mouse(world, MouseButton::Left, false);
+        key(world, KeyCode::KeyW, false);
         world.resource::<Net>().command("gamemode creative");
         gate.sweep = Sweep::default();
         to_phase(gate, TUSK_SWEEP, now);
@@ -7846,11 +7859,21 @@ fn tusk(world: &mut World, gate: &mut Gate, now: f32) {
             }
         }
         3 => {
+            // Spear in hand, stood beside him where he grazes now (he has wandered off the
+            // pad while the steps before ran).
+            let Some(view) = view else {
+                gate.check("tusk provoked", Err("he went out of sight".to_owned()));
+                sweep(world, gate, now);
+                return;
+            };
             if select(world, TUSK_SPEAR) {
+                let beside = tusk_beside(world, view.position);
                 let net = world.resource::<Net>();
                 net.command("skill hitpoints 60");
-                net.command(&format!("tp {} {} {}", pad.x as f32 + 0.5, pad.y, pad.z as f32 - 1.0));
+                net.command(&format!("tp {} {} {}", beside.x, beside.y, beside.z));
                 net.command("gamemode survival");
+                gate.swings = 0;
+                gate.swung = false;
                 gate.advance(now);
             } else if waited {
                 gate.check("tusk provoked", Err(format!("the {TUSK_SPEAR} never came to hand")));
@@ -7858,27 +7881,43 @@ fn tusk(world: &mut World, gate: &mut Gate, now: f32) {
             }
         }
         4 => {
-            // Struck until he fights back (a blow that hurts him, or one he winds up).
+            // Struck until he fights back (a blow that hurts him, or one he winds up): a
+            // well-timed blow a full charge after the last, closing in while he is out of
+            // the spear's reach, given up only once the server has answered none of them.
             let Some(view) = view else {
                 gate.check("tusk provoked", Err("he went out of sight".to_owned()));
                 sweep(world, gate, now);
                 return;
             };
+            let me = world.resource::<LocalPlayer>().position;
             if view.health < most || view.tell != 0 {
                 mouse(world, MouseButton::Left, false);
-                gate.check("tusk provoked", Ok(format!("struck, he fights back (health {} of {most}, tell {})", view.health, view.tell)));
+                key(world, KeyCode::KeyW, false);
+                gate.check("tusk provoked", Ok(format!("struck, he fights back (health {} of {most}, tell {}, {} swings)", view.health, view.tell, gate.swings)));
                 // Eight blocks off, past his gore: he charges.
-                let me = world.resource::<LocalPlayer>().position;
                 let away = me + (me - view.position).with_y(0.0).normalize_or_zero() * 8.0;
                 world.resource::<Net>().command(&format!("tp {} {} {}", away.x, me.y, away.z));
                 gate.advance(now);
-            } else if waited {
-                gate.check("tusk provoked", Err(format!("no blow of the spear's provoked him in {BOSS_WAIT} server seconds (health {})", view.health)));
+            } else if gate.unanswered() {
+                mouse(world, MouseButton::Left, false);
+                key(world, KeyCode::KeyW, false);
+                let aimed = world.resource::<crate::interact::Target>().creature.is_some();
+                let distance = view.position.xz().distance(me.xz());
+                gate.check(
+                    "tusk provoked",
+                    Err(format!("the server answered none of {} spear blows in {UNANSWERED}s (health {}, aimed at him: {aimed}, {distance:.1} blocks off)", gate.swings, view.health)),
+                );
                 sweep(world, gate, now);
             } else {
+                let distance = view.position.xz().distance(me.xz());
+                if distance > TUSK_FAR {
+                    // Wandered far while frames were few: stood beside him again.
+                    let beside = tusk_beside(world, view.position);
+                    world.resource::<Net>().command(&format!("tp {} {} {}", beside.x, beside.y, beside.z));
+                }
+                key(world, KeyCode::KeyW, distance > TUSK_CLOSE);
                 aim_at(world, view.position + Vec3::Y * 0.6);
-                let swing = ((now - gate.since) / (voxmar_engine::combat::FULL_CHARGE + 0.05)).fract() < 0.1;
-                mouse(world, MouseButton::Left, swing);
+                gate.swing(world, now);
             }
         }
         5 => {
@@ -7908,6 +7947,7 @@ fn tusk(world: &mut World, gate: &mut Gate, now: f32) {
 /// Back to survival at the first levels with the hands free, on the test ground.
 fn end_tusk(world: &mut World, gate: &mut Gate, now: f32) {
     mouse(world, MouseButton::Left, false);
+    key(world, KeyCode::KeyW, false);
     let feet = gate.feet;
     let net = world.resource::<Net>();
     net.command("gamemode survival");
