@@ -927,6 +927,15 @@ refused, and the events' jingles): the chosen set's click or tap at a volume and
 its own (a page turned, a soft "no"), a jingle, or `silent`. The launch fails on a name the
 interface never makes and on one it makes that says nothing.
 
+What the player does is seen as well (`crates/client/src/fx.rs`): dust settles round a block
+set down, crumbs fall as food is bitten, a crop picked springs a few leaves, a hoe or a seed
+kicks up soil, fertiliser falls as dust, a table, machine or station worked throws chips, food
+on the fire steams, flint sparks, motes rise at an altar, and a glint flashes over what the
+grid made. `action_fx.ron` names how every action shows: an `effect` (where it shows, what its
+particles look like and how they move, all data), `shown` by breaking or the fight, or `none`;
+the launch fails on an action it says nothing of, as for sounds. `fx_contact_sheet -- --ignored`
+sketches every effect's motion to `target/fx_contact_sheet.png`.
+
 Creatures are heard: footsteps on whatever block they walk, bleats, grunts and clucks while
 they wander, munching, sighs and purrs at rest, barks and snorts of alarm, calls carrying far,
 mating calls, snarls when they strike, and cries when hurt or dying. `creature_sounds.ron` in

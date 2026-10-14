@@ -181,7 +181,7 @@ pub(crate) struct TooltipLines;
 /// What the crafting grid makes: click to craft one onto the pointer, shift-click to craft
 /// as many as fit into the inventory.
 #[derive(Component)]
-struct OutputSlot;
+pub(crate) struct OutputSlot;
 #[derive(Component)]
 struct OutputIcon;
 /// The words beside the crafting grid's result: its name, then how to take it.

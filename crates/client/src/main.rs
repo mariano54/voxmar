@@ -33,6 +33,7 @@
 
 mod ambience;
 mod breaking;
+mod fx;
 mod butterflies;
 mod capture;
 mod creature_sounds;
@@ -336,6 +337,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     recorded.check(&content.actions)?;
     recorded.covers(&content.actions)?;
     recorded.mix.check().map_err(|e| format!("sounds.ron: {e}"))?;
+    fx::ActionFx::load(&content.files)?.check(&content.actions)?;
     let content_weather = content.weather.clone();
     let shader_packs = render::pack::ShaderPacks::load(&assets);
     let registry = content.blocks.clone();
@@ -427,7 +429,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ))
     .add_plugins((lang::LangPlugin, mix::MixPlugin));
     app.add_plugins((creatures::CreaturesPlugin, creature_sounds::CreatureSoundsPlugin, butterflies::ButterfliesPlugin));
-    app.add_plugins(emitters::EmittersPlugin);
+    app.add_plugins((emitters::EmittersPlugin, fx::FxPlugin));
     app.add_plugins(held::HeldPlugin);
     // GPU time per render pass (timestamp queries, Vulkan and DX12), which captures print
     // beside their frame statistics.
