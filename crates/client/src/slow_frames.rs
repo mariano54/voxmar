@@ -186,6 +186,9 @@ pub(crate) fn waited_for_cores() -> Option<std::time::Duration> {
 /// the unit (nanoseconds or ticks) that makes them agree within a half; neither, and nothing
 /// is said.
 #[cfg(target_os = "macos")]
+// libc marks its mach calls deprecated in favour of the mach2 crate; the one used here
+// (`mach_timebase_info`) is stable on every macOS, and no crate is added for it.
+#[allow(deprecated)]
 pub(crate) fn waited_for_cores() -> Option<std::time::Duration> {
     use std::sync::OnceLock;
     static NANOS_PER_UNIT: OnceLock<Option<f64>> = OnceLock::new();
