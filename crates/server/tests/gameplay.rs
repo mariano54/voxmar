@@ -7190,8 +7190,8 @@ impl Fresh {
         c.fill(origin, v(-7, 0, 2), v(-7, 0, 2), "wild_wheat");
         // A low bank of dirt, eight blocks, for the earth clamp: the only dirt above the
         // ground, so the bot finds it by looking (`Fresh::raised_dirt`).
-        c.fill(origin, v(17, 0, -5), v(20, 0, -4), "dirt");
-        let probes = [(v(7, 3, -5), "base:oak_log"), (v(17, 0, 4), "base:stone"), (v(-2, -1, 11), "base:water"), (v(-8, 1, 0), "base:stone"), (v(-7, 0, 2), "base:wild_wheat"), (v(20, 0, -4), "base:dirt")];
+        c.fill(origin, v(-7, 0, 8), v(-4, 0, 9), "dirt");
+        let probes = [(v(7, 3, -5), "base:oak_log"), (v(17, 0, 4), "base:stone"), (v(-2, -1, 11), "base:water"), (v(-8, 1, 0), "base:stone"), (v(-7, 0, 2), "base:wild_wheat"), (v(-4, 0, 9), "base:dirt")];
         c.pump_until(|c| probes.iter().all(|&(at, name)| c.world.block(origin + at) == c.content.blocks.id(name)) && c.world.block(origin + v(-9, 1, 0)) == Some(BlockId::AIR));
         let (at, t0) = (c.position, c.ticks());
         let epoch = (t0, Instant::now());
@@ -7565,7 +7565,8 @@ fn the_first_days(f: &mut Fresh) -> Site {
     f.gather("base:stone_shovel", ground, "base:dirt", 8);
     f.at_table(table);
     f.craft(&[(0, "base:dirt", 1), (1, "base:dirt", 1), (2, "base:dirt", 1), (3, "base:dirt", 1), (4, log, 1), (5, "base:dirt", 1), (6, "base:dirt", 1), (7, "base:dirt", 1), (8, "base:dirt", 1)], "base:earth_clamp", 1);
-    f.walk_toward(Fresh::middle(f.rel(4, 0, 1)), 2.0);
+    // Set down from two blocks south of it, wherever the dirt was dug: never from the cell itself.
+    f.walk_toward(Fresh::middle(f.rel(4, 0, 3)), 0.3);
     let clamp = f.place("base:earth_clamp", f.rel(4, -1, 1));
     f.mark("earth_clamp");
     f.gather_from("base:stone_shovel", &banks, bed.clone(), clay, 28);
