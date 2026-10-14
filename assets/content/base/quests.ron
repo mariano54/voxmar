@@ -707,7 +707,7 @@
             name: "copper_kit", age: "farm", branch: "mining", title: "Copper Kit",
             why: "Copper works six times as fast as a bare hand, a step above stone, and finds more. An axe takes three ingots, a shovel one, a hoe two and a knife one: seven in all, each a copper ore over a coal or charcoal in the grid.",
             tasks: [[Craft("copper_axe", 1), Craft("copper_shovel", 1), Craft("copper_hoe", 1), Craft("copper_knife", 1)]],
-            after: ["first_metal"],
+            after: ["red_metal"],
             rewards: [Xp("engineering", 60.0), Item("coal_ore", 8)],
         ),
         (
