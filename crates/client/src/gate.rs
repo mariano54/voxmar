@@ -572,6 +572,8 @@ struct Gate {
     quarry_id: Option<u32>,
     fallen_watched: bool,
     weapon_fallen_watched: bool,
+    /// Where the player was put to stand on the struck creature's loot, once it lay.
+    loot_stood: Option<Vec3>,
     fallen_since: Option<f32>,
     weapon_fallen_since: Option<f32>,
     /// Blows the server has answered, as last counted.
@@ -763,6 +765,7 @@ impl Gate {
             quarry_id: None,
             fallen_watched: false,
             weapon_fallen_watched: false,
+            loot_stood: None,
             fallen_since: None,
             weapon_fallen_since: None,
             blows_seen: 0,
@@ -7109,19 +7112,27 @@ fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     gate.check("creature falls", Err("its body never finished falling".into()));
                 }
             }
-            // Walk to the slime, as a player picks up loot. It comes out only once the body
+            // Stand on the slime, as a player picks up loot. It comes out only once the body
             // has fallen (a second of the server's time after the kill, later on a server
             // running behind), popped a little way off where it died: until it shows, the
-            // player walks over that spot, then to where it lies.
+            // player walks over that spot; once it lies, the player is put where it lies (a
+            // walk there could be blocked by the other creatures on the pad, and where it
+            // lies depends on where the fight ended), and the server picks it up.
             let feet = world.resource::<LocalPlayer>().position;
             let slime = world.resource::<ClientWorld>().registry.id(CREATURE_DROP);
             let quarry = gate.quarry;
             let lying: Vec<Vec3> = world.resource::<crate::drops::Drops>().lying().filter(|(_, stack, at)| Some(stack.item) == slime && at.distance(quarry) < 6.0).map(|(_, _, at)| at).collect();
-            let to = lying.iter().copied().min_by(|a, b| a.distance(feet).total_cmp(&b.distance(feet))).unwrap_or(quarry);
-            let close = feet.xz().distance(to.xz()) < 0.4;
-            key(world, KeyCode::KeyW, !close);
-            if !close {
-                aim_at(world, to + Vec3::Y * 1.6);
+            let nearest = lying.iter().copied().min_by(|a, b| a.distance(feet).total_cmp(&b.distance(feet)));
+            if let (Some(at), None) = (nearest, gate.loot_stood) {
+                key(world, KeyCode::KeyW, false);
+                world.resource::<Net>().command(&format!("tp {} {} {}", at.x, at.y.floor(), at.z));
+                gate.loot_stood = Some(at);
+            } else if gate.loot_stood.is_none() {
+                let close = feet.xz().distance(quarry.xz()) < 0.4;
+                key(world, KeyCode::KeyW, !close);
+                if !close {
+                    aim_at(world, quarry + Vec3::Y * 1.6);
+                }
             }
             // Picking up is the server's work: waited on by its clock.
             let count = item_count(world, CREATURE_DROP);
@@ -7132,8 +7143,9 @@ fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 } else {
                     let room = slime.map_or(0, |item| world.resource::<LocalPlayer>().inventory.room_for(item, 1));
                     let lying: Vec<String> = lying.iter().map(|at| format!("{:.1} blocks off", at.distance(feet))).collect();
+                    let stood = gate.loot_stood.map_or("never put by it (none lay)".to_string(), |at| format!("put where it lay at {at:.1}"));
                     Err(format!(
-                        "no {CREATURE_DROP} picked up in 8 server s ({in_phase:.1} s) after the kill: slime lying near where it died {lying:?}, the player {:.1} blocks from that spot, room for {room}",
+                        "no {CREATURE_DROP} picked up in 8 server s ({in_phase:.1} s) after the kill: slime lying near where it died {lying:?}, the player {:.1} blocks from that spot, {stood}, room for {room}",
                         feet.xz().distance(quarry.xz())
                     ))
                 };
