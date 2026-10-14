@@ -301,8 +301,10 @@ pub fn step(body: &mut Body, world: &impl Surroundings, movement: &Movement, wat
     }
 
     // Hop up a step it walks into, if it can jump and there is room above: a block before
-    // its feet, not only its head stopped at a door frame.
-    if body.on_ground && body.against_wall && movement.jump > 0.0 && along != Vec3::ZERO {
+    // its feet, not only its head stopped at a door frame. Paddling at a bank, anything
+    // that walks hauls itself out the same way.
+    let paddling = body.in_water && water != Water::Swim && !floating && !flying;
+    if (body.on_ground && movement.jump > 0.0 || paddling) && body.against_wall && along != Vec3::ZERO {
         let (mut level, mut raised) = (body.aabb(), body.aabb());
         level.translate(along * 0.3);
         raised.translate(Vec3::Y * 1.05 + along * 0.3);
