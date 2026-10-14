@@ -1,5 +1,6 @@
 // Bosses (docs/bosses.md). Each lives in its lairs (lairs.ron), where the server puts it
-// when a player comes near, never by habitat (`party_only`). A boss never flees, a perfect
+// when a player comes near, never by habitat (`party_only`). A boss never flees, always
+// fights whoever comes near (no tolerance, no level rule), a perfect
 // block staggers it less (combat.ron's `boss_stagger`), a mace's daze does not hold it,
 // and a ward stops only `boss_ward` of its blows (prayers.ron). Its fight is data:
 // `attack` is its plain blow, `moves` the ones it chooses among by phase and by how far
