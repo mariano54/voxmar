@@ -2,6 +2,7 @@
 //! the client for singleplayer.
 
 mod actions;
+mod apiary;
 mod commands;
 mod condition;
 /// The weather in words, for the debug overlay as for `/weather`.
@@ -494,6 +495,8 @@ pub(crate) struct Server {
     /// grew back, whose picking pays the planter's experience.
     regrowing: FxHashMap<IVec3, regrow::Regrowing>,
     planter_grown: FxHashSet<IVec3>,
+    /// Kept hives with bees, and how far each is toward its honey (`apiary`).
+    apiary: apiary::Apiary,
     /// When the player message being handled arrived (see `actions`).
     arrival: Instant,
     /// The moment before which every player message has been handled: the last time all
@@ -599,6 +602,7 @@ impl Server {
         let placed = meta.placed.iter().map(|&p| IVec3::from_array(p)).collect();
         let regrowing = regrow::restore(&meta.regrowing, |name| content.blocks.id(name));
         let planter_grown = meta.planter_grown.iter().map(|&p| IVec3::from_array(p)).collect();
+        let apiary = apiary::Apiary::restore(&meta.hives);
         let lit = meta.lit.iter().filter(|fire| fire.until > tick && content.multiblocks.get(&fire.structure).is_some())
             .map(|fire| (IVec3::from_array(fire.position), fire.clone())).collect();
         let survival = Arc::new(rules::SurvivalRules::load(&content.files, &content.blocks, &mut Vec::new()).expect("checked by load_content"));
@@ -621,6 +625,7 @@ impl Server {
             placed,
             regrowing,
             planter_grown,
+            apiary,
             arrival: Instant::now(),
             heard: None,
             creatures: creatures::Creatures::default(),
@@ -927,6 +932,7 @@ impl Server {
         let mut grown: Vec<[i32; 3]> = self.planter_grown.iter().map(|p| p.to_array()).collect();
         grown.sort();
         meta.planter_grown = grown;
+        meta.hives = self.apiary.saved();
         meta.lit = self.lit.values().filter(|fire| fire.until > self.tick).cloned().collect();
         meta.lit.sort_by_key(|fire| fire.position);
         meta.day = Some(self.day as u64);
@@ -1047,6 +1053,7 @@ impl Server {
                 self.forget_placed(pos);
                 done.push((pos, block));
                 self.machine_changed(pos, old, block);
+                self.hive_changed(pos, old, block);
                 self.fire_changed(pos);
             }
         }
@@ -1081,6 +1088,7 @@ impl Server {
             self.dirty.insert(column);
             self.forget_placed(pos);
             self.machine_changed(pos, old, block);
+            self.hive_changed(pos, old, block);
             self.fire_changed(pos);
             for player in self.players.values().filter(|p| p.joined && p.sent.contains(&column)) {
                 player.connection.send(ServerMessage::BlockChanged { pos, block });

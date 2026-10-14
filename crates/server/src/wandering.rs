@@ -6151,6 +6151,24 @@ mod tests {
         assert!(!comes_at(&server, "fireside_guests", spot));
     }
 
+    /// The beekeeper comes by day only to a home with a bee garden: a skep of bees among
+    /// flowers. An empty skep is no draw.
+    #[test]
+    fn the_beekeeper_comes_only_to_a_home_with_bees() {
+        let mut server = fixture();
+        server.day = (0..40).map(|i| TICKS_PER_DAY as f64 * (4.0 + i as f64 / 40.0)).find(|&day| voxmar_engine::creature::daylight(day as u64) >= 1.0).expect("midday");
+        let home = IVec3::new(128, 200, 128);
+        server.players.get_mut(&1).unwrap().home = Some(home.as_vec3());
+        let spot = IVec3::new(128, 200, 150);
+        for (i, name) in ["base:hearthstone", "base:sleeping_bag", "base:dandelion", "base:dandelion", "base:dandelion"].iter().enumerate() {
+            place(&mut server, name, home + IVec3::new(i as i32 + 1, 0, 0));
+        }
+        place(&mut server, "base:skep", home + IVec3::new(0, 0, 2));
+        assert!(!comes_at(&server, "beekeeper", spot), "an empty skep draws no beekeeper");
+        place(&mut server, "base:bee_skep", home + IVec3::new(0, 0, 2));
+        assert!(comes_at(&server, "beekeeper", spot), "bees at home draw the beekeeper");
+    }
+
     /// No party hands over a step of the ages' main line (docs/wandering.md, "How often"):
     /// what a main quest asks a player to make is never a gift, and what it asks them to
     /// cook, mine or carry comes, if at all, short of the count and never again and again.

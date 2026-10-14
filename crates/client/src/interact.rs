@@ -214,6 +214,10 @@ impl ActionContext for ClientContext<'_> {
         Some(&self.content.machines)
     }
 
+    fn bees(&self) -> Option<&voxmar_engine::bees::Bees> {
+        Some(&self.content.bees)
+    }
+
     fn combat(&self) -> Option<&voxmar_engine::combat::CombatRegistry> {
         Some(&self.content.combat)
     }
@@ -344,8 +348,9 @@ fn break_and_place(
             }
         }
         // A multiblock's core is lit (the server says whether the structure around it
-        // stands); a sleeping bag is slept in; a locked chest's lock is picked.
-        for name in ["base:light", "base:sleep", "base:pick_lock"] {
+        // stands); a sleeping bag is slept in; a locked chest's lock is picked; bees give a
+        // swarm to a skep held up to them, or a full skep its honey.
+        for name in ["base:light", "base:sleep", "base:pick_lock", "base:tend_bees"] {
             if let (Some(hit), Some(action)) = (hit, actions.0.id(name)) {
                 let context = ClientContext { world: &world, player: &player, content };
                 let action_target = ActionTarget::Block { block: hit.block, face: hit.face };
