@@ -240,9 +240,11 @@ online) is that home's guest (process.rs `guest_survey`): `AtHome` holds for the
 is. Their own quest perks (`Done(..)`) still need their own quests. A guest's steps are never
 announced, tallied as reached or felt for their quests (so their own hearth announces them later), and a host's
 stores are not theirs to lay from (laying and sleep keep `at_home`). If two hosts' reaches
-overlap, the lower-numbered one's home counts. Tests (guests.rs):
-`a_guest_by_a_friends_hearth_is_hearthside_unannounced`,
-`a_guest_loses_the_comfort_away_from_it_or_with_the_host_gone`. No gate step: the gate runs
+overlap, the lower-numbered one's home counts. A guest who sleeps in a bed there rests as
+the home gives (Well rested by a friend's Bedside or in a Snug home, Deep rest in a Cosy one).
+Tests (guests.rs): `a_guest_by_a_friends_hearth_is_hearthside_unannounced`,
+`a_guest_loses_the_comfort_away_from_it_or_with_the_host_gone`,
+`a_guest_sleeps_as_well_as_the_home_they_are_a_guest_in`. No gate step: the gate runs
 one player.
 
 ## Quest hooks (written, in base/quests.ron)

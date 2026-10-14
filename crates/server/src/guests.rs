@@ -3,6 +3,10 @@
 //! host is here, never announced to them, and nothing once they leave or the host does.
 
 use std::sync::Arc;
+use std::time::Instant;
+
+use voxmar_engine::action::ActionTarget;
+use voxmar_engine::coords::Face;
 
 use voxmar_engine::block::BlockId;
 use voxmar_engine::coords::ColumnPos;
@@ -86,4 +90,30 @@ fn a_guest_loses_the_comfort_away_from_it_or_with_the_host_gone() {
     server.players.get_mut(&2).unwrap().joined = false;
     crate::process::Survival.run(&mut server);
     assert!(!hearthside(&server, 1), "Hearthside at the hearth of a host who is not here");
+}
+
+/// A guest who sleeps in a bed by a friend's hearth, with a seat and two lights by it (the
+/// host's Bedside), wakes well rested as the host would, though their own hearth is far off;
+/// with the host gone, it is a plain rest.
+#[test]
+fn a_guest_sleeps_as_well_as_the_home_they_are_a_guest_in() {
+    let rested = |host_here: bool| {
+        let mut server = fixture();
+        let (bag, stool, torches) = (HEARTH + IVec3::new(-3, 0, 1), HEARTH + IVec3::new(-3, 0, -1), [HEARTH + IVec3::new(-1, 0, 2), HEARTH + IVec3::new(-1, 0, -2)]);
+        for (at, name) in [(bag, "base:sleeping_bag"), (stool, "base:oak_stool"), (torches[0], "base:torch"), (torches[1], "base:torch")] {
+            let block = id(&server, name);
+            server.set_block(at, block);
+        }
+        server.players.get_mut(&1).unwrap().home = Some(Vec3::new(400.5, (FLOOR + 2) as f32, 400.5));
+        server.players.get_mut(&2).unwrap().joined = host_here;
+        let sleep = server.content.actions.expect("base:sleep");
+        server.propose(1, sleep, ActionTarget::Block { block: bag, face: Face::PosY }, Instant::now());
+        let effects = &server.content.effects;
+        let well = effects.id("base:well_rested").expect("base's well_rested");
+        let plain = effects.id("base:rested").expect("base's rested");
+        let given = &server.players[&1].timed_effects;
+        (given.iter().any(|(e, _)| *e == well), given.iter().any(|(e, _)| *e == plain))
+    };
+    assert_eq!(rested(true).0, true, "a guest by a friend's Bedside did not sleep well rested");
+    assert_eq!(rested(false), (false, true), "with the host gone, the guest's sleep is a plain rest");
 }
