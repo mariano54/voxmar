@@ -896,7 +896,8 @@ panned by direction, with a reverb as wet as the place is enclosed. Every condit
 range with a fade, and rain ducks layers rather than silencing them. Indoors is asked apart
 (the fill leaks out of an open door): a roof over the eye and walls met by short rays around it
 make the `shelter` axis, and a roof close overhead the `roof` axis. Outdoor layers duck by
-shelter and their one-shots are muffled with a low-pass as far as they duck, rain drums on the
+shelter and are muffled as far as they duck (one-shots by a low-pass; beds by a darkened twin,
+made at startup at a quarter of the rate, played beside them), rain drums on the
 roof, a fire's layers never duck, and thunder is quieter (`ambience.ron` `shelter`;
 `indoor_preview -- --ignored` writes a wood and a storm heard outside and then from a home by
 its hearth to `target/indoor_preview.wav`). Captures run it silently
@@ -909,7 +910,9 @@ writes about twenty seconds of each of seventeen typical places to `target/ambie
 What the player does is heard as they do it: eating, crafting at the grid, loading a home
 station, lighting a fire or a kiln, opening a chest or a door, putting food on to cook,
 lying down to sleep, casting a line, feeding an animal, emptying a pouch, feeding a machine,
-picking a lock, praying at an altar, spreading fertiliser and throwing something down.
+picking a lock, praying at an altar, spreading fertiliser and throwing something down; and what
+an action brings as it lands in the pack (`brings`, by the item's tags): a fish landed, food off
+the fire done, or burnt.
 `sounds.ron`'s `actions` gives each action, by name, its clips (one picked at random, at a
 slightly different pitch) and a volume, around the loudness of placing a block, or says it is
 `silent` on purpose or `heard` elsewhere (by the block touched, the interface or the fight). A

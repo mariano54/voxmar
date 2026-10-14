@@ -98,6 +98,8 @@ impl Plugin for AmbiencePlugin {
 /// place in stereo each time they play.
 struct Clips {
     beds: Vec<Vec<Handle<AudioSource>>>,
+    /// Each outdoor bed's segments as heard from indoors (none for the rest).
+    muffled: Vec<Vec<Handle<AudioSource>>>,
     sounds: Vec<Arc<Vec<OneShotClip>>>,
 }
 
@@ -109,6 +111,8 @@ struct OneShotClip {
 /// What the synthesis thread hands back: bed segments as WAV files, and one-shots.
 struct Synthesized {
     beds: Vec<(Synth, Vec<Vec<u8>>)>,
+    /// Outdoor beds' muffled segments, by bed.
+    muffled: Vec<(usize, Vec<Vec<u8>>)>,
     sounds: Vec<(Synth, Arc<Vec<OneShotClip>>)>,
 }
 
@@ -163,6 +167,24 @@ struct Ambient {
 #[derive(Component)]
 struct BedSegment(usize);
 
+/// A bed segment's muffled twin, playing alongside it as loud as the place is indoors.
+#[derive(Component)]
+struct Muffled;
+
+/// A recording in the assets as `[left, right]` at the game's sample rate.
+pub(crate) fn decode(file: &std::path::Path) -> Result<[Vec<f32>; 2], String> {
+    use bevy::audio::{Decodable, Source};
+    let source = AudioSource { bytes: std::fs::read(file).map_err(|e| format!("{}: {e}", file.display()))?.into() };
+    let decoder = source.decoder();
+    if decoder.sample_rate().get() != sfx::RATE {
+        return Err(format!("{}: not at {} Hz", file.display(), sfx::RATE));
+    }
+    let channels = decoder.channels().get() as usize;
+    let samples: Vec<f32> = decoder.collect();
+    let channel = |c: usize| samples.iter().skip(c.min(channels - 1)).step_by(channels).copied().collect();
+    Ok([channel(0), channel(1)])
+}
+
 /// Reads the ambience definitions and starts synthesizing what they use.
 fn start(mut commands: Commands, launch: Res<Launch>, world: Res<ClientWorld>) {
     let ambience = match Ambience::load(&launch.content.files) {
@@ -180,6 +202,11 @@ fn start(mut commands: Commands, launch: Res<Launch>, world: Res<ClientWorld>) {
     let mut synths: Vec<Synth> = bed_synths.chain(ambience.sounds.iter().map(|s| s.synth)).collect();
     synths.sort_by_key(|s| *s as u8);
     synths.dedup();
+    // Outdoor beds are also made muffled, to play beside them as loud as the place is
+    // indoors: a wall takes the brightness, not just the loudness.
+    let outdoor: Vec<(usize, BedSound)> = ambience.beds.iter().enumerate().filter(|(_, bed)| bed.outdoor()).map(|(i, bed)| (i, bed.sound.clone())).collect();
+    let cutoff = ambience.shelter.muffle;
+    let assets = voxmar_server::assets_dir();
     let (tx, clips_rx) = unbounded();
     rayon::spawn(move || {
         let beds = synths
@@ -195,7 +222,30 @@ fn start(mut commands: Commands, launch: Res<Launch>, world: Res<ClientWorld>) {
                 (s, Arc::new(variants))
             })
             .collect();
-        let _ = tx.send(Synthesized { beds, sounds });
+        let muffled = outdoor
+            .par_iter()
+            .filter(|_| cutoff < defs::OPEN_AIR_HZ)
+            .filter_map(|(bed, sound)| {
+                let segments = (0..synth::BED_VARIANTS).map(|v| {
+                    let segment = match sound {
+                        BedSound::Synth(synth) => Ok(synth::bed(*synth, v)),
+                        BedSound::Recorded(paths) => decode(&assets.join(&paths[v])),
+                    };
+                    segment.map(|segment| {
+                        let [l, r] = mixer::muffled(segment, cutoff);
+                        sfx::wav_stereo_at(sfx::RATE / mixer::MUFFLED_STEP as u32, &l, &r)
+                    })
+                });
+                match segments.collect::<Result<Vec<_>, _>>() {
+                    Ok(segments) => Some((*bed, segments)),
+                    Err(e) => {
+                        warn!("ambience: no muffled bed: {e}");
+                        None
+                    }
+                }
+            })
+            .collect();
+        let _ = tx.send(Synthesized { beds, muffled, sounds });
     });
     let groups = ambience.groups.len();
     commands.insert_resource(Ambient {
@@ -252,7 +302,11 @@ fn receive_clips(ambient: Option<ResMut<Ambient>>, mut sources: ResMut<Assets<Au
         })
         .collect();
     let sounds = ambient.ambience.sounds.iter().map(|s| find_sound(s.synth)).collect();
-    ambient.clips = Some(Clips { beds, sounds });
+    let mut muffled = vec![Vec::new(); ambient.ambience.beds.len()];
+    for (bed, files) in synthesized.muffled {
+        muffled[bed] = files.into_iter().map(|bytes| sources.add(AudioSource { bytes: Arc::from(bytes) })).collect();
+    }
+    ambient.clips = Some(Clips { beds, muffled, sounds });
 }
 
 /// Scans the surroundings on a worker about once a second, and eases the environment
@@ -429,7 +483,7 @@ fn play(
     settings: Res<Settings>,
     global: Res<GlobalVolume>,
     camera: Query<&GlobalTransform, With<Camera3d>>,
-    mut segments: Query<(Entity, &BedSegment, &mut AudioSink)>,
+    mut segments: Query<(Entity, &BedSegment, Has<Muffled>, &mut AudioSink)>,
     mut sources: ResMut<Assets<AudioSource>>,
     mut ambient: ResMut<Ambient>,
 ) {
@@ -452,11 +506,14 @@ fn play(
             Cue::Segment { .. } | Cue::Sound { .. } if !audible => {}
             Cue::Segment { bed, variant } => {
                 let Some(clip) = clips.beds[bed].get(variant) else { continue };
-                let volume = Volume::Linear(ambient.mixer.level(bed) * master);
-                commands.spawn((BedSegment(bed), AudioPlayer(clip.clone()), PlaybackSettings::DESPAWN.with_volume(volume)));
+                let [dry, wet] = heard(ambient, clips, bed, master);
+                commands.spawn((BedSegment(bed), AudioPlayer(clip.clone()), PlaybackSettings::DESPAWN.with_volume(Volume::Linear(dry))));
+                if let Some(clip) = clips.muffled[bed].get(variant) {
+                    commands.spawn((BedSegment(bed), Muffled, AudioPlayer(clip.clone()), PlaybackSettings::DESPAWN.with_volume(Volume::Linear(wet))));
+                }
             }
             Cue::Stop { bed } => {
-                for (entity, segment, _) in &segments {
+                for (entity, segment, _, _) in &segments {
                     if segment.0 == bed {
                         commands.entity(entity).despawn();
                     }
@@ -478,8 +535,8 @@ fn play(
         }
     }
     ambient.cues = cues;
-    for (_, segment, mut sink) in &mut segments {
-        sink.set_volume(Volume::Linear(ambient.mixer.level(segment.0) * master));
+    for (_, segment, muffled, mut sink) in &mut segments {
+        sink.set_volume(Volume::Linear(heard(ambient, clips, segment.0, master)[muffled as usize]));
     }
     // Say which beds are playing whenever that changes, for tuning.
     let beds: Vec<&str> = (ambient.ambience.beds.iter().enumerate())
@@ -494,6 +551,17 @@ fn play(
         info!("ambience: [{beds}] air {air:.2} sky {sky:.2} reverb {reverb:.2} relief {relief:.0} depth {depth:.0} shelter {shelter:.2}");
         ambient.logged = beds;
     }
+}
+
+/// How loud a bed plays as it is and muffled: split by how indoors the place is, if it has
+/// a muffled twin.
+fn heard(ambient: &Ambient, clips: &Clips, bed: usize, master: f32) -> [f32; 2] {
+    let level = ambient.mixer.level(bed) * master;
+    if clips.muffled[bed].is_empty() {
+        return [level, 0.0];
+    }
+    let muffled = ambient.mixer.muffling(&ambient.env, &ambient.ambience.beds[bed].duck);
+    [level * (1.0 - muffled), level * muffled]
 }
 
 /// A layer's name without its package, for logs.

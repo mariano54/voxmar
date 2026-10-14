@@ -283,6 +283,13 @@ pub struct Bed {
     pub fade: f32,
 }
 
+impl Bed {
+    /// An outdoor layer, heard muffled from indoors: one that ducks by `shelter`.
+    pub fn outdoor(&self) -> bool {
+        self.duck.iter().any(|(by, _)| *by == DuckBy::Axis(Fixed::Shelter as usize))
+    }
+}
+
 /// Where a one-shot sounds from.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Placement {

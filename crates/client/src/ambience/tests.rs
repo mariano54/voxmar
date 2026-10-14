@@ -18,15 +18,7 @@ pub(crate) fn segment(sound: &BedSound, variant: usize) -> [Vec<f32>; 2] {
 
 /// A recording under `assets/` as `[left, right]` at the game's sample rate.
 pub(crate) fn decode(path: &str) -> [Vec<f32>; 2] {
-    use bevy::audio::{AudioSource, Decodable, Source};
-    let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets").join(path);
-    let source = AudioSource { bytes: std::fs::read(&file).unwrap_or_else(|e| panic!("{}: {e}", file.display())).into() };
-    let decoder = source.decoder();
-    assert_eq!(decoder.sample_rate().get(), RATE, "{path}");
-    let channels = decoder.channels().get() as usize;
-    let samples: Vec<f32> = decoder.collect();
-    let channel = |c: usize| samples.iter().skip(c.min(channels - 1)).step_by(channels).copied().collect();
-    [channel(0), channel(1)]
+    super::decode(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets").join(path)).unwrap()
 }
 
 fn base() -> Ambience {
@@ -225,6 +217,40 @@ fn indoors_the_outside_is_muffled_and_the_hearth_is_clear() {
     assert!(sounds(&outside.0, "gusty").iter().all(|&(_, muffle)| muffle == 0.0), "outdoors nothing is muffled");
 }
 
+/// Outdoor beds have a muffled twin, darker and as long, which plays as far as the place
+/// is indoors; the fire, the rain on the roof and the cave's own air have none.
+#[test]
+fn outdoor_beds_are_heard_muffled_from_indoors() {
+    let ambience = base();
+    let bed = |name: &str| ambience.beds.iter().find(|b| b.name == format!("base:{name}")).unwrap();
+    for name in ["rain", "downpour", "breeze", "storm_wind", "leaves", "stream", "surf"] {
+        assert!(bed(name).outdoor(), "{name}");
+    }
+    for name in ["fire", "rain_on_roof", "cave", "lava"] {
+        assert!(!bed(name).outdoor(), "{name}");
+    }
+    let mixer = Mixer::new(&ambience, 1);
+    let mut env = Environment::new(ambience.groups.len());
+    assert_eq!(mixer.muffling(&env, &bed("breeze").duck), 0.0);
+    env.set(Fixed::Shelter, 1.0);
+    assert!(mixer.muffling(&env, &bed("breeze").duck) > 0.8);
+    assert_eq!(mixer.muffling(&env, &bed("fire").duck), 0.0);
+    // A recorded bed and a synthesized one, muffled: as long, a quarter of the samples, and
+    // far darker than the same kept at that rate unfiltered.
+    let brightness = |c: &[f32]| {
+        let rms = |x: &mut dyn Iterator<Item = f32>| (x.map(|v| v * v).sum::<f32>() / c.len() as f32).sqrt();
+        rms(&mut c.windows(2).map(|w| w[1] - w[0])) / rms(&mut c.iter().copied()).max(1e-9)
+    };
+    for sound in [&bed("rain").sound, &bed("breeze").sound] {
+        let dry = segment(sound, 0);
+        let kept: Vec<f32> = dry[0].iter().step_by(super::mixer::MUFFLED_STEP).copied().collect();
+        let [left, right] = super::mixer::muffled(dry.clone(), ambience.shelter.muffle);
+        assert_eq!((left.len(), right.len()), (kept.len(), kept.len()));
+        assert!(brightness(&left) < 0.5 * brightness(&kept), "{sound:?}: {} against {}", brightness(&left), brightness(&kept));
+        assert!(left.iter().any(|s| s.abs() > 1e-3), "{sound:?} muffled to nothing");
+    }
+}
+
 /// Recorded beds are what the mixer expects: segments of `SEGMENT` seconds that fade in
 /// and out, at the game's sample rate.
 #[test]
@@ -292,6 +318,20 @@ fn indoor_preview() {
 fn render(ambience: &Ambience, scenes: Vec<Scene>, extra: &[(usize, f32, f32, &[Vec<f32>; 2])]) -> [Vec<f32>; 2] {
     let beds: Vec<Vec<[Vec<f32>; 2]>> =
         ambience.beds.iter().map(|b| (0..synth::BED_VARIANTS).map(|v| segment(&b.sound, v)).collect()).collect();
+    // Outdoor beds' muffled twins, held back up to the full rate, as the game plays them.
+    let step = super::mixer::MUFFLED_STEP;
+    let muffled: Vec<Vec<[Vec<f32>; 2]>> = ambience
+        .beds
+        .iter()
+        .zip(&beds)
+        .map(|(bed, segments)| {
+            let up = |c: Vec<f32>| c.into_iter().flat_map(|s| std::iter::repeat_n(s, step)).collect::<Vec<f32>>();
+            if !bed.outdoor() {
+                return Vec::new();
+            }
+            segments.iter().map(|segment| super::mixer::muffled(segment.clone(), ambience.shelter.muffle).map(up)).collect()
+        })
+        .collect();
     type Variants = Vec<(Vec<f32>, [Vec<f32>; 2])>;
     let sounds: Vec<Variants> =
         ambience.sounds.iter().map(|s| (0..synth::ONE_SHOT_VARIANTS).map(|v| synth::one_shot(s.synth, v)).collect()).collect();
@@ -340,10 +380,17 @@ fn render(ambience: &Ambience, scenes: Vec<Scene>, extra: &[(usize, f32, f32, &[
             for (bed, variant, offset) in &mut playing {
                 let [l, r] = &beds[*bed][*variant];
                 let level = mixer.level(*bed) * sfx::MASTER * super::AMBIENCE_GAIN;
+                let wet = if muffled[*bed].is_empty() { 0.0 } else { mixer.muffling(&scene.env, &ambience.beds[*bed].duck) };
                 for i in 0..block {
                     if let Some(s) = l.get(*offset + i) {
-                        left[at + i] += s * level;
-                        right[at + i] += r[*offset + i] * level;
+                        left[at + i] += s * level * (1.0 - wet);
+                        right[at + i] += r[*offset + i] * level * (1.0 - wet);
+                    }
+                    if let Some([ml, mr]) = muffled[*bed].get(*variant)
+                        && let (Some(a), Some(b)) = (ml.get(*offset + i), mr.get(*offset + i))
+                    {
+                        left[at + i] += a * level * wet;
+                        right[at + i] += b * level * wet;
                     }
                 }
                 *offset += block;
