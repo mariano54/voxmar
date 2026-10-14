@@ -403,6 +403,9 @@ enum Step {
     /// chat says so with what to add next, and the sleep is a rest. At home, Lay on a
     /// recipe fills the crafting grid from a barrel there.
     Home,
+    /// A hen kept at that home lays into a barrel there, not onto the ground, and the chat
+    /// says so.
+    Nest,
     /// A wooden door placed before the player goes in whole, both halves facing them, and a
     /// right click on it opens it and another shuts it, as the server turns it.
     Door,
@@ -1274,6 +1277,8 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         Step::Party => 60.0,
         // The effects are judged once a second by the server, and a rest is a sleep away.
         Step::Home => 70.0,
+        // The barrel opened, then a server pass for the egg and a second for the chat.
+        Step::Nest => 45.0,
         // A rack hung, then a pot set simmering, each answer waited on.
         Step::Dry => 5.0 * DRY_WAIT + STEP_LIMIT,
         // The refusal waited on, then a well set down by the plot.
@@ -1553,6 +1558,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Journal => journal(world, gate, now, in_phase),
         Step::Prayers => prayers(world, gate, now, in_phase),
         Step::Home => home(world, gate, now),
+        Step::Nest => nest(world, gate, now),
         Step::Door => door(world, gate, now, in_phase),
         Step::Quests => quests(world, gate, now, in_phase),
         Step::Catalogue => catalogue(world, gate, now, in_phase),
@@ -4667,14 +4673,11 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
     let (bag, torch, barrel) = (stand + IVec3::new(2, 0, 0), stand + IVec3::new(3, 0, 0), stand + IVec3::new(-2, 0, 0));
     let waited = gate.server_in_phase();
     let leave = |world: &mut World, gate: &mut Gate| {
-        let net = world.resource::<Net>();
-        for at in [bag, torch] {
-            net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
-        }
-        net.command("effect clear");
+        world.resource::<Net>().command("effect clear");
         let style = &mut world.resource_mut::<crate::hud::inventory::InterfaceStyle>();
         style.home_hidden_within = gate.home_hidden_within.take().unwrap_or(style.home_hidden_within);
-        gate.next(Step::Door, now);
+        // The bag stays home for the hen's nest; that step takes it and the torch up.
+        gate.next(Step::Nest, now);
     };
     match gate.phase {
         0 => {
@@ -4864,6 +4867,79 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
             } else if waited > 10.0 {
                 gate.check("home: lay", Err(format!("{waited:.1} server s after Lay: {laid} planks in the grid, {held} in the pack, barrel screen open {open}, inventory open {inventory}, viewer open {viewer}")));
                 lay_done(world, barrel);
+                leave(world, gate);
+            }
+        }
+    }
+}
+
+/// A junglefowl summoned at the Home step's bag, tamed and with an egg due, lays it into a
+/// barrel in that home (`Product::nests`), seen in the barrel's open screen (shot
+/// `home-nest`), and the chat tells the keeper; then the bag, torch, barrel and hen go.
+fn nest(world: &mut World, gate: &mut Gate, now: f32) {
+    let stand = world.resource::<LocalPlayer>().position.floor().as_ivec3();
+    let (bag, torch, barrel, hen) = (stand + IVec3::new(2, 0, 0), stand + IVec3::new(3, 0, 0), stand + IVec3::new(0, 0, 2), stand + IVec3::new(0, 0, -3));
+    let waited = gate.server_in_phase();
+    let leave = |world: &mut World, gate: &mut Gate| {
+        world.resource_mut::<UiState>().inventory_open = false;
+        let net = world.resource::<Net>();
+        net.command("creatures remove junglefowl");
+        for at in [bag, torch, barrel] {
+            net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
+        }
+        net.command("clear egg");
+        gate.next(Step::Door, now);
+    };
+    let eggs = |world: &World| {
+        let egg = world.resource::<ClientWorld>().registry.id("base:egg");
+        world.resource::<LocalPlayer>().inventory.store.as_ref().map_or(0, |s| s.slots.iter().flatten().filter(|x| Some(x.item) == egg).map(|x| x.count as u32).sum::<u32>())
+    };
+    match gate.phase {
+        0 => {
+            if world.resource::<LocalPlayer>().vitals.home != Some(bag) {
+                let home = world.resource::<LocalPlayer>().vitals.home;
+                gate.check("home: nest", Err(format!("no home at the bag {bag} to keep a hen at (home {home:?})")));
+                leave(world, gate);
+                return;
+            }
+            let net = world.resource::<Net>();
+            net.command(&format!("setblock {} {} {} barrel", barrel.x, barrel.y, barrel.z));
+            net.command(&format!("summon junglefowl 1 {} {} {}", hen.x, hen.y, hen.z));
+            net.command("creatures tame junglefowl");
+            net.command("creatures hold junglefowl");
+            gate.machines_asked = f32::MIN;
+            gate.advance(now);
+        }
+        // The barrel opened, empty, and only then an egg made due, so it is laid with the
+        // screen watching.
+        1 => {
+            if world.resource::<LocalPlayer>().inventory.store.is_some() {
+                world.resource::<Net>().command("creatures hasten junglefowl");
+                gate.advance(now);
+            } else if waited > 10.0 {
+                gate.check("home: nest", Err(format!("{waited:.1} server s on, the nest barrel at {barrel} did not open")));
+                leave(world, gate);
+            } else if gate.server_now - gate.machines_asked >= 1.0 {
+                if world.resource::<ClientWorld>().registry.id("base:barrel").is_some_and(|b| world.resource::<ClientWorld>().block(barrel) == Some(b)) {
+                    world.resource_mut::<LocalPlayer>().store_asked = true;
+                    let actions = world.resource::<crate::Actions>().0.clone();
+                    world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("base:open_store"), voxmar_engine::action::ActionTarget::Block { block: barrel, face: voxmar_engine::coords::Face::PosY });
+                }
+                gate.machines_asked = gate.server_now;
+            }
+        }
+        _ => {
+            let laid = eggs(world);
+            let told = world.resource::<crate::hud::console::Console>().since(gate.phase_since).any(|l| l.contains("laid into your home's stores"));
+            if laid > 0 && told {
+                if gate.shot(world, "home-nest").is_none() {
+                    return;
+                }
+                gate.check("home: nest", Ok(format!("a hen kept at home laid {laid} egg into the barrel there (shot home-nest), and the chat said so")));
+                leave(world, gate);
+            } else if waited > 15.0 {
+                let open = world.resource::<LocalPlayer>().inventory.store.is_some();
+                gate.check("home: nest", Err(format!("{waited:.1} server s after the hen's egg was made due: {laid} eggs in the barrel (open {open}), told {told}")));
                 leave(world, gate);
             }
         }
