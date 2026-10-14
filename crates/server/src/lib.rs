@@ -13,6 +13,7 @@ mod fishing;
 mod death;
 mod hearth;
 mod journal;
+mod lairs;
 mod machines;
 mod quests;
 mod regrow;
@@ -518,6 +519,7 @@ pub(crate) struct Server {
     villagers: villagers::Villagers,
     /// Parties that come by on their own errands (`wandering`).
     wandering: wandering::Wandering,
+    lairs: lairs::Lairs,
     /// A new player's health and kit, and what falls, lava, fires and water do.
     survival: Arc<rules::SurvivalRules>,
     /// Swings, guards, dodges and creatures' wind-ups (`fight`).
@@ -611,6 +613,7 @@ impl Server {
         });
         let placed = meta.placed.iter().map(|&p| IVec3::from_array(p)).collect();
         let regrowing = regrow::restore(&meta.regrowing, |name| content.blocks.id(name));
+        let lairs = lairs::Lairs::restore(&meta.lairs);
         let planter_grown = meta.planter_grown.iter().map(|&p| IVec3::from_array(p)).collect();
         let lit = meta.lit.iter().filter(|fire| fire.until > tick && content.multiblocks.get(&fire.structure).is_some())
             .map(|fire| (IVec3::from_array(fire.position), fire.clone())).collect();
@@ -639,6 +642,7 @@ impl Server {
             creatures: creatures::Creatures::default(),
             villagers: villagers::Villagers::restore(state.villagers),
             wandering: Default::default(),
+            lairs,
             survival,
             fights: fight::Fights::default(),
             processes,
@@ -941,6 +945,7 @@ impl Server {
         let mut grown: Vec<[i32; 3]> = self.planter_grown.iter().map(|p| p.to_array()).collect();
         grown.sort();
         meta.planter_grown = grown;
+        meta.lairs = self.lairs.saved();
         meta.lit = self.lit.values().filter(|fire| fire.until > self.tick).cloned().collect();
         meta.lit.sort_by_key(|fire| fire.position);
         meta.day = Some(self.day as u64);

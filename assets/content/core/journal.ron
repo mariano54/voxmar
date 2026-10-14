@@ -9,7 +9,7 @@
         // Ten kills show a monster's weak style, a hundred its drop table.
         (page: Monsters, studied: 10, mastered: 100, seen_within: 3.0),
         (page: Animals, studied: 10, mastered: 100, seen_within: 3.0),
-        (page: Bosses, studied: 1, mastered: 10),
+        (page: Bosses, studied: 1, mastered: 10, seen_within: 8.0),
         (page: Fish, studied: 10, mastered: 100, seen_within: 3.0),
         (page: Plants, studied: 10, mastered: 100),
         (page: Ores, studied: 25, mastered: 250),

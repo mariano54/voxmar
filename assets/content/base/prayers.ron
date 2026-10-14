@@ -5,7 +5,8 @@
 // either way for `calm` seconds, a point comes back every `regain` seconds. One ward is on
 // at a time, and one boost of each stat: the last turned on puts out the one it shares a
 // kind with. A ward stops `ward` of a creature's blows in its styles, so food still
-// matters with one up (bosses and players' blows get their own shares when there are any).
+// matters with one up, and `boss_ward` of a boss's (players' blows get their own share when
+// there are player fights).
 //
 // The book holds what fights do today; ranged and magic boosts (Steady Eye, Spark Will, Far
 // Eye, Flame Will, Falcon Eye, Star Will) come with ranged and magic attacks, Lingering with
@@ -17,6 +18,7 @@
         calm: 10.0,
         regain: 20.0,
         ward: 0.8,
+        boss_ward: 0.5,
         // Magic experience a bone offered at an altar gives (the wiki: 16 at a wayside
         // shrine), times what the offering is worth in bones.
         offer_xp: 16.0,

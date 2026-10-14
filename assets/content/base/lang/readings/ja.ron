@@ -712,4 +712,10 @@
     "prayer.base.hawk_mind": "たかのこころ",
     "prayer.base.ward_melee": "きんせつのまもり",
     "prayer.base.last_breath": "さいごのいき",
+    "effect.base.heartwood": "しんざい",
+    "block.base.heartroot": "しんね",
+    "block.base.hollow_root": "うろのね",
+    "block.base.hollow_floor": "うろのゆか",
+    "creature.base.rootmother": "ねのはは",
+    "quest.base.the_rootmother": "ねのはは",
 }

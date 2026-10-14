@@ -1774,6 +1774,8 @@ pub struct WorldContent {
     pub ores: crate::ores::OresDef,
     /// Settlements (`settlements.ron`).
     pub settlements: crate::settlements::SettlementsDef,
+    /// Bosses' lairs (`lairs.ron`), every package's.
+    pub lairs: Vec<crate::lairs::LairDef>,
     /// Tarns (`terrain.ron`); none when no package defines them.
     pub tarns: Option<TarnsDef>,
     /// What loading noticed and allowed, for the log: a later package replacing data an
@@ -1827,7 +1829,7 @@ pub struct TreadDef {
 
 /// The base package's files, built in so that a generator can be made from a block
 /// registry alone (distant terrain, tools and tests).
-pub(crate) const BASE_FILES: [(&str, &str); 17] = [
+pub(crate) const BASE_FILES: [(&str, &str); 18] = [
     ("ambient.ron", include_str!("../../../assets/content/base/ambient.ron")),
     ("crops.ron", include_str!("../../../assets/content/base/crops.ron")),
     ("biomes.ron", include_str!("../../../assets/content/base/biomes.ron")),
@@ -1835,6 +1837,7 @@ pub(crate) const BASE_FILES: [(&str, &str); 17] = [
     ("climate.ron", include_str!("../../../assets/content/base/climate.ron")),
     ("cultures.ron", include_str!("../../../assets/content/base/cultures.ron")),
     ("decorations.ron", include_str!("../../../assets/content/base/decorations.ron")),
+    ("lairs.ron", include_str!("../../../assets/content/base/lairs.ron")),
     ("land.ron", include_str!("../../../assets/content/base/land.ron")),
     ("ores.ron", include_str!("../../../assets/content/base/ores.ron")),
     ("plants.ron", include_str!("../../../assets/content/base/plants.ron")),
@@ -1854,6 +1857,9 @@ impl WorldContent {
         let world = Self::from_files(content.files.iter(), &content.blocks)?;
         world.settlements.check_furnishings(&content.blocks)?;
         world.settlements.people.check_against(&content.creatures, &world.settlements.works())?;
+        if let Some(lair) = world.lairs.iter().find(|l| content.creatures.id(&l.boss).is_none()) {
+            return Err(ContentError(format!("lairs.ron: lair `{}` is the home of `{}`, which no package has", lair.name, lair.boss)));
+        }
         Ok(world)
     }
 
@@ -1909,6 +1915,7 @@ impl WorldContent {
         let mut weather = voxmar_engine::weather::WeatherTable::default();
         let mut ores = crate::ores::OresDef::default();
         let mut settlements = crate::settlements::SettlementsDef::default();
+        let mut lairs = Vec::new();
         let mut tarns: Option<(TarnsDef, Setters)> = None;
         let mut raw = Vec::new();
         for file in files {
@@ -2018,6 +2025,7 @@ impl WorldContent {
                 "land.ron" => lay_file(&mut land, file, |_: &mut LandSet| {}, &mut notes)?,
                 "ores.ron" => ores.extend(&at, &file.package, &file.source)?,
                 "settlements.ron" => settlements.extend(&at, &file.package, &file.source)?,
+                "lairs.ron" => lairs.extend(crate::lairs::read(&at, &file.package, &file.source)?),
                 "cultures.ron" => settlements.cultures.extend(&at, &file.package, &file.source)?,
                 // Each crop's level, rarity and stages, so settlements keep to everyday crops
                 // and never grow them ripe.
@@ -2127,6 +2135,7 @@ impl WorldContent {
             land,
             ores,
             settlements,
+            lairs,
             tarns: tarns.map(|(t, _)| t),
             notes,
         };
@@ -2135,6 +2144,9 @@ impl WorldContent {
             content.settlements.check(registry)?;
         }
         content.check(registry, &raw.iter().map(|(at, b)| (b.name.clone(), at.clone())).collect::<Vec<_>>())?;
+        for lair in &content.lairs {
+            lair.check(registry, |name| content.biome(name).is_some()).map_err(ContentError)?;
+        }
         // Every plant the density keeps names one: a typo would thin what it meant to keep.
         for keep in &content.plant_density_keeps {
             let found = match keep {

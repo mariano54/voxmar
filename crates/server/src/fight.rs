@@ -289,16 +289,26 @@ impl Server {
         }
     }
 
+    /// Undoes a creature's blow on its way, if any (a boss rearing into a new phase).
+    pub(crate) fn fights_forget(&mut self, creature: u32) {
+        self.fights.windups.retain(|w| w.creature != creature);
+    }
+
     /// A creature decided to strike a player: it winds up first, showing it, following them
     /// for the first part of it.
     pub(crate) fn wind_up(&mut self, creature: u32, player: PlayerId) {
         let Some(live) = self.creatures.live.get(&creature) else { return };
-        let Some(attack) = self.content.creatures.get(live.species).def.attack else { return };
         let Some(target) = self.players.get(&player) else { return };
         let to = (target.position - live.body.position).with_y(0.0);
         if self.fights.windups.iter().any(|w| w.creature == creature) {
             return;
         }
+        // Which of its attacks: a boss's next move that fits its phase and how far away the
+        // player stands, from its body's edge (`Creature::choose`).
+        let species = self.content.creatures.get(live.species);
+        let edge = to.length() - species.def.body.size.0 * live.scale * 0.5 - 0.3;
+        let Some(index) = species.choose(live.phase, edge, live.attack) else { return };
+        let Some(attack) = species.attack_at(index) else { return };
         let feel = self.content.combat.feel;
         let windup = attack.windup.unwrap_or(feel.creature_windup).max(0.0);
         let lands = self.fights.now() + windup as f64;
@@ -311,6 +321,7 @@ impl Server {
             live.body.yaw = voxmar_engine::creature::motion::yaw_of(to);
         }
         live.winding = true;
+        live.attack = index;
         live.held_until = live.held_until.max(tick + ticks(windup));
         live.tracking = Some((player, tick + ticks(windup * feel.creature_tracking.clamp(0.0, 1.0))));
         live.changed = true;
@@ -326,10 +337,11 @@ impl Server {
             return None;
         }
         let target = self.players.get(&player)?.position;
-        let def = &self.content.creatures.get(live.species).def;
+        let species = self.content.creatures.get(live.species);
+        let def = &species.def;
         let to = (target - live.body.position).with_y(0.0);
         let touching = live.body.size.0 * 0.5 + PLAYER_HALF + self.content.combat.feel.creature_clearance;
-        let pace = match def.attack.and_then(|a| a.pace).unwrap_or(self.content.combat.feel.tracking_pace) {
+        let pace = match species.attack_at(live.attack).and_then(|a| a.pace).unwrap_or(self.content.combat.feel.tracking_pace) {
             Pace::Walk => def.movement.walk,
             Pace::Run => def.movement.run,
         };
@@ -469,6 +481,8 @@ impl Server {
             Some(Effect::Sunder { defence, seconds }) => {
                 self.fights.sundered.insert(creature, (defence, now + seconds as f64));
             }
+            // A boss shakes off a daze (`combat::Effect::Daze`).
+            Some(Effect::Daze { .. }) if self.creatures.live.get(&creature).is_some_and(|c| self.content.creatures.get(c.species).def.boss) => {}
             Some(Effect::Daze { seconds }) => {
                 self.fights.windups.retain(|w| w.creature != creature);
                 self.stagger(creature, seconds);
@@ -496,8 +510,9 @@ impl Server {
         let feel = self.content.combat.feel;
         let Some(live) = self.creatures.live.get(&creature) else { return };
         let species = live.species;
-        let def = &self.content.creatures.get(species).def;
-        let Some(attack) = def.attack else { return };
+        let creature_def = self.content.creatures.get(species);
+        let def = &creature_def.def;
+        let Some(attack) = creature_def.attack_at(live.attack) else { return };
         // It stands to recover: the moment for the player's blows. Its next attack waits
         // out the rest of its `every`, as the brain counts it.
         let recovery = attack.recovery.unwrap_or(feel.creature_recovery).max(0.0);
@@ -541,8 +556,10 @@ impl Server {
             Defended::Hit => self.creature_strikes(creature, species, player, 1.0),
             Defended::Blocked => self.creature_strikes(creature, species, player, 1.0 - guard.map_or(0.0, |g| g.stops(attack.style, &feel))),
             Defended::Perfect => {
-                // Staggered once it has recovered: the whole stagger is the player's to use.
-                self.stagger(creature, recovery + feel.stagger);
+                // Staggered once it has recovered: the whole stagger is the player's to use; a
+                // boss shakes it off sooner.
+                let stagger = if self.content.creatures.get(species).def.boss { feel.boss_stagger } else { feel.stagger };
+                self.stagger(creature, recovery + stagger);
                 self.defence_xp(player, creature, species);
                 Some(0)
             }

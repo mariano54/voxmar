@@ -113,6 +113,15 @@ pub struct Live {
     pub winding: bool,
     /// Following the player it winds up at, until a tick, before its aim locks (`fight`).
     pub tracking: Option<(PlayerId, u64)>,
+    /// The attack it winds up or last used (`Creature::attack_at`): 0 its plain one, then
+    /// its moves (`fight`).
+    pub attack: u8,
+    /// The phase of its fight it has come to (`Creature::phase`), and whether it rears on
+    /// coming to one (held still until `held_until`).
+    pub phase: u8,
+    pub rearing: bool,
+    /// The tick it last mended a wound (`lairs`).
+    pub mended: u64,
     /// Its genes, and what shows of them.
     pub genome: genes::Genome,
     pub traits: genes::Traits,
@@ -141,7 +150,19 @@ impl Live {
         if self.winding { brain::Pose::Attacking } else { self.decision.pose }
     }
 
-    fn view(&self, id: u32) -> CreatureView {
+    /// The tell it shows (`CreatureView::tell`): its move while it winds one up, `REARING`
+    /// while it rears into a new phase, else none.
+    fn tell(&self) -> u8 {
+        if self.rearing {
+            voxmar_protocol::REARING
+        } else if self.winding {
+            self.attack
+        } else {
+            0
+        }
+    }
+
+    pub(crate) fn view(&self, id: u32) -> CreatureView {
         CreatureView {
             id,
             species: self.species,
@@ -149,6 +170,7 @@ impl Live {
             velocity: self.body.velocity,
             yaw: self.body.yaw,
             pose: self.pose(),
+            tell: self.tell(),
             health: self.health,
             scale: self.scale,
             seed: self.seed as u32,
@@ -387,6 +409,8 @@ impl Server {
                 let decision = if self.tick < creature.held_until {
                     brain::Decision { pose: brain::Pose::Idle, ..Default::default() }
                 } else {
+                    // Done rearing into a new phase: it fights on.
+                    creature.rearing = false;
                     brain::think(species, &mut creature.mind, &situation)
                 };
                 creature.decision = decision;
@@ -590,8 +614,9 @@ impl Server {
     /// against the player's Defence, its damage times `share` (what a guard lets through).
     /// Returns the damage, or `None` for a miss, which may train Defence (`defence_xp`).
     pub(crate) fn creature_strikes(&mut self, creature: u32, species: CreatureId, player: PlayerId, share: f32) -> Option<u16> {
-        let def = &self.content.creatures.get(species).def;
-        let attack = def.attack?;
+        let creature_def = self.content.creatures.get(species);
+        let def = &creature_def.def;
+        let attack = creature_def.attack_at(self.creatures.live.get(&creature).map_or(0, |c| c.attack))?;
         let target = self.players.get(&player)?;
         if !target.health.alive() || target.allow_flight {
             return Some(0);
@@ -603,7 +628,9 @@ impl Server {
         let boost = 1.0 + book.boost(&target.praying.on, voxmar_engine::prayer::Stat::Defence);
         let defence = voxmar_engine::combat::by_chance(self.level(player, defence_skill) as f32 * boost, unit_from(mix(hit.to_bits() as u64, 0xdef))).min(u8::MAX as u16) as u8;
         // A ward up against the blow's style stops its share; with a guard, the larger stop.
-        let share = if book.warded(&target.praying.on, attack.style) { share.min(1.0 - book.rules.ward) } else { share };
+        // A boss's blows by a smaller share (`boss_ward`).
+        let ward = if def.boss { book.rules.boss_ward } else { book.rules.ward };
+        let share = if book.warded(&target.praying.on, attack.style) { share.min(1.0 - ward) } else { share };
         let last_breath = book.last_breath(&target.praying.on);
         let (low, high) = attack.damage;
         // Worn armour adds to the defence roll, by the wearer's own Defence level.
@@ -649,8 +676,9 @@ impl Server {
         if self.villager_calm_for(id, player) {
             return;
         }
-        let def = &self.content.creatures.get(species).def;
-        let Some(attack) = def.attack else { return };
+        let creature = self.content.creatures.get(species);
+        let def = &creature.def;
+        let Some(attack) = creature.attack_at(self.creatures.live.get(&id).map_or(0, |c| c.attack)) else { return };
         let Some(skill) = self.skill("core:defence") else { return };
         let (low, high) = attack.damage;
         // Nothing for turning aside what could never hurt.
@@ -755,6 +783,9 @@ impl Server {
             target.changed(traits::SKILLS);
         }
         let killed = self.creatures.live[&id].health == 0;
+        if !killed {
+            self.phase_check(id);
+        }
         self.wandering_hurt(id, player);
         self.struck(player, id, damage, killed, blow);
         if killed {
@@ -776,6 +807,7 @@ impl Server {
         // One of a settlement's people: noted dead now, so no save misses it.
         self.villager_died(id);
         self.wandering_died(id);
+        self.lair_boss_died(id);
         let species = self.content.creatures.get(creature.species);
         let killer = creature.hurt_by.and_then(|p| self.players.get(&p));
         let tool: Vec<String> = killer.and_then(|p| p.held()).map_or_else(Vec::new, |item| self.content.blocks.def(item).tags.clone());
@@ -792,7 +824,7 @@ impl Server {
         let cell = creature.body.position.floor().as_ivec3();
         // The killer's journal: one more of the species (people are not counted), and each
         // drop for the collection log.
-        let mut journal: Vec<_> = Self::page_of(species.def.kind).map(|page| (page, species.def.name.clone(), 1)).into_iter().collect();
+        let mut journal: Vec<_> = Self::page_of(&species.def).map(|page| (page, species.def.name.clone(), 1)).into_iter().collect();
         journal.extend(found.iter().map(|&(item, count)| (voxmar_engine::journal::Page::Collection, self.content.blocks.def(item).name.clone(), count as u32)));
         // Its loot comes out once its body has fallen, never from an animal still standing.
         let due = self.tick + (species.def.death.drops_after() * TICKS_PER_SECOND as f32).round() as u64;
@@ -925,6 +957,10 @@ impl Server {
             held_until: 0,
             winding: false,
             tracking: None,
+            attack: 0,
+            phase: 0,
+            rearing: false,
+            mended: 0,
             genome,
             traits,
             breeds_again: 0,
@@ -1003,7 +1039,7 @@ impl Server {
             return;
         }
         let Some(spot) = self.standing_spot(x, z, at.y.floor() as i32) else { return };
-        if self.seen_by_a_player(spot, limits.spawn_unseen_angle) {
+        if self.seen_by_a_player(spot, limits.spawn_unseen_angle) || self.in_lair_quiet(spot) {
             return;
         }
         let site = self.overworld.site(x, z);
@@ -1226,7 +1262,7 @@ impl Server {
     fn replicate_creatures(&mut self) {
         let gone = std::mem::take(&mut self.creatures.gone);
         let every_other = self.tick.is_multiple_of(2);
-        let posed = |creature: &Live| creature.changed && creature.sent.is_some_and(|last| last.pose != creature.pose());
+        let posed = |creature: &Live| creature.changed && creature.sent.is_some_and(|last| last.pose != creature.pose() || last.tell != creature.tell());
         for player in self.players.values().filter(|p| p.joined) {
             let seen = self.creatures.seen.entry(player.id).or_default();
             let mut changed = Vec::new();

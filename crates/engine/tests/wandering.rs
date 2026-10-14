@@ -58,7 +58,8 @@ fn party_only_species_come_with_some_party() {
     let cast: BTreeSet<_> = content.wandering.iter().flat_map(|(_, e)| e.groups.iter().map(|(species, _)| *species)).collect();
     for (id, creature) in content.creatures.iter() {
         let def = &creature.def;
-        if def.habitat.party_only {
+        // A boss comes from its lairs instead (worldgen's `every_boss_has_a_lair`).
+        if def.habitat.party_only && !def.boss {
             assert!(cast.contains(&id), "`{}` only comes with a wandering party, and no event casts it", def.name);
         }
     }
