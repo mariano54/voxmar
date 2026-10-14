@@ -608,6 +608,10 @@ pub(crate) struct Server {
     /// grew back, whose picking pays the planter's experience.
     regrowing: FxHashMap<IVec3, regrow::Regrowing>,
     planter_grown: FxHashSet<IVec3>,
+    /// Blocks set down that a quest's `Placed` counts, by cell, with who set each and what
+    /// it was: broken, it is taken back off their tally, so only those standing count. Kept
+    /// for this run only: one broken after a restart stays counted.
+    placed_for_quests: FxHashMap<IVec3, (PlayerId, String)>,
     /// Kept hives with bees, and how far each is toward its honey (`apiary`).
     apiary: apiary::Apiary,
     /// What is on each loaded home station, and when it is done (`stations`).
@@ -751,6 +755,7 @@ impl Server {
             placed,
             regrowing,
             planter_grown,
+            placed_for_quests: FxHashMap::default(),
             apiary,
             stations,
             catches,
@@ -1240,6 +1245,11 @@ impl Server {
         if let Some(old) = self.world.set_block(pos, block) {
             self.dirty.insert(column);
             self.forget_placed(pos);
+            if (block == BlockId::AIR || self.content.blocks.info(block).fluid.is_some())
+                && let Some((by, name)) = self.placed_for_quests.remove(&pos)
+            {
+                self.untally(by, "placed", &name, 1);
+            }
             self.machine_changed(pos, old, block);
             self.hive_changed(pos, old, block);
             self.station_changed(pos, old, block);

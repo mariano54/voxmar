@@ -328,7 +328,7 @@ pub fn goal_words(locale: &Locale, content: &Content, quest: &QuestDef, goal: &G
         Goal::Laid(item, _) => locale.format("quest.goal.laid", &[("item", &item_words(locale, content, package, item))]),
         Goal::Watering(block, _) => locale.format("quest.goal.watering", &[("item", &item_words(locale, content, package, block))]),
         Goal::Placed(block, _) => locale.format("quest.goal.placed", &[("item", &item_words(locale, content, package, block))]),
-        Goal::Stocked(store, _) => locale.format("quest.goal.stocked", &[("item", &item_words(locale, content, package, store))]),
+        Goal::Stocked(item, store, _) => locale.format("quest.goal.stocked", &[("item", &item_words(locale, content, package, item)), ("store", &item_words(locale, content, package, store))]),
         Goal::CraftNear(item, near, _) => locale.format("quest.goal.craft_near", &[("item", &item_words(locale, content, package, item)), ("near", &item_words(locale, content, package, near))]),
         Goal::Trapped(creature, _) => locale.format("quest.goal.trapped", &[("creature", &creature_words(locale, content, package, creature))]),
         Goal::Felt(effect) => {
@@ -1324,7 +1324,7 @@ mod tests {
             let item = |name: &str| name == "any" || name.starts_with("tag:") || item_id(&content, package, name).is_some();
             for goal in quest.tasks.iter().flatten() {
                 let known = match goal {
-                    Goal::Craft(name, _) | Goal::Cook(name, _) | Goal::CookAt(name, _, _) | Goal::CraftNear(name, _, _) | Goal::Placed(name, _) | Goal::Stocked(name, _) | Goal::Have(name, _) | Goal::Pick(name, _) | Goal::Mine(name, _) | Goal::LookUp(name) => item(name),
+                    Goal::Craft(name, _) | Goal::Cook(name, _) | Goal::CookAt(name, _, _) | Goal::CraftNear(name, _, _) | Goal::Placed(name, _) | Goal::Stocked(name, _, _) | Goal::Have(name, _) | Goal::Pick(name, _) | Goal::Mine(name, _) | Goal::LookUp(name) => item(name),
                     Goal::Catch(name, _) => name == "Kinds" || item(name),
                     Goal::Kinds(page, name, _) => match page {
                         voxmar_engine::journal::Page::Animals | voxmar_engine::journal::Page::Monsters => name == "any" || qualified(package, name).iter().any(|name| content.creatures.find(name).is_some()),
