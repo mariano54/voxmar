@@ -102,6 +102,8 @@ fn scenes(ambience: &Ambience) -> Vec<Scene> {
         scene(ambience, "forest_after_rain", &forest_tags, &[&forest[..], &[("wetness", 0.9), ("cover", 0.6)]].concat()),
         scene(ambience, "lava_cave", &["mountain"], &[("rock", 1.0), ("lava", 0.8), ("sky", 0.0), ("air", 0.3), ("reverb", 0.7), ("depth", 30.0)]),
         scene(ambience, "waterfall", &["river", "water"], &[("water", 0.6), ("falls", 0.9), ("flowing", 1.0), ("rock", 0.4)]),
+        scene(ambience, "campfire_night", &["grassland", "temperate", "open"], &[("grass", 1.0), ("fire", 1.0), ("sun", -0.7), ("temperature", 18.0)]),
+        scene(ambience, "by_the_hearth", &["forest", "temperate"], &[("fire", 1.0), ("air", 0.5), ("sky", 0.0), ("reverb", 0.1)]),
         scene(ambience, "quiet_peak", &["mountain"], &[("rock", 0.8), ("relief", 60.0), ("height", 150.0), ("wind", 4.0), ("temperature", 2.0)]),
     ]
 }
@@ -137,7 +139,7 @@ fn each_place_has_its_own_sound() {
         println!("{}: beds {beds:?}, sounds {sounds:?}", scene.name);
         let (must, must_not): (&[&str], &[&str]) = match scene.name {
             "forest_dawn" => (&["leaves", "dawn_chorus", "warbler"], &["crickets", "owl"]),
-            "forest_noon" => (&["leaves", "breeze", "warbler", "thrush"], &["meadow", "crickets", "owl", "dawn_chorus", "cave", "drip"]),
+            "forest_noon" => (&["leaves", "breeze", "warbler", "thrush"], &["meadow", "crickets", "owl", "dawn_chorus", "cave", "drip", "fire", "fire_snap"]),
             "forest_rain" => (&["downpour"], &["rain_on_roof"]),
             "meadow_noon" => (&["meadow", "breeze"], &["leaves", "crickets", "warbler"]),
             "meadow_night" => (&["crickets", "cricket"], &["meadow", "warbler", "thrush"]),
@@ -147,7 +149,10 @@ fn each_place_has_its_own_sound() {
             "light_rain" => (&["rain"], &["downpour", "rain_on_roof"]),
             "porch_in_rain" => (&["rain_on_roof"], &["downpour"]),
             "forest_after_rain" => (&["dripping_trees"], &["rain", "downpour"]),
-            "lava_cave" => (&["lava", "lava_pop", "cave", "far_drip"], &["stream", "lake", "waterfall"]),
+            "lava_cave" => (&["lava", "lava_pop", "cave", "far_drip"], &["stream", "lake", "waterfall", "fire", "fire_snap"]),
+            // A fire is heard by the fire, crackling and snapping, under the night outdoors.
+            "campfire_night" => (&["fire", "fire_snap", "crickets"], &["lava", "lava_pop", "warbler"]),
+            "by_the_hearth" => (&["fire", "fire_snap"], &["lava", "breeze", "rain_on_roof"]),
             "waterfall" => (&["waterfall"], &["lava", "cave"]),
             // Wind on heights even on a quiet day.
             "quiet_peak" => (&["high_wind"], &["leaves", "warbler"]),

@@ -2,6 +2,8 @@
 //! each chapter's quests as a web, a quest after the ones it follows, joined by lines:
 //! gold once done, lit while open, dim while what comes first is not done. A quest from
 //! another chapter that comes first stands at the web's left, dim, to show the way in. A
+//! web bigger than its well is a canvas: dragged by its empty space (or scrolled either
+//! way), it opens on the quest picked, and its lines are cut at the well's edge. A
 //! quest's page says first why it is worth doing (the reason and the reward), then what
 //! comes first if anything, its routes (any one finishes it) with each goal's progress,
 //! and its rewards, and pins it while it is open. The quests pinned (`core/quests.ron`'s
@@ -38,7 +40,7 @@ impl Plugin for QuestsPlugin {
         app.init_resource::<QuestView>()
             .add_systems(PostStartup, (spawn, spawn_tracker))
             .add_systems(OnEnter(Screen::InGame), keep_known_pins)
-            .add_systems(Update, ((open_start, choose_on_open, show, pick, claim, turn_ways, draw).chain().after(ScreenSystems), (seed_pins, retire, track).chain(), hear_quests).run_if(in_state(Screen::InGame)));
+            .add_systems(Update, ((open_start, choose_on_open, show, pick, claim, turn_ways, keep_web_in_range, drag_web, draw, fit_lines.after(crate::ui::widgets::scroll_lists)).chain().after(ScreenSystems), (seed_pins, retire, track).chain(), hear_quests).run_if(in_state(Screen::InGame)));
     }
 }
 
@@ -285,6 +287,7 @@ pub fn goal_words(locale: &Locale, content: &Content, quest: &QuestDef, goal: &G
         Goal::Catch(fish, _) => locale.format("quest.goal.catch", &[("item", &item_words(locale, content, package, fish))]),
         Goal::Kill(creature, _) => locale.format("quest.goal.kill", &[("creature", &creature_words(locale, content, package, creature))]),
         Goal::Tame(creature, _) => locale.format("quest.goal.tame", &[("creature", &creature_words(locale, content, package, creature))]),
+        Goal::Lured(creature, _) => locale.format("quest.goal.lured", &[("creature", &creature_words(locale, content, package, creature))]),
         Goal::Pick(plant, _) => locale.format("quest.goal.pick", &[("item", &item_words(locale, content, package, plant))]),
         Goal::Mine(ore, _) => locale.format("quest.goal.mine", &[("item", &item_words(locale, content, package, ore))]),
         Goal::Visit(_) => locale.get("quest.goal.visit").to_owned(),
@@ -318,6 +321,7 @@ pub fn goal_words(locale: &Locale, content: &Content, quest: &QuestDef, goal: &G
         Goal::Opened(chest, _) => locale.format("quest.goal.opened", &[("item", &item_words(locale, content, package, chest))]),
         Goal::Fertilised(item, _) => locale.format("quest.goal.fertilised", &[("item", &item_words(locale, content, package, item))]),
         Goal::Ate(food, _) => locale.format("quest.goal.ate", &[("item", &item_words(locale, content, package, food))]),
+        Goal::Laid(item, _) => locale.format("quest.goal.laid", &[("item", &item_words(locale, content, package, item))]),
         Goal::Felt(effect) => {
             let words = qualified(package, effect).iter().find_map(|name| content.effects.find(name)).map(|id| content.effects.get(id)).map_or_else(|| title_from_id(effect), |def| locale.get_or(&def_key("effect", &def.name), &def.title).to_owned());
             return locale.format("quest.goal.felt", &[("effect", &words)]);
@@ -434,7 +438,21 @@ struct ChapterButton(usize);
 #[derive(Component)]
 struct Chapters;
 #[derive(Component)]
-struct Web;
+pub(crate) struct Web;
+/// The web's quests and lines, inside the well, at its margins (which centre a web smaller
+/// than the well).
+#[derive(Component)]
+pub(crate) struct Canvas {
+    margin: Vec2,
+}
+/// A line from one quest to the next, between their centres on the canvas, drawn only as
+/// far as the well shows it: the interface clips only what is square to it, so a slanted
+/// line is cut to the well here instead of poking out of the book.
+#[derive(Component)]
+pub(crate) struct WebLine {
+    from: Vec2,
+    to: Vec2,
+}
 #[derive(Component)]
 struct QuestNode(String);
 #[derive(Component)]
@@ -458,16 +476,19 @@ const SHARE: Vec2 = Vec2::new(92.0, 76.0);
 /// The chapters' column, and the sidebar at the right with the picked quest's page.
 const CHAPTERS: f32 = 80.0 * PX;
 const SIDEBAR: f32 = 180.0 * PX;
-/// A quest on the web: its cell, and the item or skill drawn in it at twice the size of a
-/// slot's (each of its 16 texels two interface pixels).
-const CELL: f32 = 36.0 * PX;
-const ICON: f32 = 32.0 * PX;
+/// A quest on the web: its cell, and the item or skill drawn in it at one and a half times
+/// a slot's (each of its 16 texels three screen pixels), small enough for a big chapter to
+/// show much of itself at once.
+const CELL: f32 = 28.0 * PX;
+const ICON: f32 = 24.0 * PX;
 /// The quests' least and most step across and down the web; it spreads to fill its well
-/// between them, and a web too big for the well scrolls.
+/// between them, and a web too big for the well is a canvas dragged about inside it.
 const STEP_LEAST: Vec2 = Vec2::new(CELL + 12.0 * PX, CELL + 6.0 * PX);
 const STEP_MOST: Vec2 = Vec2::new(CELL + 90.0 * PX, CELL + 40.0 * PX);
 /// How far the picked quest's glow reaches past it.
-const GLOW: f32 = 4.0 * PX;
+const GLOW: f32 = 3.0 * PX;
+/// How thick the lines between quests are.
+const LINE: f32 = 2.0 * PX;
 
 fn spawn(mut commands: Commands, font: Res<UiFont>) {
     let font = &font.0;
@@ -553,7 +574,7 @@ fn claim(buttons: Query<&Interaction, (Changed<Interaction>, With<ClaimButton>)>
     }
 }
 
-/// The sounds of quests: a chime as one is finished, and a softer one as its rewards are
+/// The sounds of quests: a jingle as one is finished, and coins as its rewards are
 /// claimed, told by the server's next states against the last (not on joining, when the
 /// first states arrive).
 fn hear_quests(player: Res<LocalPlayer>, mut sounds: MessageWriter<UiSound>, mut last: Local<(u32, Vec<QuestState>)>) {
@@ -632,7 +653,7 @@ fn draw(
     settings: Res<Settings>,
     viewer: Res<super::recipes::RecipeViewer>,
     chapters_column: Query<Entity, With<Chapters>>,
-    web: Query<(Entity, &ComputedNode), With<Web>>,
+    mut web: Query<(Entity, &ComputedNode, &mut ScrollPosition), With<Web>>,
     detail: Query<Entity, With<Detail>>,
     mut drawn: Local<Option<(QuestView, u32, Vec<String>, bool, IVec2)>>,
 ) {
@@ -642,11 +663,14 @@ fn draw(
     }
     // The web's room inside its well, as laid out for this window: drawn again when the
     // window changes it.
-    let room = web.single().map_or(Vec2::ZERO, |(_, computed)| (computed.size() * computed.inverse_scale_factor() - Vec2::splat(2.0 * space::GAP)).max(Vec2::ZERO));
+    let room = web.single().map_or(Vec2::ZERO, |(_, computed, _)| (computed.size() * computed.inverse_scale_factor() - Vec2::splat(2.0 * space::GAP)).max(Vec2::ZERO));
     let wanted = (view.clone(), player.quests_rev, settings.pinned_quests.clone(), viewer.book().is_some(), room.as_ivec2());
     if drawn.as_ref() == Some(&wanted) && !locale.is_changed() {
         return;
     }
+    // Opened, or turned to another chapter, the canvas comes to the quest picked: again
+    // once the well has its size, for the book's first frame has none to centre in.
+    let arrived = drawn.as_ref().is_none_or(|(was, .., was_room)| was.chapter != view.chapter || *was_room == IVec2::ZERO);
     *drawn = Some(wanted);
     let content = &launch.content;
     let font = &font.0;
@@ -686,36 +710,30 @@ fn draw(
     let step = Vec2::new(room.x / columns as f32, room.y / tallest as f32).clamp(STEP_LEAST, STEP_MOST);
     let place = |i: usize| cells[i] * step + (step - Vec2::splat(CELL)) / 2.0;
     let centre = |i: usize| place(i) + Vec2::splat(CELL / 2.0);
-    if let Ok((web, _)) = web.single() {
+    if let Ok((web, _, mut scroll)) = web.single_mut() {
+        let size = Vec2::new(columns as f32, tallest as f32) * step;
+        // Centred in the well by its margins; a web too big for the well has none that way,
+        // and is dragged about in it rather than cut off.
+        let margin = ((room - size) / 2.0).max(Vec2::ZERO);
+        if arrived {
+            let at = view.picked.as_deref().and_then(|name| quests.iter().position(|q| q.name == name)).map_or(Vec2::ZERO, |i| centre(i) - room / 2.0);
+            scroll.0 = at.clamp(Vec2::ZERO, (size - room).max(Vec2::ZERO));
+        }
         commands.entity(web).despawn_children().with_children(|web| {
             if ours == 0 {
                 web.spawn((Localized("quest.empty"), text(font, "", BODY, MUTED)));
                 return;
             }
-            let size = Vec2::new(columns as f32, tallest as f32) * step;
-            // Centred in the well by its margins; a web too big for the well has none that way,
-            // so it scrolls from its top-left rather than being cut off.
-            let margin = ((room - size) / 2.0).max(Vec2::ZERO);
-            let margin = UiRect { left: Val::Px(margin.x), top: Val::Px(margin.y), ..default() };
-            web.spawn(Node { width: Val::Px(size.x), height: Val::Px(size.y), flex_shrink: 0.0, margin, ..default() }).with_children(|area| {
-                // The lines first, under the quests.
+            let canvas = Node { width: Val::Px(size.x), height: Val::Px(size.y), flex_shrink: 0.0, margin: UiRect { left: Val::Px(margin.x), top: Val::Px(margin.y), ..default() }, ..default() };
+            web.spawn((canvas, Canvas { margin })).with_children(|area| {
+                // The lines first, under the quests; each is fitted to what the well shows
+                // of it as the canvas moves (`fit_lines`).
                 for i in 0..ours {
                     for first in before(content, quests[i]) {
                         let Some(j) = quests.iter().position(|q| q.name == first.name) else { continue };
-                        let (from, to) = (centre(j), centre(i));
-                        let length = from.distance(to);
-                        let middle = (from + to) / 2.0;
                         let done = standing(content, &player, quests[j]) == Standing::Done;
-                        let line = Node {
-                            position_type: PositionType::Absolute,
-                            left: Val::Px(middle.x - length / 2.0),
-                            top: Val::Px(middle.y - PX),
-                            width: Val::Px(length),
-                            height: Val::Px(2.0 * PX),
-                            ..default()
-                        };
-                        let turn = UiTransform { rotation: Rot2::radians((to - from).to_angle()), ..default() };
-                        area.spawn((line, turn, BackgroundColor(if done { GOLD } else { MUTED.with_alpha(0.7) })));
+                        let line = Node { position_type: PositionType::Absolute, display: Display::None, height: Val::Px(LINE), ..default() };
+                        area.spawn((line, UiTransform::default(), WebLine { from: centre(j), to: centre(i) }, BackgroundColor(if done { GOLD } else { MUTED.with_alpha(0.7) })));
                     }
                 }
                 for (i, quest) in quests.iter().enumerate() {
@@ -892,6 +910,117 @@ fn draw(
     }
 }
 
+/// The part of the line from `from` to `to` inside `view`, if any (Liang and Barsky's way:
+/// the line as `from + t (to - from)`, `t` narrowed by each edge in turn).
+pub(crate) fn clip_line(from: Vec2, to: Vec2, view: Rect) -> Option<(Vec2, Vec2)> {
+    let d = to - from;
+    let (mut enter, mut leave) = (0.0_f32, 1.0_f32);
+    for (p, q) in [(-d.x, from.x - view.min.x), (d.x, view.max.x - from.x), (-d.y, from.y - view.min.y), (d.y, view.max.y - from.y)] {
+        if p == 0.0 {
+            if q < 0.0 {
+                return None;
+            }
+        } else if p < 0.0 {
+            enter = enter.max(q / p);
+        } else {
+            leave = leave.min(q / p);
+        }
+    }
+    (enter < leave).then(|| (from + d * enter, from + d * leave))
+}
+
+/// Fits each line to what the well shows of the canvas, as it is dragged about or drawn
+/// anew: the part inside, turned along the line, or nothing. The well is narrowed by half
+/// a line's thickness so a cut end's corners stay in it too.
+fn fit_lines(web: Query<(Ref<ComputedNode>, Ref<ScrollPosition>), With<Web>>, canvas: Query<&Canvas>, mut lines: Query<(Ref<WebLine>, &mut Node, &mut UiTransform)>) {
+    let Ok((computed, scroll)) = web.single() else { return };
+    if !computed.is_changed() && !scroll.is_changed() && !lines.iter().any(|(line, ..)| line.is_added()) {
+        return;
+    }
+    let Ok(canvas) = canvas.single() else { return };
+    // Where the canvas stands this frame: as scrolled now, within its edges as the layout
+    // will hold it.
+    let scale = computed.inverse_scale_factor();
+    let room = (computed.size() * scale - Vec2::splat(2.0 * space::GAP)).max(Vec2::ZERO);
+    let max = (computed.content_size() - computed.size()).max(Vec2::ZERO) * scale;
+    let corner = scroll.0.clamp(Vec2::ZERO, max).floor() - canvas.margin;
+    let view = Rect::from_corners(corner, corner + room).inflate(-LINE / 2.0);
+    for (line, mut node, mut turn) in &mut lines {
+        let Some((from, to)) = clip_line(line.from, line.to, view) else {
+            if node.display != Display::None {
+                node.display = Display::None;
+            }
+            continue;
+        };
+        let (length, middle) = (from.distance(to), (from + to) / 2.0);
+        let fitted = Node { display: Display::Flex, left: Val::Px(middle.x - length / 2.0), top: Val::Px(middle.y - LINE / 2.0), width: Val::Px(length), ..node.clone() };
+        if *node != fitted {
+            *node = fitted;
+        }
+        let rotation = Rot2::radians((line.to - line.from).to_angle());
+        if turn.rotation != rotation {
+            turn.rotation = rotation;
+        }
+    }
+}
+
+/// Holds the web's scroll within what its layout lets it move, as dragging, the wheel and
+/// `fit_lines` reckon it: the canvas centred on a quest by `draw` may ask a little past it
+/// (the well's padding), and a first drag from there would jump.
+fn keep_web_in_range(mut web: Query<(&ComputedNode, &mut ScrollPosition), With<Web>>) {
+    let Ok((computed, mut scroll)) = web.single_mut() else { return };
+    if computed.content_size() == Vec2::ZERO {
+        return;
+    }
+    let max = (computed.content_size() - computed.size()).max(Vec2::ZERO) * computed.inverse_scale_factor();
+    let held = scroll.0.clamp(Vec2::ZERO, max);
+    if scroll.0 != held {
+        scroll.0 = held;
+    }
+}
+
+/// Where a drag of the web began, and where the pointer was last.
+#[derive(Default)]
+struct Drag {
+    held: bool,
+    last: Option<Vec2>,
+}
+
+/// Dragging the web's empty canvas with the left button held moves it under the pointer,
+/// within its edges, so the web never leaves the well; a press on a quest picks it instead.
+/// The pointer moves in the window's points, the canvas in the interface's, `UiScale` of
+/// them to a point.
+fn drag_web(
+    buttons: Res<ButtonInput<MouseButton>>,
+    scale: Res<UiScale>,
+    mut moved: MessageReader<CursorMoved>,
+    quests: Query<&Interaction, With<QuestNode>>,
+    mut web: Query<(&mut ScrollPosition, &bevy::ui::RelativeCursorPosition, &ComputedNode), With<Web>>,
+    mut drag: Local<Drag>,
+) {
+    let mut delta = Vec2::ZERO;
+    for event in moved.read() {
+        if let Some(last) = drag.last {
+            delta += event.position - last;
+        }
+        drag.last = Some(event.position);
+    }
+    let Ok((mut scroll, cursor, computed)) = web.single_mut() else { return };
+    if buttons.just_pressed(MouseButton::Left) {
+        drag.held = cursor.cursor_over() && quests.iter().all(|i| *i == Interaction::None);
+    }
+    if !buttons.pressed(MouseButton::Left) {
+        drag.held = false;
+    }
+    if drag.held && delta != Vec2::ZERO {
+        let max = (computed.content_size() - computed.size()).max(Vec2::ZERO) * computed.inverse_scale_factor();
+        let next = (scroll.0 - delta / scale.0).clamp(Vec2::ZERO, max);
+        if scroll.0 != next {
+            scroll.0 = next;
+        }
+    }
+}
+
 /// One way of making an item, small, under the goal that asks for it: what goes in, an
 /// arrow, what comes out, and, where there are several ways, arrows to turn to the next
 /// with "1/3" between them.
@@ -943,21 +1072,46 @@ fn spawn_tracker(mut commands: Commands) {
 #[derive(Default)]
 struct Finished(Vec<(String, f32)>);
 
-/// Unpins a quest once it has shown done on screen for a moment.
+/// Unpins a quest once it has shown done on screen for a moment, and pins what follows it
+/// (`follow_ons`) where the tracker's data asks.
 fn retire(time: Res<Time>, player: Res<LocalPlayer>, launch: Res<Launch>, tracker: Query<&Visibility, With<Tracker>>, mut settings: ResMut<Settings>, mut finished: Local<Finished>) {
     let shown = tracker.iter().any(|v| *v != Visibility::Hidden);
     let done = |name: &str| state(&player, name).is_some_and(|s| s.done);
-    let gone = finished.tick(&settings.pinned_quests, done, shown, time.delta_secs(), launch.content.quests.tracker().done_stays);
+    let content = &launch.content;
+    let gone = finished.tick(&settings.pinned_quests, done, shown, time.delta_secs(), content.quests.tracker().done_stays);
     if !gone.is_empty() {
         settings.pinned_quests.retain(|p| !gone.contains(p));
+        if content.quests.tracker().follow_on {
+            let next = follow_ons(content, &settings.pinned_quests, &gone, &done);
+            settings.pinned_quests.extend(next);
+        }
         settings.save();
     }
 }
 
+/// What to pin after the quests `gone` drop off done, beside those still `pinned`, as far
+/// as the tracker has room: the open quests that come after one of them, in the book's
+/// order; opening none, and leaving nothing pinned, the first open quest of the age the
+/// first of them is in, so the next step is always on screen.
+pub(crate) fn follow_ons(content: &Content, pinned: &[String], gone: &[String], done: &dyn Fn(&str) -> bool) -> Vec<String> {
+    let room = content.quests.tracker().pins.saturating_sub(pinned.len());
+    let open = |quest: &&QuestDef| !done(&quest.name) && content.quests.open(quest, done) && !pinned.contains(&quest.name);
+    let mut next: Vec<String> = content.quests.iter().filter(open).filter(|quest| before(content, quest).iter().any(|first| gone.contains(&first.name))).map(|quest| quest.name.clone()).take(room).collect();
+    if next.is_empty()
+        && pinned.is_empty()
+        && let Some(age) = gone.first().and_then(|name| content.quests.get(name)).map(|quest| quest.age.clone())
+    {
+        next.extend(content.quests.iter().filter(open).find(|quest| quest.age == age).map(|quest| quest.name.clone()));
+    }
+    next
+}
+
 impl Finished {
     /// Counts `seconds` for each pinned quest done, while the tracker is `shown`: those
-    /// shown done longer than `stays`, which then drop off.
+    /// shown done longer than `stays`, which then drop off. One unpinned meanwhile (its ×)
+    /// is forgotten, so it never drops off and pins what follows it.
     fn tick(&mut self, pinned: &[String], done: impl Fn(&str) -> bool, shown: bool, seconds: f32, stays: f32) -> Vec<String> {
+        self.0.retain(|(n, _)| pinned.contains(n));
         for name in pinned {
             if done(name) && !self.0.iter().any(|(n, _)| n == name) {
                 self.0.push((name.clone(), 0.0));
@@ -1063,7 +1217,7 @@ mod tests {
                         voxmar_engine::journal::Page::Plants | voxmar_engine::journal::Page::Ores | voxmar_engine::journal::Page::Fish => item(name),
                         _ => name == "any",
                     },
-                    Goal::Kill(name, _) | Goal::Tame(name, _) => name == "any" || qualified(package, name).iter().any(|name| content.creatures.find(name).is_some()),
+                    Goal::Kill(name, _) | Goal::Tame(name, _) | Goal::Lured(name, _) => name == "any" || qualified(package, name).iter().any(|name| content.creatures.find(name).is_some()),
                     Goal::Built(name, _) => qualified(package, name).iter().any(|name| content.multiblocks.get(name).is_some() || content.effects.step(name).is_some()),
                     Goal::Lit(name, _) => qualified(package, name).iter().any(|name| content.multiblocks.get(name).is_some()),
                     Goal::Level(skill, _) => skill_id(&content, skill).is_some(),
@@ -1125,6 +1279,74 @@ mod tests {
         assert_eq!(pins.len(), most - 1);
     }
 
+    /// A pinned quest that drops off done leaves what it opens pinned, within the tracker's
+    /// room, never a quest done or one still waiting on another; opening nothing, and with
+    /// nothing else pinned, the next open quest of its age.
+    #[test]
+    fn what_a_done_quest_opens_is_pinned_in_its_place() {
+        let content = content();
+        let room = content.quests.tracker().pins;
+        // Some quest whose follower waits on it alone.
+        let (first, follower) = content
+            .quests
+            .iter()
+            .find_map(|quest| (quest.after.len() == 1 && !quest.after[0].contains('|')).then(|| (quest.after[0].clone(), quest.name.clone())))
+            .and_then(|(after, name)| content.quests.get(&after).map(|q| (q.name.clone(), name)))
+            .expect("a quest after one other");
+        // Done: the first and everything before it.
+        let mut finished = vec![first.clone()];
+        let mut i = 0;
+        while i < finished.len() {
+            let quest = content.quests.get(&finished[i]).unwrap();
+            for b in before(&content, quest) {
+                if !finished.contains(&b.name) {
+                    finished.push(b.name.clone());
+                }
+            }
+            i += 1;
+        }
+        let done = |name: &str| finished.iter().any(|f| f == name);
+        let next = follow_ons(&content, &[], std::slice::from_ref(&first), &done);
+        assert!(next.contains(&follower), "{follower} follows {first}: {next:?}");
+        assert!(next.len() <= room);
+        for name in &next {
+            let quest = content.quests.get(name).unwrap();
+            assert!(!done(name) && content.quests.open(quest, &done), "{name} is open");
+        }
+        // A full tracker takes none.
+        let full: Vec<String> = (0..room).map(|i| format!("base:pinned_{i}")).collect();
+        assert!(follow_ons(&content, &full, std::slice::from_ref(&first), &done).is_empty());
+        // Opening nothing new: the age's next open quest, only with nothing else pinned.
+        let last = content.quests.iter().find(|q| content.quests.iter().all(|other| !before(&content, other).iter().any(|b| b.name == q.name))).expect("a quest nothing follows");
+        let none = |name: &str| name == last.name;
+        let fallback = follow_ons(&content, &[], std::slice::from_ref(&last.name), &none);
+        assert_eq!(fallback.len(), 1, "{fallback:?}");
+        assert_eq!(content.quests.get(&fallback[0]).unwrap().age, last.age);
+        assert!(follow_ons(&content, &["base:other".to_owned()], std::slice::from_ref(&last.name), &none).is_empty());
+    }
+
+    #[test]
+    fn lines_are_cut_to_the_well() {
+        let view = Rect::new(0.0, 0.0, 100.0, 50.0);
+        // Inside, whole; across an edge, cut at it; across a corner, cut at both; outside,
+        // nothing; along an edge, square to it, nothing past the ends.
+        assert_eq!(clip_line(Vec2::new(10.0, 10.0), Vec2::new(90.0, 40.0), view), Some((Vec2::new(10.0, 10.0), Vec2::new(90.0, 40.0))));
+        assert_eq!(clip_line(Vec2::new(50.0, 25.0), Vec2::new(150.0, 25.0), view), Some((Vec2::new(50.0, 25.0), Vec2::new(100.0, 25.0))));
+        let (from, to) = clip_line(Vec2::new(-50.0, -25.0), Vec2::new(150.0, 75.0), view).unwrap();
+        assert!(from.distance(Vec2::new(0.0, 0.0)) < 1e-4 && to.distance(Vec2::new(100.0, 50.0)) < 1e-4, "{from} {to}");
+        assert_eq!(clip_line(Vec2::new(-10.0, 60.0), Vec2::new(200.0, 300.0), view), None);
+        assert_eq!(clip_line(Vec2::new(-10.0, 80.0), Vec2::new(-5.0, -80.0), view), None);
+        assert_eq!(clip_line(Vec2::new(20.0, -30.0), Vec2::new(20.0, 30.0), view), Some((Vec2::new(20.0, 0.0), Vec2::new(20.0, 30.0))));
+        // Every point of a cut line lies in the well, whichever way it runs.
+        for (from, to) in [(Vec2::new(130.0, -40.0), Vec2::new(-30.0, 90.0)), (Vec2::new(70.0, 120.0), Vec2::new(10.0, -3.0))] {
+            let (a, b) = clip_line(from, to, view).unwrap();
+            for t in [0.0, 0.25, 0.5, 0.75, 1.0] {
+                let p = a.lerp(b, t);
+                assert!(view.inflate(1e-3).contains(p), "{p} of {from}..{to}");
+            }
+        }
+    }
+
     #[test]
     fn a_done_quest_counts_down_only_while_shown() {
         let pinned = vec!["base:a".to_owned(), "base:b".to_owned()];
@@ -1139,6 +1361,13 @@ mod tests {
             assert!(finished.tick(&pinned, done, true, 0.5, 5.0).is_empty());
         }
         assert_eq!(finished.tick(&pinned, done, true, 0.5, 5.0), vec!["base:a".to_owned()]);
+        assert!(finished.0.is_empty());
+        // Done, then unpinned by its × before its time: it never drops off as done.
+        assert!(finished.tick(&pinned, done, true, 0.5, 5.0).is_empty());
+        let left = vec!["base:b".to_owned()];
+        for _ in 0..20 {
+            assert!(finished.tick(&left, done, true, 0.5, 5.0).is_empty());
+        }
         assert!(finished.0.is_empty());
     }
 
@@ -1172,6 +1401,6 @@ mod tests {
         for age in chapters(&content) {
             assert!(ja.find(&format!("quest.age.{age}")).is_some(), "no Japanese name for the {age} chapter");
         }
-        assert_eq!(content.quests.tracker(), voxmar_engine::quest::Tracker { pins: 3, done_stays: 5.0, backing_alpha: 0.5 });
+        assert_eq!(content.quests.tracker(), voxmar_engine::quest::Tracker { pins: 3, done_stays: 5.0, backing_alpha: 0.5, follow_on: true });
     }
 }

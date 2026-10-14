@@ -29,8 +29,14 @@
     groups: [
         (name: "leaves", tags: ["leaves"], range: (20, 300)),
         (name: "wood", tags: ["log"], range: (5, 60)),
+        // A fire to sit by: a campfire, a hearth, a kiln. Before rock, as a hearthstone or a
+        // kiln is stone to the step. One within five blocks is a fire fully heard; by ten
+        // blocks it has faded to a murmur, and past fifteen it is gone.
+        (name: "fire", tags: ["campfire", "hearth", "pit_kiln", "crucible"], range: (3, 10)),
         // Lava and falling water sound like water to the step, so they come first.
         (name: "lava", tags: ["lava"], range: (4, 80)),
+        // A pot on the boil (`simmering`): one within five blocks is full.
+        (name: "pot", tags: ["simmering"], range: (2, 10)),
         (name: "falls", materials: [Water], falling: true, range: (6, 90)),
         (name: "water", materials: [Water], range: (20, 300)),
         // Not heard: the air's pollen keeps near flowers (client/src/weather/atmosphere.rs).
@@ -150,6 +156,12 @@
         (
             name: "lava", recording: ["sounds/lava_1.mp3", "sounds/lava_2.mp3", "sounds/lava_3.mp3"], volume: 0.42, fade: 2,
             when: {"lava": (min: 0.35, fade: 0.3)},
+        ),
+        // A fire burning close by: a warm low roar and the crackle of the wood, so home
+        // sounds lived in. Quiet: it sits under the music.
+        (
+            name: "fire", sound: Fire, volume: 0.3, fade: 2,
+            when: {"fire": (min: 0.6, fade: 0.55)},
         ),
         // A waterfall's roar, from the curtain of water pouring down.
         (
@@ -275,6 +287,18 @@
             name: "lava_pop", sound: LavaPop, volume: 0.35, at: Block("lava"), per_minute: 5, cooldown: 4,
             pitch: (0.8, 1.15), reach: 10,
             when: {"lava": (min: 0.3, fade: 0.3)},
+        ),
+        // A log snapping in the fire, from the fire itself.
+        (
+            name: "fire_snap", sound: Snap, volume: 0.3, at: Block("fire"), per_minute: 6, cooldown: 3,
+            pitch: (0.85, 1.2), reach: 5,
+            when: {"fire": (min: 0.25, fade: 0.2)},
+        ),
+        // A pot on the fire bubbling away while it cooks.
+        (
+            name: "simmer", sound: Simmer, volume: 0.3, at: Block("pot"), per_minute: 14, cooldown: 1.5,
+            pitch: (0.85, 1.2), reach: 4,
+            when: {"pot": (min: 0.3, fade: 0.3)},
         ),
     ],
 )

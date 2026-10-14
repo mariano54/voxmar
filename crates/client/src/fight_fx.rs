@@ -1,0 +1,715 @@
+//! How a fight feels beyond its marks: what a blow does to what it lands on, to the view and
+//! to the hand, and every fight sound (`combat_fx.ron`, in `core`; see [`style`]).
+//!
+//! The server decides every blow; this side only shows them, as the server's answers come
+//! in ([`crate::fight::Fighting`]'s blows each way) and as the player swings, dodges and
+//! guards:
+//!
+//! - A blow that lands freezes the creature a moment (a hit-stop, longer for a larger share
+//!   of its health), flashes it white, then makes it flinch back and tip away and redden
+//!   (drawn by `creatures`; it is never moved: there is no knockback). Sparks burst where it
+//!   was struck and tufts of its coat fly, and the swing in hand holds still as long as the
+//!   creature does, then the hand jolts back with the impact. A blow on the beat ticks,
+//!   brighter and crisper; a flourish or a counter lands heavier and dips the view.
+//! - A killing blow freezes it longer and dips the view; the body tips over, then shrinks
+//!   into a puff of smoke.
+//! - A creature coils through its wind-up and snaps into its strike as the blow lands
+//!   (`creatures`, by its attack's style), so the timing to block or dodge reads in its body.
+//! - A blow that hurts the player thuds, tips the view toward the side it came from and
+//!   reddens the edges of the screen. A block knocks and jolts the hand; a perfect block
+//!   rings and throws sparks before the eyes.
+//! - Sounds are synthesized at startup from the file's layers ([`sound`]), unless a package
+//!   gives recordings.
+//!
+//! Screen Shake in the settings turns off every movement of the view.
+
+use bevy::audio::{AudioPlayer, AudioSource, PlaybackSettings, Volume};
+use bevy::prelude::*;
+use rustc_hash::FxHashMap;
+use voxmar_engine::combat::{Blow, Defended, Style};
+use voxmar_engine::creature::Role;
+
+use crate::breaking::sky_light;
+use crate::creatures::{Creatures, ShowCreatures};
+use crate::drops::block_light;
+use crate::fight::Fighting;
+use crate::menu::Screen;
+use crate::player::LocalPlayer;
+use crate::render::particles::{Look, Motion, Particle, Particles};
+use crate::session::Launch;
+use crate::settings::Settings;
+use crate::sfx::{Audible, MASTER};
+use crate::world::ClientWorld;
+use voxmar_engine::block::ParticleBlend;
+
+pub mod sound;
+pub mod style;
+
+pub use style::FightLook;
+use style::{Burst, Stance, StrikeLook};
+
+pub struct FightFxPlugin;
+
+impl Plugin for FightFxPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<Seen>()
+            .init_resource::<HitStop>()
+            .init_resource::<HandKick>()
+            .init_resource::<CameraKick>()
+            .init_resource::<Heard>()
+            .init_resource::<Queued>()
+            .add_systems(Startup, make_sounds)
+            .add_systems(PostStartup, spawn_vignette)
+            .add_systems(Update, react.in_set(Reacted).after(ShowCreatures).run_if(in_state(Screen::InGame)))
+            .add_systems(Update, play.after(react).in_set(Audible))
+            // What `react` set going shows the same frame.
+            .add_systems(Update, (kick_camera.after(crate::player::follow_camera), vignette).after(Reacted).run_if(in_state(Screen::InGame)))
+            .add_systems(OnExit(Screen::InGame), reset);
+    }
+}
+
+/// Where blows are taken in (the freeze, the hand's knock, the view's kicks): what shows
+/// them runs after, so they show the frame they land.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Reacted;
+
+/// How long a blow's freeze lasts: the hit's share of its target's health makes it longer,
+/// up to the most a hit freezes; the kind of blow scales it, and a killing blow freezes at
+/// least as long as a death does.
+pub fn stop_for(look: &FightLook, blow: Blow, share: f32, killed: bool) -> f32 {
+    let hit = &look.hit;
+    let stop = (hit.stop + hit.stop_per_share * share.clamp(0.0, 1.0)).min(hit.stop_most) * look.blow(blow).stop;
+    if killed { stop.max(look.death.stop) } else { stop }
+}
+
+/// How far a flinch `t` seconds in (of `seconds`) has the creature pushed back, 0 to 1:
+/// quickly there, easing back.
+pub fn flinch_weight(t: f32, seconds: f32) -> f32 {
+    const THERE: f32 = 0.035;
+    if t < 0.0 || t >= seconds {
+        return 0.0;
+    }
+    if t < THERE {
+        return t / THERE;
+    }
+    (1.0 - (t - THERE) / (seconds - THERE).max(1e-3)).max(0.0).powi(2)
+}
+
+/// A creature's strike stance: coiled `coil` of the way through its wind-up, or `striking`
+/// seconds into its strike (snapping from the coil to the strike, then settling back).
+/// The second value is whether the strike is over (or there is none).
+pub fn strike_stance(strike: &StrikeLook, coil: Option<f32>, striking: Option<f32>) -> (Stance, bool) {
+    let ease = |x: f32| {
+        let x = x.clamp(0.0, 1.0);
+        x * x * (3.0 - 2.0 * x)
+    };
+    if let Some(s) = striking {
+        if s < strike.snap {
+            let p = 1.0 - (1.0 - s / strike.snap).powi(3);
+            return (strike.coil.scaled(1.0 - p).plus(strike.strike.scaled(p)), false);
+        }
+        let settled = (s - strike.snap) / strike.settle;
+        if settled < 1.0 {
+            return (strike.strike.scaled(1.0 - ease(settled)), false);
+        }
+        return (Stance::default(), true);
+    }
+    match coil {
+        Some(c) => (strike.coil.scaled(ease(c)), true),
+        None => (Stance::default(), true),
+    }
+}
+
+/// The sounds of a blow of the player's the server answered, by name and loudness: a hit by
+/// the weapon's style (with the shell's clack on a shelled creature) and the kind's accent
+/// over it, a miss's air, bleeding's drip.
+pub fn struck_sounds(damage: u16, blow: Blow, killed: bool, style: Style, shell: bool) -> Vec<(String, f32)> {
+    if blow == Blow::Bleed {
+        return vec![("bleed".into(), 1.0)];
+    }
+    if damage == 0 {
+        return vec![("miss".into(), 1.0)];
+    }
+    let mut sounds = vec![(format!("hit.{}", style.key()), 1.0)];
+    if shell {
+        sounds.push(("hit.shell".into(), 1.0));
+    }
+    match blow {
+        Blow::Beat => sounds.push(("beat".into(), 1.0)),
+        Blow::Flourish => sounds.extend([("beat".into(), 1.0), ("flourish".into(), 1.0)]),
+        Blow::Counter => sounds.push(("counter".into(), 1.0)),
+        Blow::Plain | Blow::Bleed => {}
+    }
+    if killed {
+        sounds.push(("kill".into(), 1.0));
+    }
+    sounds
+}
+
+/// The sounds of a creature's blow at the player, by what came of it.
+pub fn hurt_sounds(damage: u16, defended: Defended) -> Vec<(&'static str, f32)> {
+    match defended {
+        Defended::Hit if damage > 0 => vec![("hurt", 1.0)],
+        Defended::Hit | Defended::Missed | Defended::Dodged | Defended::Evaded => vec![("miss", 0.8)],
+        Defended::Blocked if damage > 0 => vec![("blocked", 1.0), ("hurt", 0.45)],
+        Defended::Blocked => vec![("blocked", 1.0)],
+        Defended::Perfect => vec![("perfect", 1.0)],
+    }
+}
+
+/// The sound a name plays: its own, else its family's (`swing.mace` falls back to `swing`).
+pub fn resolve<'a>(look: &'a FightLook, name: &'a str) -> Option<&'a str> {
+    if look.sounds.contains_key(name) {
+        return Some(name);
+    }
+    let family = name.split('.').next()?;
+    look.sounds.contains_key(family).then_some(family)
+}
+
+/// How long the swing in hand holds still with a blow that landed.
+#[derive(Resource, Default, Debug, Clone, Copy)]
+pub struct HitStop {
+    until: f32,
+}
+
+impl HitStop {
+    pub fn holds(&self, now: f32) -> bool {
+        now < self.until
+    }
+}
+
+/// Knocks to the hand: where each started (app seconds), how far back and how long.
+#[derive(Resource, Default, Debug, Clone)]
+pub struct HandKick {
+    kicks: Vec<(f32, f32, f32)>,
+}
+
+impl HandKick {
+    /// Where the hand is knocked to now, in the hand's own blocks (right, up, forward): back
+    /// toward the eye and a little down, there quickly and easing back.
+    pub fn offset(&self, now: f32) -> Vec3 {
+        // Knocked back at once, the frame the blow lands, and easing back.
+        let back: f32 = self.kicks.iter().map(|&(at, by, seconds)| if (0.0..seconds).contains(&(now - at)) { by * (1.0 - (now - at) / seconds).powi(2) } else { 0.0 }).sum();
+        Vec3::new(0.0, -back * 0.3, -back)
+    }
+
+    fn add(&mut self, now: f32, by: f32, seconds: f32) {
+        self.kicks.retain(|&(at, _, s)| now - at < s);
+        self.kicks.push((now, by, seconds));
+    }
+}
+
+/// What moves the view: dips, tips and shakes, each with when it started.
+#[derive(Resource, Default, Debug, Clone)]
+pub struct CameraKick {
+    kicks: Vec<Kick>,
+    /// When the screen's edges last reddened.
+    hurt_at: Option<f32>,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Kick {
+    /// The view dips by degrees.
+    Dip { at: f32, degrees: f32, seconds: f32 },
+    /// The view tips (rolls) by degrees, positive to the right.
+    Tip { at: f32, degrees: f32, seconds: f32 },
+    /// The view shakes by degrees.
+    Shake { at: f32, degrees: f32, seconds: f32 },
+}
+
+impl CameraKick {
+    /// The view's turn now, in radians: yaw, pitch (down negative) and roll.
+    pub fn turn(&self, now: f32) -> Vec3 {
+        let mut turn = Vec3::ZERO;
+        for kick in &self.kicks {
+            match *kick {
+                Kick::Dip { at, degrees, seconds } => turn.y -= degrees.to_radians() * flinch_weight(now - at, seconds),
+                Kick::Tip { at, degrees, seconds } => turn.z -= degrees.to_radians() * flinch_weight(now - at, seconds),
+                Kick::Shake { at, degrees, seconds } => {
+                    let t = now - at;
+                    if (0.0..seconds).contains(&t) {
+                        let fade = (1.0 - t / seconds).powi(2) * degrees.to_radians();
+                        turn.x += (t * 211.0).sin() * fade;
+                        turn.y += (t * 173.0 + 1.3).sin() * fade;
+                    }
+                }
+            }
+        }
+        turn
+    }
+
+    fn add(&mut self, kick: Kick) {
+        let now = match kick {
+            Kick::Dip { at, .. } | Kick::Tip { at, .. } | Kick::Shake { at, .. } => at,
+        };
+        self.kicks.retain(|k| match *k {
+            Kick::Dip { at, seconds, .. } | Kick::Tip { at, seconds, .. } | Kick::Shake { at, seconds, .. } => now - at < seconds,
+        });
+        self.kicks.push(kick);
+    }
+}
+
+/// Fight sounds asked for since joining, by name, played or not (a silent run plays none):
+/// for the gate.
+#[derive(Resource, Default, Debug)]
+pub struct Heard {
+    pub asked: std::collections::BTreeMap<String, u32>,
+    /// Bursts of particles thrown: hits, perfect blocks and puffs; and of those, puffs.
+    pub bursts: u32,
+    pub poofs: u32,
+    /// Times the view moved, and the hand was knocked.
+    pub kicks: u32,
+    pub knocks: u32,
+}
+
+/// Sounds to play this frame: name, loudness and pitch.
+#[derive(Resource, Default)]
+struct Queued(Vec<(String, f32, f32)>);
+
+/// What has been seen of the fight so far, to find what is new.
+#[derive(Resource, Default)]
+struct Seen {
+    started: bool,
+    struck: u32,
+    hurt: u32,
+    /// The rhythm's seconds into its swing last frame, and what was held.
+    since: f32,
+    held: Option<voxmar_engine::block::BlockId>,
+    dashing: bool,
+    guarding: bool,
+}
+
+/// Every fight sound's takes, by name.
+#[derive(Resource, Default)]
+struct Bank {
+    clips: FxHashMap<String, Vec<Handle<AudioSource>>>,
+    gains: FxHashMap<String, f32>,
+    counter: u64,
+}
+
+/// Makes every fight sound once, at startup, or loads its recordings.
+fn make_sounds(mut commands: Commands, look: Option<Res<FightLook>>, assets: Res<AssetServer>, mut sources: ResMut<Assets<AudioSource>>) {
+    let Some(look) = look else { return };
+    let started = std::time::Instant::now();
+    let mut bank = Bank::default();
+    for (i, (name, def)) in look.sounds.iter().enumerate() {
+        let clips = if def.recordings.is_empty() {
+            sound::render(def, crate::sfx::mix(i as u64 * 7919 + 17))
+                .iter()
+                .map(|samples| sources.add(AudioSource { bytes: std::sync::Arc::from(crate::sfx::wav(samples)) }))
+                .collect()
+        } else {
+            def.recordings.iter().map(|path| assets.load::<AudioSource>(path.clone())).collect()
+        };
+        bank.clips.insert(name.clone(), clips);
+        bank.gains.insert(name.clone(), def.gain);
+    }
+    info!("fight sounds: {} made in {} ms", bank.clips.len(), started.elapsed().as_millis());
+    commands.insert_resource(bank);
+}
+
+fn play(mut commands: Commands, mut queued: ResMut<Queued>, bank: Option<ResMut<Bank>>, settings: Res<Settings>) {
+    let Some(mut bank) = bank else {
+        queued.0.clear();
+        return;
+    };
+    let master = MASTER * settings.sound_volume as f32 / 100.0;
+    for (name, gain, pitch) in queued.0.drain(..) {
+        bank.counter += 1;
+        let roll = crate::sfx::mix(bank.counter);
+        let Some(clips) = bank.clips.get(&name).filter(|c| !c.is_empty()) else { continue };
+        let clip = clips[(roll % clips.len() as u64) as usize].clone();
+        let jitter = ((roll >> 32) & 0xffff) as f32 / 65535.0;
+        let volume = Volume::Linear(bank.gains[&name] * gain * master);
+        commands.spawn((AudioPlayer(clip), PlaybackSettings { speed: pitch * (0.96 + 0.08 * jitter), ..PlaybackSettings::DESPAWN.with_volume(volume) }));
+    }
+}
+
+/// The edges of the screen, reddened while the player is hurt.
+#[derive(Component)]
+pub struct Vignette;
+
+fn spawn_vignette(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
+    use bevy::asset::RenderAssetUsages;
+    use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+    // Clear in the middle, rising to full at the corners: a soft ring, in white for the
+    // colour to tint.
+    const SIZE: u32 = 64;
+    let mut pixels = Vec::with_capacity((SIZE * SIZE * 4) as usize);
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let (u, v) = ((x as f32 + 0.5) / SIZE as f32 * 2.0 - 1.0, (y as f32 + 0.5) / SIZE as f32 * 2.0 - 1.0);
+            let edge = ((u * u + v * v).sqrt() - 0.55).max(0.0) / 0.85;
+            let alpha = (edge.min(1.0).powf(1.4) * 255.0) as u8;
+            pixels.extend([255, 255, 255, alpha]);
+        }
+    }
+    let image = Image::new(Extent3d { width: SIZE, height: SIZE, depth_or_array_layers: 1 }, TextureDimension::D2, pixels, TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::RENDER_WORLD);
+    commands.spawn((
+        Vignette,
+        ImageNode { image: images.add(image), color: Color::NONE, ..default() },
+        Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() },
+        Visibility::Hidden,
+        GlobalZIndex(-1),
+    ));
+}
+
+fn vignette(time: Res<Time>, look: Option<Res<FightLook>>, kick: Res<CameraKick>, mut node: Query<(&mut ImageNode, &mut Visibility), With<Vignette>>) {
+    let (Some(look), Ok((mut image, mut shown))) = (look, node.single_mut()) else { return };
+    let camera = &look.camera;
+    let t = kick.hurt_at.map_or(f32::MAX, |at| time.elapsed_secs() - at);
+    let alpha = if t < camera.vignette_seconds { camera.vignette_alpha * (1.0 - t / camera.vignette_seconds).powi(2) } else { 0.0 };
+    let want = if alpha > 0.002 { Visibility::Inherited } else { Visibility::Hidden };
+    if *shown != want {
+        *shown = want;
+    }
+    if alpha > 0.002 {
+        image.color = camera.vignette.color().with_alpha(alpha);
+    }
+}
+
+/// Turns the camera by what kicks it, after it follows the player's eye.
+fn kick_camera(time: Res<Time>, settings: Res<Settings>, kick: Res<CameraKick>, mut camera: Query<&mut Transform, With<Camera3d>>) {
+    if !settings.screen_shake {
+        return;
+    }
+    let turn = kick.turn(time.elapsed_secs());
+    if turn == Vec3::ZERO {
+        return;
+    }
+    if let Ok(mut transform) = camera.single_mut() {
+        transform.rotation *= Quat::from_euler(EulerRot::YXZ, turn.x, turn.y, turn.z);
+    }
+}
+
+fn reset(mut seen: ResMut<Seen>, mut kick: ResMut<CameraKick>, mut hand: ResMut<HandKick>, mut stop: ResMut<HitStop>) {
+    *seen = Seen::default();
+    *kick = CameraKick::default();
+    *hand = HandKick::default();
+    *stop = HitStop::default();
+}
+
+/// Turns what is new in the fight into sounds, sparks, freezes and kicks.
+#[allow(clippy::too_many_arguments)]
+fn react(
+    time: Res<Time>,
+    launch: Res<Launch>,
+    look: Option<Res<FightLook>>,
+    settings: Res<Settings>,
+    fighting: Res<Fighting>,
+    player: Res<LocalPlayer>,
+    world: Res<ClientWorld>,
+    mut creatures: ResMut<Creatures>,
+    mut particles: ResMut<Particles>,
+    (mut seen, mut stop, mut hand, mut kick, mut heard, mut queued): (ResMut<Seen>, ResMut<HitStop>, ResMut<HandKick>, ResMut<CameraKick>, ResMut<Heard>, ResMut<Queued>),
+) {
+    let Some(look) = look else { return };
+    let now = time.elapsed_secs();
+    let mut say = |name: &str, gain: f32, pitch: f32, heard: &mut Heard| {
+        if let Some(name) = resolve(&look, name) {
+            *heard.asked.entry(name.to_owned()).or_default() += 1;
+            queued.0.push((name.to_owned(), gain, pitch));
+        }
+    };
+    // The fight so far is not news on joining.
+    if !seen.started {
+        (seen.started, seen.struck, seen.hurt) = (true, fighting.struck_count, fighting.hurt_count);
+    }
+    let combat = &launch.content.combat;
+    let held = player.inventory.get(player.selected).map(|s| s.item);
+    let weapon = combat.wielded(held, |skill| launch.content.skills.level(player.skills.xp(skill)));
+    let class = combat.class_of(&weapon).map_or(voxmar_engine::combat::FIST_CLASS, |class| class.name.as_str());
+    // A swing starts: the rhythm's meter starts over (not for a switch of what is held).
+    let timing = combat.timing(&weapon);
+    let since = fighting.rhythm.meter(time.elapsed_secs_f64(), &timing) * timing.cooldown;
+    if held == seen.held && since < seen.since - 1e-3 {
+        say(&format!("swing.{class}"), 1.0, 1.0, &mut heard);
+    }
+    (seen.since, seen.held) = (since, held);
+    let dashing = fighting.dash.is_some();
+    if dashing && !seen.dashing {
+        say("dodge", 1.0, 1.0, &mut heard);
+        // The view leans the way the player goes.
+        if let Some((dir, ..)) = fighting.dash
+            && settings.screen_shake
+        {
+            let side = if dir.dot(player.rotation() * Vec3::X) < -0.1 { -1.0 } else { 1.0 };
+            kick.add(Kick::Tip { at: now, degrees: look.camera.dodge_lean * side, seconds: look.camera.dodge_seconds });
+            heard.kicks += 1;
+        }
+    }
+    let guarding = fighting.guard.is_some();
+    if guarding && !seen.guarding {
+        say("guard", 1.0, 1.0, &mut heard);
+    }
+    (seen.dashing, seen.guarding) = (dashing, guarding);
+
+    let amount = particles.amount;
+    let light_at = |at: Vec3| {
+        let cell = at.floor().as_ivec3();
+        [sky_light(&world, cell), block_light(&world, cell)]
+    };
+    let eye = player.eye();
+    let shake = settings.screen_shake;
+    // The player's blows the server answered.
+    let new = (fighting.struck_count.wrapping_sub(seen.struck) as usize).min(fighting.struck.len());
+    seen.struck = fighting.struck_count;
+    for &(id, damage, blow, _, killed) in &fighting.struck[fighting.struck.len() - new..] {
+        let body = creatures.body(id);
+        let def = body.map(|(species, ..)| &launch.content.creatures.get(species).def);
+        let parts = body.map(|(species, ..)| &launch.content.creatures.get(species).parts);
+        let shell = parts.is_some_and(|parts| parts.iter().any(|p| p.role == Role::Shell));
+        let height = body.zip(def).map_or(1.0, |((_, _, scale), def)| def.body.size.1 * scale);
+        // A big creature's hits sound deeper, a small one's higher.
+        let pitch = (1.0 / height.max(0.2)).powf(0.15).clamp(0.82, 1.25);
+        let share = def.map_or(0.2, |def| f32::from(damage) / f32::from(def.health.max(1)));
+        let loud = 0.75 + 0.25 * (share * 3.0).min(1.0);
+        for (name, gain) in struck_sounds(damage, blow, killed, weapon.style, shell) {
+            say(&name, gain * loud, pitch, &mut heard);
+        }
+        if damage == 0 || blow == Blow::Bleed {
+            continue;
+        }
+        let kind = look.blow(blow);
+        stop.until = stop.until.max(now + stop_for(&look, blow, share, killed));
+        hand.add(now, look.camera.recoil, 0.18);
+        heard.knocks += 1;
+        let punch = kind.punch + if killed { look.death.punch } else { 0.0 };
+        if shake && punch > 0.0 {
+            kick.add(Kick::Dip { at: now, degrees: punch, seconds: look.camera.punch_seconds });
+            heard.kicks += 1;
+        }
+        // Sparks where it was struck, on the side toward the eye, and tufts of its coat.
+        let Some(((_, feet, _), def)) = body.zip(def) else { continue };
+        let middle = feet + Vec3::Y * height * 0.55;
+        let toward = (eye - middle).normalize_or(Vec3::Y);
+        let at = middle + toward * (def.body.size.0 * 0.5).min(height * 0.6);
+        let coat = def.body.colours.first().copied().unwrap_or([180, 160, 140]);
+        let seed = (id as u64) << 20 ^ (now * 1000.0) as u64;
+        burst(&mut particles, &look.hit.sparks, kind.sparks * amount, at, toward, coat, light_at(at), true, seed);
+        let chips = if shell { def.body.colours.get(1).copied().unwrap_or(coat) } else { coat };
+        burst(&mut particles, &look.hit.tufts, kind.sparks.min(1.5) * amount, at, toward, chips, light_at(at), false, seed ^ 0x5bd1);
+        heard.bursts += 1;
+    }
+    // Creatures' blows at the player.
+    let new = (fighting.hurt_count.wrapping_sub(seen.hurt) as usize).min(fighting.hurt.len());
+    seen.hurt = fighting.hurt_count;
+    for &(id, damage, defended, _) in &fighting.hurt[fighting.hurt.len() - new..] {
+        for (name, gain) in hurt_sounds(damage, defended) {
+            say(name, gain, 1.0, &mut heard);
+        }
+        let camera = &look.camera;
+        match defended {
+            Defended::Hit if damage > 0 => {
+                kick.hurt_at = Some(now);
+                if shake {
+                    // Tipped toward the side the blow came from.
+                    let from = creatures.body(id).map_or(Vec3::ZERO, |(_, feet, _)| feet - eye);
+                    let right = player.rotation() * Vec3::X;
+                    let side = if from.dot(right) >= 0.0 { 1.0 } else { -1.0 };
+                    kick.add(Kick::Tip { at: now, degrees: camera.hurt_roll * side, seconds: camera.hurt_seconds });
+                    heard.kicks += 1;
+                }
+            }
+            Defended::Blocked | Defended::Perfect => {
+                hand.add(now, camera.block_jolt, 0.22);
+                heard.knocks += 1;
+                if shake {
+                    kick.add(Kick::Shake { at: now, degrees: camera.block_shake * if defended == Defended::Perfect { 0.6 } else { 1.0 }, seconds: 0.2 });
+                    heard.kicks += 1;
+                }
+                if defended == Defended::Perfect {
+                    let look_dir = player.look_direction().normalize_or(Vec3::NEG_Z);
+                    let at = eye + look_dir * 0.7 + Vec3::Y * -0.1;
+                    burst(&mut particles, &camera.perfect_sparks, amount, at, look_dir, [255, 236, 170], light_at(at), true, now.to_bits() as u64);
+                    heard.bursts += 1;
+                }
+                if defended == Defended::Blocked && damage > 0 {
+                    kick.hurt_at = Some(now);
+                }
+            }
+            _ => {}
+        }
+    }
+    // Bodies vanishing: a puff of smoke.
+    for (at, height, coat) in std::mem::take(&mut creatures.poofs) {
+        let mut poof = look.death.poof;
+        poof.size *= height.clamp(0.4, 2.5);
+        let grey = poof.color.map_or(coat, |c| [c.0, c.1, c.2]);
+        smoke(&mut particles, &poof, amount, at, height, grey, light_at(at), at.to_array().iter().map(|v| v.to_bits() as u64).fold(7, |a, b| a ^ b.rotate_left(17)));
+        heard.bursts += 1;
+        heard.poofs += 1;
+    }
+}
+
+/// Throws a burst of `count` × `scale` particles out from `at`, mostly along `toward`: sparks
+/// glow and fade fast, chips are lit and fall to the ground.
+#[allow(clippy::too_many_arguments)]
+fn burst(particles: &mut Particles, burst: &Burst, scale: f32, at: Vec3, toward: Vec3, coat: [u8; 3], light: [u8; 2], glow: bool, seed: u64) {
+    let count = (burst.count as f32 * scale).round() as u32;
+    let mut noise = crate::sfx::Noise(seed);
+    let colour = burst.color.map_or(coat, |c| [c.0, c.1, c.2]);
+    for _ in 0..count {
+        let random = Vec3::new(noise.next(), noise.next(), noise.next());
+        let direction = (toward * 0.8 + random + Vec3::Y * 0.4).normalize_or(Vec3::Y);
+        let speed = burst.speed * (0.55 + 0.45 * noise.unit());
+        // Each a little lighter or darker, as tufts of a coat are.
+        let shade = 0.85 + 0.3 * noise.unit();
+        let colour = colour.map(|c| (c as f32 * if glow { 1.0 } else { shade }).min(255.0) as u8);
+        particles.spawn(&Particle {
+            position: at + random * 0.08,
+            velocity: direction * speed,
+            motion: Motion::Ballistic,
+            gravity: if glow { 5.0 } else { 14.0 },
+            drag: if glow { 5.0 } else { 1.5 },
+            floor: at.y - 2.0,
+            size: burst.size * (0.7 + 0.6 * noise.unit()),
+            grow: if glow { 0.4 } else { 1.0 },
+            life: burst.life * (0.7 + 0.6 * noise.unit()),
+            look: Look::Speck,
+            color: [colour[0], colour[1], colour[2], 255],
+            glow,
+            cools: false,
+            light,
+            blend: if glow { ParticleBlend::Add } else { ParticleBlend::Cutout },
+            hides: if glow { 0.3 } else { 0.0 },
+            ..Particle::default()
+        });
+    }
+}
+
+/// A puff of smoke where a body vanished, over its height.
+#[allow(clippy::too_many_arguments)]
+fn smoke(particles: &mut Particles, poof: &Burst, scale: f32, at: Vec3, height: f32, colour: [u8; 3], light: [u8; 2], seed: u64) {
+    let count = (poof.count as f32 * scale).round() as u32;
+    let mut noise = crate::sfx::Noise(seed);
+    for _ in 0..count {
+        let out = Vec3::new(noise.next(), noise.next() * 0.5, noise.next()).normalize_or(Vec3::X);
+        particles.spawn(&Particle {
+            position: at + out * 0.3 * height.min(2.0) + Vec3::Y * noise.next() * height * 0.3,
+            velocity: out * poof.speed * (0.6 + 0.6 * noise.unit()) + Vec3::Y * 0.6,
+            motion: Motion::Rise,
+            gravity: -0.6,
+            drag: 2.5,
+            size: poof.size * (0.7 + 0.6 * noise.unit()),
+            grow: 2.2,
+            wander: 0.12,
+            life: poof.life * (0.7 + 0.6 * noise.unit()),
+            look: Look::Speck,
+            color: [colour[0], colour[1], colour[2], 210],
+            light,
+            blend: ParticleBlend::Veil,
+            ..Particle::default()
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn look() -> FightLook {
+        let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/content/core/combat_fx.ron")).unwrap();
+        FightLook::load(&[voxmar_engine::content::ContentFile { package: "core".into(), name: style::FILE.into(), source }]).unwrap()
+    }
+
+    #[test]
+    fn bigger_blows_freeze_longer_and_kills_longest() {
+        let look = look();
+        let small = stop_for(&look, Blow::Plain, 0.05, false);
+        let big = stop_for(&look, Blow::Plain, 0.6, false);
+        assert!(big > small, "a blow taking more of its health freezes longer ({small} then {big})");
+        assert!(stop_for(&look, Blow::Flourish, 0.05, false) > small, "a flourish freezes longer than a plain blow");
+        assert!(stop_for(&look, Blow::Plain, 0.05, true) >= look.death.stop, "a killing blow freezes as a death does");
+        // Never past a few frames, and bleeding not at all.
+        for blow in [Blow::Plain, Blow::Beat, Blow::Flourish, Blow::Counter, Blow::Bleed] {
+            assert!(stop_for(&look, blow, 1.0, true) <= 0.25);
+        }
+        assert_eq!(stop_for(&look, Blow::Bleed, 0.5, false), 0.0);
+    }
+
+    #[test]
+    fn a_flinch_comes_quickly_and_eases_back() {
+        assert_eq!(flinch_weight(0.0, 0.2), 0.0);
+        assert!((flinch_weight(0.035, 0.2) - 1.0).abs() < 1e-4);
+        assert!(flinch_weight(0.1, 0.2) < 1.0 && flinch_weight(0.1, 0.2) > flinch_weight(0.15, 0.2));
+        assert_eq!(flinch_weight(0.2, 0.2), 0.0);
+    }
+
+    #[test]
+    fn a_strike_coils_snaps_and_settles() {
+        let look = look();
+        for style in [Style::Stab, Style::Slash, Style::Crush, Style::Ranged, Style::Magic] {
+            let strike = look.strike(style);
+            // Coiling deepens through the wind-up.
+            let (half, _) = strike_stance(&strike, Some(0.5), None);
+            let (full, _) = strike_stance(&strike, Some(1.0), None);
+            assert!(full.lean.abs() >= half.lean.abs() && (full.lean - strike.coil.lean).abs() < 1e-4, "{style:?}");
+            // It snaps from the coil to the strike, leaning forward, and settles to nothing.
+            let (start, over) = strike_stance(&strike, None, Some(0.0));
+            assert!(!over && (start.lean - strike.coil.lean).abs() < 1e-4, "{style:?} starts its strike from its coil");
+            let (snapped, _) = strike_stance(&strike, None, Some(strike.snap));
+            assert!(snapped.lean > 0.0 && (snapped.lean - strike.strike.lean).abs() < 1e-4, "{style:?} strikes forward");
+            let (_, over) = strike_stance(&strike, None, Some(strike.snap + strike.settle + 0.01));
+            assert!(over, "{style:?}'s strike ends");
+            // Every strike lunges forward from a coil drawn back.
+            assert!(strike.coil.lean < 0.0 && strike.strike.lean > 0.0, "{style:?}");
+        }
+        // A bite snaps the head down at its target; horns drop the head before they drive.
+        assert!(look.strike(Style::Stab).strike.nod > look.strike(Style::Stab).coil.nod);
+        assert!(look.strike(Style::Crush).coil.nod > 0.0);
+        // Claws rear up and swipe their front limbs down and forward.
+        let claws = look.strike(Style::Slash);
+        assert!(claws.coil.rear > 0.5 && claws.strike.paw > 0.0 && claws.coil.paw < 0.0);
+    }
+
+    #[test]
+    fn every_blow_and_outcome_has_its_sounds() {
+        let look = look();
+        let blows = [Blow::Plain, Blow::Beat, Blow::Flourish, Blow::Counter, Blow::Bleed];
+        let styles = [Style::Stab, Style::Slash, Style::Crush, Style::Ranged, Style::Magic];
+        for blow in blows {
+            for style in styles {
+                for (damage, killed, shell) in [(0, false, false), (3, false, false), (3, true, true)] {
+                    for (name, gain) in struck_sounds(damage, blow, killed, style, shell) {
+                        assert!(resolve(&look, &name).is_some(), "no sound for {name}");
+                        assert!(gain > 0.0);
+                    }
+                }
+            }
+        }
+        // A hit sounds its weapon's style; on the beat it ticks; a kill thumps; a miss is air.
+        assert_eq!(struck_sounds(3, Blow::Beat, false, Style::Slash, false).iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(), ["hit.slash", "beat"]);
+        assert!(struck_sounds(3, Blow::Plain, true, Style::Crush, true).iter().any(|(n, _)| n == "kill"));
+        assert!(struck_sounds(3, Blow::Plain, false, Style::Crush, true).iter().any(|(n, _)| n == "hit.shell"));
+        assert_eq!(struck_sounds(0, Blow::Plain, false, Style::Stab, false)[0].0, "miss");
+        for defended in [Defended::Hit, Defended::Missed, Defended::Blocked, Defended::Perfect, Defended::Dodged, Defended::Evaded] {
+            for damage in [0, 4] {
+                for (name, _) in hurt_sounds(damage, defended) {
+                    assert!(resolve(&look, name).is_some(), "no sound for {name}");
+                }
+            }
+        }
+        assert_eq!(hurt_sounds(4, Defended::Perfect)[0].0, "perfect");
+        assert_eq!(hurt_sounds(4, Defended::Hit)[0].0, "hurt");
+        // A class with no swing of its own whooshes as any weapon does.
+        assert_eq!(resolve(&look, "swing.halberd"), Some("swing"));
+        assert_eq!(resolve(&look, "swing.mace"), Some("swing.mace"));
+    }
+
+    #[test]
+    fn kicks_ease_back_to_still() {
+        let mut kick = CameraKick::default();
+        kick.add(Kick::Dip { at: 0.0, degrees: 1.0, seconds: 0.2 });
+        kick.add(Kick::Tip { at: 0.0, degrees: 4.0, seconds: 0.4 });
+        kick.add(Kick::Shake { at: 0.0, degrees: 0.7, seconds: 0.2 });
+        let peak = kick.turn(0.035);
+        assert!(peak.y < 0.0 && peak.z < 0.0, "the view dips and tips: {peak}");
+        assert_eq!(kick.turn(1.0), Vec3::ZERO, "and comes back to still");
+        let mut hand = HandKick::default();
+        hand.add(0.0, 0.05, 0.2);
+        assert!(hand.offset(0.0).z < -0.049, "the hand is knocked back the frame the blow lands (the gate looks then)");
+        assert!(hand.offset(0.1).z < 0.0 && hand.offset(0.1).z > hand.offset(0.0).z, "and eases back");
+        assert_eq!(hand.offset(0.5), Vec3::ZERO);
+    }
+}
