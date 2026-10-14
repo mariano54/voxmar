@@ -216,11 +216,11 @@ impl Blocks<'_> {
         (y / CHUNK_SIZE) as usize * CHUNK_VOLUME + local_index(IVec3::new(x, y % CHUNK_SIZE, z))
     }
 
-    fn get_local(&self, x: i32, y: i32, z: i32) -> BlockId {
+    pub(crate) fn get_local(&self, x: i32, y: i32, z: i32) -> BlockId {
         self.data[Self::local(x, y, z)]
     }
 
-    fn set_local(&mut self, x: i32, y: i32, z: i32, block: BlockId) {
+    pub(crate) fn set_local(&mut self, x: i32, y: i32, z: i32, block: BlockId) {
         self.data[Self::local(x, y, z)] = block;
     }
 
@@ -616,6 +616,8 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
     {
         let _stage = stage::enter(Stage::Decoration);
         settled = world.settlements.build(world, pos, &mut blocks, &|x, z| geology.get(x, z).height);
+        // Lairs, dug under the land the settlements left.
+        world.lairs.build(world, origin, &mut blocks, &|x, z| geology.get(x, z).height, &|b| terrain.plants[b.0 as usize]);
     }
 
     // Samples of ore over the veins below, on open ground of the land's own: never in

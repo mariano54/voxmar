@@ -132,9 +132,11 @@ rules! {
     /// every `regain` seconds.
     calm: f32 = 10.0,
     regain: f32 = 20.0,
-    /// The share of a creature's blow in its style a ward stops. (Bosses and players' blows get
-    /// their own shares when there are bosses and player fights to ward off.)
+    /// The share of a creature's blow in its style a ward stops, and of a boss's (a boss
+    /// can't be fought untouched behind a prayer; the wiki's 50%). Players' blows get
+    /// their own share when there are player fights to ward off.
     ward: f32 = 0.8,
+    boss_ward: f32 = 0.5,
     /// Magic experience for each bone offered at an altar, times the offering's worth.
     offer_xp: f32 = 16.0,
 }
@@ -200,7 +202,7 @@ impl PrayerRegistry {
             offerings.extend(file.offerings);
         }
         let wrong = |what: String| RegistryError(format!("prayers.ron: {what}"));
-        if !(0.0..=1.0).contains(&rules.ward) || rules.points < 1.0 || rules.per_level < 0.0 || rules.calm < 0.0 || rules.regain <= 0.0 || rules.offer_xp < 0.0 {
+        if !(0.0..=1.0).contains(&rules.ward) || !(0.0..=1.0).contains(&rules.boss_ward) || rules.points < 1.0 || rules.per_level < 0.0 || rules.calm < 0.0 || rules.regain <= 0.0 || rules.offer_xp < 0.0 {
             return Err(wrong("a ward stops a share from 0 to 1, points start at 1 or more, and no time or experience is negative".into()));
         }
         if prayers.len() > u16::MAX as usize {

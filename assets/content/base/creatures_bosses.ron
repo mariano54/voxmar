@@ -1,0 +1,53 @@
+// Bosses (docs/bosses.md). Each lives in its lairs (lairs.ron), where the server puts it
+// when a player comes near, never by habitat (`party_only`). A boss never flees, a perfect
+// block staggers it less (combat.ron's `boss_stagger`), a mace's daze does not hold it,
+// and a ward stops only `boss_ward` of its blows (prayers.ron). Its fight is data:
+// `attack` is its plain blow, `moves` the ones it chooses among by phase and by how far
+// away its target stands (the next that fits, in order, so a fight has a pattern to
+// learn), `phases` the health it changes at (it rears for `hold` seconds and players near
+// are told), and `mend` how it heals between blows and what stops that.
+(
+    creatures: [
+        (
+            // The Rootmother (design wiki, Farm age): a hunched mass of old root under the
+            // oldest woods. Phase one, her lash and her grasp take turns: block the lash,
+            // dodge the grasp (heavy, it goes through any guard). Below half she rears and
+            // wakes: a quicker thrash, and a volley of seeds at anyone who keeps away. She
+            // mends between blows unless a fire burns within four blocks of her or the
+            // sun is on her: cut her and she grows back, so burn her, or bring her up
+            // into the light. Weak to slash, as roots are to an axe.
+            name: "rootmother", kind: Monster, boss: true, rarity: Rare, level: 22, health: 120, weak: Some(Slash),
+            attack: (windup: 0.6, recovery: 0.7, damage: (1, 4), reach: 2.0, every: 1.8, lunge: 0.8, style: Slash, pace: Walk),
+            moves: [
+                (name: "lash", phases: [0], attack: (windup: 0.6, recovery: 0.7, damage: (1, 4), reach: 2.0, every: 1.8, lunge: 0.8, style: Slash, pace: Walk), tell: (nod: 0.6)),
+                (name: "thrash", phases: [1], attack: (windup: 0.45, recovery: 0.6, damage: (2, 5), reach: 2.2, every: 1.5, lunge: 1.0, style: Slash, pace: Walk), tell: (nod: 0.9, crouch: 0.2)),
+                (name: "grasp", attack: (windup: 1.1, recovery: 1.3, damage: (3, 7), reach: 2.6, every: 3.0, lunge: 0.0, style: Crush, heavy: true, pace: Walk), tell: (crouch: 1.0, nod: 0.2)),
+                (name: "volley", phases: [1], least: 3.5, attack: (windup: 0.8, recovery: 0.8, damage: (1, 3), reach: 12.0, every: 2.4, lunge: 0.0, style: Ranged, pace: Walk), tell: (rear: 0.6, nod: 0.1)),
+            ],
+            phases: [(below: 0.5, hold: 2.0)],
+            mend: (health: 2, every: 2.0, after: 4.0, fire: ["fire"], fire_reach: 4.0, daylight: Some(0.5)),
+            defence: 14,
+            body: (
+                size: (1.8, 1.6),
+                model: Crawler(body: (1.5, 1.0, 1.7), head: (0.8, 0.7, 0.6), legs: 0.9, pairs: 4),
+                colours: [(70, 52, 38), (104, 82, 58)],
+                skin: (eyes: Cluster, iris: (230, 170, 60), fur: 0.25, belly: 0.0, markings: [Dorsal(colour: (64, 92, 48), width: 0.3), Spots(colour: (122, 98, 70), size: 0.08, density: 0.4)]),
+            ),
+            movement: (style: Creeper, walk: 1.2, run: 2.6, turn: 140.0, jump: 6.0),
+            habitat: (active: Any, party_only: true),
+            temperament: (aggression: 1.0, fear: 0.0, nervousness: 0.0, curiosity: 0.2, sociability: 0.0, territory: 1.0, energy: 0.5),
+            senses: (sight: 16.0, hearing: 20.0),
+            leash: 30.0,
+            xp: (kill: 120.0, skill: "hunter"),
+            loot: [
+                (item: "heartroot", count: (3, 3)),
+                (item: "gold_coin", count: (6, 12)),
+                (item: "bone", count: (2, 4)),
+                (item: "potato", chance: 0.33, count: (2, 4), rarity: Uncommon),
+                (item: "cabbage_seeds", chance: 0.33, count: (1, 2), rarity: Uncommon),
+                (item: "copper_helmet", chance: 0.0625, rarity: Uncommon),
+                (item: "copper_shield", chance: 0.0625, rarity: Uncommon),
+            ],
+        ),
+    ],
+)
