@@ -6622,13 +6622,26 @@ impl Fresh {
         true
     }
 
-    /// Goes to a drop at `p`: walking up to it on open ground, or by teleport to the nearest
-    /// bank in reach of one that floated out on a pond (the walk keeps out of the water, and
-    /// the way round a pond is no part of what the test checks).
-    fn go_near(&mut self, p: Vec3) {
+    /// Goes to a drop at `p`: walking up to it on open ground; to the nearest place in reach
+    /// of it with room for the body, where it lies with none (under a trunk cut from below);
+    /// or by teleport to the nearest bank in reach of one that floated out on a pond (the walk
+    /// keeps out of the water, and the way round a pond is no part of what the test checks).
+    /// False where nowhere on the ground is in reach of it.
+    fn go_near(&mut self, p: Vec3) -> bool {
         let floor = |me: &Self| solid(&me.c, IVec3::new(p.x.floor() as i32, me.origin.y - 1, p.z.floor() as i32));
+        if floor(self) && self.has_room(p.with_y(self.at.y)) {
+            self.walk_toward(p, 0.5);
+            return true;
+        }
         if floor(self) {
-            return self.walk_toward(p, 0.5);
+            let beside = (0..=4)
+                .flat_map(|ring| (0..16).map(move |i| (ring as f32 * 0.3, (i as f32 * 22.5).to_radians())))
+                .map(|(r, a)| Vec3::new(p.x + r * a.cos(), self.at.y, p.z + r * a.sin()))
+                .filter(|&q| self.has_room(q) && self.in_reach(q, p))
+                .min_by(|a, b| across(*a, self.at).total_cmp(&across(*b, self.at)));
+            let Some(beside) = beside else { return false };
+            self.walk_toward(beside, 0.05);
+            return true;
         }
         let spot = (1..=4)
             .flat_map(|ring| (0..16).map(move |i| (ring as f32 * 0.4, (i as f32 * 22.5).to_radians())))
@@ -6640,6 +6653,7 @@ impl Fresh {
             self.c.tp(spot);
             self.at = spot;
         }
+        true
     }
 
     /// Whether the body has room standing at `at`: air at both its heights, at each corner,
@@ -6869,8 +6883,14 @@ impl Fresh {
                     Some(p) if across(p, me.at) > 0.8 => {
                         beside = 0;
                         let from = me.at;
-                        me.go_near(p);
-                        did(format!("went from {from:.2} to {:.2} for the drop at {p:.2}", me.at), &mut done);
+                        if me.go_near(p) {
+                            did(format!("went from {from:.2} to {:.2} for the drop at {p:.2}", me.at), &mut done);
+                        } else {
+                            // Nowhere on the ground in reach of it: straight to stepping down
+                            // for it, or leaving it.
+                            came = me.steps.saturating_sub(3 * TICKS_PER_SECOND as u64 + 1);
+                            did(format!("found no room on the ground in reach of the drop at {p:.2}"), &mut done);
+                        }
                     }
                     // In reach and not taken for half a second: stepped onto, on open ground.
                     Some(p) if beside >= TICKS_PER_SECOND / 2 && solid(&me.c, IVec3::new(p.x.floor() as i32, me.origin.y - 1, p.z.floor() as i32)) => {
@@ -7141,6 +7161,25 @@ fn the_bot_steps_down_into_a_pit_for_a_drop_and_back_out() {
     f.collect("base:cobblestone", 1);
     assert_eq!(f.have("base:cobblestone"), 1);
     assert_eq!(f.at.y, feet.y, "back out of the pit on the ground");
+}
+
+/// A drop under a trunk cut from below lies in a one-high gap, where the body has no room:
+/// the bot walks up beside it, in reach, rather than onto it (the kiln bot, gathering logs
+/// beside a trunk it had just cut: "no way round ... and no room near it").
+#[test]
+fn the_bot_takes_a_drop_under_a_cut_trunk_from_beside_it() {
+    let c = on_a_test_floor();
+    let (feet, ticks) = (c.position, c.ticks());
+    let origin = feet.floor().as_ivec3();
+    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0 };
+    // A log hanging a block over the ground four blocks off, a cobblestone in the gap under it.
+    let gap = origin + IVec3::X * 4;
+    f.c.ok(&format!("/setblock {} {} {} oak_log", gap.x, gap.y + 1, gap.z));
+    f.c.pump_until(|c| c.world.block(gap + IVec3::Y) == c.content.blocks.id("base:oak_log"));
+    f.c.ok(&format!("/drop cobblestone 1 {} {} {}", gap.x, gap.y, gap.z));
+    f.c.pump_until(|c| loose(c, "base:cobblestone") == 1);
+    f.collect("base:cobblestone", 1);
+    assert_eq!(f.have("base:cobblestone"), 1);
 }
 
 /// A drop with no room for a body anywhere in reach of it (a slot one block high under the
