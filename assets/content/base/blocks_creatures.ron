@@ -20,7 +20,6 @@
         (template: "drop", name: "raw_beef", tags: ["meat", "raw", "edible", "flavour:savoury"], all: (color: (190, 50, 50))),
         (template: "drop", name: "raw_venison", tags: ["meat", "raw", "edible", "flavour:savoury", "game"], all: (color: (150, 40, 40))),
         (template: "drop", name: "raw_bear", tags: ["meat", "raw", "edible", "flavour:savoury", "game", "fat"], all: (color: (130, 40, 40), rarity: Uncommon)),
-        (template: "drop", name: "raw_frog", tags: ["meat", "raw", "edible", "flavour:savoury"], all: (color: (230, 180, 170))),
         (template: "drop", name: "raw_crab", tags: ["meat", "raw", "edible", "flavour:savoury", "seafood"], all: (color: (220, 120, 80))),
         // The Rootmother's heart of root (lairs.ron): eaten raw it heals and leaves the
         // Heartwood buff; it stacks, being a root and not a meal.

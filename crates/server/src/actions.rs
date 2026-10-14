@@ -352,6 +352,7 @@ impl Server {
                     }
                     self.placed_plant(item, cell);
                     self.placed_machine(agent, cell);
+                    self.placed_by_field(agent, item, cell);
                 }
                 (Effect::MoveItems, ActionTarget::Slots { from, to, count }) => {
                     // An open store's slots as it holds them now, and what moved written back.

@@ -325,7 +325,11 @@ pub fn step(body: &mut Body, world: &impl Surroundings, movement: &Movement, wat
         let (mut level, mut raised) = (body.aabb(), body.aabb());
         level.translate(along * 0.3);
         raised.translate(Vec3::Y * 1.05 + along * 0.3);
-        if level.intersects(|p| world.solid(p)) && !raised.intersects(|p| world.solid(p)) {
+        // A long head (a boar's snout) meets the step before its box does: a step its head
+        // meets and clears a block up is a step too.
+        let head = |up: f32| Body { position: body.position + along * 0.3 + Vec3::Y * up, ..*body }.head_blocked(world);
+        let step_at = level.intersects(|p| world.solid(p)) || (head(0.0) && !head(1.05));
+        if step_at && !raised.intersects(|p| world.solid(p)) {
             body.velocity.y = movement.jump.max(climb_speed(dt));
         }
     }
@@ -503,6 +507,22 @@ mod tests {
             step(&mut walker, &step_up, &low, Water::Land, Drive { wish: Vec3::X, speed: 2.0, face: None }, 0.05);
         }
         assert!(walker.position.y >= 1.0 && walker.position.x > 3.5, "it never got up the step: {}", walker.position);
+    }
+
+    /// A long head meets a step before the body does, and stops it there (its head stops at
+    /// what its box does not): it hops the step all the same, as a short-headed walker does.
+    #[test]
+    fn a_long_headed_walker_hops_a_single_block_its_snout_meets_first() {
+        let step_up = Ledge { high: 1 };
+        let movement = Movement { jump: 6.0, ..Movement::default() };
+        let mut boar = Body::new(Vec3::new(0.5, 0.0, 0.5), yaw_of(Vec3::X), (1.2, 1.2));
+        (boar.on_ground, boar.reach, boar.head) = (true, 1.6, 0.9);
+        assert!(!Body { position: Vec3::new(1.6, 0.0, 0.5), ..boar }.aabb().intersects(|p| step_up.solid(p)), "the box clears the step where the head meets it");
+        assert!(Body { position: Vec3::new(1.6, 0.0, 0.5), ..boar }.head_blocked(&step_up), "the head meets the step first");
+        for _ in 0..80 {
+            step(&mut boar, &step_up, &movement, Water::Land, Drive { wish: Vec3::X, speed: 4.0, face: None }, 0.05);
+        }
+        assert!(boar.position.y >= 1.0 && boar.position.x > 3.5, "its snout held it at the step: {}", boar.position);
     }
 
     #[test]

@@ -345,6 +345,8 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
             });
             card.spawn(grid(0.0)).with_children(|grid| (HOTBAR_SLOTS..SLOTS).for_each(|slot| spawn_slot(grid, slot)));
             card.spawn(grid(5.0 * PX)).with_children(|grid| (0..HOTBAR_SLOTS).for_each(|slot| spawn_slot(grid, slot)));
+            // What the pack can make, ready first.
+            super::makeable::spawn(card, font, HOTBAR_SLOTS);
             spawn_legend(card, font);
         });
         super::screens::spawn_hotkeys(root, super::screens::GameScreen::Inventory);

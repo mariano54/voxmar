@@ -32,6 +32,7 @@ use crate::creatures::Creatures;
 use crate::lang::Locale;
 use crate::player::{LocalPlayer, UiState};
 use crate::session::Launch;
+use crate::mix::Duck;
 use crate::settings::Settings;
 use crate::sfx::sound_on;
 use crate::world::ClientWorld;
@@ -60,7 +61,8 @@ impl Plugin for MusicPlugin {
                     (receive_found, schedule_music, start_loaded).chain().run_if(sound_on.or_else(resource_exists::<Rehearse>)),
                     show_now_playing,
                     fade_out,
-                    (set_volume, stop_switched_off).run_if(resource_changed::<Settings>),
+                    set_volume,
+                    stop_switched_off.run_if(resource_changed::<Settings>),
                 ),
             );
     }
@@ -151,10 +153,10 @@ impl Music {
         }
     }
 
-    /// Gain of a track playing in full.
-    fn level(&self, settings: &Settings, own: bool) -> f32 {
+    /// Gain of a track playing in full, brought to the others' loudness by `trim`.
+    fn level(&self, settings: &Settings, own: bool, trim: f32) -> f32 {
         let borrowed = if own { 1.0 } else { self.rules.borrowed_volume };
-        self.rules.volume * borrowed * settings.music_volume as f32 / 100.0
+        self.rules.volume * borrowed * trim * settings.music_volume as f32 / 100.0
     }
 
     /// Seconds of quiet before the next track, in the menus or in a world.
@@ -166,8 +168,11 @@ impl Music {
     /// Plays track `index` from `source`, and names it.
     fn start(&mut self, commands: &mut Commands, time: &Time, settings: &Settings, index: usize, source: Handle<AudioSource>) {
         let track = &self.tracks[index];
-        let level = self.level(settings, track.own());
-        let entity = commands.spawn((MusicTrack { own: track.own(), category: track.category.clone() }, AudioPlayer(source), PlaybackSettings::DESPAWN.with_volume(Volume::Linear(level)))).id();
+        let trim = if track.own() { self.rules.trim(&track.name) } else { 1.0 };
+        let level = self.level(settings, track.own(), trim);
+        let entity = commands
+            .spawn((MusicTrack { own: track.own(), trim, category: track.category.clone() }, AudioPlayer(source), PlaybackSettings::DESPAWN.with_volume(Volume::Linear(level))))
+            .id();
         self.playing = Some(entity);
         self.current = Some(index);
         self.started = Some((index, time.elapsed()));
@@ -196,6 +201,8 @@ fn title(track: &Track, locale: &Locale) -> String {
 #[derive(Component)]
 struct MusicTrack {
     own: bool,
+    /// The gain bringing it to the loudness of the rest (`MusicRules::trim`).
+    trim: f32,
     category: String,
 }
 
@@ -621,7 +628,9 @@ fn fade_out(
     global: Res<GlobalVolume>,
     music: Option<Res<Music>>,
     mut fading: Query<(Entity, &MusicTrack, &mut FadingOut, Option<&mut AudioSink>)>,
+    duck: Option<Res<Duck>>,
 ) {
+    let duck = duck.map_or(1.0, |d| d.0);
     let Some(music) = music else { return };
     for (entity, track, mut fade, sink) in &mut fading {
         fade.0 -= time.delta_secs();
@@ -632,19 +641,23 @@ fn fade_out(
         };
         // Bevy applies the global volume only as a track starts (see main.rs).
         let left = fade.0 / music.rules.fade_out.max(f32::EPSILON);
-        sink.set_volume(Volume::Linear(music.level(&settings, track.own) * left) * global.volume);
+        sink.set_volume(Volume::Linear(music.level(&settings, track.own, track.trim) * left * duck) * global.volume);
     }
 }
 
+/// Keeps the track playing at the volume the settings ask, dipped while the mix makes room
+/// for a jingle or a boss (`mix::Duck`).
 fn set_volume(
     settings: Res<Settings>,
     global: Res<GlobalVolume>,
     music: Option<Res<Music>>,
+    duck: Option<Res<Duck>>,
     mut playing: Query<(&MusicTrack, &mut AudioSink), Without<FadingOut>>,
 ) {
     let Some(music) = music else { return };
+    let duck = duck.map_or(1.0, |d| d.0);
     for (track, mut sink) in &mut playing {
-        sink.set_volume(Volume::Linear(music.level(&settings, track.own)) * global.volume);
+        sink.set_volume(Volume::Linear(music.level(&settings, track.own, track.trim) * duck) * global.volume);
     }
 }
 
@@ -814,6 +827,41 @@ mod tests {
             assert_eq!(pick(&with_any, Boss, &desert, &all, &none, 0.0, [0.5, roll]), Some(4));
         }
         assert_eq!(pick(&tracks[..2], Boss, &forest, &all, &none, 0.0, [0.5, 0.5]), None);
+    }
+
+    /// Every one of Voxmar's own tracks is measured in `music.ron` as it is (a test that
+    /// finds one far off says what to write), and brought by it to within the music's
+    /// loudness band.
+    #[test]
+    fn own_tracks_are_measured_and_heard_within_their_band() {
+        use crate::mix::{Category, db, tests::{all, within}};
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+        let content = voxmar_server::load_content(&assets).unwrap();
+        let rules = MusicRules::load(&content.files).unwrap();
+        let own: Vec<String> = rules.categories.iter().filter_map(|c| c.folder.as_ref()).flat_map(|folder| own_tracks(&assets.join("music"), folder)).collect();
+        let measured: Vec<(String, f32)> = std::thread::scope(|scope| {
+            let jobs: Vec<_> = own
+                .iter()
+                .map(|name| {
+                    scope.spawn(move || {
+                        use bevy::audio::{AudioSource, Decodable};
+                        let bytes = std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/music").join(name)).unwrap();
+                        let samples: Vec<f32> = AudioSource { bytes: bytes.into() }.decoder().collect();
+                        (name.clone(), crate::sfx::mean_loudness(&samples))
+                    })
+                })
+                .collect();
+            jobs.into_iter().map(|job| job.join().unwrap()).collect()
+        });
+        let stale: Vec<String> = measured
+            .iter()
+            .filter(|(name, level)| rules.levels.get(name).is_none_or(|known| (known - db(*level)).abs() > 1.0))
+            .map(|(name, level)| format!("        \"{name}\": {:.1},", db(*level)))
+            .collect();
+        let heard = measured.iter().map(|(name, level)| (name.clone(), level * rules.volume * rules.trim(name)));
+        let band = within(Category::Music, heard);
+        let levels = if stale.is_empty() { Ok(()) } else { Err(format!("music.ron's levels miss or are off for:\n{}", stale.join("\n"))) };
+        all([levels, band]);
     }
 
     /// Every boss has a fight track of its own among Voxmar's tracks: one whose rule is a
