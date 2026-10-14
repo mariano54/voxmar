@@ -35,8 +35,8 @@ load-checked to more than 0 and at most 64): a creature counts as seen only when
 straight line from the player's eyes to the middle of its body is that short and passes
 no solid block, so a quest that asks to find animals means getting right up to them.
 
-Bosses, breeds, places, sky, music, books and discoveries have pages and rules but no
-events yet; `Server::discover(player, page, name, times)` and `Journal::study` are the
+Bosses are seen and slain as creatures are, on their own page (docs/bosses.md).
+Breeds, places, sky, music, books and discoveries have pages and rules but no events yet; `Server::discover(player, page, name, times)` and `Journal::study` are the
 hooks for the systems that will fill them.
 
 ## Stages

@@ -106,7 +106,7 @@ draining points a minute while on. Points are `points` + `per_level` × Magic (1
 | Draining | The prayers on drain together by the tick; at none left every prayer goes out. Prayers off drain nothing (flicking them is allowed: it costs the keys, not points). |
 | Points back | With no prayer on and no blow either way for `calm` (10 s), one point every `regain` (20 s). Praying at an altar fills them, and takes an offering in hand (a bone) for Magic experience first. |
 | Boosts | Attack, Strength and Defence by a share of the level, rounded by chance so a small one still counts. |
-| Wards | A ward stops `ward` (0.8) of a blow of its style from a creature (a boss's and a player's blows get their own shares when there are bosses and player fights), never past what a guard stops: the larger stop counts. |
+| Wards | A ward stops `ward` (0.8) of a blow of its style from a creature (a boss's blow only `boss_ward`, 0.5, of it: docs/bosses.md; a player's will get its own share when there are player fights), never past what a guard stops: the larger stop counts. |
 | Mending | Health comes back faster. |
 | Death | Keepsake keeps one more item, never past the worth rule's most (4 with a grave ward); death puts out every prayer. |
 | Last Breath | A blow that leaves the player under its share of health heals a share, then costs every point. |

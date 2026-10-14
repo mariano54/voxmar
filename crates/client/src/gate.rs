@@ -287,6 +287,10 @@ enum Step {
     /// its wind-up ends is a perfect block that takes nothing, a click then is a counter,
     /// and a dodge as the next blow comes down lets it pass.
     Feel,
+    /// The Rootmother summoned on the pad reaches the client and draws; the music counts it a
+    /// boss fight and plays a boss's track; in survival she winds up a move of her own, its
+    /// tell shown. Every exit sweeps her away.
+    Boss,
     /// A chainmail shirt and a wooden shield in hand, each right click puts one on in its
     /// own worn slot, and with the shield on the guard is the shield's; the inventory
     /// shows both in its worn wells, and their tooltips the armour lines.
@@ -1308,6 +1312,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Strike => strike(world, gate, now, in_phase),
         Step::Weapon => weapon(world, gate, now, in_phase),
         Step::Feel => feel(world, gate, now, in_phase),
+        Step::Boss => boss(world, gate, now),
         Step::Wear => wear(world, gate, now, in_phase),
         Step::CombatHud => combat_hud(world, gate, now, in_phase),
         Step::Cook => cook(world, gate, now, in_phase),
@@ -6788,6 +6793,96 @@ fn end_feel(world: &mut World, gate: &mut Gate, now: f32) {
     let net = world.resource::<Net>();
     net.command("gamemode survival");
     net.command("skill attack 1");
+    net.command("skill hitpoints 10");
+    net.command(&format!("tp {} {} {}", feet.x as f32 + 0.5, feet.y, feet.z as f32 + 0.5));
+    gate.next(Step::Boss, now);
+}
+
+/// The boss the boss step summons.
+const BOSS: &str = "base:rootmother";
+/// Server seconds each of the boss step's waits may take.
+const BOSS_WAIT: f32 = 10.0;
+/// The boss step's sweep, which every exit comes to.
+const BOSS_SWEEP: u32 = 4;
+
+/// The Rootmother on the pad: drawn, her music, a move's tell; then swept away.
+fn boss(world: &mut World, gate: &mut Gate, now: f32) {
+    let Some(species) = world.resource::<Launch>().content.creatures.find(BOSS) else {
+        gate.check("boss", Err(format!("no `{BOSS}` in the content")));
+        end_boss(world, gate, now);
+        return;
+    };
+    let pad = gate.feet + IVec3::new(0, 0, 14);
+    let view = world.resource::<crate::creatures::Creatures>().views().find(|v| v.species == species).copied();
+    let waited = gate.server_in_phase() > BOSS_WAIT;
+    let sweep = |gate: &mut Gate, now: f32| {
+        gate.sweep = Sweep::default();
+        to_phase(gate, BOSS_SWEEP, now);
+    };
+    match gate.phase {
+        0 => {
+            // In creative, so she does not fight before the music is judged.
+            let net = world.resource::<Net>();
+            net.command("gamemode creative");
+            net.command(&format!("summon {} 1 {} {} {}", BOSS.trim_start_matches("base:"), pad.x, pad.y, pad.z + 1));
+            gate.advance(now);
+        }
+        1 => {
+            if let Some(view) = view {
+                gate.check("boss drawn", Ok(format!("the Rootmother reached the client at {:.1}", view.position)));
+                gate.advance(now);
+            } else if waited {
+                gate.check("boss drawn", Err(format!("a summoned {BOSS} never reached the client in {BOSS_WAIT} server seconds")));
+                sweep(gate, now);
+            }
+        }
+        2 => {
+            // A boss within the rules' reach is a boss fight: the calm track fades and a
+            // boss's starts (silently, `music::Rehearse`).
+            let music = crate::music::boss_music(world);
+            if music.is_some_and(|(fighting, track)| fighting && track) {
+                gate.check("boss music", Ok("a boss fight, with a boss's track playing".into()));
+                gate.advance(now);
+            } else if waited {
+                let said = music.map_or("no music running".to_owned(), |(fighting, track)| format!("in a boss fight: {fighting}, a boss's track: {track}"));
+                gate.check("boss music", Err(format!("not a boss fight with its track after {BOSS_WAIT} server seconds ({said})")));
+                gate.advance(now);
+            }
+        }
+        3 => {
+            if gate.settled == 0 {
+                // Close enough for her lash, with room for a blow should one land.
+                let net = world.resource::<Net>();
+                net.command("skill hitpoints 60");
+                net.command(&format!("tp {} {} {}", pad.x as f32 + 0.5, pad.y, pad.z as f32 - 1.0));
+                net.command("gamemode survival");
+                gate.settled = 1;
+            }
+            let told = view.filter(|v| v.tell != 0 && v.tell != voxmar_protocol::REARING);
+            if let Some(view) = told {
+                let content = &world.resource::<Launch>().content;
+                let name = content.creatures.get(species).def.moves.get(view.tell as usize - 1).map_or("?", |m| m.name.as_str());
+                gate.check("boss tell", Ok(format!("she wound up her {name}, its tell shown")));
+                world.resource::<Net>().command("gamemode creative");
+                sweep(gate, now);
+            } else if waited || view.is_none() {
+                gate.check("boss tell", Err(format!("no move of hers wound up in {BOSS_WAIT} server seconds (seen: {})", view.is_some())));
+                sweep(gate, now);
+            }
+        }
+        _ => {
+            if sweep_bears(world, gate, species, pad) {
+                end_boss(world, gate, now);
+            }
+        }
+    }
+}
+
+/// Back to survival at the first levels on the test ground, for the steps after.
+fn end_boss(world: &mut World, gate: &mut Gate, now: f32) {
+    let feet = gate.feet;
+    let net = world.resource::<Net>();
+    net.command("gamemode survival");
     net.command("skill hitpoints 10");
     net.command(&format!("tp {} {} {}", feet.x as f32 + 0.5, feet.y, feet.z as f32 + 0.5));
     gate.next(Step::Wear, now);

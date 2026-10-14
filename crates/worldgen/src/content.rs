@@ -3251,8 +3251,15 @@ mod tests {
     /// The base package with `biomes.ron` replaced by `source`, and an extra package.
     fn load_with(biomes: &str) -> Result<WorldContent, ContentError> {
         let mut files = base_files();
-        files.iter_mut().find(|f| f.name == "biomes.ron").unwrap().source = biomes.into();
+        with_biomes(&mut files, biomes);
         WorldContent::from_files(files.iter(), &registry())
+    }
+
+    /// Replaces the base `biomes.ron` with `source`, and empties `lairs.ron`, whose lairs
+    /// lie under base biomes `source` may not have.
+    fn with_biomes(files: &mut [ContentFile], source: &str) {
+        files.iter_mut().find(|f| f.name == "biomes.ron").unwrap().source = source.into();
+        files.iter_mut().find(|f| f.name == "lairs.ron").unwrap().source = "(lairs: [])".into();
     }
 
     const GROUND: &str = "surface: (ground: (top: Block(\"grass_block\")), underwater: (top: Block(\"sand\")))";
@@ -3570,7 +3577,7 @@ mod tests {
         let registry = registry();
         let load = |patches: &str, weight: f32| {
             let mut files = base_files();
-            files.iter_mut().find(|f| f.name == "biomes.ron").unwrap().source = biomes(&format!("(name: \"herbs\", climate: [()], flora: (plants: [Name(\"mod:herb\", {weight:?})]), {GROUND})"));
+            with_biomes(&mut files, &biomes(&format!("(name: \"herbs\", climate: [()], flora: (plants: [Name(\"mod:herb\", {weight:?})]), {GROUND})")));
             let plant = format!("(plants: [(name: \"herb\", block: \"base:poppy\", {patches})])");
             files.push(ContentFile { package: "mod".into(), name: "plants.ron".into(), source: plant });
             WorldContent::from_files(files.iter(), &registry).map(|_| ()).map_err(|e| e.0)

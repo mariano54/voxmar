@@ -204,8 +204,19 @@ impl Lairs {
             if !fits || world.settlement_covers(at.x, at.y) {
                 return None;
             }
-            const OUT: [IVec2; 4] = [IVec2::X, IVec2::NEG_X, IVec2::Y, IVec2::NEG_Y];
-            Some(LairSite { lair, heart: IVec3::new(at.x, site.height - def.depth, at.y), out: OUT[(h >> 52) as usize % 4] })
+            // The passage leaves by the first side, from a rolled one, where it comes out
+            // within its reach: rising a block in two, it must meet the ground before the
+            // land rises away from it.
+            const OUT: [IVec2; 4] = [IVec2::X, IVec2::Y, IVec2::NEG_X, IVec2::NEG_Y];
+            let base = site.height - def.depth;
+            let first = (h >> 52) as usize;
+            let out = (0..4).map(|i| OUT[(first + i) % 4]).find(|&out| {
+                (def.radius..def.radius + def.reach()).any(|d| {
+                    let p = at + out * d;
+                    base + (d - def.radius + 1).div_euclid(2) + 3 > world.site(p.x, p.y).height
+                })
+            })?;
+            Some(LairSite { lair, heart: IVec3::new(at.x, base, at.y), out })
         })
     }
 
