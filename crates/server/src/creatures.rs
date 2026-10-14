@@ -104,6 +104,9 @@ pub struct Live {
     pub companion: bool,
     /// Seconds without getting nearer its goal, to notice being stuck.
     pub stuck: f32,
+    /// The side it is going round something in its way to (`motion::steer`): 1 or -1, 0
+    /// while its way is open.
+    pub detour: f32,
     /// The player who keeps it, by name (tamed or bred), and the id they have now.
     pub owner: Option<String>,
     pub owner_id: Option<PlayerId>,
@@ -569,11 +572,24 @@ impl Server {
         let before = body.position;
         body.reach = species.reach * creature.scale;
         body.head = species.head * creature.scale;
-        motion::step(&mut body, &Ground(self), &species.def.movement, species.def.habitat.water, drive, dt);
+        // Going where it chose, it finds its way round a wall, a corner or a tree in the way
+        // rather than pressing into it: a creature run from beside a wall runs along it.
+        let (movement, water) = (&species.def.movement, species.def.habitat.water);
+        let (drive, detour) = if decision.goal.is_some() && !held && motion::walks(movement, water, drive) {
+            let flat = drive.wish.with_y(0.0).normalize_or_zero();
+            let (heading, side) = motion::steer(&body, &Ground(self), movement, flat, creature.detour, dt);
+            (Drive { wish: heading, ..drive }, side)
+        } else {
+            (drive, 0.0)
+        };
+        motion::step(&mut body, &Ground(self), movement, water, drive, dt);
         let creature = self.creatures.live.get_mut(&id).expect("still there");
-        // Stuck against something for two seconds: give up the goal.
-        if drive.wish != Vec3::ZERO && body.position.distance(before) < drive.speed * dt * 0.2 {
-            creature.stuck += dt;
+        creature.detour = detour;
+        // Stuck against something for two seconds, or going round it for four: give up the
+        // goal.
+        let gained = body.position.distance(before) >= drive.speed * dt * 0.2;
+        if drive.wish != Vec3::ZERO && (!gained || detour != 0.0) {
+            creature.stuck += if gained { dt * 0.5 } else { dt };
             if creature.stuck > 2.0 {
                 creature.decision.goal = None;
                 creature.mind.goal = None;
@@ -986,6 +1002,7 @@ impl Server {
             wanderer: false,
             companion: false,
             stuck: 0.0,
+            detour: 0.0,
             owner: None,
             owner_id: None,
             trust: 0.0,
@@ -2032,6 +2049,159 @@ mod density_tests {
                 println!("{biome:>14} {label:>6} | {a32:>10} {a64:>3} {a128:>4} | {m64:>10} {m128:>4}");
             }
         }
+    }
+}
+
+/// Creatures hurt beside walls, in corners and by trees: they run clear, round what is in
+/// their way, and their bodies (heads too) never go into a block.
+#[cfg(test)]
+mod cornered_tests {
+    use super::*;
+
+    const SPECIES: [&str; 4] = ["base:red_deer", "base:rabbit", "base:mouflon", "base:wild_boar"];
+
+    /// A stone pen over empty columns, high over spawn: a floor `half` blocks each way from
+    /// its centre, walled three high round its edge. Returns the centre, at feet level.
+    fn pen(server: &mut Server, half: i32) -> IVec3 {
+        let centre = server.spawn.floor().as_ivec3() + IVec3::Y * 40;
+        let (from, to) = (ColumnPos::of_block(centre - IVec3::splat(half)), ColumnPos::of_block(centre + IVec3::splat(half)));
+        for z in from.0.y..=to.0.y {
+            for x in from.0.x..=to.0.x {
+                server.world.insert(ColumnPos::new(x, z), std::sync::Arc::new(voxmar_engine::world::Column::default()));
+            }
+        }
+        let stone = server.content.blocks.expect("base:stone");
+        for z in -half..=half {
+            for x in -half..=half {
+                server.world.set_block(centre + IVec3::new(x, -1, z), stone);
+            }
+        }
+        let rim = (-half..=half).flat_map(|i| [IVec3::new(i, 0, -half), IVec3::new(i, 0, half), IVec3::new(-half, 0, i), IVec3::new(half, 0, i)]);
+        wall(server, rim.map(|cell| centre + cell).collect::<Vec<_>>(), 3);
+        centre
+    }
+
+    /// Stone `high` blocks tall on each of `cells` (feet level).
+    fn wall(server: &mut Server, cells: impl IntoIterator<Item = IVec3>, high: i32) {
+        let stone = server.content.blocks.expect("base:stone");
+        for cell in cells {
+            for y in 0..high {
+                server.world.set_block(cell + IVec3::Y * y, stone);
+            }
+        }
+    }
+
+    fn join(server: &mut Server, at: Vec3) -> PlayerId {
+        let (_client, connection) = voxmar_protocol::local_pair();
+        let mut player = crate::player::Player::new(1, connection, at, 2, server.tick, server.survival.max_health, &server.config.limits);
+        player.joined = true;
+        server.players.insert(1, player);
+        1
+    }
+
+    /// A creature of `name` at `at`, facing along `facing`.
+    fn put(server: &mut Server, name: &str, at: Vec3, facing: Vec3) -> u32 {
+        let species = server.content.creatures.id(name).expect("species");
+        let id = server.spawn_creature(species, at, 7).expect("room");
+        server.creatures.live.get_mut(&id).unwrap().body.yaw = motion::yaw_of(facing);
+        id
+    }
+
+    /// Runs `seconds` of creature ticks, the player landing a harmless blow on `id` each
+    /// second it is within reach, and checks every tick that no body or head is in a
+    /// block. Returns the furthest it got from the player.
+    fn hunted(server: &mut Server, id: u32, player: PlayerId, seconds: f32) -> f32 {
+        let mut furthest = 0.0f32;
+        for t in 0..(seconds * TICKS_PER_SECOND as f32) as u64 {
+            server.tick += 1;
+            let reach = server.players[&player].position.distance(server.creatures.live[&id].body.position);
+            if t % TICKS_PER_SECOND as u64 == 0 && reach < 3.5 {
+                server.hurt_creature(player, id, 0, None, voxmar_engine::combat::Blow::Plain);
+            }
+            server.think_and_move();
+            let ground = Ground(server);
+            for (&other, c) in &server.creatures.live {
+                assert!(!c.body.aabb().intersects(|p| motion::Surroundings::solid(&ground, p)), "creature {other} went into a block at {} (tick {t})", c.body.position);
+                assert!(!c.body.head_blocked(&ground), "creature {other}'s head went into a block at {} (tick {t})", c.body.position);
+            }
+            furthest = furthest.max(server.players[&player].position.distance(server.creatures.live[&id].body.position));
+        }
+        furthest
+    }
+
+    /// Struck with its back to a wall, the way it would run is shut: it runs along the wall
+    /// and gets clear, rather than pressing into it under the player's blows.
+    #[test]
+    fn a_creature_struck_against_a_wall_runs_clear_along_it() {
+        let mut server = crate::test_server();
+        let centre = pen(&mut server, 16);
+        wall(&mut server, (-16..=16).map(|z| centre + IVec3::new(-3, 0, z)).collect::<Vec<_>>(), 3);
+        let player = join(&mut server, centre.as_vec3() + Vec3::new(1.5, 0.0, 0.5));
+        for name in SPECIES {
+            let id = put(&mut server, name, centre.as_vec3() + Vec3::new(-1.5, 0.0, 0.5), Vec3::X);
+            let away = hunted(&mut server, id, player, 5.0);
+            assert!(away > 6.0, "{name} struck against a wall got only {away:.1} blocks from the player");
+            server.creatures.live.remove(&id);
+        }
+    }
+
+    /// Struck in a corner, with the player in front: it finds the way out, past them (and,
+    /// the pen being small, runs round it).
+    #[test]
+    fn a_creature_struck_in_a_corner_finds_the_way_out() {
+        let mut server = crate::test_server();
+        let centre = pen(&mut server, 6);
+        let corner = centre.as_vec3() + Vec3::new(-4.4, 0.0, -4.4);
+        let player = join(&mut server, corner + Vec3::new(2.5, 0.0, 2.5));
+        for name in SPECIES {
+            let id = put(&mut server, name, corner, Vec3::new(1.0, 0.0, 1.0).normalize());
+            let away = hunted(&mut server, id, player, 6.0);
+            assert!(away > 5.0, "{name} struck in a corner got only {away:.1} blocks from the player");
+            server.creatures.live.remove(&id);
+        }
+    }
+
+    /// A tree trunk right behind it: it runs round the trunk, not into it.
+    #[test]
+    fn a_creature_struck_before_a_tree_runs_round_it() {
+        let mut server = crate::test_server();
+        let centre = pen(&mut server, 16);
+        let log = server.content.blocks.expect("base:oak_log");
+        for y in 0..6 {
+            server.world.set_block(centre + IVec3::new(-3, y, 0), log);
+        }
+        let player = join(&mut server, centre.as_vec3() + Vec3::new(1.5, 0.0, 0.5));
+        for name in SPECIES {
+            let id = put(&mut server, name, centre.as_vec3() + Vec3::new(-1.3, 0.0, 0.5), Vec3::X);
+            let away = hunted(&mut server, id, player, 5.0);
+            assert!(away > 6.0, "{name} struck before a tree got only {away:.1} blocks from the player");
+            server.creatures.live.remove(&id);
+        }
+    }
+
+    /// A block set right before its face (by a player building, say) does not lock it
+    /// there: it turns away and walks off, where it used to stand frozen for good.
+    #[test]
+    fn a_creature_with_a_block_before_its_face_turns_away() {
+        let mut server = crate::test_server();
+        let centre = pen(&mut server, 16);
+        let player = join(&mut server, centre.as_vec3() + Vec3::new(4.5, 0.0, 0.5));
+        let id = put(&mut server, "base:red_deer", centre.as_vec3() + Vec3::new(0.5, 0.0, 0.5), -Vec3::X);
+        // A tick standing gives its body its head's reach.
+        server.move_creature(id, 0.0);
+        let body = server.creatures.live[&id].body;
+        let face = (body.position + body.forward() * body.reach + Vec3::Y * body.head).floor().as_ivec3();
+        server.world.set_block(face, server.content.blocks.expect("base:stone"));
+        assert!(body.head_blocked(&Ground(&server)), "the fixture must put the block at its head");
+        let start = body.position;
+        server.hurt_creature(player, id, 0, None, voxmar_engine::combat::Blow::Plain);
+        for _ in 0..3 * TICKS_PER_SECOND {
+            server.tick += 1;
+            server.think_and_move();
+        }
+        let now = server.creatures.live[&id].body;
+        assert!(!now.head_blocked(&Ground(&server)), "its head stayed in the block");
+        assert!(now.position.distance(start) > 3.0, "it stood frozen by the block at its face");
     }
 }
 

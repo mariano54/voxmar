@@ -42,11 +42,17 @@ pub struct Body {
     /// well out in front of its box, and must not go into rock.
     pub reach: f32,
     pub head: f32,
+    /// Which way round it turns, 1 or -1, once its head barred the short way (round a wall
+    /// at its side); 0 turns the short way. Kept only while it still wants the heading it
+    /// took the long way for (`turn_to`, a yaw): wanting another, it turns the short way
+    /// again rather than spin round.
+    pub turn_way: f32,
+    pub turn_to: f32,
 }
 
 impl Body {
     pub fn new(position: Vec3, yaw: f32, size: (f32, f32)) -> Self {
-        Self { position, velocity: Vec3::ZERO, yaw, on_ground: false, in_water: false, size, against_wall: false, reach: 0.0, head: 0.0 }
+        Self { position, velocity: Vec3::ZERO, yaw, on_ground: false, in_water: false, size, against_wall: false, reach: 0.0, head: 0.0, turn_way: 0.0, turn_to: 0.0 }
     }
 
     pub fn aabb(&self) -> Aabb {
@@ -106,6 +112,83 @@ pub fn flies(movement: &Movement, drive: Drive) -> bool {
     drive.wish != Vec3::ZERO && drive.speed > movement.walk * TAKES_WING
 }
 
+/// How far round a creature turns, in degrees, to find a way past what shuts the one it
+/// wants: a little each side first, then further, at last back past where it came from.
+const DETOURS: [f32; 4] = [40.0, 80.0, 120.0, 160.0];
+
+/// How high a jump at `jump` blocks per second lifts it, stepped as `step` steps it.
+fn hop_height(jump: f32, dt: f32) -> f32 {
+    let (mut v, mut up) = (jump, 0.0);
+    while v > 0.0 {
+        up += v * dt;
+        v -= GRAVITY * dt;
+    }
+    up
+}
+
+/// Whether the body can go a little way along `heading` (horizontal, unit length): sliding
+/// along a wall counts, and so does a single step it can hop up; its head must not meet
+/// rock there.
+pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, heading: Vec3, dt: f32) -> bool {
+    let probe = body.size.0 * 0.5 + 0.3;
+    let solid = |p: IVec3| world.solid(p);
+    let goes = |lift: f32| {
+        let mut aabb = body.aabb();
+        aabb.translate(Vec3::Y * lift);
+        if lift > 0.0 && aabb.intersects(solid) {
+            return None;
+        }
+        let start = aabb.min;
+        move_and_slide(&mut aabb, heading * probe, solid);
+        let gone = (aabb.min - start).dot(heading);
+        (gone >= probe * 0.5).then(|| Vec3::new((aabb.min.x + aabb.max.x) / 2.0, aabb.min.y, (aabb.min.z + aabb.max.z) / 2.0))
+    };
+    let climbs = movement.jump > 0.0 && hop_height(movement.jump, dt) >= 1.0;
+    let Some(to) = goes(0.0).or_else(|| if climbs { goes(1.05) } else { None }) else { return false };
+    let ahead = Body { position: to, yaw: yaw_of(heading), ..*body };
+    !ahead.head_blocked(world)
+}
+
+/// The way a walking body goes for a `wish` (horizontal, unit length): the wish itself
+/// while it is open (`open_way`), else the nearest turn from it that is, to the side it
+/// already took (`side`, 1 or -1; 0 for none yet: the side it faces more). Returns the
+/// heading and the side taken, 0 when it goes straight; boxed in, the wish and 0. This is
+/// how anything walking gets round a wall, a corner or a tree rather than pressing into it.
+pub fn steer(body: &Body, world: &impl Surroundings, movement: &Movement, wish: Vec3, side: f32, dt: f32) -> (Vec3, f32) {
+    if wish == Vec3::ZERO || open_way(body, world, movement, wish, dt) {
+        return (wish, 0.0);
+    }
+    let turned = |sign: f32, degrees: f32| glam::Quat::from_rotation_y(sign * degrees.to_radians()) * wish;
+    let first = if side != 0.0 {
+        side.signum()
+    } else if turned(1.0, 90.0).dot(body.forward()) >= turned(-1.0, 90.0).dot(body.forward()) {
+        1.0
+    } else {
+        -1.0
+    };
+    // Going round already, it keeps to its side all the way round before it tries the
+    // other, so it does not dither between two ways out; starting, the nearest turn either
+    // side wins.
+    let tries: Vec<(f32, f32)> = if side != 0.0 {
+        [first, -first].into_iter().flat_map(|sign| DETOURS.map(|degrees| (sign, degrees))).collect()
+    } else {
+        DETOURS.into_iter().flat_map(|degrees| [(first, degrees), (-first, degrees)]).collect()
+    };
+    tries.into_iter().map(|(sign, degrees)| (turned(sign, degrees), sign)).find(|&(heading, _)| open_way(body, world, movement, heading, dt)).unwrap_or((wish, 0.0))
+}
+
+/// Whether a body moving with this drive walks on the land, where `steer` finds its way:
+/// not on the wing, drifting, floating or a swimmer.
+pub fn walks(movement: &Movement, water: Water, drive: Drive) -> bool {
+    !(movement.style == Style::Flier && flies(movement, drive)) && movement.style != Style::Drifter && !matches!(water, Water::Air | Water::Swim)
+}
+
+/// How far apart two yaws are, the short way round, in radians.
+fn angle_between(a: f32, b: f32) -> f32 {
+    let d = (a - b).rem_euclid(std::f32::consts::TAU);
+    d.min(std::f32::consts::TAU - d)
+}
+
 /// Advances the body by `dt` seconds.
 pub fn step(body: &mut Body, world: &impl Surroundings, movement: &Movement, water: Water, drive: Drive, dt: f32) {
     let feet = body.position.floor().as_ivec3();
@@ -116,10 +199,27 @@ pub fn step(body: &mut Body, world: &impl Surroundings, movement: &Movement, wat
     let floating = water == Water::Air || movement.style == Style::Drifter;
 
     let (start, start_yaw) = (body.position, body.yaw);
+    // A head already in something (a block set before its face) is not held there: it may
+    // turn and walk out, or it would stand frozen for good.
+    let head_was_blocked = body.head_blocked(world);
     // Face the way it moves, or what it was asked to look at.
-    let heading = if drive.wish.length_squared() > 1e-4 { Some(drive.wish) } else { drive.face };
-    if let Some(heading) = heading.filter(|h| h.x.abs() + h.z.abs() > 1e-4) {
-        body.yaw = turn(body.yaw, yaw_of(heading), movement.turn.to_radians() * dt);
+    let moving = drive.wish.length_squared() > 1e-4;
+    let heading = if moving { Some(drive.wish) } else { drive.face };
+    let wanted = heading.filter(|h| h.x.abs() + h.z.abs() > 1e-4).map(yaw_of);
+    if let Some(to) = wanted {
+        let most = movement.turn.to_radians() * dt;
+        if body.turn_way != 0.0 && angle_between(to, body.turn_to) > 45f32.to_radians() {
+            body.turn_way = 0.0;
+        }
+        if body.turn_way == 0.0 {
+            body.yaw = turn(body.yaw, to, most);
+        } else {
+            let left = ((to - body.yaw) * body.turn_way).rem_euclid(std::f32::consts::TAU);
+            body.yaw += body.turn_way * left.min(most);
+            if left <= most {
+                body.turn_way = 0.0;
+            }
+        }
     }
 
     // Walk in the direction it faces once it roughly faces it, so it turns before it goes.
@@ -180,17 +280,42 @@ pub fn step(body: &mut Body, world: &impl Surroundings, movement: &Movement, wat
         }
     }
     body.position = Vec3::new((aabb.min.x + aabb.max.x) / 2.0, aabb.min.y, (aabb.min.z + aabb.max.z) / 2.0);
-    // Its head stops at what its box does not: back out of the turn or the step that put it
-    // into a wall, and count it as against the wall, so it climbs or turns away.
-    if body.head_blocked(world) {
-        body.yaw = start_yaw;
-        let back = Vec3::new(start.x, body.position.y, start.z);
-        if !Aabb::standing(back, body.size.0, body.size.1).intersects(|p| world.solid(p)) {
-            body.position = back;
+    // Its head stops at what its box does not. Keeping the step, it turns the other way
+    // round if that is clear, or holds its facing (edging along a wall still facing as it
+    // was); else it undoes the step and keeps the turn, or keeps the turn and backs from
+    // what its head meets, as an animal turning in a corner backs as it turns; else it
+    // undoes both. A step undone counts as against the wall, so it climbs or turns away.
+    if !head_was_blocked && body.head_blocked(world) {
+        let (moved, turned) = (body.position, body.yaw);
+        let fits = |at: Vec3| !Aabb::standing(at, body.size.0, body.size.1).intersects(|p| world.solid(p));
+        let clear = |at: Vec3, yaw: f32| fits(at) && !Body { position: at, yaw, ..*body }.head_blocked(world);
+        let back = Vec3::new(start.x, moved.y, start.z);
+        let other_way = start_yaw - (turned - start_yaw);
+        // Standing to face something, the long way round only to a heading its head fits
+        // at: one it cannot face (a player behind a wall it stands against) it would turn
+        // for for ever.
+        let faceable = moving || wanted.is_none_or(|to| clear(moved, to));
+        if turned != start_yaw && clear(moved, other_way) && faceable {
+            body.yaw = other_way;
+            body.turn_way = (other_way - start_yaw).signum();
+            body.turn_to = wanted.unwrap_or(turned);
+        } else if clear(moved, start_yaw) {
+            body.yaw = start_yaw;
+        } else {
+            if clear(back, turned) {
+                body.position = back;
+            } else if let Some(at) = (1..=4).map(|k| moved - body.forward() * (0.12 * k as f32)).find(|&at| clear(at, turned)) {
+                body.position = at;
+            } else {
+                body.yaw = start_yaw;
+                if fits(back) {
+                    body.position = back;
+                }
+            }
+            body.velocity.x = 0.0;
+            body.velocity.z = 0.0;
+            body.against_wall = true;
         }
-        body.velocity.x = 0.0;
-        body.velocity.z = 0.0;
-        body.against_wall = true;
     }
 }
 
@@ -249,6 +374,106 @@ mod tests {
         }
         assert!(body.position.x + body.reach <= 3.0 + 1e-3, "the head went into the wall at {}", body.position.x + body.reach);
         assert!(body.against_wall);
+    }
+
+    /// A wall `high` blocks tall from x = 3 on, over flat ground.
+    struct Ledge {
+        high: i32,
+    }
+
+    impl Surroundings for Ledge {
+        fn solid(&self, cell: IVec3) -> bool {
+            cell.y < 0 || (cell.x >= 3 && cell.y < self.high)
+        }
+        fn water(&self, _: IVec3) -> bool {
+            false
+        }
+    }
+
+    #[test]
+    fn walkers_steer_along_a_wall_they_cannot_climb_and_keep_to_their_side() {
+        let wall = Ledge { high: 3 };
+        let movement = Movement::default();
+        // Flush against the wall, facing a little toward +z.
+        let mut body = Body::new(Vec3::new(2.7, 0.0, 0.5), yaw_of(Vec3::new(0.3, 0.0, 1.0)), (0.6, 0.8));
+        let (heading, side) = steer(&body, &wall, &movement, Vec3::X, 0.0, 0.05);
+        assert!(side != 0.0 && heading.dot(Vec3::X).abs() < 0.5, "it pressed on into the wall: {heading}");
+        assert!(heading.z > 0.0, "it went round the way it faced less: {heading}");
+        // Going round, it keeps to its side though the other is as open.
+        let (again, kept) = steer(&body, &wall, &movement, Vec3::X, -side, 0.05);
+        assert_eq!(kept, -side, "it changed sides going round");
+        assert!(again.z < 0.0);
+        // An open way is taken as it is.
+        assert_eq!(steer(&body, &wall, &movement, -Vec3::X, side, 0.05), (-Vec3::X, 0.0));
+        // Walking it, it slides along and is never pressed still.
+        for _ in 0..40 {
+            let (heading, _) = steer(&body, &wall, &movement, Vec3::X, side, 0.05);
+            step(&mut body, &wall, &movement, Water::Land, Drive { wish: heading, speed: 2.0, face: None }, 0.05);
+        }
+        assert!(body.position.z > 2.5, "it barely moved along the wall: {}", body.position);
+        assert!(body.position.x + 0.3 <= 3.0 + 1e-3, "it went into the wall");
+    }
+
+    #[test]
+    fn a_step_is_open_only_to_a_creature_whose_jump_clears_it() {
+        let step_up = Ledge { high: 1 };
+        let body = Body::new(Vec3::new(2.7, 0.0, 0.5), yaw_of(Vec3::X), (0.6, 0.8));
+        let (high, low) = (Movement { jump: 7.5, ..Movement::default() }, Movement { jump: 6.0, ..Movement::default() });
+        assert!(hop_height(7.5, 0.05) >= 1.0 && hop_height(6.0, 0.05) < 1.0);
+        assert!(open_way(&body, &step_up, &high, Vec3::X, 0.05), "a block it can hop up was a wall");
+        assert!(!open_way(&body, &step_up, &low, Vec3::X, 0.05), "a block it cannot hop up was open");
+        assert!(!open_way(&body, &Ledge { high: 2 }, &high, Vec3::X, 0.05), "a wall two high was open");
+    }
+
+    #[test]
+    fn a_head_in_a_block_set_before_it_turns_out_and_a_turn_toward_a_wall_goes_the_other_way() {
+        // A block before its face: it is not held there, it turns away.
+        let wall = Ledge { high: 3 };
+        let movement = Movement { jump: 0.0, ..Movement::default() };
+        let mut body = Body::new(Vec3::new(2.2, 0.0, 0.5), yaw_of(Vec3::X), (0.6, 1.4));
+        body.reach = 0.9;
+        body.head = 1.4;
+        assert!(body.head_blocked(&wall));
+        for _ in 0..30 {
+            step(&mut body, &wall, &movement, Water::Land, Drive { wish: -Vec3::X, speed: 2.0, face: None }, 0.05);
+        }
+        assert!(!body.head_blocked(&wall) && body.position.x < 1.5, "it stayed with its head in the block at {}", body.position);
+        // Turning about from facing along the wall, the short way would sweep its head into
+        // the wall: it turns the other way round, and its head never goes in.
+        let mut body = Body::new(Vec3::new(2.6, 0.0, 0.5), yaw_of(-Vec3::Z), (0.6, 1.4));
+        body.reach = 0.9;
+        body.head = 1.4;
+        for _ in 0..40 {
+            step(&mut body, &wall, &movement, Water::Land, Drive { wish: Vec3::new(0.2, 0.0, 1.0).normalize(), speed: 2.0, face: None }, 0.05);
+            assert!(!body.head_blocked(&wall), "its head went into the wall at {}", body.position);
+        }
+        assert!(body.forward().z > 0.9, "it never turned: facing {}", body.forward());
+        // Wanting another way part way round the long turn, it turns the short way to it
+        // rather than finish a spin it no longer wants.
+        let mut body = Body::new(Vec3::new(2.6, 0.0, 0.5), yaw_of(-Vec3::Z), (0.6, 1.4));
+        body.reach = 0.9;
+        body.head = 1.4;
+        for _ in 0..3 {
+            step(&mut body, &wall, &movement, Water::Land, Drive { wish: Vec3::new(0.2, 0.0, 1.0).normalize(), speed: 2.0, face: None }, 0.05);
+        }
+        assert!(body.turn_way != 0.0, "it never took the long way");
+        let from = body.yaw;
+        step(&mut body, &wall, &movement, Water::Land, Drive { wish: -Vec3::X, speed: 0.0, face: None }, 0.05);
+        assert_eq!(body.turn_way, 0.0, "the long turn outlived the heading it was for");
+        assert!(angle_between(body.yaw, yaw_of(-Vec3::X)) < angle_between(from, yaw_of(-Vec3::X)), "it turned away from the new heading");
+        // Standing to look at something through the wall, which its head cannot face, it
+        // turns as far as it can and does not spin round for it.
+        let mut body = Body::new(Vec3::new(2.6, 0.0, 0.5), yaw_of(-Vec3::Z), (0.6, 1.4));
+        body.reach = 0.9;
+        body.head = 1.4;
+        let mut swept = 0.0;
+        for _ in 0..200 {
+            let was = body.yaw;
+            step(&mut body, &wall, &movement, Water::Land, Drive { wish: Vec3::ZERO, speed: 0.0, face: Some(Vec3::new(1.0, 0.0, 0.05)) }, 0.05);
+            swept += angle_between(body.yaw, was);
+            assert!(!body.head_blocked(&wall), "its head went into the wall facing {}", body.forward());
+        }
+        assert!(swept < std::f32::consts::PI, "it spun {swept} radians looking at what it cannot face");
     }
 
     #[test]

@@ -164,8 +164,18 @@ stalking, the head down for grazing and up when alert, tails swaying.
 
 ## Pathfinding
 
-Now: steering straight at goals with box collision, stepping up single blocks, giving up a
-goal after two stuck seconds. Next, from the deep dive:
+Now: steering at goals with box collision (`motion::steer`). A walker heads straight
+while that way is open (sliding along a wall counts, and so does a single block its jump
+really clears); when it is shut, it takes the nearest turn that is open, 40, 80, 120 or
+160 degrees off, and keeps to the side it took until it is round, so a creature struck
+with its back to a wall runs along it, one in a corner runs out past the player, and one
+before a tree runs round the trunk. Its head stops at what its box does not: a turn that
+would put it into a wall goes the other way round (only while it still wants that way, and,
+standing, only to a heading its head fits at, so it never spins to face a player through a
+wall), a step that would is undone, and a
+head already in a block (one built before its face) may turn and walk out rather than
+stand frozen. It gives up a goal after two stuck seconds, or four going round. Fliers on
+the wing, drifters and swimmers do not steer. Next, from the deep dive:
 
 - A* over standable cells with a per-species movement profile (step, jump, safe fall,
   media) and sparse overrides of one block-cost table (water, fire, powder snow, berry
