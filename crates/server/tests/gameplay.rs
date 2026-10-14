@@ -6281,12 +6281,18 @@ impl Fresh {
     /// The player stands still meanwhile, saying so each tick, which brings the game's clock
     /// to the server: a timed action is done once a message stamped after it arrives.
     fn wait(&mut self, limit: f32, what: &str, done: impl Fn(&Client) -> bool) {
+        let finished = self.waited(limit, done);
+        assert!(finished, "{what}: not done within {limit} server seconds (now {:.1} s into the run)", self.secs());
+    }
+
+    /// As `wait`, saying whether `done` came rather than failing.
+    fn waited(&mut self, limit: f32, done: impl Fn(&Client) -> bool) -> bool {
         let until = self.c.ticks() + (limit * TICKS_PER_SECOND as f32) as u64;
         while !done(&self.c) && self.c.ticks() < until {
             self.send();
             self.tick();
         }
-        assert!(done(&self.c), "{what}: not done within {limit} server seconds (now {:.1} s into the run)", self.secs());
+        done(&self.c)
     }
 
     /// Lets one server tick pass.
@@ -6560,7 +6566,17 @@ impl Fresh {
         self.hold(item);
         self.propose("core:place", ActionTarget::Block { block: ground, face: Face::PosY });
         let cell = ground + IVec3::Y;
-        self.wait(5.0, &format!("placing {item}"), |c| c.world.block(cell).is_some_and(|b| b != BlockId::AIR));
+        let refused = self.c.refused.len();
+        let placed = self.waited(5.0, |c| c.world.block(cell).is_some_and(|b| b != BlockId::AIR));
+        assert!(
+            placed,
+            "placing {item} on {ground}: not done within 5 server seconds (now {:.1} s into the run), from {:.2}, holding slot {} ({:?}), refused since: {:?}",
+            self.secs(),
+            self.at,
+            self.held,
+            self.c.inventory.get(self.held as usize).map(|s| self.c.content.blocks.def(s.item).name.clone()),
+            &self.c.refused[refused.min(self.c.refused.len())..]
+        );
         cell
     }
 
