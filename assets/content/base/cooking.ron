@@ -43,9 +43,10 @@
         // altar, lanterns and graves are cut from. It never cracks.
         (input: "cobblestone", output: "stone", station: "pit_kiln", skill: "core:construction", level: 1, xp: 1.0, stop_burning: 0),
         // Smelted in the Crucible Kiln (Engineering), which must stand round its crucible:
-        // copper and tin, and bronze from their blend. Metal never burns.
+        // copper ingots from ore, and bronze from three copper ingots held and a tin ore
+        // carried, four at a time (one step, no blend). Metal never burns.
         (input: "copper_ore", output: "copper_ingot", station: "crucible", skill: "core:engineering", level: 5, xp: 8.0, stop_burning: 0),
-        (input: "bronze_blend", output: "bronze_ingot", station: "crucible", skill: "core:engineering", level: 12, xp: 14.0, stop_burning: 0),
+        (input: "copper_ingot", uses: 3, with: [("tin_ore", 1)], output: "bronze_ingot", count: 4, station: "crucible", skill: "core:engineering", level: 12, xp: 88.0, stop_burning: 0),
         // A log left in the fire burns down to charcoal, for torches; it never fails.
         (input: "tag:log", output: "charcoal", level: 1, xp: 5.0, stop_burning: 0),
     ],
