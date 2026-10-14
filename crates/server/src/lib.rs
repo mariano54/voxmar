@@ -344,7 +344,7 @@ impl ServerHandle {
     /// How many ticks the server has simulated: its own clock, which a server running behind
     /// on a busy machine keeps, where wall-clock seconds do not.
     pub fn ticks(&self) -> u64 {
-        self.ticks.load(Ordering::Relaxed)
+        self.ticks.load(Ordering::Acquire)
     }
 
     /// Whether a server made to run behind (`ServerConfig::lag`) does so from now on: it
@@ -766,7 +766,9 @@ impl Server {
             }
             if now >= next_tick {
                 self.tick();
-                ticks.fetch_add(1, Ordering::Relaxed);
+                // Released after the tick's messages are sent: whoever reads this count
+                // finds them waiting (`ServerHandle::ticks`).
+                ticks.fetch_add(1, Ordering::Release);
                 if let Some(leash) = &self.leash {
                     *leash.made.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = ticks.load(Ordering::Relaxed);
                     leash.ticked.notify_all();
