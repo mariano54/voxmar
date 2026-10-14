@@ -9396,15 +9396,32 @@ fn combat_feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 Ok(format!("sounds asked for, the creature jolted, {bursts} bursts of sparks, the hand knocked back {:.3}, the view turned {:.2} degrees, the edges reddened", -hand.z, turned.length().to_degrees()))
             };
             gate.check("combat feel: blows", result);
-            // What the fights before showed: creatures coiling into strikes, and the fallen
-            // going up in smoke as they vanish.
+            // What the fights before showed: creatures planting and coiling deep into their
+            // strikes, standing out their recovery, and the fallen going up in smoke as they
+            // vanish.
             let (strikes, deaths, poofs) = (creatures.strikes, creatures.deaths, heard.poofs);
+            let reads = &creatures.reads;
+            let slid = reads.iter().find(|r| r.slid > r.planted);
+            let shallow = reads.iter().find(|r| r.coiled < STRIKE_COILED);
+            let stood: Vec<f32> = reads.iter().filter_map(|r| r.recovered).collect();
             let result = if strikes == 0 {
                 Err("no creature was seen to strike in the fights".into())
+            } else if let Some(read) = slid {
+                Err(format!("a creature slid {:.2} blocks as it wound up, where planted it would have moved {:.2} at most", read.slid, read.planted))
+            } else if let Some(read) = shallow {
+                Err(format!("a creature struck coiled only {:.2} deep ({STRIKE_COILED} wanted)", read.coiled))
+            } else if let Some(most) = stood.iter().copied().find(|&most| most < STRIKE_RECOVERED) {
+                Err(format!("a creature stood out its recovery showing only {most:.2} of its recover stance ({STRIKE_RECOVERED} wanted)"))
             } else if deaths > 0 && poofs == 0 {
                 Err(format!("{deaths} creatures died in view and none went up in smoke"))
             } else {
-                Ok(format!("{strikes} strikes snapped out of their wind-ups, {poofs} of {deaths} fallen gone in smoke"))
+                let deepest = reads.iter().map(|r| r.coiled).fold(0.0, f32::max);
+                let most = reads.iter().map(|r| r.slid).fold(0.0, f32::max);
+                Ok(format!(
+                    "{strikes} strikes snapped out of their wind-ups ({} read: coiled up to {deepest:.2} deep, slid at most {most:.2} blocks coiling; {} stood out their recovery), {poofs} of {deaths} fallen gone in smoke",
+                    reads.len(),
+                    stood.len()
+                ))
             };
             gate.check("combat feel: fights", result);
             gate.advance(now);
@@ -9416,6 +9433,13 @@ fn combat_feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         }
     }
 }
+
+/// How deep (of its coil in `combat_fx.ron`) a creature seen to strike must have coiled
+/// first, short of the whole for a server's word that comes a little early; and how much of
+/// its recover stance one that stood out its recovery must have shown, short of the whole
+/// for a slow machine's frames.
+const STRIKE_COILED: f32 = 0.6;
+const STRIKE_RECOVERED: f32 = 0.5;
 
 /// The deer the creature motion steps walk, an id the server never gives, and its species.
 const PUPPET: u32 = u32::MAX - 7;
