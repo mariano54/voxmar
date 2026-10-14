@@ -160,7 +160,9 @@ impl Plugin for CreatureSoundsPlugin {
         app.init_resource::<CreatureSounds>()
             .init_resource::<Heard>()
             .add_systems(Startup, load)
-            .add_systems(Update, (shimmer_loaded, listen, play).chain());
+            // After the creatures are shown, so what they did this frame is asked for (and
+            // heard) this frame, not the next: a death is counted and cried in one frame.
+            .add_systems(Update, (shimmer_loaded, listen, play).chain().after(crate::creatures::ShowCreatures));
     }
 }
 
