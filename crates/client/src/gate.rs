@@ -6503,12 +6503,24 @@ fn held(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.advance(now);
             }
         }
-        // Sealed in: a roof over the eye and nothing alight.
+        // Sealed in: a roof over the eye and nothing alight, and the box drawn. The client
+        // holding its blocks is not enough: until their columns are meshed, a shot still
+        // shows the sky (a run's `held-sword-dark` did). So the box's corners and roof must
+        // be there and every column under it meshed, for `HELD_DRAWN_FRAMES` frames running.
         6 => {
-            let roof = feet + IVec3::new(0, 5, 0);
-            let sealed = world.resource::<ClientWorld>().block(roof).is_some_and(|b| !b.is_air());
-            if (sealed && in_phase > SETTLE) || gate.server_in_phase() > 10.0 {
+            let (x, y, z) = (feet.x, feet.y, feet.z);
+            let cells = [IVec3::new(x, y + 5, z), IVec3::new(x - 3, y, z - 3), IVec3::new(x + 3, y, z - 3), IVec3::new(x - 3, y, z + 3), IVec3::new(x + 3, y + 5, z + 3)];
+            let client = world.resource::<ClientWorld>();
+            let sealed = cells.iter().all(|&cell| client.block(cell).is_some_and(|b| !b.is_air()));
+            let ready = sealed && cells.iter().all(|&cell| drawn(world, cell));
+            gate.settled = if ready { gate.settled + 1 } else { 0 };
+            if gate.settled >= HELD_DRAWN_FRAMES && in_phase > SETTLE {
                 gate.advance(now);
+            } else if gate.server_in_phase() > 10.0 {
+                gate.check("held", Err(format!("{:.1} server s after the dark box was filled, it is not drawn (all its walls and roof on the client: {sealed})", gate.server_in_phase())));
+                world.resource::<Net>().command(&format!("fill {} {y} {} {} {} {} air", x - 3, z - 3, x + 3, y + 5, z + 3));
+                empty_hand(world);
+                gate.next(Step::NaturalSpawns, now);
             }
         }
         7 if in_phase > 1.0 => {
@@ -9340,6 +9352,10 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
 
 /// Where the dry step looks on its rack: the middle of the strips hung from its twine.
 const RACK_MEAT: Vec3 = Vec3::new(0.5, 0.55, 0.5);
+
+/// Frames running the held step's dark box must be drawn before the sword is shot in it:
+/// a frame for the new meshes to reach the screen, and a couple more to spare.
+const HELD_DRAWN_FRAMES: u32 = 3;
 
 /// Whether the renderer has the column holding `at` as its blocks are now: none of it waits
 /// to be meshed, so a shot shows what was just placed there.
