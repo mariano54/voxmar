@@ -18,7 +18,7 @@ const TROUGH: &str = "trough";
 
 impl Server {
     /// The trough a kept, hungry creature `id` would eat from: the nearest to it within its
-    /// leash of home holding one of its foods.
+    /// leash of home (as the walk home reckons it) holding one of its foods.
     pub(crate) fn trough_for(&self, id: u32) -> Option<IVec3> {
         let creature = self.creatures.live.get(&id)?;
         let rules = self.content.creatures.condition();
@@ -26,13 +26,18 @@ impl Server {
             return None;
         }
         let (home, at) = (creature.home.floor().as_ivec3(), creature.body.position);
-        let reach = KEPT_LEASH as i32;
+        // Within its leash as the walk home reckons it (across, as the crow flies), a block
+        // short of it, where it stands to eat: a trough in a square pen's far corner is past
+        // its leash, and it would turn home before reaching it.
+        let leash = self.content.creatures.get(creature.species).def.leash.min(KEPT_LEASH);
+        let within = |pos: IVec3| (pos.as_vec3() + 0.5 - creature.home).with_y(0.0).length() <= leash - 1.0;
+        let reach = leash as i32;
         let mut best: Option<(f32, IVec3)> = None;
         for dy in -3..=1 {
             for dz in -reach..=reach {
                 for dx in -reach..=reach {
                     let pos = home + IVec3::new(dx, dy, dz);
-                    if self.trough_food(id, pos).is_some() {
+                    if within(pos) && self.trough_food(id, pos).is_some() {
                         let distance = (pos.as_vec3() + 0.5).distance(at);
                         if best.is_none_or(|(d, _)| distance < d) {
                             best = Some((distance, pos));
@@ -148,6 +153,19 @@ mod tests {
 
     /// Through the brain: a hungry kept rabbit with nothing to graze near walks over to its
     /// trough and eats a carrot from it, head down, as it would graze.
+    /// A trough counts within the leash as the walk home reckons it, across as the crow
+    /// flies: one in a square pen's far corner (six and six off) is past it, one five
+    /// straight off is not.
+    #[test]
+    fn a_trough_in_the_pens_far_corner_is_past_the_leash() {
+        let (mut server, fox, trough) = pen(&[("base:raw_chicken", 2)]);
+        let middle = trough.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
+        server.creatures.live.get_mut(&fox).unwrap().home = middle - Vec3::new(6.0, 0.0, 6.0);
+        assert_eq!(server.trough_for(fox), None, "a trough past the leash's reach was chosen");
+        server.creatures.live.get_mut(&fox).unwrap().home = middle - Vec3::new(5.0, 0.0, 0.0);
+        assert_eq!(server.trough_for(fox), Some(trough));
+    }
+
     #[test]
     fn a_kept_grazer_left_alone_feeds_itself_at_the_trough() {
         let (mut server, _, trough) = pen(&[]);

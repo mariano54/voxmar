@@ -445,6 +445,48 @@ mod tests {
         assert_eq!(server.stations.get(by_well).unwrap().due, server.tick + 10 * MINUTE);
     }
 
+    /// The pot: it simmers only over a hob (a campfire, or on the hearthstone) with water
+    /// near; two grain become porridge at Cooking 3, three meat or vegetables a stew at 14.
+    #[test]
+    fn a_pot_simmers_on_a_hob_by_water() {
+        let mut server = fixture(1);
+        let cooking = server.content.skills.id("core:cooking").unwrap();
+        let grant = |server: &mut Server, level: u8| {
+            let more = server.content.skills.xp_for(level) - xp(server, "core:cooking");
+            server.players.get_mut(&1).unwrap().skills.grant(cooking, more);
+        };
+        grant(&mut server, 3);
+        server.set_block(AT, block(&server, "base:cooking_pot"));
+        hold(&mut server, "base:wheat", 4);
+        server.use_station(1, AT);
+        assert_eq!(at(&server, AT), "base:cooking_pot", "no fire under it");
+        server.set_block(AT + IVec3::new(1, 0, 0), block(&server, "base:campfire"));
+        server.use_station(1, AT);
+        assert_eq!(at(&server, AT), "base:cooking_pot", "no water near");
+        server.set_block(AT + IVec3::new(-3, -1, 0), block(&server, "base:water"));
+        server.use_station(1, AT);
+        assert_eq!(at(&server, AT), "base:cooking_pot_simmering");
+        assert_eq!(carried(&server, "base:wheat"), 0, "two sets of two");
+        server.tick += 2 * MINUTE;
+        server.use_station(1, AT);
+        assert_eq!(carried(&server, "base:porridge"), 2);
+
+        // A stew asks Cooking 14; on the hearthstone, the pot needs no campfire.
+        let hearth = AT + IVec3::new(0, 0, 4);
+        server.set_block(hearth, block(&server, "base:hearthstone"));
+        server.set_block(hearth + IVec3::Y, block(&server, "base:cooking_pot"));
+        hold(&mut server, "base:carrot", 3);
+        server.use_station(1, hearth + IVec3::Y);
+        assert_eq!(at(&server, hearth + IVec3::Y), "base:cooking_pot", "Cooking 3: no stew");
+        grant(&mut server, 14);
+        hold(&mut server, "base:carrot", 3);
+        server.use_station(1, hearth + IVec3::Y);
+        assert_eq!(at(&server, hearth + IVec3::Y), "base:cooking_pot_simmering");
+        server.tick += 3 * MINUTE;
+        server.use_station(1, hearth + IVec3::Y);
+        assert_eq!(carried(&server, "base:stew"), 1);
+    }
+
     /// Breaking a loaded station lets its load fall: the raw input before it is done, the
     /// output after.
     #[test]
