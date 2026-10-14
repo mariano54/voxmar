@@ -40,6 +40,7 @@ pub mod multiblock;
 pub mod physics;
 pub mod prayer;
 pub mod quest;
+pub mod quest_path;
 pub mod recipe_book;
 pub mod regrowth;
 pub mod schedule;

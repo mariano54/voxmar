@@ -28,7 +28,6 @@
     },
     textures: {
         "block/cooked_small_game": (base: "block/raw_small_game", palettes: {"fruit": "cooked_light", "wood": "crust_rim"}),
-        "block/cooked_frog": (base: "block/raw_small_game", palettes: {"fruit": "cooked_light", "wood": "crust_rim"}),
         "block/cooked_crab": (base: "block/raw_small_game", palettes: {"fruit": "crab_cooked", "wood": "crust_rim"}),
         "block/cooked_duck": (base: "block/raw_small_game", palettes: {"fruit": "cooked_mid", "wood": "crust_rim"}),
         "block/cooked_mutton": (base: "block/raw_small_game", palettes: {"fruit": "cooked_mid", "wood": "crust_rim"}),
