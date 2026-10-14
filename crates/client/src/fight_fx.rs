@@ -284,13 +284,14 @@ pub struct Heard {
 struct Queued(Vec<(String, f32, f32, bool)>);
 
 /// Tells' sounds waiting for their moment (app seconds), so each one's loudest lands with
-/// its blow, and whose wind-up they tell: one whose wind-up ended first (the creature died,
-/// went, or struck sooner) is dropped.
+/// its blow, whose wind-up they tell and when that wind-up ends (its blow): one whose
+/// wind-up ended well before its blow (the creature died, went, or stopped) is dropped.
 #[derive(Resource, Default, Debug)]
 pub struct Pending(pub Vec<Cue>);
 
 /// A tell's sound waiting: when it plays (app seconds), what, whose wind-up it tells, how
-/// loud (quieter further off), and whether the music dips under it.
+/// loud (quieter further off), whether the music dips under it, and when the wind-up it
+/// tells ends (its blow).
 #[derive(Debug, Clone)]
 pub struct Cue {
     pub due: f32,
@@ -298,6 +299,7 @@ pub struct Cue {
     pub id: u32,
     pub gain: f32,
     pub ducks: bool,
+    pub blow: f32,
 }
 
 /// A ring on the ground telling how far a boss's blow reaches: whose, when its wind-up
@@ -417,7 +419,7 @@ fn tell(
         *heard.asked.entry(tell.sound.clone()).or_default() += 1;
         // Seen first mid wind-up, how much of it is left is not known: told at once.
         let due = if told.late { now } else { now + (told.windup - tell.peak).max(0.0) };
-        pending.0.push(Cue { due, sound: tell.sound.clone(), id: told.id, gain, ducks: tell.ducks });
+        pending.0.push(Cue { due, sound: tell.sound.clone(), id: told.id, gain, ducks: tell.ducks, blow: now + told.windup });
         let Some(marker) = tell.marker else { continue };
         heard.markers += 1;
         let colour = |alpha: f32| StandardMaterial { base_color: marker.colour.color().with_alpha(alpha), unlit: true, alpha_mode: AlphaMode::Blend, cull_mode: None, ..default() };
@@ -436,10 +438,11 @@ fn tell(
     }
     // A wind-up that stops near its end was the blow: a tell still to come plays with it.
     // One that stops sooner, or whose creature falls or goes, was cut short: its tell is
-    // dropped.
+    // dropped. Judged by the time left to the blow, not to the cue (which starts its sound's
+    // peak before the blow).
     for cue in std::mem::take(&mut pending.0) {
         let struck = !creatures.winding(cue.id);
-        if struck && !(creatures.standing(cue.id) && cue.due - now <= BLOW_SLACK) {
+        if struck && !(creatures.standing(cue.id) && cue.blow - now <= BLOW_SLACK) {
             continue;
         }
         if struck || cue.due <= now {
@@ -665,9 +668,9 @@ fn react(
         for (name, gain) in struck_sounds(damage, blow, killed, weapon.style, shell) {
             say(&name, gain * loud, pitch, &mut heard);
         }
-        // A shot that missed sails on past.
-        if damage == 0 && shooting.is_some() {
-            shots.missed.push(id);
+        // A shot that missed sails on past; one that hit strikes home.
+        if shooting.is_some() {
+            if damage == 0 { shots.missed.push(id) } else { shots.hit.push(id) }
         }
         if damage == 0 || blow == Blow::Bleed {
             continue;
