@@ -309,6 +309,10 @@ pub struct Needs {
     /// It comes only to a player who has met a party of this kind before (spoken with it,
     /// walked with it, freed it): one visit sets up the next.
     pub met: Option<String>,
+    /// It comes only to a player whose home has reached this step: an effect (a home step
+    /// such as `homely`) whose condition holds at their home, judged as `/home` judges it.
+    /// Callers who come only to a cosy home.
+    pub home_is: Option<String>,
 }
 
 /// A party that stops for a player: when one comes within `near` blocks of its leader, it
@@ -721,6 +725,8 @@ pub struct Event {
     /// What a `Hunt` party hunts, and what it gives the one who drew first blood.
     pub quarry: Vec<CreatureId>,
     pub share: Vec<ResolvedReward>,
+    /// The home step a player's home must have reached (`needs.home_is`).
+    pub home_is: Option<EffectId>,
 }
 
 /// A meeting with its lines resolved.
@@ -983,6 +989,9 @@ impl WanderRegistry {
             }
             if let Some(met) = &mut event.needs.met {
                 qualify(met);
+            }
+            if let Some(step) = &mut event.needs.home_is {
+                qualify(step);
             }
             event.cast.iter_mut().for_each(|g| qualify(&mut g.species));
             event.seek.iter_mut().for_each(qualify);
@@ -1415,7 +1424,15 @@ impl WanderRegistry {
                 meetings.push(ResolvedMeeting { who: meeting.who, greet: meeting.greet.clone(), greets: meeting.greets, lines });
             }
             registry.by_name.insert(def.name.clone(), registry.events.len());
-            registry.events.push(Event { def, groups, meetings, thanks, guide_thanks, reveal, seek, deliver, stalk, show, quarry, share });
+            let home_is = match &def.needs.home_is {
+                None => None,
+                Some(step) => match effects.find(step) {
+                    Some(id) if effects.get(id).when.is_some() => Some(id),
+                    Some(_) => return Err(error(format!("home_is: `{step}` holds anywhere, not a home step"))),
+                    None => return Err(error(format!("home_is: no effect `{step}`"))),
+                },
+            };
+            registry.events.push(Event { def, groups, meetings, thanks, guide_thanks, reveal, seek, deliver, stalk, show, quarry, share, home_is });
         }
         // Parties that come after, or tell of, another kind: that kind must be one read.
         for event in &registry.events {

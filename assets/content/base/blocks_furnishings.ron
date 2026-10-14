@@ -121,10 +121,10 @@
             name: "fishing_net", render: Plant, solid: false, support: Above, sound: Grass, textures: All("fishing_net"),
             drops: "core:air", hardness: 0.2, color: (170, 150, 110), tags: ["net", "decor", "building"],
         ),
-        // Bunches of herbs hung upside down to dry.
+        // Bunches of herbs hung upside down to dry: two make a home's herb nook (`drying`).
         (
             name: "hanging_herbs", render: Plant, solid: false, support: Above, sound: Grass, textures: All("hanging_herbs"),
-            drops: "core:air", hardness: 0.0, color: (110, 140, 70), tags: ["hanging", "decor"],
+            drops: "core:air", hardness: 0.0, color: (110, 140, 70), tags: ["hanging", "drying", "decor"],
         ),
 
         // Singles. A candle (tallow until bees make wax), and the fire a hearth has.

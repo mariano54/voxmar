@@ -54,6 +54,17 @@ announced in chat with a **Next:** line, and the better one hides the other:
 | Workshop | + roof, 2 lights, a loom, spindle stand or quern, 2 storage | crafting and construction +2, engineering +1 |
 | Pantry | 2 storage, a hearth or any heat block | the good effects of a meal last x1.25 (`meal_time`) |
 | Larder | + roof, 4 storage, a stove or cauldron, a table | meals also heal x1.2 (`meal_heal`) and last x1.5 |
+| Bedside | a bed, a seat, 2 lights (no roof needed) | 2° warmer, and sleeping there is a Well rested sleep |
+| Herb nook | 2 hanging herbs (`drying`), 1 storage | farming and alchemy count 1 level higher, a meal's good lasts x1.1 |
+
+Bedside is a Nomad's first comfort: a stool (Construction 1) and two candles (Crafting 3)
+beside the sleeping bag. Before any roof or hearth it is the warmer night and the better rest
+(Well rested, 15 minutes, instead of Rested's 10); a snug home gives the same rest, and two
+ways to one rest give it once (`given_by_sleep` keeps each effect once, its longest rule).
+The herb nook is the Farm age's: two herbs tied with twine hang to dry (Crafting 4, two
+bunches); two bunches and a jar, basket or crate make it. Its farming level counts where it
+is felt, sowing the kitchen garden at the door (a crop a level early) and harvesting it, and
+its alchemy level at the bench.
 
 `boosts` are the effect vocabulary's own (they stop at +6 and recipes marked firm ignore
 them); `meal_heal` and `meal_time` are two new modifiers, applied as the meal is eaten from
@@ -78,8 +89,21 @@ position is inside the home box (`survey_around(anchor, keeper)`); a mod can ask
 `HomeHas("kept", n)` like any other tag, and content load accepts it. `crop` is the block tag
 every crop stage carries, so a garden needs no new tag. Other players' animals never count.
 
-Ideas left: species rules (`kept:hen` for eggs, a cat for fewer mice), wandering visitors
-who stop at a lit home (needs hooks from the wandering events work), a herb nook.
+Ideas left: species rules (`kept:hen` for eggs, a cat for fewer mice).
+
+## Callers (wandering parties that come to a home)
+
+A wandering kind can ask how far a player's home has come: `needs.home_is` names a home
+step (any effect with a condition), judged at the home as `/home` judges it (its survey, its
+roof), so it works wherever the player stands near home. With `near_home` it brings callers:
+
+| Kind | Comes to | What it brings |
+| --- | --- | --- |
+| Neighbours | any lit hearth (batch 9) | a plate for the house; seed for a cooked meal |
+| Fireside guests | a Homely home, of an evening | a long talk (Focused, 15 minutes); for a cooked supper, two candles toward Cosy |
+| A hedgehog at the door | a Cosy home, by night | a wild hedgehog after the crumbs: tame it (Hunter 3) and it is one of the animals about the house (Company) |
+
+They are wandering kinds like any other (docs/wandering.md), rare, one at a time.
 
 ## Home perks (know-how kept at home)
 
@@ -136,13 +160,13 @@ Home (Farm), each with routes that also accept any higher step, because a player
 reaches a higher step never gets the lower one announced; they come after the craft quests
 that make the pieces (seats, a table, shelves, rugs, crockery, candles) and A Stove and a
 Quern, Books and Banners, the two parts the last step needs. Hearthside is the Homestead
-Hearth quest itself. The rooms have their own: A Bench to Work At, Pantry Shelves and
-Company at Camp (Nomad), A Proper Workshop, A Larder, A Kitchen Garden and A Full House (Farm).
+Hearth quest itself. The rooms have their own: A Bench to Work At, Pantry Shelves,
+Company at Camp and A Lit Corner (Nomad), A Proper Workshop, A Larder, A Kitchen Garden,
+A Full House and A Herb Nook (Farm). Callers at the Door (Farm, after A Homely Home) asks
+for a supper or a talk with fireside guests.
 
 ## Not built (ideas)
 
-- A herb nook (hanging herbs, jars) boosting Alchemy and Farming: `hanging_herbs` is only a
-  village prop today, with no recipe.
 - Real storage (extra pack slots or a home chest) as a tier perk: needs the inventory and
   protocol to take a slot count.
 - Passing the night by sleeping, and a visible Rested icon (effects use the plain buff icon).

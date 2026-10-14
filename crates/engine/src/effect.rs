@@ -641,9 +641,17 @@ impl EffectRegistry {
     }
 
     /// The timed effects sleeping at a bed gives where `situation` is: each sleep rule whose
-    /// needed effect would hold there.
+    /// needed effect would hold there, and each effect once, for the longest of its rules
+    /// that hold (two ways to the same rest: a snug home, or a lit corner by the bed).
     pub fn given_by_sleep(&self, situation: &Situation) -> Vec<(EffectId, f32)> {
-        self.sleeps.iter().filter(|(_, _, needs)| needs.is_none_or(|n| self.get(n).when.as_ref().is_some_and(|c| c.holds(situation)))).map(|&(id, seconds, _)| (id, seconds)).collect()
+        let mut given: Vec<(EffectId, f32)> = Vec::new();
+        for &(id, seconds, _) in self.sleeps.iter().filter(|(_, _, needs)| needs.is_none_or(|n| self.get(n).when.as_ref().is_some_and(|c| c.holds(situation)))) {
+            match given.iter_mut().find(|(e, _)| *e == id) {
+                Some(had) => had.1 = had.1.max(seconds),
+                None => given.push((id, seconds)),
+            }
+        }
+        given
     }
 
     pub fn fingerprint(&self) -> u64 {

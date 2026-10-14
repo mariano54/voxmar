@@ -173,6 +173,9 @@ fn parties_that_answer_other_parties_are_checked_as_they_load() {
     assert!(line("OneOf([Toward(\"poacher\", 160.0), Item(\"bread\", (1, 1))])").is_ok());
     assert!(line("Toward(\"nobody\", 160.0)").is_err(), "tells of a kind there is");
     assert!(line("Toward(\"poacher\", 4.0)").is_err());
+    assert!(load("needs: (home_is: Some(\"homely\"))").is_ok(), "a home step");
+    assert!(load("needs: (home_is: Some(\"nowhere\"))").is_err(), "a step there is");
+    assert!(load("needs: (home_is: Some(\"hearty\"))").is_err(), "a step, not a food's buff that holds anywhere");
     let camp = "cast: [(species: \"villager\")], script: Camp(near: 16.0, stay: (60.0, 90.0), mill: 1.0, away: 60.0)";
     let show = |gives: &str| {
         let events = format!("(name: \"poacher\", {camp}), (name: \"x\", {camp}, show: (near: 5.0, seconds: 10.0, gives: [{gives}]))");
