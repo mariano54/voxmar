@@ -771,12 +771,23 @@ fn follow_pointer(
     }
 }
 
-/// A light tap whenever the pointer picks up or puts down items.
-fn tap(ui: Res<UiState>, player: Res<LocalPlayer>, mut sounds: MessageWriter<UiSound>, mut held: Local<Option<ItemStack>>) {
+/// A light tap whenever the pointer picks up or puts down items; picking up half a stack
+/// (a right click, this frame or the last) is a split.
+fn tap(
+    ui: Res<UiState>,
+    player: Res<LocalPlayer>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    keys: Res<ButtonInput<KeyCode>>,
+    mut sounds: MessageWriter<UiSound>,
+    mut held: Local<Option<ItemStack>>,
+    mut right: Local<[bool; 2]>,
+) {
+    let control = keys.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
+    *right = [mouse.just_pressed(MouseButton::Right) || (mouse.just_pressed(MouseButton::Left) && control), right[0]];
     let now = player.inventory.cursor.filter(|_| ui.inventory_open);
     if now != *held {
         if ui.inventory_open {
-            sounds.write(UiSound::Item);
+            sounds.write(if held.is_none() && right.iter().any(|r| *r) { UiSound::Split } else { UiSound::Item });
         }
         *held = now;
     }
