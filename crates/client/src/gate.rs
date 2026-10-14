@@ -4543,8 +4543,10 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
             if stored == LAY_PLANKS && held == 0 {
                 // The crafting table's recipe in the viewer, over the open inventory.
                 let table = world.resource::<ClientWorld>().registry.id("base:crafting_table");
+                // Opened as a click in it does: a trail with the viewer shut reads as Esc.
                 if let Some(table) = table {
                     world.resource_mut::<crate::hud::recipes::RecipeViewer>().open(table, false);
+                    world.resource_mut::<UiState>().recipes_open = true;
                 }
                 gate.advance(now);
             } else if waited > 10.0 {
@@ -4575,8 +4577,13 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
             if let Some(button) = button {
                 world.resource_mut::<UiClicks>().next = Some((button, MouseButton::Left));
                 gate.advance(now);
-            } else if waited > 3.0 {
-                gate.check("home: lay", Err("the crafting table's recipe showed no Lay button with the inventory open".into()));
+            } else if waited > 10.0 {
+                let ui = world.resource::<UiState>();
+                let (inventory, viewer) = (ui.inventory_open, ui.recipes_open);
+                let shown = world.resource::<crate::hud::recipes::RecipeViewer>().trail.last().map(|lookup| lookup.item);
+                let buttons = world.query::<(&crate::hud::recipes::LayButton, &InheritedVisibility)>().iter(world).map(|(lay, visible)| (lay.output, visible.get())).collect::<Vec<_>>();
+                let store = world.resource::<LocalPlayer>().inventory.store.as_ref().map(|s| s.slots.iter().flatten().map(|x| x.count as u32).sum::<u32>());
+                gate.check("home: lay", Err(format!("{waited:.1} server s on, no visible Lay button for the crafting table: inventory open {inventory}, viewer open {viewer} on {shown:?}, Lay buttons (item, visible) {buttons:?}, the barrel's slots on the client hold {store:?}")));
                 lay_done(world, barrel);
                 leave(world, gate);
             }
