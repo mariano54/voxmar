@@ -3648,9 +3648,36 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let count: u32 = inventory.slots.iter().flatten().filter(|s| Some(s.item) == planks).map(|s| s.count as u32).sum();
             if count >= 4 {
                 gate.check("craft", Ok(format!("the crafting grid turned a log into {count} planks")));
-                gate.next(Step::Music, now);
+                // Four fired clay to make kiln bricks of (Crafting 5).
+                let net = world.resource::<Net>();
+                net.command("skill crafting 5");
+                net.command("give fired_clay 4");
+                gate.advance(now);
             } else if gate.server_in_phase() > 5.0 {
                 gate.check("craft", Err(format!("after crafting a log there are {count} planks and the grid holds {:?}", inventory.grid())));
+                gate.next(Step::Music, now);
+            }
+        }
+        // Four fired clay in the grid make two kiln bricks (the Farm age's pacing audit:
+        // nineteen bricks were 76 fired clay to fire, now 40).
+        10 => {
+            if holding(world, "base:fired_clay").0 >= 4 && skill_level(world, "core:crafting").0 >= 5 {
+                gate.count_before = holding(world, "base:kiln_bricks").0;
+                lay_and_craft(world, &[(0, "base:fired_clay"), (1, "base:fired_clay"), (3, "base:fired_clay"), (4, "base:fired_clay")]);
+                gate.advance(now);
+            } else if gate.server_in_phase() > 5.0 {
+                gate.check("craft: kiln bricks", Err(format!("the fired clay ({}) or Crafting 5 never arrived", holding(world, "base:fired_clay").0)));
+                gate.next(Step::Music, now);
+            }
+        }
+        11 => {
+            let made = holding(world, "base:kiln_bricks").0.saturating_sub(gate.count_before);
+            if made >= 2 {
+                let result = if made == 2 { Ok("four fired clay made 2 kiln bricks".to_owned()) } else { Err(format!("four fired clay made {made} kiln bricks")) };
+                gate.check("craft: kiln bricks", result);
+                gate.next(Step::Music, now);
+            } else if gate.server_in_phase() > 5.0 {
+                gate.check("craft: kiln bricks", Err(format!("four fired clay made {made} kiln bricks")));
                 gate.next(Step::Music, now);
             }
         }

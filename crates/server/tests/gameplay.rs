@@ -7630,7 +7630,7 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     f.craft(&[(0, ingot, 1), (1, ingot, 1), (2, ingot, 1), (4, stick, 1), (7, stick, 1)], "base:copper_pickaxe", 1);
     f.mark("red_metal");
 
-    // Brick by Brick: nineteen kiln bricks in hand, four fired clay each in the grid
+    // Brick by Brick: nineteen kiln bricks in hand, two from four fired clay in the grid
     // (Crafting 5). A Kiln Load falls on the way, done at forty clay fired in all, and pays
     // the first four.
     while !quest_status(&f.c, "a_kiln_load").0 {
@@ -7638,10 +7638,10 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
         f.fire_clay(&site, more);
     }
     f.mark("a_kiln_load");
-    let short = 19u32.saturating_sub(f.have(bricks));
-    f.fire_clay(&site, short * 4);
-    let k = short as u8;
-    f.craft(&[(0, fired, k), (1, fired, k), (3, fired, k), (4, fired, k)], bricks, short);
+    let crafts = 19u32.saturating_sub(f.have(bricks)).div_ceil(2);
+    f.fire_clay(&site, crafts * 4);
+    let k = crafts as u8;
+    f.craft(&[(0, fired, k), (1, fired, k), (3, fired, k), (4, fired, k)], bricks, crafts * 2);
     f.mark("brick_by_brick");
 
     // The Crucible: seven kiln bricks round a clay pot at the table (Engineering 10).

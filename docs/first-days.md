@@ -40,7 +40,7 @@ paying Farming, Mining and Fishing experience and two bread.
 **Days 3 to 5, Farm: sustain yourself, then fire.** Plant wheat (First Harvest), keep hens
 (Hens in a Row, Fresh Eggs), cook (Camp Cook, level 5), a flock (A Woolly Flock). The main line
 is clay work: Clay Banks, A Pit Kiln, Fire the Clay (twelve fired clay), The Potter, Brick by
-Brick (nineteen kiln bricks, about 76 fired clay), and Red Metal for the copper the crucible
+Brick (nineteen kiln bricks, about 40 fired clay: four make two), and Red Metal for the copper the crucible
 needs. The Crucible then The Crucible Kiln: **lighting it ends Farm**. Everything else
 (husbandry, hunting, mail, home furnishings, ores, exploring) is optional breadth with its
 own rewards, so a player can always see two or three things worth doing.
@@ -274,6 +274,18 @@ six times in ten (`crops.ron`), about 13 tufts; sown wheat stays the bulk source
 (`wild_wheat_bakes_bread_in_a_short_walk`). A Varied Table (12 meat, 8 fish, 6 bread,
 about 11 minutes) and Trail Rations (12 jerky) were long by their counts, which the quest
 book's owners set.
+
+### Farm pacing (Oct 14)
+
+The same pass over the Farm age, from the lit hearth to the lit Crucible Kiln (the table is
+in the project's design/farm-pacing.md). Firing clay for the kiln was the one long stretch
+of a single action: Brick by Brick's nineteen bricks were 76 fired clay, 91 s of the
+quest-book bot's 394. Four fired clay now make two bricks (`recipes.ron`, the same
+Crafting experience a brick), and Brick by Brick takes 16 s; the kiln is lit at 319 s.
+`hunt_pace_probe` (crates/server/src/creatures.rs) measures a kill in the wild at 5 to 9 s
+on level ground, and a cast lands two times in five, about 12.5 s a fish. Crops take 12
+minutes of growth (wheat; carrots 14) day and night, and while they grow the main line,
+husbandry and the home quests are open.
 
 ## Measured pacing
 
