@@ -59,19 +59,17 @@ impl Catches {
     }
 }
 
-/// How often set traps look for what stepped in, in ticks.
-const LOOK_TICKS: u64 = 4;
-
-/// `base:traps`: springs set traps on the creatures that stepped into them.
+/// `base:traps`: springs set traps on the creatures that stepped into them, every 4 ticks
+/// (`Tier::Medium`), so a rabbit running through a set cell is still in it at a look.
 pub(crate) struct Traps;
 
 impl Process for Traps {
     fn tier(&self) -> Tier {
-        Tier::Low
+        Tier::Medium
     }
 
     fn run(&mut self, server: &mut Server) {
-        if server.tick % LOOK_TICKS != 0 || server.content.traps.traps.is_empty() {
+        if server.content.traps.traps.is_empty() {
             return;
         }
         server.spring_traps();
