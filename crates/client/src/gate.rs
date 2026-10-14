@@ -832,6 +832,13 @@ impl Gate {
         self.server_in_phase() > seconds && self.taps >= UNANSWERED_SWINGS
     }
 
+    /// Whether a phase waiting on the client's own doing (music it plays) has waited out
+    /// `seconds` both of the server's clock and of the client's: frames starved behind a
+    /// running server have not yet had the seconds to do it in.
+    fn waited_both(&self, seconds: f32, now: f32) -> bool {
+        self.server_in_phase() > seconds && now - self.phase_since > seconds
+    }
+
     /// Whether the server has answered none of the swings of a striking step: `UNANSWERED`
     /// of its seconds since the last answer, with at least `UNANSWERED_SWINGS` sent in them.
     fn unanswered(&self) -> bool {
@@ -7705,9 +7712,9 @@ fn boss(world: &mut World, gate: &mut Gate, now: f32) {
                     gate.check("boss music", result);
                     gate.advance(now);
                 }
-                music if waited => {
+                music if gate.waited_both(BOSS_WAIT, now) => {
                     let said = music.map_or("no music running".to_owned(), |(fighting, _)| format!("in a boss fight: {fighting}, no boss's track"));
-                    gate.check("boss music", Err(format!("not a boss fight with her track after {BOSS_WAIT} server seconds ({said})")));
+                    gate.check("boss music", Err(format!("not a boss fight with her track after {BOSS_WAIT} seconds of the server and the client ({said})")));
                     gate.advance(now);
                 }
                 _ => {}
@@ -7940,8 +7947,8 @@ fn tusk(world: &mut World, gate: &mut Gate, now: f32) {
                     gate.check("tusk fight music", result);
                     sweep(world, gate, now);
                 }
-                music if waited => {
-                    gate.check("tusk fight music", Err(format!("no fight music of his own in {BOSS_WAIT} server seconds once he fought ({music:?})")));
+                music if gate.waited_both(BOSS_WAIT, now) => {
+                    gate.check("tusk fight music", Err(format!("no fight music of his own in {BOSS_WAIT} seconds of the server and the client once he fought ({music:?})")));
                     sweep(world, gate, now);
                 }
                 _ => {}
