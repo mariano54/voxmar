@@ -824,6 +824,17 @@ impl Gate {
         }
     }
 
+    /// A left click on the screen's `cell`, held out like `tap`: given to the UI once each
+    /// half second of game time and counted in `taps`, so `waited_out` gives up only on a
+    /// server that was asked.
+    fn click(&mut self, world: &mut World, cell: Entity, now: f32) {
+        if now - self.tap_at >= TAP_EVERY {
+            world.resource_mut::<UiClicks>().next = Some((cell, MouseButton::Left));
+            self.tap_at = now;
+            self.taps += 1;
+        }
+    }
+
     /// Whether a phase that clicks (`tap`) has waited out `seconds` of the server's clock
     /// with at least `UNANSWERED_SWINGS` clicks sent: a client starved of frames that sent
     /// fewer has not been answered no, only not asked.
@@ -4727,21 +4738,21 @@ fn makeable(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             ui.inventory_open = true;
             gate.advance(now);
         }
-        // Planks ready, and every ready one before any that is not.
+        // Planks ready, and every ready one before any that is not. The list is drawn from
+        // what the server gave, so giving up wants its seconds and the client's both.
         1 => {
             let drawn = world.resource::<Drawn>().0.clone();
             let ready = drawn.iter().find(|m| m.output == planks).is_some_and(|m| m.reach == Reach::Ready);
             let cell = cell_of(world, planks);
             match cell {
-                Some(cell) if ready && holding(world, "base:oak_log").0 >= 1 => {
+                Some(_) if ready && holding(world, "base:oak_log").0 >= 1 => {
                     let first_not = drawn.iter().position(|m| m.reach != Reach::Ready).unwrap_or(drawn.len());
                     let order = drawn[first_not..].iter().all(|m| m.reach != Reach::Ready);
                     gate.check("make: list", if order { Ok(format!("a log in the pack shows planks ready; {first_not} of {} ready, all first", drawn.len())) } else { Err(format!("a ready one comes after one not ready: {:?}", drawn.iter().map(|m| m.reach.rank()).collect::<Vec<_>>())) });
                     gate.count_before = world.resource::<LocalPlayer>().inventory.craft.iter().flatten().filter(|s| s.item == log).map(|s| s.count as u32).sum();
-                    world.resource_mut::<UiClicks>().next = Some((cell, MouseButton::Left));
                     gate.advance(now);
                 }
-                _ if waited > QUEST_WAIT => {
+                _ if waited > QUEST_WAIT && in_phase > QUEST_WAIT => {
                     let shown: Vec<String> = drawn.iter().take(6).map(|m| format!("{:?} {:?}", m.output, m.reach)).collect();
                     gate.check("make: list", Err(format!("{waited:.1} server s on, {} logs held, planks ready {ready}, a cell for them {}; the list starts {shown:?}", holding(world, "base:oak_log").0, cell.is_some())));
                     leave(world, gate);
@@ -4749,22 +4760,24 @@ fn makeable(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 _ => {}
             }
         }
-        // The server lays the log in the grid.
+        // Clicked, the planks have the server lay the log in the grid.
         2 => {
             let laid: u32 = world.resource::<LocalPlayer>().inventory.craft.iter().flatten().filter(|s| s.item == log).map(|s| s.count as u32).sum();
             if laid > gate.count_before {
                 gate.check("make: lay", Ok(format!("a click on the planks laid {} log in the grid", laid - gate.count_before)));
                 gate.advance(now);
-            } else if waited > QUEST_WAIT {
-                gate.check("make: lay", Err(format!("{waited:.1} server s after the click the grid holds {laid} logs, as before")));
+            } else if gate.waited_out(QUEST_WAIT) {
+                gate.check("make: lay", Err(format!("{waited:.1} server s and {} clicks on the planks on, the grid holds {laid} logs, as before", gate.taps)));
                 leave(world, gate);
+            } else if let Some(cell) = cell_of(world, planks) {
+                gate.click(world, cell, now);
             }
         }
         // Pointed at, the stone pickaxe says what it still wants.
         _ => {
             let Some(cell) = cell_of(world, pickaxe) else {
-                if waited > QUEST_WAIT {
-                    gate.check("make: wants", Err(format!("{waited:.1} server s on, with three cobblestone the stone pickaxe is not on the list")));
+                if in_phase > 2.0 {
+                    gate.check("make: wants", Err(format!("{in_phase:.1} s on, with three cobblestone the stone pickaxe is not on the list")));
                     leave(world, gate);
                 }
                 return;
