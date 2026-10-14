@@ -164,14 +164,21 @@
                 (style: Smoke, rate: 1.0, at: (0.5, 0.9, 0.5), spread: 0.1, size: 0.6, color: Some((112, 112, 112))),
             ],
         ),
-        // Decor until the Cooking machines land: a pot on three legs, and a brick stove.
+        // Decor until the Cooking machines land: a pot on three legs.
         (
             name: "cauldron", render: Model, shape: "cauldron", sound: Stone, textures: All("cauldron_iron"),
             drops: "core:air", hardness: 2.0, color: (60, 60, 66), tags: ["cooking", "decor", "metal"],
         ),
+        // A brick stove: the campfire it is built round still burns in it. It cooks what a
+        // campfire cooks (`campfire`), holds a cooking pot (`hob`), warms and lights the room
+        // as a fire does (`heat`, `fire`, light 12: survival.ron's heat_emission), and smokes
+        // from its flue.
         (
             name: "cottage_stove", render: Model, shape: "cottage_stove", sound: Stone, textures: All("stove_bricks"),
-            drops: "core:air", hardness: 2.0, color: (120, 90, 80), tags: ["cooking", "decor", "stone"],
+            light: 12, drops: "core:air", hardness: 2.0, color: (120, 90, 80), tags: ["cooking", "decor", "stone", "campfire", "heat", "fire", "hob"],
+            particles: [
+                (style: Smoke, rate: 3.0, at: (0.75, 1.05, 0.75), spread: 0.06, size: 0.9, height: 3.0, color: Some((112, 112, 112))),
+            ],
         ),
         // Stand-ins for the Farm age's machines, which will have the plain names: a loom, a
         // spinning wheel and a quern for a weaver's or a miller's room.

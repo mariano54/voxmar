@@ -271,6 +271,21 @@ A mod's rain barrel or cistern is the same tag. Tests: `a_well_waters_the_field_
 dry plot ("well", shot "well"). The Farm quest A Well by the Field (after A Field of Gold)
 asks for one made and set down where it keeps tilled ground moist (`Watering`).
 
+## The hearth is a fire
+
+Lit, the Homestead Hearth cooks what a campfire cooks: raw meat, fish or an egg in hand, a right
+click on the standing hearth (its ring and chimney whole, `station_stands`) cooks one, with an
+empty hand still lighting it. The Cottage Stove (Farm, five cobblestone round a campfire) is
+the campfire built in: it cooks the same, holds a cooking pot (`hob`), and warms and lights the
+room as a fire does (`heat`, `fire`, light 12, which survival.ron's `heat_emission` counts),
+smoking from its flue. So the home's own fire is where supper is made, and nobody keeps a
+campfire on the floor. Data only: the `campfire` tag the cooking recipes ask for, on the
+hearthstone and the stove (blocks_tools.ron, blocks_furnishings.ron); a loose hearthstone
+does not cook, and says what the hearth lacks. Cooking at either counts as campfire cooking
+for quests (First Night). Test `the_hearth_and_the_stove_cook_as_a_campfire_does`; the gate's
+Cook step rings its hearthstone with stone and cooks small game at it ("hearth: cooks"), then at a
+stove ("stove: cooks").
+
 ## Smoke over home
 
 The Homestead Hearth's chimney smokes from its top while the hearthstone stands below it, a
