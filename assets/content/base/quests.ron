@@ -329,6 +329,20 @@
             after: ["homestead_hearth", "fire_the_clay"],
             rewards: [Xp("crafting", 305.0), Item("vial", 4)],
         ),
+        (
+            name: "a_pot_on_the_fire", age: "farm", branch: "cooking", title: "A Pot on the Fire",
+            why: "A cooking pot simmers two grain into porridge, which heals more than bread, while you get on with other work. Make one at the crafting table (Crafting 3): seven fired clay round a clay pot. Set it beside a campfire, or on the hearthstone, with water within four blocks (a well counts). Right-click it with wheat in hand (Cooking 3), and two minutes later take the porridge. Keep two.",
+            tasks: [[Craft("cooking_pot", 1), Have("porridge", 2)]],
+            after: ["the_potter", "camp_cook"],
+            rewards: [Xp("cooking", 120.0), Xp("crafting", 40.0)],
+        ),
+        (
+            name: "a_hearty_stew", age: "farm", branch: "cooking", title: "A Hearty Stew",
+            why: "At Cooking 14 the pot takes three raw meat, roots or vegetables at once and simmers them into a stew, the best food a pot makes. Carrots, raw rabbit, raw chicken or raw mutton all go in; cooked food and grain do not. Load it as before, take the stew three minutes later, and keep two.",
+            tasks: [[Level("cooking", 14), Have("stew", 2)]],
+            after: ["a_pot_on_the_fire"],
+            rewards: [Xp("cooking", 300.0)],
+        ),
         // Fuel before metal, and the Engineering and Mining that copper asks for (design
         // drafts 100 and 102: the nomad path alone left both short of 5).
         (
