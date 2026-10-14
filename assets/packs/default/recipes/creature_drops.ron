@@ -20,7 +20,6 @@
         "meat_venison": ["#5a0e0e", "#8e1e1e", "#b83a32"],
         "meat_bear": ["#4a0c0c", "#7a1a18", "#a8342c"],
         "meat_rotten": ["#4a5a2a", "#6e7e3c", "#98a456"],
-        "meat_frog": ["#b07a70", "#e4b0a4", "#f8d4ca"],
         "meat_crab": ["#a83c18", "#e46a30", "#f8a070"],
         "snow_white": ["#c8ccd4", "#eceef2", "#ffffff"],
         "lynx_tawny": ["#7a5e3e", "#b0926c", "#dccaa8"],
@@ -80,7 +79,6 @@
         "block/raw_beef": (base: "block/raw_small_game", palettes: {"fruit": "meat_beef", "wood": "fat_rim"}),
         "block/raw_venison": (base: "block/raw_small_game", palettes: {"fruit": "meat_venison", "wood": "fat_rim"}),
         "block/raw_bear": (base: "block/raw_small_game", palettes: {"fruit": "meat_bear", "wood": "fat_rim"}),
-        "block/raw_frog": (base: "block/raw_small_game", palettes: {"fruit": "meat_frog", "wood": "bone_pale"}),
         "block/raw_crab": (base: "block/raw_small_game", palettes: {"fruit": "meat_crab", "wood": "fat_rim"}),
         "block/rotten_flesh": (base: "block/raw_small_game", palettes: {"fruit": "meat_rotten", "wood": "meat_rotten"}),
         // A hide stretched out: four legs and a neck.
