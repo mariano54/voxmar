@@ -4575,6 +4575,10 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
         7 => {
             let button = world.query::<(Entity, &crate::hud::recipes::LayButton, &InheritedVisibility)>().iter(world).find(|(_, lay, visible)| visible.get() && world.resource::<ClientWorld>().registry.id("base:crafting_table") == Some(lay.output)).map(|(entity, ..)| entity);
             if let Some(button) = button {
+                // The table's recipe drawn, with its Lay button, before it is pressed.
+                if gate.shot(world, "home-lay-recipe").is_none() {
+                    return;
+                }
                 world.resource_mut::<UiClicks>().next = Some((button, MouseButton::Left));
                 gate.advance(now);
             } else if waited > 10.0 {
@@ -4592,18 +4596,21 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
             let planks = world.resource::<ClientWorld>().registry.id("base:oak_planks");
             let player = world.resource::<LocalPlayer>();
             let laid: u32 = player.inventory.craft.iter().flatten().filter(|x| Some(x.item) == planks).map(|x| x.count as u32).sum();
-            let stored: u32 = player.inventory.store.as_ref().map_or(0, |s| s.slots.iter().flatten().filter(|x| Some(x.item) == planks).map(|x| x.count as u32).sum());
-            if laid == LAY_PLANKS && stored == 0 {
+            let open = player.inventory.store.is_some();
+            let held = holding(world, "base:oak_planks").0;
+            let ui = world.resource::<UiState>();
+            let (inventory, viewer) = (ui.inventory_open, ui.recipes_open);
+            // Laid, the barrel's screen closes onto the grid, drawn with the planks in it;
+            // the pack held none, so they came from the barrel.
+            if laid == LAY_PLANKS && held == 0 && !open && inventory && !viewer {
                 if gate.shot(world, "home-lay").is_none() {
                     return;
                 }
-                gate.check("home: lay", Ok(format!("Lay on the crafting table's recipe filled the grid with {laid} planks from the home barrel")));
+                gate.check("home: lay", Ok(format!("home-lay-recipe shows the crafting table's recipe with its Lay button; pressed, home-lay shows the inventory's grid holding the {laid} planks from the home barrel (its screen closed, none in the pack)")));
                 lay_done(world, barrel);
                 leave(world, gate);
             } else if waited > 10.0 {
-                let viewer = world.resource::<UiState>().recipes_open;
-                let held = holding(world, "base:oak_planks").0;
-                gate.check("home: lay", Err(format!("{waited:.1} server s after Lay: {laid} planks in the grid, {stored} left in the barrel, {held} in the pack, viewer open {viewer}")));
+                gate.check("home: lay", Err(format!("{waited:.1} server s after Lay: {laid} planks in the grid, {held} in the pack, barrel screen open {open}, inventory open {inventory}, viewer open {viewer}")));
                 lay_done(world, barrel);
                 leave(world, gate);
             }
