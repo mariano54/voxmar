@@ -72,15 +72,24 @@ pub struct NowPlaying {
 }
 
 /// When the player counts as in a boss fight: a boss alive within `within` blocks, or a
-/// block of a boss's room (one of `rooms`, by name) within `room_reach` blocks.
+/// block of a boss's room (one of `rooms`) within `room_reach` blocks.
 #[derive(Clone, Debug, Default, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BossMusic {
     pub within: f32,
     #[serde(default)]
-    pub rooms: Vec<String>,
+    pub rooms: Vec<BossRoom>,
     #[serde(default)]
     pub room_reach: i32,
+}
+
+/// A boss's room: a block of it (by name) and the boss whose room it is, whose fight music
+/// (its `music` tags) plays there.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BossRoom {
+    pub block: String,
+    pub boss: String,
 }
 
 /// When the player counts as underground.
@@ -146,8 +155,9 @@ pub struct Rule {
     /// How often one is picked against the others that suit the moment.
     #[serde(default = "one")]
     pub weight: f32,
-    /// Biome tags (`biomes.ron`) where they play, one enough; none for anywhere. A boss
-    /// fight where no boss track suits the biome takes one from anywhere.
+    /// Biome tags (`biomes.ron`) where they play, one enough; none for anywhere. For boss
+    /// tracks, the tags a boss's `music` names (any one): tagged ones play only for those
+    /// bosses, untagged ones for every boss.
     #[serde(default)]
     pub biomes: Vec<String>,
 }

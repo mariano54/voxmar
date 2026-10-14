@@ -36,7 +36,9 @@
         (name: "lyria", folder: "lyria"),
         // Made with ElevenLabs Music v2.5 by tools/music/elevenlabs (rounds 4 and 5): the
         // general tracks play anywhere; a biome's only in its biome (by its tags in
-        // biomes.ron), above ground; a boss's only in a boss fight, its own biome's first.
+        // biomes.ron), above ground; a boss's only in a boss fight, and only for a boss
+        // whose `music` (its creature's) names one of its tags, wherever the fight is. The
+        // boss tracks with no tags (none yet) are every boss's.
         (name: "elevenlabs", folder: "elevenlabs", tracks: [
             (paths: ["*/forest/boss-*"], contexts: [Boss], biomes: ["forest"]),
             (paths: ["*/snow/boss-*"], contexts: [Boss], biomes: ["frozen", "cold", "tundra", "snow"]),
@@ -57,9 +59,10 @@
     // Tracks played lately that are passed over while others suit.
     recent: 12,
     // A boss fight: a creature with `boss: true` alive within `within` blocks, or a block
-    // of a boss's room (by name in `rooms`) within `room_reach` blocks. Only Boss tracks
-    // play then: the calm track playing fades as it starts, and the boss's when it ends.
-    boss: (within: 32.0, rooms: ["base:hollow_floor"], room_reach: 12),
+    // of a boss's room (`rooms`: the block, and whose room it is) within `room_reach`
+    // blocks. Only that boss's tracks play then (its `music` tags, else the untagged boss
+    // tracks): the calm track playing fades as they start, and the boss's when it ends.
+    boss: (within: 32.0, rooms: [(block: "base:hollow_floor", boss: "base:rootmother")], room_reach: 12),
         // Underground: this many blocks below the surface, with this little of the air
     // around open to the sky.
     underground: (depth: 12.0, max_sky: 0.05),
