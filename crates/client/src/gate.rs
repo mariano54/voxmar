@@ -11801,6 +11801,18 @@ mod tests {
         }
     }
 
+    /// The Nomad age too: every quest says where what it asks for comes from.
+    #[test]
+    fn every_nomad_quest_names_what_it_asks_for() {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        let content = voxmar_engine::content::Content::load(&assets).unwrap();
+        let nomad: Vec<&str> = content.quests.iter().filter(|q| q.age == "nomad").map(|q| q.name.as_str()).collect();
+        for code in ["en", "ja"] {
+            let misses = super::unexplained(&content, &Locale::load(&assets, code), &nomad);
+            assert!(misses.is_empty(), "{code}: {} {misses:?}", misses.len());
+        }
+    }
+
     use super::{sling_next, SlingNext, BEAR, SLING, SLING_LEVEL, SLING_STONES, UNANSWERED};
 
     /// At the sling step's Ranged level, against its bear, every stone missing is a broken

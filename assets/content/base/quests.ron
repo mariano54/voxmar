@@ -25,9 +25,9 @@
         ),
         (
             name: "first_night", age: "nomad", branch: "main", title: "First Night",
-            why: "Make a campfire: put two logs or Wood blocks above two Cobblestones in the 2×2 crafting grid. No stripped wood is needed; cobblestone comes from stone, a few blocks under the dirt or bare on hillsides, and bare hands can break it slowly. Place the fire, select raw rabbit, raw chicken or an egg in your hotbar, and right-click the fire. Rabbits and junglefowl roam open grassland; a junglefowl gives chicken and sometimes an egg. Fists are slow at the hunt too: swing an axe instead; a stone one hits three times as hard as a fist (a stone sword, two cobblestone over a stick, does as well). Wait two seconds; the cooked food goes into your inventory. If it burns, try again. Cooked food heals more than raw food.",
+            why: "Make a campfire: put two logs or Wood blocks above two Cobblestones in the 2×2 crafting grid. No stripped wood is needed; cobblestone comes from stone, a few blocks under the dirt or bare on hillsides, and bare hands can break it slowly. Place the fire, select raw small game or an egg in your hotbar, and right-click the fire. Rabbits and junglefowl roam open grassland; a junglefowl gives small game and sometimes an egg. Fists are slow at the hunt too: swing an axe instead; a stone one hits three times as hard as a fist (a stone sword, two cobblestone over a stick, does as well). Wait two seconds; the cooked food goes into your inventory. If it burns, try again. Cooked food heals more than raw food.",
             tasks: [[Craft("campfire", 1), CookAt("tag:edible", "campfire", 1)]],
-            rewards: [Xp("cooking", 93.0), Item("torch", 4)],
+            rewards: [Xp("cooking", 93.0), Item("feather", 2)],
         ),
         (
             name: "stone_in_hand", age: "nomad", branch: "main", title: "Stone in Hand",
@@ -90,14 +90,14 @@
             why: "A snare catches small game while you do other work. Two twine over two sticks make one (Hunter 1). Set it on grass where rabbits, hares or field mice wander, and go about your day; a sprung snare holds its catch until you come back. Right-click it to take the catch and set it again.",
             tasks: [[Placed("snare", 1), Trapped("any", 1)]],
             after: ["twine_and_thong"],
-            rewards: [Xp("hunter", 60.0)],
+            rewards: [Xp("hunter", 60.0), Item("snare", 2)],
         ),
         (
             name: "pockets", age: "nomad", branch: "qol", title: "Pockets",
             why: "Herbs and seeds eat slots; a pouch holds a thousand of a kind in one. A hide and a twine side by side make a herb pouch, a twine over a hide a seed pouch (Crafting 3).",
             tasks: [[Craft("herb_pouch", 1)], [Craft("seed_pouch", 1)]],
             after: ["twine_and_thong"],
-            rewards: [Xp("crafting", 40.0)],
+            rewards: [Xp("crafting", 40.0), Item("hide", 2)],
         ),
         (
             name: "torchlight", age: "nomad", branch: "main", title: "Torchlight",
@@ -128,10 +128,10 @@
         ),
         (
             name: "first_ore", age: "nomad", branch: "mining", title: "Red Metal Underfoot",
-            why: "Copper needs Mining 5 and the pickaxe you have. Mining grows mostly from coal: a score or so of it, with what the early quests give, takes you there. Copper lies in veins underground, mostly below sea level and richest under granite; a small copper-coloured stone lying on the ground marks a vein below it, so dig down there. Mine five; it is the start of every metal.",
+            why: "Copper needs Mining 5 and the pickaxe you have. Mining grows mostly from coal: a score or so of it, with what the early quests give, takes you there. Copper lies in veins underground, mostly below sea level and richest under granite; a small copper-coloured stone lying on the ground marks a vein below it, so dig down there. Mine five copper ore; it is the start of every metal.",
             tasks: [[Mine("copper_ore", 5)]],
             after: ["coal_and_cinders"],
-            rewards: [Xp("mining", 60.0)],
+            rewards: [Xp("mining", 60.0), Item("coal_ore", 8)],
         ),
         (
             name: "timber", age: "nomad", branch: "start", title: "Timber",
@@ -148,7 +148,7 @@
         ),
         (
             name: "coal_and_cinders", age: "nomad", branch: "mining", title: "Coal and Cinders",
-            why: "Coal shows as black flecks in the rock. It lies in wide seams around sea level and below, most often under limestone, sandstone and chalk; a small black-flecked stone lying on the ground marks a seam below it. One coal or charcoal over a stick makes four torches, and it smelts metal later. Mine eight.",
+            why: "Coal shows as black flecks in the rock. It lies in wide seams around sea level and below, most often under limestone, sandstone and chalk; a small black-flecked stone lying on the ground marks a seam below it. One coal or charcoal over a stick makes four torches, and it smelts metal later. Mine eight coal ore.",
             tasks: [[Mine("coal_ore", 8)]],
             after: ["dig_in"],
             rewards: [Xp("mining", 60.0), Item("torch", 8)],
@@ -169,7 +169,7 @@
         ),
         (
             name: "small_game", age: "nomad", branch: "hunter", title: "Small Game",
-            why: "Rabbits, junglefowl and other small animals are the easiest food: raw rabbit and chicken cook well at a campfire. Look for them on open grassland. Hunt three; a few blows are enough, and each kill trains Hunter. Then cook one of what you killed.",
+            why: "Rabbits, junglefowl and other small animals are the easiest food: small game cooks well at a campfire. Look for them on open grassland. Hunt three; a few blows are enough, and each kill trains Hunter. Then cook one of what you killed.",
             tasks: [[Kill("any", 3), Cook("tag:meat", 1)]],
             after: ["something_to_swing"],
             rewards: [Xp("hunter", 80.0)],
@@ -200,11 +200,11 @@
             why: "Two skills grow only in a fight. Defence trains on the blows you turn aside while you fight back against something your match, and Hitpoints, twice your level in health, on every blow you land. Rabbits and fowl cannot hurt you, so wear your hide wraps against boar and wolves in the woods, or the monsters that come out at night. Reach Defence 3 and Hitpoints 11.",
             tasks: [[Level("defence", 3), Level("hitpoints", 11)]],
             after: ["raise_your_guard"],
-            rewards: [Xp("defence", 60.0), Xp("hitpoints", 40.0)],
+            rewards: [Xp("defence", 60.0), Xp("hitpoints", 40.0), Item("hide", 4)],
         ),
         (
             name: "meat_and_fire", age: "nomad", branch: "cooking", title: "Meat on the Fire",
-            why: "Raw meat heals little and leaves you Queasy; cooked meat heals far more. Cook six pieces of meat at a campfire: rabbit, chicken, duck or frog. Ducks and frogs live by rivers and in swamps. A higher Cooking level burns less. Six good meals will also take you to Cooking 2.",
+            why: "Raw meat heals little and leaves you Queasy; cooked meat heals far more. Cook six pieces of meat at a campfire: small game, duck or frog. Ducks and frogs live by rivers and in swamps. A higher Cooking level burns less. Six good meals will also take you to Cooking 2.",
             tasks: [[Cook("tag:meat", 6), Level("cooking", 2)]],
             after: ["first_night"],
             rewards: [Xp("cooking", 120.0)],
@@ -242,7 +242,7 @@
             why: "A fish tastes far better cooked. Roast three at a campfire: hold the raw fish and right-click the fire. Catch the three yourself.",
             tasks: [[Catch("tag:fish", 3), Cook("tag:fish", 3)]],
             after: ["bare_hands"],
-            rewards: [Xp("cooking", 60.0), Xp("fishing", 40.0)],
+            rewards: [Xp("cooking", 60.0), Xp("fishing", 40.0), Item("drying_rack", 1)],
         ),
         (
             name: "wild_harvest", age: "nomad", branch: "farming", title: "Wild Harvest",
@@ -256,7 +256,7 @@
             why: "Alchemy is knowing what each herb carries. Brewing comes in a later age, but folk on the road teach the first of it now: an old herb gatherer shares lore for a herb, a wandering healer makes a salve of three, and a travelling alchemist wants two each of six kinds. Carry herbs on your rounds and deal with one of them.",
             tasks: [[Met("herb_gatherer", 1)], [Met("travelling_alchemist", 1)], [Met("wandering_healer", 1)]],
             after: ["wild_harvest"],
-            rewards: [Xp("alchemy", 30.0), Xp("farming", 40.0)],
+            rewards: [Xp("alchemy", 30.0), Xp("farming", 40.0), Item("herb_pouch", 1)],
         ),
         (
             name: "neighbours", age: "nomad", branch: "explore", title: "Wild Neighbours",
@@ -389,7 +389,7 @@
         ),
         (
             name: "first_bronze", age: "farm", branch: "main", title: "First Bronze",
-            why: "Three copper ingots and one tin ore make four bronze blend in the crafting grid (Engineering 12). Hold the blend and right-click the crucible of your lit kiln: it melts into bronze, the metal of the next age. Smelt four.",
+            why: "Hold three copper ingots, with a tin ore in your pack, and right-click the crucible of your lit kiln: they melt into four bronze, the metal of the next age (Engineering 12). Smelt four.",
             tasks: [[Cook("bronze_ingot", 4)]],
             after: ["crucible_kiln"],
             rewards: [Xp("engineering", 400.0), Item("bronze_ingot", 4)],
@@ -863,7 +863,7 @@
             why: "No need to carry it all: at home, open your pack, look a recipe up (U or R over an item) and press Lay. The grid fills from your pack and from every store in your home, nearest first, so a crate stack of planks by the bed is a woodshed to craft from. Shift lays as many as will go. Put planks in a store and lay three recipes from it.",
             tasks: [[Laid("any", 3)]],
             after: ["pantry_shelves"],
-            rewards: [Xp("crafting", 40.0), Xp("construction", 20.0)],
+            rewards: [Xp("crafting", 40.0), Xp("construction", 20.0), Item("crate", 1)],
         ),
         (
             name: "company_at_camp", age: "nomad", branch: "home", title: "Company at Camp",
@@ -877,7 +877,7 @@
             why: "One food grows dull and heals little. Cook six meat at a fire, cook four fish, and bake three bread: every kind comes from a different part of the land, and together they keep you going.",
             tasks: [[Cook("tag:meat", 6), Cook("tag:fish", 4), Craft("bread", 3)]],
             after: ["a_fish_supper", "daily_bread", "trail_rations"],
-            rewards: [Xp("cooking", 180.0), Xp("hitpoints", 40.0)],
+            rewards: [Xp("cooking", 180.0), Xp("hitpoints", 40.0), Item("jerky", 8)],
         ),
         (
             name: "a_proper_workshop", age: "farm", branch: "home", title: "A Proper Workshop",
@@ -1071,7 +1071,7 @@
             why: "Coal carters walk sacks of coal to the nearest town, and miners caught by the dark far from home sit waiting for a light. Keep with the carters to the town, or give the miners a lump of coal or charcoal to light their lamp again; both say where coal shows at the surface. Then make sixteen torches: coal or charcoal over a stick makes four.",
             tasks: [[Met("coal_carters", 1), Craft("torch", 16)], [Met("benighted_miners", 1), Craft("torch", 16)]],
             after: ["caught_in_the_rain"],
-            rewards: [Xp("mining", 80.0), Item("coal_ore", 4)],
+            rewards: [Xp("mining", 80.0), Item("coal_ore", 4), Item("gold_coin", 5)],
         ),
         (
             name: "the_last_sheaf", age: "farm", branch: "farming", title: "The Last Sheaf",
