@@ -165,3 +165,34 @@ Oct 14, 2026. The bot is `first_fights_measured` in `server/tests/gameplay.rs`; 
 | Brown bear | 0.70 s | 61.5 s | 103 | 35 (85) | 35 of 35, shortest 0.74 s |
 
 Every wind-up was on screen 0.4 s or more before its blow; the server sends a new pose at once. The gap was sound: before this change only bosses' wind-ups made a sound, so a blow from a creature at the edge of the view or behind came with no warning. Now every blow is told (decision 9 above). Wind-up times, and so the server's timing, are unchanged. The wolf (27 damage over 16 s, more than a new player's 20 health) and the bear are not fights for a new player who stands and trades blows. Their numbers are left for balance.
+
+## First-age fight balance
+
+Oct 14, 2026. The first fights audit above played a bot at Attack 5 with 60 health. A brand-new player has 20 health, Attack 1 and Defence 1, and fared much worse. The bot `first_age_fights_balanced` in `server/tests/gameplay.rs` plays that player. It runs on an open floor walled round, chases on foot at a sprint, and swings a stone sword on its cooldown whenever the creature is in reach. It fights each creature twice: once never guarding, and once raising the guard just before every other wind-up lands. Run it by hand with `--ignored --nocapture`; `FIGHT_ONLY`, `FIGHT_RUNS` and `FIGHT_GUARD` narrow it. The cloud runs, averaged over 4 runs before and 6 after. The wolf's open fight after is 8 runs at its final health of 13; its guarding fight was measured at 14, one point harder:
+
+| Creature | Before, open | Before, guarding | After, open | After, guarding |
+| --- | --- | --- | --- | --- |
+| Wild boar | killed in 6.6 s, chase 1.9 s (worst 7.3 s) | 8.6 s, chase 1.9 s | 7.7 s, chase 1.4 s | 6.1 s, chase 0.1 s |
+| Badger | 3 of 4 died, 12% health left | 88% left | 62% left (worst 30%) | 92% left |
+| Fox | 88% left | 92% left | 78% left | 97% left |
+| Aurochs | 70% left | 100% left | 61% left (worst 45%) | 90% left |
+| Wolf | 4 of 4 died | 86% left | 43% left (worst 15%), none died | 93% left |
+| Brown bear | 4 of 4 died | 4 of 4 died | 6 of 6 died | 4 of 6 died |
+
+What changed, all in `creatures.ron`:
+
+- **Wolf**: health 16 to 13, defence 8 to 4, damage 2-4 to 1-3. Its level (12), speed, wind-up and pack size are unchanged. A pack at night is still a reason to be home by the fire.
+- **Badger**: defence 7 to 3, damage 1-3 to 1-2, and a blow every 1.4 s instead of 1.1 s. Its wind-up is unchanged.
+- **Wild boar**: it runs at 5.4 instead of 6.0 blocks a second, under a sprint's 6.1, so a chase closes.
+- **Brown bear**: it now lives in the cold pine woods and the mountains, never as warm as where a new player starts. A bear's comfort ends at 8 degrees, and the world's spawn is open temperate grassland at 8 to 20 degrees. Its fight is unchanged, so a bear met later is still a danger to avoid. A player who guards well beat one in 2 of 6 runs.
+- The fox and the aurochs are unchanged. Their numbers moved only with the rolls: the server rolls by its tick, and the runs before mostly repeated the same rolls, while the runs after each start a little later.
+
+Every wind-up is still 0.3 s or more. `engine/tests/first_fights.rs` holds these targets on the content's own rolls:
+
+- a new player beats a wolf without guarding with 15% to 45% of their health left;
+- a badger and a fox are easy;
+- an aurochs is fair;
+- a boar runs at least half a block a second slower than a sprint;
+- no brown bear lives at any temperature a new player starts in, and none can be beaten by a new player.
+
+A new player's kills now take 6 to 12 s; the design lane's level audit assumed 5.4 to 9 s. A wolf has 3 fewer health points, so its kill gives 12 fewer Attack and 4 fewer Hitpoints experience. No experience rate changed.
