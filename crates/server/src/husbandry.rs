@@ -304,9 +304,7 @@ impl Server {
         }
         let at = creature.body.position;
         neighbours
-            .around(at)
-            .into_iter()
-            .filter(|&other| other != id)
+            .kind_around(at, creature.species, id)
             .filter_map(|other| self.creatures.live.get(&other))
             .filter(|c| c.species == creature.species && c.owner.is_some() && c.ready_until > 0 && c.body.position.distance(at) < MATE_RANGE)
             .map(|c| c.body.position)
@@ -367,15 +365,39 @@ impl Server {
             for (index, product) in species.def.products.iter().enumerate() {
                 if product.tool.is_none() && tick >= creature.products_due[index] {
                     creature.products_due[index] = tick + product_ticks(product.every / often, creature.seed ^ tick, index);
-                    laid.push((creature.body.position, species.products[index], product.count, creature.traits.yield_, id));
+                    let keeper = creature.owner_id.filter(|_| product.nests);
+                    laid.push((creature.body.position, species.products[index], product.count, creature.traits.yield_, id, keeper));
                 }
             }
         }
-        for (position, item, (low, high), yield_, id) in laid {
+        for (position, item, (low, high), yield_, id, keeper) in laid {
             let cell = position.floor().as_ivec3();
             let [a, b, c] = random3(tick, cell, id);
             let count = yielded(low + ((a * (high - low + 1) as f32) as u8).min(high - low), yield_, c);
-            self.items.spawn(ItemStack { item, count }, dropped::popped(cell, [b, c, a]), dropped::PICKUP_DELAY);
+            // Laid in its keeper's home, it goes into the stores there that take it, nearest
+            // first; what finds no room falls as ever.
+            let mut left = Some(ItemStack { item, count });
+            if let Some(keeper) = keeper
+                && let Some(anchor) = self.home_holding(keeper, position)
+            {
+                for store in self.stores_around(anchor) {
+                    let Some(stack) = left else { break };
+                    left = self.factory.put(store, stack, &self.content.machines);
+                }
+                let nested = count as u32 - left.map_or(0, |s| s.count as u32);
+                if nested > 0
+                    && let Some(player) = self.players.get_mut(&keeper)
+                {
+                    let name = self.content.blocks.def(item).name.clone();
+                    match player.nested.iter_mut().find(|(n, _)| *n == name) {
+                        Some((_, n)) => *n += nested,
+                        None => player.nested.push((name, nested)),
+                    }
+                }
+            }
+            if let Some(stack) = left {
+                self.items.spawn(stack, dropped::popped(cell, [b, c, a]), dropped::PICKUP_DELAY);
+            }
         }
         // Ready pairs that have met.
         let ready: Vec<(u32, CreatureId, Vec3)> =
@@ -1028,6 +1050,65 @@ mod tests {
             assert_eq!(server.creatures.live[&wild].condition, after, "taking it in again from {before}");
         }
         assert_eq!(paid(&server), (xp_tamed, tally_tamed), "taming a let-go animal again paid");
+    }
+
+    /// A kept hen laying in its keeper's home lays into the nearest store there that takes
+    /// an egg (a basket, which keeps only what is foraged, does not), and the keeper is told
+    /// once home; with no room in the stores, or away from home, the egg falls as ever.
+    #[test]
+    fn eggs_laid_at_home_go_into_its_stores() {
+        use crate::process::Process;
+        let mut server = test_server();
+        let (player, client) = keeper(&mut server);
+        let at = server.spawn.floor().as_ivec3();
+        let machines = server.content.machines.clone();
+        let (basket, barrel) = (at + IVec3::X, at + IVec3::new(3, 0, 0));
+        for (pos, name) in [(basket, "base:earthen_basket"), (barrel, "base:barrel")] {
+            let block = server.content.blocks.expect(name);
+            server.set_block(pos, block);
+            if server.factory.get(pos).is_none() {
+                server.factory.insert(pos, block, &machines);
+            }
+        }
+        let egg = server.content.blocks.expect("base:egg");
+        let on_ground = |server: &Server| server.items.saved(|b| server.content.blocks.def(b).name.clone()).iter().filter(|i| i.item == "base:egg").count();
+        let held = |server: &Server, pos: IVec3| server.factory.get(pos).map_or(0, |(_, state)| state.bin.iter().flatten().filter(|s| s.item == egg).map(|s| s.count as u32).sum::<u32>());
+        let pass = |server: &mut Server| {
+            server.tick = server.tick.next_multiple_of(EVERY);
+            server.tick_husbandry();
+            server.tick += 1;
+        };
+        let hen = kept(&mut server, "base:junglefowl", 1);
+        let due = |server: &mut Server| server.creatures.live.get_mut(&hen).unwrap().products_due.iter_mut().for_each(|due| *due = 0);
+        // No home yet: it falls.
+        pass(&mut server);
+        assert_eq!((on_ground(&server), held(&server, barrel)), (1, 0), "laid with no home");
+        // Slept here, it is home: the barrel takes it, the nearer basket does not.
+        server.players.get_mut(&player).unwrap().bed = Some(server.spawn);
+        due(&mut server);
+        pass(&mut server);
+        let laid = held(&server, barrel);
+        assert!(laid > 0 && on_ground(&server) == 1 && held(&server, basket) == 0, "{laid} in the barrel, {} on the ground", on_ground(&server));
+        assert_eq!(server.players[&player].nested, vec![("base:egg".to_owned(), laid)]);
+        // Home, they are told, once.
+        while client.try_recv().is_ok_and(|m| m.is_some()) {}
+        crate::process::Survival.run(&mut server);
+        assert!(told(&client).contains(&"home.nested".to_owned()));
+        assert!(server.players[&player].nested.is_empty());
+        crate::process::Survival.run(&mut server);
+        assert!(!told(&client).contains(&"home.nested".to_owned()), "told twice");
+        // The barrel full: it falls.
+        let stone = server.content.blocks.expect("base:cobblestone");
+        server.factory.state_mut(barrel).unwrap().bin.iter_mut().for_each(|slot| *slot = Some(ItemStack { item: stone, count: 64 }));
+        due(&mut server);
+        pass(&mut server);
+        assert_eq!(on_ground(&server), 2, "laid into a full store");
+        // Emptied, but home is elsewhere now: it falls.
+        server.factory.state_mut(barrel).unwrap().bin.iter_mut().for_each(|slot| *slot = None);
+        server.players.get_mut(&player).unwrap().bed = Some(server.spawn + Vec3::new(40.0, 0.0, 0.0));
+        due(&mut server);
+        pass(&mut server);
+        assert_eq!((on_ground(&server), held(&server, barrel)), (3, 0), "laid away from home");
     }
 
     #[test]

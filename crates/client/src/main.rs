@@ -347,6 +347,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let celebrations = hud::celebrate::Celebrations::load(&content.files)?;
     let recorded = sfx::Recordings::load(&content.files)?;
     recorded.check(&content.actions)?;
+    recorded.covers(&content.actions)?;
     recorded.mix.check().map_err(|e| format!("sounds.ron: {e}"))?;
     let content_weather = content.weather.clone();
     let shader_packs = render::pack::ShaderPacks::load(&assets);
