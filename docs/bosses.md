@@ -39,7 +39,9 @@ counter, no knockback. What it adds, in `creature.rs` and `creature/moves.rs`:
 - `moves`: attacks it chooses among, each with the phases it is used in, a least distance
   (`least`), and a `tell` (nod, crouch, rear) the client draws through the wind-up. It
   takes the next move that fits, in order, so a fight has a pattern to learn; its plain
-  `attack` when none fits.
+  `attack` when none fits. Reach counts from its body's edge at its own size, the same
+  for its brain and its wind-up (`Creature::edge`): it stops to strike only where a move
+  fits, and closes in across a gap between its moves' reaches.
 - `phases`: health shares it changes at. It rears for `hold` seconds, its blow on the way
   is forgotten, and players within 32 blocks are told (`boss.NS.NAME.phase.N`).
 - `mend`: health it regains every `every` seconds once `after` seconds pass without a
@@ -48,7 +50,11 @@ counter, no knockback. What it adds, in `creature.rs` and `creature/moves.rs`:
 - A boss never flees, a perfect block staggers it for `boss_stagger` (combat.ron), a daze
   does not hold it, and a ward stops only `boss_ward` of its blows (prayers.ron).
 - The journal's Bosses page lists the bosses seen; the music plays a boss's track while a
-  boss is within 32 blocks or a block of a boss's room (`music.ron`) is near.
+  boss is within 32 blocks or a block of a boss's room (`music.ron`'s `rooms`: the block and
+  whose room it is) is near. Which track is the boss's own: its creature's `music` tags
+  (the Rootmother's `forest`) choose among the boss tracks by their tags, wherever she is
+  met, never another biome's; untagged boss tracks (none yet) are every boss's fallback.
+  `every_boss_has_a_fight_track_of_its_own` checks each boss has one.
 
 ## The Rootmother
 
@@ -91,5 +97,5 @@ Defence 10, then her death. Its text names the four biomes her hollows lie under
 
 Pets and companions do not fight yet, so they have no rule here.
 
-The gate's Boss step summons her on the pad: drawn, the boss music, a move's tell; every
-exit sweeps her away.
+The gate's Boss step summons her on the pad: drawn, the boss music (a track of her own,
+checked against her tags), a move's tell; every exit sweeps her away.

@@ -127,6 +127,21 @@ impl super::Creature {
         self.moves_in(phase).map(|(_, m)| m.attack.reach).fold(self.def.attack.map_or(1.0, |a| a.reach), f32::max)
     }
 
+    /// How far a target `flat` blocks from its centre (across the ground) is from its body's
+    /// edge, at its individual `scale`: what its reach is measured from, by its brain when
+    /// it judges it close enough to strike and by the fight when it winds up.
+    pub fn edge(&self, flat: f32, scale: f32) -> f32 {
+        flat - self.def.body.size.0 * scale * 0.5 - 0.3
+    }
+
+    /// Whether it has an attack for a target `edge` blocks from its body's edge in `phase`:
+    /// one of its moves fits (`choose`), so a boss whose moves leave a gap between their
+    /// reaches (a lash up close, a volley from afar) closes in across it rather than stand
+    /// where nothing fits; one with no moves, within its plain attack's reach.
+    pub fn reaches(&self, phase: u8, edge: f32) -> bool {
+        if self.def.moves.is_empty() { edge <= self.longest_reach(phase) } else { self.choose(phase, edge, 0).is_some() }
+    }
+
     /// The attack it winds up at a target `edge` blocks from its body's edge, in `phase`,
     /// having used `last` before: the next of its moves that fits, in order, so a fight
     /// has a pattern to learn; its plain attack if none does and the target is in its
