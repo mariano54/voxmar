@@ -6,9 +6,11 @@
 //! Each sound is a few decaying sine partials, which may glide in pitch, be frequency
 //! modulated or blip twice, and may carry a breath of high noise.
 //!
-//! A quest finished chimes, and its rewards claimed ring softer. These do not follow the
-//! set chosen: they are events, not clicks. Synthesized unless a package's `sounds.ron`
-//! lists recordings for them (`quest_done`, `quest_claim`), which replace the synthesis.
+//! Events play jingles instead, whatever the set chosen: a quest finished, its rewards
+//! claimed (coins), a skill's level reached, and a grander one at a milestone level. They
+//! are recordings each package's `sounds.ron` lists (the base package's are our own, from
+//! `tools/generate_jingles.py`). The HUD's moments (`hud::celebrate`) ask for the tunes as
+//! each one shows, so two never start over each other.
 
 use std::f32::consts::TAU;
 use std::sync::Arc;
@@ -18,6 +20,7 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use super::widgets::Disabled;
+use crate::mix::{Category, Voice};
 use crate::settings::Settings;
 use crate::session::Launch;
 use crate::sfx::{Audible, MASTER, RATE, Recordings, wav};
@@ -27,9 +30,9 @@ pub struct UiSoundPlugin;
 impl Plugin for UiSoundPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<UiSound>()
-            .add_systems(Startup, (synthesize, quest_clips))
-            .add_systems(Update, (click_buttons, play.in_set(Audible)).chain())
-            .add_systems(Update, play_quest.in_set(Audible));
+            .add_systems(Startup, (synthesize, jingle_clips))
+            .add_systems(Update, ((click_buttons, hear_screens), play.in_set(Audible)).chain())
+            .add_systems(Update, play_jingles.in_set(Audible));
     }
 }
 
@@ -40,10 +43,19 @@ pub enum UiSound {
     Click,
     /// An item picked up or put down.
     Item,
-    /// A quest finished: a rising two-note chime.
+    /// A screen opened (the inventory, the quest book, the character screen, the journal):
+    /// the set's item tap, a little higher.
+    Open,
+    /// The last such screen closed: the same tap, a little lower.
+    Close,
+    /// A quest finished.
     QuestDone,
-    /// A finished quest's rewards claimed: a softer, brighter ring of coins.
+    /// A finished quest's rewards claimed: coins.
     QuestClaim,
+    /// A skill reached a new level.
+    LevelUp,
+    /// A skill reached a milestone level (`hud::celebrate`).
+    Milestone,
 }
 
 /// Buttons that make no click of their own, such as inventory slots, which tap instead.
@@ -141,25 +153,6 @@ impl UiSounds {
 
 const PLAIN: Sound = Sound { partials: &[], seconds: 0.05, attack: 0.001, glide: 0.0, fm: None, noise: None, echo: None };
 
-/// The quest chime: a bell (its partials not whole multiples, as a struck bell's are) and the
-/// same bell a fifth above a moment later.
-const QUEST_DONE: Sound = Sound {
-    partials: &[(784.0, 784.0, 1.0, 0.45), (1568.0, 1568.0, 0.35, 0.26), (2163.0, 2163.0, 0.16, 0.15), (3190.0, 3190.0, 0.07, 0.08)],
-    seconds: 1.1,
-    attack: 0.003,
-    echo: Some((0.14, 1.5)),
-    ..PLAIN
-};
-
-/// Rewards claimed: two quick, high, small rings.
-const QUEST_CLAIM: Sound = Sound {
-    partials: &[(1568.0, 1568.0, 1.0, 0.1), (2349.0, 2349.0, 0.4, 0.07), (4698.0, 4698.0, 0.1, 0.03)],
-    seconds: 0.45,
-    attack: 0.002,
-    echo: Some((0.07, 1.335)),
-    ..PLAIN
-};
-
 /// A short synthesized sound, as `UiSounds::recipe` describes.
 struct Sound {
     /// Sine partials: starting and ending frequency (Hz), level and decay time (s).
@@ -250,46 +243,77 @@ fn synthesize(mut commands: Commands, mut sources: ResMut<Assets<AudioSource>>) 
     commands.insert_resource(Clips(clips));
 }
 
-#[allow(clippy::type_complexity)]
-/// The quest sounds: a package's recordings where it lists any, else the synthesized chimes.
+/// The jingles, as the packages list them.
 #[derive(Resource)]
-struct QuestClips {
+struct Jingles {
     done: Vec<Handle<AudioSource>>,
     claim: Vec<Handle<AudioSource>>,
+    level: Vec<Handle<AudioSource>>,
+    milestone: Vec<Handle<AudioSource>>,
 }
 
-fn quest_clips(mut commands: Commands, mut sources: ResMut<Assets<AudioSource>>, assets: Res<AssetServer>, launch: Res<Launch>) {
-    let recorded = Recordings::load(&launch.content.files).unwrap_or_else(|e| {
-        error!("no recorded sounds: {e}");
-        Recordings::default()
-    });
-    let mut pick = |paths: &[String], synthesized: &Sound, seed| -> Vec<Handle<AudioSource>> {
-        if paths.is_empty() {
-            vec![sources.add(AudioSource { bytes: Arc::from(wav(&synthesized.render(seed))) })]
-        } else {
-            paths.iter().map(|path| assets.load::<AudioSource>(path.clone())).collect()
-        }
-    };
-    commands.insert_resource(QuestClips { done: pick(&recorded.quest_done, &QUEST_DONE, 3), claim: pick(&recorded.quest_claim, &QUEST_CLAIM, 5) });
-}
-
-/// Plays the quest chimes, taking turns among a package's recordings if it lists several.
-fn play_quest(mut commands: Commands, mut sounds: MessageReader<UiSound>, clips: Option<Res<QuestClips>>, settings: Res<Settings>, mut turn: Local<usize>) {
-    let volume = MASTER * settings.sound_volume as f32 / 100.0;
-    for &sound in sounds.read() {
-        let (Some(clips), true) = (&clips, volume > 0.0) else { continue };
-        let (list, gain) = match sound {
-            UiSound::QuestDone => (&clips.done, 0.5),
-            UiSound::QuestClaim => (&clips.claim, 0.3),
-            UiSound::Click | UiSound::Item => continue,
+impl Jingles {
+    /// The clips `sound` takes turns among and how loud it plays, or `None` for no jingle. A
+    /// milestone without clips of its own rings as a level.
+    fn of(&self, sound: UiSound) -> Option<(&[Handle<AudioSource>], f32)> {
+        let list = match sound {
+            UiSound::QuestDone => &self.done,
+            UiSound::QuestClaim => &self.claim,
+            UiSound::Milestone if !self.milestone.is_empty() => &self.milestone,
+            UiSound::LevelUp | UiSound::Milestone => &self.level,
+            UiSound::Click | UiSound::Item | UiSound::Open | UiSound::Close => return None,
         };
-        *turn += 1;
-        if let Some(clip) = list.get(*turn % list.len().max(1)) {
-            commands.spawn((AudioPlayer(clip.clone()), PlaybackSettings::DESPAWN.with_volume(Volume::Linear(gain * volume))));
-        }
+        (!list.is_empty()).then_some((list.as_slice(), jingle_gain(sound)))
     }
 }
 
+/// How loud a jingle plays: the coins of a claim softer than the tunes.
+pub(crate) fn jingle_gain(sound: UiSound) -> f32 {
+    if sound == UiSound::QuestClaim { 0.3 } else { 0.5 }
+}
+
+/// Which of a set's two clips a sound plays (the click or the item tap), how loud and how
+/// fast; `None` for the jingles.
+pub(crate) fn tap(sound: UiSound) -> Option<(usize, f32, f32)> {
+    Some(match sound {
+        UiSound::Click => (0, 0.4, 1.0),
+        UiSound::Item => (1, 0.32, 1.0),
+        UiSound::Open => (1, 0.3, 1.15),
+        UiSound::Close => (1, 0.24, 0.85),
+        UiSound::QuestDone | UiSound::QuestClaim | UiSound::LevelUp | UiSound::Milestone => return None,
+    })
+}
+
+fn jingle_clips(mut commands: Commands, assets: Res<AssetServer>, launch: Res<Launch>) {
+    let recorded = Recordings::load(&launch.content.files).unwrap_or_else(|e| {
+        error!("no jingles: {e}");
+        Recordings::default()
+    });
+    let load = |paths: &[String]| paths.iter().map(|path| assets.load::<AudioSource>(path.clone())).collect();
+    commands.insert_resource(Jingles {
+        done: load(&recorded.quest_done),
+        claim: load(&recorded.quest_claim),
+        level: load(&recorded.level_up),
+        milestone: load(&recorded.level_milestone),
+    });
+}
+
+/// Plays the jingles asked for, each once a frame, taking turns among a package's clips
+/// where it lists several.
+fn play_jingles(mut commands: Commands, mut sounds: MessageReader<UiSound>, jingles: Option<Res<Jingles>>, settings: Res<Settings>, mut turn: Local<usize>) {
+    let Some(jingles) = jingles else { return };
+    let volume = MASTER * settings.sound_volume as f32 / 100.0;
+    let mut played = Vec::new();
+    for &sound in sounds.read() {
+        let Some((list, gain)) = jingles.of(sound).filter(|_| volume > 0.0 && !played.contains(&sound)) else { continue };
+        played.push(sound);
+        *turn += 1;
+        let playback = PlaybackSettings::DESPAWN.with_volume(Volume::Linear(gain * volume));
+        commands.spawn((AudioPlayer(list[*turn % list.len()].clone()), playback, Voice::of(Category::Jingles)));
+    }
+}
+
+#[allow(clippy::type_complexity)]
 fn click_buttons(
     buttons: Query<&Interaction, (Changed<Interaction>, With<Button>, Without<Disabled>, Without<Silent>)>,
     mut sounds: MessageWriter<UiSound>,
@@ -308,18 +332,77 @@ fn play(mut commands: Commands, mut sounds: MessageReader<UiSound>, clips: Optio
         // One of each a frame, however many buttons or moves asked.
         let Some(set) = set.filter(|_| !played.contains(&sound) && volume > 0.0) else { continue };
         played.push(sound);
-        let (clip, gain) = match sound {
-            UiSound::Click => (&set[0], 0.4),
-            UiSound::Item => (&set[1], 0.32),
-            UiSound::QuestDone | UiSound::QuestClaim => continue,
-        };
-        commands.spawn((AudioPlayer(clip.clone()), PlaybackSettings::DESPAWN.with_volume(Volume::Linear(gain * volume))));
+        let Some((clip, gain, speed)) = tap(sound) else { continue };
+        let playback = PlaybackSettings { speed, ..PlaybackSettings::DESPAWN.with_volume(Volume::Linear(gain * volume)) };
+        commands.spawn((AudioPlayer(set[clip].clone()), playback, Voice::of(Category::Ui)));
     }
+}
+
+/// A screen opening sounds `Open`; the last one closing, `Close`. Switching from one screen
+/// to another in a frame is an opening.
+fn hear_screens(ui: Option<Res<crate::player::UiState>>, mut was: Local<[bool; 4]>, mut sounds: MessageWriter<UiSound>) {
+    let Some(ui) = ui else { return };
+    let now = [ui.inventory_open, ui.quests_open, ui.character_open, ui.journal_open];
+    if now.iter().zip(was.iter()).any(|(now, was)| *now && !was) {
+        sounds.write(UiSound::Open);
+    } else if was.iter().any(|w| *w) && !now.iter().any(|n| *n) {
+        sounds.write(UiSound::Close);
+    }
+    *was = now;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every set's clicks and taps, as played, are heard within the interface's band, and
+    /// every jingle within the jingles'.
+    #[test]
+    fn interface_sounds_and_jingles_are_heard_within_their_bands() {
+        use crate::mix::tests::{all, measure, within};
+        use crate::sfx::loudness;
+        let mut taps = Vec::new();
+        for set in UiSounds::ALL {
+            let levels: [f32; 2] = match (set.files(), set.recipe()) {
+                (Some(files), _) => files.map(|file| measure(&format!("ui/sounds/{file}"))[0]),
+                (None, Some([click, item])) => [loudness(&click.render(7), 1), loudness(&item.render(11), 1)],
+                (None, None) => continue,
+            };
+            for sound in [UiSound::Click, UiSound::Item, UiSound::Open, UiSound::Close] {
+                let (clip, gain, _) = tap(sound).unwrap();
+                taps.push((format!("{set:?} {sound:?}"), levels[clip] * gain));
+            }
+        }
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let recorded = Recordings::load(&content.files).unwrap();
+        let events = [
+            (UiSound::QuestDone, &recorded.quest_done),
+            (UiSound::QuestClaim, &recorded.quest_claim),
+            (UiSound::LevelUp, &recorded.level_up),
+            (UiSound::Milestone, &recorded.level_milestone),
+        ];
+        let jingles = events.into_iter().flat_map(|(sound, paths)| paths.iter().map(move |path| (path.clone(), measure(path)[0] * jingle_gain(sound))));
+        all([within(Category::Ui, taps), within(Category::Jingles, jingles)]);
+    }
+
+    /// Opening a screen sounds once, switching straight to another opens again, and only
+    /// the last one closing closes.
+    #[test]
+    fn screens_open_and_close_aloud() {
+        let mut app = App::new();
+        app.add_message::<UiSound>().init_resource::<crate::player::UiState>().add_systems(Update, hear_screens);
+        let step = |app: &mut App, change: fn(&mut crate::player::UiState)| -> Vec<UiSound> {
+            change(&mut app.world_mut().resource_mut::<crate::player::UiState>());
+            app.update();
+            app.world_mut().resource_mut::<Messages<UiSound>>().drain().collect()
+        };
+        assert_eq!(step(&mut app, |_| {}), []);
+        assert_eq!(step(&mut app, |ui| ui.inventory_open = true), [UiSound::Open]);
+        assert_eq!(step(&mut app, |_| {}), []);
+        assert_eq!(step(&mut app, |ui| (ui.inventory_open, ui.quests_open) = (false, true)), [UiSound::Open]);
+        assert_eq!(step(&mut app, |ui| ui.quests_open = false), [UiSound::Close]);
+        assert_eq!(step(&mut app, |_| {}), []);
+    }
 
     #[test]
     fn recorded_sets_are_shipped() {
@@ -331,16 +414,17 @@ mod tests {
         }
     }
 
-    /// The quest chimes sound, fade out, and the claim is the shorter and softer of the two.
+    /// Each event takes its own clips, a milestone without any rings as a level, and clicks
+    /// are no jingle.
     #[test]
-    fn the_quest_chimes_sound_and_end_quietly() {
-        let (done, claim) = (QUEST_DONE.render(3), QUEST_CLAIM.render(5));
-        for samples in [&done, &claim] {
-            assert!(samples.iter().any(|s| s.abs() > 0.7), "silent");
-            assert!(samples.iter().all(|s| s.is_finite() && s.abs() <= 0.81));
-            assert!(samples.last().unwrap().abs() < 1e-3, "ends with a click");
-        }
-        assert!(claim.len() < done.len());
+    fn events_take_their_jingles() {
+        let clip = |n: usize| vec![Handle::<AudioSource>::default(); n];
+        let jingles = Jingles { done: clip(1), claim: clip(3), level: clip(1), milestone: clip(2) };
+        let count = |sound| jingles.of(sound).map(|(list, _)| list.len());
+        assert_eq!([count(UiSound::QuestDone), count(UiSound::QuestClaim), count(UiSound::LevelUp), count(UiSound::Milestone)], [Some(1), Some(3), Some(1), Some(2)]);
+        assert_eq!(count(UiSound::Click), None);
+        let plain = Jingles { milestone: Vec::new(), ..jingles };
+        assert_eq!(plain.of(UiSound::Milestone).map(|(list, _)| list.len()), Some(1));
     }
 
     #[test]

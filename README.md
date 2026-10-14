@@ -873,7 +873,7 @@ random pitch change so nothing repeats exactly. Footsteps come from whatever is 
 ground, the rustle of plants, flowers and moss carpet walked through (with the ground softer
 under them), a splash when wading, strokes when swimming. Every broken block plays its break
 sound once, whether the player's own break or one the server reports, fading out over 16 blocks
-for others' breaks.
+for others' breaks, panned to the nearer ear.
 Rain is a synthesized loop of tiny drops over a soft hiss, as loud as the rain is heavy and
 quieter under cover. `cargo test -p voxmar_client sfx_preview -- --ignored` writes every
 synthesized cue to `target/sfx_preview.wav`.
@@ -885,11 +885,11 @@ sand and snow it meets, nearer ones counting more. With the climate and biome fr
 generator, height above the land around, depth underground, the weather and the time of day,
 that makes an environment vector, and `ambience.ron` in any content package lists what plays
 where: beds (breeze, high wind and storm wind, rustling leaves, grasshoppers, crickets,
-surf, synthesized; rain by strength and cover, hail, dripping trees, streams, lakes, a
+surf, a fire's crackle by a campfire, hearth or kiln, synthesized; rain by strength and cover, hail, dripping trees, streams, lakes, a
 waterfall's roar by falling water, a slight cave air and lava bubbling, recorded) as stereo
 segments that crossfade and never repeat back to back, and one-shots at a rate per minute (songbirds and a dawn chorus in the leaves around, a woodpecker on a trunk,
 owls, a cricket in the grass, frogs in the water, gusts on heights, creaking trees, drips
-near and far and rumbles in caves, lava bursting bubbles). Recordings are CC0 field recordings in the package
+near and far and rumbles in caves, lava bursting bubbles, logs snapping in a fire). Recordings are CC0 field recordings in the package
 (`assets/content/base/sounds/`, credited in THIRD_PARTY_NOTICES.md), as are thunder near to
 far, swimming strokes and splashes (`sounds.ron`). One-shots sound from real blocks the fill found,
 panned by direction, with a reverb as wet as the place is enclosed. Every condition is a soft
@@ -899,6 +899,17 @@ writes about twenty seconds of each of seventeen typical places to `target/ambie
 `ambience_survey -- --ignored` prints what the scan makes of real places in a world (`SEED`).
 `weather_sound_preview -- --ignored` writes the thunder, swimming and splashes to
 `target/sound_preview/`, as the game plays them.
+
+What the player does is heard as they do it: eating, crafting at the grid, loading a home
+station, lighting a fire or a kiln, opening a chest or a door, putting food on to cook,
+lying down to sleep, casting a line, feeding an animal, emptying a pouch, feeding a machine,
+picking a lock, praying at an altar, spreading fertiliser and throwing something down.
+`sounds.ron`'s `actions` gives each action, by name, its clips (one picked at random, at a
+slightly different pitch) and a volume, around the loudness of placing a block, or says it is
+`silent` on purpose or `heard` elsewhere (by the block touched, the interface or the fight). A
+later package replaces an action's sound; the launch fails on a sound for an action the content
+lacks, and on an action, a mod's too, that says nothing of how it sounds. The clips, and the pop of an item picked up
+when Minecraft's own sounds are off, are our own, synthesized by `tools/generate_sfx.py`.
 
 Creatures are heard: footsteps on whatever block they walk, bleats, grunts and clucks while
 they wander, munching, sighs and purrs at rest, barks and snorts of alarm, calls carrying far,
@@ -915,6 +926,16 @@ are Freesound's (CC0 and CC-BY, credited in THIRD_PARTY_NOTICES.md); hisses, sli
 clicks, embers and the wisps' chimes are synthesized. `cargo test -p voxmar_client
 creature_sound_preview -- --ignored` writes every species' sounds, as each plays them, to
 `target/creature_sounds/`.
+
+The mix (`sounds.ron`'s `mix`, crates/client/src/mix.rs) holds it all together. Each kind of
+sound (music, ambience, interface, everyday, combat, jingles, creatures, weather) has a loudness
+band, and tests measure every clip we ship, as the game plays it, against its band; Voxmar's own
+music tracks are each brought to one loudness by levels `music.ron` lists (a test measures the
+files again and says what to write when one is off). The music dips under a jingle and under a
+boss's voice, and comes back after. Each kind has a cap on sounds playing at once: past it, the
+farthest, then the oldest, fades out to make room. Things the player can walk up to (blocks,
+creatures) fade along one curve to silence at their reach; the ambience's distant birds and
+thunder fade by their own reach, never quite to nothing.
 
 ## Rendering and performance
 

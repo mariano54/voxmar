@@ -1,4 +1,5 @@
-//! Sound effects for block materials, thunder, and swimming and splashing.
+//! Sound effects for block materials, thunder, swimming and splashing, and what the player
+//! does (eating, crafting, lighting a fire, opening a door: `sounds.ron`'s `actions`).
 //!
 //! A block declares what it is made of (`sound: Wood`); every cue for that material (a
 //! step, landing, placing, a tap while mining, breaking) comes from the player's own
@@ -30,7 +31,7 @@
 use std::f32::consts::{PI, TAU};
 use std::sync::Arc;
 
-use bevy::audio::{AudioPlayer, AudioSource, GlobalVolume, PlaybackSettings, Volume};
+use bevy::audio::{AudioPlayer, AudioSource, GlobalVolume, PlaybackSettings, SpatialScale, Volume};
 use bevy::prelude::*;
 use rustc_hash::FxHashMap;
 use serde::Deserialize;
@@ -40,6 +41,7 @@ use voxmar_engine::physics::player as dims;
 
 use self::dsp::{OnePole, Pink, Svf};
 use self::minecraft::SoundStore;
+use crate::mix::{Category, PAN_SCALE, Voice, falloff};
 use crate::player::LocalPlayer;
 use crate::session::Launch;
 use crate::settings::Settings;
@@ -63,7 +65,8 @@ const FAR_LIGHTNING: f32 = 900.0;
 /// The file listing a package's recorded sounds.
 const RECORDINGS: &str = "sounds.ron";
 /// Cues placed in the world fade out over this many blocks from the listener, as
-/// Minecraft's block sounds do.
+/// Minecraft's block sounds do, along the curve every sound in the world fades by
+/// ([`falloff`]).
 const HEARD_WITHIN: f32 = 16.0;
 /// Seconds of the loudest stretch of a clip, by which clips are levelled.
 const LOUDNESS_WINDOW: f32 = 0.05;
@@ -75,7 +78,7 @@ impl Plugin for SfxPlugin {
         app.add_message::<SoundCue>()
             .configure_sets(Update, Audible.run_if(sound_on))
             .add_systems(Startup, synthesize)
-            .add_systems(Update, ((footsteps, play_cues.in_set(Audible)).chain(), thunder.in_set(Audible)));
+            .add_systems(Update, ((footsteps, play_cues.in_set(Audible)).chain(), thunder.in_set(Audible), play_actions));
     }
 }
 
@@ -172,6 +175,8 @@ struct Sfx {
     clips: FxHashMap<(Sound, Cue), Vec<Clip>>,
     /// Thunder from near, middling and far lightning, a few variants each.
     thunder: [Vec<Handle<AudioSource>>; 3],
+    /// What actions sound like as the player does them.
+    actions: FxHashMap<voxmar_engine::action::ActionId, Vec<Clip>>,
     counter: u64,
 }
 
@@ -295,7 +300,12 @@ fn synthesize(
                     variants.push(Clip { source, gain: gain * clip.volume * volume, speed: pitch * clip.pitch });
                 }
             }
-            if recorded_here {
+            // Our own pop for a pickup Minecraft's sounds do not give, as loud as the one
+            // synthesized.
+            if variants.is_empty() && cue == Cue::Pickup && !recorded.pickup.is_empty() {
+                let gain = cue.gain() * level(&target, cue) / ACTION_LOUDNESS;
+                variants = load(&recorded.pickup).into_iter().map(|source| Clip { source, gain, speed: 1.0 }).collect();
+            } else if recorded_here {
             } else if variants.is_empty() {
                 variants = synthesized[&(sound, cue)]
                     .iter()
@@ -313,8 +323,27 @@ fn synthesize(
         started.elapsed().as_millis()
     );
     let thunder = [&recorded.thunder.near, &recorded.thunder.middle, &recorded.thunder.far].map(|paths| load(paths));
-    commands.insert_resource(Sfx { clips, thunder, counter: 0 });
+    // What the player does sounds about as loud as placing a block, times its volume.
+    let actions = recorded
+        .actions
+        .iter()
+        .filter_map(|(name, sound)| {
+            let gain = sound.volume * Cue::Place.gain() * level(&target, Cue::Place) / ACTION_LOUDNESS;
+            Some((launch.content.actions.id(name)?, load(&sound.sounds).into_iter().map(|source| Clip { source, gain, speed: 1.0 }).collect()))
+        })
+        .collect();
+    commands.insert_resource(Sfx { clips, thunder, actions, counter: 0 });
 }
+
+/// How loud a synthesized cue's clips are on average.
+fn level(target: &FxHashMap<Cue, (f32, f32)>, cue: Cue) -> f32 {
+    let (sum, count) = target[&cue];
+    sum / count.max(1.0)
+}
+
+/// How loud our own action and pickup clips are made (tools/generate_sfx.py), by
+/// [`loudness`]; a package's own should be made as loud.
+pub(crate) const ACTION_LOUDNESS: f32 = 0.22;
 
 /// Recorded swimming strokes and splashes are levelled to a peak of -3 dBFS; this brings
 /// them to the loudness of the synthesized cues.
@@ -330,10 +359,53 @@ pub(crate) struct Recordings {
     swim: Vec<String>,
     /// Jumping or falling into water.
     splash: Vec<String>,
-    /// A quest finished, and a quest's rewards claimed. Without any, the interface
-    /// synthesizes a chime (`ui::sound`); a package that lists some replaces it.
+    /// The jingles of events (`ui::sound`): a quest finished, a quest's rewards claimed, a
+    /// skill's level reached, and a milestone level reached (which levels are is
+    /// `celebrations.ron`'s). A later package that lists any for an event replaces the
+    /// earlier ones: a jingle is one tune, not a pool to add to.
     pub(crate) quest_done: Vec<String>,
     pub(crate) quest_claim: Vec<String>,
+    pub(crate) level_up: Vec<String>,
+    pub(crate) level_milestone: Vec<String>,
+    /// An item picked up off the ground, played when the player's Minecraft sounds are not.
+    /// A later package that lists any replaces these.
+    pickup: Vec<String>,
+    /// What the player does, heard as they do it, by the action's name (`core:eat`): the
+    /// clips take turns at random. A later package that names an action replaces its sound.
+    pub(crate) actions: std::collections::BTreeMap<String, ActionSound>,
+    /// How loud each kind of sound is, how many play at once and what the music makes
+    /// room for (`mix`).
+    pub(crate) mix: crate::mix::MixDef,
+}
+
+/// The sound of one action: its clips, made at the loudness of [`ACTION_LOUDNESS`], and how
+/// loud to play them beside it; or that it is meant to be silent, or is heard from another
+/// part of the game. Every action says one of the three.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub(crate) struct ActionSound {
+    pub(crate) sounds: Vec<String>,
+    #[serde(default = "full")]
+    pub(crate) volume: f32,
+    /// Makes no sound, on purpose.
+    pub(crate) silent: bool,
+    /// Heard from elsewhere instead.
+    pub(crate) heard: Option<HeardBy>,
+}
+
+/// Where an action's sound comes from when not from `sounds.ron`.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+pub(crate) enum HeardBy {
+    /// The block it touches, by its material's cues (mining, placing, sowing, picking).
+    Block,
+    /// The interface's clicks and taps (moving items about the screens).
+    Interface,
+    /// The fight's own sounds (swings, blows, dodges).
+    Combat,
+}
+
+fn full() -> f32 {
+    1.0
 }
 
 /// Thunder by how far off the lightning struck (see [`Reach`]).
@@ -357,16 +429,58 @@ impl Recordings {
             all.thunder.far.extend(path(def.thunder.far));
             all.swim.extend(path(def.swim));
             all.splash.extend(path(def.splash));
-            all.quest_done.extend(path(def.quest_done));
-            all.quest_claim.extend(path(def.quest_claim));
+            let replace = |all: &mut Vec<String>, list: Vec<String>| {
+                if !list.is_empty() {
+                    *all = path(list).collect();
+                }
+            };
+            replace(&mut all.quest_done, def.quest_done);
+            replace(&mut all.quest_claim, def.quest_claim);
+            replace(&mut all.level_up, def.level_up);
+            replace(&mut all.level_milestone, def.level_milestone);
+            replace(&mut all.pickup, def.pickup);
+            for (name, sound) in def.actions {
+                all.actions.insert(name, ActionSound { sounds: path(sound.sounds).collect(), ..sound });
+            }
+            all.mix.merge(def.mix);
         }
         Ok(all)
+    }
+
+    /// Whether every action given a sound is one the content has, with clips, at a volume
+    /// from above nothing to twice the usual.
+    pub(crate) fn check(&self, actions: &voxmar_engine::action::ActionRegistry) -> Result<(), String> {
+        for (name, sound) in &self.actions {
+            if actions.id(name).is_none() {
+                return Err(format!("{RECORDINGS}: a sound for `{name}`, which is no action"));
+            }
+            let says = [!sound.sounds.is_empty(), sound.silent, sound.heard.is_some()].into_iter().filter(|&s| s).count();
+            if says != 1 {
+                return Err(format!("{RECORDINGS}: `{name}` says {says} of sounds, silent and heard; it says one"));
+            }
+            if !(sound.volume > 0.0 && sound.volume <= 2.0) {
+                return Err(format!("{RECORDINGS}: `{name}` has volume {}, not above 0 and up to 2", sound.volume));
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether every action the content has says how it sounds (`actions`): its clips, or
+    /// that it is silent or heard from elsewhere, so a new action is never mute by
+    /// oversight.
+    pub(crate) fn covers(&self, actions: &voxmar_engine::action::ActionRegistry) -> Result<(), String> {
+        let missing: Vec<&str> = actions.names().filter(|name| !self.actions.contains_key(*name)).collect();
+        if missing.is_empty() {
+            Ok(())
+        } else {
+            Err(format!("{RECORDINGS}: no sound for {}; give each `sounds`, `silent: true` or `heard`", missing.join(", ")))
+        }
     }
 }
 
 /// How loud a clip is: the RMS of its loudest stretch of [`LOUDNESS_WINDOW`], so short
 /// clicks and long tails compare fairly. `samples` interleave `channels`.
-fn loudness(samples: &[f32], channels: usize) -> f32 {
+pub(crate) fn loudness(samples: &[f32], channels: usize) -> f32 {
     let window = ((LOUDNESS_WINDOW * RATE as f32) as usize * channels).max(1);
     let hop = (window / 4).max(1);
     let mut loudest = 0.0f32;
@@ -382,6 +496,12 @@ fn loudness(samples: &[f32], channels: usize) -> f32 {
         start += hop;
     }
     loudest.sqrt()
+}
+
+/// How loud a sound that goes on is (music, a bed): the RMS of all of it.
+#[cfg(test)]
+pub(crate) fn mean_loudness(samples: &[f32]) -> f32 {
+    (samples.iter().map(|s| (s * s) as f64).sum::<f64>() / samples.len().max(1) as f64).sqrt() as f32
 }
 
 /// The loudness of an encoded clip, decoding it once.
@@ -414,6 +534,12 @@ impl Reach {
 }
 
 
+/// How loud thunder is from lightning `distance` blocks off: half as loud 400 blocks away,
+/// and on, never quite gone.
+fn thunder_gain(distance: f32) -> f32 {
+    THUNDER_GAIN / (1.0 + distance / 400.0)
+}
+
 /// Plays thunder as it reaches the player, quieter the farther the lightning.
 fn thunder(mut commands: Commands, mut heard: MessageReader<Thunder>, sfx: Option<ResMut<Sfx>>, settings: Res<Settings>) {
     let Some(mut sfx) = sfx else { return };
@@ -423,8 +549,8 @@ fn thunder(mut commands: Commands, mut heard: MessageReader<Thunder>, sfx: Optio
         let clips = &sfx.thunder[Reach::of(thunder.distance) as usize];
         let Some(clip) = clips.get((pick * clips.len() as f32) as usize).cloned() else { continue };
         let speed = 0.95 + jitter * 0.1;
-        let volume = Volume::Linear(THUNDER_GAIN / (1.0 + thunder.distance / 400.0) * master);
-        commands.spawn((AudioPlayer(clip), PlaybackSettings { speed, ..PlaybackSettings::DESPAWN.with_volume(volume) }));
+        let volume = Volume::Linear(thunder_gain(thunder.distance) * master);
+        commands.spawn((AudioPlayer(clip), PlaybackSettings { speed, ..PlaybackSettings::DESPAWN.with_volume(volume) }, Voice::of(Category::Weather)));
     }
 }
 
@@ -440,7 +566,7 @@ fn play_cues(
     let listener = listener.single().map(|t| t.translation()).ok();
     for cue in cues.read() {
         let distance = cue.at.zip(listener).map_or(0.0, |(at, ear)| at.distance(ear));
-        let gain = cue.gain * (1.0 - distance / HEARD_WITHIN).max(0.0);
+        let gain = cue.gain * falloff(distance, HEARD_WITHIN);
         if gain <= 0.0 {
             continue;
         }
@@ -451,7 +577,39 @@ fn play_cues(
         };
         let speed = clip.speed * cue.pitch * (0.94 + 0.12 * jitter);
         let playback = PlaybackSettings { speed, ..PlaybackSettings::DESPAWN.with_volume(Volume::Linear(clip.gain * gain * master)) };
-        commands.spawn((AudioPlayer(clip.source.clone()), playback));
+        match cue.at {
+            // Placed in the world: panned to the nearer ear, as a creature's call is.
+            Some(at) => commands.spawn((
+                AudioPlayer(clip.source.clone()),
+                PlaybackSettings { spatial: true, spatial_scale: Some(SpatialScale::new(PAN_SCALE)), ..playback },
+                Transform::from_translation(at),
+                Voice::at(Category::Everyday, at),
+            )),
+            None => commands.spawn((AudioPlayer(clip.source.clone()), playback, Voice::of(Category::Everyday))),
+        };
+    }
+}
+
+/// Plays what the player's proposed actions sound like (`sounds.ron`'s `actions`): eating,
+/// crafting, lighting a fire, opening a chest or a door. Proposals are taken every frame,
+/// so none pile up while sound is off; muted, none is heard.
+fn play_actions(
+    mut commands: Commands,
+    net: Option<Res<crate::net::Net>>,
+    sfx: Option<ResMut<Sfx>>,
+    settings: Res<Settings>,
+    global: Option<Res<GlobalVolume>>,
+) {
+    let Some(net) = net else { return };
+    let proposed = net.take_proposed();
+    let (Some(mut sfx), true) = (sfx, sound_on(global)) else { return };
+    let master = MASTER * settings.sound_volume as f32 / 100.0;
+    for action in proposed {
+        let (pick, jitter) = (sfx.random(), sfx.random());
+        let Some(clip) = sfx.actions.get(&action).and_then(|clips| clips.get((pick * clips.len() as f32) as usize)) else { continue };
+        let speed = clip.speed * (0.96 + 0.08 * jitter);
+        let playback = PlaybackSettings { speed, ..PlaybackSettings::DESPAWN.with_volume(Volume::Linear(clip.gain * master)) };
+        commands.spawn((AudioPlayer(clip.source.clone()), playback, Voice::of(Category::Everyday)));
     }
 }
 
@@ -873,7 +1031,7 @@ mod tests {
             let rolls = [vec![Handle::default()], vec![Handle::default()], vec![Handle::default()]];
             app.insert_resource(GlobalVolume::new(global))
                 .insert_resource(Settings::default())
-                .insert_resource(Sfx { clips, thunder: rolls, counter: 0 })
+                .insert_resource(Sfx { clips, thunder: rolls, actions: FxHashMap::default(), counter: 0 })
                 .add_message::<SoundCue>()
                 .add_message::<Thunder>()
                 .configure_sets(Update, Audible.run_if(sound_on))
@@ -928,6 +1086,169 @@ mod tests {
                 let [left, _] = crate::ambience::tests::decode(path);
                 assert!(left.len() > RATE as usize / 2 && left.iter().all(|s| s.is_finite() && s.abs() <= 1.0), "{path}");
             }
+        }
+        // The jingles: each there, as loud as one another at their loudest (within 3 dB, so
+        // none jumps out), fading out rather than stopping, and over within five seconds.
+        for list in [&recorded.quest_done, &recorded.quest_claim, &recorded.level_up, &recorded.level_milestone] {
+            assert!(!list.is_empty());
+            for path in list {
+                let [left, right] = crate::ambience::tests::decode(path);
+                let both: Vec<f32> = left.iter().zip(&right).flat_map(|(l, r)| [*l, *r]).collect();
+                let level = loudness(&both, 2);
+                assert!((0.21..0.42).contains(&level), "{path}: loudest {level}");
+                assert!(both.iter().all(|s| s.is_finite() && s.abs() <= 0.95), "{path} clips");
+                assert!(left.len() < 5 * RATE as usize, "{path} runs on");
+                let tail = &both[both.len() - 400..];
+                assert!(tail.iter().all(|s| s.abs() < 0.01), "{path} ends with a click");
+            }
+        }
+    }
+
+    /// A later package's jingle replaces the earlier one; one it leaves out stays.
+    #[test]
+    fn a_later_jingle_replaces_the_earlier() {
+        let file = |package: &str, source: &str| ContentFile { package: package.into(), name: RECORDINGS.into(), source: source.into() };
+        let base = file("base", r#"(quest_done: ["a.ogg"], level_up: ["b.ogg"], level_milestone: ["c.ogg"])"#);
+        let recorded = Recordings::load(&[base, file("mod", r#"(quest_done: ["x.ogg", "y.ogg"])"#)]).unwrap();
+        assert_eq!(recorded.quest_done, ["content/mod/x.ogg", "content/mod/y.ogg"]);
+        assert_eq!(recorded.level_up, ["content/base/b.ogg"]);
+        assert_eq!(recorded.level_milestone, ["content/base/c.ogg"]);
+    }
+
+    /// A later package replaces an action's sound and the pickup pop, and adds actions; a
+    /// sound for no action, with no clips, or at no volume fails the launch check.
+    #[test]
+    fn action_sounds_are_checked_and_a_later_package_replaces_them() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let file = |package: &str, source: &str| ContentFile { package: package.into(), name: RECORDINGS.into(), source: source.into() };
+        let base = file("base", r#"(pickup: ["p.ogg"], actions: {"core:eat": (sounds: ["a.ogg", "b.ogg"]), "core:craft": (sounds: ["c.ogg"], volume: 0.5)})"#);
+        let recorded = Recordings::load(&[base.clone(), file("mod", r#"(pickup: ["q.ogg"], actions: {"core:eat": (sounds: ["x.ogg"], volume: 1.5)})"#)]).unwrap();
+        assert_eq!(recorded.pickup, ["content/mod/q.ogg"]);
+        assert_eq!(recorded.actions["core:eat"], ActionSound { sounds: vec!["content/mod/x.ogg".into()], volume: 1.5, ..Default::default() });
+        assert_eq!(recorded.actions["core:craft"], ActionSound { sounds: vec!["content/base/c.ogg".into()], volume: 0.5, ..Default::default() });
+        assert_eq!(recorded.check(&content.actions), Ok(()));
+        for wrong in [r#"(actions: {"core:juggle": (sounds: ["a.ogg"])})"#, r#"(actions: {"core:eat": (sounds: [])})"#, r#"(actions: {"core:eat": (sounds: ["a.ogg"], volume: 0.0)})"#, r#"(actions: {"core:eat": (sounds: ["a.ogg"], silent: true)})"#, r#"(actions: {"core:eat": (silent: true, heard: Some(Block))})"#] {
+            assert!(Recordings::load(&[file("mod", wrong)]).unwrap().check(&content.actions).is_err(), "{wrong}");
+        }
+        // Every action must say how it sounds: the base package's do; a package that adds
+        // an action and says nothing of it fails, until it does.
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content/base/sounds.ron");
+        let base = file("base", &std::fs::read_to_string(path).unwrap());
+        assert_eq!(Recordings::load(&[base.clone()]).unwrap().covers(&content.actions), Ok(()));
+        let mut more = voxmar_engine::action::ActionRegistry::default();
+        for (namespace, source) in [("core", "core/actions.ron"), ("base", "base/actions.ron")] {
+            let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+            more.extend(namespace, &std::fs::read_to_string(dir.join(source)).unwrap()).unwrap();
+        }
+        more.extend("zmod", r#"(actions: [(name: "juggle", duration: Instant, effects: [])])"#).unwrap();
+        let mute = Recordings::load(&[base.clone()]).unwrap().covers(&more);
+        assert!(mute.as_ref().is_err_and(|e| e.contains("zmod:juggle")), "{mute:?}");
+        let quiet = Recordings::load(&[base, file("zmod", r#"(actions: {"zmod:juggle": (silent: true)})"#)]).unwrap();
+        assert_eq!((quiet.check(&more), quiet.covers(&more)), (Ok(()), Ok(())));
+    }
+
+    /// The everyday actions of the first days are heard, from clips we ship, each made at
+    /// [`ACTION_LOUDNESS`] (a clip far quieter or louder would sound wrong beside the
+    /// rest), and so is an item picked up.
+    #[test]
+    fn everyday_actions_are_heard_at_one_loudness() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let recorded = Recordings::load(&content.files).unwrap();
+        recorded.check(&content.actions).unwrap();
+        recorded.covers(&content.actions).unwrap();
+        for name in [
+            "core:eat",
+            "core:craft",
+            "core:drop",
+            "base:light",
+            "base:open_store",
+            "base:open",
+            "base:cook",
+            "base:sleep",
+            "base:tend",
+            "base:empty_pouch",
+            "base:use_machine",
+            "base:pick_lock",
+            "base:pray",
+            "base:fertilise",
+        ] {
+            assert!(recorded.actions.contains_key(name), "no sound for {name}");
+        }
+        assert!(!recorded.pickup.is_empty(), "no pickup pop");
+        let clips = recorded.actions.values().flat_map(|sound| sound.sounds.iter().map(|path| (path, sound.volume))).chain(recorded.pickup.iter().map(|path| (path, 1.0)));
+        for (path, volume) in clips {
+            let [left, right] = crate::ambience::tests::decode(path);
+            let stereo: Vec<f32> = left.iter().zip(&right).flat_map(|(l, r)| [*l, *r]).collect();
+            let heard = loudness(&stereo, 2) * volume / ACTION_LOUDNESS;
+            assert!((0.5..=1.25).contains(&heard), "{path} is heard at {heard:.2} of the loudness of the rest");
+            assert!(left.len() as f32 / (RATE as f32) < 1.5, "{path} is longer than an action");
+        }
+    }
+
+    /// Everything the player does and touches is heard within the everyday band (blocks'
+    /// cues as synthesized, the water's and our own recordings as levelled to them), and
+    /// thunder within the weather's, from overhead and from each reach's nearest.
+    #[test]
+    fn everyday_sounds_and_thunder_are_heard_within_their_bands() {
+        use crate::mix::tests::{measure, within};
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let recorded = Recordings::load(&content.files).unwrap();
+        let mut heard = Vec::new();
+        let mut target: FxHashMap<Cue, (f32, f32)> = FxHashMap::default();
+        for sound in Sound::ALL {
+            for cue in Cue::ALL {
+                for v in 0..VARIANTS {
+                    let samples = render(sound, cue, mix(sound as u64 * 131 + cue as u64 * 17 + v));
+                    let level = loudness(&samples, 1);
+                    let entry = target.entry(cue).or_default();
+                    *entry = (entry.0 + level, entry.1 + 1.0);
+                    heard.push((format!("{sound:?} {cue:?} {v}"), level * cue.gain()));
+                }
+            }
+        }
+        for (cue, paths) in [(Cue::Step, &recorded.swim), (Cue::Land, &recorded.splash)] {
+            heard.extend(paths.iter().map(|path| (path.clone(), measure(path)[0] * cue.gain() * RECORDED_GAIN)));
+        }
+        let pickup = Cue::Pickup.gain() * level(&target, Cue::Pickup) / ACTION_LOUDNESS;
+        heard.extend(recorded.pickup.iter().map(|path| (path.clone(), measure(path)[0] * pickup)));
+        for sound in recorded.actions.values() {
+            let gain = sound.volume * Cue::Place.gain() * level(&target, Cue::Place) / ACTION_LOUDNESS;
+            heard.extend(sound.sounds.iter().map(|path| (path.clone(), measure(path)[0] * gain)));
+        }
+        let everyday = within(crate::mix::Category::Everyday, heard);
+        let thunder = [(&recorded.thunder.near, 0.0), (&recorded.thunder.middle, NEAR_LIGHTNING), (&recorded.thunder.far, FAR_LIGHTNING)]
+            .into_iter()
+            .flat_map(|(paths, distance)| paths.iter().map(move |path| (path.clone(), measure(path)[0] * thunder_gain(distance))));
+        let weather = within(crate::mix::Category::Weather, thunder);
+        crate::mix::tests::all([everyday, weather]);
+    }
+
+    /// Each action proposed is heard once, and only with sound on; proposals made while it
+    /// is off are let go, not saved up.
+    #[test]
+    fn proposed_actions_are_heard_once_and_never_muted() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let eat = content.actions.expect("core:eat");
+        let craft = content.actions.expect("core:craft");
+        for (global, started) in [(Volume::SILENT, 0), (Volume::Linear(1.0), 1)] {
+            let (connection, _server_side) = voxmar_protocol::local_pair();
+            let net = crate::net::Net::new(connection, None, "tester".into(), content.fingerprint(), None);
+            let mut actions = FxHashMap::default();
+            actions.insert(eat, vec![Clip { source: Handle::default(), gain: 1.0, speed: 1.0 }]);
+            let mut app = App::new();
+            app.insert_resource(GlobalVolume::new(global))
+                .insert_resource(Settings::default())
+                .insert_resource(Sfx { clips: FxHashMap::default(), thunder: Default::default(), actions, counter: 0 })
+                .insert_resource(net)
+                .add_systems(Update, play_actions);
+            // Crafting has no sound here: nothing plays for it.
+            app.world().resource::<crate::net::Net>().propose(eat, voxmar_engine::action::ActionTarget::None);
+            app.world().resource::<crate::net::Net>().propose(craft, voxmar_engine::action::ActionTarget::Slot(1));
+            app.update();
+            app.update();
+            let playing = app.world_mut().query::<&AudioPlayer>().iter(app.world()).count();
+            assert_eq!(playing, started, "volume {global:?}");
+            assert!(app.world().resource::<crate::net::Net>().take_proposed().is_empty());
         }
     }
 

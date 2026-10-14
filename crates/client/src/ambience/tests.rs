@@ -102,6 +102,8 @@ fn scenes(ambience: &Ambience) -> Vec<Scene> {
         scene(ambience, "forest_after_rain", &forest_tags, &[&forest[..], &[("wetness", 0.9), ("cover", 0.6)]].concat()),
         scene(ambience, "lava_cave", &["mountain"], &[("rock", 1.0), ("lava", 0.8), ("sky", 0.0), ("air", 0.3), ("reverb", 0.7), ("depth", 30.0)]),
         scene(ambience, "waterfall", &["river", "water"], &[("water", 0.6), ("falls", 0.9), ("flowing", 1.0), ("rock", 0.4)]),
+        scene(ambience, "campfire_night", &["grassland", "temperate", "open"], &[("grass", 1.0), ("fire", 1.0), ("sun", -0.7), ("temperature", 18.0)]),
+        scene(ambience, "by_the_hearth", &["forest", "temperate"], &[("fire", 1.0), ("air", 0.5), ("sky", 0.0), ("reverb", 0.1)]),
         scene(ambience, "quiet_peak", &["mountain"], &[("rock", 0.8), ("relief", 60.0), ("height", 150.0), ("wind", 4.0), ("temperature", 2.0)]),
     ]
 }
@@ -137,7 +139,7 @@ fn each_place_has_its_own_sound() {
         println!("{}: beds {beds:?}, sounds {sounds:?}", scene.name);
         let (must, must_not): (&[&str], &[&str]) = match scene.name {
             "forest_dawn" => (&["leaves", "dawn_chorus", "warbler"], &["crickets", "owl"]),
-            "forest_noon" => (&["leaves", "breeze", "warbler", "thrush"], &["meadow", "crickets", "owl", "dawn_chorus", "cave", "drip"]),
+            "forest_noon" => (&["leaves", "breeze", "warbler", "thrush"], &["meadow", "crickets", "owl", "dawn_chorus", "cave", "drip", "fire", "fire_snap"]),
             "forest_rain" => (&["downpour"], &["rain_on_roof"]),
             "meadow_noon" => (&["meadow", "breeze"], &["leaves", "crickets", "warbler"]),
             "meadow_night" => (&["crickets", "cricket"], &["meadow", "warbler", "thrush"]),
@@ -147,7 +149,10 @@ fn each_place_has_its_own_sound() {
             "light_rain" => (&["rain"], &["downpour", "rain_on_roof"]),
             "porch_in_rain" => (&["rain_on_roof"], &["downpour"]),
             "forest_after_rain" => (&["dripping_trees"], &["rain", "downpour"]),
-            "lava_cave" => (&["lava", "lava_pop", "cave", "far_drip"], &["stream", "lake", "waterfall"]),
+            "lava_cave" => (&["lava", "lava_pop", "cave", "far_drip"], &["stream", "lake", "waterfall", "fire", "fire_snap"]),
+            // A fire is heard by the fire, crackling and snapping, under the night outdoors.
+            "campfire_night" => (&["fire", "fire_snap", "crickets"], &["lava", "lava_pop", "warbler"]),
+            "by_the_hearth" => (&["fire", "fire_snap"], &["lava", "breeze", "rain_on_roof"]),
             "waterfall" => (&["waterfall"], &["lava", "cave"]),
             // Wind on heights even on a quiet day.
             "quiet_peak" => (&["high_wind"], &["leaves", "warbler"]),
@@ -371,4 +376,35 @@ fn leaving_a_world_forgets_the_surroundings() {
     let left = world.resource::<super::Surroundings>();
     let fresh = super::Surroundings::default();
     assert_eq!((left.flowers, left.depth, left.sky), (fresh.flowers, fresh.depth, fresh.sky));
+}
+
+/// Every bed, over all of a segment, and every one-shot, at its loudest from where it
+/// sounds nearest, is heard within the ambience's band at full weight.
+#[test]
+fn the_ambience_is_heard_within_its_band() {
+    use super::defs::Placement;
+    use crate::mix::{Category, tests::{all, within}};
+    let ambience = base();
+    let mut heard = Vec::new();
+    for bed in &ambience.beds {
+        for variant in 0..synth::BED_VARIANTS {
+            let [left, right] = segment(&bed.sound, variant);
+            // The middle of the segment, past its fades.
+            let fade = (OVERLAP * RATE as f32) as usize;
+            let stereo: Vec<f32> = left[fade..left.len() - fade].iter().zip(&right[fade..right.len() - fade]).flat_map(|(l, r)| [*l, *r]).collect();
+            heard.push((format!("bed {} {variant}", bed.name), sfx::mean_loudness(&stereo) * bed.volume * super::AMBIENCE_GAIN));
+        }
+    }
+    for sound in &ambience.sounds {
+        let distance = match sound.at {
+            Placement::Around { distance, .. } => distance.0,
+            Placement::Block(_) | Placement::Listener => 0.0,
+        };
+        for variant in 0..synth::ONE_SHOT_VARIANTS {
+            let (dry, _) = synth::one_shot(sound.synth, variant);
+            let near = sound.reach / (sound.reach + distance);
+            heard.push((format!("{} {variant}", sound.name), sfx::loudness(&dry, 1) * sound.volume * near * super::AMBIENCE_GAIN));
+        }
+    }
+    all([within(Category::Ambience, heard)]);
 }

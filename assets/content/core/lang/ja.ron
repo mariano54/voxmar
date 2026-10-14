@@ -277,6 +277,9 @@
 
     "skills.gained": "+{xp} {skill}",
     "skills.level_up": "レベル{level}",
+    "celebrate.quest": "クエスト達成",
+    "celebrate.quest.claim": "報酬はクエストブックで受け取れます",
+    "celebrate.milestone": "節目のレベルに到達",
     "recipes.title.recipes": "レシピ:{item}",
     "recipes.title.uses": "用途:{item}",
     "recipes.page": "{page} / {pages}",
