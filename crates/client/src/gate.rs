@@ -7114,9 +7114,23 @@ struct FeelRun {
     slow: u32,
     /// Whether this wind-up's moment came with no press, already told (`answer`).
     held: bool,
+    /// Frames since this wind-up showed that could have pressed before its result came
+    /// (`answer`), and the tries set aside as unanswerable: the result came before any
+    /// frame at or after the moment tried (`feel`).
+    chances: u32,
+    unanswerable: u32,
 }
 
 impl FeelRun {
+    /// Whether this wind-up's result came before the client could answer it, with `answered`
+    /// whether a press went: none did, and its moment passed between two frames with the
+    /// result heard in the later (`held`), or no frame came at all between the wind-up
+    /// showing and the result. A frame before the moment that could have pressed says a
+    /// result after it came before the moment: that try counts, and the search moves earlier.
+    fn could_not_answer(&self, answered: bool) -> bool {
+        !answered && (self.held || self.chances == 0)
+    }
+
     /// Observe a pose edge only after a calm pose. Hurt can arrive before the server's
     /// next Idle replication; consuming it invalidates the still-shown attack pose.
     fn observe(&mut self, attacking: bool, received: bool) -> bool {
@@ -7127,6 +7141,7 @@ impl FeelRun {
         } else if self.calm && self.seen.is_none() && !self.answered {
             self.seen = Some(Instant::now());
             self.calm = false;
+            self.chances = 0;
             return true;
         }
         false
@@ -7152,6 +7167,11 @@ impl FeelRun {
             self.held = true;
         }
         if received || self.answered || !due {
+            // A frame before the moment, with the blow still to come: a press could have
+            // gone, so a result after it says the moment was late.
+            if !received && !self.answered {
+                self.chances += 1;
+            }
             return false;
         }
         self.answered = true;
@@ -7208,12 +7228,15 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         gate.feel.clicked = false;
     }
     if (1..=4).contains(&gate.phase) && gate.server_now - gate.feel.started > FEEL_LIMIT {
+        // In a block again for a late counter (phase 2 with the perfect block found), what is
+        // still owed is the counter: the perfect block passed at its first.
         let check = match gate.phase {
             3 => "counter",
+            2 if gate.feel.found.is_some() => "counter",
             4 => "dodge",
             _ => "perfect block",
         };
-        gate.check(check, Err(format!("not done in {FEEL_LIMIT} server seconds: {:?}", gate.feel.outcomes)));
+        gate.check(check, Err(format!("not done in {FEEL_LIMIT} server seconds: {:?}, {} set aside as unanswerable", gate.feel.outcomes, gate.feel.unanswerable)));
         clear_feel(gate, now);
         return;
     }
@@ -7367,6 +7390,19 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             // landed, whatever moment was tried: the try says nothing of the moment, so it is
             // set aside, not counted, and the search stays. Enough of them and the machine is
             // too slow to judge (as `creature falls` is when it draws too few frames).
+            // A result before any frame at or after the moment tried, with none before it
+            // that could have pressed (the wind-up first seen after it landed, or the moment
+            // passed between two frames, as frames of a second or more do on a loaded
+            // machine): no press could have answered it, so the try says nothing of the
+            // moment. It is set aside and the search stays; unlike a late frame it never
+            // excuses the step, which `FEEL_LIMIT` still bounds.
+            if !passed && gate.feel.could_not_answer(answered) {
+                gate.feel.outcomes.pop();
+                gate.feel.unanswerable += 1;
+                let why = if gate.feel.held { "the moment passed between two frames" } else { "no frame came between the wind-up showing and the blow landing" };
+                info!("gate: combat try set aside phase {} try {} bear {}: {defended:?} came before it could be answered ({why}), frame {:.3}s, {} set aside", gate.phase, gate.feel.tries + 1, view.id, world.resource::<Time>().delta_secs(), gate.feel.unanswerable);
+                return;
+            }
             let late = std::mem::take(&mut gate.feel.late);
             if !passed && answered && late > FEEL_SLOW_FRAME {
                 gate.feel.outcomes.pop();
@@ -7387,8 +7423,14 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
             if passed {
                 let detail = format!("{defended:?} for {damage} damage, requested {:.2}s after the wind-up showed, try {}", gate.feel.after, gate.feel.tries + 1);
-                let result = if damage == 0 { Ok(detail) } else { Err(format!("{detail}: it still did damage")) };
-                gate.check(if blocking { "perfect block" } else { "dodge" }, result);
+                // A block again, for a counter that came too late (phase 3): the perfect
+                // block was judged at its first, so this one only opens the counter's window.
+                if blocking && damage == 0 && gate.feel.found.is_some() {
+                    info!("gate: combat block again for the counter: {detail}");
+                } else {
+                    let result = if damage == 0 { Ok(detail) } else { Err(format!("{detail}: it still did damage")) };
+                    gate.check(if blocking { "perfect block" } else { "dodge" }, result);
+                }
                 gate.feel.struck = world.resource::<crate::fight::Fighting>().struck_count;
                 if blocking {
                     gate.feel.found = Some(gate.feel.after);
@@ -7421,7 +7463,13 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.feel.after = (gate.feel.centre + side * FEEL_STEP * k.div_ceil(2) as f32).clamp(0.0, windup);
             if gate.feel.tries >= FEEL_TRIES {
                 let outcomes = std::mem::take(&mut gate.feel.outcomes);
-                gate.check(if blocking { "perfect block" } else { "dodge" }, Err(format!("{FEEL_TRIES} answers to the bear's blows came to {outcomes:?}")));
+                // After a perfect block whose counter came too late, what is still owed is
+                // the counter: the perfect block passed at its first.
+                if blocking && gate.feel.found.is_some() {
+                    gate.check("counter", Err(format!("the click after the perfect block came too late, and the blocks after it came to {outcomes:?}, none perfect to counter from")));
+                } else {
+                    gate.check(if blocking { "perfect block" } else { "dodge" }, Err(format!("{FEEL_TRIES} answers to the bear's blows came to {outcomes:?}, {} more set aside as unanswerable", gate.feel.unanswerable)));
+                }
                 if blocking {
                     to_dodge(gate, windup, perfect, now);
                 } else {
@@ -7456,6 +7504,7 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 } else {
                     // Too late for the window (a server far behind): block again.
                     gate.feel.tries += 1;
+                    gate.feel.outcomes.clear();
                     to_phase(gate, FEEL_BLOCK, now);
                 }
             } else if gate.server_in_phase() > UNANSWERED {
@@ -7476,6 +7525,7 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 fn to_dodge(gate: &mut Gate, windup: f32, perfect: f32, now: f32) {
     gate.feel.tries = 0;
     gate.feel.slow = 0;
+    gate.feel.unanswerable = 0;
     gate.feel.slowest = 0.0;
     gate.feel.outcomes.clear();
     gate.feel.seen = None;
@@ -10467,6 +10517,37 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn a_blow_heard_before_any_frame_could_answer_it_is_set_aside() {
+        let mut app = App::new();
+        app.add_plugins(bevy::input::InputPlugin);
+        let dodge = KeyCode::ShiftLeft;
+        // A wind-up seen, and the result heard at the next frame, before the moment tried
+        // (0.6 s): no frame could have pressed.
+        let mut feel = FeelRun { after: 0.6, calm: true, ..default() };
+        assert!(feel.observe(true, false));
+        assert!(!feel.answer(app.world_mut(), true, dodge, true));
+        assert!(feel.could_not_answer(false), "no frame came between the wind-up and its result");
+        // A frame before the moment came first, with the blow still to come: a press could
+        // have gone there, so the result after it says the moment was late, and counts.
+        let mut feel = FeelRun { after: 0.6, calm: true, ..default() };
+        assert!(feel.observe(true, false));
+        assert!(!feel.answer(app.world_mut(), true, dodge, false));
+        assert!(!feel.answer(app.world_mut(), true, dodge, true));
+        assert!(!feel.could_not_answer(false), "a frame before the moment could have answered");
+        // The moment passed between that frame and the next, which heard the result: the
+        // press would have gone in the next, after the blow, so this one is set aside too.
+        let mut feel = FeelRun { seen: Some(Instant::now() - std::time::Duration::from_secs(1)), after: 0.6, chances: 1, ..default() };
+        assert!(!feel.answer(app.world_mut(), true, dodge, true));
+        assert!(feel.held && feel.could_not_answer(false));
+        // An answered try is never set aside for this: it said something of its moment.
+        assert!(!feel.could_not_answer(true));
+        // A new wind-up starts with no frames.
+        let mut feel = FeelRun { chances: 3, calm: true, ..default() };
+        assert!(feel.observe(true, false));
+        assert_eq!(feel.chances, 0);
     }
 
     #[test]
