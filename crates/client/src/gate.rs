@@ -6179,6 +6179,10 @@ fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 /// The weapon the gate strikes with, and the level that wields it.
 const WEAPON: &str = "base:iron_sword";
 const WEAPON_LEVEL: u8 = 20;
+/// The Attack level the weapon step strikes at, the most content asks for: the bear dies in
+/// a few blows rather than fifteen (11 s on the Mac), and the sword's hardest blow is still
+/// judged against a fist's most at the same level.
+const STRIKE_LEVEL: u8 = 80;
 /// What it strikes: big enough to take several blows, in creative so its own pass by.
 const BEAR: &str = "base:brown_bear";
 
@@ -6190,14 +6194,14 @@ fn weapon(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
         gate.next(Step::Cook, now);
         return;
     };
-    let fist = voxmar_engine::combat::Weapon::FISTS.max_hit(WEAPON_LEVEL);
+    let fist = voxmar_engine::combat::Weapon::FISTS.max_hit(STRIKE_LEVEL);
     let pad = gate.feet + IVec3::new(0, 0, 14);
     let view = the_bear(world, gate, species);
     match gate.phase {
         0 => {
             let net = world.resource::<Net>();
             net.command("gamemode creative");
-            net.command(&format!("skill attack {WEAPON_LEVEL}"));
+            net.command(&format!("skill attack {STRIKE_LEVEL}"));
             net.command(&format!("give {} 1", WEAPON.trim_start_matches("base:")));
             net.command(&format!("summon {} 1 {} {} {}", BEAR.trim_start_matches("base:"), pad.x, pad.y, pad.z + 1));
             gate.blows_seen = world.resource::<crate::creatures::Creatures>().blows;
@@ -6206,11 +6210,11 @@ fn weapon(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
         }
         1 => {
             // The sword in hand, at the level that wields it, and the bear in sight.
-            let ready = skill_level(world, "core:attack").0 >= WEAPON_LEVEL && view.is_some();
+            let ready = skill_level(world, "core:attack").0 >= STRIKE_LEVEL && view.is_some();
             if ready && select(world, WEAPON) {
                 gate.advance(now);
             } else if gate.server_in_phase() > 10.0 {
-                gate.check("weapon", Err(format!("the sword, Attack {WEAPON_LEVEL} or the bear never came (bear seen: {})", view.is_some())));
+                gate.check("weapon", Err(format!("the sword, Attack {STRIKE_LEVEL} or the bear never came (bear seen: {})", view.is_some())));
                 end_weapon(world, gate, now);
             }
         }
