@@ -15,6 +15,9 @@
 //!   into a puff of smoke.
 //! - A creature coils through its wind-up and snaps into its strike as the blow lands
 //!   (`creatures`, by its attack's style), so the timing to block or dodge reads in its body.
+//! - A creature staggered (a perfect block, a daze) reels instead: its wind-up ends with no
+//!   blow, its head droops and its body sways while the server holds it, dizzy sparks
+//!   circle over its head and it thuds and wobbles (`combat_fx.ron`'s `stagger`).
 //! - A blow that hurts the player thuds, tips the view toward the side it came from and
 //!   reddens the edges of the screen. A block knocks and jolts the hand; a perfect block
 //!   rings and throws sparks before the eyes.
@@ -46,7 +49,7 @@ pub mod sound;
 pub mod style;
 
 pub use style::FightLook;
-use style::{Burst, Stance, StrikeLook};
+use style::{Burst, Stance, StaggerLook, StrikeLook};
 
 pub struct FightFxPlugin;
 
@@ -145,6 +148,28 @@ pub fn recover_share(strike: &StrikeLook, striking: f32, recovery: f32) -> f32 {
 pub fn coil_share(strike: &StrikeLook, coil: f32) -> f32 {
     let (stance, _) = strike_stance(strike, Some(coil), None, 0.0);
     (stance.size() / strike.coil.size().max(1e-4)).min(1.0)
+}
+
+/// How far into its stagger stance a creature is (0 to 1, before easing) `dt` seconds of
+/// game time on from `depth`: further in by `dt / ease` while `staggered`, as quickly back
+/// out after. Counted in game time, so `ease` seconds after a stagger began it is all the
+/// way in however the frames fell.
+pub fn stagger_depth(look: &StaggerLook, depth: f32, staggered: bool, dt: f32) -> f32 {
+    let by = dt / look.ease.max(1e-3);
+    (if staggered { depth + by } else { depth - by }).clamp(0.0, 1.0)
+}
+
+/// How much of its stagger stance a creature `depth` into it (`stagger_depth`) shows, 0 to 1.
+pub fn stagger_share(depth: f32) -> f32 {
+    let x = depth.clamp(0.0, 1.0);
+    x * x * (3.0 - 2.0 * x)
+}
+
+/// A staggered creature's stance `depth` into it (`stagger_depth`), `t` seconds into the
+/// stagger: the stagger's stance, its body swaying side to side.
+pub fn stagger_stance(look: &StaggerLook, depth: f32, t: f32) -> Stance {
+    let sway = look.sway * (std::f32::consts::TAU * look.sway_rate * t).sin();
+    Stance { twist: look.stance.twist + sway, ..look.stance }.scaled(stagger_share(depth))
 }
 
 /// The sounds of a blow of the player's the server answered, by name and loudness: a hit by
@@ -567,6 +592,16 @@ fn react(
         heard.bursts += 1;
         heard.poofs += 1;
     }
+    // Creatures staggered: a thud and a dazed wobble (deeper for a bigger one, as its hits
+    // are), and sparks circling up over its head.
+    for (head, height) in std::mem::take(&mut creatures.staggers) {
+        let pitch = (1.0 / height.max(0.2)).powf(0.15).clamp(0.82, 1.25);
+        say("stagger", 1.0, pitch, &mut heard);
+        let sparks = look.stagger.sparks;
+        let colour = sparks.color.map_or([255, 238, 150], |c| [c.0, c.1, c.2]);
+        dizzy(&mut particles, &sparks, amount, head, height, colour, light_at(head), head.to_array().iter().map(|v| v.to_bits() as u64).fold(11, |a, b| a ^ b.rotate_left(23)));
+        heard.bursts += 1;
+    }
 }
 
 /// Throws a burst of `count` × `scale` particles out from `at`, mostly along `toward`: sparks
@@ -600,6 +635,39 @@ fn burst(particles: &mut Particles, burst: &Burst, scale: f32, at: Vec3, toward:
             light,
             blend: if glow { ParticleBlend::Add } else { ParticleBlend::Cutout },
             hides: if glow { 0.3 } else { 0.0 },
+            ..Particle::default()
+        });
+    }
+}
+
+/// Dizzy sparks over a staggered creature's head (`at`): set round it in a ring as wide as
+/// it is tall allows, each going round the ring and drifting up as it fades.
+#[allow(clippy::too_many_arguments)]
+fn dizzy(particles: &mut Particles, sparks: &Burst, scale: f32, at: Vec3, height: f32, colour: [u8; 3], light: [u8; 2], seed: u64) {
+    let count = (sparks.count as f32 * scale).round() as u32;
+    let mut noise = crate::sfx::Noise(seed);
+    let radius = (height * 0.3).clamp(0.2, 0.8);
+    for i in 0..count {
+        let angle = std::f32::consts::TAU * (i as f32 + 0.5 * noise.unit()) / count.max(1) as f32;
+        let out = Vec3::new(angle.cos(), 0.0, angle.sin());
+        // Round the ring, the same way for every spark.
+        let round = Vec3::new(-angle.sin(), 0.0, angle.cos());
+        particles.spawn(&Particle {
+            position: at + out * radius + Vec3::Y * noise.next() * 0.05,
+            velocity: round * sparks.speed * (0.8 + 0.4 * noise.unit()) + Vec3::Y * 0.25,
+            motion: Motion::Rise,
+            gravity: -0.4,
+            drag: 1.2,
+            size: sparks.size * (0.8 + 0.4 * noise.unit()),
+            grow: 0.6,
+            wander: 0.1,
+            life: sparks.life * (0.8 + 0.4 * noise.unit()),
+            look: Look::Speck,
+            color: [colour[0], colour[1], colour[2], 255],
+            glow: true,
+            light,
+            blend: ParticleBlend::Add,
+            hides: 0.3,
             ..Particle::default()
         });
     }
@@ -661,6 +729,30 @@ mod tests {
         assert!((flinch_weight(0.035, 0.2) - 1.0).abs() < 1e-4);
         assert!(flinch_weight(0.1, 0.2) < 1.0 && flinch_weight(0.1, 0.2) > flinch_weight(0.15, 0.2));
         assert_eq!(flinch_weight(0.2, 0.2), 0.0);
+    }
+
+    /// A stagger is all the way in `ease` seconds of game time after it began, however the
+    /// frames fell (a few long ones or many short), shows its stance whole there, sways, and
+    /// eases back out as long once it is over.
+    #[test]
+    fn a_stagger_eases_in_by_game_time_sways_and_eases_out() {
+        let look = look().stagger;
+        for frames in [1, 2, 3, 7, 60] {
+            let dt = look.ease / frames as f32;
+            let depth = (0..frames).fold(0.0, |depth, _| stagger_depth(&look, depth, true, dt));
+            assert!((depth - 1.0).abs() < 1e-4, "{frames} frames over the ease came to {depth}");
+        }
+        assert!(stagger_depth(&look, 0.0, true, look.ease * 0.5) < 1.0, "half the ease is not all the way in");
+        // All the way in, it stands in the stagger's stance (no sway at its start), and sways
+        // `sway` either way a quarter of a sway's time later.
+        let stance = stagger_stance(&look, 1.0, 0.0);
+        assert!((stance.nod - look.stance.nod).abs() < 1e-5 && (stance.crouch - look.stance.crouch).abs() < 1e-5 && (stance.lean - look.stance.lean).abs() < 1e-5);
+        let quarter = 0.25 / look.sway_rate.max(1e-3);
+        assert!((stagger_stance(&look, 1.0, quarter).twist - look.stance.twist - look.sway).abs() < 1e-4);
+        assert!(look.stance.nod > 0.0 && look.stance.lean < 0.0 && look.sway > 0.0, "its head droops, its weight goes back and it sways");
+        // Out again over as long.
+        assert_eq!(stagger_depth(&look, 1.0, false, look.ease), 0.0);
+        assert_eq!(stagger_stance(&look, 0.0, quarter), Stance::default());
     }
 
     /// The core recovery after a creature's blow (`combat.ron`'s `creature_recovery`).

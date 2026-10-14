@@ -72,6 +72,9 @@ struct Client {
     /// message's stamp is when it was sent): a wind-up's start, however late this thread
     /// read it.
     attacking_since: std::collections::HashMap<u32, Instant>,
+    /// Each time a creature was shown staggered (`STAGGERED`), from not: which, how many of
+    /// creatures' blows at us had been heard by then, and the pose it showed.
+    staggers: Vec<(u32, usize, voxmar_engine::creature::brain::Pose)>,
     /// The stamp of the message being applied.
     stamp: Option<Instant>,
     journal: voxmar_engine::journal::Journal,
@@ -259,6 +262,7 @@ impl Client {
             hurt_by: Vec::new(),
             hurt_at: Vec::new(),
             attacking_since: Default::default(),
+            staggers: Vec::new(),
             stamp: None,
             journal: Default::default(),
             quests: Vec::new(),
@@ -410,6 +414,10 @@ impl Client {
                         self.attacking_since.remove(&view.id);
                     } else if !self.creatures.get(&view.id).is_some_and(attacking) {
                         self.attacking_since.insert(view.id, self.stamp.unwrap_or_else(Instant::now));
+                    }
+                    let staggered = |v: &voxmar_protocol::CreatureView| v.tell == voxmar_protocol::STAGGERED;
+                    if staggered(&view) && !self.creatures.get(&view.id).is_some_and(staggered) {
+                        self.staggers.push((view.id, self.hurt.len(), view.pose));
                     }
                     self.creatures.insert(view.id, view);
                 }
@@ -4507,6 +4515,13 @@ fn a_perfect_block_staggers_a_bear_and_a_dodge_lets_its_blow_pass() {
     let perfect = answer(&mut client, Defended::Perfect, &raise, &lower);
     assert_eq!(client.hurt[perfect].0, 0, "a perfect block takes nothing");
     assert!(client.health <= health);
+    // Shown staggered by it, at rest (not a blow): the view goes out the tick the blow
+    // came to nothing, after word of it.
+    client.pump_until(|c| c.staggers.iter().any(|&(s, ..)| s == id));
+    let shown: Vec<_> = client.staggers.iter().filter(|&&(s, ..)| s == id).collect();
+    assert_eq!(shown.len(), 1, "staggered once: {shown:?}");
+    assert_eq!(shown[0].1, perfect + 1, "staggered by the perfect block, not before it");
+    assert_ne!(shown[0].2, voxmar_engine::creature::brain::Pose::Attacking, "a staggered bear is shown winding nothing up");
     let blows = client.kinds.len();
     client.propose("core:attack", ActionTarget::Creature(id));
     client.pump_until(|c| c.kinds.len() > blows);

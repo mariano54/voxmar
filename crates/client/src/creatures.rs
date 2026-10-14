@@ -323,6 +323,22 @@ struct Shown {
     /// The move (`moves`, from 1) it winds up and strikes with, 0 for its plain attack:
     /// what it showed as the wind-up began, kept through the strike after.
     move_shown: u8,
+    /// Seconds of game time into its stagger (`STAGGERED`), while it shows one, and how far
+    /// into its stagger stance it is (`fight_fx::stagger_depth`); its entry in
+    /// `Creatures::stagger_reads`.
+    staggered: Option<f32>,
+    stagger_depth: f32,
+    stagger_read: Option<usize>,
+}
+
+/// What one stagger showed, for the gate: whose it was, whether a strike was counted as it
+/// came (its wind-up cut short must not read as the blow landing), and the most of its
+/// stagger stance it showed (0 to 1).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct StaggerRead {
+    pub id: u32,
+    pub struck: bool,
+    pub deepest: f32,
 }
 
 
@@ -367,6 +383,12 @@ pub struct Creatures {
     /// Bodies vanishing since `fight_fx` last looked: where their middle is, how tall they
     /// are and their coat's colour, for the puff of smoke they go in.
     pub poofs: Vec<(Vec3, f32, [u8; 3])>,
+    /// Creatures staggered since `fight_fx` last looked: over their head, and how tall they
+    /// are, for the sound and the dizzy sparks.
+    pub staggers: Vec<(Vec3, f32)>,
+    /// Staggers seen since joining, and what each showed, for the gate.
+    pub staggers_seen: u32,
+    pub stagger_reads: Vec<StaggerRead>,
     /// Blows creatures were seen to strike since joining (their wind-up ended in a snap),
     /// for the gate.
     pub strikes: u32,
@@ -892,18 +914,40 @@ fn show(
                 sounds.push(sound(Sound::Ready, view.id, &view, shown.position, 0.0));
             }
             // A wind-up starts its coil; its end is the blow, struck now unless the wind-up's
-            // own time struck it already.
+            // own time struck it already. Staggered (a perfect block, a daze), its wind-up is
+            // cut short instead: no blow, so no strike; it reels (`fight_fx`'s stagger).
             let attacking = |pose| pose == Pose::Attacking;
-            if attacking(view.pose) && !attacking(shown.view.pose) {
+            let staggered = |tell| tell == voxmar_protocol::STAGGERED;
+            let (strikes, read) = (creatures.strikes, creatures.stagger_reads.len());
+            if staggered(view.tell) && !staggered(shown.view.tell) {
+                shown.coiling = None;
+                shown.move_shown = 0;
+                shown.staggered = Some(0.0);
+                if shown.dying.is_none() {
+                    let def = &registry.get(view.species).def;
+                    let height = def.body.size.1 * view.scale;
+                    let forward = Quat::from_rotation_y(shown.yaw) * Vec3::NEG_Z;
+                    let head = shown.position + forward * def.body.size.0 * view.scale * 0.35 + Vec3::Y * height * 1.1;
+                    creatures.staggers.push((head, height));
+                }
+                creatures.staggers_seen += 1;
+                shown.stagger_read = Some(read);
+                creatures.stagger_reads.push(StaggerRead { id: view.id, struck: false, deepest: 0.0 });
+            } else if attacking(view.pose) && !attacking(shown.view.pose) {
                 (shown.coiling, shown.striking, shown.coil_struck) = (Some(0.0), None, false);
                 (shown.coil_from, shown.coil_far, shown.coil_slid, shown.coil_deepest, shown.recover_most) = (shown.position, 0.0, 0.0, 0.0, 0.0);
-                shown.move_shown = if view.tell == voxmar_protocol::REARING { 0 } else { view.tell };
+                // Rearing into a phase, or staggered, is no move.
+                shown.move_shown = if matches!(view.tell, voxmar_protocol::REARING | voxmar_protocol::STAGGERED) { 0 } else { view.tell };
             } else if !attacking(view.pose) && attacking(shown.view.pose) {
                 if !shown.coil_struck && shown.coiling.is_some() && shown.dying.is_none() {
                     shown.striking = Some(0.0);
                     creatures.strikes += 1;
                 }
                 shown.coiling = None;
+            }
+            // Whether the view that staggered it was taken as a blow landing.
+            if let Some(read) = creatures.stagger_reads.get_mut(read) {
+                read.struck = creatures.strikes > strikes;
             }
             shown.view = view;
             shown.told_at = now;
@@ -988,6 +1032,9 @@ fn show(
                 recover_most: 0.0,
                 poofed: false,
                 move_shown: 0,
+                staggered: None,
+                stagger_depth: 0.0,
+                stagger_read: None,
             },
         );
     }
@@ -1118,6 +1165,28 @@ fn show(
         if struck_out {
             shown.striking = None;
         }
+        // Staggered, it reels where it stands (`combat_fx.ron`'s `stagger`): eased into its
+        // stagger stance by game time, swaying, whatever of its strike still shows giving way
+        // to it; eased back out once the stagger is over. The most of it shown is kept for
+        // the gate.
+        let reeling = shown.view.tell == voxmar_protocol::STAGGERED && shown.dying.is_none();
+        if let Some(t) = shown.staggered.as_mut() {
+            *t += dt;
+        }
+        let stance = match (fx, shown.staggered) {
+            (Some(fx), Some(t)) => {
+                shown.stagger_depth = crate::fight_fx::stagger_depth(&fx.stagger, shown.stagger_depth, reeling, dt);
+                let share = crate::fight_fx::stagger_share(shown.stagger_depth);
+                if let Some(read) = shown.stagger_read.and_then(|i| creatures.stagger_reads.get_mut(i)) {
+                    read.deepest = read.deepest.max(share);
+                }
+                stance.scaled(1.0 - share).plus(crate::fight_fx::stagger_stance(&fx.stagger, shown.stagger_depth, t))
+            }
+            _ => stance,
+        };
+        if !reeling && shown.stagger_depth <= 0.0 {
+            (shown.staggered, shown.stagger_read, shown.stagger_depth) = (None, None, 0.0);
+        }
         // Its flinch from our blow: pushed back and tipped away, squashed, then easing back.
         if let Some(flinch) = shown.flinch.as_mut() {
             *flinch += dt;
@@ -1139,9 +1208,10 @@ fn show(
             Pose::Idle => (0.0, 0.0),
         };
         // A boss's move shows its own tell, so each reads apart; rearing into a new phase,
-        // it rears right up.
+        // it rears right up. Staggered, its stagger stance (above) is what shows.
         let (nod, crouch, rear) = match shown.view.tell {
             voxmar_protocol::REARING => (-0.4, 0.0, 1.0),
+            voxmar_protocol::STAGGERED => (nod, crouch, 0.0),
             0 => (nod, crouch, 0.0),
             index => {
                 let tell = registry.get(shown.view.species).tell_at(index);
@@ -1150,7 +1220,7 @@ fn show(
         };
         // Standing about, now and then it sniffs at the ground; running away, its head
         // goes out low.
-        let idle = shown.view.pose == Pose::Idle && speed < 0.2 && shown.coiling.is_none() && shown.dying.is_none();
+        let idle = shown.view.pose == Pose::Idle && speed < 0.2 && shown.coiling.is_none() && shown.staggered.is_none() && shown.dying.is_none();
         let sniff = motion::now_and_then(&moves.idle.sniff, now, shown.view.seed, 2).filter(|_| idle).map_or(0.0, |t| (t * std::f32::consts::TAU * 2.0).sin().abs());
         let nod = nod + sniff * moves.idle.sniff.size + moves.flee.head * shown.flee;
         shown.nod += (nod - shown.nod) * (6.0 * dt).min(1.0);

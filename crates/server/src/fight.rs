@@ -352,6 +352,8 @@ impl Server {
             live.body.yaw = voxmar_engine::creature::motion::yaw_of(to);
         }
         live.winding = true;
+        // A new wind-up is past any stagger.
+        live.staggered = false;
         live.attack = index;
         live.held_until = live.held_until.max(tick + ticks(windup));
         live.tracking = Some((player, tick + ticks(windup * feel.creature_tracking.clamp(0.0, 1.0))));
@@ -567,6 +569,7 @@ impl Server {
         if let Some(live) = self.creatures.live.get_mut(&creature) {
             live.held_until = if live.winding { tick + ticks(seconds) } else { live.held_until.max(tick + ticks(seconds)) };
             live.winding = false;
+            live.staggered = true;
             live.tracking = None;
             live.decision.pose = brain::Pose::Idle;
             live.changed = true;
@@ -872,6 +875,43 @@ mod tests {
         for (after, dash, defended) in on_time {
             assert_ne!(rig.answered(0.15, Some(0.0), after, dash), defended, "the 150 ms answer needed no allowance");
         }
+    }
+
+    /// A perfect block staggers the bear, and players are shown it (`STAGGERED`, its pose at
+    /// rest) for as long as it is held; once the hold ends and it thinks again the tell
+    /// goes. A daze interrupting a wind-up shows the same, the move it wound up gone.
+    #[test]
+    fn a_staggered_creature_shows_it_while_held_and_not_after() {
+        let mut rig = Rig::new();
+        let bear = rig.bear;
+        let perfect = rig.server.guard_of(1).expect("a sword guards").perfect;
+        let windup = rig.windup();
+        assert_eq!(rig.answered(0.0, None, windup - perfect / 2.0, false), Defended::Perfect);
+        let server = &mut rig.server;
+        let view = server.creatures.live[&bear].view(bear);
+        assert!(server.creatures.live[&bear].held_until > server.tick, "the perfect block holds it");
+        assert_eq!((view.tell, view.pose), (voxmar_protocol::STAGGERED, brain::Pose::Idle), "and shows it staggered");
+        let held_until = server.creatures.live[&bear].held_until;
+        let over = (0..held_until - server.tick + 10 * TICKS_PER_SECOND as u64)
+            .find(|_| {
+                server.tick += 1;
+                server.tick_creatures();
+                server.creatures.live[&bear].view(bear).tell != voxmar_protocol::STAGGERED
+            })
+            .expect("the stagger ends");
+        assert!(server.tick >= held_until, "the stagger stopped showing {} ticks before its hold ended", held_until - server.tick);
+        // It is asked again at its next thought, at most a far one's beat on.
+        assert!(server.tick <= held_until + crate::creatures::FAR_THINK + 2, "the stagger showed {over} ticks, long past its hold");
+        assert!(!server.creatures.live[&bear].staggered);
+        // A daze cuts a wind-up short: the move is no longer shown, the stagger is.
+        server.fights.windups.clear();
+        server.creatures.live.get_mut(&bear).unwrap().held_until = 0;
+        server.wind_up(bear, 1);
+        assert!(server.creatures.live[&bear].winding);
+        assert_ne!(server.creatures.live[&bear].tell(), voxmar_protocol::STAGGERED);
+        server.stagger(bear, 1.0);
+        let view = server.creatures.live[&bear].view(bear);
+        assert_eq!((view.tell, view.pose), (voxmar_protocol::STAGGERED, brain::Pose::Idle));
     }
 
     /// The round trip the allowance is made of: a ping answered later by the connection's
