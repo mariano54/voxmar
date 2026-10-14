@@ -122,6 +122,13 @@ Level 22, health 120, defence 14, weak to slash.
 | Thrash | 2 | 2-5 slash | 2.2 | 0.45 s | block, quicker |
 | Volley | 2 | 1-3 ranged | 12, from 3.5 | 0.8 s, she rears | close in, or block |
 
+Each of her blows is told by ear as well as by her body (`combat_fx.ron`'s `tells`, client
+only): a cue that swells to its loudest as the blow lands, the music dipping under it. The
+lash and the thrash creak and crack like a whip; the grasp groans up from under the ground
+and lands with a thud, and draws a ring on the ground as far as it reaches, filling in as
+the wind-up runs out (it goes through a guard, so the ring says how far to dodge); the
+volley rattles. Every boss blow must have a tell: the client refuses to start without one.
+
 Below half health she rears for 2 s into phase two. She mends 2 health every 2 s, 4 s
 after a blow, unless fire burns within 4 blocks or the sun is on her. The answer the quest
 hints at: light a campfire or bring torches into the hollow.

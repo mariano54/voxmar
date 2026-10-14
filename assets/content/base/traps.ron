@@ -1,0 +1,10 @@
+// Traps (engine/src/trap.rs, docs/traps.md): `set` waits; a wild creature it `catches` that
+// steps into its cell is caught, and the trap shows `sprung` until a player with the
+// `skill` at `level` takes the catch: its loot, rolled for them as their kill, and its kill
+// experience. The trap is set again.
+(
+    traps: [
+        // A snare (Nomad, Hunter 1): small ground game, set on the runs they wander.
+        (set: "snare", sprung: "snare_sprung", catches: ["rabbit", "hare", "field_mouse"], skill: "core:hunter", level: 1),
+    ],
+)
