@@ -162,7 +162,8 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
     });
 }
 
-/// R and U over an item look it up; the viewer opens over whatever screen was open.
+/// R and U over an item look it up; the viewer opens over whatever screen was open, and
+/// the back key (Backspace) steps back through what was looked up.
 #[allow(clippy::too_many_arguments)]
 fn look_up(
     keys: Res<ButtonInput<KeyCode>>,
@@ -201,6 +202,10 @@ fn look_up(
         } else if keys.just_pressed(settings.uses_key.0) {
             viewer.open(item, true);
         }
+    }
+    // The back key steps back as the Back button does, closing the viewer past the first.
+    if ui.recipes_open && keys.just_pressed(settings.recipe_back_key.0) {
+        viewer.trail.pop();
     }
     // Esc (in `player::grab_cursor`) closes the viewer by clearing the flag.
     if !ui.recipes_open && !viewer.trail.is_empty() && !keys.just_pressed(settings.recipes_key.0) && !keys.just_pressed(settings.uses_key.0) {

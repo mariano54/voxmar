@@ -3834,7 +3834,8 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 /// The recipe lookup as a survival player does it: type "pick" in the inventory's search,
 /// click the stone pickaxe's recipe, see "Look It Up" finish, then open the quest book on
 /// the stone tools quest, whose goal shows the pickaxe's recipe inline, look an input up
-/// from there and come Back to the book.
+/// from there and come Back to the book; then R over the planks on the crafting table's
+/// quest opens their recipe, and the back key returns to the book.
 fn look_up(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     use crate::hud::creative::{Catalogue, Cell, SearchField};
     use crate::hud::quests::QuestView;
@@ -3842,7 +3843,12 @@ fn look_up(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     use crate::ui::widgets::TextField;
     const QUEST: &str = "base:look_it_up";
     const BOOK_QUEST: &str = "base:stone_in_hand";
+    const TABLE_QUEST: &str = "base:crafting_table";
     let blocks = world.resource::<Launch>().content.blocks.clone();
+    let (recipes_key, back_key) = {
+        let settings = world.resource::<crate::settings::Settings>();
+        (settings.recipes_key.0, settings.recipe_back_key.0)
+    };
     let Some(pickaxe) = blocks.id("base:stone_pickaxe") else {
         gate.check("recipe lookup", Err("no stone pickaxe in the content".into()));
         gate.next(Step::Refusal, now);
@@ -3972,14 +3978,67 @@ fn look_up(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             world.resource_mut::<UiClicks>().next = Some((cell, MouseButton::Right));
             gate.advance(now);
         }
-        _ => {
+        6 => {
             let viewer = world.resource::<RecipeViewer>();
             let uses = viewer.trail.last().is_some_and(|look| look.uses && look.item.0 as u32 == gate.counted);
             gate.check("recipe lookup: uses", if uses { Ok("right-clicking a quest recipe's input opens its uses".into()) } else { Err("right-click did not open the input's uses".into()) });
-            world.resource_mut::<UiState>().quests_open = false;
-            world.resource_mut::<UiState>().recipes_open = false;
+            // On to the crafting table's quest, whose recipe draws planks.
             world.resource_mut::<RecipeViewer>().trail.clear();
-            gate.next(Step::Refusal, now);
+            let mut ui = world.resource_mut::<UiState>();
+            (ui.recipes_open, ui.quests_open) = (false, true);
+            *world.resource_mut::<QuestView>() = QuestView { chapter: 0, picked: Some(TABLE_QUEST.into()), ..default() };
+            gate.counted = 0;
+            gate.advance(now);
+        }
+        7 => {
+            // The pointer over the planks the quest page draws, held there, and after a beat
+            // the recipes key pressed.
+            let planks = world.query::<(Entity, &ViewerItem, &InheritedVisibility)>().iter(world)
+                .find(|(_, item, visible)| visible.get() && blocks.def(item.0).name.ends_with("_planks")).map(|(entity, item, _)| (entity, item.0));
+            let Some((cell, item)) = planks else {
+                if in_phase > 3.0 {
+                    fail(world, gate, "recipe lookup: R in the quest book", "the crafting table's quest page draws no planks".into());
+                }
+                return;
+            };
+            world.resource_mut::<UiClicks>().hover = Some(cell);
+            if in_phase > 0.3 {
+                key(world, recipes_key, true);
+                gate.counted = item.0 as u32;
+                gate.advance(now);
+            }
+        }
+        8 => {
+            key(world, recipes_key, false);
+            let viewer = world.resource::<RecipeViewer>();
+            let opened = world.resource::<UiState>().recipes_open && viewer.trail.len() == 1 && viewer.trail.last().is_some_and(|look| !look.uses && look.item.0 as u32 == gate.counted);
+            if opened {
+                if gate.shot(world, "lookup-quest-r").is_none() {
+                    return;
+                }
+                let name = world.resource::<Locale>().block(blocks.def(BlockId(gate.counted as u16)));
+                gate.check("recipe lookup: R in the quest book", Ok(format!("R over {name} on the crafting table's quest page opens the viewer on how to make it")));
+                key(world, back_key, true);
+                gate.advance(now);
+            } else if in_phase > 2.0 {
+                let shown = world.resource::<RecipeViewer>().trail.last().map(|look| (look.item, look.uses));
+                fail(world, gate, "recipe lookup: R in the quest book", format!("R over the quest page's planks left the viewer on {shown:?}"));
+            }
+        }
+        _ => {
+            key(world, back_key, false);
+            let ui = world.resource::<UiState>();
+            let back = ui.quests_open && !ui.recipes_open && world.resource::<RecipeViewer>().trail.is_empty();
+            if back || in_phase > 2.0 {
+                gate.check(
+                    "recipe lookup: back key",
+                    if back { Ok("the back key closes the viewer onto the quest book".into()) } else { Err("the back key left the viewer open over the quest book".into()) },
+                );
+                world.resource_mut::<UiState>().quests_open = false;
+                world.resource_mut::<UiState>().recipes_open = false;
+                world.resource_mut::<RecipeViewer>().trail.clear();
+                gate.next(Step::Refusal, now);
+            }
         }
     }
 }

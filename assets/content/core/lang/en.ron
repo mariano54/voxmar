@@ -187,6 +187,8 @@
     "settings.key.recipes.hint": "Over an item: the recipes that make it.",
     "settings.key.uses": "Uses key",
     "settings.key.uses.hint": "Over an item: everything it goes into.",
+    "settings.key.recipe_back": "Recipe Back key",
+    "settings.key.recipe_back.hint": "In the recipe viewer: back to what you looked up before.",
     "settings.key.screenshot": "Screenshot key",
     "settings.key.screenshot.hint": "Copies the screen to the clipboard and saves it in the screenshots folder.",
     "screenshot.copied": "Screenshot copied to the clipboard and saved as {file}.",
