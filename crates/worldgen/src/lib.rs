@@ -1161,7 +1161,7 @@ mod tests {
     /// near the origin that they all reach are worked out once rather than once a test.
     /// Tests that compare a fresh world with another, or count the work a world does,
     /// make their own with `Overworld::new`.
-    fn read_world(seed: u64) -> Arc<Overworld> {
+    pub(crate) fn read_world(seed: u64) -> Arc<Overworld> {
         use std::sync::{Mutex, OnceLock};
         static WORLDS: Mutex<Vec<(u64, Arc<OnceLock<Arc<Overworld>>>)>> = Mutex::new(Vec::new());
         let slot = {
