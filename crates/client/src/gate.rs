@@ -3822,6 +3822,20 @@ fn look_up(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     }
 }
 
+/// The language key of why rice is refused on the dry plot at `plot`: the engine's own
+/// judge (`crop::unsuited`) over the climate worldgen gives its column, as the server reads
+/// it, full light and unwatered.
+fn refusal_reason(world: &World, plot: IVec3, rice: BlockId) -> Result<&'static str, String> {
+    let generator = world.resource::<crate::render::lod::WorldGenerator>().get().cloned().ok_or("no world generator to read the plot's climate")?;
+    let launch = world.resource::<Launch>();
+    let crops = &launch.content.crops;
+    let crop = crops.get(crops.planted_by(rice).ok_or("rice plants no crop")?);
+    let site = generator.site(plot.x, plot.z);
+    let at = voxmar_engine::crop::Conditions { temperature: site.temperature, moisture: site.soil_moisture(), light: 15, fertile: false, watered: false };
+    let why = voxmar_engine::crop::unsuited(&crop.def, at).ok_or_else(|| format!("rice would grow on the dry plot ({:.1} °C)", site.temperature))?;
+    Ok(why.key())
+}
+
 /// The plot `refusal` sows, on the test ground's dirt within reach of the player and more
 /// than four blocks from its pool (x 3 to 5), so nothing waters it.
 const DRY_PLOT: IVec3 = IVec3::new(-2, -1, 2);
@@ -3830,11 +3844,11 @@ const REFUSAL_WAIT: f32 = 8.0;
 /// The ground beside the dry plot where the well goes, from the plot.
 const WELL_BY: IVec3 = IVec3::new(1, 0, 0);
 
-/// Rice sown on the test ground, about 10 °C where it wants 18 to 34: the server refuses
-/// it and says why, too cold, as a refusal, which shows by the hotbar with the others,
-/// naming the crop as the player holds it ("Rice"), not its growing stage. The reason is
-/// judged word for word, so a refusal for another cause (no water: the plot is dry too)
-/// fails it.
+/// Rice sown on a dry plot of the test ground: the server refuses it and says why, as a
+/// refusal, which shows by the hotbar with the others, naming the crop as the player holds
+/// it ("Rice"), not its growing stage. The reason is judged word for word against the one
+/// the plot's climate gives (`refusal_reason`): too cold on today's spawn (about 10 °C,
+/// where rice wants 18 to 34), no water on warmer ground.
 fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
     let plot = gate.feet + DRY_PLOT;
     let rice = world.resource::<ClientWorld>().registry.id("base:rice");
@@ -3893,15 +3907,26 @@ fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 let (locale, launch) = (world.resource::<Locale>(), world.resource::<Launch>());
                 locale.block(launch.content.blocks.def(rice))
             };
+            // Why the server should refuse it, from the plot's own climate (worldgen's site,
+            // as the server reads it) and a dry plot: too cold where the ground is a hard stop
+            // for rice, else no water. So the check holds wherever the world puts spawn.
+            let reason = match refusal_reason(world, plot, rice) {
+                Ok(reason) => reason,
+                Err(why) => {
+                    gate.check("refusal", Err(why));
+                    gate.next(Step::Merged, now);
+                    return;
+                }
+            };
             let cold = {
                 let (locale, launch) = (world.resource::<Locale>(), world.resource::<Launch>());
                 let blocks = &launch.content.blocks;
-                locale.render(&voxmar_engine::lang::Words::key("farming.too_cold").with("crop", voxmar_engine::lang::Words::Block(blocks.def(rice).name.clone())), blocks)
+                locale.render(&voxmar_engine::lang::Words::key(reason).with("crop", voxmar_engine::lang::Words::Block(blocks.def(rice).name.clone())), blocks)
             };
             let said = world.resource::<crate::hud::skills::SkillToasts>().refusals().find(|why| why.contains(&name)).map(str::to_owned);
             if let Some(said) = said {
                 mouse(world, MouseButton::Right, false);
-                let result = if said == cold { Ok(format!("sowing rice where it is too cold was refused for that: \"{said}\"")) } else { Err(format!("sowing rice was refused, but not as too cold (\"{cold}\"): \"{said}\"")) };
+                let result = if said == cold { Ok(format!("sowing rice was refused for its reason ({reason}): \"{said}\"")) } else { Err(format!("sowing rice was refused, but not as {reason} (\"{cold}\"): \"{said}\"")) };
                 gate.check("refusal", result);
                 gate.advance(now);
             } else if gate.server_in_phase() > REFUSAL_WAIT {
