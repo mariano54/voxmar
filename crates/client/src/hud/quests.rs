@@ -2,6 +2,8 @@
 //! each chapter's quests as a web, a quest after the ones it follows, joined by lines:
 //! gold once done, lit while open, dim while what comes first is not done. A quest from
 //! another chapter that comes first stands at the web's left, dim, to show the way in. A
+//! web bigger than its well is a canvas: dragged by its empty space (or scrolled either
+//! way), it opens on the quest picked, and its lines are cut at the well's edge. A
 //! quest's page says first why it is worth doing (the reason and the reward), then what
 //! comes first if anything, its routes (any one finishes it) with each goal's progress,
 //! and its rewards, and pins it while it is open. The quests pinned (`core/quests.ron`'s
@@ -38,7 +40,7 @@ impl Plugin for QuestsPlugin {
         app.init_resource::<QuestView>()
             .add_systems(PostStartup, (spawn, spawn_tracker))
             .add_systems(OnEnter(Screen::InGame), keep_known_pins)
-            .add_systems(Update, ((open_start, choose_on_open, show, pick, claim, turn_ways, draw).chain().after(ScreenSystems), (seed_pins, retire, track).chain(), hear_quests).run_if(in_state(Screen::InGame)));
+            .add_systems(Update, ((open_start, choose_on_open, show, pick, claim, turn_ways, drag_web, draw, fit_lines.after(crate::ui::widgets::scroll_lists)).chain().after(ScreenSystems), (seed_pins, retire, track).chain(), hear_quests).run_if(in_state(Screen::InGame)));
     }
 }
 
@@ -434,7 +436,21 @@ struct ChapterButton(usize);
 #[derive(Component)]
 struct Chapters;
 #[derive(Component)]
-struct Web;
+pub(crate) struct Web;
+/// The web's quests and lines, inside the well, at its margins (which centre a web smaller
+/// than the well).
+#[derive(Component)]
+pub(crate) struct Canvas {
+    margin: Vec2,
+}
+/// A line from one quest to the next, between their centres on the canvas, drawn only as
+/// far as the well shows it: the interface clips only what is square to it, so a slanted
+/// line is cut to the well here instead of poking out of the book.
+#[derive(Component)]
+pub(crate) struct WebLine {
+    from: Vec2,
+    to: Vec2,
+}
 #[derive(Component)]
 struct QuestNode(String);
 #[derive(Component)]
@@ -458,16 +474,19 @@ const SHARE: Vec2 = Vec2::new(92.0, 76.0);
 /// The chapters' column, and the sidebar at the right with the picked quest's page.
 const CHAPTERS: f32 = 80.0 * PX;
 const SIDEBAR: f32 = 180.0 * PX;
-/// A quest on the web: its cell, and the item or skill drawn in it at twice the size of a
-/// slot's (each of its 16 texels two interface pixels).
-const CELL: f32 = 36.0 * PX;
-const ICON: f32 = 32.0 * PX;
+/// A quest on the web: its cell, and the item or skill drawn in it at one and a half times
+/// a slot's (each of its 16 texels three screen pixels), small enough for a big chapter to
+/// show much of itself at once.
+const CELL: f32 = 28.0 * PX;
+const ICON: f32 = 24.0 * PX;
 /// The quests' least and most step across and down the web; it spreads to fill its well
-/// between them, and a web too big for the well scrolls.
+/// between them, and a web too big for the well is a canvas dragged about inside it.
 const STEP_LEAST: Vec2 = Vec2::new(CELL + 12.0 * PX, CELL + 6.0 * PX);
 const STEP_MOST: Vec2 = Vec2::new(CELL + 90.0 * PX, CELL + 40.0 * PX);
 /// How far the picked quest's glow reaches past it.
-const GLOW: f32 = 4.0 * PX;
+const GLOW: f32 = 3.0 * PX;
+/// How thick the lines between quests are.
+const LINE: f32 = 2.0 * PX;
 
 fn spawn(mut commands: Commands, font: Res<UiFont>) {
     let font = &font.0;
@@ -632,7 +651,7 @@ fn draw(
     settings: Res<Settings>,
     viewer: Res<super::recipes::RecipeViewer>,
     chapters_column: Query<Entity, With<Chapters>>,
-    web: Query<(Entity, &ComputedNode), With<Web>>,
+    mut web: Query<(Entity, &ComputedNode, &mut ScrollPosition), With<Web>>,
     detail: Query<Entity, With<Detail>>,
     mut drawn: Local<Option<(QuestView, u32, Vec<String>, bool, IVec2)>>,
 ) {
@@ -642,11 +661,13 @@ fn draw(
     }
     // The web's room inside its well, as laid out for this window: drawn again when the
     // window changes it.
-    let room = web.single().map_or(Vec2::ZERO, |(_, computed)| (computed.size() * computed.inverse_scale_factor() - Vec2::splat(2.0 * space::GAP)).max(Vec2::ZERO));
+    let room = web.single().map_or(Vec2::ZERO, |(_, computed, _)| (computed.size() * computed.inverse_scale_factor() - Vec2::splat(2.0 * space::GAP)).max(Vec2::ZERO));
     let wanted = (view.clone(), player.quests_rev, settings.pinned_quests.clone(), viewer.book().is_some(), room.as_ivec2());
     if drawn.as_ref() == Some(&wanted) && !locale.is_changed() {
         return;
     }
+    // Opened, or turned to another chapter, the canvas comes to the quest picked.
+    let arrived = drawn.as_ref().is_none_or(|(was, ..)| was.chapter != view.chapter);
     *drawn = Some(wanted);
     let content = &launch.content;
     let font = &font.0;
@@ -686,36 +707,30 @@ fn draw(
     let step = Vec2::new(room.x / columns as f32, room.y / tallest as f32).clamp(STEP_LEAST, STEP_MOST);
     let place = |i: usize| cells[i] * step + (step - Vec2::splat(CELL)) / 2.0;
     let centre = |i: usize| place(i) + Vec2::splat(CELL / 2.0);
-    if let Ok((web, _)) = web.single() {
+    if let Ok((web, _, mut scroll)) = web.single_mut() {
+        let size = Vec2::new(columns as f32, tallest as f32) * step;
+        // Centred in the well by its margins; a web too big for the well has none that way,
+        // and is dragged about in it rather than cut off.
+        let margin = ((room - size) / 2.0).max(Vec2::ZERO);
+        if arrived {
+            let at = view.picked.as_deref().and_then(|name| quests.iter().position(|q| q.name == name)).map_or(Vec2::ZERO, |i| centre(i) - room / 2.0);
+            scroll.0 = at.clamp(Vec2::ZERO, (size - room).max(Vec2::ZERO));
+        }
         commands.entity(web).despawn_children().with_children(|web| {
             if ours == 0 {
                 web.spawn((Localized("quest.empty"), text(font, "", BODY, MUTED)));
                 return;
             }
-            let size = Vec2::new(columns as f32, tallest as f32) * step;
-            // Centred in the well by its margins; a web too big for the well has none that way,
-            // so it scrolls from its top-left rather than being cut off.
-            let margin = ((room - size) / 2.0).max(Vec2::ZERO);
-            let margin = UiRect { left: Val::Px(margin.x), top: Val::Px(margin.y), ..default() };
-            web.spawn(Node { width: Val::Px(size.x), height: Val::Px(size.y), flex_shrink: 0.0, margin, ..default() }).with_children(|area| {
-                // The lines first, under the quests.
+            let canvas = Node { width: Val::Px(size.x), height: Val::Px(size.y), flex_shrink: 0.0, margin: UiRect { left: Val::Px(margin.x), top: Val::Px(margin.y), ..default() }, ..default() };
+            web.spawn((canvas, Canvas { margin })).with_children(|area| {
+                // The lines first, under the quests; each is fitted to what the well shows
+                // of it as the canvas moves (`fit_lines`).
                 for i in 0..ours {
                     for first in before(content, quests[i]) {
                         let Some(j) = quests.iter().position(|q| q.name == first.name) else { continue };
-                        let (from, to) = (centre(j), centre(i));
-                        let length = from.distance(to);
-                        let middle = (from + to) / 2.0;
                         let done = standing(content, &player, quests[j]) == Standing::Done;
-                        let line = Node {
-                            position_type: PositionType::Absolute,
-                            left: Val::Px(middle.x - length / 2.0),
-                            top: Val::Px(middle.y - PX),
-                            width: Val::Px(length),
-                            height: Val::Px(2.0 * PX),
-                            ..default()
-                        };
-                        let turn = UiTransform { rotation: Rot2::radians((to - from).to_angle()), ..default() };
-                        area.spawn((line, turn, BackgroundColor(if done { GOLD } else { MUTED.with_alpha(0.7) })));
+                        let line = Node { position_type: PositionType::Absolute, display: Display::None, height: Val::Px(LINE), ..default() };
+                        area.spawn((line, UiTransform::default(), WebLine { from: centre(j), to: centre(i) }, BackgroundColor(if done { GOLD } else { MUTED.with_alpha(0.7) })));
                     }
                 }
                 for (i, quest) in quests.iter().enumerate() {
@@ -889,6 +904,99 @@ fn draw(
                 }
             }
         });
+    }
+}
+
+/// The part of the line from `from` to `to` inside `view`, if any (Liang and Barsky's way:
+/// the line as `from + t (to - from)`, `t` narrowed by each edge in turn).
+pub(crate) fn clip_line(from: Vec2, to: Vec2, view: Rect) -> Option<(Vec2, Vec2)> {
+    let d = to - from;
+    let (mut enter, mut leave) = (0.0_f32, 1.0_f32);
+    for (p, q) in [(-d.x, from.x - view.min.x), (d.x, view.max.x - from.x), (-d.y, from.y - view.min.y), (d.y, view.max.y - from.y)] {
+        if p == 0.0 {
+            if q < 0.0 {
+                return None;
+            }
+        } else if p < 0.0 {
+            enter = enter.max(q / p);
+        } else {
+            leave = leave.min(q / p);
+        }
+    }
+    (enter < leave).then(|| (from + d * enter, from + d * leave))
+}
+
+/// Fits each line to what the well shows of the canvas, as it is dragged about or drawn
+/// anew: the part inside, turned along the line, or nothing. The well is narrowed by half
+/// a line's thickness so a cut end's corners stay in it too.
+fn fit_lines(web: Query<(Ref<ComputedNode>, Ref<ScrollPosition>), With<Web>>, canvas: Query<&Canvas>, mut lines: Query<(Ref<WebLine>, &mut Node, &mut UiTransform)>) {
+    let Ok((computed, scroll)) = web.single() else { return };
+    if !computed.is_changed() && !scroll.is_changed() && !lines.iter().any(|(line, ..)| line.is_added()) {
+        return;
+    }
+    let Ok(canvas) = canvas.single() else { return };
+    // Where the canvas stands this frame: as scrolled now, within its edges as the layout
+    // will hold it.
+    let scale = computed.inverse_scale_factor();
+    let room = (computed.size() * scale - Vec2::splat(2.0 * space::GAP)).max(Vec2::ZERO);
+    let max = (computed.content_size() - computed.size()).max(Vec2::ZERO) * scale;
+    let corner = scroll.0.clamp(Vec2::ZERO, max).floor() - canvas.margin;
+    let view = Rect::from_corners(corner, corner + room).inflate(-LINE / 2.0);
+    for (line, mut node, mut turn) in &mut lines {
+        let Some((from, to)) = clip_line(line.from, line.to, view) else {
+            if node.display != Display::None {
+                node.display = Display::None;
+            }
+            continue;
+        };
+        let (length, middle) = (from.distance(to), (from + to) / 2.0);
+        let fitted = Node { display: Display::Flex, left: Val::Px(middle.x - length / 2.0), top: Val::Px(middle.y - LINE / 2.0), width: Val::Px(length), ..node.clone() };
+        if *node != fitted {
+            *node = fitted;
+        }
+        let rotation = Rot2::radians((line.to - line.from).to_angle());
+        if turn.rotation != rotation {
+            turn.rotation = rotation;
+        }
+    }
+}
+
+/// Where a drag of the web began, and where the pointer was last.
+#[derive(Default)]
+struct Drag {
+    held: bool,
+    last: Option<Vec2>,
+}
+
+/// Dragging the web's empty canvas with the left button held moves it under the pointer,
+/// within its edges, so the web never leaves the well; a press on a quest picks it instead.
+fn drag_web(
+    buttons: Res<ButtonInput<MouseButton>>,
+    mut moved: MessageReader<CursorMoved>,
+    quests: Query<&Interaction, With<QuestNode>>,
+    mut web: Query<(&mut ScrollPosition, &bevy::ui::RelativeCursorPosition, &ComputedNode), With<Web>>,
+    mut drag: Local<Drag>,
+) {
+    let mut delta = Vec2::ZERO;
+    for event in moved.read() {
+        if let Some(last) = drag.last {
+            delta += event.position - last;
+        }
+        drag.last = Some(event.position);
+    }
+    let Ok((mut scroll, cursor, computed)) = web.single_mut() else { return };
+    if buttons.just_pressed(MouseButton::Left) {
+        drag.held = cursor.cursor_over() && quests.iter().all(|i| *i == Interaction::None);
+    }
+    if !buttons.pressed(MouseButton::Left) {
+        drag.held = false;
+    }
+    if drag.held && delta != Vec2::ZERO {
+        let max = (computed.content_size() - computed.size()).max(Vec2::ZERO) * computed.inverse_scale_factor();
+        let next = (scroll.0 - delta).clamp(Vec2::ZERO, max);
+        if scroll.0 != next {
+            scroll.0 = next;
+        }
     }
 }
 
@@ -1123,6 +1231,28 @@ mod tests {
         assert!(!pins.contains(&names[0]));
         assert!(!toggle(&mut pins, &content, "base:no_such_quest"));
         assert_eq!(pins.len(), most - 1);
+    }
+
+    #[test]
+    fn lines_are_cut_to_the_well() {
+        let view = Rect::new(0.0, 0.0, 100.0, 50.0);
+        // Inside, whole; across an edge, cut at it; across a corner, cut at both; outside,
+        // nothing; along an edge, square to it, nothing past the ends.
+        assert_eq!(clip_line(Vec2::new(10.0, 10.0), Vec2::new(90.0, 40.0), view), Some((Vec2::new(10.0, 10.0), Vec2::new(90.0, 40.0))));
+        assert_eq!(clip_line(Vec2::new(50.0, 25.0), Vec2::new(150.0, 25.0), view), Some((Vec2::new(50.0, 25.0), Vec2::new(100.0, 25.0))));
+        let (from, to) = clip_line(Vec2::new(-50.0, -25.0), Vec2::new(150.0, 75.0), view).unwrap();
+        assert!(from.distance(Vec2::new(0.0, 0.0)) < 1e-4 && to.distance(Vec2::new(100.0, 50.0)) < 1e-4, "{from} {to}");
+        assert_eq!(clip_line(Vec2::new(-10.0, 60.0), Vec2::new(200.0, 300.0), view), None);
+        assert_eq!(clip_line(Vec2::new(-10.0, 80.0), Vec2::new(-5.0, -80.0), view), None);
+        assert_eq!(clip_line(Vec2::new(20.0, -30.0), Vec2::new(20.0, 30.0), view), Some((Vec2::new(20.0, 0.0), Vec2::new(20.0, 30.0))));
+        // Every point of a cut line lies in the well, whichever way it runs.
+        for (from, to) in [(Vec2::new(130.0, -40.0), Vec2::new(-30.0, 90.0)), (Vec2::new(70.0, 120.0), Vec2::new(10.0, -3.0))] {
+            let (a, b) = clip_line(from, to, view).unwrap();
+            for t in [0.0, 0.25, 0.5, 0.75, 1.0] {
+                let p = a.lerp(b, t);
+                assert!(view.inflate(1e-3).contains(p), "{p} of {from}..{to}");
+            }
+        }
     }
 
     #[test]
