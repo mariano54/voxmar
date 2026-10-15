@@ -86,6 +86,9 @@ pub(crate) struct Charging {
     /// Ticks in a row it has made no way against something: a wall it cannot hop, even
     /// where its head met it first.
     pub stalled: u8,
+    /// The tick its run is over by, however little way it made: hopping at a stair it
+    /// cannot climb, or swimming.
+    pub until: u64,
 }
 
 impl Charging {
@@ -709,7 +712,7 @@ impl Server {
         live.winding = false;
         live.tracking = None;
         live.decision.pose = brain::Pose::Idle;
-        live.charging = Some(Charging { player, along: live.body.forward(), left: charge.distance, speed: charge.speed, stun: charge.stun, top: live.body.position.y, stalled: 0 });
+        live.charging = Some(Charging { player, along: live.body.forward(), left: charge.distance, speed: charge.speed, stun: charge.stun, top: live.body.position.y, stalled: 0, until: tick + ticks(charge.seconds() + 0.5) });
         // Held from thinking for the run, and a little over; `charge_ran` ends it sooner.
         live.held_until = live.held_until.max(tick + ticks(charge.seconds() + 0.5));
         live.changed = true;
@@ -728,7 +731,9 @@ impl Server {
         let (size, scale, most) = (species.def.body.size, live.scale, species.def.health);
         let moved = (body.position - before).with_y(0.0).dot(charge.along).max(0.0);
         charge.left -= moved;
-        let stuck = body.against_wall && moved < charge.speed * dt * 0.25;
+        // Stuck only on its feet: in the air between hops up a stair its snout meets the
+        // next riser and it falls back onto the step, which is no wall.
+        let stuck = body.on_ground && body.against_wall && moved < charge.speed * dt * 0.25;
         charge.stalled = if stuck { charge.stalled.saturating_add(1) } else { 0 };
         // A fall: counted from the highest its feet were since it last stood.
         let mut fell = 0.0;
@@ -775,8 +780,9 @@ impl Server {
             });
         if rammed {
             self.end_charge(creature, Some(charge.stun));
-        } else if charge.left <= 0.0 && body.on_ground {
-            // Run out: once on its feet, so a fall it ran off still counts when it lands.
+        } else if (charge.left <= 0.0 || self.tick >= charge.until) && (body.on_ground || body.in_water) {
+            // Run out, or out of time: once on its feet, so a fall it ran off still counts
+            // when it lands, or swimming, which has no feet to come down on.
             self.end_charge(creature, None);
         }
     }

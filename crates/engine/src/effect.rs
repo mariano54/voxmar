@@ -61,6 +61,10 @@ pub struct EffectDef {
     /// default) is an effect that lasts only while `when` holds.
     #[serde(default)]
     pub lingers: f32,
+    /// What ends a lingering effect at once, once its `when` has stopped: wet clothes dry
+    /// by a fire (`Warmed`). None: it lasts its `lingers` seconds out.
+    #[serde(default)]
+    pub ends: Option<Condition>,
     /// Whether the player is told (in chat) when it comes on, with what it does: for the
     /// steps of a ladder they work toward.
     #[serde(default)]
@@ -437,7 +441,7 @@ impl EffectRegistry {
         for def in &mut file.effects {
             qualify(&mut def.name);
             def.replaces.iter_mut().for_each(qualify);
-            if let Some(when) = &mut def.when {
+            for when in def.when.iter_mut().chain(&mut def.ends) {
                 when.qualify_quests(&qualify);
             }
             // Skills are all core's.
@@ -506,7 +510,7 @@ impl EffectRegistry {
             .collect::<Result<_, RegistryError>>()?;
         let mut tags: Vec<&str> = Vec::new();
         for def in &defs {
-            if let Some(when) = &def.when {
+            for when in def.when.iter().chain(&def.ends) {
                 when.home_tags(&mut tags);
             }
         }
@@ -518,7 +522,7 @@ impl EffectRegistry {
         }
         let mut asked: Vec<&str> = Vec::new();
         for def in &defs {
-            if let Some(when) = &def.when {
+            for when in def.when.iter().chain(&def.ends) {
                 when.quests(&mut asked);
             }
         }
@@ -533,7 +537,10 @@ impl EffectRegistry {
             if !(def.lingers.is_finite() && def.lingers >= 0.0) || (def.lingers > 0.0 && def.when.is_none()) {
                 return Err(RegistryError(format!("effect `{}` lingers {} seconds: it takes 0 or more, and a `when` to linger after", def.name, def.lingers)));
             }
-            if let Some(when) = &def.when {
+            if def.ends.is_some() && def.lingers <= 0.0 {
+                return Err(RegistryError(format!("effect `{}` has `ends` but does not linger: only what lingers can end early", def.name)));
+            }
+            for when in def.when.iter().chain(&def.ends) {
                 when.asks(&mut near, &mut held);
             }
         }
@@ -678,11 +685,17 @@ impl EffectRegistry {
     /// The tags effects ask of a home (`HomeHas`): what surveying a home counts.
     /// Tops up `timed` with every effect that lingers whose `when` holds at `situation`:
     /// each kept at no less than its `lingers` seconds, so it lasts that long once it stops
-    /// holding.
+    /// holding; one whose `when` no longer holds and whose `ends` does is gone at once.
     pub fn linger(&self, situation: &Situation, timed: &mut Vec<(EffectId, f32)>) {
         for id in self.ids() {
             let def = self.get(id);
-            if def.lingers <= 0.0 || !def.when.as_ref().is_some_and(|c| c.holds(situation)) {
+            if def.lingers <= 0.0 {
+                continue;
+            }
+            if !def.when.as_ref().is_some_and(|c| c.holds(situation)) {
+                if def.ends.as_ref().is_some_and(|c| c.holds(situation)) {
+                    timed.retain(|(e, _)| *e != id);
+                }
                 continue;
             }
             match timed.iter_mut().find(|(e, _)| *e == id) {
@@ -850,6 +863,33 @@ mod tests {
         assert_eq!(active.len(), 1);
         assert_eq!(effects.modifiers(&active).speed, 1.05);
         assert!(effects.active(&holding, &[]).is_empty(), "held, not worn");
+    }
+
+    /// Rain soaks you, and you stay wet under a roof until you dry off by a fire (`ends`),
+    /// or it wears off; out in the rain by a fire you stay wet.
+    #[test]
+    fn wet_through_you_dry_off_by_a_fire_and_not_before() {
+        let source = r#"(effects: [
+            (name: "soaked", kind: Debuff, title: "Soaked", description: "", when: Some(Rain(0.3)), lingers: 120.0, ends: Some(Any([Warmed, Near("fire", 3)]))),
+        ])"#;
+        let effects = EffectRegistry::new(vec![EffectRegistry::read("core", source).unwrap()]).unwrap();
+        assert_eq!(effects.near_asks(), [("fire".to_owned(), 3)], "what ends it is asked for too");
+        let soaked = effects.find("soaked").unwrap();
+        let (rain, fire) = (Weather { precipitation: 0.6, ..Weather::NONE }, [("fire".to_owned(), 3)]);
+        let mut timed = Vec::new();
+        effects.linger(&situation(&rain, false, 15.0, true), &mut timed);
+        assert_eq!(timed, [(soaked, 120.0)]);
+        effects.linger(&Situation { near: &fire, ..situation(&rain, false, 15.0, true) }, &mut timed);
+        assert_eq!(timed, [(soaked, 120.0)], "out in the rain, a fire does not dry you");
+        effects.linger(&situation(&rain, false, 15.0, false), &mut timed);
+        assert_eq!(timed, [(soaked, 120.0)], "indoors, still wet");
+        effects.linger(&Situation { near: &fire, ..situation(&rain, false, 15.0, false) }, &mut timed);
+        assert!(timed.is_empty(), "indoors by a fire, dry");
+        let quest = r#"(effects: [(name: "x", kind: Debuff, title: "X", description: "", when: Some(Rain(0.3)), lingers: 60.0, ends: Some(Done("dry_kit")))])"#;
+        let quest = EffectRegistry::new(vec![EffectRegistry::read("core", quest).unwrap()]).unwrap();
+        assert_eq!(quest.quests(), ["core:dry_kit"], "a quest in `ends` is qualified by the package too");
+        let bad = r#"(effects: [(name: "x", kind: Debuff, title: "X", description: "", when: Some(Rain(0.3)), ends: Some(Warmed))])"#;
+        assert!(EffectRegistry::new(vec![EffectRegistry::read("core", bad).unwrap()]).is_err(), "only what lingers ends");
     }
 
     #[test]

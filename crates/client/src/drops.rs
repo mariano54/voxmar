@@ -90,6 +90,11 @@ impl Drops {
         self.items.iter().filter(|(_, item)| item.collected.is_none()).map(|(&id, item)| (id, item.stack, item.told))
     }
 
+    /// The items flying to whoever picked them up: id, stack and where they were taken from.
+    pub fn picked_up(&self) -> impl Iterator<Item = (u32, ItemStack, Vec3)> + '_ {
+        self.items.iter().filter_map(|(&id, item)| item.collected.map(|(_, _, from)| (id, item.stack, from)))
+    }
+
     /// The item lying nearest along the look ray within `within` blocks of the eye, and how
     /// far, met by a box `width` across (an item is small, and hard to aim at). The box is
     /// where the item is drawn, which runs a little behind the server's word while it moves.

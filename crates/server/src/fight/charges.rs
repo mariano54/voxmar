@@ -207,6 +207,51 @@ fn a_charge_into_a_wall_dazes_the_charger_and_hops_a_step() {
     assert!((live.mind.cooldown - rest).abs() < 1e-4, "cooldown {} after the daze, not {rest}", live.mind.cooldown);
 }
 
+/// A stair of one-deep steps is no wall: in the air between hops his snout meets the next
+/// riser and he falls back onto the step, and that is not counted as stalled, so he is not
+/// dazed; the charge ends on its time. (How far up he gets is the hop's, `motion::step`.)
+#[test]
+fn a_charge_runs_up_a_stair_of_one_deep_steps() {
+    let mut field = Field::new(Vec3::new(40.5, STAND, 70.0), Vec3::new(40.5, STAND, 36.5));
+    for x in 36..46 {
+        for (i, z) in (40..44).enumerate() {
+            for y in 0..=i as i32 {
+                field.set(IVec3::new(x, FLOOR + 1 + y, z), "base:stone");
+            }
+        }
+        for z in 44..56 {
+            for y in 1..=4 {
+                field.set(IVec3::new(x, FLOOR + y, z), "base:stone");
+            }
+        }
+    }
+    let stun = field.charge().stun;
+    field.sets_off();
+    field.run(4.0);
+    let at = field.at();
+    assert!(!field.charging(), "his charge ended, at {at}");
+    assert!(field.held() < stun, "the stair dazed him ({} s held), at {at}", field.held());
+}
+
+/// A charge into deep water ends once its distance is spent, swimming as on foot: he does
+/// not run on, held from thinking, to the far shore.
+#[test]
+fn a_charge_into_deep_water_ends_when_its_distance_is_spent() {
+    let mut field = Field::new(Vec3::new(40.5, STAND, 90.0), Vec3::new(40.5, STAND, 36.5));
+    for x in 20..62 {
+        for z in 40..96 {
+            field.set(IVec3::new(x, FLOOR, z), "base:water");
+            field.set(IVec3::new(x, FLOOR - 1, z), "base:water");
+        }
+    }
+    let distance = field.charge().distance;
+    field.sets_off();
+    field.run(12.0);
+    let at = field.at();
+    assert!(!field.charging(), "his charge ended in the water, at {at}");
+    assert!(at.z - 36.5 < distance + 4.0, "he ran {} blocks of a {distance}-block charge", at.z - 36.5);
+}
+
 /// A charge runs off a cliff blind, and the fall costs the charger a tenth of its health
 /// for each block past the safe fall; into a pit two deep it falls unhurt, and cannot climb
 /// out after the player at its edge.
