@@ -294,6 +294,9 @@ impl Server {
         creature.home = creature.body.position;
         creature.was_kept = true;
         creature.changed = true;
+        // Wild from here: the traps' next look follows it from where it was let go.
+        let at = creature.body.position;
+        self.catches.arrived(id, at);
         self.tell(Source::Player(player), ChatKind::Info, Words::key("husbandry.released").with("creature", what));
     }
 
