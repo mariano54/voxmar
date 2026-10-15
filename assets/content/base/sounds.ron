@@ -15,11 +15,11 @@
     splash: ["sounds/splash_1.mp3", "sounds/splash_2.mp3", "sounds/splash_3.mp3"],
     // Jingles for events, our own (tools/generate_jingles.py). A package that lists any for
     // an event replaces these; several listed take turns.
-    // A quest finished: a plucked "amen" close, settling home under bells.
+    // A quest finished: a short brass call landing home (IV - V - I), held under a harp.
     quest_done: ["sounds/quest_done_1.ogg"],
     // A finished quest's rewards claimed: coins into the purse and a glint.
     quest_claim: ["sounds/quest_claim_1.ogg", "sounds/quest_claim_2.ogg", "sounds/quest_claim_3.ogg"],
-    // A skill's level reached: a harp run up onto a bright chord.
+    // A skill's level reached: a quick trumpet run up to a bright held chord.
     level_up: ["sounds/level_up_1.ogg"],
     // A milestone level (every tenth, as celebrations.ron says): the grander one, instead.
     level_milestone: ["sounds/level_milestone_1.ogg"],
