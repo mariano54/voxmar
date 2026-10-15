@@ -69,6 +69,7 @@
     "home.tag.flower": "花",
     "station.loaded": "{item}を{count}個のせた。とどまっても離れても、約{minutes}分で仕上がる。",
     "station.loaded_faster": "{words}置き場所のおかげで早く仕上がる。",
+    "station.loaded_from_stores": "{words}うち{count}個は家の収納から。",
     "station.working": "{item}はまだ仕上がっていない。残り約{minutes}分。",
     "station.took": "{item}を{count}個取った。",
     "trap.needs": "これにかかった獲物を取るには{skill}{level}が必要だ。",

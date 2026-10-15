@@ -82,10 +82,16 @@ pub enum Fixed {
     Cover,
     /// 1 with the head under water.
     Underwater,
+    /// How far the middle of the nearest settlement (its square or green) is, across the
+    /// ground, in blocks; [`NO_SETTLEMENT`] with none near.
+    Settlement,
 }
 
+/// The `settlement` axis with no settlement near.
+pub const NO_SETTLEMENT: f32 = 10_000.0;
+
 impl Fixed {
-    pub const ALL: [Fixed; 27] = [
+    pub const ALL: [Fixed; 28] = [
         Fixed::Air,
         Fixed::Sky,
         Fixed::Canopy,
@@ -113,6 +119,7 @@ impl Fixed {
         Fixed::Dust,
         Fixed::Cover,
         Fixed::Underwater,
+        Fixed::Settlement,
     ];
 
     fn name(self) -> &'static str {
@@ -144,6 +151,7 @@ impl Fixed {
             Fixed::Dust => "dust",
             Fixed::Cover => "cover",
             Fixed::Underwater => "underwater",
+            Fixed::Settlement => "settlement",
         }
     }
 }
@@ -162,7 +170,9 @@ pub struct Environment {
 
 impl Environment {
     pub fn new(groups: usize) -> Self {
-        Self { values: vec![0.0; Fixed::ALL.len() + groups], home: 1.0, ..Self::default() }
+        let mut values = vec![0.0; Fixed::ALL.len() + groups];
+        values[Fixed::Settlement as usize] = NO_SETTLEMENT;
+        Self { values, home: 1.0, ..Self::default() }
     }
 
     pub fn get(&self, axis: Fixed) -> f32 {
@@ -231,6 +241,11 @@ pub struct Conditions {
 }
 
 impl Conditions {
+    /// Whether they hold a range on `axis`.
+    pub fn uses(&self, axis: Fixed) -> bool {
+        self.ranges.iter().any(|&(a, _)| a == axis as usize)
+    }
+
     /// How fully the conditions hold, 0..1.
     pub fn weight(&self, env: &Environment) -> f32 {
         let mut weight = self.ranges.iter().map(|&(axis, range)| range.weight(env.values[axis])).product::<f32>();
