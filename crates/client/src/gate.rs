@@ -312,7 +312,7 @@ enum Step {
     /// tell shown. Every exit sweeps her away.
     Boss,
     /// A brown bear struck through a doorway a block across, narrower than its body, with
-    /// the player then two blocks past it: it comes at the wall, lands no blow, gives up and
+    /// the player then two and a half blocks past it: it comes at the wall, lands no blow, gives up and
     /// goes off rather than press the wall.
     Narrow,
     /// A torch held a moment leaves the player Smoky (smoke that clings): its chip shows,
@@ -9461,7 +9461,7 @@ struct NarrowRun {
 
 /// A brown bear behind a wall: a doorway narrower than the bear (a block less than its
 /// measured width, rounded up) cut where it landed, it is struck from the doorway; then,
-/// with the player two blocks past the wall, it comes at the wall, lands no blow, gives up
+/// with the player two and a half blocks past the wall, it comes at the wall, lands no blow, gives up
 /// and goes off (back toward its home) rather than press the wall. What is judged derives
 /// from that setup: it came to the wall (within half a block of the nearest the wall lets
 /// its middle come), and then went more than a block back from its nearest, with no blow
@@ -9473,6 +9473,10 @@ fn narrow(world: &mut World, gate: &mut Gate, now: f32) {
         return;
     };
     let at = gate.feet + NARROW_AT;
+    // Where the player stands to watch: two and a half blocks past the wall's far face, on
+    // the doorway's line. The teleport and the check are both this one point (written to
+    // the hundredth, so `/tp` never takes it for a block and centres it).
+    let past = Vec3::new(gate.narrow.door.x, at.y as f32, at.z as f32 + 3.5);
     // This client's own view of the bear (not the observer's).
     let view = {
         let creatures = world.resource::<crate::creatures::Creatures>();
@@ -9513,7 +9517,7 @@ fn narrow(world: &mut World, gate: &mut Gate, now: f32) {
             net.command(&format!("fill {} {} {} {} {} {} air", at.x - 7, at.y, at.z - 7, at.x + 7, at.y + 4, at.z + 5));
             net.command(&format!("fill {} {} {} {} {} {} stone", at.x - 7, at.y - 1, at.z - 7, at.x + 7, at.y - 1, at.z + 5));
             net.command(&format!("fill {} {} {} {} {} {} stone", at.x - 7, at.y, at.z, at.x + 7, at.y + 2, at.z));
-            net.command(&format!("tp {} {} {}", at.x as f32 + 0.5, at.y, at.z as f32 + 1.5));
+            net.command(&format!("tp {:.2} {:.2} {:.2}", at.x as f32 + 0.5, at.y as f32, at.z as f32 + 1.5));
             // /summon sets the first one 1.8 blocks west of the cell's middle (`summon`):
             // asked two east, it lands about the wall's middle, and two blocks behind it,
             // so a fist from the doorway reaches it (the server measures from the eye to its
@@ -9550,7 +9554,7 @@ fn narrow(world: &mut World, gate: &mut Gate, now: f32) {
                 let net = world.resource::<Net>();
                 net.command(&format!("fill {} {} {} {} {} {} air", start, at.y, at.z, start + door_width - 1, at.y + 2, at.z));
                 // In the doorway, facing the bear across it.
-                net.command(&format!("tp {} {} {}", door.x, door.y, door.z));
+                net.command(&format!("tp {:.2} {:.2} {:.2}", door.x, door.y, door.z));
                 net.command("gamemode survival");
                 net.command("skill hitpoints 60");
                 net.command("heal");
@@ -9568,6 +9572,7 @@ fn narrow(world: &mut World, gate: &mut Gate, now: f32) {
                 if hand.is_none() {
                     info!("gate: narrow: the pack is full, so the bear is struck with what is in hand");
                 }
+                info!("gate: narrow: ready to strike from {me:.2}, the bear at {:.2}", view.position);
                 let fighting = world.resource::<crate::fight::Fighting>();
                 gate.narrow.struck = fighting.struck_count;
                 advance(gate);
@@ -9590,12 +9595,12 @@ fn narrow(world: &mut World, gate: &mut Gate, now: f32) {
             let fighting = world.resource::<crate::fight::Fighting>();
             let new = (fighting.struck_count - gate.narrow.struck) as usize;
             if fighting.struck.iter().rev().take(new).any(|s| s.0 == view.id) {
-                // Struck: the player steps two blocks past the wall, out of its reach, and
+                // Struck: the player steps to `past`, out of its reach, and
                 // it is watched from there.
                 gate.narrow.hurts = fighting.hurt_count;
                 mouse(world, MouseButton::Left, false);
-                let door = gate.narrow.door;
-                world.resource::<Net>().command(&format!("tp {} {} {}", door.x, door.y, at.z as f32 + 3.0));
+                world.resource::<Net>().command(&format!("tp {:.2} {:.2} {:.2}", past.x, past.y, past.z));
+                info!("gate: narrow: struck the bear at {:.2} from {:.2}; to {past:.2}", view.position, world.resource::<LocalPlayer>().position);
                 advance(gate);
             } else if gate.waited_out(NARROW_WAIT) || (blocking.is_some() && waited) {
                 let distance = eye.xz().distance(view.position.xz());
@@ -9614,12 +9619,16 @@ fn narrow(world: &mut World, gate: &mut Gate, now: f32) {
                 fail(world, gate, format!("the bear went out of view (nearest {:.2}, last {:.2}, {} blows landed)", gate.narrow.nearest, gate.narrow.last, gate.narrow.landed));
                 return;
             };
-            // Only once the player stands past the doorway.
-            if (me.z - (at.z as f32 + 3.0)).abs() > 0.3 {
+            // Only once this client's player stands at `past`, within a quarter block across
+            // the ground.
+            if me.xz().distance(past.xz()) > 0.25 {
                 if waited {
-                    fail(world, gate, format!("the player never came to stand past the doorway (at {me:.1})"));
+                    fail(world, gate, format!("the player never came to stand past the doorway: at {me:.2}, sent to {past:.2}"));
                 }
                 return;
+            }
+            if gate.narrow.first.is_none() {
+                info!("gate: narrow: the player stands past the doorway at {me:.2}, the bear at {:.2}", view.position);
             }
             let fighting = world.resource::<crate::fight::Fighting>();
             let new = (fighting.hurt_count - gate.narrow.hurts) as usize;
@@ -9631,8 +9640,8 @@ fn narrow(world: &mut World, gate: &mut Gate, now: f32) {
             gate.narrow.last = distance;
             let (nearest, landed) = (gate.narrow.nearest, gate.narrow.landed);
             // At the wall: its middle within half a block of the nearest the wall lets it
-            // come (half its width behind the wall's face, three blocks from the player).
-            let wall = 3.0 + gate.narrow.width / 2.0;
+            // come (half its width behind the wall's face, which is `past` from the player).
+            let wall = past.z - at.z as f32 + gate.narrow.width / 2.0;
             let came = nearest < wall + 0.5;
             let what = format!("from {first:.2} it came to {nearest:.2} blocks off (the wall lets it to {wall:.2}) and is {distance:.2} off, {landed} blows landed (a bear {:.2} wide, a doorway {} across)", gate.narrow.width, gate.narrow.door_width);
             if landed > 0 {
@@ -9651,7 +9660,7 @@ fn narrow(world: &mut World, gate: &mut Gate, now: f32) {
             let net = world.resource::<Net>();
             net.command("gamemode creative");
             if let Some(bear) = bear {
-                net.command(&format!("tp {} {} {}", bear.x, bear.y, bear.z));
+                net.command(&format!("tp {:.2} {:.2} {:.2}", bear.x, bear.y, bear.z));
                 net.command("creatures kill");
             }
             net.command(&format!("fill {} {} {} {} {} {} air", at.x - 7, at.y, at.z, at.x + 7, at.y + 2, at.z));
