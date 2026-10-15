@@ -34,6 +34,9 @@
         // swap for, unless someone stands where it would shut.
         (name: "open", duration: Instant, requires: [Alive, InReach, Swaps], effects: [Swap]),
         (name: "sleep", duration: Instant, requires: [Alive, InReach, Bed], effects: [Sleep]),
+        // Sit on a seat (a stool, chair, bench or cushion), with nothing to place in hand:
+        // sat until you move off it (effects ask `Seated`).
+        (name: "sit", duration: Instant, requires: [Alive, InReach, Seat], effects: [Sit]),
         (name: "light", duration: Instant, requires: [Alive, InReach, MultiblockCore], effects: [Light]),
         // Use a machine (machines.ron): what is in hand goes in, if it burns it or works it;
         // with nothing it takes, what the machine made comes out.
@@ -53,6 +56,8 @@
         // Use a home station (stations.ron): load it with what is in hand, take what it
         // made, or be told how it goes.
         (name: "use_station", duration: Instant, requires: [Alive, InReach, Station], effects: [UseStation]),
+        // Take what a sprung trap caught (traps.ron), and set it again.
+        (name: "take_from_trap", duration: Instant, requires: [Alive, InReach, SprungTrap], effects: [TakeFromTrap]),
         // Spread a fertiliser in hand on a growing crop: the crops about it grow a stage.
         (name: "fertilise", duration: Instant, requires: [Alive, InReach, Fertilisable], effects: [Fertilise]),
     ],

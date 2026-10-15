@@ -78,6 +78,27 @@ pack can retune or replace all of it.
 | 12 | Inspect or guard | A right click at a creature looks closely at it, unless it is fighting the player (winding up, or blows traded within 6 s, `engaged`) and what is held or worn guards: then it guards. Food or a tool it takes tends it first; a ripe crop is picked before armour in hand goes on. |
 | 13 | Lag | A guard or dodge is judged as of when the player saw the wind-up: by when their message arrived, less their round trip (the server pings each player every second and smooths what comes back), never more than 0.2 s (`lag_allowance`), so a slower connection earns no wider a window. A creature's blow on a player waits that long before it is judged, so their answer has time to come; counters and ripostes count the same way. Breaking blocks is judged by arrival the same way (`actions`). |
 
+## Feel on screen
+
+Oct 14, 2026 (Mariano: "combat sucks ... the sound effects and visual effects are not
+satisfactory, animations are bad"). Everything here is drawn and heard on the client from what
+the server already says; no rule, time or number of the fight changes. The code is
+`client/src/fight_fx.rs` (and `creatures.rs` for bodies, `held.rs` for the hand); every number
+and sound is `core/combat_fx.ron`'s, and the hand's strokes are the texture pack's `held.ron`.
+
+| # | Question | Decision |
+| --- | --- | --- |
+| 1 | A blow landing | A hit-stop: the creature freezes for 0.045 s plus 0.12 s × the share of its health the blow took (at most 0.11 s), shaking a little, the kind of blow scaling it (a beat 1.25×, a flourish 2×, a counter 1.8×). It flashes white, then red, then flinches: pushed back 0.12 of its height and tipped 11° away from the striker, squashed, easing back over 0.22 s. That flinch is weighed (`hit.weigh`): a body of width² × height 0.5 (a wolf) flinches as given, a smaller one more and a bigger one less by the cube root of the ratio (a rabbit 1.8×, a deer 0.8×, a bear 0.63×, held between 0.4× and 1.8×), and a scratch 0.7× up to 1.5× for a blow taking half its health or more. Its position never moves (no knockback, decision 7 above). The swing in hand holds still as long as the creature does, then the hand is knocked back. |
+| 2 | Sparks | A burst of glowing sparks where it was struck (on the side facing the eye) and tufts of its own coat; a shelled creature throws chips of its shell's colour. On the beat more, a flourish three times as many. The particle setting scales them. |
+| 3 | Sounds | Synthesized at startup from layers (a contact click, a body's falling thump, a band of noise for the surface, crackle, rings, swept air), saturated and given a small room, a few takes each. A hit sounds the weapon's style; a big creature's lower, a small one's higher; a shelled one clacks. On the beat a bright tick plays over the hit, so the rhythm is heard; a flourish crunches and shimmers; a counter clashes and rings; a kill thumps deep. Swings whoosh by class (a dagger quick and high, a mace low and long, a bow's string). A miss is air; a blow that hurts thuds; a block knocks; a perfect block rings like a parry. A package may give recordings for any of them. |
+| 4 | Creature strikes | A creature coils through its wind-up and snaps into its strike as the blow lands (at the wind-up's own time, or the server's word if sooner), then settles, by its attack's style: a bite pulls its head back and snaps it forward, claws rear up and swipe their front limbs down, horns and hooves drop the head and drive through, a spell rears and flares. Coiling it plants its feet (it follows where the server has it only `plant` as closely as walking), and the lunge darts the rest of the way (`dart` times as quickly), so the blow comes from where the coil was. After the blow it stands in its `recover` stance, head low and weight back, while the server holds it still for its attack's `recovery`, and is back to standing as that ends: the moment to hit back reads as one. The coil is the tell to block or dodge by. The gate's "combat feel: fights" checks every strike seen planted, coiled deep and, when it stood its recovery out, showing its recover stance. |
+| 5 | Stagger | A creature staggered (a perfect block, or a mace's daze cutting its wind-up short) is told to the client as its tell `STAGGERED` for as long as the server holds it. A daze cuts its wind-up short with no strike (an interrupted wind-up no longer reads as the blow landing); a perfect block parries a blow that came, which may show before it reels. It reels where it stands: over `ease` (0.15 s) it eases into its `stagger` stance, head drooped, a slight crouch and its weight back, whatever of its strike still showed giving way to it, and its body sways side to side (0.22 radians, 1.6 times a second); it eases back out as long once the stagger is over. Dizzy sparks (in its coat's colour unless given) circle up over its head and it thuds with a dazed wobble (`stagger` sound), fainter further off. One first seen staggered reels, unheard. The gate's "combat feel: stagger" checks that the bear the perfect block staggers is shown staggered, its stance shown whole (by game time: all the way in after `ease`), and takes the shot `creature-stagger`; client tests judge that a daze shows no blow. |
+| 6 | Deaths | A killing blow freezes 0.12 s and dips the view; once the freeze is over the body topples onto its side over its `death.fall` (0.3 s) and lies there a beat, then over the last 12% of its time to its loot sinks and shrinks away, and goes up in a puff of smoke where it lay as its loot bursts out (the server's `death.drops_after`, by the game's clock from the blow, so the freeze never puts the puff behind the loot). It must lie at least 0.3 s past the freeze and its going (`LIES`, checked at launch: `FightLook::unlain`), so a pack whose death `seconds` is under 0.6 with the default 0.3 s fall no longer loads. Gate: the RangedFeel deer is shot lying fallen (`creature-death`), drawn rolled all the way over at its full size and not sinking, and must puff within a step and a half of its loot. |
+| 7 | The player | A blow that hurts tips the view 4° toward the side it came from and reddens the screen's edges; a block jolts the hand and shakes the view; a perfect block throws sparks before the eyes. A flourish, counter or kill dips the view. Screen shake in the settings turns every movement of the view off. |
+| 8 | The hand | Every attack stroke winds up before it cuts (`wind` in `held.ron`): a sword draws back and slashes across, a dagger and a spear draw back and thrust, a club and an axe rise overhead and come down, a bow draws to the cheek and looses, a sling swings up behind the shoulder and whips forward overhand. |
+| 9 | Shots | The server judges a sling or bow shot as its wind-up ends, along a clear line from the eye (no missile exists there). On this side the missile is loosed from the hand as the draw lets go, timed so it reaches the creature as the blow is judged (never before half the draw), and kicks the hand back. It flies with a slight arc (a stone 34 blocks a second, flat; an arrow 52, arcing more), leaving a fading streak, and where it arrives throws a puff (the creature's coat, else dust) with its own sound: a stone smacks a body and clatters on the ground, an arrow thocks into a body and sticks quivering in the ground. A shot the server says missed sails on past the creature to land beyond. A shot whose swing is cancelled before its blow (the guard raised, a dodge, or what is held changed) strikes nothing, as the server judges no blow: one not yet loosed never is, and one flying sails on past and is gone where it lands without a puff or a sound (the gate's "shot cancel", shot `shot-cancel`). Each class that takes ammunition must have its shot (`shots` in `combat_fx.ron`, checked at launch). |
+| 10 | Every blow told | Oct 14 (the first fights audit). Every creature's wind-up is told by ear as well as by its coil: its own sound if it has one (a wolf snarls, a badger hisses, a fox yips, an aurochs bellows, a bear roars), else its style's growl, draw or hum. Each swells to its loudest as the blow lands. Only a boss's dips the music; the rest are fainter further off (full within 6 blocks). Every blow must have one, checked at launch, and every wind-up is at least 0.3 s (`fight_fx::READABLE`), with its sound peaking no later than the blow. |
+
 ## Armour and shields
 
 Oct 7, 2026 (the wiki's "Items" tab for sets, weights and Defence levels, its material tiers
@@ -130,3 +151,49 @@ lose the Keepsake.
 
 Still to come in phase 4, in order: food timing; ranged weapons, ammunition and projectiles; then modifications (P42). The
 vows come with the temple rites.
+
+## First fights audit
+
+Oct 14, 2026. The bot is `first_fights_measured` in `server/tests/gameplay.rs`; run it by hand with `--ignored --nocapture`. It plays a new player with a stone sword at Attack 5 and 60 health, swinging on the sword's 0.6 s cooldown and never guarding or dodging, against each first-age creature until it dies. The cloud run:
+
+| Creature | Wind-up | Kill | Swings | Blows back (damage) | Read 0.3 s or more |
+| --- | --- | --- | --- | --- | --- |
+| Wild boar | none (it flees) | 21.8 s | 11 | 0 (0) | none to read |
+| Badger | 0.35 s | 5.6 s | 10 | 5 (8) | 5 of 5, shortest 0.40 s |
+| Fox | 0.35 s | 2.0 s | 4 | 1 (0) | 1 of 1, shortest 0.40 s |
+| Aurochs | 0.70 s | 5.0 s | 9 | 3 (6) | 3 of 3, shortest 0.75 s |
+| Wolf | 0.50 s | 15.8 s | 27 | 13 (27) | 13 of 13, shortest 0.55 s |
+| Brown bear | 0.70 s | 61.5 s | 103 | 35 (85) | 35 of 35, shortest 0.74 s |
+
+Every wind-up was on screen 0.4 s or more before its blow; the server sends a new pose at once. The gap was sound: before this change only bosses' wind-ups made a sound, so a blow from a creature at the edge of the view or behind came with no warning. Now every blow is told (decision 9 above). Wind-up times, and so the server's timing, are unchanged. The wolf (27 damage over 16 s, more than a new player's 20 health) and the bear are not fights for a new player who stands and trades blows. Their numbers are left for balance.
+
+## First-age fight balance
+
+Oct 14, 2026. The first fights audit above played a bot at Attack 5 with 60 health. A brand-new player has 20 health, Attack 1 and Defence 1, and fared much worse. The bot `first_age_fights_balanced` in `server/tests/gameplay.rs` plays that player. It runs on an open floor walled round, chases on foot at a sprint, and swings a stone sword on its cooldown whenever the creature is in reach. It fights each creature twice: once never guarding, and once raising the guard just before every other wind-up lands. Run it by hand with `--ignored --nocapture`; `FIGHT_ONLY`, `FIGHT_RUNS` and `FIGHT_GUARD` narrow it. The cloud runs, averaged over 4 runs before and 6 after. The wolf's open fight after is 8 runs at its final health of 13; its guarding fight was measured at 14, one point harder:
+
+| Creature | Before, open | Before, guarding | After, open | After, guarding |
+| --- | --- | --- | --- | --- |
+| Wild boar | killed in 6.6 s, chase 1.9 s (worst 7.3 s) | 8.6 s, chase 1.9 s | 7.7 s, chase 1.4 s | 6.1 s, chase 0.1 s |
+| Badger | 3 of 4 died, 12% health left | 88% left | 62% left (worst 30%) | 92% left |
+| Fox | 88% left | 92% left | 78% left | 97% left |
+| Aurochs | 70% left | 100% left | 61% left (worst 45%) | 90% left |
+| Wolf | 4 of 4 died | 86% left | 43% left (worst 15%), none died | 93% left |
+| Brown bear | 4 of 4 died | 4 of 4 died | 6 of 6 died | 4 of 6 died |
+
+What changed, all in `creatures.ron`:
+
+- **Wolf**: health 16 to 13, defence 8 to 4, damage 2-4 to 1-3. Its level (12), speed, wind-up and pack size are unchanged. A pack at night is still a reason to be home by the fire.
+- **Badger**: defence 7 to 3, damage 1-3 to 1-2, and a blow every 1.4 s instead of 1.1 s. Its wind-up is unchanged.
+- **Wild boar**: it runs at 5.4 instead of 6.0 blocks a second, under a sprint's 6.1, so a chase closes.
+- **Brown bear**: it now lives in the cold pine woods and the mountains, never as warm as where a new player starts. A bear's comfort ends at 8 degrees, and the world's spawn is open temperate grassland at 8 to 20 degrees. Its fight is unchanged, so a bear met later is still a danger to avoid. A player who guards well beat one in 2 of 6 runs.
+- The fox and the aurochs are unchanged. Their numbers moved only with the rolls: the server rolls by its tick, and the runs before mostly repeated the same rolls, while the runs after each start a little later.
+
+Every wind-up is still 0.3 s or more. `engine/tests/first_fights.rs` holds these targets on the content's own rolls:
+
+- a new player beats a wolf without guarding with 15% to 45% of their health left;
+- a badger and a fox are easy;
+- an aurochs is fair;
+- a boar runs at least half a block a second slower than a sprint;
+- no brown bear lives at any temperature a new player starts in, and none can be beaten by a new player.
+
+A new player's kills now take 6 to 12 s; the design lane's level audit assumed 5.4 to 9 s. A wolf has 3 fewer health points, so its kill gives 12 fewer Attack and 4 fewer Hitpoints experience. No experience rate changed.

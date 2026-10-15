@@ -224,7 +224,7 @@ encoded as MP3. The files are in `assets/content/base/sounds/` and are listed in
 | `thunder_near_1.mp3`, `thunder_middle_1.mp3` | th_loud.wav | Pingel | https://freesound.org/s/2689/ |
 | `thunder_near_2.mp3`, `thunder_middle_2.mp3` | thunder crack.wav | cognito perceptu | https://freesound.org/s/347853/ |
 | `thunder_far_1..3.mp3` | Dry storm thunders | fran_marenco | https://freesound.org/s/796529/ |
-| `swim_1..6.mp3` | water movements swimming around various splashes random.flac | kyles | https://freesound.org/s/637958/ |
+| `swim_2.mp3`, `swim_3.mp3`, `swim_4.mp3`, `swim_6.mp3` | water movements swimming around various splashes random.flac | kyles | https://freesound.org/s/637958/ |
 | `splash_1..3.mp3` | Foley_Natural_Water_Jump_Mono.wav | Nox_Sound | https://freesound.org/s/585744/ |
 | `waterfall_1..3.mp3` | Waterfall sound. | Tom_Kaszuba | https://freesound.org/s/660255/ |
 | `hail_1..3.mp3` | Hail and Rain in the Courtyard | qubodup | https://freesound.org/s/162213/ |
@@ -289,13 +289,13 @@ farm recordings.
 | `horse/` alert_1, idle_4, idle_5 | G38-16-Four Horse Snorts.wav | craigsmith | https://freesound.org/people/craigsmith/sounds/437111/ |
 | `bat/` idle_1, idle_2, idle_3, idle_4 | G12-02-Bats Chirping.wav | craigsmith | https://freesound.org/people/craigsmith/sounds/437934/ |
 | `croc/` alert_1, alert_2, attack_1, attack_2, call_1, hurt_1 | S27-21 Alligator hiss twice.wav | craigsmith | https://freesound.org/people/craigsmith/sounds/675513/ |
-| `rabbit/` graze_1, graze_2, graze_3, graze_4, graze_5, graze_6 | A rabbit is eating a cucumber | davi-sh | https://freesound.org/people/davi-sh/sounds/482732/ |
+| `rabbit/` graze_1, graze_2, graze_3, graze_4 | A rabbit is eating a cucumber | davi-sh | https://freesound.org/people/davi-sh/sounds/482732/ |
 | `duck/` alert_1, alert_2, hurt_2, idle_3, idle_4, idle_5 | Duck quacking.mp3 | DigPro120 | https://freesound.org/people/DigPro120/sounds/558858/ |
 | `grazer_large/` graze_1, graze_2, graze_3, rest_1, rest_2 | Cow Breathing and Chewing | elricadavis | https://freesound.org/people/elricadavis/sounds/764587/ |
 | `cattle/` call_1, death_1 | Cow mooing in south of France (Limousin) | felix.blume | https://freesound.org/people/felix.blume/sounds/163727/ |
 | `horse/` call_1, death_1 | Horse neigh | felix.blume | https://freesound.org/people/felix.blume/sounds/385947/ |
 | `deer/` alert_1, alert_2, alert_3 | Deer_Bark_5_s | ferventtorpor | https://freesound.org/people/ferventtorpor/sounds/696776/ |
-| `hedgehog/` idle_1, idle_2, idle_3, idle_4, idle_5 | Hedgehog smell and run.mp3 | ffdown | https://freesound.org/people/ffdown/sounds/570301/ |
+| `hedgehog/` idle_1, idle_2, idle_3, idle_5 | Hedgehog smell and run.mp3 | ffdown | https://freesound.org/people/ffdown/sounds/570301/ |
 | `hedgehog/` alert_1, alert_2, alert_3, alert_4, alert_5 | Angry hedgehog sniffing 1 | fthgurdy | https://freesound.org/people/fthgurdy/sounds/528183/ |
 | `deer/` call_1, call_2, call_3, ready_4 | Bellowing deer - Animal - Nature - Hirsch - Röhren - Tiere - Wald | IchBinChrist | https://freesound.org/people/IchBinChrist/sounds/407631/ |
 | `croc/` idle_1, idle_2, idle_3 | Tiny Croc Chirp | iwanPlays | https://freesound.org/people/iwanPlays/sounds/511430/ |
@@ -432,6 +432,31 @@ Kenney anyway. Licence checked in the pack's License.txt on 5 October 2026. Unch
 | --- | --- |
 | `assets/ui/sounds/micro_switch_click.ogg` | `switch13.ogg` |
 | `assets/ui/sounds/micro_switch_item.ogg` | `switch14.ogg` |
+
+## FluidR3 GM sound font (the quest and level fanfares)
+
+The quest-finished, level-up and tenth-level fanfares (`assets/content/base/sounds/quest_done_1.ogg`,
+`level_up_1.ogg`, `level_milestone_1.ogg`) are our own tunes, written as notes in
+`tools/generate_jingles.py` and played offline by FluidSynth from the FluidR3 General MIDI
+sound font, Copyright (c) 2000-2002, 2008 Frank Wen and (c) 2008 Toby Smithe, released under
+the MIT licence (the font's README and COPYING; checked in the Ubuntu fluid-soundfont-gm
+package on 14 October 2026). The font itself is not shipped.
+
+> Permission is hereby granted, free of charge, to any person obtaining a copy of this
+> software and associated documentation files (the "Software"), to deal in the Software
+> without restriction, including without limitation the rights to use, copy, modify, merge,
+> publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons
+> to whom the Software is furnished to do so, subject to the following conditions:
+>
+> The above copyright notice and this permission notice shall be included in all copies or
+> substantial portions of the Software.
+>
+> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+> INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR
+> PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE
+> FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+> OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+> DEALINGS IN THE SOFTWARE.
 
 ## Fusion Pixel Font (Japanese text)
 

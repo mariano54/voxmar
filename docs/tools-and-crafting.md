@@ -60,6 +60,15 @@ the bigger grid, for as long as you are within reach of it and the screen is ope
 Anything bigger than two by two, or with more than four ingredients, needs a table; the
 server checks.
 
+A recipe may be made only `near` a block with a tag, within a player's reach
+(`craft::tags_near`, the same for the server and the client's prediction): where the grid
+holds both that recipe and one made anywhere, the one near the block is made, and away from
+it the plain one. The **chopping block** (`blocks_workshop.ron`; flint over any log,
+Crafting 2) is the first: a log split by it gives six planks, not the grid's four, so it
+pays back the log it took after two. The recipe viewer shows the block beside the grid and
+"Near a Chopping Block". A mod adds a workshop block by giving a block a tag and a recipe
+`near: "<tag>"`; the load refuses a tag no block has.
+
 A cell or ingredient can accept several items: `tag:log` takes any log, `coal_ore|charcoal`
 either (`Recipe::alternatives`; the viewer shows the first). Torches use it.
 
@@ -143,8 +152,9 @@ you wake after dying until a hearth gives you a home: right click it to sleep
 vials and kiln bricks are made of at the grid. The Crucible Kiln, the Farm age's gate, is a multiblock:
 a crucible (kiln bricks round a clay pot) ringed with kiln bricks, with a pillar on each
 corner. A crucible smelts only in a standing kiln with an unexpired paid fire:
-copper ore into ingots, and a bronze blend (three copper ingots and a tin ore) into
-bronze, all Engineering, never burnt (`stop_burning: 0`). To light a cold kiln,
+copper ore into ingots, and three copper ingots held with a tin ore carried into four
+bronze (a station recipe may take several of what is held, `uses`, and other items
+besides, `with`, and make several, `count`), all Engineering, never burnt (`stop_burning: 0`). To light a cold kiln,
 hold 32 charcoal or 24 coal and right-click the crucible. Lighting consumes the charge
 and quests count it (`Lit("crucible_kiln", 1)`). Its fire uses the fuel times in
 `machines.ron`, survives reload, and goes out when it expires or a required piece is
@@ -162,8 +172,17 @@ Mariano, 2026-10-07: one item per material or part, each with several ways to ge
 thing. Every warm pelt is fur (a bear gives two), rabbit hide is hide, duck eggs are eggs,
 bear fat is lard, bright feathers are feathers, claws are fangs, glimmer dust is moon dust;
 fired clay replaces unfired pots, unfired vials and fired bricks, and tin ore goes straight
-into the bronze blend. Flint comes from gravel, one break in eight (tools.ron's `instead`;
+into bronze at the crucible (Oct 14: the bronze blend between them is gone). Flint comes from gravel, one break in eight (tools.ron's `instead`;
 gravel a player placed gives none).
+
+Raw and cooked rabbit and chicken were the same meat (Cooking 1, the same experience and
+healing) and are **small game** now (Oct 14). A package's blocks file lists what it renamed
+or merged, old name to new (`renamed: {"raw_rabbit": "raw_small_game"}`), and an older save
+loads those items, in slots, pouches, on the ground and on stations, as the new one. Load
+refuses a rename to a block that does not exist, or of a name a block still has. Shrimp, which
+were minnows in all but name (level, experience, healing, weight), are minnows too, and
+minnows bite in any water. Frog, also Cooking 1 and healing 4 but teaching less, is small
+game too: a frog drops it and a heron still favours it.
 
 ## Dying
 

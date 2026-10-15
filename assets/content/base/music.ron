@@ -10,12 +10,50 @@
     volume: 0.26,
     // Borrowed tracks' gain relative to Voxmar's own.
     borrowed_volume: 1.0,
+    // Each of Voxmar's own tracks is brought to this loudness (dB below full scale, the RMS
+    // of all of it) by how loud it was made, below, so none is much louder than the next.
+    loudness: -18.0,
+    // How loud each own track was made, by its path under `assets/music`. A test measures
+    // the files again and says what to write for a track added or changed.
+    levels: {
+        "suno/moonlit_quest.mp3": -18.0,
+        "suno/moonlit_quest_2.mp3": -18.1,
+        "suno/quiet_sky.mp3": -17.9,
+        "suno/skyward_serenity.mp3": -18.2,
+        "lyria/dawn_meadow.mp3": -14.7,
+        "lyria/highland_wind.mp3": -14.7,
+        "lyria/lantern_village.mp3": -14.7,
+        "lyria/old_forest.mp3": -14.7,
+        "lyria/rain_on_stone.mp3": -14.7,
+        "lyria/starlit_night.mp3": -14.7,
+        "elevenlabs/round4/desert/01-sandstone-ruins-in-warm-evening-light.mp3": -17.7,
+        "elevenlabs/round4/desert/02-golden-dunes-at-sunset.mp3": -19.6,
+        "elevenlabs/round4/desert/03-wind-carved-canyons-at-dawn.mp3": -26.0,
+        "elevenlabs/round4/fantasy/01-floating-islands-drifting-above-the-clou.mp3": -17.4,
+        "elevenlabs/round4/fantasy/02-a-fairy-village-in-the-roots-of-a-great-.mp3": -15.3,
+        "elevenlabs/round4/fantasy/03-a-crystal-library-hidden-in-old-ruins.mp3": -24.0,
+        "elevenlabs/round4/forest/01-a-misty-pine-forest-at-dawn.mp3": -20.9,
+        "elevenlabs/round4/forest/03-a-warm-cabin-deep-in-the-woods.mp3": -15.5,
+        "elevenlabs/round4/snow/01-a-frozen-lake-at-dusk.mp3": -18.5,
+        "elevenlabs/round4/snow/02-a-quiet-mountain-hut-on-a-winter-night.mp3": -16.2,
+        "elevenlabs/round4/snow/03-frost-glittering-on-a-still-morning.mp3": -23.9,
+        "elevenlabs/round5/desert/boss-01-the-guardian-of-a-buried-tomb.mp3": -16.8,
+        "elevenlabs/round5/fantasy/boss-01-a-duel-with-a-rogue-archmage-in-a-floati.mp3": -15.0,
+        "elevenlabs/round5/forest/boss-01-a-corrupted-beast-stalking-the-deep-wood.mp3": -15.4,
+        "elevenlabs/round5/general/01-a-peaceful-village-square.mp3": -24.6,
+        "elevenlabs/round5/general/02-a-cozy-inn-where-travelers-rest.mp3": -17.2,
+        "elevenlabs/round5/general/03-a-quiet-moment-between-adventures.mp3": -27.0,
+        "elevenlabs/round5/general/05-a-calm-harbor-town.mp3": -14.9,
+        "elevenlabs/round5/snow/boss-01-a-frost-giant-on-a-frozen-glacier.mp3": -16.3,
+    },
     // Seconds before the title screen's first track.
     first_menu_delay: (2.0, 6.0),
     // Seconds of quiet between tracks in a world (and before its first), so music comes
-    // now and then, as Minecraft's does (10 to 20 minutes), not all the time; and in the
-    // menus.
-    gap: (600.0, 1200.0),
+    // now and then, not all the time; and in the menus. Five to ten minutes (7.5 on
+    // average; it was Minecraft's 10 to 20 until 15 Oct, which Mariano found too rare):
+    // with tracks about 2.8 minutes long, a 20-minute stretch holds about 4.5 minutes of
+    // music, nearly twice the 2.4 it did, and still mostly quiet.
+    gap: (300.0, 600.0),
     menu_gap: (180.0, 420.0),
     // As a track starts, its name and category show small at the top right for this many
     // seconds, fading in and out over `fade`.

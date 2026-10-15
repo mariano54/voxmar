@@ -103,6 +103,14 @@ impl Server {
     /// Tells `player` that what they tried was refused, and why: the interface shows it
     /// with its other refusals rather than as a console line.
     pub(crate) fn refuse(&self, player: PlayerId, why: Words) {
+        // Every reason the server refuses with is listed in `refusals.ron`, which checks
+        // each has words in every language.
+        if let Words::Key(key, _) = &why
+            && !self.content.refusals.sent(key)
+        {
+            debug_assert!(false, "refused with `{key}`, which refusals.ron does not list under `sent`");
+            tracing::warn!("refused with `{key}`, which refusals.ron does not list under `sent`");
+        }
         if let Some(player) = self.players.get(&player) {
             player.connection.send(ServerMessage::Refused { why });
         }
@@ -183,6 +191,7 @@ impl Server {
             Run::Clear => self.clear(id, args),
             Run::Effect => self.effect_command(id, args),
             Run::Kill => self.kill_command(id),
+            Run::Heal => self.heal_command(id),
             Run::Op => self.op_command(args, true),
             Run::Deop => self.op_command(args, false),
             Run::Drop => self.drop_command(id, args),
@@ -483,7 +492,7 @@ impl Server {
     /// The biome the player stands in, and what makes it.
     /// `/summon <creature> [count]`: creatures on the ground a few blocks in front of the
     /// player.
-    fn summon(&mut self, id: Source, args: &[String]) -> Reply {
+    pub(crate) fn summon(&mut self, id: Source, args: &[String]) -> Reply {
         // `held` last stands them still for a minute from the tick they arrive, as
         // `/creatures hold` would: a hold sent after would find them already moved.
         let (args, held) = match args {
@@ -698,11 +707,11 @@ impl Server {
     /// one lacks, judged as if the player stood in it.
     fn home_command(&self, id: Source) -> Reply {
         let player = self.players.get(&Self::me(id)?).ok_or_else(|| Words::key("command.error.nobody_to_give_to"))?;
-        let Some(home) = player.home.or(player.bed) else { return Err(Words::key("home.none")) };
+        let Some(home) = player.home_spot(&self.lit) else { return Err(Words::key("home.none")) };
         let anchor = home.floor().as_ivec3();
         let survey = self.survey_around(anchor, Some(Self::me(id)?));
         let calm = voxmar_engine::weather::Weather::NONE;
-        let situation = voxmar_engine::effect::Situation { felt: 0.0, warmed: false, outdoors: self.open_sky(anchor + IVec3::Y * 2), weather: &calm, biome: "", biome_tags: &[], home: Some(&survey), done: &player.quests_done, held: &[], near: &[] };
+        let situation = voxmar_engine::effect::Situation { felt: 0.0, warmed: false, outdoors: self.open_sky(anchor + IVec3::Y * 2), weather: &calm, biome: "", biome_tags: &[], home: Some(&survey), done: &player.quests_done, held: &[], near: &[], seated: false };
         let effects = &self.content.effects;
         let name = |effect| {
             let def = effects.get(effect);
@@ -995,6 +1004,16 @@ impl Server {
             player.connection.send(ServerMessage::Died);
         }
         Ok(Words::key("command.kill"))
+    }
+
+    fn heal_command(&mut self, source: Source) -> Reply {
+        let player = self.players.get_mut(&Self::me(source)?).ok_or_else(|| Words::key("command.error.nobody_to_give_to"))?;
+        if !player.health.alive() {
+            return Err(Words::key("command.heal.dead"));
+        }
+        player.health.current = player.health.max;
+        player.changed(voxmar_engine::traits::HEALTH);
+        Ok(Words::key("command.heal"))
     }
 
     fn grow_command(&mut self, source: Source, args: &[String]) -> Reply {

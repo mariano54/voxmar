@@ -21,7 +21,7 @@ use voxmar_protocol::{
 };
 
 use crate::{Limits, Server};
-use crate::save::{GameMode, SavedPlayer};
+use crate::save::{Draw, Draws, GameMode, SavedPlayer};
 
 pub struct Player {
     pub id: PlayerId,
@@ -74,6 +74,9 @@ pub struct Player {
     pub home: Option<Vec3>,
     /// The bed (a sleeping bag) last slept in, where they wake without a home.
     pub bed: Option<Vec3>,
+    /// Whether their home hearth needs no lighting again from an older save
+    /// (`hearth::kindle_home`): new players' and those already seen to.
+    pub kindled: bool,
     pub buried: bool,
     /// Everything the player has discovered (`journal`).
     pub journal: voxmar_engine::journal::Journal,
@@ -124,21 +127,51 @@ pub struct Player {
     /// The last tick a blow fell between them and a creature, either way (prayer points
     /// come back only after a calm, `prayers`).
     pub last_blow: u64,
+    /// The last tick a wound fell on them (`Player::wound`: a blow, a fall, a sting; not the
+    /// cold or heat wearing at them): no sleeping off a fight just had (`survival.ron`'s
+    /// `sleep_after_hurt`).
+    pub hurt_at: Option<u64>,
     /// Prayer points and the prayers on, and what the player was last told of them.
     pub praying: voxmar_engine::prayer::Praying,
+    /// Lines the player has cast, which numbers each cast's draw (`Server::fish`).
+    pub casts: u64,
+    /// What the player's other rolls are numbered by (`Draws::next`): strikes, blows taken,
+    /// feeds and cooks.
+    pub draws: Draws,
+    /// The player's own share of the world's draw key (`player_draw_key`), so two players
+    /// casting the same count into the same water draw apart, whatever connection each has.
+    pub draw_key: u64,
     pub prayers_sent: Option<(u16, u16, Vec<voxmar_engine::prayer::PrayerId>)>,
     /// Owner-replicated traits changed since they were last sent.
     pub dirty: Vec<TraitDecl>,
     pub sent: FxHashSet<ColumnPos>,
     /// Dropped items this player has been told about.
     pub items_seen: FxHashSet<u32>,
+    /// What their kept animals laid into the home's stores (`Product::nests`), by item
+    /// name, not yet told: they are told once home.
+    pub nested: Vec<(String, u32)>,
 }
 
 impl Player {
-    /// The home block as `Vitals::home` tells it: the lit hearth, else the bed last slept
-    /// in, stored as the point a block above where the player stands on waking.
-    pub fn home_block(&self) -> Option<voxmar_engine::glam::IVec3> {
-        self.home.or(self.bed).map(|at| (at - Vec3::Y).floor().as_ivec3())
+    /// The player's next two draws of `kind`, by their draw key and their count of that
+    /// kind (`Draws`), counted.
+    pub(crate) fn draw(&mut self, kind: Draw) -> [f32; 2] {
+        let key = self.draw_key;
+        self.draws.next(key, kind)
+    }
+
+    /// Where home is, the point a block above where the player stands on waking: the
+    /// hearth they made home while it burns (in `lit`, by its core), else the bed they last
+    /// slept in. A hearth broken or gone cold is no home; one from a save made before
+    /// hearths kept their fire is home until it is lit again for them (`kindle_home`).
+    /// Respawn, `/home`, the HUD, home effects and stores and wanderers all ask here.
+    pub fn home_spot(&self, lit: &rustc_hash::FxHashMap<voxmar_engine::glam::IVec3, crate::hearth::Lit>) -> Option<Vec3> {
+        self.home.filter(|&at| !self.kindled || lit.contains_key(&(at - Vec3::new(0.5, 1.0, 0.5)).round().as_ivec3())).or(self.bed)
+    }
+
+    /// The block home stands on (`home_spot`), as `Vitals::home` tells it.
+    pub fn home_block(&self, lit: &rustc_hash::FxHashMap<voxmar_engine::glam::IVec3, crate::hearth::Lit>) -> Option<voxmar_engine::glam::IVec3> {
+        self.home_spot(lit).map(|at| (at - Vec3::Y).floor().as_ivec3())
     }
 
     pub fn new(id: PlayerId, connection: ServerConnection, spawn: Vec3, view_distance: i32, tick: u64, max_health: u8, limits: &Limits) -> Self {
@@ -170,6 +203,7 @@ impl Player {
             health_base: 0,
             home: None,
             bed: None,
+            kindled: true,
             buried: false,
             journal: Default::default(),
             quests_done: Vec::new(),
@@ -196,11 +230,16 @@ impl Player {
             ping: None,
             round_trip: None,
             last_blow: 0,
+            hurt_at: None,
             praying: Default::default(),
+            casts: 0,
+            draws: Draws::default(),
+            draw_key: 0,
             prayers_sent: None,
             dirty: vec![traits::HEALTH, traits::INVENTORY, traits::SKILLS, traits::VITALS],
             sent: FxHashSet::default(),
             items_seen: FxHashSet::default(),
+            nested: Vec::new(),
         }
     }
 
@@ -213,7 +252,7 @@ impl Player {
     }
 
     pub fn eye(&self) -> Vec3 {
-        self.position + Vec3::Y * dims::EYE_HEIGHT
+        voxmar_engine::vitals::eye(self.position, dims::EYE_HEIGHT, self.vitals.seated)
     }
 
     /// Where the player looks.
@@ -253,6 +292,15 @@ impl Player {
     }
 
     /// Gives timed effects (eaten food's), topping up any it has to the longer time.
+    /// `amount` health taken by a wound at `tick` (a blow, a fall, a sting), which keeps them
+    /// from sleeping a while even if it heals back at once; true if it killed them.
+    pub fn wound(&mut self, amount: u8, tick: u64) -> bool {
+        if amount > 0 {
+            self.hurt_at = Some(tick);
+        }
+        self.health.damage(amount)
+    }
+
     pub fn give_effects(&mut self, given: &[(EffectId, f32)]) {
         for &(effect, seconds) in given {
             match self.timed_effects.iter_mut().find(|(e, _)| *e == effect) {
@@ -275,11 +323,14 @@ impl Player {
             effects: self.timed_effects.iter().map(|&(id, left)| (effects.get(id).name.clone(), left)).collect(),
             home: self.home.map(|h| h.to_array()),
             bed: self.bed.map(|b| b.to_array()),
+            kindled: self.kindled,
             journal: self.journal.entries().cloned().collect(),
             quests: self.quests_done.clone(),
             quests_claimed: self.quests_claimed.clone(),
             tallies: { let mut t: Vec<(String, u32)> = self.tallies.iter().map(|(k, &v)| (k.clone(), v)).collect(); t.sort(); t },
             prayer_points: Some(self.praying.points),
+            casts: self.casts,
+            draws: self.draws,
         }
     }
 }
@@ -319,6 +370,7 @@ impl Server {
             ClientMessage::Pray { prayer, on } => self.pray(id, prayer, on),
             ClientMessage::LookedUp { item } => self.looked_up(id, item),
             ClientMessage::ClaimQuest { name } => self.claim_quest(id, &name),
+            ClientMessage::LookAtStation { block } => self.look_at_station(id, block),
         }
     }
 
@@ -508,6 +560,11 @@ impl Server {
         // Returning players carry on where they left, prayer points and all (the dead with
         // them full); new ones start at spawn with a kit.
         let points = saved.as_ref().filter(|saved| saved.health.alive()).and_then(|saved| saved.prayer_points);
+        // Casts and the other rolls go on being numbered from where they were, alive or dead,
+        // so none is drawn twice.
+        player.casts = saved.as_ref().map_or(0, |saved| saved.casts);
+        player.draws = saved.as_ref().map_or_else(Draws::default, |saved| saved.draws);
+        player.draw_key = player_draw_key(self.meta.draw_key, &player.name);
         match saved {
             Some(saved) if saved.health.alive() => {
                 player.position = saved.position;
@@ -518,6 +575,7 @@ impl Server {
                 player.skills = restore_skills(&saved.skills, &skill_ids);
                 player.home = saved.home.map(Vec3::from_array);
                 player.bed = saved.bed.map(Vec3::from_array);
+                player.kindled = saved.kindled;
                 player.journal = voxmar_engine::journal::Journal::from_entries(saved.journal);
                 player.quests_done = saved.quests;
                 player.quests_claimed = saved.quests_claimed;
@@ -528,7 +586,8 @@ impl Server {
             Some(saved) => {
                 player.home = saved.home.map(Vec3::from_array);
                 player.bed = saved.bed.map(Vec3::from_array);
-                if let Some(home) = player.home.or(player.bed) {
+                player.kindled = saved.kindled;
+                if let Some(home) = player.home_spot(&self.lit) {
                     player.position = home;
                 }
                 player.inventory = saved.inventory;
@@ -569,6 +628,8 @@ impl Server {
         self.players[&id].connection.send(time);
         let entries = self.players[&id].journal.entries().cloned().collect();
         self.players[&id].connection.send(ServerMessage::Journal { entries });
+        self.kindle_home(id);
+        self.players[&id].connection.send(ServerMessage::Fires { lit: self.fires() });
         if let Some(file) = set_aside {
             let text = Words::key("save.player_set_aside").with("file", Words::text(file));
             self.players[&id].connection.send(ServerMessage::Chat { kind: ChatKind::Error, text });
@@ -914,6 +975,12 @@ impl Support {
 /// they first differ.
 fn same_token(ours: &str, theirs: &str) -> bool {
     ours.len() == theirs.len() && ours.bytes().zip(theirs.bytes()).fold(0u8, |diff, (a, b)| diff | (a ^ b)) == 0
+}
+
+/// A player's draw key: the world's secret one mixed with the name their file is kept
+/// under, the same each time they join and never another player's.
+pub(crate) fn player_draw_key(world: u64, name: &str) -> u64 {
+    crate::player_key(name).bytes().fold(world ^ 0x5d5e_c7a1_9b3f_0e27, |h, b| (h ^ b as u64).wrapping_mul(0x0000_0100_0000_01b3))
 }
 
 /// Whether two names are one player's: names differ in case only for show.

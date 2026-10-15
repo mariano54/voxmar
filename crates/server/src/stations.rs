@@ -17,7 +17,6 @@ use voxmar_engine::traits;
 use voxmar_protocol::{ChatKind, PlayerId, ServerMessage, TICKS_PER_SECOND};
 
 use crate::Server;
-use crate::items::random3;
 use crate::process::Process;
 
 /// What is on a station: `count` of `item`, done at tick `due`.
@@ -59,6 +58,10 @@ impl Loads {
         self.loads.get(&pos).copied()
     }
 }
+
+/// How far from a player's eye a station they ask about may stand, in blocks: a little past
+/// reach, so the readout does not flicker at its edge.
+const SEEN_FROM: f32 = 8.0;
 
 /// How often the look at loaded stations comes, in seconds.
 const LOOK_SECONDS: u64 = 5;
@@ -116,6 +119,34 @@ impl Server {
         ticks.div_ceil(60 * TICKS_PER_SECOND as u64).max(1)
     }
 
+    /// What is on the station at `pos` as `agent` sees it (`ClientMessage::LookAtStation`):
+    /// None, not answered, if it is no station or too far off to see; else its load, if any,
+    /// and, for a fuelled structure's core (a kiln), the seconds its fire burns on.
+    pub(crate) fn station_seen(&self, agent: PlayerId, pos: IVec3) -> Option<(Option<voxmar_protocol::StationLoad>, Option<u32>)> {
+        let player = self.players.get(&agent)?;
+        if player.eye().distance(pos.as_vec3() + Vec3::splat(0.5)) > SEEN_FROM {
+            return None;
+        }
+        let block = self.block(pos)?;
+        let seconds = |due: u64| due.saturating_sub(self.tick).div_ceil(TICKS_PER_SECOND as u64).min(u32::MAX as u64) as u32;
+        if let Some((station, _)) = self.content.stations.of(block) {
+            let load = self.stations.get(pos).and_then(|load| {
+                let (_, work) = station.work(load.item)?;
+                Some(voxmar_protocol::StationLoad { item: load.item, count: load.count, output: work.output, makes: load.count / work.takes * work.gives, seconds: seconds(load.due) })
+            });
+            return Some((load, None));
+        }
+        let fuelled = self.content.multiblocks.with_core(block).any(|m| !m.fuels.is_empty());
+        fuelled.then(|| (None, Some(if self.station_lit(pos) { self.lit.get(&pos).map_or(0, |fire| seconds(fire.until)) } else { 0 })))
+    }
+
+    /// Answers `agent`'s look at the station at `pos`, when it is one they can see.
+    pub(crate) fn look_at_station(&self, agent: PlayerId, pos: IVec3) {
+        if let (Some((load, fire)), Some(player)) = (self.station_seen(agent, pos), self.players.get(&agent)) {
+            player.connection.send(ServerMessage::Station { block: pos, load, fire });
+        }
+    }
+
     /// `agent` uses the station at `pos` (`base:use_station`): loads it with what is in
     /// hand, takes what it made, or is told how it goes.
     pub(crate) fn use_station(&mut self, agent: PlayerId, pos: IVec3) {
@@ -147,18 +178,18 @@ impl Server {
         let Some((_, work)) = station.work(stack.item) else { return };
         if self.check_level(agent, work.skill) < work.level {
             let skill = Words::key(&voxmar_engine::lang::def_key("skill", &self.content.skills.get(work.skill).name));
-            self.tell_station(agent, Words::key("station.level").with("skill", skill).with("level", Words::text(work.level)));
+            self.refuse(agent, Words::key("station.level").with("skill", skill).with("level", Words::text(work.level)));
             return;
         }
         if let Some(lacks) = self.lacks(pos, station) {
-            self.tell_station(agent, lacks);
+            self.refuse(agent, lacks);
             return;
         }
         // Whole batches only: the heap rots four greens to one compost, so a load is a
         // multiple of four.
         let count = stack.count.min(station.holds) / work.takes * work.takes;
         if count == 0 {
-            self.tell_station(agent, Words::key("station.too_few").with("count", Words::text(work.takes)).with("item", Words::Block(self.content.blocks.def(stack.item).name.clone())));
+            self.refuse(agent, Words::key("station.too_few").with("count", Words::text(work.takes)).with("item", Words::Block(self.content.blocks.def(stack.item).name.clone())));
             return;
         }
         let speed: f32 = station.faster.iter().filter(|(spot, _)| self.spot_holds(pos, spot)).map(|(_, times)| times).product();
@@ -188,10 +219,19 @@ impl Server {
         let left = player.inventory.add(work.output, made);
         player.changed(traits::INVENTORY);
         if left > 0 {
-            let body = dropped::popped(pos, random3(self.tick, pos, 0x57a7));
+            let body = dropped::popped(pos, self.meta.next_pop(pos, 0x57a7));
             self.items.spawn(ItemStack { item: work.output, count: left }, body, dropped::PICKUP_DELAY);
         }
         self.grant_xp(agent, work.skill, work.xp * made as f32);
+        if let Some(kind) = &work.counts {
+            let output = self.content.blocks.def(work.output).name.clone();
+            self.tally(agent, kind, &output, made as u32);
+            // Cooked at this station too, by its empty block's name, for a quest's `CookAt`.
+            if kind == "cooked" {
+                let at = self.content.blocks.def(station.empty).name.rsplit(':').next().unwrap_or_default().to_owned();
+                self.tally(agent, &format!("cooked_at:{at}"), &output, made as u32);
+            }
+        }
         let words = Words::key("station.took").with("count", Words::text(made)).with("item", Words::Block(self.content.blocks.def(work.output).name.clone()));
         self.tell_station(agent, words);
     }
@@ -216,7 +256,7 @@ impl Server {
             Some((_, work)) if self.tick >= load.due => ItemStack { item: work.output, count: load.count / work.takes * work.gives },
             _ => ItemStack { item: load.item, count: load.count },
         };
-        let body = dropped::popped(pos, random3(self.tick, pos, 0x57a8));
+        let body = dropped::popped(pos, self.meta.next_pop(pos, 0x57a8));
         self.items.spawn(stack, body, dropped::PICKUP_DELAY);
     }
 
@@ -247,7 +287,7 @@ impl Server {
         let Some(fertiliser) = player.held().and_then(|item| stations.fertiliser(item)) else { return };
         let grown = self.grow_around(pos.as_vec3() + Vec3::splat(0.5), fertiliser.reach, fertiliser.stages);
         if grown == 0 {
-            self.tell_station(agent, Words::key("station.nothing_grows"));
+            self.refuse(agent, Words::key("station.nothing_grows"));
             return;
         }
         let player = self.players.get_mut(&agent).expect("checked above");
@@ -356,13 +396,32 @@ mod tests {
         assert_eq!(server.stations.get(AT), None);
     }
 
+    /// Looked at, a rack at work says what is on it and the seconds left, an empty one
+    /// nothing; one too far off, or a block that is no station, is not answered.
+    #[test]
+    fn a_station_looked_at_says_what_is_on_it_and_how_long() {
+        let mut server = fixture(1);
+        server.set_block(AT, block(&server, "base:drying_rack"));
+        assert_eq!(server.station_seen(1, AT), Some((None, None)), "empty");
+        hold(&mut server, "base:raw_beef", 6);
+        server.use_station(1, AT);
+        server.tick += 4 * MINUTE;
+        let load = server.station_seen(1, AT).and_then(|(load, _)| load).expect("loaded");
+        assert_eq!((load.item, load.count, load.output, load.makes), (block(&server, "base:raw_beef"), 6, block(&server, "base:jerky"), 6));
+        assert_eq!(load.seconds, 6 * 60, "ten minutes, four gone");
+        server.tick += 6 * MINUTE;
+        assert_eq!(server.station_seen(1, AT).and_then(|(load, _)| load).map(|l| l.seconds), Some(0), "done");
+        assert_eq!(server.station_seen(1, AT + IVec3::new(0, 0, 40)), None, "too far");
+        assert_eq!(server.station_seen(1, AT + IVec3::new(1, 0, 0)), None, "no station");
+    }
+
     /// A rack works while the column is not even loaded: a done rack still shows its old
     /// block, and using it takes the jerky all the same.
     #[test]
     fn a_rack_left_alone_is_done_when_its_owner_comes_back() {
         let mut server = fixture(1);
         server.set_block(AT, block(&server, "base:drying_rack"));
-        hold(&mut server, "base:raw_rabbit", 3);
+        hold(&mut server, "base:raw_small_game", 3);
         server.use_station(1, AT);
         server.tick += 60 * MINUTE;
         server.use_station(1, AT);
@@ -520,6 +579,37 @@ mod tests {
         assert_eq!(saved.len(), 1);
         let back = Loads::restore(&saved, |name| blocks.id(name));
         assert_eq!(back.get(AT), server.stations.get(AT));
+    }
+
+    /// An earth clamp fires clay with nobody by it, and quests count what comes out as cooked;
+    /// while it smoulders it is a fire, so a rack by it dries twice as fast.
+    #[test]
+    fn an_earth_clamp_fires_clay_by_itself_and_smoulders_like_a_fire() {
+        let mut server = fixture(1);
+        server.set_block(AT, block(&server, "base:earth_clamp"));
+        hold(&mut server, "base:clay", 20);
+        server.use_station(1, AT);
+        assert_eq!(at(&server, AT), "base:earth_clamp_lit");
+        assert_eq!(carried(&server, "base:clay"), 4, "sixteen go in");
+        let rack = AT + IVec3::new(2, 0, 0);
+        server.set_block(rack, block(&server, "base:drying_rack"));
+        hold(&mut server, "base:raw_beef", 1);
+        server.use_station(1, rack);
+        assert_eq!(server.stations.get(rack).unwrap().due, server.tick + 5 * MINUTE, "the smouldering clamp is a fire near");
+        server.tick += 2 * MINUTE;
+        server.show_done_stations();
+        assert_eq!(at(&server, AT), "base:earth_clamp_cooled");
+        server.use_station(1, AT);
+        assert_eq!(carried(&server, "base:fired_clay"), 16, "none cracked");
+        assert_eq!(server.players[&1].tallies.get("cooked:base:fired_clay"), Some(&16), "Fire the Clay and A Kiln Load count it");
+        assert_eq!(server.players[&1].tallies.get("cooked_at:earth_clamp:base:fired_clay"), Some(&16), "An Earth Clamp counts it as fired in the clamp");
+
+        hold(&mut server, "base:oak_log", 16);
+        server.use_station(1, AT);
+        server.tick += 2 * MINUTE;
+        server.use_station(1, AT);
+        assert_eq!(carried(&server, "base:charcoal"), 16);
+        assert_eq!(server.players[&1].tallies.get("cooked:base:charcoal"), Some(&16));
     }
 
     /// Wheat sprouts on farmland at y 200 for each x of `xs` along z 40.

@@ -700,13 +700,14 @@ impl Server {
         let combat = self.combat_level(player);
         let recent = self.wandering.recent.get(&player);
         // The player's home, surveyed once and only if a kind asks how far it has come.
-        let anchor = p.home.or(p.bed).map(|h| h.floor().as_ivec3());
+        let home = p.home_spot(&self.lit);
+        let anchor = home.map(|h| h.floor().as_ivec3());
         let survey = std::cell::OnceCell::new();
         let home_is = |step: voxmar_engine::effect::EffectId| {
             let Some(anchor) = anchor else { return false };
             let survey = survey.get_or_init(|| self.survey_around(anchor, Some(player)));
             let calm = voxmar_engine::weather::Weather::NONE;
-            let situation = voxmar_engine::effect::Situation { felt: 0.0, warmed: false, outdoors: self.open_sky(anchor + IVec3::Y * 2), weather: &calm, biome: "", biome_tags: &[], home: Some(survey), done: &p.quests_done, held: &[], near: &[] };
+            let situation = voxmar_engine::effect::Situation { felt: 0.0, warmed: false, outdoors: self.open_sky(anchor + IVec3::Y * 2), weather: &calm, biome: "", biome_tags: &[], home: Some(survey), done: &p.quests_done, held: &[], near: &[], seated: false };
             self.content.effects.get(step).when.as_ref().is_some_and(|when| when.holds(&situation))
         };
         let mut choices: Vec<(usize, f32)> = Vec::new();
@@ -718,11 +719,11 @@ impl Server {
             let suits = event.suits_light(daylight)
                 && event.suits_distance(flat(spot.as_vec3(), self.spawn))
                 && days >= needs.days
-                && needs.home.is_none_or(|h| h == p.home.is_some())
+                && needs.home.is_none_or(|h| h == home.is_some())
                 && needs.combat.is_none_or(|(low, high)| (low..=high).contains(&combat))
                 && needs.town.is_none_or(|reach| self.town_near(spot.as_vec3(), reach).is_some())
                 && needs.wet.is_none_or(|w| w == wet)
-                && needs.near_home.is_none_or(|near| p.home.is_some_and(|home| flat(home, p.position) <= near))
+                && needs.near_home.is_none_or(|near| home.is_some_and(|home| flat(home, p.position) <= near))
                 && needs.after.as_ref().is_none_or(|(name, reach)| self.forerunner_near(spot.as_vec3(), name, *reach).is_some())
                 && needs.met.as_ref().is_none_or(|name| p.tallies.get(&format!("met:{name}")).is_some_and(|&n| n > 0))
                 && event.home_is.is_none_or(home_is);
@@ -1137,8 +1138,10 @@ impl Server {
         let Some(freed) = event.def.freed.clone() else { return };
         let Some(at) = inst.members.iter().position(|m| event.groups[m.group].1.role == Role::Captive) else { return };
         let captive = inst.members[at].creature;
-        let seed = mix(inst.seed, 0xf4ee ^ self.tick);
-        let follows = by.filter(|p| self.players.get(p).is_some_and(|p| p.health.alive())).filter(|_| unit_from(seed) < freed.follow);
+        // Whether it follows, by a living freer's own count of captives freed, never the
+        // tick it is freed on; nobody's freeing draws nothing.
+        let freer = by.filter(|p| self.players.get(p).is_some_and(|p| p.health.alive()));
+        let follows = freer.filter(|&p| self.players.get_mut(&p).is_some_and(|p| p.draw(crate::save::Draw::Free)[0] < freed.follow));
         if let Some(player) = by.and_then(|p| self.players.get(&p).map(|_| p)) {
             if let Some(who) = self.speaker_name(captive) {
                 self.players[&player].connection.send(ServerMessage::Chat { kind: ChatKind::Chat, text: Words::key("wander.said").with("who", who).with("text", Words::key(&event.key("thanks"))) });
@@ -1193,7 +1196,8 @@ impl Server {
         }
     }
 
-    /// Reward `gifts` to `player`, from creature `source` (whose id seeds the draws).
+    /// Reward `gifts` to `player`, from creature `source` (where those that point the way
+    /// start from); what is drawn, by the player's own count of rewards.
     fn hand_out(&mut self, player: PlayerId, source: u32, gifts: &[ResolvedReward]) {
         for gift in gifts {
             match *gift {
@@ -1239,7 +1243,9 @@ impl Server {
                     p.connection.send(ServerMessage::Chat { kind: ChatKind::Chat, text });
                 }
                 ResolvedReward::Item(item, (low, high)) => {
-                    let count = low + (unit_from(mix(self.tick, source as u64 ^ item.0 as u64)) * (high - low + 1) as f32) as u8;
+                    // By the player's own count of rewards, never the tick it is given on.
+                    let roll = self.draw_for(player, crate::save::Draw::Reward)[0];
+                    let count = low + (roll * (high - low + 1) as f32) as u8;
                     let Some(p) = self.players.get_mut(&player) else { return };
                     let left = p.inventory.add(item, count.min(high));
                     p.changed(traits::INVENTORY);
@@ -1266,7 +1272,8 @@ impl Server {
                     if open.is_empty() {
                         continue;
                     }
-                    let pick = ((unit_from(mix(self.tick, source as u64 ^ 0x0f07)) * open.len() as f32) as usize).min(open.len() - 1);
+                    let roll = self.draw_for(player, crate::save::Draw::Reward)[0];
+                    let pick = ((roll * open.len() as f32) as usize).min(open.len() - 1);
                     self.hand_out(player, source, &open[pick..=pick]);
                 }
                 ResolvedReward::Weather(ref name, seconds) => {
@@ -1653,7 +1660,7 @@ impl Server {
                 Some(p) if self.tick < *until => {
                     heading = (xz(p.position) - xz(lead)).try_normalize().unwrap_or(heading);
                     let arrived = match arrive {
-                        Arrival::Home => p.home.is_some_and(|h| flat(h, lead) < SETTLE_AT),
+                        Arrival::Home => p.home_spot(&self.lit).is_some_and(|h| flat(h, lead) < SETTLE_AT),
                         Arrival::Town => self.villagers.town_within(lead, TOWN_AT),
                     };
                     if arrived {
@@ -2224,7 +2231,7 @@ impl Server {
         let Some(p) = self.players.get(&player).filter(|p| p.health.alive()) else { return false };
         let held = p.inventory.get(p.selected);
         let level = |skill| self.content.skills.level(p.skills.xp(skill));
-        let (has_home, hurt) = (p.home.is_some(), p.health.current < p.health.max);
+        let (has_home, hurt) = (p.home_spot(&self.lit).is_some(), p.health.current < p.health.max);
         // A line that hands over one of the party says so only with one to hand, and room
         // among what the player keeps.
         let kept_room = self.player_name(player).is_some_and(|name| self.kept_by(&name) < self.content.creatures.limits().kept_each);
@@ -2924,6 +2931,49 @@ mod tests {
         assert!(follows > 0 && alone > 0, "both happen: {follows} follow, {alone} go alone");
     }
 
+    /// Whether a freed captive follows is drawn by its living freer's own count of captives
+    /// freed: the same freeings later go the same way, each counts on, and a freeing by
+    /// nobody, or by a freer who is dead, draws nothing.
+    #[test]
+    fn a_freed_captive_follows_by_the_freers_count_not_the_tick() {
+        let freed = |tick: u64| {
+            let mut server = fixture();
+            server.players.get_mut(&1).unwrap().draw_key = crate::player::player_draw_key(0x0d1a, "Tëster");
+            server.tick = tick;
+            let mut followed = Vec::new();
+            for seed in 0..12u64 {
+                clear(&mut server);
+                let event = event(&server, "prison_convoy");
+                let spot = server.standing_spot(68, 128, 200).unwrap();
+                let id = server.begin_event_at(Some(1), event, spot, seed * 7919 + 3, true).unwrap();
+                let captive = members_of(&server, id, 2)[0];
+                server.free_in_test(id);
+                followed.push(server.wandering.by_creature.get(&captive).is_some_and(|&(i, _)| matches!(server.wandering.active[&i].plan, Plan::Follow { player: 1, .. })));
+                server.tick += 37;
+            }
+            let frees = server.players[&1].draws.frees;
+            // Freed by nobody, and by a freer who is dead: nothing drawn.
+            for by in [None, Some(1)] {
+                clear(&mut server);
+                if by.is_some() {
+                    server.players.get_mut(&1).unwrap().health.damage(u8::MAX);
+                }
+                let event = event(&server, "prison_convoy");
+                let spot = server.standing_spot(68, 128, 200).unwrap();
+                let id = server.begin_event_at(Some(1), event, spot, 5, true).unwrap();
+                let mut inst = server.wandering.active.remove(&id).unwrap();
+                server.free_captive(&mut inst, by);
+                server.keep(inst);
+            }
+            (followed, frees, server.players[&1].draws.frees)
+        };
+        let first = freed(1_000);
+        assert_eq!(first.1, 12, "each freeing by a living player counted on");
+        assert_eq!(first.2, first.1, "a freeing by nobody or by the dead drew");
+        assert!(first.0.iter().any(|&f| f) && first.0.iter().any(|&f| !f), "twelve freed captives all went alike: {:?}", first.0);
+        assert_eq!(freed(1_377), first, "the same freeings later went otherwise");
+    }
+
     impl Server {
         /// Frees the captive of party `id` as if player 1 had.
         fn free_in_test(&mut self, id: u64) {
@@ -2951,7 +3001,7 @@ mod tests {
             }
             // The player has a home a little way off; the prisoner walks with them and stays.
             let player = server.players.get_mut(&1).unwrap();
-            (player.home, player.position) = (Some(home), home);
+            (player.bed, player.position) = (Some(home), home);
             run(server, 20 * 120);
             return captive;
         }
@@ -3300,7 +3350,7 @@ mod tests {
         assert!(walked < 6.0, "it kept up: {walked:.1} blocks behind");
         // At journey's end (here, the player's home) the family pays and the child stays.
         let player = server.players.get_mut(&1).unwrap();
-        player.home = Some(player.position);
+        player.bed = Some(player.position);
         let party = server.wandering.by_creature[&child].0;
         if let Plan::Follow { arrive, .. } = &mut server.wandering.active.get_mut(&party).unwrap().plan {
             *arrive = Arrival::Home;
@@ -3359,7 +3409,7 @@ mod tests {
         put_next_to(&mut server, hound, Vec3::new(1.5, 0.0, 0.0));
         skill_to(&mut server, "core:hunter", 2);
         for _ in 0..12 {
-            give_held(&mut server, "base:raw_rabbit", 1);
+            give_held(&mut server, "base:raw_small_game", 1);
             server.tend(1, hound);
             if server.creatures.live[&hound].owner.is_some() {
                 break;
@@ -3702,7 +3752,7 @@ mod tests {
         let hound = server.wandering.active[&id].members[0].creature;
         let distance = |server: &Server| flat(server.creatures.live[&hound].body.position, server.players[&1].position);
         let before = distance(&server);
-        give_held(&mut server, "base:cooked_rabbit", 1);
+        give_held(&mut server, "base:cooked_small_game", 1);
         run(&mut server, 20 * 12);
         assert!(distance(&server) < before - 3.0, "it came to the food: {before:.1} -> {:.1}", distance(&server));
         give_held(&mut server, "base:torch", 1);
@@ -4071,27 +4121,27 @@ mod tests {
         let mut server = fixture();
         let id = start(&mut server, "travelling_cook", (110, 128));
         let cook = members_of(&server, id, 0)[0];
-        give_held(&mut server, "base:raw_rabbit", 5);
+        give_held(&mut server, "base:raw_small_game", 5);
         assert!(server.meet(1, cook));
-        assert_eq!((count_of(&server, "base:raw_rabbit"), count_of(&server, "base:cooked_rabbit")), (0, 4), "five cooked, one kept");
+        assert_eq!((count_of(&server, "base:raw_small_game"), count_of(&server, "base:cooked_small_game")), (0, 4), "five cooked, one kept");
         // One raw is not enough to bother the pot with.
-        give_held(&mut server, "base:raw_rabbit", 1);
+        give_held(&mut server, "base:raw_small_game", 1);
         assert!(server.meet(1, cook));
-        assert_eq!(count_of(&server, "base:raw_rabbit"), 1);
+        assert_eq!(count_of(&server, "base:raw_small_game"), 1);
         // Showing cooked food teaches a beginner, once, and it is not taken.
         let cooking = server.content.skills.id("core:cooking").unwrap();
-        give_held(&mut server, "base:cooked_rabbit", 1);
+        give_held(&mut server, "base:cooked_small_game", 1);
         assert!(server.meet(1, cook));
         let xp = server.players[&1].skills.xp(cooking);
         assert!(xp > 0);
         assert!(server.meet(1, cook));
-        assert_eq!((server.players[&1].skills.xp(cooking), count_of(&server, "base:cooked_rabbit")), (xp, 1));
+        assert_eq!((server.players[&1].skills.xp(cooking), count_of(&server, "base:cooked_small_game")), (xp, 1));
     }
 
     #[test]
     fn a_cowherd_sells_the_calf_only_to_one_who_could_keep_it() {
         let mut server = fixture();
-        server.players.get_mut(&1).unwrap().home = Some(Vec3::new(128.5, 200.0, 128.5));
+        server.players.get_mut(&1).unwrap().bed = Some(Vec3::new(128.5, 200.0, 128.5));
         let id = start(&mut server, "cowherd", (110, 128));
         let herder = members_of(&server, id, 0)[0];
         let calf = members_of(&server, id, 2)[0];
@@ -4118,7 +4168,7 @@ mod tests {
     #[test]
     fn a_pail_held_out_is_filled_once() {
         let mut server = fixture();
-        server.players.get_mut(&1).unwrap().home = Some(Vec3::new(128.5, 200.0, 128.5));
+        server.players.get_mut(&1).unwrap().bed = Some(Vec3::new(128.5, 200.0, 128.5));
         let id = start(&mut server, "cowherd", (110, 128));
         let herder = members_of(&server, id, 0)[0];
         give_held(&mut server, "base:pail", 1);
@@ -4185,7 +4235,7 @@ mod tests {
     fn water_carriers_come_only_where_water_and_a_field_lie_together() {
         let mut server = fixture();
         server.day = TICKS_PER_DAY as f64 * 3.4;
-        server.players.get_mut(&1).unwrap().home = Some(Vec3::new(128.5, 200.0, 128.5));
+        server.players.get_mut(&1).unwrap().bed = Some(Vec3::new(128.5, 200.0, 128.5));
         let carriers = event(&server, "water_carriers");
         let spot = IVec3::new(150, 200, 128);
         place(&mut server, "base:water", IVec3::new(160, 199, 128));
@@ -4594,7 +4644,7 @@ mod tests {
         // Home: they stay as one of the player's people, and the seed is the player's.
         let home = Vec3::new(near.x + 30.0, 200.0, near.z);
         let player = server.players.get_mut(&1).unwrap();
-        (player.position, player.home) = (home, Some(home));
+        (player.position, player.bed) = (home, Some(home));
         for _ in 0..60 {
             run(&mut server, 20);
             if !server.wandering.by_creature.contains_key(&refugee) {
@@ -5106,7 +5156,7 @@ mod tests {
         let spot = IVec3::new(128, 200, 128);
         let comes = |server: &Server| (0..800u64).any(|seed| server.pick_event(1, spot, mix(seed, 3)) == Some(neighbours));
         assert!(!comes(&server), "no home, no neighbours");
-        server.players.get_mut(&1).unwrap().home = Some(Vec3::new(140.5, 200.0, 128.5));
+        server.players.get_mut(&1).unwrap().bed = Some(Vec3::new(140.5, 200.0, 128.5));
         assert!(comes(&server), "at home");
         server.players.get_mut(&1).unwrap().position = Vec3::new(140.5 + 300.0, 200.0, 128.5);
         assert!(!comes(&server), "away from it");
@@ -5120,9 +5170,9 @@ mod tests {
         server.players.get_mut(&1).unwrap().inventory.clear(|_| true);
         assert!(server.meet(1, neighbour));
         assert_eq!(count_of(&server, "base:earthen_plate"), 1, "a housewarming gift");
-        give_held(&mut server, "base:cooked_rabbit", 1);
+        give_held(&mut server, "base:cooked_small_game", 1);
         assert!(server.meet(1, neighbour));
-        assert_eq!(count_of(&server, "base:cooked_rabbit"), 0);
+        assert_eq!(count_of(&server, "base:cooked_small_game"), 0);
         assert!(count_of(&server, "base:seed_mix") >= 3);
         assert!(has_effect(&server, "sustained"));
         assert_eq!(count_of(&server, "base:earthen_plate"), 0, "the plate came once, to the party");
@@ -5168,7 +5218,7 @@ mod tests {
         let home = spot.as_vec3() + Vec3::new(10.0, 0.0, 0.0);
         server.players.get_mut(&1).unwrap().position = home;
         assert!(!comes(&server), "no home, no harvest home");
-        server.players.get_mut(&1).unwrap().home = Some(home);
+        server.players.get_mut(&1).unwrap().bed = Some(home);
         assert!(comes(&server), "at home");
         server.players.get_mut(&1).unwrap().position = home + Vec3::new(200.0, 0.0, 0.0);
         assert!(!comes(&server), "away from it");
@@ -5519,7 +5569,7 @@ mod tests {
         let home = spot.as_vec3() + Vec3::new(10.0, 0.0, 0.0);
         server.players.get_mut(&1).unwrap().position = home;
         assert!(!comes(&server), "no home, no wassail");
-        server.players.get_mut(&1).unwrap().home = Some(home);
+        server.players.get_mut(&1).unwrap().bed = Some(home);
         assert!(comes(&server), "at home, at night");
         broad_day(&mut server);
         assert!(!comes(&server), "not by day");
@@ -5664,7 +5714,7 @@ mod tests {
         let home = spot.as_vec3() + Vec3::new(10.0, 0.0, 0.0);
         server.players.get_mut(&1).unwrap().position = home;
         assert!(!comes(&server), "no home, nobody's sleepwalker");
-        server.players.get_mut(&1).unwrap().home = Some(home);
+        server.players.get_mut(&1).unwrap().bed = Some(home);
         assert!(comes(&server), "near home at night");
         broad_day(&mut server);
         assert!(!comes(&server), "awake by day");
@@ -5781,7 +5831,7 @@ mod tests {
         skill_to(&mut server, "core:farming", 3);
         server.meet(1, wife);
         assert_eq!(count_of(&server, "base:wheat_seeds"), 6, "nor for one without a home");
-        server.players.get_mut(&1).unwrap().home = Some(Vec3::new(128.5, 200.0, 128.5));
+        server.players.get_mut(&1).unwrap().bed = Some(Vec3::new(128.5, 200.0, 128.5));
         assert!(server.meet(1, wife));
         assert_eq!(count_of(&server, "base:wheat_seeds"), 0);
         assert_eq!(hens.iter().filter(|h| server.creatures.live[h].owner.as_deref() == Some("Tëster")).count(), 1, "one hen is the player's");
@@ -5959,14 +6009,14 @@ mod tests {
         broad_day(&mut server);
         server.day += 6.0 * TICKS_PER_DAY as f64;
         let home = Vec3::new(128.5, 200.0, 128.5);
-        server.players.get_mut(&1).unwrap().home = Some(home);
+        server.players.get_mut(&1).unwrap().bed = Some(home);
         let comes = |server: &Server, name: &str| {
             let kind = event(server, name);
             let spot = land_for(server, kind, home, |_| true);
             (0..800u64).any(|seed| server.pick_event_in(1, spot, mix(seed, 3), false) == Some(kind))
         };
         let spot = land_for(&server, event(&server, "refugee_kin"), home, |_| true);
-        server.players.get_mut(&1).unwrap().home = Some(spot.as_vec3());
+        server.players.get_mut(&1).unwrap().bed = Some(spot.as_vec3());
         server.players.get_mut(&1).unwrap().position = spot.as_vec3();
         assert!(!comes(&server, "refugee_kin") && !comes(&server, "christening"), "nobody met, nobody comes back");
         server.tally(1, "met", "base:refugees", 1);
@@ -5993,7 +6043,7 @@ mod tests {
         skill_to(&mut server, "core:attack", 10);
         skill_to(&mut server, "core:defence", 10);
         skill_to(&mut server, "core:hitpoints", 10);
-        server.players.get_mut(&1).unwrap().home = Some(Vec3::new(128.0, 200.0, 128.0));
+        server.players.get_mut(&1).unwrap().bed = Some(Vec3::new(128.0, 200.0, 128.0));
         let spot = land_for(&server, event(&server, "poachers_gang"), Vec3::new(128.0, 200.0, 128.0), |_| true);
         assert!(!comes_at(&server, "poachers_gang", spot), "a stranger to him");
         server.tally(1, "met", "base:poacher", 1);
@@ -6012,7 +6062,7 @@ mod tests {
         broad_day(&mut server);
         server.day += 5.0 * TICKS_PER_DAY as f64;
         let spot = land_for(&server, event(&server, "grateful_parents"), Vec3::new(128.0, 200.0, 128.0), |_| true);
-        server.players.get_mut(&1).unwrap().home = Some(spot.as_vec3());
+        server.players.get_mut(&1).unwrap().bed = Some(spot.as_vec3());
         server.players.get_mut(&1).unwrap().position = spot.as_vec3();
         assert!(!comes_at(&server, "grateful_parents", spot) && !comes_at(&server, "journeyman", spot), "nobody helped, nobody comes back");
         server.tally(1, "met", "base:lost_child", 1);
@@ -6167,7 +6217,9 @@ mod tests {
         let mut server = fixture();
         server.day = (0..40).map(|i| TICKS_PER_DAY as f64 * (4.0 + i as f64 / 40.0)).find(|&day| (0.1..0.5).contains(&voxmar_engine::creature::daylight(day as u64))).expect("an evening");
         let home = IVec3::new(128, 200, 128);
-        server.players.get_mut(&1).unwrap().home = Some(home.as_vec3());
+        // A hearth home, not burning, and the bed beside it: callers judge the bed's home.
+        let player = server.players.get_mut(&1).unwrap();
+        (player.home, player.bed) = (Some(home.as_vec3()), Some(home.as_vec3()));
         let spot = IVec3::new(128, 200, 150);
         let bare = ["base:hearthstone", "base:sleeping_bag", "base:candle"];
         for (i, name) in bare.iter().enumerate() {
@@ -6186,8 +6238,28 @@ mod tests {
         assert!(comes_at(&server, "fireside_guests", spot), "a homely home has callers");
         assert!(!comes_at(&server, "hedgehog_lodger", spot), "homely is not yet cosy");
         // Far from home, nobody calls there.
-        server.players.get_mut(&1).unwrap().home = Some(Vec3::new(600.0, 200.0, 600.0));
+        let player = server.players.get_mut(&1).unwrap();
+        (player.home, player.bed) = (Some(Vec3::new(600.0, 200.0, 600.0)), Some(Vec3::new(600.0, 200.0, 600.0)));
         assert!(!comes_at(&server, "fireside_guests", spot));
+    }
+
+    /// Wanderers who call on a home ask where home is as respawn does (`home_spot`): a
+    /// hearth burning, else the last bed. A hearth gone cold is no home to call on.
+    #[test]
+    fn neighbours_call_only_on_a_home_whose_hearth_burns_or_a_bed() {
+        let mut server = fixture();
+        server.day = (0..40).map(|i| TICKS_PER_DAY as f64 * (4.0 + i as f64 / 40.0)).find(|&day| voxmar_engine::creature::daylight(day as u64) >= 1.0).expect("midday");
+        let core = IVec3::new(128, 199, 128);
+        let player = server.players.get_mut(&1).unwrap();
+        (player.home, player.bed, player.kindled) = (Some(core.as_vec3() + Vec3::new(0.5, 1.0, 0.5)), None, true);
+        player.position = Vec3::new(128.5, 200.0, 140.5);
+        let spot = IVec3::new(128, 200, 150);
+        assert!(!comes_at(&server, "neighbours", spot), "a cold hearth is no home to call on");
+        server.lit.insert(core, crate::hearth::Lit { position: core.to_array(), structure: "base:hearth".into(), until: u64::MAX });
+        assert!(comes_at(&server, "neighbours", spot), "a burning one is");
+        server.lit.clear();
+        server.players.get_mut(&1).unwrap().bed = Some(Vec3::new(130.5, 200.0, 130.5));
+        assert!(comes_at(&server, "neighbours", spot), "and with it cold, the last bed is home");
     }
 
     /// The beekeeper comes by day only to a home with a bee garden: a skep of bees among
@@ -6197,7 +6269,9 @@ mod tests {
         let mut server = fixture();
         server.day = (0..40).map(|i| TICKS_PER_DAY as f64 * (4.0 + i as f64 / 40.0)).find(|&day| voxmar_engine::creature::daylight(day as u64) >= 1.0).expect("midday");
         let home = IVec3::new(128, 200, 128);
-        server.players.get_mut(&1).unwrap().home = Some(home.as_vec3());
+        // A hearth home, not burning, and the bed beside it: callers judge the bed's home.
+        let player = server.players.get_mut(&1).unwrap();
+        (player.home, player.bed) = (Some(home.as_vec3()), Some(home.as_vec3()));
         let spot = IVec3::new(128, 200, 150);
         for (i, name) in ["base:hearthstone", "base:sleeping_bag", "base:dandelion", "base:dandelion", "base:dandelion"].iter().enumerate() {
             place(&mut server, name, home + IVec3::new(i as i32 + 1, 0, 0));
@@ -6251,5 +6325,38 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// What a wanderer gives, how many and which of several, is drawn by the player's own
+    /// count of rewards: the same rewards given later, after the world rolled otherwise,
+    /// give the same, and each draw counts on.
+    #[test]
+    fn rewards_draw_by_the_players_count_not_the_tick() {
+        let given = |tick: u64, others: usize| {
+            let mut server = fixture();
+            server.meta.draw_key = 0x0d1a;
+            server.players.get_mut(&1).unwrap().draw_key = crate::player::player_draw_key(0x0d1a, "Tëster");
+            server.tick = tick;
+            let (stick, cobble) = (server.content.blocks.expect("base:stick"), server.content.blocks.expect("base:cobblestone"));
+            let mut got = Vec::new();
+            for _ in 0..16 {
+                for _ in 0..others {
+                    server.meta.next_loot();
+                    server.meta.next_roll(crate::save::ROLL_LITTER);
+                }
+                let player = server.players.get_mut(&1).unwrap();
+                player.inventory.clear(|_| true);
+                server.hand_out(1, 0, &[ResolvedReward::Item(stick, (1, 4)), ResolvedReward::OneOf(vec![ResolvedReward::Item(stick, (1, 1)), ResolvedReward::Item(cobble, (1, 1))])]);
+                let inventory = &server.players[&1].inventory;
+                got.push((inventory.count(stick), inventory.count(cobble)));
+                server.tick += 37;
+            }
+            (got, server.players[&1].draws.rewards)
+        };
+        let first = given(1_000, 0);
+        assert_eq!(first.1, 16 * 3, "each count, pick and picked count drawn on");
+        assert!(first.0.windows(2).any(|w| w[0].0 != w[1].0), "sixteen rewards gave the same count: {:?}", first.0);
+        assert!(first.0.iter().any(|g| g.1 > 0) && first.0.iter().any(|g| g.1 == 0), "sixteen picks of one of two all went alike: {:?}", first.0);
+        assert_eq!(given(1_377, 3), first, "the same rewards given later, after other rolls, gave otherwise");
     }
 }

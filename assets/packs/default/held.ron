@@ -16,28 +16,62 @@
     )),
     // What every kind does unless it says otherwise: a slash across the view, a chop down,
     // a poke forward, the item lifted across the chest to guard or to the mouth to eat.
+    // A blow winds up first (`wind`: drawn back that far over that share of the stroke),
+    // then cuts through. Its peak meets the blow landing: the attack's peak comes as the
+    // weapon class's wind-up (combat.ron) ends, when the server judges the blow, and
+    // `seconds` paces the rest. A dodge leaves the hand behind (as for a dodge to the right;
+    // one to the left mirrors it), and a blow taken unguarded knocks it down and in.
     moves: (
-        attack: Some((at: (-0.20, -0.02, 0.10), turn: (-55.0, 20.0, 55.0), seconds: 0.30)),
+        attack: Some((at: (-0.22, -0.04, 0.12), turn: (-62.0, 22.0, 60.0), seconds: 0.32,
+            wind: Some((at: (0.07, 0.09, -0.05), turn: (18.0, -12.0, -22.0), share: 0.26)))),
         dig: Some((at: (-0.06, -0.10, 0.14), turn: (-45.0, 0.0, 15.0), seconds: 0.32)),
         place: Some((at: (-0.05, -0.06, 0.10), turn: (-22.0, 0.0, 0.0), seconds: 0.22)),
         guard: Some((at: (-0.22, 0.08, -0.02), turn: (-20.0, 30.0, 35.0))),
         eat: Some((at: (-0.20, 0.30, -0.12), turn: (-30.0, 20.0, 20.0))),
+        dodge: Some((at: (-0.12, -0.10, -0.03), turn: (10.0, 14.0, -18.0), seconds: 0.32)),
+        flinch: Some((at: (0.05, -0.05, -0.04), turn: (14.0, 6.0, -12.0), seconds: 0.3)),
     ),
     kinds: [
         // Blades: a sword stands upright at the lower right, a dagger and a spear lean away.
         (tag: "sword", pose: (at: (0.34, -0.23, 0.62), turn: (0.0, -18.0, 38.0), size: 0.56)),
+        // A dagger and a spear draw back and thrust.
         (
             tag: "dagger", pose: (at: (0.34, -0.26, 0.58), turn: (-10.0, -18.0, 38.0), size: 0.5),
-            moves: (attack: Some((at: (-0.16, 0.0, 0.22), turn: (-35.0, 8.0, 15.0), seconds: 0.22))),
+            moves: (attack: Some((at: (-0.24, 0.06, 0.30), turn: (-40.0, 14.0, 20.0), seconds: 0.22,
+                wind: Some((at: (0.06, -0.04, -0.12), turn: (12.0, -4.0, 0.0), share: 0.22))))),
         ),
         (
             tag: "spear", pose: (at: (0.38, -0.26, 0.66), turn: (-12.0, -18.0, 28.0), size: 0.8),
-            moves: (attack: Some((at: (-0.10, 0.02, 0.30), turn: (-25.0, 6.0, 12.0), seconds: 0.34))),
+            moves: (attack: Some((at: (-0.20, 0.06, 0.42), turn: (-30.0, 12.0, 18.0), seconds: 0.36,
+                wind: Some((at: (0.04, -0.02, -0.16), turn: (8.0, -4.0, 0.0), share: 0.3))))),
+        ),
+        // A club is raised overhead and brought down.
+        (
+            tag: "mace", pose: (at: (0.34, -0.23, 0.62), turn: (0.0, -18.0, 38.0), size: 0.56),
+            moves: (attack: Some((at: (-0.10, -0.18, 0.14), turn: (-75.0, 4.0, 22.0), seconds: 0.4,
+                wind: Some((at: (0.0, 0.15, -0.05), turn: (34.0, 0.0, -10.0), share: 0.34))))),
+        ),
+        // A bow is drawn back to the cheek and loosed.
+        (
+            tag: "bow", pose: (at: (0.30, -0.22, 0.60), turn: (0.0, -10.0, 30.0), size: 0.6),
+            moves: (attack: Some((at: (-0.04, 0.03, 0.06), turn: (-6.0, 0.0, 0.0), seconds: 0.36,
+                wind: Some((at: (-0.06, 0.06, -0.12), turn: (4.0, 6.0, 0.0), share: 0.5))))),
+        ),
+        // A sling is swung up behind the shoulder and whipped forward overhand.
+        (
+            tag: "sling", pose: (at: (0.32, -0.25, 0.58), turn: (0.0, -14.0, 20.0), size: 0.5),
+            moves: (attack: Some((at: (-0.14, 0.02, 0.22), turn: (-58.0, 8.0, 18.0), seconds: 0.36,
+                wind: Some((at: (0.05, 0.17, -0.1), turn: (42.0, -10.0, -24.0), share: 0.42))))),
         ),
         (tag: "weapon", pose: (at: (0.34, -0.23, 0.62), turn: (0.0, -18.0, 38.0), size: 0.56)),
         // Tools: held up, head forward, and a dig is a chop.
         (tag: "pickaxe", pose: (at: (0.34, -0.23, 0.62), turn: (0.0, -18.0, 38.0), size: 0.56)),
-        (tag: "axe", pose: (at: (0.34, -0.23, 0.62), turn: (0.0, -18.0, 38.0), size: 0.56)),
+        // An axe swings from overhead, like a club, a little across.
+        (
+            tag: "axe", pose: (at: (0.34, -0.23, 0.62), turn: (0.0, -18.0, 38.0), size: 0.56),
+            moves: (attack: Some((at: (-0.14, -0.15, 0.14), turn: (-70.0, 12.0, 34.0), seconds: 0.38,
+                wind: Some((at: (0.03, 0.14, -0.05), turn: (30.0, -6.0, -14.0), share: 0.32))))),
+        ),
         (tag: "shovel", pose: (at: (0.34, -0.23, 0.62), turn: (0.0, -18.0, 38.0), size: 0.58)),
         (
             tag: "hoe", pose: (at: (0.34, -0.23, 0.62), turn: (0.0, -18.0, 38.0), size: 0.56),
@@ -63,4 +97,27 @@
     cube: Some((tag: "cube", pose: (at: (0.34, -0.26, 0.56), turn: (12.0, 36.0, 0.0), size: 0.3))),
     // Any other item is its icon, thin, facing the player.
     sprite: Some((tag: "sprite", pose: (at: (0.34, -0.27, 0.56), turn: (0.0, -16.0, 10.0), size: 0.42))),
+    // The empty hand: the fist at `pose`, the forearm and sleeve behind it, each a cube
+    // `spacing` widths further back along the arm (its +z, toward the eye: a positive pitch
+    // brings the elbow down, a positive yaw to the right). Textures in recipes/hand.ron.
+    // A punch drives the fist in toward the crosshair, peaking as the fist's wind-up
+    // (combat.ron) ends; working at a block is a shorter jab; the guard (with a shield worn)
+    // raises the fist before the face.
+    bare: Some((
+        pose: (at: (0.29, -0.24, 0.42), turn: (35.0, 25.0, 0.0), size: 0.15),
+        pieces: ["block/held_fist", "block/held_arm", "block/held_sleeve"],
+        spacing: 1.0,
+        moves: (
+            attack: Some((at: (-0.16, 0.10, 0.26), turn: (-18.0, -12.0, 0.0), seconds: 0.26,
+                wind: Some((at: (0.02, 0.0, -0.05), turn: (6.0, 4.0, 0.0), share: 0.25)))),
+            dig: Some((at: (-0.10, 0.07, 0.18), turn: (-14.0, -10.0, 0.0), seconds: 0.28)),
+            place: Some((at: (-0.07, 0.05, 0.10), turn: (-16.0, -6.0, 0.0), seconds: 0.22)),
+            guard: Some((at: (-0.12, 0.15, -0.02), turn: (30.0, -22.0, 0.0))),
+            // Nothing is eaten from an empty hand; should a bite go on as the hand empties, the
+            // fist comes up toward the mouth, the arm kept clear of the eye.
+            eat: Some((at: (-0.12, 0.12, -0.04), turn: (10.0, -10.0, 0.0))),
+            dodge: Some((at: (-0.10, -0.04, 0.0), turn: (8.0, 12.0, -12.0), seconds: 0.32)),
+            flinch: Some((at: (0.04, -0.03, -0.02), turn: (12.0, 6.0, -10.0), seconds: 0.3)),
+        ),
+    )),
 )
