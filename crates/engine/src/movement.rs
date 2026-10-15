@@ -89,11 +89,11 @@ pub struct Checks {
     /// Longest step, in blocks, a move is checked for walls in.
     pub sweep_step: f32,
     /// The player's box, as shares of their width and height, that must stay out of
-    /// walls: a little smaller than theirs, for rounding. Whole blocks only: a share would
-    /// let a player through a gap between shapes narrower than they are.
+    /// walls: a little smaller than theirs, for rounding. Only among whole blocks: a share
+    /// would let a player through a gap beside a shape narrower than they are.
     pub wall_box: (f32, f32),
-    /// Blocks the player's box is shrunk by on every side, for rounding, against shaped
-    /// blocks' boxes (`wall_box` is for whole blocks).
+    /// Blocks the player's box is shrunk by on every side, for rounding, wherever a shaped
+    /// block is near (`wall_box` among whole blocks only).
     pub wall_margin: f32,
 }
 
@@ -179,8 +179,8 @@ impl Checks {
             Err("let_down_pause must be no more than hover_grace".into())
         } else if !(0.5..=1.0).contains(&width) || !(0.5..=1.0).contains(&height) {
             Err("wall_box shares must be from 0.5 to 1".into())
-        } else if wall_margin > 0.03 {
-            Err("wall_margin must be at most 0.03 (more lets a player into gaps narrower than they are)".into())
+        } else if wall_margin > 0.015 {
+            Err("wall_margin must be at most 0.015 (more lets a player through a gap of 9/16 of a block, narrower than they are)".into())
         } else {
             Ok(())
         }
@@ -509,7 +509,7 @@ mod tests {
     #[test]
     fn checks_a_mod_could_set_to_hang_or_stop_the_server_are_refused_on_load() {
         let source = include_str!("../../../assets/content/core/movement.ron");
-        for (from, to) in [("sweep_step: 0.25", "sweep_step: 0.0"), ("speed_margin: 1.25", "speed_margin: 0.5"), ("burst: 2.0", "burst: 0.0"), ("let_down_pause: 0.25", "let_down_pause: 3.0"), ("hover_sink: 1.0", "hover_sink: -1.0"), ("wall_box: (0.9, 0.95)", "wall_box: (0.9, 2.0)"), ("wall_margin: 0.01", "wall_margin: 0.1")] {
+        for (from, to) in [("sweep_step: 0.25", "sweep_step: 0.0"), ("speed_margin: 1.25", "speed_margin: 0.5"), ("burst: 2.0", "burst: 0.0"), ("let_down_pause: 0.25", "let_down_pause: 3.0"), ("hover_sink: 1.0", "hover_sink: -1.0"), ("wall_box: (0.9, 0.95)", "wall_box: (0.9, 2.0)"), ("wall_margin: 0.01", "wall_margin: 0.1"), ("wall_margin: 0.01", "wall_margin: 0.02")] {
             assert!(source.contains(from), "{from}");
             assert!(Tuning::from_ron(&source.replace(from, to)).is_err(), "{to} loads");
         }

@@ -5964,8 +5964,18 @@ fn seat(world: &mut World, gate: &mut Gate, now: f32) {
 
 /// The step-up course, from where the player stands (`step_up`): blocks along +z at the
 /// stand's height (`0`) and one up (`1`), a slab-like block, a stair-like one, then whole
-/// blocks with a slab-like one on the first.
-const STEP_UP_COURSE: [(i32, i32, Piece); 6] = [(2, 0, Piece::Slab), (3, 0, Piece::Stair), (4, 0, Piece::Cube), (5, 0, Piece::Cube), (5, 1, Piece::Slab), (6, 1, Piece::Cube)];
+/// blocks with a slab-like one on the first, and whole blocks at the top beyond its end.
+const STEP_UP_COURSE: [(i32, i32, Piece); 8] = [
+    (2, 0, Piece::Slab),
+    (3, 0, Piece::Stair),
+    (4, 0, Piece::Cube),
+    (5, 0, Piece::Cube),
+    (5, 1, Piece::Slab),
+    (6, 1, Piece::Cube),
+    // Room at the top past the end, so a long frame crossing it does not carry the player off.
+    (7, 1, Piece::Cube),
+    (8, 1, Piece::Cube),
+];
 /// How high the course's last block stands over the floor (a whole block on a whole block),
 /// and how far along it is.
 const STEP_UP_TOP: f32 = 2.0;
@@ -6061,7 +6071,21 @@ fn step_up(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let name = |b: Option<BlockId>| b.map_or("nothing loaded".to_owned(), |b| registry.def(b).name.clone());
     let from_stand = |at: Vec3| at - stand.as_vec3();
     match gate.phase {
+        // Its own start, whatever the steps before left: nothing held down, not flying, and
+        // an empty hand (a click does nothing on the way).
         0 => {
+            key(world, KeyCode::KeyW, false);
+            mouse(world, MouseButton::Left, false);
+            mouse(world, MouseButton::Right, false);
+            world.resource_mut::<LocalPlayer>().flying = false;
+            match clear_hand(world) {
+                Some(true) => {}
+                Some(false) if gate.server_in_phase() < STEP_UP_WAIT => return,
+                emptied => {
+                    gate.check("step up", Err(format!("the hand never emptied ({emptied:?}: no free slot, or still moving the held stack after {STEP_UP_WAIT} s)")));
+                    return leave(world, gate);
+                }
+            }
             let step_up = world.resource::<Launch>().content.movement.step_up;
             let [slab, stair, cube] = match step_up_pieces(&registry, step_up) {
                 Ok(pieces) => pieces,
