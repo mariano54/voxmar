@@ -382,6 +382,8 @@
     "prayer.restored": "祈りの力が満ちた。",
     "bed.rested": "ぐっすり眠った：{name}。{what}",
     "bed.not_tired": "もう休めているので新たな休息はないが、ここが寝床になった。",
+    "bed.threatened": "何かに狙われているそばでは眠れない。",
+    "bed.just_hurt": "傷がまだ新しくて眠れない。まず息を整えよう。",
     "effect.gained": "{name}：{what}",
     "effect.gained_next": "{name}：{what}{next}",
     "quest.done": "クエスト達成：{quest}。",
