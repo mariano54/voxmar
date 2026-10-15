@@ -417,7 +417,7 @@ steps! {
     /// `/locate settlement` finds a hamlet or village, and the server's world there has
     /// what its plan says: a well on its square, doors open onto a floor, and houses dry;
     /// the ambience hears it at work by day, not by night; then `/locate settlement town`
-    /// finds a town, and its wall stands where planned.
+    /// finds a town, and the wall of the walled town nearest it stands where planned.
     Settlements,
     /// Over a log in the inventory, the uses key shows what it goes into (planks, a
     /// campfire); clicking planks shows their recipe, and Back returns.
@@ -13734,6 +13734,20 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 gate.advance(now);
                 return;
             };
+            // Not every town is walled (a size's `walls` chance): the walls are judged at
+            // the walled town nearest the one found.
+            let walled = world
+                .resource::<crate::render::lod::WorldGenerator>()
+                .get()
+                .cloned()
+                .and_then(|g| g.settlements_near(at.xz(), TOWN_RADIUS).into_iter().filter(|s| s.size == "town" && s.wall_block.is_some()).min_by_key(|s| (s.centre.xz() - at.xz()).length_squared()));
+            let Some(walled) = walled else {
+                gate.check("town walls", Err(format!("no walled town within {TOWN_RADIUS} of the town /locate found at {at}")));
+                gate.phase = 5;
+                gate.advance(now);
+                return;
+            };
+            let at = walled.centre;
             gate.town = at;
             if let Some(observer) = gate.observer.as_mut() {
                 observer.connection.send(ClientMessage::Command { line: format!("tp {} {} {}", at.x, at.y + 60, at.z) });

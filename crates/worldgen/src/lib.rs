@@ -793,7 +793,8 @@ impl trails::Land for RiverLand<'_> {
             .near(self.world, centre, radius)
             .iter()
             .filter_map(|slot| slot.0.as_ref())
-            .flat_map(|p| p.buildings.iter().map(|b| (b.min, b.max)))
+            // A walled place's wall too, column by column, so trails come in at its gates.
+            .flat_map(|p| p.buildings.iter().map(|b| (b.min, b.max)).chain(p.walls.iter().map(|w| (w.0, w.0))))
             .filter(|(lo, hi)| lo.cmple(max).all() && hi.cmpge(min).all())
             .collect()
     }

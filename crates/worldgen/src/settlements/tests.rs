@@ -3268,3 +3268,30 @@ fn interiors_load_checks_refuse_strangers_and_unclaimed_beds() {
     bag.pieces.iter_mut().find(|p| p.role == Role::Bed).unwrap().block = "base:sleeping_bag".into();
     assert!(bag.check(&content.blocks).is_err(), "a bed that is no furnishing was let through");
 }
+
+/// Trails come into a walled place through its gates: none runs over a column of its wall.
+#[test]
+fn trails_never_cross_a_wall() {
+    let (mut places, mut trails) = (0, 0);
+    let mut over = Vec::new();
+    for seed in [0x5eedu64, 7] {
+        let world = shared_world(seed);
+        let spawn = world.spawn_point();
+        for s in world.settlements_near(IVec2::new(spawn.x, spawn.z), 9000).into_iter().filter(|s| !s.walls.is_empty()) {
+            places += 1;
+            let walls: rustc_hash::FxHashSet<IVec2> = s.walls.iter().map(|w| w.0).collect();
+            let (lo, hi) = (walls.iter().fold(IVec2::MAX, |a, &b| a.min(b)), walls.iter().fold(IVec2::MIN, |a, &b| a.max(b)));
+            let (lines, _) = world.trails_in(lo - 8, hi + 8);
+            trails += lines.len();
+            for &(p, _) in lines.iter().flatten() {
+                if walls.contains(&p.round().as_ivec2()) {
+                    let c = p.round().as_ivec2();
+                    let gate = s.gates.iter().map(|g| (*g - c).abs().max_element()).min().unwrap_or(-1);
+                    over.push(format!("{} at {c}, {gate} from a gate", s.name.0));
+                }
+            }
+        }
+    }
+    assert!(places >= 6 && trails >= 20, "only {places} walled places and {trails} trails by them to judge");
+    assert!(over.is_empty(), "{} trail points on a wall: {:?}", over.len(), &over);
+}
