@@ -294,6 +294,11 @@ steps! {
     /// Blocks drawn as shapes (a slab, stairs both ways up, a barrel, a crate and a sack)
     /// reach the client and draw.
     Shapes,
+    /// The building pieces (a post, a beam, a lattice window, thatch and shingle roofs and
+    /// ridges, cobblestone stairs and a stone brick slab) set in a row reach the client and
+    /// draw; each is named under the crosshair and stops movement with its own boxes, less
+    /// than its whole cell; and a thatch canopy darkens the sky light under it.
+    Pieces,
     /// The item in the hand is drawn in first person: an iron sword, a stone block and an
     /// empty hand each give a different view, only in the lower right; and sealed in a
     /// stone box with no light the sword is far darker than under the open sky.
@@ -643,6 +648,8 @@ struct Gate {
     kiln_since: f32,
     /// Where the shapes step sets its row of shaped blocks: in the air before the player.
     shapes_row: IVec3,
+    /// Sky light under the pieces step's thatch canopy before it was set.
+    pieces_open: u8,
     /// Times the held step sent wild creatures away and began its shots of the sky again.
     held_cleared: u32,
     /// The weather step's snow left for the depths step to clear with its fog: the sky's
@@ -910,6 +917,7 @@ impl Gate {
             kiln: IVec3::ZERO,
             kiln_since: 0.0,
             shapes_row: IVec3::ZERO,
+            pieces_open: 0,
             held_cleared: 0,
             weather_clear_owed: false,
             kiln_asked: f32::MIN,
@@ -1793,6 +1801,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Depths => depths(world, gate, now, in_phase),
         Step::Tree => tree(world, gate, now, in_phase),
         Step::Shapes => shapes(world, gate, now, in_phase),
+        Step::Pieces => pieces(world, gate, now, in_phase),
         Step::Held => held(world, gate, now, in_phase),
         Step::Sky => sky(world, gate, now, in_phase),
         Step::NaturalSpawns => natural_spawns(world, gate, now),
@@ -8526,9 +8535,123 @@ fn shapes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 (true, false) => Err(format!("the shaped blocks barely show: the view changed by {change:.1} levels")),
             };
             gate.check("shapes", result);
-            gate.next(Step::Held, now);
+            gate.next(Step::Pieces, now);
         }
         _ => {}
+    }
+}
+
+/// The building pieces the pieces step sets (blocks_building.ron), in a facing or two.
+const PIECES: [&str; 9] = [
+    "oak_post", "birch_beam_east", "dark_oak_lattice_window", "thatch_roof", "thatch_ridge", "oak_shingles_south", "birch_shingle_ridge", "cobblestone_stairs_west", "stone_brick_slab",
+];
+
+/// The building pieces in a row in the air three blocks behind the shapes step's, seen
+/// against the sky: they must reach the client and the server alike and change the view.
+/// Then each in turn, the crosshair turned to its middle names it, and what it stops
+/// movement with is its shape's boxes, filling some of its cell but not all (a whole cube
+/// would be a block that only looks shaped). Last, a three-by-three thatch canopy set
+/// beside the row leaves the cell under its middle darker to the sky than it was open.
+fn pieces(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    let row = gate.shapes_row + IVec3::new(0, 0, 3);
+    let cells: Vec<IVec3> = (0..PIECES.len() as i32).map(|i| row + IVec3::X * i).collect();
+    let canopy = row + IVec3::new(PIECES.len() as i32 + 2, 0, 0);
+    let under = canopy - IVec3::Y;
+    let leave = |world: &mut World, gate: &mut Gate| {
+        let net = world.resource::<Net>();
+        net.command(&format!("fill {} {} {} {} {} {} air", row.x, row.y, row.z, canopy.x + 1, row.y, row.z + 1));
+        net.command(&format!("fill {} {} {} {} {} {} air", canopy.x - 1, canopy.y, canopy.z - 1, canopy.x + 1, canopy.y, canopy.z + 1));
+        gate.next(Step::Held, now);
+    };
+    let here = |world: &World, gate: &Gate, cell: IVec3, name: &str| {
+        let client = world.resource::<ClientWorld>();
+        let wanted = client.registry.id(&format!("base:{name}"));
+        wanted.is_some() && client.block(cell) == wanted && gate.observer.as_ref().is_none_or(|o| o.world.block(cell) == wanted)
+    };
+    let first_piece: u32 = 3;
+    match gate.phase {
+        0 => {
+            aim(world, row + IVec3::X * (PIECES.len() as i32 / 2));
+            gate.advance(now);
+        }
+        1 if in_phase > 0.5 => {
+            aim(world, row + IVec3::X * (PIECES.len() as i32 / 2));
+            if gate.shot(world, "pieces-before").is_some() {
+                for (cell, block) in cells.iter().zip(PIECES) {
+                    world.resource::<Net>().command(&format!("setblock {} {} {} {block}", cell.x, cell.y, cell.z));
+                }
+                gate.advance(now);
+            }
+        }
+        2 => {
+            let arrived = cells.iter().zip(PIECES).all(|(&cell, name)| here(world, gate, cell, name));
+            if !(arrived && settled(world, row) && in_phase > SETTLE) && gate.server_in_step() < STEP_LIMIT - 1.0 {
+                return;
+            }
+            let Some(shot) = gate.shot(world, "pieces") else { return };
+            let change = gate.earlier_shot("pieces-before").map_or(0.0, |before| change(&before, &shot, 0.25));
+            let missing: Vec<&str> = cells.iter().zip(PIECES).filter(|&(&cell, name)| !here(world, gate, cell, name)).map(|(_, name)| name).collect();
+            let result = match (missing.is_empty(), change >= SCREEN_CHANGE) {
+                (true, true) => Ok(format!("{} building pieces drawn, changing the view by {change:.1} levels", PIECES.len())),
+                (false, _) => Err(format!("not on both client and server: {missing:?}")),
+                (true, false) => Err(format!("the building pieces barely show: the view changed by {change:.1} levels")),
+            };
+            gate.check("pieces", result);
+            if missing.is_empty() {
+                aim(world, cells[0]);
+                gate.advance(now);
+            } else {
+                leave(world, gate);
+            }
+        }
+        // One piece a phase: aimed at the frame before, judged this one.
+        p if p >= first_piece && ((p - first_piece) as usize) < PIECES.len() => {
+            let i = (p - first_piece) as usize;
+            let (cell, name) = (cells[i], PIECES[i]);
+            let on = world.resource::<crate::interact::Target>().hit.as_ref().map(|hit| hit.block);
+            if on != Some(cell) && in_phase < SETTLE_LIMIT {
+                aim(world, cell);
+                return;
+            }
+            let client = world.resource::<ClientWorld>();
+            let boxes = client.block(cell).map(|b| client.registry.collision(b).to_vec()).unwrap_or_default();
+            let filled: f32 = boxes.iter().map(|b| (b.max - b.min).element_product()).sum();
+            let result = if on != Some(cell) {
+                Err(format!("aimed at {name}, the crosshair is on {on:?}, not {cell}"))
+            } else if boxes.is_empty() || filled >= 0.999 {
+                Err(format!("{name} stops movement with {} boxes filling {:.0}% of its cell: not its shape", boxes.len(), filled * 100.0))
+            } else {
+                Ok(format!("under the crosshair, on client and server, stopping movement with {} boxes filling {:.0}% of its cell", boxes.len(), filled * 100.0))
+            };
+            gate.check(&format!("pieces: {name}"), result);
+            if let Some(&next) = cells.get(i + 1) {
+                aim(world, next);
+                gate.advance(now);
+            } else {
+                gate.pieces_open = crate::breaking::sky_light(world.resource::<ClientWorld>(), under);
+                let net = world.resource::<Net>();
+                net.command(&format!("fill {} {} {} {} {} {} thatch_roof", canopy.x - 1, canopy.y, canopy.z - 1, canopy.x + 1, canopy.y, canopy.z + 1));
+                gate.advance(now);
+            }
+        }
+        // The canopy in the client's world: the cell under it darker to the sky.
+        _ => {
+            let roofed = (-1..=1).all(|dx| (-1..=1).all(|dz| here(world, gate, canopy + IVec3::new(dx, 0, dz), "thatch_roof")));
+            let shaded = crate::breaking::sky_light(world.resource::<ClientWorld>(), under);
+            let open = gate.pieces_open;
+            if !(roofed && shaded + 2 <= open) && gate.server_in_phase() < STEP_LIMIT / 2.0 {
+                return;
+            }
+            let result = if !roofed {
+                Err("the thatch canopy never reached both client and server".into())
+            } else if shaded + 2 <= open {
+                Ok(format!("sky light under a thatch canopy {shaded}, open before it {open}"))
+            } else {
+                Err(format!("a thatch canopy leaves sky light under it at {shaded}, open before it {open}: the roof lets the sky through"))
+            };
+            gate.check("pieces: thatch shades", result);
+            leave(world, gate);
+        }
     }
 }
 
