@@ -77,37 +77,17 @@ fn every_decor_block_has_a_colour_baked_into_its_textures_and_a_way_to_get_it() 
 }
 
 #[test]
-fn furniture_breaks_to_planks_and_everything_else_to_nothing() {
-    // Count the planks in a piece, including a wardrobe's cupboard, and account for
-    // recipes that make more than one piece (two counters from six planks).
-    fn cost(content: &Content, item: BlockId, planks: BlockId, path: &mut BTreeSet<BlockId>) -> u32 {
-        if item == planks {
-            return 1;
-        }
-        if !content.blocks.def(item).has_tag("furniture") {
-            return 0;
-        }
-        assert!(path.insert(item), "cyclic furniture recipe for {}", content.blocks.def(item).name);
-        let recipe = content.recipes.iter().find(|r| r.output == item).unwrap();
-        let used: u32 = recipe.cells().iter().flatten().map(|&ingredient| cost(content, ingredient, planks, path)).sum();
-        path.remove(&item);
-        used / recipe.count as u32
-    }
+fn a_placed_piece_gives_itself_back_and_a_village_one_nothing() {
+    // Whatever a home is furnished with comes back whole when broken, so a room can be
+    // rearranged or a home moved; the `furnishing` tag keeps a village's pieces from
+    // giving anything (the server gives a furnishing back only from a cell a player set).
     let content = content();
-    let air = BlockId::AIR;
-    for id in made(&content) {
+    let candle = content.blocks.expect("base:candle");
+    for id in made(&content).into_iter().chain([candle]) {
         let def: &BlockDef = content.blocks.def(id);
-        let drops = content.blocks.info(id).drops;
-        if def.has_tag("furniture") {
-            assert!(def.has_tag("furnishing"), "{} would yield free planks when world-placed", def.name);
-            let planks = format!("{}_planks", def.family.as_deref().unwrap());
-            let planks = content.blocks.id(&planks).unwrap();
-            assert_eq!(drops, planks, "{}", def.name);
-            // Half what it cost, at most: breaking furniture is no way to make planks.
-            assert!(def.drop_count >= 1 && u32::from(def.drop_count) * 2 <= cost(&content, id, planks, &mut BTreeSet::new()), "{}", def.name);
-        } else {
-            assert_eq!(drops, air, "{} drops something", def.name);
-        }
+        let info = content.blocks.info(id);
+        assert!(def.has_tag("furnishing"), "{} would give itself away where a village placed it", def.name);
+        assert_eq!((info.drops, info.drop_count), (id, 1), "{} does not give itself back", def.name);
     }
 }
 
