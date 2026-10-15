@@ -578,12 +578,20 @@ pub fn furnish(it: &Interiors, spec: &Spec, frame: &Frame, wood: &str, levers: &
             let kept = entries.iter().copied().collect();
             (entries, kept)
         };
-        // The foot of the stair up from here is a way in too, kept clear.
+        // The foot of the stair up from here, the open floor beside its lowest step, is a
+        // way in too, kept clear (the first of a flight is under the landing above).
         if let Some(Some(flight)) = flights.get(s as usize)
-            && let Some(&(x, z)) = flight.first()
+            && let Some(&(x, z)) = flight.last()
         {
-            entries.push(world(x, z));
-            kept.insert(world(x, z));
+            let steps: Vec<IVec2> = flight.iter().map(|&(x, z)| world(x, z)).collect();
+            let low = world(x, z);
+            for side in SIDES {
+                let p = low + side;
+                if walk.contains(&p) && !steps.contains(&p) {
+                    entries.push(p);
+                    kept.insert(p);
+                }
+            }
         }
         entries.sort_unstable_by_key(|p| (p.x, p.y));
         entries.dedup();
