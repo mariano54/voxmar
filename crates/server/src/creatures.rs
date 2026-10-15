@@ -827,15 +827,15 @@ impl Server {
             creature.body = body;
             creature.changed = true;
         }
-        if charging.is_some() {
-            self.charge_ran(id, before);
-        }
         let handoff = self.overworld.settlement_people().live.handoff;
         if balked && self.villagers.errand(id, handoff).is_none() && self.wandering.errand(id).is_none() {
             // With no way to its target at all, struck again soon it runs rather than come
             // back to the fence (`Memory::NoWay`).
             let mind = &mut self.creatures.live.get_mut(&id).expect("still there").mind;
             if no_way { mind.find_no_way() } else { mind.give_up() }
+        }
+        if charging.is_some() {
+            self.charge_ran(id, before);
         }
         let Some(body) = self.creatures.live.get(&id).map(|c| c.body) else { return };
         if body.position.y < -64.0 {
@@ -2469,6 +2469,30 @@ mod cornered_tests {
             let id = put(&mut server, name, centre.as_vec3() + Vec3::new(-1.5, 0.0, 0.5), Vec3::X);
             let away = hunted(&mut server, id, player, 5.0);
             assert!(away > 6.0, "{name} struck against a wall got only {away:.1} blocks from the player");
+            server.creatures.live.remove(&id);
+        }
+    }
+
+    /// A pen walled two high keeps its animals, struck and running, tall heads and all: a
+    /// head over the wall is no step (motion's head-met step is judged at the feet).
+    #[test]
+    fn a_pen_two_high_keeps_its_animals_struck_and_running() {
+        let mut server = crate::test_server();
+        let half = 5;
+        let centre = pen(&mut server, half);
+        for i in -half..=half {
+            for cell in [IVec3::new(i, 2, -half), IVec3::new(i, 2, half), IVec3::new(-half, 2, i), IVec3::new(half, 2, i)] {
+                server.world.set_block(centre + cell, voxmar_engine::block::BlockId::AIR);
+            }
+        }
+        let player = join(&mut server, centre.as_vec3() + Vec3::new(0.5, 0.0, 0.5));
+        for name in ["base:red_deer", "base:wild_boar", "base:aurochs", "base:brown_bear"] {
+            let Some(species) = server.content.creatures.id(name) else { continue };
+            let id = put(&mut server, name, centre.as_vec3() + Vec3::new(-2.5, 0.0, 0.5), Vec3::NEG_X);
+            server.creatures.live.get_mut(&id).unwrap().owner = Some("1".into());
+            let _ = hunted(&mut server, id, player, 10.0);
+            let at = server.creatures.live[&id].body.position - centre.as_vec3();
+            assert!(at.x.abs() < half as f32 && at.z.abs() < half as f32 && at.y < 1.5, "{name} ({species:?}) left a pen two high: at {at}");
             server.creatures.live.remove(&id);
         }
     }

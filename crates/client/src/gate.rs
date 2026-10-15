@@ -1006,6 +1006,13 @@ impl Gate {
         self.server_in_phase() > seconds && self.taps >= UNANSWERED_SWINGS
     }
 
+    /// Whether a phase waiting on the client's own doing (music it plays) has waited out
+    /// `seconds` both of the server's clock and of the client's: frames starved behind a
+    /// running server have not yet had the seconds to do it in.
+    fn waited_both(&self, seconds: f32, now: f32) -> bool {
+        self.server_in_phase() > seconds && now - self.phase_since > seconds
+    }
+
     /// Whether the server has answered none of the strikes of a striking step: at least
     /// `UNANSWERED_SWINGS` asked of it (`Fighting::strikes`, of `strikes` so far) since its
     /// last answer, and `UNANSWERED` of its seconds since the first of them went. A press
@@ -1030,19 +1037,6 @@ impl Gate {
         self.swings = 0;
         self.strikes_seen = Some(strikes);
         self.first_unanswered = None;
-    }
-
-    /// Whether a phase waiting on the client's own doing (music it plays) has waited out
-    /// `seconds` both of the server's clock and of the client's: frames starved behind a
-    /// running server have not yet had the seconds to do it in.
-    fn waited_both(&self, seconds: f32, now: f32) -> bool {
-        self.server_in_phase() > seconds && now - self.phase_since > seconds
-    }
-
-    /// Whether the server has answered none of the swings of a striking step: `UNANSWERED`
-    /// of its seconds since the last answer, with at least `UNANSWERED_SWINGS` sent in them.
-    fn unanswered_swings(&self) -> bool {
-        self.server_in_phase() > UNANSWERED && self.swings >= UNANSWERED_SWINGS
     }
 
     fn next(&mut self, step: Step, now: f32) {
@@ -9794,7 +9788,7 @@ fn tusk(world: &mut World, gate: &mut Gate, now: f32) {
                 let away = me + (me - view.position).with_y(0.0).normalize_or_zero() * 8.0;
                 world.resource::<Net>().command(&format!("tp {} {} {}", away.x, me.y, away.z));
                 gate.advance(now);
-            } else if gate.unanswered_swings() {
+            } else if gate.unanswered(world.resource::<crate::fight::Fighting>().strikes) {
                 mouse(world, MouseButton::Left, false);
                 key(world, KeyCode::KeyW, false);
                 let aimed = world.resource::<crate::interact::Target>().creature.is_some();
