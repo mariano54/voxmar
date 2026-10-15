@@ -627,3 +627,59 @@ fn a_thatch_roof_muffles_the_rain_once() {
     let sound = roofs.shelter.iter().find(|(tag, _)| tag == "shelter:sound").unwrap().1;
     assert!((roofs.sheltered(|tag| tag == "shelter:sound", None) - (1.0 - (1.0 - roofs.muffle) * (1.0 - sound))).abs() < 1e-6);
 }
+
+/// Fire in the thatch as the server tells it: thatch the server says smoulders hisses, and
+/// the same thatch not smouldering is silent; burning cells crackle, fuller with more of
+/// them near and thinner as they burn out, silent with none. Counted by the enclosure scan
+/// from the blocks and the server's smoulders, as in the game.
+#[test]
+fn thatch_hisses_as_it_smoulders_and_crackles_thinner_as_it_burns_out() {
+    use voxmar_engine::coords::ColumnPos;
+    use voxmar_engine::world::{Column, VoxelWorld};
+
+    let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+    let content = voxmar_server::load_content(&assets).unwrap();
+    let blocks = &content.blocks;
+    let ambience = Ambience::load(&content.files).unwrap();
+    let kinds = super::kinds(&ambience, blocks, &content.multiblocks, &voxmar_server::wall_shelters(&content));
+    let id = |name: &str| blocks.id(name).unwrap_or_else(|| panic!("{name}"));
+    let group = |name: &str| ambience.groups.iter().position(|g| g.name == name).unwrap_or_else(|| panic!("a {name} group"));
+    let bed = |name: &str| ambience.beds.iter().position(|b| b.name == format!("base:{name}")).unwrap_or_else(|| panic!("a {name} bed"));
+    let (smoulder, blaze) = (group("smoulder"), group("blaze"));
+    let burning = content.fire.burning.expect("fire.ron burns");
+    // Open ground, and `cells` of a row three blocks off set to `block`.
+    let world = |block: voxmar_engine::block::BlockId, cells: i32| {
+        let mut world = VoxelWorld::default();
+        for dz in -1..=1 {
+            for dx in -1..=1 {
+                world.insert(ColumnPos::of_block(IVec3::ZERO).offset(dx, dz), std::sync::Arc::new(Column::default()));
+            }
+        }
+        for x in -6..=6 {
+            for z in -6..=6 {
+                world.set_block(IVec3::new(x, 9, z), id("base:dirt"));
+            }
+        }
+        for i in 0..cells {
+            world.set_block(IVec3::new(3, 10, i - 3), block);
+        }
+        world
+    };
+    let night = [("sun", -0.6), ("air", 0.8), ("sky", 0.9), ("wind", 1.0), ("raining", 0.0)];
+    let heard = |world: &VoxelWorld, smoulders: bool, listen: usize| {
+        let found = super::enclosure::scan(IVec3::new(0, 10, 0), |p| world.block(p), |_| smoulders, &kinds, 1);
+        let axes = [("smoulder", ambience.presence(smoulder, found.groups[smoulder])), ("blaze", ambience.presence(blaze, found.groups[blaze]))];
+        let place = scene(&ambience, "yard", &["plains"], &[night.as_slice(), &axes].concat());
+        run(&ambience, &place, 20.0).1[listen]
+    };
+    let (hiss, crackle) = (bed("smoulder_hiss"), bed("blaze_crackle"));
+    let thatch = world(id("base:thatch_roof"), 1);
+    let smouldering = heard(&thatch, true, hiss);
+    assert!(smouldering > 0.5 * ambience.beds[hiss].volume, "smouldering thatch hisses at {smouldering:.3} of {}", ambience.beds[hiss].volume);
+    let still = heard(&thatch, false, hiss);
+    assert!(still < 1e-3, "thatch the server does not say smoulders hisses at {still:.3}");
+    let [six, two, none] = [6, 2, 0].map(|cells| heard(&world(burning, cells), false, crackle));
+    assert!(six > 0.8 * ambience.beds[crackle].volume, "six burning cells near crackle at {six:.3} of {}", ambience.beds[crackle].volume);
+    assert!(two > 0.05 && two < 0.75 * six, "two burning cells left crackle at {two:.3}, against {six:.3} for six: it thins as they burn out");
+    assert!(none < 1e-3, "with every cell burned out the crackle plays at {none:.3}");
+}

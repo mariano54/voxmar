@@ -74,6 +74,12 @@ pub enum Synth {
     /// Wind finding the gaps in a draughty wall: a thin, wavering whistle that comes and
     /// goes with the gusts, over a faint breathy hiss.
     Draught,
+    /// Thatch or wattle smouldering, about to catch: a soft, close sizzling hiss, swelling
+    /// and easing, with a fine fizz of tiny ticks through it.
+    Smoulder,
+    /// Thatch or wattle burning: a crisp, busy crackle of straw and withies going up over a
+    /// light roar, brighter and quicker than a hearth's logs.
+    Blaze,
     /// A quick songbird: trills and twitters.
     Warbler,
     /// A fluting songbird that repeats its phrases.
@@ -120,7 +126,7 @@ pub enum Synth {
 
 impl Synth {
     #[cfg(test)]
-    pub const ALL: [Synth; 38] = [
+    pub const ALL: [Synth; 40] = [
         Synth::Wind,
         Synth::Gale,
         Synth::Rustle,
@@ -139,6 +145,8 @@ impl Synth {
         Synth::StonePatter,
         Synth::GlassPatter,
         Synth::Draught,
+        Synth::Smoulder,
+        Synth::Blaze,
         Synth::Warbler,
         Synth::Thrush,
         Synth::Whistler,
@@ -183,6 +191,8 @@ impl Synth {
                 | Synth::StonePatter
                 | Synth::GlassPatter
                 | Synth::Draught
+                | Synth::Smoulder
+                | Synth::Blaze
         )
     }
 
@@ -267,6 +277,8 @@ fn render_bed(synth: Synth, noise: &mut Noise, len: usize) -> Vec<f32> {
         Synth::StonePatter => stone_patter(noise, len),
         Synth::GlassPatter => glass_patter(noise, len),
         Synth::Draught => draught(noise, len),
+        Synth::Smoulder => smoulder(noise, len),
+        Synth::Blaze => blaze(noise, len),
         one_shot => panic!("{one_shot:?} makes one-shots, not a bed"),
     }
 }
@@ -491,6 +503,59 @@ fn draught(noise: &mut Noise, len: usize) -> Vec<f32> {
             (whistle * g + hiss.band(noise.next()) * 0.06 * (0.3 + g)) * (0.15 + 0.85 * g)
         })
         .collect()
+}
+
+/// Thatch smouldering: a high, soft sizzle of band noise that swells and eases as the heat
+/// comes and goes, a fine fizz of tiny ticks through it, and a low breath under both.
+fn smoulder(noise: &mut Noise, len: usize) -> Vec<f32> {
+    let swell = Drift::new(noise, 0.25);
+    let mut sizzle = Svf::new(4200.0, 1.2);
+    let mut breath = Svf::new(500.0, 0.6);
+    let mut out: Vec<f32> = (0..len)
+        .map(|i| {
+            let s = swell.unit(i as f32 / SR);
+            sizzle.band(noise.next()) * 0.22 * (0.45 + 0.55 * s) + breath.band(noise.next()) * 0.05 * s
+        })
+        .collect();
+    let mut t = between(noise, 0.0, 0.05);
+    while t < len as f32 / SR {
+        let gain = 0.03 + 0.08 * noise.unit().powi(3);
+        crack(&mut out, noise, t, (0.0005, 0.0015), (3500.0, 7000.0), gain);
+        t += gap(noise, 30.0);
+    }
+    out
+}
+
+/// Straw and withies burning: a light roar breathing quickly, and crackles thick and crisp,
+/// in quick bursts, the odd louder pop of a withy splitting.
+fn blaze(noise: &mut Noise, len: usize) -> Vec<f32> {
+    let breath = Drift::new(noise, 0.8);
+    let mut roar = Svf::new(260.0, 0.7);
+    let mut rush = Svf::new(1400.0, 0.6);
+    let mut out: Vec<f32> = (0..len)
+        .map(|i| {
+            let b = breath.unit(i as f32 / SR);
+            let white = noise.next();
+            roar.low(white) * (0.35 + 0.3 * b) + rush.band(white) * 0.08 * (0.5 + 0.5 * b)
+        })
+        .collect();
+    let mut t = between(noise, 0.0, 0.1);
+    while t < len as f32 / SR {
+        let mut at = t;
+        for _ in 0..2 + (noise.unit().powi(2) * 9.0) as usize {
+            let gain = 0.06 + 0.25 * noise.unit().powi(3);
+            crack(&mut out, noise, at, (0.001, 0.003), (2200.0, 6000.0), gain);
+            at += between(noise, 0.004, 0.03);
+        }
+        t = at + gap(noise, 4.0 + 3.0 * breath.unit(t));
+    }
+    let mut t = between(noise, 0.2, 1.0);
+    while t < len as f32 / SR {
+        let gain = between(noise, 0.3, 0.5);
+        crack(&mut out, noise, t, (0.003, 0.007), (900.0, 1800.0), gain);
+        t += gap(noise, 1.1);
+    }
+    out
 }
 
 /// Rain on stone overhead: fewer drops, each a dull knock, over a low wash of water.

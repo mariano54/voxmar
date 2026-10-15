@@ -53,6 +53,10 @@
         // Thatch or wattle smouldering by a flame, about to catch (fire.ron): heard only while
         // it smoulders (`smouldering`), one within a few blocks fully.
         (name: "smoulder", tags: ["thatch", "wattle"], range: (1, 4), smouldering: true),
+        // Thatch or wattle burning (fire.ron's `burning` block): each burning cell near counts,
+        // so the crackle is fullest while the fire runs through a roof and thins as cell after
+        // cell burns out to ash. Four within five blocks fully.
+        (name: "blaze", tags: ["blaze"], range: (0, 40)),
         (name: "leaves", tags: ["leaves"], range: (20, 300)),
         (name: "wood", tags: ["log"], range: (5, 60)),
         // A fire to sit by: a campfire, a hearth, a kiln. Before rock, as a hearthstone or a
@@ -246,6 +250,18 @@
             name: "fire", sound: Fire, volume: 0.3, fade: 2,
             when: {"fire": (min: 0.6, fade: 0.55)},
         ),
+        // Thatch about to catch: a soft, close sizzle, the warning before the flame (with
+        // `smoulder_crackle`'s spits). Only while the server says it smoulders.
+        (
+            name: "smoulder_hiss", sound: Smoulder, volume: 0.3, fade: 1,
+            when: {"smoulder": (min: 0.05, fade: 0.05)},
+        ),
+        // Thatch and wattle burning: a crisp, busy crackle as loud as there is fire near, so
+        // it thins as the fire burns out, and is gone with the last burning cell.
+        (
+            name: "blaze_crackle", sound: Blaze, volume: 0.5, fade: 1,
+            when: {"blaze": (min: 0.6, fade: 0.6)},
+        ),
         // A waterfall's roar, from the curtain of water pouring down.
         (
             name: "waterfall", recording: ["sounds/waterfall_1.mp3", "sounds/waterfall_2.mp3", "sounds/waterfall_3.mp3"], volume: 0.4, fade: 3,
@@ -377,6 +393,12 @@
             name: "smoulder_crackle", sound: Snap, volume: 0.4, at: Block("smoulder"), per_minute: 40, cooldown: 1,
             pitch: (1.1, 1.45), reach: 8,
             when: {"smoulder": (min: 0.05, fade: 0.05)},
+        ),
+        // A withy or a bundle of straw popping as it burns, from the burning cells.
+        (
+            name: "blaze_pop", sound: Snap, volume: 0.35, at: Block("blaze"), per_minute: 24, cooldown: 1,
+            pitch: (1.0, 1.35), reach: 8,
+            when: {"blaze": (min: 0.1, fade: 0.1)},
         ),
         // A log snapping in the fire, from the fire itself.
         (

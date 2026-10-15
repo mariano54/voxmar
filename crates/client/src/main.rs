@@ -353,6 +353,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     recorded.check(&content.actions)?;
     recorded.covers(&content.actions)?;
     recorded.check_materials(&content.blocks)?;
+    recorded.check_fire(&content.fire)?;
     // Every roof's rain patters or is silent (ambience.ron's `roofs`), by its building
     // material or else its family sound.
     let ambience = ambience::defs::Ambience::load(&content.files)?;

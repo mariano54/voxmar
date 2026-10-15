@@ -228,7 +228,7 @@ pub(crate) fn receive(
     mut weather: ResMut<ClientWeather>,
     (time, mut clock, mut console, mut air, mut cues): (Res<Time>, ResMut<Clock>, ResMut<Console>, ResMut<ClientAtmosphere>, MessageWriter<SoundCue>),
     (mut drops, mut toasts, launch, locale, mut creatures): (ResMut<Drops>, ResMut<SkillToasts>, Res<Launch>, Res<Locale>, ResMut<crate::creatures::Creatures>),
-    mut broken: MessageWriter<BlockBroken>,
+    (mut broken, mut catches): (MessageWriter<BlockBroken>, MessageWriter<crate::sfx::Catches>),
     mut fighting: ResMut<crate::fight::Fighting>,
     mut stations: ResMut<crate::hud::target::StationSeen>,
 ) {
@@ -294,12 +294,22 @@ pub(crate) fn receive(
                     {
                         cues.write(cue.at(pos.as_vec3() + Vec3::splat(0.5)));
                     }
+                    // Thatch or wattle catching fire, nearby.
+                    if crate::sfx::catches(&launch.content.fire, old, block) && pos.as_vec3().distance(player.position) < SHOWN_WITHIN {
+                        catches.write(crate::sfx::Catches { at: pos.as_vec3() + Vec3::splat(0.5) });
+                    }
                     world.set_block(pos, block);
                 }
             }
             ServerMessage::Blocks { changes } => {
                 for (pos, block) in changes {
-                    if world.block(pos) != Some(block) {
+                    let old = world.block(pos);
+                    if old != Some(block) {
+                        // Thatch or wattle catching fire, nearby: the server's word, never a
+                        // client timer.
+                        if crate::sfx::catches(&launch.content.fire, old, block) && pos.as_vec3().distance(player.position) < SHOWN_WITHIN {
+                            catches.write(crate::sfx::Catches { at: pos.as_vec3() + Vec3::splat(0.5) });
+                        }
                         world.set_block(pos, block);
                     }
                 }

@@ -157,6 +157,22 @@ def light(rng):
     return out
 
 
+def catch(rng):
+    """Thatch or wattle catching fire (fire.ron): a soft, low whoomph of flame taking hold,
+    swelling quickly and settling, with the first dry crackles running through it. Softer
+    than a strike: a warning heard across a room, not a bang."""
+    n = int(1.4 * RATE)
+    t = np.arange(n) / RATE
+    rise = rng.uniform(0.12, 0.18)
+    swell = np.minimum(t / rise, 1.0) ** 1.5 * np.exp(-np.maximum(t - rise, 0) / rng.uniform(0.38, 0.5))
+    body = lowpass(rng.standard_normal(n), 0.035) * swell
+    air = bandpass(rng.standard_normal(n), 900, 0.6) * swell * 0.25
+    out = body / (np.abs(body).max() + 1e-9) * 0.8 + air
+    tail = int(1.2 * RATE)
+    place(out, rise * 0.6, crackles(rng, 1.2, 30, 0.7) * np.exp(-np.arange(tail) / RATE / 0.55))
+    return out
+
+
 def creak(rng, seconds, low, high, body):
     """A hinge or a lid creaking: stick-slip pulses whose rate rises and falls, rung through
     the wood's body."""
@@ -679,6 +695,7 @@ SOUNDS = {
     "eat": (eat, 3),
     "craft": (craft, 3),
     "light": (light, 2),
+    "fire_catch": (catch, 2),
     "store_open": (store_open, 2),
     "door": (door, 2),
     "cook": (cook, 2),

@@ -460,8 +460,14 @@ enough to see the smoke, step over and break the thatch or panel by bare hand (a
 second: hardness 0.8 or 1).
 
 The wait is shown. While a block waits to catch it **smoulders**: grey smoke curls off it
-with the odd ember (`smoke` in fire.ron, the client's emitters) and it crackles (ambience.ron's
-`smoulder` group, `smouldering: true`, and its `smoulder_crackle` sound). The server tells
+with the odd ember (`smoke` in fire.ron, the client's emitters) and it hisses and crackles
+(ambience.ron's `smoulder` group, `smouldering: true`, its `smoulder_hiss` bed and
+`smoulder_crackle` sound). As it catches, a soft whoomph comes from it (sounds.ron's `fire`
+`catch`, played on the server's block change to the blaze; a fire that can burn without one
+does not start). Burning, it crackles crisply (the `blaze` group, `blaze_crackle` bed and
+`blaze_pop` sound), as loud as there are burning cells near, so the crackle thins as the fire
+burns out and stops with the last of it. All of it follows the server's word, never a timer
+of the client's. The server tells
 every player which blocks smoulder when that changes (`ServerMessage::Smoulders`, protocol 48),
 since only it knows what changed (a village's thatch by its own torches does not smoulder).
 The first time in a session a player's own change sets something smouldering (a torch set, a
