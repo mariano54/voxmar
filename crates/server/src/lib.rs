@@ -763,7 +763,7 @@ impl Server {
         let planter_grown = meta.planter_grown.iter().map(|&p| IVec3::from_array(p)).collect();
         let apiary = apiary::Apiary::restore(&meta.hives);
         let stations = stations::Loads::restore(&meta.stations, |name| content.blocks.item_named(name));
-        let catches = traps::Catches::restore(&meta.catches, |name| content.creatures.id(name));
+        let catches = traps::Catches::restore(&meta.catches, &meta.trap_rolls, |name| content.creatures.id(name));
         let lit = meta.lit.iter().filter(|fire| fire.until > tick && content.multiblocks.get(&fire.structure).is_some())
             .map(|fire| (IVec3::from_array(fire.position), fire.clone())).collect();
         let survival = Arc::new(rules::SurvivalRules::load(&content.files, &content.blocks, &mut Vec::new()).expect("checked by load_content"));
@@ -1124,6 +1124,7 @@ impl Server {
         meta.hives = self.apiary.saved();
         meta.stations = self.stations.saved(|item| self.content.blocks.def(item).name.clone());
         meta.catches = self.catches.saved(|species| self.content.creatures.get(species).def.name.clone());
+        meta.trap_rolls = self.catches.saved_rolls();
         meta.lit = self.lit.values().filter(|fire| fire.until > self.tick).cloned().collect();
         meta.lit.sort_by_key(|fire| fire.position);
         meta.day = Some(self.day as u64);

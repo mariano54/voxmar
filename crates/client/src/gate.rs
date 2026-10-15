@@ -728,6 +728,10 @@ struct Gate {
     tap_at: f32,
     tapped: bool,
     taps: u32,
+    /// Rabbits the snare step has put in its snare, and when the last went in (server
+    /// seconds): one may slip it, and another goes in.
+    snare_tries: u32,
+    snare_at: f32,
     /// The sling step's run (`sling`).
     sling: SlingRun,
     /// The Rootmothers seen before the Boss step summoned its own, and the one it summoned:
@@ -958,6 +962,8 @@ impl Gate {
             tap_at: f32::MIN,
             tapped: false,
             taps: 0,
+            snare_tries: 0,
+            snare_at: 0.0,
             sling: SlingRun::default(),
             boss_before: Vec::new(),
             boss_id: None,
@@ -13360,6 +13366,18 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
 /// Where the snare step sets its snare, from where the dry step's rack stood.
 const SNARE_FROM_RACK: IVec3 = IVec3::new(3, 0, 0);
 
+/// Server seconds a rabbit put in the snare is given (the traps look every 4 ticks) before
+/// it is taken to have slipped it, and the most put in: a rabbit is held three times in
+/// five, so eight all slipping is a broken snare, not bad luck (the gate's draw key is
+/// fixed, so the same ones slip every run).
+const SNARE_SLIPPED: f32 = 0.6;
+const SNARE_TRIES: u32 = 8;
+
+/// Whether the client has no block, or air, at `at`.
+fn client_gone(world: &World, at: IVec3) -> bool {
+    world.resource::<ClientWorld>().block(at).is_none_or(|b| b.is_air())
+}
+
 fn snare(world: &mut World, gate: &mut Gate, now: f32) {
     let snare = gate.feet + IVec3::new(0, 0, 14) + RACK_FROM_FIRE + SNARE_FROM_RACK;
     let waited = gate.server_in_phase() > DRY_WAIT;
@@ -13371,6 +13389,8 @@ fn snare(world: &mut World, gate: &mut Gate, now: f32) {
     let end = |world: &mut World, gate: &mut Gate| {
         gate.tap(world, false, now);
         world.resource::<Net>().command(&format!("setblock {} {} {} air", snare.x, snare.y, snare.z));
+        // The rabbits that slipped it, held by the snare, go with it.
+        world.resource::<Net>().command("creatures kill rabbit");
         gate.next(Step::Tame, now);
     };
     match gate.phase {
@@ -13390,6 +13410,7 @@ fn snare(world: &mut World, gate: &mut Gate, now: f32) {
                 // next look: a rabbit let loose arriving just after one could run out first
                 // and never come back, by whichever tick a loaded server took the summon on.
                 world.resource::<Net>().command(&format!("summon rabbit 1 {} {} {} held", snare.x + 2, snare.y, snare.z));
+                (gate.snare_tries, gate.snare_at) = (1, gate.server_now);
                 gate.advance(now);
             } else if waited {
                 gate.check("snare", Err(format!("the snare never stood in {DRY_WAIT} server seconds")));
@@ -13399,18 +13420,26 @@ fn snare(world: &mut World, gate: &mut Gate, now: f32) {
         2 => {
             aim_at(world, snare.as_vec3() + Vec3::new(0.5, 0.3, 0.5));
             if sprung && drawn(world, snare) && gate.shot(world, "snare_sprung").is_some() {
-                gate.check("snare", Ok("a rabbit summoned into a set snare was caught: the server sprang it".to_owned()));
+                let tries = gate.snare_tries;
+                gate.check("snare", Ok(format!("a rabbit summoned into a set snare was caught: the server sprang it ({tries} rabbits put in, the rest slipped it)")));
                 gate.advance(now);
+            } else if set && gate.server_now - gate.snare_at > SNARE_SLIPPED && gate.snare_tries < SNARE_TRIES {
+                // Still set past a few of the traps' looks: that rabbit slipped it; another.
+                world.resource::<Net>().command(&format!("summon rabbit 1 {} {} {} held", snare.x + 2, snare.y, snare.z));
+                (gate.snare_tries, gate.snare_at) = (gate.snare_tries + 1, gate.server_now);
             } else if waited {
-                gate.check("snare", Err(format!("a rabbit in the snare never sprang it in {DRY_WAIT} server seconds")));
+                gate.check("snare", Err(format!("{} rabbits in the snare never sprang it in {DRY_WAIT} server seconds", gate.snare_tries)));
                 end(world, gate);
             }
         }
         _ => {
             // Right clicks on the sprung snare, until the server answers one.
             aim_at(world, snare.as_vec3() + Vec3::new(0.5, 0.3, 0.5));
-            if set && carried > 0 {
-                gate.check("snare taken", Ok(format!("a right click took {carried} raw small game from the snare, set again ({} clicks)", gate.taps)));
+            // Taken, it is set again, or worn out and gone (`wear`, a stick left).
+            let gone = client_gone(world, snare);
+            if (set || gone) && carried > 0 {
+                let after = if set { "set again" } else { "worn out and gone" };
+                gate.check("snare taken", Ok(format!("a right click took {carried} raw small game from the snare, {after} ({} clicks)", gate.taps)));
                 end(world, gate);
             } else if gate.waited_out(DRY_WAIT) {
                 gate.check("snare taken", Err(format!("{} right clicks on the sprung snare: set again {set}, raw small game carried {carried}", gate.taps)));

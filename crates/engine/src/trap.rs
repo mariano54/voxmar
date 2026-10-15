@@ -6,6 +6,13 @@
 //! loot rolled for the player who takes it (their Hunter level, as a kill), with the
 //! species' kill experience; the trap is set again. Taking asks the trap's `skill` at
 //! `level`.
+//!
+//! What a trap costs and how sure it is (Oct 15, docs/traps.md "Snares as a hunt"): a
+//! creature it catches is held by `chance` (or its own in `chances`), else it slips free,
+//! frightened; one too big for it (`holds`, its health) or that fights tears it by `tear`;
+//! each catch taken wears it out by `wear`; torn or worn out it is gone, leaving `leaves`.
+//! A catch gives `xp` of the kill's experience, and none is caught within `shy_reach` of a
+//! block tagged one of `shy_of` (game keeps off fire).
 
 use serde::Deserialize;
 
@@ -24,10 +31,44 @@ pub struct TrapDef {
     pub skill: String,
     #[serde(default = "one")]
     pub level: u8,
+    /// The chance a creature it catches is held when it steps in; else it slips free.
+    #[serde(default = "always")]
+    pub chance: f32,
+    /// Chances of its own for some of the species it catches, by name.
+    #[serde(default)]
+    pub chances: std::collections::BTreeMap<String, f32>,
+    /// The most health a creature it holds may have: a wild one bigger, or one that fights,
+    /// that steps in tears it by `tear`.
+    #[serde(default = "most")]
+    pub holds: u16,
+    #[serde(default)]
+    pub tear: f32,
+    /// The chance taking a catch wears it out.
+    #[serde(default)]
+    pub wear: f32,
+    /// What is left where it is torn or wears out, an item of each.
+    #[serde(default)]
+    pub leaves: Vec<String>,
+    /// The share of a kill's experience a catch gives.
+    #[serde(default = "always")]
+    pub xp: f32,
+    /// Block tags game keeps off: within `shy_reach` of one, nothing is caught.
+    #[serde(default)]
+    pub shy_of: Vec<String>,
+    #[serde(default)]
+    pub shy_reach: f32,
 }
 
 fn one() -> u8 {
     1
+}
+
+fn always() -> f32 {
+    1.0
+}
+
+fn most() -> u16 {
+    u16::MAX
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -37,19 +78,38 @@ pub struct TrapFile {
     pub traps: Vec<TrapDef>,
 }
 
-/// A trap, resolved: `catches` is sorted.
+/// A trap, resolved: `catches` is sorted, with each species' chance beside it.
 #[derive(Clone, Debug)]
 pub struct Trap {
     pub set: BlockId,
     pub sprung: BlockId,
     pub catches: Vec<CreatureId>,
+    pub chances: Vec<f32>,
     pub skill: SkillId,
     pub level: u8,
+    pub holds: u16,
+    pub tear: f32,
+    pub wear: f32,
+    pub leaves: Vec<BlockId>,
+    pub xp: f32,
+    pub shy_of: Vec<String>,
+    pub shy_reach: f32,
 }
 
 impl Trap {
     pub fn catches(&self, species: CreatureId) -> bool {
         self.catches.binary_search(&species).is_ok()
+    }
+
+    /// The chance `species` is held when it steps in: 0 for one it does not catch.
+    pub fn chance(&self, species: CreatureId) -> f32 {
+        self.catches.binary_search(&species).map_or(0.0, |i| self.chances[i])
+    }
+
+    /// Whether a wild creature of `species` tears it when it steps in, by `tear`: one too
+    /// big for it, or one that fights.
+    pub fn torn_by(&self, species: &crate::creature::Creature) -> bool {
+        self.tear > 0.0 && (species.def.health > self.holds || species.fights())
     }
 }
 
@@ -71,6 +131,14 @@ impl Traps {
             qualify(&mut trap.sprung);
             qualify(&mut trap.skill);
             trap.catches.iter_mut().for_each(qualify);
+            trap.leaves.iter_mut().for_each(qualify);
+            trap.chances = std::mem::take(&mut trap.chances)
+                .into_iter()
+                .map(|(mut name, n)| {
+                    qualify(&mut name);
+                    (name, n)
+                })
+                .collect();
         }
         Ok(file)
     }
@@ -102,7 +170,37 @@ impl Traps {
             if def.level == 0 || def.level > skills.max_level() {
                 return Err(refuse(format!("{}: level {} is not one a player can have", def.set, def.level)));
             }
-            traps.traps.push(Trap { set, sprung, catches, skill, level: def.level });
+            let share = |name: &str, n: f32| if n.is_finite() && n > 0.0 && n <= 1.0 { Ok(n) } else { Err(refuse(format!("{}: {name} {n} is not a share over 0 and at most 1", def.set))) };
+            let chance = share("chance", def.chance)?;
+            for (name, &n) in &def.chances {
+                let species = creatures.id(name).ok_or_else(|| refuse(format!("{}: a chance for no creature `{name}`", def.set)))?;
+                if !catches.contains(&species) {
+                    return Err(refuse(format!("{}: a chance for `{name}`, which it does not catch", def.set)));
+                }
+                share(&format!("{name}'s chance"), n)?;
+            }
+            let chances = catches.iter().map(|&c| def.chances.get(&creatures.get(c).def.name).copied().unwrap_or(chance)).collect();
+            // What it catches it holds: none too big for it, none that fights.
+            for &c in &catches {
+                let species = creatures.get(c);
+                if species.def.health > def.holds || species.fights() {
+                    return Err(refuse(format!("{}: it catches `{}`, which is too big for it to hold ({} health over {}) or fights", def.set, species.def.name, species.def.health, def.holds)));
+                }
+            }
+            for (name, n) in [("tear", def.tear), ("wear", def.wear)] {
+                if !(n.is_finite() && (0.0..=1.0).contains(&n)) {
+                    return Err(refuse(format!("{}: {name} {n} is not a chance from 0 to 1", def.set)));
+                }
+            }
+            let xp = share("xp", def.xp)?;
+            let mut leaves = Vec::new();
+            for name in &def.leaves {
+                leaves.push(block(name)?);
+            }
+            if !(def.shy_reach.is_finite() && (0.0..=16.0).contains(&def.shy_reach)) || (def.shy_reach > 0.0) == def.shy_of.is_empty() {
+                return Err(refuse(format!("{}: shy_reach is 0 to 16 blocks, with tags in shy_of exactly when it is over 0", def.set)));
+            }
+            traps.traps.push(Trap { set, sprung, catches, chances, skill, level: def.level, holds: def.holds, tear: def.tear, wear: def.wear, leaves, xp, shy_of: def.shy_of, shy_reach: def.shy_reach });
         }
         Ok(traps)
     }
@@ -141,11 +239,20 @@ mod tests {
         assert!(snare.catches(content.creatures.id("base:rabbit").unwrap()));
         assert!(!snare.catches(content.creatures.id("base:wolf").unwrap()), "no wolf in a snare");
         assert_eq!((content.skills.get(snare.skill).name.as_str(), snare.level), ("core:hunter", 1));
+        // Not sure, and spent: a rabbit slips it some of the time, a deer or a fox tears it,
+        // taking wears it out, and a catch is worth less than the kill.
+        let [rabbit, deer, fox] = ["base:rabbit", "base:red_deer", "base:fox"].map(|n| content.creatures.id(n).unwrap());
+        assert!((0.0..1.0).contains(&snare.chance(rabbit)) && snare.chance(rabbit) > 0.0, "a rabbit is held {}", snare.chance(rabbit));
+        assert_eq!(snare.chance(deer), 0.0, "no deer is held");
+        assert!(snare.torn_by(content.creatures.get(deer)) && snare.torn_by(content.creatures.get(fox)), "a deer and a fox tear a snare");
+        assert!(!snare.torn_by(content.creatures.get(rabbit)), "a rabbit does not");
+        assert!(snare.wear > 0.0 && snare.xp < 1.0 && !snare.leaves.is_empty() && snare.shy_reach > 0.0);
     }
 
     #[test]
     fn bad_traps_are_refused() {
         assert!(load(r#"(traps: [(set: "snare", sprung: "snare_sprung", catches: ["rabbit"], skill: "core:hunter")])"#).is_ok());
+        assert!(load(r#"(traps: [(set: "snare", sprung: "snare_sprung", catches: ["rabbit", "hare"], skill: "core:hunter", chance: 0.6, chances: {"hare": 0.5}, holds: 6, tear: 0.6, wear: 0.2, leaves: ["stick"], xp: 0.5, shy_of: ["fire"], shy_reach: 6.0)])"#).is_ok());
         for bad in [
             r#"(traps: [(set: "snare", sprung: "snare", catches: ["rabbit"], skill: "core:hunter")])"#,
             r#"(traps: [(set: "snare", sprung: "snare_sprung", catches: [], skill: "core:hunter")])"#,
@@ -153,6 +260,19 @@ mod tests {
             r#"(traps: [(set: "snare", sprung: "snare_sprung", catches: ["rabbit"], skill: "core:hunter", level: 0)])"#,
             r#"(traps: [(set: "stone", sprung: "snare_sprung", catches: ["rabbit"], skill: "core:hunter")])"#,
             r#"(traps: [(set: "snare", sprung: "snare_sprung", catches: ["rabbit"], skill: "core:juggling")])"#,
+            r#"(traps: [(set: "snare", sprung: "snare_sprung", catches: ["rabbit"], skill: "core:hunter", chance: 0.0)])"#,
+            r#"(traps: [(set: "snare", sprung: "snare_sprung", catches: ["rabbit"], skill: "core:hunter", chance: 1.5)])"#,
+            r#"(traps: [(set: "snare", sprung: "snare_sprung", catches: ["rabbit"], skill: "core:hunter", chances: {"hare": 0.5})])"#,
+            r#"(traps: [(set: "snare", sprung: "snare_sprung", catches: ["rabbit"], skill: "core:hunter", chances: {"rabbit": -0.1})])"#,
+            r#"(traps: [(set: "snare", sprung: "snare_sprung", catches: ["rabbit", "wolf"], skill: "core:hunter")])"#,
+            r#"(traps: [(set: "snare", sprung: "snare_sprung", catches: ["rabbit"], skill: "core:hunter", holds: 2)])"#,
+            r#"(traps: [(set: "snare", sprung: "snare_sprung", catches: ["rabbit"], skill: "core:hunter", tear: 1.2)])"#,
+            r#"(traps: [(set: "snare", sprung: "snare_sprung", catches: ["rabbit"], skill: "core:hunter", wear: -0.5)])"#,
+            r#"(traps: [(set: "snare", sprung: "snare_sprung", catches: ["rabbit"], skill: "core:hunter", leaves: ["moonbeam"])])"#,
+            r#"(traps: [(set: "snare", sprung: "snare_sprung", catches: ["rabbit"], skill: "core:hunter", xp: 0.0)])"#,
+            r#"(traps: [(set: "snare", sprung: "snare_sprung", catches: ["rabbit"], skill: "core:hunter", shy_reach: 4.0)])"#,
+            r#"(traps: [(set: "snare", sprung: "snare_sprung", catches: ["rabbit"], skill: "core:hunter", shy_of: ["fire"])])"#,
+            r#"(traps: [(set: "snare", sprung: "snare_sprung", catches: ["rabbit"], skill: "core:hunter", shy_of: ["fire"], shy_reach: 40.0)])"#,
         ] {
             assert!(load(bad).is_err(), "{bad}");
         }
