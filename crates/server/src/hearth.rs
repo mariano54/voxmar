@@ -104,14 +104,22 @@ impl Server {
     }
 
     /// Whose a fire `agent` lights at `core` is: a home hearth's is the one it was first lit
-    /// by, kept while it is out and relit by anyone, until its hearthstone is broken
-    /// (`home_changed`), so a stranger who breaks and mends it to relight it never takes it.
+    /// by, kept while it is out, broken by others and relit by anyone, until its owner breaks
+    /// its hearthstone (`home_changed`), so a stranger who breaks and mends it to relight it
+    /// never takes it.
     fn hearth_owner(&mut self, agent: PlayerId, core: IVec3, structure: &Multiblock) -> Option<String> {
         let lighter = self.players.get(&agent).map(|p| crate::player_key(&p.name));
         if !structure.home {
             return lighter;
         }
-        self.hearth_owners.entry(core).or_insert(lighter).clone()
+        if let Some(owner) = self.hearth_owners.get(&core) {
+            return owner.clone();
+        }
+        // One home hearth each: a player's hearth elsewhere is theirs no more, so the kept
+        // owners stay one a player (and the old ones no one owns).
+        self.hearth_owners.retain(|_, owner| owner.is_none() || *owner != lighter);
+        self.hearth_owners.insert(core, lighter.clone());
+        lighter
     }
 
     fn structure_reply(&self, agent: PlayerId, words: Words) {
@@ -180,9 +188,14 @@ impl Server {
     /// told. They wake at what is left (the bed, the hearth, else the world's spawn), and the
     /// home mark goes with it.
     pub(crate) fn home_changed(&mut self, pos: IVec3, block: voxmar_engine::block::BlockId) {
-        // The hearthstone gone, the home hearth is no one's any more: whoever builds one
-        // there next lights it as theirs.
-        if self.hearth_owners.contains_key(&pos) && !self.content.multiblocks.with_core(block).any(|m| m.home) {
+        // The hearthstone broken by its owner, the home hearth is no one's any more: whoever
+        // builds one there next lights it as theirs. Broken by anyone else (a stranger, a
+        // flood, a command) it stays its owner's, and their home stays theirs.
+        if let Some(owner) = self.hearth_owners.get(&pos)
+            && owner.is_some()
+            && *owner == self.fire_origin
+            && !self.content.multiblocks.with_core(block).any(|m| m.home)
+        {
             self.hearth_owners.remove(&pos);
         }
         let at = |spot: Option<Vec3>| spot.is_some_and(|spot| (spot - Vec3::new(0.5, 1.0, 0.5)).round().as_ivec3() == pos);
