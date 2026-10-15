@@ -126,8 +126,8 @@ pub trait Land: Sync {
         Vec::new()
     }
 
-    /// The ground settlements' buildings take (each from its least corner to its most)
-    /// within or touching the box from `min` to `max`, which trails keep off.
+    /// The ground settlements' buildings and walls take (each from its least corner to its
+    /// most) within or touching the box from `min` to `max`, which trails keep off.
     fn built(&self, _min: IVec2, _max: IVec2) -> Vec<(IVec2, IVec2)> {
         Vec::new()
     }
