@@ -41,6 +41,33 @@
         (template: "cut_stone", name: "stone_brick", tags: ["bricks"], all: (textures: All("stone_bricks"), color: (120, 120, 120))),
     ],
     blocks: [
+        // The home's ladder (design: a hide lean-to, then wattle and daub, then timber, then
+        // stone and brick). Each carries a shelter tag for how well it keeps weather out of
+        // a room, `shelter:draughty`, `shelter:sound` or `shelter:fine`, and its material for
+        // its sounds. A hide lean-to: two rafters under hide stretched in courses down to an
+        // eave towards whoever set it, the first roof anyone has.
+        (name: "hide_lean_to", render: Model, shape: "lean_to", facing: true, light_filter: 14, sound: Wood, textures: All("hide_cover"), hardness: 0.6, color: (170, 120, 75), tags: ["roof", "hide", "lean_to", "building", "shelter:draughty"]),
+        // Wattle: stakes with sticks woven between them, a wall a wind still finds its way
+        // through; daubed with clay and straw it is a sound wall.
+        (name: "wattle_panel", render: Model, shape: "wattle", facing: true, sound: Wood, textures: All("wattle"), hardness: 0.8, color: (140, 105, 65), tags: ["wattle", "wall", "wood", "building", "fuel", "shelter:draughty"]),
+        (name: "daub", sound: Soil, textures: All("daub"), hardness: 1.0, color: (205, 185, 150), tags: ["daub", "wall", "building", "shelter:sound"]),
+        // Half-timbering: a dark timber frame with a brace, daub between.
+        (name: "half_timber", sound: Wood, textures: All("half_timber"), hardness: 1.5, color: (190, 170, 135), tags: ["half_timber", "timber", "wall", "building", "shelter:sound"]),
+        // Shutters for a window: shut, two plank leaves across the opening that keep light
+        // and weather out; a right click folds them back against the jambs (`swaps`, as a
+        // door), where nothing stops on them.
+        (
+            name: "wooden_shutters", render: Model, shape: "shutters", facing: true, light_filter: 14, sound: Wood, textures: All("oak_planks"),
+            swaps: "wooden_shutters_open", hardness: 1.0, color: (150, 110, 65), tags: ["shutters", "shutters_shut", "wood", "building", "fuel", "shelter:sound"],
+        ),
+        (
+            name: "wooden_shutters_open", render: Model, shape: "shutters_open", facing: true, solid: false, sound: Wood, textures: All("oak_planks"),
+            swaps: "wooden_shutters", drops: "wooden_shutters", hardness: 1.0, color: (150, 110, 65), tags: ["shutters", "shutters_open", "wood", "building", "fuel", "shelter:sound"],
+        ),
+        // Chimney pieces, to carry a hearth's chimney up through a roof: a flue of brick
+        // narrower than a block, so roof courses meet it, and a clay pot to top it.
+        (name: "chimney_stack", render: Model, shape: "chimney_stack", sound: Stone, textures: All("chimney_side"), hardness: 2.0, color: (130, 100, 90), tags: ["chimney_piece", "stone", "bricks", "building", "shelter:fine"]),
+        (name: "chimney_pot", render: Model, shape: "chimney_pot", sound: Stone, textures: All("terracotta"), hardness: 1.25, color: (152, 94, 67), tags: ["chimney_piece", "terracotta", "building", "shelter:fine"]),
         // Thatch: straw laid in courses on a roof, the first roof anyone can make (grass
         // twine or wheat). It stops rain and light as shingles do, and feeds a fire as straw does.
         (name: "thatch_roof", render: Model, shape: "roof", facing: true, light_filter: 14, sound: Grass, textures: All("thatch"), hardness: 0.8, color: (196, 166, 82), tags: ["roof", "thatch", "building", "fuel"]),

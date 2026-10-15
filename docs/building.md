@@ -15,6 +15,19 @@ and a pixel, `core/movement.ron`) without jumping; a whole block still takes a j
 | Lattice window | `<timber>_lattice_window` | a frame and laths, light through the squares | faces the placer | 4 planks, 5 sticks make 4 (3) |
 | Roof | `thatch_roof`, `<timber>_shingles` | four courses a quarter block high, eave towards the placer | | thatch: 6 fibre make 4 (1); shingles: 6 slabs make 4 (5) |
 | Ridge | `thatch_ridge`, `<timber>_shingle_ridge` | courses rising from both sides to a cap | ridge across the placer's view | thatch: 3 fibre make 2 (1); shingles: 3 slabs make 2 (5) |
+| Hide lean-to | `hide_lean_to` | hide in four thin courses on two rafters, eave towards the placer | | 3 hide, 2 sticks make 2 (1) |
+| Wattle | `wattle_panel` | woven sticks across the middle of the cell, three stakes | faces the placer | 8 sticks round a twine make 4 (1) |
+| Daub | `daub` | a whole block | | 2 clay, a twine and a wattle panel make 2 (2) |
+| Half-timber | `half_timber` | a whole block: daub in a braced timber frame | | 2 beams, 2 daub make 4 (4) |
+| Shutters | `wooden_shutters` (`_open`) | two plank leaves across the middle; open, folded back to the jambs and stopping nothing | face the placer; a right click opens and shuts them | 4 planks, 2 sticks make 2 (2) |
+| Chimney | `chimney_stack`, `chimney_pot` | a brick flue 3/4 of a block across; a clay pot with a rim | | 4 stone bricks make 2 (6); 4 fired clay round a flue make 2 (3) |
+
+The home's ladder runs from a hide lean-to through wattle and daub and timber to stone and
+brick. Every piece on it carries a shelter tag for how well it keeps the weather out of a
+room: `shelter:draughty` (hide, wattle), `shelter:sound` (daub, half-timber, shutters, the
+wooden door) or `shelter:fine` (the chimney pieces); the home's wall scan reads them. Their
+recipes start from worked materials (sticks, twine, hide, fired clay, bricks, beams), never
+from blocks straight out of the ground; daub also takes clay, smoothed onto a wattle panel.
 
 Timber comes in the furniture's three woods (birch, oak, dark oak), its greyscale drawings
 tinted the wood's colour (`blocks_building.ron` family lines). Thatch is the first roof:

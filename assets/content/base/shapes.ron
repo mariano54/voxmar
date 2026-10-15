@@ -400,6 +400,47 @@
         // The top of a gable, between a roof facing north one below it on one side and one
         // facing south on the other: courses rising from both sides to a ridge capping the
         // middle, running east to west.
+        // A hide lean-to: the hide in four thin courses a quarter of a block apart, stepping
+        // up from the eave at the north (the placer's side) to the back, on two rafters.
+        "lean_to": (boxes: [
+            (from: (0, 3, 0), to: (16, 4, 4)),
+            (from: (0, 7, 4), to: (16, 8, 8)),
+            (from: (0, 11, 8), to: (16, 12, 12)),
+            (from: (0, 15, 12), to: (16, 16, 16)),
+            (from: (1, 0, 0), to: (2.5, 3, 4), textures: All("oak_planks")),
+            (from: (13.5, 0, 0), to: (15, 3, 4), textures: All("oak_planks")),
+            (from: (1, 3, 4), to: (2.5, 7, 8), textures: All("oak_planks")),
+            (from: (13.5, 3, 4), to: (15, 7, 8), textures: All("oak_planks")),
+            (from: (1, 7, 8), to: (2.5, 11, 12), textures: All("oak_planks")),
+            (from: (13.5, 7, 8), to: (15, 11, 12), textures: All("oak_planks")),
+            (from: (1, 11, 12), to: (2.5, 15, 16), textures: All("oak_planks")),
+            (from: (13.5, 11, 12), to: (15, 15, 16), textures: All("oak_planks")),
+        ]),
+        // Wattle across the middle of its cell: the woven sticks, and three stakes standing
+        // proud of them.
+        "wattle": (boxes: [
+            (from: (0, 0, 7), to: (16, 16, 9)),
+            (from: (1, 0, 6.5), to: (2.5, 16, 9.5)),
+            (from: (7.25, 0, 6.5), to: (8.75, 16, 9.5)),
+            (from: (13.5, 0, 6.5), to: (15, 16, 9.5)),
+        ]),
+        // Shutters: shut, two leaves across the middle with a batten on each; open, folded
+        // back flat against the jambs east and west.
+        "shutters": (boxes: [
+            (from: (0, 0, 7), to: (16, 16, 9)),
+            (from: (1, 3, 6), to: (15, 5, 7)),
+            (from: (1, 11, 6), to: (15, 13, 7)),
+        ]),
+        "shutters_open": (boxes: [
+            (from: (0, 0, 1), to: (1, 16, 9)),
+            (from: (15, 0, 1), to: (16, 16, 9)),
+        ]),
+        // A brick flue three quarters of a block across, and a clay pot with a rim.
+        "chimney_stack": (boxes: [(from: (2, 0, 2), to: (14, 16, 14))]),
+        "chimney_pot": (boxes: [
+            (from: (5, 0, 5), to: (11, 9, 11)),
+            (from: (4.5, 9, 4.5), to: (11.5, 11, 11.5)),
+        ]),
         "roof_ridge": (boxes: [
             (from: (0, 0, 0), to: (16, 4, 16), cull: true),
             (from: (0, 4, 4), to: (16, 8, 12), cull: true),
