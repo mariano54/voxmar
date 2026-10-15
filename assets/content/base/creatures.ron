@@ -282,10 +282,11 @@
         (
             // Never attacks first (Mariano, 2026-10-06): common in a few biomes, a little
             // slower than a sprint, so a chase closes. Struck while it is hale it turns and
-            // gores back, a short readable jab of the tusks (block it); badly hurt it runs
-            // (`Mind::hurt`: how brave decides when), so a first fight answers rather than
-            // being a chase alone. Old Tusk, the boss, is the one that charges.
-            name: "wild_boar", level: 4, health: 10,
+            // gores back, a short readable jab of the tusks (block it); under 40% of its
+            // health it drops the fight and runs (`flees_below`), so a first fight answers
+            // and ends in a short chase. Its piglets only run. Old Tusk, the boss, is the one
+            // that charges.
+            name: "wild_boar", level: 4, health: 10, flees_below: 0.4,
             attack: (windup: 0.55, recovery: 0.6, damage: (1, 2), reach: 0.9, every: 1.6, lunge: 1.0, style: Stab),
             defence: 4,
             body: (
@@ -294,7 +295,7 @@
                 colours: [(82, 62, 46), (112, 90, 70), (226, 214, 190)],
                 skin: (fur: 0.18, belly: 0.2, feet: (36, 28, 24), markings: [Dorsal(colour: (46, 34, 28), width: 0.16), Muzzle(colour: (120, 96, 84))]),
             ),
-            movement: (style: Lumberer, walk: 1.3, run: 5.4, turn: 220.0, jump: 7.5),
+            movement: (style: Lumberer, walk: 1.3, run: 5.1, turn: 220.0, jump: 7.5),
             habitat: (
                 biomes: [("tag:forest", 1.0), ("tag:broadleaf", 1.0), ("tag:scrubland", 0.7), ("tag:conifer", 0.5), ("tag:grassland", 0.35)],
                 comfort: (temperature: (-12.0, 32.0), moisture: (0.3, 2.4)),

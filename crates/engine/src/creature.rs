@@ -513,6 +513,13 @@ pub struct CreatureDef {
     /// How it falls when it dies.
     #[serde(default)]
     pub death: Death,
+    /// The share of its health below which one that fights back runs instead (0 to 1); unset,
+    /// a braver one holds longer (`Creature::holds`).
+    #[serde(default)]
+    pub flees_below: Option<f32>,
+    /// Whether its young fight back as its grown do; unset, they run (a piglet).
+    #[serde(default)]
+    pub young_fight: bool,
 }
 
 /// How a creature falls when it dies, as the client draws it: it tips over onto its side
@@ -777,6 +784,24 @@ impl Creature {
     pub fn fights(&self) -> bool {
         self.def.attack.is_some() && self.behaviours.iter().any(|b| matches!(b.behaviour, Behaviour::Defend | Behaviour::Hunt { .. }))
     }
+
+    /// Whether one of its kind, `young` or grown, fights back at all: its young only if
+    /// `young_fight`.
+    pub fn fights_as(&self, young: bool) -> bool {
+        self.fights() && (!young || self.def.young_fight)
+    }
+
+    /// Whether one that fights back, `young` or grown, at `health` (0 to 1) of its own and
+    /// of `bravery`, holds its ground rather than runs: a boss always; else above
+    /// `flees_below`, or unset, above 0.5 less 0.35 x its bravery.
+    pub fn holds(&self, young: bool, health: f32, bravery: f32) -> bool {
+        self.fights_as(young) && (self.def.boss || health > self.def.flees_below.unwrap_or(0.5 - 0.35 * bravery))
+    }
+
+    /// Whether it ever runs from a fight (a `Flee` behaviour).
+    pub fn flees(&self) -> bool {
+        self.behaviours.iter().any(|b| matches!(b.behaviour, Behaviour::Flee { .. }))
+    }
 }
 
 /// Every species.
@@ -845,6 +870,9 @@ impl CreatureRegistry {
             }
             moves::check(&def).map_err(error)?;
             def.death.check().map_err(error)?;
+            if def.flees_below.is_some_and(|f| !(0.0..=1.0).contains(&f)) {
+                return Err(error(format!("`flees_below` is a share of its health, 0 to 1, not {:?}", def.flees_below)));
+            }
             if !def.boss && !def.music.is_empty() {
                 return Err(error("has fight `music` but is no boss".into()));
             }

@@ -2513,6 +2513,24 @@ mod cornered_tests {
         furthest
     }
 
+    /// One of `name` put at `at` facing `facing`, if its kind fights back, struck at full
+    /// health: it stands and fights, striking the player within 3 s, and (`hunted`) never
+    /// puts its body or head in a block doing it.
+    fn fights_back_hale(server: &mut Server, name: &str, at: Vec3, facing: Vec3, player: PlayerId) {
+        let species = server.content.creatures.id(name).expect("species");
+        if !server.content.creatures.get(species).fights() {
+            return;
+        }
+        let id = put(server, name, at, facing);
+        let most = server.players[&player].health.max;
+        server.players.get_mut(&player).unwrap().health.current = most;
+        let _ = hunted(server, id, player, 3.0);
+        let left = server.players[&player].health.current;
+        assert!(left < most, "{name} struck at full health did not strike back within 3 s");
+        server.players.get_mut(&player).unwrap().health.current = most;
+        server.creatures.live.remove(&id);
+    }
+
     /// Struck with its back to a wall, the way it would run is shut: it runs along the wall
     /// and gets clear, rather than pressing into it under the player's blows.
     #[test]
@@ -2522,6 +2540,7 @@ mod cornered_tests {
         wall(&mut server, (-16..=16).map(|z| centre + IVec3::new(-3, 0, z)).collect::<Vec<_>>(), 3);
         let player = join(&mut server, centre.as_vec3() + Vec3::new(1.5, 0.0, 0.5));
         for name in SPECIES {
+            fights_back_hale(&mut server, name, centre.as_vec3() + Vec3::new(-1.5, 0.0, 0.5), Vec3::X, player);
             let id = put(&mut server, name, centre.as_vec3() + Vec3::new(-1.5, 0.0, 0.5), Vec3::X);
             badly_hurt(&mut server, id);
             let away = hunted(&mut server, id, player, 5.0);
@@ -2530,10 +2549,10 @@ mod cornered_tests {
         }
     }
 
-    /// A pen walled two high keeps its animals, struck and running, tall heads and all: a
-    /// head over the wall is no step (motion's head-met step is judged at the feet).
+    /// A pen walled two high keeps its animals struck, running or fighting back (a kept
+    /// boar gores its keeper), tall heads and all: a head over the wall is no step (motion's head-met step is judged at the feet).
     #[test]
-    fn a_pen_two_high_keeps_its_animals_struck_and_running() {
+    fn a_pen_two_high_keeps_its_animals_struck_whether_they_run_or_fight() {
         let mut server = crate::test_server();
         let half = 5;
         let centre = pen(&mut server, half);
@@ -2563,6 +2582,7 @@ mod cornered_tests {
         let corner = centre.as_vec3() + Vec3::new(-4.4, 0.0, -4.4);
         let player = join(&mut server, corner + Vec3::new(2.5, 0.0, 2.5));
         for name in SPECIES {
+            fights_back_hale(&mut server, name, corner, Vec3::new(1.0, 0.0, 1.0).normalize(), player);
             let id = put(&mut server, name, corner, Vec3::new(1.0, 0.0, 1.0).normalize());
             badly_hurt(&mut server, id);
             let away = hunted(&mut server, id, player, 6.0);
@@ -2582,6 +2602,7 @@ mod cornered_tests {
         }
         let player = join(&mut server, centre.as_vec3() + Vec3::new(1.5, 0.0, 0.5));
         for name in SPECIES {
+            fights_back_hale(&mut server, name, centre.as_vec3() + Vec3::new(-1.3, 0.0, 0.5), Vec3::X, player);
             let id = put(&mut server, name, centre.as_vec3() + Vec3::new(-1.3, 0.0, 0.5), Vec3::X);
             badly_hurt(&mut server, id);
             let away = hunted(&mut server, id, player, 5.0);
@@ -2679,8 +2700,8 @@ mod way_tests {
             }
             c.as_vec3() + Vec3::new(5.5, 1.0, 0.5)
         };
-        // The badger's own jump does not lift it a block.
-        for name in ["base:wolf", "base:brown_bear", "base:badger"] {
+        // The badger's own jump does not lift it a block. A wild boar only fights back, struck.
+        for name in ["base:wolf", "base:brown_bear", "base:badger", "base:wild_boar"] {
             assert!(hunter(name, tree, 6).is_some(), "{name} never came round the tree");
             assert!(hunter(name, step, 6).is_some(), "{name} never came up the step");
         }
@@ -3119,7 +3140,7 @@ mod chase_tests {
     #[test]
     fn struck_hunters_come_round_fence_tree_and_pond() {
         let scenes = [((6.5, 0.5), (-0.5, 0.5)), ((-3.5, 7.5), (-3.5, 0.5)), ((-6.5, 4.5), (-6.5, -6.5))];
-        for name in ["base:wolf", "base:brown_bear", "base:badger"] {
+        for name in ["base:wolf", "base:brown_bear", "base:badger", "base:wild_boar"] {
             for &((px, pz), (hx, hz)) in &scenes {
                 let mut server = crate::test_server();
                 let c = pen(&mut server, 14);
@@ -3591,10 +3612,10 @@ mod fight_tests {
     use super::cornered_tests::{join, pen, put, wall};
     use super::*;
 
-    pub(super) const FIGHTERS: [&str; 5] = ["base:wolf", "base:brown_bear", "base:badger", "base:aurochs", "base:bison"];
+    pub(super) const FIGHTERS: [&str; 6] = ["base:wolf", "base:brown_bear", "base:badger", "base:aurochs", "base:bison", "base:wild_boar"];
     /// The fighters wider than a block, which take no way through a doorway a block across.
     pub(super) const WIDE: [&str; 3] = ["base:brown_bear", "base:aurochs", "base:bison"];
-    pub(super) const PREY: [&str; 5] = ["base:red_deer", "base:mouflon", "base:wild_boar", "base:rabbit", "base:junglefowl"];
+    pub(super) const PREY: [&str; 4] = ["base:red_deer", "base:mouflon", "base:rabbit", "base:junglefowl"];
 
     #[derive(Debug, Default)]
     pub(super) struct Fight {

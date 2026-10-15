@@ -382,10 +382,10 @@ steps! {
     /// Every creature's blow told (`fight_fx`'s tells): a wolf this side alone winds up in
     /// reach and coils, its snarl waiting to land with the blow without dipping the music,
     /// while the player swings at it (`Gate::swing`); then a creature with no tell of its own,
-    /// first seen already winding up, coils and is told by its style's; then a wild boar
-    /// (which gores back when struck) coils, its gore told without dipping the music. Each
-    /// frame a fixed step of their time (`Creatures::watch_step`). Shots with the wolf
-    /// coiled and with the boar coiled.
+    /// first seen already winding up, coils and is told by its style's; then the first
+    /// creature in the content that never hunts but fights back when struck (a wild boar)
+    /// coils, its blow told without dipping the music. Each frame a fixed step of their
+    /// time (`Creatures::watch_step`). Shots with the wolf coiled and with that one coiled.
     FirstFights,
     /// A cancelled swing's shot strikes nothing (`fight_fx`'s shots): a bow's arrow drawn
     /// at a deer this side alone is loosed from the hand, and the swing is cancelled (as
@@ -11359,9 +11359,9 @@ fn ranged_feel(world: &mut World, gate: &mut Gate) {
 const FIGHTER: u32 = u32::MAX - 10;
 const FIGHTER_SPECIES: &str = "wolf";
 const FALLBACK: u32 = u32::MAX - 11;
-/// The wild boar the FirstFights step winds up last, an id the server never gives.
-const BOAR: u32 = u32::MAX - 13;
-const BOAR_SPECIES: &str = "wild_boar";
+/// The creature that only fights back (a wild boar) the FirstFights step winds up last, an
+/// id the server never gives.
+const DEFENDER: u32 = u32::MAX - 13;
 
 /// The FirstFights step (see [`Step::FirstFights`]).
 fn first_fights(world: &mut World, gate: &mut Gate) {
@@ -11385,8 +11385,16 @@ fn first_fights(world: &mut World, gate: &mut Gate) {
     let plain_style = plain_creature.def.attack.map(|a| a.style).unwrap_or(voxmar_engine::combat::Style::Crush);
     let plain_tell = look.tell_for("", plain_style).map(|t| t.sound.clone()).unwrap_or_default();
     let wolf_tell = look.tells.get(FIGHTER_SPECIES).map(|t| (t.sound.clone(), t.ducks));
-    let boar = launch.content.creatures.find(BOAR_SPECIES).map(|species| (species, launch.content.creatures.get(species).def.health));
-    let boar_tell = boar.and_then(|_| look.tells.get(BOAR_SPECIES)).map(|t| (t.sound.clone(), t.ducks));
+    // The first creature that never hunts but fights back when struck, and its tell.
+    let defender = launch.content.creatures.iter().find(|(_, c)| {
+        use voxmar_engine::creature::Behaviour;
+        !c.def.boss && c.def.attack.is_some() && c.behaviours.iter().any(|b| b.behaviour == Behaviour::Defend) && !c.behaviours.iter().any(|b| matches!(b.behaviour, Behaviour::Hunt { .. }))
+    });
+    let defender = defender.and_then(|(species, c)| {
+        let name = c.def.name.rsplit(':').next().unwrap_or(&c.def.name).to_owned();
+        let tell = look.tell_for(&name, c.def.attack?.style)?;
+        Some((species, c.def.health, name, tell.sound.clone(), tell.ducks))
+    });
     let health = |species| launch.content.creatures.get(species).def.health;
     let (wolf_health, plain_health) = (health(wolf), health(plain));
     let at = gate.feet.as_vec3() + Vec3::new(0.0, 0.0, 2.2);
@@ -11476,40 +11484,40 @@ fn first_fights(world: &mut World, gate: &mut Gate) {
                 Ok(format!("{name}, first seen mid-wind-up, coils and is told by its style's {plain_tell}"))
             };
             gate.check("first fights: style tell", result);
-            // Then a wild boar, which fights back when struck, winding up its gore.
+            // Then one that fights back when struck (a wild boar), winding up its blow.
             gate.feel_asked = world.resource::<Heard>().asked.clone();
             let mut creatures = world.resource_mut::<Creatures>();
-            let boar = boar.map(|(species, health)| view(BOAR, species, Pose::Attacking, health));
-            creatures.receive(boar.into_iter().collect(), vec![voxmar_protocol::CreatureGone { id: FALLBACK, died: false }]);
-            creatures.watch = Some(BOAR);
+            let defender = defender.as_ref().map(|(species, health, ..)| view(DEFENDER, *species, Pose::Attacking, *health));
+            creatures.receive(defender.into_iter().collect(), vec![voxmar_protocol::CreatureGone { id: FALLBACK, died: false }]);
+            creatures.watch = Some(DEFENDER);
             gate.advance(now);
         }
         // The frame after: coiling, its gore waiting to land with the blow, the music left
         // alone.
         5 => {
-            let Some((sound, ducks)) = boar_tell.clone() else {
-                gate.check("first fights: boar", Err(format!("no {BOAR_SPECIES} in the content, or it has no tell of its own")));
+            let Some((_, _, name, sound, ducks)) = defender.clone() else {
+                gate.check("first fights: defender", Ok("no creature in the content only fights back when struck, so none to wind up".into()));
                 gate.advance(now);
                 return;
             };
-            let winding = world.resource::<Creatures>().winding(BOAR);
-            let cue = world.resource::<Pending>().0.iter().find(|c| c.id == BOAR).map(|c| (c.due - now, c.ducks));
+            let winding = world.resource::<Creatures>().winding(DEFENDER);
+            let cue = world.resource::<Pending>().0.iter().find(|c| c.id == DEFENDER).map(|c| (c.due - now, c.ducks));
             let result = if !winding {
-                Err("the wild boar shows no wind-up".into())
+                Err(format!("the {name} shows no wind-up"))
             } else if asked(world, &sound) <= before(gate, &sound) {
-                Err(format!("the wild boar's wind-up asked for no {sound}"))
+                Err(format!("the {name}'s wind-up asked for no {sound}"))
             } else if ducks || cue.is_some_and(|(_, ducks)| ducks) {
-                Err("the wild boar's gore dips the music, as only a boss's may".into())
+                Err(format!("the {name}'s blow dips the music, as only a boss's may"))
             } else {
-                Ok(format!("the wild boar coils with {sound}, its loudest {:.2} s on as the blow lands, the music left alone", cue.map_or(0.0, |(wait, _)| wait.max(0.0))))
+                Ok(format!("the {name}, which only fights back, coils with {sound}, its loudest {:.2} s on as the blow lands, the music left alone", cue.map_or(0.0, |(wait, _)| wait.max(0.0))))
             };
-            gate.check("first fights: boar", result);
+            gate.check("first fights: defender", result);
             gate.advance(now);
         }
         6 => {
-            if boar_tell.is_none() || gate.shot(world, "boar-gore").is_some() {
+            if defender.is_none() || gate.shot(world, "defender-blow").is_some() {
                 let mut creatures = world.resource_mut::<Creatures>();
-                creatures.receive(vec![], vec![voxmar_protocol::CreatureGone { id: BOAR, died: false }]);
+                creatures.receive(vec![], vec![voxmar_protocol::CreatureGone { id: DEFENDER, died: false }]);
                 (creatures.watch, creatures.watch_step) = (None, None);
                 gate.next(Step::ShotCancel, now);
             }
