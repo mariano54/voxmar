@@ -76,7 +76,7 @@
         ),
         (
             name: "wooden_shutters_open", render: Model, shape: "shutters_open", facing: true, solid: false, sound: Wood, textures: All("oak_planks"),
-            swaps: "wooden_shutters", drops: "wooden_shutters", hardness: 1.0, color: (150, 110, 65), tags: ["shutters", "shutters_open", "wood", "building", "fuel", "shelter:sound"],
+            swaps: "wooden_shutters", drops: "wooden_shutters", hardness: 1.0, color: (150, 110, 65), tags: ["shutters", "shutters_open", "wood", "building", "fuel"],
         ),
         // Chimney pieces, to carry a hearth's chimney up through a roof: a flue of brick
         // narrower than a block, so roof courses meet it, and a clay pot to top it.

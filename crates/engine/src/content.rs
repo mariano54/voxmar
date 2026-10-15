@@ -430,23 +430,34 @@ impl Content {
         if let Some(tag) = effects.near_asks().iter().map(|(tag, _)| tag).chain(effects.held_tags()).find(|tag| !blocks.ids().any(|id| blocks.def(id).has_tag(tag))) {
             return Err(RegistryError(format!("effects.ron: an effect asks for a block or held item tagged `{tag}`, which no block carries")));
         }
-        // Every full solid building block says how well it shelters a room (`HomeWalls`),
-        // once; no block says it twice.
+        // Every piece and full solid block a building is made of says how well it shelters a
+        // room (`HomeWalls`), once, and every piece what it is made of; no block says it
+        // twice. Devices, furniture, goods and water sources stand in a room rather than make
+        // it, and an open door or shutter shelters nothing.
         {
             use crate::block::RenderKind;
             use crate::effect::Shelter;
+            const NOT_FABRIC: [&str; 8] = ["machine", "station", "furnishing", "storage", "decor", "multiblock_core", "farm", "waters"];
+            const MATERIALS: [&str; 13] = ["wood", "timber", "stone", "bricks", "thatch", "shingle", "hide", "wattle", "daub", "terracotta", "cloth", "metal", "glass"];
             let unjudged: Vec<String> = blocks
                 .ids()
                 .map(|id| blocks.def(id))
                 .filter(|def| {
                     let shelters = Shelter::ALL.iter().filter(|s| def.has_tag(s.tag())).count();
-                    let full = def.solid && def.shape.is_none() && matches!(def.render, RenderKind::Opaque | RenderKind::Cutout | RenderKind::Leaves | RenderKind::Translucent);
-                    shelters > 1 || (shelters == 0 && full && def.has_tag("building"))
+                    let piece = def.shape.is_some();
+                    let full = def.solid && !piece && matches!(def.render, RenderKind::Opaque | RenderKind::Cutout | RenderKind::Leaves | RenderKind::Translucent);
+                    let fabric = def.has_tag("building") && !NOT_FABRIC.iter().any(|t| def.has_tag(t));
+                    let open = def.has_tag("door_open") || def.has_tag("shutters_open");
+                    let unmade = piece && fabric && !MATERIALS.iter().any(|m| def.has_tag(m));
+                    shelters > 1 || (shelters == 0 && fabric && (full || piece) && !open) || unmade
                 })
                 .map(|def| def.name.clone())
                 .collect();
             if !unjudged.is_empty() {
-                return Err(RegistryError(format!("blocks: each full solid `building` block carries exactly one of `shelter:draughty`, `shelter:sound` or `shelter:fine`, and no block more than one; these do not: {}", unjudged.join(", "))));
+                return Err(RegistryError(format!(
+                    "blocks: each `building` piece and full solid block (but a machine, station, furnishing, store, ornament or water source) carries exactly one of `shelter:draughty`, `shelter:sound` or `shelter:fine` (an open door or shutter may carry none), each such piece one of the materials {MATERIALS:?}, and no block more than one shelter; these do not: {}",
+                    unjudged.join(", ")
+                )));
             }
         }
         // Every kept animal needs water, met by a block tagged `drink` near its home.
