@@ -364,6 +364,8 @@
     "machine.idle": "{machine}：停止中。",
     "bed.set": "家ができるまで、倒れたらここで目覚める。",
     "bed.set_home": "倒れたらここで目覚める。ただし炉が優先される。",
+    "bed.lost": "寝床がなくなった。もうそこでは目覚めない。",
+    "home.lost": "炉がなくなった。もうそこは家ではない。",
     "screen.prayers": "祈り",
     "character.prayers": "祈り",
     "prayers.points": "祈り",
