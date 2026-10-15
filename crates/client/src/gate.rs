@@ -1532,8 +1532,9 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         // Two answers waited on, each up to `WALLS_WAIT` server seconds.
         Step::HomeWalls => STEP_LIMIT + 10.0,
         // A smoulder and its catch, waited on up to fire.ron's catching time and 4 s, then
-        // the burning out, up to its burning time and 4 s.
-        Step::Blaze => STEP_LIMIT + 10.0,
+        // the burning out, up to its burning time and 4 s; then a new panel daubed, three
+        // answers of up to 4 s each.
+        Step::Blaze => STEP_LIMIT + 25.0,
         // The campfire, its smoke and the chimney's, then a cook at the hearth and the stove.
         Step::Cook => STEP_LIMIT + 30.0,
         // The barrel opened, then a server pass for the egg and a second for the chat; then

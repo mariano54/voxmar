@@ -8,7 +8,7 @@ use voxmar_engine::lang::Words;
 use voxmar_protocol::PlayerId;
 
 use crate::Server;
-use crate::player::traits;
+use voxmar_engine::traits;
 
 impl Server {
     pub(crate) fn coat(&mut self, agent: PlayerId, pos: IVec3) {
@@ -86,5 +86,42 @@ mod tests {
         // Daub is not coated again, and clay to a block with no coat does nothing.
         server.coat(1, at);
         assert_eq!(server.players[&1].inventory.get(0).unwrap().count, 2);
+    }
+
+    /// An earth wall daubs too: clay to the side of a dirt block coats it, by the action a
+    /// right click proposes; clay to its top is laid there as before, never a coat.
+    #[test]
+    fn clay_to_the_side_of_an_earth_wall_daubs_it_and_to_the_top_does_not() {
+        use voxmar_engine::action::ActionTarget;
+        use voxmar_engine::coords::Face;
+        let mut server = crate::test_server();
+        let (_client, connection) = voxmar_protocol::local_pair();
+        let mut player = Player::new(1, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
+        player.joined = true;
+        server.players.insert(1, player);
+        let at = ColumnPos::of_block(server.spawn.floor().as_ivec3()).origin() + IVec3::new(8, server.spawn.y as i32 + 10, 8);
+        let block = |server: &crate::Server, name: &str| server.content.blocks.expect(name);
+        let (stone, dirt, clay, daub) = (block(&server, "base:stone"), block(&server, "base:dirt"), block(&server, "base:clay"), block(&server, "base:daub"));
+        for x in -1..=1 {
+            for z in -3..=1 {
+                server.set_block(at + IVec3::new(x, -1, z), stone);
+            }
+        }
+        server.set_block(at, dirt);
+        let player = server.players.get_mut(&1).unwrap();
+        player.position = at.as_vec3() + Vec3::new(0.5, 0.0, -1.5);
+        player.inventory.slots[0] = Some(ItemStack { item: clay, count: 3 });
+        player.selected = 0;
+        let construction = server.content.skills.id("core:construction").expect("construction");
+        let level = server.content.recipes.iter().filter(|r| r.output == daub).map(|r| r.level).min().expect("a daub recipe");
+        let xp = server.content.skills.xp_for(level);
+        server.players.get_mut(&1).unwrap().skills.grant(construction, xp);
+        let coat = server.content.actions.expect("base:coat");
+        server.propose(1, coat, ActionTarget::Block { block: at, face: Face::PosY }, std::time::Instant::now());
+        assert_eq!(server.block(at), Some(dirt), "coated from the top");
+        assert_eq!(server.players[&1].inventory.get(0).unwrap().count, 3);
+        server.propose(1, coat, ActionTarget::Block { block: at, face: Face::NegZ }, std::time::Instant::now());
+        assert_eq!(server.block(at), Some(daub), "the earth wall's face was not daubed");
+        assert_eq!(server.players[&1].inventory.get(0).unwrap().count, 2, "one clay a block");
     }
 }

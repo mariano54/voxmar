@@ -113,8 +113,8 @@ pub enum Requirement {
     /// The target is a seat (tagged `seat`: a stool, chair, bench or cushion) with room to
     /// sit on it, and the actor holds no block to place against it.
     Seat,
-    /// The target is coated in place by what the actor holds (`coat` on its block): clay
-    /// on a wattle panel.
+    /// The target is coated in place by what the actor holds (`coat` on its block), aimed
+    /// at one of its sides: clay on a wattle panel or an earth wall.
     Coats,
     /// The target is the core of a multiblock (tagged `multiblock_core`): a hearthstone,
     /// a crucible; for a machine's core, the actor holds no block to place against it.
@@ -684,9 +684,12 @@ impl ActionDef {
                 ctx.block(block).is_some_and(|b| ctx.blocks().def(b).has_tag("bed"))
             }
             Requirement::Coats => {
-                let (block, _) = block_target()?;
+                // On a wall's face only: clay to the top of a dirt floor or a panel is still
+                // laid there as a block.
+                let (block, face) = block_target()?;
+                let side = !matches!(face, Face::PosY | Face::NegY);
                 let coating = ctx.block(block).and_then(|b| ctx.blocks().coating(b));
-                coating.is_some_and(|(with, _)| ctx.actor_held() == Some(with))
+                side && coating.is_some_and(|(with, _)| ctx.actor_held() == Some(with))
             }
             Requirement::Seat => {
                 let (block, _) = block_target()?;

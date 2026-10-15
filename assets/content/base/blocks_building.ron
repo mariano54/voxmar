@@ -51,7 +51,8 @@
         // through; daubed with clay it is a sound wall that will not burn (a placed panel is
         // daubed in place, clay in hand: `coat`).
         (name: "wattle_panel", render: Model, shape: "wattle", facing: true, sound: Wood, textures: All("wattle"), hardness: 0.8, color: (140, 105, 65), tags: ["wattle", "wall", "wood", "building", "fuel", "shelter:draughty"], coat: Some((with: "clay", into: "daub"))),
-        (name: "daub", sound: Soil, textures: All("daub"), hardness: 1.0, color: (205, 185, 150), tags: ["daub", "wall", "building", "shelter:sound"]),
+        // Daub (clay and straw over the panel) is in blocks.ron, beside the clay and earth it
+        // coats.
         // Half-timbering: a dark timber frame with a brace, daub between.
         (name: "half_timber", sound: Wood, textures: All("half_timber"), hardness: 1.5, color: (190, 170, 135), tags: ["half_timber", "timber", "wall", "building", "shelter:sound"]),
         // Shutters for a window: shut, two plank leaves across the opening that keep light
