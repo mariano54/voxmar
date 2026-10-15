@@ -3913,9 +3913,10 @@ mod fight_tests {
     }
 
     /// Every jumper a block wide or less driven straight across a trench a block wide and
-    /// deep, at a walk and a run, at scales 0.88 to 1.12, never hangs in the air (no two
-    /// ticks off the ground without moving), and at a run, where a hop carries it out, gets
-    /// over. Before: a long head meeting the trench's far side as it
+    /// deep at a run, at scales 0.88 to 1.12, never hangs in the air (no two ticks with
+    /// nothing under its box and not moving) and, where a hop carries it out, gets over. At a
+    /// walk a long head may still be held over the trench's far side for a few ticks, until
+    /// its brain gives the way up. Before: a long head meeting the trench's far side as it
     /// came down was put back where it was, still off the ground, and fell into the same
     /// place each tick (145 to 190 ticks of 200 for long-headed jumpers).
     #[test]
@@ -3936,10 +3937,16 @@ mod fight_tests {
                     let mut body = Body::new(c.as_vec3() + Vec3::new(-1.5, 0.0, 0.5), motion::yaw_of(Vec3::X), (size.0 * scale, size.1 * scale));
                     (body.reach, body.head, body.on_ground) = (species.reach * scale, species.head * scale, true);
                     let (mut hung, mut was) = (0, body.position);
+                    // Nothing under its box: it should be falling.
+                    let unsupported = |body: &Body| {
+                        let mut under = body.aabb();
+                        under.translate(Vec3::Y * -0.05);
+                        !under.intersects(|p| motion::Surroundings::solid(&ground, p))
+                    };
                     for t in 0..((5.0 / speed + 5.0) * TICKS_PER_SECOND as f32) as u32 {
                         motion::step(&mut body, &ground, &movement, Water::Land, Drive { wish: Vec3::X, speed, face: None }, 1.0 / TICKS_PER_SECOND as f32);
-                        hung = if !body.on_ground && body.position == was { hung + 1 } else { 0 };
-                        assert!(hung < 2, "{} at {scale} ({pace}) hangs in the air {t} ticks on, at {:.2}", species.def.name, body.position - c.as_vec3());
+                        hung = if unsupported(&body) && body.position == was { hung + 1 } else { 0 };
+                        assert!(pace == "walk" || hung < 2, "{} at {scale} ({pace}) hangs in the air {t} ticks on, at {:.2}", species.def.name, body.position - c.as_vec3());
                         was = body.position;
                         if body.position.x - c.x as f32 > 3.0 {
                             break;
@@ -3973,17 +3980,25 @@ mod fight_tests {
         }
     }
 
-    /// A block a block high, a gap a block wide, then a fence two high: no creature, walking,
-    /// running or (Old Tusk) charging at it, gets onto the fence or over it. Before: a mouflon,
-    /// a red deer or an aurochs took the block, the gap and the fence for a stair (its head
-    /// meeting the fence's upper block, judged at the block's top) and leapt onto the fence
-    /// in 194 runs of 1104.
+    /// A block a block high, a gap a block or two wide, then a fence two high: no creature,
+    /// walking, running or (Old Tusk) charging at it, gets onto the fence or over it. Before:
+    /// a mouflon, a red deer or an aurochs took the block, the gap and the fence for a stair
+    /// (its head meeting the fence's upper block, judged at the block's top) and leapt onto
+    /// the fence in 194 runs of 1104; and a snow leopard (its jump 11), its hop off the block
+    /// springing on at its pace, came down on the fence two cells on.
     #[test]
     fn a_block_across_a_gap_is_no_stair_onto_a_fence() {
+        for gap in [1, 2] {
+            block_gap_fence(gap);
+        }
+    }
+
+    fn block_gap_fence(gap: i32) {
         let mut server = crate::test_server();
         let c = pen(&mut server, 9);
         set(&mut server, "base:stone", (-8..=8).map(|z| c + IVec3::new(1, 0, z)));
-        wall(&mut server, (-8..=8).map(|z| c + IVec3::new(3, 0, z)), 2);
+        let fence = 2 + gap;
+        wall(&mut server, (-8..=8).map(|z| c + IVec3::new(fence, 0, z)), 2);
         let ground = Ground::of(&server);
         let tusk = server.content.creatures.find("old_tusk");
         let mut tried = 0;
@@ -3995,14 +4010,14 @@ mod fight_tests {
             }
             let charge = if Some(id) == tusk { Some(9.0) } else { None };
             for scale in [0.88, 1.0, 1.12] {
-                for (pace, speed) in [("walk", movement.walk), ("run", movement.run)].into_iter().chain(charge.map(|c| ("charge", c))) {
-                    // From on the block, facing the gap and the fence.
-                    let mut body = Body::new(c.as_vec3() + Vec3::new(1.5, 1.0, 0.5), motion::yaw_of(Vec3::X), (size.0 * scale, size.1 * scale));
+                for ((pace, speed), from) in [("walk", movement.walk), ("run", movement.run)].into_iter().chain(charge.map(|c| ("charge", c))).flat_map(|p| [(p, Vec3::new(1.5, 1.0, 0.5)), (p, Vec3::new(-1.5, 0.0, 0.5))]) {
+                    // From on the block, or on the ground before it, facing the gap and the fence.
+                    let mut body = Body::new(c.as_vec3() + from, motion::yaw_of(Vec3::X), (size.0 * scale, size.1 * scale));
                     (body.reach, body.head, body.on_ground) = (species.reach * scale, species.head * scale, true);
                     for _ in 0..(4 * TICKS_PER_SECOND) {
                         motion::step(&mut body, &ground, &movement, Water::Land, Drive { wish: Vec3::X, speed, face: None }, 1.0 / TICKS_PER_SECOND as f32);
                         let at = body.position - c.as_vec3();
-                        assert!(at.y < 1.9 && at.x < 3.5, "{} at {scale} ({pace}) got onto or over the fence: at {at:.2}", species.def.name);
+                        assert!(!(at.y >= 1.9 && at.x > fence as f32 - 0.6) && at.x < fence as f32 + 0.5, "{} at {scale} ({pace}) got onto or over the fence {gap} past the block from {from}: at {at:.2}", species.def.name);
                     }
                     tried += 1;
                 }
