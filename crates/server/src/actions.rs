@@ -46,7 +46,12 @@ struct Timed {
     due: Instant,
     /// The player's client shows it done: nothing cancels it now.
     finished: bool,
+    /// The hotbar slot in hand when it began and what was in it: what the work wears.
+    tool: Tool,
 }
+
+/// A hotbar slot and what was in it when an action began.
+pub(crate) type Tool = (usize, Option<voxmar_engine::block::BlockId>);
 
 impl Timed {
     fn mostly_done(&self, at: Instant) -> bool {
@@ -211,13 +216,15 @@ impl Server {
             tracing::debug!("player {agent}: {} refused at {target:?}: {why:?}", def.name);
             self.reject(agent, target);
         } else if !timed {
-            self.commit(agent, &def, target);
+            let tool = self.tool_in_hand(agent);
+            self.commit(agent, &def, target, tool);
         } else {
             if def.effects.contains(&Effect::EatHeld) {
                 self.bite_started(agent);
             }
             let due = at + Duration::from_secs_f32(seconds);
-            self.executor.timed.push(Timed { agent, action, target, started: at, due, finished: false });
+            let tool = self.tool_in_hand(agent);
+            self.executor.timed.push(Timed { agent, action, target, started: at, due, finished: false, tool });
         }
     }
 
@@ -235,7 +242,7 @@ impl Server {
         };
         if self.executor.timed[i].mostly_done(at) {
             let timed = self.executor.timed.swap_remove(i);
-            self.finish(timed.agent, timed.action, timed.target);
+            self.finish(timed.agent, timed.action, timed.target, timed.tool);
         } else {
             self.executor.timed[i].finished = true;
         }
@@ -247,18 +254,18 @@ impl Server {
         let Some(i) = self.executor.timed.iter().position(|t| t.agent == agent && !t.finished) else { return };
         let timed = self.executor.timed.swap_remove(i);
         if timed.mostly_done(at) {
-            self.finish(timed.agent, timed.action, timed.target);
+            self.finish(timed.agent, timed.action, timed.target, timed.tool);
         }
     }
 
     /// Commits an action whose time is up, if its requirements still hold.
-    fn finish(&mut self, agent: PlayerId, action: ActionId, target: ActionTarget) {
+    fn finish(&mut self, agent: PlayerId, action: ActionId, target: ActionTarget, tool: Tool) {
         if !self.players.contains_key(&agent) {
             return;
         }
         let Some(def) = self.action_def(action) else { return };
         if def.validate(&Context { server: self, agent }, target).is_ok() {
-            self.commit(agent, &def, target);
+            self.commit(agent, &def, target, tool);
         } else {
             self.reject(agent, target);
         }
@@ -285,12 +292,18 @@ impl Server {
         self.executor.timed = rest;
         due.sort_by_key(|t| (t.due, t.agent));
         for timed in due {
-            self.finish(timed.agent, timed.action, timed.target);
+            self.finish(timed.agent, timed.action, timed.target, timed.tool);
         }
     }
 
-    /// Applies an action's effects. Validation already guaranteed they can all apply.
-    fn commit(&mut self, agent: PlayerId, def: &ActionDef, target: ActionTarget) {
+    /// The hotbar slot `agent` has in hand and what is in it.
+    pub(crate) fn tool_in_hand(&self, agent: PlayerId) -> Tool {
+        self.players.get(&agent).map_or((0, None), |p| (p.selected, p.held()))
+    }
+
+    /// Applies an action's effects, `tool` being the slot in hand when it began and what
+    /// was in it. Validation already guaranteed they can all apply.
+    fn commit(&mut self, agent: PlayerId, def: &ActionDef, target: ActionTarget, tool: Tool) {
         for &effect in &def.effects {
             match (effect, target) {
                 (Effect::GiveDrop, ActionTarget::Block { block, .. }) => {
@@ -407,7 +420,7 @@ impl Server {
                     let changes = voxmar_engine::action::swapping(&Context { server: self, agent }, block);
                     self.set_blocks(&changes);
                 }
-                (Effect::WearHeld, ActionTarget::Block { block, .. }) => self.wear_on_block(agent, block, def.effects.contains(&Effect::Till)),
+                (Effect::WearHeld, ActionTarget::Block { block, .. }) => self.wear_on_block(agent, block, def.effects.contains(&Effect::Till), tool),
                 (Effect::Till, ActionTarget::Block { block, .. }) => {
                     if let Some(farmland) = self.content.blocks.id("base:farmland") {
                         self.set_block(block, farmland);
