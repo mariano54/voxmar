@@ -183,6 +183,7 @@ mod tests {
     use voxmar_engine::coords::ColumnPos;
     use voxmar_engine::inventory::ItemStack;
     use crate::player::Player;
+    use crate::save::Draw;
 
     fn player(server: &mut Server) {
         let (_, connection) = voxmar_protocol::local_pair();
@@ -332,10 +333,11 @@ mod tests {
         let (raw, cooked) = (block(&server, "base:raw_small_game"), block(&server, "base:cooked_small_game"));
         server.set_block(core, block(&server, "base:hearthstone"));
         server.set_block(stove, block(&server, "base:cottage_stove"));
-        // A tick whose roll never burns at level 1, at either fire.
+        // A count of goes cooked from which the next two never burn at level 1.
         let burn = server.content.cooking.for_item(raw, &["campfire".into()]).unwrap().burn_chance(1);
-        let tick = (server.tick..server.tick + 1000).find(|&tick| [core, stove].iter().all(|&at| crate::items::random3(tick, at, 1 ^ 0xc00c)[0] >= burn)).unwrap();
-        server.tick = tick;
+        let key = server.players[&1].draw_key;
+        let cooks = (0..1000).find(|&n| (n..n + 2).all(|n| crate::save::numbered_draws(key, Draw::Cook.salt(), n)[0] >= burn)).unwrap();
+        server.players.get_mut(&1).unwrap().draws.cooks = cooks;
         let cook = |server: &mut Server, at: IVec3| {
             server.players.get_mut(&1).unwrap().inventory.slots.iter_mut().for_each(|slot| *slot = None);
             server.players.get_mut(&1).unwrap().inventory.slots[0] = Some(ItemStack { item: raw, count: 1 });
@@ -406,8 +408,9 @@ mod tests {
         let recipe = server.content.cooking.for_item(raw, &["campfire".into()]).unwrap();
         let burn = recipe.burn_chance(1);
         let burnt = recipe.burnt.unwrap();
-        let tick = (server.tick..server.tick + 1000).find(|&tick| crate::items::random3(tick, fire, 1 ^ 0xc00c)[0] < burn).expect("a real burnt roll");
-        server.tick = tick;
+        let key = server.players[&1].draw_key;
+        let cooks = (0..1000).find(|&n| crate::save::numbered_draws(key, Draw::Cook.salt(), n)[0] < burn).expect("a real burnt roll");
+        server.players.get_mut(&1).unwrap().draws.cooks = cooks;
         server.players.get_mut(&1).unwrap().inventory.slots[0] = Some(ItemStack { item: raw, count: 1 });
         server.cook(1, fire);
         assert_eq!(server.players[&1].inventory.get(0).unwrap().item, burnt);
@@ -427,8 +430,9 @@ mod tests {
         let burn = recipe.burn_chance(1);
         assert!(burn > 0.0 && recipe.burnt == Some(clay), "clay cracks back to clay at level 1");
         for cracks in [true, false] {
-            let tick = (server.tick..server.tick + 1000).find(|&tick| (crate::items::random3(tick, kiln, 1 ^ 0xc00c)[0] < burn) == cracks).unwrap();
-            server.tick = tick;
+            let key = server.players[&1].draw_key;
+            let cooks = (0..1000).find(|&n| (crate::save::numbered_draws(key, Draw::Cook.salt(), n)[0] < burn) == cracks).unwrap();
+            server.players.get_mut(&1).unwrap().draws.cooks = cooks;
             let inventory = &mut server.players.get_mut(&1).unwrap().inventory;
             for slot in inventory.slots.iter_mut() {
                 *slot = Some(ItemStack { item: stone, count: 64 });

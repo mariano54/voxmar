@@ -136,6 +136,10 @@ pub struct WorldMeta {
     /// one when they open (`ServerConfig::draw_key`, else a random one).
     #[serde(default)]
     pub draw_key: u64,
+    /// Drops popped from broken blocks so far, which numbers where each lands (`popped`);
+    /// none in older worlds.
+    #[serde(default)]
+    pub drops: u64,
 }
 
 /// How a regrowing plant is saved, by block names.
@@ -176,6 +180,7 @@ impl WorldMeta {
             worldgen_content: None,
             lairs: Vec::new(),
             draw_key: random_key(),
+            drops: 0,
         }
     }
 }
@@ -197,6 +202,65 @@ pub fn random_key() -> u64 {
 /// Seconds since the Unix epoch.
 pub fn unix_time() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
+}
+
+/// What a player's rolls are numbered by, a count for each kind (`Draw`), saved, so no
+/// roll is drawn twice and none hangs on the tick it falls on.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Draws {
+    /// Blows the player has struck at creatures.
+    pub strikes: u64,
+    /// Creatures' blows that have come down on the player.
+    pub blows: u64,
+    /// Feeds given to creatures being tamed.
+    pub feeds: u64,
+    /// Goes cooked at a station.
+    pub cooks: u64,
+}
+
+/// A kind of roll a player's draws number (`Draws`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Draw {
+    Strike,
+    Blow,
+    Feed,
+    Cook,
+}
+
+impl Draw {
+    /// What tells this kind's draws from another's at the same count.
+    pub fn salt(self) -> u64 {
+        match self {
+            Draw::Strike => 0x5717,
+            Draw::Blow => 0x0b10,
+            Draw::Feed => 0x7a3e,
+            Draw::Cook => 0xc00c,
+        }
+    }
+}
+
+impl Draws {
+    /// The next two draws of `kind` for the player whose draw key is `key`, counted.
+    pub fn next(&mut self, key: u64, kind: Draw) -> [f32; 2] {
+        let count = match kind {
+            Draw::Strike => &mut self.strikes,
+            Draw::Blow => &mut self.blows,
+            Draw::Feed => &mut self.feeds,
+            Draw::Cook => &mut self.cooks,
+        };
+        let draws = numbered_draws(key, kind.salt(), *count);
+        *count += 1;
+        draws
+    }
+}
+
+/// Two draws for the `count`th roll of a kind (`salt`) by the player whose draw key is
+/// `key`: each count its own, whatever tick it falls on.
+pub fn numbered_draws(key: u64, salt: u64, count: u64) -> [f32; 2] {
+    use voxmar_engine::creature::{mix, unit_from};
+    let h = mix(mix(key ^ salt, count), 0xd2a3);
+    [unit_from(h), unit_from(mix(h, 1))]
 }
 
 /// What is kept of a player between sessions.
@@ -231,6 +295,8 @@ pub struct SavedPlayer {
     pub prayer_points: Option<f32>,
     /// Lines cast so far (none in older saves).
     pub casts: u64,
+    /// What the player's other rolls are numbered by (none in older saves).
+    pub draws: Draws,
 }
 
 /// Tallies quests count (`kind:name`, or `kind:station:name`) under the names items have
@@ -298,6 +364,8 @@ struct PlayerFile {
     prayer_points: Option<f32>,
     #[serde(default)]
     casts: u64,
+    #[serde(default)]
+    draws: Draws,
 }
 
 /// A column file, generic so that saving can borrow the column.
@@ -577,7 +645,7 @@ impl WorldSave {
         }
         let health = Health { current: file.health.current.min(file.health.max), max: file.health.max };
         let yaw = if file.yaw.is_finite() { file.yaw } else { 0.0 };
-        Ok(Some(SavedPlayer { position, yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills, effects: file.effects, home: file.home, bed: file.bed, kindled: file.kindled, journal: merge_journal(file.journal, registry), quests_claimed: file.quests_claimed.unwrap_or_else(|| file.quests.clone()), quests: file.quests, tallies: renamed_tallies(file.tallies, registry), prayer_points: file.prayer_points, casts: file.casts }))
+        Ok(Some(SavedPlayer { position, yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills, effects: file.effects, home: file.home, bed: file.bed, kindled: file.kindled, journal: merge_journal(file.journal, registry), quests_claimed: file.quests_claimed.unwrap_or_else(|| file.quests.clone()), quests: file.quests, tallies: renamed_tallies(file.tallies, registry), prayer_points: file.prayer_points, casts: file.casts, draws: file.draws }))
     }
 
     /// Moves the file of the player called `name` aside, as unreadable (`set_aside`).
@@ -621,6 +689,7 @@ impl WorldSave {
             tallies: player.tallies.clone(),
             prayer_points: player.prayer_points,
             casts: player.casts,
+            draws: player.draws,
         };
         let text = ron::ser::to_string_pretty(&file, ron::ser::PrettyConfig::default()).map_err(io::Error::other)?;
         let path = self.player_path(name);
@@ -1143,6 +1212,7 @@ mod tests {
             tallies: Vec::new(),
             prayer_points: None,
             casts: 0,
+            draws: Draws::default(),
         };
         save.write_player("ada", &player, &registry).unwrap();
         assert_eq!(save.read_player("ada", &registry).unwrap().unwrap().quests_claimed, ["base:a"], "a waiting reward is kept");
@@ -1187,6 +1257,7 @@ mod tests {
             tallies: vec![("crafted:base:torch".into(), 8)],
             prayer_points: Some(7.5),
             casts: 12,
+            draws: Draws { strikes: 31, blows: 9, feeds: 4, cooks: 17 },
         };
         for name in ["steve", "Steve", "a/b", "../x", "ünï cödé"] {
             save.write_player(name, &player, &registry).unwrap();
@@ -1231,6 +1302,22 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// Each kind of roll counts on by itself, and a count's draws are its own: another
+    /// count, kind or player's key draws otherwise.
+    #[test]
+    fn draws_count_on_by_kind_and_differ_by_count_kind_and_key() {
+        let mut draws = Draws::default();
+        let (ada, bea) = (crate::player::player_draw_key(0x0d1a, "ada"), crate::player::player_draw_key(0x0d1a, "bea"));
+        let first = draws.next(ada, Draw::Strike);
+        assert_eq!(first, numbered_draws(ada, Draw::Strike.salt(), 0));
+        assert_eq!(draws.next(ada, Draw::Strike), numbered_draws(ada, Draw::Strike.salt(), 1));
+        draws.next(ada, Draw::Cook);
+        assert_eq!(draws, Draws { strikes: 2, blows: 0, feeds: 0, cooks: 1 });
+        let others = [numbered_draws(ada, Draw::Strike.salt(), 1), numbered_draws(ada, Draw::Blow.salt(), 0), numbered_draws(ada, Draw::Feed.salt(), 0), numbered_draws(ada, Draw::Cook.salt(), 0), numbered_draws(bea, Draw::Strike.salt(), 0)];
+        assert!(others.iter().all(|other| *other != first), "{first:?} drawn again among {others:?}");
+        assert!(others.iter().chain([&first]).flatten().all(|d| (0.0..1.0).contains(d)));
+    }
+
     /// Items an older save holds that have since merged into one come back as that item
     /// (every kind of wild herb is kitchen herbs now), pouched ones added up.
     #[test]
@@ -1261,6 +1348,7 @@ mod tests {
             tallies: Vec::new(),
             prayer_points: None,
             casts: 0,
+            draws: Draws::default(),
         };
         save.write_player("herbalist", &player, &registry).unwrap();
         let loaded = save.read_player("herbalist", &registry).unwrap().unwrap();
@@ -1286,6 +1374,7 @@ mod tests {
         std::fs::write(dir.join("players/hunter.ron"), file).unwrap();
         let loaded = save.read_player("hunter", &blocks).unwrap().unwrap();
         assert_eq!(loaded.casts, 0, "an older save has cast nothing yet");
+        assert_eq!(loaded.draws, Draws::default(), "an older save has drawn nothing yet");
         let (raw, cooked) = (blocks.expect("base:raw_small_game"), blocks.expect("base:cooked_small_game"));
         let slots: Vec<(BlockId, u8)> = loaded.inventory.slots.iter().flatten().map(|s| (s.item, s.count)).collect();
         assert_eq!(slots, [(raw, 3), (raw, 2), (cooked, 4)]);
