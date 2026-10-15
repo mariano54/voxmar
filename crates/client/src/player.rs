@@ -484,7 +484,7 @@ fn movement(
     let clearance = combat.feel.creature_clearance;
     for aabb in creatures.bodies(&launch) {
         if let Some(out) = out_of(body.position, &aabb, dims::WIDTH / 2.0 + clearance)
-            && !Aabb::standing(out, dims::WIDTH, dims::HEIGHT).intersects(|cell| around.solid(cell))
+            && !Aabb::standing(out, dims::WIDTH, dims::HEIGHT).overlaps(|cell| around.boxes(cell))
         {
             body.position = out;
         }
@@ -546,6 +546,12 @@ struct Around<'a> {
 impl Surroundings for Around<'_> {
     fn solid(&self, cell: IVec3) -> bool {
         self.world.is_solid(cell)
+    }
+
+    /// As the server judges moves (`Server::boxes`): a shaped block by its boxes, unloaded
+    /// space as a whole cube, so the player cannot fall out of the loaded world.
+    fn boxes(&self, cell: IVec3) -> &[Aabb] {
+        self.world.block(cell).map_or(&voxmar_engine::physics::CUBE, |b| self.world.registry.collision(b))
     }
 
     fn water(&self, aabb: &Aabb) -> (f32, Vec2) {

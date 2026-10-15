@@ -833,7 +833,7 @@ impl Server {
         let (depth, _) = voxmar_engine::movement::water_around(blocks, |cell| self.block(cell), &Aabb::standing(feet, dims::WIDTH, dims::HEIGHT));
         if depth > 0.0 {
             Some(true)
-        } else if ground.intersects(|cell| self.is_solid(cell)) {
+        } else if ground.overlaps(|cell| self.boxes(cell)) {
             Some(false)
         } else {
             None
@@ -844,24 +844,28 @@ impl Server {
     fn near_ground(&self, feet: Vec3) -> bool {
         let half = dims::WIDTH / 2.0;
         let below = Aabb { min: feet - Vec3::new(half, self.content.movement.checks.near_ground, half), max: feet + Vec3::new(half, 0.0, half) };
-        below.intersects(|cell| self.is_solid(cell))
+        below.overlaps(|cell| self.boxes(cell))
     }
 
-    /// Where a player above `from` would stand on the first solid block under them (within
-    /// 64 blocks; otherwise where they are).
+    /// Where a player above `from` would stand on the first solid block under them, on its
+    /// top (a slab's at half a block), within 64 blocks; otherwise where they are.
     fn ground_below(&self, from: Vec3) -> Vec3 {
         let cell = from.floor().as_ivec3();
         (0..64)
             .map(|down| cell - voxmar_engine::glam::IVec3::Y * down)
-            .find(|&below| self.is_solid(below) && !self.inside(below.as_vec3().with_x(from.x).with_z(from.z) + Vec3::Y))
-            .map_or(from, |below| Vec3::new(from.x, below.y as f32 + 1.0, from.z))
+            .find_map(|below| {
+                let top = self.boxes(below).iter().map(|b| b.max.y).reduce(f32::max)?;
+                let on = Vec3::new(from.x, below.y as f32 + top, from.z);
+                (!self.inside(on)).then_some(on)
+            })
+            .unwrap_or(from)
     }
 
     /// Whether a player at `feet` would be in a wall (with a slightly smaller box than
     /// theirs, for rounding: `Checks::wall_box`).
     fn inside(&self, feet: Vec3) -> bool {
         let (width, height) = self.content.movement.checks.wall_box;
-        Aabb::standing(feet, dims::WIDTH * width, dims::HEIGHT * height).intersects(|cell| self.is_solid(cell))
+        Aabb::standing(feet, dims::WIDTH * width, dims::HEIGHT * height).overlaps(|cell| self.boxes(cell))
     }
 
     /// Whether a player could have got from `from` to `to` without passing through a wall.

@@ -3486,6 +3486,28 @@ fn long_steps_off_ledges_down_terraces_and_up_steps_are_not_snapped() {
 }
 
 #[test]
+fn walkers_stand_on_shaped_blocks_where_they_stop_them() {
+    real_time("movement is checked against the clock: how far a player may get in the seconds between their messages");
+    let mut client = on_a_test_floor();
+    let start = client.position;
+    let at = start.floor().as_ivec3();
+    // Southwards: a slab, a stair whose step faces north (the way it comes), a plank.
+    client.fill(at, IVec3::new(0, 0, 1), IVec3::new(0, 0, 1), "oak_slab");
+    client.fill(at, IVec3::new(0, 0, 2), IVec3::new(0, 0, 2), "oak_stairs");
+    client.fill(at, IVec3::new(0, 0, 3), IVec3::new(0, 0, 3), "oak_planks");
+    // On the slab's top, half a block up in its cell, then the stair's upper step and the
+    // plank: where the client stepped up to, none of it inside a block.
+    client.send_position(start + Vec3::new(0.0, 0.5, 1.0), false);
+    client.send_position(start + Vec3::new(0.0, 1.0, 2.25), false);
+    client.send_position(start + Vec3::new(0.0, 1.0, 3.0), false);
+    assert!(client.all_accepted(), "a walker on shaped blocks was put back to {:?}", client.teleported);
+    // But not sunk into the slab: its lower half stops movement.
+    client.send_position(start + Vec3::new(0.0, 0.25, 1.0), false);
+    client.pump_until(|c| c.teleported.is_some());
+    assert_eq!(client.teleported.take(), Some(start + Vec3::new(0.0, 1.0, 3.0)), "stood inside the slab");
+}
+
+#[test]
 fn swimmers_climb_out_onto_a_bank_but_nobody_jumps_out_of_a_dry_pit_or_lava() {
     real_time("movement is checked against the clock: how far a player may get in the seconds between their messages");
     let mut client = on_a_test_floor();
