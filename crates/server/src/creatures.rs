@@ -1296,6 +1296,8 @@ impl Server {
             sent: None,
             changed: true,
         };
+        // Where it arrived, for a trap it runs through before the traps next look.
+        self.catches.arrived(id, creature.body.position);
         self.creatures.live.insert(id, creature);
         Some(id)
     }
