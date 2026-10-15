@@ -72,6 +72,9 @@ const LIT_REACH: i32 = 5;
 /// Where a creature's stuck clock (`Live::stuck`, to 2 s) stands once a search finds no way
 /// to its goal.
 const NO_WAY_STUCK: f32 = 1.5;
+/// How high a shape stands before it is in a creature's way at its feet, in blocks: a lower
+/// slab is open ground to the way-finder, walked up onto (`Movement::step`, never less).
+const HALF_STEP: f32 = 0.5 + 1e-3;
 /// How soon after balking at a chase a second balk makes a creature give it up, in ticks.
 const BALK_WINDOW: u64 = 8 * TICKS_PER_SECOND as u64;
 /// How long after giving a chase up a creature that takes one up again gives it up at its
@@ -264,6 +267,9 @@ pub struct Creatures {
     pub(crate) release_asked: FxHashMap<PlayerId, (u32, u64)>,
     /// Which blocks are water a creature swims in or drinks, by id, worked out once.
     water: std::sync::OnceLock<Vec<bool>>,
+    /// Which blocks stand in a creature's way at its feet (`motion::Surroundings::solid`),
+    /// by id, worked out once.
+    in_way: std::sync::OnceLock<Vec<bool>>,
 }
 
 /// Every live creature by where it stood when a pass began, in square cells `CELL` blocks
@@ -319,6 +325,12 @@ impl Creatures {
     /// Which blocks are water (a fluid named for it), by id.
     fn water_blocks(&self, blocks: &voxmar_engine::block::BlockRegistry) -> &[bool] {
         self.water.get_or_init(|| blocks.ids().map(|b| blocks.info(b).fluid.is_some() && blocks.def(b).name.contains("water")).collect())
+    }
+
+    /// Which blocks stand in the way at a body's feet, by id: a whole block, or a shape
+    /// taller than a half block (`HALF_STEP`); a lower slab is walked up onto.
+    fn in_way_blocks(&self, blocks: &voxmar_engine::block::BlockRegistry) -> &[bool] {
+        self.in_way.get_or_init(|| blocks.ids().map(|b| blocks.collision(b).iter().any(|a| a.max.y > HALF_STEP)).collect())
     }
 
     /// Takes a creature out of the world without a death (`/creatures remove`).
@@ -378,7 +390,11 @@ impl<'a> Ground<'a> {
 impl motion::Surroundings for Ground<'_> {
     fn solid(&self, cell: IVec3) -> bool {
         // Unloaded columns are walls, so nothing walks off the edge of the world.
-        self.block(cell).is_none_or(|b| self.server.content.blocks.info(b).solid)
+        self.block(cell).is_none_or(|b| self.server.creatures.in_way_blocks(&self.server.content.blocks)[b.0 as usize])
+    }
+
+    fn boxes(&self, cell: IVec3) -> &[voxmar_engine::physics::Aabb] {
+        self.block(cell).map_or(&voxmar_engine::physics::CUBE, |b| self.server.content.blocks.collision(b))
     }
 
     fn water(&self, cell: IVec3) -> bool {
@@ -668,7 +684,7 @@ impl Server {
     /// where a body `height` blocks tall stands.
     fn shore_for(&self, at: Vec3, height: i32) -> Option<IVec3> {
         let ground = Ground::of(self);
-        let walker = path::Walker { height, climbs: true, wary: true, span: 1 };
+        let walker = path::Walker { height, climbs: true, step: 0.5625, wary: true, span: 1 };
         let feet = at.floor().as_ivec3();
         (1..=SHORE_RANGE).find_map(|r| {
             (-r..=r)
@@ -752,7 +768,7 @@ impl Server {
                 let going_round = creature.detour != 0.0 || creature.stuck > 0.5;
                 // Its way is of squares as wide as it is, and it makes for each one's middle.
                 let span = path::Walker::span_of(body.size.0);
-                let walker = path::Walker { height: body.size.1.ceil() as i32, climbs: movement.jump > 0.0, wary: water == Water::Land, span };
+                let walker = path::Walker { height: body.size.1.ceil() as i32, climbs: movement.jump > 0.0, step: movement.step, wary: water == Water::Land, span };
                 if (going_round || !cells.is_empty()) && stale && self.tick >= creature.way_at + TICKS_PER_SECOND as u64 {
                     let found = path::find(&Ground::of(self), &walker, walker.corner(body.position + Vec3::Y * 0.01), walker.corner(goal));
                     #[cfg(test)]
@@ -3520,7 +3536,7 @@ pub(crate) mod tick_cost_tests {
     #[test]
     #[ignore]
     fn search_cost_on_the_ground() {
-        let wolf = path::Walker { height: 1, climbs: true, wary: true, span: 1 };
+        let wolf = path::Walker { height: 1, climbs: true, step: 0.5625, wary: true, span: 1 };
         let bear = path::Walker { height: 2, span: 2, ..wolf };
         for door in [0, 1, 2] {
             let mut server = crate::test_server();

@@ -313,6 +313,10 @@ pub struct Movement {
     pub turn: f32,
     /// Upward speed of its jump; 0 for creatures that cannot jump.
     pub jump: f32,
+    /// How high it walks up without a hop, in blocks (a slab, a stair's tread), as a
+    /// player steps: from a half block (what the way-finder takes for open ground) to a
+    /// whole one.
+    pub step: f32,
     /// How high a flier keeps over the ground (or the treetops) in flight, in blocks; only
     /// for `Flier`s.
     pub fly: f32,
@@ -320,7 +324,7 @@ pub struct Movement {
 
 impl Default for Movement {
     fn default() -> Self {
-        Self { style: Style::Walker, walk: 1.6, run: 4.5, turn: 270.0, jump: 7.5, fly: 0.0 }
+        Self { style: Style::Walker, walk: 1.6, run: 4.5, turn: 270.0, jump: 7.5, step: 0.5625, fly: 0.0 }
     }
 }
 
@@ -857,6 +861,9 @@ impl CreatureRegistry {
             let flier = def.movement.style == Style::Flier;
             if flier != (def.movement.fly > 0.0) || !(def.movement.fly.is_finite() && def.movement.fly <= 32.0) {
                 return Err(error(format!("a `Flier` needs `fly` from above 0 to 32 blocks, and only a flier has one (`fly: {}`)", def.movement.fly)));
+            }
+            if !(def.movement.step.is_finite() && (0.5..=1.0).contains(&def.movement.step)) {
+                return Err(error(format!("`step` must be from 0.5 (a slab) to 1 block, not {}", def.movement.step)));
             }
             if flier && def.movement.run <= def.movement.walk * 1.5 {
                 return Err(error("a flier takes wing above one and a half times its walk, so its `run` must be faster than that".into()));

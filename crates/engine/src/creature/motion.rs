@@ -2,13 +2,14 @@
 //! rate, jumping up single steps, falling, floating in water, drifting in the air for
 //! creatures that float, and flying for fliers: on the wing whenever they go faster than a
 //! walk, keeping their height over the land and what grows on it, and fluttering down to
-//! land when they slow. The same box collision as players (`physics::move_and_slide`),
-//! sized to the creature.
+//! land when they slow. The same box collision as players (`physics::move_and_slide_boxes`,
+//! against blocks' shapes: a slab's lower half, a post), sized to the creature; it walks up
+//! a half step (`Movement::step`) without a hop, as a player does.
 
 use glam::{IVec3, Vec3};
 
 use super::{Movement, Style, Water};
-use crate::physics::{Aabb, move_and_slide};
+use crate::physics::{Aabb, CUBE, move_and_slide_boxes, move_axis_boxes};
 
 /// Blocks per second squared, as players fall.
 pub const GRAVITY: f32 = 32.0;
@@ -67,7 +68,7 @@ impl Body {
     /// Whether its head (and the neck on the way to it), beyond its box, is in something
     /// solid.
     pub fn head_blocked(&self, world: &impl Surroundings) -> bool {
-        self.head_cells().any(|cell| world.solid(cell))
+        self.head_points().any(|p| inside(world, p))
     }
 
     /// Whether what its head meets going `along` (within a little of the way it faces), at
@@ -116,18 +117,18 @@ impl Body {
         }
         let mut over = self.aabb();
         over.translate(Vec3::Y * 1.05 + forward * (out - half + 0.3));
-        (1..=self.size.1.ceil() as i32).all(|up| !world.solid(cell + IVec3::Y * up)) && !over.intersects(|p| world.solid(p))
+        (1..=self.size.1.ceil() as i32).all(|up| !world.solid(cell + IVec3::Y * up)) && !over.overlaps(|p| world.boxes(p))
     }
 
-    /// The cells its head (and the neck on the way to it) is in, beyond its box: none for a
+    /// Where its head (and the neck on the way to it) is, beyond its box: nowhere for a
     /// head within it.
-    fn head_cells(&self) -> impl Iterator<Item = IVec3> + '_ {
+    fn head_points(&self) -> impl Iterator<Item = Vec3> + '_ {
         let beyond = self.reach > self.size.0 * 0.5 + 0.05;
         let forward = self.forward();
-        [(1.0, 1.0), (1.0, 0.7), (0.75, 0.85)].into_iter().filter(move |_| beyond).map(move |(out, up)| {
-            let p = self.position + forward * self.reach * out + Vec3::Y * (self.head * up).max(0.2);
-            p.floor().as_ivec3()
-        })
+        [(1.0, 1.0), (1.0, 0.7), (0.75, 0.85)]
+            .into_iter()
+            .filter(move |_| beyond)
+            .map(move |(out, up)| self.position + forward * self.reach * out + Vec3::Y * (self.head * up).max(0.2))
     }
 }
 
@@ -145,8 +146,38 @@ pub struct Drive {
 
 /// What the body needs to know about the world.
 pub trait Surroundings {
+    /// Whether a cell stands in the way at a body's feet: a whole block, or a shape taller
+    /// than a half step (a post, a stair, a top slab). A lower slab is not: it is walked up
+    /// onto (`Movement::step`), and the way-finder and the look ahead take it for open
+    /// ground.
     fn solid(&self, cell: IVec3) -> bool;
     fn water(&self, cell: IVec3) -> bool;
+    /// What a cell stops a body with, in blocks from its lower corner
+    /// (`BlockRegistry::collision`): by default the whole cell if it is solid.
+    fn boxes(&self, cell: IVec3) -> &[Aabb] {
+        if self.solid(cell) { &CUBE } else { &[] }
+    }
+}
+
+/// Whether a point is in something: in one of its cell's boxes (a whole block's cell, as
+/// the cell it is in).
+pub fn inside(world: &impl Surroundings, p: Vec3) -> bool {
+    let cell = p.floor().as_ivec3();
+    let at = p - cell.as_vec3();
+    world.boxes(cell).iter().any(|b| (0..3).all(|k| at[k] >= b.min[k] && at[k] < b.max[k]))
+}
+
+/// Where a box at `start` moving by `motion` ends if it first rises by up to `step`, then goes
+/// across, then comes down onto what it stepped onto, with which axes across stopped it;
+/// none if it would come down on nothing (as a player steps, `movement::advance`).
+fn step_up(start: Aabb, motion: Vec3, step: f32, world: &impl Surroundings) -> Option<(Aabb, [bool; 3])> {
+    let boxes = |p: IVec3| world.boxes(p);
+    let mut aabb = start;
+    move_axis_boxes(&mut aabb, 1, step, &boxes);
+    let risen = aabb.min.y - start.min.y;
+    let across = [move_axis_boxes(&mut aabb, 0, motion.x, &boxes), false, move_axis_boxes(&mut aabb, 2, motion.z, &boxes)];
+    let landed = move_axis_boxes(&mut aabb, 1, -(risen - motion.y.min(0.0)), &boxes);
+    landed.then_some((aabb, across))
 }
 
 /// The yaw that faces along `direction`.
@@ -216,15 +247,27 @@ pub fn hop_speed(movement: &Movement, dt: f32) -> f32 {
 /// `dt` is how long a `step` is, which the hop is judged by.
 pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, water: Water, heading: Vec3, pace: f32, dt: f32) -> bool {
     let probe = body.size.0 * 0.5 + 0.3;
-    let solid = |p: IVec3| world.solid(p);
+    let boxes = |p: IVec3| world.boxes(p);
     let goes = |lift: f32| {
         let mut aabb = body.aabb();
         aabb.translate(Vec3::Y * lift);
-        if lift > 0.0 && aabb.intersects(solid) {
+        if lift > 0.0 && aabb.overlaps(boxes) {
             return None;
         }
         let start = aabb.min;
-        move_and_slide(&mut aabb, heading * probe, solid);
+        // Up a half step as it walks (a slab), as `step` takes it.
+        let blocked = move_and_slide_boxes(&mut aabb, heading * probe, boxes);
+        if lift == 0.0 && (blocked[0] || blocked[2]) && movement.step > 0.0 {
+            let mut raised = body.aabb();
+            raised.translate(Vec3::Y * movement.step);
+            if !raised.overlaps(boxes) {
+                let mut over = raised;
+                move_and_slide_boxes(&mut over, heading * probe, boxes);
+                if (over.min - start).dot(heading) > (aabb.min - start).dot(heading) + 1e-3 {
+                    aabb = over;
+                }
+            }
+        }
         let gone = (aabb.min - start).dot(heading);
         (gone >= probe * 0.5).then(|| Vec3::new((aabb.min.x + aabb.max.x) / 2.0, aabb.min.y, (aabb.min.z + aabb.max.z) / 2.0))
     };
@@ -267,7 +310,7 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
     let mut aabb = Aabb::standing(to, body.size.0, body.size.1);
     (0..=samples).all(|i| {
         if i > 0 {
-            move_and_slide(&mut aabb, step, solid);
+            move_and_slide_boxes(&mut aabb, step, boxes);
         }
         let middle = Vec3::new((aabb.min.x + aabb.max.x) / 2.0, aabb.min.y, (aabb.min.z + aabb.max.z) / 2.0);
         let cell = (middle + Vec3::Y * 0.01).floor().as_ivec3();
@@ -403,15 +446,18 @@ pub fn step(body: &mut Body, world: &impl Surroundings, movement: &Movement, wat
         // gap (a deer on a block beside a fence a block off) takes the fence for no step,
         // or it would leap onto a fence two high. Paddling, it hauls itself out of the water.
         let front = body.position + along * (body.size.0 * 0.5 - 0.01);
-        let footed = paddling || world.solid(IVec3::new(front.x.floor() as i32, (body.position.y - 0.01).floor() as i32, front.z.floor() as i32));
-        let boxed = footed && level.intersects(|p| world.solid(p));
+        let footed = paddling || inside(world, Vec3::new(front.x, body.position.y - 0.01, front.z));
+        // A half step it walks up (`step_up`) is no step to hop.
+        let mut stepped = level;
+        stepped.translate(Vec3::Y * movement.step);
+        let boxed = footed && level.overlaps(|p| world.boxes(p)) && stepped.overlaps(|p| world.boxes(p));
         // A long head (a boar's snout, a badger's) stops the body short of a step its box
         // never meets (`Body::head_step`): it hops all the same. Either hop springs on toward
         // the step at its pace, its way along having been stopped at the step: else it goes
         // nearly straight up and, slow (a tortoise), comes down short of the step's edge,
         // where it was.
         let head_step = !boxed && body.head_step(world, along, target.length(), hop_speed(movement, dt));
-        if (boxed && !raised.intersects(|p| world.solid(p))) || head_step {
+        if (boxed && !raised.overlaps(|p| world.boxes(p))) || head_step {
             body.velocity.y = hop_speed(movement, dt);
             body.velocity.x = target.x;
             body.velocity.z = target.z;
@@ -424,8 +470,27 @@ pub fn step(body: &mut Body, world: &impl Surroundings, movement: &Movement, wat
         body.velocity = target.with_y(movement.jump.min(6.0) * 0.75);
     }
 
-    let mut aabb = body.aabb();
-    let blocked = move_and_slide(&mut aabb, body.velocity * dt, |p| world.solid(p));
+    let start_box = body.aabb();
+    let mut aabb = start_box;
+    let motion = body.velocity * dt;
+    let mut blocked = move_and_slide_boxes(&mut aabb, motion, |p| world.boxes(p));
+    // Stopped across on the ground: up onto what stopped it if it is a half step (a slab,
+    // a stair's tread) and the body fits there, as a player steps; whole blocks it hops.
+    if (blocked[0] || blocked[2])
+        && body.on_ground
+        && motion.y <= 0.0
+        && movement.step > 0.0
+        && !floating
+        && !flying
+        && let Some((stepped, across)) = step_up(start_box, motion, movement.step, world)
+    {
+        let gone = |b: &Aabb| (b.min - start_box.min).with_y(0.0).length_squared();
+        let freed = [0, 2].into_iter().any(|k| blocked[k] && !across[k]);
+        if freed || (stepped.min.y > start_box.min.y && gone(&stepped) > gone(&aabb) + 1e-8) {
+            aabb = stepped;
+            blocked = [across[0], true, across[2]];
+        }
+    }
     body.on_ground = blocked[1] && body.velocity.y <= 0.0;
     body.against_wall = blocked[0] || blocked[2];
     for (axis, blocked) in blocked.into_iter().enumerate() {
@@ -444,7 +509,7 @@ pub fn step(body: &mut Body, world: &impl Surroundings, movement: &Movement, wat
     // step undone counts as against the wall, so it climbs or turns away.
     if !head_was_blocked && body.head_blocked(world) {
         let (moved, turned) = (body.position, body.yaw);
-        let fits = |at: Vec3| !Aabb::standing(at, body.size.0, body.size.1).intersects(|p| world.solid(p));
+        let fits = |at: Vec3| !Aabb::standing(at, body.size.0, body.size.1).overlaps(|p| world.boxes(p));
         let clear = |at: Vec3, yaw: f32| fits(at) && !Body { position: at, yaw, ..*body }.head_blocked(world);
         let back = Vec3::new(start.x, moved.y, start.z);
         let other_way = start_yaw - (turned - start_yaw);
