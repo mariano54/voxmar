@@ -5853,7 +5853,8 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
 /// torch set beside it: first it smoulders (told by the server, and smoke counted rising
 /// from it), and once the catching time has passed (fire.ron) the panel is a blaze,
 /// and once the burning time has, it is gone. Each answer waited on in the server's seconds,
-/// with frames paced as taps; the torch goes after.
+/// with frames paced as taps. Then a new panel by the same torch, and clay held to it at
+/// the daub recipe's level: it is daub, and smoulders no more. The torch goes after.
 fn blaze(world: &mut World, gate: &mut Gate, now: f32) {
     let stand = world.resource::<LocalPlayer>().position.floor().as_ivec3();
     let (panel, torch) = (stand + IVec3::new(0, 0, 3), stand + IVec3::new(1, 0, 3));
@@ -5915,12 +5916,69 @@ fn blaze(world: &mut World, gate: &mut Gate, now: f32) {
             }
         }
         // Burned away.
-        _ => {
+        2 => {
             if here == "core:air" {
                 gate.check("fire: burns out", Ok(format!("the blaze was gone {waited:.1} server s on (fire.ron: {} s), nothing left", rules.burn_seconds)));
-                leave(world, gate);
+                gate.advance(now);
             } else if gate.waited_out(rules.burn_seconds + 4.0) {
                 gate.check("fire: burns out", Err(format!("{waited:.1} server s after the panel caught, the cell at {panel} shows {here:?}, not air")));
+                leave(world, gate);
+            }
+        }
+        // A new panel by the same torch, and clay in hand at the daub recipe's level.
+        3 => {
+            let level = {
+                let content = &world.resource::<Launch>().content;
+                let daub = content.blocks.id("base:daub");
+                content.recipes.iter().filter(|r| Some(r.output) == daub).map(|r| r.level).min().unwrap_or(1)
+            };
+            let net = world.resource::<Net>();
+            net.command(&format!("setblock {} {} {} wattle_panel", panel.x, panel.y, panel.z));
+            if skill_level(world, "core:construction").0 < level {
+                net.command(&format!("skill construction {level}"));
+            }
+            net.command("give clay 1");
+            gate.advance(now);
+        }
+        // Held to the panel once it stands and the clay is in the pack: daubed in place.
+        4 => {
+            let (clay, held) = {
+                let registry = &world.resource::<ClientWorld>().registry;
+                let clay = registry.id("base:clay");
+                (clay, clay.is_some_and(|clay| world.resource::<LocalPlayer>().inventory.count(clay) > 0))
+            };
+            if here == "base:wattle_panel" && held && let Some(clay) = clay {
+                hold(world, Holder::Tool(clay));
+                gate.advance(now);
+            } else if gate.waited_out(4.0) {
+                gate.check("daub: coats", Err(format!("the new panel at {panel} shows {here:?} and clay in the pack {held}, after {waited:.1} server s")));
+                leave(world, gate);
+            }
+        }
+        // In hand a frame on (the server told which slot is held), held to the panel.
+        5 => {
+            let in_hand = {
+                let player = world.resource::<LocalPlayer>();
+                let clay = world.resource::<ClientWorld>().registry.id("base:clay");
+                clay.is_some() && player.inventory.get(player.selected).map(|stack| stack.item) == clay
+            };
+            if in_hand && gate.taps > 0 {
+                let actions = world.resource::<crate::Actions>().0.clone();
+                world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("base:coat"), voxmar_engine::action::ActionTarget::Block { block: panel, face: voxmar_engine::coords::Face::NegZ });
+                gate.advance(now);
+            } else if gate.waited_out(4.0) {
+                gate.check("daub: coats", Err(format!("the clay never came to hand after {waited:.1} server s")));
+                leave(world, gate);
+            }
+        }
+        // The panel is daub: sound, and no longer smouldering by the torch.
+        _ => {
+            let smouldering = world.resource::<ClientWorld>().smoulders.contains(&panel);
+            if here == "base:daub" && !smouldering {
+                gate.check("daub: coats", Ok(format!("clay held to a wattle panel by a torch daubed it {waited:.1} server s on, and it no longer smoulders")));
+                leave(world, gate);
+            } else if gate.waited_out(4.0) {
+                gate.check("daub: coats", Err(format!("{waited:.1} server s after clay was held to the panel at {panel}, it shows {here:?} (smouldering {smouldering})")));
                 leave(world, gate);
             }
         }

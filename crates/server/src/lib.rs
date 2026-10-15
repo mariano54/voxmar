@@ -22,6 +22,7 @@ mod lairs;
 mod machines;
 mod quests;
 mod blaze;
+mod coat;
 mod regrow;
 mod farm;
 mod husbandry;

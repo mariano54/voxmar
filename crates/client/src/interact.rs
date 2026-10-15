@@ -368,12 +368,13 @@ fn break_and_place(
         // stands); a sleeping bag is slept in; a seat is sat on; a locked chest's lock is picked; bees give a
         // swarm to a skep held up to them, or a full skep its honey; a home station is
         // loaded or emptied; a sprung trap's catch is taken; a fertiliser is spread on a
-        // growing crop; a door is opened or shut, as the server turns it (never predicted:
-        // it holds the collision).
+        // growing crop; a wattle panel is daubed with clay in hand (as the server turns it); a
+        // door is opened or shut, as the server turns it (never predicted: it holds the
+        // collision).
         // One of these plainly meant (a door, a hive, a station aimed at, a fertiliser in
         // hand) but refused says why, unless something else below takes the click.
         let mut unmet = None;
-        for name in ["base:light", "base:sleep", "base:sit", "base:pick_lock", "base:tend_bees", "base:use_station", "base:take_from_trap", "base:fertilise", "base:open"] {
+        for name in ["base:light", "base:sleep", "base:sit", "base:pick_lock", "base:tend_bees", "base:use_station", "base:take_from_trap", "base:fertilise", "base:coat", "base:open"] {
             if let (Some(hit), Some(action)) = (hit, actions.0.id(name)) {
                 let context = ClientContext { world: &world, player: &player, content };
                 let action_target = ActionTarget::Block { block: hit.block, face: hit.face };
