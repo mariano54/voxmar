@@ -299,10 +299,12 @@ mod tests {
         for x in -3..=3 { for z in -3..=3 {
             server.set_block(floor + IVec3::new(x, 0, z), stone);
         }}
-        let bed = floor + IVec3::Y;
+        // The bag between the water and the floor's nearer edge, so it lies on the water's
+        // way down (water runs only toward the nearest drop).
+        let bed = floor + IVec3::new(2, 1, 0);
         server.set_block(bed, server.content.blocks.expect("base:sleeping_bag"));
         server.players.get_mut(&1).unwrap().bed = Some(bed.as_vec3() + Vec3::new(0.5, 1.0, 0.5));
-        server.set_block(bed + IVec3::X, server.content.blocks.expect("base:water"));
+        server.set_block(bed - IVec3::X, server.content.blocks.expect("base:water"));
         for _ in 0..200 {
             server.tick += 1;
             server.flow();
