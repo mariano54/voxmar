@@ -4033,7 +4033,7 @@ mod fight_tests {
                         motion::step(&mut body, &ground, &movement, Water::Land, Drive { wish: Vec3::X, speed, face: None }, 1.0 / TICKS_PER_SECOND as f32);
                         hung = if unsupported(&body) && body.position == was { hung + 1 } else { 0 };
                         assert!(pace == "walk" || hung < 2, "{} at {scale} ({pace}) hangs in the air {t} ticks on, at {:.2}", species.def.name, body.position - c.as_vec3());
-                    was = body.position;
+                        was = body.position;
                         if body.position.x - c.x as f32 > 3.0 {
                             break;
                         }

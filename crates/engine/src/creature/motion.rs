@@ -263,9 +263,9 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
     // Along the way it really goes, sliding along a wall as its box would, a step at a
     // time; ahead of its middle by half its width.
     // Down into a space it would hang in (a trench too short for a long head to come down
-    // into with its head clear): no way at a walk, or it walks in and stands stuck there. Judged once, at the first place its way
-    // goes down, over all of that space along its way it fits in: a pit with room to land
-    // short of its far wall is open. Running or chasing, a creature drops in (a hop carries
+    // into with its head clear): no way at a walk, or it walks in and stands stuck there.
+    // Judged once, at the first place its way goes down, over all of that space along its
+    // way it fits in: a pit with room to land short of its far wall is open. Running or chasing, a creature drops in (a hop carries
     // it, and its brain gives a held way up); into water it swims, its head up.
     // Down is below where its feet are: at a lip its box's corners may all be over the drop
     // (`now`) while its edge still stands on it.
