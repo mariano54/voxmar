@@ -72,11 +72,11 @@ fn a_home_shows_the_highest_step_it_has_and_a_rest_to_match() {
     // Out in the open nothing past the hearth holds.
     assert_eq!(top(&survey_of("heart_of_the_home"), true), ["base:hearthside"]);
     let names = |list: Vec<(String, f32)>| list.into_iter().map(|(n, _)| n).collect::<Vec<_>>();
-    assert_eq!(names(rest(&survey_of("camp"), false)), ["base:mending", "base:rested"]);
-    assert_eq!(names(rest(&survey_of("snug"), false)), ["base:mending", "base:rested", "base:well_rested"]);
-    assert_eq!(names(rest(&survey_of("cosy"), false)), ["base:mending", "base:rested", "base:well_rested", "base:deep_rest"]);
-    assert_eq!(names(rest(&survey_of("camp"), true)), ["base:mending", "base:rested"], "a bed under the sky is a plain rest");
-    assert_eq!(names(rest(&survey_of("cosy"), true)), ["base:mending", "base:rested", "base:well_rested"], "under the sky, its seats and lights are only a lit corner");
+    assert_eq!(names(rest(&survey_of("camp"), false)), ["base:healing_sleep", "base:rested"]);
+    assert_eq!(names(rest(&survey_of("snug"), false)), ["base:healing_sleep", "base:rested", "base:well_rested"]);
+    assert_eq!(names(rest(&survey_of("cosy"), false)), ["base:healing_sleep", "base:rested", "base:well_rested", "base:deep_rest"]);
+    assert_eq!(names(rest(&survey_of("camp"), true)), ["base:healing_sleep", "base:rested"], "a bed under the sky is a plain rest");
+    assert_eq!(names(rest(&survey_of("cosy"), true)), ["base:healing_sleep", "base:rested", "base:well_rested"], "under the sky, its seats and lights are only a lit corner");
 }
 
 #[test]
@@ -90,9 +90,9 @@ fn a_lit_corner_by_the_bed_rests_well_before_any_roof() {
         effects.given_by_sleep(&situation, &bag()).iter().map(|&(id, seconds)| (effects.get(id).name.clone(), seconds)).collect::<Vec<_>>()
     };
     // A camp out under the sky: a plain rest. A seat and a second light by the bag: a well rested one.
-    assert_eq!(rest(&survey(&[("bed", 1), ("light", 1)])), [("base:mending".to_owned(), 60.0), ("base:rested".to_owned(), 600.0)]);
+    assert_eq!(rest(&survey(&[("bed", 1), ("light", 1)])), [("base:healing_sleep".to_owned(), 60.0), ("base:rested".to_owned(), 600.0)]);
     let corner = survey(&[("bed", 1), ("seat", 1), ("light", 2)]);
-    assert_eq!(rest(&corner), [("base:mending".to_owned(), 60.0), ("base:rested".to_owned(), 600.0), ("base:well_rested".to_owned(), 900.0)]);
+    assert_eq!(rest(&corner), [("base:healing_sleep".to_owned(), 60.0), ("base:rested".to_owned(), 600.0), ("base:well_rested".to_owned(), 900.0)]);
     assert_eq!(rooms_in(&[("bed", 1), ("seat", 1), ("light", 2)], &calm, true), ["base:bedside"]);
     assert_eq!(effects.get(effects.id("base:bedside").unwrap()).modifiers.warmth, 2.0);
     // Snug and a lit corner too: the one rest, once.
@@ -300,17 +300,43 @@ fn a_proper_bed_rests_well_and_every_sleep_mends_slower_than_food() {
     let situation = Situation { felt: 15.0, warmed: false, outdoors: true, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(&camp), done: &[], held: &[], near: &[] };
     let bed = content.blocks.def(content.blocks.expect("base:oak_bed")).tags.clone();
     let rest = |tags: &[String]| effects.given_by_sleep(&situation, tags).iter().map(|&(id, seconds)| (effects.get(id).name.clone(), seconds)).collect::<Vec<_>>();
-    assert_eq!(rest(&bag()), [("base:mending".to_owned(), 60.0), ("base:rested".to_owned(), 600.0)], "a bag under the sky");
-    assert_eq!(rest(&bed), [("base:mending".to_owned(), 120.0), ("base:rested".to_owned(), 600.0), ("base:well_rested".to_owned(), 900.0)], "a proper bed under the sky");
-    // The best home, the deepest rest and the mend together heal slower than eating the
-    // plainest cooked food, a bite at a time.
-    let heal = |name: &str| effects.get(effects.id(name).unwrap()).modifiers.heal;
-    let together = voxmar_engine::effect::Modifiers { heal: heal("base:heart_of_the_home") * heal("base:deep_rest") * heal("base:mending"), ..Default::default() };
-    let per_second = 1.0 / voxmar_engine::vitals::rates(&together).heal_every.unwrap();
+    assert_eq!(rest(&bag()), [("base:healing_sleep".to_owned(), 60.0), ("base:rested".to_owned(), 600.0)], "a bag under the sky");
+    assert_eq!(rest(&bed), [("base:healing_sleep".to_owned(), 120.0), ("base:rested".to_owned(), 600.0), ("base:well_rested".to_owned(), 900.0)], "a proper bed under the sky");
+    // Every heal buff that can be on at once (the strongest of each chain of replaces, the
+    // others hidden by it) and the strongest prayer, together, are held at survival.ron's
+    // `heal_most`, which is below what the slowest food heals a second, a bite at a time:
+    // food stays the heal (design draft 63).
+    let mut chain: Vec<usize> = (0..effects.len()).collect();
+    fn root(chain: &mut [usize], i: usize) -> usize {
+        if chain[i] == i { i } else { let r = root(chain, chain[i]); chain[i] = r; r }
+    }
+    let ids: Vec<_> = effects.ids().collect();
+    for (i, &a) in ids.iter().enumerate() {
+        for (j, &b) in ids.iter().enumerate() {
+            if effects.hides(a, b) {
+                let (ra, rb) = (root(&mut chain, i), root(&mut chain, j));
+                chain[ra] = rb;
+            }
+        }
+    }
+    let mut strongest = std::collections::HashMap::new();
+    for (i, &id) in ids.iter().enumerate() {
+        let heal = effects.get(id).modifiers.heal;
+        let best = strongest.entry(root(&mut chain, i)).or_insert(1.0f32);
+        *best = best.max(heal);
+    }
+    let buffs: f32 = strongest.values().product();
+    let prayer = content.prayers.all().flat_map(|(_, p)| &p.effects).filter_map(|e| if let voxmar_engine::prayer::Effect::Mending(times) = e { Some(*times) } else { None }).fold(1.0, f32::max);
+    let survival = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content/core/survival.ron")).unwrap();
+    let heal_most: f32 = survival.lines().find_map(|line| line.trim().strip_prefix("heal_most:")).and_then(|n| n.trim().trim_end_matches(',').parse().ok()).expect("survival.ron sets heal_most");
+    let all_on = voxmar_engine::vitals::rates(&voxmar_engine::effect::Modifiers { heal: buffs, ..Default::default() }, prayer, heal_most);
+    let per_second = 1.0 / all_on.heal_every.unwrap();
+    assert!(per_second <= heal_most + 1e-6, "every heal buff and prayer together ({buffs:.2}x, {prayer}x) heal {per_second:.2} a second, past heal_most ({heal_most})");
     let eat = content.actions.get(content.actions.id("core:eat").unwrap()).unwrap();
     let voxmar_engine::action::Duration::Seconds(bite) = eat.duration else { panic!("eating takes a set time") };
-    let eating = voxmar_engine::vitals::cooked_heal(1) as f32 / bite;
-    assert!(per_second < eating, "a home, a rest and a mend heal {per_second:.2} a second, as fast as eating ({eating:.2})");
+    let slowest = content.blocks.ids().map(|id| voxmar_engine::vitals::food_value(&content.blocks.def(id).tags)).filter(|&h| h > 0).min().unwrap();
+    let eating = slowest as f32 / bite;
+    assert!(per_second < eating, "every heal buff and prayer heal {per_second:.2} a second, as fast as eating the slowest food ({eating:.2})");
 }
 
 /// Whatever a home keeps things in, or on, counts as its storage: every store a player opens
@@ -329,4 +355,21 @@ fn every_store_shelf_and_cupboard_counts_as_storage() {
         .collect();
     assert!(missing.is_empty(), "kept things in, yet not storage: {missing:?}");
     assert!(blocks.ids().filter(|&id| blocks.def(id).has_tag("trough")).all(|id| !blocks.def(id).has_tag("storage")), "a trough counted as a home's storage");
+}
+
+/// A package whose sleep rule asks for a kind of bed no bed is (a feather bed nobody made) is
+/// refused at load, naming the tag: that rest could never be had.
+#[test]
+fn a_sleep_rule_for_a_bed_nobody_made_is_refused_at_load() {
+    let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content").canonicalize().unwrap();
+    let dir = std::env::temp_dir().join(format!("voxmar-feather-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("zz_feather")).unwrap();
+    for package in ["base", "core"] {
+        std::os::unix::fs::symlink(assets.join(package), dir.join(package)).unwrap();
+    }
+    std::fs::write(dir.join("zz_feather/effects.ron"), r#"(sleeps: [(effect: "base:well_rested", seconds: 1200.0, bed: "feather")])"#).unwrap();
+    let error = Content::load(&dir).err().expect("refused").to_string();
+    assert!(error.contains("`feather`"), "{error}");
+    std::fs::remove_dir_all(&dir).unwrap();
 }

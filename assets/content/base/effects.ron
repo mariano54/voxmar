@@ -143,7 +143,7 @@
         // better the rest, which lasts a while wherever you go, and keeps you from sleeping again.
         // A sleep mends too, for a minute (two in a proper bed): four times the healing of
         // being awake, still slower than eating, since food is the heal (design draft 63).
-        (name: "mending", kind: Buff, title: "Mending", description: "You slept: your wounds close quickly for a little while.",
+        (name: "healing_sleep", kind: Buff, title: "Healing Sleep", description: "You slept: your wounds close quickly for a little while.",
             replaces: [], modifiers: (heal: 4.0)),
         (name: "rested", kind: Buff, title: "Rested", description: "You slept: you heal and learn a little more for a while.",
             replaces: [], modifiers: (heal: 1.1, xp: 1.03)),
@@ -225,8 +225,8 @@
     // proper bed is furniture, a sleeping bag is not). A rest lasts this many seconds (a day
     // is 1200), and a rested player cannot sleep again until it wears off.
     sleeps: [
-        (effect: "mending", seconds: 60.0),
-        (effect: "mending", seconds: 120.0, bed: "furniture"),
+        (effect: "healing_sleep", seconds: 60.0),
+        (effect: "healing_sleep", seconds: 120.0, bed: "furniture"),
         (effect: "rested", seconds: 600.0),
         (effect: "well_rested", seconds: 900.0, bed: "furniture"),
         (effect: "well_rested", seconds: 900.0, needs: "snug"),

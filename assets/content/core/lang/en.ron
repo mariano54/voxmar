@@ -395,6 +395,8 @@
     "prayer.restored": "Your prayer points are full again.",
     "bed.rested": "You sleep soundly: {name}. {what}",
     "bed.not_tired": "You are rested already, so there is no new rest, but this is your bed.",
+    "bed.threatened": "You cannot sleep with something hunting you so near.",
+    "bed.just_hurt": "You cannot sleep with your wounds so fresh: catch your breath first.",
     "effect.gained": "{name}: {what}",
     "effect.gained_next": "{name}: {what} {next}",
     "quest.done": "Quest done: {quest}.",

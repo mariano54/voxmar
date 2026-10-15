@@ -338,7 +338,7 @@
             ".kkkkkkkk.",
         ])]),
         // A crescent moon and a small heart: a sleep that mends.
-        "ui/effect/mending": (size: (10, 10), layers: [Grid(legend: {'k': "#10142a", 'M': "#f2e6a8", 'r': "#e0465a", 'p': "#ff9aa8"}, rows: [
+        "ui/effect/healing_sleep": (size: (10, 10), layers: [Grid(legend: {'k': "#10142a", 'M': "#f2e6a8", 'r': "#e0465a", 'p': "#ff9aa8"}, rows: [
             "...kkk....",
             "..kMMk.r.r",
             ".kMMk.rprr",

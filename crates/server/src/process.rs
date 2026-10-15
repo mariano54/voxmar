@@ -187,7 +187,7 @@ impl Process for Survival {
                 player.tallies.entry(format!("felt:{}", effects.get(a.effect).name)).or_insert(1);
             }
             player.modifiers = modifiers;
-            let rates = vitals::rates(&modifiers);
+            let rates = vitals::rates(&modifiers, mending, server.survival.heal_most);
             // Twice the Hitpoints level, and what effects add: a level gained brings health
             // to fill it; what effects add comes empty (Hearty's tenth, design draft 63), and
             // what a lowered most takes goes.
@@ -203,11 +203,14 @@ impl Process for Survival {
             // Healing, while anything is left to heal.
             match rates.heal_every.filter(|_| player.health.current < player.health.max) {
                 Some(every) => {
-                    player.heal_clock += seconds * mending;
+                    player.heal_clock += seconds;
                     if player.heal_clock >= every {
                         player.heal_clock -= every;
                         player.health.heal(1);
                     }
+                    // Time past a point is not banked to pay out after the buffs end: at
+                    // most one point's worth waits.
+                    player.heal_clock = player.heal_clock.min(every);
                 }
                 None => player.heal_clock = 0.0,
             }
@@ -394,5 +397,31 @@ impl Server {
                     vitals: player.vitals.clone(),
                 });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Time past a point of healing is not banked: however long the clock ran (buffs and a
+    /// prayer stacked, then ended), a pass leaves at most one point's worth waiting.
+    #[test]
+    fn healing_past_a_point_is_not_banked_for_after() {
+        let mut server = crate::test_server();
+        let (client, connection) = voxmar_protocol::local_pair();
+        std::mem::forget(client);
+        let at = voxmar_engine::glam::Vec3::new(8.5, 300.0, 8.5);
+        let mut player = crate::player::Player::new(1, connection, at, 2, server.tick, server.survival.max_health, &server.config.limits);
+        player.joined = true;
+        server.players.insert(1, player);
+        Survival.run(&mut server);
+        let player = server.players.get_mut(&1).unwrap();
+        (player.health.current, player.heal_clock) = (1, 1000.0);
+        Survival.run(&mut server);
+        let player = &server.players[&1];
+        let every = vitals::rates(&player.modifiers, 1.0, server.survival.heal_most).heal_every.expect("healing");
+        assert_eq!(player.health.current, 2, "one point a pass");
+        assert!(player.heal_clock <= every, "{} s banked against a point each {every} s", player.heal_clock);
     }
 }

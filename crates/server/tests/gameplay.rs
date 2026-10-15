@@ -2599,16 +2599,50 @@ fn a_proper_bed_rests_well_and_mends_longer_than_a_bag() {
     client.pump_until(|c| c.world.block(bag) == c.content.blocks.id("base:sleeping_bag") && c.world.block(bed) == c.content.blocks.id("base:oak_bed"));
     // The bag: a plain rest, and a minute's mend.
     client.propose("base:sleep", ActionTarget::Block { block: bag, face: Face::PosY });
-    client.pump_until(|c| effect(c, "base:rested").is_some() && effect(c, "base:mending").is_some());
-    assert!(effect(&client, "base:mending").and_then(|a| a.seconds_left).is_some_and(|s| s <= 60));
+    client.pump_until(|c| effect(c, "base:rested").is_some() && effect(c, "base:healing_sleep").is_some());
+    assert!(effect(&client, "base:healing_sleep").and_then(|a| a.seconds_left).is_some_and(|s| s <= 60));
     assert!(effect(&client, "base:well_rested").is_none(), "a bag on the ground is a plain rest");
     // The bed, another night: well rested, and two minutes' mend.
     client.ok("/effect clear");
-    client.pump_until(|c| effect(c, "base:rested").is_none() && effect(c, "base:mending").is_none());
+    client.pump_until(|c| effect(c, "base:rested").is_none() && effect(c, "base:healing_sleep").is_none());
     client.chat.clear();
     client.propose("base:sleep", ActionTarget::Block { block: bed, face: Face::PosY });
-    client.pump_until(|c| effect(c, "base:well_rested").is_some() && effect(c, "base:mending").is_some() && told(c, "Well rested"));
-    assert!(effect(&client, "base:mending").and_then(|a| a.seconds_left).is_some_and(|s| s > 60), "a bed mends longer");
+    client.pump_until(|c| effect(c, "base:well_rested").is_some() && effect(c, "base:healing_sleep").is_some() && told(c, "Well rested"));
+    assert!(effect(&client, "base:healing_sleep").and_then(|a| a.seconds_left).is_some_and(|s| s > 60), "a bed mends longer");
+}
+
+/// Rest is no way to heal in a fight (survival.ron): a bed refuses sleep with a creature that
+/// hunts players near, and with wounds still fresh; once the hunter is gone and the wounds
+/// have had their while, it gives its rest.
+#[test]
+fn no_sleep_with_a_hunter_near_or_wounds_fresh() {
+    let mut client = on_a_test_floor();
+    let feet = client.position.floor().as_ivec3();
+    let healing = |c: &Client| c.vitals.effects.iter().any(|a| c.content.effects.get(a.effect).name == "base:healing_sleep");
+    let refused = |c: &Client, text: &str| c.refused.iter().any(|t| t.contains(text));
+    let bag = feet + IVec3::new(2, 0, 0);
+    client.ok(&format!("/setblock {} {} {} sleeping_bag", bag.x, bag.y, bag.z));
+    client.pump_until(|c| c.world.block(bag) == c.content.blocks.id("base:sleeping_bag"));
+    // A shambler hunts players: eight blocks off is too near.
+    client.ok(&format!("/summon shambler 1 {} {} {}", feet.x + 8, feet.y, feet.z));
+    client.propose("base:sleep", ActionTarget::Block { block: bag, face: Face::PosY });
+    client.pump_until(|c| refused(c, "something hunting you"));
+    assert!(!healing(&client), "no rest with a hunter near");
+    client.ok("/creatures kill shambler");
+    // Hurt (a fall): the wounds are too fresh.
+    client.ok(&format!("/fill {} {} {} {} {} {} air", feet.x - 2, feet.y + 1, feet.z - 3, feet.x + 3, feet.y + 14, feet.z + 3));
+    client.pump_until(|c| c.world.block(feet + IVec3::Y * 12) == Some(BlockId::AIR));
+    let before = client.health;
+    fall_from_open_sky(&mut client);
+    client.pump_until(|c| c.health < before);
+    client.refused.clear();
+    client.propose("base:sleep", ActionTarget::Block { block: bag, face: Face::PosY });
+    client.pump_until(|c| refused(c, "wounds so fresh"));
+    assert!(!healing(&client), "no rest with wounds fresh");
+    // Their while out (15 s of the server's ticks), the bag gives its rest.
+    client.after_server_ticks(15 * voxmar_protocol::TICKS_PER_SECOND as u64 + 1);
+    client.propose("base:sleep", ActionTarget::Block { block: bag, face: Face::PosY });
+    client.pump_until(healing);
 }
 
 #[test]
@@ -2619,20 +2653,24 @@ fn a_larder_makes_more_of_a_meal() {
     // Hurt by a fall first (food is eaten to heal), from air cleared high enough.
     client.ok(&format!("/fill {} {} {} {} {} {} air", feet.x - 2, feet.y + 1, feet.z - 3, feet.x + 9, feet.y + 14, feet.z + 3));
     client.pump_until(|c| c.world.block(feet + IVec3::Y * 12) == Some(BlockId::AIR));
-    fall_from_open_sky(&mut client);
     let at = |dx: i32| feet + IVec3::new(dx, 0, 0);
     let chip = |c: &Client, name: &str| c.vitals.effects.iter().find(|a| c.content.effects.get(a.effect).name == name).copied();
-    // A bed to be home, a hearth to cook by (its tag is all a home asks), four crates, a
-    // cauldron and a table, under a roof: a larder.
+    // A bed to be home, slept in before the fall (nobody sleeps with wounds fresh).
+    client.ok(&format!("/setblock {} {} {} sleeping_bag", at(2).x, at(2).y, at(2).z));
+    client.pump_until(|c| c.world.block(at(2)) == c.content.blocks.id("base:sleeping_bag"));
+    client.propose("base:sleep", ActionTarget::Block { block: at(2), face: Face::PosY });
+    client.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("wake here")));
+    fall_from_open_sky(&mut client);
+    // A hearth to cook by (its tag is all a home asks), four crates, a cauldron and a
+    // table, under a roof: a larder.
     let mut lines = vec![format!("/fill {} {} {} {} {} {} stone", feet.x - 2, feet.y + 4, feet.z - 3, feet.x + 9, feet.y + 4, feet.z + 3)];
-    for (dx, block) in [(2, "sleeping_bag"), (3, "hearthstone"), (4, "crate"), (5, "crate"), (6, "crate"), (7, "crate"), (8, "cauldron"), (9, "oak_table")] {
+    for (dx, block) in [(3, "hearthstone"), (4, "crate"), (5, "crate"), (6, "crate"), (7, "crate"), (8, "cauldron"), (9, "oak_table")] {
         lines.push(format!("/setblock {} {} {} {block}", at(dx).x, at(dx).y, at(dx).z));
     }
     for line in lines {
         client.ok(&line);
     }
     client.pump_until(|c| c.world.block(at(9)) == c.content.blocks.id("base:oak_table"));
-    client.propose("base:sleep", ActionTarget::Block { block: at(2), face: Face::PosY });
     client.pump_until(|c| chip(c, "base:larder").is_some());
     // Bread gives Sustained for ten minutes; at a larder, for fifteen.
     for line in ["/clear", "/give bread 1", "/effect clear"] {

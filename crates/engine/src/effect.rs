@@ -738,6 +738,11 @@ impl EffectRegistry {
         self.sleeps.iter().any(|(effect, ..)| active.iter().any(|(a, _)| a == effect))
     }
 
+    /// Whether some sleep gives `effect` (`sleeps`).
+    pub fn from_sleep(&self, effect: EffectId) -> bool {
+        self.sleeps.iter().any(|rule| rule.0 == effect)
+    }
+
     /// The timed effects sleeping at a bed tagged `bed` gives where `situation` is: each
     /// sleep rule whose needed effect would hold there and whose bed tag the bed carries,
     /// and each effect once, for the longest of its rules that hold (two ways to the same

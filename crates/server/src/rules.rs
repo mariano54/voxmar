@@ -37,6 +37,13 @@ pub(crate) struct SurvivalRules {
     pub home_reach: i32,
     pub home_up: i32,
     pub home_down: i32,
+    /// No sleeping with a creature that hunts players this many blocks off, or this many
+    /// seconds after being hurt.
+    pub sleep_threat_reach: f32,
+    pub sleep_after_hurt: f32,
+    /// The most health a second brings back by itself, however many heal buffs and prayers
+    /// are on: eating stays the way to heal in a hurry.
+    pub heal_most: f32,
 }
 
 /// One package's `survival.ron`: whichever numbers it sets.
@@ -60,6 +67,9 @@ struct SurvivalFile {
     home_reach: Option<i32>,
     home_up: Option<i32>,
     home_down: Option<i32>,
+    sleep_threat_reach: Option<f32>,
+    sleep_after_hurt: Option<f32>,
+    heal_most: Option<f32>,
 }
 
 impl SurvivalRules {
@@ -75,7 +85,7 @@ impl SurvivalRules {
             macro_rules! later_wins {
                 ($($field:ident),*) => { $(if next.$field.is_some() { merged.$field = next.$field; set.push(stringify!($field)); })* };
             }
-            later_wins!(max_health, starter_kit, pack_end, kits_per_address, kit_window, safe_fall, burn, burn_every, void_below, heat_emission, heat, heat_reach, water_chill, roof_scan, home_reach, home_up, home_down);
+            later_wins!(max_health, starter_kit, pack_end, kits_per_address, kit_window, safe_fall, burn, burn_every, void_below, heat_emission, heat, heat_reach, water_chill, roof_scan, home_reach, home_up, home_down, sleep_threat_reach, sleep_after_hurt, heal_most);
             laid.set(&file.package, FILE, "survival rules", set, notes);
         }
         macro_rules! set {
@@ -115,6 +125,9 @@ impl SurvivalRules {
             home_reach: set!(home_reach),
             home_up: set!(home_up),
             home_down: set!(home_down),
+            sleep_threat_reach: set!(sleep_threat_reach),
+            sleep_after_hurt: set!(sleep_after_hurt),
+            heal_most: set!(heal_most),
         };
         let checks = [
             (rules.max_health > 0, "max_health must be above 0"),
@@ -129,6 +142,9 @@ impl SurvivalRules {
             ((1..=256).contains(&rules.roof_scan), "roof_scan must be 1 to 256 blocks"),
             ((1..=16).contains(&rules.home_reach), "home_reach must be 1 to 16 blocks"),
             ((0..=16).contains(&rules.home_up) && (0..=16).contains(&rules.home_down), "home_up and home_down must be 0 to 16 blocks"),
+            (rules.sleep_threat_reach.is_finite() && (0.0..=64.0).contains(&rules.sleep_threat_reach), "sleep_threat_reach must be 0 to 64 blocks"),
+            (rules.sleep_after_hurt.is_finite() && (0.0..=600.0).contains(&rules.sleep_after_hurt), "sleep_after_hurt must be 0 to 600 seconds"),
+            (rules.heal_most.is_finite() && rules.heal_most > 0.0, "heal_most must be above 0"),
             (rules.pack_end.len() <= SLOTS - HOTBAR_SLOTS, "pack_end holds at most as many items as the pack has slots besides the hotbar"),
             (rules.new_inventory(true).is_some(), "pack_end and starter_kit together do not fit in an inventory"),
         ];
