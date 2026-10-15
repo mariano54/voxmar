@@ -8044,10 +8044,11 @@ const QUEST_BOOK_ORDER: &[&str] = &[
     "fire_the_clay",
     "the_potter",
     "charcoal",
-    "red_metal",
     "brick_by_brick",
+    "hammer_and_anvil",
     "the_crucible",
     "crucible_kiln",
+    "red_metal",
 ];
 
 impl Fresh {
@@ -8224,8 +8225,8 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     f.mark("the_potter");
 
     // Charcoal: logs held and burnt down at the campfire, sixteen. The trunks give the
-    // charcoal for the copper ingots and what the kiln's charge lacks after The Crucible's
-    // sixteen (three more), and a log for sticks: twenty-four is a few to spare.
+    // charcoal for what the kiln's charge lacks after The Crucible's sixteen, and a log for
+    // sticks: twenty-four is a few to spare.
     let trunks: Vec<IVec3> = [-7, -9].into_iter().flat_map(|z| [1, 3, 5, 7, 11, 13, 15].into_iter().flat_map(move |x| (0..4).map(move |y| o + IVec3::new(x, y, z)))).collect();
     f.gather("base:stone_axe", trunks, log, 24);
     // The earth clamp from Fire the Clay, taken of its clay and loaded with sixteen logs. It
@@ -8245,20 +8246,6 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     f.mark("charcoal");
     f.make_room(8);
 
-    // Red Metal: nine copper ores (Mining 5) with the stone pickaxe; a copper ore over a
-    // charcoal in the grid makes an ingot (Engineering 5); three ingots over two sticks at
-    // the table make the copper pickaxe.
-    let vein: Vec<IVec3> = (18..=19).flat_map(|x| (7..=11).map(move |z| o + IVec3::new(x, 0, z))).collect();
-    f.gather("base:stone_pickaxe", vein, copper, 9);
-    f.craft(&[(0, copper, 3), (3, charcoal, 3)], ingot, 3);
-    if f.have(stick) < 2 {
-        f.craft(&[(0, log, 1)], "base:oak_planks", 4);
-        f.craft(&[(0, "base:oak_planks", 1), (3, "base:oak_planks", 1)], stick, 4);
-    }
-    f.at_table(site.table);
-    f.craft(&[(0, ingot, 1), (1, ingot, 1), (2, ingot, 1), (4, stick, 1), (7, stick, 1)], "base:copper_pickaxe", 1);
-    f.mark("red_metal");
-
     // Brick by Brick: nineteen kiln bricks in hand, four fired clay each in the grid
     // (Crafting 5). A Kiln Load falls on the way, done at forty clay fired in all, and pays
     // the first four.
@@ -8272,6 +8259,33 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     let k = short as u8;
     f.craft(&[(0, fired, k), (1, fired, k), (3, fired, k), (4, fired, k)], bricks, short);
     f.mark("brick_by_brick");
+
+    // Hammer and Anvil: nine copper ores (Mining 5) with the stone pickaxe; three stone fired
+    // from cobblestone in the pit kiln; at the table a stone hammer (Crafting 3) and a stone
+    // anvil (Crafting 5), the anvil set down by the table, and six of the ores held and
+    // crushed on it with the hammer in the pack (Engineering 5).
+    let vein: Vec<IVec3> = (18..=19).flat_map(|x| (7..=11).map(move |z| o + IVec3::new(x, 0, z))).collect();
+    f.gather("base:stone_pickaxe", vein, copper, 9);
+    let (cobble, stone, crushed) = ("base:cobblestone", "base:stone", "base:crushed_copper");
+    let patch: Vec<IVec3> = (9..=17).flat_map(|x| (-3..=4).map(move |z| o + IVec3::new(x, 0, z))).filter(|p| p.x - o.x > 9 || p.z - o.z < 3).collect();
+    f.gather("base:stone_pickaxe", patch, cobble, 9);
+    f.walk_toward(Fresh::middle(site.kiln), 2.0);
+    while f.have(stone) < 3 {
+        f.cook(site.kiln, cobble, stone);
+    }
+    if f.have(stick) < 1 {
+        f.craft(&[(0, log, 1)], "base:oak_planks", 4);
+        f.craft(&[(0, "base:oak_planks", 1), (3, "base:oak_planks", 1)], stick, 4);
+    }
+    f.at_table(site.table);
+    f.craft(&[(0, cobble, 1), (1, cobble, 1), (4, stick, 1)], "base:stone_hammer", 1);
+    f.craft(&[(0, stone, 1), (1, stone, 1), (2, stone, 1), (4, cobble, 1), (6, cobble, 1), (7, cobble, 1), (8, cobble, 1)], "base:stone_anvil", 1);
+    f.walk_toward(Fresh::middle(f.rel(8, 0, 0)), 0.05);
+    let anvil = f.place("base:stone_anvil", f.rel(7, -1, 1));
+    while f.have(crushed) < 6 {
+        f.cook(anvil, copper, crushed);
+    }
+    f.mark("hammer_and_anvil");
 
     // The Crucible: seven kiln bricks round a clay pot at the table (Engineering 10).
     f.at_table(site.table);
@@ -8293,6 +8307,18 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     f.hold(charcoal);
     f.propose("base:light", ActionTarget::Block { block: core, face: Face::PosY });
     f.mark("crucible_kiln");
+
+    // Red Metal: two crushed copper held and smelted in the lit kiln's crucible make three
+    // ingots (Engineering 5); three ingots over two sticks at the table make the copper
+    // pickaxe.
+    f.cook(core, crushed, ingot);
+    if f.have(stick) < 2 {
+        f.craft(&[(0, log, 1)], "base:oak_planks", 4);
+        f.craft(&[(0, "base:oak_planks", 1), (3, "base:oak_planks", 1)], stick, 4);
+    }
+    f.at_table(site.table);
+    f.craft(&[(0, ingot, 1), (1, ingot, 1), (2, ingot, 1), (4, stick, 1), (7, stick, 1)], "base:copper_pickaxe", 1);
+    f.mark("red_metal");
 
     // Every quest of the line done, none skipped, and the report for the budgets.
     assert_eq!(f.c.died, 0, "the player died on the way");
@@ -8342,10 +8368,11 @@ const FRESH_QUESTS: &[(&str, &str)] = &[
     ("the_potter", "the_potter"),
     ("a_kiln_load", "a_kiln_load"),
     ("charcoal", "charcoal"),
-    ("red_metal", "red_metal"),
     ("brick_by_brick", "brick_by_brick"),
+    ("hammer_and_anvil", "hammer_and_anvil"),
     ("the_crucible", "the_crucible"),
     ("crucible_kiln", "crucible_kiln"),
+    ("red_metal", "red_metal"),
 ];
 
 /// Checks the server's own books agree with what the player did, prints the run's one summary

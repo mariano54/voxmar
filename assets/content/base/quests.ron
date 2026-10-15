@@ -374,17 +374,24 @@
             rewards: [Xp("engineering", 325.0), Xp("mining", 300.0)],
         ),
         (
-            name: "red_metal", age: "farm", branch: "main", title: "Red Metal",
-            why: "Copper tools are faster and find more, and copper is three parts of bronze. A small copper-coloured stone on the ground marks a copper vein below it; breaking copper ore takes Mining 5, which the Charcoal quest's reward brings once claimed in the book. A copper ore over a coal or charcoal in the grid makes a copper ingot (Engineering 5); three ingots over two sticks at the table make the pickaxe.",
-            tasks: [[Mine("copper_ore", 9), Craft("copper_pickaxe", 1)]],
+            name: "hammer_and_anvil", age: "farm", branch: "main", title: "Hammer and Anvil",
+            why: "Ore gives up its metal only to fire, and gives more of it crushed first. At the table make a stone hammer (two cobblestones over a stick) and a stone anvil (three stone over one cobblestone over three cobblestones). Set the anvil down, then hold copper ore and right-click the anvil with the hammer in your pack. Crush six; breaking copper ore takes Mining 5, which the Charcoal quest's reward brings. Two crushed copper smelt to three ingots once your Crucible Kiln is lit.",
+            tasks: [[Craft("stone_anvil", 1), Craft("stone_hammer", 1), Cook("crushed_copper", 6)]],
             after: ["charcoal"],
-            rewards: [Xp("mining", 650.0), Xp("engineering", 750.0)],
+            rewards: [Xp("engineering", 750.0)],
+        ),
+        (
+            name: "red_metal", age: "farm", branch: "main", title: "Red Metal",
+            why: "Copper tools are faster and find more, and copper is three parts of bronze. A small copper-coloured stone on the ground marks a copper vein below it. Hold copper ore, or crushed copper (it goes half again as far), and right-click the crucible of your lit kiln: it melts into ingots (Engineering 5). Three ingots over two sticks at the table make the pickaxe.",
+            tasks: [[Mine("copper_ore", 9), Craft("copper_pickaxe", 1)]],
+            after: ["charcoal", "crucible_kiln"],
+            rewards: [Xp("mining", 650.0), Xp("engineering", 300.0)],
         ),
         (
             name: "crucible_kiln", age: "farm", branch: "main", title: "Crucible Kiln",
             why: "Bronze needs heat a campfire can't reach. Three steps: make the crucible (The Crucible); set it down, ring it with eight kiln bricks and stand one more brick on each corner of the ring, then right-click the crucible to check it stands (it names the fuel it wants); then hold thirty-two charcoal or twenty-four coal and right-click it again. Lighting the kiln starts the Bronze age.",
             tasks: [[Craft("crucible", 1), Built("crucible_kiln", 1), Lit("crucible_kiln", 1)]],
-            after: ["the_potter", "red_metal", "the_crucible"],
+            after: ["the_potter", "the_crucible"],
             rewards: [Xp("engineering", 905.0)],
         ),
         (
@@ -438,9 +445,9 @@
         ),
         (
             name: "the_crucible", age: "farm", branch: "main", title: "The Crucible",
-            why: "The heart of the kiln: seven kiln bricks round a clay pot, shaped at the crafting table (Engineering 10). Engineering grows with every tool, ingot and torch you make, and the copper quests pay it well. Make it, then build the kiln round it; its reward is sixteen charcoal, half the kiln's charge.",
+            why: "The heart of the kiln: seven kiln bricks round a clay pot, shaped at the crafting table (Engineering 10). Engineering grows with every tool, ingot and torch you make, and Hammer and Anvil pays it well. Make it, then build the kiln round it; its reward is sixteen charcoal, half the kiln's charge.",
             tasks: [[Craft("crucible", 1)]],
-            after: ["brick_by_brick", "red_metal"],
+            after: ["brick_by_brick", "hammer_and_anvil"],
             rewards: [Xp("engineering", 300.0), Item("charcoal", 16)],
         ),
         (
@@ -585,7 +592,7 @@
         ),
         (
             name: "copper_arms", age: "farm", branch: "combat", title: "Copper Arms",
-            why: "Copper hits harder and lasts longer than stone. Smelt ingots (ore over charcoal in the grid, Engineering 5), then at the crafting table make a copper sword (two ingots over a stick) and a copper shield (six ingots round a plank, as the recipe shows).",
+            why: "Copper hits harder and lasts longer than stone. Smelt ingots in your lit kiln (from copper ore, or from crushed copper for half again as many; Engineering 5), then at the crafting table make a copper sword (two ingots over a stick) and a copper shield (six ingots round a plank, as the recipe shows).",
             tasks: [[Craft("copper_sword", 1), Craft("copper_shield", 1)]],
             after: ["copper_kit"],
             rewards: [Xp("engineering", 200.0), Xp("attack", 100.0)],
@@ -732,7 +739,7 @@
         ),
         (
             name: "copper_kit", age: "farm", branch: "mining", title: "Copper Kit",
-            why: "Copper works seven times as fast as a bare hand, a step above stone, and finds more; a tool's tooltip says how fast it works. Make an axe (three ingots), a shovel (one) and a knife (one), and have a copper hoe: A Full Granary gives one, or make it from two. Each ingot is a copper ore over a coal or charcoal in the grid.",
+            why: "Copper works seven times as fast as a bare hand, a step above stone, and finds more; a tool's tooltip says how fast it works. Make an axe (three ingots), a shovel (one) and a knife (one), and have a copper hoe: A Full Granary gives one, or make it from two. Each ingot is smelted in your lit kiln from copper ore, or from crushed copper for half again as many.",
             tasks: [[Craft("copper_axe", 1), Craft("copper_shovel", 1), Have("copper_hoe", 1), Craft("copper_knife", 1)]],
             after: ["red_metal"],
             rewards: [Xp("engineering", 60.0), Item("coal_ore", 8)],
