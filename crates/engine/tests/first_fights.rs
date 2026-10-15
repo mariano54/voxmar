@@ -63,6 +63,7 @@ fn a_new_player_beats_the_first_age_creatures_as_designed() {
     check("badger", (0.5, 1.0), "a badger is easy");
     check("fox", (0.6, 1.0), "a fox is easy");
     check("aurochs", (0.3, 0.85), "an aurochs is real but fair");
+    check("wild_boar", (0.6, 1.0), "a wild boar answers a blow but is easy");
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
 
@@ -73,6 +74,31 @@ fn a_new_player_catches_a_fleeing_boar_at_a_sprint() {
     let sprint = content.movement.sprint_speed;
     // Half a block a second or more: a chase closes in a few seconds, not never.
     assert!(boar.movement.run + 0.5 <= sprint, "a wild boar runs {} blocks a second, too near a sprint's {sprint} to catch", boar.movement.run);
+}
+
+/// The wild boar never starts a fight, but struck while it is hale it turns and gores
+/// back; badly hurt it runs instead. Whatever its own temper.
+#[test]
+fn a_wild_boar_struck_gores_back_until_badly_hurt() {
+    use voxmar_engine::creature::brain::{Mind, Seen, Situation, think};
+    use voxmar_engine::glam;
+    let content = content();
+    let boar = content.creatures.get(content.creatures.find("wild_boar").unwrap());
+    let doing = |mind: &Mind| mind.doing.map_or("nothing", |i| boar.modules[i].0.name());
+    let near = [Seen { id: 1, position: glam::Vec3::new(1.2, 0.0, 0.0), tempting: false, combat_level: 3, creative: false, tolerated: false, friend: false }];
+    let at = |health| Situation { position: glam::Vec3::ZERO, home: glam::Vec3::ZERO, health, phase: 0, scale: 1.0, daylight: 1.0, players: &near, kin: &[], food: None, mate: None, kept: false, errand: None, dt: 0.2, seed: 7 };
+    for seed in 0..40 {
+        let mut mind = Mind::new(&boar.def.temperament, seed);
+        let first = think(boar, &mut mind, &at(1.0));
+        assert!(first.attack.is_none() && doing(&mind) != "defend", "seed {seed}: a boar went for a player who never struck it ({})", doing(&mind));
+        mind.hurt(boar, Some(1), 0.8);
+        let answer = think(boar, &mut mind, &at(0.8));
+        assert_eq!((doing(&mind), answer.attack), ("defend", Some(1)), "seed {seed}: a hale boar struck did not gore back");
+        let mut mind = Mind::new(&boar.def.temperament, seed);
+        mind.hurt(boar, Some(1), 0.1);
+        let _ = think(boar, &mut mind, &at(0.1));
+        assert_eq!(doing(&mind), "flee", "seed {seed}: a badly hurt boar did not run");
+    }
 }
 
 #[test]

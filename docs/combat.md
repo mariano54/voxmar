@@ -190,12 +190,15 @@ What changed, all in `creatures.ron`:
 - **Brown bear**: it now lives in the cold pine woods and the mountains, never as warm as where a new player starts. A bear's comfort ends at 8 degrees, and the world's spawn is open temperate grassland at 8 to 20 degrees. Its fight is unchanged, so a bear met later is still a danger to avoid. A player who guards well beat one in 2 of 6 runs.
 - The fox and the aurochs are unchanged. Their numbers moved only with the rolls: the server rolls by its tick, and the runs before mostly repeated the same rolls, while the runs after each start a little later.
 
+**The boar fights back** (Oct 15, combat feel pass gap 4). Until then the wild boar had no attack, so a first fight with one was a chase after something that never answered. It still never starts a fight and is still slower than a sprint. Struck while it is hale, it now turns and gores back with a short jab of the tusks: wind-up 0.55 s, told by Old Tusk's gore sound (fainter, never dipping the music), 1 to 2 damage every 1.6 s, stab. Once badly hurt it runs, as `Mind::hurt` decides for a creature that fights (below about 40% of its health for a boar's temper). Measured by the same bot over 6 runs each: open, 6.9 s to kill, 4.3 blows back for 4.2 damage, 79% of health left (worst 70%); guarding, 5.2 s, 94% left (worst 90%). Every blow back was told. That makes it a little harder than a fox and easier than a badger. The gate's FirstFights step winds a boar up and checks that its gore is told without dipping the music (shot `boar-gore`).
+
 Every wind-up is still 0.3 s or more. `engine/tests/first_fights.rs` holds these targets on the content's own rolls:
 
 - a new player beats a wolf without guarding with 15% to 45% of their health left;
 - a badger and a fox are easy;
 - an aurochs is fair;
 - a boar runs at least half a block a second slower than a sprint;
+- a wild boar answers a blow but is easy, and gores back when struck while hale but runs when badly hurt;
 - no brown bear lives at any temperature a new player starts in, and none can be beaten by a new player.
 
 A new player's kills now take 6 to 12 s; the design lane's level audit assumed 5.4 to 9 s. A wolf has 3 fewer health points, so its kill gives 12 fewer Attack and 4 fewer Hitpoints experience. No experience rate changed.

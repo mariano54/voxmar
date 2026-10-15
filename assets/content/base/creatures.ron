@@ -280,10 +280,13 @@
         ),
         // --- Forest folk and hunters ---------------------------------------------------------
         (
-            // Passive (Mariano, 2026-10-06): common in a few biomes, never attacks first,
-            // flees when struck, a little slower than a sprint, so a chase closes. Old Tusk,
-            // the boss, is the one that charges.
+            // Never attacks first (Mariano, 2026-10-06): common in a few biomes, a little
+            // slower than a sprint, so a chase closes. Struck while it is hale it turns and
+            // gores back, a short readable jab of the tusks (block it); badly hurt it runs
+            // (`Mind::hurt`: how brave decides when), so a first fight answers rather than
+            // being a chase alone. Old Tusk, the boss, is the one that charges.
             name: "wild_boar", level: 4, health: 10,
+            attack: (windup: 0.55, recovery: 0.6, damage: (1, 2), reach: 0.9, every: 1.6, lunge: 1.0, style: Stab),
             defence: 4,
             body: (
                 size: (0.8, 0.85),
@@ -301,7 +304,7 @@
             leash: 28.0,
             diet: (eats: ["brown_mushroom", "red_mushroom", "short_grass"], favourite: ["apple", "carrot"]),
             behaviours: [
-                (do: Wander(radius: 12.0)), (do: LookAround), (do: Graze), (do: Flee(radius: 8.0), weight: 1.2),
+                (do: Wander(radius: 12.0)), (do: LookAround), (do: Graze), (do: Flee(radius: 8.0), weight: 1.2), (do: Defend, weight: 1.2),
                 (do: Curious(distance: 7.0), weight: 0.6), (do: StandToLook), (do: Herd(spacing: 3.0)), (do: Tempted(radius: 10.0)),
             ],
             xp: (kill: 12.0, skill: "hunter"),
