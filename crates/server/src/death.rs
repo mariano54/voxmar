@@ -85,7 +85,7 @@ impl Server {
 
 /// Splits an inventory into what is kept (the `keep` most valuable single items, and a
 /// grave-ward amulet besides when `warded`) and the stacks that are left behind.
-fn split(inventory: &Inventory, keep: usize, warded: bool, mut value: impl FnMut(BlockId) -> u32) -> (Inventory, Vec<ItemStack>) {
+pub(crate) fn split(inventory: &Inventory, keep: usize, warded: bool, mut value: impl FnMut(BlockId) -> u32) -> (Inventory, Vec<ItemStack>) {
     use voxmar_engine::inventory::{CURSOR, LAST, WORN};
     // Everything carried: the inventory, the pointer, the crafting grid and what is worn.
     let mut carried: Vec<ItemStack> = (0..=CURSOR + voxmar_engine::craft::GRID).chain(WORN..=LAST).filter_map(|slot| inventory.get(slot)).collect();
@@ -96,7 +96,8 @@ fn split(inventory: &Inventory, keep: usize, warded: bool, mut value: impl FnMut
     let mut kept = Inventory::default();
     let mut budget = keep + usize::from(warded);
     while budget > 0 {
-        let Some((index, _)) = carried.iter().enumerate().filter(|(_, s)| s.count > 0).max_by_key(|(_, s)| value(s.item)) else { break };
+        // Of tools worth the same, the least worn.
+        let Some((index, _)) = carried.iter().enumerate().filter(|(_, s)| s.count > 0).max_by_key(|(_, s)| (value(s.item), std::cmp::Reverse(s.wear))) else { break };
         // A worn tool is kept as worn as it was.
         let one = ItemStack { count: 1, ..carried[index] };
         carried[index].count -= 1;

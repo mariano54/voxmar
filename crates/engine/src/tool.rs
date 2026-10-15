@@ -188,7 +188,18 @@ pub struct ToolRegistry {
     heads: Vec<Option<BlockId>>,
     mends: Vec<Vec<BlockId>>,
     mended_near: Vec<Option<String>>,
+    /// Each item that wears: the share of its uses one mend brings back, and the skill and
+    /// level its recipe asks, which mending asks too (`ToolRegistry::link`).
+    mend_share: Vec<f32>,
+    mend_skill: Vec<Option<(SkillId, u8)>>,
+    /// Each item mended by any item with a tag (`mend:#TAG`): the first such tag, for
+    /// naming what mends it (`item.mend.tag.TAG`).
+    mend_by_tag: Vec<Option<String>>,
 }
+
+/// The tag of a tool that never wears (a pail, a fishing rod): every other tool says
+/// `uses:N`.
+pub const NEVER_WEARS: &str = "never_wears";
 
 impl ToolRegistry {
     pub fn read(namespace: &str, source: &str) -> Result<ToolFile, RegistryError> {
@@ -244,20 +255,29 @@ impl ToolRegistry {
         let mut covered = Vec::with_capacity(blocks.len());
         let mut suited = Vec::with_capacity(blocks.len());
         let (mut heads, mut mends, mut mended_near) = (Vec::with_capacity(blocks.len()), Vec::with_capacity(blocks.len()), Vec::with_capacity(blocks.len()));
+        let mut mend_by_tag = Vec::with_capacity(blocks.len());
         for id in blocks.ids() {
             let def = blocks.def(id);
             let tags = &def.tags;
             let bad = |why: String| RegistryError(format!("`{}`: {why}", def.name));
+            for once in ["uses:", "head:", "mend_near:"] {
+                if tags.iter().filter(|t| t.starts_with(once)).count() > 1 {
+                    return Err(bad(format!("more than one `{once}` tag")));
+                }
+            }
             let uses = match tags.iter().find_map(|t| t.strip_prefix("uses:")) {
                 None => 0,
                 Some(n) => n.parse::<u16>().ok().filter(|&n| n > 0).ok_or_else(|| bad(format!("`uses:{n}` is not a count above 0")))?,
             };
+            // A name without a package is in the item's own.
+            let package = def.name.split_once(':').map_or("base", |(package, _)| package);
             let item = |name: &str| {
-                let name = if name.contains(':') { name.to_owned() } else { format!("base:{name}") };
+                let name = if name.contains(':') { name.to_owned() } else { format!("{package}:{name}") };
                 blocks.id(&name).ok_or_else(|| bad(format!("no item `{name}`")))
             };
             let head = tags.iter().find_map(|t| t.strip_prefix("head:")).map(item).transpose()?;
             let mut mend = Vec::new();
+            mend_by_tag.push(tags.iter().find_map(|t| t.strip_prefix("mend:#")).map(str::to_owned));
             for by in tags.iter().filter_map(|t| t.strip_prefix("mend:")) {
                 match by.strip_prefix('#') {
                     Some(tag) => {
@@ -279,6 +299,9 @@ impl ToolRegistry {
             if (head.is_some() || !mend.is_empty()) && uses == 0 {
                 return Err(bad("a head or mend, but no `uses:N` to wear".into()));
             }
+            if uses == 0 && tags.iter().any(|t| t == "tool") && !tags.iter().any(|t| t == NEVER_WEARS) {
+                return Err(bad(format!("a tool with no `uses:N` to wear; give it one, or `{NEVER_WEARS}`")));
+            }
             heads.push(head);
             mends.push(mend);
             mended_near.push(near);
@@ -294,7 +317,7 @@ impl ToolRegistry {
             covered.push(rules.iter().position(|rule| rule.tags.iter().all(has)));
             suited.push(kinds.iter().enumerate().filter(|(_, k)| k.mines.iter().any(has)).map(|(i, _)| i).collect());
         }
-        Ok(Self { kinds, rules, tools, covered, suited, wear, savers, heads, mends, mended_near })
+        Ok(Self { kinds, rules, tools, covered, suited, wear, savers, heads, mends, mended_near, mend_share: Vec::new(), mend_skill: Vec::new(), mend_by_tag })
     }
 
     /// How tools and weapons wear.
@@ -322,10 +345,12 @@ impl ToolRegistry {
 
     /// The skill whose level saves `item`'s wear: its kind's, else for a weapon
     /// (`weapon`) the wear's weapon skill.
-    pub fn wear_skill(&self, item: BlockId, weapon: bool) -> Option<SkillId> {
+    /// The skill that saves `item`'s wear: its kind's, or for a weapon the skill it is
+    /// wielded with (`wielded`, a sling's Ranged), else `Wear::weapon_skill`.
+    pub fn wear_skill(&self, item: BlockId, weapon: bool, wielded: Option<SkillId>) -> Option<SkillId> {
         match self.tool(Some(item)).kind {
             Some(kind) => self.savers[kind],
-            None if weapon => self.wear.weapon_skill,
+            None if weapon => wielded.or(self.wear.weapon_skill),
             None => None,
         }
     }
@@ -352,6 +377,19 @@ impl ToolRegistry {
     }
 
     /// Every tag a block mending is done by may have, each once.
+    /// The tag whose items mend `item`, if it is mended by a tag (`mend:#TAG`).
+    pub fn mend_by_tag(&self, item: BlockId) -> Option<&str> {
+        self.mend_by_tag.get(item.0 as usize).and_then(Option::as_deref)
+    }
+
+    /// Every tag tools are mended with (`mend:#TAG`), each once.
+    pub fn mend_by_tags(&self) -> Vec<&str> {
+        let mut tags: Vec<&str> = self.mend_by_tag.iter().flatten().map(String::as_str).collect();
+        tags.sort_unstable();
+        tags.dedup();
+        tags
+    }
+
     pub fn mend_tags(&self) -> Vec<&str> {
         let mut tags: Vec<&str> = std::iter::once(self.wear.mend_near.as_str()).chain(self.mended_near.iter().flatten().map(String::as_str)).filter(|t| !t.is_empty()).collect();
         tags.sort_unstable();
@@ -370,8 +408,74 @@ impl ToolRegistry {
         if tool.wear == 0 || uses == 0 || tool.count != 1 || !self.mends(tool.item).contains(&by.item) || !near(self.mend_near(tool.item)) {
             return None;
         }
-        let back = ((uses as f32 * self.wear.mend).round() as u16).max(1);
+        let back = ((uses as f32 * self.mend_share(tool.item)).round() as u16).max(1);
         Some(crate::inventory::ItemStack { wear: tool.wear.saturating_sub(back), ..tool })
+    }
+
+    /// The share of `item`'s uses one mend brings back: `Wear::mend`, or all a piece of its
+    /// recipe's mend material is of it if more (a knife of one ingot comes back whole).
+    pub fn mend_share(&self, item: BlockId) -> f32 {
+        self.mend_share.get(item.0 as usize).copied().unwrap_or(self.wear.mend)
+    }
+
+    /// The skill and level mending `item` asks: what its recipe asks, if anything.
+    pub fn mend_skill(&self, item: BlockId) -> Option<(SkillId, u8)> {
+        self.mend_skill.get(item.0 as usize).copied().flatten()
+    }
+
+    /// Ties wear to recipes once all content is loaded: each wearing item's mend share and
+    /// skill come from the cheapest recipe that makes it, every weapon must wear (or say
+    /// `never_wears`), and making a new one after a break must cost at least what mending
+    /// one through a whole life does, or breaking would be a cheap mend.
+    pub fn link(content: &crate::content::Content) -> Result<(Vec<f32>, Vec<Option<(SkillId, u8)>>), RegistryError> {
+        let (blocks, tools) = (&content.blocks, &content.tools);
+        let mut known = std::collections::HashMap::new();
+        let (mut shares, mut skills) = (vec![tools.wear.mend; blocks.len()], vec![None; blocks.len()]);
+        for item in blocks.ids() {
+            let def = blocks.def(item);
+            let uses = tools.uses(item);
+            let weapon = def.has_tag("weapon") || content.combat.weapon(item).is_some();
+            if weapon && uses == 0 && !def.has_tag(NEVER_WEARS) {
+                return Err(RegistryError(format!("`{}`: a weapon with no `uses:N` to wear; give it one, or `{NEVER_WEARS}`", def.name)));
+            }
+            let mends = tools.mends(item);
+            if uses == 0 || mends.is_empty() {
+                continue;
+            }
+            let mut cheapest: Option<(f32, &crate::craft::Recipe)> = None;
+            for recipe in content.recipes.iter().filter(|r| r.output == item && r.count > 0) {
+                let mut cost = 0.0;
+                for cell in recipe.alternatives().into_iter().flatten() {
+                    cost += cell.iter().map(|&i| crate::value::worth_in(content, i, &mut known) as f32).reduce(f32::min).unwrap_or(0.0);
+                }
+                let cost = cost / recipe.count as f32;
+                if cheapest.is_none_or(|(least, _)| cost < least) {
+                    cheapest = Some((cost, recipe));
+                }
+            }
+            let Some((cost, recipe)) = cheapest else { continue };
+            let pieces = recipe.alternatives().into_iter().flatten().filter(|cell| cell.iter().any(|i| mends.contains(i))).count();
+            let share = if pieces > 0 { tools.wear.mend.max(1.0 / pieces as f32) } else { tools.wear.mend };
+            shares[item.0 as usize] = share;
+            skills[item.0 as usize] = recipe.skill.map(|skill| (skill, recipe.level));
+            // What a break gives back counts off what a new one costs.
+            let back = tools.head(item).map_or(0.0, |head| crate::value::worth_in(content, head, &mut known) as f32);
+            let mend = mends.iter().map(|&m| crate::value::worth_in(content, m, &mut known) as f32).reduce(f32::min).unwrap_or(0.0);
+            let life = (1.0 / share).ceil() * mend;
+            if cost - back < life {
+                return Err(RegistryError(format!(
+                    "`{}`: a new one after it breaks costs {} coins, less than the {life} coins of mending one through a life; mending must never cost more than breaking",
+                    def.name,
+                    cost - back
+                )));
+            }
+        }
+        Ok((shares, skills))
+    }
+
+    /// Sets what [`ToolRegistry::link`] found.
+    pub fn set_mend_terms(&mut self, (shares, skills): (Vec<f32>, Vec<Option<(SkillId, u8)>>)) {
+        (self.mend_share, self.mend_skill) = (shares, skills);
     }
 
     /// What `item` is as a tool (nothing held is a bare hand).
@@ -438,9 +542,9 @@ mod tests {
             block("stone", &["stone", "natural"]),
             block("iron_ore", &["ore", "metal:iron", "natural"]),
             block("log", &["log", "wood"]),
-            block("wooden_pickaxe", &["pickaxe", "tool", "tier:1", "speed:2"]),
-            block("stone_pickaxe", &["pickaxe", "tool", "tier:2", "speed:4", "yield:0.05"]),
-            block("stone_axe", &["axe", "tool", "tier:2", "speed:4"]),
+            block("wooden_pickaxe", &["pickaxe", "tool", "tier:1", "speed:2", "uses:50"]),
+            block("stone_pickaxe", &["pickaxe", "tool", "tier:2", "speed:4", "yield:0.05", "uses:100"]),
+            block("stone_axe", &["axe", "tool", "tier:2", "speed:4", "uses:100"]),
         ])
         .unwrap();
         let mut skills = SkillRegistry::default();
@@ -499,6 +603,22 @@ mod tests {
         assert_eq!(stone.wear, 0);
     }
 
+    /// Load refuses a second `uses:`, a tool that never wears without saying so, and names
+    /// a head or mend in the item's own package.
+    #[test]
+    fn wear_tags_are_checked_at_load() {
+        let block = |name: &str, tags: &[&str]| BlockDef { name: name.into(), tags: tags.iter().map(|t| t.to_string()).collect(), ..Default::default() };
+        let skills = SkillRegistry::default();
+        let load = |tags: &[&str]| {
+            let blocks = BlockRegistry::new(vec![block("t:air", &[]), block("t:flint", &[]), block("t:knife", tags)]).unwrap();
+            ToolRegistry::new(vec![ToolRegistry::read("t", "(kinds: [], blocks: [])").unwrap()], &blocks, &skills).map(|tools| tools.mends(blocks.expect("t:knife")).to_vec())
+        };
+        assert_eq!(load(&["tool", "uses:9", "mend:flint"]).unwrap().len(), 1, "`flint` is the knife's own package's");
+        assert!(load(&["tool", "uses:9", "uses:8"]).is_err(), "two uses");
+        assert!(load(&["tool"]).is_err(), "a tool that never wears without saying so");
+        assert!(load(&["tool", NEVER_WEARS]).is_ok());
+    }
+
     /// The game's tools wear, break to their heads and mend by what made them, at a
     /// chopping block and nowhere else, by half their uses, never past new; a grid with
     /// anything else in it, or a tool not worn, mends nothing.
@@ -509,7 +629,7 @@ mod tests {
         let (tools, id) = (&content.tools, |name: &str| content.blocks.expect(name));
         let pick = id("base:wooden_pickaxe");
         let uses = tools.uses(pick);
-        assert!(uses > 0 && tools.head(pick) == Some(id("base:stick")));
+        assert!(uses > 0 && tools.head(pick).is_none(), "a break gives nothing of what made it back");
         assert!(tools.mends(pick).contains(&id("base:oak_planks")), "mended with planks of any wood");
         assert_eq!(crate::inventory::max_stack(pick), 1, "what wears stacks one at a time");
         let worn = crate::inventory::ItemStack { wear: uses - 3, ..crate::inventory::ItemStack::new(pick, 1) };
@@ -530,8 +650,31 @@ mod tests {
         grid[8] = None;
         grid[4] = Some(crate::inventory::ItemStack::new(id("base:cobblestone"), 1));
         assert_eq!(tools.mended(&grid, by_block), None, "not what mends it");
-        // Every tool and weapon that wears names a head or a mend that exists, and lasts
-        // longer the better its tier.
+        // One plank brings a wooden knife (one plank) back whole, a pickaxe (three) half;
+        // mending an iron pickaxe asks the level making one does.
+        let knife = id("base:wooden_knife");
+        assert_eq!((tools.mend_share(pick), tools.mend_share(knife)), (0.5, 1.0));
+        let engineering = content.skills.id("core:engineering").unwrap();
+        assert_eq!(tools.mend_skill(id("base:iron_pickaxe")), Some((engineering, 15)));
+        grid[0] = Some(crate::inventory::ItemStack { wear: tools.uses(knife) - 1, ..crate::inventory::ItemStack::new(knife, 1) });
+        grid[4] = Some(crate::inventory::ItemStack::new(id("base:oak_planks"), 1));
+        assert_eq!(tools.mended(&grid, by_block).map(|m| m.wear), Some(0));
+        // Every tool and weapon wears (or says it never does) and has a mend that exists,
+        // and tools last longer the better their tier.
+        for item in content.blocks.ids() {
+            let def = content.blocks.def(item);
+            let wields = def.has_tag("tool") || def.has_tag("weapon") || content.combat.weapon(item).is_some();
+            if wields && !def.has_tag(NEVER_WEARS) {
+                assert!(tools.uses(item) > 0 && !tools.mends(item).is_empty(), "{} wears and mends", def.name);
+            }
+        }
+        // What mends by a tag, and where, is named in every language.
+        for code in ["en", "ja"] {
+            let lang = crate::lang::Lang::load(&assets, code);
+            for key in tools.mend_by_tags().iter().map(|t| format!("item.mend.tag.{t}")).chain(tools.mend_tags().iter().map(|t| format!("item.mend.near.{t}"))) {
+                assert!(lang.defines(&key), "{code} names {key}");
+            }
+        }
         for kind in ["pickaxe", "axe", "shovel", "hoe", "knife"] {
             let lasts: Vec<u16> = ["wooden", "stone", "copper", "iron"].iter().map(|tier| tools.uses(id(&format!("base:{tier}_{kind}")))).collect();
             assert!(lasts.windows(2).all(|w| w[0] < w[1]), "{kind}s last longer the better they are: {lasts:?}");

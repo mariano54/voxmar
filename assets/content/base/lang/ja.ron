@@ -993,6 +993,8 @@
     "block.base.snare": "くくり罠",
     "block.base.snare_sprung": "かかったくくり罠",
     "block.base.chopping_block": "薪割り台",
+    "item.mend.tag.planks": "板材",
+    "item.mend.near.chopping_block": "薪割り台",
     "block.base.drying_rack_hung": "肉をかけた干し台",
     "block.base.drying_rack_dry": "干し肉の干し台",
     "block.base.compost_heap": "堆肥枠",

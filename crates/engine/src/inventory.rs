@@ -62,6 +62,18 @@ pub fn set_stack_limits(limits: Vec<u8>) {
 pub fn max_stack(item: BlockId) -> u8 {
     LIMITS.read().unwrap_or_else(|e| e.into_inner()).get(item.0 as usize).copied().unwrap_or(MAX_STACK)
 }
+
+/// `stack` in stacks no bigger than its item stacks to, keeping its wear.
+pub fn split_stack(stack: ItemStack) -> impl Iterator<Item = ItemStack> {
+    let most = max_stack(stack.item).max(1);
+    let mut left = stack.count;
+    std::iter::from_fn(move || {
+        let count = left.min(most);
+        left -= count;
+        (count > 0).then_some(ItemStack { count, ..stack })
+    })
+}
+
 /// The slot number of the stack held on the pointer while the inventory screen is open.
 pub const CURSOR: usize = SLOTS;
 /// The crafting grid's first slot; its nine are `CRAFT..CRAFT + 9`, row by row.
@@ -195,6 +207,26 @@ impl Inventory {
             count -= moved;
         }
         count
+    }
+
+    /// Breaks up stacks bigger than their item stacks to (an older save's stack of tools,
+    /// from before tools wore), the rest going into empty slots one stack at a time.
+    /// Returns what found no room.
+    pub fn split_overfull(&mut self) -> Vec<ItemStack> {
+        let mut extra = Vec::new();
+        for stack in self.slots.iter_mut().flatten() {
+            let most = max_stack(stack.item);
+            if stack.count > most {
+                extra.extend(split_stack(ItemStack { count: stack.count - most, ..*stack }));
+                stack.count = most;
+            }
+        }
+        let mut extra = extra.into_iter();
+        for slot in self.slots.iter_mut().filter(|s| s.is_none()) {
+            let Some(stack) = extra.next() else { break };
+            *slot = Some(stack);
+        }
+        extra.collect()
     }
 
     /// Adds a stack as [`Inventory::add`] does, keeping its wear: a worn one takes an empty

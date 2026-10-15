@@ -436,9 +436,12 @@ fn craft(
     // A worn tool and what mends it, by the block it is mended at, mend it, as the server
     // does before any recipe.
     let tools = launch.content.tools.clone();
-    let mended = tools.mended(&player.inventory.craft, near);
-    let found = recipes.find_near(&player.inventory.grid(), near).filter(|_| mended.is_none());
-    let lacking = found.and_then(|r| short(r).map(|skill| (skill, r.level)));
+    let mending = tools.mended(&player.inventory.craft, near);
+    // At the level its recipe asks, as the server checks it.
+    let mend_short = mending.and_then(|m| tools.mend_skill(m.item)).filter(|&(skill, level)| skills.level(player.skills.xp(skill)) < level);
+    let mended = mending.filter(|_| mend_short.is_none());
+    let found = recipes.find_near(&player.inventory.grid(), near).filter(|_| mending.is_none());
+    let lacking = mend_short.or_else(|| found.and_then(|r| short(r).map(|skill| (skill, r.level))));
     let made = mended.map(|m| (m.item, 1)).or_else(|| found.filter(|r| allowed(r)).map(|r| (r.output, r.count)));
     let filled = player.inventory.grid().iter().any(Option::is_some);
     let (title, how) = match made {
@@ -984,10 +987,14 @@ fn wear_lines(locale: &Locale, content: &voxmar_engine::content::Content, item: 
     let left = uses.saturating_sub(wear);
     let color = if worn_low(&content.tools, item, wear) { ERROR } else { SOFT };
     let mut lines = vec![(locale.format("item.uses", &[("left", &left), ("uses", &uses)]), color)];
-    let near = content.tools.mend_near(item);
-    let station = content.blocks.ids().find(|&b| content.blocks.def(b).has_tag(near));
-    if let (Some(&by), Some(station)) = (content.tools.mends(item).first(), station) {
-        let (by, station) = (locale.block(content.blocks.def(by)), locale.block(content.blocks.def(station)));
+    // Named by the tag that mends it (Planks, not one wood's), and by the kind of block
+    // it is mended at.
+    if let Some(&by) = content.tools.mends(item).first() {
+        let by = match content.tools.mend_by_tag(item) {
+            Some(tag) => locale.get(&format!("item.mend.tag.{tag}")).to_owned(),
+            None => locale.block(content.blocks.def(by)),
+        };
+        let station = locale.get(&format!("item.mend.near.{}", content.tools.mend_near(item))).to_owned();
         lines.push((locale.format("item.mend", &[("item", &by), ("station", &station)]), MUTED));
     }
     lines

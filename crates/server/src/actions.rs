@@ -550,10 +550,12 @@ impl Server {
         let near = self.near_tags(agent);
         let near = |tag: &str| near.iter().any(|t| t == tag);
         let player = self.players.get_mut(&agent).unwrap();
-        // A worn tool and what mends it, by the block it is mended at, mend it.
+        // A worn tool and what mends it, by the block it is mended at, mend it, at the level
+        // its recipe asks.
         if let Some(mended) = self.content.tools.mended(&player.inventory.craft, near) {
             let item = mended.item;
-            if player.inventory.mend(mended, all) {
+            let able = self.content.tools.mend_skill(item).is_none_or(|(skill, level)| self.content.skills.level(player.skills.xp(skill)) >= level);
+            if able && player.inventory.mend(mended, all) {
                 let name = self.content.blocks.def(item).name.clone();
                 self.tally(agent, "mended", &name, 1);
             }

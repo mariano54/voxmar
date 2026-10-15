@@ -274,14 +274,14 @@ impl Factory {
         let Some(machine) = machines.get(node.block) else { return Some(stack) };
         let mut left = stack.count;
         if machine.burns() && machines.burn_seconds(stack.item).is_some() {
-            left = fill(std::slice::from_mut(&mut node.state.fuel), stack.item, left);
+            left = fill(std::slice::from_mut(&mut node.state.fuel), stack.item, stack.wear, left);
         }
         if left > 0 && machine.is_processor() && machines.takes(machine, stack.item) {
             let room = machines.input_room(machine, stack.item, node.state.inputs.len());
-            left = fill_within(&mut node.state.inputs, stack.item, left, room, |other| machines.same_input(machine, stack.item, other));
+            left = fill_within(&mut node.state.inputs, stack.item, stack.wear, left, room, |other| machines.same_input(machine, stack.item, other));
         }
         if left > 0 && !node.state.bin.is_empty() && machine.bin_takes(stack.item) {
-            let left = fill(&mut node.state.bin, stack.item, left);
+            let left = fill(&mut node.state.bin, stack.item, stack.wear, left);
             return (left > 0).then_some(ItemStack { count: left, ..stack });
         }
         if left < stack.count {
@@ -860,11 +860,11 @@ fn finish(pos: IVec3, state: &mut MachineState, process: &crate::machine::Proces
     for &(item, count) in &process.outputs {
         let made = count as f32 * (1.0 + extra);
         let more = if roll.next() < made.fract() { 1 } else { 0 };
-        fill(&mut state.outputs, item, made.floor() as u8 + more);
+        fill(&mut state.outputs, item, 0, made.floor() as u8 + more);
     }
     for &(item, count, chance) in &process.byproducts {
         if roll.next() < chance {
-            fill(&mut state.outputs, item, count);
+            fill(&mut state.outputs, item, 0, count);
         }
     }
     state.made = state.made.wrapping_add(1);
@@ -872,10 +872,11 @@ fn finish(pos: IVec3, state: &mut MachineState, process: &crate::machine::Proces
     state.progress = 0.0;
 }
 
-/// Puts `count` of `item` into `slots`, topping up its stacks first, while no more than
-/// `room` stacks hold it or what goes in `same` as it; returns how many did not fit.
-fn fill_within(slots: &mut [Option<ItemStack>], item: BlockId, mut count: u8, room: usize, same: impl Fn(BlockId) -> bool) -> u8 {
-    for stack in slots.iter_mut().flatten().filter(|s| s.item == item) {
+/// Puts `count` of `item` worn by `wear` into `slots`, topping up its stacks of the same
+/// wear first, while no more than `room` stacks hold it or what goes in `same` as it;
+/// returns how many did not fit. Wear goes with it: a worn tool stays worn.
+fn fill_within(slots: &mut [Option<ItemStack>], item: BlockId, wear: u16, mut count: u8, room: usize, same: impl Fn(BlockId) -> bool) -> u8 {
+    for stack in slots.iter_mut().flatten().filter(|s| s.item == item && s.wear == wear) {
         let moved = count.min(max_stack(item).saturating_sub(stack.count));
         stack.count += moved;
         count -= moved;
@@ -886,15 +887,16 @@ fn fill_within(slots: &mut [Option<ItemStack>], item: BlockId, mut count: u8, ro
             break;
         }
         let moved = count.min(max_stack(item));
-        *slot = Some(ItemStack::new(item, moved));
+        *slot = Some(ItemStack { wear, ..ItemStack::new(item, moved) });
         count -= moved;
     }
     count
 }
 
-/// Puts `count` of `item` into `slots`, topping up stacks first; returns how many did not fit.
-fn fill(slots: &mut [Option<ItemStack>], item: BlockId, mut count: u8) -> u8 {
-    for stack in slots.iter_mut().flatten().filter(|s| s.item == item) {
+/// Puts `count` of `item` worn by `wear` into `slots`, topping up stacks of the same wear
+/// first; returns how many did not fit.
+fn fill(slots: &mut [Option<ItemStack>], item: BlockId, wear: u16, mut count: u8) -> u8 {
+    for stack in slots.iter_mut().flatten().filter(|s| s.item == item && s.wear == wear) {
         let moved = count.min(max_stack(item).saturating_sub(stack.count));
         stack.count += moved;
         count -= moved;
@@ -904,7 +906,7 @@ fn fill(slots: &mut [Option<ItemStack>], item: BlockId, mut count: u8) -> u8 {
             break;
         }
         let moved = count.min(max_stack(item));
-        *slot = Some(ItemStack::new(item, moved));
+        *slot = Some(ItemStack { wear, ..ItemStack::new(item, moved) });
         count -= moved;
     }
     count
@@ -930,7 +932,7 @@ pub fn inputs_hold(inputs: &[Option<ItemStack>], process: &crate::machine::Proce
 fn outputs_fit(outputs: &[Option<ItemStack>], process: &crate::machine::Process, extra: f32) -> bool {
     let mut slots = outputs.to_vec();
     let most = |count: u8| (count as f32 * (1.0 + extra)).ceil() as u8;
-    process.outputs.iter().map(|&(item, count)| (item, most(count))).chain(process.byproducts.iter().map(|&(item, count, _)| (item, count))).all(|(item, count)| fill(&mut slots, item, count) == 0)
+    process.outputs.iter().map(|&(item, count)| (item, most(count))).chain(process.byproducts.iter().map(|&(item, count, _)| (item, count))).all(|(item, count)| fill(&mut slots, item, 0, count) == 0)
 }
 
 /// A machine's rolls: the same for the same machine and the same thing made, so a world
@@ -1303,6 +1305,25 @@ mod tests {
         assert_eq!(moved(&["hopper", "chute", "furnace"]), 3);
         assert_eq!(moved(&["hopper", "conveyor", "furnace"]), 12);
         assert_eq!(moved(&["hopper", "conveyor", "chute", "furnace"]), 3);
+    }
+
+    /// What wears keeps its wear wherever it goes: into a bin beside a fresh one, into a
+    /// machine's inputs, and down a chute; it never merges with a stack worn otherwise.
+    #[test]
+    fn wear_goes_with_a_stack_through_machines() {
+        let t = test();
+        let mut factory = Factory::default();
+        build(&t, &mut factory, &["hopper", "conveyor", "furnace", "conveyor", "chest"]);
+        let (worn, fresh) = (ItemStack { wear: 7, ..ItemStack::new(t.id("dust"), 1) }, ItemStack::new(t.id("dust"), 1));
+        let hopper = IVec3::ZERO;
+        assert_eq!(factory.put(hopper, worn, &t.machines), None);
+        assert_eq!(factory.put(hopper, fresh, &t.machines), None);
+        assert_eq!(factory.get(hopper).unwrap().1.bin.iter().flatten().copied().collect::<Vec<_>>(), [worn, fresh], "kept apart");
+        run(&t, &mut factory, 3.0);
+        let (_, furnace) = factory.get(IVec3::new(2, 0, 0)).unwrap();
+        let mut inputs: Vec<ItemStack> = furnace.inputs.iter().flatten().copied().collect();
+        inputs.sort_by_key(|s| s.wear);
+        assert_eq!(inputs, [fresh, worn], "down the chute as worn as it went in");
     }
 
     #[test]

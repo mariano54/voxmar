@@ -149,6 +149,8 @@ impl Server {
                 }
             }
             self.grant(player, farming, xp);
+            // Shearing wears the shears as a block they are made for does.
+            self.wear_held(player, self.content.tools.wear().suited);
             return;
         }
         // A wild one past its would-be keeper's cap is not taken in: taming waits for room,

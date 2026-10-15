@@ -410,6 +410,9 @@ pub struct SavedPlayer {
     pub casts: u64,
     /// What the player's other rolls are numbered by (none in older saves).
     pub draws: Draws,
+    /// What an older save carried in stacks that now come one at a time (tools), with no
+    /// empty slot left for it: dropped at the player's feet when they join. Never saved.
+    pub spilled: Vec<ItemStack>,
 }
 
 /// Tallies quests count (`kind:name`, or `kind:station:name`) under the names items have
@@ -750,6 +753,8 @@ impl WorldSave {
                 stack.wear = wear;
             }
         }
+        // Tools stacked before they wore come apart, one to a slot.
+        let spilled = inventory.split_overfull();
         // Older saves' items that merged into one add up.
         for (item, count) in file.pouched.iter().filter_map(|(item, count)| Some((registry.item_named(item)?, *count))).filter(|&(_, n)| n > 0) {
             match inventory.pouched.iter_mut().find(|(have, _)| *have == item) {
@@ -766,7 +771,7 @@ impl WorldSave {
         }
         let health = Health { current: file.health.current.min(file.health.max), max: file.health.max };
         let yaw = if file.yaw.is_finite() { file.yaw } else { 0.0 };
-        Ok(Some(SavedPlayer { position, yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills, effects: file.effects, home: file.home, bed: file.bed, kindled: file.kindled, journal: merge_journal(file.journal, registry), quests_claimed: file.quests_claimed.unwrap_or_else(|| file.quests.clone()), quests: file.quests, tallies: renamed_tallies(file.tallies, registry), prayer_points: file.prayer_points, casts: file.casts, draws: file.draws }))
+        Ok(Some(SavedPlayer { position, yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills, effects: file.effects, home: file.home, bed: file.bed, kindled: file.kindled, journal: merge_journal(file.journal, registry), quests_claimed: file.quests_claimed.unwrap_or_else(|| file.quests.clone()), quests: file.quests, tallies: renamed_tallies(file.tallies, registry), prayer_points: file.prayer_points, casts: file.casts, draws: file.draws, spilled }))
     }
 
     /// Moves the file of the player called `name` aside, as unreadable (`set_aside`).
@@ -1342,6 +1347,7 @@ mod tests {
             prayer_points: None,
             casts: 0,
             draws: Draws::default(),
+            spilled: Vec::new(),
         };
         save.write_player("ada", &player, &registry).unwrap();
         assert_eq!(save.read_player("ada", &registry).unwrap().unwrap().quests_claimed, ["base:a"], "a waiting reward is kept");
@@ -1389,6 +1395,7 @@ mod tests {
             prayer_points: Some(7.5),
             casts: 12,
             draws: Draws { strikes: 31, blows: 9, feeds: 4, cooks: 17, recovers: 5, flourishes: 2, mines: 40, yields: 3, forages: 6, harvests: 11, locks: 1, catches: 8, wakes: 2, rewards: 7, frees: 3, wears: 12 },
+            spilled: Vec::new(),
         };
         for name in ["steve", "Steve", "a/b", "../x", "ünï cödé"] {
             save.write_player(name, &player, &registry).unwrap();
@@ -1485,6 +1492,7 @@ mod tests {
             prayer_points: None,
             casts: 0,
             draws: Draws::default(),
+            spilled: Vec::new(),
         };
         save.write_player("herbalist", &player, &registry).unwrap();
         let loaded = save.read_player("herbalist", &registry).unwrap().unwrap();
@@ -1513,7 +1521,9 @@ mod tests {
         assert_eq!(loaded.draws, Draws::default(), "an older save has drawn nothing yet");
         let (raw, cooked) = (blocks.expect("base:raw_small_game"), blocks.expect("base:cooked_small_game"));
         let slots: Vec<(BlockId, u8)> = loaded.inventory.slots.iter().flatten().map(|s| (s.item, s.count)).collect();
-        assert_eq!(slots, [(raw, 3), (raw, 2), (cooked, 4)]);
+        // Cooked food comes one to a slot now: the old stack of four comes apart.
+        assert_eq!(slots, [(raw, 3), (raw, 2), (cooked, 1), (cooked, 1), (cooked, 1), (cooked, 1)]);
+        assert!(loaded.spilled.is_empty());
         assert_eq!(loaded.inventory.pouched, [(raw, 11)], "pouched rabbit and chicken add up");
         assert_eq!(blocks.item_named("base:cooked_rabbit"), Some(cooked), "dropped items and station loads resolve the same way");
         assert_eq!(blocks.saved_id("base:raw_chicken"), Some(raw), "and a column's block names");

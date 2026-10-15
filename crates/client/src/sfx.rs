@@ -579,6 +579,16 @@ impl Recordings {
         Ok(())
     }
 
+    /// Whether a tool nearly worn out, and one breaking, have sounds: they are always heard.
+    pub(crate) fn check_wear(&self) -> Result<(), String> {
+        for (name, clips) in [("tool_worn", &self.tool_worn), ("tool_break", &self.tool_break)] {
+            if clips.is_empty() {
+                return Err(format!("{RECORDINGS}: no `{name}` sounds"));
+            }
+        }
+        Ok(())
+    }
+
     /// Which material `block` sounds as, if any (see [`MaterialSound`]).
     pub(crate) fn material_of(&self, blocks: &BlockRegistry, block: BlockId) -> Option<usize> {
         let def = blocks.def(block);
@@ -1330,6 +1340,7 @@ mod tests {
         assert_eq!(recorded.actions["core:eat"], ActionSound { sounds: vec!["content/mod/x.ogg".into()], volume: 1.5, ..Default::default() });
         assert_eq!(recorded.actions["core:craft"], ActionSound { sounds: vec!["content/base/c.ogg".into()], volume: 0.5, ..Default::default() });
         assert_eq!(recorded.check(&content.actions), Ok(()));
+        assert!(recorded.check_wear().is_err(), "no tool wear sounds");
         for wrong in [r#"(actions: {"core:juggle": (sounds: ["a.ogg"])})"#, r#"(actions: {"core:eat": (sounds: [])})"#, r#"(actions: {"core:eat": (sounds: ["a.ogg"], volume: 0.0)})"#, r#"(actions: {"core:eat": (sounds: ["a.ogg"], silent: true)})"#, r#"(actions: {"core:eat": (silent: true, heard: Some(Block))})"#] {
             assert!(Recordings::load(&[file("mod", wrong)]).unwrap().check(&content.actions).is_err(), "{wrong}");
         }
@@ -1338,6 +1349,7 @@ mod tests {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content/base/sounds.ron");
         let base = file("base", &std::fs::read_to_string(path).unwrap());
         assert_eq!(Recordings::load(&[base.clone()]).unwrap().covers(&content.actions), Ok(()));
+        assert_eq!(Recordings::load(&[base.clone()]).unwrap().check_wear(), Ok(()), "the base package's tools are heard wearing");
         let mut more = voxmar_engine::action::ActionRegistry::default();
         for (namespace, source) in [("core", "core/actions.ron"), ("base", "base/actions.ron")] {
             let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");

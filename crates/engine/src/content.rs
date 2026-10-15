@@ -519,7 +519,7 @@ impl Content {
         let languages: Vec<Lang> = crate::lang::languages(dir).into_iter().map(|language| Lang::load(dir, &language.code)).collect();
         let codes: Vec<&str> = languages.iter().map(Lang::code).collect();
         refusals.check_words(&codes, |code, key| languages.iter().any(|lang| lang.code() == code && lang.defines(key)))?;
-        Ok(Self {
+        let mut content = Self {
             blocks: Arc::new(blocks),
             actions: Arc::new(actions),
             commands: Arc::new(commands),
@@ -551,7 +551,11 @@ impl Content {
             files: Arc::new(files),
             english: Arc::new(Lang::load(dir, ENGLISH)),
             notes: Arc::new(notes),
-        })
+        };
+        // Mending follows the recipes, which load after the tools.
+        let terms = ToolRegistry::link(&content)?;
+        Arc::get_mut(&mut content.tools).expect("only this has it").set_mend_terms(terms);
+        Ok(content)
     }
 
     /// Fingerprint used to check that client and server load the same content.

@@ -465,8 +465,11 @@ impl Items {
             }
             let stack = ItemStack { wear: if item.count == 1 { item.wear } else { 0 }, ..ItemStack::new(block, item.count.min(MAX_STACK)) };
             let life = item.lifetime.map_or(lifetime(), |seconds| (seconds * TICKS_PER_SECOND as f32) as u32);
-            let new = items.spawn_for(stack, Loose::new(position, Vec3::ZERO), 0.0, item.owner, life);
-            items.all.get_mut(&new).expect("just spawned").age = (item.age * TICKS_PER_SECOND as f32) as u32;
+            // Tools stacked before they wore lie as one item each.
+            for stack in voxmar_engine::inventory::split_stack(stack) {
+                let new = items.spawn_for(stack, Loose::new(position, Vec3::ZERO), 0.0, item.owner, life);
+                items.all.get_mut(&new).expect("just spawned").age = (item.age * TICKS_PER_SECOND as f32) as u32;
+            }
         }
         items
     }

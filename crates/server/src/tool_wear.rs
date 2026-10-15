@@ -1,7 +1,7 @@
 //! Tools and weapons wearing out in the hand (`voxmar_engine::tool::Wear`, each package's
 //! `tools.ron`): a block broken, soil tilled or a blow that lands takes uses from what the
 //! player holds, the skill its kind trains saves one now and then, and worn to nothing it
-//! breaks, leaving its head in the hand. The player hears it warn once it is nearly worn
+//! breaks (leaving its head in the hand, if it names one). The player hears it warn once it is nearly worn
 //! out, and hears and sees it break (`ServerMessage::ToolWore`). Creative play wears nothing.
 
 use voxmar_engine::inventory::ItemStack;
@@ -23,7 +23,8 @@ impl Server {
             return;
         }
         // By the player's own count of uses that might have worn, never the tick.
-        if let Some(skill) = tools.wear_skill(stack.item, blocks.def(stack.item).has_tag("weapon")) {
+        let wielded = self.content.combat.weapon(stack.item).and_then(|weapon| weapon.skill);
+        if let Some(skill) = tools.wear_skill(stack.item, blocks.def(stack.item).has_tag("weapon"), wielded) {
             let level = skills.level(player.skills.xp(skill));
             let [draw, _] = player.draw(Draw::Wear);
             if tools.saves_wear(level, draw) {
@@ -125,15 +126,21 @@ mod tests {
         assert_eq!(told(&client), (1, 0), "warned once, crossing a tenth left");
         server.players.get_mut(&1).unwrap().inventory.slots[0].as_mut().unwrap().wear = uses - 1;
         server.wear_on_block(1, stone, false);
-        let stick = server.content.blocks.expect("base:stick");
-        assert_eq!(server.players[&1].inventory.slots[0], Some(ItemStack::new(stick, 1)), "broken, its head is left in the hand");
+        let pick = server.content.blocks.expect("base:stone_pickaxe");
+        let left = server.content.tools.head(pick).map(|head| ItemStack::new(head, 1));
+        assert_eq!(server.players[&1].inventory.slots[0], left, "broken, nothing but a head it names is left in the hand");
         assert_eq!(told(&client), (0, 1));
     }
 
-    /// Mining saves a pickaxe's wear by the level: never at level 1, about one use in two
-    /// at 99, drawn by the player's count of uses, never the tick.
+    /// Mining saves a pickaxe's wear by the level, `level` times `save_per_level` a use
+    /// (about one use in two at 99), drawn by the player's count of uses, never the tick.
     #[test]
     fn skill_saves_wear_by_the_count_of_uses_not_the_tick() {
+        let expected = |level: u8| {
+            let (server, _client) = holding("base:iron_pickaxe", 0);
+            let key = server.players[&1].draw_key;
+            (0..200).filter(|&n| !server.content.tools.saves_wear(level, crate::save::numbered_draws(key, crate::save::Draw::Wear.salt(), n)[0])).count() as u16
+        };
         let worn = |tick: u64, level: u8| {
             let (mut server, _client) = holding("base:iron_pickaxe", 0);
             let mining = server.content.skills.id("core:mining").unwrap();
@@ -146,9 +153,10 @@ mod tests {
             }
             (server.players[&1].inventory.slots[0].unwrap().wear, server.players[&1].draws.wears)
         };
-        assert_eq!(worn(1_000, 1).0, 200, "level 1 saves nothing");
+        assert_eq!(worn(1_000, 1).0, expected(1), "level 1 saves one use in 200");
         let (wear, draws) = worn(1_000, 99);
         assert_eq!(draws, 200, "each use counted on");
+        assert_eq!(wear, expected(99), "each draw by its count");
         assert!((70..130).contains(&wear), "at 99 about half the uses wear: {wear} of 200");
         assert_eq!(worn(1_377, 99), (wear, draws), "the same uses later wore otherwise");
     }
@@ -174,7 +182,7 @@ mod tests {
     }
 
     /// A worn tool keeps its wear when dropped, saved with the world's items and picked up
-    /// again, and when it is kept through a death.
+    /// again, and when it is kept through a death (the least worn of two the same).
     #[test]
     fn a_dropped_tool_keeps_its_wear() {
         let (server, _client) = holding("base:stone_axe", 37);
@@ -192,5 +200,84 @@ mod tests {
         inventory.add(axe.item, 1);
         assert_eq!(inventory.add_stack(stack), 0);
         assert_eq!(inventory.slots[1], Some(axe), "a worn one takes a slot of its own");
+        // Through a death: the stone axes are worth the most, and the fresher is kept.
+        let (kept, left) = crate::death::split(&inventory, 1, false, |item| u32::from(item == axe.item));
+        assert_eq!(kept.slots[0], Some(ItemStack::new(axe.item, 1)), "the unworn one kept");
+        assert_eq!(left, [axe], "the worn one left as worn");
+        let mut worn_only = voxmar_engine::inventory::Inventory::default();
+        worn_only.slots[5] = Some(axe);
+        let (kept, _) = crate::death::split(&worn_only, 1, false, |_| 1);
+        assert_eq!(kept.slots[0], Some(axe), "kept as worn as it was");
+    }
+
+    /// A worn tool put into a hopper by hand comes back as worn: a machine is no free
+    /// mend (the factory's own tests follow it down a chute).
+    #[test]
+    fn a_hopper_keeps_a_tools_wear() {
+        let (mut server, _client) = holding("base:iron_pickaxe", 300);
+        let pick = server.players[&1].inventory.slots[0].unwrap();
+        let at = put(&mut server, "base:hopper");
+        let hopper = server.content.blocks.expect("base:hopper");
+        let machines = server.content.machines.clone();
+        server.factory.insert(at, hopper, &machines);
+        server.use_machine(1, at);
+        assert_eq!(server.players[&1].inventory.slots[0], None, "put in");
+        assert_eq!(server.factory.get(at).unwrap().1.bin.iter().flatten().next(), Some(&pick), "worn in the hopper");
+        server.use_machine(1, at);
+        assert_eq!(server.players[&1].inventory.slots[0], Some(pick), "taken back as worn");
+    }
+
+    /// Saves from before tools wore held them in stacks: loaded, a stack of three pickaxes
+    /// comes apart into three, in a player's slots (any with no room fall at their feet),
+    /// a chest's bin and the items lying in the world; a worn tool in a chest stays worn.
+    #[test]
+    fn old_stacks_of_tools_come_apart_on_load() {
+        let (mut server, _client) = holding("base:iron_pickaxe", 0);
+        let pick = server.content.blocks.expect("base:iron_pickaxe");
+        let blocks = server.content.blocks.clone();
+        let dir = std::env::temp_dir().join(format!("voxmar-old-stacks-{}", std::process::id()));
+        let save = crate::save::WorldSave::new(&dir);
+        let mut player = server.players[&1].saved(&server.content.skills, &server.content.effects);
+        player.inventory = voxmar_engine::inventory::Inventory::default();
+        player.inventory.slots[0] = Some(ItemStack::new(pick, 3));
+        save.write_player("ada", &player, &blocks).unwrap();
+        let read = save.read_player("ada", &blocks).unwrap().unwrap();
+        let picks: Vec<ItemStack> = read.inventory.slots.iter().flatten().copied().collect();
+        assert_eq!(picks, [ItemStack::new(pick, 1); 3]);
+        assert!(read.spilled.is_empty());
+        // A full pack: what has no slot is spilled, to fall at their feet on joining.
+        let dirt = blocks.expect("base:dirt");
+        for slot in player.inventory.slots.iter_mut().skip(1) {
+            *slot = Some(ItemStack::new(dirt, 1));
+        }
+        save.write_player("bo", &player, &blocks).unwrap();
+        let read = save.read_player("bo", &blocks).unwrap().unwrap();
+        assert_eq!((read.inventory.slots[0], read.spilled), (Some(ItemStack::new(pick, 1)), vec![ItemStack::new(pick, 1); 2]));
+        let _ = std::fs::remove_dir_all(&dir);
+        // A chest's bin, as saved before and as saved worn.
+        let at = put(&mut server, "base:chest");
+        let chest = blocks.expect("base:chest");
+        let machines = server.content.machines.clone();
+        server.factory.insert(at, chest, &machines);
+        server.factory.put(at, ItemStack { wear: 41, ..ItemStack::new(pick, 1) }, &machines);
+        server.factory.put(at, ItemStack::new(pick, 1), &machines);
+        let mut saved: Vec<_> = server.saved_machines().into_iter().filter(|m| m.position == at.to_array()).collect();
+        let mut again = crate::test_server();
+        again.set_block(at, chest);
+        again.restore_machines(saved.clone());
+        let bin: Vec<ItemStack> = again.factory.get(at).unwrap().1.bin.iter().flatten().copied().collect();
+        assert_eq!(bin, [ItemStack { wear: 41, ..ItemStack::new(pick, 1) }, ItemStack::new(pick, 1)], "worn kept through a save");
+        saved[0].bin = vec![("base:iron_pickaxe".into(), 3)];
+        saved[0].bin_wear.clear();
+        let mut old = crate::test_server();
+        old.set_block(at, chest);
+        old.restore_machines(saved);
+        let bin: Vec<ItemStack> = old.factory.get(at).unwrap().1.bin.iter().flatten().copied().collect();
+        assert_eq!(bin, [ItemStack::new(pick, 1); 3], "an old stack of three, three");
+        // Lying in the world.
+        let lying = crate::save::SavedItem { item: "base:iron_pickaxe".into(), count: 3, position: server.spawn.to_array(), age: 0.0, owner: None, lifetime: None, wear: 0 };
+        let items = crate::items::Items::restore(vec![lying], |name| blocks.id(name));
+        let saved = items.saved(|item| blocks.def(item).name.clone());
+        assert_eq!(saved.iter().map(|i| i.count).collect::<Vec<_>>(), [1, 1, 1]);
     }
 }

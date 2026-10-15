@@ -517,6 +517,11 @@ impl Server {
                     stack.wear = wear;
                 }
             }
+            // Tools stacked before they wore come apart, one to a slot (what has no room
+            // falls out below).
+            for slots in [&mut state.inputs, &mut state.outputs, &mut state.bin] {
+                *slots = slots.drain(..).flatten().flat_map(voxmar_engine::inventory::split_stack).map(Some).collect();
+            }
             // The work it was doing goes on where it was: the recipe of this machine that makes
             // the same thing from what it holds (a furnace makes an ingot from ore or from dust;
             // the next step drops it if what it holds no longer does).
