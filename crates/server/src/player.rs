@@ -240,7 +240,7 @@ impl Player {
     }
 
     pub fn eye(&self) -> Vec3 {
-        self.position + Vec3::Y * dims::EYE_HEIGHT
+        voxmar_engine::vitals::eye(self.position, dims::EYE_HEIGHT, self.vitals.seated)
     }
 
     /// Where the player looks.
