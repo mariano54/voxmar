@@ -304,4 +304,25 @@ mod tests {
         server.set_block(snare, BlockId::AIR);
         assert!(server.catches.get(snare).is_none(), "broken, the catch is lost");
     }
+
+    /// A rabbit summoned held into a set snare, with a player by it as the gate's snare
+    /// step stands, is caught at the traps' next look whatever tick it arrives on. One not
+    /// held can run out of the cell first: arriving just after a look, it did, and never
+    /// came back, so the gate's step summons it held.
+    #[test]
+    fn a_rabbit_summoned_held_into_a_snare_is_caught_at_the_next_look() {
+        for phase in 0..Tier::Medium.period() {
+            let (mut server, snare) = field(1);
+            server.players.get_mut(&1).unwrap().position = Vec3::new(snare.x as f32 + 0.5, snare.y as f32, snare.z as f32 - 2.5);
+            server.tick = 1000 + phase;
+            let at = [snare.x + 2, snare.y, snare.z].map(|v| v.to_string());
+            let args: Vec<String> = ["rabbit", "1"].into_iter().map(str::to_owned).chain(at).chain(["held".to_owned()]).collect();
+            server.summon(crate::commands::Source::Player(1), &args).expect("summoned");
+            let caught = (0..Tier::Medium.period()).position(|_| {
+                server.tick();
+                server.catches.get(snare).is_some()
+            });
+            assert!(caught.is_some(), "arriving {phase} ticks past a look, a held rabbit in the snare was not caught at the next");
+        }
+    }
 }
