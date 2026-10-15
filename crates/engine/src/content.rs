@@ -499,6 +499,11 @@ impl Content {
                 blocks.def(id).name
             )));
         }
+        // A sleep rule's `bed` tag names a kind of bed: some bed must carry it, or the rest it
+        // gives could never be had.
+        if let Some(tag) = effects.sleep_beds().find(|tag| !blocks.ids().any(|id| blocks.def(id).has_tag("bed") && blocks.def(id).has_tag(tag))) {
+            return Err(RegistryError(format!("effects.ron: a sleep rule asks for a bed tagged `{tag}`, and no block tagged `bed` carries it")));
+        }
         // Every refusal is said in every language the game has.
         let refusals = crate::refusal::Refusals::load(&files)?;
         let languages: Vec<Lang> = crate::lang::languages(dir).into_iter().map(|language| Lang::load(dir, &language.code)).collect();
