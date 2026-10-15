@@ -181,6 +181,11 @@ fn right_arm(part: &Part) -> bool {
     matches!(part.role, Role::Arm | Role::Neck) && part.pivot.x > 0.0
 }
 
+/// Whether a box is of the left arm or its hand.
+fn left_arm(part: &Part) -> bool {
+    matches!(part.role, Role::Arm | Role::Neck) && part.pivot.x < 0.0
+}
+
 /// One other player as drawn.
 struct Figure {
     root: Entity,
@@ -251,6 +256,11 @@ pub struct FigureRead {
 impl Figures {
     /// Where another player's body is drawn, once it is (what the eye sees of them, eased
     /// behind where the server says they are).
+    /// The joint its head turns on, for the gate to read its transform.
+    pub fn head_joint(&self, id: PlayerId) -> Option<Entity> {
+        self.shown.get(&id)?.joints.iter().find(|(_, part)| part.swing == Swing::Head).map(|(joint, _)| *joint)
+    }
+
     pub fn drawn_at(&self, id: PlayerId) -> Option<Vec3> {
         self.shown.get(&id).filter(|f| f.painting.is_none()).map(|f| f.position)
     }
@@ -348,8 +358,9 @@ fn show(
             let joints: Vec<(Entity, Part)> = parts.iter().map(|&part| (commands.spawn((Transform::from_translation(part.pivot), ChildOf(root))).id(), part)).collect();
             let skinned = SkinnedMesh { inverse_bindposes: body.binds.clone(), joints: joints.iter().map(|(e, _)| *e).collect() };
             commands.spawn((Mesh3d(body.mesh.clone()), MeshMaterial3d(material.clone()), skinned, Transform::default(), Visibility::default(), NotShadowCaster, ChildOf(root)));
-            let seed = name_hash(&view.name) as u32;
-            let painting = Some(crate::creatures::paint_skin(look.body_of(&view.name), parts.clone(), body, seed, false));
+            let name = view.name.as_deref().unwrap_or_default();
+            let seed = name_hash(name) as u32;
+            let painting = Some(crate::creatures::paint_skin(look.body_of(name), parts.clone(), body, seed, false));
             Figure {
                 root,
                 joints,
@@ -416,13 +427,11 @@ fn show(
             let turn = match part.swing {
                 Swing::Leg { phase, .. } => {
                     let swing = look.swing * going * ((figure.stride + phase) * std::f32::consts::TAU).sin();
-                    let calm = 1.0 - fight.share;
-                    if right_arm(&part) && part.role == Role::Arm {
+                    // An arm and its hand (each on the shoulder's pivot) turn as one.
+                    if right_arm(&part) {
                         let walking = if holding { look.carry + swing * look.carry_swing } else { swing };
-                        walking * calm + fight.right * fight.share
-                    } else if right_arm(&part) && holding {
-                        look.carry + swing * look.carry_swing
-                    } else if part.role == Role::Arm && part.pivot.x < 0.0 {
+                        walking * (1.0 - fight.share) + fight.right * fight.share
+                    } else if left_arm(&part) {
                         swing * (1.0 - figure.drawing) + look.fight.draw * figure.drawing
                     } else {
                         swing
@@ -439,7 +448,7 @@ fn show(
             if part.role == Role::Leg && part.pivot.x < 0.0 {
                 figure.leg = turn.to_radians();
             }
-            if part.role == Role::Arm && part.pivot.x < 0.0 {
+            if left_arm(&part) && part.role == Role::Arm {
                 figure.left = turn.to_radians();
             }
             if part.swing == Swing::Head {

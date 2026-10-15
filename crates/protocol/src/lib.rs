@@ -43,7 +43,8 @@ pub use voxmar_engine::weather::Weather;
 // 45 to 49: kept for branches landing ahead of this one, each with its own line (47 the
 // 341 branch, 48 the home fire, 49 the 157 branch).
 // 50: how another player looks up or down and what is in their hand (PlayerView::pitch, held).
-// 52: what another player is doing in a fight (PlayerView::fight): their swing, blows, guard.
+// 52: what another player is doing in a fight (PlayerView::fight): their swing, blows, guard;
+// and Players told as they change (seen, gone), names once, only those near enough.
 pub const PROTOCOL_VERSION: u32 = 52;
 
 /// A creature's `tell` while it rears into a new phase of its fight.
@@ -165,7 +166,10 @@ pub enum ServerMessage {
     /// Authoritative position, after a rejected move, a command or a respawn; `seq` counts
     /// the player's teleports, for `PlayerInput::teleport`.
     Teleport { position: Vec3, seq: u32 },
-    Players { players: Vec<PlayerView> },
+    /// Other players near enough to see (`Limits::players_seen`), told as they change:
+    /// `seen` holds only those whose view changed since it was last sent (or who came into
+    /// sight), `gone` those who left or went out of sight. Sent only when there is either.
+    Players { seen: Vec<PlayerView>, gone: Vec<PlayerId> },
     /// The clocks, every second and whenever a command changes them: `tick` counts
     /// simulation ticks since the world began, at `TICKS_PER_SECOND`, and `day` is the
     /// time of day in ticks (0 at sunrise of the first day), which runs `day_speed` times
@@ -304,10 +308,12 @@ pub enum ChatKind {
 }
 
 /// How other players see a player.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PlayerView {
     pub id: PlayerId,
-    pub name: String,
+    /// Their name, sent once: when they come into sight, or if it changes. Else `None`,
+    /// the name told before standing.
+    pub name: Option<String>,
     pub position: Vec3,
     pub yaw: f32,
     /// How far they look up (positive) or down, radians.

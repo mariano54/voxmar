@@ -196,6 +196,20 @@ impl RemotePlayers {
         self.players.values()
     }
 
+    /// What the server told of others: views changed or come into sight (a name, when
+    /// missing, is the one told before), and players gone or out of sight.
+    pub fn told(&mut self, seen: Vec<PlayerView>, gone: Vec<PlayerId>) {
+        for id in gone {
+            self.players.remove(&id);
+        }
+        for mut view in seen {
+            if view.name.is_none() {
+                view.name = self.players.get(&view.id).and_then(|old| old.name.clone());
+            }
+            self.players.insert(view.id, view);
+        }
+    }
+
     /// Shows another player as if the server had told of them, or moves one shown so (the
     /// gate's stand-in, as no second client plays it).
     pub fn puppet(&mut self, view: PlayerView) {
@@ -209,7 +223,7 @@ impl RemotePlayers {
 
     /// What another player is called, while they are here.
     pub fn name(&self, id: PlayerId) -> Option<&str> {
-        self.players.get(&id).map(|view| view.name.as_str())
+        self.players.get(&id).and_then(|view| view.name.as_deref())
     }
 
     /// The player nearest along the look ray within `within` blocks of the eye, and how far:
@@ -357,9 +371,7 @@ pub(crate) fn receive(
                     fighting.dodge_ready = fighting.dodge_was;
                 }
             }
-            ServerMessage::Players { players } => {
-                remote.players = players.into_iter().map(|view| (view.id, view)).collect();
-            }
+            ServerMessage::Players { seen, gone } => remote.told(seen, gone),
             ServerMessage::Time { tick, day, day_speed } => {
                 *clock = Clock { day: day as f64, day_speed, told_at: time.elapsed_secs_f64() };
                 weather.set_tick(tick, time.elapsed_secs_f64());
@@ -473,10 +485,22 @@ mod tests {
         assert_eq!(admin_token_for("::1", "[::1]:25665=six").as_deref(), Some("six"));
     }
 
+    /// A view told without a name keeps the name told before; one gone is forgotten.
+    #[test]
+    fn others_are_told_as_they_change() {
+        let mut players = RemotePlayers::default();
+        let view = |name: Option<&str>, x: f32| PlayerView { id: 9, name: name.map(str::to_owned), position: Vec3::new(x, 0.0, 0.0), yaw: 0.0, pitch: 0.0, held: None, fight: Default::default() };
+        players.told(vec![view(Some("Ada"), 0.0)], vec![]);
+        players.told(vec![view(None, 1.0)], vec![]);
+        assert_eq!((players.name(9), players.position(9)), (Some("Ada"), Some(Vec3::X)));
+        players.told(vec![], vec![9]);
+        assert_eq!(players.views().count(), 0);
+    }
+
     #[test]
     fn a_player_is_looked_at_within_range_and_aim() {
         let mut players = RemotePlayers::default();
-        let view = PlayerView { id: 9, name: "Ada".to_owned(), position: Vec3::new(0.0, 0.0, -10.0), yaw: 0.0, pitch: 0.0, held: None, fight: Default::default() };
+        let view = PlayerView { id: 9, name: Some("Ada".to_owned()), position: Vec3::new(0.0, 0.0, -10.0), yaw: 0.0, pitch: 0.0, held: None, fight: Default::default() };
         players.players.insert(9, view);
         let eye = Vec3::new(0.0, 1.62, 0.0);
         let (who, distance) = players.looked_at(eye, Vec3::NEG_Z, 24.0, |_| None).unwrap();

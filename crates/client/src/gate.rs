@@ -1310,9 +1310,19 @@ impl Observer {
                         }
                     }
                     ServerMessage::Chat { text, .. } => self.replies.push(text),
-                    ServerMessage::Players { players } => {
-                        self.names = players.iter().map(|p| (p.id, p.name.clone())).collect();
-                        self.others = players.iter().filter(|p| Some(p.id) != self.id).map(|p| (p.id, p.position)).collect();
+                    ServerMessage::Players { seen, gone } => {
+                        for id in gone {
+                            self.names.remove(&id);
+                            self.others.remove(&id);
+                        }
+                        for p in seen {
+                            if let Some(name) = p.name {
+                                self.names.insert(p.id, name);
+                            }
+                            if Some(p.id) != self.id {
+                                self.others.insert(p.id, p.position);
+                            }
+                        }
                     }
                     _ => {}
                 },
@@ -12762,7 +12772,7 @@ fn others(world: &mut World, gate: &mut Gate) {
     let pace = look.full_pace * OTHER_PACE;
     // Facing the eye, so its front and its right fist show.
     let shooter = shooter.unwrap_or(weapon);
-    let fought = |at: Vec3, held: voxmar_engine::block::BlockId, fight: voxmar_protocol::FightView| voxmar_protocol::PlayerView { id: OTHER, name: "Gate".into(), position: at, yaw: 0.0, pitch: OTHER_PITCH, held: Some(held), fight };
+    let fought = |at: Vec3, held: voxmar_engine::block::BlockId, fight: voxmar_protocol::FightView| voxmar_protocol::PlayerView { id: OTHER, name: Some("Gate".into()), position: at, yaw: 0.0, pitch: OTHER_PITCH, held: Some(held), fight };
     let view = |at: Vec3| fought(at, weapon, Default::default());
     let walked = |frames: u32| start + Vec3::X * pace * PUPPET_STEP * frames as f32;
     let done = |world: &mut World, gate: &mut Gate, result: Result<String, String>| {
@@ -12839,11 +12849,14 @@ fn others(world: &mut World, gate: &mut Gate) {
             let reach = Vec3::new(look.hand.at.0, look.hand.at.1, look.hand.at.2).length() + 0.05;
             let drawn = world.resource::<crate::render::items::ItemModels>().0.iter().any(|m| m.posed.is_some() && read.held_at.is_some_and(|h| m.center.distance(h) < 1e-3));
             let carried = look.carry.to_radians();
+            // Where the head's joint as drawn faces (its front is -z), to tilt the way told.
+            let face = world.resource::<Figures>().head_joint(OTHER).and_then(|joint| world.get::<Transform>(joint)).map(|t| t.rotation * Vec3::NEG_Z);
             // Looking down as told (`OTHER_PITCH`): the head tilted `look` of it.
             let tilt = (OTHER_PITCH.to_degrees() * look.look).clamp(-look.look_most, look.look_most).to_radians();
             let result = match read.held_at {
                 _ if (read.arm - carried).abs() > 0.05 => Err(format!("the arm holding the weapon was swung {:.2} radians standing, {carried:.2} (`carry`) wanted", read.arm)),
                 _ if (read.head - tilt).abs() > 0.02 => Err(format!("told they look {OTHER_PITCH:.2} radians up, its head was tilted {:.2} radians, {tilt:.2} (`look`) wanted", read.head)),
+                _ if face.is_none_or(|face| face.y.signum() != OTHER_PITCH.signum()) => Err(format!("told they look {OTHER_PITCH:.2} radians up, its head's joint faces {face:?}: not the same way up or down")),
                 Some(held) if held.distance(shoulder) <= reach && drawn => Ok(format!(
                     "painted with its {} boxes, walking {pace:.2} blocks a second it trailed by the easing and its legs swung {:.2} radians; stopped, it settled in {frames} frames with the weapon {:.2} blocks from its right shoulder and its head tilted {:.2} radians as it looks",
                     read.joints,
