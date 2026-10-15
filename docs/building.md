@@ -16,6 +16,12 @@ and a pixel, `core/movement.ron`) without jumping; a whole block still takes a j
 | Roof | `thatch_roof`, `<timber>_shingles` | four courses a quarter block high, eave towards the placer | | thatch: 6 fibre make 4 (1); shingles: 6 slabs make 4 (5) |
 | Ridge | `thatch_ridge`, `<timber>_shingle_ridge` | courses rising from both sides to a cap | ridge across the placer's view | thatch: 3 fibre make 2 (1); shingles: 3 slabs make 2 (5) |
 
+Cut stone keeps its stone's tags (a cobblestone slab is `stone`) but never stands in for a
+whole block: a recipe's or a multiblock's `tag:` cell that whole blocks answer takes no piece
+(`BlockRegistry::answers_whole`; the hearth's ring of stone takes no slabs, headstones or columns), since three
+blocks cut into six would count double. A tag only pieces carry (`tag:beam`) takes them.
+Cobblestone pieces are not `cobbled` (sling ammo, cobble recipes).
+
 Timber comes in the furniture's three woods (birch, oak, dark oak), its greyscale drawings
 tinted the wood's colour (`blocks_building.ron` family lines). Thatch is the first roof:
 fibre is wheat or grass twine, so it is there from the first days.
