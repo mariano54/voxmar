@@ -5282,6 +5282,7 @@ fn wait_server(client: &mut Client, seconds: u64) {
 /// Asks `/machine` about a block until its answer contains `want`, or panics after `seconds`
 /// of the server's clock, counted once the land round the player is in (a machine's survey
 /// looks only at land the server holds).
+#[track_caller]
 fn machine_says(client: &mut Client, at: &str, want: &str, seconds: u64) -> String {
     client.land_round();
     let started = client.server_tick;
@@ -5771,14 +5772,16 @@ fn stacks_a_machine_has_no_slot_for_after_a_change_fall_out_where_it_stands() {
     let saved = format!(r#"[(position:({},{},{}),block:"base:chest",inputs:[],outputs:[],fuel:None,burning:0.0,energy:0.0,condition:0.0,made:0,bin:[{stacks}])]"#, chest.x, chest.y, chest.z);
     std::fs::write(dir.join("machines.ron"), saved).unwrap();
     let mut client = Client::join_with(config());
-    machine_says(&mut client, &at, &format!("holds {} items", 27 * 64), 10);
     let cobblestone = client.content.blocks.expect("base:cobblestone");
+    let held = |c: &Client| c.inventory.slots.iter().flatten().filter(|s| s.item == cobblestone).map(|s| s.count as u32).sum::<u32>();
+    // What the player held as they came in (a starting kit) is no stack of the chest's.
+    let held_at_join = held(&client);
+    machine_says(&mut client, &at, &format!("holds {} items", 27 * 64), 10);
     // Out on the ground, or already picked up by the player standing beside it: the wait
     // for the land round the player (`machine_says`) can outlast the pick-up delay.
     let spilled = |c: &Client| {
         let lying = c.items.values().filter(|i| i.stack.item == cobblestone).map(|i| i.stack.count as u32).sum::<u32>();
-        let held = c.inventory.slots.iter().flatten().filter(|s| s.item == cobblestone).map(|s| s.count as u32).sum::<u32>();
-        lying + held
+        lying + held(c).saturating_sub(held_at_join)
     };
     client.pump_until(|c| spilled(c) == 3 * 64);
     drop(client);
