@@ -35,7 +35,7 @@
         // Where, and with what.
         "Replaceable": (say: "refusal.in_the_way"),
         "Unobstructed": (say: "refusal.someone_there"),
-        "Supported": (say: "refusal.needs_ground"),
+        "Supported": (say: "refusal.needs_support"),
         "Plantable": (say: "refusal.wont_grow"),
         "Tillable": (say: "refusal.not_soil"),
         "Fishable": (say: "refusal.no_water"),
