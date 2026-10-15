@@ -557,7 +557,7 @@ impl Motion {
     /// Advances the hand by `dt` seconds of what the player does.
     pub fn step(&mut self, doing: Doing, dt: f32, hand: &Hand, moves: &AllMoves) -> Weights {
         if doing.item != self.item {
-            *self = Motion { item: doing.item, light: self.light, lit: self.lit, dashing: self.dashing, hurt_seen: self.hurt_seen, ..Motion::default() };
+            *self = Motion { item: doing.item, light: self.light, lit: self.lit, dashing: self.dashing, hurt_seen: self.hurt_seen, whiffs: self.whiffs, ..Motion::default() };
         }
         self.raised += dt;
         // Strokes run their course, and a held button starts the next.
@@ -1073,6 +1073,23 @@ mod tests {
         assert!(!motion.swing_began(0.5, false));
         // A switch of what is held restarts the rhythm too, which is no swing.
         assert!(!motion.swing_began(0.0, true));
+    }
+
+    /// A whiff is seen once, and not again when what is held changes after it. Before: the
+    /// switch made the hand anew with no whiffs seen, and the next frame swung the new item.
+    #[test]
+    fn a_whiff_is_seen_once_and_not_again_after_a_switch() {
+        let handling = shipped();
+        let (hand, moves) = (handling.hand, handling.moves);
+        let mut motion = Motion::default();
+        assert!(!motion.whiff_began(0, false));
+        assert!(motion.whiff_began(1, false));
+        assert!(!motion.whiff_began(1, false));
+        // A switch the frame it is seen, then the hand made anew for the new item.
+        assert!(!motion.whiff_began(1, true));
+        motion.step(Doing { item: Some(BlockId(5)), ..Doing::default() }, 0.05, &hand, &moves);
+        assert!(!motion.whiff_began(1, false), "the switch was taken for a whiff");
+        assert!(motion.whiff_began(2, false));
     }
 
     #[test]
