@@ -441,6 +441,7 @@ fn show(
             }
             if part.role == Role::Arm && part.pivot.x < 0.0 {
                 figure.left = turn.to_radians();
+            }
             if part.swing == Swing::Head {
                 figure.head = turn.to_radians();
             }
@@ -581,6 +582,7 @@ mod tests {
             pace: 0.0,
             arm: 0.0,
             leg: 0.0,
+            head: 0.0,
             held_at: None,
             pose: look.carry,
             guarding: 0.0,
