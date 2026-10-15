@@ -4,14 +4,33 @@
 //! them in the quest screen (`ClientMessage::ClaimQuest`); a quest that pays nothing is
 //! claimed as it finishes.
 
-use voxmar_engine::block::BlockId;
+use rustc_hash::FxHashMap;
+use voxmar_engine::block::{BlockId, BlockRegistry};
 use voxmar_engine::glam::IVec3;
 use voxmar_engine::lang::Words;
-use voxmar_engine::quest::{Progress, QuestState, Reward};
+use voxmar_engine::quest::{Progress, QuestRegistry, QuestState, Reward};
 use voxmar_engine::traits;
 use voxmar_protocol::{ChatKind, PlayerId, ServerMessage, TICKS_PER_SECOND};
 
 use crate::Server;
+
+/// Whether a quest that `done` does not hold counts `item` set down (`Goal::Placed`).
+fn counts_placed(blocks: &BlockRegistry, quests: &QuestRegistry, item: &str, done: &dyn Fn(&str) -> bool) -> bool {
+    blocks.id(item).is_some_and(|id| quests.places(item, &|tag| blocks.def(id).has_tag(tag), done))
+}
+
+/// The blocks set down for quests a save recorded (`WorldMeta::quest_placed`), by cell: a
+/// renamed item's records go on under its new name, as tallies do, and records no quest
+/// counts any more (a mod took it away) are dropped.
+pub(crate) fn restore_placed(saved: &[([i32; 3], String, String)], blocks: &BlockRegistry, quests: &QuestRegistry) -> FxHashMap<IVec3, (String, String)> {
+    saved
+        .iter()
+        .filter_map(|(cell, owner, item)| {
+            let item = blocks.def(blocks.saved_id(item)?).name.clone();
+            counts_placed(blocks, quests, &item, &|_| false).then(|| (IVec3::from_array(*cell), (crate::player_key(owner), item)))
+        })
+        .collect()
+}
 
 impl Server {
     /// Counts one more of something a player did that quests may ask for: `crafted`,
@@ -46,7 +65,7 @@ impl Server {
         if !self.content.quests.places(&def.name, &|tag| def.has_tag(tag), &done) {
             return;
         }
-        let (owner, name) = (player.name.to_lowercase(), def.name.clone());
+        let (owner, name) = (crate::player_key(&player.name), def.name.clone());
         if let Some((before, item)) = self.quest_placed.insert(cell, (owner, name.clone()))
             && let Some(id) = self.here(&before)
         {
@@ -61,7 +80,9 @@ impl Server {
     /// they are here, else as they next join.
     pub(crate) fn unplaced(&mut self, pos: IVec3, block: BlockId) {
         let Some((_, item)) = self.quest_placed.get(&pos) else { return };
-        if self.content.blocks.id(item).is_some_and(|item| self.content.blocks.info(block).drops == item) {
+        let blocks = &self.content.blocks;
+        let drops = |id: BlockId| Some(blocks.info(id).drops).filter(|d| !d.is_air());
+        if blocks.id(item).and_then(drops).is_some_and(|wanted| drops(block) == Some(wanted)) {
             return;
         }
         let (owner, item) = self.quest_placed.remove(&pos).expect("found above");
@@ -71,19 +92,40 @@ impl Server {
     }
 
     /// A player's `placed` tallies, counted again from the cells recorded for them: what
-    /// was built over or broken while they were away comes off.
+    /// was built over or broken while they were away comes off, and so do records no quest
+    /// still open to them counts (a mod took the quest away).
     pub(crate) fn recount_placed(&mut self, agent: PlayerId) {
+        self.prune_placed(agent);
         let Some(player) = self.players.get_mut(&agent) else { return };
-        let owner = player.name.to_lowercase();
+        let owner = crate::player_key(&player.name);
         player.tallies.retain(|key, _| !key.starts_with("placed:"));
         for (_, item) in self.quest_placed.values().filter(|(who, _)| *who == owner) {
             *player.tallies.entry(format!("placed:{item}")).or_default() += 1;
         }
     }
 
-    /// The joined player whose name in lower case is `owner`.
+    /// Drops `agent`'s records of blocks set down that no quest still open to them counts,
+    /// and takes them off their tally.
+    fn prune_placed(&mut self, agent: PlayerId) {
+        let Some(player) = self.players.get(&agent) else { return };
+        let (owner, done) = (crate::player_key(&player.name), player.quests_done.clone());
+        let (blocks, quests) = (&self.content.blocks, &self.content.quests);
+        let mut dropped = Vec::new();
+        self.quest_placed.retain(|_, (who, item)| {
+            let keep = *who != owner || counts_placed(blocks, quests, item, &|quest| done.iter().any(|d| d == quest));
+            if !keep {
+                dropped.push(item.clone());
+            }
+            keep
+        });
+        for item in dropped {
+            self.untally(agent, "placed", &item, 1);
+        }
+    }
+
+    /// The joined player whose `player_key` is `owner`.
     fn here(&self, owner: &str) -> Option<PlayerId> {
-        self.players.iter().find(|(_, p)| p.joined && p.name.to_lowercase() == owner).map(|(&id, _)| id)
+        self.players.iter().find(|(_, p)| p.joined && crate::player_key(&p.name) == owner).map(|(&id, _)| id)
     }
 
     /// How many animals `keeper` keeps, in the world or waiting in the save, with a condition
@@ -166,22 +208,7 @@ impl Server {
             player.quests_claimed.push(name.to_owned());
         }
         // Blocks set down that no quest still open to them counts are no longer kept.
-        let (owner, done) = (player.name.to_lowercase(), player.quests_done.clone());
-        let (blocks, quests) = (&self.content.blocks, &self.content.quests);
-        let counted = |item: &str| {
-            blocks.id(item).is_some_and(|id| quests.places(item, &|tag| blocks.def(id).has_tag(tag), &|quest| done.iter().any(|d| d == quest)))
-        };
-        let mut dropped = Vec::new();
-        self.quest_placed.retain(|_, (who, item)| {
-            let keep = *who != owner || counted(item);
-            if !keep {
-                dropped.push(item.clone());
-            }
-            keep
-        });
-        for item in dropped {
-            self.untally(agent, "placed", &item, 1);
-        }
+        self.prune_placed(agent);
         let Some(player) = self.players.get_mut(&agent) else { return };
         let title = Words::Own(voxmar_engine::lang::def_key("quest", &quest.name), quest.title.clone());
         let key = if quest.pays() { "quest.ready" } else { "quest.done" };
@@ -291,10 +318,12 @@ mod tests {
         set(&mut server, "base:feed_trough", 127);
         assert_eq!(tally(&server, "placed:base:feed_trough"), 1, "set down again, once");
         let snare = set(&mut server, "base:snare", 129);
-        let sprung = server.content.traps.traps.iter().find(|t| server.block(snare) == Some(t.set)).expect("a set snare").sprung;
+        let trap = server.content.traps.traps.iter().find(|t| server.block(snare) == Some(t.set)).expect("a set snare");
+        let (armed, sprung) = (trap.set, trap.sprung);
         server.set_block(snare, sprung);
         assert_eq!(tally(&server, "placed:base:snare"), 1, "sprung is still standing");
         set(&mut server, "base:snare", 129);
+        assert_eq!(server.block(snare), Some(armed), "the cell holds the set snare again");
         assert_eq!(tally(&server, "placed:base:snare"), 1, "a snare set over its own cell counts once");
         set(&mut server, "base:cobblestone", 129);
         assert_eq!(tally(&server, "placed:base:snare"), 0, "built over, the snare no longer counts");
@@ -324,6 +353,28 @@ mod tests {
         assert!(!server.quest_placed.contains_key(&trough), "no open quest counts it any more");
         set(&mut server, "base:feed_trough", 125);
         assert_eq!(tally(&server, "placed:base:feed_trough"), 0, "nor is one set down after");
+    }
+
+    /// A save's records come back by cell: a renamed item's under its new name, and one no
+    /// quest counts any more (a mod took its quest away) not at all, nor on its owner's tally
+    /// as they join.
+    #[test]
+    fn placed_records_load_renamed_and_without_quests_gone() {
+        let mut content = crate::test_content();
+        std::sync::Arc::get_mut(&mut content.blocks).expect("its own").rename(vec![("base:old_snare".into(), "base:snare".into())]).unwrap();
+        let saved = vec![([1, 2, 3], "Ada".to_owned(), "base:old_snare".to_owned()), ([4, 5, 6], "ada".to_owned(), "base:cobblestone".to_owned()), ([7, 8, 9], "ada".to_owned(), "base:gone".to_owned())];
+        let restored = super::restore_placed(&saved, &content.blocks, &content.quests);
+        let restored: Vec<_> = restored.into_iter().collect();
+        assert_eq!(restored, [(IVec3::new(1, 2, 3), ("ada".to_owned(), "base:snare".to_owned()))], "renamed loads as the snare; cobblestone no quest counts; an unknown item goes");
+        // At join: one whose quest a mod took away goes, and its tally with it.
+        let mut server = fixture();
+        let name = server.players[&1].name.clone();
+        let owner = crate::player_key(&name);
+        server.quest_placed.insert(IVec3::new(1, 2, 3), (owner.clone(), "base:cobblestone".into()));
+        server.quest_placed.insert(IVec3::new(4, 5, 6), (owner, "base:snare".into()));
+        server.recount_placed(1);
+        assert_eq!(server.quest_placed.len(), 1, "only the snare a quest counts is kept");
+        assert_eq!((tally(&server, "placed:base:snare"), tally(&server, "placed:base:cobblestone")), (1, 0));
     }
 
     /// Starts a party of `kind` beside the player and gives back its first member.
