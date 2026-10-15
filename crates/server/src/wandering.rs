@@ -345,6 +345,10 @@ pub struct SavedCompanion {
     pub position: [f32; 3],
     pub yaw: f32,
     pub health: u16,
+    /// Its own count of rolls (`Live::rolls`), so it thinks on rather than again; none in
+    /// older saves.
+    #[serde(default)]
+    pub rolls: u64,
 }
 
 impl Server {
@@ -355,7 +359,7 @@ impl Server {
             .live
             .values()
             .filter(|c| c.companion)
-            .map(|c| SavedCompanion { species: self.content.creatures.get(c.species).def.name.clone(), seed: c.seed, position: c.body.position.to_array(), yaw: c.body.yaw, health: c.health })
+            .map(|c| SavedCompanion { species: self.content.creatures.get(c.species).def.name.clone(), seed: c.seed, position: c.body.position.to_array(), yaw: c.body.yaw, health: c.health, rolls: c.rolls })
             .collect();
         // The same file for the same world, whatever order the creatures are kept in.
         saved.sort_by_key(|s| s.seed);
@@ -376,6 +380,7 @@ impl Server {
             let creature = self.creatures.live.get_mut(&id).expect("just made");
             creature.body.yaw = s.yaw;
             creature.health = s.health.min(creature.health).max(1);
+            creature.rolls = s.rolls;
             (creature.companion, creature.wanderer) = (true, true);
         }
     }
@@ -3081,10 +3086,12 @@ mod tests {
         let home = Vec3::new(150.5, 200.0, 128.5);
         let mut server = fixture();
         let captive = settled_prisoner(&mut server, home);
-        server.creatures.live.get_mut(&captive).unwrap().health = 3;
+        let creature = server.creatures.live.get_mut(&captive).unwrap();
+        (creature.health, creature.rolls) = (3, 600);
         let (species, at) = (server.creatures.live[&captive].species, server.creatures.live[&captive].body.position);
         let saved = server.saved_companions();
         assert_eq!(saved.len(), 1);
+        assert_eq!(saved[0].rolls, 600);
         // Through the file, into a world that has just opened.
         let dir = std::env::temp_dir().join(format!("voxmar-companions-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -3099,10 +3106,17 @@ mod tests {
         let (id, back) = reopened.creatures.live.iter().find(|(_, c)| c.companion).expect("the prisoner is back");
         assert_eq!(back.species, species);
         assert_eq!(back.health, 3, "as wounded as it was");
+        assert_eq!(back.rolls, 600, "it thinks on from where it was, not over again");
         assert!(flat(back.body.position, at) < 0.01, "where it stood");
         assert!(!reopened.wandering.manages(*id));
         assert_eq!(reopened.saved_companions(), saved, "and is saved again the same");
         std::fs::remove_dir_all(&dir).unwrap();
+        // A file from before rolls were counted reads, and starts its count at none.
+        let text = ron::ser::to_string(&saved).unwrap();
+        let older = text.replace(",rolls:600", "");
+        assert_ne!(older, text, "the field is in the text: {text}");
+        let read: Vec<SavedCompanion> = ron::from_str(&older).unwrap();
+        assert_eq!(read[0].rolls, 0);
     }
 
     #[test]
@@ -3138,7 +3152,7 @@ mod tests {
     fn companions_waiting_for_their_species_keep_their_places() {
         let mut server = fixture();
         let most = server.content.wandering.rules().companions_most;
-        let gone = |n: u64| SavedCompanion { species: "lostmod:ghost".into(), seed: n, position: [128.5, 200.0, 140.5], yaw: 0.0, health: 5 };
+        let gone = |n: u64| SavedCompanion { species: "lostmod:ghost".into(), seed: n, position: [128.5, 200.0, 140.5], yaw: 0.0, health: 5, rolls: 0 };
         server.restore_companions((0..most as u64).map(gone).collect());
         assert_eq!(server.wandering.waiting.len(), most);
         let led = settled_prisoner(&mut server, Vec3::new(150.5, 200.0, 128.5));
@@ -6179,15 +6193,10 @@ mod tests {
         assert!(server.wandering.active.contains_key(&ahead));
     }
 
-    /// A party that comes after another (`needs.after`) joins it through the gap that keeps
-    /// other parties off, `follow_after` seconds on at the earliest, and only once for each.
-    #[test]
-    fn a_party_that_comes_after_another_joins_it_through_the_gap_once() {
-        let mut server = fixture();
-        broad_day(&mut server);
-        // Floor about land the rival comes to, and the player on it.
-        let land = land_for(&server, event(&server, "rival_pedlar"), Vec3::new(128.0, 200.0, 128.0), |at| {
-            let rival = server.content.wandering.get(event(&server, "rival_pedlar"));
+    /// Floor about land a rival pedlar comes to, and player 1 on it; where it is.
+    fn rival_ground(server: &mut Server) -> IVec3 {
+        let land = land_for(server, event(server, "rival_pedlar"), Vec3::new(128.0, 200.0, 128.0), |at| {
+            let rival = server.content.wandering.get(event(server, "rival_pedlar"));
             (0..16).all(|i| {
                 let (a, r) = (i as f32 * 0.4, 50.0 + i as f32 * 3.0);
                 let biome = server.overworld.biomes().get(server.overworld.site((at.x + a.cos() * r) as i32, (at.z + a.sin() * r) as i32).biome);
@@ -6208,6 +6217,62 @@ mod tests {
             }
         }
         server.players.get_mut(&1).unwrap().position = Vec3::new(land.x as f32 + 0.5, 200.0, land.z as f32 + 0.5);
+        land
+    }
+
+    /// Whether a party comes after another, and which, is drawn by the world's count of
+    /// rolls, never the tick it is tried on.
+    #[test]
+    fn a_follower_draws_by_the_worlds_count_not_the_tick() {
+        let joined = |from: u64| {
+            let mut server = fixture();
+            server.meta.draw_key = 0x0d1a;
+            broad_day(&mut server);
+            let land = rival_ground(&mut server);
+            server.tick = from;
+            start(&mut server, "pedlar_and_hound", (land.x, land.z - 60));
+            server.tick += ticks(server.content.wandering.rules().follow_after);
+            let before: Vec<u64> = server.wandering.active.keys().copied().collect();
+            let found = (0..400).find_map(|salt| {
+                server.try_follower(1, salt);
+                server.tick += 7;
+                server.wandering.active.values().find(|i| !before.contains(&i.id)).map(|i| (salt, i.event, i.seed))
+            });
+            (found, server.meta.rolls)
+        };
+        let first = joined(3_000);
+        assert!(first.0.is_some(), "no rival came: {first:?}");
+        assert_eq!(joined(3_000 + 40_977), first, "the same tries later drew otherwise");
+    }
+
+    /// How long a party camps is drawn by its own count of rolls, never the tick: the same
+    /// party set out later stays alike.
+    #[test]
+    fn a_partys_stay_draws_by_its_own_count_not_the_tick() {
+        let stays = |from: u64| {
+            let mut server = fixture();
+            server.tick = from;
+            let id = start(&mut server, "puppeteers", (110, 128));
+            assert!(run_until(&mut server, id, 60, |inst| matches!(inst.plan, Plan::Camp { stay_until: Some(_), .. })), "the party settles");
+            let inst = &server.wandering.active[&id];
+            let Plan::Camp { stay_until: Some(until), .. } = inst.plan else { unreachable!() };
+            (until - server.tick, inst.rolls.get())
+        };
+        // A whole number of every creature's beats on (see the creatures' own test), so
+        // the party walks alike.
+        let beats: u64 = (4..7).chain(20..23).product();
+        let first = stays(2_000);
+        assert!(first.1 > 0, "its stay drew nothing: {first:?}");
+        assert_eq!(stays(2_000 + 7 * beats), first, "the same party set out later stayed otherwise");
+    }
+
+    /// A party that comes after another (`needs.after`) joins it through the gap that keeps
+    /// other parties off, `follow_after` seconds on at the earliest, and only once for each.
+    #[test]
+    fn a_party_that_comes_after_another_joins_it_through_the_gap_once() {
+        let mut server = fixture();
+        broad_day(&mut server);
+        let land = rival_ground(&mut server);
         let pedlar = start(&mut server, "pedlar_and_hound", (land.x, land.z - 60));
         assert!(!server.wandering_welcome(1), "the gap after the pedlar keeps others off");
         let follow = |server: &mut Server| {

@@ -248,6 +248,12 @@ fn days(day: f64) -> f64 {
     day / TICKS_PER_DAY as f64
 }
 
+/// What person `seed` draws the spot for a trip by: the day, the place's slot, the trip's
+/// leg there and the tries in a row that found none, never the tick it sets out on.
+fn spot_pick(seed: u64, day: u64, slot: usize, leg: usize, misses: u64) -> u64 {
+    mix(mix(mix(seed, day), (slot as u64) << 32 | leg as u64), misses)
+}
+
 impl Server {
     /// How settlements' people are kept alive (`people.live`).
     fn live(&self) -> LiveDef {
@@ -446,6 +452,7 @@ impl Server {
             return;
         }
         let Some(id) = self.spawn_seeded(species, spot.0.as_vec3() + Vec3::new(0.5, 0.0, 0.5), seed) else { return };
+        self.start_rolls(id);
         // Looks from the people of the land about, the same each visit.
         let genome = self.wild_genome(species, home, seed);
         let def = &self.content.creatures.get(species).def;
@@ -536,7 +543,7 @@ impl Server {
             // Which spot, by the day, the place's slot and the trip's leg there, never the tick
             // it sets out on; a miss draws the next try otherwise.
             let misses = self.villagers.towns[&town].people[i].misses;
-            let pick = mix(mix(mix(seed, day as u64), (slot as u64) << 32 | leg as u64), misses);
+            let pick = spot_pick(seed, day, slot, leg, misses);
             let found = self.target(town, i, pick, &mut trip, live);
             self.villagers.towns.get_mut(&town).expect("listed").people[i].misses = if found.is_some() { 0 } else { misses + 1 };
             let Some(target) = found else { return };
@@ -1013,6 +1020,43 @@ mod tests {
         player.joined = true;
         player.name = "Tëster".into();
         server.players.insert(1, player);
+    }
+
+    /// The spot a person sets out for is drawn by the day, the slot and the leg, never the
+    /// tick they set out on; and each try in a row that found none draws the next otherwise.
+    #[test]
+    fn a_persons_spot_draws_by_the_day_not_the_tick_and_a_miss_draws_anew() {
+        let set_out = |tick: u64| {
+            let mut server = fixture("base:farmer", 1);
+            server.bring_out(1, 0);
+            let id = server.villagers.towns[&1].people[0].creature.expect("out");
+            server.tick = tick;
+            let live = server.live();
+            server.follow_day(id, 1, 0, &live);
+            server.villagers.towns[&1].people[0].trip.as_ref().map(|t| (t.place, t.slot, t.day, t.leg, t.path.clone()))
+        };
+        let first = set_out(5_000);
+        assert!(first.as_ref().is_some_and(|t| !t.4.is_empty()), "no trip set out on: {first:?}");
+        assert_eq!(set_out(5_000 + 7_919), first, "the same day's trip set out later went elsewhere");
+        let picks: std::collections::BTreeSet<u64> = (0..8).map(|misses| spot_pick(100, 3, 1, 0, misses)).collect();
+        assert_eq!(picks.len(), 8, "a miss drew the same pick again");
+    }
+
+    /// A resident is the same individual on each visit, but thinks afresh: each coming out
+    /// starts its count of rolls at the world's next roll, not at none again.
+    #[test]
+    fn a_resident_out_again_is_the_same_but_thinks_afresh() {
+        let mut server = fixture("base:farmer", 1);
+        let mut out = Vec::new();
+        for _ in 0..3 {
+            server.bring_out(1, 0);
+            let id = server.villagers.towns[&1].people[0].creature.expect("out");
+            out.push((server.creatures.live[&id].seed, server.creatures.live[&id].rolls));
+            server.release_town(1);
+        }
+        assert!(out.iter().all(|o| o.0 == out[0].0), "not the same individual: {out:?}");
+        let starts: std::collections::BTreeSet<u64> = out.iter().map(|o| o.1).collect();
+        assert_eq!(starts.len(), 3, "a visit started its thoughts where another did: {out:?}");
     }
 
     #[test]

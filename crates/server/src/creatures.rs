@@ -542,7 +542,7 @@ impl Server {
                     errand: self.villagers.errand(id, handoff).or_else(|| self.wandering.errand(id)),
                     dt: every as f32 * dt,
                     // By its own count of thoughts, never the tick it thinks on.
-                    seed: mix(creature.seed, creature.rolls ^ THOUGHT),
+                    seed: mix(mix(creature.seed, creature.rolls), THOUGHT),
                 };
                 let wet = Ground::of(self).water_at(position.floor().as_ivec3());
                 let creature = self.creatures.live.get_mut(&id).expect("listed");
@@ -1227,6 +1227,16 @@ impl Server {
     /// resident remains the same individual on each visit.
     pub(crate) fn spawn_seeded(&mut self, species: CreatureId, at: Vec3, seed: u64) -> Option<u32> {
         self.spawn_seeded_unseen(species, at, seed, 0.0)
+    }
+
+    /// Starts creature `id`'s own count of rolls (`Live::rolls`) at the world's next roll
+    /// (`ROLL_START`): one with a fixed seed (a lair's boss, a settlement's resident), woken
+    /// again as the same individual, draws its thoughts afresh rather than over again.
+    pub(crate) fn start_rolls(&mut self, id: u32) {
+        let [a, b] = self.meta.next_roll(crate::save::ROLL_START);
+        if let Some(creature) = self.creatures.live.get_mut(&id) {
+            creature.rolls = u64::from(a.to_bits()) << 32 | u64::from(b.to_bits());
+        }
     }
 
     /// Natural spawns check the individual's gene-scaled body before it enters the
@@ -2965,6 +2975,29 @@ mod herd_tests {
     /// whichever the list of those about put first, two near each other went round to each
     /// other's far side, and strolls took them well off: 288 sharp turns for mouflon, 256
     /// for red deer, 394 for junglefowl.
+    /// What a creature thinks is drawn by its own count of thoughts, never the tick it
+    /// thinks on: the same herd let be from a tick far on wanders alike.
+    #[test]
+    fn a_creatures_thoughts_draw_by_its_own_count_not_the_tick() {
+        let wandered = |from: u64| {
+            let mut server = crate::test_server();
+            let c = pen(&mut server, 14);
+            let ids: Vec<u32> = (0..3).map(|i| put(&mut server, "base:mouflon", c.as_vec3() + Vec3::new(i as f32 * 1.5 - 1.5, 0.0, 0.0), Vec3::X)).collect();
+            server.tick = from;
+            for _ in 0..20 * TICKS_PER_SECOND as u64 {
+                server.tick += 1;
+                server.think_and_move();
+            }
+            ids.iter().map(|id| (server.creatures.live[id].rolls, server.creatures.live[id].body.position.to_array())).collect::<Vec<_>>()
+        };
+        // A whole number of every beat a creature may think at on (`NEAR_THINK`,
+        // `FAR_THINK`, each up to two more), so each thinks on the same ticks of its own.
+        let beats: u64 = (0..3).map(|k| NEAR_THINK + k).chain((0..3).map(|k| FAR_THINK + k)).product();
+        let first = wandered(1_000);
+        assert!(first.iter().all(|(rolls, _)| *rolls > 3), "they hardly thought: {first:?}");
+        assert_eq!(wandered(1_000 + 7 * beats), first, "the same herd from later thought otherwise");
+    }
+
     #[test]
     fn a_herd_at_rest_keeps_together_without_turning_to_and_fro() {
         for (name, most) in [("base:mouflon", 110), ("base:red_deer", 110), ("base:junglefowl", 220)] {

@@ -375,7 +375,7 @@ impl Server {
             for (index, product) in species.def.products.iter().enumerate() {
                 if product.tool.is_none() && tick >= creature.products_due[index] {
                     // By its own count of rolls, never the tick it is laid on.
-                    let roll = voxmar_engine::creature::mix(creature.seed, creature.rolls ^ crate::creatures::PRODUCT);
+                    let roll = voxmar_engine::creature::mix(voxmar_engine::creature::mix(creature.seed, creature.rolls), crate::creatures::PRODUCT);
                     creature.rolls += 1;
                     creature.products_due[index] = tick + product_ticks(product.every / often, roll, index);
                     let keeper = creature.owner_id.filter(|_| product.nests);
@@ -469,7 +469,7 @@ impl Server {
         for i in 0..count {
             // Each young's genes, looks and mind by the world's count of rolls, never by the
             // tick it is born on.
-            let [g, h] = self.meta.next_roll(crate::save::ROLL_YOUNG);
+            let [g, h] = self.meta.next_cast(crate::save::ROLL_YOUNG);
             let salt = seed ^ (u64::from(g.to_bits()) << 32 | u64::from(h.to_bits()));
             let Some(id) = self.spawn_creature(species, at + Vec3::new(0.3 * i as f32, 0.0, 0.3), salt) else { continue };
             born += 1;
@@ -1425,18 +1425,23 @@ mod tests {
         server.creatures.live.get_mut(&id).unwrap().owner = None;
         assert_eq!(server.working_share(id), 0.0);
         server.creatures.live.get_mut(&id).unwrap().owner = Some("test".into());
-        // The save keeps its condition and when it ate, and brings both back.
+        // The save keeps its condition, when it ate and its count of rolls, and brings
+        // them back, through the file's own text.
         let creature = server.creatures.live.get_mut(&id).unwrap();
-        (creature.condition, creature.fed) = (0.42, server.day - 1.5 * day);
+        (creature.condition, creature.fed, creature.rolls) = (0.42, server.day - 1.5 * day, 600);
         let saved = server.saved_creatures();
         assert_eq!(saved.len(), 1);
         assert_eq!(saved[0].condition, Some(0.42));
         assert!((saved[0].fed_days_ago.unwrap() - 1.5).abs() < 1e-3);
+        let text = ron::ser::to_string(&saved).unwrap();
+        let read: Vec<SavedCreature> = ron::from_str(&text).unwrap();
+        assert_eq!(read, saved);
         server.creatures.live.clear();
-        server.restore_creatures(saved);
+        server.restore_creatures(read);
         let back = server.creatures.live.values().next().expect("restored");
         assert_eq!(back.condition, 0.42);
         assert!((server.days_since(back.fed) - 1.5).abs() < 1e-3);
+        assert_eq!(back.rolls, 600, "it thinks on from where it was, not over again");
         // One saved before condition comes back newly tamed and just fed.
         let old = rabbit(server.spawn);
         server.creatures.live.clear();
@@ -1444,6 +1449,11 @@ mod tests {
         let back = server.creatures.live.values().next().expect("restored");
         assert_eq!(back.condition, rules.tamed);
         assert!(server.days_since(back.fed).abs() < 1e-3);
+        // A file from before rolls were counted reads, and starts its count at none.
+        let older = text.replace(",rolls:600", "");
+        assert_ne!(older, text, "the field is in the text: {text}");
+        let read: Vec<SavedCreature> = ron::from_str(&older).unwrap();
+        assert_eq!(read[0].rolls, 0);
     }
 
     /// When a kept animal's next product is due is drawn by its own count of rolls, never
