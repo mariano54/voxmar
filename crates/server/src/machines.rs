@@ -338,7 +338,8 @@ impl Server {
         let multiblocks = self.content.multiblocks.clone();
         let structure = multiblocks.with_core(view.block).next();
         match structure {
-            Some(_) if !self.structure_loaded(pos) => lines.push(Words::key("station.unloaded")),
+            // Not standing as far as can be seen: a piece in land still loading may be there.
+            Some(_) if !self.station_stands(pos) && !self.structure_loaded(pos) => lines.push(Words::key("station.unloaded")),
             Some(structure) if !self.station_stands(pos) => {
                 lines.push(Words::Own(format!("{}.hint", def_key("multiblock", &structure.name)), structure.hint.clone()));
             }

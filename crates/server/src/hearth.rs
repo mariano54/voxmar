@@ -79,13 +79,14 @@ impl Server {
     /// Explain a broken or cold station without activating it as a side effect of cooking.
     pub(crate) fn station_hint(&self, agent: PlayerId, core: IVec3) {
         let Some(block) = self.block(core) else { return };
+        let structures = &self.content.multiblocks;
+        let standing = structures.with_core(block).find(|m| m.stands(core, |p| self.block(p)));
         // A piece in land not yet loaded never matches: that is no reason to call it unbuilt.
-        if !self.structure_loaded(core) {
+        if standing.is_none() && !self.structure_loaded(core) {
             self.refuse(agent, Words::key("station.unloaded"));
             return;
         }
-        let structures = &self.content.multiblocks;
-        let words = match structures.with_core(block).find(|m| m.stands(core, |p| self.block(p))) {
+        let words = match standing {
             // Cold: said where refusals are, with the soft no.
             Some(standing) => {
                 let words = Words::key("multiblock.cold").with("structure", structure_words(standing)).with("fuel", fuel_words(standing, &self.content.blocks));
@@ -463,6 +464,31 @@ mod tests {
         server.world.insert(east, held);
         server.light(1, core);
         assert!(server.lit.contains_key(&core), "not lit once loaded");
+    }
+
+    /// A structure that stands is told as standing, though land within its reach on a side
+    /// it does not use is still loading.
+    #[test]
+    fn a_standing_structure_by_land_still_loading_is_told_cold_not_loading() {
+        let mut server = crate::test_server();
+        let (client, connection) = voxmar_protocol::local_pair();
+        server.players.insert(1, Player::new(1, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits));
+        // A mod's hearth one block wide, built along the column's east edge.
+        let source = r#"(multiblocks: [(name: "edge_hearth", title: "Edge Hearth", hint: "A stone each side.", layers: [["s", "H", "s"]], key: {'s': "tag:stone", 'H': "hearthstone"}, core: 'H')])"#;
+        let file = voxmar_engine::multiblock::MultiblockRegistry::read("base", source).expect("reads");
+        server.content.multiblocks = std::sync::Arc::new(voxmar_engine::multiblock::MultiblockRegistry::new(vec![file], &server.content.blocks).expect("resolves"));
+        let column = ColumnPos::of_block(server.spawn.floor().as_ivec3());
+        let core = column.origin() + IVec3::new(31, server.spawn.y as i32 + 4, 8);
+        server.load_area(core - IVec3::splat(2), core + IVec3::splat(2));
+        let stone = server.content.blocks.expect("base:cobblestone");
+        server.set_block(core + IVec3::Z, stone);
+        server.set_block(core - IVec3::Z, stone);
+        server.set_block(core, server.content.blocks.expect("base:hearthstone"));
+        server.world.remove(column.offset(1, 0)).expect("loaded");
+        assert!(server.station_stands(core) && !server.structure_loaded(core), "the case is a standing structure short of loaded land");
+        server.station_hint(1, core);
+        let told: Vec<Words> = std::iter::from_fn(|| client.try_recv().ok().flatten()).filter_map(|m| match m { ServerMessage::Refused { why } => Some(why), _ => None }).collect();
+        assert!(matches!(told.as_slice(), [Words::Key(key, _)] if key == "multiblock.cold"), "told {told:?}");
     }
 
     /// A standing Homestead Hearth and a Cottage Stove cook what a campfire cooks; a
