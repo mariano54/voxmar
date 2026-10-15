@@ -442,6 +442,11 @@ steps! {
     /// A stick held in a fire catches as a firebrand in the hand, which lights the dark
     /// floor before the player warm while held, and burns out to a charred stick.
     Firebrand,
+    /// A torch set down in a sealed dark room lights the floor before the player warm; a
+    /// game day later it has burnt down to a dark stub (the same floor, settled, shots
+    /// `torch-lit` and `torch-stub`). A firebrand right clicked on the stub lights it again,
+    /// and rain on it, the roof gone, puts it out.
+    Torch,
     /// A survival player's inventory search finds the stone pickaxe by "pick"; its recipe
     /// opened in the viewer finishes the "Look It Up" quest; the quest book's page for the
     /// pickaxe shows its recipe inline, an item clicked there opens the viewer, and Back
@@ -625,6 +630,8 @@ struct Gate {
     tool_wear: Option<WearPlan>,
     /// What the firebrand step lights.
     firebrand: Option<BrandPlan>,
+    /// What the torch step burns out and lights again.
+    torch: Option<TorchPlan>,
     /// Raw small game carried, slots and pouch, as the dry step hangs the rack, so its
     /// readout can count what hung.
     rack_rabbits: u32,
@@ -914,6 +921,7 @@ impl Gate {
             pot_ground: None,
             tool_wear: None,
             firebrand: None,
+            torch: None,
             rack_rabbits: 0,
             dry_clearing: None,
             dry_pickup: None,
@@ -1541,6 +1549,8 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         // Two blocks mined with a tool, and a mend crafted, each waited on.
         Step::ToolWear => STEP_LIMIT + 15.0,
         Step::Firebrand => STEP_LIMIT + 15.0,
+        // A torch burnt out, lit again and rained out, each waited on.
+        Step::Torch => STEP_LIMIT + 20.0,
         // A party walks in, is talked to, traded with and sent away, each in server seconds.
         Step::Party => 60.0,
         // The effects are judged once a second by the server, and a rest is a sleep away.
@@ -1863,6 +1873,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Chop => chop(world, gate, now),
         Step::ToolWear => tool_wear(world, gate, now),
         Step::Firebrand => firebrand(world, gate, now, in_phase),
+        Step::Torch => torch(world, gate, now, in_phase),
         Step::LookUp => look_up(world, gate, now, in_phase),
         Step::Refusal => refusal(world, gate, now, in_phase),
         Step::Merged => merged(world, gate, now, in_phase),
@@ -4829,7 +4840,7 @@ fn firebrand(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 net.command(&format!("clear {}", content.blocks.def(item).name));
             }
         }
-        gate.next(Step::LookUp, now);
+        gate.next(Step::Torch, now);
     };
     let fail = |world: &mut World, gate: &mut Gate, check: &str, why: String| {
         let why = format!("{why} (crosshair on {}; screens {:?})", crosshair_on(world), covering_screens(world));
@@ -4953,6 +4964,170 @@ fn firebrand(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             } else if waited {
                 let held = held.map(|b| name(b));
                 fail(world, gate, "firebrand: burns out", format!("a second from burnt out, the {} still left {held:?} in hand after {BRAND_WAIT} server seconds (wanted {:?})", name(plan.brand), plan.burnt.map(|b| name(b))));
+            }
+        }
+    }
+}
+
+/// Server seconds the torch step waits on each thing it asks.
+const TORCH_WAIT: f32 = 10.0;
+
+/// What the torch step burns out and lights again, picked from the content by what each is:
+/// a light set down on its own (not on a wall) that burns out and rain puts out, what it
+/// leaves, and something else that kindles it again.
+#[derive(Clone, Copy, Debug)]
+struct TorchPlan {
+    torch: BlockId,
+    stub: BlockId,
+    kindle: BlockId,
+}
+
+impl TorchPlan {
+    fn of(content: &voxmar_engine::content::Content) -> Result<Self, String> {
+        let (blocks, flames) = (&content.blocks, &content.flames);
+        let torch = blocks
+            .ids()
+            .find(|&b| blocks.info(b).facing.is_none() && blocks.info(b).placeable && blocks.item_of(b) == b && blocks.info(b).emission > 0 && flames.douses(b) && flames.burns_out(blocks, b).is_some())
+            .ok_or("no light set down on its own in the content burns out and is put out by rain")?;
+        let (_, stub) = flames.burns_out(blocks, torch).expect("found by it");
+        let kindle = blocks.ids().find(|&b| b != torch && flames.kindles(b)).ok_or("nothing in the content but the light itself kindles")?;
+        Ok(Self { torch, stub, kindle })
+    }
+}
+
+/// A torch set down in a sealed dark room lights the floor before the player; a game day on
+/// (`/time add`, so the room is as dark as it was) it is a stub and the same floor, settled,
+/// is dark again. Lit again from a firebrand in hand, then the roof taken off and rain
+/// brought, the rain puts it out.
+fn torch(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    let at = gate.feet + IVec3::new(0, 0, 14) + CHOP_FROM_FIRE + IVec3::new(16, 0, 0);
+    let light_at = at + IVec3::new(1, 0, 2);
+    let floor = at + IVec3::new(0, -1, 2);
+    let waited = gate.server_in_phase() > TORCH_WAIT;
+    let content = world.resource::<Launch>().content.clone();
+    let name = |id: BlockId| content.blocks.def(id).name.clone();
+    let end = |world: &mut World, gate: &mut Gate| {
+        mouse(world, MouseButton::Right, false);
+        world.resource_mut::<crate::render::particles::Particles>().hidden = false;
+        let net = world.resource::<Net>();
+        net.command("weather natural");
+        net.command(&format!("fill {} {} {} {} {} {} air", at.x - 3, at.y, at.z - 3, at.x + 3, at.y + 5, at.z + 3));
+        if let Some(plan) = gate.torch.take() {
+            for item in [plan.torch, plan.stub, plan.kindle] {
+                net.command(&format!("clear {}", content.blocks.def(item).name));
+            }
+        }
+        gate.fire_lit = None;
+        gate.next(Step::LookUp, now);
+    };
+    let fail = |world: &mut World, gate: &mut Gate, check: &str, why: String| {
+        let why = format!("{why} (crosshair on {}; screens {:?})", crosshair_on(world), covering_screens(world));
+        gate.check(check, Err(why));
+        end(world, gate);
+    };
+    let here = |world: &World| world.resource::<ClientWorld>().block(light_at);
+    match gate.phase {
+        0 => {
+            let plan = match TorchPlan::of(&content) {
+                Ok(plan) => plan,
+                Err(why) => return fail(world, gate, "torch: burns out", why),
+            };
+            gate.torch = Some(plan);
+            if !empty_hand(world) {
+                return fail(world, gate, "torch: burns out", "no empty hotbar slot, so no light is held".into());
+            }
+            let net = world.resource::<Net>();
+            net.command("gamemode survival");
+            net.command("time set midnight");
+            net.command("creatures disperse");
+            for item in [plan.torch, plan.stub, plan.kindle] {
+                net.command(&format!("clear {}", name(item)));
+            }
+            // A sealed room of stone, floor and all, with the torch set down in it.
+            net.command(&format!("fill {} {} {} {} {} {} stone", at.x - 3, at.y - 1, at.z - 3, at.x + 3, at.y + 5, at.z + 3));
+            net.command(&format!("fill {} {} {} {} {} {} air", at.x - 2, at.y, at.z - 2, at.x + 2, at.y + 4, at.z + 2));
+            net.command(&format!("setblock {} {} {} {}", light_at.x, light_at.y, light_at.z, name(plan.torch)));
+            net.command(&format!("tp {} {} {}", at.x as f32 + 0.5, at.y, at.z as f32 + 0.5));
+            gate.advance(now);
+        }
+        // The torch there and its light drawn: the floor before the player, lit by it.
+        1 => {
+            let Some(plan) = gate.torch else { return };
+            aim_at(world, floor.as_vec3() + Vec3::new(0.5, 1.0, 0.5));
+            let set = here(world) == Some(plan.torch);
+            if set && light_drawn(world, gate, &[light_at, at, floor]) && in_phase > 0.5 {
+                let Some(shot) = fire_shot(world, gate, "torch-lit") else { return };
+                match ground_colour(&shot) {
+                    Ok(colour) => {
+                        gate.fire_lit = Some(colour);
+                        // A game day on, as dark a night: it has burnt down.
+                        world.resource::<Net>().command("time add 1d");
+                        gate.advance(now);
+                    }
+                    Err(why) => fail(world, gate, "torch: burns out", why),
+                }
+            } else if waited {
+                fail(world, gate, "torch: burns out", format!("the {} set down never reached the client ({:?} there) in {TORCH_WAIT} server seconds", name(plan.torch), here(world).map(|b| name(b))));
+            }
+        }
+        2 => {
+            let Some(plan) = gate.torch else { return };
+            aim_at(world, floor.as_vec3() + Vec3::new(0.5, 1.0, 0.5));
+            let out = here(world) == Some(plan.stub);
+            if out && light_drawn(world, gate, &[light_at, at, floor]) && in_phase > 0.5 {
+                let Some(shot) = fire_shot(world, gate, "torch-stub") else { return };
+                let judged = match (gate.fire_lit.take(), ground_colour(&shot)) {
+                    (Some(lit), Ok(unlit)) => {
+                        let added = [0, 1, 2].map(|c| lit[c] - unlit[c]);
+                        let brighter = added.iter().sum::<f64>() / 3.0;
+                        let said = format!("the floor before the player is rgb {:.0} {:.0} {:.0} by the {} and {:.0} {:.0} {:.0} a game day on, by its {}: it had added {:.0} {:.0} {:.0}", lit[0], lit[1], lit[2], name(plan.torch), unlit[0], unlit[1], unlit[2], name(plan.stub), added[0], added[1], added[2]);
+                        if brighter > BRAND_LIFT && added[0] > added[2] + BRAND_WARMTH { Ok(said) } else { Err(format!("{said}, wanted over {BRAND_LIFT} brighter and {BRAND_WARMTH} redder than blue")) }
+                    }
+                    (None, _) => Err("the lit floor was not kept".into()),
+                    (_, Err(why)) => Err(why),
+                };
+                gate.check("torch: burns out", judged);
+                world.resource::<Net>().command(&format!("give {} 1", name(plan.kindle)));
+                gate.advance(now);
+            } else if waited {
+                fail(world, gate, "torch: burns out", format!("a game day on, the {} was still {:?}, not its {}, after {TORCH_WAIT} server seconds", name(plan.torch), here(world).map(|b| name(b)), name(plan.stub)));
+            }
+        }
+        // Something that kindles in hand, right clicked on the stub.
+        3 => {
+            let Some(plan) = gate.torch else { return };
+            let (_, slot) = holding(world, &name(plan.kindle));
+            if let Some(slot) = slot.filter(|&s| s < voxmar_engine::inventory::HOTBAR_SLOTS) {
+                world.resource_mut::<LocalPlayer>().selected = slot;
+                aim_at(world, light_at.as_vec3() + Vec3::new(0.5, 0.4, 0.5));
+                mouse(world, MouseButton::Right, true);
+                gate.advance(now);
+            } else if waited {
+                fail(world, gate, "torch: lights again", format!("a {} never reached the hotbar ({slot:?}) in {TORCH_WAIT} server seconds", name(plan.kindle)));
+            }
+        }
+        4 => {
+            let Some(plan) = gate.torch else { return };
+            aim_at(world, light_at.as_vec3() + Vec3::new(0.5, 0.4, 0.5));
+            if here(world) == Some(plan.torch) {
+                mouse(world, MouseButton::Right, false);
+                gate.check("torch: lights again", Ok(format!("a {} right clicked on the {} lit it again a {}", name(plan.kindle), name(plan.stub), name(plan.torch))));
+                // The roof off, and rain brought over it.
+                let net = world.resource::<Net>();
+                net.command(&format!("fill {} {} {} {} {} {} air", at.x - 3, at.y + 5, at.z - 3, at.x + 3, at.y + 5, at.z + 3));
+                net.command("weather rain 1 60");
+                gate.advance(now);
+            } else if waited {
+                fail(world, gate, "torch: lights again", format!("right clicking the {} with a {} left {:?} there after {TORCH_WAIT} server seconds", name(plan.stub), name(plan.kindle), here(world).map(|b| name(b))));
+            }
+        }
+        _ => {
+            let Some(plan) = gate.torch else { return };
+            if here(world) == Some(plan.stub) {
+                gate.check("torch: rain puts out", Ok(format!("under open sky in rain the {} went out to its {}", name(plan.torch), name(plan.stub))));
+                end(world, gate);
+            } else if waited {
+                fail(world, gate, "torch: rain puts out", format!("in rain under open sky the {} was still {:?} after {TORCH_WAIT} server seconds", name(plan.torch), here(world).map(|b| name(b))));
             }
         }
     }

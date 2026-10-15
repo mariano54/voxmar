@@ -67,6 +67,7 @@
         "base:take_from_trap": (sounds: ["sounds/pouch_1.ogg", "sounds/pouch_2.ogg"], volume: 0.6),
         // Flint struck, sparks, and the tinder catching: a fire or a kiln lit.
         "base:light": (sounds: ["sounds/light_1.ogg", "sounds/light_2.ogg"]),
+        "base:relight": (sounds: ["sounds/light_1.ogg", "sounds/light_2.ogg"]),
         // A lid lifted: a short creak and the lid knocking back.
         "base:open_store": (sounds: ["sounds/store_open_1.ogg", "sounds/store_open_2.ogg"], volume: 0.8),
         // The latch, then a slow creak on the hinges; quieter than the rest at its loudest, so

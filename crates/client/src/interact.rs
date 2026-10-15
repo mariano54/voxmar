@@ -210,6 +210,10 @@ impl ActionContext for ClientContext<'_> {
         Some(&self.content.tools)
     }
 
+    fn flames(&self) -> Option<&voxmar_engine::flame::Flames> {
+        Some(&self.content.flames)
+    }
+
     fn machines(&self) -> Option<&voxmar_engine::machine::MachineRegistry> {
         Some(&self.content.machines)
     }
@@ -369,11 +373,11 @@ fn break_and_place(
         // swarm to a skep held up to them, or a full skep its honey; a home station is
         // loaded or emptied; a sprung trap's catch is taken; a fertiliser is spread on a
         // growing crop; a door is opened or shut, as the server turns it (never predicted:
-        // it holds the collision).
+        // it holds the collision); a torch's stub is lit again by a firebrand or torch.
         // One of these plainly meant (a door, a hive, a station aimed at, a fertiliser in
         // hand) but refused says why, unless something else below takes the click.
         let mut unmet = None;
-        for name in ["base:light", "base:sleep", "base:sit", "base:pick_lock", "base:tend_bees", "base:use_station", "base:take_from_trap", "base:fertilise", "base:open"] {
+        for name in ["base:light", "base:relight", "base:sleep", "base:sit", "base:pick_lock", "base:tend_bees", "base:use_station", "base:take_from_trap", "base:fertilise", "base:open"] {
             if let (Some(hit), Some(action)) = (hit, actions.0.id(name)) {
                 let context = ClientContext { world: &world, player: &player, content };
                 let action_target = ActionTarget::Block { block: hit.block, face: hit.face };
@@ -634,6 +638,7 @@ fn meant(context: &ClientContext, block: IVec3, need: Requirement) -> bool {
     let Some(at) = context.world.block(block) else { return false };
     match need {
         Requirement::Swaps => !voxmar_engine::action::swapping(context, block).is_empty(),
+        Requirement::Relights => context.content.flames.relit(&context.content.blocks, at).is_some(),
         Requirement::Bees => context.bees().is_some_and(|bees| bees.takes.iter().any(|take| take.block == at)),
         Requirement::Station => context.stations().is_some_and(|stations| stations.of(at).is_some()),
         Requirement::Fertilisable => context.actor_held().zip(context.stations()).is_some_and(|(item, stations)| stations.fertiliser(item).is_some()),

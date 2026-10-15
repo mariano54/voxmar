@@ -144,11 +144,14 @@ pub enum Requirement {
     /// The target turns into another block when used (`swaps`: a door), and nobody stands
     /// where it would shut.
     Swaps,
+    /// The target is a light gone out that is lit again (`relights_to:`, a torch's stub),
+    /// and the actor holds something that `kindles` (`flame`).
+    Relights,
 }
 
 impl Requirement {
     /// Every requirement, in [`Requirement::index`] order (`refusal` says why each failed).
-    pub const ALL: [Requirement; 38] = [Requirement::Alive, Requirement::Dead, Requirement::InReach, Requirement::Breakable, Requirement::HoldingBlock, Requirement::Replaceable, Requirement::Unobstructed, Requirement::Supported, Requirement::HoldingSeed, Requirement::Plantable, Requirement::SkillLevel, Requirement::Ripe, Requirement::CreatureInReach, Requirement::CreatureInTouch, Requirement::CreatureAccepts, Requirement::CreatureIsMine, Requirement::Cookable, Requirement::CookingLevel, Requirement::HoldingFood, Requirement::Hurt, Requirement::ToolGood, Requirement::BlockLevel, Requirement::CropLevel, Requirement::Tillable, Requirement::CraftingTable, Requirement::Bed, Requirement::MultiblockCore, Requirement::Machine, Requirement::Altar, Requirement::Fishable, Requirement::Locked, Requirement::Bees, Requirement::Station, Requirement::Fertilisable, Requirement::Store, Requirement::Swaps, Requirement::SprungTrap, Requirement::Seat];
+    pub const ALL: [Requirement; 39] = [Requirement::Alive, Requirement::Dead, Requirement::InReach, Requirement::Breakable, Requirement::HoldingBlock, Requirement::Replaceable, Requirement::Unobstructed, Requirement::Supported, Requirement::HoldingSeed, Requirement::Plantable, Requirement::SkillLevel, Requirement::Ripe, Requirement::CreatureInReach, Requirement::CreatureInTouch, Requirement::CreatureAccepts, Requirement::CreatureIsMine, Requirement::Cookable, Requirement::CookingLevel, Requirement::HoldingFood, Requirement::Hurt, Requirement::ToolGood, Requirement::BlockLevel, Requirement::CropLevel, Requirement::Tillable, Requirement::CraftingTable, Requirement::Bed, Requirement::MultiblockCore, Requirement::Machine, Requirement::Altar, Requirement::Fishable, Requirement::Locked, Requirement::Bees, Requirement::Station, Requirement::Fertilisable, Requirement::Store, Requirement::Swaps, Requirement::SprungTrap, Requirement::Seat, Requirement::Relights];
 
     /// Where it stands in [`Requirement::ALL`]. A new requirement must be added to both:
     /// this match does not compile without it.
@@ -192,6 +195,7 @@ impl Requirement {
             Requirement::Swaps => 35,
             Requirement::SprungTrap => 36,
             Requirement::Seat => 37,
+            Requirement::Relights => 38,
         }
     }
 
@@ -265,6 +269,8 @@ pub enum Effect {
     /// Turn the target into what it swaps for, its upper or lower half with it: open or
     /// shut a door (see [`swapping`]).
     Swap,
+    /// Light the target again: a stub into its torch (`flame`), burning anew.
+    Relight,
     /// Work at the target crafting table: its three-by-three grid, until the actor walks away.
     UseTable,
     /// Empty the pouch in hand into the actor's inventory.
@@ -418,6 +424,10 @@ pub trait ActionContext {
     }
     /// What tools do, where the context knows.
     fn tools(&self) -> Option<&crate::tool::ToolRegistry> {
+        None
+    }
+    /// What burns out and is lit again, where the context knows.
+    fn flames(&self) -> Option<&crate::flame::Flames> {
         None
     }
     /// Whether any agent's body overlaps the cell.
@@ -653,6 +663,12 @@ impl ActionDef {
                 let (block, _) = block_target()?;
                 let rule = ctx.block(block).zip(ctx.tools()).and_then(|(b, tools)| tools.rule(b));
                 rule.is_none_or(|rule| rule.skill.is_none_or(|skill| ctx.actor_level(skill) >= rule.level))
+            }
+            Requirement::Relights => {
+                let (block, _) = block_target()?;
+                ctx.flames().is_some_and(|flames| {
+                    ctx.block(block).is_some_and(|b| flames.relit(ctx.blocks(), b).is_some()) && ctx.actor_held().is_some_and(|item| flames.kindles(item))
+                })
             }
             Requirement::Swaps => {
                 let (block, _) = block_target()?;

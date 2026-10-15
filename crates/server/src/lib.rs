@@ -11,6 +11,7 @@ mod cooking;
 mod creatures;
 mod fight;
 mod fishing;
+mod flames;
 mod death;
 #[cfg(test)]
 mod doors;
@@ -643,6 +644,8 @@ pub(crate) struct Server {
     /// Picked wild plants waiting to grow back (see `regrow`), and plants a herb planter
     /// grew back, whose picking pays the planter's experience.
     regrowing: FxHashMap<IVec3, regrow::Regrowing>,
+    /// Lights set down and burning, by where they stand (`flames`).
+    flames: FxHashMap<IVec3, flames::Flame>,
     planter_grown: FxHashSet<IVec3>,
     /// Kept hives with bees, and how far each is toward its honey (`apiary`).
     apiary: apiary::Apiary,
@@ -760,6 +763,7 @@ impl Server {
         });
         let placed = meta.placed.iter().map(|&p| IVec3::from_array(p)).collect();
         let regrowing = regrow::restore(&meta.regrowing, |name| content.blocks.id(name));
+        let flames = flames::restore(&meta.flames, |name| content.blocks.id(name));
         let lairs = lairs::Lairs::restore(&meta.lairs);
         let planter_grown = meta.planter_grown.iter().map(|&p| IVec3::from_array(p)).collect();
         let apiary = apiary::Apiary::restore(&meta.hives);
@@ -787,6 +791,7 @@ impl Server {
             fires_sent: Vec::new(),
             placed,
             regrowing,
+            flames,
             planter_grown,
             apiary,
             stations,
@@ -1119,6 +1124,7 @@ impl Server {
         meta.time = self.tick;
         meta.placed = self.placed.iter().map(|p| p.to_array()).collect();
         meta.regrowing = self.saved_regrowing();
+        meta.flames = self.saved_flames();
         let mut grown: Vec<[i32; 3]> = self.planter_grown.iter().map(|p| p.to_array()).collect();
         grown.sort();
         meta.planter_grown = grown;
@@ -1251,6 +1257,7 @@ impl Server {
                 self.trap_changed(pos, block);
                 self.fire_changed(pos);
                 self.home_changed(pos, block);
+                self.flame_changed(pos, block);
             }
         }
         for &(pos, _) in &done {
@@ -1289,6 +1296,7 @@ impl Server {
             self.trap_changed(pos, block);
             self.fire_changed(pos);
             self.home_changed(pos, block);
+            self.flame_changed(pos, block);
             for player in self.players.values().filter(|p| p.joined && p.sent.contains(&column)) {
                 player.connection.send(ServerMessage::BlockChanged { pos, block });
             }
