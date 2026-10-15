@@ -19,6 +19,7 @@
         "CreatureInTouch": (silent: true),
         "CraftingTable": (silent: true),
         "Bed": (silent: true),
+        "Seat": (silent: true),
         "MultiblockCore": (silent: true),
         "Machine": (silent: true),
         "Altar": (silent: true),
@@ -57,5 +58,7 @@
         "multiblock.fuel", "multiblock.cold",
         // Home stations.
         "station.level", "station.too_few", "station.nothing_grows", "station.needs.sky", "station.needs.spot", "station.needs.water",
+        // A catch in a trap taken below its skill's level.
+        "trap.needs",
     ],
 )

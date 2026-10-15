@@ -411,8 +411,8 @@ enum Step {
     /// Rice sown on the test ground, too cold for it, is refused by the server for that
     /// reason, and the refusal shows under the crosshair, as a level the player lacks does
     /// (the server sends it as a refusal, not a console line). Then a well from the hand goes
-    /// down by the plot, and stone mined there by hand says under the crosshair which tool
-    /// it wants, in words that fit.
+    /// down by the plot, and a block there that asks for a tool (the first `tools.ron` names
+    /// at level 1) mined by hand says under the crosshair which tool it wants, in words that fit.
     Refusal,
     /// A wild plant whose item merged (oregano into kitchen herbs) is given as the merged
     /// item, and the catalogues (creative, journal, recipe book) list the item, not the plant.
@@ -4508,9 +4508,16 @@ fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 gate.advance(now);
             }
         }
-        // Stone where the plot was, and an empty hand.
+        // A block that wants a tool where the plot was, and an empty hand.
         5 => {
-            world.resource::<Net>().command(&format!("setblock {} {} {} stone", plot.x, plot.y, plot.z));
+            match needs_a_tool(world) {
+                Some((_, name)) => world.resource::<Net>().command(&format!("setblock {} {} {} {name}", plot.x, plot.y, plot.z)),
+                None => {
+                    gate.check("refusal: by hand", Err("no block in the loaded tools.ron asks for a tool at level 1, so none can say which it wants".into()));
+                    to_phase(gate, 7, now);
+                    return;
+                }
+            }
             let empty = (0..voxmar_engine::inventory::HOTBAR_SLOTS).find(|&slot| world.resource::<LocalPlayer>().inventory.get(slot).is_none());
             if let Some(slot) = empty {
                 world.resource_mut::<LocalPlayer>().selected = slot;
@@ -4519,12 +4526,13 @@ fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
         }
         // Mined by hand, it says under the crosshair which tool it wants, and the words fit.
         6 => {
-            let stone = world.resource::<ClientWorld>().registry.id("base:stone");
-            let is_stone = stone.is_some() && world.resource::<ClientWorld>().block(plot) == stone;
-            let wanted = stone.and_then(|stone| why_by_hand(world, stone));
-            if !is_stone || wanted.is_none() {
+            let Some((block, name)) = needs_a_tool(world) else { return to_phase(gate, 7, now) };
+            let came = world.resource::<ClientWorld>().block(plot) == Some(block);
+            let wanted = why_by_hand(world, block);
+            if !came || wanted.is_none() {
                 if gate.server_in_phase() > REFUSAL_WAIT {
-                    gate.check("refusal: by hand", Err(format!("the stone never came at the plot ({is_stone}), or stone asks for no tool ({wanted:?})")));
+                    let showing = world.resource::<ClientWorld>().block(plot).map(|b| world.resource::<ClientWorld>().registry.def(b).name.clone());
+                    gate.check("refusal: by hand", Err(format!("{name} never came at the plot (it holds {showing:?}), or the words for its tool are missing ({wanted:?})")));
                     to_phase(gate, 7, now);
                 }
                 return;
@@ -4536,8 +4544,8 @@ fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 mouse(world, MouseButton::Left, false);
                 let spills: Vec<String> = crate::ui::fit::find(world).into_iter().filter(|spill| spill.text == wanted).map(|spill| spill.to_string()).collect();
                 let judged = match (placed, spills.is_empty()) {
-                    (Ok(at), true) => Ok(format!("stone mined by hand said \"{wanted}\" {at}, and it fits")),
-                    (Ok(_), false) => Err(format!("stone mined by hand said \"{wanted}\", but it does not fit: {}", spills.join("; "))),
+                    (Ok(at), true) => Ok(format!("{name} mined by hand said \"{wanted}\" {at}, and it fits")),
+                    (Ok(_), false) => Err(format!("{name} mined by hand said \"{wanted}\", but it does not fit: {}", spills.join("; "))),
                     (Err(why), _) => Err(why),
                 };
                 gate.check("refusal: by hand", judged);
@@ -4546,7 +4554,7 @@ fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 mouse(world, MouseButton::Left, false);
                 let held = holding_any(world);
                 let showing: Vec<String> = world.resource::<crate::hud::skills::SkillToasts>().refusals().map(str::to_owned).collect();
-                gate.check("refusal: by hand", Err(format!("clicking stone holding {held:?} never showed \"{wanted}\" under the crosshair (showing {showing:?})")));
+                gate.check("refusal: by hand", Err(format!("clicking {name} holding {held:?} never showed \"{wanted}\" under the crosshair (showing {showing:?})")));
                 gate.advance(now);
             } else {
                 // A fresh press each time: a held button mines on, it does not ask again.
@@ -4568,6 +4576,13 @@ fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
 
 /// What clicking `block` with no tool should say: `refusals.ron`'s words for the tool it
 /// wants, naming the least tool that would do.
+/// The first block, in registry order, whose rule in the loaded `tools.ron` asks for a tool
+/// and no more than level 1 (so a bare hand is refused for the tool alone), and its name.
+fn needs_a_tool(world: &World) -> Option<(BlockId, String)> {
+    let content = &world.resource::<Launch>().content;
+    content.blocks.ids().find(|&b| content.tools.rule(b).is_some_and(|rule| rule.tool.is_some() && rule.level <= 1)).map(|b| (b, content.blocks.def(b).name.clone()))
+}
+
 fn why_by_hand(world: &World, block: BlockId) -> Option<String> {
     let (locale, launch) = (world.resource::<Locale>(), world.resource::<Launch>());
     let content = &launch.content;

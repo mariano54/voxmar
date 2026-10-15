@@ -176,7 +176,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
     });
 }
 
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn show(
     time: Res<Time>,
     launch: Res<Launch>,
@@ -184,13 +184,17 @@ fn show(
     mut toasts: ResMut<SkillToasts>,
     mut lines: Query<(&ToastLine, &mut Text, &mut TextColor, &mut TextShadow, &mut Node, &mut Visibility)>,
     mut why_line: Query<(&mut Text, &mut TextColor, &mut TextShadow, &mut Visibility), (With<WhyLine>, Without<ToastLine>)>,
+    ui: Res<UiState>,
+    player: Res<crate::player::LocalPlayer>,
 ) {
     let now = time.elapsed_secs();
     let skills = &launch.content.skills;
     toasts.now = now;
     toasts.lines.retain(|line| now - line.at < LINE_SECONDS);
     if let Ok((mut text, mut color, mut shadow, mut visibility)) = why_line.single_mut() {
-        match toasts.why.as_ref().filter(|(_, at)| now - at < WHY_SECONDS) {
+        // Why a click in the world did nothing: not over a screen, which hides the world.
+        let covered = ui.inventory_open || ui.character_open || ui.journal_open || ui.quests_open || ui.menu_open || ui.recipes_open || player.dead;
+        match toasts.why.as_ref().filter(|(_, at)| now - at < WHY_SECONDS && !covered) {
             Some((why, at)) => {
                 if text.0 != *why {
                     text.0 = why.clone();

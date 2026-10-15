@@ -15,7 +15,7 @@ use voxmar_engine::lang::Words;
 use voxmar_engine::loot::{self, Moment};
 use voxmar_engine::schedule::Tier;
 use voxmar_engine::traits;
-use voxmar_protocol::{ChatKind, PlayerId, ServerMessage};
+use voxmar_protocol::PlayerId;
 
 use crate::Server;
 use crate::items::random3;
@@ -114,7 +114,7 @@ impl Server {
         let level = self.content.skills.level(player.skills.xp(trap.skill));
         if level < trap.level {
             let skill = Words::Own(voxmar_engine::lang::def_key("skill", &self.content.skills.get(trap.skill).name), self.content.skills.get(trap.skill).title.clone());
-            player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: Words::key("trap.needs").with("skill", skill).with("level", Words::text(trap.level)) });
+            self.refuse(agent, Words::key("trap.needs").with("skill", skill).with("level", Words::text(trap.level)));
             return;
         }
         let catch = self.catches.caught.remove(&pos);
