@@ -345,7 +345,7 @@ impl Server {
     pub(crate) fn handle_message(&mut self, id: PlayerId, message: ClientMessage, at: Instant) {
         self.arrival = at;
         // A fire this sets off is theirs.
-        self.fire_origin = self.players.get(&id).map(|p| p.name.clone());
+        self.fire_origin = self.players.get(&id).map(|p| crate::player_key(&p.name));
         if let Some(player) = self.players.get_mut(&id) {
             player.last_heard = player.last_heard.max(at);
         }
@@ -458,7 +458,7 @@ impl Server {
         }
     }
 
-    fn hello(&mut self, id: PlayerId, name: String, protocol: u32, content: u64, admin_token: Option<String>) {
+    pub(crate) fn hello(&mut self, id: PlayerId, name: String, protocol: u32, content: u64, admin_token: Option<String>) {
         let fingerprint = self.content.fingerprint();
         let blocks = self.content.blocks.clone();
         let (seed, allow_flight) = (self.meta.seed, self.config.allow_flight);
@@ -637,7 +637,6 @@ impl Server {
         self.players[&id].connection.send(time);
         let entries = self.players[&id].journal.entries().cloned().collect();
         self.players[&id].connection.send(ServerMessage::Journal { entries });
-        self.claim_home_hearth(id);
         self.kindle_home(id);
         self.players[&id].connection.send(ServerMessage::Fires { lit: self.fires() });
         // What smoulders now: the others were told as it began, and are told only of changes.

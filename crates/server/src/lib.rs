@@ -651,9 +651,9 @@ pub(crate) struct Server {
     blaze_risked: Vec<IVec3>,
     /// The smouldering blocks players were last told of.
     smoulders_sent: Vec<IVec3>,
-    /// Whose doing a fire that starts now is (a player's name): the player whose message is
-    /// being handled, a hearth's owner as it is lit, a burning block's own fire as it spreads;
-    /// none for a flood or a command. Homes catch only from their owner (fire.ron).
+    /// Whose doing a fire that starts now is (a player's key, `player_key`): the player whose
+    /// message is being handled, a hearth's owner as it is lit, a burning block's own fire as
+    /// it spreads; none for a flood or a command. Homes catch only from their owner (fire.ron).
     fire_origin: Option<String>,
     planter_grown: FxHashSet<IVec3>,
     /// Kept hives with bees, and how far each is toward its honey (`apiary`).
