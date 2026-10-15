@@ -30,7 +30,9 @@
         (pattern: [["hide", "hide", "hide"], ["stick", "", "stick"]], output: "hide_lean_to", count: 2, skill: "core:construction", level: 1, xp: 3.0),
         (pattern: [["stick", "stick", "stick"], ["stick", "twine", "stick"], ["stick", "stick", "stick"]], output: "wattle_panel", count: 4, skill: "core:construction", level: 1, xp: 3.0),
         (pattern: [["clay", "twine", "clay"], ["", "wattle_panel", ""]], output: "daub", count: 2, skill: "core:construction", level: 2, xp: 3.0),
-        (pattern: [["tag:beam", "daub"], ["daub", "tag:beam"]], output: "half_timber", count: 4, skill: "core:construction", level: 4, xp: 4.0),
+        // Half-timber: two beams of one wood (a beam asked for by name, so no other piece
+        // answers it) framing two daub.
+        (pattern: [["{name}_beam", "daub"], ["daub", "{name}_beam"]], output: "half_timber", count: 4, skill: "core:construction", level: 4, xp: 4.0),
         (pattern: [["{name}_planks", "stick", "{name}_planks"], ["{name}_planks", "stick", "{name}_planks"]], output: "wooden_shutters", count: 2, skill: "core:construction", level: 2, xp: 3.0),
         (pattern: [["stone_bricks", "", "stone_bricks"], ["stone_bricks", "", "stone_bricks"]], output: "chimney_stack", count: 2, skill: "core:construction", level: 6, xp: 4.0),
         // A town's house: jetties carry an upper floor out over the street on beams and posts;

@@ -17,13 +17,13 @@
     templates: {
         // Timber in one wood (`{name}`).
         "timber": [
-            (name: "{name}_post", render: Model, shape: "post", sound: Wood, textures: All("furniture_grain"), hardness: 2.0, color: (160, 120, 70), tags: ["timber", "post", "wood", "building", "fuel", "shelter:draughty"]),
-            (name: "{name}_beam", render: Model, shape: "beam", facing: true, flips: true, sound: Wood, textures: All("furniture_grain"), hardness: 2.0, color: (160, 120, 70), tags: ["timber", "beam", "wood", "building", "fuel", "shelter:draughty"]),
+            (name: "{name}_post", render: Model, shape: "post", sound: Wood, textures: All("furniture_grain"), hardness: 2.0, color: (160, 120, 70), tags: ["timber", "post", "wood", "building", "fuel", "shelter:sound"]),
+            (name: "{name}_beam", render: Model, shape: "beam", facing: true, flips: true, sound: Wood, textures: All("furniture_grain"), hardness: 2.0, color: (160, 120, 70), tags: ["timber", "beam", "wood", "building", "fuel", "shelter:sound"]),
             (name: "{name}_lattice_window", render: Model, shape: "lattice_window", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 1.0, color: (160, 120, 70), tags: ["timber", "lattice", "wood", "building", "shelter:draughty"]),
             (name: "{name}_shingles", render: Model, shape: "roof", facing: true, light_filter: 14, sound: Wood, textures: All("shingles_grey"), hardness: 1.5, color: (160, 120, 70), tags: ["roof", "shingle", "wood", "building", "fuel", "shelter:sound"]),
             // A jetty: a joist run out past the wall below to carry a floor over the street,
             // a brace under it back to the wall. Its overhang faces whoever set it.
-            (name: "{name}_jetty_beam", render: Model, shape: "jetty_beam", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 2.0, color: (160, 120, 70), tags: ["timber", "jetty", "wood", "building", "fuel", "shelter:draughty"]),
+            (name: "{name}_jetty_beam", render: Model, shape: "jetty_beam", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 2.0, color: (160, 120, 70), tags: ["timber", "jetty", "wood", "building", "fuel", "shelter:sound"]),
             // A door frame: jambs either side of a doorway and a lintel over it, two blocks
             // high (placed whole, as a door is). It frames a way with no door in it, so
             // nothing stops on it: anyone, villager or beast, walks through.

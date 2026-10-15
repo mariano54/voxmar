@@ -65,17 +65,24 @@ A building block says how well it shelters with a tag: `shelter:draughty` (the h
 wattle panels, hide windows, cloth, awnings), `shelter:sound` (logs, planks, cobble, cracked
 and mossy bricks, daub, half-timber, shut doors and shutters) or `shelter:fine` (stone and
 other bricks, polished stone, terracotta, glass, chimney pieces). A better one counts for every
-worse. An open door or shutter carries none: it shelters nothing. A solid block with no tag
-(earth, rock, leaves) counts as draughty: a dugout is walled in, not well built. Shaped pieces
-keep their parent's tags, so a plank stair is as sound as a plank. Every full solid block
-tagged `building` carries exactly one shelter tag, checked when content loads, so a new one
-cannot slip in unjudged.
+worse. An open door or shutter carries none: it shelters nothing. Roofs are judged as walls:
+thatch and shingles are both sound (the trade between them is fire, not draught: thatch is
+cheap and cosy but catches, shingles do not), as are timber posts and beams and plank and
+cobble slabs and stairs; a lattice window is draughty. Natural rock and the ores in it are
+sound, so a home cut into a hillside can be Cosy after the mining it took; earth, gravel, sand
+and any other solid block with no tag count as draughty, until daub coats them. Every solid
+block tagged `building` or `roof`, full or shaped, that is not furniture carries exactly one
+shelter tag, and no block more than one, checked when content loads (server `rules.rs`
+`check_shelters`), so a new one cannot slip in unjudged.
 
 How it is judged (`Server::room_walls`, beside the home survey): from where home stands, a
 scan goes out over the open cells within the home's reach (survival.ron's `home_reach`,
-`home_up`, `home_down`). Every face it meets sideways or overhead is a face of the room: a
+`home_up`, `home_down`), starting from the first open cell over a hearthstone. Every face it meets sideways or overhead is a face of the room: a
 wall, or the roof. A wall is any solid block or any with a shelter tag, so a shut door or a
-window closes the room, and an open door lets the scan out. A face leading out of the reach
+window closes the room, and an open door lets the scan out. Furniture is not a wall: a block
+with a tag in survival.ron's `home_furniture` (machine, station, furnishing, storage, decor,
+multiblock_core, farm, waters) is looked past to the wall behind it, so a chest or a table
+by the wall leaves the room as it was, and a barrel in a doorway is no door. A face leading out of the reach
 (or into an unloaded column) is an opening, of no shelter, and counts against the room; the
 floor is not counted. `HomeWalls(Sound, 0.6)` holds when 6 in 10 faces are sound or better
 (effect.rs, `Condition::HomeWalls`, `Walls::share`; load-checked: the share is above 0 and at
