@@ -103,6 +103,14 @@ impl Server {
     /// Tells `player` that what they tried was refused, and why: the interface shows it
     /// with its other refusals rather than as a console line.
     pub(crate) fn refuse(&self, player: PlayerId, why: Words) {
+        // Every reason the server refuses with is listed in `refusals.ron`, which checks
+        // each has words in every language.
+        if let Words::Key(key, _) = &why
+            && !self.content.refusals.sent(key)
+        {
+            debug_assert!(false, "refused with `{key}`, which refusals.ron does not list under `sent`");
+            tracing::warn!("refused with `{key}`, which refusals.ron does not list under `sent`");
+        }
         if let Some(player) = self.players.get(&player) {
             player.connection.send(ServerMessage::Refused { why });
         }
