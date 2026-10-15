@@ -1494,7 +1494,7 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         Step::Feel => FEEL_LIMIT + 2.0 * UNANSWERED + STEP_LIMIT,
         Step::Breaks => BREAKS_LIMIT + 15.0,
         // Two tools to hand and two breaks, each answer waited on.
-        Step::Tiers => 6.0 * TIERS_WAIT + STEP_LIMIT,
+        Step::Tiers => 8.0 * TIERS_WAIT + STEP_LIMIT,
         // Crafting, mining, tilling and fishing until something bites.
         // In the full gate, with time for its full-only machine phases.
         Step::Workshop => 250.0 + full_allowance(),
@@ -2301,7 +2301,9 @@ const TIERS: [&str; 2] = ["wooden_pickaxe", "copper_pickaxe"];
 
 /// The same stone broken with each pickaxe of `TIERS` in turn: the client works out how
 /// long each takes when it starts (as the server does), and the better one takes the other's
-/// time over the ratio of their speeds, the tooltip naming each speed.
+/// time over the ratio of their speeds, the tooltip naming each speed; then the better
+/// one's tooltip, hovered in the inventory, shows its speed line fitting in English and in
+/// Japanese.
 fn tiers(world: &mut World, gate: &mut Gate, now: f32) {
     let cell = gate.feet + TIERS_AT;
     let stand = gate.feet + BREAK_STAND;
@@ -2396,7 +2398,16 @@ fn tiers(world: &mut World, gate: &mut Gate, now: f32) {
                         Ok(format!("stone broke in {slow_s:.3} s with a wooden pickaxe and {fast_s:.3} s with a copper one, {ratio:.2}x as their speeds say; each tooltip names its speed"))
                     };
                     gate.check("tiers", result);
-                    end(world, gate);
+                    // The fast pickaxe's tooltip, drawn in the inventory, in each language.
+                    let slot = world.resource::<LocalPlayer>().inventory.slots.iter().position(|s| s.is_some_and(|s| s.item == fast));
+                    let Some(slot) = slot else {
+                        gate.check("tiers: speed fits", Err(format!("the {} left the inventory before its tooltip could be read", content.blocks.def(fast).name)));
+                        end(world, gate);
+                        return;
+                    };
+                    world.resource_mut::<UiState>().inventory_open = true;
+                    world.insert_resource(crate::hud::inventory::HoverSlot(slot));
+                    gate.advance(now);
                 }
             } else if waited {
                 gate.check("tiers", Err(format!("the stone at {cell} never broke with the {} in {TIERS_WAIT} seconds", content.blocks.def(pick).name)));
@@ -2405,8 +2416,45 @@ fn tiers(world: &mut World, gate: &mut Gate, now: f32) {
                 mouse(world, MouseButton::Left, true);
             }
         }
+        // The speed line, drawn in the hovered tooltip, fits: English (7), then Japanese (8).
+        7 | 8 => {
+            let language = if gate.phase == 7 { "en" } else { "ja" };
+            if world.resource::<Locale>().code() != language {
+                set_language(world, language);
+            }
+            let line = crate::hud::inventory::tool_line(world.resource::<Locale>(), &content, fast).map(|(line, _)| line);
+            let drawn = line.as_ref().is_some_and(|line| text_drawn(world, line));
+            if drawn && let Some(line) = line {
+                let spills: Vec<String> = crate::ui::fit::find(world).into_iter().filter(|spill| spill.text == line).map(|spill| spill.to_string()).collect();
+                let result = if spills.is_empty() { Ok(format!("{language}: \"{line}\" fits in the tooltip")) } else { Err(format!("{language}: \"{line}\" does not fit: {}", spills.join("; "))) };
+                gate.check("tiers: speed fits", result);
+                if gate.phase == 7 {
+                    gate.advance(now);
+                } else {
+                    end_tooltip(world);
+                    end(world, gate);
+                }
+            } else if waited {
+                let open = world.resource::<UiState>().inventory_open;
+                gate.check("tiers: speed fits", Err(format!("{language}: the tooltip's speed line {line:?} was never drawn (inventory open {open}, screens {:?})", covering_screens(world))));
+                end_tooltip(world);
+                end(world, gate);
+            }
+        }
         _ => end(world, gate),
     }
+}
+
+/// Closes the inventory a tooltip was read in, back in English.
+fn end_tooltip(world: &mut World) {
+    set_language(world, "en");
+    world.remove_resource::<crate::hud::inventory::HoverSlot>();
+    world.resource_mut::<UiState>().inventory_open = false;
+}
+
+/// Whether `line` is drawn on screen as a text of its own, shown.
+fn text_drawn(world: &mut World, line: &str) -> bool {
+    world.query::<(&Text, &InheritedVisibility)>().iter(world).any(|(text, shown)| shown.get() && text.0 == line)
 }
 
 /// Where the workshop puts the crafting table, the ore, and the soil it tills, from the
