@@ -69,7 +69,9 @@ impl Process for Falling {
             let column_loaded = server.world.contains(ColumnPos::of_block(player.position.floor().as_ivec3()));
             let mut below = aabb;
             below.translate(Vec3::new(0.0, -0.05, 0.0));
-            let on_ground = below.intersects(|p| server.is_solid(p));
+            // Ground is what the feet rest on as drawn: a shaft lined with posts or stair corners
+            // is still a fall.
+            let on_ground = below.overlaps(|p| server.boxes(p));
             // Any state of the fluid counts: flowing water (any fluid swum in) breaks a fall,
             // flowing lava burns.
             let touching = |kind: &dyn Fn(FluidId) -> bool| aabb.intersects(|p| server.block(p).and_then(|b| blocks.fluid(b)).is_some_and(|f| kind(f.fluid)));
@@ -101,7 +103,7 @@ impl Process for Falling {
                 damage += player.health.max as f32;
             }
             if damage > 0.0 {
-                let died = player.health.damage(damage as u8);
+                let died = player.wound(damage as u8, tick);
                 player.changed(traits::HEALTH);
                 if died {
                     player.connection.send(ServerMessage::Died);
@@ -162,6 +164,7 @@ impl Survival {
         let cold_air = air - if wet { server.survival.water_chill } else { 0.0 };
         let warmed = heat > 0.5 && cold_air < vitals::CHILLY;
         let home = server.home_survey(id);
+        let home_stores = server.home_store_tally(id);
         // What effects ask of the item in hand (`Holding`) and of the blocks near
         // (`Near`).
         let held: Vec<String> = player.held().map_or_else(Vec::new, |item| {
@@ -207,7 +210,7 @@ impl Survival {
             player.tallies.entry(format!("felt:{}", effects.get(a.effect).name)).or_insert(1);
         }
         player.modifiers = modifiers;
-        let rates = vitals::rates(&modifiers);
+        let rates = vitals::rates(&modifiers, mending, server.survival.heal_most);
         // Twice the Hitpoints level, and what effects add: a level gained brings health
         // to fill it; what effects add comes empty (Hearty's tenth, design draft 63), and
         // what a lowered most takes goes.
@@ -220,34 +223,43 @@ impl Survival {
             player.health.max = max;
             player.health.current = player.health.current.saturating_add(gained).min(max);
         }
-        // Healing, while anything is left to heal.
-        match rates.heal_every.filter(|_| player.health.current < player.health.max) {
-            Some(every) => {
-                player.heal_clock += seconds * mending;
-                if player.heal_clock >= every {
-                    player.heal_clock -= every;
-                    player.health.heal(1);
+        // Healing and hurt run on time gone by: a refresh (no time) leaves them be, or each
+        // would pay out a point the pass before had already counted.
+        if seconds > 0.0 {
+            // Healing, while anything is left to heal.
+            match rates.heal_every.filter(|_| player.health.current < player.health.max) {
+                Some(every) => {
+                    player.heal_clock += seconds;
+                    if player.heal_clock >= every {
+                        player.heal_clock -= every;
+                        player.health.heal(1);
+                    }
+                    // Time past a point is not banked to pay out after the buffs end: at
+                    // most one point's worth waits.
+                    player.heal_clock = player.heal_clock.min(every);
                 }
+                None => player.heal_clock = 0.0,
             }
-            None => player.heal_clock = 0.0,
-        }
-        match rates.hurt_every.filter(|_| !creative) {
-            Some(every) => {
-                player.hurt_clock += seconds;
-                if player.hurt_clock >= every {
-                    player.hurt_clock -= every;
-                    if player.health.damage(1) {
-                        player.connection.send(ServerMessage::Died);
+            match rates.hurt_every.filter(|_| !creative) {
+                Some(every) => {
+                    player.hurt_clock += seconds;
+                    if player.hurt_clock >= every {
+                        player.hurt_clock -= every;
+                        // Wearing at them (cold, heat, hail) is no wound: it never stops a sleep.
+                        if player.health.damage(1) {
+                            player.connection.send(ServerMessage::Died);
+                        }
                     }
                 }
+                None => player.hurt_clock = 0.0,
             }
-            None => player.hurt_clock = 0.0,
         }
         // The felt temperature is sent to the degree, so it does not resend every tick.
         player.vitals.felt = situation.felt.round();
         player.vitals.effects = effects.active(&situation, &player.timed_effects);
         player.vitals.home = player.home_block(&server.lit);
         player.vitals.seated = seated;
+        player.vitals.home_stores = home_stores;
         // What kept animals laid into the home's stores is told once the keeper is home.
         if home.is_some() && !player.nested.is_empty() {
             let items = std::mem::take(&mut player.nested).into_iter().map(|(item, n)| Words::key("multiblock.fuel_stack").with("count", n.to_string()).with("item", Words::Block(item))).collect();
@@ -414,6 +426,102 @@ impl Server {
                     skills: player.skills.clone(),
                     vitals: player.vitals.clone(),
                 });
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Time past a point of healing is not banked: however long the clock ran (buffs and a
+    /// prayer stacked, then ended), a pass leaves at most one point's worth waiting.
+    #[test]
+    fn healing_past_a_point_is_not_banked_for_after() {
+        let mut server = crate::test_server();
+        let (client, connection) = voxmar_protocol::local_pair();
+        std::mem::forget(client);
+        let at = voxmar_engine::glam::Vec3::new(8.5, 300.0, 8.5);
+        let mut player = crate::player::Player::new(1, connection, at, 2, server.tick, server.survival.max_health, &server.config.limits);
+        player.joined = true;
+        server.players.insert(1, player);
+        Survival.run(&mut server);
+        let player = server.players.get_mut(&1).unwrap();
+        (player.health.current, player.heal_clock) = (1, 1000.0);
+        Survival.run(&mut server);
+        let player = &server.players[&1];
+        let every = vitals::rates(&player.modifiers, 1.0, server.survival.heal_most).heal_every.expect("healing");
+        assert_eq!(player.health.current, 2, "one point a pass");
+        assert!(player.heal_clock <= every, "{} s banked against a point each {every} s", player.heal_clock);
+    }
+
+    /// A refresh (no time gone by, as sitting down asks for) heals nothing: the pass before
+    /// left a point's worth waiting on the clock, and only time pays it out.
+    #[test]
+    fn a_refresh_after_a_pass_heals_nothing_more() {
+        let mut server = crate::test_server();
+        let (client, connection) = voxmar_protocol::local_pair();
+        std::mem::forget(client);
+        let at = voxmar_engine::glam::Vec3::new(8.5, 300.0, 8.5);
+        let mut player = crate::player::Player::new(1, connection, at, 2, server.tick, server.survival.max_health, &server.config.limits);
+        player.joined = true;
+        // Hitpoints 5: room to heal past one point.
+        let hitpoints = server.content.skills.id("core:hitpoints").expect("hitpoints");
+        player.skills.grant(hitpoints, server.content.skills.xp_for(5));
+        server.players.insert(1, player);
+        Survival.run(&mut server);
+        let player = server.players.get_mut(&1).unwrap();
+        assert!(player.health.max >= 4, "room to heal: most {}", player.health.max);
+        (player.health.current, player.heal_clock) = (1, 1000.0);
+        Survival.run(&mut server);
+        assert_eq!(server.players[&1].health.current, 2, "one point a pass");
+        Survival::refresh(&mut server, 1);
+        assert_eq!(server.players[&1].health.current, 2, "a refresh pays out nothing");
+    }
+
+    /// A wound keeps the player from sleeping even if it heals back at once; the most coming
+    /// down (a buff to it wearing off) is no wound.
+    #[test]
+    fn a_wound_counts_and_a_lowered_most_does_not() {
+        let mut server = crate::test_server();
+        let (client, connection) = voxmar_protocol::local_pair();
+        std::mem::forget(client);
+        let at = voxmar_engine::glam::Vec3::new(8.5, 300.0, 8.5);
+        let mut player = crate::player::Player::new(1, connection, at, 2, server.tick, server.survival.max_health, &server.config.limits);
+        player.joined = true;
+        server.players.insert(1, player);
+        Survival.run(&mut server);
+        let player = server.players.get_mut(&1).unwrap();
+        let full = player.health.current;
+        (player.health.max, player.health.current) = (full - 1, full - 1);
+        Survival.run(&mut server);
+        assert_eq!(server.players[&1].hurt_at, None, "the most came down: no wound");
+        let tick = server.tick;
+        let player = server.players.get_mut(&1).unwrap();
+        let _ = player.wound(1, tick);
+        player.health.heal(1);
+        assert_eq!(player.hurt_at, Some(tick), "a wound healed back at once is a wound");
+    }
+
+    /// Every roof piece (thatch, shingles, their ridges) keeps the sky off whoever stands
+    /// under it, as a solid block does: no rain soaks them, a rack under it does not dry, and
+    /// they are indoors for a home.
+    #[test]
+    fn every_roof_piece_keeps_the_sky_off() {
+        use voxmar_engine::glam::IVec3;
+        let mut server = crate::test_server();
+        let cell = server.spawn.floor().as_ivec3();
+        server.load_area(cell - IVec3::new(4, 0, 4), cell + IVec3::new(4, 0, 4));
+        for dy in 0..server.survival.roof_scan + 2 {
+            server.set_block(cell + IVec3::Y * dy, voxmar_engine::block::BlockId::AIR);
+        }
+        assert!(server.open_sky(cell), "the test spot is open to the sky");
+        let blocks = server.content.blocks.clone();
+        let roofs: Vec<_> = blocks.ids().filter(|&id| blocks.def(id).has_tag("roof")).collect();
+        assert!(roofs.len() >= 8, "thatch, shingles in three woods and their ridges: {}", roofs.len());
+        for roof in roofs {
+            server.set_block(cell + IVec3::Y * 3, roof);
+            assert!(!server.open_sky(cell), "{} lets the sky through", blocks.def(roof).name);
         }
     }
 }

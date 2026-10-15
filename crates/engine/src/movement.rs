@@ -89,15 +89,20 @@ pub struct Checks {
     /// Longest step, in blocks, a move is checked for walls in.
     pub sweep_step: f32,
     /// The player's box, as shares of their width and height, that must stay out of
-    /// walls: a little smaller than theirs, for rounding.
+    /// walls: a little smaller than theirs, for rounding, raised `wall_margin` off their
+    /// feet and inside their box less `wall_margin` all round. Only among whole blocks: a
+    /// share would let a player through a gap beside a shape narrower than they are.
     pub wall_box: (f32, f32),
+    /// Blocks the player's box is shrunk by on every side, for rounding, wherever a shaped
+    /// block is near (`wall_box` among whole blocks only).
+    pub wall_margin: f32,
 }
 
 crate::content::settable! {
     /// What one package's `movement.ron` sets of the `checks`.
     SetChecks for Checks {
         speed_margin: f32, burst: f32, slack: f32, rise_slack: f32, hover_grace: f32, hover_sink: f32,
-        let_down_pause: f32, near_ground: f32, sweep_step: f32, wall_box: (f32, f32),
+        let_down_pause: f32, near_ground: f32, sweep_step: f32, wall_box: (f32, f32), wall_margin: f32,
     }
 }
 
@@ -151,6 +156,7 @@ impl crate::content::Settable for Tuning {
                 "let_down_pause" => "checks.let_down_pause",
                 "near_ground" => "checks.near_ground",
                 "sweep_step" => "checks.sweep_step",
+                "wall_margin" => "checks.wall_margin",
                 _ => "checks.wall_box",
             }));
         }
@@ -160,8 +166,8 @@ impl crate::content::Settable for Tuning {
 
 impl Checks {
     fn check(&self) -> Result<(), String> {
-        let Checks { speed_margin, burst, slack, rise_slack, hover_grace, hover_sink, let_down_pause, near_ground, sweep_step, wall_box: (width, height) } = *self;
-        let numbers = [speed_margin, burst, slack, rise_slack, hover_grace, hover_sink, let_down_pause, near_ground, sweep_step, width, height];
+        let Checks { speed_margin, burst, slack, rise_slack, hover_grace, hover_sink, let_down_pause, near_ground, sweep_step, wall_box: (width, height), wall_margin } = *self;
+        let numbers = [speed_margin, burst, slack, rise_slack, hover_grace, hover_sink, let_down_pause, near_ground, sweep_step, width, height, wall_margin];
         if numbers.iter().any(|n| !n.is_finite() || *n < 0.0) {
             Err("every number must be zero or more".into())
         } else if speed_margin < 1.0 {
@@ -174,6 +180,12 @@ impl Checks {
             Err("let_down_pause must be no more than hover_grace".into())
         } else if !(0.5..=1.0).contains(&width) || !(0.5..=1.0).contains(&height) {
             Err("wall_box shares must be from 0.5 to 1".into())
+        } else if wall_margin > 0.015 {
+            Err("wall_margin must be at most 0.015 (more lets a player through a gap of 9/16 of a block, narrower than they are)".into())
+        } else if width * dims::WIDTH > dims::WIDTH - 2.0 * wall_margin || height * dims::HEIGHT > dims::HEIGHT - 2.0 * wall_margin {
+            // The server judges a spot by one box or the other as shapes come and go beside
+            // it; one inside the other, a spot clear by the margin is clear by the share too.
+            Err("wall_box must fit inside the player's box less wall_margin on every side".into())
         } else {
             Ok(())
         }
@@ -377,18 +389,23 @@ pub fn step(body: &mut Body, world: &impl Surroundings, tuning: &Tuning, control
     let mut blocked = move_and_slide_boxes(&mut aabb, motion, |p| world.boxes(p));
     // Stopped across while on the ground: stepping up onto what stopped it (a slab, a stair)
     // goes further, as in Minecraft, if it fits; whole blocks are still jumped onto.
-    if (blocked[0] || blocked[2]) && body.on_ground && !body.flying && !swimming && motion.y <= 0.0 && tuning.step_up > 0.0 {
-        if let Some((stepped, across)) = step_up(start, motion, tuning.step_up, world) {
-            // Up and further across; or not yet over the step but no longer stopped by it,
-            // so the walker keeps its speed and goes up next time: one starting off against
-            // the step moves less in a short frame, far from the origin less than positions
-            // round to, than it takes to come down on it.
-            let gone = |b: &Aabb| (b.min - start.min).with_y(0.0).length_squared();
-            let freed = [0, 2].into_iter().any(|k| blocked[k] && !across[k]);
-            if freed || (stepped.min.y > start.min.y && gone(&stepped) > gone(&aabb) + 1e-8) {
-                aabb = stepped;
-                blocked = [across[0], true, across[2]];
-            }
+    if (blocked[0] || blocked[2])
+        && body.on_ground
+        && !body.flying
+        && !swimming
+        && motion.y <= 0.0
+        && tuning.step_up > 0.0
+        && let Some((stepped, across)) = step_up(start, motion, tuning.step_up, world)
+    {
+        // Up and further across; or not yet over the step but no longer stopped by it,
+        // so the walker keeps its speed and goes up next time: one starting off against
+        // the step moves less in a short frame, far from the origin less than positions
+        // round to, than it takes to come down on it.
+        let gone = |b: &Aabb| (b.min - start.min).with_y(0.0).length_squared();
+        let freed = [0, 2].into_iter().any(|k| blocked[k] && !across[k]);
+        if freed || (stepped.min.y > start.min.y && gone(&stepped) > gone(&aabb) + 1e-8) {
+            aabb = stepped;
+            blocked = [across[0], true, across[2]];
         }
     }
     body.on_ground = blocked[1] && body.velocity.y <= 0.0;
@@ -497,7 +514,7 @@ mod tests {
     #[test]
     fn checks_a_mod_could_set_to_hang_or_stop_the_server_are_refused_on_load() {
         let source = include_str!("../../../assets/content/core/movement.ron");
-        for (from, to) in [("sweep_step: 0.25", "sweep_step: 0.0"), ("speed_margin: 1.25", "speed_margin: 0.5"), ("burst: 2.0", "burst: 0.0"), ("let_down_pause: 0.25", "let_down_pause: 3.0"), ("hover_sink: 1.0", "hover_sink: -1.0"), ("wall_box: (0.9, 0.95)", "wall_box: (0.9, 2.0)")] {
+        for (from, to) in [("sweep_step: 0.25", "sweep_step: 0.0"), ("speed_margin: 1.25", "speed_margin: 0.5"), ("burst: 2.0", "burst: 0.0"), ("let_down_pause: 0.25", "let_down_pause: 3.0"), ("hover_sink: 1.0", "hover_sink: -1.0"), ("wall_box: (0.9, 0.95)", "wall_box: (0.9, 2.0)"), ("wall_margin: 0.01", "wall_margin: 0.1"), ("wall_margin: 0.01", "wall_margin: 0.02"), ("wall_box: (0.9, 0.95)", "wall_box: (1.0, 0.95)"), ("wall_box: (0.9, 0.95)", "wall_box: (0.9, 0.995)")] {
             assert!(source.contains(from), "{from}");
             assert!(Tuning::from_ron(&source.replace(from, to)).is_err(), "{to} loads");
         }

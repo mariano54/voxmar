@@ -191,6 +191,18 @@ bearing the mark draws from where it sits, which must be within 3° of home's
 ("way home: dusk"). Back at the camp it waits for the mark to fade out ("way home:
 inside"). It then sets the time back and leaves the camp to the Nest step, which takes it down.
 
+**No ghost home.** A home used to be only ever set: break the hearth or the bed and you woke
+at the hole, the mark pointing there. Now every block change asks `Server::home_changed`:
+a player whose bed stood where the new block is no bed forgets the bed ("Your bed is gone:
+you will not wake there again."), and one whose home hearth's core it was forgets the hearth
+("Your hearth is gone: it is your home no more."), en+ja. They wake at what is left (the
+hearth, the bed, else the world's spawn) and `Vitals::home` changes at once, so the mark
+moves or goes. A bed set down where the bed was (a bag swapped for a proper bed) is still
+the bed. Test: `hearth::tests::a_broken_bed_or_hearth_is_forgotten`. Gate: the Nest step's
+last phase breaks the bag that was home and waits for no home, no mark and the chat line
+("home: no ghost"). A bed broken while its sleeper is offline is not seen (their save keeps it
+until they sleep elsewhere).
+
 ## Sleeping
 
 Right clicking a bed used to only set where you wake. It now also gives a **rest** (the
@@ -199,6 +211,25 @@ Deep rest (20) in a Cosy one (a game day is 20 minutes). Rest gives a little hea
 mining and speed wherever you go, and a bed always works as a bed (it sets where you wake and your home) but gives no new rest
 while one lasts, so the buff is a once-a-day habit, not a button to hold. Timed effects count down
 online only.
+
+A proper bed rests better than a bag on the ground: a sleep rule can name a `bed` tag the bed
+slept in must carry, and a bed of furniture (`bed: "furniture"`) is Well rested anywhere,
+where a sleeping bag needs a Snug home or a lit corner. Every sleep also mends: Healing
+Sleep (heal x4) for a minute, two in a proper bed, so coming home hurt and sleeping heals.
+It is no way to heal in a fight: a bed refuses sleep with a creature that hunts players
+(wild, or kept by another player) within `sleep_threat_reach` blocks (12), or within
+`sleep_after_hurt` seconds (15) of a wound (a blow, a fall, a sting; not the cold or heat
+wearing at one) (`core/survival.ron`). A refused sleep still claims the bed. And it stays slower than eating, since food is the heal (design
+draft 63): however many heal buffs and prayers are on, healing by itself is held at
+`heal_most` (1 a second, `survival.ron`), which loading checks is below what the slowest
+food heals a second, a 0.6 s bite at a time; time past a point is never banked to pay out
+after. No night skipping. Loading refuses a sleep rule whose `bed` tag no bed carries.
+Tests: the engine's `a_proper_bed_rests_well_and_every_sleep_mends_slower_than_food` and
+`a_sleep_rule_for_a_bed_nobody_made_is_refused_at_load`, the server's
+`a_proper_bed_rests_well_and_mends_longer_than_a_bag` and
+`no_sleep_with_a_hunter_near_or_wounds_fresh`; the gate's Home step clicks the bag with a
+shambler near and expects the refusal, then waits on every chip the engine says the bag
+gives there.
 
 ## Drying off
 
@@ -274,6 +305,48 @@ the store's screen closes, since its slots stand where the grid is drawn. The ga
 step puts four planks in a barrel beside the bag, shoots the table's recipe with its Lay
 button ("home-lay-recipe"), presses it, and shoots the grid laid from the barrel
 ("home-lay"; check "home: lay").
+
+**Stores count everywhere a home crafts (Oct 14).** The eleventh pass carries the same rule
+to the rest of the home, so the barrel is a larder from the first night:
+
+- **Always on, not a tier perk.** The rule holds wherever the player stands in their own home,
+  at any home step from a bed and a torch up. Tying it to a tier would hide it until the
+  home is Homely, when the first days are already over; the tiers instead grow how much the
+  stores hold. Only the player's own home counts, and only the stores they placed (or that
+  nobody did, as a village's): a guest sleeping in a friend's bed crafts from their own pack
+  and their own barrels, since a friend's barrel is not theirs to empty.
+- **The home bounds** are the box `/home` counts: `home_reach` across, `home_up` and
+  `home_down`, around the lit hearth, else the bed last slept in. The player must stand
+  in it, and a station must stand in it too.
+- **Which stations count.** Crafting (the 2×2 grid and the crafting table) already lays from
+  the stores. Home stations (stations.ron) now count too: loading one tops the load up to
+  what it `holds`, with more of what is in hand. It takes from the hand first, then the
+  rest of the pack, then the stores, nearest the hearth or bed first. Unlike Lay, a station
+  never reaches into a pouch. This is data per station, `from_stores` (true unless said
+  otherwise). The drying rack and the cooking pot take from the stores. The compost heap
+  does not, because grain and seed kept in a barrel are for eating and sowing, and a heap
+  that ate them would punish keeping a larder. Nor does the earth clamp: logs and clay in
+  the stores are for building, and one log in hand would draw the woodshed in. The chat line says how many came from the stores
+  (`station.loaded_from_stores`, en and ja). Cooking at a fire (cooking.ron) and machines
+  are left out. A fire cooks the one item in hand and a machine takes items into its own
+  slots, so there is no load to top up.
+- **What the player sees.** The Can Make list under the inventory, and what the recipe
+  viewer says a recipe still wants, count the home's stores while the player stands in
+  their home. The server sends the tally with the vitals (`Vitals::home_stores`, protocol
+  44). It is recounted on the once-a-second survival pass, which already surveys the same
+  box, and resent only when it changes. With four planks in the barrel and none in the
+  pack, the crafting table shows as ready. What a fire cooks counts the pack alone, since a
+  fire cooks what is in hand: raw meat only in the barrel is not shown cooked.
+- **Tests.** In server/src/laying.rs: `at_home_a_rack_tops_its_load_up_from_the_stores`,
+  `at_home_with_no_store_a_rack_tops_up_from_the_pack`,
+  `a_compost_heap_leaves_the_stores_alone`, `a_guest_draws_on_no_one_elses_stores`,
+  `a_station_and_its_loader_must_both_be_in_the_home` and
+  `the_home_stores_are_counted_only_at_home`. In client/src/hud/makeable.rs:
+  `the_home_stores_count_toward_what_can_be_made`, which also checks a cooked thing is not
+  shown from the stores alone. In the gate's Home step, before Lay, the check
+  "home: can make" asks that the server counted the barrel's planks (as many as the crafting
+  table's recipe takes) and that the Can Make plan, drawn under the open barrel, has the
+  crafting table ready from them alone.
 
 ## Eggs in the stores
 

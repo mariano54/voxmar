@@ -11,7 +11,7 @@ use voxmar_engine::glam::Vec3;
 use voxmar_engine::inventory::{HOTBAR_SLOTS, Inventory, ItemStack, MAX_STACK};
 use voxmar_engine::lang::Words;
 use voxmar_engine::movement::Checks;
-use voxmar_engine::physics::{Aabb, player as dims};
+use voxmar_engine::physics::{Aabb, CUBE, player as dims};
 use voxmar_engine::skill::{SkillRegistry, Skills};
 use voxmar_engine::traits::{self, Health, TraitDecl};
 use voxmar_engine::vitals::Vitals;
@@ -127,6 +127,10 @@ pub struct Player {
     /// The last tick a blow fell between them and a creature, either way (prayer points
     /// come back only after a calm, `prayers`).
     pub last_blow: u64,
+    /// The last tick a wound fell on them (`Player::wound`: a blow, a fall, a sting; not the
+    /// cold or heat wearing at them): no sleeping off a fight just had (`survival.ron`'s
+    /// `sleep_after_hurt`).
+    pub hurt_at: Option<u64>,
     /// Prayer points and the prayers on, and what the player was last told of them.
     pub praying: voxmar_engine::prayer::Praying,
     /// Lines the player has cast, which numbers each cast's draw (`Server::fish`).
@@ -226,6 +230,7 @@ impl Player {
             ping: None,
             round_trip: None,
             last_blow: 0,
+            hurt_at: None,
             praying: Default::default(),
             casts: 0,
             draws: Draws::default(),
@@ -287,6 +292,15 @@ impl Player {
     }
 
     /// Gives timed effects (eaten food's), topping up any it has to the longer time.
+    /// `amount` health taken by a wound at `tick` (a blow, a fall, a sting), which keeps them
+    /// from sleeping a while even if it heals back at once; true if it killed them.
+    pub fn wound(&mut self, amount: u8, tick: u64) -> bool {
+        if amount > 0 {
+            self.hurt_at = Some(tick);
+        }
+        self.health.damage(amount)
+    }
+
     pub fn give_effects(&mut self, given: &[(EffectId, f32)]) {
         for &(effect, seconds) in given {
             match self.timed_effects.iter_mut().find(|(e, _)| *e == effect) {
@@ -861,11 +875,31 @@ impl Server {
             .unwrap_or(from)
     }
 
-    /// Whether a player at `feet` would be in a wall (with a slightly smaller box than
-    /// theirs, for rounding: `Checks::wall_box`).
+    /// Whether a player at `feet` would be in a wall, with a slightly smaller box than theirs
+    /// for rounding: a share of it against whole blocks (`Checks::wall_box`), their own less
+    /// a fixed margin against shaped blocks' boxes (`Checks::wall_margin`), so a gap between
+    /// shapes narrower than the player is no way through.
     fn inside(&self, feet: Vec3) -> bool {
-        let (width, height) = self.content.movement.checks.wall_box;
-        Aabb::standing(feet, dims::WIDTH * width, dims::HEIGHT * height).overlaps(|cell| self.boxes(cell))
+        let checks = &self.content.movement.checks;
+        let (width, height) = checks.wall_box;
+        let m = checks.wall_margin;
+        let half = dims::WIDTH / 2.0 - m;
+        let tight = Aabb { min: feet - Vec3::new(half, -m, half), max: feet + Vec3::new(half, dims::HEIGHT - m, half) };
+        // Near a shape every block is judged by the margin: a whole block's share and a
+        // shape's margin together would leave a gap narrower than the player open. Near is
+        // a shape in a cell the margin box itself reaches into, past rounding: a shape can
+        // only come or go in a cell the player's own box at most touches (one placed is
+        // refused in a cell they are in), and the share box sits inside the margin box, so
+        // which box judges a spot never flips it from clear to inside.
+        let near_shape = tight.intersects(|cell| {
+            let boxes = self.boxes(cell);
+            !boxes.is_empty() && boxes != CUBE
+        });
+        if near_shape {
+            tight.overlaps(|cell| self.boxes(cell))
+        } else {
+            Aabb::standing(feet + Vec3::Y * m, dims::WIDTH * width, dims::HEIGHT * height).overlaps(|cell| self.boxes(cell))
+        }
     }
 
     /// Whether a player could have got from `from` to `to` without passing through a wall.
@@ -886,7 +920,67 @@ impl Server {
         };
         let across_first = Vec3::new(to.x, from.y, to.z);
         let up_first = Vec3::new(from.x, to.y, from.z);
-        clear(from, to) || (clear(from, across_first) && clear(across_first, to)) || (clear(from, up_first) && clear(up_first, to))
+        clear(from, to) || (clear(from, across_first) && clear(across_first, to)) || (clear(from, up_first) && clear(up_first, to)) || self.stepped_between(from, to)
+    }
+
+    /// Whether a walker could have got from `from` to `to` along the ground, stepping up onto
+    /// each block in the way no taller than `step_up` as the client does: between two inputs
+    /// a sprint at a low frame rate climbs a slab and then a stair under a ceiling that no
+    /// straight or one-turn path clears.
+    fn stepped_between(&self, from: Vec3, to: Vec3) -> bool {
+        let tuning = &self.content.movement;
+        // As many steps as the rise budget lets one input climb (about a block and a half):
+        // each is checked below.
+        if to.y < from.y {
+            return false;
+        }
+        let across = (to - from).with_y(0.0);
+        let steps = (across.length() / tuning.checks.sweep_step).ceil().max(1.0) as u32;
+        let mut at = from;
+        for i in 1..=steps {
+            let mut next = (from + across * (i as f32 / steps as f32)).with_y(at.y);
+            if self.inside(next) {
+                // Up onto what is in the way, from where the walker was: its top, no more
+                // than a step up.
+                let Some(top) = self.top_within(next, tuning.step_up) else { return false };
+                next.y = top;
+                if self.inside(at.with_y(top)) || self.inside(next) {
+                    return false;
+                }
+            }
+            at = next;
+        }
+        // Then down, if the last step overshot, to where they are: through nothing on the way
+        // (a roof walked up onto is no way into the room under it).
+        if at.y + 1e-3 < to.y {
+            return false;
+        }
+        let drop = ((at.y - to.y) / tuning.checks.sweep_step).ceil().max(1.0) as u32;
+        (1..=drop).all(|i| !self.inside(to.with_y(at.y + (to.y - at.y) * i as f32 / drop as f32)))
+    }
+
+    /// The highest top of a block's boxes under a player's footprint at `feet` that is above
+    /// their feet but at most `rise` above.
+    fn top_within(&self, feet: Vec3, rise: f32) -> Option<f32> {
+        let half = dims::WIDTH / 2.0;
+        let (lo, hi) = (feet - Vec3::new(half, 0.0, half), feet + Vec3::new(half, rise, half));
+        let (a, b) = (lo.floor().as_ivec3(), hi.floor().as_ivec3());
+        let mut top = None::<f32>;
+        for x in a.x..=b.x {
+            for y in a.y..=b.y {
+                for z in a.z..=b.z {
+                    let cell = voxmar_engine::glam::IVec3::new(x, y, z);
+                    for b in self.boxes(cell) {
+                        let (min, max) = (b.min + cell.as_vec3(), b.max + cell.as_vec3());
+                        let over = min.x < hi.x && max.x > lo.x && min.z < hi.z && max.z > lo.z;
+                        if over && max.y > feet.y && max.y <= feet.y + rise {
+                            top = Some(top.map_or(max.y, |t| t.max(max.y)));
+                        }
+                    }
+                }
+            }
+        }
+        top
     }
 
     fn settings(&mut self, id: PlayerId, view_distance: u8, fly_speed: f32) {

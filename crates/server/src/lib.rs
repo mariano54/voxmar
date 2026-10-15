@@ -286,6 +286,21 @@ pub fn assets_dir() -> PathBuf {
 const NAMED_ACTIONS: &[&str] =
     &["core:mine", "core:place", "core:transfer", "core:quick_move", "core:craft", "core:stow", "core:drop", "core:attack", "core:eat", "core:respawn"];
 
+/// Healing by itself, however many buffs and prayers are on, is held under `heal_most` a
+/// second (`survival.ron`), which must be below what the slowest food heals a second eaten
+/// bite after bite (`core:eat`'s time): food stays the way to heal in a hurry.
+fn heal_most_below_food(content: &Content, heal_most: f32) -> Result<(), String> {
+    let eat = content.actions.get(content.actions.expect("core:eat")).expect("named");
+    let voxmar_engine::action::Duration::Seconds(bite) = eat.duration else {
+        return Err("core:eat must take a time (Seconds), the bite that heal_most is held under".into());
+    };
+    let slowest = content.blocks.ids().map(|id| voxmar_engine::vitals::food_value(&content.blocks.def(id).tags)).filter(|&heal| heal > 0).min();
+    match slowest.map(|heal| heal as f32 / bite.max(f32::EPSILON)) {
+        Some(per_second) if heal_most >= per_second => Err(format!("survival.ron's heal_most ({heal_most} a second) must be below what the slowest food heals a second, a bite each {bite} s ({per_second:.2})")),
+        _ => Ok(()),
+    }
+}
+
 /// Loads every content package under `assets/content`, and checks the world
 /// generator's definitions in them, so a broken package fails at startup.
 pub fn load_content(assets: &Path) -> Result<Content, Box<dyn std::error::Error>> {
@@ -296,7 +311,8 @@ pub fn load_content(assets: &Path) -> Result<Content, Box<dyn std::error::Error>
     WorldContent::load(&content)?;
     wear::WearRules::load(&content.files, &content.blocks, 0)?;
     let mut notes = Vec::new();
-    rules::SurvivalRules::load(&content.files, &content.blocks, &mut notes)?;
+    let survival = rules::SurvivalRules::load(&content.files, &content.blocks, &mut notes)?;
+    heal_most_below_food(&content, survival.heal_most)?;
     std::sync::Arc::make_mut(&mut content.notes).extend(notes);
     for fluid in content.blocks.fluids().iter().filter(|fluid| !swum_or_burns(&content.blocks, fluid)) {
         tracing::warn!("the fluid {} is neither swum in (swim: true) nor burns (tagged \"lava\"): players wade through it unharmed", fluid.name);
@@ -1241,6 +1257,7 @@ impl Server {
                 self.station_changed(pos, old, block);
                 self.trap_changed(pos, block);
                 self.fire_changed(pos);
+                self.home_changed(pos, block);
             }
         }
         for &(pos, _) in &done {
@@ -1278,6 +1295,7 @@ impl Server {
             self.station_changed(pos, old, block);
             self.trap_changed(pos, block);
             self.fire_changed(pos);
+            self.home_changed(pos, block);
             for player in self.players.values().filter(|p| p.joined && p.sent.contains(&column)) {
                 player.connection.send(ServerMessage::BlockChanged { pos, block });
             }
@@ -1366,9 +1384,9 @@ mod tests {
         let (save, meta) = open_world(&mut config(Some(42))).unwrap();
         assert_eq!(meta.draw_key, 42, "made with the config's key");
         assert_eq!(open_world(&mut config(None)).unwrap().1.draw_key, 42, "kept");
-        save.as_ref().unwrap().write_meta(&WorldMeta { drops: 5, loot: 7, ..meta.clone() }).unwrap();
+        save.as_ref().unwrap().write_meta(&WorldMeta { drops: 5, loot: 7, rolls: 11, ..meta.clone() }).unwrap();
         let kept = open_world(&mut config(None)).unwrap().1;
-        assert_eq!((kept.drops, kept.loot), (5, 7), "the counts of drops popped and loot rolled kept");
+        assert_eq!((kept.drops, kept.loot, kept.rolls), (5, 7, 11), "the counts of drops popped, loot rolled and world rolls kept");
         save.unwrap().write_meta(&WorldMeta { draw_key: 0, ..meta }).unwrap();
         assert_ne!(open_world(&mut config(None)).unwrap().1.draw_key, 0, "an older world given one");
         assert_ne!(WorldMeta::new("a", 1, GameMode::Survival).draw_key, WorldMeta::new("a", 1, GameMode::Survival).draw_key, "random without one asked");

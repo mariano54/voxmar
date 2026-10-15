@@ -1140,7 +1140,8 @@ fn emit_plant(out: &mut MeshBuffers, registry: &BlockRegistry, column: &Column, 
 
 /// The quads of a block drawn as its shape (`RenderKind::Model`), each a quad of the
 /// renderer's shape table (`BlockRegistry::shapes`, in order). A quad inside the cell is lit
-/// by the cell's own light; one on its boundary by the brighter of the cell's and the
+/// by the cell's own light, or, in a block that stops light (a roof, which holds none), by
+/// the neighbour's it faces; one on its boundary by the brighter of the cell's and the
 /// neighbour's (the one beyond, for a shape that fills its cell and so holds no light), and
 /// it hides, if it may, behind a neighbour that hides faces. They go as plant faces of the
 /// shape model (`PLANT_SHAPE`), with the table's quad in word 1 bits 12..23 where a plant
@@ -1150,13 +1151,14 @@ fn emit_model(out: &mut MeshBuffers, registry: &BlockRegistry, cells: &[Cell], p
     let Some(first) = registry.shape_first_quad(cell.block) else { return };
     let Some(shape) = registry.shape(cell.block) else { return };
     let layers = registry.shape_layers(cell.block);
+    let dark = registry.info(cell.block).attenuation >= 15;
     let at = IVec3::new((padded % P) as i32, (padded / (P * P)) as i32, (padded / P % P) as i32);
     for (q, quad) in shape.quads.iter().enumerate() {
         let mut light = cell.light;
-        if let Some(face) = quad.boundary {
+        if let Some(face) = quad.boundary.or(if dark { Some(quad.face) } else { None }) {
             let n = at + face.normal();
             let beyond = &cells[pidx(n.x as usize, n.y as usize, n.z as usize)];
-            if quad.cull && beyond.occludes {
+            if quad.boundary.is_some() && quad.cull && beyond.occludes {
                 continue;
             }
             light = (light & 0xF0).max(beyond.light & 0xF0) | (light & 0x0F).max(beyond.light & 0x0F);
@@ -1375,6 +1377,61 @@ mod tests {
         // Beside the other slab, both sides are drawn.
         assert!(quad(a, Face::PosX).is_some() && quad(b, Face::NegX).is_some());
         assert_eq!(drawn.iter().filter(|(p, ..)| *p == a).count(), 5);
+    }
+
+    /// A roof stops the sky's light: under it the room is dark, while its courses' faces
+    /// inside its cell (each step's top and front) take the light of the open side they
+    /// face, not the dark of the cell they are in.
+    #[test]
+    fn a_roof_darkens_under_it_and_its_inner_faces_take_the_light_they_face() {
+        let file = crate::shape::ShapeFile::read(
+            "test",
+            r#"(shapes: {"roof": (boxes: [(to: (16, 8, 16), cull: true), (from: (0, 8, 8), to: (16, 16, 16), cull: true)])})"#,
+        )
+        .unwrap();
+        let shapes = crate::shape::Shapes::gather(vec![("test".into(), file)], crate::shape::ShapeLimits { boxes: 2, quads: 64 }).unwrap();
+        let block = |name: &str, render| BlockDef { name: format!("test:{name}"), render, textures: Textures::All(name.into()), ..Default::default() };
+        let reg = BlockRegistry::with_shapes(
+            vec![block("stone", RenderKind::Opaque), BlockDef { shape: Some("test:roof".into()), light_filter: 14, ..block("roof", RenderKind::Model) }],
+            &shapes,
+        )
+        .unwrap();
+        let (stone, roof) = (reg.expect("test:stone"), reg.expect("test:roof"));
+        let mut column = Column::default();
+        for z in 0..32 {
+            for x in 0..32 {
+                column.set_block(IVec3::new(x, 0, z), stone);
+            }
+        }
+        // A roof five by five, three up, over open ground.
+        for z in 8..13 {
+            for x in 8..13 {
+                column.set_block(IVec3::new(x, 3, z), roof);
+            }
+        }
+        let column = Arc::new(column);
+        let region = LitRegion::compute(&reg, &std::array::from_fn(|_| column.clone()));
+        let (centre, under, open) = (IVec3::new(10, 3, 10), IVec3::new(10, 1, 10), IVec3::new(2, 1, 2));
+        assert_eq!(region.light(centre) >> 4, 0, "the roof holds no light");
+        assert!(region.light(under) >> 4 <= (region.light(open) >> 4) - 3, "under the roof {:#x}, in the open {:#x}", region.light(under), region.light(open));
+        let mesh = mesh_chunk(&reg, &region, &column, 0, 1);
+        let shape = reg.shape(roof).unwrap();
+        let first = reg.shape_first_quad(roof).unwrap();
+        let drawn: Vec<(IVec3, &crate::shape::ShapeQuad, u8)> = mesh
+            .cutout
+            .vertices
+            .chunks(4)
+            .filter(|quad| is_shape_quad(quad[0][0]))
+            .map(|quad| {
+                let [w0, w1] = quad[0];
+                let at = IVec3::new((w0 & 63) as i32, ((w0 >> 6) & 63) as i32, ((w0 >> 12) & 63) as i32);
+                (at, &shape.quads[((w1 >> 12) & 0xFFF) as usize - first], (w1 >> 24) as u8)
+            })
+            .collect();
+        // The lower course's top lies inside the cell, under the open sky above it.
+        let inner_top = drawn.iter().find(|(p, q, _)| *p == centre && q.face == Face::PosY && q.boundary.is_none()).expect("the lower course's top is drawn");
+        assert_eq!(inner_top.2, region.light(centre + IVec3::Y), "the inner top takes the light above it");
+        assert_eq!(inner_top.2 >> 4, 15);
     }
 
     #[test]
