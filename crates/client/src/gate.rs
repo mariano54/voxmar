@@ -9333,6 +9333,12 @@ struct SwingWatch {
     frames: Vec<(f32, f32, f32)>,
     /// The server's seconds at its press, and the blows the server had answered then.
     pressed: (f32, u32),
+    /// The swings the client had sent at its press (`Fighting::strikes`), the frames since
+    /// it, and the presses the client took for no swing (the quarry out of the crosshair or
+    /// reach as the click was read), each pressed again.
+    sent: u32,
+    since_press: u32,
+    untaken: u32,
     /// Its stroke has run its course, back to rest.
     ended: bool,
     /// The shot taken as it connects, and the models the hand was drawn with then.
@@ -9350,6 +9356,9 @@ impl SwingWatch {
 const SWING_FRAME: f32 = 1.0 / 60.0;
 /// Server seconds the watched swing has to play out and be answered.
 const SWING_WAIT: f32 = 4.0;
+/// Presses the client may take for no swing (its quarry out of the crosshair or reach as
+/// the click is read) before the watched swing is judged a failure.
+const SWING_UNTAKEN: u32 = 4;
 
 /// Watches the weapon step's first swing: pressed once the bear is in reach and aimed at,
 /// then followed each frame until its stroke is back at rest and the server has answered
@@ -9364,6 +9373,8 @@ fn watch_swing(world: &mut World, gate: &mut Gate, far: bool, now: f32) -> bool 
             world.resource_mut::<crate::held::HeldClock>().step = Some(SWING_FRAME);
             gate.swing_watch.stage = 1;
             gate.swing_watch.pressed = (gate.server_now, world.resource::<crate::creatures::Creatures>().blows);
+            gate.swing_watch.sent = world.resource::<crate::fight::Fighting>().strikes;
+            gate.swing_watch.since_press = 0;
             gate.swing(world, now);
             true
         }
@@ -9373,7 +9384,17 @@ fn watch_swing(world: &mut World, gate: &mut Gate, far: bool, now: f32) -> bool 
                 gate.swing(world, now);
             }
             let seen = world.resource::<crate::held::Motion>().swing();
+            let sent = world.resource::<crate::fight::Fighting>().strikes;
             let watch = &mut gate.swing_watch;
+            watch.since_press += 1;
+            // The press read (the frame after it) and let go (the frame after that) with no
+            // swing sent: the click met no quarry in reach. Pressed again once it is.
+            if watch.since_press > 2 && sent == watch.sent && watch.frames.is_empty() && watch.untaken < SWING_UNTAKEN {
+                watch.untaken += 1;
+                watch.stage = 0;
+                world.resource_mut::<crate::held::HeldClock>().step = None;
+                return true;
+            }
             match seen {
                 Some(frame) if !watch.ended => {
                     if watch.frames.last().is_none_or(|last| last.0 != frame.0) {
@@ -9412,6 +9433,7 @@ fn judge_swing(world: &mut World, gate: &mut Gate, answered: bool) {
     let judged = SwingWatch { stage: 2, ..SwingWatch::of(gate.swing_watch.name, gate.swing_watch.shot_name, gate.swing_watch.quarry) };
     let watch = std::mem::replace(&mut gate.swing_watch, judged);
     let quarry = watch.quarry;
+    let sent = world.resource::<crate::fight::Fighting>().strikes;
     let (windup, held) = {
         let (launch, player) = (world.resource::<Launch>(), world.resource::<LocalPlayer>());
         let combat = &launch.content.combat;
@@ -9428,7 +9450,12 @@ fn judge_swing(world: &mut World, gate: &mut Gate, answered: bool) {
     let peak = watch.frames.iter().copied().max_by(|a, b| a.2.total_cmp(&b.2));
     let result = match peak {
         _ if watch.stage == 0 => Err(format!("{quarry} was never in reach and aimed at for the watched swing")),
-        None => Err(format!("the swing at {quarry} never played in the hand")),
+        None => Err(format!(
+            "the swing at {quarry} never played in the hand: {} presses taken for no swing; {} swings sent since the press ({} then)",
+            watch.untaken,
+            sent - watch.sent,
+            watch.sent
+        )),
         Some((_, connect, _)) if (connect - windup).abs() > 1e-4 => Err(format!("the swing was timed to connect {connect:.3} s in, not at the wind-up of {windup:.3} s")),
         Some((at, _, _)) if (at - windup).abs() > SWING_FRAME + 1e-3 => Err(format!("the swing peaked {at:.3} s in, where the server judges its blow at {windup:.3} s")),
         Some((_, _, weight)) if weight < 0.9 => Err(format!("the swing went only {weight:.2} of the way out")),
@@ -9437,9 +9464,10 @@ fn judge_swing(world: &mut World, gate: &mut Gate, answered: bool) {
         Some(_) if !watch.shot => Err("the swing was never shot as it connected".to_string()),
         Some(_) if watch.drawn != models || models == 0 => Err(format!("the hand was drawn with {} models as it connected, where it takes {models}", watch.drawn)),
         Some((at, _, weight)) => Ok(format!(
-            "{} frames of 1/60 s: out {weight:.2} at {at:.3} s, the blow judged at {windup:.3} s; at rest {:.2} s in; its blow answered; drawn with {models} models",
+            "{} frames of 1/60 s: out {weight:.2} at {at:.3} s, the blow judged at {windup:.3} s; at rest {:.2} s in; its blow answered; drawn with {models} models; {} presses taken for no swing first",
             watch.frames.len(),
-            watch.frames.last().map_or(0.0, |f| f.0)
+            watch.frames.last().map_or(0.0, |f| f.0),
+            watch.untaken
         )),
     };
     gate.check(watch.name, result);
