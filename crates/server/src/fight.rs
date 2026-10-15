@@ -143,6 +143,13 @@ impl Fights {
         self.secs(Instant::now())
     }
 
+    /// Passes `seconds` of fight time at once, as if they had gone by (tests that tick
+    /// faster than the clock).
+    #[cfg(test)]
+    pub(crate) fn pass(&mut self, seconds: f32) {
+        self.epoch = self.epoch.checked_sub(std::time::Duration::from_secs_f32(seconds)).unwrap_or(self.epoch);
+    }
+
     /// The share a pin slows `creature` by now.
     pub(crate) fn slow(&self, creature: u32) -> f32 {
         let now = self.now();
@@ -364,7 +371,7 @@ impl Server {
         // player stands, from its body's edge (`Creature::choose`).
         let species = self.content.creatures.get(live.species);
         let edge = species.edge(to.length(), live.scale);
-        let Some(index) = species.choose(live.phase, edge, live.attack) else { return };
+        let Some(index) = species.choose(live.phase, edge, live.attack, species.level(live.body.position.y, target.position.y, live.scale)) else { return };
         let Some(attack) = species.attack_at(index) else { return };
         let feel = self.content.combat.feel;
         let windup = attack.windup.unwrap_or(feel.creature_windup).max(0.0);
@@ -648,7 +655,7 @@ impl Server {
         // with slack for the lag.
         let reach = attack.reach + size.0 * scale * 0.5 + 0.3 + feel.reach_slack;
         let flat = (to - at).with_y(0.0).length();
-        let tall = (to.y - at.y).abs() < size.1 * scale + 1.5;
+        let tall = self.content.creatures.get(species).in_band(at.y, to.y, voxmar_engine::physics::player::HEIGHT, scale);
         // A charge that runs onto a braced point is stopped on it, heavy or not.
         if let Some(charge) = attack.charge.filter(|_| contact) {
             let bracing = self.guard_of(player).filter(|g| g.braces(look, at - to));
@@ -719,7 +726,8 @@ impl Server {
         let Some(live) = self.creatures.live.get_mut(&creature) else { return };
         let Some(mut charge) = live.charging else { return };
         let body = live.body;
-        let species = self.content.creatures.get(live.species);
+        let kind = live.species;
+        let species = self.content.creatures.get(kind);
         let (size, scale, most) = (species.def.body.size, live.scale, species.def.health);
         let moved = (body.position - before).with_y(0.0).dot(charge.along).max(0.0);
         charge.left -= moved;
@@ -752,7 +760,7 @@ impl Server {
             .filter(|p| p.joined && p.health.alive() && !p.allow_flight)
             .filter(|p| {
                 let to = (p.position - body.position).with_y(0.0);
-                to.length() <= touching && to.dot(charge.along) >= 0.0 && (p.position.y - body.position.y).abs() < size.1 * scale + 1.0
+                to.length() <= touching && to.dot(charge.along) >= 0.0 && self.content.creatures.get(kind).level(body.position.y, p.position.y, scale)
             })
             .min_by(|a, b| (a.position - body.position).with_y(0.0).length_squared().total_cmp(&(b.position - body.position).with_y(0.0).length_squared()))
             .map(|p| p.id);

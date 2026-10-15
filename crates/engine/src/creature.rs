@@ -456,6 +456,9 @@ pub struct CreatureDef {
     /// Attacks besides `attack`, chosen by phase and distance (`moves::Creature::choose`).
     #[serde(default)]
     pub moves: Vec<moves::Move>,
+    /// How far up and down it strikes (`moves::Strike`).
+    #[serde(default)]
+    pub strike: moves::Strike,
     /// The stages of its fight, by the health it falls to.
     #[serde(default)]
     pub phases: Vec<moves::Phase>,

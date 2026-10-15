@@ -799,13 +799,22 @@ impl Server {
             }
         }
         let (mut balked, mut no_way) = (false, false);
+        let chasing = creature.mind.doing.is_some_and(|i| matches!(species.modules[i].0.name(), "hunt" | "defend"));
+        // Over or under what it chases, out of its reach up or down (`moves::Strike`: a
+        // player down a hole too deep for it), it can come no nearer: it has no way there,
+        // and gives the chase up at once rather than stand over them.
+        let over = chasing && !held && charging.is_none() && wanted == Vec3::ZERO
+            && decision.goal.is_some_and(|g| g.with_y(0.0).distance(body.position.with_y(0.0)) <= 0.4 && !species.in_band(body.position.y, g.y, voxmar_engine::physics::player::HEIGHT, creature.scale));
         // Its last look for a way, lately, found none.
-        let no_way_lately = creature.way_to.is_none() && creature.way_at != 0 && self.tick < creature.way_at + 3 * TICKS_PER_SECOND as u64;
+        let no_way_lately = over || creature.way_to.is_none() && creature.way_at != 0 && self.tick < creature.way_at + 3 * TICKS_PER_SECOND as u64;
         // Stuck against something for two seconds, or going round it for four: give up the
         // goal.
         let gained = body.position.distance(before) >= drive.speed * dt * 0.2;
-        if wanted != Vec3::ZERO && (!gained || detour != 0.0) {
-            creature.stuck += if gained { dt * 0.5 } else { dt };
+        if over {
+            creature.stuck = creature.stuck.max(NO_WAY_STUCK);
+        }
+        if over || wanted != Vec3::ZERO && (!gained || detour != 0.0) {
+            creature.stuck += if gained && !over { dt * 0.5 } else { dt };
             if creature.stuck > 2.0 {
                 creature.decision.goal = None;
                 creature.mind.goal = None;
@@ -814,7 +823,6 @@ impl Server {
                 // through, or round a box it cannot get into): it gives the chase up and
                 // goes home rather than hang there. Back at it within a minute, it gives up
                 // at the first balk.
-                let chasing = creature.mind.doing.is_some_and(|i| matches!(species.modules[i].0.name(), "hunt" | "defend"));
                 if chasing && !species.def.boss {
                     let again = self.tick < creature.balked_at + BALK_WINDOW;
                     creature.balked = if again { creature.balked + 1 } else { 1 };
@@ -3639,6 +3647,8 @@ mod fight_tests {
         pub pressing: f32,
         pub cornered: f32,
         pub hops: u32,
+        /// Its blows that landed on the player (`fight_timed` with its blows timed).
+        pub hits: u32,
         pub nearest: f32,
         /// How far it ended from the player.
         pub last: f32,
@@ -3703,6 +3713,47 @@ mod fight_tests {
         }
     }
 
+    /// The pen's floor raised `deep` blocks, its walls with it, but for a hole a block across
+    /// and `deep` deep at x = 2, the player at its foot; the creature starts on the raised
+    /// floor to the west.
+    fn hole(s: &mut Server, c: IVec3, deep: i32) -> (Vec3, Vec3) {
+        set(s, "base:stone", (-8..=8).flat_map(|x| (-8..=8).flat_map(move |z| (0..deep).map(move |y| IVec3::new(x, y, z)))).filter(|cell| cell.x != 2 || cell.z != 0).map(|cell| c + cell));
+        let rim = (-9..=9).flat_map(|i| [IVec3::new(i, deep, -9), IVec3::new(i, deep, 9), IVec3::new(-9, deep, i), IVec3::new(9, deep, i)]);
+        wall(s, rim.map(|cell| c + cell).collect::<Vec<_>>(), 3);
+        (c.as_vec3() + Vec3::new(2.5, 0.0, 0.5), c.as_vec3() + Vec3::new(-3.5, deep as f32, 0.5))
+    }
+
+    /// The fighters, Old Tusk among them, with the player down a hole a block across and
+    /// two or three deep, strike down at them from its rim: first within 3 s, a blow landing
+    /// in 8 s, never standing still a second wanting to go (their blows timed as the game
+    /// times them). Old Tusk walks to the rim and gores rather than charge over the hole.
+    /// Before: none struck down a hole three deep in 8 s (their reach down was their height
+    /// and 1.5 blocks less the player's height), and Old Tusk charged over it, rammed the
+    /// far wall, and charged again.
+    #[test]
+    fn fighters_strike_down_into_a_hole_a_block_across() {
+        let holes: [(&str, Scene); 2] = [("hole 2", |s, c| hole(s, c, 2)), ("hole 3", |s, c| hole(s, c, 3))];
+        for (scene, set) in holes {
+            for name in FIGHTERS.into_iter().chain(["base:old_tusk"]) {
+                let f = fight_timed(name, set, 8.0, true);
+                assert!(f.first.is_some_and(|t| t <= 3.0) && f.hits > 0 && f.pinned < 1.0, "{scene}: {name}: {f:?}");
+            }
+        }
+    }
+
+    /// With the player down a hole a block across and four deep, out of their reach down
+    /// (`moves::Strike`), the fighters (not a boss, who fights to the end) strike nothing,
+    /// never stand a second over the hole, and give the chase up, ending well off it. Before:
+    /// a bear, an aurochs and a bison stood over the player, under their blows, 4 to 5 s of 8,
+    /// their goal reached and no nearer to go.
+    #[test]
+    fn fighters_give_up_on_a_player_down_a_hole_too_deep_for_them() {
+        for name in FIGHTERS {
+            let f = fight_timed(name, |s, c| hole(s, c, 4), 8.0, true);
+            assert!(f.hits == 0 && f.pinned < 1.0 && f.last > 2.0, "{name}: {f:?}");
+        }
+    }
+
     /// Uneven ground in a fight: a step, steps, a slab and block, logs lying about, tall
     /// grass, and a fence (two blocks high: the game has no fence block yet) or a ledge the
     /// player stands behind or on, out of the creature's way.
@@ -3747,6 +3798,12 @@ mod fight_tests {
     /// `name` started at the scene's spot, struck once to anger it, then `seconds` of the
     /// player standing there striking it each second it is within 3.5 blocks.
     pub(super) fn fight(name: &str, scene: Scene, seconds: f32) -> Fight {
+        fight_timed(name, scene, seconds, false)
+    }
+
+    /// As `fight`; `timed`, its blows land as the game lands them, each wind-up out (fight
+    /// time passing with the ticks), and it recovers after (a charge sets off and runs).
+    pub(super) fn fight_timed(name: &str, scene: Scene, seconds: f32, timed: bool) -> Fight {
         let mut server = crate::test_server();
         let c = pen(&mut server, 9);
         let (stand, from) = scene(&mut server, c);
@@ -3764,6 +3821,11 @@ mod fight_tests {
                 server.hurt_creature(player, id, 0, None, voxmar_engine::combat::Blow::Plain);
             }
             server.think_and_move();
+            if timed {
+                server.fights.pass(dt);
+                server.tick_fights();
+            }
+            fight.hits += (server.players[&player].health != traits::Health::full(server.survival.max_health)) as u32;
             server.players.get_mut(&player).unwrap().health = traits::Health::full(server.survival.max_health);
             let creature = &server.creatures.live[&id];
             let body = creature.body;
