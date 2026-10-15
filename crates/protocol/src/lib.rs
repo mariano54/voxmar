@@ -40,8 +40,9 @@ pub use voxmar_engine::weather::Weather;
 // 42: a staggered creature's tell (STAGGERED).
 // 43: the seat a player sits on (Vitals::seated), for the lower eye.
 // 44: what the home's stores hold (Vitals::home_stores), for what can be made there.
-// 45: a seventh worn slot, the charm (inventory::WORN_SLOTS), moving an open store's slots one on.
-pub const PROTOCOL_VERSION: u32 = 45;
+// 48: a seventh worn slot, the charm (inventory::WORN_SLOTS), moving an open store's slots one
+// on; 45 to 47 are handed to other lanes.
+pub const PROTOCOL_VERSION: u32 = 48;
 
 /// A creature's `tell` while it rears into a new phase of its fight.
 pub const REARING: u8 = u8::MAX;
