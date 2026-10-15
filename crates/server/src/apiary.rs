@@ -17,7 +17,6 @@ use voxmar_engine::traits;
 use voxmar_protocol::{ChatKind, PlayerId, ServerMessage, TICKS_PER_SECOND};
 
 use crate::Server;
-use crate::items::random3;
 use crate::process::Process;
 
 /// The kept hives with bees in them, and the seconds each has foraged toward its honey.
@@ -116,14 +115,16 @@ impl Server {
             let left = player.inventory.replace_one(selected, becomes);
             player.changed(traits::INVENTORY);
             if left > 0 {
-                let body = dropped::popped(pos, random3(self.tick, pos, 0xbee0));
+                let body = dropped::popped(pos, self.meta.next_pop(pos, 0xbee0));
                 self.items.spawn(ItemStack { item: becomes, count: left }, body, dropped::PICKUP_DELAY);
             }
         }
-        let mut draws = (0u32..).map(|i| random3(self.tick, pos, 0xbee1_0000 ^ i)[0]);
-        let found = voxmar_engine::crop::roll(&take.gives, 0.0, || draws.next().expect("endless"));
+        // Each draw numbered by the player's count of harvest draws, and where a drop pops
+        // by the world's count of drops, never by the tick it is taken on.
+        let player = self.players.get_mut(&agent).expect("checked above");
+        let found = voxmar_engine::crop::roll(&take.gives, 0.0, || player.draw(crate::save::Draw::Harvest)[0]);
         for (i, (item, count)) in found.into_iter().enumerate() {
-            let body = dropped::popped(pos, random3(self.tick, pos, 0xbee2 + i as u32));
+            let body = dropped::popped(pos, self.meta.next_pop(pos, 0xbee2 + i as u32));
             self.items.spawn(ItemStack { item, count }, body, dropped::PICKUP_DELAY);
         }
         self.set_block(pos, take.becomes);
@@ -541,5 +542,32 @@ mod tests {
         let saved = server.apiary.saved();
         assert_eq!(saved, vec![SavedHive { position: HIVE.to_array(), foraged: 30.0 }]);
         assert_eq!(Apiary::restore(&saved).foraged(HIVE), Some(30.0));
+    }
+
+    /// What a skep gives is drawn by the keeper's count of harvest draws, and pops by the
+    /// world's count of drops, not the tick it is taken on.
+    #[test]
+    fn a_skep_gives_by_the_keepers_count_not_the_tick() {
+        let taken = |tick: u64| {
+            let mut server = fixture();
+            server.meta.draw_key = 0x0d1a;
+            server.players.get_mut(&1).unwrap().draw_key = crate::player::player_draw_key(0x0d1a, "ada");
+            server.tick = tick;
+            let mut found = Vec::new();
+            for _ in 0..12 {
+                server.set_block(HIVE, block(&server, "base:honey_skep"));
+                hold(&mut server, "base:stick");
+                server.tend_bees(1, HIVE);
+                let mut lying: Vec<_> = server.items.take_all().map(|d| (d.stack.item, d.stack.count, d.body.position.to_array(), d.body.velocity.to_array())).collect();
+                lying.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                found.push(lying);
+            }
+            (found, server.players[&1].draws.harvests, server.meta.drops)
+        };
+        let first = taken(1_000);
+        assert!(first.1 > 0 && first.0.iter().all(|f| !f.is_empty()), "twelve skeps drew {} times for {:?}", first.1, first.0);
+        let gave: Vec<Vec<_>> = first.0.iter().map(|f| f.iter().map(|d| (d.0, d.1)).collect()).collect();
+        assert!(gave.windows(2).any(|w| w[0] != w[1]), "twelve skeps all gave alike: {gave:?}");
+        assert_eq!(taken(1_377), first, "the same skeps taken later gave otherwise");
     }
 }
