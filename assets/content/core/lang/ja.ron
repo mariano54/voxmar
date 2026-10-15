@@ -461,6 +461,7 @@
     "quest.unpin": "ピンを外す",
     "quest.tracker.done": "達成！",
     "quest.tracker.ready": "達成！受け取ろう",
+    "quest.tracker.more": "ほか{count}件",
     "quest.any": "何か",
     "quest.any_creature": "何かの生き物",
     "quest.progress": "{goal} {have}/{need}",
