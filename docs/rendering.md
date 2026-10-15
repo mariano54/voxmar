@@ -404,7 +404,7 @@ runs from less to more within the cell; a box may hide behind a solid neighbour 
 only with a face on the cell's side; a box turned about the vertical (`turn`) hides nothing and counts, for what it hides and will
 collide with, as its unturned bound; and the caps on boxes per shape and on quads in all
 are data (core's `shapes.ron`, which a later package may change field by field, though
-never past the 4096 quads a vertex can number); a shape is defined by one package only. Which of the cell's six sides the boxes cover whole is
+never past the 16384 quads a vertex can number: 12 bits in word 1 and 2 in word 0); a shape is defined by one package only. Which of the cell's six sides the boxes cover whole is
 worked out by sampling every 16th, never read from a flag: only a shape covering all six
 hides its neighbours' faces and stops light as a cube does, so a slab's top or a stair's
 side never hides a face, and slabs and stairs neither darken what they touch nor stop

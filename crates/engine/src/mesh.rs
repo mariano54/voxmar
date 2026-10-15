@@ -26,6 +26,8 @@
 //! Bit 27 marks the same quads used as leaf cards (`ChunkMesh::fringe`), with flag 2 for a
 //! flat card, bit 28 for a conifer's needles and bits 29..31 for the face of the crown it is
 //! shaded as; their top edge is flag 1, as on a plant.
+//! A block's shape goes as plant faces of the shape model (`PLANT_SHAPE`): its quad's number in
+//! the renderer's shape table in word 1 bits 12..23 and, above those, word 0 bits 30..31.
 //!
 //! Faces of translucent fluids (water) carry the fluid's state instead of ambient
 //! occlusion, which their shading has no use for:
@@ -1143,8 +1145,9 @@ fn emit_plant(out: &mut MeshBuffers, registry: &BlockRegistry, column: &Column, 
 /// by the cell's own light; one on its boundary by the brighter of the cell's and the
 /// neighbour's (the one beyond, for a shape that fills its cell and so holds no light), and
 /// it hides, if it may, behind a neighbour that hides faces. They go as plant faces of the
-/// shape model (`PLANT_SHAPE`), with the table's quad in word 1 bits 12..23 where a plant
-/// has its tint and height.
+/// shape model (`PLANT_SHAPE`), with the table's quad numbered in 14 bits: its low 12 in
+/// word 1 bits 12..23, where a plant has its tint and height, its high 2 in word 0 bits
+/// 30..31, where a plant has which quad of its model it is (see [`shape_quad_index`]).
 fn emit_model(out: &mut MeshBuffers, registry: &BlockRegistry, cells: &[Cell], padded: usize, pos: IVec3) {
     let cell = &cells[padded];
     let Some(first) = registry.shape_first_quad(cell.block) else { return };
@@ -1161,8 +1164,8 @@ fn emit_model(out: &mut MeshBuffers, registry: &BlockRegistry, cells: &[Cell], p
             }
             light = (light & 0xF0).max(beyond.light & 0xF0) | (light & 0x0F).max(beyond.light & 0x0F);
         }
-        let index = (first + q) as u32;
-        let w1 = layers[q] as u32 | (index & 0xFFF) << 12 | (light as u32) << 24;
+        let (high, low) = shape_quad_bits((first + q) as u32);
+        let w1 = layers[q] as u32 | low | (light as u32) << 24;
         let base = out.vertices.len() as u32;
         for corner in 0..4u32 {
             let w0 = pos.x as u32
@@ -1171,11 +1174,25 @@ fn emit_model(out: &mut MeshBuffers, registry: &BlockRegistry, cells: &[Cell], p
                 | PLANT_DIAGONAL << 18
                 | corner << 21
                 | (PLANT_SHAPE & 3) << PLANT_MODEL_SHIFT
-                | (PLANT_SHAPE >> 2) << PLANT_MODEL_HIGH_SHIFT;
+                | (PLANT_SHAPE >> 2) << PLANT_MODEL_HIGH_SHIFT
+                | high;
             out.vertices.push([w0, w1]);
         }
         out.indices.extend([0, 1, 2, 0, 2, 3].map(|i| base + i));
     }
+}
+
+/// A shape quad's number in the renderer's table as a vertex keeps it: (word 0 bits, word 1
+/// bits). See [`shape_quad_index`].
+fn shape_quad_bits(index: u32) -> (u32, u32) {
+    debug_assert!((index as usize) < crate::shape::MAX_SHAPE_QUADS);
+    ((index >> 12 & 3) << PLANT_PIECE_SHIFT, (index & 0xFFF) << 12)
+}
+
+/// The number in the renderer's table of a shape quad's vertex, from its two words, as
+/// voxel.wgsl `shape_index` reads it.
+pub fn shape_quad_index(w0: u32, w1: u32) -> usize {
+    ((w1 >> 12 & 0xFFF) | (w0 >> PLANT_PIECE_SHIFT & 3) << 12) as usize
 }
 
 /// A blade seed for every grass block whose top is open to the air (or a plant).
@@ -1359,7 +1376,7 @@ mod tests {
             .map(|quad| {
                 let [w0, w1] = quad[0];
                 let at = IVec3::new((w0 & 63) as i32, ((w0 >> 6) & 63) as i32, ((w0 >> 12) & 63) as i32);
-                (at, &shape.quads[((w1 >> 12) & 0xFFF) as usize - first], (w1 >> 24) as u8)
+                (at, &shape.quads[shape_quad_index(w0, w1) - first], (w1 >> 24) as u8)
             })
             .collect();
         let quad = |at: IVec3, face: Face| drawn.iter().find(|(p, q, _)| *p == at && q.face == face).map(|&(_, _, light)| light);
@@ -1418,6 +1435,20 @@ mod tests {
         let top = |v: &Vertex| (v[0] >> 6) & 63;
         let highest = mesh.opaque.vertices.iter().map(top).max().unwrap();
         assert_eq!(highest, 10, "the top faces of 10-high ground sit at y = 10");
+    }
+
+    /// Every number the shape table may hold comes back out of a vertex as it went in, past
+    /// the twelve bits word 1 has for it, and the shader reads it the same way.
+    #[test]
+    fn shape_quads_number_up_to_the_whole_table() {
+        for index in [0, 1, 4095, 4096, 5000, crate::shape::MAX_SHAPE_QUADS as u32 - 1] {
+            let (high, low) = shape_quad_bits(index);
+            let w0 = PLANT_DIAGONAL << 18 | (PLANT_SHAPE & 3) << PLANT_MODEL_SHIFT | (PLANT_SHAPE >> 2) << PLANT_MODEL_HIGH_SHIFT | high;
+            assert!(is_shape_quad(w0), "{index}: no longer read as a shape quad");
+            assert_eq!(shape_quad_index(w0, low), index as usize);
+        }
+        let shader = include_str!("../../client/src/render/voxel.wgsl");
+        assert!(shader.contains("return ((w1 >> 12u) & 0xFFFu) | (((w0 >> PLANT_PIECE_SHIFT) & 3u) << 12u);"), "voxel.wgsl reads a shape quad's number otherwise");
     }
 
     #[test]
