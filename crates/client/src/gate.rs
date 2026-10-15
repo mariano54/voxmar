@@ -742,7 +742,7 @@ struct Gate {
     dry_fire: Option<IVec3>,
     storm_wet: Vec<String>,
     /// Frames in a row the door step's lit or darkened spot has had nothing near it waiting
-    /// to be meshed (`light_drawn`).
+    /// to be meshed (`light_drawn`); each phase counts afresh.
     light_frames: u32,
     /// While taming, frames the junglefowl was under the crosshair, another creature was,
     /// or none was, and the nearest the player came to it.
@@ -1130,6 +1130,7 @@ impl Gate {
         self.settled = 0;
         self.phase_server = self.server_now;
         self.taps = 0;
+        self.light_frames = 0;
     }
 
     /// Seconds of the server's own clock since the phase began: what a wait on the server
@@ -9991,6 +9992,7 @@ fn to_phase(gate: &mut Gate, phase: u32, now: f32) {
     gate.phase = phase;
     gate.phase_since = now;
     gate.phase_server = gate.server_now;
+    gate.light_frames = 0;
 }
 
 /// Done, or a failed check: on to sweeping the bears away (phase 5), so none is left
