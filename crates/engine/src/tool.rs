@@ -686,6 +686,9 @@ mod tests {
         // mending an iron pickaxe asks the level making one does.
         let knife = id("base:wooden_knife");
         assert_eq!((tools.mend_share(pick), tools.mend_share(knife)), (0.5, 1.0));
+        // A trophy is kept by care: the tusk club by its twine bindings, half at a time.
+        let club = id("base:tusk_club");
+        assert_eq!((tools.mends(club), tools.mend_share(club)), (&[id("base:twine")][..], 0.5));
         let engineering = content.skills.id("core:engineering").unwrap();
         assert_eq!(tools.mend_skill(id("base:iron_pickaxe")), Some((engineering, 15)));
         // Met as making one is: boosts count, as a schematic would.
