@@ -464,6 +464,7 @@
     "quest.unpin": "Unpin",
     "quest.tracker.done": "Done!",
     "quest.tracker.ready": "Done! Claim it.",
+    "quest.tracker.more": "+{count} More",
     "quest.any": "anything",
     "quest.any_creature": "any creature",
     "quest.progress": "{goal} {have}/{need}",

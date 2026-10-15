@@ -569,6 +569,10 @@ struct Gate {
     web_canvas: Vec2,
     /// The quest a lane's header was pressed to bring into view.
     web_head: Option<String>,
+    /// A quest pinned only for the tracker-behind-book check, to let go after it.
+    pinned_for_check: Option<String>,
+    /// Whether the tracker showed in the game before leaving it.
+    tracker_in_game: bool,
     /// A quest's cell on the web across, and the point of the canvas at the middle of the
     /// well (a share of it), before the wheel zooms the web.
     web_cell: f32,
@@ -669,8 +673,9 @@ struct Gate {
     /// Views in a language with line rules where no text had its line breaks checked.
     unbroken: Vec<String>,
     /// The text-fit tour's view (its step and stage), its layout as last drawn, whether that
-    /// changed since the view was shown, and the frames it has held still since (`FIT_STILL`).
-    fit_layout: ((Step, u32), u64, bool, u32),
+    /// changed since the view was shown, the frames it has held still since (`FIT_STILL`),
+    /// and the frames it has been shown.
+    fit_layout: ((Step, u32), u64, bool, u32, u32),
     /// The interface font before the gate tried another, to go back to.
     font: Option<crate::ui::skin::InterfaceFont>,
     /// Whether the taming food was moved into the hotbar, which earlier steps may have filled.
@@ -805,6 +810,8 @@ impl Gate {
             web_scroll: Vec2::ZERO,
             web_canvas: Vec2::ZERO,
             web_head: None,
+            pinned_for_check: None,
+            tracker_in_game: false,
             web_cell: 0.0,
             web_middle: Vec2::ZERO,
             fell: Vec3::ZERO,
@@ -856,7 +863,7 @@ impl Gate {
             cover_checked: false,
             spills: Vec::new(),
             unbroken: Vec::new(),
-            fit_layout: ((Step::Load, 0), 0, false, 0),
+            fit_layout: ((Step::Load, 0), 0, false, 0, 0),
             font: None,
             food_moved: false,
             cook_started: false,
@@ -1685,6 +1692,18 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
                     Err(format!("compiled while playing, each a hitch the frame it was first needed: {}", late.join(", ")))
                 };
                 gate.check("pipelines", result);
+                // Something pinned, to see the tracker go with the game.
+                if world.resource::<crate::settings::Settings>().pinned_quests.is_empty() {
+                    let first = world.resource::<Launch>().content.quests.iter().next().map(|quest| quest.name.clone());
+                    gate.pinned_for_check = first.clone();
+                    world.resource_mut::<crate::settings::Settings>().pinned_quests.extend(first);
+                }
+                gate.advance(now);
+            } else if gate.phase == 1 {
+                if tracker_lines(world).is_none() && in_phase < 3.0 {
+                    return;
+                }
+                gate.tracker_in_game = tracker_lines(world).is_some();
                 world.resource_mut::<NextState<Screen>>().set(Screen::Title);
                 gate.advance(now);
             } else {
@@ -1698,6 +1717,16 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
                     Err(format!("still at {screen:?} a second after leaving"))
                 };
                 gate.check("leave", result);
+                let tracker = tracker_lines(world);
+                let result = match tracker {
+                    _ if !gate.tracker_in_game => Err("with a quest pinned, the tracker never showed in the game".into()),
+                    None => Ok("the tracker showed in the game and went with it".to_owned()),
+                    Some(lines) => Err(format!("the title screen still shows the tracker: {lines:?}")),
+                };
+                gate.check("tracker: gone with the game", result);
+                if let Some(name) = gate.pinned_for_check.take() {
+                    world.resource_mut::<crate::settings::Settings>().pinned_quests.retain(|pin| *pin != name);
+                }
                 // The session changed settings and closed the menu, which saves them in a
                 // player's game; a gate run must leave the player's file as it found it.
                 let modified = crate::settings::file().and_then(|file| std::fs::metadata(file).and_then(|m| m.modified()).ok());
@@ -6371,6 +6400,13 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 let last = ages.len().saturating_sub(1);
                 (last, content.quests.iter().filter(|q| ages.get(last) == Some(&q.age) && Some(&q.name) != current.as_ref()).last().map(|q| q.name.clone()))
             };
+            // The tracker behind the book is only seen hidden with something pinned: pin the
+            // quest on for the check if nothing is, and let it go after.
+            let mut settings = world.resource_mut::<crate::settings::Settings>();
+            gate.pinned_for_check = settings.pinned_quests.is_empty().then(|| current.clone()).flatten();
+            if let Some(name) = &gate.pinned_for_check {
+                settings.pinned_quests.push(name.clone());
+            }
             let mut view = world.resource_mut::<crate::hud::quests::QuestView>();
             view.chapter = last;
             view.picked = other;
@@ -6390,7 +6426,15 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.check("quests: current", Ok(format!("Current Quest turned the book back to {picked:?}, picked and inside the well")));
                 let pins = world.resource::<crate::settings::Settings>().pinned_quests.len();
                 let tracker = tracker_lines(world);
-                gate.check("quests: tracker behind book", if tracker.is_none() { Ok(format!("with the book open the tracker is hidden ({pins} pinned)")) } else { Err(format!("with the book open the tracker shows {tracker:?}")) });
+                let result = match tracker {
+                    _ if pins == 0 => Err("nothing is pinned, so a hidden tracker says nothing".into()),
+                    None => Ok(format!("with the book open the tracker is hidden ({pins} pinned)")),
+                    Some(lines) => Err(format!("with the book open the tracker shows {lines:?}")),
+                };
+                gate.check("quests: tracker behind book", result);
+                if let Some(name) = gate.pinned_for_check.take() {
+                    world.resource_mut::<crate::settings::Settings>().pinned_quests.retain(|pin| *pin != name);
+                }
             } else if in_phase < 2.0 {
                 return;
             } else {
@@ -6562,6 +6606,8 @@ const FIT_SETTLE: f32 = 0.4;
 /// Frames a view's layout must hold still, once it changed for the view, to be read before
 /// `FIT_SETTLE`, and the least it is left: a view laid out sooner is read sooner.
 const FIT_STILL: u32 = 4;
+/// Frames a view that never holds still is left before it is read: `FIT_SETTLE` at 60 a second.
+const FIT_FRAMES: u32 = 24;
 const FIT_SETTLE_LEAST: f32 = 0.1;
 
 /// Where every node of the interface is and how big, and every text's lines: what laying
@@ -6628,16 +6674,20 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     // or `FIT_SETTLE` passed (a view that lays out like the one before it).
     let print = layout_print(world);
     let shown = (gate.step, gate.phase);
-    let (on, last, changed, still) = &mut gate.fit_layout;
+    let (on, last, changed, still, frames) = &mut gate.fit_layout;
+    *frames += 1;
     if *on != shown {
-        (*on, *last, *changed, *still) = (shown, print, false, 0);
+        (*on, *last, *changed, *still, *frames) = (shown, print, false, 0, 0);
     } else if print == *last {
         *still += 1;
     } else {
         (*last, *changed, *still) = (print, true, 0);
     }
     let laid_out = *changed && *still >= FIT_STILL && in_phase >= FIT_SETTLE_LEAST;
-    if in_phase < FIT_SETTLE && !laid_out {
+    // Held still either way, so a slow frame rate never reads a view mid-change (a tracker
+    // folding its lines a frame after it is drawn), but for a view always moving (a toast
+    // rising), read once it has had `FIT_FRAMES` frames.
+    if (in_phase < FIT_SETTLE || (*still < FIT_STILL && *frames < FIT_FRAMES)) && !laid_out {
         return;
     }
     // A journal page is read once it is drawn, in this language, however long that takes.
@@ -6807,6 +6857,10 @@ fn show_view(world: &mut World, view: Option<View>, now: f32) {
 /// Switches the interface to language `code`, as the setting does, without writing the
 /// player's settings.
 fn set_language(world: &mut World, code: &str) {
+    // The settings too, or the next change to them (a pin) switches back to theirs.
+    if world.resource::<crate::settings::Settings>().language != code {
+        world.resource_mut::<crate::settings::Settings>().language = code.to_owned();
+    }
     let content = voxmar_server::assets_dir().join("content");
     world.insert_resource(Locale::load(&content, code));
 }
