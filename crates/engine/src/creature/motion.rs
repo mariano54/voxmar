@@ -175,6 +175,8 @@ pub const SAFE_DROP: i32 = 3;
 
 /// How high a jump at `jump` blocks per second lifts it, stepped as `dt` steps it.
 fn hop_height(jump: f32, dt: f32) -> f32 {
+    // A step of no time would never come down.
+    let dt = dt.max(1e-3);
     let (mut v, mut up) = (jump, 0.0);
     while v > 0.0 {
         up += v * dt;
@@ -194,11 +196,16 @@ fn climb_speed(dt: f32) -> f32 {
     high
 }
 
-/// How fast a hop up a step goes, stepped as `dt` steps it: its own jump, or the least that
-/// gets up a block (`climb_speed`). Steering (`open_way`) and the hop (`step`) judge a step
-/// by the same hop.
+/// The fastest a hop up a step goes, in blocks per second: a rise of about a block and a
+/// half. A great leaper (a snow leopard, its jump 11, rising over two blocks) springing on at
+/// its pace from a block before a gap would come down on a fence two high beyond it.
+const STEP_HOP: f32 = 8.8;
+
+/// How fast a hop up a step goes, stepped as `dt` steps it: its own jump, no faster than
+/// `STEP_HOP`, or the least that gets up a block (`climb_speed`). Steering (`open_way`) and
+/// the hop (`step`) judge a step by the same hop.
 pub fn hop_speed(movement: &Movement, dt: f32) -> f32 {
-    movement.jump.max(climb_speed(dt))
+    movement.jump.min(STEP_HOP).max(climb_speed(dt))
 }
 
 /// Whether the body can go a little way along `heading` (horizontal, unit length): sliding
