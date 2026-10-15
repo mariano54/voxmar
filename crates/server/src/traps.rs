@@ -405,4 +405,29 @@ mod tests {
         assert!(!ran(Vec3::new(-1.0, 0.0, -0.5), Vec3::new(2.0, 0.0, -0.5)), "ran beside it");
         assert!(!ran(Vec3::new(-3.0, 0.0, 0.5), Vec3::new(3.0, 0.0, 0.5)), "a blink of six blocks");
     }
+
+    /// Where each wild creature stood at the last look is kept for those still wild and alive
+    /// only: one felled, taken away or taken in is dropped at the next look, so the record
+    /// never outgrows the wild about; and none of it is saved, so a loaded world's first look
+    /// starts from where each creature stands.
+    #[test]
+    fn the_last_look_keeps_only_the_wild_and_starts_fresh_after_a_load() {
+        let (mut server, snare) = field(1);
+        let [stays, felled, gone, kept] = [-6.0, -4.0, 4.0, 6.0].map(|x| put(&mut server, "base:rabbit", snare.as_vec3() + Vec3::new(x, 0.0, 0.5)));
+        let seen = |server: &Server| {
+            let mut ids: Vec<u32> = server.catches.seen.keys().copied().collect();
+            ids.sort_unstable();
+            ids
+        };
+        server.spring_traps();
+        let mut all = vec![stays, felled, gone, kept];
+        all.sort_unstable();
+        assert_eq!(seen(&server), all);
+        server.creature_felled(felled, None);
+        server.creatures.take_away(gone);
+        server.creatures.live.get_mut(&kept).unwrap().owner = Some("keeper".to_owned());
+        server.spring_traps();
+        assert_eq!(seen(&server), [stays], "only the one still wild and alive is remembered");
+        assert!(Catches::restore(&[], |_| None).seen.is_empty(), "a loaded world remembers no last look");
+    }
 }
