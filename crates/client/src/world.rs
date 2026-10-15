@@ -122,6 +122,9 @@ pub struct ClientWorld {
     culler: Culler,
     pub view_distance: i32,
     pub stats: WorldStats,
+    /// The cores of lit structures whose fire burns, as the server last said
+    /// (`ServerMessage::Fires`): a hearth crackles and smokes only while lit.
+    pub fires: FxHashSet<IVec3>,
 }
 
 #[derive(Default, Clone, Copy)]
@@ -156,6 +159,7 @@ impl ClientWorld {
             culler: Culler::spawn(),
             view_distance,
             stats: WorldStats::default(),
+            fires: FxHashSet::default(),
         }
     }
 
