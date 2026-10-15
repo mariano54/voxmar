@@ -739,7 +739,7 @@ impl Server {
         let fall = fell - safe_fall;
         if fall > 0.0 {
             let damage = ((fall.ceil() * feel.charge_fall * most as f32).round() as u16).max(1);
-            self.hurt_creature(charge.player, creature, damage, None, Blow::Plain);
+            self.fall_hurt_creature(creature, damage);
             if !self.creatures.live.get(&creature).is_some_and(|c| c.charging.is_some()) {
                 return;
             }
@@ -790,6 +790,8 @@ impl Server {
         let recovery = attack.and_then(|a| a.recovery).unwrap_or(feel.creature_recovery).max(0.0);
         let windup = attack.and_then(|a| a.windup).unwrap_or(feel.creature_windup).max(0.0);
         live.held_until = tick + ticks(recovery + stun.unwrap_or(0.0));
+        // Dazed by a wall or a braced point, it reels as from any stagger (`STAGGERED`).
+        live.staggered = stun.is_some();
         // The rest of its `every` after the wind-up and recovery, as a blow that lands
         // leaves it: a miss, a wall or a braced point costs no more than a hit.
         live.mind.cooldown = attack.map_or(1.0, |a| (a.every - windup - recovery).max(0.0));
