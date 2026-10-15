@@ -60,6 +60,8 @@ pub struct Kinds {
     /// Leaves: sound passes, and they make a canopy but do not hide the sky.
     pub leaves: Vec<bool>,
     pub group: Vec<Option<u8>>,
+    /// A structure's core whose group counts it only while its fire burns.
+    pub lit_only: Vec<bool>,
     pub groups: usize,
 }
 
@@ -81,9 +83,9 @@ struct Roof {
 }
 
 /// Floods from `eye` through blocks `kinds` marks open. `block` gives the block at a
-/// position, `None` where the world is not loaded (treated as a wall). `seed` makes the
-/// sample choice.
-pub fn scan(eye: IVec3, block: impl Fn(IVec3) -> Option<BlockId>, kinds: &Kinds, seed: u64) -> Enclosure {
+/// position, `None` where the world is not loaded (treated as a wall); `burning` whether a
+/// fire burns at a structure's core. `seed` makes the sample choice.
+pub fn scan(eye: IVec3, block: impl Fn(IVec3) -> Option<BlockId>, burning: impl Fn(IVec3) -> bool, kinds: &Kinds, seed: u64) -> Enclosure {
     let origin = eye - IVec3::splat(SIDE / 2);
     let index = |p: IVec3| {
         let l = p - origin;
@@ -120,6 +122,9 @@ pub fn scan(eye: IVec3, block: impl Fn(IVec3) -> Option<BlockId>, kinds: &Kinds,
     let mut random = seed;
     let mut meet = |found: &mut Enclosure, p: IVec3, b: BlockId, d: i32| {
         let Some(group) = kinds.group[b.0 as usize] else { return };
+        if kinds.lit_only[b.0 as usize] && !burning(p) {
+            return;
+        }
         let (group, w) = (group as usize, weight(d));
         found.groups[group] += w;
         random = mix(random);
@@ -203,8 +208,22 @@ mod tests {
             leaves: vec![false, false, true, false, false],
             // Groups: 0 rock, 1 leaves, 2 water, 3 grass.
             group: vec![None, Some(0), Some(1), Some(2), Some(3)],
+            lit_only: vec![false; 5],
             groups: 4,
         }
+    }
+
+    /// A block heard only while lit (a hearthstone, say) is not counted cold, and counted
+    /// where its fire burns.
+    #[test]
+    fn a_cold_core_is_not_heard() {
+        let mut kinds = kinds();
+        kinds.lit_only[STONE.0 as usize] = true;
+        let room = |p: IVec3| Some(if p.max_element() > 2 || p.min_element() < -2 { STONE } else { AIR });
+        let cold = scan(IVec3::ZERO, room, |_| false, &kinds, 1);
+        let lit = scan(IVec3::ZERO, room, |p| p.x == 3, &kinds, 1);
+        assert_eq!(cold.groups[0], 0.0, "a cold core was heard");
+        assert!(lit.groups[0] > 0.0 && lit.samples[0].iter().all(|p| p.x == 3), "only the burning cores are heard: {:?}", lit.samples[0]);
     }
 
     fn field(p: IVec3) -> Option<BlockId> {
@@ -217,7 +236,7 @@ mod tests {
 
     #[test]
     fn open_field_is_open_to_the_sky() {
-        let found = scan(IVec3::new(0, 65, 0), field, &kinds(), 1);
+        let found = scan(IVec3::new(0, 65, 0), field, |_| true, &kinds(), 1);
         assert!(found.air > 0.9, "{}", found.air);
         assert_eq!(found.sky, 1.0);
         assert_eq!(found.canopy, 0.0);
@@ -230,7 +249,7 @@ mod tests {
     fn a_closed_room_is_small_and_dark() {
         // A 5×3×5 room cut into stone.
         let room = |p: IVec3| Some(if p.x.abs() <= 2 && p.z.abs() <= 2 && (64..67).contains(&p.y) { AIR } else { STONE });
-        let found = scan(IVec3::new(0, 65, 0), room, &kinds(), 1);
+        let found = scan(IVec3::new(0, 65, 0), room, |_| true, &kinds(), 1);
         assert!(found.air < 0.02, "{}", found.air);
         assert_eq!(found.sky, 0.0);
         assert!(found.groups[0] > 300.0, "close rock all around: {}", found.groups[0]);
@@ -248,14 +267,14 @@ mod tests {
                 STONE
             })
         };
-        let found = scan(IVec3::new(2, 65, 0), hill, &kinds(), 1);
+        let found = scan(IVec3::new(2, 65, 0), hill, |_| true, &kinds(), 1);
         assert!(found.sky > 0.2 && found.sky < 0.9, "{}", found.sky);
     }
 
     #[test]
     fn under_a_canopy_is_still_outdoors() {
         let forest = |p: IVec3| Some(if (70..74).contains(&p.y) { LEAVES } else { field(p).unwrap() });
-        let found = scan(IVec3::new(0, 65, 0), forest, &kinds(), 1);
+        let found = scan(IVec3::new(0, 65, 0), forest, |_| true, &kinds(), 1);
         assert_eq!(found.sky, 1.0);
         assert!(found.canopy > 0.9, "{}", found.canopy);
         assert!(found.groups[1] > 100.0);
@@ -265,14 +284,14 @@ mod tests {
     #[test]
     fn water_is_heard_through_and_counted() {
         let shore = |p: IVec3| Some(if p.x > 3 && p.y == 64 { WATER } else { field(p).unwrap() });
-        let found = scan(IVec3::new(0, 65, 0), shore, &kinds(), 1);
+        let found = scan(IVec3::new(0, 65, 0), shore, |_| true, &kinds(), 1);
         assert!(found.groups[2] > 50.0);
         assert!(found.samples[2].iter().all(|p| p.x > 3));
     }
 
     #[test]
     fn unloaded_space_is_a_wall() {
-        let found = scan(IVec3::new(0, 65, 0), |p| (p.x < 4).then(|| field(p).unwrap()), &kinds(), 1);
+        let found = scan(IVec3::new(0, 65, 0), |p| (p.x < 4).then(|| field(p).unwrap()), |_| true, &kinds(), 1);
         assert!(found.air > 0.2 && found.air < 0.9);
     }
 }
