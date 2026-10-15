@@ -25,6 +25,10 @@ const MERGE: f32 = 1.2;
 const RISE: f32 = 10.0;
 /// Lines shown at once at most.
 const LINES: usize = 6;
+/// How long a refusal's reason shows under the crosshair, and how far below its middle
+/// (of the screen's height): close enough to read without looking away from the block.
+const WHY_SECONDS: f32 = 2.5;
+const WHY_BELOW: f32 = 6.0;
 
 pub struct SkillHudPlugin;
 
@@ -48,8 +52,6 @@ struct Line {
 enum LineKind {
     /// Experience gained, in tenths.
     Gain { skill: SkillId, tenths: u32 },
-    /// Something refused, and why.
-    Refused(String),
 }
 
 /// What the skill HUD has to show.
@@ -58,15 +60,18 @@ pub struct SkillToasts {
     lines: Vec<Line>,
     /// Levels reached that the HUD's moments have not yet taken (`celebrate`).
     reached: Vec<(SkillId, u8)>,
+    /// Why the last action was refused, and when, shown under the crosshair.
+    why: Option<(String, f32)>,
+    /// The clock of the last `show`, so a refusal is showing only while it would be drawn.
+    now: f32,
 }
 
 impl SkillToasts {
     /// `tenths` of experience earned in `skill` at `now` seconds.
     pub fn gained(&mut self, skill: SkillId, tenths: u32, now: f32) {
         if let Some(line) = self.lines.iter_mut().rev().find(|l| now - l.at < MERGE && matches!(l.kind, LineKind::Gain { skill: s, .. } if s == skill)) {
-            if let LineKind::Gain { tenths: total, .. } = &mut line.kind {
-                *total += tenths;
-            }
+            let LineKind::Gain { tenths: total, .. } = &mut line.kind;
+            *total += tenths;
             line.at = now;
             return;
         }
@@ -97,21 +102,16 @@ impl SkillToasts {
         self.refusals().any(|w| w == why)
     }
 
-    /// The refusals showing, each saying why.
+    /// The refusals showing, each saying why: the last one, under the crosshair.
     pub fn refusals(&self) -> impl Iterator<Item = &str> {
-        self.lines.iter().filter_map(|l| match &l.kind {
-            LineKind::Refused(why) => Some(why.as_str()),
-            LineKind::Gain { .. } => None,
-        })
+        self.why.iter().filter(|(_, at)| self.now - at < WHY_SECONDS).map(|(why, _)| why.as_str())
     }
 
-    /// An action refused, with why, at `now`; the same reason again only refreshes it.
+    /// An action refused, with why, at `now`: it shows under the crosshair in place of the
+    /// last; the same reason again only refreshes it.
     pub fn refused(&mut self, why: String, now: f32) {
-        if let Some(line) = self.lines.iter_mut().find(|l| l.kind == LineKind::Refused(why.clone())) {
-            line.at = now;
-            return;
-        }
-        self.push(Line { kind: LineKind::Refused(why), at: now });
+        self.now = self.now.max(now);
+        self.why = Some((why, now));
     }
 
     fn push(&mut self, line: Line) {
@@ -129,6 +129,10 @@ pub fn xp_text(tenths: u32) -> String {
 
 #[derive(Component)]
 struct ToastLine(usize);
+/// Why the last action was refused, under the crosshair.
+#[derive(Component)]
+pub struct WhyLine;
+
 /// The toasts' place, at the right of the screen, or its left while
 /// creative mode's catalogue fills the right.
 #[derive(Component)]
@@ -166,19 +170,54 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
             column.spawn((Node::default(), shadowed(font, "", BODY, ACCENT), ToastLine(i), Visibility::Hidden));
         }
     });
+    // Under the crosshair, where the player is looking: why a click did nothing.
+    let under = Node {
+        position_type: PositionType::Absolute,
+        left: Val::Px(0.0),
+        right: Val::Px(0.0),
+        top: Val::Percent(50.0 + WHY_BELOW),
+        justify_content: JustifyContent::Center,
+        ..default()
+    };
+    commands.spawn((under, GlobalZIndex(1))).with_children(|under| {
+        let line = Node { max_width: Val::Percent(60.0), ..default() };
+        under.spawn((line, shadowed(font, "", BODY, ERROR), TextLayout::default().with_justify(Justify::Center), WhyLine, Visibility::Hidden));
+    });
 }
 
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn show(
     time: Res<Time>,
     launch: Res<Launch>,
     locale: Res<Locale>,
     mut toasts: ResMut<SkillToasts>,
     mut lines: Query<(&ToastLine, &mut Text, &mut TextColor, &mut TextShadow, &mut Node, &mut Visibility)>,
+    mut why_line: Query<(&mut Text, &mut TextColor, &mut TextShadow, &mut Visibility), (With<WhyLine>, Without<ToastLine>)>,
+    ui: Res<UiState>,
+    player: Res<crate::player::LocalPlayer>,
 ) {
     let now = time.elapsed_secs();
     let skills = &launch.content.skills;
+    toasts.now = now;
     toasts.lines.retain(|line| now - line.at < LINE_SECONDS);
+    if let Ok((mut text, mut color, mut shadow, mut visibility)) = why_line.single_mut() {
+        // Why a click in the world did nothing: not over a screen, which hides the world.
+        let covered = ui.inventory_open || ui.character_open || ui.journal_open || ui.quests_open || ui.menu_open || ui.recipes_open || player.dead;
+        match toasts.why.as_ref().filter(|(_, at)| now - at < WHY_SECONDS && !covered) {
+            Some((why, at)) => {
+                if text.0 != *why {
+                    text.0 = why.clone();
+                }
+                let alpha = ((WHY_SECONDS - (now - at)) / FADE).clamp(0.0, 1.0);
+                color.set_if_neq(TextColor(ERROR.with_alpha(alpha)));
+                shadow.color = SHADOW.with_alpha(SHADOW.alpha() * alpha);
+                visibility.set_if_neq(Visibility::Inherited);
+            }
+            None => {
+                visibility.set_if_neq(Visibility::Hidden);
+            }
+        }
+    }
     let fade = |since: f32, life: f32| ((life - since) / FADE).clamp(0.0, 1.0);
     for (ToastLine(i), mut text, mut color, mut shadow, mut node, mut visibility) in &mut lines {
         let Some(line) = toasts.lines.get(*i) else {
@@ -189,7 +228,6 @@ fn show(
             LineKind::Gain { skill, tenths } => {
                 (locale.format("skills.gained", &[("xp", &xp_text(*tenths)), ("skill", &locale.skill(skills.get(*skill)))]), ACCENT)
             }
-            LineKind::Refused(why) => (why.clone(), ERROR),
         };
         if text.0 != words {
             text.0 = words;
