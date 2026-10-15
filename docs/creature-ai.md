@@ -175,7 +175,8 @@ standing, only to a heading its head fits at, so it never spins to face a player
 wall), a step that would is undone, and a head already in a block (one built before its
 face) may turn and walk out rather than stand frozen. What its head meets with clear room a
 block up is a step it gets up, not a wall: it hops up it, springing on toward it, rather
-than turn along it. It gives up a goal after two stuck
+than turn along it. Only what starts within a block of its feet is a step: a head carried
+high meets a wall two high in its upper block, and that is a wall. It gives up a goal after two stuck
 seconds, or four going round, or about one once a search finds no way there. Fliers on
 the wing, drifters and swimmers do not steer.
 

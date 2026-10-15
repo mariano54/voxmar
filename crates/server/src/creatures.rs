@@ -3520,6 +3520,10 @@ mod fight_tests {
         pub nearest: f32,
         /// How far it ended from the player.
         pub last: f32,
+        /// The highest its feet came above the pen's floor, and the farthest it came east
+        /// of the pen's centre (towards the player in the ground scenes).
+        pub highest: f32,
+        pub farthest: f32,
     }
 
     /// A scene: walls set about the pen's centre `c`, and where the player stands and the
@@ -3628,7 +3632,7 @@ mod fight_tests {
         let id = put(&mut server, name, from, stand - from);
         server.tick = 1000;
         server.hurt_creature(player, id, 0, None, voxmar_engine::combat::Blow::Plain);
-        let mut fight = Fight { nearest: f32::MAX, ..Default::default() };
+        let mut fight = Fight { nearest: f32::MAX, highest: f32::MIN, farthest: f32::MIN, ..Default::default() };
         let dt = 1.0 / TICKS_PER_SECOND as f32;
         let (mut was_attacking, mut rising, mut still_for, mut last) = (false, false, 0.0f32, server.creatures.live[&id].body.position);
         for t in 0..(seconds * TICKS_PER_SECOND as f32) as u64 {
@@ -3657,6 +3661,8 @@ mod fight_tests {
             }
             let flat = body.position.with_y(0.0).distance(stand.with_y(0.0));
             fight.nearest = fight.nearest.min(flat);
+            fight.highest = fight.highest.max(body.position.y - c.y as f32);
+            fight.farthest = fight.farthest.max(body.position.x - c.x as f32);
             // Wanting to go (a goal, not winding up or striking), out of reach, and no more
             // than a tenth of a block from where it stood a second ago.
             let wants = creature.decision.goal.is_some() && !attacking && server.tick >= creature.held_until;
@@ -3709,8 +3715,9 @@ mod fight_tests {
 
     /// On uneven ground (a step, a flight of steps, a slab, logs lying about, tall grass)
     /// every fighter gets up to the player and strikes within 3 s, pressing a wall under
-    /// 1 s of the 10. Behind a fence or up a ledge it cannot get over, it strikes over it
-    /// within 3.5 s or gives up, pressing under 4 s. Before: a wolf took 4.2 s to its first
+    /// 1 s of the 10. Behind a fence or up a ledge two blocks high, it never gets over (its
+    /// feet never two up, its middle never in the first column), and strikes over it within
+    /// 3.5 s or gives up, pressing under 4 s. Before: a wolf took 4.2 s to its first
     /// strike up three steps (pressing 2.0 s) and a badger 4.0 s, their heads meeting each
     /// step before their feet and turning them along it; and a wolf pressed the fence 16 s
     /// (given up since `Memory::NoWay`).
@@ -3723,6 +3730,10 @@ mod fight_tests {
                     for name in FIGHTERS {
                         let f = fight(name, set, 10.0);
                         if matches!(scene, "fence" | "ledge") {
+                            // Two blocks high: no creature hops it. Its feet never come up
+                            // to the top, nor its middle into the fence's or ledge's first
+                            // column (x 1).
+                            assert!(f.highest < 2.0 && f.farthest < 1.0, "{scene}: {name} got over: its feet {:.2} up, its middle {:.2} east", f.highest, f.farthest);
                             let gave_up = f.strikes == 0 && f.pressing < 4.0;
                             assert!(f.first.is_some_and(|s| s < 3.5) || gave_up, "{scene}: {name} first struck at {:?}, pressed {:.1} s", f.first, f.pressing);
                         } else {

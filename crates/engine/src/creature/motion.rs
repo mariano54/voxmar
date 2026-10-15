@@ -67,13 +67,30 @@ impl Body {
     /// Whether its head (and the neck on the way to it), beyond its box, is in something
     /// solid.
     pub fn head_blocked(&self, world: &impl Surroundings) -> bool {
-        if self.reach <= self.size.0 * 0.5 + 0.05 {
-            return false;
+        self.head_cells().any(|cell| world.solid(cell))
+    }
+
+    /// Whether its head is clear, or meets only a step it can get up: a block up its head
+    /// is clear, and so is its body moved up there to under its head. A head carried high
+    /// meets a wall two high in its upper block, clear a block up, but its body cannot
+    /// follow it there.
+    pub fn head_steps(&self, world: &impl Surroundings) -> bool {
+        if !self.head_blocked(world) {
+            return true;
         }
+        let up = Body { position: self.position + Vec3::Y * 1.05, ..*self };
+        let under = up.position + self.forward() * (self.reach - self.size.0 * 0.5 + 0.05).max(0.0);
+        !up.head_blocked(world) && !Aabb::standing(under, self.size.0, self.size.1).intersects(|p| world.solid(p))
+    }
+
+    /// The cells its head (and the neck on the way to it) is in, beyond its box: none for a
+    /// head within it.
+    fn head_cells(&self) -> impl Iterator<Item = IVec3> + '_ {
+        let beyond = self.reach > self.size.0 * 0.5 + 0.05;
         let forward = self.forward();
-        [(1.0, 1.0), (1.0, 0.7), (0.75, 0.85)].into_iter().any(|(out, up)| {
+        [(1.0, 1.0), (1.0, 0.7), (0.75, 0.85)].into_iter().filter(move |_| beyond).map(move |(out, up)| {
             let p = self.position + forward * self.reach * out + Vec3::Y * (self.head * up).max(0.2);
-            world.solid(p.floor().as_ivec3())
+            p.floor().as_ivec3()
         })
     }
 }
@@ -161,8 +178,13 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
     };
     // Its head clear where it gets to. Walking up to a step, it gets most of the way at
     // its level but its head meets the step: the way is up it, not round.
+    // Up a step, only one its head meets at its own level as a step (a high head meets a
+    // wall two high in its upper block, and is over it a block up).
     let head_clear = |to: Vec3| !Body { position: to, yaw: yaw_of(heading), ..*body }.head_blocked(world);
-    let Some(to) = goes(0.0).filter(|&to| head_clear(to)).or_else(|| if movement.jump > 0.0 { goes(1.05).filter(|&to| head_clear(to)) } else { None }) else {
+    // Judged where it gets to at its level, short of what its box meets.
+    let level = goes(0.0);
+    let head_steps = level.is_none_or(|to| Body { position: to, yaw: yaw_of(heading), ..*body }.head_steps(world));
+    let Some(to) = level.filter(|&to| head_clear(to)).or_else(|| if movement.jump > 0.0 && head_steps { goes(1.05).filter(|&to| head_clear(to)) } else { None }) else {
         return false;
     };
     // What it would come down on along its way, from here to as far ahead as it carries
@@ -329,7 +351,7 @@ pub fn step(body: &mut Body, world: &impl Surroundings, movement: &Movement, wat
         // Its head counts as its box does: a long-headed body walking up to a step meets it
         // with its head first, and goes up it, its head clear a block up.
         let (ahead, up) = (Body { position: body.position + along * 0.3, ..*body }, Body { position: body.position + Vec3::Y * 1.05 + along * 0.3, ..*body });
-        let walled = level.intersects(|p| world.solid(p)) || ahead.head_blocked(world);
+        let walled = level.intersects(|p| world.solid(p)) || (ahead.head_blocked(world) && ahead.head_steps(world));
         if walled && !raised.intersects(|p| world.solid(p)) && !up.head_blocked(world) {
             body.velocity.y = movement.jump.max(climb_speed(dt));
             // Stopped short of the step by its head, it springs on toward it, or it would
@@ -367,7 +389,7 @@ pub fn step(body: &mut Body, world: &impl Surroundings, movement: &Movement, wat
     // step undone counts as against the wall, so it climbs or turns away.
     // What its head meets a block up from clear, a step it gets up, does not stop it: it
     // hops up it (above) with its head over the step's edge.
-    let step_up = movement.jump > 0.0 && !Body { position: body.position + Vec3::Y * 1.05, ..*body }.head_blocked(world);
+    let step_up = movement.jump > 0.0 && body.head_steps(world);
     if !head_was_blocked && body.head_blocked(world) && !step_up {
         let (moved, turned) = (body.position, body.yaw);
         let fits = |at: Vec3| !Aabb::standing(at, body.size.0, body.size.1).intersects(|p| world.solid(p));
@@ -537,6 +559,27 @@ mod tests {
         }
         assert!(body.position.y >= 1.0 && body.position.x > 3.3, "it never got up the step in 1.5 s: {}", body.position);
         assert!((body.yaw - yaw_of(Vec3::X)).abs() < 0.01, "it turned at the step: yaw {}", body.yaw);
+    }
+
+    /// A body with its head carried high (an aurochs, a deer) walking at a wall two blocks
+    /// high: its head meets the wall's upper block, which a step up does not clear, so the
+    /// wall is a wall. Before: its head lifted a block was over the wall, so its head was
+    /// let into the wall as if at a step, and a way at the wall read as open.
+    #[test]
+    fn a_high_head_at_a_wall_two_high_takes_it_for_a_wall_not_a_step() {
+        let wall = Ledge { high: 2 };
+        let movement = Movement { jump: 6.5, ..Movement::default() };
+        let mut body = Body::new(Vec3::new(1.0, 0.0, 0.5), yaw_of(Vec3::X), (1.0, 1.4));
+        (body.reach, body.head, body.on_ground) = (1.1, 1.5, true);
+        let short = Body { position: Vec3::new(2.0, 0.0, 0.5), ..body };
+        assert!(short.head_blocked(&wall) && !Aabb::standing(short.position, 1.0, 1.4).intersects(|p| wall.solid(p)), "the fixture means its head to meet the wall first");
+        assert!(!Body { position: short.position + Vec3::Y * 1.05, ..short }.head_blocked(&wall), "the fixture means its head a block up to be over the wall");
+        assert!(!open_way(&short, &wall, &movement, Water::Land, Vec3::X), "the wall read as open");
+        for i in 0..40 {
+            step(&mut body, &wall, &movement, Water::Land, Drive { wish: Vec3::X, speed: 3.0, face: None }, 0.05);
+            assert!(!body.head_blocked(&wall), "its head went into the wall {i} steps on, at {}", body.position);
+            assert!(body.position.y < 0.5, "it hopped at the wall, {i} steps on, at {}", body.position);
+        }
     }
 
     #[test]

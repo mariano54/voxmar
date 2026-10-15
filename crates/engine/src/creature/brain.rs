@@ -317,8 +317,11 @@ impl Mind {
         if let Some(id) = by {
             self.remember(Memory::HurtBy(id), 45.0);
         }
-        // Struck again, it takes up the fight it gave up.
-        self.memories.retain(|(m, _)| !matches!(m, Memory::GaveUp | Memory::Homeward));
+        // Struck again, it takes up the fight it gave up: unless it gave up for want of any
+        // way to them, when it runs and, its fright gone, still leaves them be.
+        if creature.def.boss || !self.recalls(Memory::NoWay) {
+            self.memories.retain(|(m, _)| !matches!(m, Memory::GaveUp | Memory::Homeward));
+        }
     }
 
     /// Gives up the chase: its anger and grudges go, for `GAVE_UP` seconds it hunts no one
@@ -596,6 +599,30 @@ pub(super) mod tests {
             let _ = think(&boss, &mut mind, &situation(&[seen]));
             assert_eq!(doing(&boss, &mind), "hunt");
         }
+    }
+
+    /// A hunter that gave up for want of any way to a player, struck again, runs and then
+    /// leaves them be. Before: the blow dropped its giving up, so once its fright faded it
+    /// hunted them again, back to the wall it found no way through.
+    #[test]
+    fn a_hunter_with_no_way_struck_again_does_not_hunt_again() {
+        let wolf = species(&format!(
+            "(creatures: [(name: \"wolf\", health: 10, level: 5, {BODY}, attack: (damage: (1, 3)), temperament: (aggression: 0.9), behaviours: [(do: Hunt(radius: 16.0))])])"
+        ));
+        let near = [player(Vec3::new(1.0, 0.0, 0.0))];
+        let mut mind = Mind::new(&wolf.def.temperament, 2);
+        mind.find_no_way();
+        mind.hurt(&wolf, Some(1), 1.0);
+        assert_eq!((mind.fear, mind.anger), (1.0, 0.0), "it fought back");
+        mind.fear = 0.0;
+        let _ = think(&wolf, &mut mind, &situation(&near));
+        assert_ne!(doing(&wolf, &mind), "hunt");
+        // Given up past its leash instead, struck again it takes the fight up.
+        let mut mind = Mind::new(&wolf.def.temperament, 2);
+        mind.give_up();
+        mind.hurt(&wolf, Some(1), 1.0);
+        let _ = think(&wolf, &mut mind, &situation(&near));
+        assert_eq!(doing(&wolf, &mind), "hunt");
     }
 
     #[test]
