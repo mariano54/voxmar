@@ -6956,14 +6956,16 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     if in_phase < FIT_SETTLE && !laid_out {
         return;
     }
-    if !laid_out {
-        gate.fit_settled.push(format!("{language} {view:?}"));
-    }
     // A journal page is read once it is drawn, in this language, however long that takes.
     if let View::Journal(page) = view
         && world.resource::<crate::hud::journal::JournalDrawn>().0.as_ref() != Some(&(page, language.to_owned()))
     {
         return;
+    }
+    // Named once, as it is read, only if read at `FIT_SETTLE` (a journal page waits on
+    // being drawn as long as it takes).
+    if !laid_out {
+        gate.fit_settled.push(format!("{language} {view:?}"));
     }
     let checked = |world: &World| world.get_resource::<crate::ui::fit::LineBreaksChecked>().copied().unwrap_or_default();
     let before = checked(world);
