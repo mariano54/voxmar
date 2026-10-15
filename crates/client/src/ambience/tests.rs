@@ -607,3 +607,23 @@ fn a_draughty_home_whistles_until_daubed() {
     let (some, fainter) = heard(&patched, IVec3::new(0, 11, 0), under_thatch);
     assert!(some > 0.0 && fainter > 0.0 && fainter < wattle, "one wattle wall left plays at {fainter:.3}, not under the {wattle:.3} of four");
 }
+
+/// A roof block muffles the rain once: thatch, tagged `shelter:sound` for the home's walls,
+/// is no quieter overhead than its soft patter alone makes it; a roof of no muffling patter
+/// is muffled by its shelter tags instead.
+#[test]
+fn a_thatch_roof_muffles_the_rain_once() {
+    let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+    let content = voxmar_server::load_content(&assets).unwrap();
+    let ambience = Ambience::load(&content.files).unwrap();
+    let roofs = &ambience.roofs;
+    let thatch = content.blocks.def(content.blocks.id("base:thatch_roof").unwrap());
+    assert!(thatch.has_tag("shelter:sound"), "thatch is a sound wall now; this test checks it is not counted twice overhead");
+    let soft = roofs.patters.iter().position(|p| p == "roof_soft").unwrap();
+    let once = 1.0 - (1.0 - roofs.muffle) * (1.0 - roofs.patter_shelter[soft]);
+    let heard = roofs.sheltered(|tag| thatch.has_tag(tag), Some(soft));
+    assert!(heard <= once + 1e-6, "thatch muffles {heard:.3}, more than its patter alone ({once:.3})");
+    assert!((heard - once).abs() < 1e-6, "thatch muffles {heard:.3}, not its patter's {once:.3}");
+    let sound = roofs.shelter.iter().find(|(tag, _)| tag == "shelter:sound").unwrap().1;
+    assert!((roofs.sheltered(|tag| tag == "shelter:sound", None) - (1.0 - (1.0 - roofs.muffle) * (1.0 - sound))).abs() < 1e-6);
+}

@@ -358,12 +358,17 @@ pub struct Roofs {
 
 impl Roofs {
     /// The `sheltered` axis under a roof block with `tags` that patters `patter`: the
-    /// muffle, more for its shelter tags, and more for what it is made of unless draughty.
+    /// muffle, and more for what it is made of unless draughty. Each block muffles the rain
+    /// once: by what it is made of when that patter muffles, else by its shelter tags (the
+    /// walls' tags are the shelter flood's, for the wind and the draught).
     pub fn sheltered(&self, has_tag: impl Fn(&str) -> bool, patter: Option<usize>) -> f32 {
-        let left = self.shelter.iter().filter(|(tag, _)| has_tag(tag)).fold(1.0 - self.muffle, |left, (_, more)| left * (1.0 - more));
         let draughty = self.draughty.iter().any(|tag| has_tag(tag));
-        let made = patter.filter(|_| !draughty).and_then(|p| self.patter_shelter.get(p)).copied().unwrap_or(0.0);
-        (1.0 - left * (1.0 - made)).clamp(0.0, 1.0)
+        let made = patter.filter(|_| !draughty).and_then(|p| self.patter_shelter.get(p)).copied().filter(|&more| more > 0.0);
+        let left = match made {
+            Some(more) => (1.0 - self.muffle) * (1.0 - more),
+            None => self.shelter.iter().filter(|(tag, _)| has_tag(tag)).fold(1.0 - self.muffle, |left, (_, more)| left * (1.0 - more)),
+        };
+        (1.0 - left).clamp(0.0, 1.0)
     }
 }
 
