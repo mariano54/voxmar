@@ -1038,7 +1038,7 @@ impl Server {
         if !stroke.certain && hit >= voxmar_engine::combat::hit_chance_with(attack, weapon.accuracy, defence, 0, stroke.accuracy) {
             let creature = self.creatures.live.get_mut(&id).expect("checked above");
             if !calm {
-                creature.mind.hurt(species, Some(player), creature.health as f32 / species.def.health as f32);
+                creature.mind.hurt_young(species, Some(player), creature.health as f32 / species.def.health as f32, creature.grows_up.is_some());
             }
             self.struck(player, id, 0, false, stroke.blow);
             return Some(0);
@@ -1071,7 +1071,7 @@ impl Server {
             creature.fought = Some((player, self.tick));
         }
         if !calm {
-            creature.mind.hurt(species, Some(player), creature.health as f32 / species.def.health as f32);
+            creature.mind.hurt_young(species, Some(player), creature.health as f32 / species.def.health as f32, creature.grows_up.is_some());
             // A blow, not a bleed, keeps a hunter past its leash fighting (`Memory::Struck`).
             if !matches!(blow, voxmar_engine::combat::Blow::Bleed) {
                 creature.mind.remember(brain::Memory::Struck, brain::STRUCK_LATELY);
@@ -2481,6 +2481,16 @@ mod cornered_tests {
         id
     }
 
+    /// Prey that gores back while it is hale (a wild boar) runs once badly hurt: put in at a
+    /// tenth of its health, so struck it runs as the rest do.
+    pub(super) fn badly_hurt(server: &mut Server, id: u32) {
+        let live = server.creatures.live.get_mut(&id).unwrap();
+        let species = server.content.creatures.get(live.species);
+        if species.fights() && !species.def.boss {
+            live.health = (species.def.health / 10).max(1);
+        }
+    }
+
     /// Runs `seconds` of creature ticks, the player landing a harmless blow on `id` each
     /// second it is within reach, and checks every tick that no body or head is in a
     /// block. Returns the furthest it got from the player.
@@ -2513,6 +2523,7 @@ mod cornered_tests {
         let player = join(&mut server, centre.as_vec3() + Vec3::new(1.5, 0.0, 0.5));
         for name in SPECIES {
             let id = put(&mut server, name, centre.as_vec3() + Vec3::new(-1.5, 0.0, 0.5), Vec3::X);
+            badly_hurt(&mut server, id);
             let away = hunted(&mut server, id, player, 5.0);
             assert!(away > 6.0, "{name} struck against a wall got only {away:.1} blocks from the player");
             server.creatures.live.remove(&id);
@@ -2553,6 +2564,7 @@ mod cornered_tests {
         let player = join(&mut server, corner + Vec3::new(2.5, 0.0, 2.5));
         for name in SPECIES {
             let id = put(&mut server, name, corner, Vec3::new(1.0, 0.0, 1.0).normalize());
+            badly_hurt(&mut server, id);
             let away = hunted(&mut server, id, player, 6.0);
             assert!(away > 5.0, "{name} struck in a corner got only {away:.1} blocks from the player");
             server.creatures.live.remove(&id);
@@ -2571,6 +2583,7 @@ mod cornered_tests {
         let player = join(&mut server, centre.as_vec3() + Vec3::new(1.5, 0.0, 0.5));
         for name in SPECIES {
             let id = put(&mut server, name, centre.as_vec3() + Vec3::new(-1.3, 0.0, 0.5), Vec3::X);
+            badly_hurt(&mut server, id);
             let away = hunted(&mut server, id, player, 5.0);
             assert!(away > 6.0, "{name} struck before a tree got only {away:.1} blocks from the player");
             server.creatures.live.remove(&id);
@@ -3029,7 +3042,7 @@ mod herd_tests {
 #[cfg(test)]
 mod chase_tests {
     use super::*;
-    use super::cornered_tests::{join, pen, put, wall};
+    use super::cornered_tests::{badly_hurt, join, pen, put, wall};
 
     fn doing(server: &Server, id: u32) -> &'static str {
         let c = &server.creatures.live[&id];
@@ -3077,6 +3090,7 @@ mod chase_tests {
                 let at = c.as_vec3() + Vec3::new(x, 0.0, z);
                 let player = join(&mut server, at + Vec3::new(ax, 0.0, az).normalize() * 1.5);
                 let id = put(&mut server, name, at, -Vec3::new(ax, 0.0, az));
+                badly_hurt(&mut server, id);
                 server.hurt_creature(player, id, 0, None, voxmar_engine::combat::Blow::Plain);
                 for _ in 0..6 * TICKS_PER_SECOND as u64 {
                     server.tick += 1;

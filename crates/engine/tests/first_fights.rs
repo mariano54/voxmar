@@ -77,7 +77,7 @@ fn a_new_player_catches_a_fleeing_boar_at_a_sprint() {
 }
 
 /// The wild boar never starts a fight, but struck while it is hale it turns and gores
-/// back; badly hurt it runs instead. Whatever its own temper.
+/// back; badly hurt it runs instead, and a piglet always runs. Whatever its own temper.
 #[test]
 fn a_wild_boar_struck_gores_back_until_badly_hurt() {
     use voxmar_engine::creature::brain::{Mind, Seen, Situation, think};
@@ -98,6 +98,11 @@ fn a_wild_boar_struck_gores_back_until_badly_hurt() {
         mind.hurt(boar, Some(1), 0.1);
         let _ = think(boar, &mut mind, &at(0.1));
         assert_eq!(doing(&mind), "flee", "seed {seed}: a badly hurt boar did not run");
+        // A piglet runs, hale or not.
+        let mut mind = Mind::new(&boar.def.temperament, seed);
+        mind.hurt_young(boar, Some(1), 0.8, true);
+        let _ = think(boar, &mut mind, &at(0.8));
+        assert_eq!(doing(&mind), "flee", "seed {seed}: a piglet struck did not run");
     }
 }
 
