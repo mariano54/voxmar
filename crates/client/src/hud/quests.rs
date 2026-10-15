@@ -390,6 +390,8 @@ pub fn goal_words(locale: &Locale, content: &Content, quest: &QuestDef, goal: &G
             locale.format("quest.goal.lit", &[("item", &multiblock_words(locale, content, package, name)), ("fuels", &fuels)])
         },
         Goal::LookUp(item) => locale.format("quest.goal.lookup", &[("item", &item_words(locale, content, package, item))]),
+        Goal::QuestsDone(age, _) => locale.format("quest.goal.quests_done", &[("age", &locale.get(&format!("quest.age.{age}")).to_owned())]),
+        Goal::Capstones(age, _) => locale.format("quest.goal.capstones", &[("age", &locale.get(&format!("quest.age.{age}")).to_owned())]),
     };
     if need > 1 { locale.format("quest.progress", &[("goal", &what), ("have", &have.min(need)), ("need", &need)]) } else { what }
 }
@@ -1679,8 +1681,8 @@ mod tests {
             }
         }
         let farm = layout(&content, "farm");
-        let hearth = farm.quests.iter().position(|q| q.name == "base:homestead_hearth").expect("the farm's web shows the hearth that opens it");
-        assert!(hearth >= farm.ours);
+        let rite = farm.quests.iter().position(|q| q.name == "base:the_farm_age").expect("the farm's web shows the rite that opens it");
+        assert!(rite >= farm.ours);
     }
 
     /// Each path runs along a lane of its own, in `quest_paths.ron`'s order: its quests

@@ -45,6 +45,9 @@ pub(crate) enum Reach {
     Table,
     /// All it takes is here, but it wants this level in this skill.
     Level(SkillId, u8),
+    /// All it takes is here, but it opens in a later age (`farm`), once that age's rite is
+    /// done.
+    Age(String),
     /// Cooked, fired or smelted at a station (blocks with this tag); what goes in is here.
     Station(String),
     /// Half or more of it is here; these are short, and by how many.
@@ -59,8 +62,9 @@ impl Reach {
             Reach::Ready => 0,
             Reach::Table => 1,
             Reach::Level(..) => 2,
-            Reach::Station(_) => 3,
-            Reach::Short(items) => 4 + items.iter().map(|&(_, n)| n).sum::<u32>(),
+            Reach::Age(_) => 3,
+            Reach::Station(_) => 4,
+            Reach::Short(items) => 5 + items.iter().map(|&(_, n)| n).sum::<u32>(),
         }
     }
 }
@@ -89,16 +93,17 @@ pub(crate) fn held(inventory: &voxmar_engine::inventory::Inventory) -> FxHashMap
 }
 
 /// How near one crafting recipe is, or None when too little of it is here to show.
-/// `lacks` says the level a recipe wants that the player does not have, if any.
-pub(crate) fn reach(recipe: &Recipe, have: &FxHashMap<BlockId, u32>, at_table: bool, lacks: &dyn Fn(&Recipe) -> Option<(SkillId, u8)>) -> Option<Reach> {
+/// `lacks` says what else a recipe wants that the player does not have, if anything: a
+/// later age (`Reach::Age`) or a level (`Reach::Level`).
+pub(crate) fn reach(recipe: &Recipe, have: &FxHashMap<BlockId, u32>, at_table: bool, lacks: &dyn Fn(&Recipe) -> Option<Reach>) -> Option<Reach> {
     let short = recipe.short(have);
     if short.is_empty() {
-        return Some(if recipe.needs_table() && !at_table {
-            Reach::Table
-        } else if let Some((skill, level)) = lacks(recipe) {
-            Reach::Level(skill, level)
-        } else {
-            Reach::Ready
+        // A later age stands before any table: no table makes it yet.
+        return Some(match lacks(recipe) {
+            Some(age @ Reach::Age(_)) => age,
+            _ if recipe.needs_table() && !at_table => Reach::Table,
+            Some(wanted) => wanted,
+            None => Reach::Ready,
         });
     }
     let cells = recipe.alternatives().iter().flatten().count() as u32;
@@ -108,7 +113,7 @@ pub(crate) fn reach(recipe: &Recipe, have: &FxHashMap<BlockId, u32>, at_table: b
 
 /// Everything the player can make or nearly, from the book and what they hold, in the
 /// order it is shown; each thing once, by its nearest way.
-pub(crate) fn plan(content: &Content, book: &RecipeBook, have: &FxHashMap<BlockId, u32>, at_table: bool, lacks: &dyn Fn(&Recipe) -> Option<(SkillId, u8)>) -> Vec<Makeable> {
+pub(crate) fn plan(content: &Content, book: &RecipeBook, have: &FxHashMap<BlockId, u32>, at_table: bool, lacks: &dyn Fn(&Recipe) -> Option<Reach>) -> Vec<Makeable> {
     let recipes: Vec<&Recipe> = content.recipes.iter().collect();
     let mut found: Vec<Makeable> = Vec::new();
     for entry in book.entries() {
@@ -135,19 +140,30 @@ pub(crate) fn plan(content: &Content, book: &RecipeBook, have: &FxHashMap<BlockI
     found
 }
 
+/// What a recipe wants that `player` lacks, as the server judges it: a later age whose rite
+/// they have not done (`closed`), else a level (`short_of`).
+pub(crate) fn lacks<'a>(content: &'a Content, player: &'a LocalPlayer) -> impl Fn(&Recipe) -> Option<Reach> + 'a {
+    move |recipe: &Recipe| closed(content, player, recipe).map(Reach::Age).or_else(|| short_of(content, player, recipe).map(|(skill, level)| Reach::Level(skill, level)))
+}
+
+/// The later age a recipe opens in, while `player` has not done its rite (the quests they
+/// are told are done, as the server counts them).
+pub(crate) fn closed(content: &Content, player: &LocalPlayer, recipe: &Recipe) -> Option<String> {
+    let done = |quest: &str| player.quests.iter().any(|s| s.done && s.name == quest);
+    recipe.age.clone().filter(|age| !content.quests.opened(age, &done))
+}
+
 /// The level a recipe wants that `player` lacks, as the server judges it (boosts and
 /// schematics counted).
-pub(crate) fn lacks<'a>(content: &'a Content, player: &'a LocalPlayer) -> impl Fn(&Recipe) -> Option<(SkillId, u8)> + 'a {
-    move |recipe: &Recipe| {
-        let (skills, effects, blocks) = (&content.skills, &content.effects, &content.blocks);
-        recipe
-            .skill
-            .filter(|&skill| {
-                let boosted = voxmar_engine::level::check_level(skills, effects, &player.skills, &player.vitals.effects, skill);
-                !voxmar_engine::level::meets_recipe(recipe, skills.level(player.skills.xp(skill)), boosted, &player.inventory, blocks)
-            })
-            .map(|skill| (skill, recipe.level))
-    }
+pub(crate) fn short_of(content: &Content, player: &LocalPlayer, recipe: &Recipe) -> Option<(SkillId, u8)> {
+    let (skills, effects, blocks) = (&content.skills, &content.effects, &content.blocks);
+    recipe
+        .skill
+        .filter(|&skill| {
+            let boosted = voxmar_engine::level::check_level(skills, effects, &player.skills, &player.vitals.effects, skill);
+            !voxmar_engine::level::meets_recipe(recipe, skills.level(player.skills.xp(skill)), boosted, &player.inventory, blocks)
+        })
+        .map(|skill| (skill, recipe.level))
 }
 
 /// The words for what stands in the way of `output` ("Stone Axe: still needs 1 Stick").
@@ -158,6 +174,7 @@ pub(crate) fn words(locale: &Locale, content: &Content, output: BlockId, reach: 
         Reach::Ready => locale.format("make.ready", &[("item", &item)]),
         Reach::Table => locale.format("make.table", &[("item", &item), ("table", &block("crafting_table"))]),
         Reach::Level(skill, level) => locale.format("make.level", &[("item", &item), ("skill", &locale.skill(content.skills.get(*skill))), ("level", level)]),
+        Reach::Age(age) => locale.format("make.age", &[("item", &item), ("age", &locale.get(&format!("quest.age.{age}")))]),
         Reach::Station(station) => locale.format("make.station", &[("item", &item), ("station", &block(station))]),
         Reach::Short(short) => {
             let items: Vec<String> = short.iter().map(|&(i, n)| locale.format("multiblock.fuel_stack", &[("count", &n), ("item", &locale.block(content.blocks.def(i)))])).collect();
@@ -365,7 +382,7 @@ mod tests {
         let stick = content.blocks.id("base:stick").unwrap();
         assert_eq!(find(&plan_short, &content, "base:stone_pickaxe").map(|m| &m.reach), Some(&Reach::Short(vec![(stick, 1)])));
         let engineering = content.skills.id("core:engineering").unwrap();
-        let lacking = |r: &Recipe| r.skill.filter(|&s| s == engineering && r.level > 0).map(|s| (s, r.level));
+        let lacking = |r: &Recipe| r.skill.filter(|&s| s == engineering && r.level > 0).map(|s| Reach::Level(s, r.level));
         let level = plan(&content, &book, &have(&content, &[("base:cobblestone", 3), ("base:stick", 2)]), true, &lacking);
         assert_eq!(find(&level, &content, "base:stone_pickaxe").map(|m| &m.reach), Some(&Reach::Level(engineering, 1)));
         let locale = Locale::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content"), "en");
@@ -382,7 +399,7 @@ mod tests {
         assert!(!line.contains(station.as_str()) || content.blocks.tagged(station).next().is_none(), "the station is named, not its tag: {line}");
         for code in ["en", "ja"] {
             let locale = Locale::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content"), code);
-            for key in ["make.title", "make.none", "make.summary", "make.ready", "make.table", "make.level", "make.station", "make.short"] {
+            for key in ["make.title", "make.none", "make.summary", "make.ready", "make.table", "make.level", "make.age", "make.station", "make.short"] {
                 assert!(locale.find(key).is_some(), "{code} lacks {key}");
             }
         }

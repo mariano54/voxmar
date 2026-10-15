@@ -1,8 +1,9 @@
 //! Quests (the progression plan's quest engine, P20): content (each package's
 //! `quests.ron`), checked against what a player has already done, so a quest completes the
-//! moment its tasks hold, however long ago they were done. Nothing is ever locked behind a
-//! quest: recipes stay open, and quests only point the way and reward the walk with
-//! experience, items and knowledge.
+//! moment its tasks hold, however long ago they were done. Quests point the way and reward
+//! the walk with experience, items and knowledge; one thing only is locked behind them: an
+//! age's rite (`opens`), done, opens the recipes that name that age (`age` in recipes.ron),
+//! the next age's stations.
 //!
 //! A quest has tasks, any one of which completes it (the routes: craft it, or find it), and
 //! may need other quests first (`"a|b"` for either). Each task is a few goals that must all
@@ -104,6 +105,11 @@ pub enum Goal {
     CraftNear(String, String, u32),
     /// Took this many creatures (one a trap catches, or `any`) from a sprung trap.
     Trapped(String, u32),
+    /// Finished this many quests of an age (`nomad`), its capstones among them: an age's
+    /// rite asks for a share of its book. Counted by the registry (`QuestRegistry::measure`).
+    QuestsDone(String, u32),
+    /// Finished this many of an age's capstones (`capstone: true`, a path's last quest).
+    Capstones(String, u32),
 }
 
 /// One way to finish a quest: every goal must hold.
@@ -136,6 +142,14 @@ pub struct QuestDef {
     pub after: Vec<String>,
     #[serde(default)]
     pub rewards: Vec<Reward>,
+    /// The last quest of its path, which pays something useful at that point: an age's
+    /// rite asks for some of these (`Capstones`).
+    #[serde(default)]
+    pub capstone: bool,
+    /// The age this quest, done, opens: its rite. Recipes that name the age (`age` in
+    /// recipes.ron) are refused until it is done. One rite to an age, load-checked.
+    #[serde(default)]
+    pub opens: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -271,15 +285,11 @@ impl Progress<'_> {
             Goal::Stocked(item, store, n) => (tally(&format!("stocked:{store}"), item), *n),
             Goal::CraftNear(item, near, n) => (tally(&format!("crafted_near:{near}"), item), *n),
             Goal::Trapped(creature, n) => (tally("trapped", creature), *n),
+            // Counts of quests are the registry's, which knows each quest's age.
+            Goal::QuestsDone(_, n) | Goal::Capstones(_, n) => (0, *n),
         }
     }
 
-    pub fn task_done(&self, task: &Task) -> bool {
-        task.iter().all(|goal| {
-            let (have, need) = self.goal(goal);
-            have >= need
-        })
-    }
 }
 
 /// A quest's state as the client is told it.
@@ -352,6 +362,31 @@ impl QuestRegistry {
             for name in quest.after.iter().flat_map(|a| a.split('|')) {
                 if !quests.iter().any(|q| q.name == name) {
                     return Err(RegistryError(format!("quest {} comes after `{name}`, which does not exist", quest.name)));
+                }
+            }
+            // A rite opens a later age, and only one quest is an age's rite.
+            if let Some(age) = &quest.opens {
+                if *age == quest.age {
+                    return Err(RegistryError(format!("quest {} opens its own age `{age}`", quest.name)));
+                }
+                if let Some(other) = quests.iter().find(|q| q.name != quest.name && q.opens.as_ref() == Some(age)) {
+                    return Err(RegistryError(format!("quests {} and {} both open the age `{age}`", quest.name, other.name)));
+                }
+            }
+            // Counts of an age's quests name an age the book has, and ask no more than it holds.
+            for goal in quest.tasks.iter().flatten() {
+                let (age, want, capstones) = match goal {
+                    Goal::QuestsDone(age, n) => (age, *n, false),
+                    Goal::Capstones(age, n) => (age, *n, true),
+                    _ => continue,
+                };
+                let held = quests.iter().filter(|q| q.age == *age && q.name != quest.name && (!capstones || q.capstone)).count() as u32;
+                if !quests.iter().any(|q| q.age == *age) {
+                    return Err(RegistryError(format!("quest {} counts quests of the age `{age}`, which no quest is in", quest.name)));
+                }
+                if want == 0 || want > held {
+                    let what = if capstones { "capstones" } else { "quests" };
+                    return Err(RegistryError(format!("quest {} asks for {want} {what} of the age `{age}`, which has {held} besides it", quest.name)));
                 }
             }
         }
@@ -478,6 +513,8 @@ impl QuestRegistry {
                         }
                     }
                     Goal::Trapped(name, _) => find(name, &trappable)?,
+                    // Ages are checked as the registry is made (`new`).
+                    Goal::QuestsDone(..) | Goal::Capstones(..) => {}
                 }
             }
             for given in &mut quest.rewards {
@@ -516,6 +553,36 @@ impl QuestRegistry {
             .any(|(quest, want)| !done(quest) && (want == "any" || want == name || want.strip_prefix("tag:").is_some_and(has_tag)))
     }
 
+    /// Whether `age` is open to a player with these quests `done`: no rite opens it (the
+    /// first age), or its rite is done.
+    pub fn opened(&self, age: &str, done: &dyn Fn(&str) -> bool) -> bool {
+        self.rite(age).is_none_or(|rite| done(&rite.name))
+    }
+
+    /// The quest that opens `age`, if one does.
+    pub fn rite(&self, age: &str) -> Option<&QuestDef> {
+        self.quests.iter().find(|q| q.opens.as_deref() == Some(age))
+    }
+
+    /// How far a goal has got, out of what it asks: as `Progress::goal`, and the counts of
+    /// an age's quests `done`.
+    pub fn measure(&self, goal: &Goal, progress: &Progress, done: &dyn Fn(&str) -> bool) -> (u32, u32) {
+        let count = |age: &str, capstones: bool| self.quests.iter().filter(|q| q.age == age && (!capstones || q.capstone) && done(&q.name)).count() as u32;
+        match goal {
+            Goal::QuestsDone(age, n) => (count(age, false), *n),
+            Goal::Capstones(age, n) => (count(age, true), *n),
+            _ => progress.goal(goal),
+        }
+    }
+
+    /// Whether every goal of a task holds.
+    pub fn task_done(&self, task: &Task, progress: &Progress, done: &dyn Fn(&str) -> bool) -> bool {
+        task.iter().all(|goal| {
+            let (have, need) = self.measure(goal, progress, done);
+            have >= need
+        })
+    }
+
     /// Whether a quest's earlier quests are done.
     pub fn open(&self, quest: &QuestDef, done: &dyn Fn(&str) -> bool) -> bool {
         quest.after.iter().all(|after| after.split('|').any(done))
@@ -530,7 +597,7 @@ impl QuestRegistry {
             let next: Vec<String> = self
                 .quests
                 .iter()
-                .filter(|q| !is_done(&q.name) && self.open(q, &is_done) && q.tasks.iter().any(|t| progress.task_done(t)))
+                .filter(|q| !is_done(&q.name) && self.open(q, &is_done) && q.tasks.iter().any(|t| self.task_done(t, progress, &is_done)))
                 .map(|q| q.name.clone())
                 .collect();
             if next.is_empty() {
@@ -542,13 +609,14 @@ impl QuestRegistry {
 
     /// Every quest's state for the client.
     pub fn states(&self, done: &[String], claimed: &[String], progress: &Progress) -> Vec<QuestState> {
+        let is_done = |name: &str| done.iter().any(|d| d == name);
         self.quests
             .iter()
             .map(|q| QuestState {
                 name: q.name.clone(),
                 done: done.contains(&q.name),
                 claimed: claimed.contains(&q.name),
-                tasks: q.tasks.iter().map(|t| t.iter().map(|g| progress.goal(g)).collect()).collect(),
+                tasks: q.tasks.iter().map(|t| t.iter().map(|g| self.measure(g, progress, &is_done)).collect()).collect(),
             })
             .collect()
     }
@@ -650,6 +718,51 @@ mod tests {
         assert_eq!(progress.goal(&Goal::Kinds(Page::Plants, "any".into(), 5)), (3, 5), "three picked; the fern was only seen, and a rabbit is no plant");
         assert_eq!(progress.goal(&Goal::Kinds(Page::Plants, "tag:flower".into(), 2)), (2, 2));
         assert_eq!(progress.goal(&Goal::Pick("any".into(), 5)), (5, 5), "a count of picks is not a count of kinds");
+    }
+
+    /// An age's rite counts the age's quests done, capstones among them, and finishes in
+    /// the same check as the quests that bring it there; done, it opens the age it names.
+    #[test]
+    fn a_rite_counts_its_ages_quests_and_opens_the_next() {
+        let source = r#"(quests: [
+            (name: "a", age: "nomad", branch: "main", title: "", why: "", tasks: [[Home]]),
+            (name: "b", age: "nomad", branch: "main", title: "", why: "", tasks: [[Home]], after: ["a"], capstone: true),
+            (name: "c", age: "nomad", branch: "fishing", title: "", why: "", tasks: [[Visit(9)]], capstone: true),
+            (name: "rite", age: "nomad", branch: "main", title: "", why: "", tasks: [[QuestsDone("nomad", 2), Capstones("nomad", 1)]], opens: "farm"),
+            (name: "later", age: "farm", branch: "main", title: "", why: "", tasks: [[Home]], after: ["rite"]),
+        ])"#;
+        let quests = QuestRegistry::new(vec![QuestRegistry::read("t", source).unwrap()]).unwrap();
+        let (journal, tallies) = (Journal::default(), FxHashMap::default());
+        let (level, carried, drops, thriving) = (|_: &str| 1, |_: &str| 0, |_: &str| None, |_: u8| 0);
+        let has_tag = |_: &str, _: &str| false;
+        let progress = Progress { journal: &journal, tallies: &tallies, level: &level, carried: &carried, has_tag: &has_tag, drops: &drops, thriving: &thriving, home: true };
+        // Home holds: a, then b (a capstone), then the rite with two done, then what follows.
+        let done = quests.newly_done(&[], &progress);
+        assert_eq!(done, ["t:a", "t:b", "t:rite", "t:later"].map(String::from), "one check, in order");
+        let states = quests.states(&["t:a".to_owned()], &[], &progress);
+        let rite = states.iter().find(|s| s.name == "t:rite").unwrap();
+        assert_eq!(rite.tasks, [vec![(1, 2), (0, 1)]], "a counts, and is no capstone");
+        let is = |names: &'static [&'static str]| move |q: &str| names.contains(&q);
+        assert!(quests.opened("nomad", &is(&[])), "an age no quest opens is open from the start");
+        assert!(!quests.opened("farm", &is(&["t:a", "t:b"])));
+        assert!(quests.opened("farm", &is(&["t:rite"])));
+        assert_eq!(quests.rite("farm").map(|q| q.name.as_str()), Some("t:rite"));
+    }
+
+    #[test]
+    fn rites_are_one_to_an_age_and_count_only_what_the_age_holds() {
+        let load = |extra: &str| {
+            let source = format!(r#"(quests: [(name: "a", age: "nomad", branch: "main", title: "", why: "", tasks: [[Home]], capstone: true), {extra}])"#);
+            QuestRegistry::new(vec![QuestRegistry::read("t", &source).unwrap()]).err().map(|e| e.0)
+        };
+        let rite = |name: &str, tasks: &str, opens: &str| format!(r#"(name: "{name}", age: "nomad", branch: "main", title: "", why: "", tasks: [[{tasks}]], opens: "{opens}")"#);
+        assert_eq!(load(&rite("r", r#"QuestsDone("nomad", 1), Capstones("nomad", 1)"#, "farm")), None);
+        assert!(load(&rite("r", r#"QuestsDone("nomad", 2)"#, "farm")).unwrap().contains("has 1 besides it"), "the rite does not count itself");
+        assert!(load(&rite("r", r#"Capstones("farm", 1)"#, "farm")).unwrap().contains("no quest is in"));
+        assert!(load(&rite("r", r#"QuestsDone("nomad", 0)"#, "farm")).is_some(), "a count of none");
+        assert!(load(&rite("r", "Home", "nomad")).unwrap().contains("its own age"));
+        let both = format!("{}, {}", rite("r", "Home", "farm"), rite("s", "Home", "farm"));
+        assert!(load(&both).unwrap().contains("both open"));
     }
 
     #[test]

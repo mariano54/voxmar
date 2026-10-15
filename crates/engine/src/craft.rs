@@ -59,6 +59,10 @@ pub struct RecipeDef {
     /// Made only within reach of a block with this tag.
     #[serde(default)]
     pub near: Option<String>,
+    /// The age it opens in (`farm`): refused until the player has done that age's rite
+    /// (a quest that `opens` it), load-checked to have one.
+    #[serde(default)]
+    pub age: Option<String>,
 }
 
 fn one() -> u8 {
@@ -89,6 +93,8 @@ pub struct Recipe {
     pub firm: bool,
     /// The tag of a block it is made near, if any.
     pub near: Option<String>,
+    /// The age it opens in, if not the first (`RecipeDef::age`).
+    pub age: Option<String>,
 }
 
 impl Recipe {
@@ -351,7 +357,7 @@ impl RecipeRegistry {
                 };
                 let ingredients: Vec<Accepts> = def.ingredients.iter().map(resolve).collect::<Result<Vec<_>, _>>()?.into_iter().flatten().collect();
                 let output = item(&def.output)?;
-                recipes.push(Recipe { pattern, ingredients, output, count: def.count.max(1), skill, level: def.level, xp: def.xp, firm: def.firm, near: def.near.clone() });
+                recipes.push(Recipe { pattern, ingredients, output, count: def.count.max(1), skill, level: def.level, xp: def.xp, firm: def.firm, near: def.near.clone(), age: def.age.clone() });
             }
         }
         Ok(Self { recipes })

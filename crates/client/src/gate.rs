@@ -6233,7 +6233,8 @@ fn seat(world: &mut World, gate: &mut Gate, now: f32) {
 
 /// The Can Make list under the inventory's slots, played: a log shows planks ready, ready
 /// ones first; clicking them lays the log in the grid (the server's `core:lay`); pointed at,
-/// the stone pickaxe's line says what stands in its way, in the list's own words.
+/// the stone pickaxe's line says what stands in its way, in the list's own words; with all a
+/// pit kiln wants, its line says it opens in the Farm age.
 fn makeable(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     use crate::hud::makeable::{Drawn, MakeCell, Reach};
     let waited = gate.server_in_phase();
@@ -6301,7 +6302,7 @@ fn makeable(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
         }
         // Pointed at, the stone pickaxe says what it still wants.
-        _ => {
+        3 => {
             let Some(cell) = cell_of(world, pickaxe) else {
                 if in_phase > 2.0 {
                     gate.check("make: wants", Err(format!("{in_phase:.1} s on, with three cobblestone the stone pickaxe is not on the list")));
@@ -6327,7 +6328,41 @@ fn makeable(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 return;
             }
             gate.check("make: wants", Ok(format!("pointed at, the stone pickaxe reads {line:?}")));
-            leave(world, gate);
+            // A pit kiln's all: four cobblestone round a campfire.
+            let net = world.resource::<Net>();
+            for line in ["give cobblestone 1", "clear campfire", "give campfire 1"] {
+                net.command(line);
+            }
+            gate.advance(now);
+        }
+        // With all a pit kiln wants, its line says it opens in the Farm age, before the
+        // Farm age's rite: the server refuses it there too.
+        _ => {
+            let finish = |world: &mut World, gate: &mut Gate| {
+                world.resource::<Net>().command("clear campfire");
+                leave(world, gate);
+            };
+            let kiln = world.resource::<ClientWorld>().registry.id("base:pit_kiln");
+            let cell = kiln.and_then(|kiln| cell_of(world, kiln));
+            let reach = kiln.and_then(|kiln| world.resource::<Drawn>().0.iter().find(|m| m.output == kiln).map(|m| m.reach.clone()));
+            let (Some(kiln), Some(cell), Some(reach @ Reach::Age(_))) = (kiln, cell, reach.clone()) else {
+                if waited > QUEST_WAIT && in_phase > QUEST_WAIT {
+                    let campfires = holding(world, "base:campfire").0;
+                    gate.check("make: age", Err(format!("{waited:.1} server s on, holding {} cobblestone and {campfires} campfire, the pit kiln shows {reach:?}, a cell for it {}", holding(world, "base:cobblestone").0, cell.is_some())));
+                    finish(world, gate);
+                }
+                return;
+            };
+            world.resource_mut::<UiClicks>().hover = Some(cell);
+            let wanted = crate::hud::makeable::words(world.resource::<Locale>(), &world.resource::<Launch>().content, kiln, &reach);
+            let line = world.query_filtered::<&Text, With<crate::hud::makeable::MakeLine>>().iter(world).next().map(|t| t.0.clone()).unwrap_or_default();
+            if line == wanted && in_phase >= 0.3 {
+                gate.check("make: age", Ok(format!("all a pit kiln wants held, it reads {line:?}")));
+                finish(world, gate);
+            } else if waited > QUEST_WAIT && in_phase > QUEST_WAIT {
+                gate.check("make: age", Err(format!("pointed at, the pit kiln's line reads {line:?}, not {wanted:?}")));
+                finish(world, gate);
+            }
         }
     }
 }

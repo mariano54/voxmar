@@ -326,6 +326,24 @@ owners). Loading refuses a `Stocked` store that is not a store, a `CraftNear` ta
 recipe is made near, and a `Trapped` creature no trap catches. A tally goal naming one
 full name reads its one key; only `any` and `tag:` look across a kind's keys. Nomad has 63 quests, Farm 98.
 
+## An age's rite (Oct 15)
+
+The next age's stations wait for its rite. A quest with `opens: Some("farm")` is the rite
+of that age (one to an age, and never its own), and a recipe with `age: "farm"` is
+refused, on the server (`allowed_recipes`) and greyed in Can Make and the grid ("opens in
+the Farm Age"), until its rite is done. A recipe naming an age no quest opens fails to
+load. Two goals count the age's own quests, read from what is done rather than a tally:
+`QuestsDone(age, n)` and `Capstones(age, n)`, the latter only quests marked
+`capstone: true` (a path's last quest). Loading refuses a count that is 0, of an age no
+quest is in, or more than the age holds besides the rite.
+
+| Rite | After | Parts | Opens |
+|---|---|---|---|
+| The Farm Age | Homestead Hearth | 20 Nomad quests; 3 Nomad path capstones | pit kiln, crucible, herb planter, stone altar, earth clamp, cooking pot, well, cottage stove, compost heap, skep |
+| The Bronze Age | Crucible Kiln | 30 Farm quests; 4 Farm path capstones | (nothing yet) |
+
+The Farm quests that followed Homestead Hearth follow The Farm Age.
+
 ## Readable to a newcomer (Oct 13)
 
 Every Nomad and Farm quest was read as someone who has never played would: does its text

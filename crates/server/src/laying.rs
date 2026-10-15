@@ -139,7 +139,8 @@ impl Server {
     }
 
     /// Which recipes `agent` may craft where they are: a table's within reach of one, one
-    /// made near a block within reach of such a block, and those whose level they have.
+    /// made near a block within reach of such a block, those whose level they have, and a
+    /// later age's only once they have done its rite.
     pub(crate) fn allowed_recipes(&self, agent: PlayerId) -> impl Fn(&Recipe) -> bool + use<> {
         let at_table = self.at_table(agent);
         let near = self.near_tags(agent);
@@ -149,8 +150,12 @@ impl Server {
             skills.ids().map(|skill| (skill, (skills.level(player.skills.xp(skill)), voxmar_engine::level::check_level(&skills, &effects, &player.skills, &player.vitals.effects, skill)))).collect()
         }).unwrap_or_default();
         let inventory = player.map(|p| p.inventory.clone()).unwrap_or_default();
+        // The ages whose rite they have done: a later age's recipes wait for it.
+        let done = player.map(|p| p.quests_done.clone()).unwrap_or_default();
+        let quests = self.content.quests.clone();
         move |r: &Recipe| {
-            (at_table || !r.needs_table())
+            r.age.as_deref().is_none_or(|age| quests.opened(age, &|quest| done.iter().any(|d| d == quest)))
+                && (at_table || !r.needs_table())
                 && r.near.as_deref().is_none_or(|tag| near.iter().any(|t| t == tag))
                 && r.skill.is_none_or(|s| levels.get(&s).is_some_and(|&(own, boosted)| voxmar_engine::level::meets_recipe(r, own, boosted, &inventory, &blocks)))
         }
@@ -339,6 +344,32 @@ mod tests {
         assert_eq!(grid(&server), vec![(planks, 1); 4]);
         assert_eq!(laid(&server), 1, "only a lay that took from a store counts");
     }
+    /// A later age's station (a pit kiln, `age: "farm"`) is refused until its rite is done,
+    /// whatever lies in the grid; then it is made as any other.
+    #[test]
+    fn a_later_ages_station_waits_for_its_rite() {
+        let mut server = fixture();
+        let (cobble, campfire, kiln) = (id(&server, "base:cobblestone"), id(&server, "base:campfire"), id(&server, "base:pit_kiln"));
+        let table = IVec3::new(10, FLOOR + 1, 8);
+        server.set_block(table, id(&server, "base:crafting_table"));
+        server.players.get_mut(&1).unwrap().station = Some(table);
+        assert!(server.at_table(1), "at the table, so only the age stands in the way");
+        let craft = server.content.actions.expect("core:craft");
+        let made = |server: &mut Server| {
+            let inventory = &mut server.players.get_mut(&1).unwrap().inventory;
+            inventory.craft = [None; GRID];
+            for (cell, item) in [(0, cobble), (2, cobble), (3, cobble), (4, campfire), (5, cobble)] {
+                inventory.craft[cell] = Some(ItemStack { item, count: 1 });
+            }
+            server.propose(1, craft, ActionTarget::Slot(0), Instant::now());
+            server.players[&1].inventory.slots.iter().flatten().filter(|s| s.item == kiln).count()
+        };
+        let rite = server.content.quests.rite("farm").expect("a rite opens the Farm age").name.clone();
+        assert_eq!(made(&mut server), 0, "the Farm age is not open");
+        server.players.get_mut(&1).unwrap().quests_done.push(rite);
+        assert_eq!(made(&mut server), 1, "its rite done, the kiln is made");
+    }
+
     /// A log split near a chopping block gives six planks, away from one the grid's four;
     /// the way made near one lays only near one.
     #[test]
