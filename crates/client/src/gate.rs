@@ -334,6 +334,10 @@ steps! {
     /// the player then two and a half blocks past it: it comes at the wall, lands no blow, gives up and
     /// goes off rather than press the wall.
     Narrow,
+    /// A wolf struck from the edge of a step a block high, with the player then three
+    /// blocks back along its top: it comes up the step and strikes, in the time its run
+    /// takes to cover the way.
+    Climb,
     /// A torch held a moment leaves the player Smoky (smoke that clings): its chip shows,
     /// timed; then the hand is emptied.
     Smoke,
@@ -834,6 +838,8 @@ struct Gate {
     look_cleared: f32,
     /// Where the narrow step stands.
     narrow: NarrowRun,
+    /// Where the climb step stands.
+    climb: ClimbRun,
     /// The weapon step's first swing, watched in the hand.
     swing_watch: SwingWatch,
     /// When the music step checked the now-playing line, while it is watched fading out
@@ -1006,6 +1012,7 @@ impl Gate {
             look_crowded: false,
             look_cleared: 0.0,
             narrow: NarrowRun::default(),
+            climb: ClimbRun::default(),
             swing_watch: SwingWatch::default(),
             music_fade: None,
             worn_states: 0,
@@ -1814,6 +1821,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Boss => boss(world, gate, now),
         Step::Tusk => tusk(world, gate, now),
         Step::Narrow => narrow(world, gate, now),
+        Step::Climb => climb(world, gate, now),
         Step::Smoke => smoke(world, gate, now),
         Step::Wear => wear(world, gate, now, in_phase),
         Step::CombatHud => combat_hud(world, gate, now, in_phase),
@@ -10863,7 +10871,7 @@ fn tusk(world: &mut World, gate: &mut Gate, now: f32) {
             }
         }
         _ => {
-            if sweep_bears(world, gate, species, pad) {
+            if sweep_bears(world, gate, species, pad, now) {
                 end_tusk(world, gate, now);
             }
         }
@@ -10883,6 +10891,7 @@ fn end_tusk(world: &mut World, gate: &mut Gate, now: f32) {
     net.command(&format!("tp {} {} {}", feet.x as f32 + 0.5, feet.y, feet.z as f32 + 0.5));
     gate.next(Step::Narrow, now);
 }
+
 
 /// Where the narrow step builds, from the test ground's feet: the middle of its wall.
 const NARROW_AT: IVec3 = IVec3::new(0, 0, 22);
@@ -10931,7 +10940,7 @@ struct NarrowRun {
 fn narrow(world: &mut World, gate: &mut Gate, now: f32) {
     let Some(species) = world.resource::<Launch>().content.creatures.find(BEAR) else {
         gate.check("narrow doorway", Err(format!("no `{BEAR}` in the content")));
-        gate.next(Step::Smoke, now);
+        gate.next(Step::Climb, now);
         return;
     };
     let at = gate.feet + NARROW_AT;
@@ -11133,6 +11142,207 @@ fn narrow(world: &mut World, gate: &mut Gate, now: f32) {
                 net.command("creatures kill");
             }
             net.command(&format!("fill {} {} {} {} {} {} air", at.x - 7, at.y, at.z, at.x + 7, at.y + 2, at.z));
+            net.command("gamemode survival");
+            net.command("skill hitpoints 10");
+            net.command(&format!("tp {} {} {}", feet.x as f32 + 0.5, feet.y, feet.z as f32 + 0.5));
+            gate.next(Step::Climb, now);
+        }
+    }
+}
+
+/// The climb step's wolf.
+const WOLF: &str = "base:wolf";
+/// Where the climb step builds, from the test ground's feet: the middle of the step's edge.
+const CLIMB_AT: IVec3 = IVec3::new(0, 0, 36);
+/// Blocks back along the step's top the player stands once the wolf is struck.
+const CLIMB_BACK: f32 = 3.0;
+/// What the climb allows past the wolf's run over the way and its wind-up: a beat to turn
+/// and come up the step, which takes it a hop.
+const CLIMB_SPARE: f32 = 1.0;
+
+/// Where the climb step stands.
+#[derive(Default)]
+struct ClimbRun {
+    /// The wolves in view before it summoned its own, and its own once seen.
+    before: Vec<u32>,
+    wolf: Option<u32>,
+    /// The blows each way the server had answered as the phase began.
+    struck: u32,
+    hurts: u32,
+    /// Server seconds the wolf is allowed, from the player standing back to its blow, and
+    /// what they were made of.
+    allowed: f32,
+    allowance: String,
+    /// The wolf at its highest, and where it was when the player stood back.
+    highest: f32,
+    from: Vec3,
+    /// `Gate::frames` as the phase began.
+    frames_at: u32,
+}
+
+/// A wolf on level ground below a step a block high: struck from the step's edge, then,
+/// with the player three blocks back along the top, it comes up the step and strikes.
+/// What is judged derives from the setup: its blow lands with its feet up on the step,
+/// within the server seconds its own run takes over the way from where it was to its
+/// reach of the player, plus its wind-up and `CLIMB_SPARE`. Before the fix to heads meeting
+/// steps (`motion::step`) a wolf coming straight at a step met it with its head first and
+/// was turned along it.
+fn climb(world: &mut World, gate: &mut Gate, now: f32) {
+    let Some(species) = world.resource::<Launch>().content.creatures.find(WOLF) else {
+        gate.check("climb", Err(format!("no `{WOLF}` in the content")));
+        gate.next(Step::Smoke, now);
+        return;
+    };
+    let at = gate.feet + CLIMB_AT;
+    // On the step's edge, the wolf below it; and three blocks back along its top. Both
+    // written to the hundredth, so `/tp` never takes them for a block and centres them.
+    let edge = Vec3::new(at.x as f32 + 0.5, at.y as f32 + 1.0, at.z as f32 + 0.5);
+    let back = edge + Vec3::Z * CLIMB_BACK;
+    let view = {
+        let creatures = world.resource::<crate::creatures::Creatures>();
+        match gate.climb.wolf {
+            Some(id) => creatures.views().find(|v| v.id == id).copied(),
+            None => creatures.views().find(|v| v.species == species && !gate.climb.before.contains(&v.id)).copied(),
+        }
+    };
+    let in_phase = now - gate.phase_since;
+    // Server seconds, game seconds and frames, so neither a starved server nor a starved
+    // client is taken for a wolf that did nothing.
+    let waited = |gate: &Gate, seconds: f32| gate.server_in_phase() > seconds && in_phase > seconds && gate.frames.saturating_sub(gate.climb.frames_at) >= NARROW_FRAMES;
+    let fail = |world: &mut World, gate: &mut Gate, why: String| {
+        gate.check("climb", Err(why));
+        mouse(world, MouseButton::Left, false);
+        to_phase(gate, 4, now);
+    };
+    let advance = |gate: &mut Gate| {
+        gate.climb.frames_at = gate.frames;
+        gate.advance(now);
+    };
+    match gate.phase {
+        0 => {
+            // In creative while it is built: level ground, the step across it a block high
+            // from the edge on, and the wolf summoned below it, two blocks out.
+            gate.climb = ClimbRun { before: world.resource::<crate::creatures::Creatures>().views().filter(|v| v.species == species).map(|v| v.id).collect(), highest: f32::MIN, ..default() };
+            let net = world.resource::<Net>();
+            net.command("gamemode creative");
+            net.command(&format!("fill {} {} {} {} {} {} air", at.x - 6, at.y, at.z - 6, at.x + 6, at.y + 4, at.z + 6));
+            net.command(&format!("fill {} {} {} {} {} {} stone", at.x - 6, at.y - 1, at.z - 6, at.x + 6, at.y - 1, at.z + 6));
+            net.command(&format!("fill {} {} {} {} {} {} stone", at.x - 6, at.y, at.z, at.x + 6, at.y, at.z + 6));
+            net.command(&format!("tp {:.2} {:.2} {:.2}", edge.x, edge.y, edge.z));
+            // /summon sets the first one 1.8 blocks west of the cell's middle (`summon`):
+            // asked two east, it lands about on the edge's line.
+            net.command(&format!("summon {} 1 {} {} {}", WOLF.trim_start_matches("base:"), at.x + 2, at.y, at.z - 2));
+            advance(gate);
+        }
+        1 => {
+            let Some(view) = view else {
+                if waited(gate, NARROW_WAIT) {
+                    fail(world, gate, format!("a summoned {WOLF} never reached the client in {NARROW_WAIT} server and game seconds"));
+                }
+                return;
+            };
+            if gate.settled == 0 {
+                gate.climb.wolf = Some(view.id);
+                let net = world.resource::<Net>();
+                net.command("gamemode survival");
+                net.command("skill hitpoints 60");
+                net.command("heal");
+                gate.settled = 1;
+                info!("gate: climb: wolf {} landed at {:.2}; the step's edge at {edge:.2}", view.id, view.position);
+            }
+            aim_at(world, view.position + Vec3::Y * 0.4);
+            let me = world.resource::<LocalPlayer>().position;
+            let hand = clear_hand(world);
+            if me.xz().distance(edge.xz()) < 0.3 && hand != Some(false) {
+                gate.climb.struck = world.resource::<crate::fight::Fighting>().struck_count;
+                advance(gate);
+            } else if waited(gate, NARROW_WAIT) {
+                fail(world, gate, format!("not ready to strike: the player at {me:.2} (the edge at {edge:.2}), the hand emptied {hand:?}"));
+            }
+        }
+        2 => {
+            let Some(view) = view else {
+                fail(world, gate, "the wolf went out of view before it was struck".into());
+                return;
+            };
+            aim_at(world, view.position + Vec3::Y * 0.4);
+            let fighting = world.resource::<crate::fight::Fighting>();
+            let new = (fighting.struck_count - gate.climb.struck) as usize;
+            if fighting.struck.iter().rev().take(new).any(|s| s.0 == view.id) {
+                gate.climb.hurts = fighting.hurt_count;
+                mouse(world, MouseButton::Left, false);
+                world.resource::<Net>().command(&format!("tp {:.2} {:.2} {:.2}", back.x, back.y, back.z));
+                info!("gate: climb: struck the wolf at {:.2}; to {back:.2}", view.position);
+                advance(gate);
+            } else if gate.waited_out(NARROW_WAIT) {
+                let distance = world.resource::<LocalPlayer>().eye().distance(view.position);
+                fail(world, gate, format!("no blow at the wolf landed in {} clicks ({distance:.2} blocks off, at {:.2})", gate.taps, view.position));
+            } else {
+                let swings = gate.swings;
+                gate.swing(world, now);
+                gate.taps += gate.swings - swings;
+            }
+        }
+        3 => {
+            let me = world.resource::<LocalPlayer>().position;
+            let Some(view) = view else {
+                fail(world, gate, format!("the wolf went out of view (its feet {:.2} up at most)", gate.climb.highest));
+                return;
+            };
+            // Timed from this client's player standing back, within a quarter block.
+            if gate.climb.allowed == 0.0 {
+                // A blow before it stands back was struck at the edge: not counted.
+                gate.climb.hurts = world.resource::<crate::fight::Fighting>().hurt_count;
+                if me.xz().distance(back.xz()) > 0.25 {
+                    if waited(gate, NARROW_WAIT) {
+                        fail(world, gate, format!("the player never came to stand back along the step: at {me:.2}, sent to {back:.2}"));
+                    }
+                    return;
+                }
+                // Its way: from its body's front to its reach of the player, at its run, and
+                // its wind-up before the blow lands.
+                let content = &world.resource::<Launch>().content;
+                let def = &content.creatures.get(species).def;
+                let run = def.movement.run.max(0.1);
+                let attack = def.attack;
+                let reach = attack.map_or(1.0, |a| a.reach);
+                let windup = attack.and_then(|a| a.windup).unwrap_or(content.combat.feel.creature_windup);
+                let half = def.body.size.0 * view.scale / 2.0;
+                let way = (view.position.xz().distance(me.xz()) - half - reach).max(0.0);
+                gate.climb.allowed = way / run + windup + CLIMB_SPARE;
+                gate.climb.allowance = format!("{way:.2} blocks at its run of {run:.2} a second, a wind-up of {windup:.2} s and {CLIMB_SPARE:.1} s to spare");
+                gate.climb.from = view.position;
+                to_phase(gate, 3, now);
+                gate.climb.frames_at = gate.frames;
+                info!("gate: climb: the player stands back at {me:.2}, the wolf at {:.2}; allowed {:.2} server s ({})", view.position, gate.climb.allowed, gate.climb.allowance);
+                return;
+            }
+            let up = view.position.y - at.y as f32;
+            gate.climb.highest = gate.climb.highest.max(up);
+            let fighting = world.resource::<crate::fight::Fighting>();
+            let new = (fighting.hurt_count - gate.climb.hurts) as usize;
+            gate.climb.hurts = fighting.hurt_count;
+            let blow = fighting.hurt.iter().rev().take(new).any(|h| h.0 == view.id);
+            let taken = gate.server_in_phase();
+            let what = format!("from {:.2} to {:.2}, its feet {up:.2} up (at most {:.2}), allowed {:.2} server s for {}", gate.climb.from, view.position, gate.climb.highest, gate.climb.allowed, gate.climb.allowance);
+            if blow && up > 0.9 {
+                gate.check("climb", Ok(format!("up the step a block high, the wolf struck in {taken:.2} server s: {what}")));
+                to_phase(gate, 4, now);
+            } else if blow {
+                fail(world, gate, format!("the wolf struck from below the step, {taken:.2} server s on: {what}"));
+            } else if waited(gate, gate.climb.allowed) {
+                fail(world, gate, format!("no blow from the wolf in {taken:.2} server s ({in_phase:.2} game s): {what}, moving {:.2}", view.velocity.with_y(0.0).length()));
+            }
+        }
+        _ => {
+            // Killed where it was built (whether or not it was ever seen), the step swept
+            // away, and back to the test ground for the steps after.
+            let feet = gate.feet;
+            let net = world.resource::<Net>();
+            net.command("gamemode creative");
+            net.command(&format!("tp {:.2} {:.2} {:.2}", at.x as f32 + 0.5, at.y as f32, at.z as f32 - 1.5));
+            net.command("creatures kill");
+            net.command(&format!("fill {} {} {} {} {} {} air", at.x - 6, at.y, at.z, at.x + 6, at.y, at.z + 6));
             net.command("gamemode survival");
             net.command("skill hitpoints 10");
             net.command(&format!("tp {} {} {}", feet.x as f32 + 0.5, feet.y, feet.z as f32 + 0.5));
