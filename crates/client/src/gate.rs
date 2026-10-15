@@ -796,12 +796,13 @@ struct Gate {
     was_creative: bool,
     counted: u32,
     /// Real frame times so far (milliseconds), and the longest in each step with the
-    /// milliseconds our threads waited for a core in it (`slow_frames::waited_for_cores`).
-    /// Each frame is timed from one run of the gate to the next, by the wall's clock and by
-    /// the waiting so far (`frame_at`).
+    /// milliseconds our threads waited for a core in it (`slow_frames::waited_for_cores`)
+    /// and of those, the share other work on the machine caused
+    /// (`slow_frames::waited_for_others`). Each frame is timed from one run of the gate to
+    /// the next, by the wall's clock, the waiting so far and the core times (`frame_at`).
     frame_ms: Vec<f32>,
-    longest: FxHashMap<Step, (f32, f32)>,
-    frame_at: Option<(Instant, Option<std::time::Duration>)>,
+    longest: FxHashMap<Step, (f32, f32, f32)>,
+    frame_at: Option<(Instant, Option<std::time::Duration>, Option<crate::slow_frames::CoreTimes>)>,
     /// The machine's one-minute load average read about once a second, with the session's
     /// real seconds at each read, over the last `LOAD_SPAN` (`Gate::load_now`).
     loads: std::collections::VecDeque<(f32, f64)>,
@@ -1138,6 +1139,12 @@ impl Gate {
     }
 
     fn next(&mut self, step: Step, now: f32) {
+        // The step left: its longest frame by the wall's clock, what our threads waited for a
+        // core in it, and how much of that other work on the machine caused (the share the
+        // smooth checks take off).
+        if let Some(&(wall, waited, others)) = self.longest.get(&self.step) {
+            info!("gate: {:?} longest frame {wall:.0} ms, our threads waiting {waited:.0} ms for a core in it, {others:.0} ms of that for other work", self.step);
+        }
         info!("gate: {step:?} at {now:.1}s, server {:.1}s", self.server_now);
         if !self.entered.contains(&step) {
             self.entered.push(step);
@@ -1370,14 +1377,20 @@ fn run(world: &mut World) {
     if screen == Screen::InGame && !matches!(gate.step, Step::Fit | Step::FitJournal | Step::FitMenus | Step::Leave | Step::Done) {
         watch_health(world, &mut gate);
     }
-    let now_at = (Instant::now(), crate::slow_frames::waited_for_cores());
-    if let Some((then, waited_then)) = gate.frame_at.replace(now_at) {
-        let frame_ms = now_at.0.saturating_duration_since(then).as_secs_f32() * 1000.0;
-        let waited_ms = waited_then.zip(now_at.1).map_or(0.0, |(then, now)| now.saturating_sub(then).as_secs_f32() * 1000.0);
+    let now_at = (Instant::now(), crate::slow_frames::waited_for_cores(), crate::slow_frames::core_times());
+    if let Some((then, waited_then, times_then)) = gate.frame_at.replace(now_at) {
+        let ms = |d: std::time::Duration| d.as_secs_f32() * 1000.0;
+        let frame_ms = ms(now_at.0.saturating_duration_since(then));
+        let waited_ms = waited_then.zip(now_at.1).map_or(0.0, |(then, now)| ms(now.saturating_sub(then)));
+        let cores = std::thread::available_parallelism().map_or(1, |n| n.get()) as f32;
+        let others_ms = times_then.zip(now_at.2).map_or(0.0, |(then, now)| {
+            let (ours, busy) = (ms(now.ours.saturating_sub(then.ours)), ms(now.machine_busy.saturating_sub(then.machine_busy)));
+            crate::slow_frames::waited_for_others(frame_ms, waited_ms, ours, busy, cores)
+        });
         gate.frame_ms.push(frame_ms);
         let longest = gate.longest.entry(gate.step).or_default();
         if frame_ms > longest.0 {
-            *longest = (frame_ms, waited_ms);
+            *longest = (frame_ms, waited_ms, others_ms);
         }
     }
     let real = world.resource::<Time<Real>>().elapsed_secs();
@@ -2197,7 +2210,7 @@ fn breaks(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 wrong.push(format!("{differ} blocks around differ between client and server"));
             }
             let tools = gate.breaks.row.iter().filter(|(.., holder)| matches!(holder, Holder::Tool(_))).count();
-            let longest = gate.longest.get(&Step::Breaks).map_or(0.0, |&(wall, _)| wall);
+            let longest = gate.longest.get(&Step::Breaks).map_or(0.0, |&(wall, ..)| wall);
             let result = if wrong.is_empty() {
                 Ok(format!("{} blocks of {} hardnesses broke with the bare hand, planks and {tools} tools under load (frames up to {longest:.0} ms), and stayed broken on both sides", gate.breaks.row.len(), BREAK_BLOCKS.len()))
             } else {
@@ -14937,13 +14950,14 @@ const HITCH_FACTOR: f32 = 6.0;
 /// Checks that `step` (placing or digging) ran without a hitch: no frame over
 /// max(`HITCH_MS`, `HITCH_FACTOR` × the session's median frame), times how far the load
 /// now (`Gate::load_now`) asks for more than the cores. A frame is judged by the game's own
-/// time in it (`frame_work`): what our threads spent waiting for a core while other work ran
-/// is the machine's, not the game's.
+/// time in it (`frame_work`): what our threads spent waiting for a core because other work
+/// on the machine ran is the machine's, not the game's; waiting on our own pools is the
+/// game's.
 fn smooth(gate: &mut Gate, name: &str, step: Step, known: Option<&str>) {
     let mut sorted = gate.frame_ms.clone();
     sorted.sort_by(f32::total_cmp);
     let median = sorted.get(sorted.len() / 2).copied().unwrap_or(0.0);
-    let (longest, waited) = gate.longest.get(&step).copied().unwrap_or_default();
+    let (longest, waited, others) = gate.longest.get(&step).copied().unwrap_or_default();
     // A machine asked for more than all its cores (other threads' builds) stretches every
     // frame's waits by about how far over it is: the bar rises with it rather than the
     // check being skipped, for the machine is rarely calm enough to wait for. Pipelines
@@ -14953,8 +14967,8 @@ fn smooth(gate: &mut Gate, name: &str, step: Step, known: Option<&str>) {
     let crowded = (load / cores).max(1.0) as f32;
     let limit = HITCH_MS.max(HITCH_FACTOR * median) * crowded;
     let on = if crowded > 1.0 { format!(", the bar {crowded:.1}× higher at load {load:.0} on {cores} cores") } else { String::new() };
-    let work = frame_work(longest, waited);
-    let queued = if waited > 0.0 { format!(", {:.0} ms of it our threads waiting for a core", waited.min(longest)) } else { String::new() };
+    let work = frame_work(longest, others);
+    let queued = if waited > 0.0 { format!(", our threads waiting {waited:.0} ms for a core in it, {others:.0} ms of that for other work") } else { String::new() };
     let result = if work <= limit {
         Ok(format!("its longest frame took {longest:.0} ms{queued} (median {median:.0} ms{on})"))
     } else {
@@ -14967,14 +14981,15 @@ fn smooth(gate: &mut Gate, name: &str, step: Step, known: Option<&str>) {
     }
 }
 
-/// The game's own milliseconds in a frame of `wall` ms in which our threads waited `waited`
-/// ms for a core: the waiting taken off. On a calm machine nothing waits, so it is the whole
-/// frame; a frame stretched by a burst of other work (247 ms at an instant load of 104 on 18
-/// cores, with the minute's average still under the cores) is held to the same bar for what
-/// is left. Waiting is summed over all our threads, so it can only take off as much as the
-/// frame lasted.
-fn frame_work(wall: f32, waited: f32) -> f32 {
-    wall - waited.clamp(0.0, wall)
+/// The game's own milliseconds in a frame of `wall` ms in which our threads waited `others`
+/// ms for a core because other work ran (`slow_frames::waited_for_others`): that waiting
+/// taken off. On a calm machine other work runs nothing, so it is the whole frame; a frame
+/// stretched by a burst of other work (247 ms at an instant load of 104 on 18 cores, with
+/// the minute's average still under the cores) is held to the same bar for what is left.
+/// Waiting is summed over all our threads, so it can only take off as much as the frame
+/// lasted.
+fn frame_work(wall: f32, others: f32) -> f32 {
+    wall - others.clamp(0.0, wall)
 }
 
 /// How far back `Gate::load_now` reads the load average, and the least span it judges a
@@ -15319,15 +15334,36 @@ mod tests {
     /// counted forms ("1 creature", "3 creatures", "0 creatures"), in English and in
     /// Japanese, and only a reply since the kill was sent.
     /// A frame is judged by the game's own time in it: a calm machine's frame whole, a frame
-    /// stretched by waiting for a core with the waiting taken off, never below nothing.
+    /// stretched by other work with the waiting it caused taken off, never below nothing;
+    /// waiting on our own pools is never taken off.
     #[test]
     fn a_frame_is_judged_by_the_time_the_game_had_in_it() {
-        assert_eq!(frame_work(247.0, 0.0), 247.0, "a frame with no waiting is all the game's");
+        assert_eq!(frame_work(247.0, 0.0), 247.0, "a frame other work did not slow is all the game's");
         assert!(frame_work(247.0, 0.0) > HITCH_MS, "a hitch on a calm machine still fails");
         assert_eq!(frame_work(247.0, 200.0), 47.0);
         assert!(frame_work(247.0, 200.0) <= HITCH_MS, "a frame stretched by other work passes on what is left");
         assert_eq!(frame_work(247.0, 900.0), 0.0, "waiting summed over threads takes off no more than the frame");
         assert_eq!(frame_work(247.0, -1.0), 247.0);
+        // Over a 0.247 s frame on 18 cores (4.446 core seconds).
+        let others = |waited, ours, busy| crate::slow_frames::waited_for_others(0.247, waited, ours, busy, 18.0);
+        // Our own pools filling every core with nothing else on the machine: no excuse.
+        assert_eq!(others(0.9, 4.446, 4.446), 0.0, "waiting on our own pools was set down to other work");
+        // A burst of other work filling the cores we did not use: all our waiting is theirs.
+        assert!((others(0.2, 1.0, 4.446) - 0.2).abs() < 1e-6);
+        // Both: what we asked past every core is ours, the rest, no more than they ran, theirs.
+        assert!((others(1.0, 4.0, 4.446) - 0.446).abs() < 1e-4, "{}", others(1.0, 4.0, 4.446));
+        assert!((others(1.0, 4.4, 4.446) - 0.046).abs() < 1e-4, "{}", others(1.0, 4.4, 4.446));
+    }
+
+    /// The machine's busy core time is read on this system, and holds our own CPU time.
+    #[test]
+    fn the_machine_says_how_busy_its_cores_have_been() {
+        let spin = Instant::now();
+        while spin.elapsed() < Duration::from_millis(30) {
+            std::hint::black_box(0);
+        }
+        let times = crate::slow_frames::core_times().expect("the machine's core times");
+        assert!(times.ours > Duration::ZERO && times.machine_busy >= times.ours, "{times:?}");
     }
 
     #[test]
