@@ -28,6 +28,10 @@ pub(super) static GIVEN_UP: [std::sync::atomic::AtomicU32; 12] = [const { std::s
 #[cfg(test)]
 pub(super) static PLACE_FAILS: [std::sync::atomic::AtomicU32; 8] = [const { std::sync::atomic::AtomicU32::new(0) }; 8];
 
+/// Wall blocks left out where the ring runs against a lot, in every plan made (none should be).
+#[cfg(test)]
+pub(super) static WALL_ON_LOTS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
 #[cfg(test)]
 thread_local! {
     static PROFILE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -1764,15 +1768,28 @@ fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smal
     let wall_rules = &rules.walls;
     let mut wall: Vec<Walling> = Vec::new();
     if walled {
-        let heart: Vec<Rect> = lots
-            .iter()
-            .filter(|l| !matches!(l.spec.kind, Kind::Field | Kind::Pen | Kind::Orchard | Kind::Woodyard | Kind::Shrine | Kind::Centrepiece))
-            .map(|l| l.rect)
-            .chain([square_rect])
-            .collect();
-        let corners = super::walls::ring(&heart, wall_rules.margin);
-        let cells = super::walls::trace(&corners);
-        let blocked = |ground: &mut Ground, p: IVec2| !bounds.holds(p) || lots.iter().any(|l| l.rect.grow(1).holds(p)) || !standing(&ground.at(p));
+        // Round the heart, and round any field, pen or shrine out at the ends the ring would
+        // cut through, so it is never left open beside one.
+        let mut inner: Vec<bool> = lots.iter().map(|l| !matches!(l.spec.kind, Kind::Field | Kind::Pen | Kind::Orchard | Kind::Woodyard | Kind::Shrine | Kind::Centrepiece)).collect();
+        let (corners, cells) = loop {
+            let heart: Vec<Rect> = lots.iter().zip(&inner).filter(|(_, inner)| **inner).map(|(l, _)| l.rect).chain([square_rect]).collect();
+            let corners = super::walls::ring(&heart, wall_rules.margin);
+            let cells = super::walls::trace(&corners);
+            let mut grew = false;
+            for (l, inner) in lots.iter().zip(inner.iter_mut()) {
+                if !*inner && cells.iter().any(|&p| l.rect.grow(1).holds(p)) {
+                    *inner = true;
+                    grew = true;
+                }
+            }
+            if !grew {
+                break (corners, cells);
+            }
+        };
+        let on_lot = |p: IVec2| lots.iter().any(|l| l.rect.grow(1).holds(p));
+        #[cfg(test)]
+        WALL_ON_LOTS.fetch_add(cells.iter().filter(|&&p| on_lot(p)).count() as u32, std::sync::atomic::Ordering::Relaxed);
+        let blocked = |ground: &mut Ground, p: IVec2| !bounds.holds(p) || on_lot(p) || !standing(&ground.at(p));
         let crossed = |p: IVec2, by: f32| lanes.iter().any(|l| l.distance(p.as_vec2()) <= l.half + by);
         let gates: Vec<bool> = cells.iter().map(|&p| crossed(p, 1.0)).collect();
         for (i, &p) in cells.iter().enumerate() {
@@ -1793,7 +1810,8 @@ fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smal
             for dz in -1..=1 {
                 for dx in -1..=1 {
                     let p = cells[i] + IVec2::new(dx, dz);
-                    if crossed(p, 0.5) || blocked(&mut ground, p) {
+                    // Never on a gate (its lintel), so as wide a berth of a lane as a gate's.
+                    if crossed(p, 1.0) || blocked(&mut ground, p) {
                         continue;
                     }
                     let part = if dx != 0 && dz != 0 { WallPart::TowerCorner } else { WallPart::Tower };
