@@ -259,6 +259,14 @@ pub(crate) struct InventoryCard;
 struct PointerStack;
 #[derive(Component)]
 struct Tooltip;
+/// How wide the tooltip grows.
+const TIP_WIDTH: f32 = 180.0 * PX;
+
+/// One tooltip line's box: as wide as the tooltip's inside at most, so a line that wraps is
+/// measured, and the tooltip's backing grows, by every line it wraps to.
+fn tip_line() -> Node {
+    Node { max_width: Val::Px(TIP_WIDTH - 2.0 * space::GAP), ..default() }
+}
 #[derive(Component)]
 pub(crate) struct TooltipLines;
 /// What the crafting grid makes: click to craft one onto the pointer, shift-click to craft
@@ -387,7 +395,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
         position_type: PositionType::Absolute,
         flex_direction: FlexDirection::Column,
         row_gap: Val::Px(PX),
-        max_width: Val::Px(180.0 * PX),
+        max_width: Val::Px(TIP_WIDTH),
         padding: UiRect::axes(Val::Px(space::GAP), Val::Px(space::INNER)),
         ..default()
     };
@@ -1176,8 +1184,8 @@ fn tooltip(
         let key = voxmar_engine::combat::Slot::ALL[slot - WORN].key();
         let name = locale.get_or(&format!("item.slot.{key}"), key).to_owned();
         commands.entity(entity).despawn_children().with_children(|lines| {
-            lines.spawn(shadowed(&font.0, name, BODY, TEXT));
-            lines.spawn(text(&font.0, locale.get("item.slot.empty").to_owned(), BODY, MUTED));
+            lines.spawn((shadowed(&font.0, name, BODY, TEXT), tip_line()));
+            lines.spawn((text(&font.0, locale.get("item.slot.empty").to_owned(), BODY, MUTED), tip_line()));
         });
         visibility.set_if_neq(Visibility::Inherited);
         place_tip(&mut node, computed, window.single().ok(), scale.0, forced.as_ref().map(|f| f.0), &places);
@@ -1204,13 +1212,13 @@ fn tooltip(
         commands.entity(entity).despawn_children().with_children(|lines| {
             if in_japanese {
                 for line in &readings {
-                    lines.spawn(text(&font.0, line, BODY, SOFT));
+                    lines.spawn((text(&font.0, line, BODY, SOFT), tip_line()));
                 }
             }
-            lines.spawn(shadowed(&font.0, locale.block(def), BODY, rarity_color(def.rarity)));
+            lines.spawn((shadowed(&font.0, locale.block(def), BODY, rarity_color(def.rarity)), tip_line()));
             if !in_japanese {
                 for line in &readings {
-                    lines.spawn(text(&font.0, line, BODY, SOFT));
+                    lines.spawn((text(&font.0, line, BODY, SOFT), tip_line()));
                 }
             }
             // Where it comes from and what it goes into, before the rest.
@@ -1223,11 +1231,11 @@ fn tooltip(
                 .chain(book.into_iter().map(|line| (line, SOFT)))
                 .chain(details(&locale, def, settings.debug_overlay));
             for (line, color) in lines_after {
-                lines.spawn(text(&font.0, line, BODY, color));
+                lines.spawn((text(&font.0, line, BODY, color), tip_line()));
             }
             // How to look it up.
             let keys = [("recipes", settings.recipes_key.name(&locale)), ("uses", settings.uses_key.name(&locale))];
-            lines.spawn(text(&font.0, locale.format("tooltip.lookup", &[(keys[0].0, &keys[0].1), (keys[1].0, &keys[1].1)]), BODY, MUTED));
+            lines.spawn((text(&font.0, locale.format("tooltip.lookup", &[(keys[0].0, &keys[0].1), (keys[1].0, &keys[1].1)]), BODY, MUTED), tip_line()));
         });
     }
     visibility.set_if_neq(Visibility::Inherited);

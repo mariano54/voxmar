@@ -739,6 +739,8 @@ struct Gate {
     spills: Vec<(String, String)>,
     /// What the keys under a screen ran into on the views of a text-fit step, each once.
     keys_blocked: Vec<String>,
+    /// Views of the text-fit tour on which a tool's tooltip showed, whole, on screen.
+    fit_tips: usize,
     /// The text-fit views read only once `FIT_SETTLE` passed, their layout never settled.
     fit_settled: Vec<String>,
     /// Views in a language with line rules where no text had its line breaks checked.
@@ -958,6 +960,7 @@ impl Gate {
             cover_checked: false,
             spills: Vec::new(),
             keys_blocked: Vec::new(),
+            fit_tips: 0,
             fit_settled: Vec::new(),
             unbroken: Vec::new(),
             fit_layout: ((Step::Load, 0), 0, false, 0, false, 0),
@@ -7598,10 +7601,12 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         // the pass fails.
         let breaks = world.remove_resource::<crate::ui::fit::LineBreaksChecked>().unwrap_or_default();
         let unbroken = std::mem::take(&mut gate.unbroken);
+        let tips = std::mem::take(&mut gate.fit_tips);
+        let tips = if tips > 0 { format!("; a tool's tooltip whole on screen on {tips}") } else { String::new() };
         let result = if !unbroken.is_empty() {
             Err(format!("no line breaks checked on {} views in a language with line rules: {}", unbroken.len(), unbroken.join("; ")))
         } else if spills.is_empty() {
-            Ok(format!("every text fits on {} views in {}; line breaks checked {}", views.len(), FIT_LANGUAGES.join(" and "), breaks.checked))
+            Ok(format!("every text fits on {} views in {}; line breaks checked {}{tips}", views.len(), FIT_LANGUAGES.join(" and "), breaks.checked))
         } else {
             Err(format!("{} texts do not fit: {}", spills.len(), spills.join("; ")))
         };
@@ -7686,6 +7691,24 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     if checked(world).none_since(&before) {
         gate.unbroken.push(format!("{language}, {view:?}"));
     }
+    if let View::Inventory = view {
+        let (off, over) = tip_wrong(world);
+        if off.is_empty() && over.is_empty() {
+            gate.fit_tips += 1;
+        }
+        for wrong in off {
+            let what = format!("{language}: {wrong}");
+            if !gate.spills.iter().any(|(known, _)| *known == what) {
+                gate.spills.push((what, format!("{language}, {view:?}: {wrong}")));
+            }
+        }
+        for wrong in over {
+            let what = format!("{language}, {view:?}: {wrong}");
+            if !gate.keys_blocked.contains(&what) {
+                gate.keys_blocked.push(what);
+            }
+        }
+    }
     for blocked in keys_blocked(world) {
         let what = format!("{language}, {view:?}: {blocked}");
         if !gate.keys_blocked.contains(&what) {
@@ -7766,6 +7789,85 @@ fn keys_blocked(world: &mut World) -> Vec<String> {
     found.sort();
     found.dedup();
     found
+}
+
+/// What is wrong with the tooltip [`fit_tool`] shows: not showing or past the screen's edge,
+/// then over the keys under the screen.
+fn tip_wrong(world: &mut World) -> (Vec<String>, Vec<String>) {
+    use crate::hud::screens::HotkeyBar;
+    let rect = |node: &ComputedNode, at: &bevy::ui::UiGlobalTransform| Rect::from_center_size(at.translation, node.size());
+    let tip = world
+        .query_filtered::<(&ComputedNode, &bevy::ui::UiGlobalTransform, &InheritedVisibility, &bevy::ui::ComputedUiRenderTargetInfo), With<crate::hud::inventory::TooltipLines>>()
+        .iter(world)
+        .find(|(node, _, shown, _)| shown.get() && node.size().min_element() > 0.0)
+        .map(|(node, at, _, target)| (rect(node, at), target.physical_size().as_vec2()));
+    let Some((tip, screen)) = tip else { return (vec!["the tool's tooltip did not show".to_owned()], Vec::new()) };
+    let mut off = Vec::new();
+    let past = [("left", -tip.min.x), ("top", -tip.min.y), ("right", tip.max.x - screen.x), ("bottom", tip.max.y - screen.y)];
+    for (side, by) in past {
+        if by > 0.5 {
+            off.push(format!("the tool's tooltip ({:.0}×{:.0}) reaches past the screen by {by:.0} px {side}", tip.width(), tip.height()));
+        }
+    }
+    let over = world
+        .query_filtered::<(&ComputedNode, &bevy::ui::UiGlobalTransform, &InheritedVisibility), With<HotkeyBar>>()
+        .iter(world)
+        .filter(|(node, _, shown)| shown.get() && node.size().min_element() > 0.0)
+        .filter(|(node, at, _)| {
+            let both = tip.intersect(rect(node, at));
+            both.width() > 0.5 && both.height() > 0.5
+        })
+        .map(|_| "the tool's tooltip covers the keys".to_owned())
+        .take(1)
+        .collect();
+    (off, over)
+}
+
+/// The slot [`fit_tool`] lays a tool in: the hotbar's last, at the inventory's right.
+const FIT_TOOL_SLOT: usize = voxmar_engine::inventory::HOTBAR_SLOTS - 1;
+
+/// The slot's own stack while [`fit_tool`] shows a tool there, and the tool's.
+#[derive(Resource)]
+struct KeptSlot(Option<voxmar_engine::inventory::ItemStack>, voxmar_engine::inventory::ItemStack);
+
+/// With `full`, the inventory's last hotbar slot holds the best tool there is (the highest
+/// tier, then the fastest), its tooltip showing; without, the slot's own stack comes back,
+/// unless the server has told the inventory since.
+fn fit_tool(world: &mut World, full: bool) {
+    if !full {
+        if let Some(KeptSlot(kept, shown)) = world.remove_resource::<KeptSlot>() {
+            world.remove_resource::<crate::hud::inventory::HoverSlot>();
+            let mut player = world.resource_mut::<LocalPlayer>();
+            if player.inventory.slots[FIT_TOOL_SLOT] == Some(shown) {
+                player.inventory.slots[FIT_TOOL_SLOT] = kept;
+            }
+        }
+        return;
+    }
+    if world.contains_resource::<KeptSlot>() {
+        return;
+    }
+    let content = &world.resource::<Launch>().content;
+    let best = |block: BlockId| {
+        let tool = content.tools.tool(Some(block));
+        (tool.tier, tool.speed)
+    };
+    let Some(tool) = content
+        .blocks
+        .ids()
+        .filter(|&block| content.tools.tool(Some(block)).kind.is_some())
+        .max_by(|&a, &b| {
+            let ((tier_a, speed_a), (tier_b, speed_b)) = (best(a), best(b));
+            tier_a.cmp(&tier_b).then(speed_a.total_cmp(&speed_b)).then_with(|| content.blocks.def(b).name.cmp(&content.blocks.def(a).name))
+        })
+    else {
+        return;
+    };
+    let shown = voxmar_engine::inventory::ItemStack { item: tool, count: 1 };
+    let mut player = world.resource_mut::<LocalPlayer>();
+    let kept = std::mem::replace(&mut player.inventory.slots[FIT_TOOL_SLOT], Some(shown));
+    world.insert_resource(KeptSlot(kept, shown));
+    world.insert_resource(crate::hud::inventory::HoverSlot(FIT_TOOL_SLOT));
 }
 
 /// The player's own pins while [`fit_pins`] pins others.
@@ -7865,6 +7967,7 @@ fn show_view(world: &mut World, view: Option<View>, now: f32) {
     }
     fit_prayers(world, book);
     fit_pins(world, matches!(view, Some(View::Tracker)));
+    fit_tool(world, matches!(view, Some(View::Inventory)));
     if let Some(View::Quests) = view {
         // A quest still waiting on another, so its page reads so, beside those done and open.
         use crate::hud::quests::{QuestView, Standing, standing};
