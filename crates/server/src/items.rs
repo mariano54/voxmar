@@ -147,11 +147,12 @@ pub(crate) fn unsown_roll(def: &voxmar_engine::crop::CropDef, roll: f32) -> bool
 }
 
 /// A small, fast hash for the spread of popped drops and for chances: deterministic for a
-/// given tick and place, like everything else the server does. Each value goes through
+/// given key (a count-derived one, `WorldMeta::next_pop`, or a tick) and place, like
+/// everything else the server does. Each value goes through
 /// the whole of MurmurHash3's finaliser: with half of it, ticks in a row gave values in a
 /// slow drift, so a one-in-eight chance tried on sixty ticks running could miss them all.
-pub(crate) fn random3(tick: u64, cell: IVec3, salt: u32) -> [f32; 3] {
-    let mut h = tick.wrapping_mul(0xd6e8_feb8_6659_fd93)
+pub(crate) fn random3(key: u64, cell: IVec3, salt: u32) -> [f32; 3] {
+    let mut h = key.wrapping_mul(0xd6e8_feb8_6659_fd93)
         ^ (cell.x as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15)
         ^ (cell.y as u64).wrapping_mul(0xc2b2_ae3d_27d4_eb4f)
         ^ (cell.z as u64).wrapping_mul(0x1656_67b1_9e37_79f9)
@@ -225,6 +226,10 @@ impl Server {
     /// Whether a crop nobody sowed gives anything this time (`unsown` in crops.ron), by
     /// the player's count of wild crops taken; fruit on trees always does.
     pub(crate) fn unsown_gives(&mut self, agent: PlayerId, crop: voxmar_engine::crop::CropId) -> bool {
+        // Tree fruit always gives: only a crop that may give nothing spends a draw.
+        if self.content.crops.get(crop).def.fruit {
+            return true;
+        }
         let [roll, _] = self.draw_for(agent, crate::save::Draw::Forage);
         unsown_roll(&self.content.crops.get(crop).def, roll)
     }
@@ -579,10 +584,13 @@ mod tests {
             let (tomato, _) = server.content.crops.iter().find(|(_, c)| c.def.name == "base:tomato").unwrap();
             server.tick = tick;
             let gave: Vec<bool> = (0..40).map(|_| server.unsown_gives(1, tomato)).collect();
+            // Tree fruit always gives, and spends no draw.
+            let (apple, _) = server.content.crops.iter().find(|(_, c)| c.def.name == "base:apple").unwrap();
+            assert!((0..5).all(|_| server.unsown_gives(1, apple)), "tree fruit held back");
             (gave, server.players[&1].draws.forages)
         };
         let (first, count) = taken(1_000);
-        assert_eq!(count, 40, "each crop taken counted on");
+        assert_eq!(count, 40, "each crop that may give nothing taken counted on, and no fruit");
         assert!(first.contains(&true) && first.contains(&false), "forty tomatoes nobody sowed all gave alike: {first:?}");
         assert_eq!(taken(1_377), (first, count), "the same crops taken later gave otherwise");
     }

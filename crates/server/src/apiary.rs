@@ -566,6 +566,8 @@ mod tests {
         };
         let first = taken(1_000);
         assert!(first.1 > 0 && first.0.iter().all(|f| !f.is_empty()), "twelve skeps drew {} times for {:?}", first.1, first.0);
+        let gave: Vec<Vec<_>> = first.0.iter().map(|f| f.iter().map(|d| (d.0, d.1)).collect()).collect();
+        assert!(gave.windows(2).any(|w| w[0] != w[1]), "twelve skeps all gave alike: {gave:?}");
         assert_eq!(taken(1_377), first, "the same skeps taken later gave otherwise");
     }
 }
