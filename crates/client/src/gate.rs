@@ -9349,6 +9349,8 @@ struct SlingRun {
     /// whatever else earlier steps or the land left there), and what each was: taken away
     /// for the shots and put back on every way out.
     cleared: Vec<(IVec3, String)>,
+    /// The least share of pace the player kept while a stone was drawn, as they moved.
+    pace: Option<f32>,
 }
 
 /// One cell set to `block` by name.
@@ -9536,6 +9538,9 @@ fn sling(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 return;
             }
             gate.sling.in_the_way = None;
+            if let Some(pace) = world.resource::<crate::fight::Fighting>().drawing_pace {
+                gate.sling.pace = Some(gate.sling.pace.map_or(pace, |least| least.min(pace)));
+            }
             let run = &gate.sling;
             let xp = skill_level(world, "core:ranged").1;
             let unanswered = run.shot_at.map_or(0.0, |(game, server)| (now - game).min(gate.server_now - server));
@@ -9554,6 +9559,7 @@ fn sling(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             mouse(world, MouseButton::Left, false);
             match next {
                 SlingNext::Hit => {
+                    let pace = run.pace;
                     // Every shot the server answered spent a stone: the hit, and any misses before it.
                     let spent = run.stones.saturating_sub(stones);
                     let distance = world.resource::<LocalPlayer>().eye().distance(view.position + Vec3::Y * 0.6);
@@ -9563,6 +9569,14 @@ fn sling(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                         Err(format!("a stone hit from {distance:.1} blocks, but no cobblestone was spent ({stones} left)"))
                     };
                     gate.check("sling shot", result);
+                    // Drawing slows the player to the class's share of their pace.
+                    let combat = &world.resource::<Launch>().content.combat;
+                    let wanted = world.resource::<Launch>().content.blocks.id(SLING).map(|sling| combat.drawing_speed(&combat.wielded(Some(sling), |_| SLING_LEVEL)));
+                    let result = match (pace, wanted) {
+                        (Some(pace), Some(wanted)) if (pace - wanted).abs() < 1e-4 => Ok(format!("drawing a stone the player kept {pace:.2} of their pace")),
+                        (pace, wanted) => Err(format!("drawing a stone the player kept {pace:?} of their pace, the sling's {wanted:?} wanted")),
+                    };
+                    gate.check("sling draw", result);
                     end_weapon(world, gate, now);
                 }
                 SlingNext::Fail(why) => {

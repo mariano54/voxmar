@@ -458,6 +458,7 @@ fn movement(
         let held = player.inventory.get(player.selected).map(|s| s.item);
         combat.drawing_speed(&combat.wielded(held, |skill| launch.content.skills.level(player.skills.xp(skill))))
     });
+    fighting.drawing_pace = drawing_speed;
     let controls = Controls {
         wish: wish.normalize_or_zero(),
         forward: pressed(KeyCode::KeyW) && !pressed(KeyCode::KeyS),

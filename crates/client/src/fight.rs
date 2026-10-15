@@ -54,6 +54,9 @@ pub struct Fighting {
     /// How many of the server's pings (`ServerMessage::Ping`), which time the round trip
     /// guards and dodges are judged by, have been answered, ever.
     pub pings: u32,
+    /// The share of their pace the player kept as they last moved, for a shot being drawn
+    /// (`drawing_speed`); None when nothing was drawn.
+    pub drawing_pace: Option<f32>,
     /// The item last swung, to lose the pips on a switch as the server does.
     held: Option<voxmar_engine::block::BlockId>,
     /// When the player and each creature last traded blows, either way (app seconds).

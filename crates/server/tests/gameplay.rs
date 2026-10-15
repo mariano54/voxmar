@@ -4487,19 +4487,23 @@ fn an_arrow_that_hits_may_be_left_by_the_target_to_pick_up_again() {
     let yaw = yaw_toward(client.position, at);
     client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw, pitch: 0.0, selected_slot: slot as u8, flying: true }));
     client.wait_server(1);
-    // Shot until an arrow lies by the bear: a hit leaves one half the time, so a forty-health
-    // bear dies only after a dozen or more hits, by which one has all but surely been left.
-    let lying = |c: &Client| c.items.values().any(|v| v.stack.item == arrow && v.position.distance(at) < 3.0);
+    // Shot until a hit leaves an arrow by the bear: a hit leaves one half the time, so a
+    // forty-health bear dies only after a dozen or more hits, by which one has all but surely
+    // been left. A miss in reach may land by it too (`recover_miss`), so only an arrow that
+    // came with a hit counts.
+    let lying = |c: &Client| c.items.values().filter(|v| v.stack.item == arrow && v.position.distance(at) < 3.0).map(|v| v.stack.count as u32).sum::<u32>();
     let mut shots = 0;
-    while !lying(&client) {
-        assert!(client.creatures.contains_key(&id) && shots < 48, "no arrow left by the bear after {shots} shots: {:?}", client.damage);
+    loop {
+        assert!(client.creatures.contains_key(&id) && shots < 48, "no arrow left by the bear by a hit after {shots} shots: {:?}", client.damage);
+        let before = lying(&client);
         client.propose("core:attack", ActionTarget::Creature(id));
         shots += 1;
         client.pump_until(|c| c.blows == shots || !c.creatures.contains_key(&id));
         client.wait_server(1);
+        if client.damage.last().is_some_and(|&d| d > 0) && lying(&client) > before {
+            break;
+        }
     }
-    let hits = client.damage.iter().filter(|&&d| d > 0).count();
-    assert!(hits >= 1, "an arrow lay by the bear with no hit: {:?}", client.damage);
 }
 
 /// A shot that lands by a wild bees' nest stirs the bees, and they sting the shooter; with a

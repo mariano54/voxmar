@@ -44,9 +44,19 @@ A ranged weapon is a class with `ammo` (an item or `tag:`): each shot spends one
 lands, hit or miss, and with none the server starts no swing and says what it needs. A shot
 needs a clear line from the eye to the middle of the target as well as reach; otherwise it
 is the same blow, rhythm and experience as any other. A shot that hits may be left lying
-by the target to pick up again: `recover` is that chance (sling stones 0.25, arrows 0.5),
-rolled by the server from the tick and the creature. A miss is gone. Arrows: four from flint or
-cobblestone, a stick and a feather, Crafting 5.
+by the target to pick up again: `recover` is that chance (sling stones 0.25, arrows 0.5).
+A miss lands to pick up again by `recover_miss` (stones 0.5, arrows 0.8): by the target
+if it was in reach, else as far as the weapon reaches toward it, short of anything solid
+on the way. The rest break or fly out of sight. Both are rolled by the player's own count
+of hits and of misses (`Draw::Recover`, `Draw::Stray`), never the tick. Arrows: four from
+flint or cobblestone, a stick and a feather, Crafting 5.
+
+A class may also say what drawing costs (`combat.ron`, load-checked; only a class with
+ammo may): `spoiled_by_hits` lets a draw go when a creature's blow hurts the player, as
+raising the guard does (the meter starts again from `cancel_to`, and the shot spends
+nothing), and `drawing_speed` is the share of their pace the player keeps while a shot is
+drawn (bow 0.4, sling 0.7). Both the server and the client spoil the draw, the client on
+the hit it is told of. The slowing is the client's own, as the guard's is (gate check `sling draw`).
 
 Creatures' styles and weaknesses (systems agreed them, 7 Oct): wolves, foxes, cave crawlers
 and crocodiles bite (stab) and are weak to crush; bears and snow leopards claw (slash),
@@ -168,6 +178,54 @@ Oct 14, 2026. The bot is `first_fights_measured` in `server/tests/gameplay.rs`; 
 | Brown bear | 0.70 s | 61.5 s | 103 | 35 (85) | 35 of 35, shortest 0.74 s |
 
 Every wind-up was on screen 0.4 s or more before its blow; the server sends a new pose at once. The gap was sound: before this change only bosses' wind-ups made a sound, so a blow from a creature at the edge of the view or behind came with no warning. Now every blow is told (decision 9 above). Wind-up times, and so the server's timing, are unchanged. The wolf (27 damage over 16 s, more than a new player's 20 health) and the bear are not fights for a new player who stands and trades blows. Their numbers are left for balance.
+
+## Nomad hunting
+
+Oct 15, 2026. The short bow came down to Ranged 3 and Crafting 3 (PR 379), within a
+Nomad's reach. At its old timing (a 0.6 s cooldown, 0.2 s draw) and with every miss lost
+but nothing else asked of it, it beat a spear or club on every Nomad creature: quicker,
+safer, and the only way to take a deer. The bow should be safer but slower and costlier
+than melee, and better against skittish prey.
+
+`engine/tests/nomad_hunting.rs` measures it on the content's own data, 400 seeded runs a
+fight at level 3, never on the clock. The model is one line of ground. The player starts
+24 blocks off and closes at a sprint, or at `drawing_speed` of one while drawn. Each
+creature acts by its behaviour data: one that `fights()` (Defend or Hunt) charges and
+strikes on its attack's timing, and the rest bolt while fear lasts (`FEAR_FADE`) and keep
+the player out of their Flee radius. A hit taken spoils a draw where the class says so.
+Arrows are kept by `recover` on a hit and `recover_miss` on a miss. Times are seconds to
+the kill, hurt is the share of health lost, and spent is arrows used up per kill:
+
+| Creature | Spear | Club | Bow before | Bow after |
+| --- | --- | --- | --- | --- |
+| Rabbit | never caught | never caught | 7.3 s, 1.7 spent | 8.1 s, 0.9 spent |
+| Junglefowl | 11.0 s | 12.3 s | 2.2 s, 1.7 spent | 6.9 s, 1.5 spent |
+| Red deer | never caught | never caught | 33.0 s, 4.0 spent | 35.0 s, 2.2 spent |
+| Wild boar | 17.9 s | 21.0 s | 5.9 s, 6.4 spent | 33.3 s, 5.1 spent |
+| Aurochs | 12.8 s, 26% hurt | 16.7 s, 35% hurt, 1% died | 7.7 s, 8% hurt, 8.7 spent | 12.7 s, 19% hurt, 4.2 spent |
+
+Over the game melee can take (junglefowl, boar, aurochs) the bow took 16 s against
+melee's 42 s before, and 53 s after.
+
+What changed, in `combat.ron`:
+
+- **Bow**: cooldown 0.6 to 1.0 s and draw 0.2 to 0.5 s; misses kept 0.8; spoiled by
+  hits; 0.4 of the pace while drawn.
+- **Sling**: cooldown 0.53 to 0.8 s and draw 0.15 to 0.3 s; misses kept 0.5; spoiled by
+  hits; 0.7 of the pace while drawn.
+
+Prey reacts as it already did, through its behaviour data: a deer or rabbit that is shot
+is frightened and bolts out of reach (Flee, fear fading at 0.12 a second), and an aurochs
+charges (Defend). A wild boar flees for now; with PR 302 it fights back to about 40% of
+its health, which makes the bow safer still against it.
+
+The test pins, so a later change cannot make the bow strictly better than melee:
+
+- against every creature melee kills at least half the time, the bow costs no more than
+  2 points of health more than the best melee weapon;
+- every kill with the bow uses up at least half an arrow;
+- over the game melee can take, the bow takes longer;
+- the bow takes a red deer at least 30 points more often than melee.
 
 ## First-age fight balance
 
