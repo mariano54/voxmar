@@ -45,7 +45,11 @@ the gate's Home step, "home: icons", shot `home-chips`).
 | Heart of the Home | Farm end | + books, cooking, workshop, banner | heal x2, xp x1.125 |
 
 Seats are stools, chairs, benches and cushions; tables include desks and counters; storage is
-barrels, crates, barrel racks, jars and baskets; cooking is the cottage stove and cauldron;
+whatever a home keeps things in or on: chests, cupboards and wardrobes, shelves (pot shelves
+and bookshelves too), crate stacks, barrel racks, jars and baskets, and a village's barrels
+and crates (every store a player opens counts but the feed trough, which is the pen's: test
+`every_store_shelf_and_cupboard_counts_as_storage`; the gate's Nest step finds a Pantry made
+of a chest and a barrel by a campfire, "home: storage"); cooking is the cottage stove and cauldron;
 workshop is the loom frame, spindle stand and quern. All are craftable in the first two ages
 (Construction 1 to 8, Crafting 2 to 8), so each step is a few minutes of gathering and
 crafting, not a grind.
@@ -288,7 +292,7 @@ stove ("stove: cooks").
 
 ## Smoke over home
 
-The Homestead Hearth's chimney smokes from its top while the hearthstone stands below it, a
+The Homestead Hearth's chimney smokes from its top while the hearth below it is lit, a
 thick column seen from 96 blocks, so a player out at dusk sees where home is from across a
 valley. It is data on the chimney block (blocks_tools.ron): a smoke emission with
 `range: Some(96.0)` (how far off it is seen, up to 128, against the 24 every other block's
@@ -297,8 +301,17 @@ particles keep) and `over: Some(("hearth", 3))` (given off only with a `hearth` 
 stove pipe or a forge's flue can do the same. The client searches farther only for chunks
 whose palette holds such a block, and counts nearness as a share of each emission's range,
 so a far chimney takes its place among the nearest torches
-(`a_chimney_smokes_over_a_hearth_from_afar`). The gate's Cook step sets a hearthstone and a
-chimney beside its campfire and counts the chimney's puffs ("chimney smoke").
+(`a_chimney_smokes_over_a_hearth_from_afar`). The gate's Cook step builds a hearth beside
+its campfire, checks its chimney gives nothing off cold, lights it and counts the puffs
+("chimney smoke").
+
+A cold hearth is quiet. Lighting a hearth keeps its fire until a piece of it is taken away
+(server/src/hearth.rs; a kiln's burns for its fuel charge), and the server tells every
+player which fires burn when that changes (`ServerMessage::Fires`, protocol 41). Over a
+structure's core (a hearthstone) an emission is `over` it only while it burns, and the
+ambience's `fire` group (`lit: true`) hears a hearth or a Crucible Kiln crackle and snap only
+then; a campfire or a pit kiln always. A home hearth lit in a world saved before this is lit
+again when its player joins.
 
 ## Light in the windows
 
