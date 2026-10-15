@@ -629,7 +629,7 @@
     // Why an action was refused (refusals.ron), said by the crosshair.
     "refusal.in_the_way": "何かがじゃまをしている",
     "refusal.someone_there": "そこに誰かが立っている",
-    "refusal.needs_ground": "下に支えがいる",
+    "refusal.needs_support": "そこでは支えがない",
     "refusal.wont_grow": "ここでは育たない",
     "refusal.not_soil": "耕せるのは何もない草地か土だけ",
     "refusal.no_water": "開けた水面に投げよう",
