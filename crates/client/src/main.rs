@@ -352,6 +352,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let recorded = sfx::Recordings::load(&content.files)?;
     recorded.check(&content.actions)?;
     recorded.covers(&content.actions)?;
+    recorded.check_materials(&content.blocks)?;
     recorded.mix.check().map_err(|e| format!("sounds.ron: {e}"))?;
     let content_weather = content.weather.clone();
     let shader_packs = render::pack::ShaderPacks::load(&assets);
