@@ -285,6 +285,24 @@ and unbounded mutation counts before a world can be created.
   old, saltboxes where it grew rather than was planned, gambrels in green, roomy places,
   sheds where it is poor. Round houses take cones and courtyard houses hips whatever
   was rolled, unless flat; A-frames are steep gables.
+- **Shaped roofs.** A style's `roof_pieces` (a `slope` and its `ridge`, each a block that
+  faces four ways, by weight) lay a share (`pieced`) of its steep gables over four walls
+  or a shop front in pieces: each column's top a slope whose low edge faces the eave
+  below it, a ridge cap along the peak where the span is odd. Thatch in stone-cottage,
+  stilt, mudbrick and timber-frame places, shingles in log cabins, blossom houses and
+  maple lodges (dark oak, the woods there making none), birch shingles or thatch in
+  birch cottages; the rest stay whole blocks. Loading fails on a piece missing a facing
+  in any of its style's woods, a slope not tagged `roof` or a ridge not tagged `ridge`.
+- **Fire** (`rules.fire`, `settlements/roofs.rs`). No village stands ready to burn: once
+  a place is drawn, each of its flames (tag `fire`: torches, campfires, braziers) walks
+  out a face at a time through open cells, `reach` (4, fire.ron's most) steps, as fire
+  catches in a home (docs/home.md). A street lamp or fire on the ground that reaches
+  something that catches (`thatch`, `wattle`) goes, post and all; a thatch roof a
+  building's own flame reaches is laid whole in `instead` (dark oak shingles), each piece
+  turned as it was; a flame that still reaches is put out. In the base worlds about one
+  street lamp in seventy goes and one thatch roof in ten turns to shingles. The gate's
+  "settlement roofs" checks the town's pieces stand as planned and none of its flames
+  reaches its thatch.
 - `extras`: chimney, porch, lean-to shed, flower boxes, garden, hedge, lamp, woodpile,
   moss, wing, dormer, balcony, outside stair, shutters, awning, sign board, rain barrel,
   weathervane, dovecote and herbs drying under the eaves, each by its own chance; a

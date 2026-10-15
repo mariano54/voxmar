@@ -422,7 +422,8 @@ steps! {
     /// `/locate settlement` finds a hamlet or village, and the server's world there has
     /// what its plan says: a well on its square, doors open onto a floor, and houses dry;
     /// the ambience hears it at work by day, not by night; then `/locate settlement town`
-    /// finds a town, and its wall stands where planned.
+    /// finds a town, its wall stands where planned, and its shaped roofs stand as planned
+    /// with none of its flames in reach of its thatch.
     Settlements,
     /// Over a log in the inventory, the uses key shows what it goes into (planks, a
     /// campfire); clicking planks shows their recipe, and Back returns.
@@ -14123,6 +14124,7 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             let Some(reply) = gate.observer.as_ref().and_then(|o| o.replies.iter().map(english).find(|r| r.contains("town"))) else {
                 if gate.server_in_phase() > 30.0 {
                     gate.check("town walls", Err(format!("no answer to /locate settlement town {TOWN_RADIUS}")));
+                    gate.check("settlement roofs", Err("no town to judge the roofs of".into()));
                     gate.phase = 5;
                     gate.advance(now);
                 }
@@ -14134,6 +14136,7 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             });
             let Some(at) = at else {
                 gate.check("town walls", Err(format!("/locate settlement town: {reply}")));
+                gate.check("settlement roofs", Err("no town to judge the roofs of".into()));
                 gate.phase = 5;
                 gate.advance(now);
                 return;
@@ -14154,6 +14157,7 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 if gate.server_in_phase() > SETTLEMENT_LOAD {
                     let n = columns.len();
                     gate.check("town walls", Err(format!("the world around the town at {at} did not load: the server sent {held} of its {n} columns in {SETTLEMENT_LOAD} server seconds")));
+                    gate.check("settlement roofs", Err("no town to judge the roofs of".into()));
                     gate.phase = 5;
                     gate.advance(now);
                 }
@@ -14161,6 +14165,8 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             }
             let result = judge_town(world, gate, at);
             gate.check("town walls", result);
+            let roofs = judge_roofs(world, gate, at);
+            gate.check("settlement roofs", roofs);
             gate.advance(now);
         }
         // Back on the test ground.
@@ -14370,6 +14376,50 @@ fn judge_town(world: &World, gate: &Gate, at: IVec3) -> Result<String, String> {
     } else {
         Err(format!("{name}, a town at {at}: {standing} of {judged} columns of its {block_name} wall stand: {}", wrong.join("; ")))
     }
+}
+
+/// The town's shaped roofs as the server built them: every roof piece its plan lays within
+/// `TOWN_REACH` of its square stands there, in the facing planned, and no flame of the town
+/// reaches its thatch (or anything else that catches) as fire catches in a home.
+fn judge_roofs(world: &World, gate: &Gate, at: IVec3) -> Result<String, String> {
+    let Some(generator) = world.resource::<crate::render::lod::WorldGenerator>().get().cloned() else {
+        return Err("no world generator on the client to read the town's plan from".into());
+    };
+    let Some(observer) = gate.observer.as_ref() else { return Err("no observer".into()) };
+    let client = world.resource::<ClientWorld>();
+    let name = generator.settlements_near(at.xz(), 64).into_iter().find(|s| s.centre.xz() == at.xz()).map_or_else(|| format!("the town at {at}"), |s| s.name.0);
+    let within = |p: IVec3| (p.xz() - at.xz()).abs().max_element() <= TOWN_REACH;
+    let planned: Vec<(IVec3, BlockId)> = generator.settlement_roofs(at.xz()).into_iter().filter(|r| within(r.0)).collect();
+    if planned.len() < 20 {
+        return Err(format!("{name}: only {} shaped roof pieces planned within {TOWN_REACH} of its square at {at}", planned.len()));
+    }
+    let block = |b: Option<BlockId>| b.map_or("unloaded".to_owned(), |b| client.registry.def(b).name.clone());
+    let wrong: Vec<String> = planned
+        .iter()
+        .filter(|&&(p, b)| observer.world.block(p) != Some(b))
+        .map(|&(p, b)| format!("{} at {p} is {}", block(Some(b)), block(observer.world.block(p))))
+        .collect();
+    if !wrong.is_empty() {
+        return Err(format!("{name}: {} of its {} roof pieces within {TOWN_REACH} are not as planned: {}", wrong.len(), planned.len(), wrong.into_iter().take(4).collect::<Vec<_>>().join("; ")));
+    }
+    let mut blocks: FxHashMap<IVec3, BlockId> = FxHashMap::default();
+    for z in at.z - TOWN_REACH..=at.z + TOWN_REACH {
+        for x in at.x - TOWN_REACH..=at.x + TOWN_REACH {
+            for y in at.y - 24..=at.y + 40 {
+                let p = IVec3::new(x, y, z);
+                if let Some(b) = observer.world.block(p).filter(|b| !b.is_air()) {
+                    blocks.insert(p, b);
+                }
+            }
+        }
+    }
+    let flames = blocks.values().filter(|&&b| client.registry.def(b).has_tag("fire")).count();
+    let thatch = planned.iter().filter(|r| client.registry.def(r.1).has_tag("thatch")).count();
+    let reached = generator.flames_reaching(&blocks);
+    if !reached.is_empty() {
+        return Err(format!("{name}: {} flames reach what catches: {}", reached.len(), reached.iter().take(4).map(|&(f, c)| format!("{} at {f} -> {} at {c}", block(Some(blocks[&f])), block(Some(blocks[&c])))).collect::<Vec<_>>().join("; ")));
+    }
+    Ok(format!("{name}: {} roof pieces within {TOWN_REACH} stand as planned ({thatch} thatch); none of its {flames} flames there reaches what catches", planned.len()))
 }
 
 fn gorge(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {

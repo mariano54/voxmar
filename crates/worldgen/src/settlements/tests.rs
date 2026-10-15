@@ -571,7 +571,7 @@ fn house_catalogue() {
         log: id("oak_log"),
         chimney: id("cobblestone"),
         crops: Vec::new(),
-        fruit: palette("apple_leaves_2"),
+        fruit: palette("apple_leaves_2"), roof_pieces: Vec::new(), pieced: 0.0,
     };
     // Each house with the roof and extras it is shown with.
     use Extra::*;
@@ -691,7 +691,7 @@ fn house_catalogue() {
             log: registry.id(&super::def::fill(&style.log, wood, wood)).unwrap(),
             chimney: block(&style.chimney),
             crops: Vec::new(),
-            fruit: palette("apple_leaves_2"),
+            fruit: palette("apple_leaves_2"), roof_pieces: Vec::new(), pieced: 0.0,
         };
         let row: [(&str, Vec<Extra>); 6] = [
             ("cottage", vec![Chimney, Shutters]),
@@ -1120,7 +1120,7 @@ fn chimneys_stand_inside_and_just_clear_the_roof() {
         log: id("oak_log"),
         chimney: stack,
         crops: Vec::new(),
-        fruit: palette("apple_leaves_2"),
+        fruit: palette("apple_leaves_2"), roof_pieces: Vec::new(), pieced: 0.0,
     };
     let mut drawn = 0;
     for (n, h) in def.houses.iter().enumerate() {
@@ -1548,7 +1548,7 @@ fn every_storey_can_be_walked_to() {
     let mats = Mats {
         foundation: palette("cobblestone"), floor: id("spruce_planks"), wall: id("polished_calcite"), frame: id("dark_oak_log"),
         roof: id("dark_oak_planks"), trim: id("spruce_planks"), window: Some(id("old_glass")), weathered: palette("mossy_cobblestone"),
-        hedge: palette("oak_leaves"), log: id("oak_log"), chimney: id("cobblestone"), crops: Vec::new(), fruit: palette("apple_leaves_2"),
+        hedge: palette("oak_leaves"), log: id("oak_log"), chimney: id("cobblestone"), crops: Vec::new(), fruit: palette("apple_leaves_2"), roof_pieces: Vec::new(), pieced: 0.0,
     };
     let solid = |b: BlockId| registry.def(b).solid;
     let mut walked = 0;
@@ -3267,4 +3267,115 @@ fn interiors_load_checks_refuse_strangers_and_unclaimed_beds() {
     let mut bag = s.interiors.clone();
     bag.pieces.iter_mut().find(|p| p.role == Role::Bed).unwrap().block = "base:sleeping_bag".into();
     assert!(bag.check(&content.blocks).is_err(), "a bed that is no furnishing was let through");
+}
+
+/// Every village as the world makes it, in full content: no flame of its own stands within
+/// reach of its thatch (rules.fire, as a home's fire catches), and its gables are laid in
+/// slope pieces whose low edge faces the eave, under a ridge cap.
+#[test]
+fn village_flames_never_reach_its_thatch() {
+    use super::roofs::{Fire, SIDES, SUFFIXES};
+    use voxmar_engine::coords::ColumnPos;
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+    let content = voxmar_engine::content::Content::load(&dir).unwrap();
+    let world_content = crate::content::WorldContent::load(&content).unwrap();
+    let registry = content.blocks.clone();
+    let def = &world_content.settlements;
+    let fire = Fire::new(&def.rules.fire, &registry, []);
+    let tagged = |b: BlockId, tag: &str| registry.def(b).has_tag(tag);
+    let facing = |b: BlockId| -> usize {
+        let name = &registry.def(b).name;
+        (1..4).find(|&i| name.ends_with(SUFFIXES[i])).unwrap_or(0)
+    };
+    let before = super::plan::ROOFS_RELAID.load(std::sync::atomic::Ordering::Relaxed);
+    let (mut places, mut thatch, mut shingles, mut slopes, mut ridges, mut flames, mut rising) = (0, 0, 0, 0, 0, 0, 0);
+    for seed in [42u64, 1] {
+        let world = Overworld::with_content(seed, registry.clone(), &world_content);
+        let spawn = world.spawn_point();
+        for slot in world.settlements.near(&world, IVec2::new(spawn.x, spawn.z), 2500) {
+            let Some(plan) = slot.0.as_ref() else { continue };
+            places += 1;
+            let mut columns: rustc_hash::FxHashMap<ColumnPos, voxmar_engine::world::Column> = Default::default();
+            let mut at = |p: IVec3| -> BlockId {
+                let pos = ColumnPos::of_block(p);
+                let column = columns.entry(pos).or_insert_with(|| world.generate(pos));
+                let o = pos.origin();
+                column.block(IVec3::new(p.x - o.x, p.y, p.z - o.z))
+            };
+            let low = plan.buildings.iter().map(|b| b.floor).min().unwrap_or(crate::SEA_LEVEL) - 6;
+            let high = plan.buildings.iter().map(|b| b.floor).max().unwrap_or(crate::SEA_LEVEL) + 28;
+            let mut blocks: rustc_hash::FxHashMap<IVec3, BlockId> = Default::default();
+            for z in plan.min.y..=plan.max.y {
+                for x in plan.min.x..=plan.max.x {
+                    for y in low..=high {
+                        let p = IVec3::new(x, y, z);
+                        let b = at(p);
+                        if !b.is_air() {
+                            blocks.insert(p, b);
+                        }
+                    }
+                }
+            }
+            let exposed = fire.exposed(&blocks);
+            assert!(exposed.is_empty(), "{}: a flame reaches what catches: {:?}", plan.name.0,
+                exposed.iter().take(4).map(|(f, c)| format!("{} at {f} -> {} at {c}", registry.def(blocks[f]).name, registry.def(blocks[c]).name)).collect::<Vec<_>>());
+            flames += blocks.values().filter(|&&b| fire.flame(b)).count();
+            for (&p, &b) in &blocks {
+                if !tagged(b, "roof") || registry.info(b).render != voxmar_engine::block::RenderKind::Model {
+                    continue;
+                }
+                if tagged(b, "thatch") { thatch += 1 } else if tagged(b, "shingle") { shingles += 1 }
+                let d = SIDES[facing(b)];
+                if tagged(b, "ridge") {
+                    ridges += 1;
+                    continue;
+                }
+                if !tagged(b, "shingle") && !tagged(b, "thatch") {
+                    continue;
+                }
+                slopes += 1;
+                // Behind its high edge the roof goes on up (or meets the other slope at
+                // the peak): a slope turned the wrong way has the roof going down there.
+                let back = p - IVec3::new(d.x, 0, d.y);
+                let up = blocks.get(&(back + IVec3::Y)).is_some_and(|&n| tagged(n, "roof"));
+                let peak = blocks.get(&back).is_some_and(|&n| tagged(n, "roof") && !tagged(n, "ridge") && facing(n) == (facing(b) + 2) % 4);
+                let ridge = blocks.get(&back).is_some_and(|&n| tagged(n, "ridge"));
+                if up || peak || ridge {
+                    rising += 1;
+                }
+            }
+        }
+    }
+    let relaid = super::plan::ROOFS_RELAID.load(std::sync::atomic::Ordering::Relaxed) - before;
+    eprintln!("{places} places: {thatch} thatch and {shingles} shingle pieces ({slopes} slopes, {rising} rising behind, {ridges} ridges), {flames} flames; {relaid} pieces relaid in shingles");
+    assert!(places >= 4 && thatch > 100 && shingles > 100 && ridges > 10, "too few shaped roofs to judge");
+    // Chimneys and dormers break through a few.
+    assert!(rising * 100 >= slopes * 95, "only {rising} of {slopes} slopes have the roof rising behind them");
+}
+
+/// Loading refuses roof pieces that are not whole: a piece missing a facing or in some
+/// wood of its style, a slope or ridge not tagged so, a fire `instead` that catches, and a
+/// share or reach out of range.
+#[test]
+fn roof_pieces_and_fire_are_load_checked() {
+    use super::def::RoofPiecesDef;
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+    let content = voxmar_engine::content::Content::load(&dir).unwrap();
+    let base = crate::content::WorldContent::load(&content).unwrap().settlements;
+    let refused = |change: &dyn Fn(&mut super::SettlementsDef)| {
+        let mut def = base.clone();
+        change(&mut def);
+        def.check(&content.blocks).is_err() || def.check_furnishings(&content.blocks).is_err()
+    };
+    let piece = |slope: &str, ridge: &str| RoofPiecesDef { slope: format!("base:{slope}"), ridge: format!("base:{ridge}"), weight: 1.0 };
+    let timber = |d: &mut super::SettlementsDef| d.styles.iter().position(|s| s.name == "timber_frame").unwrap();
+    assert!(!refused(&|_| {}));
+    assert!(base.styles.iter().any(|s| !s.roof_pieces.is_empty()) && base.rules.fire.instead.is_some());
+    // Spruce makes no shingles, and timber-frame villages may be built of spruce.
+    assert!(refused(&|d| { let i = timber(d); d.styles[i].roof_pieces.push(piece("{wood}_shingles", "{wood}_shingle_ridge")) }));
+    assert!(refused(&|d| { let i = timber(d); d.styles[i].roof_pieces.push(piece("oak_planks", "thatch_ridge")) }), "a whole block faces no way");
+    assert!(refused(&|d| { let i = timber(d); d.styles[i].roof_pieces.push(piece("thatch_ridge", "thatch_roof")) }), "the slope and ridge swapped");
+    assert!(refused(&|d| d.rules.fire.instead = Some(piece("thatch_roof", "thatch_ridge"))), "the fire's roof catches itself");
+    assert!(refused(&|d| { let i = timber(d); d.styles[i].pieced = 1.5 }));
+    assert!(refused(&|d| d.rules.fire.reach = 5));
 }
