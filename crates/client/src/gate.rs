@@ -432,7 +432,8 @@ steps! {
     /// reason, and the refusal shows under the crosshair, as a level the player lacks does
     /// (the server sends it as a refusal, not a console line). Then a well from the hand goes
     /// down by the plot, and a block there that asks for a tool (the first `tools.ron` names
-    /// at level 1) mined by hand says under the crosshair which tool it wants, in words that fit.
+    /// at level 1) mined by hand says under the crosshair which tool it wants, in words that fit;
+    /// an empty drying rack there, right clicked with nothing in hand, says it cannot work that.
     Refusal,
     /// A wild plant whose item merged (oregano into kitchen herbs) is given as the merged
     /// item, and the catalogues (creative, journal, recipe book) list the item, not the plant.
@@ -742,7 +743,7 @@ struct Gate {
     dry_fire: Option<IVec3>,
     storm_wet: Vec<String>,
     /// Frames in a row the door step's lit or darkened spot has had nothing near it waiting
-    /// to be meshed (`light_drawn`).
+    /// to be meshed (`light_drawn`); each phase counts afresh.
     light_frames: u32,
     /// While taming, frames the junglefowl was under the crosshair, another creature was,
     /// or none was, and the nearest the player came to it.
@@ -1130,6 +1131,7 @@ impl Gate {
         self.settled = 0;
         self.phase_server = self.server_now;
         self.taps = 0;
+        self.light_frames = 0;
     }
 
     /// Seconds of the server's own clock since the phase began: what a wait on the server
@@ -1492,7 +1494,7 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         // A rack hung and read, a clamp lit, then a pot set simmering, each answer waited on.
         Step::Dry => 6.0 * DRY_WAIT + STEP_LIMIT,
         // The refusal waited on, then a well set down by the plot.
-        Step::Refusal => UNANSWERED + 3.0 * REFUSAL_WAIT + STEP_LIMIT,
+        Step::Refusal => UNANSWERED + 4.0 * REFUSAL_WAIT + STEP_LIMIT,
         // Taming, then a feed trough opened, waited on up to `TROUGH_WAIT`.
         Step::Tame => STEP_LIMIT + TROUGH_WAIT,
         // A fresh area around the settlement to generate: up to `SETTLEMENT_LOAD` of the
@@ -4699,8 +4701,49 @@ fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 mouse(world, MouseButton::Left, gate.frames.is_multiple_of(2));
             }
         }
+        // An empty drying rack where the ore was: right clicked with nothing in hand, which
+        // nothing else takes, it says it cannot work that, under the crosshair.
+        7 => {
+            mouse(world, MouseButton::Left, false);
+            world.resource::<Net>().command(&format!("setblock {} {} {} drying_rack", plot.x, plot.y, plot.z));
+            gate.advance(now);
+        }
+        8 => {
+            let rack = world.resource::<ClientWorld>().registry.id("base:drying_rack");
+            let came = rack.is_some() && world.resource::<ClientWorld>().block(plot) == rack;
+            let wanted = {
+                let (locale, launch) = (world.resource::<Locale>(), world.resource::<Launch>());
+                launch.content.refusals.says(voxmar_engine::action::Requirement::Station).map(|key| locale.get(key).to_owned())
+            };
+            let empty = world.resource::<LocalPlayer>().inventory.get(world.resource::<LocalPlayer>().selected).is_none();
+            let Some(wanted) = wanted.filter(|_| came && empty) else {
+                if gate.server_in_phase() > REFUSAL_WAIT {
+                    gate.check("refusal: station", Err(format!("the drying rack never came at {plot} ({came}), the hand is not empty ({}), or refusals.ron has no words for Station", !empty)));
+                    gate.advance(now);
+                }
+                return;
+            };
+            aim_at(world, plot.as_vec3() + RACK_MEAT);
+            let shown = world.resource::<crate::hud::skills::SkillToasts>().shows_refusal(&wanted);
+            let drawn = why_placed(world, &wanted);
+            if shown && let Ok(placed) = drawn.clone() {
+                mouse(world, MouseButton::Right, false);
+                gate.check("refusal: station", placed.map(|at| format!("an empty drying rack right clicked with nothing in hand said \"{wanted}\" {at}")));
+                gate.advance(now);
+            } else if gate.server_in_phase() > REFUSAL_WAIT {
+                mouse(world, MouseButton::Right, false);
+                let showing: Vec<String> = world.resource::<crate::hud::skills::SkillToasts>().refusals().map(str::to_owned).collect();
+                let line = drawn.err().unwrap_or_else(|| "the reason line was drawn".into());
+                gate.check("refusal: station", Err(format!("right clicking the empty drying rack at {plot} never showed \"{wanted}\" under the crosshair (refusals {showing:?}; {line}); the crosshair was on {}, screens open {:?}", crosshair_on(world), covering_screens(world))));
+                gate.advance(now);
+            } else {
+                // A fresh press each time: the reason is said once per click.
+                mouse(world, MouseButton::Right, gate.frames.is_multiple_of(2));
+            }
+        }
         _ => {
             mouse(world, MouseButton::Left, false);
+            mouse(world, MouseButton::Right, false);
             let net = world.resource::<Net>();
             let well = plot + WELL_BY + IVec3::Y;
             net.command("clear rice");
@@ -4712,8 +4755,6 @@ fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
     }
 }
 
-/// What clicking `block` with no tool should say: `refusals.ron`'s words for the tool it
-/// wants, naming the least tool that would do.
 /// What the crosshair rests on, for a failure to name: the block and its cell, or nothing.
 fn crosshair_on(world: &World) -> String {
     let client = world.resource::<ClientWorld>();
@@ -4749,6 +4790,8 @@ fn needs_a_tool(world: &World) -> Option<(BlockId, String)> {
     content.blocks.ids().find(|&b| content.tools.rule(b).is_some_and(|rule| rule.tool.is_some() && rule.level <= 1)).map(|b| (b, content.blocks.def(b).name.clone()))
 }
 
+/// What clicking `block` with no tool should say: `refusals.ron`'s words for the tool it
+/// wants, naming the least tool that would do.
 fn why_by_hand(world: &World, block: BlockId) -> Option<String> {
     let (locale, launch) = (world.resource::<Locale>(), world.resource::<Launch>());
     let content = &launch.content;
@@ -10025,6 +10068,7 @@ fn to_phase(gate: &mut Gate, phase: u32, now: f32) {
     gate.phase = phase;
     gate.phase_since = now;
     gate.phase_server = gate.server_now;
+    gate.light_frames = 0;
 }
 
 /// Done, or a failed check: on to sweeping the bears away (phase 5), so none is left
