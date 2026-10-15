@@ -371,6 +371,7 @@ impl Server {
             ClientMessage::LookedUp { item } => self.looked_up(id, item),
             ClientMessage::ClaimQuest { name } => self.claim_quest(id, &name),
             ClientMessage::LookAtStation { block } => self.look_at_station(id, block),
+            ClientMessage::GiveUp => self.player_gives_up(id),
         }
     }
 

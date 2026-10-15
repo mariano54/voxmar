@@ -3326,6 +3326,21 @@ fn a_respawn_sent_the_moment_a_player_dies_still_leaves_their_things_behind() {
     assert_eq!((carried(&client), lying), (3, 44), "the respawned player kept {:?}", client.inventory);
 }
 
+#[test]
+fn giving_up_is_a_death_like_any_other() {
+    let mut client = Client::join_with(ServerConfig { view_distance: 2, ..Default::default() });
+    give_a_load(&mut client);
+    client.connection.send(ClientMessage::GiveUp);
+    client.pump_until(|c| c.died > 0);
+    client.after_server_ticks(2);
+    let lying = client.items.values().map(|i| i.stack.count as u32).sum::<u32>();
+    assert_eq!((carried(&client), lying), (3, 44), "giving up kept {:?}", client.inventory);
+    // The dead cannot give up again.
+    client.connection.send(ClientMessage::GiveUp);
+    client.after_server_ticks(2);
+    assert_eq!(client.died, 1);
+}
+
 /// Waits until `name` has left `host`'s server.
 fn gone(host: &mut Client, name: &str) {
     let online = |c: &Client| c.chat.iter().find(|(kind, text)| *kind == ChatKind::Info && text.contains("online")).map(|(_, text)| text.clone());

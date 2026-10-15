@@ -20,6 +20,16 @@ use crate::Server;
 use crate::items::owner_of;
 
 impl Server {
+    /// `id` gives up (the pause menu's Give up): they die where they stand, credited to
+    /// nobody, and the grave takes what it always does. Nothing for one already dead.
+    pub(crate) fn player_gives_up(&mut self, id: PlayerId) {
+        let Some(player) = self.players.get_mut(&id).filter(|p| p.joined && p.health.alive()) else { return };
+        if player.health.damage(u8::MAX) {
+            player.changed(traits::HEALTH);
+            player.connection.send(ServerMessage::Died);
+        }
+    }
+
     /// Leaves what each player who has just died carried where they fell.
     pub(crate) fn bury_the_dead(&mut self) {
         let dead: Vec<PlayerId> = self.players.values().filter(|p| p.joined && !p.health.alive() && !p.buried).map(|p| p.id).collect();

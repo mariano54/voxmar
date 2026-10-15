@@ -274,8 +274,9 @@ steps! {
     /// three-by-three grid, where cobblestone and sticks make a stone pickaxe. An iron ore
     /// refuses the hand and a low Mining level, and breaks for the pickaxe at level 15,
     /// teaching Mining; a hoe tills dirt into farmland; cooked food takes a slot each; a rod
-    /// cast into the pool catches a fish. Then the player dies: three items stay in hand,
-    /// the rest lie where they fell, and after waking they are picked up again.
+    /// cast into the pool catches a fish. Then the player gives up from the pause menu (one
+    /// click asks again, the second dies): three items stay in hand, the rest lie where they
+    /// fell, and after waking they are picked up again.
     Workshop,
     /// The full-only HV factory, locked chests, picks and their bilingual evidence.
     HvAge,
@@ -821,8 +822,10 @@ struct Gate {
     /// never kill its player, and a dead one fails every step after.
     health_last: u8,
     death_seen: bool,
-    /// Set while a step kills the player on purpose (the workshop's /kill), until the step ends.
+    /// Set while a step kills the player on purpose (the workshop's Give up), until the step ends.
     killed_on_purpose: bool,
+    /// Clicks on the menu's Give up so far in the workshop's death (the second gives up).
+    give_up_clicks: u8,
     /// PostUpdate's milliseconds each frame with the debug overlay closed, then open.
     overlay_ms: [Vec<f32>; 2],
     /// Frames on which the open overlay's text changed (each one lays the UI out again),
@@ -1006,6 +1009,7 @@ impl Gate {
             health_last: 0,
             death_seen: false,
             killed_on_purpose: false,
+            give_up_clicks: 0,
             overlay_changes: 0,
             feel: FeelRun::default(),
             sweep: Sweep::default(),
@@ -1360,6 +1364,7 @@ fn run(world: &mut World) {
     if gate.step != gate.last_step {
         (gate.last_step, gate.failures_then) = (gate.step, gate.failures.len());
         gate.killed_on_purpose = false;
+        gate.give_up_clicks = 0;
     }
     // (The text-fit steps put the player through the death screen on purpose.)
     if screen == Screen::InGame && !matches!(gate.step, Step::Fit | Step::FitJournal | Step::FitMenus | Step::Leave | Step::Done) {
@@ -2832,15 +2837,40 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 fail(world, gate, "fishing", "40 server seconds of casting into the pool at Fishing 99 with a fine rod caught nothing".into());
             }
         }
+        // The pause menu's Give up: one click asks again, the second dies.
         12 => {
-            if carried(world) == 44 {
-                gate.count_before = 44;
-                gate.fell = world.resource::<LocalPlayer>().position;
-                gate.killed_on_purpose = true;
-                world.resource::<Net>().command("kill");
-                gate.advance(now);
-            } else if gate.server_in_phase() > WORKSHOP_WAIT {
-                fail(world, gate, "death keeps three", format!("the pack to die with never came: carrying {}", carried(world)));
+            if gate.give_up_clicks == 0 {
+                if carried(world) == 44 {
+                    gate.count_before = 44;
+                    gate.fell = world.resource::<LocalPlayer>().position;
+                    gate.killed_on_purpose = true;
+                    world.resource_mut::<UiState>().menu_open = true;
+                    gate.give_up_clicks = 1;
+                } else if gate.server_in_phase() > WORKSHOP_WAIT {
+                    fail(world, gate, "death keeps three", format!("the pack to die with never came: carrying {}", carried(world)));
+                }
+                return;
+            }
+            let locale = world.resource::<Locale>();
+            let (ask, sure) = (locale.get("menu.give_up").to_owned(), locale.get("menu.give_up.sure").to_owned());
+            let shown = crate::settings::give_up_button(world);
+            match (gate.give_up_clicks, shown) {
+                (1, Some((button, words))) if words == ask => {
+                    world.resource_mut::<UiClicks>().next = Some((button, MouseButton::Left));
+                    gate.give_up_clicks = 2;
+                }
+                (2, Some((button, words))) if words == sure => {
+                    gate.check("workshop: give up: asks", Ok(format!("one click on \"{ask}\" asks \"{sure}\"")));
+                    world.resource_mut::<UiClicks>().next = Some((button, MouseButton::Left));
+                    gate.give_up_clicks = 3;
+                }
+                (3, _) if world.resource::<LocalPlayer>().dead => gate.advance(now),
+                (clicks, shown) if gate.server_in_phase() > WORKSHOP_WAIT => {
+                    let ui = world.resource::<UiState>();
+                    let menu = ui.menu_open;
+                    fail(world, gate, "give up", format!("after {} clicks the menu (open {menu}) shows {shown:?}, not dead", clicks - 1));
+                }
+                _ => {}
             }
         }
         // Dead: the three most valuable items stay, the rest lie where the player fell.
@@ -2854,7 +2884,7 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 world.resource::<Net>().propose(actions.expect("core:respawn"), voxmar_engine::action::ActionTarget::None);
                 gate.advance(now);
             } else if gate.server_in_phase() > WORKSHOP_WAIT {
-                fail(world, gate, "death keeps three", format!("after /kill: dead {dead}, carrying {kept} of {} items", gate.count_before));
+                fail(world, gate, "death keeps three", format!("after giving up: dead {dead}, carrying {kept} of {} items", gate.count_before));
             }
         }
         // Awake again, back where they fell, the player picks everything up.
