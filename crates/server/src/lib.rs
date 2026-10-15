@@ -303,6 +303,12 @@ fn heal_most_below_food(content: &Content, heal_most: f32) -> Result<(), String>
 
 /// Loads every content package under `assets/content`, and checks the world
 /// generator's definitions in them, so a broken package fails at startup.
+/// The tags that mark furniture (survival.ron's `home_furniture`), which a room's walls are
+/// looked past, for the client to hear a home's walls as the server judges them.
+pub fn home_furniture(content: &Content) -> Vec<String> {
+    rules::SurvivalRules::load(&content.files, &content.blocks, &mut Vec::new()).map(|rules| rules.home_furniture).unwrap_or_default()
+}
+
 pub fn load_content(assets: &Path) -> Result<Content, Box<dyn std::error::Error>> {
     let mut content = Content::load(&assets.join("content"))?;
     if let Some(missing) = NAMED_ACTIONS.iter().find(|name| content.actions.id(name).is_none()) {

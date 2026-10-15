@@ -199,7 +199,7 @@ fn start(mut commands: Commands, launch: Res<Launch>, world: Res<ClientWorld>, c
             (ambience, patters)
         }
     };
-    let kinds = Arc::new(kinds(&ambience, &world.registry, &launch.content.multiblocks));
+    let kinds = Arc::new(kinds(&ambience, &world.registry, &launch.content.multiblocks, &voxmar_server::home_furniture(&launch.content)));
     let bed_synths = ambience.beds.iter().filter_map(|b| match b.sound {
         BedSound::Synth(synth) => Some(synth),
         BedSound::Recorded(_) => None,
@@ -248,7 +248,7 @@ fn start(mut commands: Commands, launch: Res<Launch>, world: Res<ClientWorld>, c
 }
 
 /// What the enclosure scan needs of each block.
-fn kinds(ambience: &Ambience, registry: &BlockRegistry, multiblocks: &voxmar_engine::multiblock::MultiblockRegistry) -> Kinds {
+fn kinds(ambience: &Ambience, registry: &BlockRegistry, multiblocks: &voxmar_engine::multiblock::MultiblockRegistry, furniture: &[String]) -> Kinds {
     let ids = (0..registry.len()).map(|id| registry.info(voxmar_engine::block::BlockId(id as u16)));
     let group = ambience.block_groups(registry);
     // A structure's core in a group heard only while lit.
@@ -260,6 +260,7 @@ fn kinds(ambience: &Ambience, registry: &BlockRegistry, multiblocks: &voxmar_eng
     Kinds {
         open: ids.clone().map(|info| !info.solid || info.render == RenderKind::Leaves).collect(),
         leaves: ids.map(|info| info.render == RenderKind::Leaves).collect(),
+        wall_group: ambience.wall_groups(registry, furniture),
         group,
         lit_only,
         groups: ambience.groups.len(),

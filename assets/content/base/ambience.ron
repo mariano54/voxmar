@@ -43,10 +43,12 @@
 // below, and the roof patters.
 (
     groups: [
-        // Walls that let the wind through (wattle not yet daubed): first, as a wattle panel
-        // is wood to the step. A few panels within five blocks begin to whistle; a room
-        // walled in them whistles fully.
-        (name: "draughty", tags: ["shelter:draughty"], range: (10, 160)),
+        // Walls that let the wind through, as the home judges a room's walls (`shelter`:
+        // a `shelter:draughty` block such as wattle or hide, or earth, gravel, sand and any
+        // other solid block with no shelter tag, until daub coats it; never the floor, nor
+        // furniture). First, as a wattle panel is wood to the step. A few draughty cells
+        // within five blocks begin to whistle; a room walled in them whistles fully.
+        (name: "draughty", shelter: Draughty, range: (10, 160)),
         (name: "leaves", tags: ["leaves"], range: (20, 300)),
         (name: "wood", tags: ["log"], range: (5, 60)),
         // A fire to sit by: a campfire, a hearth, a kiln. Before rock, as a hearthstone or a

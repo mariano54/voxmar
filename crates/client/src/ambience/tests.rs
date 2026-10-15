@@ -134,7 +134,7 @@ fn run(ambience: &Ambience, scene: &Scene, seconds: f32) -> (Vec<(f32, Cue)>, Ve
 fn structures_are_heard_as_fires_only_while_lit() {
     let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
     let ambience = base();
-    let kinds = super::kinds(&ambience, &content.blocks, &content.multiblocks);
+    let kinds = super::kinds(&ambience, &content.blocks, &content.multiblocks, &voxmar_server::home_furniture(&content));
     let fire = ambience.groups.iter().position(|g| g.name == "fire").unwrap() as u8;
     for (name, lit_only) in [("base:hearthstone", true), ("base:crucible", true), ("base:campfire", false), ("base:pit_kiln", false)] {
         let id = content.blocks.expect(name).0 as usize;
@@ -328,7 +328,7 @@ fn ambience_survey() {
     let content = voxmar_server::load_content(&assets).unwrap();
     let generator = Overworld::with_content(seed, content.blocks.clone(), &WorldContent::load(&content).unwrap());
     let ambience = Ambience::load(&content.files).unwrap();
-    let kinds = super::kinds(&ambience, &content.blocks, &content.multiblocks);
+    let kinds = super::kinds(&ambience, &content.blocks, &content.multiblocks, &voxmar_server::home_furniture(&content));
     let around = |x: i32, z: i32| {
         let center = ColumnPos::of_block(IVec3::new(x, 0, z));
         let mut world = VoxelWorld::default();
@@ -537,9 +537,11 @@ fn the_settlement_axis_is_the_way_to_the_nearest_middle() {
 }
 
 /// A draughty home whistles on a windy night, louder the more draughty wall is near: in a
-/// room walled with wattle under thatch the draught plays; the same room daubed is silent;
-/// and outside, by the same wattle walls but under the open sky, it is silent too. The
-/// draughty walls are counted by the enclosure scan, as in the game.
+/// room walled with wattle under thatch the draught plays, and walled with bare earth too
+/// (untagged, so draughty as the home judges it); the same room daubed is silent, though it
+/// stands on earth (a floor is no wall); and outside, by the same wattle walls but under
+/// the open sky, it is silent too. The walls are counted by the enclosure scan, as in the
+/// game.
 #[test]
 fn a_draughty_home_whistles_until_daubed() {
     use voxmar_engine::coords::ColumnPos;
@@ -549,11 +551,11 @@ fn a_draughty_home_whistles_until_daubed() {
     let content = voxmar_server::load_content(&assets).unwrap();
     let blocks = &content.blocks;
     let ambience = Ambience::load(&content.files).unwrap();
-    let kinds = super::kinds(&ambience, blocks, &content.multiblocks);
+    let kinds = super::kinds(&ambience, blocks, &content.multiblocks, &voxmar_server::home_furniture(&content));
     let id = |name: &str| blocks.id(name).unwrap_or_else(|| panic!("{name}"));
     let group = ambience.groups.iter().position(|g| g.name == "draughty").expect("a draughty group");
     let draught = ambience.beds.iter().position(|b| b.name == "base:draught").expect("a draught bed");
-    // A room five across inside, walls three high on a stone floor, a thatched roof over it.
+    // A room five across inside, walls three high on an earth floor, a thatched roof over it.
     let room = |wall: &str, roofed: bool| {
         let mut world = VoxelWorld::default();
         for dz in -1..=1 {
@@ -563,7 +565,7 @@ fn a_draughty_home_whistles_until_daubed() {
         }
         for x in -3..=3 {
             for z in -3..=3 {
-                world.set_block(IVec3::new(x, 9, z), id("base:stone"));
+                world.set_block(IVec3::new(x, 9, z), id("base:dirt"));
                 for y in 10..13 {
                     if x.abs() == 3 || z.abs() == 3 {
                         world.set_block(IVec3::new(x, y, z), id(wall));
@@ -588,6 +590,8 @@ fn a_draughty_home_whistles_until_daubed() {
     let full = ambience.beds[draught].volume;
     let (walls, wattle) = heard(&room("base:wattle_panel", true), IVec3::new(0, 11, 0), under_thatch);
     assert!(walls > 0.5 && wattle > 0.5 * full, "in a wattle room the draughty walls count {walls:.2} and the draught plays at {wattle:.3} of {full}");
+    let (walls, earth) = heard(&room("base:dirt", true), IVec3::new(0, 11, 0), under_thatch);
+    assert!(walls > 0.5 && earth > 0.5 * full, "in an earth-walled room the draughty walls count {walls:.2} and the draught plays at {earth:.3}");
     let (walls, daubed) = heard(&room("base:daub", true), IVec3::new(0, 11, 0), under_thatch);
     assert!(walls == 0.0 && daubed < 1e-3, "daubed, the walls still count {walls:.2} as draughty and the draught plays at {daubed:.3}");
     // Outside, a step from the wattle wall, no roof overhead.

@@ -387,12 +387,9 @@ impl Server {
         };
         // What stands at a cell: open (`None`), or a wall of a shelter. Furniture is looked
         // past, as open, whatever it is made of.
-        let furniture = |tags: &[String]| tags.iter().any(|tag| rules.home_furniture.contains(tag));
         let wall = |p: IVec3| -> Option<Option<Shelter>> {
             let block = self.block(p)?;
-            let tags = &blocks.def(block).tags;
-            let shelter = Shelter::of(tags);
-            ((shelter.is_some() || blocks.info(block).solid) && !furniture(tags)).then(|| Some(shelter.unwrap_or(Shelter::Draughty)))
+            Shelter::of_wall(&blocks.def(block).tags, blocks.info(block).solid, &rules.home_furniture).map(Some)
         };
         let mut walls = Walls::default();
         // A hearth's home is its hearthstone, solid: the room is the open cell over it.

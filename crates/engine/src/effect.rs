@@ -390,6 +390,14 @@ impl Shelter {
     pub fn of(tags: &[String]) -> Option<Shelter> {
         Shelter::ALL.into_iter().rev().find(|s| tags.iter().any(|t| t == s.tag()))
     }
+
+    /// How a block shelters as a wall of a room: by its tag; a solid block with none
+    /// (earth, gravel, sand) as draughty; none for one that is no wall (open, or furniture,
+    /// a block with one of the `furniture` tags, looked past to the wall behind).
+    pub fn of_wall(tags: &[String], solid: bool, furniture: &[String]) -> Option<Shelter> {
+        let shelter = Shelter::of(tags);
+        ((shelter.is_some() || solid) && !tags.iter().any(|tag| furniture.contains(tag))).then(|| shelter.unwrap_or(Shelter::Draughty))
+    }
 }
 
 /// The faces about a home's room: its walls and roof as a scan from the home out over the
