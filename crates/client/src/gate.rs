@@ -259,7 +259,8 @@ steps! {
     /// Walking into the hole picks up what the dug blocks dropped.
     Collect,
     /// A row of blocks of every hardness, broken with the bare hand, a held block and every
-    /// tool, under load: client and server agree on every one, and none comes back.
+    /// tool, under load: client and server agree on every one, and none comes back. Those
+    /// of a building material (the cobblestone) sound as it.
     Breaks,
     /// On the menu's audio page, a switch for each category of music the player can hear;
     /// clicking one turns that category off, and again on. A track starting is named, with
@@ -820,6 +821,8 @@ struct Gate {
     sweep: Sweep,
     /// The look step's pad still had creatures by it when its wait ran out (said once).
     look_crowded: bool,
+    /// The server's clock when the look step last cleared its pad.
+    look_cleared: f32,
     /// Where the narrow step stands.
     narrow: NarrowRun,
     /// The weapon step's first swing, watched in the hand.
@@ -989,6 +992,7 @@ impl Gate {
             feel: FeelRun::default(),
             sweep: Sweep::default(),
             look_crowded: false,
+            look_cleared: 0.0,
             narrow: NarrowRun::default(),
             swing_watch: SwingWatch::default(),
             music_fade: None,
@@ -2033,6 +2037,7 @@ fn breaks(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 net.command(&format!("setblock {} {} {} {}", cell.x, cell.y, cell.z, registry.def(block).name));
             }
             gate.breaks = Breaks { row, ..default() };
+            world.resource_mut::<crate::sfx::MaterialsAsked>().0.clear();
             gate.advance(now);
         }
         1 => {
@@ -2146,9 +2151,45 @@ fn breaks(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 Err(wrong.join("; "))
             };
             gate.check("breaks", result);
+            let sounded = material_sounds(world, &gate.breaks.row);
+            gate.check("breaks: material sounds", sounded);
             end_breaks(world, gate, now);
         }
     }
+}
+
+/// Whether every block of the breaks row that is of a building material (`sounds.ron`'s
+/// `materials`) asked, as it broke, for that material's break clips, and its taps (when it
+/// took long enough to tap) for its step clips, not its family's; with sound off, by what
+/// was asked rather than heard. Some block of the row must be of one.
+fn material_sounds(world: &World, row: &[(IVec3, BlockId, Holder)]) -> Result<String, String> {
+    use crate::sfx::Cue;
+    let recorded = crate::sfx::Recordings::load(&world.resource::<Launch>().content.files)?;
+    let registry = &world.resource::<ClientWorld>().registry;
+    let asked = &world.resource::<crate::sfx::MaterialsAsked>().0;
+    let mut blocks: Vec<BlockId> = row.iter().map(|&(_, block, _)| block).collect();
+    blocks.dedup();
+    let of_material: Vec<(BlockId, &crate::sfx::MaterialSound)> =
+        blocks.iter().filter_map(|&block| Some((block, &recorded.materials[recorded.material_of(registry, block)?]))).collect();
+    if of_material.is_empty() {
+        let names: Vec<&str> = blocks.iter().map(|&b| registry.def(b).name.as_str()).collect();
+        return Err(format!("no block of the row ({}) is of a building material", names.join(", ")));
+    }
+    let mut wrong = Vec::new();
+    let mut heard = Vec::new();
+    for (block, material) in of_material {
+        let name = &registry.def(block).name;
+        for (cue, needed) in [(Cue::Break, true), (Cue::Hit, false)] {
+            let wanted: Vec<String> = material.clips(cue).map(|(paths, _)| paths.to_vec()).unwrap_or_default();
+            match asked.iter().find(|&&(b, c, _)| b == block && c == cue) {
+                Some((.., paths)) if *paths == wanted => heard.push(format!("{name} {cue:?} as {} ({} clips)", material.name, paths.len())),
+                Some((.., paths)) => wrong.push(format!("{name} {cue:?} asked for {paths:?}, not {}'s {wanted:?}", material.name)),
+                None if needed => wrong.push(format!("{name} broke but never asked for its {cue:?} sound (asked: {asked:?})")),
+                None => {}
+            }
+        }
+    }
+    if wrong.is_empty() { Ok(heard.join(", ")) } else { Err(wrong.join("; ")) }
 }
 
 /// The breaks step's row: every holder once, in order, each with a block, and every block
@@ -5204,6 +5245,24 @@ fn celebrate(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 /// How near the pad's middle no creature may be for the look step's first look.
 const LOOK_CLEAR: f32 = 12.0;
 
+/// Takes every creature within [`LOOK_CLEAR`] of the look step's pad away, whatever its
+/// species: the wild sent away, and the kept taken away from the pad's middle and from a
+/// ring around it, so all are reached by a remove's 8 blocks; then the player stands where
+/// the step looks from.
+fn look_clear(net: &Net, pad: IVec3) {
+    let middle = pad.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
+    for i in 0..=8 {
+        let ring = if i == 0 { Vec3::ZERO } else { Quat::from_rotation_y(i as f32 * std::f32::consts::FRAC_PI_4) * Vec3::new(LOOK_CLEAR - 4.0, 0.0, 0.0) };
+        let at = middle + ring;
+        net.command(&format!("tp {} {} {}", at.x, at.y, at.z));
+        if i == 0 {
+            net.command("creatures disperse");
+        }
+        net.command("creatures remove");
+    }
+    net.command(&format!("tp {} {} {}", pad.x as f32 + 0.5, pad.y, pad.z as f32 + 4.5));
+}
+
 fn look_name(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let pad = gate.feet + IVec3::new(0, 0, 14);
     let planks = pad + IVec3::new(1, 0, 2);
@@ -5219,27 +5278,14 @@ fn look_name(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         // On the creatures' pad (clear stone, air above): a plank block close by, once what the
         // creatures step left there (a grazer or two in the walls, the bird) is gone, since a
         // wanderer on the look ray would take the name. Every creature by the pad goes,
-        // whatever its species: the wild sent away, and the kept taken away from the pad's
-        // middle and from a ring around it, so all within [`LOOK_CLEAR`] are reached by a
-        // remove's 8 blocks.
+        // whatever its species (`look_clear`).
         0 => {
             let net = world.resource::<Net>();
             for species in ["mouflon", "rabbit", "lumen_snail", "shambler", "goldfinch"] {
                 net.command(&format!("creatures remove {species}"));
             }
-            let middle = pad.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
-            for i in 0..=8 {
-                let ring = if i == 0 { Vec3::ZERO } else { Quat::from_rotation_y(i as f32 * std::f32::consts::FRAC_PI_4) * Vec3::new(LOOK_CLEAR - 4.0, 0.0, 0.0) };
-                let at = middle + ring;
-                net.command(&format!("tp {} {} {}", at.x, at.y, at.z));
-                if i == 0 {
-                    net.command("creatures disperse");
-                }
-                net.command("creatures remove");
-            }
-            net.command(&format!("tp {} {} {}", pad.x as f32 + 0.5, pad.y, pad.z as f32 + 4.5));
-            // The bird flies about its home on the pad, out of reach of the first remove.
-            net.command("creatures remove goldfinch");
+            look_clear(net, pad);
+            gate.look_cleared = gate.server_now;
             net.command(&format!("setblock {} {} {} oak_planks", planks.x, planks.y, planks.z));
             net.command("time set noon");
             gate.advance(now);
@@ -5253,6 +5299,11 @@ fn look_name(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             };
             if !near.is_empty() {
                 if gate.server_in_phase() < 6.0 {
+                    // Birds fly back in: cleared again, a server second apart, until none is.
+                    if gate.server_now - gate.look_cleared >= 1.0 {
+                        look_clear(world.resource::<Net>(), pad);
+                        gate.look_cleared = gate.server_now;
+                    }
                     return;
                 }
                 if !gate.look_crowded {
