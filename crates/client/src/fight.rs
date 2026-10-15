@@ -48,6 +48,9 @@ pub struct Fighting {
     /// How many blows this side has asked the server to strike, ever (`core:attack`): a click
     /// at nothing in reach, or one held for the beat, asks nothing.
     pub strikes: u32,
+    /// How many swings the player has cancelled before their blow, ever (raising the guard,
+    /// or changing what is held): the server judges no blow for them (`fight_fx`'s shots).
+    pub cancels: u32,
     /// How many of the server's pings (`ServerMessage::Ping`), which time the round trip
     /// guards and dodges are judged by, have been answered, ever.
     pub pings: u32,
@@ -110,8 +113,8 @@ impl Fighting {
     /// server does. `timing` is the rhythm of what was held.
     pub fn holding(&mut self, now: f64, timing: &Timing, held: Option<voxmar_engine::block::BlockId>, feel: &voxmar_engine::combat::Feel) {
         if held != self.held {
-            if self.rhythm.pending().is_some() {
-                self.rhythm.cancel(now, timing, feel);
+            if self.rhythm.pending().is_some() && self.rhythm.cancel(now, timing, feel) {
+                self.cancels += 1;
             }
             self.rhythm.lose_pips();
             self.held = held;
@@ -160,7 +163,9 @@ pub fn guard(
         fighting.guard = up.then_some(now);
         if up {
             let timing = combat.timing(&weapon);
-            fighting.rhythm.cancel(now, &timing, &combat.feel);
+            if fighting.rhythm.cancel(now, &timing, &combat.feel) {
+                fighting.cancels += 1;
+            }
         }
         net.guard(up);
     }
