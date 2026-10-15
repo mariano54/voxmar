@@ -200,6 +200,25 @@ mining and speed wherever you go, and a bed always works as a bed (it sets where
 while one lasts, so the buff is a once-a-day habit, not a button to hold. Timed effects count down
 online only.
 
+A proper bed rests better than a bag on the ground: a sleep rule can name a `bed` tag the bed
+slept in must carry, and a bed of furniture (`bed: "furniture"`) is Well rested anywhere,
+where a sleeping bag needs a Snug home or a lit corner. Every sleep also mends: Healing
+Sleep (heal x4) for a minute, two in a proper bed, so coming home hurt and sleeping heals.
+It is no way to heal in a fight: a bed refuses sleep with a creature that hunts players
+(wild, or kept by another player) within `sleep_threat_reach` blocks (12), or within
+`sleep_after_hurt` seconds (15) of a wound (a blow, a fall, a sting; not the cold or heat
+wearing at one) (`core/survival.ron`). A refused sleep still claims the bed. And it stays slower than eating, since food is the heal (design
+draft 63): however many heal buffs and prayers are on, healing by itself is held at
+`heal_most` (1 a second, `survival.ron`), which loading checks is below what the slowest
+food heals a second, a 0.6 s bite at a time; time past a point is never banked to pay out
+after. No night skipping. Loading refuses a sleep rule whose `bed` tag no bed carries.
+Tests: the engine's `a_proper_bed_rests_well_and_every_sleep_mends_slower_than_food` and
+`a_sleep_rule_for_a_bed_nobody_made_is_refused_at_load`, the server's
+`a_proper_bed_rests_well_and_mends_longer_than_a_bag` and
+`no_sleep_with_a_hunter_near_or_wounds_fresh`; the gate's Home step clicks the bag with a
+shambler near and expects the refusal, then waits on every chip the engine says the bag
+gives there.
+
 ## Drying off
 
 Rain soaks you (Soaked, Drenched in a downpour), and a roof alone no longer dries you: wet

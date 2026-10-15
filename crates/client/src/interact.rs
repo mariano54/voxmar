@@ -370,19 +370,41 @@ fn break_and_place(
         // loaded or emptied; a sprung trap's catch is taken; a fertiliser is spread on a
         // growing crop; a door is opened or shut, as the server turns it (never predicted:
         // it holds the collision).
+        // One of these plainly meant (a door, a hive, a station aimed at, a fertiliser in
+        // hand) but refused says why, unless something else below takes the click.
+        let mut unmet = None;
         for name in ["base:light", "base:sleep", "base:sit", "base:pick_lock", "base:tend_bees", "base:use_station", "base:take_from_trap", "base:fertilise", "base:open"] {
             if let (Some(hit), Some(action)) = (hit, actions.0.id(name)) {
                 let context = ClientContext { world: &world, player: &player, content };
                 let action_target = ActionTarget::Block { block: hit.block, face: hit.face };
                 // With something it smelts in hand, a crucible smelts it (below) instead.
                 let cooks = actions.0.id("base:cook").and_then(|cook| actions.0.get(cook)).is_some_and(|def| def.validate(&context, action_target).is_ok());
-                if !cooks && actions.0.get(action).is_some_and(|def| def.validate(&context, action_target).is_ok()) {
-                    net.propose_from(&player, action, action_target);
-                    target.used_right = true;
-                    // A lock picked opens the chest's slots.
-                    player.store_asked |= name == "base:pick_lock";
-                    return;
+                match actions.0.get(action).map(|def| def.validate(&context, action_target)) {
+                    Some(Ok(())) if !cooks => {
+                        net.propose_from(&player, action, action_target);
+                        target.used_right = true;
+                        // A lock picked opens the chest's slots.
+                        player.store_asked |= name == "base:pick_lock";
+                        return;
+                    }
+                    Some(Err(Rejection::Unmet(need))) if unmet.is_none() && meant(&context, hit.block, need) => {
+                        unmet = refusal(&context, &locale, Some(hit.block), need);
+                    }
+                    _ => {}
                 }
+            }
+        }
+        if let (Some(why), Some(hit)) = (unmet, hit) {
+            let context = ClientContext { world: &world, player: &player, content };
+            let action_target = ActionTarget::Block { block: hit.block, face: hit.face };
+            let takes = |name: &str| actions.0.id(name).and_then(|id| actions.0.get(id)).is_some_and(|def| def.validate(&context, action_target).is_ok());
+            let held = context.actor_held();
+            let own = held.and_then(|item| world.registry.def(item).action.as_deref()).is_some_and(|name| takes(name));
+            let placed = held.is_some_and(|item| world.registry.info(item).placeable) && takes("core:place");
+            let food = held.is_some_and(|item| world.registry.info(item).food > 0);
+            if !(takes("base:cook") || takes("base:pick") || own || placed || food) {
+                toasts.refused(why, time.elapsed_secs());
+                return;
             }
         }
         // Using what a station cooks on that station cooks it, before eating or placing.
@@ -605,6 +627,20 @@ fn water_block(world: &ClientWorld, pos: IVec3) -> BlockId {
 /// What to tell a player whose click was refused because `need` failed, at `block` if it
 /// aimed at one: the words `refusals.ron` gives it, with the skill and level it asks for or
 /// the least tool that would do; none for a requirement that is silent there.
+/// Whether a right click on `block` plainly meant the action whose requirement `need`
+/// failed: the target is what it asks about (a door, a hive, a station) or the hand holds
+/// what it spreads (a fertiliser). A click meant for something else says nothing.
+fn meant(context: &ClientContext, block: IVec3, need: Requirement) -> bool {
+    let Some(at) = context.world.block(block) else { return false };
+    match need {
+        Requirement::Swaps => !voxmar_engine::action::swapping(context, block).is_empty(),
+        Requirement::Bees => context.bees().is_some_and(|bees| bees.takes.iter().any(|take| take.block == at)),
+        Requirement::Station => context.stations().is_some_and(|stations| stations.of(at).is_some()),
+        Requirement::Fertilisable => context.actor_held().zip(context.stations()).is_some_and(|(item, stations)| stations.fertiliser(item).is_some()),
+        _ => false,
+    }
+}
+
 fn refusal(context: &ClientContext, locale: &Locale, block: Option<IVec3>, need: Requirement) -> Option<String> {
     let (world, content) = (context.world, context.content);
     let key = content.refusals.says(need)?;
