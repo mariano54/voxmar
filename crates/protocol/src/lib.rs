@@ -40,8 +40,9 @@ pub use voxmar_engine::weather::Weather;
 // 42: a staggered creature's tell (STAGGERED).
 // 43: the seat a player sits on (Vitals::seated), for the lower eye.
 // 44: what the home's stores hold (Vitals::home_stores), for what can be made there.
-// 46: tools wear (ItemStack::wear) and ServerMessage::ToolWore; 45 is handed to another lane.
-pub const PROTOCOL_VERSION: u32 = 46;
+// 48: tools wear (ItemStack::wear) and ServerMessage::ToolWore; 45 to 47 are handed to
+// other lanes.
+pub const PROTOCOL_VERSION: u32 = 48;
 
 /// A creature's `tell` while it rears into a new phase of its fight.
 pub const REARING: u8 = u8::MAX;

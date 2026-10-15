@@ -441,8 +441,8 @@ mod tests {
         let item = id(server, held);
         let player = server.players.get_mut(&1).unwrap();
         player.inventory = Default::default();
-        player.inventory.slots[0] = Some(ItemStack { item, count: in_hand });
-        player.inventory.slots[5] = (packed > 0).then_some(ItemStack { item, count: packed });
+        player.inventory.slots[0] = Some(ItemStack::new(item, in_hand));
+        player.inventory.slots[5] = (packed > 0).then_some(ItemStack::new(item, packed));
         player.selected = 0;
         server.use_station(1, at);
     }
