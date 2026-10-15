@@ -388,7 +388,7 @@ impl Server {
                     // world spawn. What they carried is left where they fell first.
                     self.bury_if_dead(agent);
                     let player = self.players.get_mut(&agent).unwrap();
-                    let spawn = player.home.or(player.bed).unwrap_or(self.spawn);
+                    let spawn = player.home_spot(&self.lit).unwrap_or(self.spawn);
                     player.buried = false;
                     player.health.heal(u8::MAX);
                     // Where they wake is where a grave goes until they stand elsewhere,
@@ -426,11 +426,13 @@ impl Server {
                 (Effect::TendBees, ActionTarget::Block { block, .. }) => self.tend_bees(agent, block),
                 (Effect::Pray, ActionTarget::Block { .. }) => self.pray_at_altar(agent),
                 (Effect::Sleep, ActionTarget::Block { block, .. }) => self.sleep(agent, block),
+                (Effect::Sit, ActionTarget::Block { block, .. }) => self.sit(agent, block),
                 (Effect::UseTable, ActionTarget::Block { block, .. }) => {
                     self.players.get_mut(&agent).unwrap().station = Some(block);
                 }
                 (Effect::EatHeld, _) => {
                     let (blocks, effects) = (self.content.blocks.clone(), self.content.effects.clone());
+                    let most = self.survival.meal_most;
                     let player = self.players.get_mut(&agent).unwrap();
                     let selected = player.selected;
                     let Some(item) = player.inventory.take_one(selected) else { continue };
@@ -439,8 +441,9 @@ impl Server {
                     // Food heals, the same food a little less each time in a row.
                     let share = player.recent_food.share(item);
                     player.recent_food.eat(item);
-                    // A pantry or larder at home makes more of a meal (effects.ron's meal_heal, meal_time).
-                    let (meal_heal, meal_time) = (player.modifiers.meal_heal, player.modifiers.meal_time);
+                    // A pantry or larder at home makes more of a meal (effects.ron's meal_heal, meal_time),
+                    // all together up to survival's meal_most.
+                    let (meal_heal, meal_time) = (player.modifiers.meal_heal.min(most), player.modifiers.meal_time.min(most));
                     let heal = (blocks.info(item).food as f32 * share * meal_heal).round().min(u8::MAX as f32) as u8;
                     // What it does besides (content's effects.ron): hearty, queasy and so on.
                     let mut given = effects.given_by(&blocks.def(item).tags);
@@ -468,6 +471,11 @@ impl Server {
         player.bed = Some(bed.as_vec3() + Vec3::new(0.5, 1.0, 0.5));
         let key = if player.home.is_some() { "bed.set_home" } else { "bed.set" };
         player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: Words::key(key) });
+        // Claimed all the same: only the rest waits.
+        if let Some(why) = self.unsafe_to_sleep(agent) {
+            self.refuse(agent, Words::key(why));
+            return;
+        }
         let effects = self.content.effects.clone();
         if effects.rested(&self.players[&agent].timed_effects) {
             let player = &self.players[&agent];
@@ -478,8 +486,10 @@ impl Server {
         let feet = self.players[&agent].position.floor().as_ivec3();
         let outdoors = self.open_sky(feet + IVec3::Y * 2);
         let calm = voxmar_engine::weather::Weather::NONE;
-        let situation = voxmar_engine::effect::Situation { felt: 0.0, warmed: false, outdoors, weather: &calm, biome: "", biome_tags: &[], home: home.as_ref(), done: &self.players[&agent].quests_done, held: &[], near: &[] };
-        let given = effects.given_by_sleep(&situation);
+        let situation = voxmar_engine::effect::Situation { felt: 0.0, warmed: false, outdoors, weather: &calm, biome: "", biome_tags: &[], home: home.as_ref(), done: &self.players[&agent].quests_done, held: &[], near: &[], seated: false };
+        // A proper bed rests better than a bag on the ground (effects.ron's `bed` tags).
+        let bed_tags = self.block(bed).map(|b| self.content.blocks.def(b).tags.clone()).unwrap_or_default();
+        let given = effects.given_by_sleep(&situation, &bed_tags);
         // The best rest it gives (the one the others are hidden by) is the one it says.
         let best = given.iter().map(|&(id, _)| id).filter(|&id| !given.iter().any(|&(other, _)| other != id && effects.hides(other, id))).next_back();
         let player = self.players.get_mut(&agent).unwrap();
@@ -491,6 +501,42 @@ impl Server {
             let words = Words::key("bed.rested").with("name", Words::Own(key.clone(), def.title.clone())).with("what", Words::Own(format!("{key}.description"), def.description.clone()));
             player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: words });
         }
+    }
+
+    /// Why `agent` cannot lie down now, if they cannot: a creature that hunts players (but
+    /// not one they keep: it hunts everyone else) within `sleep_threat_reach` blocks, or
+    /// wounded within the last `sleep_after_hurt` seconds (`survival.ron`). No sleeping off a
+    /// fight for the rest it gives. Nothing hunts one in creative, so nothing stops them.
+    pub(crate) fn unsafe_to_sleep(&self, agent: PlayerId) -> Option<&'static str> {
+        let player = self.players.get(&agent)?;
+        if player.allow_flight {
+            return None;
+        }
+        let reach = self.survival.sleep_threat_reach;
+        let hunted = self.creatures.live.values().any(|c| {
+            c.health > 0 && !c.companion && c.owner.as_deref() != Some(player.name.as_str()) && c.body.position.distance(player.position) <= reach
+                && self.content.creatures.get(c.species).behaviours.iter().any(|b| matches!(b.behaviour, voxmar_engine::creature::Behaviour::Hunt { .. }))
+        });
+        let after = (self.survival.sleep_after_hurt * voxmar_protocol::TICKS_PER_SECOND as f32).round() as u64;
+        if hunted {
+            Some("bed.threatened")
+        } else if player.hurt_at.is_some_and(|at| self.tick < at + after) {
+            Some("bed.just_hurt")
+        } else {
+            None
+        }
+    }
+
+    /// `agent` sits on the seat at `seat`: set on it (on top of a stool, in a cushion),
+    /// facing as they were, their eye lowered (`vitals::eye`), until they move off it.
+    fn sit(&mut self, agent: PlayerId, seat: IVec3) {
+        let solid = self.block(seat).is_some_and(|b| self.content.blocks.info(b).solid);
+        let player = self.players.get_mut(&agent).unwrap();
+        player.teleport(voxmar_engine::vitals::seated_feet(seat, solid));
+        player.vitals.seated = Some(seat);
+        player.changed(traits::VITALS);
+        // What sitting there gives (a table's meal bonus) holds from the first bite.
+        crate::process::Survival::refresh(self, agent);
     }
 
     /// Crafts what `agent`'s grid holds, once or (`all`) as many times as it can: if the
@@ -531,25 +577,28 @@ impl Server {
         if self.placed.remove(&pos) {
             return false;
         }
-        let Some(player) = self.players.get(&agent) else { return false };
+        let Some(player) = self.players.get_mut(&agent) else { return false };
+        // By the player's count of blocks broken, and where a drop pops by the world's count
+        // of drops, never by the tick it breaks on.
+        let [roll, other] = player.draw(crate::save::Draw::Mine);
         let held = player.held();
         let level = rule.skill.map_or(1, |skill| self.content.skills.level(player.skills.xp(skill)));
         let bonus = voxmar_engine::crop::level_bonus(level, rule.level, self.content.skills.max_level()) + tools.yield_bonus(held, block) + player.modifiers.finds;
         let info = self.content.blocks.info(block);
-        let [roll, kick, ..] = crate::items::random3(self.tick, pos, agent ^ 0xd1ce);
+        // The pops show where each drop flies, so they draw nothing from the player's rolls.
+        let [a, b, c] = self.meta.next_pop(pos, agent ^ 0xd1ce);
         // Never a furnishing's: it gives itself back only where a player placed it.
         if roll < bonus && !info.drops.is_air() && info.drop_count > 0 && !self.content.blocks.def(block).has_tag("furnishing") {
             let stack = voxmar_engine::inventory::ItemStack { item: info.drops, count: 1 };
-            let body = voxmar_engine::dropped::popped(pos, [kick, roll, kick * roll]);
+            let body = voxmar_engine::dropped::popped(pos, [a, b, c]);
             self.items.spawn(stack, body, voxmar_engine::dropped::PICKUP_DELAY);
         }
         if let Some(skill) = rule.skill.filter(|_| rule.xp > 0.0) {
             self.grant_xp(agent, skill, rule.xp);
         }
-        let [other, ..] = crate::items::random3(self.tick, pos, agent ^ 0x1257);
         match rule.instead {
             Some((item, chance)) if other < chance => {
-                let body = voxmar_engine::dropped::popped(pos, [kick, other, roll]);
+                let body = voxmar_engine::dropped::popped(pos, [b, c, a]);
                 self.items.spawn(voxmar_engine::inventory::ItemStack { item, count: 1 }, body, voxmar_engine::dropped::PICKUP_DELAY);
                 true
             }
@@ -593,5 +642,74 @@ impl Server {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod sleep_tests {
+    use super::*;
+
+    /// A wolf hunts players: wild, or kept by another player, it keeps one from sleeping; kept
+    /// by the sleeper, it does not, and in creative nothing does.
+    #[test]
+    fn only_a_hunter_one_keeps_lets_one_sleep() {
+        let mut server = crate::test_server();
+        let (_client, connection) = voxmar_protocol::local_pair();
+        let mut joined = crate::player::Player::new(1, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
+        (joined.joined, joined.name) = (true, "sleeper".into());
+        server.players.insert(1, joined);
+        let wolf = server.content.creatures.id("base:wolf").expect("wolves");
+        let id = server.spawn_creature(wolf, server.spawn + Vec3::X * 4.0, 1).expect("room");
+        assert_eq!(server.unsafe_to_sleep(1), Some("bed.threatened"), "a wild wolf");
+        server.creatures.live.get_mut(&id).unwrap().owner = Some("someone_else".into());
+        assert_eq!(server.unsafe_to_sleep(1), Some("bed.threatened"), "another's kept wolf hunts the sleeper all the same");
+        server.creatures.live.get_mut(&id).unwrap().owner = Some("sleeper".into());
+        assert_eq!(server.unsafe_to_sleep(1), None, "one's own kept wolf");
+        server.creatures.live.get_mut(&id).unwrap().owner = None;
+        server.players.get_mut(&1).unwrap().allow_flight = true;
+        assert_eq!(server.unsafe_to_sleep(1), None, "nothing hunts one in creative");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use voxmar_engine::glam::IVec3;
+
+    /// What breaking a block gives besides its own drop (gravel's flint instead, a bonus
+    /// drop) is drawn by the player's count of blocks broken, not the tick it breaks on,
+    /// and where it pops by the world's count of drops.
+    #[test]
+    fn a_break_rewards_by_the_count_of_breaks_not_the_tick() {
+        let broken = |tick: u64| {
+            let mut server = crate::test_server();
+            server.meta.draw_key = 0x0d1a;
+            let (_client, connection) = voxmar_protocol::local_pair();
+            let mut player = crate::player::Player::new(1, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
+            (player.joined, player.draw_key) = (true, crate::player::player_draw_key(0x0d1a, "ada"));
+            // Finds enough that some breaks give a bonus drop besides.
+            player.modifiers.finds = 0.5;
+            server.players.insert(1, player);
+            let gravel = server.content.blocks.expect("base:gravel");
+            let pos = server.spawn.floor().as_ivec3() + IVec3::new(2, 0, 0);
+            server.tick = tick;
+            let instead: Vec<bool> = (0..64)
+                .map(|_| {
+                    server.set_block(pos, gravel);
+                    server.reward_break(1, pos)
+                })
+                .collect();
+            let gravel_drops = server.content.blocks.def(server.content.blocks.info(gravel).drops).name.clone();
+            let blocks = server.content.blocks.clone();
+            let mut bodies: Vec<_> = server.items.saved(|item| blocks.def(item).name.clone()).into_iter().map(|d| (d.item, d.count, d.position)).collect();
+            bodies.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            let bonus: u32 = bodies.iter().filter(|(item, ..)| *item == gravel_drops).map(|&(_, count, _)| count as u32).sum();
+            (instead, bodies, server.players[&1].draws.mines, bonus)
+        };
+        let first = broken(1_000);
+        assert_eq!(first.2, 64, "each break counted on");
+        let flint = first.0.iter().filter(|&&f| f).count();
+        assert!((1..64).contains(&flint), "flint {flint} times in 64 breaks of gravel");
+        assert!((1..64).contains(&first.3), "a bonus drop {} times in 64 breaks with finds", first.3);
+        assert_eq!(broken(1_377), first, "the same breaks later gave otherwise");
     }
 }

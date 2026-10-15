@@ -14,6 +14,8 @@ mod fishing;
 mod death;
 #[cfg(test)]
 mod doors;
+#[cfg(test)]
+mod seats;
 mod hearth;
 mod journal;
 mod lairs;
@@ -108,6 +110,9 @@ pub struct ServerConfig {
     /// the clock. What the server judges by arrival stamps (a break, a blow) keeps the
     /// clock's pace, since players' messages carry theirs.
     pub tick_speedup: u32,
+    /// The key a new world's draws hash (`WorldMeta::draw_key`), else a random one. The gate
+    /// sets one, as it sets the seed, so its world draws the same every run.
+    pub draw_key: Option<u64>,
     /// Whether the server ticks only as far as its test's player allows
     /// (`ServerHandle::allow_tick`): one tick past the last the player has taken in, so a
     /// player starved of the cores on a busy machine is never left behind by a quick
@@ -232,6 +237,7 @@ impl Default for ServerConfig {
             lag: Lag::default(),
             cut_saves: false,
             tick_speedup: 1,
+            draw_key: None,
             lockstep: false,
             wandering_starts: true,
         }
@@ -280,6 +286,21 @@ pub fn assets_dir() -> PathBuf {
 const NAMED_ACTIONS: &[&str] =
     &["core:mine", "core:place", "core:transfer", "core:quick_move", "core:craft", "core:stow", "core:drop", "core:attack", "core:eat", "core:respawn"];
 
+/// Healing by itself, however many buffs and prayers are on, is held under `heal_most` a
+/// second (`survival.ron`), which must be below what the slowest food heals a second eaten
+/// bite after bite (`core:eat`'s time): food stays the way to heal in a hurry.
+fn heal_most_below_food(content: &Content, heal_most: f32) -> Result<(), String> {
+    let eat = content.actions.get(content.actions.expect("core:eat")).expect("named");
+    let voxmar_engine::action::Duration::Seconds(bite) = eat.duration else {
+        return Err("core:eat must take a time (Seconds), the bite that heal_most is held under".into());
+    };
+    let slowest = content.blocks.ids().map(|id| voxmar_engine::vitals::food_value(&content.blocks.def(id).tags)).filter(|&heal| heal > 0).min();
+    match slowest.map(|heal| heal as f32 / bite.max(f32::EPSILON)) {
+        Some(per_second) if heal_most >= per_second => Err(format!("survival.ron's heal_most ({heal_most} a second) must be below what the slowest food heals a second, a bite each {bite} s ({per_second:.2})")),
+        _ => Ok(()),
+    }
+}
+
 /// Loads every content package under `assets/content`, and checks the world
 /// generator's definitions in them, so a broken package fails at startup.
 pub fn load_content(assets: &Path) -> Result<Content, Box<dyn std::error::Error>> {
@@ -290,7 +311,8 @@ pub fn load_content(assets: &Path) -> Result<Content, Box<dyn std::error::Error>
     WorldContent::load(&content)?;
     wear::WearRules::load(&content.files, &content.blocks, 0)?;
     let mut notes = Vec::new();
-    rules::SurvivalRules::load(&content.files, &content.blocks, &mut notes)?;
+    let survival = rules::SurvivalRules::load(&content.files, &content.blocks, &mut notes)?;
+    heal_most_below_food(&content, survival.heal_most)?;
     std::sync::Arc::make_mut(&mut content.notes).extend(notes);
     for fluid in content.blocks.fluids().iter().filter(|fluid| !swum_or_burns(&content.blocks, fluid)) {
         tracing::warn!("the fluid {} is neither swum in (swim: true) nor burns (tagged \"lava\"): players wade through it unharmed", fluid.name);
@@ -506,15 +528,25 @@ pub fn spawn(mut config: ServerConfig, content: Content) -> std::io::Result<Serv
 /// an unsaved one.
 fn open_world(config: &mut ServerConfig) -> std::io::Result<(Option<WorldSave>, WorldMeta)> {
     let new_mode = if config.allow_flight { GameMode::Creative } else { GameMode::Survival };
-    let Some(dir) = &config.world else { return Ok((None, WorldMeta::new("world", config.seed, new_mode))) };
+    let keyed = |mut meta: WorldMeta| {
+        if let Some(key) = config.draw_key {
+            meta.draw_key = key;
+        }
+        meta
+    };
+    let Some(dir) = &config.world else { return Ok((None, keyed(WorldMeta::new("world", config.seed, new_mode)))) };
     let save = WorldSave::new(dir);
     let mut meta = if save.exists() {
-        let meta = save.read_meta()?;
+        let mut meta = save.read_meta()?;
         save.recover(&meta);
+        // A world from before its draws had a key gets one now, kept from its next save.
+        if meta.draw_key == 0 {
+            meta.draw_key = config.draw_key.unwrap_or_else(save::random_key);
+        }
         meta
     } else {
         let name = dir.file_name().map_or_else(|| "world".into(), |name| name.to_string_lossy().into_owned());
-        let meta = WorldMeta::new(name, config.seed, new_mode);
+        let meta = keyed(WorldMeta::new(name, config.seed, new_mode));
         save.create(&meta)?;
         tracing::info!("created world {}", dir.display());
         meta
@@ -598,8 +630,11 @@ pub(crate) struct Server {
     farm: farm::Farm,
     /// Machines players built, and the power between them.
     factory: voxmar_engine::factory::Factory,
-    /// Multiblocks burning their initial fuel charge, by core cell.
+    /// Lit multiblocks, by core cell: a kiln burning its fuel charge, a hearth (which needs
+    /// none) until it breaks.
     lit: FxHashMap<IVec3, hearth::Lit>,
+    /// The burning fires players were last told of (`ServerMessage::Fires`).
+    fires_sent: Vec<IVec3>,
     /// Cells whose block a player placed: ores, which then teach nothing; plants, which
     /// don't regrow by themselves; and furnishings, which give themselves back only from
     /// these cells (see `WorldMeta::placed`).
@@ -748,6 +783,7 @@ impl Server {
             farm,
             factory: voxmar_engine::factory::Factory::default(),
             lit,
+            fires_sent: Vec::new(),
             placed,
             regrowing,
             planter_grown,
@@ -984,6 +1020,10 @@ impl Server {
         self.broadcast_players();
         if self.tick.is_multiple_of(TICKS_PER_SECOND as u64) {
             self.broadcast(self.time_message());
+            for id in self.players.iter().filter(|(_, p)| !p.kindled).map(|(&id, _)| id).collect::<Vec<_>>() {
+                self.kindle_home(id);
+            }
+            self.send_fires();
         }
         if self.tick.is_multiple_of(SAVE_INTERVAL) {
             self.save();
@@ -1322,6 +1362,25 @@ pub(crate) fn test_server_on(content: Content) -> Server {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A world's draw key is made with it (the config's, else a random one) and kept in its
+    /// meta; an older world, saved without one, is given one when it opens.
+    #[test]
+    fn a_world_keeps_its_draw_key_and_an_older_one_is_given_one() {
+        let dir = std::env::temp_dir().join(format!("voxmar-draw-key-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let config = |key| ServerConfig { world: Some(dir.clone()), draw_key: key, ..Default::default() };
+        let (save, meta) = open_world(&mut config(Some(42))).unwrap();
+        assert_eq!(meta.draw_key, 42, "made with the config's key");
+        assert_eq!(open_world(&mut config(None)).unwrap().1.draw_key, 42, "kept");
+        save.as_ref().unwrap().write_meta(&WorldMeta { drops: 5, loot: 7, rolls: 11, ..meta.clone() }).unwrap();
+        let kept = open_world(&mut config(None)).unwrap().1;
+        assert_eq!((kept.drops, kept.loot, kept.rolls), (5, 7, 11), "the counts of drops popped, loot rolled and world rolls kept");
+        save.unwrap().write_meta(&WorldMeta { draw_key: 0, ..meta }).unwrap();
+        assert_ne!(open_world(&mut config(None)).unwrap().1.draw_key, 0, "an older world given one");
+        assert_ne!(WorldMeta::new("a", 1, GameMode::Survival).draw_key, WorldMeta::new("a", 1, GameMode::Survival).draw_key, "random without one asked");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     /// A drop and its rejoin are queued together before one reading loop: the old
     /// connection must leave before the new hello is answered, without scheduler luck.

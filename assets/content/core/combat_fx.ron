@@ -1,7 +1,8 @@
 // How a fight looks and sounds beyond its marks (crates/client/src/fight_fx.rs,
 // docs/combat.md "Feel on screen"): what a blow does to the creature it lands on, how a
-// creature winds up and strikes, how it dies, what the camera and the hand do, and every
-// fight sound. None of it changes what the server decides: it is all drawn and heard here.
+// creature winds up and strikes, how it reels when staggered, how it dies, what the camera
+// and the hand do, and every fight sound. None of it changes what the server decides: it is
+// all drawn and heard here.
 // Read and checked at launch with the rest of the content; a later package replaces each
 // part whole, and each entry of `blows`, `strikes` and `sounds` by its own name.
 // Times are seconds, distances blocks, turns degrees, colours (red, green, blue) 0 to 255.
@@ -16,6 +17,10 @@
         stop: 0.045, stop_per_share: 0.12, stop_most: 0.11, shake: 0.035,
         white: 0.08, red: 0.26,
         flinch: 0.22, recoil: 0.2, tilt: 16.0, squash: 0.14,
+        // Sized by the creature and the blow (`Weigh`): a wolf or a boar (half a cubic
+        // block) flinches as above; a rabbit up to 1.8 times as far, a bear or an aurochs
+        // two thirds as far; a scratch 0.7 times, half its health or more 1.5 times.
+        weigh: (mass: 0.5, light: 1.8, heavy: 0.4, glancing: 0.7, telling: 1.5),
         sparks: (count: 5, speed: 4.5, life: 0.22, size: 0.07, color: Some((255, 244, 214))),
         tufts: (count: 5, speed: 2.6, life: 0.55, size: 0.07),
     ),
@@ -29,11 +34,12 @@
         "counter": (stop: 1.8, sparks: 2.6, punch: 0.9),
         "bleed": (stop: 0.0, sparks: 0.0, punch: 0.0),
     },
-    // A killing blow: a longer freeze and a heavier dip, then the body tips over (each
-    // creature's `death` says how) and, over the last `shrink` of its death, shrinks into a
-    // puff of smoke where it lay.
+    // A killing blow: a longer freeze and a heavier dip, then the body tips over and lies
+    // there a beat (each creature's `death` says how long), and over the last `shrink` of its
+    // death sinks and shrinks away, going up in a puff of smoke where it lay as its loot
+    // bursts out.
     death: (
-        stop: 0.12, punch: 0.8, shrink: 0.22,
+        stop: 0.12, punch: 0.8, shrink: 0.12,
         poof: (count: 14, speed: 1.4, life: 0.8, size: 0.32, color: Some((236, 236, 232))),
     ),
     // How a creature winds up and strikes, by how it attacks (`attack.style`). Through its
@@ -65,6 +71,18 @@
                   strike: (nod: 0.3, crouch: 0.0, rear: 0.1, lean: 0.15, paw: 0.6), snap: 0.10, settle: 0.32,
                   recover: (nod: 0.3, crouch: 0.08, rear: 0.0, lean: -0.08, paw: 0.1), plant: 0.1, dart: 2.0),
     },
+    // A creature staggered (a perfect block, a daze that cuts its wind-up short): its wind-up
+    // ends with no blow, and it reels where it stands until the server lets it fight on.
+    // Its body eases over `ease` into `stance` (the parts as a strike's: head drooped, a
+    // slight crouch, its weight back) and sways side to side, `sway` radians either way
+    // `sway_rate` times a second, then eases back out over `ease` once the stagger is over.
+    // Dizzy sparks (`sparks`, like `death.poof`) circle up over its head as it begins, and
+    // the `stagger` sound plays.
+    stagger: (
+        stance: (nod: 0.5, crouch: 0.12, rear: 0.0, lean: -0.1, paw: 0.0),
+        sway: 0.22, sway_rate: 1.6, ease: 0.15,
+        sparks: (count: 7, speed: 0.9, life: 0.8, size: 0.06, color: Some((255, 238, 150))),
+    ),
     // The camera and the hand. A blow that hurts the player tips the view `hurt_roll` toward
     // the side it came from and back over `hurt_seconds`, and reddens the edges of the screen
     // (`vignette`, up to `vignette_alpha`, fading over `vignette_seconds`). A blocked blow jolts
@@ -98,7 +116,7 @@
     // higher or lower each time. Names: `swing.<class>` (else `swing`), `hit.<style>` (else
     // `hit`), `hit.shell` over a hit on a shelled creature; `beat`, `flourish`, `counter` and
     // `kill` play over a hit of that kind; `miss`, `bleed`, `hurt`, `blocked`, `perfect`,
-    // `dodge` and `guard` for the rest.
+    // `dodge` and `guard` for the rest, and `stagger` over a creature staggered.
     sounds: {
         // Whooshes: lighter weapons quicker and higher, heavy ones lower and longer; a sword
         // swings the plain one, which any other class without its own falls back to.
@@ -197,6 +215,14 @@
         ]),
         "dodge": (gain: 0.3, layers: [Sweep(from: 300, to: 1300, seconds: 0.22, gain: 0.8), Noise(low: 150, high: 500, attack: 0.01, seconds: 0.08, gain: 0.3)]),
         "guard": (gain: 0.45, variants: 3, layers: [Noise(low: 900, high: 3200, attack: 0.012, seconds: 0.08, gain: 1.0)]),
+        // A creature staggered: a dull thud of its weight rocking back, and a short wobble
+        // sinking away (two tones a little apart, beating), dazed.
+        "stagger": (gain: 0.5, drive: 1.2, room: 0.18, variants: 3, layers: [
+            Tone(from: 140, to: 55, seconds: 0.16, gain: 0.9),
+            Noise(low: 160, high: 600, attack: 0.004, seconds: 0.1, gain: 0.4),
+            Tone(from: 620, to: 330, seconds: 0.32, gain: 0.3),
+            Tone(from: 660, to: 350, seconds: 0.32, gain: 0.22),
+        ]),
         // Bosses' wind-ups (`tells`), each swelling to its loudest as the blow lands. A
         // blow to block winds up with a creak and cracks like a whip; a blow to dodge
         // groans up from under the ground and lands with a thud; a volley rattles.

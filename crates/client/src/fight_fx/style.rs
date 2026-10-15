@@ -1,6 +1,6 @@
 //! What a package says in `combat_fx.ron`, read and checked at launch: the look of a hit, a
-//! kind of blow, a death, a creature's strike, the camera and the hand, and the fight's
-//! sounds. Each part of a later package replaces the one before; `blows`, `strikes` and
+//! kind of blow, a death, a creature's strike and its stagger, the camera and the hand, and
+//! the fight's sounds. Each part of a later package replaces the one before; `blows`, `strikes` and
 //! `sounds` replace entry by entry.
 
 use std::collections::BTreeMap;
@@ -16,7 +16,7 @@ pub const FILE: &str = "combat_fx.ron";
 
 /// Sound names every package set must give between them; the others (`swing.<class>`,
 /// `hit.<style>`, `hit.shell`) are optional.
-pub const SOUNDS: [&str; 13] = ["swing", "hit", "beat", "flourish", "counter", "kill", "miss", "bleed", "hurt", "blocked", "perfect", "dodge", "guard"];
+pub const SOUNDS: [&str; 14] = ["swing", "hit", "beat", "flourish", "counter", "kill", "miss", "bleed", "hurt", "blocked", "perfect", "dodge", "guard", "stagger"];
 
 /// A burst of particles: how many, how fast they fly out, how long they last, how wide,
 /// and their colour (unset: the creature's own coat).
@@ -45,8 +45,34 @@ pub struct HitLook {
     pub recoil: f32,
     pub tilt: f32,
     pub squash: f32,
+    /// How big the flinch is, by the creature and the blow (`fight_fx::flinch_size`); left
+    /// out, every flinch is the hit's own size.
+    #[serde(default)]
+    pub weigh: Weigh,
     pub sparks: Burst,
     pub tufts: Burst,
+}
+
+/// How a flinch is sized: a creature `mass` cubic blocks big (its width squared by its
+/// height) flinches as the hit says; a lighter one more, by the cube root of how much
+/// lighter, at most `light` times; a heavier one less, at least `heavy` times. And by the
+/// share of its health the blow took: `glancing` times for a scratch, up to `telling` times
+/// for half its health or more.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Weigh {
+    pub mass: f32,
+    pub light: f32,
+    pub heavy: f32,
+    pub glancing: f32,
+    pub telling: f32,
+}
+
+impl Default for Weigh {
+    /// Unweighed: every creature, struck for any share, flinches the hit's own size.
+    fn default() -> Self {
+        Weigh { mass: 1.0, light: 1.0, heavy: 1.0, glancing: 1.0, telling: 1.0 }
+    }
 }
 
 /// What a kind of blow multiplies a hit by, and the camera's dip with it.
@@ -121,6 +147,20 @@ pub struct StrikeLook {
     /// snaps out, so the lunge darts rather than slides.
     #[serde(default = "one")]
     pub dart: f32,
+}
+
+/// A creature staggered (a perfect block, a daze): the stance it reels in (head drooped, a
+/// little crouched, its weight back), its body swaying side to side `sway` radians either
+/// way `sway_rate` times a second, eased into over `ease` seconds and out of over as many
+/// once the stagger is over; and dizzy sparks circling over its head as it begins.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StaggerLook {
+    pub stance: Stance,
+    pub sway: f32,
+    pub sway_rate: f32,
+    pub ease: f32,
+    pub sparks: Burst,
 }
 
 fn one() -> f32 {
@@ -262,6 +302,7 @@ struct FxFile {
     blows: BTreeMap<String, BlowLook>,
     death: Option<DeathLook>,
     strikes: BTreeMap<String, StrikeLook>,
+    stagger: Option<StaggerLook>,
     camera: Option<CameraLook>,
     sounds: BTreeMap<String, SoundDef>,
     tells: BTreeMap<String, TellLook>,
@@ -275,6 +316,7 @@ pub struct FightLook {
     pub blows: BTreeMap<String, BlowLook>,
     pub death: DeathLook,
     pub strikes: BTreeMap<String, StrikeLook>,
+    pub stagger: StaggerLook,
     pub camera: CameraLook,
     pub sounds: BTreeMap<String, SoundDef>,
     /// Wind-ups told by sound and marker, by the creature's name and its move's
@@ -316,6 +358,17 @@ impl FightLook {
     }
 
     /// Weapon classes that shoot (take ammunition) with no shot to show.
+    /// The creatures whose death, as this draws it, lies fallen less than
+    /// `voxmar_engine::creature::LIES`: from the killing blow's freeze and the tip over
+    /// (`death.fall`) to starting to go (the last `death.shrink` of its time to its loot).
+    pub fn unlain(&self, creatures: &voxmar_engine::creature::CreatureRegistry) -> Vec<String> {
+        creatures
+            .iter()
+            .filter(|(_, c)| lies(&c.def.death, self.death.stop, self.death.shrink) < voxmar_engine::creature::LIES - 1e-4)
+            .map(|(_, c)| c.def.name.clone())
+            .collect()
+    }
+
     pub fn unshot<'a>(&self, classes: impl IntoIterator<Item = &'a voxmar_engine::combat::ClassDef>) -> Vec<String> {
         classes.into_iter().filter(|c| c.ammo.is_some() && !self.shots.contains_key(&c.name)).map(|c| c.name.clone()).collect()
     }
@@ -332,6 +385,7 @@ impl FightLook {
             }
             all.hit = given.hit.or(all.hit);
             all.death = given.death.or(all.death);
+            all.stagger = given.stagger.or(all.stagger);
             all.camera = given.camera.or(all.camera);
             all.blows.extend(given.blows);
             all.strikes.extend(given.strikes);
@@ -344,6 +398,7 @@ impl FightLook {
             blows: all.blows,
             death: all.death.ok_or(format!("no package's {FILE} gives the death"))?,
             strikes: all.strikes,
+            stagger: all.stagger.ok_or(format!("no package's {FILE} gives the stagger"))?,
             camera: all.camera.ok_or(format!("no package's {FILE} gives the camera"))?,
             sounds: all.sounds,
             tells: all.tells,
@@ -400,6 +455,14 @@ impl FightLook {
             }
         }
         // A hit's freeze is at most a few frames; longer reads as a stall.
+        let weigh = hit.weigh;
+        let sane = |v: f32| v.is_finite() && v > 0.0;
+        if !sane(weigh.mass) || !(0.1..=1.0).contains(&weigh.heavy) || !(1.0..=4.0).contains(&weigh.light) || !(0.1..=1.0).contains(&weigh.glancing) || !(1.0..=3.0).contains(&weigh.telling) {
+            return Err(format!(
+                "{FILE}: hit.weigh has a mass above 0, heavy 0.1 to 1, light 1 to 4, glancing 0.1 to 1 and telling 1 to 3 (mass {}, heavy {}, light {}, glancing {}, telling {})",
+                weigh.mass, weigh.heavy, weigh.light, weigh.glancing, weigh.telling
+            ));
+        }
         if hit.stop_most > 0.25 || death.stop > 0.25 {
             return Err(format!("{FILE}: a freeze longer than 0.25 s reads as a stall (hit.stop_most {}, death.stop {})", hit.stop_most, death.stop));
         }
@@ -408,7 +471,7 @@ impl FightLook {
                 return Err(format!("{FILE}: {name} is a share from 0 to 0.9, not {share}"));
             }
         }
-        for (name, burst) in [("hit.sparks", hit.sparks), ("hit.tufts", hit.tufts), ("death.poof", death.poof), ("camera.perfect_sparks", camera.perfect_sparks)] {
+        for (name, burst) in [("hit.sparks", hit.sparks), ("hit.tufts", hit.tufts), ("death.poof", death.poof), ("stagger.sparks", self.stagger.sparks), ("camera.perfect_sparks", camera.perfect_sparks)] {
             if burst.count > 64 || !(burst.life > 0.0 && burst.life <= 4.0) || !(burst.size > 0.0 && burst.size <= 2.0) || !(burst.speed >= 0.0 && burst.speed <= 30.0) {
                 return Err(format!("{FILE}: {name} must be at most 64 particles, living over 0 to 4 s, 0 to 2 blocks wide, at 0 to 30 blocks a second"));
             }
@@ -421,11 +484,20 @@ impl FightLook {
                 return Err(format!("{FILE}: the {name} strike plants from 0 to 1 and darts from 1 to 8 times its walk's pace (plant {}, dart {})", strike.plant, strike.dart));
             }
             for stance in [strike.coil, strike.strike, strike.recover] {
-                let parts = [stance.nod, stance.crouch, stance.rear, stance.lean, stance.paw, stance.twist];
-                if parts.iter().any(|v| !v.is_finite() || v.abs() > 2.0) || !(0.0..=1.0).contains(&stance.rear) {
+                if !stance_fits(stance) {
                     return Err(format!("{FILE}: the {name} strike's stances turn at most 2 radians, move at most 2 heights, and rear from 0 to 1"));
                 }
             }
+        }
+        let stagger = &self.stagger;
+        if !(0.0..=1.0).contains(&stagger.sway) || !(0.0..=10.0).contains(&stagger.sway_rate) || !(stagger.ease > 0.0 && stagger.ease <= 1.0) {
+            return Err(format!(
+                "{FILE}: the stagger sways at most 1 radian, 0 to 10 times a second, and eases in and out over 0 to 1 s (sway {}, sway_rate {}, ease {})",
+                stagger.sway, stagger.sway_rate, stagger.ease
+            ));
+        }
+        if !stance_fits(stagger.stance) {
+            return Err(format!("{FILE}: the stagger's stance turns at most 2 radians, moves at most 2 heights, and rears from 0 to 1"));
         }
         for (name, tell) in &self.tells {
             let sound = self.sounds.get(&tell.sound).ok_or(format!("{FILE}: the {name} tell's sound `{}` is not given", tell.sound))?;
@@ -478,6 +550,13 @@ impl FightLook {
     }
 }
 
+/// Whether a stance stays within what a body can show: each part turning at most 2 radians
+/// or moving at most 2 heights, and rearing from 0 to 1.
+fn stance_fits(stance: Stance) -> bool {
+    let parts = [stance.nod, stance.crouch, stance.rear, stance.lean, stance.paw, stance.twist];
+    parts.iter().all(|v| v.is_finite() && v.abs() <= 2.0) && (0.0..=1.0).contains(&stance.rear)
+}
+
 /// A sound that can be made: some layers or recordings, sensible gains, times and pitches.
 fn layer_ok(layer: &Layer) -> bool {
     let audible = |hz: f32| (20.0..=12_000.0).contains(&hz);
@@ -509,6 +588,12 @@ fn check_sound(name: &str, sound: &SoundDef) -> Result<(), String> {
     Ok(())
 }
 
+/// Seconds a body lies fallen: from its tip over, after the killing blow's `stop`, to
+/// starting to go over the last `shrink` of its time to its loot.
+fn lies(death: &voxmar_engine::creature::Death, stop: f32, shrink: f32) -> f32 {
+    death.drops_after() * (1.0 - shrink) - death.fall - stop
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -529,6 +614,16 @@ mod tests {
             // A sword's is the plain swing every other weapon falls back to.
             assert!(class == "sword" || look.sounds.contains_key(&format!("swing.{class}")), "no swing sound for the {class} class");
         }
+    }
+
+    /// A death lies fallen a beat past its killing blow's freeze, its tip over and its going;
+    /// a look that takes half its death to go leaves it no time to lie, and is refused.
+    #[test]
+    fn a_death_must_lie_a_beat() {
+        let look = FightLook::load(&[core()]).unwrap();
+        let death = voxmar_engine::creature::Death::default();
+        assert!(lies(&death, look.death.stop, look.death.shrink) >= voxmar_engine::creature::LIES, "the shipped look lies {}", lies(&death, look.death.stop, look.death.shrink));
+        assert!(lies(&death, look.death.stop, 0.5) < voxmar_engine::creature::LIES, "a shrink of 0.5 was let lie");
     }
 
     #[test]
@@ -553,6 +648,29 @@ mod tests {
         let hit = r#"(hit: (stop: 0.5, stop_per_share: 0, stop_most: 0.5, shake: 0, white: 0, red: 0, flinch: 0, recoil: 0, tilt: 0, squash: 0,
             sparks: (count: 1, speed: 1, life: 1, size: 0.1), tufts: (count: 1, speed: 1, life: 1, size: 0.1)))"#;
         assert!(with(hit).unwrap_err().contains("stall"));
+        let weighed = |weigh: &str| {
+            format!(
+                r#"(hit: (stop: 0.05, stop_per_share: 0.1, stop_most: 0.1, shake: 0, white: 0, red: 0.2, flinch: 0.2, recoil: 0.1, tilt: 0.1, squash: 0.1, weigh: {weigh},
+            sparks: (count: 1, speed: 1, life: 1, size: 0.1), tufts: (count: 1, speed: 1, life: 1, size: 0.1)))"#
+            )
+        };
+        let unweighed = with(&weighed("()").replace(", weigh: ()", "")).unwrap();
+        assert_eq!(super::super::flinch_size(&unweighed.hit.weigh, (0.2, 0.2), 0.9), 1.0, "a hit with no weigh flinches its own size");
+        assert!(with(&weighed("(mass: 0.5, light: 1.8, heavy: 0.4, glancing: 0.7, telling: 1.5)")).is_ok());
+        for weigh in ["(mass: 0, light: 1.8, heavy: 0.4, glancing: 0.7, telling: 1.5)", "(mass: 0.5, light: 0.5, heavy: 0.4, glancing: 0.7, telling: 1.5)", "(mass: 0.5, light: 1.8, heavy: 2, glancing: 0.7, telling: 1.5)", "(mass: 0.5, light: 1.8, heavy: 0.4, glancing: 0, telling: 1.5)", "(mass: 0.5, light: 1.8, heavy: 0.4, glancing: 0.7, telling: 9)"] {
+            assert!(with(&weighed(weigh)).unwrap_err().contains("hit.weigh"), "{weigh} let through");
+        }
+        let stagger = |sway: f32, rate: f32, ease: f32, rear: f32| {
+            format!(
+                "(stagger: (stance: (nod: 0.5, crouch: 0.1, rear: {rear}, lean: -0.1, paw: 0), sway: {sway}, sway_rate: {rate}, ease: {ease}, sparks: (count: 6, speed: 0.8, life: 0.7, size: 0.06)))"
+            )
+        };
+        assert!(with(&stagger(0.1, 2.0, 0.15, 0.0)).is_ok());
+        for (sway, rate, ease) in [(1.5, 2.0, 0.15), (0.1, 12.0, 0.15), (0.1, 2.0, 0.0), (0.1, 2.0, 1.5), (-0.1, 2.0, 0.15)] {
+            assert!(with(&stagger(sway, rate, ease, 0.0)).unwrap_err().contains("the stagger sways"), "{sway} {rate} {ease}");
+        }
+        assert!(with(&stagger(0.1, 2.0, 0.15, 2.0)).unwrap_err().contains("the stagger's stance"));
+        assert!(with("(stagger: (stance: (nod: 0, crouch: 0, rear: 0, lean: 0, paw: 0), sway: 0, sway_rate: 0, ease: 0.1, sparks: (count: 1, speed: 1, life: 1, size: 0.1), dizzy: 1))").is_err(), "an unknown field");
         // Nothing at all.
         assert!(FightLook::load(&[]).is_err());
     }

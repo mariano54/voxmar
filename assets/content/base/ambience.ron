@@ -3,8 +3,9 @@
 // groups: kinds of block counted around the player by a flood fill from the eye, nearer
 //   ones counting more (10 within 5 blocks, 5 within 10, 2 within 15, 1 up to 24). Each
 //   group is selected by block tags or materials (`falling: true`: only fluid pouring
-//   down) and is an axis of its own, 0 below the first number of its range and 1 above
-//   the second. A block counts for the first group that selects it.
+//   down; `lit: true`: a structure's core only while its fire burns) and is an axis of its
+//   own, 0 below the first number of its range and 1 above the second. A block counts for
+//   the first group that selects it.
 // beds: continuous layers, synthesized (`sound`) or recorded (`recording`: three segments in
 //   this package, eight seconds each, fading in and out over their first and last second
 //   and a half, as the mixer crossfades them). `volume` at full strength; `when` holds soft ranges on axes,
@@ -31,8 +32,9 @@
         (name: "wood", tags: ["log"], range: (5, 60)),
         // A fire to sit by: a campfire, a hearth, a kiln. Before rock, as a hearthstone or a
         // kiln is stone to the step. One within five blocks is a fire fully heard; by ten
-        // blocks it has faded to a murmur, and past fifteen it is gone.
-        (name: "fire", tags: ["campfire", "hearth", "pit_kiln", "crucible"], range: (3, 10)),
+        // blocks it has faded to a murmur, and past fifteen it is gone. `lit`: a hearth or a
+        // Crucible Kiln (a structure's core) is heard only while its fire burns.
+        (name: "fire", tags: ["campfire", "hearth", "pit_kiln", "crucible"], range: (3, 10), lit: true),
         // Lava and falling water sound like water to the step, so they come first.
         (name: "lava", tags: ["lava"], range: (4, 80)),
         // A pot on the boil (`simmering`): one within five blocks is full.

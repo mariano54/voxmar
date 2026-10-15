@@ -74,6 +74,9 @@ struct Client {
     /// message's stamp is when it was sent): a wind-up's start, however late this thread
     /// read it.
     attacking_since: std::collections::HashMap<u32, Instant>,
+    /// Each time a creature was shown staggered (`STAGGERED`), from not: which, how many of
+    /// creatures' blows at us had been heard by then, and the pose it showed.
+    staggers: Vec<(u32, usize, voxmar_engine::creature::brain::Pose)>,
     /// The stamp of the message being applied.
     stamp: Option<Instant>,
     journal: voxmar_engine::journal::Journal,
@@ -262,6 +265,7 @@ impl Client {
             hurt_at: Vec::new(),
             wound_at: Default::default(),
             attacking_since: Default::default(),
+            staggers: Vec::new(),
             stamp: None,
             journal: Default::default(),
             quests: Vec::new(),
@@ -416,6 +420,10 @@ impl Client {
                         self.attacking_since.remove(&view.id);
                     } else if !self.creatures.get(&view.id).is_some_and(attacking) {
                         self.attacking_since.insert(view.id, self.stamp.unwrap_or_else(Instant::now));
+                    }
+                    let staggered = |v: &voxmar_protocol::CreatureView| v.tell == voxmar_protocol::STAGGERED;
+                    if staggered(&view) && !self.creatures.get(&view.id).is_some_and(staggered) {
+                        self.staggers.push((view.id, self.hurt.len(), view.pose));
                     }
                     self.creatures.insert(view.id, view);
                 }
@@ -1234,9 +1242,16 @@ fn health_is_twice_hitpoints_and_a_downpour_drenches_those_out_in_it() {
     client.ok("/fill ~-1 ~ ~-1 ~1 ~50 ~1 air");
     client.ok("/weather rain heavy 600");
     client.pump_until(|c| named(c).iter().any(|n| n == "core:soaked" || n == "core:drenched"));
-    // Under a roof, it stops.
+    // Under a roof the rain stops falling on you, but you are wet through for a while yet:
+    // the wet runs down (seconds left), and drying off by a fire ends it.
+    let wet = |c: &Client| c.vitals.effects.iter().find(|a| matches!(c.content.effects.get(a.effect).name.as_str(), "core:soaked" | "core:drenched")).and_then(|a| a.seconds_left);
     client.ok("/fill ~-1 ~3 ~-1 ~1 ~3 ~1 stone");
-    client.pump_until(|c| !named(c).iter().any(|n| n == "core:soaked" || n == "core:drenched"));
+    let roofed = client.position.floor().as_ivec3() + IVec3::new(0, 3, 0);
+    client.pump_until(|c| c.world.block(roofed) == c.content.blocks.id("base:stone"));
+    let left = wet(&client).expect("wet as the roof goes on");
+    client.pump_until(|c| wet(c).is_some_and(|now| now + 1 < left));
+    client.ok("/setblock ~1 ~ ~ campfire");
+    client.pump_until(|c| wet(c).is_none());
 }
 
 /// Water placed by a command flows, and players see it flow through batched updates; the
@@ -1682,9 +1697,9 @@ fn a_rod_cast_into_water_catches_fish_by_level_and_teaches_fishing() {
     let nothing = |c: &Client| c.chat.iter().any(|(_, text)| *text == miss);
     // At level 80 with this rod, by day here, a cast lands six times in ten (the best fish
     // biting asks level 55: 0.35 + 0.008 a level above it + 0.05 for the rod tier,
-    // fishing.rs), so sixteen casts miss them all about once in two million runs. The roll
-    // is drawn from the tick a cast lands on, and casts land on much the same ticks every
-    // run, so six casts once failed in a third of runs on a busy machine.
+    // fishing.rs), so sixteen casts miss them all about once in two million worlds. The roll
+    // is drawn from the player's count of casts (once from the tick a cast landed on, when
+    // six casts failed in a third of runs on a busy machine), so every run lands the same.
     // A cast takes five seconds of the clock (`actions.ron`), judged by when the player's
     // messages arrive: each is proposed as if clicked at `at`, and a command stamped just
     // past its time is handled after the cast is done, so the casts follow one another
@@ -1701,12 +1716,84 @@ fn a_rod_cast_into_water_catches_fish_by_level_and_teaches_fishing() {
         if fish(&client) {
             break;
         }
-        // The catch is rolled by the tick it lands on: the next cast lands on another.
-        client.after_server_ticks(1);
         at += Duration::from_millis(100);
     }
     assert!(fish(&client), "sixteen casts at Fishing 80 caught nothing");
     client.pump_until(|c| !c.earned.is_empty());
+}
+
+/// A player's casts go on being numbered across leaving and joining again: their file keeps
+/// the count, so a cast's draw is never drawn a second time.
+#[test]
+fn the_count_of_casts_survives_leaving_and_joining_again() {
+    let dir = world_dir("casts");
+    let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
+    let casts = |client: &mut Client, times: usize| {
+        let water = client.position.floor().as_ivec3() + IVec3::new(0, -1, 2);
+        for line in ["/fill ~-1 ~-2 ~1 ~1 ~-1 ~3 water", "/fill ~-1 ~ ~1 ~1 ~3 ~3 air", "/clear", "/give fishing_rod 1"] {
+            client.ok(line);
+        }
+        client.pump_until(|c| c.world.block(water).is_some_and(|b| c.content.blocks.info(b).fluid.is_some()) && c.inventory.get(0).is_some_and(|s| s.item == c.content.blocks.expect("base:fishing_rod")));
+        client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+        let miss = client.content.english.render(&voxmar_engine::lang::Words::key("fishing.nothing"), &client.content.blocks);
+        let mut at = Instant::now();
+        for _ in 0..times {
+            client.chat.clear();
+            client.earned.clear();
+            client.propose_at("base:fish", ActionTarget::Block { block: water, face: Face::PosY }, at);
+            at += Duration::from_millis(5100);
+            client.connection.send_at(ClientMessage::Command { line: "/time".into() }, at);
+            // Each cast ends in a fish (and its experience) or nothing before the next.
+            client.pump_until(|c| !c.earned.is_empty() || c.chat.iter().any(|(_, text)| *text == miss) || !c.refused.is_empty());
+            assert!(client.refused.is_empty(), "a cast was refused: {:?}", client.refused);
+            at += Duration::from_millis(100);
+        }
+    };
+    let saved = || voxmar_server::save::WorldSave::new(&dir).read_player("test", &content().blocks).unwrap().expect("the player was saved").casts;
+    let mut client = Client::join_with(config());
+    casts(&mut client, 3);
+    drop(client);
+    assert_eq!(saved(), 3, "three casts kept");
+    let mut client = Client::join_with(config());
+    casts(&mut client, 1);
+    drop(client);
+    assert_eq!(saved(), 4, "the next cast numbered on from them");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// The count that numbers a player's cooking rolls (whether a go burns) is kept, so the
+/// next go after joining again is drawn on from it, not drawn again.
+#[test]
+fn the_count_of_goes_cooked_survives_leaving_and_joining_again() {
+    let dir = world_dir("cooks");
+    let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
+    let cook = |client: &mut Client, times: u32| {
+        let fire = client.position.floor().as_ivec3() + IVec3::new(3, 0, 0);
+        let charcoal = |c: &Client| {
+            let item = c.content.blocks.expect("base:charcoal");
+            c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>()
+        };
+        client.clear();
+        for line in ["/setblock ~3 ~ ~ campfire", &format!("/give oak_log {times}"), "/skill cooking 99"] {
+            client.ok(line);
+        }
+        client.pump_until(|c| c.world.block(fire) == c.content.blocks.id("base:campfire") && c.inventory.get(0).is_some_and(|s| s.count as u32 == times));
+        client.send_position(client.position, false);
+        for go in 1..=times {
+            client.propose("base:cook", ActionTarget::Block { block: fire, face: Face::PosY });
+            client.pump_until(|c| charcoal(c) == go);
+        }
+    };
+    let saved = || voxmar_server::save::WorldSave::new(&dir).read_player("test", &content().blocks).unwrap().expect("the player was saved").draws.cooks;
+    let mut client = Client::join_with(config());
+    cook(&mut client, 2);
+    drop(client);
+    assert_eq!(saved(), 2, "two goes kept");
+    let mut client = Client::join_with(config());
+    cook(&mut client, 1);
+    drop(client);
+    assert_eq!(saved(), 3, "the next go numbered on from them");
+    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]
@@ -2205,7 +2292,7 @@ fn kiln_fuel_and_lighting_progress_survive_reload_without_free_refuelling() {
     client.pump_until(|c| count(c, "base:copper_ore") == 1);
     client.chat.clear();
     client.propose("base:cook", ActionTarget::Block { block: core, face: Face::PosY });
-    client.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("is cold")));
+    client.pump_until(|c| c.refused.iter().any(|t| t.contains("is cold")));
     assert_eq!(count(&client, "base:copper_ore"), 1);
     assert_eq!(count(&client, "base:copper_ingot"), 0);
     assert_eq!(lit(&client), 1, "dismantling erased historical quest progress");
@@ -2501,7 +2588,7 @@ fn a_crucible_smelts_only_in_its_lit_kiln_and_makes_bronze() {
     }
     client.pump_until(|c| c.world.block(core) == Some(crucible) && c.world.block(core + IVec3::new(1, 1, 1)) == c.content.blocks.id("base:kiln_bricks"));
     smelt(&mut client);
-    client.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("is cold")));
+    client.pump_until(|c| c.refused.iter().any(|t| t.contains("is cold")));
     assert_eq!(count(&client, ore), 2, "a standing but cold kiln consumed ore");
     client.clear();
     client.ok("/give coal_ore 24");
@@ -2584,6 +2671,69 @@ fn a_furnished_home_heals_faster_and_sleeping_in_it_rests_you_once() {
     client.pump_until(|c| !has(c, "base:snug") && has(c, "base:well_rested"));
 }
 
+/// A proper bed rests better than a bag (A Proper Bed: "something better than the ground"),
+/// out under the sky with nothing around it: well rested, and a longer mend.
+#[test]
+fn a_proper_bed_rests_well_and_mends_longer_than_a_bag() {
+    let mut client = on_a_test_floor();
+    let feet = client.position.floor().as_ivec3();
+    let effect = |c: &Client, name: &str| c.vitals.effects.iter().find(|a| c.content.effects.get(a.effect).name == name).copied();
+    let told = |c: &Client, text: &str| c.chat.iter().any(|(_, t)| t.contains(text));
+    let (bag, bed) = (feet + IVec3::new(2, 0, 0), feet + IVec3::new(-2, 0, 0));
+    for line in [format!("/setblock {} {} {} sleeping_bag", bag.x, bag.y, bag.z), format!("/setblock {} {} {} oak_bed", bed.x, bed.y, bed.z)] {
+        client.ok(&line);
+    }
+    client.pump_until(|c| c.world.block(bag) == c.content.blocks.id("base:sleeping_bag") && c.world.block(bed) == c.content.blocks.id("base:oak_bed"));
+    // The bag: a plain rest, and a minute's mend.
+    client.propose("base:sleep", ActionTarget::Block { block: bag, face: Face::PosY });
+    client.pump_until(|c| effect(c, "base:rested").is_some() && effect(c, "base:healing_sleep").is_some());
+    assert!(effect(&client, "base:healing_sleep").and_then(|a| a.seconds_left).is_some_and(|s| s <= 60));
+    assert!(effect(&client, "base:well_rested").is_none(), "a bag on the ground is a plain rest");
+    // The bed, another night: well rested, and two minutes' mend.
+    client.ok("/effect clear");
+    client.pump_until(|c| effect(c, "base:rested").is_none() && effect(c, "base:healing_sleep").is_none());
+    client.chat.clear();
+    client.propose("base:sleep", ActionTarget::Block { block: bed, face: Face::PosY });
+    client.pump_until(|c| effect(c, "base:well_rested").is_some() && effect(c, "base:healing_sleep").is_some() && told(c, "Well rested"));
+    assert!(effect(&client, "base:healing_sleep").and_then(|a| a.seconds_left).is_some_and(|s| s > 60), "a bed mends longer");
+}
+
+/// Rest is no way to heal in a fight (survival.ron): a bed refuses sleep with a creature that
+/// hunts players near, and with wounds still fresh; once the hunter is gone and the wounds
+/// have had their while, it gives its rest.
+#[test]
+fn no_sleep_with_a_hunter_near_or_wounds_fresh() {
+    let mut client = on_a_test_floor();
+    let feet = client.position.floor().as_ivec3();
+    let healing = |c: &Client| c.vitals.effects.iter().any(|a| c.content.effects.get(a.effect).name == "base:healing_sleep");
+    let refused = |c: &Client, text: &str| c.refused.iter().any(|t| t.contains(text));
+    let bag = feet + IVec3::new(2, 0, 0);
+    client.ok(&format!("/setblock {} {} {} sleeping_bag", bag.x, bag.y, bag.z));
+    client.pump_until(|c| c.world.block(bag) == c.content.blocks.id("base:sleeping_bag"));
+    // A shambler hunts players: eight blocks off is too near.
+    client.ok(&format!("/summon shambler 1 {} {} {}", feet.x + 8, feet.y, feet.z));
+    client.propose("base:sleep", ActionTarget::Block { block: bag, face: Face::PosY });
+    client.pump_until(|c| refused(c, "something hunting you"));
+    assert!(!healing(&client), "no rest with a hunter near");
+    let told = |c: &Client, text: &str| c.chat.iter().any(|(_, t)| t.contains(text));
+    assert!(told(&client, "You will wake here after dying"), "a refused sleep claims the bed all the same");
+    client.ok("/creatures kill shambler");
+    // Hurt (a fall): the wounds are too fresh.
+    client.ok(&format!("/fill {} {} {} {} {} {} air", feet.x - 2, feet.y + 1, feet.z - 3, feet.x + 3, feet.y + 14, feet.z + 3));
+    client.pump_until(|c| c.world.block(feet + IVec3::Y * 12) == Some(BlockId::AIR));
+    let before = client.health;
+    fall_from_open_sky(&mut client);
+    client.pump_until(|c| c.health < before);
+    client.refused.clear();
+    client.propose("base:sleep", ActionTarget::Block { block: bag, face: Face::PosY });
+    client.pump_until(|c| refused(c, "wounds so fresh"));
+    assert!(!healing(&client), "no rest with wounds fresh");
+    // Their while out (15 s of the server's ticks), the bag gives its rest.
+    client.after_server_ticks(15 * voxmar_protocol::TICKS_PER_SECOND as u64 + 1);
+    client.propose("base:sleep", ActionTarget::Block { block: bag, face: Face::PosY });
+    client.pump_until(healing);
+}
+
 #[test]
 fn a_larder_makes_more_of_a_meal() {
     real_time("eating takes its time on the clock (stamps of arrival)");
@@ -2592,20 +2742,24 @@ fn a_larder_makes_more_of_a_meal() {
     // Hurt by a fall first (food is eaten to heal), from air cleared high enough.
     client.ok(&format!("/fill {} {} {} {} {} {} air", feet.x - 2, feet.y + 1, feet.z - 3, feet.x + 9, feet.y + 14, feet.z + 3));
     client.pump_until(|c| c.world.block(feet + IVec3::Y * 12) == Some(BlockId::AIR));
-    fall_from_open_sky(&mut client);
     let at = |dx: i32| feet + IVec3::new(dx, 0, 0);
     let chip = |c: &Client, name: &str| c.vitals.effects.iter().find(|a| c.content.effects.get(a.effect).name == name).copied();
-    // A bed to be home, a hearth to cook by (its tag is all a home asks), four crates, a
-    // cauldron and a table, under a roof: a larder.
+    // A bed to be home, slept in before the fall (nobody sleeps with wounds fresh).
+    client.ok(&format!("/setblock {} {} {} sleeping_bag", at(2).x, at(2).y, at(2).z));
+    client.pump_until(|c| c.world.block(at(2)) == c.content.blocks.id("base:sleeping_bag"));
+    client.propose("base:sleep", ActionTarget::Block { block: at(2), face: Face::PosY });
+    client.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("wake here")));
+    fall_from_open_sky(&mut client);
+    // A hearth to cook by (its tag is all a home asks), four crates, a cauldron and a
+    // table, under a roof: a larder.
     let mut lines = vec![format!("/fill {} {} {} {} {} {} stone", feet.x - 2, feet.y + 4, feet.z - 3, feet.x + 9, feet.y + 4, feet.z + 3)];
-    for (dx, block) in [(2, "sleeping_bag"), (3, "hearthstone"), (4, "crate"), (5, "crate"), (6, "crate"), (7, "crate"), (8, "cauldron"), (9, "oak_table")] {
+    for (dx, block) in [(3, "hearthstone"), (4, "crate"), (5, "crate"), (6, "crate"), (7, "crate"), (8, "cauldron"), (9, "oak_table")] {
         lines.push(format!("/setblock {} {} {} {block}", at(dx).x, at(dx).y, at(dx).z));
     }
     for line in lines {
         client.ok(&line);
     }
     client.pump_until(|c| c.world.block(at(9)) == c.content.blocks.id("base:oak_table"));
-    client.propose("base:sleep", ActionTarget::Block { block: at(2), face: Face::PosY });
     client.pump_until(|c| chip(c, "base:larder").is_some());
     // Bread gives Sustained for ten minutes; at a larder, for fifteen.
     for line in ["/clear", "/give bread 1", "/effect clear"] {
@@ -3214,8 +3368,9 @@ fn a_player_who_left_dead_wakes_at_home() {
     drop(Client::join_with(config()));
     let file = dir.join("players/test.ron");
     let text = std::fs::read_to_string(&file).unwrap();
-    let dead = text.replace("current: 20", "current: 0").replace("home: None", "home: Some((3.5, 90.0, -7.5))");
-    assert!(dead.contains("current: 0") && dead.contains("home: Some"), "{text}");
+    // Home with no hearth burning is the bed last slept in.
+    let dead = text.replace("current: 20", "current: 0").replace("bed: None", "bed: Some((3.5, 90.0, -7.5))");
+    assert!(dead.contains("current: 0") && dead.contains("bed: Some"), "{text}");
     std::fs::write(&file, dead).unwrap();
     let client = Client::join_with(config());
     assert_eq!(client.position, Vec3::new(3.5, 90.0, -7.5), "woke at the spawn point rather than at home");
@@ -4518,6 +4673,13 @@ fn a_perfect_block_staggers_a_bear_and_a_dodge_lets_its_blow_pass() {
     let perfect = answer(&mut client, Defended::Perfect, &raise, &lower);
     assert_eq!(client.hurt[perfect].0, 0, "a perfect block takes nothing");
     assert!(client.health <= health);
+    // Shown staggered by it, at rest (not a blow): the view goes out the tick the blow
+    // came to nothing, after word of it.
+    client.pump_until(|c| c.staggers.iter().any(|&(s, ..)| s == id));
+    let shown: Vec<_> = client.staggers.iter().filter(|&&(s, ..)| s == id).collect();
+    assert_eq!(shown.len(), 1, "staggered once: {shown:?}");
+    assert_eq!(shown[0].1, perfect + 1, "staggered by the perfect block, not before it");
+    assert_ne!(shown[0].2, voxmar_engine::creature::brain::Pose::Attacking, "a staggered bear is shown winding nothing up");
     let blows = client.kinds.len();
     client.propose("core:attack", ActionTarget::Creature(id));
     client.pump_until(|c| c.kinds.len() > blows);
@@ -6569,6 +6731,9 @@ struct Fresh {
     /// a quick server ticks on (sixty times the clock's pace runs thirty seconds of ticks in
     /// half a real one), so a try bounded by the server's ticks could end after a step or two.
     steps: u64,
+    /// The creatures the bot swung at: each holds a grudge (`Memory::HurtBy`), a miss as
+    /// much as a hit, though a miss leaves it whole.
+    swung: Vec<u32>,
 }
 
 /// How many of `item` the pack and its pouches carry.
@@ -7189,6 +7354,7 @@ impl Fresh {
                 self.walk_toward(Vec3::new(lane_x, at.y, p.z + 1.3), 0.1);
             }
             self.propose("core:attack", ActionTarget::Creature(id));
+            self.swung.push(id);
             // One swing a beat, and on to the next once it is down.
             let t = self.c.ticks();
             self.spend(Act::Hunt, |me| {
@@ -7231,7 +7397,7 @@ impl Fresh {
         c.pump_until(|c| probes.iter().all(|&(at, name)| c.world.block(origin + at) == c.content.blocks.id(name)) && c.world.block(origin + v(-9, 1, 0)) == Some(BlockId::AIR));
         let (at, t0) = (c.position, c.ticks());
         let epoch = (t0, Instant::now());
-        let mut plot = Self { c, origin, at, held: 0, t0, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch, steps: 0 };
+        let mut plot = Self { c, origin, at, held: 0, t0, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch, steps: 0, swung: Vec::new() };
         // Ten animals in the lane: three rabbits and seven junglefowl.
         for (i, z) in (-10..=-1).enumerate() {
             plot.stock(if i % 3 == 1 { "rabbit" } else { "junglefowl" }, z);
@@ -7252,7 +7418,7 @@ fn the_bot_closes_on_a_drop_from_where_the_server_put_it() {
     let c = on_a_test_floor();
     let (feet, ticks) = (c.position, c.ticks());
     let origin = feet.floor().as_ivec3();
-    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0 };
+    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0, swung: Vec::new() };
     // A cobblestone four blocks off, beyond the pull.
     let cell = origin + IVec3::X * 4;
     f.c.ok(&format!("/drop cobblestone 1 {} {} {}", cell.x, cell.y, cell.z));
@@ -7275,7 +7441,7 @@ fn the_bot_collects_while_the_server_ticks_far_ahead_of_it() {
     let c = on_a_test_floor();
     let (feet, ticks) = (c.position, c.ticks());
     let origin = feet.floor().as_ivec3();
-    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0 };
+    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0, swung: Vec::new() };
     for i in 1..=6 {
         let cell = origin + IVec3::X * (4 * i);
         f.c.ok(&format!("/drop cobblestone 1 {} {} {}", cell.x, cell.y, cell.z));
@@ -7293,7 +7459,7 @@ fn a_server_in_lockstep_ticks_once_for_each_tick_its_bot_lets_pass() {
     let c = on_a_test_floor();
     let (feet, ticks) = (c.position, c.ticks());
     let origin = feet.floor().as_ivec3();
-    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0 };
+    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0, swung: Vec::new() };
     for _ in 0..200 {
         let t = f.c.ticks();
         f.send();
@@ -7311,7 +7477,7 @@ fn the_bot_steps_down_into_a_pit_for_a_drop_and_back_out() {
     let c = on_a_test_floor();
     let (feet, ticks) = (c.position, c.ticks());
     let origin = feet.floor().as_ivec3();
-    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0 };
+    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0, swung: Vec::new() };
     // Ground under the floor, then a pit four blocks off, one wide and three deep, a
     // cobblestone at its bottom.
     f.c.fill(origin, IVec3::new(2, -5, -2), IVec3::new(6, -2, 2), "stone");
@@ -7338,7 +7504,7 @@ fn the_bot_takes_a_drop_under_a_cut_trunk_from_beside_it() {
     let c = on_a_test_floor();
     let (feet, ticks) = (c.position, c.ticks());
     let origin = feet.floor().as_ivec3();
-    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0 };
+    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0, swung: Vec::new() };
     // A log hanging a block over the ground four blocks off, a cobblestone in the gap under it.
     let gap = origin + IVec3::X * 4;
     f.c.ok(&format!("/setblock {} {} {} oak_log", gap.x, gap.y + 1, gap.z));
@@ -7358,7 +7524,7 @@ fn the_bot_leaves_a_drop_no_one_can_reach_and_digs_another() {
     let c = on_a_test_floor();
     let (feet, ticks) = (c.position, c.ticks());
     let origin = feet.floor().as_ivec3();
-    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0 };
+    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0, swung: Vec::new() };
     // Ground under the floor, and in it a one-high slot two blocks down, three blocks off,
     // a cobblestone in it.
     f.c.fill(origin, IVec3::new(1, -5, -2), IVec3::new(5, -2, 2), "stone");
@@ -7392,7 +7558,7 @@ fn the_bot_places_from_the_slot_it_holds_after_a_correction() {
     let c = on_a_test_floor();
     let (feet, ticks) = (c.position, c.ticks());
     let origin = feet.floor().as_ivec3();
-    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0 };
+    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0, swung: Vec::new() };
     f.c.ok("/give stone_pickaxe 1");
     f.c.ok("/give cobblestone 1");
     f.c.pump_until(|c| holding(c, "base:stone_pickaxe") == 1 && holding(c, "base:cobblestone") == 1);
@@ -7508,13 +7674,13 @@ fn the_first_days(f: &mut Fresh) -> Site {
     f.wait(5.0, "picking the wild wheat", |c| c.world.block(wheat) == Some(BlockId::AIR));
     f.collect("base:wheat_seeds", 1);
     let fowl = f.c.content.creatures.find("junglefowl").expect("junglefowl in the content");
-    // Only one the night's hunt never hurt comes to seeds: a wounded one holds its grudge
-    // (`Tempted`) and runs, as a player sees it do. So one never struck is looked for, and
-    // let in if there is none.
-    let whole = f.c.content.creatures.get(fowl).def.health;
+    // Only one the night's hunt never swung at comes to seeds: one struck holds its grudge
+    // (`Tempted`) and runs, as a player sees it do, and so does one missed, whole as it is.
+    // So one never swung at is looked for, and let in if there is none.
     let origin = f.origin;
+    let swung = f.swung.clone();
     let unhurt = move |c: &Client| -> Vec<f32> {
-        lane(c, origin).into_iter().filter(|&(id, _, species)| species == fowl && c.creatures.get(&id).is_some_and(|v| v.health >= whole)).map(|(_, p, _)| p.z).collect()
+        lane(c, origin).into_iter().filter(|&(id, _, species)| species == fowl && !swung.contains(&id)).map(|(_, p, _)| p.z).collect()
     };
     if unhurt(&f.c).is_empty() {
         f.stock("junglefowl", -4);

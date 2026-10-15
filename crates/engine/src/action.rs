@@ -110,6 +110,9 @@ pub enum Requirement {
     CraftingTable,
     /// The target is somewhere to sleep (tagged `bed`): a sleeping bag.
     Bed,
+    /// The target is a seat (tagged `seat`: a stool, chair, bench or cushion) with room to
+    /// sit on it, and the actor holds no block to place against it.
+    Seat,
     /// The target is the core of a multiblock (tagged `multiblock_core`): a hearthstone,
     /// a crucible; for a machine's core, the actor holds no block to place against it.
     MultiblockCore,
@@ -141,6 +144,66 @@ pub enum Requirement {
     /// The target turns into another block when used (`swaps`: a door), and nobody stands
     /// where it would shut.
     Swaps,
+}
+
+impl Requirement {
+    /// Every requirement, in [`Requirement::index`] order (`refusal` says why each failed).
+    pub const ALL: [Requirement; 38] = [Requirement::Alive, Requirement::Dead, Requirement::InReach, Requirement::Breakable, Requirement::HoldingBlock, Requirement::Replaceable, Requirement::Unobstructed, Requirement::Supported, Requirement::HoldingSeed, Requirement::Plantable, Requirement::SkillLevel, Requirement::Ripe, Requirement::CreatureInReach, Requirement::CreatureInTouch, Requirement::CreatureAccepts, Requirement::CreatureIsMine, Requirement::Cookable, Requirement::CookingLevel, Requirement::HoldingFood, Requirement::Hurt, Requirement::ToolGood, Requirement::BlockLevel, Requirement::CropLevel, Requirement::Tillable, Requirement::CraftingTable, Requirement::Bed, Requirement::MultiblockCore, Requirement::Machine, Requirement::Altar, Requirement::Fishable, Requirement::Locked, Requirement::Bees, Requirement::Station, Requirement::Fertilisable, Requirement::Store, Requirement::Swaps, Requirement::SprungTrap, Requirement::Seat];
+
+    /// Where it stands in [`Requirement::ALL`]. A new requirement must be added to both:
+    /// this match does not compile without it.
+    pub fn index(self) -> usize {
+        match self {
+            Requirement::Alive => 0,
+            Requirement::Dead => 1,
+            Requirement::InReach => 2,
+            Requirement::Breakable => 3,
+            Requirement::HoldingBlock => 4,
+            Requirement::Replaceable => 5,
+            Requirement::Unobstructed => 6,
+            Requirement::Supported => 7,
+            Requirement::HoldingSeed => 8,
+            Requirement::Plantable => 9,
+            Requirement::SkillLevel => 10,
+            Requirement::Ripe => 11,
+            Requirement::CreatureInReach => 12,
+            Requirement::CreatureInTouch => 13,
+            Requirement::CreatureAccepts => 14,
+            Requirement::CreatureIsMine => 15,
+            Requirement::Cookable => 16,
+            Requirement::CookingLevel => 17,
+            Requirement::HoldingFood => 18,
+            Requirement::Hurt => 19,
+            Requirement::ToolGood => 20,
+            Requirement::BlockLevel => 21,
+            Requirement::CropLevel => 22,
+            Requirement::Tillable => 23,
+            Requirement::CraftingTable => 24,
+            Requirement::Bed => 25,
+            Requirement::MultiblockCore => 26,
+            Requirement::Machine => 27,
+            Requirement::Altar => 28,
+            Requirement::Fishable => 29,
+            Requirement::Locked => 30,
+            Requirement::Bees => 31,
+            Requirement::Station => 32,
+            Requirement::Fertilisable => 33,
+            Requirement::Store => 34,
+            Requirement::Swaps => 35,
+            Requirement::SprungTrap => 36,
+            Requirement::Seat => 37,
+        }
+    }
+
+    /// Its name, as `actions.ron` writes it: `ToolGood`.
+    pub fn name(self) -> String {
+        ron::to_string(&self).unwrap_or_default()
+    }
+
+    /// The requirement called `name`, as `actions.ron` writes it.
+    pub fn named(name: &str) -> Option<Requirement> {
+        Requirement::ALL.into_iter().find(|need| need.name() == name)
+    }
 }
 
 /// Engine-owned effects that actions compile down to.
@@ -206,6 +269,8 @@ pub enum Effect {
     Fish,
     /// Sleep at the target bed: the actor wakes there after dying, until they have a home.
     Sleep,
+    /// Sit on the target seat: the actor is set on it, and sits until they move off.
+    Sit,
     /// Light the multiblock whose core is the target, if it stands around it: the
     /// Homestead Hearth becomes the actor's home, a crucible kiln starts smelting.
     Light,
@@ -451,6 +516,9 @@ pub fn crop_level_met(ctx: &impl ActionContext, cell: IVec3) -> bool {
     })
 }
 
+/// The tag of a block a player can sit on (`Requirement::Seat`).
+pub const SEAT_TAG: &str = "seat";
+
 /// What using the block at `pos` changes (see [`crate::block::BlockDef::swaps`]): it and
 /// its other half (the upper half above a lower one, or the lower below an upper), each
 /// with what it turns into. Empty when it swaps for nothing.
@@ -608,6 +676,14 @@ impl ActionDef {
             Requirement::Bed => {
                 let (block, _) = block_target()?;
                 ctx.block(block).is_some_and(|b| ctx.blocks().def(b).has_tag("bed"))
+            }
+            Requirement::Seat => {
+                let (block, _) = block_target()?;
+                let seat = ctx.block(block).is_some_and(|b| ctx.blocks().def(b).has_tag(SEAT_TAG));
+                let free = |p: IVec3| ctx.block(p).is_some_and(|b| !ctx.info(b).solid);
+                let feet = crate::vitals::seated_feet(block, ctx.block(block).is_some_and(|b| ctx.info(b).solid)).floor().as_ivec3();
+                let hand_free = ctx.actor_held().is_none_or(|item| !ctx.info(item).placeable);
+                seat && free(feet) && free(feet + IVec3::Y) && hand_free
             }
             Requirement::Locked => {
                 let (block, _) = block_target()?;

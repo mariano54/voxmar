@@ -15,6 +15,9 @@
 //!   into a puff of smoke.
 //! - A creature coils through its wind-up and snaps into its strike as the blow lands
 //!   (`creatures`, by its attack's style), so the timing to block or dodge reads in its body.
+//! - A creature staggered (a perfect block, a daze) reels instead: its wind-up ends with no
+//!   blow, its head droops and its body sways while the server holds it, dizzy sparks
+//!   circle over its head and it thuds and wobbles (`combat_fx.ron`'s `stagger`).
 //! - A blow that hurts the player thuds, tips the view toward the side it came from and
 //!   reddens the edges of the screen. A block knocks and jolts the hand; a perfect block
 //!   rings and throws sparks before the eyes.
@@ -52,7 +55,7 @@ pub mod sound;
 pub mod style;
 
 pub use style::FightLook;
-use style::{Burst, Stance, StrikeLook};
+use style::{Burst, Stance, StaggerLook, StrikeLook};
 
 pub struct FightFxPlugin;
 
@@ -92,6 +95,17 @@ pub fn stop_for(look: &FightLook, blow: Blow, share: f32, killed: bool) -> f32 {
     let hit = &look.hit;
     let stop = (hit.stop + hit.stop_per_share * share.clamp(0.0, 1.0)).min(hit.stop_most) * look.blow(blow).stop;
     if killed { stop.max(look.death.stop) } else { stop }
+}
+
+/// How big a creature's flinch is, as a share of the hit's `recoil`, `tilt` and `squash`:
+/// one of `size` (width, height, already at its own scale) struck for `share` of its
+/// health. A rabbit is thrown about, a bear barely rocked; a telling blow rocks harder than
+/// a scratch.
+pub fn flinch_size(weigh: &style::Weigh, size: (f32, f32), share: f32) -> f32 {
+    let mass = (size.0 * size.0 * size.1).max(1e-3);
+    let body = (weigh.mass / mass).cbrt().clamp(weigh.heavy, weigh.light);
+    let blow = weigh.glancing + (weigh.telling - weigh.glancing) * (share / 0.5).clamp(0.0, 1.0);
+    body * blow
 }
 
 /// How far a flinch `t` seconds in (of `seconds`) has the creature pushed back, 0 to 1:
@@ -165,6 +179,28 @@ pub fn recover_peak(strike: &StrikeLook, recovery: f32) -> f32 {
 pub fn coil_share(strike: &StrikeLook, coil: f32) -> f32 {
     let (stance, _) = strike_stance(strike, Some(coil), None, 0.0);
     (stance.size() / strike.coil.size().max(1e-4)).min(1.0)
+}
+
+/// How far into its stagger stance a creature is (0 to 1, before easing) `dt` seconds of
+/// game time on from `depth`: further in by `dt / ease` while `staggered`, as quickly back
+/// out after. Counted in game time, so `ease` seconds after a stagger began it is all the
+/// way in however the frames fell.
+pub fn stagger_depth(look: &StaggerLook, depth: f32, staggered: bool, dt: f32) -> f32 {
+    let by = dt / look.ease.max(1e-3);
+    (if staggered { depth + by } else { depth - by }).clamp(0.0, 1.0)
+}
+
+/// How much of its stagger stance a creature `depth` into it (`stagger_depth`) shows, 0 to 1.
+pub fn stagger_share(depth: f32) -> f32 {
+    let x = depth.clamp(0.0, 1.0);
+    x * x * (3.0 - 2.0 * x)
+}
+
+/// A staggered creature's stance `depth` into it (`stagger_depth`), `t` seconds into the
+/// stagger: the stagger's stance, its body swaying side to side.
+pub fn stagger_stance(look: &StaggerLook, depth: f32, t: f32) -> Stance {
+    let sway = look.sway * (std::f32::consts::TAU * look.sway_rate * t).sin();
+    Stance { twist: look.stance.twist + sway, ..look.stance }.scaled(stagger_share(depth))
 }
 
 /// The sounds of a blow of the player's the server answered, by name and loudness: a hit by
@@ -309,10 +345,12 @@ pub struct Heard {
     pub knocks: u32,
     /// Rings drawn on the ground for bosses' blows.
     pub markers: u32,
-    /// Shots loosed, specks of their trails left, and shots arrived.
+    /// Shots loosed, specks of their trails left, and shots arrived; and shots of cancelled
+    /// swings gone without arriving.
     pub shots: u32,
     pub trail: u32,
     pub impacts: u32,
+    pub cancelled: u32,
 }
 
 /// Sounds to play this frame: name, loudness and pitch.
@@ -370,6 +408,8 @@ struct Seen {
     /// The rhythm's seconds into its swing last frame, and what was held.
     since: f32,
     held: Option<voxmar_engine::block::BlockId>,
+    /// The player's cancelled swings (`Fighting::cancels`).
+    cancels: u32,
     dashing: bool,
     guarding: bool,
 }
@@ -651,18 +691,23 @@ fn react(
     };
     // The fight so far is not news on joining.
     if !seen.started {
-        (seen.started, seen.struck, seen.hurt) = (true, fighting.struck_count, fighting.hurt_count);
+        (seen.started, seen.struck, seen.hurt, seen.cancels) = (true, fighting.struck_count, fighting.hurt_count, fighting.cancels);
     }
     let combat = &launch.content.combat;
     let held = player.inventory.get(player.selected).map(|s| s.item);
     let weapon = combat.wielded(held, |skill| launch.content.skills.level(player.skills.xp(skill)));
     let class = combat.class_of(&weapon).map_or(voxmar_engine::combat::FIST_CLASS, |class| class.name.as_str());
-    // A swing starts: the rhythm's meter starts over (not for a switch of what is held).
+    // A swing starts: the rhythm's meter starts over (not for a switch of what is held, nor
+    // a swing cancelled, which sets the meter back too).
     let timing = combat.timing(&weapon);
     let since = fighting.rhythm.meter(time.elapsed_secs_f64(), &timing) * timing.cooldown;
     let shooting = look.shots.get(class);
-    if held == seen.held && since < seen.since - 1e-3 {
+    let cancelled = fighting.cancels != seen.cancels;
+    seen.cancels = fighting.cancels;
+    if held == seen.held && since < seen.since - 1e-3 && !cancelled {
         say(&format!("swing.{class}"), 1.0, 1.0, &mut heard);
+        // Its shot, if it draws one, is the one a cancel takes back.
+        shots.last = None;
         // A shot is drawn, if there is one to loose: it lets go to reach the creature
         // looked at as the wind-up ends.
         let ammo = combat.ammo(&weapon);
@@ -796,6 +841,18 @@ fn react(
         heard.bursts += 1;
         heard.poofs += 1;
     }
+    // Creatures staggered: a thud and a dazed wobble (deeper for a bigger one, as its hits
+    // are), and sparks circling up over its head.
+    for (head, height, coat) in std::mem::take(&mut creatures.staggers) {
+        let pitch = (1.0 / height.max(0.2)).powf(0.15).clamp(0.82, 1.25);
+        // Heard as a blow near at hand is, fainter further off.
+        let gain = (TOLD_NEAR / head.distance(player.position).max(TOLD_NEAR)).sqrt();
+        say("stagger", gain, pitch, &mut heard);
+        let sparks = look.stagger.sparks;
+        let colour = sparks.color.map_or(coat, |c| [c.0, c.1, c.2]);
+        dizzy(&mut particles, &sparks, amount, head, height, colour, light_at(head), head.to_array().iter().map(|v| v.to_bits() as u64).fold(11, |a, b| a ^ b.rotate_left(23)));
+        heard.bursts += 1;
+    }
 }
 
 /// Throws a burst of `count` × `scale` particles out from `at`, mostly along `toward`: sparks
@@ -829,6 +886,39 @@ fn burst(particles: &mut Particles, burst: &Burst, scale: f32, at: Vec3, toward:
             light,
             blend: if glow { ParticleBlend::Add } else { ParticleBlend::Cutout },
             hides: if glow { 0.3 } else { 0.0 },
+            ..Particle::default()
+        });
+    }
+}
+
+/// Dizzy sparks over a staggered creature's head (`at`): set round it in a ring as wide as
+/// it is tall allows, each going round the ring and drifting up as it fades.
+#[allow(clippy::too_many_arguments)]
+fn dizzy(particles: &mut Particles, sparks: &Burst, scale: f32, at: Vec3, height: f32, colour: [u8; 3], light: [u8; 2], seed: u64) {
+    let count = (sparks.count as f32 * scale).round() as u32;
+    let mut noise = crate::sfx::Noise(seed);
+    let radius = (height * 0.3).clamp(0.2, 0.8);
+    for i in 0..count {
+        let angle = std::f32::consts::TAU * (i as f32 + 0.5 * noise.unit()) / count.max(1) as f32;
+        let out = Vec3::new(angle.cos(), 0.0, angle.sin());
+        // Round the ring, the same way for every spark.
+        let round = Vec3::new(-angle.sin(), 0.0, angle.cos());
+        particles.spawn(&Particle {
+            position: at + out * radius + Vec3::Y * noise.next() * 0.05,
+            velocity: round * sparks.speed * (0.8 + 0.4 * noise.unit()) + Vec3::Y * 0.25,
+            motion: Motion::Rise,
+            gravity: -0.4,
+            drag: 1.2,
+            size: sparks.size * (0.8 + 0.4 * noise.unit()),
+            grow: 0.6,
+            wander: 0.1,
+            life: sparks.life * (0.8 + 0.4 * noise.unit()),
+            look: Look::Speck,
+            color: [colour[0], colour[1], colour[2], 255],
+            glow: true,
+            light,
+            blend: ParticleBlend::Add,
+            hides: 0.3,
             ..Particle::default()
         });
     }
@@ -918,6 +1008,31 @@ mod tests {
         assert_eq!(marker_fill(1.2, 1.1), 1.0);
     }
 
+    /// A small creature is thrown about by a blow and a big one barely rocked; a blow that
+    /// takes much of its health rocks it harder than a scratch, and the weights stay inside
+    /// their bounds however small or huge the body.
+    #[test]
+    fn small_creatures_flinch_more_and_telling_blows_more_than_scratches() {
+        let look = look();
+        let weigh = &look.hit.weigh;
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let size = |name: &str| {
+            let (_, creature) = content.creatures.iter().find(|(_, c)| c.def.name.rsplit(':').next() == Some(name)).unwrap_or_else(|| panic!("no {name}"));
+            creature.def.body.size
+        };
+        let at = |name: &str, share: f32| flinch_size(weigh, size(name), share);
+        let (rabbit, wolf, bear) = (at("rabbit", 0.25), at("wolf", 0.25), at("brown_bear", 0.25));
+        assert!(rabbit > wolf * 1.4, "a rabbit flinches {rabbit}, hardly more than a wolf's {wolf}");
+        assert!(bear < wolf * 0.8, "a bear flinches {bear}, hardly less than a wolf's {wolf}");
+        assert!((0.7..1.4).contains(&wolf), "a wolf, the middling body, flinches {wolf}, far from the hit's own size");
+        assert!(at("wolf", 0.05) < at("wolf", 0.5), "a scratch rocks a wolf as hard as a telling blow");
+        assert_eq!(at("wolf", 0.5), at("wolf", 1.0), "a blow past half its health rocks no harder");
+        let most = weigh.light * weigh.telling;
+        let least = weigh.heavy * weigh.glancing;
+        assert_eq!(flinch_size(weigh, (0.01, 0.01), 1.0), most);
+        assert_eq!(flinch_size(weigh, (40.0, 40.0), 0.0), least);
+    }
+
     #[test]
     fn bigger_blows_freeze_longer_and_kills_longest() {
         let look = look();
@@ -939,6 +1054,30 @@ mod tests {
         assert!((flinch_weight(0.035, 0.2) - 1.0).abs() < 1e-4);
         assert!(flinch_weight(0.1, 0.2) < 1.0 && flinch_weight(0.1, 0.2) > flinch_weight(0.15, 0.2));
         assert_eq!(flinch_weight(0.2, 0.2), 0.0);
+    }
+
+    /// A stagger is all the way in `ease` seconds of game time after it began, however the
+    /// frames fell (a few long ones or many short), shows its stance whole there, sways, and
+    /// eases back out as long once it is over.
+    #[test]
+    fn a_stagger_eases_in_by_game_time_sways_and_eases_out() {
+        let look = look().stagger;
+        for frames in [1, 2, 3, 7, 60] {
+            let dt = look.ease / frames as f32;
+            let depth = (0..frames).fold(0.0, |depth, _| stagger_depth(&look, depth, true, dt));
+            assert!((depth - 1.0).abs() < 1e-4, "{frames} frames over the ease came to {depth}");
+        }
+        assert!(stagger_depth(&look, 0.0, true, look.ease * 0.5) < 1.0, "half the ease is not all the way in");
+        // All the way in, it stands in the stagger's stance (no sway at its start), and sways
+        // `sway` either way a quarter of a sway's time later.
+        let stance = stagger_stance(&look, 1.0, 0.0);
+        assert!((stance.nod - look.stance.nod).abs() < 1e-5 && (stance.crouch - look.stance.crouch).abs() < 1e-5 && (stance.lean - look.stance.lean).abs() < 1e-5);
+        let quarter = 0.25 / look.sway_rate.max(1e-3);
+        assert!((stagger_stance(&look, 1.0, quarter).twist - look.stance.twist - look.sway).abs() < 1e-4);
+        assert!(look.stance.nod > 0.0 && look.stance.lean < 0.0 && look.sway > 0.0, "its head droops, its weight goes back and it sways");
+        // Out again over as long.
+        assert_eq!(stagger_depth(&look, 1.0, false, look.ease), 0.0);
+        assert_eq!(stagger_stance(&look, 0.0, quarter), Stance::default());
     }
 
     /// The core recovery after a creature's blow (`combat.ron`'s `creature_recovery`).

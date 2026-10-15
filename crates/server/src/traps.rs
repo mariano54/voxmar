@@ -6,7 +6,7 @@
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use voxmar_engine::block::BlockId;
-use voxmar_engine::creature::{CreatureId, mix, unit_from};
+use voxmar_engine::creature::CreatureId;
 use voxmar_engine::crop::level_bonus;
 use voxmar_engine::dropped;
 use voxmar_engine::glam::IVec3;
@@ -15,13 +15,13 @@ use voxmar_engine::lang::Words;
 use voxmar_engine::loot::{self, Moment};
 use voxmar_engine::schedule::Tier;
 use voxmar_engine::traits;
-use voxmar_protocol::{ChatKind, PlayerId, ServerMessage};
+use voxmar_protocol::PlayerId;
 
 use crate::Server;
-use crate::items::random3;
 use crate::process::Process;
 
-/// What a sprung trap holds: the species caught, and the seed its loot is rolled from.
+/// What a sprung trap holds: the species caught, and the caught creature's own seed, kept
+/// with it in saves (its loot rolls by the emptier's count of catches, `Draw::Catch`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Catch {
     pub species: CreatureId,
@@ -114,7 +114,7 @@ impl Server {
         let level = self.content.skills.level(player.skills.xp(trap.skill));
         if level < trap.level {
             let skill = Words::Own(voxmar_engine::lang::def_key("skill", &self.content.skills.get(trap.skill).name), self.content.skills.get(trap.skill).title.clone());
-            player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: Words::key("trap.needs").with("skill", skill).with("level", Words::text(trap.level)) });
+            self.refuse(agent, Words::key("trap.needs").with("skill", skill).with("level", Words::text(trap.level)));
             return;
         }
         let catch = self.catches.caught.remove(&pos);
@@ -125,12 +125,10 @@ impl Server {
         let tool: Vec<String> = player.held().map_or_else(Vec::new, |item| self.content.blocks.def(item).tags.clone());
         let bonus = species.xp_skill.map_or(0.0, |skill| level_bonus(self.content.skills.level(player.skills.xp(skill)), 1, self.content.skills.max_level()));
         let moment = Moment { bonus, tool: &tool, night: self.daylight() < 0.3, by_player: true };
-        let mut draws = 0u64;
-        let tick = self.tick;
-        let found = loot::roll(&species.loot, &moment, || {
-            draws += 1;
-            unit_from(mix(catch.seed, draws ^ tick << 8))
-        });
+        // Each roll numbered by the emptier's own count of catches, never by the tick it is
+        // emptied on or by what else rolled first.
+        let player = self.players.get_mut(&agent).expect("checked above");
+        let found = loot::roll(&species.loot, &moment, || player.draw(crate::save::Draw::Catch)[0]);
         let name = species.def.name.clone();
         let page = Self::page_of(&species.def);
         let kill = species.xp_skill.map(|skill| (skill, species.def.xp.kill));
@@ -141,7 +139,7 @@ impl Server {
             let left = player.inventory.add(item, count);
             player.changed(traits::INVENTORY);
             if left > 0 {
-                let body = dropped::popped(pos, random3(tick, pos, 0x5a4e + i as u32));
+                let body = dropped::popped(pos, self.meta.next_pop(pos, 0x5a4e + i as u32));
                 self.items.spawn(ItemStack { item, count: left }, body, dropped::PICKUP_DELAY);
             }
         }
@@ -168,7 +166,7 @@ mod tests {
     use voxmar_engine::coords::ColumnPos;
     use voxmar_engine::glam::Vec3;
     use voxmar_engine::world::Column;
-    use voxmar_protocol::TICKS_PER_SECOND;
+    use voxmar_protocol::{ServerMessage, TICKS_PER_SECOND};
 
     use super::*;
 
@@ -232,6 +230,33 @@ mod tests {
         assert_eq!(named(&server, snare), "base:snare");
     }
 
+    /// Below the trap's level a catch stays where it is, and the player is told why as a
+    /// refusal (under the crosshair), not a chat line. The base snare asks for Hunter 1,
+    /// which every player has, so the test asks for more.
+    #[test]
+    fn a_catch_below_the_traps_level_is_refused_with_why() {
+        let (mut server, snare) = field(1);
+        let mut traps = (*server.content.traps).clone();
+        traps.traps.iter_mut().for_each(|trap| trap.level = 5);
+        server.content.traps = Arc::new(traps);
+        let (client, connection) = voxmar_protocol::local_pair();
+        server.players.get_mut(&1).unwrap().connection = connection;
+        put(&mut server, "base:rabbit", snare.as_vec3() + Vec3::new(0.5, 0.0, 0.5));
+        server.spring_traps();
+        server.take_from_trap(1, snare);
+        assert_eq!(named(&server, snare), "base:snare_sprung", "still holding its catch");
+        assert!(server.catches.caught.contains_key(&snare));
+        let mut refused = Vec::new();
+        while let Ok(Some(message)) = client.try_recv() {
+            match message {
+                ServerMessage::Refused { why: Words::Key(key, _) } => refused.push(key),
+                ServerMessage::Chat { text: Words::Key(key, _), .. } => assert_ne!(key, "trap.needs", "said in chat"),
+                _ => {}
+            }
+        }
+        assert_eq!(refused, ["trap.needs"]);
+    }
+
     /// What the gate's Snare step does: a rabbit summoned (by command, with the player two
     /// blocks off) into a set snare's cell is caught by the server's own ticks.
     #[test]
@@ -276,5 +301,32 @@ mod tests {
         assert!(restored.get(snare).is_some());
         server.set_block(snare, BlockId::AIR);
         assert!(server.catches.get(snare).is_none(), "broken, the catch is lost");
+    }
+
+    /// A catch's loot is rolled by the emptier's own count of catches, not the tick it is
+    /// taken on or what else the world rolled first, and each roll counts on.
+    #[test]
+    fn a_catch_rolls_by_the_emptiers_count_not_the_tick_or_other_rolls() {
+        // Later, and with the world's other loot rolls (kills elsewhere) drawn in between.
+        let taken = |tick: u64, others: usize| {
+            let (mut server, snare) = field(1);
+            server.meta.draw_key = 0x0d1a;
+            server.tick = tick;
+            let mut found = Vec::new();
+            for _ in 0..12 {
+                for _ in 0..others {
+                    server.meta.next_loot();
+                }
+                put(&mut server, "base:rabbit", snare.as_vec3() + Vec3::new(0.5, 0.0, 0.5));
+                server.spring_traps();
+                server.players.get_mut(&1).unwrap().inventory = Default::default();
+                server.take_from_trap(1, snare);
+                found.push(server.players[&1].inventory.slots.iter().flatten().map(|s| (s.item, s.count)).collect::<Vec<_>>());
+            }
+            (found, server.players[&1].draws.catches)
+        };
+        let (first, rolls) = taken(1_000, 0);
+        assert!(rolls > 0 && first.iter().all(|f| !f.is_empty()), "twelve catches rolled {rolls} times for {first:?}");
+        assert_eq!(taken(1_377, 3), (first, rolls), "the same catches taken later, after other rolls, gave otherwise");
     }
 }
