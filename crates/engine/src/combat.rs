@@ -1312,6 +1312,11 @@ impl CombatRegistry {
         &self.classes[index]
     }
 
+    /// Every weapon class.
+    pub fn classes(&self) -> &[ClassDef] {
+        &self.classes
+    }
+
     /// Every item that is a weapon, with its weapon, in registry order.
     pub fn weapons(&self) -> impl Iterator<Item = (BlockId, &Weapon)> + '_ {
         self.weapons.iter().enumerate().filter_map(|(i, w)| Some((BlockId(i as u16), w.as_ref()?)))

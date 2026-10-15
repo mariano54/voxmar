@@ -699,7 +699,7 @@ impl Server {
     /// one lacks, judged as if the player stood in it.
     fn home_command(&self, id: Source) -> Reply {
         let player = self.players.get(&Self::me(id)?).ok_or_else(|| Words::key("command.error.nobody_to_give_to"))?;
-        let Some(home) = player.home.or(player.bed) else { return Err(Words::key("home.none")) };
+        let Some(home) = player.home_spot(&self.lit) else { return Err(Words::key("home.none")) };
         let anchor = home.floor().as_ivec3();
         let survey = self.survey_around(anchor, Some(Self::me(id)?));
         let calm = voxmar_engine::weather::Weather::NONE;
