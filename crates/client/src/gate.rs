@@ -597,9 +597,9 @@ struct Gate {
     /// Raw small game carried, slots and pouch, as the dry step hangs the rack, so its
     /// readout can count what hung.
     rack_rabbits: u32,
-    /// When the dry step last cleared the raw small game carried (server seconds), and the
-    /// first raw small game seen picked up once it gave its own.
-    dry_cleared: f32,
+    /// What the dry step carried when it last cleared the raw small game carried, until the
+    /// pack is seen cleared, and the first raw small game seen picked up once it gave its own.
+    dry_clearing: Option<u32>,
     dry_pickup: Option<String>,
     /// The creature the combat-marks step tells its blows at, when (game time) it last told
     /// them, and how many runs it has told.
@@ -857,7 +857,7 @@ impl Gate {
             chimney_since: None,
             pot_ground: None,
             rack_rabbits: 0,
-            dry_cleared: 0.0,
+            dry_clearing: None,
             dry_pickup: None,
             marked: None,
             marked_at: 0.0,
@@ -11829,7 +11829,7 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
             // None of what earlier steps left: the step hangs only what it gives.
             net.command("clear raw_small_game");
             net.command(&format!("tp {} {} {}", rack.x as f32 + 0.5, rack.y, rack.z as f32 - 2.5));
-            (gate.rack_rabbits, gate.dry_cleared, gate.dry_pickup) = (0, gate.server_now, None);
+            (gate.rack_rabbits, gate.dry_clearing, gate.dry_pickup) = (0, Some(carried_of(world, "base:raw_small_game")), None);
             gate.advance(now);
         }
         1 => {
@@ -11849,9 +11849,14 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
                     let near = if near.is_empty() { String::new() } else { format!("; within {DRY_NEAR} blocks {}", near.join(", ")) };
                     gate.check("drying rack", Err(format!("the raw small game about the rack never cleared in {DRY_WAIT} server seconds: {carried} carried{near}")));
                     gate.next(Step::Snare, now);
-                } else if carried > 0 && gate.server_now - gate.dry_cleared >= 1.0 {
+                } else if carried == 0 {
+                    gate.dry_clearing = None;
+                } else if gate.dry_clearing.is_none_or(|was| carried > was) {
+                    // More came in since the last clear was seen, or since it was sent: clear
+                    // again at once.
+                    info!("gate: Dry: {carried} raw small game carried before the give, cleared again at {:.1}s", gate.server_now);
                     world.resource::<Net>().command("clear raw_small_game");
-                    gate.dry_cleared = gate.server_now;
+                    gate.dry_clearing = Some(carried);
                 }
                 return;
             }
