@@ -669,6 +669,9 @@ struct Gate {
     trough: Option<IVec3>,
     /// Whether the player has been seen holding what this machine stage puts in.
     machines_seen: bool,
+    /// Whether the boiler and crusher failed before the fishing (their check said why),
+    /// so the dust is not waited for.
+    machines_failed: bool,
     /// When the aurochs at the treadwheel was last told to hold still, by the server's clock.
     machines_held: f32,
     /// The highest the player's feet reached while climbing out of the pool.
@@ -914,6 +917,7 @@ impl Gate {
             machines_asked: f32::MIN,
             trough: None,
             machines_seen: false,
+            machines_failed: false,
             machines_held: f32::MIN,
             highest: f32::MIN,
             scene_teleport: 0,
@@ -2509,6 +2513,85 @@ fn work_seconds(world: &World, machine: &str, input: &str) -> Option<f32> {
     Some(process.seconds / speed)
 }
 
+/// Where `Step::Workshop` sets its boiler, from the player's feet: high in the air behind
+/// them, clear of the test ground, the pool and the kiln over their head; the steam
+/// crusher stands a block on.
+const MACHINES_AT: IVec3 = IVec3::new(-1, 5, -3);
+
+/// Takes the workshop's boiler and steam crusher down.
+fn machines_down(world: &mut World, gate: &Gate) {
+    let boiler = gate.feet + MACHINES_AT;
+    world.resource::<Net>().command(&format!("fill {} {} {} {} {} {} air", boiler.x, boiler.y, boiler.z, boiler.x + 1, boiler.y, boiler.z));
+}
+
+/// One frame of the workshop's machines stage (`Gate::machines_stage`): 0 coal into the
+/// boiler, 1 copper ore into the crusher, each by a use with it in hand, and 2 the dust
+/// taken out with an empty hand once the crush has had its seconds (`work_seconds`).
+/// `Some(Ok(dust held))` as a stage is done (and the next begun), `Some(Err(why))` once 30
+/// server seconds from `waited_from` have gone with it not done.
+fn machines_stage(world: &mut World, gate: &mut Gate, waited_from: f32, in_phase: f32) -> Option<Result<u32, String>> {
+    let (boiler, crusher) = (gate.feet + MACHINES_AT, gate.feet + MACHINES_AT + IVec3::X);
+    let client = world.resource::<ClientWorld>();
+    if client.block(crusher) != client.registry.id("base:steam_crusher") || client.block(boiler) != client.registry.id("base:boiler") {
+        return (gate.server_now - waited_from > WORKSHOP_WAIT).then(|| Err("the boiler and crusher never came".into()));
+    }
+    let (coal, ore, dust) = (holding(world, "base:coal_ore").0, holding(world, "base:copper_ore").0, holding(world, "base:copper_dust").0);
+    // Each stage is done by what the player holds, as the server says it: what goes in
+    // must first be seen in hand (it comes a few frames after it is given), then gone
+    // after the machine was used.
+    let held = match gate.machines_stage {
+        0 => coal,
+        1 => ore,
+        _ => 0,
+    };
+    gate.machines_seen |= held > 0;
+    let put_in = gate.machines_seen && held == 0 && gate.machines_asked > f32::MIN;
+    let (done, target, holds) = match gate.machines_stage {
+        0 => (put_in, boiler, Some("base:coal_ore")),
+        1 => (put_in, crusher, Some("base:copper_ore")),
+        _ => (dust >= 2, crusher, None),
+    };
+    if done {
+        gate.machines_stage += 1;
+        gate.machines_since = gate.server_now;
+        gate.machines_asked = f32::MIN;
+        gate.machines_seen = false;
+        return Some(Ok(dust));
+    }
+    // Waits for what it holds to arrive before using the machine with it.
+    let ready = match holds {
+        Some(name) => select(world, name),
+        None => empty_hand(world),
+    };
+    // Used only every few server seconds (see the kiln's lighting). The dust is asked for
+    // once the crusher has had the seconds its recipe takes (from the loaded data), counted
+    // from the ore going in, then each second.
+    let due = match gate.machines_stage {
+        0 | 1 => gate.server_now - gate.machines_asked >= 3.0,
+        _ => {
+            let work = work_seconds(world, "base:steam_crusher", "base:copper_ore").unwrap_or(0.0);
+            gate.server_now - gate.machines_since >= work && gate.server_now - gate.machines_asked >= 1.0
+        }
+    };
+    if ready && due {
+        gate.machines_asked = gate.server_now;
+        let actions = world.resource::<crate::Actions>().0.clone();
+        // With the player's input first, as a click sends it: the slot just selected
+        // reaches the server before the use, not with the next input. A use from the
+        // slot held before (emptied by the last use) takes an idle machine's inputs
+        // back out (`Factory::take_outputs_into`).
+        world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("base:use_machine"), voxmar_engine::action::ActionTarget::Block { block: target, face: voxmar_engine::coords::Face::NegY });
+    }
+    // No progress for 30 seconds of the server's time (a loaded machine stretches it);
+    // the game's clock only catches a server that stopped.
+    if gate.server_now - waited_from > 30.0 || in_phase > 300.0 {
+        let what = ["the boiler never took the coal", "the crusher never took the ore", "the crusher never gave back two dust"][gate.machines_stage.min(2) as usize];
+        let waited = (gate.server_now - waited_from, in_phase);
+        return Some(Err(format!("{what} ({:.1} server s, {:.1} game s): holding coal {coal}, ore {ore}, dust {dust}", waited.0, waited.1)));
+    }
+    None
+}
+
 /// The level of a skill, as the client was last told.
 fn skill_level(world: &World, name: &str) -> (u8, u32) {
     let (player, launch) = (world.resource::<LocalPlayer>(), world.resource::<Launch>());
@@ -2736,11 +2819,32 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 // first rod at 80), so a catch mostly takes one cast rather than two.
                 net.command("give fine_rod 1");
                 net.command("skill fishing 99");
+                // The boiler and steam crusher, fired and fed before the line goes in, so
+                // the crush runs while it waits for a bite (`MACHINES_AT`).
+                let boiler = gate.feet + MACHINES_AT;
+                for line in [format!("setblock {} {} {} boiler", boiler.x, boiler.y, boiler.z), format!("setblock {} {} {} steam_crusher", boiler.x + 1, boiler.y, boiler.z), "give coal_ore 2".to_owned()] {
+                    net.command(&line);
+                }
+                (gate.machines_stage, gate.machines_since, gate.machines_asked, gate.machines_seen, gate.machines_failed) = (0, gate.server_now, f32::MIN, false, false);
                 gate.advance(now);
             } else if gate.server_in_phase() > WORKSHOP_WAIT {
                 fail(world, gate, "seed pouch", format!("50 seeds given with a seed pouch carried, the pouch holds {pouched}"));
             }
         }
+        // Coal into the boiler, then the ore into the crusher beside it, by a use with each
+        // in hand; the crush runs on through the fishing.
+        11 if gate.machines_stage < 2 && !gate.machines_failed => match machines_stage(world, gate, gate.machines_since, in_phase) {
+            Some(Ok(_)) if gate.machines_stage == 1 => world.resource::<Net>().command("give copper_ore 1"),
+            // The ore in: the fishing's time starts now.
+            Some(Ok(_)) => to_phase(gate, 11, now),
+            Some(Err(why)) => {
+                gate.check("workshop: machines", Err(why));
+                gate.machines_failed = true;
+                machines_down(world, gate);
+                to_phase(gate, 11, now);
+            }
+            None => {}
+        },
         // A rod held over the pool, right button down, casts until something bites.
         11 => {
             let fish = |world: &World| {
@@ -2839,9 +2943,11 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 for line in ["clear", "give oak_planks 64", "give cobblestone 64", "give glass 32", "give glowstone 16"] {
                     net.command(line);
                 }
-                // A Crucible Kiln built in the air over the player's head, clear of the
-                // test ground and the pool, to light.
-                let kiln = world.resource::<LocalPlayer>().position.floor().as_ivec3() + IVec3::new(0, 4, 0);
+                // Back where they stood, under a Crucible Kiln built in the air over their
+                // head, clear of the test ground, the pool and the crusher, to light.
+                let feet = gate.feet;
+                net.command(&format!("tp {} {} {}", feet.x as f32 + 0.5, feet.y, feet.z as f32 + 0.5));
+                let kiln = feet + IVec3::new(0, 4, 0);
                 let at = |dx: i32, dy: i32, dz: i32| format!("{} {} {}", kiln.x + dx, kiln.y + dy, kiln.z + dz);
                 let net = world.resource::<Net>();
                 for line in [
@@ -2935,46 +3041,21 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 fail(world, gate, "kiln", format!("lighting the crucible in its kiln never counted ({:.1} server s, {:.1} game s): {} quests, the kiln's {state:?}", waited.0, waited.1, quests.len()));
             }
         }
-        // Coal in hand fires the boiler, ore in hand goes into the crusher beside it, and
-        // with an empty hand the crusher gives back two dust for the one ore, made on the
-        // boiler's steam.
+        // The crusher, fed before the fishing, has had the seconds its crush takes: with an
+        // empty hand it gives back two dust for the one ore, made on the boiler's steam.
         16 => {
-            let (boiler, crusher) = (gate.kiln, gate.kiln + IVec3::X);
-            let client = world.resource::<ClientWorld>();
-            if client.block(crusher) != client.registry.id("base:steam_crusher") || client.block(boiler) != client.registry.id("base:boiler") {
-                if in_phase > WORKSHOP_WAIT {
-                    fail(world, gate, "machines", "the boiler and crusher never came".into());
-                }
-                return;
+            if gate.machines_failed {
+                // Its check said why, before the fishing.
+                return end_workshop(world, gate, now);
             }
-            let (coal, ore, dust) = (holding(world, "base:coal_ore").0, holding(world, "base:copper_ore").0, holding(world, "base:copper_dust").0);
-            // Each stage is done by what the player holds, as the server says it: what goes in
-            // must first be seen in hand (it comes a few frames after it is given), then gone
-            // after the machine was used.
-            let held = match gate.machines_stage {
-                0 => coal,
-                1 => ore,
-                _ => 0,
-            };
-            gate.machines_seen |= held > 0;
-            let put_in = gate.machines_seen && held == 0 && gate.machines_asked > f32::MIN;
-            let (done, target, holds) = match gate.machines_stage {
-                0 => (put_in, boiler, Some("base:coal_ore")),
-                1 => (put_in, crusher, Some("base:copper_ore")),
-                _ => (dust >= 2, crusher, None),
-            };
-            if done {
-                let net = world.resource::<Net>();
-                match gate.machines_stage {
-                    0 => net.command("give copper_ore 1"),
-                    1 => net.command("clear"),
-                    _ => {}
-                }
-                if gate.machines_stage == 2 {
+            let waited_from = gate.phase_server;
+            match machines_stage(world, gate, waited_from, in_phase) {
+                Some(Ok(dust)) => {
                     gate.check("workshop: machines", Ok(format!("coal fired the boiler, its steam crushed one copper ore, and an empty hand took out {dust} dust")));
+                    machines_down(world, gate);
                     // The landing gate stays quick: the boiler and crusher are its machines
                     // check, and the MV, bloomery and iron-age phases play only in the full
-                    // gate. Taken down here, with the kit back for the steps after.
+                    // gate. The kiln's spot cleared, with the kit back for the steps after.
                     if !full_gate() {
                         let (a, b) = (gate.kiln - IVec3::Z, gate.kiln + IVec3::new(3, 1, 1));
                         let net = world.resource::<Net>();
@@ -2987,7 +3068,7 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                         end_workshop(world, gate, now);
                         return;
                     }
-                    // In their place, MV: a boiler and turbine over a transformer, an ore
+                    // Where the kiln stood, MV: a boiler and turbine over a transformer, an ore
                     // washer beside it, and a dry glass basin beside that for its water.
                     let k = gate.kiln;
                     let at = |d: IVec3| { let p = k + d; format!("{} {} {}", p.x, p.y, p.z) };
@@ -3012,47 +3093,12 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     gate.machines_asked = f32::MIN;
                     gate.machines_seen = false;
                     gate.advance(now);
-                    return;
                 }
-                gate.machines_stage += 1;
-                gate.machines_since = gate.server_now;
-                gate.machines_asked = f32::MIN;
-                gate.machines_seen = false;
-                return;
-            }
-            // Waits for what it holds to arrive before using the machine with it.
-            let ready = match holds {
-                Some(name) => select(world, name),
-                None => empty_hand(world),
-            };
-            // Used only every few server seconds (see the kiln above). The dust is asked for
-            // once the crusher has had the seconds its recipe takes (from the loaded data),
-            // then each second: asked on the three-second beat, a crush done just after one
-            // ask waited nearly three more for the next.
-            let due = match gate.machines_stage {
-                0 | 1 => gate.server_now - gate.machines_asked >= 3.0,
-                _ => {
-                    let work = work_seconds(world, "base:steam_crusher", "base:copper_ore").unwrap_or(0.0);
-                    gate.server_now - gate.machines_since >= work && gate.server_now - gate.machines_asked >= 1.0
+                Some(Err(why)) => {
+                    machines_down(world, gate);
+                    fail(world, gate, "machines", why);
                 }
-            };
-            if ready && due {
-                gate.machines_asked = gate.server_now;
-                let actions = world.resource::<crate::Actions>().0.clone();
-                // With the player's input first, as a click sends it: the slot just selected
-                // reaches the server before the use, not with the next input. A use from the
-                // slot held before (emptied by the last use) takes an idle machine's inputs
-                // back out (`Factory::take_outputs_into`).
-                world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("base:use_machine"), voxmar_engine::action::ActionTarget::Block { block: target, face: voxmar_engine::coords::Face::NegY });
-            }
-            // No progress for 30 seconds of the server's time (a loaded machine stretches it);
-            // the game's clock only catches a server that stopped.
-            if gate.server_now - gate.machines_since > 30.0 || in_phase > 300.0 {
-                let what = ["the boiler never took the coal", "the crusher never took the ore", "the crusher never gave back two dust"][gate.machines_stage.min(2) as usize];
-                let waited = (gate.server_now - gate.machines_since, in_phase);
-                fail(world, gate, "machines", format!("{what} ({:.1} server s, {:.1} game s): holding coal {coal}, ore {ore}, dust {dust}", waited.0, waited.1));
-                let (a, b) = (boiler, crusher);
-                world.resource::<Net>().command(&format!("fill {} {} {} {} {} {} air", a.x, a.y, a.z, b.x, b.y, b.z));
+                None => {}
             }
         }
         // MV: the turbine's power comes down through the transformer to the washer, which
@@ -3751,6 +3797,8 @@ fn end_workshop(world: &mut World, gate: &mut Gate, now: f32) {
     for tool in ["stone_pickaxe", "wooden_hoe", "crafting_table", "stick", "bread", "fine_rod"] {
         net.command(&format!("clear {tool}"));
     }
+    machines_down(world, gate);
+    let net = world.resource::<Net>();
     let feet = gate.feet;
     let line = format!("tp {} {} {}", feet.x as f32 + 4.5, feet.y - 2, feet.z as f32 + 0.5);
     net.command(&line);
@@ -12376,8 +12424,8 @@ fn kiln_down(world: &mut World, kiln: IVec3) {
 }
 
 /// The lit kiln's bronze: three copper ingots in hand and a tin ore in the pack, used on
-/// the crucible, make four bronze in one go and leave neither. Then the kiln comes down
-/// and a boiler with a steam crusher beside it goes where it stood.
+/// the crucible, make four bronze in one go and leave neither. Then the kiln comes down,
+/// on to the dust the steam crusher (fed before the fishing) has made.
 fn bronze(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let kiln = gate.kiln;
     let (copper, slot) = holding(world, "base:copper_ingot");
@@ -12385,17 +12433,8 @@ fn bronze(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     if bronze >= 4 && copper == 0 && tin == 0 {
         gate.check("workshop: bronze", Ok(format!("three copper ingots and a tin ore made {bronze} bronze at the lit crucible in one go")));
         kiln_down(world, kiln);
-        // Where the kiln stood, a boiler with a steam crusher beside it, and nothing in
-        // hand but coal to fire it.
-        let at = |d: IVec3| { let p = kiln + d; format!("{} {} {}", p.x, p.y, p.z) };
-        let net = world.resource::<Net>();
-        for line in ["clear".to_owned(), format!("setblock {} boiler", at(IVec3::ZERO)), format!("setblock {} steam_crusher", at(IVec3::X)), "give coal_ore 2".to_owned()] {
-            net.command(&line);
-        }
-        gate.machines_stage = 0;
-        gate.machines_since = gate.server_now;
-        gate.machines_asked = f32::MIN;
-        gate.machines_seen = false;
+        // Nothing in hand, for the dust the crusher fed before the fishing has made.
+        world.resource::<Net>().command("clear");
         gate.advance(now);
         return;
     }
