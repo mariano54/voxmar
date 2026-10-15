@@ -48,6 +48,10 @@
             break: ["sounds/materials/brick_break_1.ogg", "sounds/materials/brick_break_2.ogg", "sounds/materials/brick_break_3.ogg"],
         ),
     ],
+    // A tool in hand nearly worn out (tools.ron's `wear.warn`): a dry creak and a tick as the
+    // head shifts. Worn out: the haft snaps and its pieces fall.
+    tool_worn: ["sounds/tool_worn_1.ogg", "sounds/tool_worn_2.ogg"],
+    tool_break: ["sounds/tool_break_1.ogg", "sounds/tool_break_2.ogg"],
     // What the player does, heard as they do it, by action: about as loud as placing a
     // block, times `volume`. A package that names an action replaces its sound. Every
     // action says how it sounds, or the game does not start: its `sounds`, `silent: true`,

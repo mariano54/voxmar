@@ -116,7 +116,7 @@ impl Server {
             player.changed(traits::INVENTORY);
             if left > 0 {
                 let body = dropped::popped(pos, self.meta.next_pop(pos, 0xbee0));
-                self.items.spawn(ItemStack { item: becomes, count: left }, body, dropped::PICKUP_DELAY);
+                self.items.spawn(ItemStack::new(becomes, left), body, dropped::PICKUP_DELAY);
             }
         }
         // Each draw numbered by the player's count of harvest draws, and where a drop pops
@@ -125,7 +125,7 @@ impl Server {
         let found = voxmar_engine::crop::roll(&take.gives, 0.0, || player.draw(crate::save::Draw::Harvest)[0]);
         for (i, (item, count)) in found.into_iter().enumerate() {
             let body = dropped::popped(pos, self.meta.next_pop(pos, 0xbee2 + i as u32));
-            self.items.spawn(ItemStack { item, count }, body, dropped::PICKUP_DELAY);
+            self.items.spawn(ItemStack::new(item, count), body, dropped::PICKUP_DELAY);
         }
         self.set_block(pos, take.becomes);
         self.grant_xp(agent, take.skill, take.xp);

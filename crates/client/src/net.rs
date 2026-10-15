@@ -230,7 +230,7 @@ pub(crate) fn receive(
     (mut drops, mut toasts, launch, locale, mut creatures): (ResMut<Drops>, ResMut<SkillToasts>, Res<Launch>, Res<Locale>, ResMut<crate::creatures::Creatures>),
     mut broken: MessageWriter<BlockBroken>,
     mut fighting: ResMut<crate::fight::Fighting>,
-    mut stations: ResMut<crate::hud::target::StationSeen>,
+    (mut stations, mut wore): (ResMut<crate::hud::target::StationSeen>, MessageWriter<crate::breaking::ToolWore>),
 ) {
     let menu = if net.is_remote() { Screen::Join } else { Screen::Title };
     // Counted before reading: a tick's messages are all sent before it counts, so this many
@@ -395,6 +395,9 @@ pub(crate) fn receive(
             }
             ServerMessage::Prayers { points, most, on } => fighting.prayers = crate::fight::Prayers { points, most, on },
             ServerMessage::Fires { lit } => world.fires = lit.into_iter().collect(),
+            ServerMessage::ToolWore { item, broke } => {
+                wore.write(crate::breaking::ToolWore { item, broke });
+            }
             ServerMessage::Xp { skill, tenths } => toasts.gained(skill, tenths, time.elapsed_secs()),
             ServerMessage::Station { block, load, fire } => stations.tell(block, load, fire, time.elapsed_secs_f64()),
         }

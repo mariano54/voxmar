@@ -95,7 +95,7 @@ fn a_seat_wants_room_and_an_empty_hand() {
     let stool = id(&server, "base:oak_stool");
     server.set_block(STOOL, stool);
     let stone = id(&server, "base:stone");
-    server.players.get_mut(&1).unwrap().inventory.slots[0] = Some(ItemStack { item: stone, count: 1 });
+    server.players.get_mut(&1).unwrap().inventory.slots[0] = Some(ItemStack::new(stone, 1));
     sit(&mut server, STOOL);
     assert_eq!(server.players[&1].vitals.seated, None, "sat with a block to place in hand");
     server.players.get_mut(&1).unwrap().inventory.slots[0] = None;
@@ -145,7 +145,7 @@ fn every_meal_effect_together_stops_at_meal_most() {
     let warm_meal = effects.id("base:warm_meal").expect("base's warm_meal");
     let player = server.players.get_mut(&1).unwrap();
     player.modifiers = together;
-    player.inventory.slots[0] = Some(ItemStack { item: stew, count: 1 });
+    player.inventory.slots[0] = Some(ItemStack::new(stew, 1));
     player.selected = 0;
     player.health.current = 2;
     let eat = server.content.actions.expect("core:eat");
@@ -168,7 +168,7 @@ fn a_bite_straight_after_sitting_down_has_the_table() {
     let stew = server.content.blocks.expect("base:stew");
     let warm_meal = server.content.effects.id("base:warm_meal").expect("base's warm_meal");
     let player = server.players.get_mut(&1).unwrap();
-    player.inventory.slots[0] = Some(ItemStack { item: stew, count: 1 });
+    player.inventory.slots[0] = Some(ItemStack::new(stew, 1));
     player.selected = 0;
     sit(&mut server, STOOL);
     // Hurt, or a bite is refused.

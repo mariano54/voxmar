@@ -244,7 +244,7 @@ impl Server {
         player.changed(traits::INVENTORY);
         if left > 0 {
             let body = dropped::popped(pos, self.meta.next_pop(pos, 0x57a7));
-            self.items.spawn(ItemStack { item: work.output, count: left }, body, dropped::PICKUP_DELAY);
+            self.items.spawn(ItemStack::new(work.output, left), body, dropped::PICKUP_DELAY);
         }
         self.grant_xp(agent, work.skill, work.xp * made as f32);
         if let Some(kind) = &work.counts {
@@ -277,8 +277,8 @@ impl Server {
             return;
         }
         let stack = match station.work(load.item) {
-            Some((_, work)) if self.tick >= load.due => ItemStack { item: work.output, count: load.count / work.takes * work.gives },
-            _ => ItemStack { item: load.item, count: load.count },
+            Some((_, work)) if self.tick >= load.due => ItemStack::new(work.output, load.count / work.takes * work.gives),
+            _ => ItemStack::new(load.item, load.count),
         };
         let body = dropped::popped(pos, self.meta.next_pop(pos, 0x57a8));
         self.items.spawn(stack, body, dropped::PICKUP_DELAY);

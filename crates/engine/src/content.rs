@@ -199,6 +199,16 @@ pub struct ContentFile {
 }
 
 impl Content {
+    /// The tags of blocks crafting looks for within reach: what recipes are made near (a
+    /// chopping block) and what tools are mended at, each once.
+    pub fn near_tags(&self) -> Vec<&str> {
+        let mut tags = self.recipes.near_tags();
+        tags.extend(self.tools.mend_tags());
+        tags.sort_unstable();
+        tags.dedup();
+        tags
+    }
+
     /// Loads every package in `dir`, in name order so ids are the same everywhere.
     pub fn load(dir: &Path) -> Result<Self, RegistryError> {
         let read_error = |path: &Path, e: std::io::Error| RegistryError(format!("{}: {e}", path.display()));
@@ -509,7 +519,7 @@ impl Content {
         let languages: Vec<Lang> = crate::lang::languages(dir).into_iter().map(|language| Lang::load(dir, &language.code)).collect();
         let codes: Vec<&str> = languages.iter().map(Lang::code).collect();
         refusals.check_words(&codes, |code, key| languages.iter().any(|lang| lang.code() == code && lang.defines(key)))?;
-        Ok(Self {
+        let mut content = Self {
             blocks: Arc::new(blocks),
             actions: Arc::new(actions),
             commands: Arc::new(commands),
@@ -541,7 +551,11 @@ impl Content {
             files: Arc::new(files),
             english: Arc::new(Lang::load(dir, ENGLISH)),
             notes: Arc::new(notes),
-        })
+        };
+        // Mending follows the recipes, which load after the tools.
+        let terms = ToolRegistry::link(&content)?;
+        Arc::get_mut(&mut content.tools).expect("only this has it").set_mend_terms(terms);
+        Ok(content)
     }
 
     /// Fingerprint used to check that client and server load the same content.
@@ -563,8 +577,9 @@ struct Stacking {
     single: Vec<String>,
 }
 
-/// Each item's most per stack: an item's own `stack:N` tag, else one for an item with a
-/// tag some package's `stacking.ron` lists as single, else a full stack.
+/// Each item's most per stack: an item's own `stack:N` tag, else one for an item that wears
+/// (`uses:N`, so each one wears on its own) or with a tag some package's `stacking.ron`
+/// lists as single, else a full stack.
 fn stack_limits(blocks: &BlockRegistry, files: &[String]) -> Result<Vec<u8>, RegistryError> {
     let mut single = Vec::new();
     for source in files {
@@ -576,7 +591,8 @@ fn stack_limits(blocks: &BlockRegistry, files: &[String]) -> Result<Vec<u8>, Reg
         .map(|id| {
             let tags = &blocks.def(id).tags;
             let own = tags.iter().find_map(|t| t.strip_prefix("stack:")?.parse::<u8>().ok()).filter(|&n| n > 0);
-            own.unwrap_or(if tags.iter().any(|t| single.contains(t)) { 1 } else { crate::inventory::MAX_STACK }).min(crate::inventory::MAX_STACK)
+            let wears = tags.iter().any(|t| t.starts_with("uses:"));
+            own.filter(|_| !wears).unwrap_or(if wears || tags.iter().any(|t| single.contains(t)) { 1 } else { crate::inventory::MAX_STACK }).min(crate::inventory::MAX_STACK)
         })
         .collect())
 }

@@ -59,6 +59,9 @@ struct Aim {
     /// What the swing started with: the blow lands with it, and a switch drops it.
     weapon: Weapon,
     held: Option<BlockId>,
+    /// The slot it was swung from, which the blow wears: a switch to another of the same
+    /// in another slot drops the swing as well.
+    slot: usize,
 }
 
 /// A creature's blow on its way.
@@ -207,6 +210,7 @@ impl Server {
             return;
         }
         let held = self.players.get(&player).and_then(|p| p.held());
+        let slot = self.players.get(&player).map_or(0, |p| p.selected);
         let timing = self.content.combat.timing(&weapon);
         let now = self.fight_arrival();
         let feel = self.content.combat.feel;
@@ -225,7 +229,7 @@ impl Server {
             let riposte = seen <= fighter.riposte_until;
             fighter.counter_until = 0.0;
             fighter.riposte_until = 0.0;
-            fighter.aim = Some(Aim { creature, counter, riposte, weapon, held });
+            fighter.aim = Some(Aim { creature, counter, riposte, weapon, held, slot });
         }
     }
 
@@ -395,7 +399,8 @@ impl Server {
         for (&player, fighter) in &mut self.fights.fighters {
             let Some(aim) = fighter.aim else { continue };
             let held = self.players.get(&player).and_then(|p| p.held());
-            if held != aim.held {
+            let selected = self.players.get(&player).map(|p| p.selected);
+            if held != aim.held || selected != Some(aim.slot) {
                 let timing = self.content.combat.timing(&aim.weapon);
                 fighter.rhythm.cancel(now, &timing, &feel);
                 fighter.rhythm.lose_pips();
@@ -500,12 +505,17 @@ impl Server {
             self.stir_bees(player, at);
         }
         let Some(damage) = self.land_blow(player, aim.creature, &weapon, stroke) else { return };
+        // A blow that lands wears what struck it (a shot, the bow that loosed it), from the
+        // slot it was swung from.
+        if damage > 0 {
+            self.wear_slot(player, aim.slot, self.content.tools.wear().hit);
+        }
         // A shot that hit may be left lying by the target, to be picked up again.
         if let (Some(item), Some(at), true) = (shot, at, damage > 0)
             && self.players.get_mut(&player).is_some_and(|p| p.draw(Draw::Recover)[0] < self.content.combat.recover(&weapon))
         {
             let body = voxmar_engine::dropped::Loose::new(at + Vec3::Y * 0.25, Vec3::ZERO);
-            self.items.spawn(voxmar_engine::inventory::ItemStack { item, count: 1 }, body, voxmar_engine::dropped::PICKUP_DELAY);
+            self.items.spawn(voxmar_engine::inventory::ItemStack::new(item, 1), body, voxmar_engine::dropped::PICKUP_DELAY);
         }
         if kind == Blow::Flourish && damage > 0 {
             self.flourish(player, aim.creature, &weapon, damage);
@@ -705,7 +715,7 @@ mod tests {
             for _ in 0..40 {
                 let full = server.content.creatures.get(wolf).def.health;
                 server.creatures.live.get_mut(&creature).unwrap().health = full;
-                let aim = Aim { creature, counter: false, riposte: false, weapon, held: Some(sling) };
+                let aim = Aim { creature, counter: false, riposte: false, weapon, held: Some(sling), slot: 0 };
                 server.land_swing(player, aim, 1.0, false, Blow::Plain, true);
             }
             let lying: u32 = server.items.saved(|item| format!("{item:?}")).iter().map(|d| d.count as u32).sum();
@@ -717,6 +727,41 @@ mod tests {
         assert!(hits > 0 && hits < strikes, "{hits} of {strikes} shots hit, every one or none");
         assert!(lying > 0 && (lying as u64) < hits, "{lying} of {hits} shots that hit left lying");
         assert_eq!(shot(1_377), first, "the same shots later were left otherwise");
+    }
+
+    /// A blow wears the copy it was swung with, not another of the same switched to: and a
+    /// switch to another slot drops the swing before it lands.
+    #[test]
+    fn a_blow_wears_the_slot_it_was_swung_from() {
+        let mut server = crate::test_server();
+        let (_client, connection) = voxmar_protocol::local_pair();
+        let player = 1;
+        let mut joined = crate::player::Player::new(player, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
+        (joined.joined, joined.draw_key) = (true, crate::player::player_draw_key(0x0d1a, "ada"));
+        let sword = server.content.blocks.expect("base:stone_sword");
+        assert!(server.content.tools.uses(sword) > 0, "a sword wears");
+        joined.inventory.slots[0] = Some(voxmar_engine::inventory::ItemStack::new(sword, 1));
+        joined.inventory.slots[1] = Some(voxmar_engine::inventory::ItemStack::new(sword, 1));
+        joined.selected = 1;
+        server.players.insert(player, joined);
+        let weapon = server.content.combat.wielded(Some(sword), |_| 1);
+        let wolf = server.content.creatures.id("base:wolf").unwrap();
+        let creature = server.spawn_creature(wolf, server.spawn + Vec3::X * 2.0, 1).expect("room");
+        for _ in 0..20 {
+            let full = server.content.creatures.get(wolf).def.health;
+            server.creatures.live.get_mut(&creature).unwrap().health = full;
+            let aim = Aim { creature, counter: false, riposte: false, weapon, held: Some(sword), slot: 0 };
+            server.land_swing(player, aim, 1.0, false, Blow::Plain, true);
+        }
+        let wear = |slot: usize| server.players[&player].inventory.slots[slot].map(|s| s.wear);
+        assert!(wear(0).is_some_and(|w| w > 0), "the sword swung wore: {:?}", wear(0));
+        assert_eq!(wear(1), Some(0), "the one switched to did not");
+        // A swing under way from slot 0, with the hand now on slot 1's sword: dropped.
+        let fighter = server.fights.fighters.entry(player).or_default();
+        fighter.aim = Some(Aim { creature, counter: false, riposte: false, weapon, held: Some(sword), slot: 0 });
+        fighter.held = Some(sword);
+        server.tick_fights();
+        assert!(server.fights.fighters[&player].aim.is_none(), "a switch to another slot drops the swing");
     }
 
     /// A flourish's roll is the player's next flourish draw: each counts on.

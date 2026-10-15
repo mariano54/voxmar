@@ -8,7 +8,7 @@ use voxmar_engine::block::BlockId;
 use voxmar_engine::coords::ColumnPos;
 use voxmar_engine::effect::{EffectId, EffectRegistry, Modifiers};
 use voxmar_engine::glam::Vec3;
-use voxmar_engine::inventory::{HOTBAR_SLOTS, Inventory, ItemStack, MAX_STACK};
+use voxmar_engine::inventory::{HOTBAR_SLOTS, Inventory, ItemStack, max_stack};
 use voxmar_engine::lang::Words;
 use voxmar_engine::movement::Checks;
 use voxmar_engine::physics::{Aabb, player as dims};
@@ -331,6 +331,7 @@ impl Player {
             prayer_points: Some(self.praying.points),
             casts: self.casts,
             draws: self.draws,
+            spilled: Vec::new(),
         }
     }
 }
@@ -396,11 +397,14 @@ impl Server {
         if !known || count == 0 || player.mode() != GameMode::Creative {
             return;
         }
-        let count = count.min(MAX_STACK);
+        // No more than a stack of it holds (a tool comes one at a time), and never onto a
+        // worn one: a new one is not a free mend.
+        let most = max_stack(item);
+        let count = count.min(most);
         if held {
             match &mut player.inventory.cursor {
-                None => player.inventory.cursor = Some(ItemStack { item, count }),
-                Some(stack) if stack.item == item => stack.count = stack.count.saturating_add(count).min(MAX_STACK),
+                None => player.inventory.cursor = Some(ItemStack::new(item, count)),
+                Some(stack) if stack.item == item && stack.wear == 0 => stack.count = stack.count.saturating_add(count).min(most),
                 Some(_) => return,
             }
         } else {
@@ -449,7 +453,7 @@ impl Server {
         }
     }
 
-    fn hello(&mut self, id: PlayerId, name: String, protocol: u32, content: u64, admin_token: Option<String>) {
+    pub(crate) fn hello(&mut self, id: PlayerId, name: String, protocol: u32, content: u64, admin_token: Option<String>) {
         let fingerprint = self.content.fingerprint();
         let blocks = self.content.blocks.clone();
         let (seed, allow_flight) = (self.meta.seed, self.config.allow_flight);
@@ -504,7 +508,7 @@ impl Server {
         // A save that is not a player file is moved aside rather than replaced by a new
         // player's at the next save. One that could not be read at all (no permission, a
         // failing disk), or cannot be moved, turns the player away.
-        let (saved, set_aside) = if let Some((held, _)) = carried {
+        let (mut saved, set_aside) = if let Some((held, _)) = carried {
             (Some(held), None)
         } else {
             match self.save.as_ref().map(|save| (save, save.read_player(&name, &blocks))) {
@@ -565,6 +569,7 @@ impl Server {
         player.casts = saved.as_ref().map_or(0, |saved| saved.casts);
         player.draws = saved.as_ref().map_or_else(Draws::default, |saved| saved.draws);
         player.draw_key = player_draw_key(self.meta.draw_key, &player.name);
+        let spilled = saved.as_mut().map(|saved| std::mem::take(&mut saved.spilled)).unwrap_or_default();
         match saved {
             Some(saved) if saved.health.alive() => {
                 player.position = saved.position;
@@ -629,6 +634,15 @@ impl Server {
         let entries = self.players[&id].journal.entries().cloned().collect();
         self.players[&id].connection.send(ServerMessage::Journal { entries });
         self.kindle_home(id);
+        // An older save's stacked tools with no slot left fall at their feet, theirs and
+        // lying as long as a grave does: the pack was full, so they wait for room.
+        let feet = self.players[&id].position.floor().as_ivec3();
+        let owner = crate::items::owner_of(&self.players[&id].name);
+        let lifetime = (self.content.value.death.grave * voxmar_protocol::TICKS_PER_SECOND as f32) as u32;
+        for (i, stack) in spilled.into_iter().enumerate() {
+            let random = self.meta.next_pop(feet, 0x5b1d ^ i as u32);
+            self.items.spawn_for(stack, voxmar_engine::dropped::popped(feet, random), voxmar_engine::dropped::PICKUP_DELAY, Some(owner), lifetime);
+        }
         self.players[&id].connection.send(ServerMessage::Fires { lit: self.fires() });
         if let Some(file) = set_aside {
             let text = Words::key("save.player_set_aside").with("file", Words::text(file));
@@ -1065,9 +1079,9 @@ mod tests {
         let waiting = server.saved_creatures()[0].clone();
         server.creatures.unplaced = vec![waiting; kept_each - parents.len()];
         let dirt = server.content.blocks.expect("base:dirt");
-        server.items.spawn_for(ItemStack { item: dirt, count: 7 }, Loose::new(server.spawn + Vec3::Y * 0.8, Vec3::ZERO), 0.0, Some(owner_of("Bob")), 10_000);
-        server.items.spawn_for(ItemStack { item: dirt, count: 2 }, Loose::new(server.spawn + Vec3::Y * 0.8, Vec3::ZERO), 0.0, Some(owner_of("bOb")), 10_000);
-        server.items.spawn_for(ItemStack { item: dirt, count: 3 }, Loose::new(server.spawn + Vec3::Y * 0.8, Vec3::ZERO), 0.0, Some(owner_of("someone-else")), 10_000);
+        server.items.spawn_for(ItemStack::new(dirt, 7), Loose::new(server.spawn + Vec3::Y * 0.8, Vec3::ZERO), 0.0, Some(owner_of("Bob")), 10_000);
+        server.items.spawn_for(ItemStack::new(dirt, 2), Loose::new(server.spawn + Vec3::Y * 0.8, Vec3::ZERO), 0.0, Some(owner_of("bOb")), 10_000);
+        server.items.spawn_for(ItemStack::new(dirt, 3), Loose::new(server.spawn + Vec3::Y * 0.8, Vec3::ZERO), 0.0, Some(owner_of("someone-else")), 10_000);
         server.leave(1);
         drop(original);
         if legacy {

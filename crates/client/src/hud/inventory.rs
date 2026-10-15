@@ -79,7 +79,7 @@ fn find_near(ui: Res<UiState>, world: Res<ClientWorld>, player: Res<LocalPlayer>
     if !ui.inventory_open {
         return;
     }
-    let tags = launch.content.recipes.near_tags();
+    let tags = launch.content.near_tags();
     let found = voxmar_engine::craft::tags_near(&tags, &launch.content.blocks, player.eye(), |pos| world.block(pos));
     if near.0 != found {
         near.0 = found;
@@ -433,11 +433,24 @@ fn craft(
     };
     let allowed = |r: &voxmar_engine::craft::Recipe| (at_table || !r.needs_table()) && short(r).is_none();
     let near = |tag: &str| near.has(tag);
-    let found = recipes.find_near(&player.inventory.grid(), near);
-    let lacking = found.and_then(|r| short(r).map(|skill| (skill, r.level)));
-    let made = found.filter(|r| allowed(r)).map(|r| (r.output, r.count));
+    // A worn tool and what mends it, by the block it is mended at, mend it, as the server
+    // does before any recipe.
+    let tools = launch.content.tools.clone();
+    let mending = tools.mended(&player.inventory.craft, near);
+    // At the level its recipe asks, as the server checks it.
+    let level = |skill| (skills.level(player.skills.xp(skill)), voxmar_engine::level::check_level(&skills, effects, &player.skills, &player.vitals.effects, skill));
+    let mend_short = mending.and_then(|m| voxmar_engine::level::lacks_for_mend(&tools, m.item, level, &player.inventory, blocks));
+    let mended = mending.filter(|_| mend_short.is_none());
+    let found = recipes.find_near(&player.inventory.grid(), near).filter(|_| mending.is_none());
+    let lacking = mend_short.or_else(|| found.and_then(|r| short(r).map(|skill| (skill, r.level))));
+    let made = mended.map(|m| (m.item, 1)).or_else(|| found.filter(|r| allowed(r)).map(|r| (r.output, r.count)));
     let filled = player.inventory.grid().iter().any(Option::is_some);
     let (title, how) = match made {
+        Some((item, _)) if let Some(mended) = mended => {
+            let uses = tools.uses(item);
+            let after = locale.format("inventory.craft.mend", &[("left", &uses.saturating_sub(mended.wear)), ("uses", &uses)]);
+            (locale.block(launch.content.blocks.def(item)), after)
+        }
         _ if let Some((skill, level)) = lacking => {
             let skill = locale.skill(skills.get(skill));
             (locale.format("skills.needs", &[("skill", &skill), ("level", &level)]), locale.format("inventory.craft.lookup", &[("key", &settings.recipes_key.name(&locale))]))
@@ -480,7 +493,11 @@ fn craft(
     let all = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
     let Some(craft) = actions.named("core:craft") else { return };
     let mut inventory = player.inventory.clone();
-    if craft_grid(&mut inventory, &recipes, allowed, near, all) > 0 {
+    let done = match mended {
+        Some(mended) => inventory.mend(mended, all),
+        None => craft_grid(&mut inventory, &recipes, allowed, near, all) > 0,
+    };
+    if done {
         player.inventory = inventory;
         // Heard as crafting (`sounds.ron`), not as a click.
         net.propose(craft, ActionTarget::Slot(if all { 0 } else { 1 }));
@@ -961,6 +978,35 @@ fn seed_line(
 /// How a weapon fights: its class, style and the level that wields it (red while the
 /// player's is short of it), then its max hit at their level and how often it strikes, and
 /// its reach if it is not the usual.
+/// How many uses a tool or weapon has left of all it lasts, red when nearly worn out, and
+/// what mends it where.
+fn wear_lines(locale: &Locale, content: &voxmar_engine::content::Content, item: voxmar_engine::block::BlockId, wear: u16) -> Vec<(String, Color)> {
+    let uses = content.tools.uses(item);
+    if uses == 0 {
+        return Vec::new();
+    }
+    let left = uses.saturating_sub(wear);
+    let color = if worn_low(&content.tools, item, wear) { ERROR } else { SOFT };
+    let mut lines = vec![(locale.format("item.uses", &[("left", &left), ("uses", &uses)]), color)];
+    // Named by the tag that mends it (Planks, not one wood's), and by the kind of block
+    // it is mended at.
+    if let Some(&by) = content.tools.mends(item).first() {
+        let by = match content.tools.mend_by_tag(item) {
+            Some(tag) => locale.get(&format!("item.mend.tag.{tag}")).to_owned(),
+            None => locale.block(content.blocks.def(by)),
+        };
+        let station = locale.get(&format!("item.mend.near.{}", content.tools.mend_near(item))).to_owned();
+        lines.push((locale.format("item.mend", &[("item", &by), ("station", &station)]), MUTED));
+    }
+    lines
+}
+
+/// Whether a tool worn by `wear` is down to the share where it warns (`tool::Wear::warn`).
+pub fn worn_low(tools: &voxmar_engine::tool::ToolRegistry, item: voxmar_engine::block::BlockId, wear: u16) -> bool {
+    let uses = tools.uses(item);
+    uses > 0 && wear > 0 && uses.saturating_sub(wear) <= (uses as f32 * tools.wear().warn).ceil() as u16
+}
+
 fn weapon_lines(locale: &Locale, content: &voxmar_engine::content::Content, player: &LocalPlayer, item: voxmar_engine::block::BlockId) -> Vec<(String, Color)> {
     let Some(weapon) = content.combat.weapon(item) else { return Vec::new() };
     let (Some(class), Some(skill)) = (weapon.class, weapon.skill) else { return Vec::new() };
@@ -1117,7 +1163,7 @@ fn tooltip(
     window: Query<&Window, With<PrimaryWindow>>,
     slots: Query<(&InventorySlot, &RelativeCursorPosition)>,
     mut tip: Query<(Entity, &mut Node, &mut Visibility, &ComputedNode), With<Tooltip>>,
-    mut shown: Local<Option<(voxmar_engine::block::BlockId, bool, bool, u32)>>,
+    mut shown: Local<Option<(voxmar_engine::block::BlockId, bool, bool, u32, u16)>>,
     launch: Res<Launch>,
     locale: Res<Locale>,
     (keys, scale, catalogue): (Res<ButtonInput<KeyCode>>, Res<UiScale>, Res<super::creative::Catalogue>),
@@ -1160,7 +1206,9 @@ fn tooltip(
     let reading = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
     // What a pouch carries changes its lines.
     let carried: u32 = player.inventory.pouched.iter().map(|&(_, n)| n as u32 * 31 + 1).sum();
-    let key = (item, settings.debug_overlay, reading, carried);
+    // So does how worn the pointed tool is.
+    let wear = pointed.filter(|_| viewer_item.is_none()).and_then(|slot| player.inventory.get(slot)).map_or(0, |stack| stack.wear);
+    let key = (item, settings.debug_overlay, reading, carried, wear);
     if *shown != Some(key) || locale.is_changed() {
         *shown = Some(key);
         let def = world.registry.def(item);
@@ -1189,6 +1237,7 @@ fn tooltip(
             let book = viewer.book().map(|book| origins_and_uses(&locale, &launch.content, book, item)).unwrap_or_default();
             let lines_after = seed_line(&locale, &launch.content, &player, item)
                 .into_iter()
+                .chain(wear_lines(&locale, &launch.content, item, wear))
                 .chain(weapon_lines(&locale, &launch.content, &player, item))
                 .chain(armour_lines(&locale, &launch.content, &player, item))
                 .chain(pouch_lines(&locale, &world.registry, &player, item))
@@ -1294,7 +1343,7 @@ mod tests {
 
     fn held(count: u8) -> Inventory {
         let mut inventory = Inventory::default();
-        inventory.cursor = Some(ItemStack { item: BlockId(1), count });
+        inventory.cursor = Some(ItemStack::new(BlockId(1), count));
         inventory
     }
 
@@ -1339,7 +1388,7 @@ mod tests {
         let planks = content.blocks.expect("base:oak_planks");
         net.command("/clear");
         net.command("/give oak_planks 6");
-        wait_for(&|i| i.get(0) == Some(ItemStack { item: planks, count: 6 }) && i.slots.iter().flatten().count() == 1);
+        wait_for(&|i| i.get(0) == Some(ItemStack::new(planks, 6)) && i.slots.iter().flatten().count() == 1);
         // Down the left two planks a cell, one a cell beside them: a crafting table; what is
         // left, a plank over a plank, would make sticks.
         let transfer = content.actions.expect("core:transfer");
@@ -1376,9 +1425,9 @@ mod tests {
     #[test]
     fn double_clicks_gather_part_stacks_first() {
         let mut inventory = held(5);
-        inventory.slots[3] = Some(ItemStack { item: BlockId(1), count: 64 });
-        inventory.slots[7] = Some(ItemStack { item: BlockId(1), count: 20 });
-        inventory.slots[8] = Some(ItemStack { item: BlockId(2), count: 20 });
+        inventory.slots[3] = Some(ItemStack::new(BlockId(1), 64));
+        inventory.slots[7] = Some(ItemStack::new(BlockId(1), 20));
+        inventory.slots[8] = Some(ItemStack::new(BlockId(2), 20));
         let moves = gather(&inventory, BlockId(1));
         assert_eq!(moves, vec![Move::Items { from: 7, to: CURSOR, count: 20 }, Move::Items { from: 3, to: CURSOR, count: 64 }]);
         for action in moves {

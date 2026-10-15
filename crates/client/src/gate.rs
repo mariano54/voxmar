@@ -429,6 +429,11 @@ steps! {
     /// no hammer about says a hammer is needed; with one in the pack it crushes the ore,
     /// and the hammer stays.
     Anvil,
+    /// A tool nearly worn out reddens in the hotbar and creaks as a block breaks; worn out,
+    /// the next block breaks it with chips flying, leaving only a head it names; a worn one
+    /// laid in the grid with what mends it, by the block it is mended at, shows itself mended
+    /// and crafted comes back its mend's share the better, as the server mends it.
+    ToolWear,
     /// A survival player's inventory search finds the stone pickaxe by "pick"; its recipe
     /// opened in the viewer finishes the "Look It Up" quest; the quest book's page for the
     /// pickaxe shows its recipe inline, an item clicked there opens the viewer, and Back
@@ -608,6 +613,8 @@ struct Gate {
     chimney_since: Option<f32>,
     /// What the dry step's pot water replaced, put back after.
     pot_ground: Option<String>,
+    /// What the tool wear step wears, breaks and mends.
+    tool_wear: Option<WearPlan>,
     /// Raw small game carried, slots and pouch, as the dry step hangs the rack, so its
     /// readout can count what hung.
     rack_rabbits: u32,
@@ -893,6 +900,7 @@ impl Gate {
             chimney_owed: 0.0,
             chimney_since: None,
             pot_ground: None,
+            tool_wear: None,
             rack_rabbits: 0,
             dry_clearing: None,
             dry_pickup: None,
@@ -1509,6 +1517,8 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         // A door placed, opened and shut, a lit window and a campfire at midnight, each
         // waited on.
         Step::Door => STEP_LIMIT + 25.0,
+        // Two blocks mined with a tool, and a mend crafted, each waited on.
+        Step::ToolWear => STEP_LIMIT + 15.0,
         // A party walks in, is talked to, traded with and sent away, each in server seconds.
         Step::Party => 60.0,
         // The effects are judged once a second by the server, and a rest is a sleep away.
@@ -1828,6 +1838,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Recipes => recipes(world, gate, now, in_phase),
         Step::Chop => chop(world, gate, now),
         Step::Anvil => anvil(world, gate, now),
+        Step::ToolWear => tool_wear(world, gate, now),
         Step::LookUp => look_up(world, gate, now, in_phase),
         Step::Refusal => refusal(world, gate, now, in_phase),
         Step::Merged => merged(world, gate, now, in_phase),
@@ -4473,7 +4484,7 @@ fn anvil(world: &mut World, gate: &mut Gate, now: f32) {
         let net = world.resource::<Net>();
         net.command(&format!("setblock {} {} {} air", block.x, block.y, block.z));
         net.command("clear");
-        gate.next(Step::LookUp, now);
+        gate.next(Step::ToolWear, now);
     };
     let (Some(recipe), Some(anvil_block), Some(tool)) = (recipe, anvil_block, tool) else {
         gate.check("anvil", Err(format!("no {ANVIL_ORE} crushed at a block tagged `{ANVIL_TAG}` with a tool something carries")));
@@ -4536,6 +4547,287 @@ fn anvil(world: &mut World, gate: &mut Gate, now: f32) {
             } else if waited {
                 gate.check("anvil", Err(format!("{ore_name} clicked on the {anvil_name} with a {tool_name} about made {crushed} {}, left {left} ore and {kept} {tool_name}, in {CHOP_WAIT} server seconds", content.blocks.def(made).name)));
                 end(world, gate);
+/// What the tool wear step uses, all picked from the content by what it is: the tool that
+/// wears soonest with a mend a new player may do, a block it is made for that breaks
+/// quickly and needs no level, the block it is mended at, what mends it, and the head it
+/// leaves broken, if it names one.
+#[derive(Clone, Copy, Debug)]
+struct WearPlan {
+    tool: BlockId,
+    block: BlockId,
+    station: BlockId,
+    mend: BlockId,
+    head: Option<BlockId>,
+    uses: u16,
+    /// Uses left at which it warns.
+    warn_at: u16,
+    /// The hotbar slot it is held in.
+    slot: usize,
+    /// The tool warnings and breaks heard before the step.
+    worn: crate::breaking::ToolsWorn,
+}
+
+impl WearPlan {
+    fn of(content: &voxmar_engine::content::Content) -> Result<(BlockId, BlockId, BlockId, BlockId, Option<BlockId>), String> {
+        let (blocks, tools) = (&content.blocks, &content.tools);
+        let mut wearing: Vec<BlockId> = blocks
+            .ids()
+            .filter(|&id| tools.uses(id) > 0 && tools.tool(Some(id)).kind.is_some() && !tools.mends(id).is_empty() && tools.mend_skill(id).is_none_or(|(_, level)| level <= 1))
+            .collect();
+        wearing.sort_by_key(|&id| (tools.uses(id), id.0));
+        for tool in wearing {
+            let quick = blocks
+                .ids()
+                .filter(|&b| {
+                    let info = blocks.info(b);
+                    info.render == voxmar_engine::block::RenderKind::Opaque && info.solid && info.occludes && info.placeable && info.emission == 0
+                        && info.fluid.is_none() && info.shape.is_none() && info.hardness > 0.0 && info.hardness <= 3.0 && blocks.item_of(b) == b
+                        && tools.suits(&tools.tool(Some(tool)), b) && tools.good_enough(Some(tool), b) && tools.rule(b).is_none_or(|r| r.level <= 1)
+                })
+                .min_by(|&a, &b| blocks.info(a).hardness.total_cmp(&blocks.info(b).hardness).then(a.0.cmp(&b.0)));
+            let station = blocks.ids().find(|&b| blocks.def(b).has_tag(tools.mend_near(tool)) && blocks.info(b).placeable);
+            if let (Some(block), Some(station)) = (quick, station) {
+                return Ok((tool, block, station, tools.mends(tool)[0], tools.head(tool)));
+            }
+        }
+        Err("no tool in the content wears and mends at level 1, with a quick block it is made for and a block to mend it at".into())
+    }
+}
+
+/// Server seconds the tool wear step waits on each answer.
+const WEAR_WAIT: f32 = 10.0;
+
+/// A tool worn nearly out, breaking a block it is made for: it warns (a creak, its icon red
+/// and its wear bar short), then worn to its last use it breaks at the next block (a snap and
+/// chips), leaving only a head it names; then another, worn, mended by the block it is mended
+/// at (shots `tool-worn`, `tool-mend`).
+fn tool_wear(world: &mut World, gate: &mut Gate, now: f32) {
+    use crate::hud::{SlotIcon, SlotWear};
+    let block_at = gate.feet + IVec3::new(0, 0, 14) + CHOP_FROM_FIRE;
+    let station_at = block_at + IVec3::X;
+    let stand = Vec3::new(block_at.x as f32 + 0.5, block_at.y as f32, block_at.z as f32 - 2.5);
+    let waited = gate.server_in_phase() > WEAR_WAIT;
+    let content = world.resource::<Launch>().content.clone();
+    let name = |id: BlockId| content.blocks.def(id).name.clone();
+    let end = |world: &mut World, gate: &mut Gate| {
+        mouse(world, MouseButton::Left, false);
+        world.resource_mut::<UiState>().inventory_open = false;
+        let net = world.resource::<Net>();
+        for at in [block_at, station_at] {
+            net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
+        }
+        if let Some(plan) = gate.tool_wear.take() {
+            for item in [Some(plan.tool), plan.head, Some(plan.mend)].into_iter().flatten() {
+                net.command(&format!("clear {}", content.blocks.def(item).name));
+            }
+        }
+        gate.next(Step::LookUp, now);
+    };
+    let fail = |world: &mut World, gate: &mut Gate, check: &str, why: String| {
+        let why = format!("{why} (crosshair on {}; screens {:?})", crosshair_on(world), covering_screens(world));
+        gate.check(check, Err(why));
+        end(world, gate);
+    };
+    // What the plan's slot holds, as the server last said.
+    let held = |world: &World, plan: &WearPlan| world.resource::<LocalPlayer>().inventory.get(plan.slot);
+    match gate.phase {
+        0 => {
+            let (tool, block, station, mend, head) = match WearPlan::of(&content) {
+                Ok(found) => found,
+                Err(why) => return fail(world, gate, "tool wear", why),
+            };
+            // An empty hotbar slot in hand, which the tool given next lands in.
+            let player = world.resource::<LocalPlayer>();
+            let Some(slot) = (0..voxmar_engine::inventory::HOTBAR_SLOTS).find(|&s| player.inventory.get(s).is_none()) else {
+                return fail(world, gate, "tool wear", "no empty hotbar slot to hold the tool in".into());
+            };
+            world.resource_mut::<LocalPlayer>().selected = slot;
+            let (uses, warn_at) = (content.tools.uses(tool), (content.tools.uses(tool) as f32 * content.tools.wear().warn).ceil() as u16);
+            let worn = *world.resource::<crate::breaking::ToolsWorn>();
+            gate.tool_wear = Some(WearPlan { tool, block, station, mend, head, uses, warn_at, slot, worn });
+            let net = world.resource::<Net>();
+            net.command("gamemode survival");
+            for item in [Some(tool), head, Some(mend)].into_iter().flatten() {
+                net.command(&format!("clear {}", name(item)));
+            }
+            net.command(&format!("tp {} {} {}", stand.x, stand.y, stand.z));
+            gate.advance(now);
+        }
+        1 => {
+            // A frame later, the slot in hand sent: the tool given lands in it, worn to one
+            // use more than where it warns.
+            let Some(plan) = gate.tool_wear else { return };
+            let net = world.resource::<Net>();
+            net.command(&format!("give {} 1", name(plan.tool)));
+            net.command(&format!("setblock {} {} {} {}", block_at.x, block_at.y, block_at.z, name(plan.block)));
+            net.command(&format!("setblock {} {} {} air", station_at.x, station_at.y, station_at.z));
+            gate.advance(now);
+        }
+        2 => {
+            let Some(plan) = gate.tool_wear else { return };
+            if held(world, &plan).is_some_and(|s| s.item == plan.tool && s.wear == 0) {
+                world.resource::<Net>().command(&format!("wear {}", plan.warn_at + 1));
+                gate.advance(now);
+            } else if waited {
+                let got = held(world, &plan).map(|s| (name(s.item), s.wear));
+                fail(world, gate, "tool wear", format!("a new {} never reached hotbar slot {} ({got:?} there) in {WEAR_WAIT} server seconds", name(plan.tool), plan.slot));
+            }
+        }
+        3 => {
+            let Some(plan) = gate.tool_wear else { return };
+            let client = world.resource::<ClientWorld>();
+            let placed = client.block(block_at) == Some(plan.block);
+            let worn = held(world, &plan).is_some_and(|s| s.item == plan.tool && s.wear == plan.uses - plan.warn_at - 1);
+            if placed && worn && drawn(world, block_at) {
+                aim(world, block_at);
+                mouse(world, MouseButton::Left, true);
+                gate.advance(now);
+            } else if waited {
+                let got = held(world, &plan).map(|s| (name(s.item), s.wear));
+                fail(world, gate, "tool wear", format!("the {} to break ({placed}) or the tool worn to {} uses left (slot {} holds {got:?}) never came in {WEAR_WAIT} server seconds", name(plan.block), plan.warn_at + 1, plan.slot));
+            }
+        }
+        4 => {
+            // One block broken: a use worn, down to where it warns.
+            let Some(plan) = gate.tool_wear else { return };
+            let broken = world.resource::<ClientWorld>().block(block_at).is_some_and(|b| b.is_air());
+            let wear = held(world, &plan).filter(|s| s.item == plan.tool).map(|s| s.wear);
+            let heard = world.resource::<crate::breaking::ToolsWorn>().warned > plan.worn.warned;
+            if broken && wear == Some(plan.uses - plan.warn_at) && heard {
+                mouse(world, MouseButton::Left, false);
+                gate.advance(now);
+            } else if waited {
+                fail(world, gate, "tool wear: warns", format!("mining the {}: broken {broken}, wear {wear:?} (wanted {}), the server's warning heard {heard}, in {WEAR_WAIT} server seconds", name(plan.block), plan.uses - plan.warn_at));
+            }
+        }
+        5 => {
+            // A frame after the state came: the hotbar shows it nearly worn out.
+            let Some(plan) = gate.tool_wear else { return };
+            let left = plan.warn_at as f32 / plan.uses as f32 * 100.0;
+            let mut bars = world.query::<(&SlotWear, &InheritedVisibility, &Children)>();
+            let shown: Vec<(bool, Entity)> = bars.iter(world).filter(|(s, ..)| s.0 == plan.slot).map(|(_, v, c)| (v.get(), c[0])).collect();
+            let widths: Vec<(bool, Val)> = shown.iter().map(|&(visible, fill)| (visible, world.get::<Node>(fill).map_or(Val::Auto, |n| n.width))).collect();
+            let mut icons = world.query::<(&SlotIcon, &ImageNode, &InheritedVisibility)>();
+            let tints: Vec<Color> = icons.iter(world).filter(|(s, _, v)| s.0 == plan.slot && v.get()).map(|(_, image, _)| image.color).collect();
+            let bar_right = widths.iter().any(|&(visible, width)| visible && matches!(width, Val::Percent(p) if (p - left).abs() < 0.5));
+            let red = !tints.is_empty() && tints.iter().all(|&c| c != Color::WHITE);
+            if bar_right && red {
+                if gate.shot(world, "tool-worn").is_none() {
+                    return;
+                }
+                gate.check("tool wear: warns", Ok(format!("a {} worn to {} of {} uses creaked as it broke a {}; its icon reddened and its wear bar shows {left:.0}%", name(plan.tool), plan.warn_at, plan.uses, name(plan.block))));
+                world.resource::<Net>().command("wear 1");
+                world.resource::<Net>().command(&format!("setblock {} {} {} {}", block_at.x, block_at.y, block_at.z, name(plan.block)));
+                gate.advance(now);
+            } else {
+                fail(world, gate, "tool wear: warns", format!("hotbar slot {}: wear bars (shown, width) {widths:?}, wanted one shown at {left:.1}%; icon tints {tints:?}, wanted reddened", plan.slot));
+            }
+        }
+        6 => {
+            let Some(plan) = gate.tool_wear else { return };
+            let placed = world.resource::<ClientWorld>().block(block_at) == Some(plan.block);
+            let last = held(world, &plan).is_some_and(|s| s.item == plan.tool && s.wear == plan.uses - 1);
+            if placed && last && drawn(world, block_at) {
+                aim(world, block_at);
+                mouse(world, MouseButton::Left, true);
+                gate.advance(now);
+            } else if waited {
+                let got = held(world, &plan).map(|s| (name(s.item), s.wear));
+                fail(world, gate, "tool wear: breaks", format!("the {} again ({placed}) or the tool down to its last use (slot {} holds {got:?}) never came in {WEAR_WAIT} server seconds", name(plan.block), plan.slot));
+            }
+        }
+        7 => {
+            // Worn out on that block: it broke, nothing left in hand but a head it names, the
+            // snap heard and chips thrown.
+            let Some(plan) = gate.tool_wear else { return };
+            let broken = world.resource::<ClientWorld>().block(block_at).is_some_and(|b| b.is_air());
+            let in_hand = held(world, &plan).map(|s| (s.item, s.count));
+            let worn = *world.resource::<crate::breaking::ToolsWorn>();
+            let heard = worn.broke > plan.worn.broke;
+            let chips = worn.chips > 0 || world.resource::<crate::render::particles::Particles>().amount <= 0.0;
+            let left = plan.head.map_or_else(|| "nothing".to_owned(), |head| format!("a {}", name(head)));
+            if broken && in_hand == plan.head.map(|head| (head, 1)) && heard && chips {
+                mouse(world, MouseButton::Left, false);
+                gate.check("tool wear: breaks", Ok(format!("worn to its last use, the {} broke on a {}: a snap heard, {} chips thrown, and {left} left in hand", name(plan.tool), name(plan.block), worn.chips)));
+                // Another, worn to a quarter, to mend by its station.
+                let net = world.resource::<Net>();
+                if let Some(head) = plan.head {
+                    net.command(&format!("clear {}", name(head)));
+                }
+                net.command(&format!("give {} 1", name(plan.tool)));
+                net.command(&format!("give {} 1", name(plan.mend)));
+                net.command(&format!("setblock {} {} {} {}", station_at.x, station_at.y, station_at.z, name(plan.station)));
+                gate.advance(now);
+            } else if waited {
+                let got = in_hand.map(|(item, count)| (name(item), count));
+                fail(world, gate, "tool wear: breaks", format!("mining the {} with its last use: broken {broken}, slot {} holds {got:?} (wanted {left}), the break heard {heard}, chips {}, in {WEAR_WAIT} server seconds", name(plan.block), plan.slot, worn.chips));
+            }
+        }
+        8 => {
+            let Some(plan) = gate.tool_wear else { return };
+            if held(world, &plan).is_some_and(|s| s.item == plan.tool && s.wear == 0) {
+                world.resource::<Net>().command(&format!("wear {}", plan.uses / 4));
+                gate.advance(now);
+            } else if waited {
+                let got = held(world, &plan).map(|s| (name(s.item), s.wear));
+                fail(world, gate, "tool wear: mends", format!("a new {} never reached hotbar slot {} ({got:?} there) in {WEAR_WAIT} server seconds", name(plan.tool), plan.slot));
+            }
+        }
+        9 => {
+            // Worn to a quarter, it goes in the grid with what mends it, the inventory open
+            // by the station.
+            let Some(plan) = gate.tool_wear else { return };
+            let worn = held(world, &plan).is_some_and(|s| s.item == plan.tool && s.wear == plan.uses - plan.uses / 4);
+            let station = world.resource::<ClientWorld>().block(station_at) == Some(plan.station);
+            let mend_slot = world.resource::<LocalPlayer>().inventory.slots.iter().position(|s| s.is_some_and(|s| s.item == plan.mend));
+            if let (true, true, Some(mend_slot)) = (worn, station, mend_slot) {
+                aim(world, station_at);
+                world.resource_mut::<UiState>().inventory_open = true;
+                let actions = world.resource::<crate::Actions>().0.clone();
+                let net = world.resource::<Net>();
+                for (from, to) in [(plan.slot, voxmar_engine::inventory::CRAFT), (mend_slot, voxmar_engine::inventory::CRAFT + 1)] {
+                    let target = voxmar_engine::action::ActionTarget::Slots { from: from as u8, to: to as u8, count: 1 };
+                    net.propose(actions.expect("core:transfer"), target);
+                }
+                gate.advance(now);
+            } else if waited {
+                fail(world, gate, "tool wear: mends", format!("the tool worn to a quarter ({worn}), the {} placed ({station}) or a {} carried ({mend_slot:?}) never came in {WEAR_WAIT} server seconds", name(plan.station), name(plan.mend)));
+            }
+        }
+        10 => {
+            // The grid shows the tool mended, by the station within reach; crafted, so.
+            let Some(plan) = gate.tool_wear else { return };
+            let grid = world.resource::<LocalPlayer>().inventory.craft;
+            let laid = grid.iter().flatten().count() == 2;
+            let near = world.resource::<crate::hud::inventory::NearTags>();
+            let shows = content.tools.mended(&grid, |tag| near.has(tag));
+            let back = ((plan.uses as f32 * content.tools.mend_share(plan.tool)).round() as u16).max(1);
+            let after = (plan.uses - plan.uses / 4).saturating_sub(back);
+            if laid && shows.is_some_and(|m| m.item == plan.tool && m.wear == after) {
+                if gate.shot(world, "tool-mend").is_none() {
+                    return;
+                }
+                let actions = world.resource::<crate::Actions>().0.clone();
+                world.resource::<Net>().propose(actions.expect("core:craft"), voxmar_engine::action::ActionTarget::Slot(0));
+                gate.advance(now);
+            } else if waited {
+                let grid: Vec<(String, u16)> = grid.iter().flatten().map(|s| (name(s.item), s.wear)).collect();
+                fail(world, gate, "tool wear: mends", format!("the grid holds {grid:?} by a {} (near tags {:?}) and shows {shows:?} mended, wanted the {} at wear {after}, in {WEAR_WAIT} server seconds", name(plan.station), near.0, name(plan.tool)));
+            }
+        }
+        _ => {
+            let Some(plan) = gate.tool_wear else { return };
+            let back = ((plan.uses as f32 * content.tools.mend_share(plan.tool)).round() as u16).max(1);
+            let after = (plan.uses - plan.uses / 4).saturating_sub(back);
+            let inventory = &world.resource::<LocalPlayer>().inventory;
+            let mended = inventory.slots.iter().flatten().find(|s| s.item == plan.tool).map(|s| s.wear);
+            let empty = inventory.craft.iter().all(Option::is_none);
+            if mended == Some(after) && empty {
+                let left = plan.uses - after;
+                gate.check("tool wear: mends", Ok(format!("a {} at {} of {} uses and a {} in the grid by a {} showed it mended, and crafted came back at {left}", name(plan.tool), plan.uses / 4, plan.uses, name(plan.mend), name(plan.station))));
+                end(world, gate);
+            } else if waited {
+                fail(world, gate, "tool wear: mends", format!("crafted, the {} came back at wear {mended:?} (wanted {after}), grid emptied {empty}, in {WEAR_WAIT} server seconds", name(plan.tool)));
             }
         }
     }

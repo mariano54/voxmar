@@ -48,9 +48,11 @@ pub struct BreakingPlugin;
 impl Plugin for BreakingPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<BlockBroken>()
+            .add_message::<ToolWore>()
+            .init_resource::<ToolsWorn>()
             .add_systems(
                 Update,
-                (cracks, chips, bursts, sounds).in_set(EffectSystems).after(InteractSystems).run_if(in_state(Screen::InGame)),
+                (cracks, chips, bursts, sounds, tool_chips).in_set(EffectSystems).after(InteractSystems).run_if(in_state(Screen::InGame)),
             )
             .add_systems(Update, amount.run_if(resource_changed::<Settings>.or_eager(resource_changed::<ActivePack>)))
             .add_systems(OnExit(Screen::InGame), |mut crack: ResMut<Crack>| crack.at = None);
@@ -66,6 +68,24 @@ pub struct EffectSystems;
 pub struct BlockBroken {
     pub pos: IVec3,
     pub block: BlockId,
+}
+
+/// What the player held wore down past its warning, or with `broke` wore out and broke
+/// (`ServerMessage::ToolWore`): heard (`sfx`), and a break throws a puff of its chips from
+/// the hand.
+#[derive(Message, Clone, Copy, Debug)]
+pub struct ToolWore {
+    pub item: BlockId,
+    pub broke: bool,
+}
+
+/// How many times the server said a tool warned or broke, for the gate.
+#[derive(Resource, Default, Clone, Copy, Debug)]
+pub struct ToolsWorn {
+    pub warned: u32,
+    pub broke: u32,
+    /// The chips thrown by the last break.
+    pub chips: u32,
 }
 
 /// Whether breaking a block is something to see: not air, and not water.
@@ -223,6 +243,43 @@ fn bursts(
             let mut particle = piece(&world, &pieces, &mut dice, pos, info, Face::PosZ, light, pos.as_vec3() + offset, velocity, size);
             particle.life = 0.5 + 1.0 * dice.roll();
             particles.spawn(&particle);
+        }
+    }
+}
+
+/// Chips of a tool that broke, thrown from the hand: a dozen pieces of its own texture
+/// that burst forward and fall.
+fn tool_chips(
+    mut wore: MessageReader<ToolWore>,
+    world: Res<ClientWorld>,
+    player: Res<crate::player::LocalPlayer>,
+    pieces: Option<Res<TexturePieces>>,
+    mut particles: ResMut<Particles>,
+    mut dice: Local<Dice>,
+    mut worn: ResMut<ToolsWorn>,
+) {
+    for &ToolWore { item, broke } in wore.read() {
+        if !broke {
+            worn.warned += 1;
+            continue;
+        }
+        worn.broke += 1;
+        worn.chips = 0;
+        let Some(pieces) = &pieces else { continue };
+        let info = world.registry.info(item);
+        let look = player.look_direction();
+        let right = look.cross(Vec3::Y).normalize_or(Vec3::X);
+        let hand = player.eye() + look * 0.6 + right * 0.3 - Vec3::Y * 0.3;
+        let cell = hand.floor().as_ivec3();
+        let light = light_at(&world, cell);
+        for _ in 0..12 {
+            let velocity = (look + dice.spread() * 0.6).normalize_or(look) * 2.5 + Vec3::Y * 1.5;
+            let size = 0.06 + 0.06 * dice.roll();
+            let at = hand + dice.spread() * 0.1;
+            let mut particle = piece(&world, pieces, &mut dice, cell, info, Face::PosZ, light, at, velocity, size);
+            particle.life = 0.4 + 0.6 * dice.roll();
+            particles.spawn(&particle);
+            worn.chips += 1;
         }
     }
 }
