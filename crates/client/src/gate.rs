@@ -521,6 +521,9 @@ struct Gate {
     /// While the world loads, since when each part of being loaded has held (`LOAD_PARTS`),
     /// for the load line: which one the load waited on last.
     load_parts: [Option<f32>; LOAD_PARTS.len()],
+    /// When the player first stood ready on the test ground (`Step::Arrive`), for how long
+    /// placing then waited for the distant land.
+    arrive_ready: Option<f32>,
     /// Progress through a step's own stages, and when the current one began.
     phase: u32,
     phase_since: f32,
@@ -785,6 +788,7 @@ impl Gate {
             since: 0.0,
             frames: 0,
             load_parts: [None; LOAD_PARTS.len()],
+            arrive_ready: None,
             phase: 0,
             phase_since: 0.0,
             settled: 0,
@@ -1367,6 +1371,8 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
     }
     let limit = match gate.step {
         Step::Load => LOAD_LIMIT,
+        // Waiting on the distant land the load no longer waits for.
+        Step::Arrive => LOAD_LIMIT,
         // A fresh area of the world to generate and mesh.
         Step::Gorge | Step::Ore | Step::Tarns => GORGE_OVERLOADED_LIMIT + STEP_LIMIT,
         // Striking judges itself by the blows the server answers (see `strike`).
@@ -1436,9 +1442,17 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
             for (since, held) in gate.load_parts.iter_mut().zip(held) {
                 *since = held.then(|| since.unwrap_or(now));
             }
-            // As a loading screen would, waiting for the weather to show too.
-            if held.iter().all(|&held| held) {
-                let parts: Vec<String> = LOAD_PARTS.iter().zip(gate.load_parts).map(|(part, since)| format!("{part} {:.1}s", since.unwrap_or(now))).collect();
+            // As a loading screen would, waiting for the weather to show too; but not for the
+            // distant land, the slowest part, which keeps building while the test ground is
+            // built and walked onto, as nothing there looks at it: placing waits for it
+            // (`Step::Arrive`).
+            let land_free = held.iter().enumerate().all(|(part, &held)| held || part == DISTANT_LAND);
+            if land_free {
+                let parts: Vec<String> = LOAD_PARTS
+                    .iter()
+                    .zip(gate.load_parts)
+                    .map(|(part, since)| since.map_or(format!("{part} still building"), |since| format!("{part} {since:.1}s")))
+                    .collect();
                 gate.check("load", Ok(format!("the world loaded in {now:.1}s ({})", parts.join(", "))));
                 land(world, gate);
                 // From here on, anything first drawn compiles its pipeline in that frame
@@ -1507,6 +1521,13 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
                 mouse(world, MouseButton::Left, false);
             }
             if since > 0.5 && settled(world, feet) {
+                // Placing, its shots and its frame check wait on the distant land being in,
+                // whenever that is, so none of them sees it still building.
+                let ready = *gate.arrive_ready.get_or_insert(now);
+                if !load_parts(world)[DISTANT_LAND] {
+                    return;
+                }
+                info!("gate: Place waited {:.1}s for distant land (in at {now:.1}s)", now - ready);
                 let locked = world.resource::<UiState>().cursor_locked;
                 gate.check("arrive", if locked { Ok(format!("standing on the test ground at {feet}")) } else { Err("a click did not grab the mouse".into()) });
                 aim(world, feet + IVec3::new(0, -1, 2));
@@ -12721,10 +12742,10 @@ fn land(world: &World, gate: &mut Gate) {
     );
 }
 
-/// Whether the world around the player has loaded and been meshed, distant terrain
-/// included.
 /// What being loaded takes, in `load_parts`'s order, as the load line names them.
 const LOAD_PARTS: [&str; 5] = ["joined", "columns in", "meshed", "distant land", "weather"];
+/// The distant land's place in `LOAD_PARTS`.
+const DISTANT_LAND: usize = 3;
 
 /// Whether each part of being loaded holds: the player joined, every column around it
 /// arrived (nine at least), none waits to be lit or meshed, the distant land is drawn, and
@@ -13051,6 +13072,12 @@ fn finish(world: &mut World, gate: &Gate, now: f32) {
 #[cfg(test)]
 mod tests {
     use super::{sling_next, warm_window, SlingNext, BEAR, SLING, SLING_LEVEL, SLING_STONES, UNANSWERED};
+
+    /// Placing waits on the part of being loaded the load line names as the distant land.
+    #[test]
+    fn placing_waits_on_the_distant_land() {
+        assert_eq!(super::LOAD_PARTS[super::DISTANT_LAND], "distant land");
+    }
 
     /// The window is judged by what the candle adds to its pane, so a brighter night (a
     /// full moon lighting the pane too) changes nothing; a pane the candle leaves as it was,
