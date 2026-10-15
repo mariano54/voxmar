@@ -1311,6 +1311,25 @@
             "................",
             "................",
         ])]),
+        // Loose stones: three grey cobbles in a heap, lit from the top left.
+        "block/loose_stone": (base: "shape/plant", palettes: {"head": ["#4a4a50", "#7a7a82", "#a8a8b0"]}, layers: [Grid(legend: {'w': "#c8c8d0"}, rows: [
+            "................",
+            "................",
+            "................",
+            "................",
+            "................",
+            "......DDDD......",
+            ".....DcwbbD.....",
+            ".....DcbbaD.....",
+            "...DDDDbaDDDD...",
+            "..DcwbDDDDcwbD..",
+            "..DcbbbaDDcbbaD.",
+            "..DbbbbaDDbbbaD.",
+            "...DbaaD..DbaaD.",
+            "....DDD....DDD..",
+            "................",
+            "................",
+        ])]),
         // Gold coins: two short stacks, each coin lit on its rim, the top ones stamped.
         "block/gold_coin": (base: "shape/plant", palettes: {"head": ["#8a5a10", "#d0a030", "#f8e080"]}, layers: [Grid(legend: {'w': "#fff6c8"}, rows: [
             "................",

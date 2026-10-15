@@ -25,7 +25,7 @@
         ),
         (
             name: "first_night", age: "nomad", branch: "main", title: "First Night",
-            why: "Make a campfire: put two logs or Wood blocks above two Cobblestones in the 2×2 crafting grid. No stripped wood is needed; cobblestone comes from stone, a few blocks under the dirt or bare on hillsides, and a flint pickaxe breaks it. Place the fire, select raw small game or an egg in your hotbar, and right-click the fire. Rabbits and junglefowl roam open grassland; both give small game, and a junglefowl sometimes an egg. Fists are slow at the hunt too: swing the stone axe, which hits three times as hard (a stone sword, two cobblestone over a stick, does as well). Wait two seconds; the cooked food goes into your inventory. If it burns, try again. Cooked food heals more than raw food.",
+            why: "Make a campfire: put two logs or Wood blocks above two Cobblestones in the 2×2 crafting grid. No stripped wood is needed. Stone lies a few blocks under the dirt or bare on hillsides; a flint pickaxe breaks it into two loose stones, and four loose stones knock together into two cobblestone in the grid. Place the fire, select raw small game or an egg in your hotbar, and right-click the fire. Rabbits and junglefowl roam open grassland; both give small game, and a junglefowl sometimes an egg. Fists are slow at the hunt too: swing the stone axe, which hits three times as hard (a stone sword, two cobblestone over a stick, does as well). Wait two seconds; the cooked food goes into your inventory. If it burns, try again. Cooked food heals more than raw food.",
             tasks: [[Craft("campfire", 1), CookAt("tag:edible", "campfire", 1)]],
             rewards: [Xp("cooking", 93.0), Item("torch", 4)],
         ),
@@ -127,7 +127,7 @@
         ),
         (
             name: "a_pile_of_stone", age: "nomad", branch: "mining", title: "A Pile of Stone",
-            why: "Stone is the next step up from wood. It lies a few blocks under the dirt almost everywhere, and bare on cliffs, hillsides and mountains. Break twenty stone with your pickaxe: it drops cobblestone, which makes stone tools, a campfire and, later, your hearth.",
+            why: "Stone is the next step up from wood. It lies a few blocks under the dirt almost everywhere, and bare on cliffs, hillsides and mountains. Break twenty stone with your pickaxe: each breaks into two loose stones, and four loose stones in the 2×2 grid make two cobblestone, which makes a campfire, a grindstone and, later, your hearth. Hard rock breaks straight to its own cobbles.",
             tasks: [[Mine("tag:stone", 20)]],
             after: ["stone_in_hand"],
             rewards: [Xp("mining", 30.0)],

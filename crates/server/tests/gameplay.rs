@@ -7462,6 +7462,18 @@ impl Fresh {
         }
     }
 
+    /// Cobblestone, as a player makes it: plain stone broken into loose stones (two a block),
+    /// knocked four at a time into two cobblestone in the grid, until `need` are in hand.
+    fn cobble(&mut self, tool: &str, targets: Vec<IVec3>, need: u32) {
+        let (cobble, loose_stone) = ("base:cobblestone", "base:loose_stone");
+        let crafts = need.saturating_sub(self.have(cobble)).div_ceil(2);
+        if crafts == 0 {
+            return;
+        }
+        self.gather(tool, targets, loose_stone, 4 * crafts);
+        self.craft(&[0, 1, 3, 4].map(|cell| (cell, loose_stone, crafts as u8)), cobble, 2 * crafts);
+    }
+
     /// As [`Fresh::gather_from`] over open ground: the player walks up to the nearest block
     /// that is out of the pull and goes on.
     fn gather(&mut self, tool: &str, mut targets: Vec<IVec3>, item: &str, need: u32) {
@@ -8097,12 +8109,12 @@ fn the_first_days(f: &mut Fresh) -> Site {
     f.gather("base:flint_axe", trunks, log, 12);
     f.mark("an_axe_to_it");
 
-    // Stone in Hand: cobblestone with the flint pickaxe; sand by hand, and a grindstone (a
+    // Stone in Hand: cobblestone with the flint pickaxe (loose stones knocked together); sand by hand, and a grindstone (a
     // wheel of cobble dressed with sand, on two sticks) set down by the table; granite, the
     // hard rock, ground on it to seven stone heads: a stone pickaxe and axe hafted from six,
     // the seventh kept for the shovel.
     let stone = rel(f, (9..=17).flat_map(|x| (-3..=4).map(move |z| v(x, 0, z))).filter(|p| !(p.x == 9 && p.z >= 3)).collect());
-    f.gather("base:flint_pickaxe", stone.clone(), cobble, 3);
+    f.cobble("base:flint_pickaxe", stone.clone(), 3);
     let (sand, granite, head) = ("base:sand", "base:cobbled_granite", "base:stone_head");
     f.gather("base:flint_pickaxe", vec![f.rel(3, 0, 1)], sand, 1);
     f.craft(&[(0, sand, 1), (1, cobble, 1), (3, stick, 1), (4, stick, 1)], "base:grindstone", 1);
@@ -8213,7 +8225,7 @@ fn the_first_days(f: &mut Fresh) -> Site {
     f.at_table(table);
     f.craft(&[(0, "base:stone_head", 1), (3, stick, 1), (6, stick, 1)], "base:stone_shovel", 1);
     f.gather_from("base:stone_shovel", &banks, bed.clone(), clay, 4);
-    f.gather("base:stone_pickaxe", stone.clone(), cobble, 28);
+    f.cobble("base:stone_pickaxe", stone.clone(), 28);
     f.mark("hearth_materials");
     f.at_table(table);
     f.craft(&[0, 1, 2, 3, 5, 6, 7, 8].map(|cell| (cell, cobble, 1)), "base:hearthstone", 1);
@@ -8234,7 +8246,7 @@ fn the_first_days(f: &mut Fresh) -> Site {
     // The Farm age's first fire: a campfire and five cobblestones make a pit kiln, set down;
     // clay from the pond fired in it (a fair share cracks at Crafting 1) until twelve fired
     // clay are in hand.
-    f.gather("base:stone_pickaxe", stone, cobble, 7u32.max(f.have(cobble)));
+    f.cobble("base:stone_pickaxe", stone, 7);
     f.craft(&[(0, log, 1), (1, log, 1), (3, cobble, 1), (4, cobble, 1)], "base:campfire", 1);
     f.at_table(table);
     f.craft(&[(0, cobble, 1), (2, cobble, 1), (3, cobble, 1), (4, "base:campfire", 1), (5, cobble, 1)], "base:pit_kiln", 1);

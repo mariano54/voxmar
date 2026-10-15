@@ -36,6 +36,12 @@ deepslate under every province, so a player in limestone or sandstone country wa
 it or mines down. Plain stone and cobblestone will not take an edge. A stone pickaxe or axe
 takes three heads, a hoe two, a shovel or knife one.
 
+Cobblestone is made too. Plain stone breaks into two **loose stones** (`drops` and
+`drop_count` in `blocks.ron`), and four loose stones knock together into two cobblestone in
+the hand's grid, so a block mined is still a cobblestone, one craft later. Hard rock
+(granite and the other rock families) breaks straight to its own cobbles, which the
+grindstone takes whole; cobblestone set down and broken again gives itself back.
+
 `base/tools.ron` (engine/src/tool.rs) says what each kind is made for, by block tags (a
 pickaxe for stone and ore, an axe for logs and planks, a shovel for soil, sand, gravel,
 clay and snow, a hoe for crops and leaves, shears for leaves and wool, a knife for plants).

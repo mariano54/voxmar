@@ -92,6 +92,9 @@
         (pattern: [["red_sand", "red_sand"], ["red_sand", "red_sand"]], output: "red_sandstone", xp: 2.0),
         // Moss grows over stonework.
         (ingredients: ["stone_bricks", "moss_block"], output: "mossy_stone_bricks", xp: 3.0),
+        // Cobblestone is made: plain stone breaks into loose stones (blocks.ron), and four
+        // knock together into two.
+        (pattern: [["loose_stone", "loose_stone"], ["loose_stone", "loose_stone"]], output: "cobblestone", count: 2, xp: 1.0),
         (ingredients: ["cobblestone", "moss_block"], output: "mossy_cobblestone", xp: 3.0),
         // Two logs (barked or stripped), or bark-on-all-sides wood blocks, over two
         // cobblestones make a campfire. Removing bark is never a prerequisite.

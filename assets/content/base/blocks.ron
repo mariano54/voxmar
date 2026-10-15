@@ -142,12 +142,16 @@
     blocks: [
         // Rock
         (name: "bedrock", texture_variety: (turn: true, mirror: true), textures: All("bedrock"), hardness: -1.0, color: (60, 60, 60), tags: ["deep"]),
-        (name: "stone", texture_variety: (turn: true, mirror: true), textures: All("stone"), hardness: 1.5, drops: "cobblestone", color: (125, 125, 125), family: "stone", tags: ["stone", "natural", "igneous", "cliff", "cave"]),
+        (name: "stone", texture_variety: (turn: true, mirror: true), textures: All("stone"), hardness: 1.5, drops: "loose_stone", drop_count: 2, color: (125, 125, 125), family: "stone", tags: ["stone", "natural", "igneous", "cliff", "cave"]),
         // A lair's room (lairs.ron): living root that no tool cuts, and the floor boss music
         // knows the room by (music.ron's `boss.rooms`).
         (name: "hollow_root", sound: Wood, textures: All("hollow_root"), hardness: -1.0, color: (78, 58, 42), tags: ["root", "lair"]),
         (name: "hollow_floor", sound: Soil, textures: All("hollow_floor"), hardness: -1.0, color: (66, 50, 38), tags: ["lair"]),
         (name: "cobblestone", textures: All("cobblestone"), hardness: 2.0, color: (110, 110, 110), family: "stone", tags: ["stone", "cobbled", "building"]),
+        // Loose stones: what plain stone breaks into, two a block, knocked four at a time into
+        // two cobblestone in the hand's grid (recipes.ron). Hard rock breaks to its own cobbles,
+        // which the grindstone wants whole.
+        (name: "loose_stone", render: Plant, solid: false, item: true, sound: Stone, textures: All("loose_stone"), hardness: 0.0, color: (125, 125, 125), tags: ["rubble"]),
         (name: "mossy_cobblestone", textures: All("mossy_cobblestone"), hardness: 2.0, color: (100, 118, 90), family: "stone", tags: ["stone", "cobbled", "building", "mossy", "wet"]),
         (name: "polished_stone", textures: All("polished_stone"), hardness: 1.5, color: (135, 135, 135), family: "stone", tags: ["stone", "polished", "building"]),
         (name: "stone_bricks", textures: All("stone_bricks"), hardness: 1.5, color: (120, 120, 120), family: "stone", tags: ["stone", "bricks", "building"]),
