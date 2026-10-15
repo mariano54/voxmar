@@ -304,9 +304,7 @@ impl Server {
         }
         let at = creature.body.position;
         neighbours
-            .around(at)
-            .into_iter()
-            .filter(|&other| other != id)
+            .kind_around(at, creature.species, id)
             .filter_map(|other| self.creatures.live.get(&other))
             .filter(|c| c.species == creature.species && c.owner.is_some() && c.ready_until > 0 && c.body.position.distance(at) < MATE_RANGE)
             .map(|c| c.body.position)
@@ -1080,6 +1078,9 @@ mod tests {
             server.tick_husbandry();
             server.tick += 1;
         };
+        // Base's every egg nests, whichever bird lays it.
+        let unnested: Vec<String> = server.content.creatures.iter().flat_map(|(_, c)| c.def.products.iter().filter(|p| p.item == "base:egg" && !p.nests).map(|_| c.def.name.clone())).collect();
+        assert!(unnested.is_empty(), "eggs that do not nest: {unnested:?}");
         let hen = kept(&mut server, "base:junglefowl", 1);
         let due = |server: &mut Server| server.creatures.live.get_mut(&hen).unwrap().products_due.iter_mut().for_each(|due| *due = 0);
         // No home yet: it falls.

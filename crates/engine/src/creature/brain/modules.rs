@@ -609,9 +609,10 @@ fn strike(ctx: &Ctx, mind: &mut Mind, target: Option<Seen>, stalks: bool) -> Dec
     let def = &ctx.creature.def;
     // Past its leash it gives the chase up and goes home: a wolf does not follow a player
     // across the land. A boss fights to the end, and those the server sends after someone
-    // (guards) go where it says.
+    // (guards) go where it says. Struck there within the last few seconds, it fights back:
+    // a player who led it past its leash and stands to fight is fought.
     let leash = if ctx.at.kept { def.leash.min(super::super::husbandry::KEPT_LEASH) } else { def.leash };
-    if !def.boss && ctx.at.errand.is_none() && flat(ctx.at.position, ctx.at.home) > leash {
+    if !mind.recalls(Memory::Struck) && !def.boss && ctx.at.errand.is_none() && flat(ctx.at.position, ctx.at.home) > leash {
         mind.give_up();
         return Decision::default();
     }
