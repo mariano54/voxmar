@@ -744,6 +744,8 @@ struct Gate {
     /// The campfire the weather step dries the player by, while it stands, and what the
     /// storm left the player wet with before it was lit.
     dry_fire: Option<IVec3>,
+    /// The bag the Nest step keeps its hen at: home, until the step breaks it.
+    nest_bag: Option<IVec3>,
     storm_wet: Vec<String>,
     /// Frames in a row the door step's lit or darkened spot has had nothing near it waiting
     /// to be meshed (`light_drawn`); each phase counts afresh.
@@ -946,6 +948,7 @@ impl Gate {
             food_moved: false,
             cook_started: false,
             dry_fire: None,
+            nest_bag: None,
             storm_wet: Vec::new(),
             light_frames: 0,
             tame_aim: [0; 3],
@@ -6069,7 +6072,11 @@ fn way_home(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 /// barrel in that home (`Product::nests`), seen in the barrel's open screen (shot
 /// `home-nest`), and the chat tells the keeper; then the bag, torch, barrel and hen go.
 fn nest(world: &mut World, gate: &mut Gate, now: f32) {
-    let Some(bag) = world.resource::<LocalPlayer>().vitals.home else {
+    // Held for the step's last phase, which breaks the bag and waits on home going.
+    if let Some(home) = world.resource::<LocalPlayer>().vitals.home {
+        gate.nest_bag = Some(home);
+    }
+    let Some(bag) = gate.nest_bag else {
         gate.check("home: nest", Err("no home after the Home step to keep a hen at: the server named none".into()));
         gate.next(Step::Door, now);
         return;
@@ -6230,11 +6237,13 @@ fn nest(world: &mut World, gate: &mut Gate, now: f32) {
             }
         }
         // Each back in the pack, whole.
-        _ => {
+        8 => {
             let (rugs, stools) = (holding(world, "base:red_rug").0, holding(world, "base:oak_stool").0);
             if rugs == 1 && stools == 1 {
                 gate.check("home: furnishings: come back", Ok("a rug and a stool the player set down came back whole when broken".into()));
-                leave(world, gate);
+                // The bag that is home goes: no ghost home is left where it stood.
+                world.resource::<Net>().command(&format!("setblock {} {} {} air", bag.x, bag.y, bag.z));
+                gate.advance(now);
             } else if waited > 10.0 {
                 // Where each missing piece's drop lies, and how far from the player's middle
                 // against how near it must be to be drawn in.
@@ -6256,6 +6265,27 @@ fn nest(world: &mut World, gate: &mut Gate, now: f32) {
                 let missing = lying("base:red_rug", rugs) + &lying("base:oak_stool", stools);
                 gate.check("home: furnishings: come back", Err(format!("{waited:.1} server s after breaking them, the pack holds {rugs} rug and {stools} stool (want one each), the player at ({:.2}, {:.2}, {:.2}){missing}", player.position.x, player.position.y, player.position.z)));
                 leave(world, gate);
+            }
+        }
+        // The bag gone, the server forgets it: no home told, the mark gone with it, and the
+        // chat says so. Frames counted as taps, so a starved client is not failed by the clock.
+        _ => {
+            let lost = {
+                let (locale, launch) = (world.resource::<Locale>(), world.resource::<Launch>());
+                locale.render(&voxmar_engine::lang::Words::key("bed.lost"), &launch.content.blocks)
+            };
+            let told = world.resource::<crate::hud::console::Console>().since(gate.phase_since).any(|l| l.contains(lost.as_str()));
+            let home = world.resource::<LocalPlayer>().vitals.home;
+            let shown = world.query_filtered::<&Visibility, With<crate::hud::home::HomeMark>>().iter(world).any(|v| *v != Visibility::Hidden);
+            if home.is_none() && !shown && told {
+                gate.check("home: no ghost", Ok(format!("the bag that was home broken, the server named no home, the mark went and the chat said \"{lost}\"")));
+                leave(world, gate);
+            } else if gate.waited_out(5.0) {
+                gate.check("home: no ghost", Err(format!("{waited:.1} server s after the bag at {bag} was broken: home still told {home:?}, mark shown {shown}, told \"{lost}\" {told}")));
+                leave(world, gate);
+            } else if now - gate.tap_at >= TAP_EVERY {
+                gate.tap_at = now;
+                gate.taps += 1;
             }
         }
     }

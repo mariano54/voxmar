@@ -130,6 +130,31 @@ impl Server {
         }
     }
 
+    /// A bed or home hearth broken (or built over) is no home: each player whose bed or hearth
+    /// stood at `pos` forgets it, as the new block there is no bed (no home's core), and is
+    /// told. They wake at what is left (the bed, the hearth, else the world's spawn), and the
+    /// home mark goes with it.
+    pub(crate) fn home_changed(&mut self, pos: IVec3, block: voxmar_engine::block::BlockId) {
+        let at = |spot: Option<Vec3>| spot.is_some_and(|spot| (spot - Vec3::new(0.5, 1.0, 0.5)).round().as_ivec3() == pos);
+        let bed = self.content.blocks.def(block).has_tag("bed");
+        let hearth = self.content.multiblocks.with_core(block).any(|m| m.home);
+        for player in self.players.values_mut() {
+            let (bed_lost, hearth_lost) = (!bed && at(player.bed), !hearth && at(player.home));
+            if bed_lost {
+                player.bed = None;
+                player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: Words::key("bed.lost") });
+            }
+            if hearth_lost {
+                player.home = None;
+                player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: Words::key("home.lost") });
+            }
+            if bed_lost || hearth_lost {
+                player.vitals.home = player.home_block(&self.lit);
+                player.changed(traits::VITALS);
+            }
+        }
+    }
+
     /// The cores of every fire burning, in order.
     pub(crate) fn fires(&self) -> Vec<IVec3> {
         let mut fires: Vec<IVec3> = self.lit.iter().filter(|(_, fire)| fire.until > self.tick).map(|(&core, _)| core).collect();
@@ -227,6 +252,41 @@ mod tests {
         assert_eq!(server.players[&1].tallies["lit:base:crucible_kiln"], 2);
         server.set_block(core, BlockId::AIR);
         assert!(!server.lit.contains_key(&core));
+    }
+
+    /// A bed or home hearth broken leaves no ghost home: the player forgets it, is told, and
+    /// wakes at what is left. Another bed set down where the bed was keeps it.
+    #[test]
+    fn a_broken_bed_or_hearth_is_forgotten() {
+        let mut server = crate::test_server();
+        player(&mut server);
+        let core = ColumnPos::of_block(server.spawn.floor().as_ivec3()).origin() + IVec3::new(8, server.spawn.y as i32 + 4, 8);
+        let (stone, chimney) = (server.content.blocks.expect("base:cobblestone"), server.content.blocks.expect("base:chimney"));
+        for x in -1..=1 { for z in -1..=1 {
+            server.set_block(core + IVec3::new(x, 0, z), stone);
+        }}
+        server.set_block(core, server.content.blocks.expect("base:hearthstone"));
+        for y in 1..=2 { server.set_block(core + IVec3::new(-1, y, -1), chimney); }
+        let (bag, oak_bed) = (server.content.blocks.expect("base:sleeping_bag"), server.content.blocks.expect("base:oak_bed"));
+        let bed = core + IVec3::new(5, 1, 0);
+        server.set_block(bed, bag);
+        server.players.get_mut(&1).unwrap().bed = Some(bed.as_vec3() + Vec3::new(0.5, 1.0, 0.5));
+        server.light(1, core);
+        let home = |server: &Server| server.players[&1].home_block(&server.lit);
+        assert_eq!(home(&server), Some(core), "the lit hearth is home");
+        // A bed swapped for another bed is still the bed.
+        server.set_block(bed, oak_bed);
+        assert!(server.players[&1].bed.is_some(), "a bed set where the bag was is still slept in");
+        // The hearthstone broken: no home there, the bed is.
+        server.set_block(core, BlockId::AIR);
+        assert_eq!(server.players[&1].home, None, "a broken hearth is forgotten");
+        assert_eq!(home(&server), Some(bed), "home is the bed");
+        assert_eq!(server.players[&1].vitals.home, Some(bed), "and the mark says so at once");
+        // The bed broken: nothing left, they wake at the world's spawn.
+        server.set_block(bed, BlockId::AIR);
+        assert_eq!(server.players[&1].bed, None, "a broken bed is forgotten");
+        assert_eq!(home(&server), None, "no home left");
+        assert_eq!(server.players[&1].vitals.home, None);
     }
 
     /// Home is the hearth lit as home while it burns, else the last bed: a hearth broken

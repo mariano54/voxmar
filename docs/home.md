@@ -191,6 +191,18 @@ bearing the mark draws from where it sits, which must be within 3° of home's
 ("way home: dusk"). Back at the camp it waits for the mark to fade out ("way home:
 inside"). It then sets the time back and leaves the camp to the Nest step, which takes it down.
 
+**No ghost home.** A home used to be only ever set: break the hearth or the bed and you woke
+at the hole, the mark pointing there. Now every block change asks `Server::home_changed`:
+a player whose bed stood where the new block is no bed forgets the bed ("Your bed is gone:
+you will not wake there again."), and one whose home hearth's core it was forgets the hearth
+("Your hearth is gone: it is your home no more."), en+ja. They wake at what is left (the
+hearth, the bed, else the world's spawn) and `Vitals::home` changes at once, so the mark
+moves or goes. A bed set down where the bed was (a bag swapped for a proper bed) is still
+the bed. Test: `hearth::tests::a_broken_bed_or_hearth_is_forgotten`. Gate: the Nest step's
+last phase breaks the bag that was home and waits for no home, no mark and the chat line
+("home: no ghost"). A bed broken while its sleeper is offline is not seen (their save keeps it
+until they sleep elsewhere).
+
 ## Sleeping
 
 Right clicking a bed used to only set where you wake. It now also gives a **rest** (the
