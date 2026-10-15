@@ -10542,6 +10542,9 @@ const NARROW_AT: IVec3 = IVec3::new(0, 0, 22);
 /// nor a client starved by a loaded machine is taken for a bear that did nothing.
 const NARROW_WAIT: f32 = 8.0;
 const NARROW_FRAMES: u32 = 30;
+/// How near the nearest the wall lets the bear's middle come it must come to be at the
+/// wall, either way: what positions and a body's footing round to.
+const NARROW_MARGIN: f32 = 0.1;
 
 /// Where the narrow step stands.
 #[derive(Default)]
@@ -10559,8 +10562,8 @@ struct NarrowRun {
     hurts: u32,
     /// The bear's blows that landed on the player once they stood past the doorway.
     landed: u32,
-    /// Across the ground from the player once they stood past the doorway: at first, at its
-    /// nearest since, and now.
+    /// From the player across the wall (along z, so a slide along the wall is no going
+    /// off) once they stood past the doorway: at first, at its nearest since, and now.
     first: Option<f32>,
     nearest: f32,
     last: f32,
@@ -10570,11 +10573,12 @@ struct NarrowRun {
 
 /// A brown bear behind a wall: a doorway narrower than the bear (a block less than its
 /// measured width, rounded up) cut where it landed, it is struck from the doorway; then,
-/// with the player two and a half blocks past the wall, it comes at the wall, lands no blow, gives up
-/// and goes off (back toward its home) rather than press the wall. What is judged derives
-/// from that setup: it came to the wall (within half a block of the nearest the wall lets
-/// its middle come), and then went more than a block back from its nearest, with no blow
-/// landed.
+/// with the player two and a half blocks past the wall, it comes at the wall and lands no
+/// blow through the doorway. What is judged derives from that setup: across the wall (along
+/// z), its middle came to the nearest the wall lets it come, within `NARROW_MARGIN` and no
+/// nearer (into the doorway), with no blow landed. That it then gives up rather than press
+/// the wall the server's tests judge (`fighters_at_walls_and_doorways`): given up, it may
+/// stand at the wall, homeward of it by less than a block.
 fn narrow(world: &mut World, gate: &mut Gate, now: f32) {
     let Some(species) = world.resource::<Launch>().content.creatures.find(BEAR) else {
         gate.check("narrow doorway", Err(format!("no `{BEAR}` in the content")));
@@ -10743,19 +10747,26 @@ fn narrow(world: &mut World, gate: &mut Gate, now: f32) {
             let new = (fighting.hurt_count - gate.narrow.hurts) as usize;
             gate.narrow.hurts = fighting.hurt_count;
             gate.narrow.landed += fighting.hurt.iter().rev().take(new).filter(|h| h.0 == view.id).count() as u32;
-            let distance = me.xz().distance(view.position.xz());
+            // Across the wall only (along z): sliding along the wall is not going off.
+            let distance = me.z - view.position.z;
             let first = *gate.narrow.first.get_or_insert(distance);
             gate.narrow.nearest = gate.narrow.nearest.min(distance);
             gate.narrow.last = distance;
             let (nearest, landed) = (gate.narrow.nearest, gate.narrow.landed);
-            // At the wall: its middle within half a block of the nearest the wall lets it
-            // come (half its width behind the wall's face, which is `past` from the player).
+            // At the wall: its middle within `NARROW_MARGIN` of the nearest the wall lets it
+            // come, half its width behind the wall's face on its side (`at.z`, a block and
+            // the two and a half past it from the player). Nearer than that, it got into the
+            // doorway it is too wide for.
             let wall = past.z - at.z as f32 + gate.narrow.width / 2.0;
-            let came = nearest < wall + 0.5;
-            let what = format!("from {first:.2} it came to {nearest:.2} blocks off (the wall lets it to {wall:.2}) and is {distance:.2} off, {landed} blows landed (a bear {:.2} wide, a doorway {} across)", gate.narrow.width, gate.narrow.door_width);
+            let what = format!(
+                "from {first:.2} across the wall it came to {nearest:.2} at the closest (the wall lets it to {wall:.2}, within {NARROW_MARGIN}) and is {distance:.2} off now, {landed} blows landed (a bear {:.2} wide, a doorway {} across)",
+                gate.narrow.width, gate.narrow.door_width
+            );
             if landed > 0 {
                 fail(world, gate, format!("it landed a blow through a doorway too narrow for it: {what}"));
-            } else if came && distance > nearest + 1.0 {
+            } else if nearest < wall - NARROW_MARGIN {
+                fail(world, gate, format!("it came into a doorway too narrow for it: {what}"));
+            } else if nearest <= wall + NARROW_MARGIN {
                 gate.check("narrow doorway", Ok(format!("{what}, in {:.1} server s", gate.server_in_phase())));
                 to_phase(gate, 4, now);
             } else if waited {
