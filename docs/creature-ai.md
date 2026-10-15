@@ -173,7 +173,13 @@ before a tree runs round the trunk. Its head stops at what its box does not: a t
 would put it into a wall goes the other way round (only while it still wants that way, and,
 standing, only to a heading its head fits at, so it never spins to face a player through a
 wall), a step that would is undone, and a head already in a block (one built before its
-face) may turn and walk out rather than stand frozen. It gives up a goal after two stuck
+face) may turn and walk out rather than stand frozen. What its head meets is a step it gets up,
+not a wall, when it is judged so at its feet (`Body::head_step`): the first cell its head
+comes to at its feet's level is solid, with room above it for its whole body, and its body
+raised a block clears it. Then it hops up it, springing on toward it, rather than turn
+along it, and its head is let over the step's edge only on that hop. A wall two high (which
+a head carried high meets in its upper block), a lintel at head height, or a step under a
+low ceiling is no step. It gives up a goal after two stuck
 seconds, or four going round, or about one once a search finds no way there. Fliers on
 the wing, drifters and swimmers do not steer.
 
