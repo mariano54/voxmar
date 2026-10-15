@@ -38,7 +38,7 @@ and "Items" tabs); the code is `engine/src/combat.rs`, the data each package's
 | Iron sword | sword (slash) | Attack 20 | 9 | two iron ingots and a stick, Engineering 15 |
 | Iron axe | axe (slash) | Attack 20 | 11 | the tool |
 | Sling | sling (ranged, reach 12, shoots any cobbled stone) | Ranged 1 | 2 | twine, hide, twine, Crafting 1 |
-| Short bow | bow (ranged, reach 20, two hands, shoots arrows) | Ranged 5 | 4 | three sticks and three twine, Crafting 5 |
+| Short bow | bow (ranged, reach 20, two hands, shoots arrows) | Ranged 3 | 4 | three sticks and three twine, Crafting 3 |
 
 A ranged weapon is a class with `ammo` (an item or `tag:`): each shot spends one when it
 lands, hit or miss, and with none the server starts no swing and says what it needs. A shot
