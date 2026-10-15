@@ -8463,4 +8463,13 @@ fn a_village_bed_is_someones() {
     client.propose("base:sleep", ActionTarget::Block { block: side, face: Face::PosY });
     client.pump_until(|c| told(c, "wake here"));
     assert!(!refused(&client), "a bed set by command in the village was refused");
+    // So does one set in the village bed's own place: it is no longer the bed the village put there.
+    client.ok(&format!("/setblock {} {} {} sleeping_bag", bed.x, bed.y, bed.z));
+    let bag = client.content.blocks.expect("base:sleeping_bag");
+    client.pump_until(|c| c.world.block(bed) == Some(bag));
+    client.chat.clear();
+    client.refused.clear();
+    client.propose("base:sleep", ActionTarget::Block { block: bed, face: Face::PosY });
+    client.pump_until(|c| told(c, "wake here"));
+    assert!(!refused(&client), "a bag set in a village bed's place was refused");
 }

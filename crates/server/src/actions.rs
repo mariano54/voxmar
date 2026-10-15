@@ -512,11 +512,14 @@ impl Server {
         }
     }
 
-    /// Whether a settlement's plan furnished one of its homes with a bed at `bed`, and a bed
-    /// still stands there.
+    /// Whether a settlement's plan furnished one of its homes with a bed at `bed`, and that
+    /// very bed still stands there: one set down in its place (a bag, another bed, by hand
+    /// or by command) is not the village's.
     fn planned_bed(&self, bed: IVec3) -> bool {
-        self.block(bed).is_some_and(|b| self.content.blocks.def(b).has_tag("bed"))
+        let Some(now) = self.block(bed) else { return false };
+        self.content.blocks.def(now).has_tag("bed")
             && self.overworld.settlements_near(IVec2::new(bed.x, bed.z), 64).iter().any(|s| s.buildings.iter().any(|b| b.beds.contains(&bed)))
+            && voxmar_worldgen::Generator::generate(&*self.overworld, voxmar_engine::coords::ColumnPos::of_block(bed)).block(bed) == now
     }
 
     /// Why `agent` cannot lie down now, if they cannot: a creature that hunts players (but
