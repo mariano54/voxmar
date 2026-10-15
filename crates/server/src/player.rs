@@ -923,7 +923,9 @@ impl Server {
     /// straight or one-turn path clears.
     fn stepped_between(&self, from: Vec3, to: Vec3) -> bool {
         let tuning = &self.content.movement;
-        if to.y < from.y || to.y - from.y > 2.0 * tuning.step_up {
+        // However many steps (a hitch on a long stair): each is checked below, and how high a
+        // move may rise at all is the rise budget's.
+        if to.y < from.y {
             return false;
         }
         let across = (to - from).with_y(0.0);

@@ -503,8 +503,14 @@ fn movement(
 /// exactly its speed, so it covers its distance at any frame rate, stopping at a wall or at
 /// a ledge, so it never drops the player off an edge. Returns what is left of it.
 fn dash(body: &mut Body, (dir, speed, left): (Vec3, f32, f32), around: &impl Surroundings, tuning: &movement::Tuning, controls: Controls, dt: f32) -> Option<(Vec3, f32, f32)> {
+    // Ground ahead: a block's top at the feet or up to a block below them, in the cell ahead
+    // at the feet's height (a slab underfoot is in the feet's own cell) or one of the two under it.
     let ahead = (body.position + dir * 0.45).floor().as_ivec3();
-    let ground = (0..=1).any(|d| around.solid(ahead - IVec3::Y * (1 + d)));
+    let feet = body.position.y;
+    let ground = (0..=2).any(|d| {
+        let cell = ahead - IVec3::Y * d;
+        around.boxes(cell).iter().any(|b| (feet - 1.0 - 1e-3..=feet + 1e-3).contains(&(cell.y as f32 + b.max.y)))
+    });
     // The last frame moves only for the time left of it.
     let step = dt.min(left);
     let now = if ground && dt > 0.0 { speed * step / dt } else { 0.0 };
@@ -635,6 +641,48 @@ mod tests {
             assert!((went - 3.0).abs() < 0.02, "{fps} fps: {went} blocks in {frames} frames");
             assert_eq!(body.velocity.with_y(0.0), Vec3::ZERO, "it stops at the end");
         }
+    }
+
+    /// A floor of slabs (the lower half of y 0) with nothing under it, ending at x 2.
+    struct Slabs;
+
+    const SLAB: [Aabb; 1] = [Aabb { min: Vec3::ZERO, max: Vec3::new(1.0, 0.5, 1.0) }];
+
+    impl Surroundings for Slabs {
+        fn solid(&self, cell: IVec3) -> bool {
+            cell.y == 0 && cell.x < 2
+        }
+
+        fn boxes(&self, cell: IVec3) -> &[Aabb] {
+            if self.solid(cell) { &SLAB } else { &[] }
+        }
+
+        fn water(&self, _: &Aabb) -> (f32, Vec2) {
+            (0.0, Vec2::ZERO)
+        }
+    }
+
+    /// On a floor of slabs over air (an upper storey, a bridge) a dash goes on as on whole
+    /// blocks, and stops at the floor's edge rather than dropping off it.
+    #[test]
+    fn a_dash_runs_along_a_slab_floor_and_stops_at_its_edge() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let tuning = content.movement.on_foot(1.0);
+        let start = Vec3::new(-5.5, 0.5, 0.5);
+        let mut body = Body { position: start, velocity: Vec3::ZERO, on_ground: true, in_water: false, flying: false, fly_speed: 1.0, against_wall: false, sprinting: false, jump_delay: 0.0 };
+        let mut under_way = Some((Vec3::X, 3.0 / 0.25, 0.25));
+        while let Some(d) = under_way {
+            under_way = dash(&mut body, d, &Slabs, &tuning, Controls::default(), 1.0 / 60.0);
+        }
+        let went = body.position.x - start.x;
+        assert!((went - 3.0).abs() < 0.02, "dashed {went} blocks along the slabs");
+        // From near the edge it stops short of dropping off.
+        body.position = Vec3::new(1.0, 0.5, 0.5);
+        let mut under_way = Some((Vec3::X, 3.0 / 0.25, 0.25));
+        while let Some(d) = under_way {
+            under_way = dash(&mut body, d, &Slabs, &tuning, Controls::default(), 1.0 / 60.0);
+        }
+        assert!(body.position.x < 2.0 && body.position.y == 0.5, "dashed off the edge to {}", body.position);
     }
 
     #[test]
