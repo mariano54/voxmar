@@ -5088,6 +5088,7 @@ fn tips(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 /// words checked) and throws motes; then a quest and a level asked together show in turn.
 fn celebrate(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     use crate::hud::celebrate::{BannerText, Celebrations, Stage};
+    use crate::ui::sound::{JinglesAsked, UiSound};
     let launch = world.resource::<Launch>().clone();
     let skills = &launch.content.skills;
     let Some(skill) = skills.named("core", "mining").or_else(|| skills.ids().next()) else {
@@ -5100,6 +5101,7 @@ fn celebrate(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     match gate.phase {
         0 => {
             *world.resource_mut::<Stage>() = Stage::default();
+            world.resource_mut::<JinglesAsked>().0.clear();
             let every = world.resource::<Celebrations>().milestone_every.max(1);
             world.resource_mut::<crate::hud::skills::SkillToasts>().level_up(skill, every);
             gate.advance(now);
@@ -5150,6 +5152,31 @@ fn celebrate(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 return;
             }
             gate.check("celebrate: in turn", match level { Some(3) => Ok(format!("the quest showed first, the level after its turn ({hold} s)")), other => Err(format!("after the quest came {other:?}, not level 3")) });
+            gate.advance(now);
+        }
+        // Each moment asked for its own tune as it showed, from the clips `sounds.ron` lists
+        // for it: the milestone's, then the quest's, then the level's. The level's is asked
+        // the frame it shows and taken a frame on, so judged once it is (or half a second
+        // on).
+        4 => {
+            let recorded = crate::sfx::Recordings::load(&launch.content.files).unwrap_or_default();
+            // A milestone without clips of its own rings as a level; a moment with none is silent.
+            let milestone = if recorded.level_milestone.is_empty() { recorded.level_up.clone() } else { recorded.level_milestone };
+            let wanted: Vec<(UiSound, Vec<String>)> =
+                [(UiSound::Milestone, milestone), (UiSound::QuestDone, recorded.quest_done), (UiSound::LevelUp, recorded.level_up)].into_iter().filter(|(_, clips)| !clips.is_empty()).collect();
+            let asked = world.resource::<JinglesAsked>().0.clone();
+            if asked.len() < wanted.len() && in_phase < 0.5 {
+                return;
+            }
+            let heard: Vec<UiSound> = asked.iter().map(|(sound, _)| *sound).collect();
+            gate.check(
+                "celebrate: jingles",
+                if asked.len() != wanted.len() || wanted.iter().zip(&asked).any(|((want, clips), (sound, took))| want != sound || clips != took) {
+                    Err(format!("the moments asked for {asked:?}, not {wanted:?} in turn"))
+                } else {
+                    Ok(format!("the moments asked for {heard:?} in turn, each from its own clips in sounds.ron ({:?})", asked.iter().map(|(_, clips)| clips.join(", ")).collect::<Vec<_>>()))
+                },
+            );
             *world.resource_mut::<Stage>() = Stage::default();
             gate.next(Step::Look, now);
         }
