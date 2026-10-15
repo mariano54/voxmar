@@ -49,6 +49,11 @@
         output: (0.5, 0.7), breed: 0.5, fed: (1.0, 2.0), space_radius: 5.0, company: 14.0,
         climate: (0.75, 0.25), wet: 0.05, roof_within: 3.0, snow_hardy: -10.0,
     ),
+    // A hop up a step rises a block and a half at most, however great the leaper's own
+    // jump: a snow leopard (its jump 11, over two blocks) springing on from a block before a
+    // gap would otherwise come down on a fence two high beyond it. Anything that jumps at
+    // all still gets up a block.
+    climbing: (step_rise: 1.45),
     creatures: [
         // --- Small and common: where everyone starts -------------------------------------
         (
