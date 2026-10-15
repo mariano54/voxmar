@@ -402,7 +402,7 @@ second: hardness 0.8 or 1).
 The wait is shown. While a block waits to catch it **smoulders**: grey smoke curls off it
 with the odd ember (`smoke` in fire.ron, the client's emitters) and it crackles (ambience.ron's
 `smoulder` group, `smouldering: true`, and its `smoulder_crackle` sound). The server tells
-every player which blocks smoulder when that changes (`ServerMessage::Smoulders`, protocol 50),
+every player which blocks smoulder when that changes (`ServerMessage::Smoulders`, protocol 48),
 since only it knows what changed (a village's thatch by its own torches does not smoulder).
 The first time in a session a player's own change sets something smouldering (a torch set, a
 hearth lit, thatch laid by a flame), they are told why in one line, with the ways round it

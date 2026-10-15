@@ -39,8 +39,8 @@ pub use voxmar_engine::weather::Weather;
 // 41: ServerMessage::Fires, the lit structures whose fires burn.
 // 42: a staggered creature's tell (STAGGERED).
 // 43: the seat a player sits on (Vitals::seated), for the lower eye.
-// 50: ServerMessage::Smoulders, the blocks about to catch fire, for their smoke.
-pub const PROTOCOL_VERSION: u32 = 50;
+// 48: ServerMessage::Smoulders, the blocks about to catch fire, for their smoke.
+pub const PROTOCOL_VERSION: u32 = 48;
 
 /// A creature's `tell` while it rears into a new phase of its fight.
 pub const REARING: u8 = u8::MAX;
