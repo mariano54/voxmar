@@ -122,7 +122,7 @@ struct InventoryScreen;
 struct InventorySlot(usize);
 /// The faint mark in an empty worn well of what it takes.
 #[derive(Component)]
-struct WornGlyph(usize);
+pub(crate) struct WornGlyph(pub(crate) usize);
 
 /// The mark for worn slot `slot`, if it is one, by `combat::Slot`'s order.
 fn worn_glyph(slot: usize) -> Option<Piece> {

@@ -234,14 +234,15 @@ impl Condition {
         }
     }
 
-    /// The tags and reaches `Near` asks about, and the tags `Holding` and `Wearing` ask of
-    /// what the player has in hand or wears, anywhere in this condition.
-    fn asks<'a>(&'a self, near: &mut Vec<(&'a str, i32)>, held: &mut Vec<&'a str>) {
+    /// The tags and reaches `Near` asks about, the tags `Holding` asks of what the player
+    /// has in hand, and those `Wearing` asks of what they wear, anywhere in this condition.
+    fn asks<'a>(&'a self, near: &mut Vec<(&'a str, i32)>, held: &mut Vec<&'a str>, worn: &mut Vec<&'a str>) {
         match self {
             Condition::Near(tag, reach) => near.push((tag, *reach)),
-            Condition::Holding(tag) | Condition::Wearing(tag) => held.push(tag),
-            Condition::All(list) | Condition::Any(list) => list.iter().for_each(|c| c.asks(near, held)),
-            Condition::Not(c) | Condition::Sheltered(c) => c.asks(near, held),
+            Condition::Holding(tag) => held.push(tag),
+            Condition::Wearing(tag) => worn.push(tag),
+            Condition::All(list) | Condition::Any(list) => list.iter().for_each(|c| c.asks(near, held, worn)),
+            Condition::Not(c) | Condition::Sheltered(c) => c.asks(near, held, worn),
             _ => {}
         }
     }
@@ -318,7 +319,7 @@ pub struct Situation<'a> {
     pub held: &'a [String],
     /// Which of the `Near` asks (`EffectRegistry::near_asks`) hold where the player stands.
     pub near: &'a [(String, i32)],
-    /// The tags of what the player wears (of those `EffectRegistry::held_tags` asks after).
+    /// The tags of what the player wears (of those `EffectRegistry::worn_tags` asks after).
     pub worn: &'a [String],
     /// The player sits on a seat.
     pub seated: bool,
@@ -426,6 +427,7 @@ pub struct EffectRegistry {
     /// the item in hand.
     near_asks: Vec<(String, i32)>,
     held_tags: Vec<String>,
+    worn_tags: Vec<String>,
 }
 
 impl EffectRegistry {
@@ -532,7 +534,7 @@ impl EffectRegistry {
                 quests.push(quest.to_owned());
             }
         }
-        let (mut near, mut held) = (Vec::new(), Vec::new());
+        let (mut near, mut held, mut worn) = (Vec::new(), Vec::new(), Vec::new());
         for def in &defs {
             if !(def.lingers.is_finite() && def.lingers >= 0.0) || (def.lingers > 0.0 && def.when.is_none()) {
                 return Err(RegistryError(format!("effect `{}` lingers {} seconds: it takes 0 or more, and a `when` to linger after", def.name, def.lingers)));
@@ -541,7 +543,7 @@ impl EffectRegistry {
                 return Err(RegistryError(format!("effect `{}` has `ends` but does not linger: only what lingers can end early", def.name)));
             }
             for when in def.when.iter().chain(&def.ends) {
-                when.asks(&mut near, &mut held);
+                when.asks(&mut near, &mut held, &mut worn);
             }
         }
         if let Some((tag, reach)) = near.iter().find(|(_, reach)| !(1..=8).contains(reach)) {
@@ -553,13 +555,17 @@ impl EffectRegistry {
                 near_asks.push((tag.to_owned(), reach));
             }
         }
-        let mut held_tags: Vec<String> = Vec::new();
-        for tag in held {
-            if !held_tags.iter().any(|t| t == tag) {
-                held_tags.push(tag.to_owned());
+        let once = |tags: Vec<&str>| {
+            let mut once: Vec<String> = Vec::new();
+            for tag in tags {
+                if !once.iter().any(|t| t == tag) {
+                    once.push(tag.to_owned());
+                }
             }
-        }
-        Ok(Self { defs, by_name, replaces, foods, sleeps, home_tags, quests, near_asks, held_tags })
+            once
+        };
+        let (held_tags, worn_tags) = (once(held), once(worn));
+        Ok(Self { defs, by_name, replaces, foods, sleeps, home_tags, quests, near_asks, held_tags, worn_tags })
     }
 
     pub fn get(&self, id: EffectId) -> &EffectDef {
@@ -711,10 +717,14 @@ impl EffectRegistry {
         &self.near_asks
     }
 
-    /// The tags effects ask of the item in hand with `Holding`, and of what is worn with
-    /// `Wearing`.
+    /// The tags effects ask of the item in hand with `Holding`.
     pub fn held_tags(&self) -> &[String] {
         &self.held_tags
+    }
+
+    /// The tags effects ask of what is worn with `Wearing`.
+    pub fn worn_tags(&self) -> &[String] {
+        &self.worn_tags
     }
 
     pub fn home_tags(&self) -> &[String] {
@@ -854,7 +864,8 @@ mod tests {
             (name: "stride", kind: Buff, title: "Stride", description: "", when: Some(Wearing("charge_charm")), modifiers: (speed: 1.05)),
         ])"#;
         let effects = EffectRegistry::new(vec![EffectRegistry::read("core", source).unwrap()]).unwrap();
-        assert_eq!(effects.held_tags(), ["charge_charm"]);
+        assert_eq!(effects.worn_tags(), ["charge_charm"]);
+        assert!(effects.held_tags().is_empty(), "wearing asks nothing of the hand");
         let calm = Weather::NONE;
         let charm = ["charge_charm".to_owned()];
         let wearing = Situation { worn: &charm, ..situation(&calm, false, 15.0, true) };

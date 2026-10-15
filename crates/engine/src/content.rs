@@ -490,6 +490,11 @@ impl Content {
             }
             *at = Some(crate::combat::Slot::Charm.index() as u8);
         }
+        // `Wearing` asks of what is worn: a tag only things that are never worn carry (a
+        // torch's `fire`) would be an effect that can never hold.
+        if let Some(tag) = effects.worn_tags().iter().find(|tag| !blocks.ids().any(|id| worn[id.0 as usize].is_some() && blocks.def(id).has_tag(tag))) {
+            return Err(RegistryError(format!("effects.ron: an effect asks for something worn tagged `{tag}`, which nothing worn carries")));
+        }
         crate::inventory::set_worn_slots(worn);
         // A store's slots follow the player's own in a slot number of a byte.
         let mut holds = vec![None; blocks.len()];

@@ -168,7 +168,7 @@ impl Survival {
             let def = server.content.blocks.def(item);
             effects.held_tags().iter().filter(|tag| def.has_tag(tag)).cloned().collect()
         });
-        let worn: Vec<String> = effects.held_tags().iter().filter(|tag| player.inventory.worn.iter().flatten().any(|s| server.content.blocks.def(s.item).has_tag(tag))).cloned().collect();
+        let worn: Vec<String> = effects.worn_tags().iter().filter(|tag| player.inventory.worn.iter().flatten().any(|s| server.content.blocks.def(s.item).has_tag(tag))).cloned().collect();
         let near: Vec<(String, i32)> = effects.near_asks().iter().filter(|(tag, reach)| server.tagged_within(feet, tag, *reach)).cloned().collect();
         let max_level = hitpoints.map(|skill| server.content.skills.level(server.players[&id].skills.xp(skill)));
         // Mending (a prayer) brings health back faster.

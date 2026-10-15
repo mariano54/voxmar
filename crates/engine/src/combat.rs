@@ -1104,6 +1104,9 @@ impl CombatRegistry {
             for (slot, name) in &set.pieces {
                 let error = |why: &str| RegistryError(format!("combat.ron: set `{}`: {name}: {why}", set.name));
                 let item = blocks.id(name).ok_or_else(|| error("no such item"))?;
+                if *slot == Slot::Charm {
+                    return Err(error("the charm slot holds a charm, never a piece of a set"));
+                }
                 if pieces[item.0 as usize].is_some() {
                     return Err(error("listed twice"));
                 }
