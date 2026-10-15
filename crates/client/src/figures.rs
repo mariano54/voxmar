@@ -203,6 +203,12 @@ pub struct FigureRead {
 }
 
 impl Figures {
+    /// Where another player's body is drawn, once it is (what the eye sees of them, eased
+    /// behind where the server says they are).
+    pub fn drawn_at(&self, id: PlayerId) -> Option<Vec3> {
+        self.shown.get(&id).filter(|f| f.painting.is_none()).map(|f| f.position)
+    }
+
     pub fn read(&self, id: PlayerId) -> Option<FigureRead> {
         let f = self.shown.get(&id)?;
         Some(FigureRead { position: f.position, yaw: f.yaw, painted: f.painting.is_none(), joints: f.joints.len(), arm: f.arm, leg: f.leg, held_at: f.held_at })
@@ -215,7 +221,19 @@ impl Plugin for FiguresPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Figures>()
             .add_systems(Update, show.after(crate::drops::show).run_if(in_state(Screen::InGame)))
-            .add_systems(OnExit(Screen::InGame), |mut figures: ResMut<Figures>| figures.shown.clear());
+            .add_systems(OnExit(Screen::InGame), |mut figures: ResMut<Figures>, mut skins: ResMut<Assets<SkinMaterial>>, mut images: ResMut<Assets<Image>>| {
+                for (_, figure) in figures.shown.drain() {
+                    forget(&figure, &mut skins, &mut images);
+                }
+            });
+    }
+}
+
+/// Lets a figure's material and painted skin go (the blank one all share stays).
+fn forget(figure: &Figure, skins: &mut Assets<SkinMaterial>, images: &mut Assets<Image>) {
+    skins.remove(&figure.material);
+    if figure.painting.is_none() {
+        images.remove(&figure.skin);
     }
 }
 
@@ -255,7 +273,7 @@ fn show(
         let here = remote.views().any(|view| view.id == id);
         if !here {
             commands.entity(figure.root).despawn();
-            skins.remove(&figure.material);
+            forget(figure, skins, images);
         }
         here
     });
