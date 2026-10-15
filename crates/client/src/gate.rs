@@ -5101,14 +5101,22 @@ fn celebrate(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 return;
             }
             gate.check("celebrate: in turn", match level { Some(3) => Ok(format!("the quest showed first, the level after its turn ({hold} s)")), other => Err(format!("after the quest came {other:?}, not level 3")) });
-            // Each moment asked for its own tune as it showed, from the clips `sounds.ron`
-            // lists for it: the milestone's, then the quest's, then the level's.
+            gate.advance(now);
+        }
+        // Each moment asked for its own tune as it showed, from the clips `sounds.ron` lists
+        // for it: the milestone's, then the quest's, then the level's. The level's is asked
+        // the frame it shows and taken a frame on, so judged once it is (or half a second
+        // on).
+        4 => {
             let recorded = crate::sfx::Recordings::load(&launch.content.files).unwrap_or_default();
             // A milestone without clips of its own rings as a level; a moment with none is silent.
             let milestone = if recorded.level_milestone.is_empty() { recorded.level_up.clone() } else { recorded.level_milestone };
             let wanted: Vec<(UiSound, Vec<String>)> =
                 [(UiSound::Milestone, milestone), (UiSound::QuestDone, recorded.quest_done), (UiSound::LevelUp, recorded.level_up)].into_iter().filter(|(_, clips)| !clips.is_empty()).collect();
             let asked = world.resource::<JinglesAsked>().0.clone();
+            if asked.len() < wanted.len() && in_phase < 0.5 {
+                return;
+            }
             let heard: Vec<UiSound> = asked.iter().map(|(sound, _)| *sound).collect();
             gate.check(
                 "celebrate: jingles",
