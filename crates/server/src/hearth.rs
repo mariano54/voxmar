@@ -54,11 +54,13 @@ impl Server {
             player.changed(traits::INVENTORY);
             let until = self.tick.saturating_add((seconds * TICKS_PER_SECOND as f32).ceil() as u64);
             self.lit.insert(core, Lit { position: core.to_array(), structure: structure.name.clone(), until });
+            self.hearth_blaze(core);
             self.tally(agent, "lit", &structure.name, 1);
         } else if structure.fuels.is_empty() && !self.lit.contains_key(&core) {
             // A fire that needs no fuel burns until the structure breaks; lit again while it
             // burns, it is the same fire (and the same lighting, for quests).
             self.lit.insert(core, Lit { position: core.to_array(), structure: structure.name.clone(), until: u64::MAX });
+            self.hearth_blaze(core);
             self.tally(agent, "lit", &structure.name, 1);
         }
         self.send_fires();
@@ -172,6 +174,7 @@ impl Server {
         self.players.get_mut(&id).unwrap().kindled = true;
         if let Some(structure) = standing.filter(|_| !self.lit.contains_key(&core)) {
             self.lit.insert(core, Lit { position: core.to_array(), structure, until: u64::MAX });
+            self.hearth_blaze(core);
         }
     }
 }

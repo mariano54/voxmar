@@ -20,8 +20,11 @@ impl Server {
         if changes.is_empty() {
             return;
         }
-        for &(pos, _) in &changes {
+        // One pass over what changed, every per-cell hook in it.
+        for &(pos, block) in &changes {
             self.dirty.insert(ColumnPos::of_block(pos));
+            // Water over burning thatch puts it out; over a flame, ends what it lit.
+            self.blaze_changed(pos, block);
         }
         self.send_changes(changes);
     }

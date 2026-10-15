@@ -77,6 +77,9 @@ pub struct Player {
     /// Whether their home hearth needs no lighting again from an older save
     /// (`hearth::kindle_home`): new players' and those already seen to.
     pub kindled: bool,
+    /// Whether they have been told this session why something of theirs smoulders
+    /// (`blaze_hint`).
+    pub told_fire: bool,
     pub buried: bool,
     /// Everything the player has discovered (`journal`).
     pub journal: voxmar_engine::journal::Journal,
@@ -204,6 +207,7 @@ impl Player {
             home: None,
             bed: None,
             kindled: true,
+            told_fire: false,
             buried: false,
             journal: Default::default(),
             quests_done: Vec::new(),
@@ -372,6 +376,8 @@ impl Server {
             ClientMessage::ClaimQuest { name } => self.claim_quest(id, &name),
             ClientMessage::LookAtStation { block } => self.look_at_station(id, block),
         }
+        // What they did that set something smouldering, they are told why.
+        self.blaze_hint(id);
     }
 
     /// A player looked an item up in the recipe viewer: counted once for quests, if the item

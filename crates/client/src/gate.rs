@@ -471,6 +471,9 @@ steps! {
     /// chat says so with what to add next, and the sleep is a rest. At home, Lay on a
     /// recipe fills the crafting grid from a barrel there.
     Home,
+    /// Fire in the thatch: a wattle panel with a torch set beside it catches, burns, and is
+    /// gone.
+    Blaze,
     /// The way home at dusk: past the home's box, the hearth mark sits within a few degrees
     /// of where home lies; back inside the home, it is gone.
     WayHome,
@@ -739,6 +742,8 @@ struct Gate {
     boss_id: Option<u32>,
     /// Whether the target readout has shown the struck creature's health.
     readout_seen: bool,
+    /// The Blaze step saw its panel smoulder (smoke rising) before it caught.
+    smoulder_seen: bool,
     /// Whether the creatures step could release its butterfly.
     butterfly: bool,
     /// Whether the struck creature's fall was judged.
@@ -962,6 +967,7 @@ impl Gate {
             boss_before: Vec::new(),
             boss_id: None,
             readout_seen: false,
+            smoulder_seen: false,
             butterfly: false,
             fall_judged: false,
             cover_checked: false,
@@ -1846,6 +1852,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Journal => journal(world, gate, now, in_phase),
         Step::Prayers => prayers(world, gate, now, in_phase),
         Step::Home => home(world, gate, now),
+        Step::Blaze => blaze(world, gate, now),
         Step::WayHome => way_home(world, gate, now, in_phase),
         Step::Nest => nest(world, gate, now),
         Step::Door => door(world, gate, now, in_phase),
@@ -5577,7 +5584,7 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
                 net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
             }
         }
-        gate.next(Step::WayHome, now);
+        gate.next(Step::Blaze, now);
     };
     match gate.phase {
         0 => {
@@ -5836,6 +5843,84 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
             } else if waited > 10.0 {
                 gate.check("home: lay", Err(format!("{waited:.1} server s after Lay: {laid} planks in the grid, {held} in the pack, barrel screen open {open}, inventory open {inventory}, viewer open {viewer}")));
                 lay_done(world, barrel);
+                leave(world, gate);
+            }
+        }
+    }
+}
+
+/// Fire in the thatch. Three blocks south of where the Home step stood, a wattle panel and a
+/// torch set beside it: first it smoulders (told by the server, and smoke counted rising
+/// from it), and once the catching time has passed (fire.ron) the panel is a blaze,
+/// and once the burning time has, it is gone. Each answer waited on in the server's seconds,
+/// with frames paced as taps; the torch goes after.
+fn blaze(world: &mut World, gate: &mut Gate, now: f32) {
+    let stand = world.resource::<LocalPlayer>().position.floor().as_ivec3();
+    let (panel, torch) = (stand + IVec3::new(0, 0, 3), stand + IVec3::new(1, 0, 3));
+    let waited = gate.server_in_phase();
+    let rules = world.resource::<Launch>().content.fire.rules.clone();
+    let leave = |world: &mut World, gate: &mut Gate| {
+        let net = world.resource::<Net>();
+        for at in [panel, torch] {
+            net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
+        }
+        gate.next(Step::WayHome, now);
+    };
+    let here = {
+        let client = world.resource::<ClientWorld>();
+        client.block(panel).map(|b| client.registry.def(b).name.clone()).unwrap_or_default()
+    };
+    if now - gate.tap_at >= TAP_EVERY {
+        gate.tap_at = now;
+        gate.taps += 1;
+    }
+    match gate.phase {
+        0 => {
+            let net = world.resource::<Net>();
+            net.command(&format!("setblock {} {} {} wattle_panel", panel.x, panel.y, panel.z));
+            net.command(&format!("setblock {} {} {} torch", torch.x, torch.y, torch.z));
+            world.resource_mut::<crate::emitters::Emitters>().watch(panel);
+            gate.smoulder_seen = false;
+            gate.advance(now);
+        }
+        // The panel smoulders (the server says so, and smoke rises from it), then catches.
+        1 => {
+            let smouldering = world.resource::<ClientWorld>().smoulders.contains(&panel);
+            let amount = world.resource::<crate::render::particles::Particles>().amount;
+            let puffs = world.resource::<crate::emitters::Emitters>().watched;
+            if !gate.smoulder_seen && smouldering && (puffs > 0 || amount <= 0.0) && here != "base:blaze" {
+                gate.smoulder_seen = true;
+                gate.check("fire: smoulders", Ok(format!("{waited:.1} server s after the torch, the panel smouldered ({puffs} puffs of smoke at particle amount {amount:.2})")));
+            }
+            if here == "base:blaze" {
+                world.resource_mut::<crate::emitters::Emitters>().watch = None;
+                if !gate.smoulder_seen {
+                    let why = world.resource::<crate::emitters::Emitters>().why_quiet(panel, amount);
+                    gate.check("fire: smoulders", Err(format!("the panel caught {waited:.1} server s on without being seen to smoulder (told smouldering: {smouldering}; {puffs} puffs; {why})")));
+                    return leave(world, gate);
+                }
+                if waited + 1.0 < rules.catch_seconds {
+                    gate.check("fire: catches", Err(format!("the wattle panel caught {waited:.1} server s after the torch was set beside it, before the {} s fire.ron asks", rules.catch_seconds)));
+                    return leave(world, gate);
+                }
+                gate.check("fire: catches", Ok(format!("a wattle panel with a torch beside it caught {waited:.1} server s on (fire.ron: {} s) and showed as a blaze", rules.catch_seconds)));
+                gate.advance(now);
+            } else if gate.waited_out(rules.catch_seconds + 4.0) {
+                world.resource_mut::<crate::emitters::Emitters>().watch = None;
+                if !gate.smoulder_seen {
+                    gate.check("fire: smoulders", Err(format!("{waited:.1} server s after the torch, the panel at {panel} was told smouldering {smouldering} with {puffs} puffs")));
+                }
+                gate.check("fire: catches", Err(format!("{waited:.1} server s after a torch was set beside the wattle panel at {panel}, it shows {here:?}, not a blaze")));
+                leave(world, gate);
+            }
+        }
+        // Burned away.
+        _ => {
+            if here == "core:air" {
+                gate.check("fire: burns out", Ok(format!("the blaze was gone {waited:.1} server s on (fire.ron: {} s), nothing left", rules.burn_seconds)));
+                leave(world, gate);
+            } else if gate.waited_out(rules.burn_seconds + 4.0) {
+                gate.check("fire: burns out", Err(format!("{waited:.1} server s after the panel caught, the cell at {panel} shows {here:?}, not air")));
                 leave(world, gate);
             }
         }
