@@ -7118,23 +7118,31 @@ impl Fresh {
 
     /// As [`Fresh::gather`], for what a block gives only sometimes in place of its own drop
     /// (`instead` in tools.ron: flint from gravel, a stick from leaves): breaks the nearest of
-    /// `targets` until `need` of `item` are carried or lie loose, then collects them.
+    /// `targets` until `need` of `item` are carried or lie loose, then collects them; as in
+    /// `gather`, what lies out of every reach is dug again.
     fn gather_chance(&mut self, tool: &str, mut targets: Vec<IVec3>, item: &str, need: u32) {
         self.hold(tool);
-        while self.have(item) + loose(&self.c, item) < need {
-            targets.retain(|&t| solid(&self.c, t));
-            let from = self.at;
-            let Some(target) = targets.iter().copied().min_by_key(|t| ((across(Self::middle(*t), from) * 10.0) as i32, t.y)) else {
-                panic!("{item}: every block was broken for {} of {need}", self.have(item) + loose(&self.c, item));
-            };
-            let centre = Self::middle(target);
-            if across(centre, self.at) > 2.3 {
-                self.walk_toward(centre, 1.3);
-            } else {
-                self.mine(target);
+        // Drops left lying out of every reach, still counted loose.
+        let mut lost = 0;
+        loop {
+            while self.have(item) + loose(&self.c, item) < need + lost {
+                targets.retain(|&t| solid(&self.c, t));
+                let from = self.at;
+                let Some(target) = targets.iter().copied().min_by_key(|t| ((across(Self::middle(*t), from) * 10.0) as i32, t.y)) else {
+                    panic!("{item}: every block was broken for {} of {need} ({lost} out of reach)", self.have(item) + loose(&self.c, item));
+                };
+                let centre = Self::middle(target);
+                if across(centre, self.at) > 2.3 {
+                    self.walk_toward(centre, 1.3);
+                } else {
+                    self.mine(target);
+                }
+            }
+            match self.collect_reachable(item, need) {
+                0 => return,
+                short => lost += short,
             }
         }
-        self.collect(item, need);
     }
 
     /// Waits until `need` of `item` are carried, closing on the nearest loose one until it is
