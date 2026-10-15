@@ -623,6 +623,10 @@ pub(crate) struct Server {
     /// don't regrow by themselves; and furnishings, which give themselves back only from
     /// these cells (see `WorldMeta::placed`).
     placed: FxHashSet<IVec3>,
+    /// Blocks set down that an unfinished quest's `Placed` counts, by cell: whose (their
+    /// name in lower case) and what item. Each counts on their tally while the block in the
+    /// cell still drops that item (`WorldMeta::quest_placed`).
+    quest_placed: FxHashMap<IVec3, (String, String)>,
     /// Picked wild plants waiting to grow back (see `regrow`), and plants a herb planter
     /// grew back, whose picking pays the planter's experience.
     regrowing: FxHashMap<IVec3, regrow::Regrowing>,
@@ -742,6 +746,18 @@ impl Server {
             crops.iter().find(|(_, c)| c.def.name == name).map(|(id, c)| (id, c.stages.len() as u8))
         });
         let placed = meta.placed.iter().map(|&p| IVec3::from_array(p)).collect();
+        // A renamed item's records go on under its new name, as tallies do.
+        let quest_placed = meta
+            .quest_placed
+            .iter()
+            .filter_map(|(cell, owner, item)| {
+                let item = match content.blocks.id(item) {
+                    Some(_) => item.clone(),
+                    None => content.blocks.def(content.blocks.saved_id(item)?).name.clone(),
+                };
+                Some((IVec3::from_array(*cell), (owner.clone(), item)))
+            })
+            .collect();
         let regrowing = regrow::restore(&meta.regrowing, |name| content.blocks.id(name));
         let lairs = lairs::Lairs::restore(&meta.lairs);
         let planter_grown = meta.planter_grown.iter().map(|&p| IVec3::from_array(p)).collect();
@@ -769,6 +785,7 @@ impl Server {
             lit,
             fires_sent: Vec::new(),
             placed,
+            quest_placed,
             regrowing,
             planter_grown,
             apiary,
@@ -1100,6 +1117,9 @@ impl Server {
         let mut meta = self.meta.clone();
         meta.time = self.tick;
         meta.placed = self.placed.iter().map(|p| p.to_array()).collect();
+        let mut quest_placed: Vec<([i32; 3], String, String)> = self.quest_placed.iter().map(|(cell, (owner, item))| (cell.to_array(), owner.clone(), item.clone())).collect();
+        quest_placed.sort();
+        meta.quest_placed = quest_placed;
         meta.regrowing = self.saved_regrowing();
         let mut grown: Vec<[i32; 3]> = self.planter_grown.iter().map(|p| p.to_array()).collect();
         grown.sort();
@@ -1220,24 +1240,6 @@ impl Server {
 
     /// Changes many blocks at once (a command's), telling each player about those in columns
     /// they have in one message, and waking any fluid they let flow.
-    /// A block a player set down for a quest's `Placed` (`Player::placed`), broken (gone to
-    /// air or a fluid; a sprung snare still stands): it comes off their tally. One whose
-    /// player is away stays counted.
-    fn unplaced(&mut self, pos: IVec3, block: BlockId) {
-        if block != BlockId::AIR && self.content.blocks.info(block).fluid.is_none() {
-            return;
-        }
-        let found = self.players.iter_mut().find_map(|(&id, p)| {
-            let i = p.placed.iter().position(|(cell, _)| *cell == pos)?;
-            let (_, name): (IVec3, String) = p.placed.swap_remove(i);
-            Some((id, name))
-        });
-        let Some((id, name)) = found else {
-            return;
-        };
-        self.untally(id, "placed", &name, 1);
-    }
-
     pub(crate) fn set_blocks(&mut self, changes: &[(IVec3, BlockId)]) {
         let mut done = Vec::with_capacity(changes.len());
         for &(pos, block) in changes {

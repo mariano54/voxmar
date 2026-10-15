@@ -353,14 +353,7 @@ impl Server {
                     self.placed_plant(item, cell);
                     self.placed_machine(agent, cell);
                     self.placed_by_field(agent, item, cell);
-                    // Counted, while it stands, only where some quest asks for it set down.
-                    let name = self.content.blocks.def(item).name.clone();
-                    if self.content.quests.places(&name, &|_, tag| self.content.blocks.def(item).has_tag(tag)) {
-                        self.tally(agent, "placed", &name, 1);
-                        let player = self.players.get_mut(&agent).unwrap();
-                        player.placed.retain(|(at, _)| *at != cell);
-                        player.placed.push((cell, name));
-                    }
+                    self.placed_for_quests(agent, item, cell);
                 }
                 (Effect::MoveItems, ActionTarget::Slots { from, to, count }) => {
                     // An open store's slots as it holds them now, and what moved written back.

@@ -100,6 +100,11 @@ pub struct WorldMeta {
     /// by themselves; and furnishings, which give themselves back only from these cells.
     #[serde(default)]
     pub placed: Vec<[i32; 3]>,
+    /// Blocks set down that an unfinished quest's `Placed` counts: cell, whose (their name
+    /// in lower case) and what item (none in older worlds). Saved with the world, so one
+    /// broken while its owner is away, or after a restart, still comes off their count.
+    #[serde(default)]
+    pub quest_placed: Vec<([i32; 3], String, String)>,
     /// Picked wild plants waiting to grow back, and plants herb planters grew back.
     #[serde(default)]
     pub regrowing: Vec<SavedRegrowing>,
@@ -170,6 +175,7 @@ impl WorldMeta {
             day: None,
             day_speed: 1.0,
             placed: Vec::new(),
+            quest_placed: Vec::new(),
             regrowing: Vec::new(),
             planter_grown: Vec::new(),
             hives: Vec::new(),
@@ -295,9 +301,6 @@ pub struct SavedPlayer {
     pub prayer_points: Option<f32>,
     /// Lines cast so far (none in older saves).
     pub casts: u64,
-    /// Blocks set down that a quest's `Placed` counts, by cell and item (none in older
-    /// saves), so one broken after a restart still comes off.
-    pub placed: Vec<([i32; 3], String)>,
     /// What the player's other rolls are numbered by (none in older saves).
     pub draws: Draws,
 }
@@ -367,8 +370,6 @@ struct PlayerFile {
     prayer_points: Option<f32>,
     #[serde(default)]
     casts: u64,
-    #[serde(default)]
-    placed: Vec<([i32; 3], String)>,
     #[serde(default)]
     draws: Draws,
 }
@@ -650,7 +651,7 @@ impl WorldSave {
         }
         let health = Health { current: file.health.current.min(file.health.max), max: file.health.max };
         let yaw = if file.yaw.is_finite() { file.yaw } else { 0.0 };
-        Ok(Some(SavedPlayer { position, yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills, effects: file.effects, home: file.home, bed: file.bed, kindled: file.kindled, journal: merge_journal(file.journal, registry), quests_claimed: file.quests_claimed.unwrap_or_else(|| file.quests.clone()), quests: file.quests, tallies: renamed_tallies(file.tallies, registry), prayer_points: file.prayer_points, casts: file.casts, placed: file.placed, draws: file.draws }))
+        Ok(Some(SavedPlayer { position, yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills, effects: file.effects, home: file.home, bed: file.bed, kindled: file.kindled, journal: merge_journal(file.journal, registry), quests_claimed: file.quests_claimed.unwrap_or_else(|| file.quests.clone()), quests: file.quests, tallies: renamed_tallies(file.tallies, registry), prayer_points: file.prayer_points, casts: file.casts, draws: file.draws }))
     }
 
     /// Moves the file of the player called `name` aside, as unreadable (`set_aside`).
@@ -694,7 +695,6 @@ impl WorldSave {
             tallies: player.tallies.clone(),
             prayer_points: player.prayer_points,
             casts: player.casts,
-            placed: player.placed.clone(),
             draws: player.draws,
         };
         let text = ron::ser::to_string_pretty(&file, ron::ser::PrettyConfig::default()).map_err(io::Error::other)?;
@@ -1218,7 +1218,6 @@ mod tests {
             tallies: Vec::new(),
             prayer_points: None,
             casts: 0,
-            placed: Vec::new(),
             draws: Draws::default(),
         };
         save.write_player("ada", &player, &registry).unwrap();
@@ -1264,7 +1263,6 @@ mod tests {
             tallies: vec![("crafted:base:torch".into(), 8)],
             prayer_points: Some(7.5),
             casts: 12,
-            placed: vec![([4, 65, -7], "base:feed_trough".into())],
             draws: Draws { strikes: 31, blows: 9, feeds: 4, cooks: 17 },
         };
         for name in ["steve", "Steve", "a/b", "../x", "ünï cödé"] {
@@ -1356,7 +1354,6 @@ mod tests {
             tallies: Vec::new(),
             prayer_points: None,
             casts: 0,
-            placed: Vec::new(),
             draws: Draws::default(),
         };
         save.write_player("herbalist", &player, &registry).unwrap();
