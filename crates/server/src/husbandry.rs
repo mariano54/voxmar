@@ -20,6 +20,7 @@ use voxmar_engine::traits;
 use voxmar_engine::lang::Words;
 use voxmar_protocol::{ChatKind, PlayerId, TICKS_PER_DAY, TICKS_PER_SECOND};
 
+use crate::save::Draw;
 use crate::commands::Source;
 use crate::Server;
 use crate::condition::RECKON_EVERY;
@@ -204,10 +205,10 @@ impl Server {
         let name = self.player_name(player);
         let (day, tamed) = (self.day, self.content.creatures.condition().tamed);
         self.creatures.live.get_mut(&id).expect("checked").fed = day;
-        let creature = &self.creatures.live[&id];
         let Some(taming) = species.def.taming.clone() else { return };
         let kind = species.def.name.clone();
-        let u = unit_from(mix(creature.seed, self.tick ^ 0x7a3e));
+        // By the count of feeds the player has given, not the tick it is eaten on.
+        let Some([u, _]) = self.players.get_mut(&player).map(|p| p.draw(Draw::Feed)) else { return };
         let creature = self.creatures.live.get_mut(&id).expect("checked");
         if creature.trusting != name {
             creature.trusting = name.clone();
