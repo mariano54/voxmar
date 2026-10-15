@@ -122,6 +122,29 @@ fn a_wild_boar_struck_gores_back_until_badly_hurt() {
         let _ = think(boar, &mut mind, &at(0.8));
         assert_eq!(doing(&mind), "flee", "seed {seed}: a piglet struck did not run");
     }
+    // Every kind that fights and runs (a fox, a frost stag, a cave bat): struck while hale it
+    // fights, badly hurt it drops the fight and runs, and keeps running with no more blows.
+    let mut running = Vec::new();
+    for (_, creature) in content.creatures.iter().filter(|(_, c)| c.fights() && c.flees() && !c.def.boss) {
+        let name = creature.def.name.rsplit(':').next().unwrap_or(&creature.def.name);
+        let doing = |mind: &Mind| mind.doing.map_or("nothing", |i| creature.modules[i].0.name());
+        for seed in 0..40 {
+            let mut mind = Mind::new(&creature.def.temperament, seed);
+            mind.hurt(creature, Some(1), 0.9);
+            for _ in 0..4 {
+                let _ = think(creature, &mut mind, &at(0.9));
+            }
+            assert!(matches!(doing(&mind), "defend" | "hunt"), "seed {seed}: a {name} struck while hale did not fight ({})", doing(&mind));
+            mind.hurt(creature, Some(1), 0.05);
+            for _ in 0..25 {
+                let _ = think(creature, &mut mind, &at(0.05));
+            }
+            assert_eq!(doing(&mind), "flee", "seed {seed}: a badly hurt {name} was not running 5 s on");
+        }
+        running.push(name.to_owned());
+    }
+    assert!(running.iter().any(|n| n == "wild_boar"), "the kinds that fight and run: {running:?}");
+    eprintln!("fight, then run: {running:?}");
     // A kind that never runs fights on badly hurt, its anger kept.
     for (_, creature) in content.creatures.iter().filter(|(_, c)| c.fights() && !c.flees() && !c.def.boss) {
         let mut mind = Mind::new(&creature.def.temperament, 3);

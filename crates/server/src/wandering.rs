@@ -1341,13 +1341,15 @@ impl Server {
         self.wandering.active.insert(id, inst);
     }
 
-    /// Angers (or, if they cannot fight or are young, frightens) every member of a party at
-    /// `player`.
+    /// Angers (or, if they cannot fight, are young or are badly hurt, frightens) every
+    /// member of a party at `player`.
     fn stir(&mut self, inst: &Instance, player: PlayerId, fight: bool) {
         for member in &inst.members {
             let Some(creature) = self.creatures.live.get_mut(&member.creature) else { continue };
             let species = self.content.creatures.get(creature.species);
-            let fights = fight && species.fights_as(creature.grows_up.is_some());
+            // One badly hurt that would run from a fight runs rather than be angered again.
+            let health = f32::from(creature.health) / f32::from(species.def.health.max(1));
+            let fights = fight && species.holds(creature.grows_up.is_some(), health, creature.mind.personality.bravery);
             if fights {
                 creature.mind.anger = 1.0;
                 creature.mind.remember(Memory::HurtBy(player), GRUDGE);
