@@ -138,6 +138,10 @@ pub struct Attack {
     /// them, then comes in for its next blow (`Circle`).
     #[serde(default)]
     pub circle: Option<Circle>,
+    /// A charge: once wound up it runs straight at where its target stood, blind to walls,
+    /// holes and cliff edges (`moves::Charge`, docs/bosses.md).
+    #[serde(default)]
+    pub charge: Option<moves::Charge>,
 }
 
 /// How a creature circles its target between blows (a wolf): for `seconds` after its
