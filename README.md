@@ -967,7 +967,11 @@ thunder fade by their own reach, never quite to nothing.
   drifting volumes and weather fog, volumetric light (shafts through canopies, the sun's glow
   in haze and mist), HDR with bloom.
   The sun, moon, stars and planets are measured in pixels, so they stay round at any field
-  of view. Nights are dark, lit by a faint blue moon.
+  of view. Nights are dark but readable: under a full moon, faces turned to it stand out
+  from the shade and the skyline shows; a moonless night is darker, never black; campfires,
+  hearths and lit windows are what light it. How bright a night is lives in
+  `night_light.ron`, which the game refuses outside the bounds playtests set (black, or far
+  too bright).
 - Soft cascaded sun shadows whose penumbra widens with distance from the caster, and which
   stand still (the sun's light moves in tenth-of-a-degree steps); sky light that falls off
   steeply into forests and overhangs, ambient occlusion, leaves glowing against the sun,
