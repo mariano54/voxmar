@@ -1,14 +1,15 @@
 //! The terrain shader composed with its imports and validated as the renderer would, for
 //! every pass it is built for, without a GPU: a shader that would not compile fails here,
 //! not only on the first frame. Bevy's own shader modules are read from its sources in
-//! Cargo's registry, at the versions Cargo.lock names.
+//! Cargo's registry (fetched, as this crate builds with Bevy), at the versions Cargo.lock
+//! names. Here in the client, a shader edit runs it (`tools/gate` by changed crate).
 
 use naga_oil::compose::{ComposableModuleDescriptor, Composer, NagaModuleDescriptor, ShaderDefValue};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 const WORKSPACE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
-const RENDER: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../client/src/render");
+const RENDER: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/src/render");
 
 /// Each `.wgsl` under `dir`, with its text.
 fn wgsl_files(dir: &Path, out: &mut Vec<(PathBuf, String)>) {
