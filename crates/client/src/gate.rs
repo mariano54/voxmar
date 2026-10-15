@@ -2569,7 +2569,8 @@ fn mirror_recipe(world: &World) -> Option<(String, Vec<(usize, String)>)> {
             let width = r.size().1;
             let cells = r.cells();
             let alternatives = r.alternatives();
-            let laid: Vec<(usize, String)> = cells.iter().enumerate().filter_map(|(i, item)| Some((i / SIDE * SIDE + width - 1 - i % SIDE, name((*item)?)))).collect();
+            // Empty cells first: a padding column past `width` has no mirror image.
+            let laid: Vec<(usize, String)> = cells.iter().enumerate().filter_map(|(i, item)| item.map(|item| (i / SIDE * SIDE + width - 1 - i % SIDE, name(item)))).collect();
             let single = alternatives.iter().flatten().all(|a| a.len() == 1);
             let unlike = (0..cells.len()).any(|i| i % SIDE < width && cells[i] != cells[i / SIDE * SIDE + width - 1 - i % SIDE]);
             (single && unlike).then(|| (laid.len(), name(r.output), laid))
