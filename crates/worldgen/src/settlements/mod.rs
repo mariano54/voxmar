@@ -28,6 +28,7 @@ mod centre;
 pub mod culture;
 pub mod def;
 mod house;
+pub mod interior;
 pub mod people;
 mod plan;
 #[cfg(test)]
@@ -77,6 +78,10 @@ pub struct Building {
     pub what: String,
     /// The work done in it (`bakery`, `mill`, `shrine`), for the people who work there.
     pub work: Option<String>,
+    /// Where its beds and seats stand (the blocks themselves), for its people to sleep and
+    /// sit: homes only, furnished by `interiors`.
+    pub beds: Vec<IVec3>,
+    pub seats: Vec<IVec3>,
 }
 
 /// Whose a settlement is, as gameplay and tools see it (`cultures.ron`).
@@ -319,7 +324,7 @@ impl Weigh for Slot {
                 + p.raster.sums.capacity() * std::mem::size_of::<(f32, f32, f32)>()
                 + table + p.voxels.values().map(|v| v.capacity() * std::mem::size_of::<Voxel>()).sum::<usize>()
                 + p.buildings.capacity() * std::mem::size_of::<Building>()
-                + p.buildings.iter().map(|b| b.what.capacity() + b.work.as_ref().map_or(0, String::capacity) + b.room.capacity() * std::mem::size_of::<IVec2>()).sum::<usize>()
+                + p.buildings.iter().map(|b| b.what.capacity() + b.work.as_ref().map_or(0, String::capacity) + b.room.capacity() * std::mem::size_of::<IVec2>() + (b.beds.capacity() + b.seats.capacity()) * std::mem::size_of::<IVec3>()).sum::<usize>()
                 + p.people.capacity() * std::mem::size_of::<people::Resident>()
                 + p.people.iter().map(|r| r.species.capacity()).sum::<usize>()
                 + p.gates.capacity() * std::mem::size_of::<IVec2>()
@@ -738,6 +743,7 @@ fn fixed(registry: &BlockRegistry, def: &SettlementsDef) -> Option<Fixed> {
         sacks: palette(&f.sacks, &any),
         crates: palette(&f.crates, &any),
         cloth: palette(&f.cloth, &any),
+        interiors: interior::Interiors::new(&def.interiors, registry),
         plinth: def.rules.houses.plinth,
         moss: def.rules.houses.moss,
     })

@@ -235,6 +235,104 @@
         crates: [Name("crate", 1)],
         cloth: [Name("white_terracotta", 4), Name("light_blue_terracotta", 1), Name("red_terracotta", 1), Name("yellow_terracotta", 1), Name("pink_terracotta", 1), Name("light_gray_terracotta", 1)],
     ),
+    // interiors: what stands in homes, by who lives there (crates/worldgen/src/settlements/
+    //   interior.rs; P58b). A home is furnished once its people are known: a bed for each
+    //   (upstairs first, head to a wall, back from the door; `counts.beds` at most), a table
+    //   with a seat facing it for each and `guests` more (`seats` at most), `stores` against
+    //   the walls, a corner of their `trade`, `lights`, cloth on the `walls` at head height,
+    //   a `rug` by chance, a `cook`ing place where there is no hearth, and `tops` set on the
+    //   table and each cupboard by chance. Counts and chances lean like the lists; nothing
+    //   ever stands in front of the door or cuts a floor off from the door and the stairs.
+    //   A roomier home holds more: past the first `roomy` columns of floor, one store more
+    //   for every two `roomy` columns, and a light and a wall cloth for every three.
+    //   pieces: each a `role` (Bed, Table, Seat, Store, Cook, Rug, Light, Wall, Top, Trade),
+    //     its `block` (`{wood}` the furniture wood, `{dye}` the home's dye, `{glaze}` its
+    //     glaze), weight and lean; a Trade piece names `who` it is for (a species, or the
+    //     work where someone works). Seats, rugs, wall cloth and tops are never solid, beds
+    //     are tagged `bed`, and every piece drops nothing or is a `furnishing`, so a village
+    //     gives none away (loading checks each in every wood, dye and glaze).
+    //   wood: the furniture wood where the place's wood is not in `woods`.
+    //   dyes, glazes: one of each is drawn per home, leaning like the lists.
+    interiors: (
+        wood: "oak",
+        woods: {
+            "oak": "oak", "dark_oak": "dark_oak", "spruce": "dark_oak", "birch": "birch", "palm": "birch", "acacia": "oak",
+            "baobab": "oak", "cherry": "birch", "cypress": "dark_oak", "jungle": "dark_oak", "mangrove": "dark_oak",
+            "maple": "oak", "pine": "oak", "redwood": "dark_oak", "willow": "birch",
+        },
+        dyes: [
+            (name: "white", weight: 3.0, lean: {"order": 0.3}),
+            (name: "cream", weight: 3.0),
+            (name: "ochre", weight: 1.5, lean: {"age": 0.3}),
+            (name: "amber", weight: 1.0, lean: {"festivity": 0.5}),
+            (name: "red", weight: 1.5, lean: {"festivity": 0.5, "martial": 0.3}),
+            (name: "rust", weight: 1.5, lean: {"wealth": -0.3}),
+            (name: "rose", weight: 1.0, lean: {"festivity": 0.5}),
+            (name: "mulberry", weight: 0.6, lean: {"wealth": 0.6, "hierarchy": 0.5}),
+            (name: "indigo", weight: 0.8, lean: {"wealth": 0.5, "lore": 0.3}),
+            (name: "sky", weight: 1.0, lean: {"outlook": 0.4}),
+            (name: "teal", weight: 0.8, lean: {"trade": 0.3}),
+            (name: "green", weight: 1.5, lean: {"green": 0.5}),
+        ],
+        glazes: [
+            (name: "earthen", weight: 4.0, lean: {"wealth": -0.3}),
+            (name: "ivory", weight: 1.5, lean: {"wealth": 0.6}),
+            (name: "cobalt", weight: 0.5, lean: {"wealth": 0.8, "trade": 0.5}),
+        ],
+        counts: (
+            beds: 4, guests: 1, seats: 4,
+            stores: (range: (1, 3), lean: {"wealth": 0.6}),
+            trade: (range: (1, 2), lean: {"craft": 0.4}),
+            walls: (range: (0, 2), lean: {"wealth": 0.4, "festivity": 0.4}),
+            lights: (range: (0, 2), lean: {"wealth": 0.3, "festivity": 0.5}),
+            rug: (chance: 0.45, lean: {"wealth": 0.8}),
+            cook: (chance: 0.5, lean: {"wealth": 0.3}),
+            tops: (chance: 0.55, lean: {"wealth": 0.4}),
+            roomy: 12,
+        ),
+        pieces: [
+            (role: Bed, block: "{wood}_bed"),
+            (role: Table, block: "{wood}_table", weight: 4.0),
+            (role: Table, block: "{wood}_desk", weight: 0.6, lean: {"lore": 0.6, "wealth": 0.3}),
+            (role: Seat, block: "{wood}_chair", weight: 2.0, lean: {"wealth": 0.5, "order": 0.3}),
+            (role: Seat, block: "{wood}_stool", weight: 2.0, lean: {"wealth": -0.5}),
+            (role: Seat, block: "{wood}_bench", weight: 1.0, lean: {"crowding": 0.3, "hierarchy": -0.3}),
+            (role: Seat, block: "{dye}_cushion", weight: 0.6, lean: {"festivity": 0.4, "lore": 0.3}),
+            (role: Store, block: "{wood}_cupboard", weight: 2.0, lean: {"wealth": 0.4}),
+            (role: Store, block: "{wood}_shelf", weight: 1.5),
+            (role: Store, block: "{wood}_wardrobe", weight: 0.8, lean: {"wealth": 0.9, "hierarchy": 0.4}),
+            (role: Store, block: "{wood}_pot_shelf", weight: 1.0, lean: {"wealth": -0.2}),
+            (role: Store, block: "{wood}_crate_stack", weight: 0.6, lean: {"trade": 0.5}),
+            (role: Store, block: "{wood}_barrel_rack", weight: 0.4, lean: {"festivity": 0.4, "trade": 0.3}),
+            (role: Store, block: "barrel", weight: 1.0, lean: {"wealth": -0.3}),
+            (role: Store, block: "{glaze}_jar", weight: 1.0, lean: {"wealth": -0.5}),
+            (role: Cook, block: "cottage_stove", lean: {"wealth": 0.6}),
+            (role: Cook, block: "cauldron", lean: {"wealth": -0.2, "lore": 0.3}),
+            (role: Rug, block: "{dye}_rug"),
+            (role: Light, block: "candle", weight: 2.0, lean: {"piety": 0.5}),
+            (role: Light, block: "{dye}_paper_lantern", lean: {"festivity": 0.8}),
+            (role: Wall, block: "{dye}_banner", lean: {"martial": 0.6, "hierarchy": 0.4}),
+            (role: Top, block: "{glaze}_plate", weight: 2.0),
+            (role: Top, block: "{glaze}_bowl", weight: 2.0),
+            (role: Top, block: "{glaze}_jug", weight: 1.5),
+            (role: Top, block: "{glaze}_basket", lean: {"green": 0.3}),
+            (role: Top, block: "{glaze}_jar"),
+            (role: Top, block: "candle", lean: {"piety": 0.4}),
+            // Their trade, by who they are or where they work.
+            (role: Trade, block: "sack", who: ["farmer", "field", "granary", "baker", "miller", "trader"]),
+            (role: Trade, block: "{glaze}_basket", who: ["farmer", "field", "orchard"]),
+            (role: Trade, block: "hay_bale", who: ["herder", "pen", "barn"]),
+            (role: Trade, block: "barrel", who: ["fisher", "boathouse", "innkeeper"]),
+            (role: Trade, block: "{wood}_barrel_rack", who: ["innkeeper"]),
+            (role: Trade, block: "quern_stones", who: ["miller", "baker"]),
+            (role: Trade, block: "{wood}_crate_stack", who: ["smith", "trader", "woodcutter", "tanner"]),
+            (role: Trade, block: "loom_frame", weight: 0.6, who: ["villager", "elder"], lean: {"craft": 0.8}),
+            (role: Trade, block: "spindle_stand", weight: 0.6, who: ["villager", "elder"], lean: {"craft": 0.8}),
+            (role: Trade, block: "{wood}_bookshelf", who: ["elder", "priest"], lean: {"lore": 0.8}),
+            (role: Trade, block: "candle", who: ["priest"]),
+            (role: Trade, block: "{dye}_cushion", who: ["child"]),
+        ],
+    ),
     avoid: ["no_settlement", "ocean", "water", "river", "peaks", "ice", "frozen", "fantastical", "giant"],
     sizes: [
         // Homes are `houses`; working buildings (`workshops`, and the `works` it always

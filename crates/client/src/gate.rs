@@ -13434,6 +13434,8 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             }
             let result = judge_settlement(world, gate, at);
             gate.check("settlements", result);
+            let homes = judge_homes(world, gate, at);
+            gate.check("settlement homes", homes);
             gate.advance(now);
         }
         // Its people: the server brings a settlement to life when a player is near, and they
@@ -13575,6 +13577,61 @@ fn judge_settlement(world: &World, gate: &Gate, at: IVec3) -> Result<String, Str
         Ok(format!("{name}, a {} in {} country at {at}: a well on the square, {doors} doors open onto floors, {houses} buildings dry", plan.size, culture.title.0))
     } else {
         Err(format!("{name}, a {} at {at}: {}", plan.size, problems.join("; ")))
+    }
+}
+
+/// The homes of the settlement whose middle is `at` are furnished for their people: every bed
+/// worldgen plans within reach is a bed in the server's world with room to get to it, and every
+/// seat it plans is a seat (settlements.ron's `interiors`).
+fn judge_homes(world: &World, gate: &Gate, at: IVec3) -> Result<String, String> {
+    let Some(generator) = world.resource::<crate::render::lod::WorldGenerator>().get().cloned() else {
+        return Err("no world generator on the client to read the settlement's plan from".into());
+    };
+    let Some(observer) = gate.observer.as_ref() else { return Err("no observer".into()) };
+    let client = world.resource::<ClientWorld>();
+    let plans = generator.settlements_near(at.xz(), 64);
+    let Some(plan) = plans.iter().find(|s| s.centre.xz() == at.xz()) else {
+        return Err(format!("worldgen plans no settlement with its middle at {at} ({} near)", plans.len()));
+    };
+    let name = |p: IVec3| observer.world.block(p).map_or("unloaded".to_owned(), |b| client.registry.def(b).name.clone());
+    let tagged = |p: IVec3, tag: &str| observer.world.block(p).is_some_and(|b| client.registry.def(b).has_tag(tag));
+    let open = |p: IVec3| observer.world.block(p).is_some_and(|b| !client.registry.def(b).solid);
+    let within = |p: IVec3| (p.xz() - at.xz()).abs().max_element() <= SETTLEMENT_REACH;
+    let (mut homes, mut beds, mut seats, mut problems) = (0, 0, 0, Vec::new());
+    for b in plan.buildings.iter() {
+        let (planned_beds, planned_seats): (Vec<IVec3>, Vec<IVec3>) = (b.beds.iter().copied().filter(|&p| within(p)).collect(), b.seats.iter().copied().filter(|&p| within(p)).collect());
+        if planned_beds.is_empty() && planned_seats.is_empty() {
+            continue;
+        }
+        homes += 1;
+        for p in planned_beds {
+            // Got to from beside: one of its sides is open at the bed's height and above.
+            let reached = [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z].into_iter().any(|d| open(p + d) && open(p + d + IVec3::Y));
+            if !tagged(p, "bed") {
+                problems.push(format!("the {}'s bed at {p} is {}", b.kind.name(), name(p)));
+            } else if !reached {
+                let sides: Vec<String> = [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z].into_iter().map(|d| format!("{} {} over {}", p + d, name(p + d), name(p + d + IVec3::Y))).collect();
+                problems.push(format!("the {}'s bed at {p} is walled in: beside it {}", b.kind.name(), sides.join(", ")));
+            } else {
+                beds += 1;
+            }
+        }
+        for p in planned_seats {
+            if tagged(p, "seat") && open(p + IVec3::Y) {
+                seats += 1;
+            } else {
+                problems.push(format!("the {}'s seat at {p} is {} under {}", b.kind.name(), name(p), name(p + IVec3::Y)));
+            }
+        }
+    }
+    if homes == 0 && problems.is_empty() {
+        problems.push(format!("worldgen plans no bed or seat within {SETTLEMENT_REACH} of the square"));
+    }
+    let settlement = &plan.name.0;
+    if problems.is_empty() {
+        Ok(format!("{settlement}: {homes} homes furnished, {beds} beds and {seats} seats as planned"))
+    } else {
+        Err(format!("{settlement} ({homes} homes, {beds} beds and {seats} seats as planned): {}", problems.join("; ")))
     }
 }
 

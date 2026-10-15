@@ -3066,3 +3066,168 @@ fn towns_are_big_rare_and_walled_round_their_heart() {
     assert!(walled.get("town").copied().unwrap_or(0) * 2 >= town_count, "few towns walled: {walled:?} of {town_count}");
     assert!(towns.iter().all(|t| t.2 >= 14), "a small town: {towns:?}");
 }
+
+/// Homes are furnished for who lives in them (`interiors`): beds for their residents,
+/// tagged `bed` where the plan says they stand, a table with seats round it, and every bed
+/// and seat on the ground floor reached on foot from the door, which nothing stands in
+/// front of. `--nocapture` prints a few floor plans.
+#[test]
+fn homes_are_furnished_for_their_people() {
+    use super::canvas::Put;
+    use rustc_hash::FxHashMap;
+    let registry = base_registry();
+    let content = crate::content::WorldContent::base(&registry).unwrap();
+    let solid = |b: Option<&BlockId>| b.is_some_and(|&b| registry.info(b).solid);
+    let tagged = |b: Option<&BlockId>, tag: &str| b.is_some_and(|&b| registry.def(b).has_tag(tag));
+    let (mut homes, mut wanted, mut beds, mut tables, mut seats, mut tops, mut surfaces, mut bare) = (0, 0, 0, 0, 0, 0, 0, Vec::new());
+    let mut shown = 0;
+    for seed in [42u64, 1, 7] {
+        let world = Overworld::with_content(seed, registry.clone(), &content);
+        let spawn = world.spawn_point();
+        for slot in world.settlements.near(&world, IVec2::new(spawn.x, spawn.z), 2500) {
+            let Some(plan) = slot.0.as_ref() else { continue };
+            let mut at: FxHashMap<IVec3, BlockId> = FxHashMap::default();
+            for v in plan.voxels.values().flatten().filter(|v| !v.ground) {
+                match v.put {
+                    Put::Set(b) | Put::Soft(b) | Put::Down(b) => at.insert(v.pos, b),
+                    Put::Clear => at.insert(v.pos, BlockId::AIR),
+                };
+            }
+            for (i, b) in plan.buildings.iter().enumerate() {
+                if b.kind != super::house::Kind::House || b.work.is_some() || b.room.is_empty() {
+                    continue;
+                }
+                homes += 1;
+                let residents = plan.people.iter().filter(|r| r.home == i).count();
+                wanted += residents.min(4);
+                beds += b.beds.len();
+                seats += b.seats.len();
+                if residents > 0 && b.beds.is_empty() {
+                    bare.push(format!("{} {} at {:?}, {} people", plan.name.0, b.what, b.min, residents));
+                }
+                for bed in &b.beds {
+                    assert!(tagged(at.get(bed), "bed"), "{}'s {} has no bed at {bed}", plan.name.0, b.what);
+                }
+                let y = b.floor;
+                let room: rustc_hash::FxHashSet<IVec2> = b.room.iter().copied().collect();
+                let walk = |p: IVec2| room.contains(&p) && solid(at.get(&IVec3::new(p.x, y, p.y))) && !solid(at.get(&IVec3::new(p.x, y + 1, p.y))) && !solid(at.get(&IVec3::new(p.x, y + 2, p.y)));
+                // A table on any storey.
+                if (b.min.x..=b.max.x).any(|x| (b.min.y..=b.max.y).any(|z| (y + 1..y + 16).any(|up| tagged(at.get(&IVec3::new(x, up, z)), "table")))) {
+                    tables += 1;
+                }
+                // Things set on the tables and cupboards: on a solid piece of furniture, not
+                // cloth.
+                for x in b.min.x..=b.max.x {
+                    for z in b.min.y..=b.max.y {
+                        for up in y + 1..y + 16 {
+                            let below = at.get(&IVec3::new(x, up, z));
+                            if !(tagged(below, "furniture") && solid(below)) {
+                                continue;
+                            }
+                            surfaces += 1;
+                            let above = at.get(&IVec3::new(x, up + 1, z));
+                            if above.is_some_and(|b| !b.is_air()) && !tagged(above, "cloth") && !tagged(above, "furniture") {
+                                tops += 1;
+                            }
+                        }
+                    }
+                }
+                // On foot from just inside the door.
+                let step = b.facing.step();
+                let door = b.door.expect("a home's door");
+                let inside = IVec2::new(door.x, door.z) - step * 3;
+                assert!(walk(inside), "{}'s {} at {:?}: the way in at {inside} is blocked", plan.name.0, b.what, b.min);
+                let mut seen = rustc_hash::FxHashSet::default();
+                seen.insert(inside);
+                let mut queue = vec![inside];
+                while let Some(p) = queue.pop() {
+                    for s in [IVec2::X, IVec2::NEG_X, IVec2::Y, IVec2::NEG_Y] {
+                        if walk(p + s) && seen.insert(p + s) {
+                            queue.push(p + s);
+                        }
+                    }
+                }
+                let mut fail = None;
+                for bed in b.beds.iter().filter(|p| p.y == y + 1) {
+                    let p = IVec2::new(bed.x, bed.z);
+                    if ![IVec2::X, IVec2::NEG_X, IVec2::Y, IVec2::NEG_Y].iter().any(|s| seen.contains(&(p + *s))) {
+                        fail = Some(format!("{}'s {} at {:?}: the bed at {bed} can't be walked to", plan.name.0, b.what, b.min));
+                    }
+                }
+                for seat in b.seats.iter() {
+                    if !seen.contains(&IVec2::new(seat.x, seat.z)) {
+                        fail = Some(format!("{}'s {} at {:?}: the seat at {seat} can't be walked to", plan.name.0, b.what, b.min));
+                    }
+                }
+                // A few floor plans of the ground floor, north up (and any that fails).
+                if fail.is_some() || (shown < 6 && residents >= 2) {
+                    shown += 1;
+                    let (lo, hi) = (b.min, b.max);
+                    println!("{} ({}), {} for {residents}: {:?}", plan.name.0, plan.culture.family, b.what, plan.people.iter().filter(|r| r.home == i).map(|r| r.species.as_str()).collect::<Vec<_>>());
+                    for z in lo.y..=hi.y {
+                        let row: String = (lo.x..=hi.x)
+                            .map(|x| {
+                                let p = IVec2::new(x, z);
+                                let b1 = at.get(&IVec3::new(x, y + 1, z));
+                                let name = b1.map(|&b| registry.def(b).name.clone()).unwrap_or_default();
+                                if p == inside {
+                                    'D'
+                                } else if tagged(b1, "bed") {
+                                    'B'
+                                } else if tagged(b1, "table") {
+                                    'T'
+                                } else if tagged(b1, "seat") {
+                                    'c'
+                                } else if tagged(b1, "rug") {
+                                    'r'
+                                } else if tagged(b1, "storage") || tagged(b1, "shelf") {
+                                    'S'
+                                } else if name.contains("campfire") || name.contains("torch") || tagged(b1, "light") {
+                                    '*'
+                                } else if room.contains(&p) && walk(p) {
+                                    '.'
+                                } else if room.contains(&p) {
+                                    'x'
+                                } else if solid(b1) {
+                                    '#'
+                                } else {
+                                    ' '
+                                }
+                            })
+                            .collect();
+                        println!("    {row}");
+                    }
+                }
+                if let Some(fail) = fail {
+                    panic!("{fail}");
+                }
+            }
+        }
+    }
+    println!("{homes} homes: {beds} beds for {wanted} wanted, {tables} tables, {seats} seats, {tops} things set on {surfaces} tables and cupboards; bare: {bare:?}");
+    assert!(homes >= 20, "only {homes} homes near spawn");
+    assert!(beds * 10 >= wanted * 9, "{beds} beds for {wanted} residents");
+    assert!(tables * 20 >= homes * 17, "{tables} tables in {homes} homes");
+    // Tops' chance is about a half (leaning): a quarter at least of tables and cupboards.
+    assert!(tops * 4 >= surfaces && surfaces > 0, "{tops} things set on {surfaces} tables and cupboards");
+    assert!(bare.len() * 50 <= homes, "homes with nobody's bed: {bare:?}");
+}
+
+/// Loading refuses a trade piece for someone who never lives in a settlement, and a bed
+/// that is not a furnishing (which would be anyone's to sleep in).
+#[test]
+fn interiors_load_checks_refuse_strangers_and_unclaimed_beds() {
+    use super::interior::Role;
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+    let content = voxmar_engine::content::Content::load(&dir).unwrap();
+    let world = crate::content::WorldContent::load(&content).unwrap();
+    let s = &world.settlements;
+    let (species, works) = (s.people.species(), s.works());
+    assert!(s.interiors.check_who(&species, &works).is_ok());
+    let mut stranger = s.interiors.clone();
+    stranger.pieces.iter_mut().find(|p| p.role == Role::Trade).unwrap().who = vec!["nobody_at_all".into()];
+    assert!(stranger.check_who(&species, &works).is_err(), "a trade piece for nobody was let through");
+    let mut bag = s.interiors.clone();
+    bag.pieces.iter_mut().find(|p| p.role == Role::Bed).unwrap().block = "base:sleeping_bag".into();
+    assert!(bag.check(&content.blocks).is_err(), "a bed that is no furnishing was let through");
+}
