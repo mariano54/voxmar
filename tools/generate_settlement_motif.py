@@ -6,19 +6,21 @@ Our own work: a market-day tune in D major in six-eight, a recorder over a pluck
 and a fiddle's drone (D - G - A - D), about ten seconds with its ring. Played offline by
 FluidSynth from the FluidR3 General MIDI sound font (Frank Wen, MIT; see
 THIRD_PARTY_NOTICES.md), as the home motif is (tools/generate_home_motif.py), whose
-finishing this shares. Written to assets/music/settlement/ as Ogg Vorbis; a package can
+finishing this shares. Written to assets/music/settlement/ as Ogg Vorbis, the font's name
+and SHA-256 in its comment tag and printed (VOXMAR_SF2 names another); a package can
 replace it or add others to the `settlement` category's folder.
 
     python3 tools/generate_settlement_motif.py
 """
 
+import hashlib
 import sys
 from pathlib import Path
 
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from generate_jingles import RATE, ROOT, Score, perform, write_ogg  # noqa: E402
+from generate_jingles import RATE, ROOT, Score, perform, sound_font, write_ogg  # noqa: E402
 
 OUT = ROOT / "assets" / "music" / "settlement"
 GUITAR, FIDDLE, RECORDER, PIZZICATO = 24, 40, 74, 45
@@ -74,9 +76,13 @@ def main() -> None:
     rms = np.sqrt((stereo ** 2).mean())
     stereo *= 10 ** (RMS_DB / 20) / rms
     stereo *= min(1.0, 0.89 / np.abs(stereo).max())
+    # Which sound font played it, kept in the clip's tags and said here, so its licence can
+    # be checked against the one THIRD_PARTY_NOTICES.md names.
+    font = Path(sound_font())
+    rendered = f"rendered by FluidSynth from {font.name}, sha256 {hashlib.sha256(font.read_bytes()).hexdigest()}"
     path = OUT / "market_day.ogg"
-    write_ogg(stereo, path)
-    print(f"{path.relative_to(ROOT)}: {stereo.shape[1] / RATE:.2f} s, peak {np.abs(stereo).max():.2f}", file=sys.stderr)
+    write_ogg(stereo, path, rendered)
+    print(f"{path.relative_to(ROOT)}: {stereo.shape[1] / RATE:.2f} s, peak {np.abs(stereo).max():.2f}, {rendered}", file=sys.stderr)
 
 
 if __name__ == "__main__":

@@ -395,11 +395,14 @@ fn leaving_a_world_forgets_the_surroundings() {
     use bevy::ecs::system::RunSystemOnce;
     use bevy::prelude::World;
     let mut world = World::new();
-    world.insert_resource(super::Surroundings { flowers: 0.6, depth: 40.0, sky: 0.0, biome: Vec::new(), settlement: None });
+    world.insert_resource(super::Surroundings { flowers: 0.6, depth: 40.0, sky: 0.0, biome: Vec::new(), settlement: Some((3, 0.0)), started: 9, surveyed: 9 });
     world.run_system_once(super::leave).unwrap();
     let left = world.resource::<super::Surroundings>();
     let fresh = super::Surroundings::default();
-    assert_eq!((left.flowers, left.depth, left.sky), (fresh.flowers, fresh.depth, fresh.sky));
+    assert_eq!((left.flowers, left.depth, left.sky, left.settlement, left.surveyed), (fresh.flowers, fresh.depth, fresh.sky, None, 0));
+    // The count of surveys runs on, so one still out from this world is never fresh in the
+    // next.
+    assert_eq!(left.started, 9);
 }
 
 /// Every bed, over all of a segment, and every one-shot, at its loudest from where it
@@ -558,6 +561,18 @@ fn the_settlement_axis_is_the_way_to_the_nearest_middle() {
     let place = super::place(&generator, IVec3::new(alone.x, near.centre.y, alone.y), &sets);
     assert_eq!((place.settlement, place.edge, place.people), (super::defs::NO_SETTLEMENT, super::defs::NO_SETTLEMENT, 0.0));
     assert!(place.buildings.iter().all(Vec::is_empty));
+    // Standing at its east edge, by a second settlement whose middle is nearer but whose
+    // bounds the player is outside: the one stood in is the one heard.
+    let at = bevy::math::Vec2::new(east as f32 + 0.5, near.centre.z as f32 + 0.5);
+    let mut other = near.clone();
+    other.id = near.id + 1;
+    other.buildings.clear();
+    other.centre = IVec3::new(east + super::SETTLEMENT_MARGIN + 3, near.centre.y, near.centre.z);
+    let ways = [near, &other].map(|s| s.centre.xz().as_vec2().distance(at));
+    assert!(ways[1] < ways[0], "the other's middle is nearer: {ways:?}");
+    let both = [near.clone(), other];
+    let (chosen, _, (edge, _)) = super::nearest_settlement(&both, at, &sets).unwrap();
+    assert_eq!((chosen.id, edge), (near.id, 0.0), "the settlement stood in, not the nearer middle");
 }
 
 /// A settlement through its day, as the world and the server's clock and weather tell it:

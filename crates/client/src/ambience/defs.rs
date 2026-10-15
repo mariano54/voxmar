@@ -735,7 +735,6 @@ impl Ambience {
             .collect()
     }
 
-    /// The environment for a group's weighted count from the scan: 0..1.
     /// Whether every building a one-shot sounds from is one settlements have (`known`:
     /// `SettlementsDef::building_names`), so a mistyped name is not a sound never heard.
     pub fn check_buildings(&self, known: &std::collections::BTreeSet<String>) -> Result<(), String> {
@@ -748,6 +747,7 @@ impl Ambience {
         Ok(())
     }
 
+    /// The environment for a group's weighted count from the scan: 0..1.
     pub fn presence(&self, group: usize, count: f32) -> f32 {
         let (low, high) = self.groups[group].range;
         ((count - low) / (high - low).max(1e-3)).clamp(0.0, 1.0)
@@ -824,9 +824,6 @@ mod tests {
         assert!(error(r#"(beds: [(name: "x", sound: Wind, volume: 1, duck: {"thunder": 1})])"#).contains("thunder"));
     }
 
-    /// Roof patters are axes beds play on; a later package's entries replace an earlier
-    /// one's; a roof material with no entry, an entry naming no material, or a patter no
-    /// bed plays on fails the launch check.
     /// A one-shot can sound from a settlement's buildings by name, at their doors or from
     /// their middles; sets asked for twice are one, a set of no names is a mistake, and the
     /// names must be buildings settlements have.
@@ -856,6 +853,9 @@ mod tests {
         assert_eq!(shipped.check_buildings(&world.settlements.building_names()), Ok(()));
     }
 
+    /// Roof patters are axes beds play on; a later package's entries replace an earlier
+    /// one's; a roof material with no entry, an entry naming no material, or a patter no
+    /// bed plays on fails the launch check.
     #[test]
     fn roof_patters_resolve_and_are_checked() {
         let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();

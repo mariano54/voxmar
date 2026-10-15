@@ -85,6 +85,12 @@ pub struct Surroundings {
     /// The nearest settlement (by its id) and how far outside its bounds the player is, in
     /// blocks (0 within), for the settlement motif.
     pub settlement: Option<(u64, f32)>,
+    /// How many surveys of the surroundings have been started, counting on across games,
+    /// and which of them `settlement` is from (0: none since the last game was left), so
+    /// the settlement motif can tell a survey taken where the player now is from one taken
+    /// before they joined or respawned.
+    pub started: u64,
+    pub surveyed: u64,
 }
 
 impl Plugin for AmbiencePlugin {
@@ -145,6 +151,8 @@ struct Place {
 }
 
 struct Survey {
+    /// Which survey this is (`Surroundings::started` when it began).
+    number: u64,
     enclosure: Enclosure,
     place: Option<Place>,
 }
@@ -184,6 +192,8 @@ struct Ambient {
     /// towards over a couple of seconds.
     enclosure: Enclosure,
     place: Option<Place>,
+    /// Which survey `place` is from.
+    place_survey: u64,
     smooth: Enclosure,
     env: Environment,
     mixer: Mixer,
@@ -254,6 +264,7 @@ fn start(mut commands: Commands, launch: Res<Launch>, world: Res<ClientWorld>, c
         generator: None,
         enclosure: Enclosure::default(),
         place: None,
+        place_survey: 0,
         smooth: Enclosure::default(),
         env: Environment::new(axes),
         cues: Vec::new(),
@@ -311,6 +322,7 @@ fn survey(
     world: Res<ClientWorld>,
     player: Res<LocalPlayer>,
     mut ambient: ResMut<Ambient>,
+    mut surroundings: ResMut<Surroundings>,
 ) {
     let ambient = &mut *ambient;
     while let Ok(survey) = ambient.surveys.1.try_recv() {
@@ -318,6 +330,7 @@ fn survey(
         ambient.enclosure = survey.enclosure;
         if survey.place.is_some() {
             ambient.place = survey.place;
+            ambient.place_survey = survey.number;
         }
     }
     let dt = time.delta_secs();
@@ -343,9 +356,12 @@ fn survey(
     }
 
     ambient.since_survey += dt;
-    if !player.joined || ambient.surveying || ambient.since_survey < SURVEY_INTERVAL {
+    // None is taken of where a dead player lay: the next is of where they come back.
+    if !player.joined || player.dead || ambient.surveying || ambient.since_survey < SURVEY_INTERVAL {
         return;
     }
+    surroundings.started += 1;
+    let number = surroundings.started;
     ambient.since_survey = 0.0;
     let eye = player.eye().floor().as_ivec3();
     let center = ColumnPos::of_block(eye);
@@ -375,7 +391,7 @@ fn survey(
             }
         });
         let place = generator.as_ref().map(|generator| place(generator, eye, &ambience.buildings));
-        let _ = tx.send(Survey { enclosure, place });
+        let _ = tx.send(Survey { number, enclosure, place });
     });
 }
 
@@ -477,12 +493,9 @@ fn place(generator: &Overworld, eye: IVec3, sets: &[defs::BuildingSet]) -> Place
     let edge = (site.edge / 48.0).clamp(0.0, 1.0);
     let at = eye.xz().as_vec2() + 0.5;
     let near = generator.settlements_near(eye.xz(), SETTLEMENTS_HEARD);
-    let nearest = near.iter().map(|s| (s, s.centre.xz().as_vec2().distance(at))).min_by(|a, b| a.1.total_cmp(&b.1));
+    let nearest = nearest_settlement(&near, at, sets);
     let (settlement, outside, people, id, buildings) = match nearest {
-        Some((s, settlement)) => {
-            let (outside, buildings) = settlement_bounds(s, at, sets);
-            (settlement, outside, s.people.len() as f32, Some(s.id), buildings)
-        }
+        Some((s, settlement, (outside, buildings))) => (settlement, outside, s.people.len() as f32, Some(s.id), buildings),
         None => (NO_SETTLEMENT, NO_SETTLEMENT, 0.0, None, vec![Vec::new(); sets.len()]),
     };
     Place {
@@ -504,6 +517,14 @@ fn place(generator: &Overworld, eye: IVec3, sets: &[defs::BuildingSet]) -> Place
         neighbour_tags: biomes.get(site.neighbour).tags.clone(),
         home: 0.5 + 0.5 * edge * edge * (3.0 - 2.0 * edge),
     }
+}
+
+/// The settlement of `near` whose bounds are nearest `at` (the one the player stands in, of
+/// two close together), the nearer middle of two equally near: it, the way to its middle,
+/// and [`settlement_bounds`].
+#[allow(clippy::type_complexity)]
+fn nearest_settlement<'a>(near: &'a [voxmar_worldgen::SettlementInfo], at: Vec2, sets: &[defs::BuildingSet]) -> Option<(&'a voxmar_worldgen::SettlementInfo, f32, (f32, Vec<Vec<Vec3>>))> {
+    near.iter().map(|s| (s, s.centre.xz().as_vec2().distance(at), settlement_bounds(s, at, sets))).min_by(|a, b| a.2.0.total_cmp(&b.2.0).then(a.1.total_cmp(&b.1)))
 }
 
 /// How far `at` is outside settlement `s`'s bounds (the ground its buildings and square
@@ -579,6 +600,7 @@ fn listen(
     env.set(Fixed::SettlementEdge, ambient.place.as_ref().map_or(NO_SETTLEMENT, |place| place.edge));
     env.set(Fixed::SettlementPeople, ambient.place.as_ref().map_or(0.0, |place| place.people));
     surroundings.settlement = ambient.place.as_ref().and_then(|place| Some((place.id?, place.edge)));
+    surroundings.surveyed = ambient.place_survey;
     let shown = &weather.current;
     let falling = shown.precipitation * (1.0 - shown.snow);
     env.set(Fixed::Rain, falling * smooth.sky.max(0.3 * smooth.air));
@@ -722,8 +744,9 @@ fn leave(
     for entity in &segments {
         commands.entity(entity).despawn();
     }
-    // The next world starts from nothing found, not deep under the last one.
-    *surroundings = Surroundings::default();
+    // The next world starts from nothing found, not deep under the last one; the count of
+    // surveys runs on, so one still out from this world is never taken for the next's.
+    *surroundings = Surroundings { started: surroundings.started, ..default() };
     let Some(mut ambient) = ambient else { return };
     let axes = ambient.ambience.axes();
     ambient.mixer = Mixer::new(&ambient.ambience, 0x616d_6269);
@@ -731,6 +754,7 @@ fn leave(
     ambient.enclosure = Enclosure::default();
     ambient.smooth = Enclosure::default();
     ambient.place = None;
+    ambient.place_survey = 0;
     ambient.env = Environment::new(axes);
     ambient.since_survey = SURVEY_INTERVAL;
 }
