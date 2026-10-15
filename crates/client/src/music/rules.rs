@@ -442,9 +442,9 @@ mod tests {
             assert!(rule.weight > 0.0);
         }
         assert!(rules.own_share > 0.0 && rules.own_share < 1.0);
-        // A world is mostly quiet: gaps far longer than a track (two to three minutes),
-        // and the name of each shows a moment, fading in and out.
-        assert!(rules.gap.0 >= 600.0 && rules.gap.1 >= rules.gap.0, "{:?}", rules.gap);
+        // A world is mostly quiet: gaps far longer than a track (two to three minutes), at
+        // least five minutes, and the name of each shows a moment, fading in and out.
+        assert!(rules.gap.0 >= 300.0 && rules.gap.1 >= rules.gap.0, "{:?}", rules.gap);
         assert!(rules.now_playing.shown > 2.0 * rules.now_playing.fade && rules.now_playing.fade > 0.0);
         // Voxmar's own tracks, a folder for each source, play in the menus and the world.
         for name in ["suno", "lyria"] {
