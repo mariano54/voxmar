@@ -136,6 +136,11 @@ impl Server {
     /// home mark goes with it.
     pub(crate) fn home_changed(&mut self, pos: IVec3, block: voxmar_engine::block::BlockId) {
         let at = |spot: Option<Vec3>| spot.is_some_and(|spot| (spot - Vec3::new(0.5, 1.0, 0.5)).round().as_ivec3() == pos);
+        // A flood changes thousands of cells a tick: one that is no online player's bed or
+        // hearth goes no further than these compares (two a player, no lookups).
+        if !self.players.values().any(|p| at(p.bed) || at(p.home)) {
+            return;
+        }
         let bed = self.content.blocks.def(block).has_tag("bed");
         let hearth = self.content.multiblocks.with_core(block).any(|m| m.home);
         for player in self.players.values_mut() {
