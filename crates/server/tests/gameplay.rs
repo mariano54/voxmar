@@ -961,9 +961,9 @@ fn a_world_whose_worldgen_data_changed_says_so_once_and_still_opens() {
     copy_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content"), &assets.join("content"));
     let blocks = assets.join("content/base/blocks.ron");
     let source = std::fs::read_to_string(&blocks).unwrap();
-    let mossy = r#"tags: ["stone", "bricks", "building", "mossy", "wet"]"#;
+    let mossy = r#"tags: ["stone", "bricks", "building", "mossy", "wet", "shelter:sound"]"#;
     assert!(source.contains(mossy));
-    std::fs::write(&blocks, source.replace(mossy, r#"tags: ["stone", "bricks", "building", "mossy", "wet", "tagged"]"#)).unwrap();
+    std::fs::write(&blocks, source.replace(mossy, r#"tags: ["stone", "bricks", "building", "mossy", "wet", "shelter:sound", "tagged"]"#)).unwrap();
     let tagged = load_content(&assets).expect("content loads");
     assert!(warned(tagged), "a block's tags changed");
     std::fs::remove_dir_all(&dir).unwrap();
@@ -2693,12 +2693,19 @@ fn a_furnished_home_heals_faster_and_sleeping_in_it_rests_you_once() {
     client.propose("base:sleep", ActionTarget::Block { block: bag, face: Face::PosY });
     client.pump_until(|c| told(c, "rested already"));
     assert!(!has(&client, "base:well_rested"));
-    // Light a hearth with a chimney (a lit one is home), a second light and a roof: snug.
+    // Light a hearth with a chimney (a lit one is home), a second light, and walls and a
+    // roof on a floor: snug.
     let core = feet + IVec3::new(4, 0, 0);
+    let (low, high) = (feet + IVec3::new(-3, 0, -4), feet + IVec3::new(7, 3, 4));
     for line in [
         format!("/setblock {} {} {} hearthstone", core.x, core.y, core.z),
         format!("/setblock {} {} {} torch", feet.x + 3, feet.y + 1, feet.z),
         format!("/fill {} {} {} {} {} {} stone", feet.x - 2, feet.y + 4, feet.z - 3, feet.x + 6, feet.y + 4, feet.z + 3),
+        format!("/fill {} {} {} {} {} {} stone", low.x, low.y - 1, low.z, high.x, low.y - 1, high.z),
+        format!("/fill {} {} {} {} {} {} oak_planks", low.x, low.y, low.z, low.x, high.y, high.z),
+        format!("/fill {} {} {} {} {} {} oak_planks", high.x, low.y, low.z, high.x, high.y, high.z),
+        format!("/fill {} {} {} {} {} {} oak_planks", low.x, low.y, low.z, high.x, high.y, low.z),
+        format!("/fill {} {} {} {} {} {} oak_planks", low.x, low.y, high.z, high.x, high.y, high.z),
     ] {
         client.ok(&line);
     }
@@ -2903,14 +2910,15 @@ fn home_says_where_home_is_and_what_the_next_step_needs() {
     let said = client.ok("/home");
     assert!(said.contains(&format!("Your home is at {}, {}, {}", bag.x, bag.y + 1, bag.z)), "{said}");
     assert!(said.contains("Camp reached. Next, Hearthside: it needs hearth 0/1"), "{said}");
-    // A hearthstone lights it: the ladder moves on and the next step names a roof and the rest.
+    // A hearthstone lights it: the ladder moves on and the next step names a roof, walls and the rest.
     let hearth = feet + IVec3::new(4, 0, 0);
     client.ok(&format!("/setblock {} {} {} hearthstone", hearth.x, hearth.y, hearth.z));
     client.pump_until(|c| c.world.block(hearth) == c.content.blocks.id("base:hearthstone"));
     client.chat.clear();
     client.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("Hearthside:")));
     let said = client.ok("/home");
-    assert!(said.contains("Hearthside reached. Next, Snug: it needs a roof overhead, light 1/2"), "{said}");
+    assert!(said.contains("Hearthside reached. Next, Snug: it needs a roof overhead, draughty or better walls and roof all about "), "{said}");
+    assert!(said.contains("%/90%, light 1/2"), "{said}");
 }
 
 #[test]
@@ -3706,6 +3714,157 @@ fn a_climb_in_one_input_ends_on_a_roof_not_in_the_room_under_it() {
     assert_eq!(client.teleported.take(), Some(start), "got into a sealed room through its roof");
 }
 
+/// A spot the server took as clear stays clear when a shape comes or goes beside it: which
+/// of its two boxes judges the spot (the margin box near shapes, the share box among whole
+/// blocks) never flips it into a wall, where only the end of the next move would be
+/// checked and a player could step through any wall into a sealed room. Pressed a fortieth
+/// into a plank wall (the share box allows it) with a slab then set in the cell their box
+/// only touches; or a two-hundredth into the floor beside a headstone that is then mined.
+#[test]
+fn a_shape_placed_or_mined_beside_a_player_never_lets_them_through_a_wall() {
+    real_time("movement is checked against the clock: how far a player may get in the seconds between their messages");
+    let mut client = on_a_test_floor();
+    let start = client.position;
+    let at = start.floor().as_ivec3();
+    // The room: one cell two high at x+4, walled and roofed in planks.
+    let room = |client: &mut Client| {
+        client.fill(at, IVec3::new(3, 0, -1), IVec3::new(5, 2, 1), "oak_planks");
+        client.fill(at, IVec3::new(4, 0, 0), IVec3::new(4, 1, 0), "air");
+    };
+    let into = at.as_vec3() + Vec3::new(4.5, 0.0, 0.5);
+    // A plank wall at x+1, the player against it with their box's south side on a cell's edge.
+    room(&mut client);
+    client.fill(at, IVec3::new(1, 0, -2), IVec3::new(1, 1, 2), "oak_planks");
+    let pressed = at.as_vec3() + Vec3::new(1.0 - 0.3 + 0.025, 0.0, 0.7);
+    client.tp(pressed);
+    client.fill(at, IVec3::new(0, 0, 1), IVec3::new(0, 0, 1), "oak_slab");
+    client.send_position(into, false);
+    client.pump_until(|c| c.teleported.is_some());
+    assert_eq!(client.teleported.take(), Some(pressed), "into a sealed room through a wall, after a slab was set beside a player pressed against it");
+    // A headstone at x+1, the player sunk a little into the floor beside it; then it is mined.
+    client.fill(at, IVec3::new(0, 0, -2), IVec3::new(2, 2, 2), "air");
+    room(&mut client);
+    client.fill(at, IVec3::new(1, 0, 0), IVec3::new(1, 0, 0), "stone_headstone");
+    let sunk = at.as_vec3() + Vec3::new(0.75, -0.005, 0.5);
+    client.tp(sunk);
+    client.fill(at, IVec3::new(1, 0, 0), IVec3::new(1, 0, 0), "air");
+    client.send_position(into, false);
+    client.pump_until(|c| c.teleported.is_some());
+    assert_eq!(client.teleported.take(), Some(sunk), "into a sealed room through a wall, after a headstone beside a player was mined");
+}
+
+/// The test client's world as the engine's movement takes it, as the game's client moves
+/// its player: blocks by their boxes, no water.
+struct Seen<'a>(&'a Client);
+
+impl voxmar_engine::movement::Surroundings for Seen<'_> {
+    fn solid(&self, cell: IVec3) -> bool {
+        !self.boxes(cell).is_empty()
+    }
+
+    fn boxes(&self, cell: IVec3) -> &[voxmar_engine::physics::Aabb] {
+        self.0.world.block(cell).map_or(&[], |b| self.0.content.blocks.collision(b))
+    }
+
+    fn water(&self, _: &voxmar_engine::physics::Aabb) -> (f32, voxmar_engine::glam::Vec2) {
+        (0.0, voxmar_engine::glam::Vec2::ZERO)
+    }
+}
+
+/// An honest client among shapes: the engine's own movement at 30, 60 and 144 frames a
+/// second, sending where it is twenty times a second, sprinting along each course straight
+/// or drifting into its side (sliding along a wall, past the corners of shapes), jumping
+/// or not, is never put back. The courses: a slab floor along a plank wall under a plank
+/// ceiling the jumps hit; a row of barrels, pot shelves, columns, a plank block and
+/// headstones beside the way; a slab, a stair and plank blocks climbed in half steps; and
+/// a plank wall stepping back a block every four, run into at a slant round its outside
+/// corners, on a slab floor (judged by the margin box) and on the plain floor (the share box).
+/// Each input is stamped with the client's own clock (as `going_silent_does_not_buy_more_time_hovering`),
+/// so the server's ticks may run quick.
+#[test]
+fn honest_movement_among_shapes_is_never_put_back() {
+    use voxmar_engine::movement::{Body, Controls, advance};
+    let mut client = on_a_test_floor();
+    let start = client.position;
+    let at = start.floor().as_ivec3();
+    let tuning = client.content.movement.clone();
+    let wall_row = ["barrel", "oak_pot_shelf", "stone_column", "oak_planks", "stone_headstone"];
+    // Each course: boxes of blocks to fill, corners from `at`.
+    type Fills = Vec<(IVec3, IVec3, &'static str)>;
+    // A plank wall two high north of the way, a block further back every four blocks along.
+    let stepped = |floor: Option<&'static str>| -> Fills {
+        let mut fills: Fills = floor.map(|slab| (IVec3::new(1, 0, -6), IVec3::new(20, 0, 1), slab)).into_iter().collect();
+        fills.extend((0..5).map(|k| (IVec3::new(1 + 4 * k, 0, -2 - k), IVec3::new(4 + 4 * k, 1, -2 - k), "oak_planks")));
+        fills
+    };
+    let (straight, slanting) = (&[0.0, 0.3][..], &[0.3, 0.6, 1.0][..]);
+    let courses: [(&str, Fills, &[f32]); 5] = [
+        ("slab floor along a wall under a ceiling", vec![
+            (IVec3::new(1, 0, -1), IVec3::new(20, 0, 1), "oak_slab"),
+            (IVec3::new(1, 0, -2), IVec3::new(20, 3, -2), "oak_planks"),
+            (IVec3::new(1, 3, -1), IVec3::new(20, 3, 1), "oak_planks"),
+        ], straight),
+        ("shapes beside the way", (0..20).map(|i| {
+            let cell = IVec3::new(1 + i, 0, -1);
+            (cell, cell, wall_row[i as usize % wall_row.len()])
+        }).collect(), straight),
+        ("slab, stair and planks in half steps", vec![
+            (IVec3::new(2, 0, -1), IVec3::new(2, 0, 1), "oak_slab"),
+            (IVec3::new(3, 0, -1), IVec3::new(3, 0, 1), "oak_stairs_west"),
+            (IVec3::new(4, 0, -1), IVec3::new(5, 0, 1), "oak_planks"),
+            (IVec3::new(5, 1, -1), IVec3::new(5, 1, 1), "oak_slab"),
+            (IVec3::new(6, 0, -1), IVec3::new(20, 1, 1), "oak_planks"),
+        ], straight),
+        ("a wall stepping back, on slabs", stepped(Some("oak_slab")), slanting),
+        ("a wall stepping back, on the floor", stepped(None), slanting),
+    ];
+    // Ground under the stepping wall, which reaches past the test floor's north edge.
+    client.fill(at, IVec3::new(1, -1, -6), IVec3::new(20, -1, -4), "stone");
+    client.fill(at, IVec3::new(1, 0, -6), IVec3::new(20, 3, -4), "air");
+    // The client's clock, on past every run's inputs.
+    let mut clock = Instant::now();
+    let mut put_back = Vec::new();
+    for (course, blocks, drifts) in &courses {
+        for &(from, to, block) in blocks {
+            client.fill(at, from, to, block);
+        }
+        // The client's world has the course: its last block arrived.
+        let (last, name) = blocks.last().map(|&(_, to, block)| (at + to, block)).unwrap();
+        let id = client.content.blocks.expect(&format!("base:{name}"));
+        client.pump_until(|c| c.world.block(last) == Some(id));
+        for fps in [30.0, 60.0, 144.0] {
+            for (&drift, jump) in drifts.iter().flat_map(|d| [(d, false), (d, true)]) {
+                client.tp(start);
+                let mut body = Body { position: start, on_ground: true, ..Default::default() };
+                let controls = Controls { wish: Vec3::new(1.0, 0.0, -drift).normalize(), forward: true, sprint: true, jump, descend: false };
+                let (dt, mut t, mut sent) = (1.0 / fps, 0.0f32, 0u32);
+                while t < 2.5 {
+                    advance(&mut body, &Seen(&client), &tuning, controls, dt);
+                    t += dt;
+                    if t >= (sent + 1) as f32 * 0.05 {
+                        sent += 1;
+                        client.send_position_at(body.position, false, clock + Duration::from_secs_f32(t));
+                    }
+                }
+                let case = format!("{course} at {fps} fps, drift {drift}, jump {jump}");
+                if !client.all_accepted() {
+                    put_back.push(format!("{case}: at {} put back to {:?}", body.position - start, client.teleported.map(|to| to - start)));
+                } else {
+                    // Where the server has them (a teleport to where they are says): where the
+                    // client got to, along the course, every input taken.
+                    client.connection.send(ClientMessage::Command { line: "/tp ~ ~ ~".into() });
+                    client.pump_until(|c| c.teleported.is_some());
+                    let there = client.teleported.take().unwrap();
+                    assert!(there.distance(body.position) < 1e-3 && body.position.x - start.x > 1.0, "{case}: the client got to {}, the server has {}", body.position - start, there - start);
+                }
+                clock += Duration::from_secs(4);
+            }
+        }
+        client.fill(at, IVec3::new(1, 0, -6), IVec3::new(20, 3, 1), "air");
+    }
+    assert!(put_back.is_empty(), "honest moves put back:\n{}", put_back.join("\n"));
+}
+
 /// A gap between shaped blocks narrower or lower than the player is no way through, though
 /// a share of their box would fit: between two pot shelves in a row (9/16 of a block, the
 /// player is 0.6 wide), and on a headstone under an upside-down slab (1.75 high, the
@@ -3745,6 +3904,33 @@ fn gaps_between_shapes_smaller_than_the_player_are_no_way_through() {
     client.send_position(on, false);
     client.pump_until(|c| c.teleported.is_some());
     assert_eq!(client.teleported.take(), Some(start + Vec3::X), "stood on a headstone with 1.75 blocks of headroom");
+}
+
+/// A player walks through a doorway in a plank wall with its door open (the leaf swung
+/// against the frame, no box), but a shut door is a wall like the planks beside it.
+#[test]
+fn a_player_walks_through_an_open_door_but_not_a_shut_one() {
+    real_time("movement is checked against the clock: how far a player may get in the seconds between their messages");
+    let mut client = on_a_test_floor();
+    let start = client.position;
+    let at = start.floor().as_ivec3();
+    client.fill(at, IVec3::new(2, 0, -2), IVec3::new(2, 1, -1), "oak_planks");
+    client.fill(at, IVec3::new(2, 0, 1), IVec3::new(2, 1, 2), "oak_planks");
+    let walk = |client: &mut Client| {
+        client.tp(start);
+        for x in 1..=4 {
+            client.send_position(start + Vec3::X * x as f32, false);
+        }
+    };
+    client.fill(at, IVec3::new(2, 0, 0), IVec3::new(2, 0, 0), "wooden_door_open_east");
+    client.fill(at, IVec3::new(2, 1, 0), IVec3::new(2, 1, 0), "wooden_door_open_top_east");
+    walk(&mut client);
+    assert!(client.all_accepted(), "walking through an open door was put back to {:?}", client.teleported);
+    client.fill(at, IVec3::new(2, 0, 0), IVec3::new(2, 0, 0), "wooden_door_east");
+    client.fill(at, IVec3::new(2, 1, 0), IVec3::new(2, 1, 0), "wooden_door_top_east");
+    walk(&mut client);
+    client.pump_until(|c| c.teleported.is_some());
+    assert_eq!(client.teleported.take(), Some(start + Vec3::X), "walked through a shut door");
 }
 
 #[test]

@@ -52,14 +52,14 @@
         // Cloth in one dye (`dyes: true` fills `{name}` and the tint): the greyscale drawings
         // of cloth_grey and its kin, multiplied by the dye. Broken, a placed piece gives itself back.
         "dyed": [
-            (name: "{name}_cloth", sound: Moss, textures: All("cloth_grey"), hardness: 0.4, color: (200, 200, 200), tags: ["cloth", "decor", "building", "colour:{name}"]),
+            (name: "{name}_cloth", sound: Moss, textures: All("cloth_grey"), hardness: 0.4, color: (200, 200, 200), tags: ["cloth", "decor", "building", "colour:{name}", "shelter:draughty"]),
             (name: "{name}_rug", render: Model, shape: "rug", solid: false, sound: Moss, textures: All("rug_grey"), hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "rug", "decor", "colour:{name}"]),
             (name: "{name}_banner", render: Model, shape: "banner", facing: true, solid: false, sound: Moss, textures: All("banner_grey"), hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "banner", "decor", "colour:{name}"]),
             (name: "{name}_curtain", render: Model, shape: "curtain", facing: true, solid: false, sound: Moss, textures: All("curtain_grey"), hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "curtain", "decor", "colour:{name}"]),
             (name: "{name}_paper_lantern", render: Model, shape: "paper_lantern", solid: false, sound: Moss, light: 12, textures: All("lantern_grey"), hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "lantern", "light", "decor", "colour:{name}"]),
             (name: "{name}_cushion", render: Model, shape: "cushion", solid: false, sound: Moss, textures: All("cushion_grey"), hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "seat", "cushion", "decor", "colour:{name}"]),
             (name: "{name}_bunting", render: Model, shape: "bunting", facing: true, solid: false, sound: Moss, textures: All("bunting_grey"), hardness: 0.1, color: (200, 200, 200), tags: ["cloth", "bunting", "decor", "colour:{name}"]),
-            (name: "{name}_awning", render: Model, shape: "awning", facing: true, solid: false, sound: Moss, textures: All("awning_grey"), hardness: 0.3, color: (200, 200, 200), tags: ["cloth", "awning", "decor", "building", "colour:{name}"]),
+            (name: "{name}_awning", render: Model, shape: "awning", facing: true, solid: false, sound: Moss, textures: All("awning_grey"), hardness: 0.3, color: (200, 200, 200), tags: ["cloth", "awning", "decor", "building", "colour:{name}", "shelter:draughty"]),
         ],
         // Crockery in one glaze: a plate, a bowl, a jar, a jug and a basket for tables and
         // shelves; broken, a placed piece gives itself back.
@@ -110,16 +110,16 @@
         ),
         (
             name: "wooden_door_open", render: Model, shape: "door_open", facing: true, solid: false, sound: Wood, textures: All("oak_planks"),
-            upper: "wooden_door_open_top", swaps: "wooden_door", drops: "wooden_door", hardness: 1.5, color: (150, 110, 65), tags: ["door", "door_open", "wood", "building", "shelter:sound"],
+            upper: "wooden_door_open_top", swaps: "wooden_door", drops: "wooden_door", hardness: 1.5, color: (150, 110, 65), tags: ["door", "door_open", "wood", "building"],
         ),
         (
             name: "wooden_door_open_top", render: Model, shape: "door_open", facing: true, solid: false, support: Below, sound: Wood, textures: All("oak_planks"),
-            swaps: "wooden_door_top", drops: "core:air", hardness: 1.5, color: (150, 110, 65), tags: ["door", "door_open", "wood", "building", "shelter:sound"],
+            swaps: "wooden_door_top", drops: "core:air", hardness: 1.5, color: (150, 110, 65), tags: ["door", "door_open", "wood", "building"],
         ),
         // A bale of straw, tied in two places.
         (
             name: "hay_bale", sound: Grass, textures: Column(end: "hay_bale_top", side: "hay_bale_side"),
-            drops: "core:air", hardness: 0.5, color: (200, 170, 70), tags: ["hay", "farm", "decor", "building"],
+            drops: "core:air", hardness: 0.5, color: (200, 170, 70), tags: ["hay", "farm", "decor", "building", "shelter:draughty"],
         ),
         // A barrel of staves held by two iron hoops.
         (

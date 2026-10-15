@@ -404,7 +404,7 @@ runs from less to more within the cell; a box may hide behind a solid neighbour 
 only with a face on the cell's side; a box turned about the vertical (`turn`) hides nothing and counts, for what it hides and will
 collide with, as its unturned bound; and the caps on boxes per shape and on quads in all
 are data (core's `shapes.ron`, which a later package may change field by field, though
-never past the 4096 quads a vertex can number); a shape is defined by one package only. Which of the cell's six sides the boxes cover whole is
+never past the 16384 quads a vertex can number: 12 bits in word 1 and 2 in word 0); a shape is defined by one package only. Which of the cell's six sides the boxes cover whole is
 worked out by sampling every 16th, never read from a flag: only a shape covering all six
 hides its neighbours' faces and stops light as a cube does, so a slab's top or a stair's
 side never hides a face, and slabs and stairs neither darken what they touch nor stop
@@ -430,8 +430,10 @@ ceiling), and one with `facing` in four facings. Placed against the underside of
 it goes upside down, and it faces whoever places it, so stairs climb away from the player
 (engine `action::placed_block`, which client and server both run). Players collide with
 the same boxes (`BlockRegistry::collision`), on the client and as the server judges their
-moves, and step up by `movement.ron`'s `step_up`; near a shape the server checks every
-block against the player's box less a fixed `wall_margin`, not a share of it. Targeting (what the crosshair
+moves, and step up by `movement.ron`'s `step_up`; where that box reaches into a shape's cell the
+server checks every block against the player's box less a fixed `wall_margin`, not a
+share of it (the share box sits inside it, so a shape placed or mined beside a player
+never turns a spot they stood in into a wall). Targeting (what the crosshair
 picks) and creatures still take whole cells.
 
 ## Leaves
