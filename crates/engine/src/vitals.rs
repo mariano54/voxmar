@@ -28,11 +28,15 @@ pub struct Vitals {
     /// The seat the player sits on, if they sit: the eye is lower (`eye`).
     #[serde(default)]
     pub seated: Option<glam::IVec3>,
+    /// What the stores in the player's home hold, by item, while they stand in it (empty
+    /// elsewhere): what they can make there counts it, as laying a recipe takes from it.
+    #[serde(default)]
+    pub home_stores: Vec<(BlockId, u32)>,
 }
 
 impl Default for Vitals {
     fn default() -> Self {
-        Self { felt: 15.0, effects: Vec::new(), home: None, seated: None }
+        Self { felt: 15.0, effects: Vec::new(), home: None, seated: None, home_stores: Vec::new() }
     }
 }
 

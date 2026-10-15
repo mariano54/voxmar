@@ -17,7 +17,7 @@ use voxmar_engine::traits;
 use voxmar_protocol::{ChatKind, PlayerId, ServerMessage, TICKS_PER_SECOND};
 
 use crate::Server;
-use crate::items::{owner_of, random3};
+use crate::items::owner_of;
 
 impl Server {
     /// Leaves what each player who has just died carried where they fell.
@@ -42,7 +42,6 @@ impl Server {
         let at = self.grave_site(id);
         let content = self.content.clone();
         let death = content.value.death;
-        let tick = self.tick;
         let player = self.players.get_mut(&id).expect("listed");
         player.buried = true;
         let ward = |item: BlockId| content.blocks.def(item).has_tag("grave_ward");
@@ -68,7 +67,8 @@ impl Server {
         for (i, stack) in left.into_iter().enumerate() {
             // A pile at the feet, barely spread, so nothing rolls off a ledge or into water
             // out of reach of the one who comes back for it.
-            let [a, b, c] = random3(tick, cell, i as u32 ^ 0x9a7e);
+            // By the world's count of drops, never the tick of the death.
+            let [a, b, c] = self.meta.next_pop(cell, i as u32 ^ 0x9a7e);
             let nudge = Vec3::new(a - 0.5, 0.0, b - 0.5) * 0.4;
             let angle = c * std::f32::consts::TAU;
             let body = dropped::Loose::new(at + nudge + Vec3::Y * 0.25, Vec3::new(angle.cos() * 0.3, 1.5, angle.sin() * 0.3));

@@ -586,10 +586,8 @@ impl Server {
         let level = rule.skill.map_or(1, |skill| self.content.skills.level(player.skills.xp(skill)));
         let bonus = voxmar_engine::crop::level_bonus(level, rule.level, self.content.skills.max_level()) + tools.yield_bonus(held, block) + player.modifiers.finds;
         let info = self.content.blocks.info(block);
-        let popped = self.meta.drops;
-        self.meta.drops += 1;
         // The pops show where each drop flies, so they draw nothing from the player's rolls.
-        let [a, b, c] = crate::items::random3(self.meta.draw_key ^ popped.wrapping_mul(0x9e37_79b9_7f4a_7c15), pos, agent ^ 0xd1ce);
+        let [a, b, c] = self.meta.next_pop(pos, agent ^ 0xd1ce);
         // Never a furnishing's: it gives itself back only where a player placed it.
         if roll < bonus && !info.drops.is_air() && info.drop_count > 0 && !self.content.blocks.def(block).has_tag("furnishing") {
             let stack = voxmar_engine::inventory::ItemStack { item: info.drops, count: 1 };

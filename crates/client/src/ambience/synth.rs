@@ -97,11 +97,20 @@ pub enum Synth {
     Snap,
     /// A pot on the boil: a run of small, round bubbles breaking at the top.
     Simmer,
+    /// Someone at work with a hammer: a few blows on timber, a nail ringing now and then.
+    Hammer,
+    /// A saw worked through a board: rasping strokes back and forth, the push harder.
+    Saw,
+    /// A hen pottering about: a run of short clucks, now and then a rising "ba-gawk".
+    Hen,
+    /// A bucket drawn at a well: the winch creaking, water sloshing, the bucket knocking
+    /// the rim.
+    Well,
 }
 
 impl Synth {
     #[cfg(test)]
-    pub const ALL: [Synth; 30] = [
+    pub const ALL: [Synth; 34] = [
         Synth::Wind,
         Synth::Gale,
         Synth::Rustle,
@@ -132,6 +141,10 @@ impl Synth {
         Synth::LavaPop,
         Synth::Snap,
         Synth::Simmer,
+        Synth::Hammer,
+        Synth::Saw,
+        Synth::Hen,
+        Synth::Well,
     ];
 
     /// Whether it makes a continuous bed rather than one-shots.
@@ -203,6 +216,10 @@ pub fn one_shot(synth: Synth, variant: usize) -> (Vec<f32>, [Vec<f32>; 2]) {
         Synth::LavaPop => lava_pop(&mut noise),
         Synth::Snap => snap(&mut noise),
         Synth::Simmer => simmer(&mut noise),
+        Synth::Hammer => hammer(&mut noise),
+        Synth::Saw => saw(&mut noise),
+        Synth::Hen => hen(&mut noise),
+        Synth::Well => well(&mut noise),
         bed => panic!("{bed:?} makes a bed, not one-shots"),
     };
     let scale = loudness(&dry, 0.14, 0.8);
@@ -1043,6 +1060,122 @@ fn creak(noise: &mut Noise) -> Vec<f32> {
         let x = *sample;
         *sample = (low.band(x) + 0.4 * high.band(x)) * note_envelope(i as f32 / length as f32, 0.3);
     }
+    out
+}
+
+// --- A settlement at work ---
+
+/// Decaying sine partials (`(ratio, gain, decay seconds)` of `frequency`) added at `t`:
+/// something struck ringing.
+fn ring(out: &mut [f32], t: f32, frequency: f32, partials: &[(f32, f32, f32)], gain: f32) {
+    let longest = partials.iter().fold(0.0f32, |l, p| l.max(p.2));
+    add_at(out, t, seconds(longest * 6.0), |j| {
+        let local = j as f32 / SR;
+        let onset = (local / 0.0006).min(1.0);
+        gain * onset * partials.iter().map(|&(ratio, level, decay)| level * (TAU * frequency * ratio * local).sin() * (-local / decay).exp()).sum::<f32>()
+    });
+}
+
+fn hammer(noise: &mut Noise) -> Vec<f32> {
+    let blows = 3 + (noise.unit() * 4.0) as usize;
+    let every = between(noise, 0.42, 0.6);
+    let mut out = vec![0.0f32; seconds(blows as f32 * every + 0.5)];
+    let (board, nail) = (between(noise, 180.0, 260.0), between(noise, 2400.0, 3400.0));
+    let mut t = 0.03;
+    for blow in 0..blows {
+        let gain = if blow + 1 == blows { 1.1 } else { between(noise, 0.75, 1.0) };
+        crack(&mut out, noise, t, (0.002, 0.004), (2000.0, 3500.0), 0.8 * gain);
+        ring(&mut out, t, board * between(noise, 0.95, 1.05), &[(1.0, 1.0, 0.03), (2.3, 0.5, 0.018), (4.1, 0.2, 0.008)], 0.7 * gain);
+        // The nail rings while it still stands proud; the last blows sink it.
+        if blow + 2 < blows && noise.unit() < 0.7 {
+            ring(&mut out, t, nail, &[(1.0, 1.0, 0.05), (2.76, 0.3, 0.02)], 0.18 * gain);
+        }
+        t += every * between(noise, 0.9, 1.1);
+    }
+    out
+}
+
+fn saw(noise: &mut Noise) -> Vec<f32> {
+    let strokes = 4 + (noise.unit() * 5.0) as usize;
+    let length = between(noise, 0.3, 0.45);
+    let teeth = between(noise, 70.0, 110.0);
+    let mut out = vec![0.0f32; seconds(strokes as f32 * length + 0.3)];
+    let mut band = Svf::new(between(noise, 2600.0, 3600.0), 1.4);
+    let mut body = Svf::new(between(noise, 600.0, 900.0), 2.0);
+    let mut phase = 0.0f32;
+    for stroke in 0..strokes {
+        // The push bites; the pull is lighter and a little shorter.
+        let push = stroke % 2 == 0;
+        let (gain, span) = if push { (1.0, length) } else { (0.55, length * 0.85) };
+        let first = seconds(0.03 + stroke as f32 * length);
+        let count = seconds(span);
+        for j in 0..count {
+            let x = j as f32 / count as f32;
+            let speed = (PI * x).sin();
+            phase = (phase + teeth * (0.4 + speed) / SR).fract();
+            let rasp = 0.35 + 0.65 * (1.0 - phase).powi(3);
+            let grain = noise.next() * rasp;
+            if let Some(sample) = out.get_mut(first + j) {
+                *sample += gain * note_envelope(x, 0.15) * (band.band(grain) + 0.5 * body.band(grain));
+            }
+        }
+    }
+    out
+}
+
+fn hen(noise: &mut Noise) -> Vec<f32> {
+    let mut out = Vec::new();
+    let pitch = between(noise, 380.0, 520.0);
+    let mut t = 0.03;
+    for _ in 0..3 + (noise.unit() * 4.0) as usize {
+        let length = between(noise, 0.05, 0.09);
+        tone(&mut out, t, length, pitch * 1.15, pitch * 0.9, between(noise, 0.6, 1.0), 0.15, &[0.7, 0.5, 0.35, 0.2]);
+        t += length + between(noise, 0.08, 0.3);
+    }
+    // Now and then the long call: a short note, then one rising and falling.
+    if noise.unit() < 0.4 {
+        t += 0.1;
+        tone(&mut out, t, 0.08, pitch * 1.1, pitch, 0.8, 0.15, &[0.7, 0.5, 0.35, 0.2]);
+        tone(&mut out, t + 0.13, 0.35, pitch * 1.3, pitch * 1.05, 1.0, 0.2, &[0.8, 0.6, 0.4, 0.25]);
+    }
+    // A nasal throat: the clucks rung through two narrow bands.
+    let (mut nose, mut throat) = (Svf::new(between(noise, 1100.0, 1400.0), 3.0), Svf::new(between(noise, 2400.0, 2900.0), 4.0));
+    out.iter_mut().for_each(|s| *s = nose.band(*s) + 0.6 * throat.band(*s) + 0.15 * *s);
+    out
+}
+
+fn well(noise: &mut Noise) -> Vec<f32> {
+    let mut out = vec![0.0f32; seconds(2.2)];
+    // The winch: slow ticks of a ratchet and a creak on its axle.
+    let mut t = 0.03;
+    let ticks = 4 + (noise.unit() * 4.0) as usize;
+    for _ in 0..ticks {
+        crack(&mut out, noise, t, (0.002, 0.004), (1200.0, 1800.0), 0.35);
+        t += between(noise, 0.09, 0.14);
+    }
+    let mut axle = Svf::new(between(noise, 600.0, 900.0), 5.0);
+    let (start, length) = (seconds(0.02), seconds(t));
+    let mut pulse = 0.0f32;
+    for j in 0..length {
+        pulse = (pulse + between(noise, 90.0, 120.0) / SR).fract();
+        let click = if pulse < 0.05 { noise.next() } else { 0.0 };
+        out[start + j] += 0.5 * axle.band(click) * note_envelope(j as f32 / length as f32, 0.3);
+    }
+    // The bucket comes up: water slops over its lip, then it knocks against the rim.
+    t += 0.08;
+    let mut slosh = Svf::new(between(noise, 700.0, 1100.0), 1.0);
+    let span = seconds(0.45);
+    let first = seconds(t);
+    for j in 0..span {
+        let x = j as f32 / span as f32;
+        out[first + j] += 0.5 * slosh.band(noise.next()) * note_envelope(x, 0.1) * (0.6 + 0.4 * (TAU * 3.0 * x).sin());
+    }
+    for _ in 0..4 + (noise.unit() * 4.0) as usize {
+        bubble(&mut out, t + between(noise, 0.0, 0.4), between(noise, 500.0, 1300.0), between(noise, 0.15, 0.35), 0.4);
+    }
+    let knock = t + between(noise, 0.5, 0.65);
+    ring(&mut out, knock, between(noise, 200.0, 260.0), &[(1.0, 1.0, 0.04), (2.4, 0.5, 0.02), (5.1, 0.2, 0.008)], 0.9);
+    crack(&mut out, noise, knock, (0.002, 0.004), (1500.0, 2500.0), 0.6);
     out
 }
 

@@ -25,7 +25,8 @@
 // (below the ground surface here), rain (heard falling, less under a roof), raining
 // (falling at all), wetness (of the ground), snow, storm (0..1), wind (blocks/s, gusts
 // included), gusts (how gusty, 0..1), hail, sleet, dust (0..1, as heard here), cover,
-// underwater, and the groups below.
+// underwater, settlement (blocks to the middle of the nearest settlement, 10000 with none
+// within 192), and the groups below.
 (
     groups: [
         // Thatch or wattle smouldering by a flame, about to catch (fire.ron): heard only while
@@ -311,6 +312,33 @@
             name: "simmer", sound: Simmer, volume: 0.3, at: Block("pot"), per_minute: 14, cooldown: 1.5,
             pitch: (0.85, 1.2), reach: 4,
             when: {"pot": (min: 0.3, fade: 0.3)},
+        ),
+        // A settlement at work by day: its people hammering, sawing and drawing water, its
+        // hens about. Heard fully within 24 blocks of its square or green, fading out by 80,
+        // above ground, and quiet from dusk to dawn; less in the rain, when people keep in.
+        (
+            name: "hammering", sound: Hammer, volume: 0.3, at: Around(distance: (10, 22), height: (0, 4)), per_minute: 3, cooldown: 9,
+            pitch: (0.9, 1.1), reach: 14,
+            when: {"settlement": (max: 24, fade: 56), "sun": (min: 0.1, fade: 0.15), "depth": (max: 2, fade: 4)},
+            duck: {"rain": 0.6},
+        ),
+        (
+            name: "sawing", sound: Saw, volume: 0.22, at: Around(distance: (10, 22), height: (0, 3)), per_minute: 1.5, cooldown: 15,
+            pitch: (0.92, 1.08), reach: 12,
+            when: {"settlement": (max: 24, fade: 56), "sun": (min: 0.1, fade: 0.15), "depth": (max: 2, fade: 4)},
+            duck: {"rain": 0.6},
+        ),
+        (
+            name: "hens", sound: Hen, volume: 0.28, at: Around(distance: (6, 18), height: (-1, 1)), per_minute: 3, cooldown: 6,
+            pitch: (0.9, 1.12), reach: 10,
+            when: {"settlement": (max: 24, fade: 56), "sun": (min: 0.1, fade: 0.15), "depth": (max: 2, fade: 4)},
+            duck: {"rain": 0.8},
+        ),
+        (
+            name: "well_bucket", sound: Well, volume: 0.28, at: Around(distance: (8, 20), height: (0, 2)), per_minute: 0.8, cooldown: 30,
+            pitch: (0.94, 1.06), reach: 12,
+            when: {"settlement": (max: 24, fade: 56), "sun": (min: 0.1, fade: 0.15), "depth": (max: 2, fade: 4)},
+            duck: {"rain": 0.6},
         ),
     ],
 )

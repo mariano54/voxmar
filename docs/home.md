@@ -82,7 +82,13 @@ wall, or the roof. A wall is any solid block or any with a shelter tag, so a shu
 window closes the room, and an open door lets the scan out. Furniture is not a wall: a block
 with a tag in survival.ron's `home_furniture` (machine, station, furnishing, storage, decor,
 multiblock_core, farm, waters) is looked past to the wall behind it, so a chest or a table
-by the wall leaves the room as it was, and a barrel in a doorway is no door. A face leading out of the reach
+by the wall leaves the room as it was, and a barrel in a doorway is no door. Furniture is a
+furniture tag and no shelter tag: a shelter tag always wins, so cloth hung for a wall, a hay
+bale and a stone column (`shelter:draughty`, `draughty`, `sound`) wall a room, while machines,
+stations, the chest, the hearthstone, the altar and the planter carry no shelter tag and are
+looked past, so a small station never plugs a gap in a wall. The scan never steps down into a
+solid block or furniture: under the room is floor, so a hearthstone, a barrel or a well set in
+it is floor like the stone round it. A face leading out of the reach
 (or into an unloaded column) is an opening, of no shelter, and counts against the room; the
 floor is not counted. `HomeWalls(Sound, 0.6)` holds when 6 in 10 faces are sound or better
 (effect.rs, `Condition::HomeWalls`, `Walls::share`; load-checked: the share is above 0 and at
@@ -234,6 +240,18 @@ bearing the mark draws from where it sits, which must be within 3° of home's
 ("way home: dusk"). Back at the camp it waits for the mark to fade out ("way home:
 inside"). It then sets the time back and leaves the camp to the Nest step, which takes it down.
 
+**No ghost home.** A home used to be only ever set: break the hearth or the bed and you woke
+at the hole, the mark pointing there. Now every block change asks `Server::home_changed`:
+a player whose bed stood where the new block is no bed forgets the bed ("Your bed is gone:
+you will not wake there again."), and one whose home hearth's core it was forgets the hearth
+("Your hearth is gone: it is your home no more."), en+ja. They wake at what is left (the
+hearth, the bed, else the world's spawn) and `Vitals::home` changes at once, so the mark
+moves or goes. A bed set down where the bed was (a bag swapped for a proper bed) is still
+the bed. Test: `hearth::tests::a_broken_bed_or_hearth_is_forgotten`. Gate: the Nest step's
+last phase breaks the bag that was home and waits for no home, no mark and the chat line
+("home: no ghost"). A bed broken while its sleeper is offline is not seen (their save keeps it
+until they sleep elsewhere).
+
 ## Sleeping
 
 Right clicking a bed used to only set where you wake. It now also gives a **rest** (the
@@ -337,6 +355,48 @@ step puts four planks in a barrel beside the bag, shoots the table's recipe with
 button ("home-lay-recipe"), presses it, and shoots the grid laid from the barrel
 ("home-lay"; check "home: lay").
 
+**Stores count everywhere a home crafts (Oct 14).** The eleventh pass carries the same rule
+to the rest of the home, so the barrel is a larder from the first night:
+
+- **Always on, not a tier perk.** The rule holds wherever the player stands in their own home,
+  at any home step from a bed and a torch up. Tying it to a tier would hide it until the
+  home is Homely, when the first days are already over; the tiers instead grow how much the
+  stores hold. Only the player's own home counts, and only the stores they placed (or that
+  nobody did, as a village's): a guest sleeping in a friend's bed crafts from their own pack
+  and their own barrels, since a friend's barrel is not theirs to empty.
+- **The home bounds** are the box `/home` counts: `home_reach` across, `home_up` and
+  `home_down`, around the lit hearth, else the bed last slept in. The player must stand
+  in it, and a station must stand in it too.
+- **Which stations count.** Crafting (the 2×2 grid and the crafting table) already lays from
+  the stores. Home stations (stations.ron) now count too: loading one tops the load up to
+  what it `holds`, with more of what is in hand. It takes from the hand first, then the
+  rest of the pack, then the stores, nearest the hearth or bed first. Unlike Lay, a station
+  never reaches into a pouch. This is data per station, `from_stores` (true unless said
+  otherwise). The drying rack and the cooking pot take from the stores. The compost heap
+  does not, because grain and seed kept in a barrel are for eating and sowing, and a heap
+  that ate them would punish keeping a larder. Nor does the earth clamp: logs and clay in
+  the stores are for building, and one log in hand would draw the woodshed in. The chat line says how many came from the stores
+  (`station.loaded_from_stores`, en and ja). Cooking at a fire (cooking.ron) and machines
+  are left out. A fire cooks the one item in hand and a machine takes items into its own
+  slots, so there is no load to top up.
+- **What the player sees.** The Can Make list under the inventory, and what the recipe
+  viewer says a recipe still wants, count the home's stores while the player stands in
+  their home. The server sends the tally with the vitals (`Vitals::home_stores`, protocol
+  44). It is recounted on the once-a-second survival pass, which already surveys the same
+  box, and resent only when it changes. With four planks in the barrel and none in the
+  pack, the crafting table shows as ready. What a fire cooks counts the pack alone, since a
+  fire cooks what is in hand: raw meat only in the barrel is not shown cooked.
+- **Tests.** In server/src/laying.rs: `at_home_a_rack_tops_its_load_up_from_the_stores`,
+  `at_home_with_no_store_a_rack_tops_up_from_the_pack`,
+  `a_compost_heap_leaves_the_stores_alone`, `a_guest_draws_on_no_one_elses_stores`,
+  `a_station_and_its_loader_must_both_be_in_the_home` and
+  `the_home_stores_are_counted_only_at_home`. In client/src/hud/makeable.rs:
+  `the_home_stores_count_toward_what_can_be_made`, which also checks a cooked thing is not
+  shown from the stores alone. In the gate's Home step, before Lay, the check
+  "home: can make" asks that the server counted the barrel's planks (as many as the crafting
+  table's recipe takes) and that the Can Make plan, drawn under the open barrel, has the
+  crafting table ready from them alone.
+
 ## Eggs in the stores
 
 A kept hen (any bird whose product `nests`) that lays inside its keeper's home box lays into
@@ -420,9 +480,11 @@ many steps off (`fire.near_hearth`). Their next lighting by hand does set it smo
 **Homes catch only from their owner** (fire.ron `homes_catch_only_from_owner`, on unless a pack
 turns it off). Every fire remembers whose it is: the player whose change started it (a torch set,
 a hearth lit, thatch laid by a flame), carried on as it spreads and saved with it. A block in a
-player's home box (`home_reach` across, `home_up` up and `home_down` down from a home hearth lit
-by them, or from where an online player's home is) only smoulders or catches from that player's
-fire. Another player's torch beside your wattle wall fizzles, and a neighbour's burning shed
+player's home box (`home_reach` across, `home_up` up and `home_down` down from the cell their
+home is at: over a home hearth lit by them, or where an online player's home is; the same box
+they feel at home in) only smoulders or catches from that player's fire, or from any owner's
+where two homes overlap. A home hearth lit before fires were kept by owner is its player's
+again as they join or touch it, so it stays protected while they are away. Another player's torch beside your wattle wall fizzles, and a neighbour's burning shed
 stops at your home's edge; your own careless torch still burns your own roof. A fire a command
 or the world started belongs to no one, so it never takes a home either.
 
