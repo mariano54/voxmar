@@ -798,10 +798,14 @@ struct Gate {
     /// Real frame times so far (milliseconds), and the longest in each step with the
     /// milliseconds our threads waited for a core in it (`slow_frames::waited_for_cores`)
     /// and of those, the share other work on the machine caused
-    /// (`slow_frames::waited_for_others`). Each frame is timed from one run of the gate to
-    /// the next, by the wall's clock, the waiting so far and the core times (`frame_at`).
+    /// (`slow_frames::waited_for_others`), and the frame with the most of the game's own time
+    /// in it (`frame_work`), which the smooth checks judge: a frame waiting longer on other
+    /// work can be the longest by the wall's clock and hide a shorter real hitch. Each frame
+    /// is timed from one run of the gate to the next, by the wall's clock, the waiting so far
+    /// and the core times (`frame_at`).
     frame_ms: Vec<f32>,
     longest: FxHashMap<Step, (f32, f32, f32)>,
+    hardest: FxHashMap<Step, (f32, f32, f32)>,
     frame_at: Option<(Instant, Option<std::time::Duration>, Option<crate::slow_frames::CoreTimes>)>,
     /// The machine's one-minute load average read about once a second, with the session's
     /// real seconds at each read, over the last `LOAD_SPAN` (`Gate::load_now`).
@@ -997,6 +1001,7 @@ impl Gate {
             counted: 0,
             frame_ms: Vec::new(),
             longest: default(),
+            hardest: default(),
             frame_at: None,
             loads: default(),
             overlay_ms: default(),
@@ -1144,6 +1149,9 @@ impl Gate {
         // smooth checks take off).
         if let Some(&(wall, waited, others)) = self.longest.get(&self.step) {
             info!("gate: {:?} longest frame {wall:.0} ms, our threads waiting {waited:.0} ms for a core in it, {others:.0} ms of that for other work", self.step);
+        }
+        if let Some(&(wall, waited, others)) = self.hardest.get(&self.step).filter(|h| Some(*h) != self.longest.get(&self.step)) {
+            info!("gate: {:?} most game time in a frame {:.0} ms, of a {wall:.0} ms frame with our threads waiting {waited:.0} ms for a core, {others:.0} ms of that for other work", self.step, frame_work(wall, others));
         }
         info!("gate: {step:?} at {now:.1}s, server {:.1}s", self.server_now);
         if !self.entered.contains(&step) {
@@ -1388,10 +1396,12 @@ fn run(world: &mut World) {
             crate::slow_frames::waited_for_others(frame_ms, waited_ms, ours, busy, cores)
         });
         gate.frame_ms.push(frame_ms);
+        let frame = (frame_ms, waited_ms, others_ms);
         let longest = gate.longest.entry(gate.step).or_default();
         if frame_ms > longest.0 {
-            *longest = (frame_ms, waited_ms, others_ms);
+            *longest = frame;
         }
+        keep_if_harder(gate.hardest.entry(gate.step).or_default(), frame);
     }
     let real = world.resource::<Time<Real>>().elapsed_secs();
     if gate.loads.back().is_none_or(|&(at, _)| real - at >= 1.0) {
@@ -14957,7 +14967,7 @@ fn smooth(gate: &mut Gate, name: &str, step: Step, known: Option<&str>) {
     let mut sorted = gate.frame_ms.clone();
     sorted.sort_by(f32::total_cmp);
     let median = sorted.get(sorted.len() / 2).copied().unwrap_or(0.0);
-    let (longest, waited, others) = gate.longest.get(&step).copied().unwrap_or_default();
+    let (longest, waited, others) = gate.hardest.get(&step).copied().unwrap_or_default();
     // A machine asked for more than all its cores (other threads' builds) stretches every
     // frame's waits by about how far over it is: the bar rises with it rather than the
     // check being skipped, for the machine is rarely calm enough to wait for. Pipelines
@@ -14970,7 +14980,7 @@ fn smooth(gate: &mut Gate, name: &str, step: Step, known: Option<&str>) {
     let work = frame_work(longest, others);
     let queued = if waited > 0.0 { format!(", our threads waiting {waited:.0} ms for a core in it, {others:.0} ms of that for other work") } else { String::new() };
     let result = if work <= limit {
-        Ok(format!("its longest frame took {longest:.0} ms{queued} (median {median:.0} ms{on})"))
+        Ok(format!("its hardest frame took {longest:.0} ms{queued} (median {median:.0} ms{on})"))
     } else {
         Err(format!("a frame took {longest:.0} ms{queued}, over {limit:.0} ms (median {median:.0} ms{on})"))
     };
@@ -14978,6 +14988,15 @@ fn smooth(gate: &mut Gate, name: &str, step: Step, known: Option<&str>) {
     match known {
         Some(why) => gate.known(&format!("{name}: smooth"), result, why),
         None => gate.check(&format!("{name}: smooth"), result),
+    }
+}
+
+/// Keeps `frame` (wall, waited, waited for other work) as a step's hardest when it gave the
+/// game more time than the one kept: the smooth checks judge that frame, not the longest by
+/// the wall, which a shorter frame wholly the game's can outdo.
+fn keep_if_harder(kept: &mut (f32, f32, f32), frame: (f32, f32, f32)) {
+    if frame_work(frame.0, frame.2) > frame_work(kept.0, kept.2) {
+        *kept = frame;
     }
 }
 
@@ -15353,6 +15372,13 @@ mod tests {
         // Both: what we asked past every core is ours, the rest, no more than they ran, theirs.
         assert!((others(1.0, 4.0, 4.446) - 0.446).abs() < 1e-4, "{}", others(1.0, 4.0, 4.446));
         assert!((others(1.0, 4.4, 4.446) - 0.046).abs() < 1e-4, "{}", others(1.0, 4.4, 4.446));
+        // A step's judged frame is the one with the most game time, not the longest.
+        let mut kept = default();
+        for frame in [(247.0, 900.0, 240.0), (180.0, 0.0, 0.0), (120.0, 0.0, 0.0)] {
+            keep_if_harder(&mut kept, frame);
+        }
+        assert_eq!(kept, (180.0, 0.0, 0.0), "a long frame other work stretched hid a hitch wholly the game's");
+        assert!(frame_work(kept.0, kept.2) > HITCH_MS, "that hitch still fails");
     }
 
     /// The machine's busy core time is read on this system, and holds our own CPU time.
