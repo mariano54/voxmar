@@ -1954,8 +1954,6 @@ mod combat_tests {
         assert!(missed && landed, "200 blows at a wolf all missed or all landed");
     }
 
-    /// A blow, either way, is drawn by its count: struck at another tick, the same count
-    /// does the same, and each blow counts on.
     /// A kill's loot is rolled, and pops, by the world's counts of loot rolls and drops, not
     /// the tick it dies on, and each roll counts on.
     #[test]
@@ -1978,6 +1976,8 @@ mod combat_tests {
         assert_eq!(killed(1_377), (first, rolls), "the same kills later dropped otherwise");
     }
 
+    /// A blow, either way, is drawn by its count: struck at another tick, the same count
+    /// does the same, and each blow counts on.
     #[test]
     fn a_blow_draws_by_its_count_not_its_tick() {
         let mut server = crate::test_server();

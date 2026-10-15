@@ -719,6 +719,25 @@ mod tests {
         assert_eq!(shot(1_377), first, "the same shots later were left otherwise");
     }
 
+    /// A flourish's roll is the player's next flourish draw: each counts on.
+    #[test]
+    fn a_flourish_counts_on_the_players_flourish_draws() {
+        let mut server = crate::test_server();
+        let (_client, connection) = voxmar_protocol::local_pair();
+        let player = 1;
+        let joined = crate::player::Player::new(player, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
+        server.players.insert(player, joined);
+        let sword = server.content.blocks.expect("base:stone_sword");
+        let weapon = server.content.combat.wielded(Some(sword), |_| 1);
+        assert!(server.content.combat.flourish(&weapon).is_some(), "a sword flourishes");
+        let wolf = server.content.creatures.id("base:wolf").unwrap();
+        let creature = server.spawn_creature(wolf, server.spawn + Vec3::X * 2.0, 1).expect("room");
+        for _ in 0..3 {
+            server.flourish(player, creature, &weapon, 4);
+        }
+        assert_eq!(server.players[&player].draws.flourishes, 3, "each flourish drew once");
+    }
+
     /// Even a wind-up with no tracking ticks starts aimed at its target, whatever the
     /// creature faced before it chose to attack. Its locked lunge follows that same yaw.
     #[test]

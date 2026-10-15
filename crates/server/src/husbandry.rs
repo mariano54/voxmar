@@ -830,6 +830,7 @@ mod tests {
         let first = taken(1_000);
         assert_eq!(first.last(), Some(&12), "each product taken counted on");
         assert!(first[..12].iter().all(|&n| n > 0), "a product taken gave nothing: {first:?}");
+        assert!(first[..12].windows(2).any(|w| w[0] != w[1]), "twelve products taken all yielded alike: {first:?}");
         assert_eq!(taken(1_377), first, "the same products taken later yielded otherwise");
     }
 
