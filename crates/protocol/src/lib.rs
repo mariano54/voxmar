@@ -37,11 +37,15 @@ pub use voxmar_engine::weather::Weather;
 // 39: a crafting way as an action's target (ActionTarget::Recipe), for laying it.
 // 40: ClientMessage::LookAtStation and ServerMessage::Station, what is on a station looked at.
 // 41: ServerMessage::Fires, the lit structures whose fires burn.
+// 42: a staggered creature's tell (STAGGERED).
 // 45: a seventh worn slot, the charm (inventory::WORN_SLOTS), moving an open store's slots one on.
 pub const PROTOCOL_VERSION: u32 = 45;
 
 /// A creature's `tell` while it rears into a new phase of its fight.
 pub const REARING: u8 = u8::MAX;
+/// A creature's `tell` while it is staggered (a perfect block, a daze): held still, its
+/// wind-up undone, so the client shows it reel rather than a blow landing.
+pub const STAGGERED: u8 = u8::MAX - 1;
 
 pub const DEFAULT_PORT: u16 = 25_665;
 /// Server simulation rate.
@@ -227,8 +231,9 @@ pub struct CreatureView {
     pub yaw: f32,
     pub pose: Pose,
     /// What its body shows: the move it winds up (`Creature::attack_at`'s index, its
-    /// `moves` from 1; 0 its plain attack or none) or `REARING` into a new phase of its
-    /// fight, so each reads apart.
+    /// `moves` from 1; 0 its plain attack or none), `REARING` into a new phase of its
+    /// fight, or `STAGGERED` while it reels from a stagger, so each reads apart. Neither of
+    /// the last two is a move.
     pub tell: u8,
     pub health: u16,
     /// Its size against its species', from its genes.

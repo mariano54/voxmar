@@ -192,7 +192,9 @@ impl super::Creature {
 
 /// Checks a creature's moves, phases and mending as read.
 pub(super) fn check(def: &super::CreatureDef) -> Result<(), String> {
-    if def.moves.len() >= u8::MAX as usize {
+    // A tell names a move by its index from 1, and the top two are not moves: `REARING`
+    // (255) and `STAGGERED` (254) in the protocol.
+    if def.moves.len() >= u8::MAX as usize - 1 {
         return Err("has too many moves".into());
     }
     if !def.moves.is_empty() && def.attack.is_none() {
@@ -379,6 +381,14 @@ mod tests {
         let mut bad = def.clone();
         bad.moves[1].name = bad.moves[0].name.clone();
         assert!(check(&bad).unwrap_err().contains("two moves"));
+        // Its moves are told by index from 1; 254 and 255 are `STAGGERED` and `REARING`.
+        let many = |count: usize| {
+            let mut many = def.clone();
+            many.moves = (0..count).map(|i| Move { name: format!("move{i}"), ..def.moves[0].clone() }).collect();
+            check(&many)
+        };
+        assert!(many(254).is_err_and(|e| e.contains("too many")), "move 254 would be told as STAGGERED");
+        assert!(!many(253).is_err_and(|e| e.contains("too many")));
         def.mend.as_mut().unwrap().fire.clear();
         assert!(check(&def).unwrap_err().contains("mend"));
     }

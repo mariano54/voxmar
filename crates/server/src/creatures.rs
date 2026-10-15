@@ -47,7 +47,7 @@ use crate::items::random3;
 /// Creatures think every this many ticks within `NEAR` blocks of a player, every
 /// `FAR_THINK` beyond.
 const NEAR_THINK: u64 = 4;
-const FAR_THINK: u64 = 20;
+pub(crate) const FAR_THINK: u64 = 20;
 const NEAR: f32 = 64.0;
 /// Wild creatures further than this from every player go.
 const DESPAWN: f32 = 128.0;
@@ -158,6 +158,8 @@ pub struct Live {
     /// coming to one (held still until `held_until`).
     pub phase: u8,
     pub rearing: bool,
+    /// Staggered (`fight`): held still until `held_until`, shown reeling (`STAGGERED`).
+    pub staggered: bool,
     /// The tick it last mended a wound (`lairs`).
     pub mended: u64,
     /// Its genes, and what shows of them.
@@ -189,10 +191,12 @@ impl Live {
     }
 
     /// The tell it shows (`CreatureView::tell`): its move while it winds one up, `REARING`
-    /// while it rears into a new phase, else none.
-    fn tell(&self) -> u8 {
+    /// while it rears into a new phase, `STAGGERED` while it reels from a stagger, else none.
+    pub(crate) fn tell(&self) -> u8 {
         if self.rearing {
             voxmar_protocol::REARING
+        } else if self.staggered {
+            voxmar_protocol::STAGGERED
         } else if self.winding {
             self.attack
         } else {
@@ -226,6 +230,7 @@ impl Live {
         last.position.distance_squared(self.body.position) > 0.0025
             || (last.yaw - self.body.yaw).abs() > 0.05
             || last.pose != self.pose()
+            || last.tell != self.tell()
             || last.health != self.health
             || last.kept != self.owner.is_some()
             || last.owner != self.owner_id
@@ -534,11 +539,16 @@ impl Server {
                 };
                 let wet = Ground::of(self).water_at(position.floor().as_ivec3());
                 let creature = self.creatures.live.get_mut(&id).expect("listed");
-                let decision = if self.tick < creature.held_until || creature.charging.is_some() {
+                // A charge's wind-up holds him to its locked line until he sets off, through
+                // the wait for the player's round trip past the wind-up (`lag_allowance`).
+                let winding_a_charge = creature.winding && species.attack_at(creature.attack).is_some_and(|a| a.charge.is_some());
+                let decision = if self.tick < creature.held_until || creature.charging.is_some() || winding_a_charge {
                     brain::Decision { pose: brain::Pose::Idle, ..Default::default() }
                 } else {
-                    // Done rearing into a new phase: it fights on.
+                    // Done rearing into a new phase, or reeling from a stagger: it fights on
+                    // (the view goes out below, its tell changed).
                     creature.rearing = false;
+                    creature.staggered = false;
                     brain::think(species, &mut creature.mind, &situation)
                 };
                 // Led by food held up (how a wild one is lured home, or a kept one moved to a
@@ -1271,6 +1281,7 @@ impl Server {
             phase: 0,
             rearing: false,
             charging: None,
+            staggered: false,
             mended: 0,
             genome,
             traits,
@@ -3502,7 +3513,7 @@ mod boss_tests {
                 server.tick_creatures();
                 server.players.get_mut(&1).unwrap().health = traits::Health::full(server.survival.max_health);
                 let tell = server.creatures.live[&id].tell();
-                tell != 0 && tell != voxmar_protocol::REARING
+                tell != 0 && tell != voxmar_protocol::REARING && tell != voxmar_protocol::STAGGERED
             })
             .map(|t| t as f32 / TICKS_PER_SECOND as f32)
     }

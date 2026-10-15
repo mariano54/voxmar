@@ -245,7 +245,7 @@ fn fade_out(mut commands: Commands, time: Res<Time>, mut fading: Query<(Entity, 
 /// Dips the music while a sound it makes room for plays, and brings it back after.
 fn duck(mix: Option<Res<Mix>>, time: Res<Time>, voices: Query<&Voice, Without<MakingRoom>>, mut level: ResMut<Duck>) {
     let Some(duck) = mix.as_ref().and_then(|mix| mix.0.duck.as_ref()) else { return };
-    let under = voices.iter().any(|voice| voice.ducks && duck.bosses || duck.under.contains(&voice.category));
+    let under = voices.iter().any(|voice| (voice.ducks && duck.bosses) || duck.under.contains(&voice.category));
     level.0 = toward(level.0, under, duck, time.delta_secs());
 }
 
