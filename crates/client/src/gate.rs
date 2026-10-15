@@ -10876,7 +10876,7 @@ fn tusk(world: &mut World, gate: &mut Gate, now: f32) {
             }
         }
         _ => {
-            if sweep_bears(world, gate, species, pad) {
+            if sweep_bears(world, gate, species, pad, now) {
                 end_tusk(world, gate, now);
             }
         }
