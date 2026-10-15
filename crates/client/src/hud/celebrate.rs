@@ -200,6 +200,9 @@ pub struct Stage {
     bursts: Vec<(f32, Burst)>,
     /// Motes thrown so far (the gate's count).
     pub thrown: u32,
+    /// The quest states last seen and their revision, to tell which just turned done;
+    /// forgotten on leaving, so another world's states are never compared with this one's.
+    quests_seen: (u32, Vec<QuestState>),
 }
 
 impl Stage {
@@ -284,18 +287,19 @@ fn take_levels(mut toasts: ResMut<SkillToasts>, mut stage: ResMut<Stage>) {
 
 /// Quests the server's states say were just finished (not on joining, when the first
 /// states arrive).
-fn take_quests(player: Res<LocalPlayer>, mut stage: ResMut<Stage>, mut last: Local<(u32, Vec<QuestState>)>) {
+fn take_quests(player: Res<LocalPlayer>, mut stage: ResMut<Stage>) {
     if player.quests.is_empty() {
-        *last = (player.quests_rev, Vec::new());
+        stage.quests_seen = (player.quests_rev, Vec::new());
         return;
     }
-    if last.0 == player.quests_rev {
+    if stage.quests_seen.0 == player.quests_rev {
         return;
     }
-    for name in finished(&last.1, &player.quests) {
-        stage.ask(Moment::Quest(name.to_owned()));
+    let done: Vec<String> = finished(&stage.quests_seen.1, &player.quests).into_iter().map(str::to_owned).collect();
+    for name in done {
+        stage.ask(Moment::Quest(name));
     }
-    *last = (player.quests_rev, player.quests.clone());
+    stage.quests_seen = (player.quests_rev, player.quests.clone());
 }
 
 /// The quests done in `now` that were not in `before`; none for the first states of a
@@ -604,6 +608,32 @@ mod tests {
         world.run_system_once(leave).unwrap();
         assert_eq!(world.get::<Visibility>(row), Some(&Visibility::Hidden));
         assert!(world.resource::<Stage>().waiting.is_empty());
+    }
+
+    /// A quest finished in play is a moment; after leaving, another world whose first states
+    /// arrive with that quest done (before the game shows a frame) replays nothing.
+    #[test]
+    fn another_world_replays_no_quests() {
+        use bevy::ecs::system::RunSystemOnce;
+        let state = |done| vec![QuestState { name: "a".into(), done, claimed: false, tasks: Vec::new() }];
+        let mut world = World::new();
+        world.insert_resource(Stage::default());
+        let mut player = LocalPlayer::default();
+        (player.quests, player.quests_rev) = (state(false), 1);
+        world.insert_resource(player);
+        world.run_system_once(take_quests).unwrap();
+        assert!(world.resource::<Stage>().waiting.is_empty(), "joining is no moment");
+        (world.resource_mut::<LocalPlayer>().quests, world.resource_mut::<LocalPlayer>().quests_rev) = (state(true), 2);
+        world.run_system_once(take_quests).unwrap();
+        assert_eq!(world.resource::<Stage>().waiting, [Moment::Quest("a".into())]);
+        world.spawn((BannerRow, Visibility::Inherited));
+        world.run_system_once(leave).unwrap();
+        // Another save: its first states already hold the quest done.
+        let mut player = LocalPlayer::default();
+        (player.quests, player.quests_rev) = (state(true), 1);
+        world.insert_resource(player);
+        world.run_system_once(take_quests).unwrap();
+        assert!(world.resource::<Stage>().waiting.is_empty(), "another world's quest done replayed");
     }
 
     /// The banner keeps off every screen and the debug overlay; play and the chat line
