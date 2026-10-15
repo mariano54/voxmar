@@ -66,13 +66,17 @@ struct Aim {
 }
 
 /// A creature's blow on its way: the tick it comes down, and how much of that tick's
-/// length its wind-up had run out by (its seconds rounded up to whole ticks). Once due, the
-/// moment it landed on the players' clock, for judging their guard and dodges.
+/// length its wind-up had run out by (its seconds rounded up to whole ticks); when its
+/// wind-up runs out on the players' clock, a wind-up after it began there, as their client
+/// tells it; and once due, the moment it landed on that clock, for judging their guard and
+/// dodges: the earlier of the two, so ticks running behind the clock never judge it later
+/// than the player saw it come.
 struct Windup {
     creature: u32,
     player: PlayerId,
     due: u64,
     early: f64,
+    by_clock: f64,
     lands: Option<f64>,
 }
 
@@ -349,6 +353,7 @@ impl Server {
         let tick = self.tick;
         let due = tick + ticks(windup);
         let early = (due - tick) as f64 / TICKS_PER_SECOND as f64 - windup as f64;
+        let by_clock = self.fights.now().max(self.fight_arrival()) + windup as f64;
         let live = self.creatures.live.get_mut(&creature).expect("checked above");
         // Begin facing the target, before the tracking window can lock the aim. A slow
         // turn from an old wander goal otherwise spends the whole window facing away,
@@ -363,7 +368,7 @@ impl Server {
         live.held_until = live.held_until.max(tick + ticks(windup));
         live.tracking = Some((player, tick + ticks(windup * feel.creature_tracking.clamp(0.0, 1.0))));
         live.changed = true;
-        self.fights.windups.push(Windup { creature, player, due, early, lands: None });
+        self.fights.windups.push(Windup { creature, player, due, early, by_clock, lands: None });
     }
 
     /// Where a creature winding up at a player goes this tick, while it still follows them:
@@ -442,7 +447,9 @@ impl Server {
             self.land_swing(player, aim, strength, on_beat, kind, in_reach);
         }
         // Creatures' blows, each come down the tick its wind-up is done, and judged at the
-        // moment it ran out on the players' clock, once every guard and dodge
+        // moment it ran out on the players' clock (no later than a wind-up after it began
+        // there, as their client tells it, however far behind the ticks run), once every
+        // guard and dodge
         // that arrived before that moment has been handled: one that arrived after the last
         // messages were taken in, and before the blow landed, still counts. The player saw
         // the wind-up begin late by their round trip, and their answer arrives as late, so
@@ -453,7 +460,7 @@ impl Server {
         let heard = self.heard.map_or(now, |at| self.fights.secs(at));
         let mut windups = std::mem::take(&mut self.fights.windups);
         for w in windups.iter_mut().filter(|w| w.lands.is_none() && tick >= w.due) {
-            w.lands = Some(now - w.early);
+            w.lands = Some((now - w.early).min(w.by_clock));
         }
         let (due, waiting): (Vec<Windup>, Vec<Windup>) = windups.into_iter().partition(|w| w.lands.is_some_and(|lands| lands + self.lag_allowance(w.player) <= heard));
         self.fights.windups = waiting;
@@ -805,8 +812,8 @@ mod tests {
     }
 
     /// The ticks a wolf's blows come down on, standing by a player who never fights back,
-    /// over 10 game seconds of the server's own ticks; with `slow`, each tick takes a tenth
-    /// of a second more of the players' clock than it is, as on a server running behind.
+    /// over 10 game seconds of the server's own ticks; with `slow`, each tick takes 100 ms of
+    /// the players' clock, 50 more than it is, as on a server running behind.
     fn wolf_blows(slow: bool) -> Vec<u64> {
         use crate::creatures::cornered_tests::{join, pen, put};
         let mut server = crate::test_server();
@@ -877,14 +884,17 @@ mod tests {
         let bear = server.spawn_creature(species, ahead, 1).expect("room");
         server.handle_messages();
         // The guard goes up, and the blow lands just after it, inside the perfect window...
-        client.send(ClientMessage::Guard { up: true });
-        let raised = server.fights.now();
-        server.fights.windups.push(Windup { creature: bear, player, due: server.tick, early: 0.0, lands: Some(raised + 0.05) });
-        std::thread::sleep(Duration::from_millis(100));
+        let sent = std::time::Instant::now();
+        client.send_at(ClientMessage::Guard { up: true }, sent);
+        let raised = server.fights.secs(sent);
+        server.fights.windups.push(Windup { creature: bear, player, due: server.tick, early: 0.0, by_clock: raised + 0.05, lands: Some(raised + 0.05) });
         // ...but the server ticks before it takes the raise in: the blow waits for it.
         server.tick_fights();
         assert_eq!(server.fights.windups.len(), 1, "the blow was judged before the guard raised ahead of it was heard");
         server.handle_messages();
+        // A tenth of a second of the clock goes by before the next tick (the epoch put back
+        // that much, as no test waits on the clock), so the blow is past and judged.
+        server.fights.epoch = server.fights.epoch.checked_sub(Duration::from_millis(100)).expect("a clock that far back");
         server.tick_fights();
         assert!(server.fights.windups.is_empty(), "the blow was not judged once heard");
         let defended = std::iter::from_fn(|| client.try_recv().ok().flatten()).find_map(|message| match message {
@@ -957,6 +967,66 @@ mod tests {
                 ServerMessage::Hurt { defended, .. } => Some(defended),
                 _ => None,
             }).expect("the blow told the player what came of it")
+        }
+    }
+
+    /// A bear's blow guarded `answer` seconds after its wind-up began on the players'
+    /// clock (by its tell), or dodged then, with the clock going on `ticks[i]` seconds over
+    /// the server's tick `i` from the wind-up's (and a tick's 50 ms after the list): what it
+    /// came to, and seconds of that clock after the wind-up began it was judged. Through
+    /// the real path: the wind-up begun, the answer heard with the other messages, the blow
+    /// landed when fights are ticked.
+    fn answered_by_the_tell(dodge: bool, answer: f64, ticks: &[f64]) -> (Defended, f64) {
+        let mut rig = Rig::new();
+        let player = 1;
+        let server = &mut rig.server;
+        server.handle_messages();
+        server.wind_up(rig.bear, player);
+        let began = server.fights.now();
+        let dodge_action = server.content.actions.id("core:dodge").expect("a dodge");
+        let mut sent = false;
+        for i in 0..200 {
+            let step = ticks.get(i).copied().unwrap_or(0.05);
+            server.fights.epoch = server.fights.epoch.checked_sub(Duration::from_secs_f64(step)).expect("a clock that far back");
+            server.tick += 1;
+            server.players.get_mut(&player).expect("here").grounded = server.tick;
+            if !sent && server.fights.now() >= began + answer {
+                // Stamped the moment it was given, on the same clock.
+                let at = std::time::Instant::now() - Duration::from_secs_f64(server.fights.now() - (began + answer));
+                let message = if dodge { ClientMessage::Propose { action: dodge_action, target: voxmar_engine::action::ActionTarget::None } } else { ClientMessage::Guard { up: true } };
+                rig.client.send_at(message, at);
+                sent = true;
+            }
+            server.handle_messages();
+            server.tick_fights();
+            let judged = server.fights.now() - began;
+            if let Some(defended) = std::iter::from_fn(|| rig.client.try_recv().ok().flatten()).find_map(|message| match message {
+                ServerMessage::Hurt { defended, .. } => Some(defended),
+                _ => None,
+            }) {
+                return (defended, judged);
+            }
+        }
+        panic!("the bear's blow never came");
+    }
+
+    /// Review: the reviewer's probe. A bear's wind-up (0.7 s) guarded by its tell at 0.625 s
+    /// is a perfect block and dodged at 0.57 s is dodged, whether the server's ticks keep
+    /// time, run 110 ms each, or come ten at once after a stall: the blow comes down on its
+    /// tick, but is judged on the players' clock no later than its wind-up ran out there, as
+    /// their client tells it. Before: with 110 ms ticks it was judged at 1.65 s, a block and
+    /// a miss; after a burst, two misses.
+    #[test]
+    fn a_blow_answered_by_its_tell_counts_however_the_ticks_run() {
+        let on_time = vec![0.05; 20];
+        let behind = vec![0.11; 20];
+        // A stall of 0.6 s, then ten ticks at once to catch up.
+        let burst: Vec<f64> = std::iter::once(0.6).chain(std::iter::repeat_n(0.0, 10)).collect();
+        for (name, ticks) in [("on time", &on_time), ("110 ms ticks", &behind), ("a catch-up burst", &burst)] {
+            let (guarded, at) = answered_by_the_tell(false, 0.625, ticks);
+            assert_eq!(guarded, Defended::Perfect, "{name}: guarded by the tell, judged {at:.2} s after the wind-up began");
+            let (dodged, at) = answered_by_the_tell(true, 0.57, ticks);
+            assert_eq!(dodged, Defended::Dodged, "{name}: dodged by the tell, judged {at:.2} s after the wind-up began");
         }
     }
 
