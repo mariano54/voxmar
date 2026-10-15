@@ -1761,6 +1761,41 @@ fn the_count_of_casts_survives_leaving_and_joining_again() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// The count that numbers a player's cooking rolls (whether a go burns) is kept, so the
+/// next go after joining again is drawn on from it, not drawn again.
+#[test]
+fn the_count_of_goes_cooked_survives_leaving_and_joining_again() {
+    let dir = world_dir("cooks");
+    let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
+    let cook = |client: &mut Client, times: u32| {
+        let fire = client.position.floor().as_ivec3() + IVec3::new(3, 0, 0);
+        let charcoal = |c: &Client| {
+            let item = c.content.blocks.expect("base:charcoal");
+            c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>()
+        };
+        client.clear();
+        for line in ["/setblock ~3 ~ ~ campfire", &format!("/give oak_log {times}"), "/skill cooking 99"] {
+            client.ok(line);
+        }
+        client.pump_until(|c| c.world.block(fire) == c.content.blocks.id("base:campfire") && c.inventory.get(0).is_some_and(|s| s.count as u32 == times));
+        client.send_position(client.position, false);
+        for go in 1..=times {
+            client.propose("base:cook", ActionTarget::Block { block: fire, face: Face::PosY });
+            client.pump_until(|c| charcoal(c) == go);
+        }
+    };
+    let saved = || voxmar_server::save::WorldSave::new(&dir).read_player("test", &content().blocks).unwrap().expect("the player was saved").draws.cooks;
+    let mut client = Client::join_with(config());
+    cook(&mut client, 2);
+    drop(client);
+    assert_eq!(saved(), 2, "two goes kept");
+    let mut client = Client::join_with(config());
+    cook(&mut client, 1);
+    drop(client);
+    assert_eq!(saved(), 3, "the next go numbered on from them");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 #[test]
 fn a_seed_pouch_carries_seeds_in_one_slot_and_sows_from_it() {
     let mut client = Client::join();

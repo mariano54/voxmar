@@ -597,6 +597,10 @@ struct Gate {
     /// Raw small game carried, slots and pouch, as the dry step hangs the rack, so its
     /// readout can count what hung.
     rack_rabbits: u32,
+    /// When the dry step last cleared the raw small game carried (server seconds), and the
+    /// first raw small game seen picked up once it gave its own.
+    dry_cleared: f32,
+    dry_pickup: Option<String>,
     /// The creature the combat-marks step tells its blows at, when (game time) it last told
     /// them, and how many runs it has told.
     marked: Option<u32>,
@@ -674,6 +678,9 @@ struct Gate {
     quarry_id: Option<u32>,
     fallen_watched: bool,
     weapon_fallen_watched: bool,
+    /// The blows answered and landed before the weapon step struck (`Creatures::blows` and
+    /// `landed`), for its log.
+    weapon_from: (u32, u32),
     /// Where the player was put to stand on the struck creature's loot, once it lay.
     loot_stood: Option<Vec3>,
     fallen_since: Option<f32>,
@@ -711,11 +718,13 @@ struct Gate {
     cover_checked: bool,
     /// Texts found not to fit, each once per language: what, and where it was first seen.
     spills: Vec<(String, String)>,
+    /// The text-fit views read only once `FIT_SETTLE` passed, their layout never settled.
+    fit_settled: Vec<String>,
     /// Views in a language with line rules where no text had its line breaks checked.
     unbroken: Vec<String>,
     /// The text-fit tour's view (its step and stage), its layout as last drawn, whether that
     /// changed since the view was shown, and the frames it has held still since (`FIT_STILL`).
-    fit_layout: ((Step, u32), u64, bool, u32),
+    fit_layout: ((Step, u32), u64, bool, u32, bool),
     /// The interface font before the gate tried another, to go back to.
     font: Option<crate::ui::skin::InterfaceFont>,
     /// Whether the taming food was moved into the hotbar, which earlier steps may have filled.
@@ -850,6 +859,8 @@ impl Gate {
             chimney_since: None,
             pot_ground: None,
             rack_rabbits: 0,
+            dry_cleared: 0.0,
+            dry_pickup: None,
             marked: None,
             marked_at: 0.0,
             marked_tries: 0,
@@ -889,6 +900,7 @@ impl Gate {
             quarry_id: None,
             fallen_watched: false,
             weapon_fallen_watched: false,
+            weapon_from: (0, 0),
             loot_stood: None,
             fallen_since: None,
             weapon_fallen_since: None,
@@ -909,8 +921,9 @@ impl Gate {
             fall_judged: false,
             cover_checked: false,
             spills: Vec::new(),
+            fit_settled: Vec::new(),
             unbroken: Vec::new(),
-            fit_layout: ((Step::Load, 0), 0, false, 0),
+            fit_layout: ((Step::Load, 0), 0, false, 0, false),
             font: None,
             food_moved: false,
             cook_started: false,
@@ -6852,19 +6865,26 @@ const FIT_SETTLE: f32 = 0.4;
 const FIT_STILL: u32 = 4;
 const FIT_SETTLE_LEAST: f32 = 0.1;
 
-/// Where every node of the interface is and how big, and every text's lines: what laying
-/// out a view changes.
+/// Where every shown node of the interface is and how big, and every shown text's glyphs:
+/// what laying out a view changes. Hidden panels keep their layout, so only what shows
+/// counts, and each glyph by its shape, so two pages alike but for their words differ.
 fn layout_print(world: &mut World) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut hasher = rustc_hash::FxHasher::default();
-    let mut nodes = world.query::<(&ComputedNode, &bevy::ui::UiGlobalTransform, Option<&bevy::text::TextLayoutInfo>)>();
-    for (node, at, text) in nodes.iter(world) {
+    let mut nodes = world.query::<(&ComputedNode, &bevy::ui::UiGlobalTransform, &InheritedVisibility, Option<&bevy::text::TextLayoutInfo>)>();
+    for (node, at, visible, text) in nodes.iter(world) {
+        if !visible.get() {
+            continue;
+        }
         let size = node.size();
         let at = at.translation;
         [size.x, size.y, at.x, at.y].map(f32::to_bits).hash(&mut hasher);
         if let Some(text) = text {
             [text.size.x, text.size.y].map(f32::to_bits).hash(&mut hasher);
-            text.glyphs.len().hash(&mut hasher);
+            for glyph in &text.glyphs {
+                let shape = glyph.atlas_info.rect;
+                [glyph.position.x, glyph.position.y, shape.min.x, shape.min.y, shape.max.x, shape.max.y].map(f32::to_bits).hash(&mut hasher);
+            }
         }
     }
     hasher.finish()
@@ -6902,31 +6922,47 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             Err(format!("{} texts do not fit: {}", spills.len(), spills.join("; ")))
         };
         let journal = gate.step == Step::FitJournal;
+        let settled = std::mem::take(&mut gate.fit_settled);
+        if !settled.is_empty() {
+            info!("gate: {:?} read {} views only once {FIT_SETTLE}s passed: {}", gate.step, settled.len(), settled.join(", "));
+        }
         gate.check(if menus { "text fits: menus" } else if journal { "text fits: journal" } else { "text fits" }, result);
         show_view(world, None, now);
         set_language(world, "en");
         gate.next(if menus { Step::Done } else if journal { Step::Leave } else { Step::FitJournal }, now);
         return;
     };
+    let shown = (gate.step, gate.phase);
+    // A view that builds nothing of its own may already be what shows: the HUD (always
+    // built), or a screen before a game that is already the one on.
+    let as_is = gate.fit_layout.0 != shown
+        && match view {
+            View::Hud => world.resource::<Locale>().code() == language,
+            View::Title | View::Worlds | View::Create | View::Join => show_screen(view).is_some_and(|screen| *world.resource::<State<Screen>>().get() == screen),
+            _ => false,
+        };
     if world.resource::<Locale>().code() != language {
         set_language(world, language);
     }
     show_view(world, Some(view), now);
     // Read once the view is laid out: its layout changed and then held still a few frames,
-    // or `FIT_SETTLE` passed (a view that lays out like the one before it).
+    // or, for a view already showing, held still those frames unchanged; else once
+    // `FIT_SETTLE` passed.
     let print = layout_print(world);
-    let shown = (gate.step, gate.phase);
-    let (on, last, changed, still) = &mut gate.fit_layout;
+    let (on, last, changed, still, already) = &mut gate.fit_layout;
     if *on != shown {
-        (*on, *last, *changed, *still) = (shown, print, false, 0);
+        (*on, *last, *changed, *still, *already) = (shown, print, false, 0, as_is);
     } else if print == *last {
         *still += 1;
     } else {
         (*last, *changed, *still) = (print, true, 0);
     }
-    let laid_out = *changed && *still >= FIT_STILL && in_phase >= FIT_SETTLE_LEAST;
+    let laid_out = (*changed || *already) && *still >= FIT_STILL && in_phase >= FIT_SETTLE_LEAST;
     if in_phase < FIT_SETTLE && !laid_out {
         return;
+    }
+    if !laid_out {
+        gate.fit_settled.push(format!("{language} {view:?}"));
     }
     // A journal page is read once it is drawn, in this language, however long that takes.
     if let View::Journal(page) = view
@@ -6978,16 +7014,20 @@ fn fit_prayers(world: &mut World, full: bool) {
 }
 
 /// Opens one view of [`fit`]'s tour, or closes every screen.
-fn show_view(world: &mut World, view: Option<View>, now: f32) {
-    let screen = match view {
-        Some(View::Title) => Some(Screen::Title),
-        Some(View::Worlds) => Some(Screen::Worlds),
-        Some(View::Create) => Some(Screen::CreateWorld),
-        Some(View::Join) => Some(Screen::Join),
-        Some(View::Settings(_)) => Some(Screen::Settings),
+/// The screen before a game that view `view` is on, if it is one.
+fn show_screen(view: View) -> Option<Screen> {
+    match view {
+        View::Title => Some(Screen::Title),
+        View::Worlds => Some(Screen::Worlds),
+        View::Create => Some(Screen::CreateWorld),
+        View::Join => Some(Screen::Join),
+        View::Settings(_) => Some(Screen::Settings),
         _ => None,
-    };
-    if let Some(screen) = screen
+    }
+}
+
+fn show_view(world: &mut World, view: Option<View>, now: f32) {
+    if let Some(screen) = view.and_then(show_screen)
         && *world.resource::<State<Screen>>().get() != screen
     {
         world.resource_mut::<NextState<Screen>>().set(screen);
@@ -8372,6 +8412,7 @@ fn weapon(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             net.command(&format!("give {} 1", WEAPON.trim_start_matches("base:")));
             net.command(&format!("summon {} 1 {} {} {}", BEAR.trim_start_matches("base:"), pad.x, pad.y, pad.z + 1));
             gate.blows_seen = world.resource::<crate::creatures::Creatures>().blows;
+            gate.weapon_from = (gate.blows_seen, world.resource::<crate::creatures::Creatures>().landed);
             gate.feel = FeelRun::default();
             gate.swing_watch = SwingWatch::of("player swing", "player-swing-connect", "the bear");
             gate.advance(now);
@@ -8393,6 +8434,9 @@ fn weapon(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             };
             let strikes = world.resource::<crate::fight::Fighting>().strikes;
             if blows > gate.blows_seen {
+                if gate.blows_seen == gate.weapon_from.0 {
+                    info!("gate: Weapon: the first blow answered at {now:.1}s, server {:.1}s, after {} swings", gate.server_now, gate.swings);
+                }
                 gate.blows_seen = blows;
                 gate.phase_since = now;
                 gate.phase_server = gate.server_now;
@@ -8415,6 +8459,20 @@ fn weapon(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 }
                 // Out of sight: dead only if it was seen dying.
                 None => {
+                    if gate.feel.died && !gate.weapon_fallen_watched && gate.weapon_fallen_since.is_none() {
+                        // Where the weapon step's time goes, for the gate's step table.
+                        let (blows, landed) = {
+                            let creatures = world.resource::<crate::creatures::Creatures>();
+                            (creatures.blows, creatures.landed)
+                        };
+                        info!(
+                            "gate: Weapon: the bear down at {now:.1}s, server {:.1}s: {} swings sent, {} blows answered, {} landed",
+                            gate.server_now,
+                            gate.swings,
+                            blows - gate.weapon_from.0,
+                            landed - gate.weapon_from.1
+                        );
+                    }
                     if gate.feel.died && !gate.weapon_fallen_watched {
                         // Cleanup teleports into the corpse and removes its view. Watch
                         // this actual bear's mark before issuing any sweep commands.
@@ -8423,6 +8481,7 @@ fn weapon(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                         }).map(|(centre, _)| centre);
                         let Some(result) = watch_fallen(world, gate.feel.bear, anchor, &mut gate.weapon_fallen_since, now) else { return };
                         gate.weapon_fallen_watched = true;
+                        info!("gate: Weapon: the slain mark watched at {now:.1}s, server {:.1}s", gate.server_now);
                         gate.check("combat marks: slain bear", result.map(|seen| format!("its mark stayed visible for {seen:.2} s before cleanup"))
                             .map_err(|seen| format!("its mark stayed visible for only {seen:.2} s during the bounded corpse watch")));
                         return;
@@ -8739,6 +8798,7 @@ fn end_weapon(world: &mut World, gate: &mut Gate, now: f32) {
     mouse(world, MouseButton::Left, false);
     key(world, KeyCode::KeyW, false);
     gate.sweep = Sweep::default();
+    info!("gate: Weapon: sweeping the bears away at {now:.1}s, server {:.1}s", gate.server_now);
     to_phase(gate, 3, now);
 }
 
@@ -11077,11 +11137,13 @@ fn ranged_feel(world: &mut World, gate: &mut Gate) {
             }
             // Lying there: rolled over all the way, at its own size, not sinking.
             let w = world.resource::<Creatures>().watched;
+            let drawn = format!("{lying:.2} s into its death the deer was drawn rolled {:.1} of {:.0} degrees (within 3 wanted), at {:.3} of its size (0.99 or more), sunk {:.4} blocks (none)", w.death_roll, death.roll, w.death_scale, w.death_sink);
             if (w.death_roll - death.roll).abs() > 3.0 || w.death_scale < 0.99 || w.death_sink > 1e-4 {
-                gate.check("ranged feel: death", Err(format!("{lying:.2} s into its death the deer was drawn rolled {:.0} of {:.0} degrees, at {:.2} of its size, sunk {:.2} blocks", w.death_roll, death.roll, w.death_scale, w.death_sink)));
+                gate.check("ranged feel: lying", Err(drawn));
                 done(world, gate, now);
                 return;
             }
+            gate.check("ranged feel: lying", Ok(drawn));
             world.resource_mut::<Creatures>().watch_step = Some(0.0);
             gate.advance(now);
         }
@@ -11742,6 +11804,42 @@ const MEAT_SHOWS: f32 = 0.08;
 
 /// Raw small game the dry step gives to hang on the rack.
 const RACK_GIVEN: u32 = 2;
+/// How near the player's middle raw small game lying about keeps the dry step from giving
+/// its own: where it is drawn in.
+const DRY_NEAR: f32 = voxmar_engine::dropped::MAGNET;
+
+/// The raw small game lying within `within` blocks of the player's middle: where each is,
+/// and how far.
+fn raw_lying_near(world: &World, within: f32) -> Vec<String> {
+    let (player, client, drops) = (world.resource::<LocalPlayer>(), world.resource::<ClientWorld>(), world.resource::<crate::drops::Drops>());
+    let middle = player.position + Vec3::Y * voxmar_engine::physics::player::HEIGHT / 2.0;
+    let raw = client.registry.id("base:raw_small_game");
+    drops
+        .lying()
+        .filter(|(_, stack, at)| Some(stack.item) == raw && (*at + Vec3::Y * voxmar_engine::dropped::SIZE / 2.0).distance(middle) <= within)
+        .map(|(id, stack, at)| format!("{} lying at ({:.2}, {:.2}, {:.2}) (drop {id}), {:.2} blocks off", stack.count, at.x, at.y, at.z, (at + Vec3::Y * voxmar_engine::dropped::SIZE / 2.0).distance(middle)))
+        .collect()
+}
+
+/// Notes the first raw small game seen picked up once the dry step gave its own.
+fn dry_watch_pickups(world: &World, gate: &mut Gate) {
+    if gate.dry_pickup.is_some() {
+        return;
+    }
+    let (client, drops) = (world.resource::<ClientWorld>(), world.resource::<crate::drops::Drops>());
+    let raw = client.registry.id("base:raw_small_game");
+    gate.dry_pickup = drops.picked_up().find(|(_, stack, _)| Some(stack.item) == raw).map(|(id, stack, from)| format!("{} picked up from ({:.2}, {:.2}, {:.2}) (drop {id})", stack.count, from.x, from.y, from.z));
+}
+
+/// Why the dry step carries more raw small game than it gave: where the rest came from, as
+/// far as the client saw.
+fn dry_extra(world: &World, gate: &Gate, carried: u32) -> String {
+    let player = world.resource::<LocalPlayer>().position;
+    let from = gate.dry_pickup.clone().unwrap_or_else(|| "none seen picked up".into());
+    let near = raw_lying_near(world, DRY_NEAR);
+    let near = if near.is_empty() { String::new() } else { format!("; still within {DRY_NEAR} blocks {}", near.join(", ")) };
+    format!("{carried} raw small game carried after giving {RACK_GIVEN}: {from}, the player at ({:.2}, {:.2}, {:.2}){near}", player.x, player.y, player.z)
+}
 
 /// A drying rack by the campfire, seen from three blocks at eye height (shot `rack_bare`
 /// once the renderer has it), raw rabbit selected: right clicks on it hang the rabbit
@@ -11762,28 +11860,42 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
             // None of what earlier steps left: the step hangs only what it gives.
             net.command("clear raw_small_game");
             net.command(&format!("tp {} {} {}", rack.x as f32 + 0.5, rack.y, rack.z as f32 - 2.5));
-            gate.rack_rabbits = 0;
+            (gate.rack_rabbits, gate.dry_cleared, gate.dry_pickup) = (0, gate.server_now, None);
             gate.advance(now);
         }
         1 => {
             aim_at(world, rack.as_vec3() + RACK_MEAT);
-            // Given once the pack is seen cleared, so what is carried is what was given.
+            let carried = carried_of(world, "base:raw_small_game");
+            let there = world.resource::<LocalPlayer>().position.distance(Vec3::new(rack.x as f32 + 0.5, rack.y as f32, rack.z as f32 - 2.5)) < 0.5;
+            // Given once the player stands by the rack, the pack is seen cleared and no raw
+            // small game lies near enough to be drawn in (what the cook step's hearth let
+            // fall, say): any that does is let come and cleared again, so what is carried is
+            // what was given.
             if gate.rack_rabbits == 0 {
-                if carried_of(world, "base:raw_small_game") == 0 {
+                let near = raw_lying_near(world, DRY_NEAR);
+                if there && carried == 0 && near.is_empty() {
                     world.resource::<Net>().command(&format!("give raw_small_game {RACK_GIVEN}"));
                     gate.rack_rabbits = RACK_GIVEN;
                 } else if waited {
-                    gate.check("drying rack", Err(format!("the raw small game carried was never cleared in {DRY_WAIT} server seconds")));
+                    let near = if near.is_empty() { String::new() } else { format!("; within {DRY_NEAR} blocks {}", near.join(", ")) };
+                    gate.check("drying rack", Err(format!("the raw small game about the rack never cleared in {DRY_WAIT} server seconds: {carried} carried{near}")));
                     gate.next(Step::Snare, now);
+                } else if carried > 0 && gate.server_now - gate.dry_cleared >= 1.0 {
+                    world.resource::<Net>().command("clear raw_small_game");
+                    gate.dry_cleared = gate.server_now;
                 }
+                return;
+            }
+            dry_watch_pickups(world, gate);
+            if carried > RACK_GIVEN {
+                gate.check("drying rack", Err(dry_extra(world, gate, carried)));
+                gate.next(Step::Snare, now);
                 return;
             }
             let client = world.resource::<ClientWorld>();
             let stood = client.registry.id("base:drying_rack").is_some_and(|r| client.block(rack) == Some(r));
-            let there = world.resource::<LocalPlayer>().position.distance(Vec3::new(rack.x as f32 + 0.5, rack.y as f32, rack.z as f32 - 2.5)) < 0.5;
-            let given = carried_of(world, "base:raw_small_game") >= gate.rack_rabbits;
+            let given = carried == RACK_GIVEN;
             if stood && there && given && drawn(world, rack) && gate.shot(world, "rack_bare").is_some() && select(world, "base:raw_small_game") {
-                gate.rack_rabbits = carried_of(world, "base:raw_small_game");
                 gate.advance(now);
             } else if waited {
                 gate.check("drying rack", Err(format!("the rack ({stood}) or the {RACK_GIVEN} raw small game given ({given}) never came in {DRY_WAIT} server seconds")));
@@ -11792,9 +11904,15 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
         }
         2 => {
             aim_at(world, rack.as_vec3() + RACK_MEAT);
+            dry_watch_pickups(world, gate);
+            let carried = carried_of(world, "base:raw_small_game");
             let client = world.resource::<ClientWorld>();
             let hung = client.registry.id("base:drying_rack_hung").is_some_and(|h| client.block(rack) == Some(h));
-            if hung {
+            if !hung && carried > RACK_GIVEN {
+                mouse(world, MouseButton::Right, false);
+                gate.check("drying rack", Err(dry_extra(world, gate, carried)));
+                gate.next(Step::Snare, now);
+            } else if hung {
                 mouse(world, MouseButton::Right, false);
                 gate.advance(now);
             } else if gate.waited_out(DRY_WAIT) {
