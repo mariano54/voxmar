@@ -786,9 +786,13 @@ struct Gate {
     /// logs they had before a click.
     was_creative: bool,
     counted: u32,
-    /// Real frame times so far (milliseconds), and the longest in each step.
+    /// Real frame times so far (milliseconds), and the longest in each step with the
+    /// milliseconds our threads waited for a core in it (`slow_frames::waited_for_cores`).
+    /// Each frame is timed from one run of the gate to the next, by the wall's clock and by
+    /// the waiting so far (`frame_at`).
     frame_ms: Vec<f32>,
-    longest: FxHashMap<Step, f32>,
+    longest: FxHashMap<Step, (f32, f32)>,
+    frame_at: Option<(Instant, Option<std::time::Duration>)>,
     /// The machine's one-minute load average read about once a second, with the session's
     /// real seconds at each read, over the last `LOAD_SPAN` (`Gate::load_now`).
     loads: std::collections::VecDeque<(f32, f64)>,
@@ -981,6 +985,7 @@ impl Gate {
             counted: 0,
             frame_ms: Vec::new(),
             longest: default(),
+            frame_at: None,
             loads: default(),
             overlay_ms: default(),
             server_now: 0.0,
@@ -1346,10 +1351,16 @@ fn run(world: &mut World) {
     if screen == Screen::InGame && !matches!(gate.step, Step::Fit | Step::FitJournal | Step::FitMenus | Step::Leave | Step::Done) {
         watch_health(world, &mut gate);
     }
-    let frame_ms = world.resource::<Time<Real>>().delta_secs() * 1000.0;
-    gate.frame_ms.push(frame_ms);
-    let longest = gate.longest.entry(gate.step).or_default();
-    *longest = longest.max(frame_ms);
+    let now_at = (Instant::now(), crate::slow_frames::waited_for_cores());
+    if let Some((then, waited_then)) = gate.frame_at.replace(now_at) {
+        let frame_ms = now_at.0.saturating_duration_since(then).as_secs_f32() * 1000.0;
+        let waited_ms = waited_then.zip(now_at.1).map_or(0.0, |(then, now)| now.saturating_sub(then).as_secs_f32() * 1000.0);
+        gate.frame_ms.push(frame_ms);
+        let longest = gate.longest.entry(gate.step).or_default();
+        if frame_ms > longest.0 {
+            *longest = (frame_ms, waited_ms);
+        }
+    }
     let real = world.resource::<Time<Real>>().elapsed_secs();
     if gate.loads.back().is_none_or(|&(at, _)| real - at >= 1.0) {
         gate.loads.push_back((real, load_average()));
@@ -2165,7 +2176,7 @@ fn breaks(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 wrong.push(format!("{differ} blocks around differ between client and server"));
             }
             let tools = gate.breaks.row.iter().filter(|(.., holder)| matches!(holder, Holder::Tool(_))).count();
-            let longest = gate.longest.get(&Step::Breaks).copied().unwrap_or(0.0);
+            let longest = gate.longest.get(&Step::Breaks).map_or(0.0, |&(wall, _)| wall);
             let result = if wrong.is_empty() {
                 Ok(format!("{} blocks of {} hardnesses broke with the bare hand, planks and {tools} tools under load (frames up to {longest:.0} ms), and stayed broken on both sides", gate.breaks.row.len(), BREAK_BLOCKS.len()))
             } else {
@@ -14508,12 +14519,14 @@ const HITCH_FACTOR: f32 = 6.0;
 
 /// Checks that `step` (placing or digging) ran without a hitch: no frame over
 /// max(`HITCH_MS`, `HITCH_FACTOR` × the session's median frame), times how far the load
-/// now (`Gate::load_now`) asks for more than the cores.
+/// now (`Gate::load_now`) asks for more than the cores. A frame is judged by the game's own
+/// time in it (`frame_work`): what our threads spent waiting for a core while other work ran
+/// is the machine's, not the game's.
 fn smooth(gate: &mut Gate, name: &str, step: Step, known: Option<&str>) {
     let mut sorted = gate.frame_ms.clone();
     sorted.sort_by(f32::total_cmp);
     let median = sorted.get(sorted.len() / 2).copied().unwrap_or(0.0);
-    let longest = gate.longest.get(&step).copied().unwrap_or(0.0);
+    let (longest, waited) = gate.longest.get(&step).copied().unwrap_or_default();
     // A machine asked for more than all its cores (other threads' builds) stretches every
     // frame's waits by about how far over it is: the bar rises with it rather than the
     // check being skipped, for the machine is rarely calm enough to wait for. Pipelines
@@ -14523,16 +14536,28 @@ fn smooth(gate: &mut Gate, name: &str, step: Step, known: Option<&str>) {
     let crowded = (load / cores).max(1.0) as f32;
     let limit = HITCH_MS.max(HITCH_FACTOR * median) * crowded;
     let on = if crowded > 1.0 { format!(", the bar {crowded:.1}× higher at load {load:.0} on {cores} cores") } else { String::new() };
-    let result = if longest <= limit {
-        Ok(format!("its longest frame took {longest:.0} ms (median {median:.0} ms{on})"))
+    let work = frame_work(longest, waited);
+    let queued = if waited > 0.0 { format!(", {:.0} ms of it our threads waiting for a core", waited.min(longest)) } else { String::new() };
+    let result = if work <= limit {
+        Ok(format!("its longest frame took {longest:.0} ms{queued} (median {median:.0} ms{on})"))
     } else {
-        Err(format!("a frame took {longest:.0} ms, over {limit:.0} ms (median {median:.0} ms{on})"))
+        Err(format!("a frame took {longest:.0} ms{queued}, over {limit:.0} ms (median {median:.0} ms{on})"))
     };
     let known = if std::env::var_os("VOXMAR_GATE_STALL").is_some() { Some("frames stalled on purpose (VOXMAR_GATE_STALL)") } else { known };
     match known {
         Some(why) => gate.known(&format!("{name}: smooth"), result, why),
         None => gate.check(&format!("{name}: smooth"), result),
     }
+}
+
+/// The game's own milliseconds in a frame of `wall` ms in which our threads waited `waited`
+/// ms for a core: the waiting taken off. On a calm machine nothing waits, so it is the whole
+/// frame; a frame stretched by a burst of other work (247 ms at an instant load of 104 on 18
+/// cores, with the minute's average still under the cores) is held to the same bar for what
+/// is left. Waiting is summed over all our threads, so it can only take off as much as the
+/// frame lasted.
+fn frame_work(wall: f32, waited: f32) -> f32 {
+    wall - waited.clamp(0.0, wall)
 }
 
 /// How far back `Gate::load_now` reads the load average, and the least span it judges a
@@ -14876,6 +14901,18 @@ mod tests {
     /// A bear sweep reads how many a `/creatures kill` killed from its reply, in each of its
     /// counted forms ("1 creature", "3 creatures", "0 creatures"), in English and in
     /// Japanese, and only a reply since the kill was sent.
+    /// A frame is judged by the game's own time in it: a calm machine's frame whole, a frame
+    /// stretched by waiting for a core with the waiting taken off, never below nothing.
+    #[test]
+    fn a_frame_is_judged_by_the_time_the_game_had_in_it() {
+        assert_eq!(frame_work(247.0, 0.0), 247.0, "a frame with no waiting is all the game's");
+        assert!(frame_work(247.0, 0.0) > HITCH_MS, "a hitch on a calm machine still fails");
+        assert_eq!(frame_work(247.0, 200.0), 47.0);
+        assert!(frame_work(247.0, 200.0) <= HITCH_MS, "a frame stretched by other work passes on what is left");
+        assert_eq!(frame_work(247.0, 900.0), 0.0, "waiting summed over threads takes off no more than the frame");
+        assert_eq!(frame_work(247.0, -1.0), 247.0);
+    }
+
     #[test]
     fn a_kill_is_counted_from_its_reply_in_every_form() {
         use bevy::prelude::World;
