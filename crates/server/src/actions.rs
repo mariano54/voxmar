@@ -467,14 +467,15 @@ impl Server {
     /// bed allows (effects.ron's `sleeps`). A bed always works, as a bed; the rest is held back
     /// while one is still on them, so the buff cannot be had again until it wears off.
     fn sleep(&mut self, agent: PlayerId, bed: IVec3) {
-        if let Some(why) = self.unsafe_to_sleep(agent) {
-            self.refuse(agent, Words::key(why));
-            return;
-        }
         let player = self.players.get_mut(&agent).unwrap();
         player.bed = Some(bed.as_vec3() + Vec3::new(0.5, 1.0, 0.5));
         let key = if player.home.is_some() { "bed.set_home" } else { "bed.set" };
         player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: Words::key(key) });
+        // Claimed all the same: only the rest waits.
+        if let Some(why) = self.unsafe_to_sleep(agent) {
+            self.refuse(agent, Words::key(why));
+            return;
+        }
         let effects = self.content.effects.clone();
         if effects.rested(&self.players[&agent].timed_effects) {
             let player = &self.players[&agent];
@@ -502,14 +503,14 @@ impl Server {
         }
     }
 
-    /// Why `agent` cannot lie down now, if they cannot: a creature that hunts players
+    /// Why `agent` cannot lie down now, if they cannot: a wild creature that hunts players
     /// within `sleep_threat_reach` blocks, or hurt within the last `sleep_after_hurt`
     /// seconds (`survival.ron`). No sleeping off a fight for the rest it gives.
     pub(crate) fn unsafe_to_sleep(&self, agent: PlayerId) -> Option<&'static str> {
         let player = self.players.get(&agent)?;
         let reach = self.survival.sleep_threat_reach;
         let hunted = self.creatures.live.values().any(|c| {
-            c.health > 0 && !c.companion && c.body.position.distance(player.position) <= reach
+            c.health > 0 && !c.companion && c.owner.is_none() && c.body.position.distance(player.position) <= reach
                 && self.content.creatures.get(c.species).behaviours.iter().any(|b| matches!(b.behaviour, voxmar_engine::creature::Behaviour::Hunt { .. }))
         });
         let after = (self.survival.sleep_after_hurt * voxmar_protocol::TICKS_PER_SECOND as f32).round() as u64;
@@ -522,11 +523,12 @@ impl Server {
         }
     }
 
-    /// Every tick: the tick each player's health last fell, whatever took it.
+    /// Every tick: the tick each player's health last fell, whatever took it, but not a fall
+    /// that is only the most coming down (a buff to the most wearing off).
     pub(crate) fn watch_hurt(&mut self) {
         let tick = self.tick;
         for player in self.players.values_mut() {
-            if player.health.current < player.health_seen {
+            if player.health.current < player.health_seen.min(player.health.max) {
                 player.hurt_at = Some(tick);
             }
             player.health_seen = player.health.current;

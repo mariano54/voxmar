@@ -2703,11 +2703,17 @@ fn no_sleep_with_a_hunter_near_or_wounds_fresh() {
     let bag = feet + IVec3::new(2, 0, 0);
     client.ok(&format!("/setblock {} {} {} sleeping_bag", bag.x, bag.y, bag.z));
     client.pump_until(|c| c.world.block(bag) == c.content.blocks.id("base:sleeping_bag"));
+    // A wolf hunts players, but a kept one stays by the bed all along and never stops a
+    // sleep (the last one below).
+    client.ok(&format!("/summon wolf 1 {} {} {}", feet.x - 3, feet.y, feet.z));
+    client.ok("/creatures tame wolf");
     // A shambler hunts players: eight blocks off is too near.
     client.ok(&format!("/summon shambler 1 {} {} {}", feet.x + 8, feet.y, feet.z));
     client.propose("base:sleep", ActionTarget::Block { block: bag, face: Face::PosY });
     client.pump_until(|c| refused(c, "something hunting you"));
     assert!(!healing(&client), "no rest with a hunter near");
+    let told = |c: &Client, text: &str| c.chat.iter().any(|(_, t)| t.contains(text));
+    assert!(told(&client, "You will wake here after dying"), "a refused sleep claims the bed all the same");
     client.ok("/creatures kill shambler");
     // Hurt (a fall): the wounds are too fresh.
     client.ok(&format!("/fill {} {} {} {} {} {} air", feet.x - 2, feet.y + 1, feet.z - 3, feet.x + 3, feet.y + 14, feet.z + 3));

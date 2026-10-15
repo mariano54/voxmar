@@ -445,4 +445,26 @@ mod tests {
         assert_eq!(player.health.current, 2, "one point a pass");
         assert!(player.heal_clock <= every, "{} s banked against a point each {every} s", player.heal_clock);
     }
+
+    /// Health that falls only because the most came down (a buff to the most wore off) is
+    /// no wound: it does not keep the player from sleeping. A blow is one.
+    #[test]
+    fn a_lowered_most_is_no_wound() {
+        let mut server = crate::test_server();
+        let (client, connection) = voxmar_protocol::local_pair();
+        std::mem::forget(client);
+        let at = voxmar_engine::glam::Vec3::new(8.5, 300.0, 8.5);
+        let mut player = crate::player::Player::new(1, connection, at, 2, server.tick, server.survival.max_health, &server.config.limits);
+        player.joined = true;
+        server.players.insert(1, player);
+        server.watch_hurt();
+        let player = server.players.get_mut(&1).unwrap();
+        let full = player.health.current;
+        (player.health.max, player.health.current) = (full - 4, full - 4);
+        server.watch_hurt();
+        assert_eq!(server.players[&1].hurt_at, None, "the most came down: no wound");
+        let _ = server.players.get_mut(&1).unwrap().health.damage(1);
+        server.watch_hurt();
+        assert_eq!(server.players[&1].hurt_at, Some(server.tick), "a blow is a wound");
+    }
 }
