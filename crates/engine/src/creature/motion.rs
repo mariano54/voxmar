@@ -159,11 +159,12 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
         let gone = (aabb.min - start).dot(heading);
         (gone >= probe * 0.5).then(|| Vec3::new((aabb.min.x + aabb.max.x) / 2.0, aabb.min.y, (aabb.min.z + aabb.max.z) / 2.0))
     };
-    let Some(to) = goes(0.0).or_else(|| if movement.jump > 0.0 { goes(1.05) } else { None }) else { return false };
-    let ahead = Body { position: to, yaw: yaw_of(heading), ..*body };
-    if ahead.head_blocked(world) {
+    // Its head clear where it gets to. Walking up to a step, it gets most of the way at
+    // its level but its head meets the step: the way is up it, not round.
+    let head_clear = |to: Vec3| !Body { position: to, yaw: yaw_of(heading), ..*body }.head_blocked(world);
+    let Some(to) = goes(0.0).filter(|&to| head_clear(to)).or_else(|| if movement.jump > 0.0 { goes(1.05).filter(|&to| head_clear(to)) } else { None }) else {
         return false;
-    }
+    };
     // What it would come down on along its way, from here to as far ahead as it carries
     // on before it can turn (a running deer, or a hare mid-hop, goes a block or so),
     // against what it stands on now: the drop between them, and water there, judged the
@@ -325,8 +326,18 @@ pub fn step(body: &mut Body, world: &impl Surroundings, movement: &Movement, wat
         let (mut level, mut raised) = (body.aabb(), body.aabb());
         level.translate(along * 0.3);
         raised.translate(Vec3::Y * 1.05 + along * 0.3);
-        if level.intersects(|p| world.solid(p)) && !raised.intersects(|p| world.solid(p)) {
+        // Its head counts as its box does: a long-headed body walking up to a step meets it
+        // with its head first, and goes up it, its head clear a block up.
+        let (ahead, up) = (Body { position: body.position + along * 0.3, ..*body }, Body { position: body.position + Vec3::Y * 1.05 + along * 0.3, ..*body });
+        let walled = level.intersects(|p| world.solid(p)) || ahead.head_blocked(world);
+        if walled && !raised.intersects(|p| world.solid(p)) && !up.head_blocked(world) {
             body.velocity.y = movement.jump.max(climb_speed(dt));
+            // Stopped short of the step by its head, it springs on toward it, or it would
+            // go straight up and come down where it was.
+            if !level.intersects(|p| world.solid(p)) {
+                body.velocity.x = target.x;
+                body.velocity.z = target.z;
+            }
         }
     }
     // Hoppers move in hops whenever they move, and so do fliers on the ground: each hop
@@ -354,7 +365,10 @@ pub fn step(body: &mut Body, world: &impl Surroundings, movement: &Movement, wat
     // Where nothing is clear (a long head turning in a doorway) it turns where it stood,
     // its head brushing the frame for a moment, rather than spin or walk on backwards. A
     // step undone counts as against the wall, so it climbs or turns away.
-    if !head_was_blocked && body.head_blocked(world) {
+    // What its head meets a block up from clear, a step it gets up, does not stop it: it
+    // hops up it (above) with its head over the step's edge.
+    let step_up = movement.jump > 0.0 && !Body { position: body.position + Vec3::Y * 1.05, ..*body }.head_blocked(world);
+    if !head_was_blocked && body.head_blocked(world) && !step_up {
         let (moved, turned) = (body.position, body.yaw);
         let fits = |at: Vec3| !Aabb::standing(at, body.size.0, body.size.1).intersects(|p| world.solid(p));
         let clear = |at: Vec3, yaw: f32| fits(at) && !Body { position: at, yaw, ..*body }.head_blocked(world);
@@ -503,6 +517,26 @@ mod tests {
             step(&mut walker, &step_up, &low, Water::Land, Drive { wish: Vec3::X, speed: 2.0, face: None }, 0.05);
         }
         assert!(walker.position.y >= 1.0 && walker.position.x > 3.5, "it never got up the step: {}", walker.position);
+    }
+
+    /// A badger-shaped body (a low box, its head well ahead of it) walking straight at a
+    /// step meets it with its head while its box is still short of it: the way is up, not
+    /// round, and it gets up without turning. Before: its head stopped it, the step read as
+    /// a wall, and it went round or hopped on the spot (a wolf took 4 s to climb three).
+    #[test]
+    fn a_long_head_meeting_a_step_first_goes_up_it_not_round() {
+        let step_up = Ledge { high: 1 };
+        let movement = Movement { jump: 6.5, ..Movement::default() };
+        let mut body = Body::new(Vec3::new(1.0, 0.0, 0.5), yaw_of(Vec3::X), (0.6, 0.45));
+        (body.reach, body.head, body.on_ground) = (0.75, 0.3, true);
+        let short = Body { position: Vec3::new(2.4, 0.0, 0.5), ..body };
+        assert!(short.head_blocked(&step_up) && !Aabb::standing(short.position, 0.6, 0.45).intersects(|p| step_up.solid(p)), "the fixture means its head to meet the step first");
+        assert!(open_way(&short, &step_up, &movement, Water::Land, Vec3::X), "the step read as a wall to its head");
+        for _ in 0..30 {
+            step(&mut body, &step_up, &movement, Water::Land, Drive { wish: Vec3::X, speed: 3.0, face: None }, 0.05);
+        }
+        assert!(body.position.y >= 1.0 && body.position.x > 3.3, "it never got up the step in 1.5 s: {}", body.position);
+        assert!((body.yaw - yaw_of(Vec3::X)).abs() < 0.01, "it turned at the step: yaw {}", body.yaw);
     }
 
     #[test]

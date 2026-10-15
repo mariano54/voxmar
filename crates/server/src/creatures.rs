@@ -3699,6 +3699,34 @@ mod fight_tests {
         }
     }
 
+    /// On uneven ground (a step, a flight of steps, a slab, logs lying about, tall grass)
+    /// every fighter gets up to the player and strikes within 3 s, pressing a wall under
+    /// 1 s of the 10. Behind a fence or up a ledge it cannot get over, it strikes over it
+    /// within 3.5 s or gives up, pressing under 4 s. Before: a wolf took 4.2 s to its first
+    /// strike up three steps (pressing 2.0 s) and a badger 4.0 s, their heads meeting each
+    /// step before their feet and turning them along it; and a wolf pressed the fence 16 s
+    /// (given up since `Memory::NoWay`).
+    #[test]
+    fn fighters_on_uneven_ground_climb_to_strike_or_give_up() {
+        // A scene to a thread: each fight is its own server.
+        std::thread::scope(|threads| {
+            for (scene, set) in ground_scenes() {
+                threads.spawn(move || {
+                    for name in FIGHTERS {
+                        let f = fight(name, set, 10.0);
+                        if matches!(scene, "fence" | "ledge") {
+                            let gave_up = f.strikes == 0 && f.pressing < 4.0;
+                            assert!(f.first.is_some_and(|s| s < 3.5) || gave_up, "{scene}: {name} first struck at {:?}, pressed {:.1} s", f.first, f.pressing);
+                        } else {
+                            assert!(f.first.is_some_and(|s| s < 3.0), "{scene}: {name} first struck at {:?}", f.first);
+                            assert!(f.pressing < 1.0, "{scene}: {name} pressed a wall {:.1} s", f.pressing);
+                        }
+                    }
+                });
+            }
+        });
+    }
+
     /// Prints the table (`cargo test -p voxmar_server --lib fight_table -- --ignored --nocapture`).
     #[test]
     #[ignore = "a measurement: prints a table"]
