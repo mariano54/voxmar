@@ -2733,7 +2733,7 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if gone && learnt > 0 {
                 mouse(world, MouseButton::Left, false);
                 gate.check("workshop: ore", Ok(format!("at Mining 15 the stone pickaxe broke the iron ore on both sides, {:.1} Mining experience", learnt as f32 / 10.0)));
-                world.resource::<Net>().command("give wooden_hoe 1");
+                world.resource::<Net>().command("give stone_hoe 1");
                 gate.advance(now);
             } else if gate.server_in_phase() > WORKSHOP_WAIT {
                 mouse(world, MouseButton::Left, false);
@@ -2742,7 +2742,7 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         }
         // A hoe tills dirt into farmland with a right click.
         8 => {
-            if !select(world, "base:wooden_hoe") {
+            if !select(world, "base:stone_hoe") {
                 if gate.server_in_phase() > WORKSHOP_WAIT {
                     fail(world, gate, "till", "the hoe never came".into());
                 }
@@ -3766,7 +3766,7 @@ fn end_workshop(world: &mut World, gate: &mut Gate, now: f32) {
     mouse(world, MouseButton::Right, false);
     world.resource_mut::<UiState>().inventory_open = false;
     let net = world.resource::<Net>();
-    for tool in ["stone_pickaxe", "wooden_hoe", "crafting_table", "stick", "bread", "fine_rod"] {
+    for tool in ["stone_pickaxe", "stone_hoe", "crafting_table", "stick", "bread", "fine_rod"] {
         net.command(&format!("clear {tool}"));
     }
     machines_down(world, gate);

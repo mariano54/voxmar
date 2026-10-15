@@ -667,10 +667,10 @@ fn crops_are_sown_at_their_level_grow_and_are_harvested_for_experience() {
     let feet = client.position.floor().as_ivec3();
     let (ground, other) = (feet + IVec3::new(0, -1, 2), feet + IVec3::new(1, -1, 2));
     client.clear();
-    for line in ["/fill ~ ~-1 ~2 ~1 ~-1 ~2 dirt", "/fill ~ ~ ~2 ~1 ~1 ~2 air", "/give wheat_seeds 5", "/give saffron_seeds 5", "/give wooden_hoe 1"] {
+    for line in ["/fill ~ ~-1 ~2 ~1 ~-1 ~2 dirt", "/fill ~ ~ ~2 ~1 ~1 ~2 air", "/give wheat_seeds 5", "/give saffron_seeds 5", "/give stone_hoe 1"] {
         client.ok(line);
     }
-    client.pump_until(|c| c.world.block(ground).is_some_and(|b| b != BlockId::AIR) && c.inventory.get(2).is_some_and(|s| s.item == c.content.blocks.expect("base:wooden_hoe")));
+    client.pump_until(|c| c.world.block(ground).is_some_and(|b| b != BlockId::AIR) && c.inventory.get(2).is_some_and(|s| s.item == c.content.blocks.expect("base:stone_hoe")));
     let blocks = &client.content.blocks;
     let (sprout, ripe, wheat) = (blocks.expect("base:wheat_crop_0"), blocks.expect("base:wheat_crop"), blocks.expect("base:wheat"));
     let farmland = blocks.expect("base:farmland");
@@ -7736,13 +7736,13 @@ fn the_first_days(f: &mut Fresh) -> Site {
     let (cobble, clay, stick, log) = ("base:cobblestone", "base:clay", "base:stick", "base:oak_log");
 
     // Flint tools, with bare hands (a new player starts with nothing, and a bare hand fells
-    // no tree and breaks no stone): sticks pulled from leaves and a snag, flint from gravel,
-    // a flint axe and pickaxe made in the hand's grid.
+    // no tree and breaks no stone): sticks pulled from leaves and a snag, flint from gravel
+    // (two kept for An Axe to It's spare), a flint axe and pickaxe made in the hand's grid.
     let leaves = (-12..=9).step_by(3).flat_map(|x| (0..=3).map(move |y| v(x, y, 12)));
     let (flint, sticks) = ("base:flint", rel(f, leaves.chain((0..=2).map(|y| v(11, y, 12))).collect()));
     f.gather_chance("", sticks, stick, 3);
     let gravel = rel(f, (10..=24).flat_map(|x| (0..=2).flat_map(move |y| [14, 17].map(move |z| v(x, y, z)))).collect());
-    f.gather_chance("", gravel, flint, 4);
+    f.gather_chance("", gravel, flint, 6);
     f.craft(&[(0, flint, 1), (1, flint, 1), (3, stick, 1)], "base:flint_axe", 1);
     f.craft(&[(0, flint, 1), (1, flint, 1), (3, stick, 1), (4, stick, 1)], "base:flint_pickaxe", 1);
     f.mark("flint_tools");
@@ -7764,10 +7764,10 @@ fn the_first_days(f: &mut Fresh) -> Site {
     f.craft(&[(0, "base:oak_planks", 3), (3, "base:oak_planks", 3)], stick, 12);
     f.at_table(table);
 
-    // An Axe to It: a wooden axe, and the twelve logs the campfires and later planks want
-    // chopped with it, in half the time a fist takes.
-    f.craft(&[(0, "base:oak_planks", 1), (1, "base:oak_planks", 1), (3, "base:oak_planks", 1), (4, stick, 1), (7, stick, 1)], "base:wooden_axe", 1);
-    f.gather("base:wooden_axe", trunks, log, 12);
+    // An Axe to It: a spare flint axe, and the twelve logs the campfires and later planks
+    // want chopped with it.
+    f.craft(&[(0, flint, 1), (1, flint, 1), (3, stick, 1)], "base:flint_axe", 1);
+    f.gather("base:flint_axe", trunks, log, 12);
     f.mark("an_axe_to_it");
 
     // Stone in Hand: cobblestone with the flint pickaxe; sand by hand, and a grindstone (a
