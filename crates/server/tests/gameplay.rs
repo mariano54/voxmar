@@ -1690,9 +1690,9 @@ fn a_rod_cast_into_water_catches_fish_by_level_and_teaches_fishing() {
     let nothing = |c: &Client| c.chat.iter().any(|(_, text)| *text == miss);
     // At level 80 with this rod, by day here, a cast lands six times in ten (the best fish
     // biting asks level 55: 0.35 + 0.008 a level above it + 0.05 for the rod tier,
-    // fishing.rs), so sixteen casts miss them all about once in two million runs. The roll
-    // is drawn from the tick a cast lands on, and casts land on much the same ticks every
-    // run, so six casts once failed in a third of runs on a busy machine.
+    // fishing.rs), so sixteen casts miss them all about once in two million worlds. The roll
+    // is drawn from the player's count of casts (once from the tick a cast landed on, when
+    // six casts failed in a third of runs on a busy machine), so every run lands the same.
     // A cast takes five seconds of the clock (`actions.ron`), judged by when the player's
     // messages arrive: each is proposed as if clicked at `at`, and a command stamped just
     // past its time is handled after the cast is done, so the casts follow one another
@@ -1709,12 +1709,49 @@ fn a_rod_cast_into_water_catches_fish_by_level_and_teaches_fishing() {
         if fish(&client) {
             break;
         }
-        // The catch is rolled by the tick it lands on: the next cast lands on another.
-        client.after_server_ticks(1);
         at += Duration::from_millis(100);
     }
     assert!(fish(&client), "sixteen casts at Fishing 80 caught nothing");
     client.pump_until(|c| !c.earned.is_empty());
+}
+
+/// A player's casts go on being numbered across leaving and joining again: their file keeps
+/// the count, so a cast's draw is never drawn a second time.
+#[test]
+fn the_count_of_casts_survives_leaving_and_joining_again() {
+    let dir = world_dir("casts");
+    let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
+    let casts = |client: &mut Client, times: usize| {
+        let water = client.position.floor().as_ivec3() + IVec3::new(0, -1, 2);
+        for line in ["/fill ~-1 ~-2 ~1 ~1 ~-1 ~3 water", "/fill ~-1 ~ ~1 ~1 ~3 ~3 air", "/clear", "/give fishing_rod 1"] {
+            client.ok(line);
+        }
+        client.pump_until(|c| c.world.block(water).is_some_and(|b| c.content.blocks.info(b).fluid.is_some()) && c.inventory.get(0).is_some_and(|s| s.item == c.content.blocks.expect("base:fishing_rod")));
+        client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+        let miss = client.content.english.render(&voxmar_engine::lang::Words::key("fishing.nothing"), &client.content.blocks);
+        let mut at = Instant::now();
+        for _ in 0..times {
+            client.chat.clear();
+            client.earned.clear();
+            client.propose_at("base:fish", ActionTarget::Block { block: water, face: Face::PosY }, at);
+            at += Duration::from_millis(5100);
+            client.connection.send_at(ClientMessage::Command { line: "/time".into() }, at);
+            // Each cast ends in a fish (and its experience) or nothing before the next.
+            client.pump_until(|c| !c.earned.is_empty() || c.chat.iter().any(|(_, text)| *text == miss) || !c.refused.is_empty());
+            assert!(client.refused.is_empty(), "a cast was refused: {:?}", client.refused);
+            at += Duration::from_millis(100);
+        }
+    };
+    let saved = || voxmar_server::save::WorldSave::new(&dir).read_player("test", &content().blocks).unwrap().expect("the player was saved").casts;
+    let mut client = Client::join_with(config());
+    casts(&mut client, 3);
+    drop(client);
+    assert_eq!(saved(), 3, "three casts kept");
+    let mut client = Client::join_with(config());
+    casts(&mut client, 1);
+    drop(client);
+    assert_eq!(saved(), 4, "the next cast numbered on from them");
+    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]
