@@ -537,7 +537,10 @@ impl Server {
             // just after joining): load the column first, as /drop does.
             self.load_area(cell, cell);
             let Some(spot) = self.standing_spot(cell.x, cell.z, cell.y) else { continue };
-            if let Some(id) = self.spawn_creature(species, spot.as_vec3() + Vec3::new(0.5, 0.0, 0.5), self.tick ^ i as u64) {
+            // Each one's looks and mind by the world's count of rolls, never the tick.
+            let [a, b] = self.meta.next_roll(crate::save::ROLL_SUMMON);
+            let salt = u64::from(a.to_bits()) << 32 | u64::from(b.to_bits());
+            if let Some(id) = self.spawn_creature(species, spot.as_vec3() + Vec3::new(0.5, 0.0, 0.5), salt) {
                 if held && let Some(creature) = self.creatures.live.get_mut(&id) {
                     creature.held_until = self.tick + 60 * TICKS_PER_SECOND as u64;
                 }
@@ -1313,6 +1316,25 @@ mod tests {
         assert_eq!(axis("12.25", 0.0, true), Ok(12.25));
         assert_eq!(axis("64", 0.0, false), Ok(64.0));
         assert!(axis("x", 0.0, true).is_err() && axis("~y", 0.0, true).is_err() && axis("inf", 0.0, true).is_err());
+    }
+
+    /// What a summoned creature is like (its seed, so its looks, genes and mind) is drawn by
+    /// the world's count of rolls, never the tick it is summoned on.
+    #[test]
+    fn a_summon_draws_by_the_worlds_count_not_the_tick() {
+        let summoned = |tick: u64| {
+            let mut server = crate::test_server();
+            server.meta.draw_key = 0x0d1a;
+            server.tick = tick;
+            server.summon(Source::Console, &["base:rabbit".to_owned(), "4".to_owned()]).expect("summoned");
+            let mut made: Vec<_> = server.creatures.live.iter().map(|(&id, c)| (id, c.seed, c.genome.clone())).collect();
+            made.sort_by_key(|m| m.0);
+            (made, server.meta.rolls)
+        };
+        let first = summoned(1_000);
+        assert_eq!((first.0.len(), first.1), (4, 4), "four summoned, each counted on");
+        assert!(first.0.windows(2).all(|w| w[0].1 != w[1].1), "two summoned alike: {:?}", first.0);
+        assert_eq!(summoned(1_377), first, "the same summons later came otherwise");
     }
 }
 

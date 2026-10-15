@@ -131,9 +131,10 @@ impl Server {
             }
             let (item, (low, high), every, xp) = (species.products[index], product.count, product.every, product.xp);
             // By the player's count of products taken, never by the tick.
-            let Some([roll, _]) = self.players.get_mut(&player).map(|p| p.draw(crate::save::Draw::Yield)) else { return };
+            // One draw for how many, the other for the yield gene's fraction.
+            let Some([roll, fraction]) = self.players.get_mut(&player).map(|p| p.draw(crate::save::Draw::Yield)) else { return };
             let creature = &self.creatures.live[&id];
-            let count = yielded(low + ((roll * (high - low + 1) as f32) as u8).min(high - low), creature.traits.yield_, roll);
+            let count = yielded(low + ((roll * (high - low + 1) as f32) as u8).min(high - low), creature.traits.yield_, fraction);
             // Condition sets how soon the next is due (0.5 to 1.2 as often), its yield gene
             // how many come.
             let (seed, often) = (creature.seed, self.content.creatures.condition().output(creature.condition).max(0.05));
@@ -296,6 +297,9 @@ impl Server {
         creature.home = creature.body.position;
         creature.was_kept = true;
         creature.changed = true;
+        // Wild from here: the traps' next look follows it from where it was let go.
+        let at = creature.body.position;
+        self.catches.arrived(id, at);
         self.tell(Source::Player(player), ChatKind::Info, Words::key("husbandry.released").with("creature", what));
     }
 
@@ -838,6 +842,37 @@ mod tests {
         assert!(first[..12].iter().all(|&n| n > 0), "a product taken gave nothing: {first:?}");
         assert!(first[..12].windows(2).any(|w| w[0] != w[1]), "twelve products taken all yielded alike: {first:?}");
         assert_eq!(taken(1_377), first, "the same products taken later yielded otherwise");
+    }
+
+    /// How many a product yields and how its yield gene's share rounds are two draws, not
+    /// one: with one for both, a low count never rounded the same way a high one did.
+    #[test]
+    fn a_yields_rounding_is_its_own_draw() {
+        let mut server = test_server();
+        let (player, _client) = keeper(&mut server);
+        server.players.get_mut(&player).unwrap().draw_key = crate::player::player_draw_key(0x0d1a, "test");
+        let (species, index) = server.content.creatures.iter().find_map(|(id, c)| c.def.products.iter().position(|p| p.tool.as_deref() == Some("shears")).map(|i| (id, i))).expect("one sheared");
+        let shears = server.content.blocks.expect("base:shears");
+        server.players.get_mut(&player).unwrap().inventory.add(shears, 1);
+        let id = server.spawn_creature(species, server.spawn, 2).expect("room");
+        let kept = server.creatures.live.get_mut(&id).unwrap();
+        (kept.owner, kept.owner_id) = (Some("test".into()), Some(player));
+        // A share past a whole one, so every count rounds one way or the other.
+        kept.traits.yield_ = 1.3;
+        let (product, (low, high)) = (server.content.creatures.get(species).products[index], server.content.creatures.get(species).def.products[index].count);
+        let mut apart = 0;
+        for _ in 0..24 {
+            let p = &server.players[&player];
+            let [roll, fraction] = crate::save::numbered_draws(p.draw_key, crate::save::Draw::Yield.salt(), p.draws.yields);
+            let count = low + ((roll * (high - low + 1) as f32) as u8).min(high - low);
+            server.creatures.live.get_mut(&id).unwrap().products_due[index] = 0;
+            let before = server.players[&player].inventory.count(product);
+            server.tend(player, id);
+            let got = server.players[&player].inventory.count(product) - before;
+            assert_eq!(got, u32::from(yielded(count, 1.3, fraction)), "{count} at a share of 1.3, rounded by the second draw {fraction:.2}");
+            apart += usize::from(yielded(count, 1.3, fraction) != yielded(count, 1.3, roll));
+        }
+        assert!(apart > 0, "in 24 takes the second draw never rounded otherwise than the first would have");
     }
 
     #[test]

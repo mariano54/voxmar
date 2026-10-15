@@ -32,6 +32,8 @@ use crate::save::Draw;
 
 /// Half a player's width: how close a creature's lunge comes to them.
 const PLAYER_HALF: f32 = 0.3;
+/// Ticks a charge may make no way against something before it counts as a wall.
+const CHARGE_STALL: u8 = 6;
 /// The step a lunge is tried in, so it stops at a wall.
 const LUNGE_STEP: f32 = 0.1;
 
@@ -69,6 +71,35 @@ struct Windup {
     creature: u32,
     player: PlayerId,
     lands: f64,
+    /// A charge that came to the player (`Charging`): judged where it stands, with no
+    /// lunge and no new charge.
+    contact: bool,
+}
+
+/// A creature running a charge it wound up (`creature::moves::Charge`): the way it runs,
+/// the blocks left and how fast, how long a wall or a braced point dazes it, the player it
+/// was wound up at, and the highest its feet have been since it last stood, for falls.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Charging {
+    pub player: PlayerId,
+    pub along: Vec3,
+    pub left: f32,
+    pub speed: f32,
+    pub stun: f32,
+    pub top: f32,
+    /// Ticks in a row it has made no way against something: a wall it cannot hop, even
+    /// where its head met it first.
+    pub stalled: u8,
+    /// The tick its run is over by, however little way it made: hopping at a stair it
+    /// cannot climb, or swimming.
+    pub until: u64,
+}
+
+impl Charging {
+    /// Where it goes this tick: straight on, facing the way it runs.
+    pub(crate) fn drive(&self, scale: f32) -> voxmar_engine::creature::motion::Drive {
+        voxmar_engine::creature::motion::Drive { wish: self.along, speed: self.speed * scale.max(0.5), face: Some(self.along) }
+    }
 }
 
 /// Bleeding from a flourish: so much more, a point at a time, a second apart, training the
@@ -319,6 +350,9 @@ impl Server {
     /// Undoes a creature's blow on its way, if any (a boss rearing into a new phase).
     pub(crate) fn fights_forget(&mut self, creature: u32) {
         self.fights.windups.retain(|w| w.creature != creature);
+        if let Some(live) = self.creatures.live.get_mut(&creature) {
+            live.charging = None;
+        }
     }
 
     /// A creature decided to strike a player: it winds up first, showing it, following them
@@ -354,7 +388,7 @@ impl Server {
         live.held_until = live.held_until.max(tick + ticks(windup));
         live.tracking = Some((player, tick + ticks(windup * feel.creature_tracking.clamp(0.0, 1.0))));
         live.changed = true;
-        self.fights.windups.push(Windup { creature, player, lands });
+        self.fights.windups.push(Windup { creature, player, lands, contact: false });
     }
 
     /// Where a creature winding up at a player goes this tick, while it still follows them:
@@ -445,7 +479,7 @@ impl Server {
         let (due, waiting): (Vec<Windup>, Vec<Windup>) = windups.into_iter().partition(|w| w.lands + self.lag_allowance(w.player) <= heard);
         self.fights.windups = waiting;
         for windup in due {
-            self.creature_blow(windup.creature, windup.player, windup.lands);
+            self.creature_blow(windup.creature, windup.player, windup.lands, windup.contact);
         }
         // Bleeding.
         let (due, waiting): (Vec<Bleed>, Vec<Bleed>) = std::mem::take(&mut self.fights.bleeds).into_iter().partition(|b| b.next <= now);
@@ -573,25 +607,32 @@ impl Server {
             live.winding = false;
             live.staggered = true;
             live.tracking = None;
+            live.charging = None;
             live.decision.pose = brain::Pose::Idle;
             live.changed = true;
         }
     }
 
     /// A creature's wound-up blow comes down on a player at `lands`: it lunges at them, then
-    /// recovers; what came of it is judged by that moment.
-    fn creature_blow(&mut self, creature: u32, player: PlayerId, lands: f64) {
+    /// recovers; what came of it is judged by that moment. A charge instead sets off at the
+    /// end of its wind-up (`start_charge`), and its blow is judged when it reaches someone
+    /// (`contact`).
+    fn creature_blow(&mut self, creature: u32, player: PlayerId, lands: f64, contact: bool) {
         let feel = self.content.combat.feel;
         let Some(live) = self.creatures.live.get(&creature) else { return };
         let species = live.species;
         let creature_def = self.content.creatures.get(species);
         let def = &creature_def.def;
         let Some(attack) = creature_def.attack_at(live.attack) else { return };
+        if let Some(charge) = attack.charge.filter(|_| !contact) {
+            self.start_charge(creature, player, charge);
+            return;
+        }
         // It stands to recover: the moment for the player's blows. Its next attack waits
         // out the rest of its `every`, as the brain counts it.
         let recovery = attack.recovery.unwrap_or(feel.creature_recovery).max(0.0);
         let windup = attack.windup.unwrap_or(feel.creature_windup).max(0.0);
-        let lunge = attack.lunge.unwrap_or(feel.creature_lunge).max(0.0);
+        let lunge = if contact { 0.0 } else { attack.lunge.unwrap_or(feel.creature_lunge).max(0.0) };
         let tick = self.tick;
         if let Some(p) = self.players.get_mut(&player) {
             p.last_blow = tick;
@@ -618,6 +659,18 @@ impl Server {
         let reach = attack.reach + size.0 * scale * 0.5 + 0.3 + feel.reach_slack;
         let flat = (to - at).with_y(0.0).length();
         let tall = (to.y - at.y).abs() < size.1 * scale + 1.5;
+        // A charge that runs onto a braced point is stopped on it, heavy or not.
+        if let Some(charge) = attack.charge.filter(|_| contact) {
+            let bracing = self.guard_of(player).filter(|g| g.braces(look, at - to));
+            let fighter = self.fights.fighters.entry(player).or_default();
+            if let Some(brace) = bracing
+                && matches!(fighter.guarding.meets(lands, Some(&brace)), Defended::Blocked | Defended::Perfect)
+            {
+                fighter.counter_until = lands + feel.counter as f64;
+                self.braced(creature, player, charge.stun);
+                return;
+            }
+        }
         let guard = self.guard_of(player).and_then(|g| g.takes(attack.style, attack.heavy, look, at - to, &feel));
         let fighter = self.fights.fighters.entry(player).or_default();
         let defended = if flat > reach || !tall { Defended::Evaded } else { fighter.guarding.meets(lands, guard.as_ref()) };
@@ -654,6 +707,121 @@ impl Server {
         }
     }
 
+    /// A creature's charge sets off, the way it faces, its wind-up done.
+    fn start_charge(&mut self, creature: u32, player: PlayerId, charge: voxmar_engine::creature::moves::Charge) {
+        let tick = self.tick;
+        let Some(live) = self.creatures.live.get_mut(&creature) else { return };
+        live.winding = false;
+        live.tracking = None;
+        live.decision.pose = brain::Pose::Idle;
+        live.charging = Some(Charging { player, along: live.body.forward(), left: charge.distance, speed: charge.speed, stun: charge.stun, top: live.body.position.y, stalled: 0, until: tick + ticks(charge.seconds() + 0.5) });
+        // Held from thinking for the run, and a little over; `charge_ran` ends it sooner.
+        live.held_until = live.held_until.max(tick + ticks(charge.seconds() + 0.5));
+        live.changed = true;
+    }
+
+    /// A charging creature has moved this tick from `before`: it strikes a player it came
+    /// to, is dazed by a wall it ran into, is hurt by a fall it ran off, or runs out.
+    pub(crate) fn charge_ran(&mut self, creature: u32, before: Vec3) {
+        let feel = self.content.combat.feel;
+        let safe_fall = self.survival.safe_fall;
+        let dt = 1.0 / TICKS_PER_SECOND as f32;
+        let Some(live) = self.creatures.live.get_mut(&creature) else { return };
+        let Some(mut charge) = live.charging else { return };
+        let body = live.body;
+        let species = self.content.creatures.get(live.species);
+        let (size, scale, most) = (species.def.body.size, live.scale, species.def.health);
+        let moved = (body.position - before).with_y(0.0).dot(charge.along).max(0.0);
+        charge.left -= moved;
+        // Stuck only on its feet: in the air between hops up a stair its snout meets the
+        // next riser and it falls back onto the step, which is no wall.
+        let stuck = body.on_ground && body.against_wall && moved < charge.speed * dt * 0.25;
+        charge.stalled = if stuck { charge.stalled.saturating_add(1) } else { 0 };
+        // A fall: counted from the highest its feet were since it last stood.
+        let mut fell = 0.0;
+        if body.on_ground {
+            fell = charge.top - body.position.y;
+            charge.top = body.position.y;
+        } else {
+            charge.top = charge.top.max(body.position.y);
+        }
+        live.charging = Some(charge);
+        let fall = fell - safe_fall;
+        if fall > 0.0 {
+            let damage = ((fall.ceil() * feel.charge_fall * most as f32).round() as u16).max(1);
+            self.fall_hurt_creature(creature, damage);
+            if !self.creatures.live.get(&creature).is_some_and(|c| c.charging.is_some()) {
+                return;
+            }
+        }
+        // The first player in its way: the nearest it has come to.
+        let touching = size.0 * scale * 0.5 + PLAYER_HALF + feel.creature_clearance + 0.2;
+        let struck = self
+            .players
+            .values()
+            .filter(|p| p.joined && p.health.alive() && !p.allow_flight)
+            .filter(|p| {
+                let to = (p.position - body.position).with_y(0.0);
+                to.length() <= touching && to.dot(charge.along) >= 0.0 && (p.position.y - body.position.y).abs() < size.1 * scale + 1.0
+            })
+            .min_by(|a, b| (a.position - body.position).with_y(0.0).length_squared().total_cmp(&(b.position - body.position).with_y(0.0).length_squared()))
+            .map(|p| p.id);
+        if let Some(player) = struck {
+            self.end_charge(creature, None);
+            let lands = self.fights.now();
+            self.fights.windups.push(Windup { creature, player, lands, contact: true });
+            return;
+        }
+        // A wall: what it ran into is too high to hop, or it has made no way for a while
+        // (a hop takes a tick or two).
+        let rammed = stuck
+            && (charge.stalled >= CHARGE_STALL || {
+                let mut raised = body.aabb();
+                raised.translate(Vec3::Y * 1.05 + charge.along * 0.3);
+                raised.intersects(|p| self.is_solid(p))
+            });
+        if rammed {
+            self.end_charge(creature, Some(charge.stun));
+        } else if (charge.left <= 0.0 || self.tick >= charge.until) && (body.on_ground || body.in_water) {
+            // Run out, or out of time: once on its feet, so a fall it ran off still counts
+            // when it lands, or swimming, which has no feet to come down on.
+            self.end_charge(creature, None);
+        }
+    }
+
+    /// A charge is over: it stands to recover from its blow, or dazed for `stun` seconds.
+    fn end_charge(&mut self, creature: u32, stun: Option<f32>) {
+        let feel = self.content.combat.feel;
+        let tick = self.tick;
+        let Some(live) = self.creatures.live.get_mut(&creature) else { return };
+        let attack = self.content.creatures.get(live.species).attack_at(live.attack);
+        live.charging = None;
+        live.body.velocity = live.body.velocity.with_x(0.0).with_z(0.0);
+        let recovery = attack.and_then(|a| a.recovery).unwrap_or(feel.creature_recovery).max(0.0);
+        let windup = attack.and_then(|a| a.windup).unwrap_or(feel.creature_windup).max(0.0);
+        live.held_until = tick + ticks(recovery + stun.unwrap_or(0.0));
+        // Dazed by a wall or a braced point, it reels as from any stagger (`STAGGERED`).
+        live.staggered = stun.is_some();
+        // The rest of its `every` after the wind-up and recovery, as a blow that lands
+        // leaves it: a miss, a wall or a braced point costs no more than a hit.
+        live.mind.cooldown = attack.map_or(1.0, |a| (a.every - windup - recovery).max(0.0));
+        live.changed = true;
+    }
+
+    /// A charge ran onto a braced point: the bracer's max hit, sure to land, and the
+    /// charger stands dazed `stun` seconds.
+    fn braced(&mut self, creature: u32, player: PlayerId, stun: f32) {
+        let feel = self.content.combat.feel;
+        let Some(weapon) = self.wielded_by(player) else { return };
+        let level = self.level(player, weapon.skill);
+        let damage = ((weapon.max_hit(level) as f32 * (1.0 + feel.counter_max_hit)).round() as u16).max(1);
+        self.end_charge(creature, Some(stun));
+        if let Some(p) = self.players.get(&player) {
+            p.connection.send(ServerMessage::Hurt { creature, damage: 0, defended: Defended::Perfect });
+        }
+        self.hurt_creature(player, creature, damage, weapon.skill, Blow::Counter);
+    }
+
     /// A creature lunges up to `lunge` blocks the way it faces (its aim locked), stopping
     /// where it would touch the player at `to`, or at a wall. Returns where it ends.
     fn lunge(&mut self, creature: u32, to: Vec3, lunge: f32) -> Vec3 {
@@ -683,6 +851,9 @@ impl Server {
         at
     }
 }
+
+#[cfg(test)]
+mod charges;
 
 #[cfg(test)]
 mod tests {
@@ -854,7 +1025,7 @@ mod tests {
         // The guard goes up, and the blow lands just after it, inside the perfect window...
         client.send(ClientMessage::Guard { up: true });
         let raised = server.fights.now();
-        server.fights.windups.push(Windup { creature: bear, player, lands: raised + 0.05 });
+        server.fights.windups.push(Windup { creature: bear, player, lands: raised + 0.05, contact: false });
         std::thread::sleep(Duration::from_millis(100));
         // ...but the server ticks before it takes the raise in: the blow waits for it.
         server.tick_fights();
@@ -927,7 +1098,7 @@ mod tests {
             } else {
                 self.server.raise_guard(player, true);
             }
-            self.server.creature_blow(self.bear, player, lands);
+            self.server.creature_blow(self.bear, player, lands, false);
             std::iter::from_fn(|| self.client.try_recv().ok().flatten()).find_map(|message| match message {
                 ServerMessage::Hurt { defended, .. } => Some(defended),
                 _ => None,

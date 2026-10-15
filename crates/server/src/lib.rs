@@ -1250,6 +1250,7 @@ impl Server {
                 self.station_changed(pos, old, block);
                 self.trap_changed(pos, block);
                 self.fire_changed(pos);
+                self.home_changed(pos, block);
             }
         }
         for &(pos, _) in &done {
@@ -1287,6 +1288,7 @@ impl Server {
             self.station_changed(pos, old, block);
             self.trap_changed(pos, block);
             self.fire_changed(pos);
+            self.home_changed(pos, block);
             for player in self.players.values().filter(|p| p.joined && p.sent.contains(&column)) {
                 player.connection.send(ServerMessage::BlockChanged { pos, block });
             }
