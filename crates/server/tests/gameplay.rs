@@ -1242,9 +1242,16 @@ fn health_is_twice_hitpoints_and_a_downpour_drenches_those_out_in_it() {
     client.ok("/fill ~-1 ~ ~-1 ~1 ~50 ~1 air");
     client.ok("/weather rain heavy 600");
     client.pump_until(|c| named(c).iter().any(|n| n == "core:soaked" || n == "core:drenched"));
-    // Under a roof, it stops.
+    // Under a roof the rain stops falling on you, but you are wet through for a while yet:
+    // the wet runs down (seconds left), and drying off by a fire ends it.
+    let wet = |c: &Client| c.vitals.effects.iter().find(|a| matches!(c.content.effects.get(a.effect).name.as_str(), "core:soaked" | "core:drenched")).and_then(|a| a.seconds_left);
     client.ok("/fill ~-1 ~3 ~-1 ~1 ~3 ~1 stone");
-    client.pump_until(|c| !named(c).iter().any(|n| n == "core:soaked" || n == "core:drenched"));
+    let roofed = client.position.floor().as_ivec3() + IVec3::new(0, 3, 0);
+    client.pump_until(|c| c.world.block(roofed) == c.content.blocks.id("base:stone"));
+    let left = wet(&client).expect("wet as the roof goes on");
+    client.pump_until(|c| wet(c).is_some_and(|now| now + 1 < left));
+    client.ok("/setblock ~1 ~ ~ campfire");
+    client.pump_until(|c| wet(c).is_none());
 }
 
 /// Water placed by a command flows, and players see it flow through batched updates; the
@@ -1751,6 +1758,41 @@ fn the_count_of_casts_survives_leaving_and_joining_again() {
     casts(&mut client, 1);
     drop(client);
     assert_eq!(saved(), 4, "the next cast numbered on from them");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// The count that numbers a player's cooking rolls (whether a go burns) is kept, so the
+/// next go after joining again is drawn on from it, not drawn again.
+#[test]
+fn the_count_of_goes_cooked_survives_leaving_and_joining_again() {
+    let dir = world_dir("cooks");
+    let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
+    let cook = |client: &mut Client, times: u32| {
+        let fire = client.position.floor().as_ivec3() + IVec3::new(3, 0, 0);
+        let charcoal = |c: &Client| {
+            let item = c.content.blocks.expect("base:charcoal");
+            c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>()
+        };
+        client.clear();
+        for line in ["/setblock ~3 ~ ~ campfire", &format!("/give oak_log {times}"), "/skill cooking 99"] {
+            client.ok(line);
+        }
+        client.pump_until(|c| c.world.block(fire) == c.content.blocks.id("base:campfire") && c.inventory.get(0).is_some_and(|s| s.count as u32 == times));
+        client.send_position(client.position, false);
+        for go in 1..=times {
+            client.propose("base:cook", ActionTarget::Block { block: fire, face: Face::PosY });
+            client.pump_until(|c| charcoal(c) == go);
+        }
+    };
+    let saved = || voxmar_server::save::WorldSave::new(&dir).read_player("test", &content().blocks).unwrap().expect("the player was saved").draws.cooks;
+    let mut client = Client::join_with(config());
+    cook(&mut client, 2);
+    drop(client);
+    assert_eq!(saved(), 2, "two goes kept");
+    let mut client = Client::join_with(config());
+    cook(&mut client, 1);
+    drop(client);
+    assert_eq!(saved(), 3, "the next go numbered on from them");
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
