@@ -338,6 +338,9 @@ fn place(generator: &Overworld, eye: IVec3) -> Place {
         .settlements_near(eye.xz(), SETTLEMENTS_HEARD)
         .iter()
         .map(|s| s.centre.xz().as_vec2().distance(eye.xz().as_vec2() + 0.5))
+        // The search gives every settlement planned in the regions it touches, some far
+        // past hearing.
+        .filter(|&distance| distance <= SETTLEMENTS_HEARD as f32)
         .fold(NO_SETTLEMENT, f32::min);
     Place {
         settlement,
