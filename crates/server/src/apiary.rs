@@ -117,14 +117,14 @@ impl Server {
             player.changed(traits::INVENTORY);
             if left > 0 {
                 let body = dropped::popped(pos, random3(self.tick, pos, 0xbee0));
-                self.items.spawn(ItemStack { item: becomes, count: left }, body, dropped::PICKUP_DELAY);
+                self.items.spawn(ItemStack::new(becomes, left), body, dropped::PICKUP_DELAY);
             }
         }
         let mut draws = (0u32..).map(|i| random3(self.tick, pos, 0xbee1_0000 ^ i)[0]);
         let found = voxmar_engine::crop::roll(&take.gives, 0.0, || draws.next().expect("endless"));
         for (i, (item, count)) in found.into_iter().enumerate() {
             let body = dropped::popped(pos, random3(self.tick, pos, 0xbee2 + i as u32));
-            self.items.spawn(ItemStack { item, count }, body, dropped::PICKUP_DELAY);
+            self.items.spawn(ItemStack::new(item, count), body, dropped::PICKUP_DELAY);
         }
         self.set_block(pos, take.becomes);
         self.grant_xp(agent, take.skill, take.xp);

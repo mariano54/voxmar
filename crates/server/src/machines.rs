@@ -72,6 +72,9 @@ pub struct SavedMachine {
     /// What it holds as a bin.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub bin: Vec<(String, u8)>,
+    /// How worn the tools in the bin are, by their place in `bin` (only those worn at all).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bin_wear: Vec<(u16, u16)>,
     /// Who placed it, by name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owner: Option<String>,
@@ -320,7 +323,7 @@ impl Server {
             let mut took: Vec<ItemStack> = Vec::new();
             // What does not fit stays in the machine, in the slot it was in.
             self.factory.take_outputs_into(pos, |stack| {
-                let left = player.inventory.add(stack.item, stack.count);
+                let left = player.inventory.add_stack(stack);
                 if stack.count > left {
                     took.push(ItemStack { count: stack.count - left, ..stack });
                 }
@@ -430,6 +433,7 @@ impl Server {
                 condition: state.condition,
                 made: state.made,
                 bin: state.bin.iter().flatten().map(stack).collect(),
+                bin_wear: state.bin.iter().flatten().enumerate().filter(|(_, s)| s.wear > 0).map(|(at, s)| (at as u16, s.wear)).collect(),
                 owner: state.owner.clone(),
                 counted: state.counted,
                 work: state.process.and_then(|p| machines.process(p).outputs.first()).map(|&(item, _)| (blocks.def(item).name.clone(), state.progress)),
@@ -487,7 +491,7 @@ impl Server {
     /// longer known are lost.
     pub(crate) fn restore_machines(&mut self, saved: Vec<SavedMachine>) {
         let (blocks, machines) = (self.content.blocks.clone(), self.content.machines.clone());
-        let stack = |(name, count): &(String, u8)| blocks.item_named(name).map(|item| ItemStack { item, count: *count });
+        let stack = |(name, count): &(String, u8)| blocks.item_named(name).map(|item| ItemStack::new(item, *count));
         for machine in saved {
             let Some(block) = blocks.id(&machine.block) else { continue };
             let mut state = MachineState {
@@ -509,6 +513,11 @@ impl Server {
             state.outputs = machine.outputs.iter().map(stack).collect();
             state.fuel = machine.fuel.as_ref().and_then(stack);
             state.bin = machine.bin.iter().map(stack).collect();
+            for &(at, wear) in &machine.bin_wear {
+                if let Some(Some(stack)) = state.bin.get_mut(at as usize).filter(|s| s.is_some_and(|s| s.count == 1)) {
+                    stack.wear = wear;
+                }
+            }
             // The work it was doing goes on where it was: the recipe of this machine that makes
             // the same thing from what it holds (a furnace makes an ingot from ore or from dust;
             // the next step drops it if what it holds no longer does).
@@ -557,7 +566,7 @@ mod tests {
         let (blocks, machines) = (&content.blocks, &content.machines);
         let furnace = machines.get(blocks.expect("base:electric_furnace")).unwrap();
         for input in ["base:iron_ore", "base:iron_dust"] {
-            let inputs = [Some(ItemStack { item: blocks.expect(input), count: 1 }), None, None];
+            let inputs = [Some(ItemStack::new(blocks.expect(input), 1)), None, None];
             let process = resumed(furnace, machines, blocks, "base:iron_ingot", &inputs).map(|p| machines.process(p));
             assert!(process.is_some_and(|p| p.inputs[0].0.contains(&blocks.expect(input))), "an ingot from {input}");
         }

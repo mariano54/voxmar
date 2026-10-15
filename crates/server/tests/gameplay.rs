@@ -658,7 +658,7 @@ fn broken_blocks_pop_out_items_that_are_picked_up_and_thrown_stacks_fly() {
     let before = client.inventory.get(0).unwrap();
     client.propose("core:drop", ActionTarget::Stack { slot: 0, count: 1 });
     client.pump_until(|c| c.inventory.get(0).map(|s| s.count) == Some(before.count - 1));
-    client.pump_until(|c| c.items.values().any(|i| i.stack == ItemStack { item: before.item, count: 1 } && i.velocity.z < -1.0));
+    client.pump_until(|c| c.items.values().any(|i| i.stack == ItemStack::new(before.item, 1) && i.velocity.z < -1.0));
 }
 
 #[test]
@@ -1056,7 +1056,7 @@ fn what_chests_and_the_ground_held_of_merged_plants_comes_back_merged() {
     let held = machines.iter_mut().find(|m| m.position == [spot.x, spot.y, spot.z]).expect("the chest was saved");
     held.bin = vec![("base:oregano".into(), 3)];
     save.write_machines(&machines).unwrap();
-    save.write_items(&[SavedItem { item: "base:parsley".into(), count: 2, position: [feet.x + 4.5, feet.y + 1.0, feet.z], age: 0.0, owner: None, lifetime: None }]).unwrap();
+    save.write_items(&[SavedItem { item: "base:parsley".into(), count: 2, position: [feet.x + 4.5, feet.y + 1.0, feet.z], age: 0.0, owner: None, lifetime: None, wear: 0 }]).unwrap();
 
     let mut client = Client::join_with(config());
     client.pump_until(|c| c.world.block(spot) == Some(chest));

@@ -407,6 +407,7 @@ impl Server {
                     let changes = voxmar_engine::action::swapping(&Context { server: self, agent }, block);
                     self.set_blocks(&changes);
                 }
+                (Effect::WearHeld, ActionTarget::Block { block, .. }) => self.wear_on_block(agent, block, def.effects.contains(&Effect::Till)),
                 (Effect::Till, ActionTarget::Block { block, .. }) => {
                     if let Some(farmland) = self.content.blocks.id("base:farmland") {
                         self.set_block(block, farmland);
@@ -549,6 +550,16 @@ impl Server {
         let near = self.near_tags(agent);
         let near = |tag: &str| near.iter().any(|t| t == tag);
         let player = self.players.get_mut(&agent).unwrap();
+        // A worn tool and what mends it, by the block it is mended at, mend it.
+        if let Some(mended) = self.content.tools.mended(&player.inventory.craft, near) {
+            let item = mended.item;
+            if player.inventory.mend(mended, all) {
+                let name = self.content.blocks.def(item).name.clone();
+                self.tally(agent, "mended", &name, 1);
+            }
+            self.players.get_mut(&agent).unwrap().changed(traits::INVENTORY);
+            return;
+        }
         // Crafting all goes on only while the grid still makes the same recipe: experience
         // and tallies are this recipe's, once for each one made.
         let first = recipes.find_near(&player.inventory.grid(), near).filter(|r| allowed(r));
@@ -591,7 +602,7 @@ impl Server {
         let [a, b, c] = crate::items::random3(self.meta.draw_key ^ popped.wrapping_mul(0x9e37_79b9_7f4a_7c15), pos, agent ^ 0xd1ce);
         // Never a furnishing's: it gives itself back only where a player placed it.
         if roll < bonus && !info.drops.is_air() && info.drop_count > 0 && !self.content.blocks.def(block).has_tag("furnishing") {
-            let stack = voxmar_engine::inventory::ItemStack { item: info.drops, count: 1 };
+            let stack = voxmar_engine::inventory::ItemStack::new(info.drops, 1);
             let body = voxmar_engine::dropped::popped(pos, [a, b, c]);
             self.items.spawn(stack, body, voxmar_engine::dropped::PICKUP_DELAY);
         }
@@ -601,7 +612,7 @@ impl Server {
         match rule.instead {
             Some((item, chance)) if other < chance => {
                 let body = voxmar_engine::dropped::popped(pos, [b, c, a]);
-                self.items.spawn(voxmar_engine::inventory::ItemStack { item, count: 1 }, body, voxmar_engine::dropped::PICKUP_DELAY);
+                self.items.spawn(voxmar_engine::inventory::ItemStack::new(item, 1), body, voxmar_engine::dropped::PICKUP_DELAY);
                 true
             }
             _ => false,
@@ -619,7 +630,7 @@ impl Server {
     /// reach has.
     pub(crate) fn near_tags(&self, agent: PlayerId) -> Vec<String> {
         let Some(player) = self.players.get(&agent) else { return Vec::new() };
-        let tags = self.content.recipes.near_tags();
+        let tags = self.content.near_tags();
         voxmar_engine::craft::tags_near(&tags, &self.content.blocks, player.eye(), |pos| self.block(pos))
     }
 

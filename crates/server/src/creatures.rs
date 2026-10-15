@@ -1129,7 +1129,7 @@ impl Server {
             let popped = self.meta.drops;
             self.meta.drops += 1;
             let body = dropped::popped(cell, random3(self.meta.draw_key ^ popped.wrapping_mul(0x9e37_79b9_7f4a_7c15), cell, i as u32 + id));
-            self.creatures.falling_loot.push((due, ItemStack { item, count }, body));
+            self.creatures.falling_loot.push((due, ItemStack::new(item, count), body));
         }
         if let (Some(player), Some(skill), true) = (creature.hurt_by, species.xp_skill, xp) {
             let tenths = (species.def.xp.kill * 10.0) as u32;
@@ -3271,10 +3271,10 @@ mod lure_tests {
             server.note_lured();
         };
         // A stick in hand tempts nothing.
-        server.players.get_mut(&player).unwrap().inventory.slots[0] = Some(ItemStack { item: server.content.blocks.expect("base:stick"), count: 1 });
+        server.players.get_mut(&player).unwrap().inventory.slots[0] = Some(ItemStack::new(server.content.blocks.expect("base:stick"), 1));
         second(&mut server);
         assert_eq!(lured(&server), 0, "a stick lured a rabbit");
-        server.players.get_mut(&player).unwrap().inventory.slots[0] = Some(ItemStack { item: server.content.blocks.expect("base:wild_carrot"), count: 1 });
+        server.players.get_mut(&player).unwrap().inventory.slots[0] = Some(ItemStack::new(server.content.blocks.expect("base:wild_carrot"), 1));
         second(&mut server);
         assert_eq!(lured(&server), 1, "only the wild rabbit in reach is lured");
         assert!(server.creatures.live[&near].lured && !server.creatures.live[&far].lured);
@@ -3861,7 +3861,7 @@ mod review_tests {
             }
         }
         let player = join(&mut server, c.as_vec3() + Vec3::new(-5.5, 0.0, 0.5));
-        server.players.get_mut(&player).unwrap().inventory.slots[0] = Some(ItemStack { item: server.content.blocks.expect("base:wild_carrot"), count: 1 });
+        server.players.get_mut(&player).unwrap().inventory.slots[0] = Some(ItemStack::new(server.content.blocks.expect("base:wild_carrot"), 1));
         let id = put(&mut server, "base:rabbit", c.as_vec3() + Vec3::new(-8.5, 0.0, 0.5), Vec3::X);
         server.tick = 1000;
         let mut waded = false;

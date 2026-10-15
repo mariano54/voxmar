@@ -67,7 +67,7 @@ impl Server {
         player.changed(traits::INVENTORY);
         if left > 0 {
             let body = dropped::popped(at + IVec3::Y, [kick, land, pick]);
-            self.items.spawn(ItemStack { item: catch.item, count: left }, body, dropped::PICKUP_DELAY);
+            self.items.spawn(ItemStack::new(catch.item, left), body, dropped::PICKUP_DELAY);
         }
         if let Some(skill) = fishing.skill {
             self.grant_xp(agent, skill, catch.def.xp);

@@ -500,12 +500,16 @@ impl Server {
             self.stir_bees(player, at);
         }
         let Some(damage) = self.land_blow(player, aim.creature, &weapon, stroke) else { return };
+        // A blow that lands wears what struck it (a shot, the bow that loosed it).
+        if damage > 0 {
+            self.wear_held(player, self.content.tools.wear().hit);
+        }
         // A shot that hit may be left lying by the target, to be picked up again.
         if let (Some(item), Some(at), true) = (shot, at, damage > 0)
             && self.players.get_mut(&player).is_some_and(|p| p.draw(Draw::Recover)[0] < self.content.combat.recover(&weapon))
         {
             let body = voxmar_engine::dropped::Loose::new(at + Vec3::Y * 0.25, Vec3::ZERO);
-            self.items.spawn(voxmar_engine::inventory::ItemStack { item, count: 1 }, body, voxmar_engine::dropped::PICKUP_DELAY);
+            self.items.spawn(voxmar_engine::inventory::ItemStack::new(item, 1), body, voxmar_engine::dropped::PICKUP_DELAY);
         }
         if kind == Blow::Flourish && damage > 0 {
             self.flourish(player, aim.creature, &weapon, damage);

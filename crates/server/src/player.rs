@@ -399,7 +399,7 @@ impl Server {
         let count = count.min(MAX_STACK);
         if held {
             match &mut player.inventory.cursor {
-                None => player.inventory.cursor = Some(ItemStack { item, count }),
+                None => player.inventory.cursor = Some(ItemStack::new(item, count)),
                 Some(stack) if stack.item == item => stack.count = stack.count.saturating_add(count).min(MAX_STACK),
                 Some(_) => return,
             }
@@ -1065,9 +1065,9 @@ mod tests {
         let waiting = server.saved_creatures()[0].clone();
         server.creatures.unplaced = vec![waiting; kept_each - parents.len()];
         let dirt = server.content.blocks.expect("base:dirt");
-        server.items.spawn_for(ItemStack { item: dirt, count: 7 }, Loose::new(server.spawn + Vec3::Y * 0.8, Vec3::ZERO), 0.0, Some(owner_of("Bob")), 10_000);
-        server.items.spawn_for(ItemStack { item: dirt, count: 2 }, Loose::new(server.spawn + Vec3::Y * 0.8, Vec3::ZERO), 0.0, Some(owner_of("bOb")), 10_000);
-        server.items.spawn_for(ItemStack { item: dirt, count: 3 }, Loose::new(server.spawn + Vec3::Y * 0.8, Vec3::ZERO), 0.0, Some(owner_of("someone-else")), 10_000);
+        server.items.spawn_for(ItemStack::new(dirt, 7), Loose::new(server.spawn + Vec3::Y * 0.8, Vec3::ZERO), 0.0, Some(owner_of("Bob")), 10_000);
+        server.items.spawn_for(ItemStack::new(dirt, 2), Loose::new(server.spawn + Vec3::Y * 0.8, Vec3::ZERO), 0.0, Some(owner_of("bOb")), 10_000);
+        server.items.spawn_for(ItemStack::new(dirt, 3), Loose::new(server.spawn + Vec3::Y * 0.8, Vec3::ZERO), 0.0, Some(owner_of("someone-else")), 10_000);
         server.leave(1);
         drop(original);
         if legacy {
