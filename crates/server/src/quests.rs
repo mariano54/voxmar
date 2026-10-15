@@ -333,6 +333,8 @@ mod tests {
         // Water washes a snare away, in the fluids' own changes.
         let washed = set(&mut server, "base:snare", 133);
         assert_eq!(tally(&server, "placed:base:snare"), 1);
+        // Marked as a player's own, as a planted flower is: washed away, it is forgotten.
+        server.placed.insert(washed);
         server.set_block(washed + IVec3::X, server.content.blocks.expect("base:water"));
         for _ in 0..200 {
             server.tick += 1;
@@ -340,6 +342,7 @@ mod tests {
         }
         assert!(server.block(washed).is_some_and(|b| server.content.blocks.info(b).fluid.is_some()), "the water took the snare's cell");
         assert_eq!(tally(&server, "placed:base:snare"), 0, "washed away, the snare no longer counts");
+        assert!(!server.placed.contains(&washed), "nor is its cell still the player's");
         // Broken while its player is away, it comes off as they join again.
         let away = server.players.remove(&1).expect("the player");
         server.set_block(trough, BlockId::AIR);
