@@ -357,7 +357,9 @@ impl Server {
                     let name = self.content.blocks.def(item).name.clone();
                     if self.content.quests.places(&name, &|_, tag| self.content.blocks.def(item).has_tag(tag)) {
                         self.tally(agent, "placed", &name, 1);
-                        self.placed_for_quests.insert(cell, (agent, name));
+                        let player = self.players.get_mut(&agent).unwrap();
+                        player.placed.retain(|(at, _)| *at != cell);
+                        player.placed.push((cell, name));
                     }
                 }
                 (Effect::MoveItems, ActionTarget::Slots { from, to, count }) => {

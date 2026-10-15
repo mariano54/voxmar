@@ -7,7 +7,7 @@ use rustc_hash::FxHashSet;
 use voxmar_engine::block::BlockId;
 use voxmar_engine::coords::ColumnPos;
 use voxmar_engine::effect::{EffectId, EffectRegistry, Modifiers};
-use voxmar_engine::glam::Vec3;
+use voxmar_engine::glam::{IVec3, Vec3};
 use voxmar_engine::inventory::{HOTBAR_SLOTS, Inventory, ItemStack, MAX_STACK};
 use voxmar_engine::lang::Words;
 use voxmar_engine::movement::Checks;
@@ -86,6 +86,9 @@ pub struct Player {
     pub quests_done: Vec<String>,
     pub quests_claimed: Vec<String>,
     pub tallies: rustc_hash::FxHashMap<String, u32>,
+    /// Blocks they set down that a quest's `Placed` counts, by cell and item, kept with
+    /// their quests: broken, each comes off their tally (`Server::unplaced`).
+    pub placed: Vec<(IVec3, String)>,
     pub quests_sent: Vec<voxmar_engine::quest::QuestState>,
     pub food_clock: f32,
     /// Highest point of the current fall, if airborne.
@@ -195,6 +198,7 @@ impl Player {
             quests_done: Vec::new(),
             quests_claimed: Vec::new(),
             tallies: Default::default(),
+            placed: Vec::new(),
             quests_sent: Vec::new(),
             food_clock: 0.0,
             heal_clock: 0.0,
@@ -305,6 +309,7 @@ impl Player {
             tallies: { let mut t: Vec<(String, u32)> = self.tallies.iter().map(|(k, &v)| (k.clone(), v)).collect(); t.sort(); t },
             prayer_points: Some(self.praying.points),
             casts: self.casts,
+            placed: self.placed.iter().map(|(cell, name)| (cell.to_array(), name.clone())).collect(),
         }
     }
 }
@@ -552,6 +557,7 @@ impl Server {
                 player.quests_done = saved.quests;
                 player.quests_claimed = saved.quests_claimed;
                 player.tallies = saved.tallies.into_iter().collect();
+                player.placed = saved.placed.iter().map(|(cell, name)| (IVec3::from_array(*cell), name.clone())).collect();
                 player.timed_effects = saved.effects.iter().filter_map(|(name, left)| Some((effect_ids.id(name)?, *left))).collect();
             }
             // Players who left dead come back to life at home, or else the spawn point.
@@ -568,6 +574,7 @@ impl Server {
                 player.quests_done = saved.quests;
                 player.quests_claimed = saved.quests_claimed;
                 player.tallies = saved.tallies.into_iter().collect();
+                player.placed = saved.placed.iter().map(|(cell, name)| (IVec3::from_array(*cell), name.clone())).collect();
             }
             // The coin purse in the pack's last slot, out of the hotbar's way, and the kit
             // unless this address has had its share.

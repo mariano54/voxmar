@@ -1747,6 +1747,46 @@ fn the_count_of_casts_survives_leaving_and_joining_again() {
 }
 
 #[test]
+fn a_placed_block_broken_after_joining_again_comes_off_the_quest_tally() {
+    let dir = world_dir("placed");
+    let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
+    let saved = || voxmar_server::save::WorldSave::new(&dir).read_player("test", &content().blocks).unwrap().expect("the player was saved");
+    let count = |p: &voxmar_server::save::SavedPlayer| p.tallies.iter().find(|(k, _)| k == "placed:base:feed_trough").map_or(0, |(_, n)| *n);
+    let place = |client: &mut Client| {
+        let cell = client.position.floor().as_ivec3() + IVec3::new(0, 0, 2);
+        for line in ["/clear", "/give feed_trough 1", "/fill ~ ~ ~2 ~ ~1 ~2 air", "/fill ~ ~-1 ~2 ~ ~-1 ~2 stone"] {
+            client.ok(line);
+        }
+        let trough = client.content.blocks.expect("base:feed_trough");
+        client.pump_until(|c| c.world.block(cell) == Some(BlockId::AIR) && c.inventory.get(0).is_some_and(|s| s.item == trough));
+        client.propose("core:place", ActionTarget::Block { block: cell - IVec3::Y, face: Face::PosY });
+        client.pump_until(|c| c.world.block(cell) == Some(trough));
+        cell
+    };
+    let mut client = Client::join_with(config());
+    let cell = place(&mut client);
+    drop(client);
+    let player = saved();
+    assert_eq!(count(&player), 1, "the trough set down counts");
+    assert_eq!(player.placed, [(cell.to_array(), "base:feed_trough".to_owned())], "its cell is kept with the player");
+    // Joined again, the same player breaks it: it comes off, though the server that saw it
+    // placed is gone.
+    let mut client = Client::join_with(config());
+    client.ok(&format!("/fill {0} {1} {2} {0} {1} {2} air", cell.x, cell.y, cell.z));
+    client.pump_until(|c| c.world.block(cell) == Some(BlockId::AIR));
+    drop(client);
+    let player = saved();
+    assert_eq!(count(&player), 0, "the broken trough no longer counts");
+    assert!(player.placed.is_empty(), "nor is its cell kept: {:?}", player.placed);
+    // Set down once more, it counts once.
+    let mut client = Client::join_with(config());
+    place(&mut client);
+    drop(client);
+    assert_eq!(count(&saved()), 1, "the trough set down again counts once");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn a_seed_pouch_carries_seeds_in_one_slot_and_sows_from_it() {
     let mut client = Client::join();
     let ground = client.position.floor().as_ivec3() + IVec3::new(0, -1, 2);
