@@ -8290,8 +8290,16 @@ fn rain_on_roof(world: &World, open: Option<crate::ambience::RoofHeard>, under: 
     if under.sheltered <= open.sheltered {
         wrong.push(format!("the open rain is muffled {:.2} under {name}, no more than {:.2} in the open", under.sheltered, open.sheltered));
     }
+    // The weather outside (rain, wind, storms) is turned down under the roof, and not in
+    // the open.
+    let loud: Vec<&str> = under.muffled.iter().filter(|(_, left)| *left >= 1.0).map(|(bed, _)| bed.as_str()).collect();
+    let quieted: Vec<&str> = open.muffled.iter().filter(|(_, left)| *left < 1.0).map(|(bed, _)| bed.as_str()).collect();
+    if under.muffled.is_empty() || !loud.is_empty() || !quieted.is_empty() {
+        wrong.push(format!("beds outside not muffled under {name}: {loud:?} (of {}); muffled in the open: {quieted:?}", under.muffled.len()));
+    }
     if wrong.is_empty() {
-        Ok(format!("in the open no roof bed plays; under {name} the {expected} patter plays ({}) and the open rain is muffled {:.2}", beds.join(", "), under.sheltered))
+        let outside = under.muffled.iter().map(|(bed, left)| format!("{bed} {left:.2}")).collect::<Vec<_>>().join(", ");
+        Ok(format!("in the open no roof bed plays; under {name} the {expected} patter plays ({}), the open rain is muffled {:.2}, and outside is turned down ({outside})", beds.join(", "), under.sheltered))
     } else {
         Err(wrong.join("; "))
     }

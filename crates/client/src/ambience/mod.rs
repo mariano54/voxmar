@@ -414,7 +414,18 @@ pub fn roof_heard(world: &World) -> Option<RoofHeard> {
         .filter(|bed| (0..roofs.patters.len()).any(|p| bed.when.uses(ambient.ambience.patter_axis(p))))
         .map(|bed| (short(&bed.name).to_owned(), bed.when.weight(&ambient.env)))
         .collect();
-    Some(RoofHeard { under: ambient.roof.under, patter, sheltered: ambient.env.get(Fixed::Sheltered), beds })
+    // The beds outside that a roof turns down (`duck` by `sheltered`), and how far now.
+    let sheltered = ambient.env.get(Fixed::Sheltered);
+    let muffled = ambient
+        .ambience
+        .beds
+        .iter()
+        .filter_map(|bed| {
+            let amount = bed.duck.iter().find(|(by, _)| *by == defs::DuckBy::Axis(Fixed::Sheltered as usize))?.1;
+            Some((short(&bed.name).to_owned(), 1.0 - amount * sheltered.clamp(0.0, 1.0)))
+        })
+        .collect();
+    Some(RoofHeard { under: ambient.roof.under, patter, sheltered, beds, muffled })
 }
 
 /// See [`roof_heard`].
@@ -424,6 +435,8 @@ pub struct RoofHeard {
     pub patter: Option<String>,
     pub sheltered: f32,
     pub beds: Vec<(String, f32)>,
+    /// Each bed a roof turns down, and the share of it left.
+    pub muffled: Vec<(String, f32)>,
 }
 
 /// The patter a roof of `block` makes in rain, by name, as the ambience data says.
