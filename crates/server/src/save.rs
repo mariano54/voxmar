@@ -1425,6 +1425,22 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// A player file from when blocks set down for quests were kept in it (`placed`, now
+    /// the world's `quest_placed`) still loads, its tallies as they were.
+    #[test]
+    fn a_player_file_that_kept_placed_blocks_still_loads() {
+        let dir = temp_dir("placed-in-player");
+        let save = WorldSave::new(&dir);
+        let blocks = crate::test_content().blocks;
+        std::fs::create_dir_all(dir.join("players")).unwrap();
+        let file = r#"(position: (0.5, 80.0, 0.5), yaw: 0.0, flying: false, health: (current: 20, max: 20),
+            inventory: [None], tallies: [("placed:base:feed_trough", 1)], placed: [((4, 65, -7), "base:feed_trough")])"#;
+        std::fs::write(dir.join("players/keeper.ron"), file).unwrap();
+        let loaded = save.read_player("keeper", &blocks).unwrap().expect("it loads");
+        assert_eq!(loaded.tallies, [("placed:base:feed_trough".to_owned(), 1)]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     /// Plants found as separate entries before they merged are one entry now: found first
     /// when the earliest was, studied as far as the furthest, picked as many times as all.
     #[test]
