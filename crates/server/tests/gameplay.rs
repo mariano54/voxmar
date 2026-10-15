@@ -1242,9 +1242,16 @@ fn health_is_twice_hitpoints_and_a_downpour_drenches_those_out_in_it() {
     client.ok("/fill ~-1 ~ ~-1 ~1 ~50 ~1 air");
     client.ok("/weather rain heavy 600");
     client.pump_until(|c| named(c).iter().any(|n| n == "core:soaked" || n == "core:drenched"));
-    // Under a roof, it stops.
+    // Under a roof the rain stops falling on you, but you are wet through for a while yet:
+    // the wet runs down (seconds left), and drying off by a fire ends it.
+    let wet = |c: &Client| c.vitals.effects.iter().find(|a| matches!(c.content.effects.get(a.effect).name.as_str(), "core:soaked" | "core:drenched")).and_then(|a| a.seconds_left);
     client.ok("/fill ~-1 ~3 ~-1 ~1 ~3 ~1 stone");
-    client.pump_until(|c| !named(c).iter().any(|n| n == "core:soaked" || n == "core:drenched"));
+    let roofed = client.position.floor().as_ivec3() + IVec3::new(0, 3, 0);
+    client.pump_until(|c| c.world.block(roofed) == c.content.blocks.id("base:stone"));
+    let left = wet(&client).expect("wet as the roof goes on");
+    client.pump_until(|c| wet(c).is_some_and(|now| now + 1 < left));
+    client.ok("/setblock ~1 ~ ~ campfire");
+    client.pump_until(|c| wet(c).is_none());
 }
 
 /// Water placed by a command flows, and players see it flow through batched updates; the
@@ -1789,43 +1796,98 @@ fn the_count_of_goes_cooked_survives_leaving_and_joining_again() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// Sets down a feed trough two blocks south of `client` (some quest's `Placed` counts it),
+/// and gives back its cell.
+fn place_a_trough(client: &mut Client) -> IVec3 {
+    let cell = client.position.floor().as_ivec3() + IVec3::new(0, 0, 2);
+    for line in ["/clear", "/give feed_trough 1", "/fill ~ ~ ~2 ~ ~1 ~2 air", "/fill ~ ~-1 ~2 ~ ~-1 ~2 stone"] {
+        client.ok(line);
+    }
+    let trough = client.content.blocks.expect("base:feed_trough");
+    client.pump_until(|c| c.world.block(cell) == Some(BlockId::AIR) && c.inventory.get(0).is_some_and(|s| s.item == trough));
+    client.propose("core:place", ActionTarget::Block { block: cell - IVec3::Y, face: Face::PosY });
+    client.pump_until(|c| c.world.block(cell) == Some(trough));
+    cell
+}
+
+/// Breaks the block at `cell` (as a command does, through the server's block changes).
+fn clear_cell(client: &mut Client, cell: IVec3) {
+    client.ok(&format!("/fill {0} {1} {2} {0} {1} {2} air", cell.x, cell.y, cell.z));
+    client.pump_until(|c| c.world.block(cell) == Some(BlockId::AIR));
+}
+
+/// The saved count of feed troughs `name` has set down for quests, and the cells the world
+/// keeps for them; none before they are first saved.
+fn troughs_saved(dir: &std::path::Path, name: &str) -> Option<(u32, Vec<[i32; 3]>)> {
+    let save = voxmar_server::save::WorldSave::new(dir);
+    let player = save.read_player(name, &content().blocks).ok()??;
+    let count = player.tallies.iter().find(|(k, _)| k == "placed:base:feed_trough").map_or(0, |(_, n)| *n);
+    let cells = save.read_meta().ok()?.quest_placed.into_iter().filter(|(_, owner, _)| owner == name).map(|(cell, _, _)| cell).collect();
+    Some((count, cells))
+}
+
+/// Waits, up to five of the server's seconds, for the save `name` left to read `want`.
+fn await_troughs(server: &mut Client, dir: &std::path::Path, name: &str, want: (u32, Vec<[i32; 3]>), why: &str) {
+    server.pump_ticks(5 * TICKS_PER_SECOND as u64, |_| troughs_saved(dir, name).as_ref() == Some(&want));
+    assert_eq!(troughs_saved(dir, name), Some(want), "{why}");
+}
+
 #[test]
 fn a_placed_block_broken_after_joining_again_comes_off_the_quest_tally() {
     let dir = world_dir("placed");
     let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
-    let saved = || voxmar_server::save::WorldSave::new(&dir).read_player("test", &content().blocks).unwrap().expect("the player was saved");
-    let count = |p: &voxmar_server::save::SavedPlayer| p.tallies.iter().find(|(k, _)| k == "placed:base:feed_trough").map_or(0, |(_, n)| *n);
-    let place = |client: &mut Client| {
-        let cell = client.position.floor().as_ivec3() + IVec3::new(0, 0, 2);
-        for line in ["/clear", "/give feed_trough 1", "/fill ~ ~ ~2 ~ ~1 ~2 air", "/fill ~ ~-1 ~2 ~ ~-1 ~2 stone"] {
-            client.ok(line);
-        }
-        let trough = client.content.blocks.expect("base:feed_trough");
-        client.pump_until(|c| c.world.block(cell) == Some(BlockId::AIR) && c.inventory.get(0).is_some_and(|s| s.item == trough));
-        client.propose("core:place", ActionTarget::Block { block: cell - IVec3::Y, face: Face::PosY });
-        client.pump_until(|c| c.world.block(cell) == Some(trough));
-        cell
-    };
     let mut client = Client::join_with(config());
-    let cell = place(&mut client);
+    let cell = place_a_trough(&mut client);
     drop(client);
-    let player = saved();
-    assert_eq!(count(&player), 1, "the trough set down counts");
-    assert_eq!(player.placed, [(cell.to_array(), "base:feed_trough".to_owned())], "its cell is kept with the player");
-    // Joined again, the same player breaks it: it comes off, though the server that saw it
-    // placed is gone.
+    assert_eq!(troughs_saved(&dir, "test"), Some((1, vec![cell.to_array()])), "the trough set down counts, its cell kept with the world");
+    // After a restart, the same player breaks it: it comes off, though the server that saw
+    // it placed is gone.
     let mut client = Client::join_with(config());
-    client.ok(&format!("/fill {0} {1} {2} {0} {1} {2} air", cell.x, cell.y, cell.z));
-    client.pump_until(|c| c.world.block(cell) == Some(BlockId::AIR));
+    clear_cell(&mut client, cell);
     drop(client);
-    let player = saved();
-    assert_eq!(count(&player), 0, "the broken trough no longer counts");
-    assert!(player.placed.is_empty(), "nor is its cell kept: {:?}", player.placed);
+    assert_eq!(troughs_saved(&dir, "test"), Some((0, vec![])), "the broken trough no longer counts, nor is its cell kept");
     // Set down once more, it counts once.
     let mut client = Client::join_with(config());
-    place(&mut client);
+    place_a_trough(&mut client);
     drop(client);
-    assert_eq!(count(&saved()), 1, "the trough set down again counts once");
+    assert_eq!(troughs_saved(&dir, "test").map(|(n, _)| n), Some(1), "the trough set down again counts once");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// A block one player set down for a quest and another broke comes off the first one's
+/// count: while they play, while they are away, and while they lie dead away.
+#[test]
+fn a_placed_block_another_player_breaks_comes_off_its_owners_tally() {
+    let dir = world_dir("placed-by-another");
+    let config = ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
+    let mut breaker = Client::join_named(config, "bob");
+    // Both playing: Bob breaks Ada's trough.
+    let mut ada = breaker.another("ada");
+    let cell = place_a_trough(&mut ada);
+    clear_cell(&mut breaker, cell);
+    drop(ada);
+    await_troughs(&mut breaker, &dir, "ada", (0, vec![]), "broken while she played");
+    // Ada away: Bob breaks it, and she finds it off her count when she comes back.
+    let mut ada = breaker.another("ada");
+    let cell = place_a_trough(&mut ada);
+    drop(ada);
+    await_troughs(&mut breaker, &dir, "ada", (1, vec![cell.to_array()]), "set down, as she left");
+    clear_cell(&mut breaker, cell);
+    let ada = breaker.another("ada");
+    drop(ada);
+    await_troughs(&mut breaker, &dir, "ada", (0, vec![]), "broken while she was away");
+    // Ada left dead: the same, as she comes back to life.
+    let mut ada = breaker.another("ada");
+    let cell = place_a_trough(&mut ada);
+    ada.ok("/kill");
+    ada.pump_until(|c| c.health == 0);
+    drop(ada);
+    await_troughs(&mut breaker, &dir, "ada", (1, vec![cell.to_array()]), "set down, as she left dead");
+    clear_cell(&mut breaker, cell);
+    let ada = breaker.another("ada");
+    drop(ada);
+    await_troughs(&mut breaker, &dir, "ada", (0, vec![]), "broken while she lay dead away");
+    drop(breaker);
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -2325,7 +2387,7 @@ fn kiln_fuel_and_lighting_progress_survive_reload_without_free_refuelling() {
     client.pump_until(|c| count(c, "base:copper_ore") == 1);
     client.chat.clear();
     client.propose("base:cook", ActionTarget::Block { block: core, face: Face::PosY });
-    client.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("is cold")));
+    client.pump_until(|c| c.refused.iter().any(|t| t.contains("is cold")));
     assert_eq!(count(&client, "base:copper_ore"), 1);
     assert_eq!(count(&client, "base:copper_ingot"), 0);
     assert_eq!(lit(&client), 1, "dismantling erased historical quest progress");
@@ -2621,7 +2683,7 @@ fn a_crucible_smelts_only_in_its_lit_kiln_and_makes_bronze() {
     }
     client.pump_until(|c| c.world.block(core) == Some(crucible) && c.world.block(core + IVec3::new(1, 1, 1)) == c.content.blocks.id("base:kiln_bricks"));
     smelt(&mut client);
-    client.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("is cold")));
+    client.pump_until(|c| c.refused.iter().any(|t| t.contains("is cold")));
     assert_eq!(count(&client, ore), 2, "a standing but cold kiln consumed ore");
     client.clear();
     client.ok("/give coal_ore 24");

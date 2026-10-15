@@ -309,8 +309,13 @@ Each new feature has a quest that teaches it, in two parts the book counts one b
 Twine and Thong also takes ten twine carried, since a knife cuts twine from tall grass, and
 its text and A Sharp Edge's say so. First Harvest says a stone hoe reaps the ripe crops around the one cut, and A Full Granary is the harvest that pays for it. Four goals came with them, each reading a tally:
 `Placed(block, n)` (blocks set from the hand that still stand, by the item: `placed`,
-tallied only for a block some `Placed` names, and taken off when its cell is broken; a
-snare sprung still stands; kept for one run, so one broken after a restart stays counted),
+tallied only for a block a `Placed` of a quest the player has not finished names; the world
+keeps each such cell with its owner and item (`WorldMeta::quest_placed`), and the block
+counts while the one in its cell still drops that item, so a sprung snare still stands and
+a snare set over itself counts once; broken, built over or washed away, it comes off,
+straight away if its owner is playing, else as they join, when their `placed` tallies are
+counted again from the world's cells; a quest finished drops the cells no open quest still
+counts),
 `Stocked(item, store, n)` (that item put in a store of that block and left there:
 `stocked:STORE:ITEM`, in `push_store`, net of what is taken back out), `CraftNear(item,
 near, n)` (made by a recipe with `near`, by that tag: `crafted_near:TAG`, beside `crafted`)
