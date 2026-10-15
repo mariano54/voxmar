@@ -40,7 +40,8 @@ pub use voxmar_engine::weather::Weather;
 // 42: a staggered creature's tell (STAGGERED).
 // 43: the seat a player sits on (Vitals::seated), for the lower eye.
 // 44: what the home's stores hold (Vitals::home_stores), for what can be made there.
-pub const PROTOCOL_VERSION: u32 = 44;
+// 51: ClientMessage::GiveUp, the pause menu's Give up.
+pub const PROTOCOL_VERSION: u32 = 51;
 
 /// A creature's `tell` while it rears into a new phase of its fight.
 pub const REARING: u8 = u8::MAX;
@@ -106,6 +107,9 @@ pub enum ClientMessage {
     /// The player looks at the station at `block` (a drying rack at work, a kiln's core):
     /// the server answers with `ServerMessage::Station`, if it is near enough to see.
     LookAtStation { block: IVec3 },
+    /// The player gives up (the pause menu's Give up, for one stuck with no way out): a
+    /// death like any other, by nobody's hand.
+    GiveUp,
 }
 
 /// What is on a station: `count` of `item`, making `makes` of `output`, done in `seconds`

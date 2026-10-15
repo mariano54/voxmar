@@ -29,6 +29,9 @@
     "menu.cancel": "Cancel",
     "menu.done": "Done",
     "menu.back_to_game": "Back to game",
+    // Dying where you stand, for a player stuck with no way out; asks once more first.
+    "menu.give_up": "Give up",
+    "menu.give_up.sure": "Really give up?",
     "menu.save_and_quit": "Save and quit to title",
     "menu.disconnect": "Disconnect",
     "menu.quit_game": "Quit game",

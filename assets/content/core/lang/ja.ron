@@ -21,6 +21,8 @@
     "menu.cancel": "キャンセル",
     "menu.done": "完了",
     "menu.back_to_game": "ゲームに戻る",
+    "menu.give_up": "あきらめる",
+    "menu.give_up.sure": "本当にあきらめる？",
     "menu.save_and_quit": "セーブしてタイトルへ",
     "menu.disconnect": "切断",
     "menu.quit_game": "ゲームを終了",

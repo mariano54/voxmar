@@ -162,6 +162,11 @@ impl Net {
         self.connection.send(ClientMessage::LookAtStation { block });
     }
 
+    /// Gives up: the player dies where they stand (see `ClientMessage::GiveUp`).
+    pub fn give_up(&self) {
+        self.connection.send(ClientMessage::GiveUp);
+    }
+
     /// Says something to everyone.
     pub fn chat(&self, text: &str) {
         self.connection.send(ClientMessage::Chat { text: text.into() });

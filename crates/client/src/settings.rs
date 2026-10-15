@@ -43,6 +43,7 @@ impl Plugin for SettingsPlugin {
         app.init_resource::<Rebinding>()
             .init_resource::<OpenSection>()
             .init_resource::<OpenDropdown>()
+            .init_resource::<GiveUpAsked>()
             .add_systems(PostStartup, (spawn_menu, open_start_tab))
             .add_systems(PreUpdate, rebind.after(InputSystems))
             .add_systems(
@@ -1166,8 +1167,22 @@ enum MenuButton {
     Resume,
     /// Back to the title screen, when opened from there.
     Done,
+    /// Dies where the player stands, for one stuck with no way out: asks once more first.
+    GiveUp,
     QuitToTitle,
     Quit,
+}
+
+/// Whether Give up was clicked once, so the next click gives up; cleared as the menu closes.
+#[derive(Resource, Default)]
+struct GiveUpAsked(bool);
+
+/// For the gate: the menu's Give up button, if laid out, and the words on it.
+pub(crate) fn give_up_button(world: &mut World) -> Option<(Entity, String)> {
+    let mut buttons = world.query::<(Entity, &MenuButton, &ComputedNode, &Children)>();
+    let (button, child) = buttons.iter(world).find(|(_, b, node, _)| matches!(b, MenuButton::GiveUp) && node.size().x > 0.0).map(|(e, _, _, c)| (e, c.first().copied()))?;
+    let words = world.get::<Text>(child?)?.0.clone();
+    Some((button, words))
 }
 
 #[derive(Component)]
@@ -1352,6 +1367,8 @@ fn spawn_menu(mut commands: Commands, font: Res<UiFont>, categories: Option<Res<
             panel.spawn((HintBox, hint)).with_child((HintText, text(font, "", BODY, MUTED)));
             panel.spawn(button_row(4.0 * PX)).with_children(|row| {
                 spawn_button(row, font, "menu.back_to_game", ButtonStyle::Primary, (MenuButton::Resume, ShownWhen::InGame));
+                // Its words depend on whether it was clicked once: see `show_menu`.
+                spawn_button(row, font, "", ButtonStyle::Secondary, (MenuButton::GiveUp, ShownWhen::InGame));
                 spawn_button(row, font, "menu.done", ButtonStyle::Primary, (MenuButton::Done, ShownWhen::OnTitle));
             });
             panel.spawn((button_row(4.0 * PX), ShownWhen::InGame)).with_children(|row| {
@@ -1710,6 +1727,8 @@ fn click_buttons(
     buttons: Query<(&MenuButton, &Interaction), Pressed>,
     mut ui: ResMut<UiState>,
     settings: Res<Settings>,
+    net: Option<Res<Net>>,
+    mut asked: ResMut<GiveUpAsked>,
     mut next: ResMut<NextState<Screen>>,
     mut exit: MessageWriter<AppExit>,
 ) {
@@ -1719,6 +1738,13 @@ fn click_buttons(
         }
         match button {
             MenuButton::Resume => ui.menu_open = false,
+            MenuButton::GiveUp if !asked.0 => asked.0 = true,
+            MenuButton::GiveUp => {
+                if let Some(net) = &net {
+                    net.give_up();
+                }
+                ui.menu_open = false;
+            }
             MenuButton::Done => next.set(Screen::Title),
             // Leaving the game stops the integrated server, which saves the world.
             MenuButton::QuitToTitle => next.set(Screen::Title),
@@ -1810,6 +1836,7 @@ fn show_menu(
     mut title: Query<&mut Text, With<MenuTitle>>,
     mut texts: Query<&mut Text, Without<MenuTitle>>,
     mut rebinding: ResMut<Rebinding>,
+    mut asked: ResMut<GiveUpAsked>,
     locale: Res<Locale>,
 ) {
     let in_game = *screen.get() == Screen::InGame;
@@ -1817,6 +1844,9 @@ fn show_menu(
     if *was_open && !open {
         settings.save();
         rebinding.0 = None;
+    }
+    if !open && asked.0 {
+        asked.0 = false;
     }
     *was_open = open;
     if let Ok(mut visibility) = root.single_mut() {
@@ -1845,9 +1875,14 @@ fn show_menu(
     }
     // Leaving a server saves nothing of ours, so say what it does.
     let label = locale.get(if net.is_some_and(|net| net.is_remote()) { "menu.disconnect" } else { "menu.save_and_quit" });
+    let give_up = locale.get(if asked.0 { "menu.give_up.sure" } else { "menu.give_up" });
     for (button, children) in &quit_to_title {
-        if matches!(button, MenuButton::QuitToTitle)
-            && let Some(mut text) = children.first().and_then(|&child| texts.get_mut(child).ok())
+        let label = match button {
+            MenuButton::QuitToTitle => label,
+            MenuButton::GiveUp => give_up,
+            _ => continue,
+        };
+        if let Some(mut text) = children.first().and_then(|&child| texts.get_mut(child).ok())
             && text.0 != label
         {
             label.clone_into(&mut text.0);
