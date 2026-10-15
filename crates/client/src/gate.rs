@@ -656,6 +656,9 @@ struct Gate {
     quarry_id: Option<u32>,
     fallen_watched: bool,
     weapon_fallen_watched: bool,
+    /// The blows answered and landed before the weapon step struck (`Creatures::blows` and
+    /// `landed`), for its log.
+    weapon_from: (u32, u32),
     /// Where the player was put to stand on the struck creature's loot, once it lay.
     loot_stood: Option<Vec3>,
     fallen_since: Option<f32>,
@@ -867,6 +870,7 @@ impl Gate {
             quarry_id: None,
             fallen_watched: false,
             weapon_fallen_watched: false,
+            weapon_from: (0, 0),
             loot_stood: None,
             fallen_since: None,
             weapon_fallen_since: None,
@@ -8249,6 +8253,7 @@ fn weapon(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             net.command(&format!("give {} 1", WEAPON.trim_start_matches("base:")));
             net.command(&format!("summon {} 1 {} {} {}", BEAR.trim_start_matches("base:"), pad.x, pad.y, pad.z + 1));
             gate.blows_seen = world.resource::<crate::creatures::Creatures>().blows;
+            gate.weapon_from = (gate.blows_seen, world.resource::<crate::creatures::Creatures>().landed);
             gate.feel = FeelRun::default();
             gate.swing_watch = SwingWatch::of("player swing", "player-swing-connect", "the bear");
             gate.advance(now);
@@ -8270,6 +8275,9 @@ fn weapon(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             };
             let strikes = world.resource::<crate::fight::Fighting>().strikes;
             if blows > gate.blows_seen {
+                if gate.blows_seen == gate.weapon_from.0 {
+                    info!("gate: Weapon: the first blow answered at {now:.1}s, server {:.1}s, after {} swings", gate.server_now, gate.swings);
+                }
                 gate.blows_seen = blows;
                 gate.phase_since = now;
                 gate.phase_server = gate.server_now;
@@ -8292,6 +8300,20 @@ fn weapon(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 }
                 // Out of sight: dead only if it was seen dying.
                 None => {
+                    if gate.feel.died && !gate.weapon_fallen_watched && gate.weapon_fallen_since.is_none() {
+                        // Where the weapon step's time goes, for the gate's step table.
+                        let (blows, landed) = {
+                            let creatures = world.resource::<crate::creatures::Creatures>();
+                            (creatures.blows, creatures.landed)
+                        };
+                        info!(
+                            "gate: Weapon: the bear down at {now:.1}s, server {:.1}s: {} swings sent, {} blows answered, {} landed",
+                            gate.server_now,
+                            gate.swings,
+                            blows - gate.weapon_from.0,
+                            landed - gate.weapon_from.1
+                        );
+                    }
                     if gate.feel.died && !gate.weapon_fallen_watched {
                         // Cleanup teleports into the corpse and removes its view. Watch
                         // this actual bear's mark before issuing any sweep commands.
@@ -8300,6 +8322,7 @@ fn weapon(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                         }).map(|(centre, _)| centre);
                         let Some(result) = watch_fallen(world, gate.feel.bear, anchor, &mut gate.weapon_fallen_since, now) else { return };
                         gate.weapon_fallen_watched = true;
+                        info!("gate: Weapon: the slain mark watched at {now:.1}s, server {:.1}s", gate.server_now);
                         gate.check("combat marks: slain bear", result.map(|seen| format!("its mark stayed visible for {seen:.2} s before cleanup"))
                             .map_err(|seen| format!("its mark stayed visible for only {seen:.2} s during the bounded corpse watch")));
                         return;
@@ -8616,6 +8639,7 @@ fn end_weapon(world: &mut World, gate: &mut Gate, now: f32) {
     mouse(world, MouseButton::Left, false);
     key(world, KeyCode::KeyW, false);
     gate.sweep = Sweep::default();
+    info!("gate: Weapon: sweeping the bears away at {now:.1}s, server {:.1}s", gate.server_now);
     to_phase(gate, 3, now);
 }
 

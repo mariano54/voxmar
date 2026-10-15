@@ -213,7 +213,10 @@ impl Server {
                 continue;
             }
             let stack = ItemStack { item: info.drops, count: info.drop_count };
-            let body = dropped::popped(cell, random3(self.tick, cell, i as u32));
+            // Scattered by the world's count of drops popped, not the tick it breaks on.
+            let popped = self.meta.drops;
+            self.meta.drops += 1;
+            let body = dropped::popped(cell, random3(self.meta.draw_key ^ popped.wrapping_mul(0x9e37_79b9_7f4a_7c15), cell, i as u32));
             self.items.spawn(stack, body, dropped::PICKUP_DELAY);
         }
     }
@@ -471,6 +474,30 @@ mod tests {
         assert!((chance - 0.01..=chance + 0.01).contains(&gave), "{gave} of tomatoes nobody sowed gave, for a chance of {chance}");
         let apple = def("base:apple");
         assert!((0..1000).all(|x| unsown_roll(&apple, 12_345, IVec3::new(x, 70, 0), 0)), "tree fruit held back");
+    }
+
+    /// Where a broken block's drop pops to is drawn by the world's count of drops popped,
+    /// not the tick it breaks on, and each drop counts on.
+    #[test]
+    fn a_drop_pops_by_the_count_of_drops_not_the_tick() {
+        let popped = |tick: u64| {
+            let mut server = crate::test_server();
+            server.meta.draw_key = 0x0d1a;
+            let cells = [2, 3].map(|x| server.spawn.floor().as_ivec3() + IVec3::new(x, 0, 0));
+            let stone = server.content.blocks.expect("base:cobblestone");
+            for cell in cells {
+                server.set_block(cell, stone);
+            }
+            server.tick = tick;
+            server.drop_loot(1, &cells, &cells);
+            let mut bodies: Vec<_> = server.items.all.values().map(|d| (d.body.position.to_array(), d.body.velocity.to_array())).collect();
+            bodies.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            (bodies, server.meta.drops)
+        };
+        let (first, count) = popped(1_000);
+        assert_eq!((first.len(), count), (2, 2), "two drops, counted");
+        assert_eq!(popped(1_377).0, first, "the same drops broken later popped otherwise");
+        assert_ne!(first[0].1, first[1].1, "two drops popped alike");
     }
 
     fn item(count: u8, x: f32, age: u32) -> Dropped {
