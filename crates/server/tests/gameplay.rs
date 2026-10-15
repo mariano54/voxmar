@@ -3601,8 +3601,8 @@ fn a_shaft_lined_with_shaped_blocks_is_no_ground_to_dodge_or_break_a_fall_on() {
         // A server tick on each step, so the fall is seen block by block.
         client.after_server_ticks(1);
     }
-    client.pump_until(|c| c.health < 20);
-    assert_eq!(client.health, 18, "a five block fall down the shaft costs two health");
+    client.after_server_ticks(4);
+    assert_eq!(client.health, 18, "a five block fall down the shaft costs two health: the shaft's walls broke the fall");
     assert!(client.teleported.is_none(), "the fall was put back to {:?}", client.teleported);
     // A slab's top is ground to dodge from.
     client.fill(at, IVec3::new(3, 0, 0), IVec3::new(3, 0, 0), "oak_slab");
@@ -3636,6 +3636,30 @@ fn two_half_steps_in_one_input_are_climbed_under_a_low_ceiling() {
     assert_eq!(client.teleported.take(), Some(start), "climbed two whole blocks in one input");
 }
 
+/// A walk up a stair of slabs and planks onto the roof of a sealed room, in one input, ends
+/// on the roof, not in the room: the way down from the top of the climb to where the input
+/// says is through the roof.
+#[test]
+fn a_climb_in_one_input_ends_on_a_roof_not_in_the_room_under_it() {
+    real_time("movement is checked against the clock: how far a player may get in the seconds between their messages");
+    let mut client = on_a_test_floor();
+    let start = client.position;
+    let at = start.floor().as_ivec3();
+    // Eastwards, each top half a block above the last: slab, plank, then the same a level
+    // up and another, the last beside the room's roof.
+    for (x, y, block) in [(1, 0, "oak_slab"), (2, 0, "oak_planks"), (3, 1, "oak_slab"), (4, 1, "oak_planks"), (5, 2, "oak_slab"), (6, 2, "oak_planks")] {
+        client.fill(at, IVec3::new(x, 0, 0), IVec3::new(x, y - 1, 0), "oak_planks");
+        client.fill(at, IVec3::new(x, y, 0), IVec3::new(x, y, 0), block);
+    }
+    // The room: one cell two high at x+7, walled and roofed in planks.
+    client.fill(at, IVec3::new(6, 0, -1), IVec3::new(8, 2, 1), "oak_planks");
+    client.fill(at, IVec3::new(7, 0, 0), IVec3::new(7, 1, 0), "air");
+    client.tp(start);
+    client.send_position(start + Vec3::new(7.0, 0.0, 0.0), false);
+    client.pump_until(|c| c.teleported.is_some());
+    assert_eq!(client.teleported.take(), Some(start), "got into a sealed room through its roof");
+}
+
 /// A gap between shaped blocks narrower or lower than the player is no way through, though
 /// a share of their box would fit: between two pot shelves in a row (9/16 of a block, the
 /// player is 0.6 wide), and on a headstone under an upside-down slab (1.75 high, the
@@ -3653,6 +3677,14 @@ fn gaps_between_shapes_smaller_than_the_player_are_no_way_through() {
     client.send_position(beside + Vec3::X, false);
     client.pump_until(|c| c.teleported.is_some());
     assert_eq!(client.teleported.take(), Some(beside), "squeezed between two pot shelves 9/16 apart");
+    // As narrow between a whole block and a shelf, and off the gap's middle.
+    client.fill(at, IVec3::new(5, 0, 1), IVec3::new(5, 0, 1), "oak_planks");
+    client.fill(at, IVec3::new(5, 0, 2), IVec3::new(5, 0, 2), "oak_pot_shelf");
+    let beside = at.as_vec3() + Vec3::new(4.5, 0.0, 2.271);
+    client.tp(beside);
+    client.send_position(beside + Vec3::X, false);
+    client.pump_until(|c| c.teleported.is_some());
+    assert_eq!(client.teleported.take(), Some(beside), "squeezed between planks and a pot shelf 9/16 apart");
     // Onto a headstone (three quarters of a block high, a jump): open above, the player
     // stands on it...
     client.tp(start);
