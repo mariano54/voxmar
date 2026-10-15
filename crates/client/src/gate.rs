@@ -1485,7 +1485,7 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         // A party walks in, is talked to, traded with and sent away, each in server seconds.
         Step::Party => 60.0,
         // The effects are judged once a second by the server, and a rest is a sleep away.
-        Step::Home => 70.0,
+        Step::Home => 75.0,
         // The campfire, its smoke and the chimney's, then a cook at the hearth and the stove.
         Step::Cook => STEP_LIMIT + 30.0,
         // The barrel opened, then a server pass for the egg and a second for the chat; then
@@ -2349,6 +2349,18 @@ fn clear_hand(world: &mut World) -> Option<bool> {
     Some(false)
 }
 
+/// Server seconds the processor `machine` takes to work one `input` at full power, as the
+/// loaded data has it (its recipe's seconds over its speed); `None` if it works no such
+/// recipe.
+fn work_seconds(world: &World, machine: &str, input: &str) -> Option<f32> {
+    let content = &world.resource::<Launch>().content;
+    let (block, item) = (content.blocks.id(machine)?, content.blocks.id(input)?);
+    let machine = content.machines.get(block)?;
+    let voxmar_engine::machine::Role::Processor { speed, .. } = machine.role else { return None };
+    let process = machine.processes.iter().map(|&p| content.machines.process(p)).find(|p| p.inputs.iter().any(|(accepts, _)| accepts.contains(&item)))?;
+    Some(process.seconds / speed)
+}
+
 /// The level of a skill, as the client was last told.
 fn skill_level(world: &World, name: &str) -> (u8, u32) {
     let (player, launch) = (world.resource::<LocalPlayer>(), world.resource::<Launch>());
@@ -2865,9 +2877,18 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 Some(name) => select(world, name),
                 None => empty_hand(world),
             };
-            // Used only every few server seconds (see the kiln above); the crusher takes a
-            // few of them to work the ore.
-            if ready && gate.server_now - gate.machines_asked >= 3.0 {
+            // Used only every few server seconds (see the kiln above). The dust is asked for
+            // once the crusher has had the seconds its recipe takes (from the loaded data),
+            // then each second: asked on the three-second beat, a crush done just after one
+            // ask waited nearly three more for the next.
+            let due = match gate.machines_stage {
+                0 | 1 => gate.server_now - gate.machines_asked >= 3.0,
+                _ => {
+                    let work = work_seconds(world, "base:steam_crusher", "base:copper_ore").unwrap_or(0.0);
+                    gate.server_now - gate.machines_since >= work && gate.server_now - gate.machines_asked >= 1.0
+                }
+            };
+            if ready && due {
                 gate.machines_asked = gate.server_now;
                 let actions = world.resource::<crate::Actions>().0.clone();
                 // With the player's input first, as a click sends it: the slot just selected
@@ -5397,9 +5418,22 @@ fn prayers(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     }
 }
 
-/// A sleeping bag and a torch beside the player, slept in: the bed is their home and it has
-/// a light, so the Camp step (docs/home.md) comes on as a chip, each chip with its own icon
-/// (shot `home-chips`), the chat names it and what to add next, and the sleep gives a rest. Then the way home: with the mark's hiding distance
+/// Where the Home step's hunting creature is summoned, from the bag (it lands 1.5 blocks west
+/// of that cell's middle, 5.5 to 6.5 blocks off: within `/creatures kill`'s 8 blocks of the
+/// player and the server's `sleep_threat_reach`), held still so no blow of its counts as a
+/// fresh wound; what it is, and the server seconds of clicks it waits on the refusal (the
+/// session's cost of the check stays under 5 s).
+const SLEEP_FOE: IVec3 = IVec3::new(6, 0, 0);
+const SLEEP_FOE_KIND: &str = "shambler";
+const SLEEP_FOE_WAIT: f32 = 4.0;
+/// Server seconds the Home step waits on what the sleep gives.
+const HOME_SLEEP_WAIT: f32 = 30.0;
+
+/// A sleeping bag and a torch beside the player, clicked with a shambler near: no sleep in a
+/// fight. Then slept in: the bed is their home and it has a light, so the Camp step
+/// (docs/home.md) comes on as a chip, each chip with its own icon (shot `home-chips`), the
+/// chat names it and what to add next, and the sleep gives what the engine says a bag
+/// gives in such a camp (a rest, Healing Sleep), each outlasting the wait. Then the way home: with the mark's hiding distance
 /// set to nothing, the hearth mark shows how far the bag is. Then crafting at home: four
 /// planks shift clicked into a barrel beside the bag, none left in the pack, Lay on the
 /// crafting table's recipe fills the grid from the barrel. The blocks go again after, and
@@ -5445,8 +5479,9 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
                     leave(world, gate);
                 }
                 Some(true) => {
-                    let actions = world.resource::<crate::Actions>().0.clone();
-                    world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("base:sleep"), voxmar_engine::action::ActionTarget::Block { block: bag, face: voxmar_engine::coords::Face::PosY });
+                    // A creature that hunts players, a few blocks off: no sleeping yet.
+                    let foe = bag + SLEEP_FOE;
+                    world.resource::<Net>().command(&format!("summon {SLEEP_FOE_KIND} 1 {} {} {} held", foe.x, foe.y, foe.z));
                     gate.advance(now);
                 }
                 Some(false) if waited > 10.0 => {
@@ -5456,39 +5491,105 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
                 Some(false) => {}
             }
         }
+        // The bag clicked with the creature near: refused, said so on this client, and no
+        // rest given. Then it is killed and the bag slept in.
         2 => {
+            let sleep = |world: &mut World| {
+                let actions = world.resource::<crate::Actions>().0.clone();
+                world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("base:sleep"), voxmar_engine::action::ActionTarget::Block { block: bag, face: voxmar_engine::coords::Face::PosY });
+            };
+            let threatened = {
+                let (locale, launch) = (world.resource::<Locale>(), world.resource::<Launch>());
+                locale.render(&voxmar_engine::lang::Words::key("bed.threatened"), &launch.content.blocks)
+            };
+            let refused = world.resource::<crate::hud::skills::SkillToasts>().shows_refusal(&threatened);
+            let rested = {
+                let (player, launch) = (world.resource::<LocalPlayer>(), world.resource::<Launch>());
+                player.vitals.effects.iter().filter(|a| launch.content.effects.from_sleep(a.effect)).map(|a| launch.content.effects.get(a.effect).name.clone()).collect::<Vec<_>>()
+            };
+            let done = refused || !rested.is_empty() || gate.waited_out(SLEEP_FOE_WAIT);
+            if done {
+                let result = if refused && rested.is_empty() { Ok(format!("clicked with a {SLEEP_FOE_KIND} hunting near, the bag refused sleep: \"{threatened}\", no rest given")) } else { Err(format!("{:.1} server s of clicks on the bag with a {SLEEP_FOE_KIND} near: refusal shown {refused}, rest given {rested:?}", gate.server_in_phase())) };
+                gate.check("home: no sleep in a fight", result);
+                let net = world.resource::<Net>();
+                net.command(&format!("creatures kill {SLEEP_FOE_KIND}"));
+                sleep(world);
+                gate.advance(now);
+            } else if now - gate.tap_at >= TAP_EVERY {
+                // Asked as a player clicks, once each `TAP_EVERY`, counted as taps.
+                gate.tap_at = now;
+                gate.taps += 1;
+                sleep(world);
+            }
+        }
+        3 => {
             let has = |world: &World, name: &str| {
                 let (player, launch) = (world.resource::<LocalPlayer>(), world.resource::<Launch>());
                 launch.content.effects.id(name).is_some_and(|id| player.vitals.effects.iter().any(|a| a.effect == id))
             };
+            // Until the sleep shows, the bag is clicked again as a player would, once each
+            // `TAP_EVERY`: a click the server refused (the kill not yet in) is tried again.
+            let slept_in = {
+                let (player, launch) = (world.resource::<LocalPlayer>(), world.resource::<Launch>());
+                player.vitals.effects.iter().any(|a| launch.content.effects.from_sleep(a.effect))
+            };
+            if !slept_in && now - gate.tap_at >= TAP_EVERY {
+                gate.tap_at = now;
+                gate.taps += 1;
+                let actions = world.resource::<crate::Actions>().0.clone();
+                world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("base:sleep"), voxmar_engine::action::ActionTarget::Block { block: bag, face: voxmar_engine::coords::Face::PosY });
+            }
+            // What the bag said when it refused, for the failure.
+            let refusals: Vec<String> = {
+                let (locale, launch, toasts) = (world.resource::<Locale>(), world.resource::<Launch>(), world.resource::<crate::hud::skills::SkillToasts>());
+                ["bed.threatened", "bed.just_hurt"].iter().map(|key| locale.render(&voxmar_engine::lang::Words::key(key), &launch.content.blocks)).filter(|text| toasts.shows_refusal(text)).collect()
+            };
             let (camp, rested) = (has(world, "base:camp"), has(world, "base:rested"));
+            // What the sleep gives, as the engine judges this step's own camp (a bed and a
+            // light, under the sky) and the bag's tags; each lasting past this wait.
+            let (given, short): (Vec<String>, Vec<String>) = {
+                let (player, launch, client) = (world.resource::<LocalPlayer>(), world.resource::<Launch>(), world.resource::<ClientWorld>());
+                let effects = &launch.content.effects;
+                let survey = voxmar_engine::effect::HomeSurvey { counts: effects.home_tags().iter().map(|tag| (tag.clone(), u32::from(tag == "bed" || tag == "light"))).collect() };
+                let calm = voxmar_engine::weather::Weather::NONE;
+                let situation = voxmar_engine::effect::Situation { felt: 15.0, warmed: false, outdoors: true, weather: &calm, biome: "", biome_tags: &[], home: Some(&survey), done: &[], held: &[], near: &[], seated: false };
+                let tags = client.registry.id("base:sleeping_bag").map(|b| client.registry.def(b).tags.clone()).unwrap_or_default();
+                let wanted = effects.given_by_sleep(&situation, &tags);
+                let shown = |id| player.vitals.effects.iter().find(|a| a.effect == id);
+                let missing = wanted.iter().filter(|&&(id, _)| shown(id).is_none()).map(|&(id, _)| effects.get(id).name.clone()).collect();
+                let short = wanted.iter().filter(|&&(id, _)| shown(id).is_some_and(|a| a.seconds_left.is_some_and(|s| (s as f32) <= HOME_SLEEP_WAIT))).map(|&(id, _)| effects.get(id).name.clone()).collect();
+                (missing, short)
+            };
+            let all_given = given.is_empty();
             let (announced, slept) = {
                 let lines: Vec<&str> = world.resource::<crate::hud::console::Console>().since(gate.phase_since).collect();
                 (lines.iter().any(|l| l.contains("Camp:") && l.contains("Next:")), lines.iter().any(|l| l.contains("You sleep soundly")))
             };
-            if camp && rested && announced && slept {
+            if camp && rested && all_given && announced && slept {
                 if gate.shot(world, "home-chips").is_none() {
                     return;
                 }
-                gate.check("home: camp", Ok("a bed and a light slept in showed the Camp chip, the chat named it with its next step, and the sleep was a rest".into()));
-                // Each with its own icon, not the plain buff's both would share.
+                gate.check("home: camp", Ok("a bed and a light slept in showed the Camp chip, the chat named it with its next step, and the sleep gave all the engine says it gives there".into()));
+                gate.check("home: rest lasts", if short.is_empty() { Ok(format!("each of the sleep's effects shows more than the {HOME_SLEEP_WAIT} s waited for it left")) } else { Err(format!("the sleep's {short:?} show {HOME_SLEEP_WAIT} s or less left: gone before this wait could see them")) });
+                // Each with its own icon, not the plain buff's they would share.
                 let icons = {
                     let (images, effects) = (world.resource::<crate::hud::HudImages>(), &world.resource::<Launch>().content.effects);
-                    ["base:camp", "base:rested"].map(|name| effects.id(name).map(|id| images.effect(id)))
+                    ["base:camp", "base:rested", "base:healing_sleep"].map(|name| effects.id(name).map(|id| images.effect(id)))
                 };
-                gate.check("home: icons", if icons[0].is_some() && icons[0] != icons[1] { Ok("the Camp and Rested chips each show an icon of their own".into()) } else { Err(format!("the Camp and Rested chips share an icon: {icons:?}")) });
+                let distinct = icons.iter().all(Option::is_some) && icons.iter().enumerate().all(|(i, a)| icons[i + 1..].iter().all(|b| a != b));
+                gate.check("home: icons", if distinct { Ok("the Camp, Rested and Healing Sleep chips each show an icon of their own".into()) } else { Err(format!("the Camp, Rested and Healing Sleep chips share an icon: {icons:?}")) });
                 // Shown however near and at any hour, for the mark's own checks.
                 let mut style = world.resource_mut::<crate::hud::inventory::InterfaceStyle>();
                 gate.home_style = Some(style.clone());
                 (style.home_hidden_within, style.home_shown_beyond) = (0.0, 0.0);
                 gate.advance(now);
-            } else if waited > 30.0 {
-                gate.check("home: camp", Err(format!("{waited:.1} server s after sleeping at a bag with a torch beside it: Camp chip {camp}, Rested chip {rested}, Camp line with Next {announced}, sleep line {slept}")));
+            } else if waited > HOME_SLEEP_WAIT {
+                gate.check("home: camp", Err(format!("{waited:.1} server s after sleeping at a bag with a torch beside it: Camp chip {camp}, Rested chip {rested}, the sleep's chips missing {given:?}, Camp line with Next {announced}, sleep line {slept}, refusals showing {refusals:?}, {} clicks", gate.taps)));
                 leave(world, gate);
             }
         }
         // The mark over the bag, with its distance.
-        3 => {
+        4 => {
             let told = world.resource::<LocalPlayer>().vitals.home;
             let shown = world.query_filtered::<&Visibility, With<crate::hud::home::HomeMark>>().iter(world).any(|v| *v != Visibility::Hidden);
             let words = world.query_filtered::<&Text, With<crate::hud::home::HomeWords>>().iter(world).map(|t| t.0.clone()).next().unwrap_or_default();
@@ -5505,7 +5606,7 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
         }
         // Home behind: the mark waits at an edge of the screen. Then, at the real hiding
         // distance, two blocks from home it is gone.
-        4 => {
+        5 => {
             let edge = world.query::<&crate::hud::home::HomeMark>().iter(world).find_map(|m| m.edge);
             if edge.is_some() {
                 gate.check("home: behind", Ok(format!("turned away from home, the mark waited at the {} edge", if edge == Some(-1.0) { "left" } else { "right" })));
@@ -5519,7 +5620,7 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
                 leave(world, gate);
             }
         }
-        5 => {
+        6 => {
             let shown = world.query_filtered::<&Visibility, With<crate::hud::home::HomeMark>>().iter(world).any(|v| *v != Visibility::Hidden);
             if !shown {
                 let within = world.resource::<crate::hud::inventory::InterfaceStyle>().home_hidden_within;
@@ -5536,7 +5637,7 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
             }
         }
         // The barrel opened, the planks shift clicked into it.
-        6 => {
+        7 => {
             let planks = world.resource::<ClientWorld>().registry.id("base:oak_planks");
             let player = world.resource::<LocalPlayer>();
             let stored: u32 = player.inventory.store.as_ref().map_or(0, |s| s.slots.iter().flatten().filter(|x| Some(x.item) == planks).map(|x| x.count as u32).sum());
@@ -5573,7 +5674,7 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
             }
         }
         // Lay pressed: the table's planks come out of the barrel into the grid.
-        7 => {
+        8 => {
             let button = world.query::<(Entity, &crate::hud::recipes::LayButton, &InheritedVisibility)>().iter(world).find(|(_, lay, visible)| visible.get() && world.resource::<ClientWorld>().registry.id("base:crafting_table") == Some(lay.output)).map(|(entity, ..)| entity);
             if let Some(button) = button {
                 // The table's recipe drawn, with its Lay button, before it is pressed.
