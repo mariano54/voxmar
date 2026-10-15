@@ -29,6 +29,12 @@ wooden door) or `shelter:fine` (the chimney pieces); the home's wall scan reads 
 recipes start from worked materials (sticks, twine, hide, fired clay, bricks, beams), never
 from blocks straight out of the ground; daub also takes clay, smoothed onto a wattle panel.
 
+Cut stone keeps its stone's tags (a cobblestone slab is `stone`) but never stands in for a
+whole block: a recipe's or a multiblock's `tag:` cell that whole blocks answer takes no piece
+(`BlockRegistry::answers_whole`; the hearth's ring of stone takes no slabs, headstones or columns), since three
+blocks cut into six would count double. A tag only pieces carry (`tag:beam`) takes them.
+Cobblestone pieces are not `cobbled` (sling ammo, cobble recipes).
+
 Timber comes in the furniture's three woods (birch, oak, dark oak), its greyscale drawings
 tinted the wood's colour (`blocks_building.ron` family lines). Thatch is the first roof:
 fibre is wheat or grass twine, so it is there from the first days.

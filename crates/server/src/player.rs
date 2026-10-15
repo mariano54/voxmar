@@ -886,19 +886,19 @@ impl Server {
         let half = dims::WIDTH / 2.0 - m;
         let tight = Aabb { min: feet - Vec3::new(half, -m, half), max: feet + Vec3::new(half, dims::HEIGHT - m, half) };
         // Near a shape every block is judged by the margin: a whole block's share and a
-        // shape's margin together would leave a gap narrower than the player open.
-        let near_shape = {
-            let full = Aabb::standing(feet, dims::WIDTH, dims::HEIGHT);
-            let (lo, hi) = (full.min.floor().as_ivec3(), full.max.floor().as_ivec3());
-            (lo.x..=hi.x).any(|x| (lo.y..=hi.y).any(|y| (lo.z..=hi.z).any(|z| {
-                let boxes = self.boxes(voxmar_engine::glam::IVec3::new(x, y, z));
-                !boxes.is_empty() && boxes != CUBE
-            })))
-        };
+        // shape's margin together would leave a gap narrower than the player open. Near is
+        // a shape in a cell the margin box itself reaches into, past rounding: a shape can
+        // only come or go in a cell the player's own box at most touches (one placed is
+        // refused in a cell they are in), and the share box sits inside the margin box, so
+        // which box judges a spot never flips it from clear to inside.
+        let near_shape = tight.intersects(|cell| {
+            let boxes = self.boxes(cell);
+            !boxes.is_empty() && boxes != CUBE
+        });
         if near_shape {
             tight.overlaps(|cell| self.boxes(cell))
         } else {
-            Aabb::standing(feet, dims::WIDTH * width, dims::HEIGHT * height).overlaps(|cell| self.boxes(cell))
+            Aabb::standing(feet + Vec3::Y * m, dims::WIDTH * width, dims::HEIGHT * height).overlaps(|cell| self.boxes(cell))
         }
     }
 
