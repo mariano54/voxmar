@@ -609,6 +609,10 @@ struct Gate {
     /// Raw small game carried, slots and pouch, as the dry step hangs the rack, so its
     /// readout can count what hung.
     rack_rabbits: u32,
+    /// When the dry step last cleared the raw small game carried (server seconds), and the
+    /// first raw small game seen picked up once it gave its own.
+    dry_cleared: f32,
+    dry_pickup: Option<String>,
     /// The creature the combat-marks step tells its blows at, when (game time) it last told
     /// them, and how many runs it has told.
     marked: Option<u32>,
@@ -867,6 +871,8 @@ impl Gate {
             chimney_since: None,
             pot_ground: None,
             rack_rabbits: 0,
+            dry_cleared: 0.0,
+            dry_pickup: None,
             marked: None,
             marked_at: 0.0,
             marked_tries: 0,
@@ -12286,6 +12292,42 @@ const MEAT_SHOWS: f32 = 0.08;
 
 /// Raw small game the dry step gives to hang on the rack.
 const RACK_GIVEN: u32 = 2;
+/// How near the player's middle raw small game lying about keeps the dry step from giving
+/// its own: where it is drawn in.
+const DRY_NEAR: f32 = voxmar_engine::dropped::MAGNET;
+
+/// The raw small game lying within `within` blocks of the player's middle: where each is,
+/// and how far.
+fn raw_lying_near(world: &World, within: f32) -> Vec<String> {
+    let (player, client, drops) = (world.resource::<LocalPlayer>(), world.resource::<ClientWorld>(), world.resource::<crate::drops::Drops>());
+    let middle = player.position + Vec3::Y * voxmar_engine::physics::player::HEIGHT / 2.0;
+    let raw = client.registry.id("base:raw_small_game");
+    drops
+        .lying()
+        .filter(|(_, stack, at)| Some(stack.item) == raw && (*at + Vec3::Y * voxmar_engine::dropped::SIZE / 2.0).distance(middle) <= within)
+        .map(|(id, stack, at)| format!("{} lying at ({:.2}, {:.2}, {:.2}) (drop {id}), {:.2} blocks off", stack.count, at.x, at.y, at.z, (at + Vec3::Y * voxmar_engine::dropped::SIZE / 2.0).distance(middle)))
+        .collect()
+}
+
+/// Notes the first raw small game seen picked up once the dry step gave its own.
+fn dry_watch_pickups(world: &World, gate: &mut Gate) {
+    if gate.dry_pickup.is_some() {
+        return;
+    }
+    let (client, drops) = (world.resource::<ClientWorld>(), world.resource::<crate::drops::Drops>());
+    let raw = client.registry.id("base:raw_small_game");
+    gate.dry_pickup = drops.picked_up().find(|(_, stack, _)| Some(stack.item) == raw).map(|(id, stack, from)| format!("{} picked up from ({:.2}, {:.2}, {:.2}) (drop {id})", stack.count, from.x, from.y, from.z));
+}
+
+/// Why the dry step carries more raw small game than it gave: where the rest came from, as
+/// far as the client saw.
+fn dry_extra(world: &World, gate: &Gate, carried: u32) -> String {
+    let player = world.resource::<LocalPlayer>().position;
+    let from = gate.dry_pickup.clone().unwrap_or_else(|| "none seen picked up".into());
+    let near = raw_lying_near(world, DRY_NEAR);
+    let near = if near.is_empty() { String::new() } else { format!("; still within {DRY_NEAR} blocks {}", near.join(", ")) };
+    format!("{carried} raw small game carried after giving {RACK_GIVEN}: {from}, the player at ({:.2}, {:.2}, {:.2}){near}", player.x, player.y, player.z)
+}
 
 /// A drying rack by the campfire, seen from three blocks at eye height (shot `rack_bare`
 /// once the renderer has it), raw rabbit selected: right clicks on it hang the rabbit
@@ -12306,28 +12348,42 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
             // None of what earlier steps left: the step hangs only what it gives.
             net.command("clear raw_small_game");
             net.command(&format!("tp {} {} {}", rack.x as f32 + 0.5, rack.y, rack.z as f32 - 2.5));
-            gate.rack_rabbits = 0;
+            (gate.rack_rabbits, gate.dry_cleared, gate.dry_pickup) = (0, gate.server_now, None);
             gate.advance(now);
         }
         1 => {
             aim_at(world, rack.as_vec3() + RACK_MEAT);
-            // Given once the pack is seen cleared, so what is carried is what was given.
+            let carried = carried_of(world, "base:raw_small_game");
+            let there = world.resource::<LocalPlayer>().position.distance(Vec3::new(rack.x as f32 + 0.5, rack.y as f32, rack.z as f32 - 2.5)) < 0.5;
+            // Given once the player stands by the rack, the pack is seen cleared and no raw
+            // small game lies near enough to be drawn in (what the cook step's hearth let
+            // fall, say): any that does is let come and cleared again, so what is carried is
+            // what was given.
             if gate.rack_rabbits == 0 {
-                if carried_of(world, "base:raw_small_game") == 0 {
+                let near = raw_lying_near(world, DRY_NEAR);
+                if there && carried == 0 && near.is_empty() {
                     world.resource::<Net>().command(&format!("give raw_small_game {RACK_GIVEN}"));
                     gate.rack_rabbits = RACK_GIVEN;
                 } else if waited {
-                    gate.check("drying rack", Err(format!("the raw small game carried was never cleared in {DRY_WAIT} server seconds")));
+                    let near = if near.is_empty() { String::new() } else { format!("; within {DRY_NEAR} blocks {}", near.join(", ")) };
+                    gate.check("drying rack", Err(format!("the raw small game about the rack never cleared in {DRY_WAIT} server seconds: {carried} carried{near}")));
                     gate.next(Step::Snare, now);
+                } else if carried > 0 && gate.server_now - gate.dry_cleared >= 1.0 {
+                    world.resource::<Net>().command("clear raw_small_game");
+                    gate.dry_cleared = gate.server_now;
                 }
+                return;
+            }
+            dry_watch_pickups(world, gate);
+            if carried > RACK_GIVEN {
+                gate.check("drying rack", Err(dry_extra(world, gate, carried)));
+                gate.next(Step::Snare, now);
                 return;
             }
             let client = world.resource::<ClientWorld>();
             let stood = client.registry.id("base:drying_rack").is_some_and(|r| client.block(rack) == Some(r));
-            let there = world.resource::<LocalPlayer>().position.distance(Vec3::new(rack.x as f32 + 0.5, rack.y as f32, rack.z as f32 - 2.5)) < 0.5;
-            let given = carried_of(world, "base:raw_small_game") >= gate.rack_rabbits;
+            let given = carried == RACK_GIVEN;
             if stood && there && given && drawn(world, rack) && gate.shot(world, "rack_bare").is_some() && select(world, "base:raw_small_game") {
-                gate.rack_rabbits = carried_of(world, "base:raw_small_game");
                 gate.advance(now);
             } else if waited {
                 gate.check("drying rack", Err(format!("the rack ({stood}) or the {RACK_GIVEN} raw small game given ({given}) never came in {DRY_WAIT} server seconds")));
@@ -12336,9 +12392,15 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
         }
         2 => {
             aim_at(world, rack.as_vec3() + RACK_MEAT);
+            dry_watch_pickups(world, gate);
+            let carried = carried_of(world, "base:raw_small_game");
             let client = world.resource::<ClientWorld>();
             let hung = client.registry.id("base:drying_rack_hung").is_some_and(|h| client.block(rack) == Some(h));
-            if hung {
+            if !hung && carried > RACK_GIVEN {
+                mouse(world, MouseButton::Right, false);
+                gate.check("drying rack", Err(dry_extra(world, gate, carried)));
+                gate.next(Step::Snare, now);
+            } else if hung {
                 mouse(world, MouseButton::Right, false);
                 gate.advance(now);
             } else if gate.waited_out(DRY_WAIT) {
