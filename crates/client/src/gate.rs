@@ -8825,6 +8825,15 @@ struct FeelRun {
     frame_at: Option<(Instant, Option<std::time::Duration>)>,
     last_frame: (f32, f32),
     longest: (f32, f32),
+    /// Staggers the client had shown (`Creatures::stagger_reads`) when this wind-up showed;
+    /// once the perfect block has staggered the bear, the server's and the game's clocks then
+    /// and which bear it was, until its stagger is judged (`judge_stagger`), and whether it
+    /// has been.
+    stagger_from: usize,
+    stagger_due: Option<(f32, f32, u32)>,
+    stagger_judged: bool,
+    /// Frames drawn since the perfect block staggered it, while its stagger is judged.
+    stagger_frames: u32,
 }
 
 impl FeelRun {
@@ -8931,7 +8940,7 @@ impl FeelRun {
 fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     use voxmar_engine::combat::{Blow, Defended};
     use voxmar_engine::creature::brain::Pose;
-    let (species, windup, perfect, dodge) = {
+    let (species, windup, perfect, dodge, hold) = {
         let content = &world.resource::<Launch>().content;
         let Some(species) = content.creatures.find(BEAR) else {
             gate.check("perfect block", Err(format!("no `{BEAR}` in the content")));
@@ -8950,9 +8959,15 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             return;
         };
         let safe = combat.dodge_of(&[]).safe;
-        (species, windup, perfect, ((safe.0 + safe.1) / 2.0, (safe.1 - safe.0) / 2.0))
+        // How long the server holds the bear after a perfect block: its recovery, then the
+        // stagger (`fight::creature_blow`).
+        let def = &content.creatures.get(species).def;
+        let recovery = def.attack.and_then(|a| a.recovery).unwrap_or(combat.feel.creature_recovery);
+        let hold = recovery + if def.boss { combat.feel.boss_stagger } else { combat.feel.stagger };
+        (species, windup, perfect, ((safe.0 + safe.1) / 2.0, (safe.1 - safe.0) / 2.0), hold)
     };
     let view = the_bear(world, gate, species);
+    judge_stagger(world, gate, view, hold, now);
     let dodge_key = world.resource::<Settings>().dodge_key.0;
     let pad = gate.feet + IVec3::new(0, 0, 14);
     let summon = |world: &mut World| world.resource::<Net>().command(&format!("summon {} 1 {} {} {}", BEAR.trim_start_matches("base:"), pad.x, pad.y, pad.z + 1));
@@ -9061,6 +9076,9 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 let half = std::time::Duration::from_secs_f32(world.resource::<Time>().delta_secs() / 2.0);
                 gate.feel.seen = gate.feel.seen.map(|seen| seen.checked_sub(half).unwrap_or(seen));
                 gate.feel.held = false;
+                if gate.feel.stagger_due.is_none() {
+                    gate.feel.stagger_from = world.resource::<crate::creatures::Creatures>().stagger_reads.len();
+                }
                 info!("gate: combat wind-up seen phase {} try {} bear {}, frame {:.3}s, server {:.2}s", gate.phase, gate.feel.tries + 1, view.id, world.resource::<Time>().delta_secs(), gate.server_now);
                 if !gate.feel.facing_checked {
                     let target = gate.observer.as_ref().and_then(|o| o.others.values().next().copied()).unwrap_or(world.resource::<LocalPlayer>().position);
@@ -9170,6 +9188,11 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     gate.check(if blocking { "perfect block" } else { "dodge" }, result);
                 }
                 gate.feel.struck = world.resource::<crate::fight::Fighting>().struck_count;
+                // The perfect block staggers the bear on the server: how that shows is judged
+                // from here on (`judge_stagger`).
+                if blocking && !gate.feel.stagger_judged && gate.feel.stagger_due.is_none() {
+                    (gate.feel.stagger_due, gate.feel.stagger_frames) = (Some((gate.server_now, now, view.id)), 0);
+                }
                 if blocking {
                     gate.feel.found = Some(gate.feel.after);
                     gate.advance(now);
@@ -9280,6 +9303,59 @@ fn slow_try(gate: &mut Gate, late: f32, blocking: bool, windup: f32, perfect: f3
     }
 }
 
+/// The share of its stagger stance a stagger must show to have shown it whole: all of it, but
+/// for rounding (`fight_fx::stagger_depth` reaches 1 once it has reeled `stagger.ease`
+/// seconds of game time).
+const STAGGER_SHOWN: f32 = 0.999;
+/// The least frames drawn after the perfect block before a stagger that never showed is
+/// judged.
+const STAGGER_FRAMES: u32 = 10;
+
+/// The bear the perfect block staggered (`FeelRun::stagger_due`), judged each frame of the
+/// step until it is: shown staggered (`STAGGERED` reached the client) and its stagger
+/// stance shown whole, which it is once it has reeled `stagger.ease` seconds of game time
+/// however the frames fell; a shot of it then, still reeling. Its blow, parried, may show
+/// before it reels (only a daze, cutting a wind-up short, must show none: the client's
+/// tests judge that). Failed when the stagger ended without its stance shown whole, or was
+/// never drawn reeling at all, or when none showed: the last two once the `hold` the server
+/// holds it and `UNANSWERED` seconds more have passed by the server's clock and the game's
+/// both, and `STAGGER_FRAMES` frames have been drawn (a game starved of frames sees it late).
+fn judge_stagger(world: &mut World, gate: &mut Gate, view: Option<voxmar_protocol::CreatureView>, hold: f32, now: f32) {
+    let Some((since, since_game, bear)) = gate.feel.stagger_due else { return };
+    let creatures = world.resource::<crate::creatures::Creatures>();
+    let read = creatures.stagger_reads.iter().skip(gate.feel.stagger_from).find(|r| r.id == bear).copied();
+    let seen = creatures.staggers_seen;
+    let reeling = view.is_some_and(|v| v.id == bear && v.tell == voxmar_protocol::STAGGERED);
+    let waited = gate.server_now - since;
+    gate.feel.stagger_frames += 1;
+    let frames = gate.feel.stagger_frames;
+    let given_up = waited > hold + UNANSWERED && now - since_game > hold + UNANSWERED && frames >= STAGGER_FRAMES;
+    let clocks = format!("{waited:.2} server s and {:.2} game s after the perfect block, {frames} frames drawn", now - since_game);
+    match read {
+        Some(read) if read.deepest >= STAGGER_SHOWN => {
+            if reeling {
+                gate.shot(world, "creature-stagger");
+            }
+            let blow = if read.struck { "after its parried blow" } else { "its blow not shown" };
+            let late = if reeling { "" } else { ", too late for a shot" };
+            gate.check("combat feel: stagger", Ok(format!("the bear was shown staggered {waited:.2} server s after the perfect block, {blow}, its stagger stance shown whole ({:.3}){late}", read.deepest)));
+        }
+        // Never drawn reeling: the player never saw it. Judged once the clocks and the
+        // frames have run, so a starved game that has yet to draw it is not failed early.
+        Some(read) if !reeling && read.frames == 0 => {
+            if !given_up {
+                return;
+            }
+            let interrupted = read.interrupted.map_or("in no wind-up".to_owned(), |m| if m == 0 { "in its plain attack".to_owned() } else { format!("in its move {m}") });
+            gate.check("combat feel: stagger", Err(format!("the bear's stagger ({interrupted}) was never drawn reeling: 0 of {frames} frames, {clocks}")));
+        }
+        Some(read) if !reeling => gate.check("combat feel: stagger", Err(format!("its stagger ended with its stance shown {:.2} of the way at most over {} frames", read.deepest, read.frames))),
+        None if given_up => gate.check("combat feel: stagger", Err(format!("the bear was never shown staggered, {clocks} (the server holds it {hold:.1} s); {seen} staggers seen in all"))),
+        _ => return,
+    }
+    (gate.feel.stagger_due, gate.feel.stagger_judged) = (None, true);
+}
+
 /// After the block and counter, passed or not: on to the dodge (phase 4) with its own tries.
 fn to_dodge(gate: &mut Gate, windup: f32, perfect: f32, now: f32) {
     gate.feel.tries = 0;
@@ -9328,6 +9404,9 @@ fn clear_feel(gate: &mut Gate, now: f32) {
 /// Back to survival at the first levels with the hands free, on the test ground, for the
 /// steps after.
 fn end_feel(world: &mut World, gate: &mut Gate, now: f32) {
+    if let Some((since, _, _)) = gate.feel.stagger_due.take() {
+        gate.check("combat feel: stagger", Err(format!("the step ended {:.1} server s after the perfect block with the bear's stagger not yet shown whole", gate.server_now - since)));
+    }
     mouse(world, MouseButton::Left, false);
     mouse(world, MouseButton::Right, false);
     key(world, KeyCode::KeyW, false);
@@ -9439,7 +9518,8 @@ fn boss(world: &mut World, gate: &mut Gate, now: f32) {
                 }
                 gate.settled = 2;
             }
-            let told = view.filter(|v| v.tell != 0 && v.tell != voxmar_protocol::REARING);
+            // A move's tell: neither rearing into a phase nor staggered is one.
+            let told = view.filter(|v| v.tell != 0 && v.tell != voxmar_protocol::REARING && v.tell != voxmar_protocol::STAGGERED);
             if let Some(view) = told {
                 let content = &world.resource::<Launch>().content;
                 let name = content.creatures.get(species).def.moves.get(view.tell as usize - 1).map_or("?", |m| m.name.as_str());
