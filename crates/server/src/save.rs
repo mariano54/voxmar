@@ -156,6 +156,9 @@ pub struct WorldMeta {
 pub const ROLL_PRODUCT: u64 = 0x9a0d;
 pub const ROLL_LITTER: u64 = 0x1177;
 pub const ROLL_YOUNG: u64 = 0x7a46;
+pub const ROLL_GRAZE: u64 = 0x6a2e;
+pub const ROLL_SUMMON: u64 = 0x5c3d;
+pub const ROLL_WANDER: u64 = 0x3a9e;
 
 /// The key the world's popped drops scatter by, made from its draw key: where a drop lands
 /// and how it flies are seen by every client, and the draw key must not be read back from
@@ -184,7 +187,8 @@ fn normal_speed() -> f32 {
 }
 
 impl WorldMeta {
-    /// The next of the world's loot rolls (a kill's), counted.
+    /// The next of the world's loot rolls (a kill nobody made, or by a player not here),
+    /// counted.
     pub fn next_loot(&mut self) -> f32 {
         use voxmar_engine::creature::{mix, unit_from};
         self.loot += 1;
@@ -292,6 +296,10 @@ pub struct Draws {
     pub rewards: u64,
     /// Captives freed, for whether one follows its freer.
     pub frees: u64,
+    /// Kills made, each draw of the kill's loot roll.
+    pub kills: u64,
+    /// Wanderers' greetings heard, for which of their greetings is said.
+    pub greets: u64,
 }
 
 /// A kind of roll a player's draws number (`Draws`).
@@ -312,6 +320,8 @@ pub enum Draw {
     Wake,
     Reward,
     Free,
+    Kill,
+    Greet,
 }
 
 impl Draw {
@@ -333,6 +343,8 @@ impl Draw {
             Draw::Wake => 0xa4e1,
             Draw::Reward => 0x7e3a,
             Draw::Free => 0xf4ee,
+            Draw::Kill => 0xb10d,
+            Draw::Greet => 0x6e37,
         }
     }
 }
@@ -356,6 +368,8 @@ impl Draws {
             Draw::Wake => &mut self.wakes,
             Draw::Reward => &mut self.rewards,
             Draw::Free => &mut self.frees,
+            Draw::Kill => &mut self.kills,
+            Draw::Greet => &mut self.greets,
         };
         let draws = numbered_draws(key, kind.salt(), *count);
         *count += 1;
@@ -1371,7 +1385,7 @@ mod tests {
             tallies: vec![("crafted:base:torch".into(), 8)],
             prayer_points: Some(7.5),
             casts: 12,
-            draws: Draws { strikes: 31, blows: 9, feeds: 4, cooks: 17, recovers: 5, flourishes: 2, mines: 40, yields: 3, forages: 6, harvests: 11, locks: 1, catches: 8, wakes: 2, rewards: 7, frees: 3 },
+            draws: Draws { strikes: 31, blows: 9, feeds: 4, cooks: 17, recovers: 5, flourishes: 2, mines: 40, yields: 3, forages: 6, harvests: 11, locks: 1, catches: 8, wakes: 2, rewards: 7, frees: 3, kills: 12, greets: 4 },
         };
         for name in ["steve", "Steve", "a/b", "../x", "ünï cödé"] {
             save.write_player(name, &player, &registry).unwrap();
@@ -1429,6 +1443,37 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// A player saved before kills and greetings were counted loads with both at none and
+    /// every other count kept, and the next save writes them.
+    #[test]
+    fn a_save_without_kill_or_greeting_counts_loads_them_at_none() {
+        let dir = temp_dir("draws-before-kills");
+        let save = WorldSave::new(&dir);
+        let registry = registry(false);
+        let draws = Draws { strikes: 31, mines: 40, frees: 3, kills: 12, greets: 4, ..Draws::default() };
+        let player = SavedPlayer { position: Vec3::new(1.5, 80.0, -20.25), yaw: 1.25, mode: None, flying: false, health: Health { current: 13, max: 20 }, inventory: Inventory::default(), skills: Vec::new(), effects: Vec::new(), home: None, bed: None, kindled: false, journal: Vec::new(), quests: Vec::new(), quests_claimed: Vec::new(), tallies: Vec::new(), prayer_points: None, casts: 0, draws };
+        save.write_player("ada", &player, &registry).unwrap();
+        let file = dir.join("players/ada.ron");
+        let mut text = std::fs::read_to_string(&file).unwrap();
+        // The file as an older build wrote it: no `kills` or `greets` among the draws.
+        for key in ["kills", "greets"] {
+            // ` kills:`, not the end of `skills:`.
+            let at = 1 + text.find(&format!(" {key}:")).unwrap_or_else(|| panic!("no `{key}` in {text}"));
+            let end = at + text[at..].find([',', ')']).unwrap();
+            let start = text[..at].trim_end().strip_suffix(',').map_or(at, |before| before.len());
+            text.replace_range(start..end, "");
+        }
+        assert!(!text.contains(" kills:") && !text.contains(" greets:") && text.contains(" frees:"), "{text}");
+        std::fs::write(&file, &text).unwrap();
+        let old = save.read_player("ada", &registry).unwrap().expect("loads");
+        assert_eq!(old.draws, Draws { kills: 0, greets: 0, ..draws }, "the other counts kept, the new ones at none");
+        save.write_player("ada", &SavedPlayer { draws: Draws { kills: 1, greets: 2, ..old.draws }, ..old }, &registry).unwrap();
+        let again = std::fs::read_to_string(&file).unwrap();
+        assert!(again.contains(" kills:") && again.contains(" greets:"), "the next save writes both: {again}");
+        assert_eq!(save.read_player("ada", &registry).unwrap().unwrap().draws, Draws { kills: 1, greets: 2, ..draws });
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     /// Each kind of roll counts on by itself, and a count's draws are its own: another
     /// count, kind or player's key draws otherwise.
     #[test]
@@ -1440,9 +1485,9 @@ mod tests {
         assert_eq!(draws.next(ada, Draw::Strike), numbered_draws(ada, Draw::Strike.salt(), 1));
         draws.next(ada, Draw::Cook);
         assert_eq!(draws, Draws { strikes: 2, cooks: 1, ..Draws::default() });
-        let kinds = [Draw::Strike, Draw::Blow, Draw::Feed, Draw::Cook, Draw::Recover, Draw::Flourish, Draw::Mine, Draw::Yield, Draw::Forage, Draw::Harvest, Draw::Lock, Draw::Catch, Draw::Wake, Draw::Reward, Draw::Free];
+        let kinds = [Draw::Strike, Draw::Blow, Draw::Feed, Draw::Cook, Draw::Recover, Draw::Flourish, Draw::Mine, Draw::Yield, Draw::Forage, Draw::Harvest, Draw::Lock, Draw::Catch, Draw::Wake, Draw::Reward, Draw::Free, Draw::Kill, Draw::Greet];
         // Every kind's salt, the world's kinds of roll and its loot rolls' are told apart.
-        let salts: Vec<u64> = kinds.iter().map(|k| k.salt()).chain([ROLL_PRODUCT, ROLL_LITTER, ROLL_YOUNG, 0x1007]).collect();
+        let salts: Vec<u64> = kinds.iter().map(|k| k.salt()).chain([ROLL_PRODUCT, ROLL_LITTER, ROLL_YOUNG, ROLL_GRAZE, ROLL_SUMMON, ROLL_WANDER, 0x1007]).collect();
         let unique: std::collections::BTreeSet<_> = salts.iter().collect();
         assert_eq!(unique.len(), salts.len(), "two kinds of roll share a salt: {salts:x?}");
         let others: Vec<_> = kinds.iter().skip(1).map(|k| numbered_draws(ada, k.salt(), 0)).chain([numbered_draws(ada, Draw::Strike.salt(), 1), numbered_draws(bea, Draw::Strike.salt(), 0)]).collect();
