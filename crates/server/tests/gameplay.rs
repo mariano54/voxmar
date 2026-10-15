@@ -3387,10 +3387,59 @@ fn leaving_dead_leaves_their_things_behind_too() {
 }
 
 /// The spawn kit's loose flint the client sees within twelve blocks of where it stands.
+/// The loose flint within the kit's reach of the spawn (six blocks), where the land alone
+/// seldom has four.
 fn kit_flint(c: &Client) -> Vec<IVec3> {
-    let flint = c.content.blocks.id("base:loose_flint");
+    kit_pieces(c, 6, "base:loose_flint")
+}
+
+/// The cells of `piece` within `reach` blocks across of the player's feet.
+fn kit_pieces(c: &Client, reach: i32, piece: &str) -> Vec<IVec3> {
+    let piece = c.content.blocks.id(piece);
     let feet = c.position.floor().as_ivec3();
-    (-12..=12).flat_map(|dx| (-12..=12).flat_map(move |dz| (-32..=8).map(move |dy| feet + IVec3::new(dx, dy, dz)))).filter(|&p| c.world.block(p) == flint).collect()
+    (-reach..=reach).flat_map(|dx| (-reach..=reach).flat_map(move |dz| (-32..=8).map(move |dy| feet + IVec3::new(dx, dy, dz)))).filter(|&p| c.world.block(p) == piece).collect()
+}
+
+/// An older save whose player built over the spawn (set down by command, so nothing marks it
+/// placed: a dirt floor, a plank roof four up on the east, and a hall's roof eighteen up on the
+/// west, above where the kit looks for ground) gets its kit outside the build, never in it.
+#[test]
+fn the_spawn_kit_keeps_out_of_a_players_build() {
+    let dir = world_dir("spawn-kit-build");
+    let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
+    let joined = || {
+        let mut c = Client::join_with(config());
+        let feet = c.position.floor().as_ivec3();
+        c.pump_until(|c| (-1..=1).all(|dx| (-1..=1).all(|dz| c.world.block(feet + IVec3::new(dx * 12, 0, dz * 12)).is_some())));
+        c
+    };
+    let mut client = joined();
+    // Cleared of the kit a new world gets, then built over: everything within eight across.
+    for piece in ["base:loose_flint", "base:dead_log"] {
+        for p in kit_pieces(&client, 12, piece) {
+            client.ok(&format!("/setblock {} {} {} air", p.x, p.y, p.z));
+        }
+    }
+    let feet = client.position.floor().as_ivec3();
+    let (lo, hi) = (feet - IVec3::new(8, 0, 8), feet + IVec3::new(8, 0, 8));
+    client.ok(&format!("/fill {} {} {} {} {} {} oak_planks", feet.x, feet.y + 4, lo.z, hi.x, feet.y + 4, hi.z));
+    client.ok(&format!("/fill {} {} {} {} {} {} oak_planks", lo.x, feet.y + 18, lo.z, feet.x - 1, feet.y + 18, hi.z));
+    client.ok(&format!("/fill {} {} {} {} {} {} dirt", lo.x - 1, feet.y - 1, lo.z - 1, hi.x + 1, feet.y - 1, hi.z + 1));
+    let planks = client.content.blocks.id("base:oak_planks");
+    client.pump_until(|c| c.world.block(hi + IVec3::Y * 4) == planks && c.world.block(lo + IVec3::Y * 18) == planks && kit_pieces(c, 12, "base:loose_flint").is_empty());
+    drop(client);
+    let file = dir.join("world.ron");
+    let text = std::fs::read_to_string(&file).unwrap();
+    std::fs::write(&file, text.lines().filter(|line| !line.contains("spawn_kit")).collect::<Vec<_>>().join("\n")).unwrap();
+    let client = joined();
+    let inside = |p: &IVec3| (lo.x..=hi.x).contains(&p.x) && (lo.z..=hi.z).contains(&p.z) && p.y < feet.y + if p.x < feet.x { 18 } else { 4 };
+    for piece in ["base:loose_flint", "base:dead_log"] {
+        let under: Vec<IVec3> = kit_pieces(&client, 8, piece).into_iter().filter(inside).collect();
+        assert!(under.is_empty(), "{piece} laid inside the build: {under:?}");
+    }
+    assert!(!kit_pieces(&client, 12, "base:loose_flint").is_empty(), "the kit went nowhere");
+    drop(client);
+    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]

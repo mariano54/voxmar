@@ -12,6 +12,10 @@ use voxmar_engine::creature::mix;
 use voxmar_engine::glam::{IVec3, Vec3};
 use voxmar_engine::world::VoxelWorld;
 
+/// How far above a spot the kit looks for a block a player placed: a roof, a floor above, a
+/// wall top. Higher than any room, low enough to stay a few lookups a column.
+const ROOF: i32 = 24;
+
 pub const FILE: &str = "spawn_kit.ron";
 
 #[derive(Deserialize)]
@@ -81,38 +85,32 @@ impl SpawnKit {
     }
 
     /// Where the kit goes by `spawn` (the player's feet) in `world`, whose `columns` must be
-    /// loaded: each piece's cells, from the world's `seed`. A spot is natural ground (opaque,
-    /// under any canopy of leaves) no player placed (`placed`), with room above for the piece
-    /// (air, or meadow grass it lies over); the band `near` first, in an order drawn from
-    /// the seed, then nearest first out to the columns' edges, so a small islet still takes
-    /// it. Pieces that find no spot are left out.
-    pub fn plan(&self, world: &VoxelWorld, registry: &BlockRegistry, spawn: Vec3, seed: u64, placed: impl Fn(IVec3) -> bool) -> Vec<(IVec3, BlockId)> {
+    /// loaded: each piece's cells, from the world's `seed`. A spot is the first solid block
+    /// down from a little over the feet, natural and opaque, that no player `touched` (placed,
+    /// or changed from what the land was made with), with nothing touched above it either (an
+    /// older save's house on unbuilt ground keeps its rooms clear), and room for
+    /// the piece's own height (air, or meadow grass it lies over); the band `near` first, in an
+    /// order drawn from the seed, then nearest first out to the columns' edges, so a small
+    /// islet still takes it. Each piece takes the next spots tall enough for it; pieces that
+    /// find none are left out.
+    pub fn plan(&self, world: &VoxelWorld, registry: &BlockRegistry, spawn: Vec3, seed: u64, touched: impl Fn(IVec3) -> bool) -> Vec<(IVec3, BlockId)> {
         let feet = spawn.floor().as_ivec3();
         let tallest = self.pieces.iter().map(|p| p.3).max().unwrap_or(1) as i32;
         let def = |p: IVec3| world.block(p).map(|b| (b, registry.def(b), registry.info(b)));
         // Room for a piece: air, or a low meadow plant (never one two high).
-        let room = |p: IVec3| def(p).is_some_and(|(b, d, i)| b.is_air() || !i.solid && d.has_tag("grass") && !d.has_tag("tall") && !placed(p));
-        let spot = |x: i32, z: i32| -> Option<IVec3> {
-            // Down from a little above the feet, past any canopy (a spawn may stand on one),
-            // to the ground.
-            let mut y = feet.y + 8;
-            let top = loop {
-                if y < feet.y - 32 {
-                    return None;
-                }
-                let p = IVec3::new(x, y, z);
-                let (_, d, i) = def(p)?;
-                if i.solid && !["leaves", "log", "wood"].iter().any(|t| d.has_tag(t)) {
-                    break p;
-                }
-                y -= 1;
-            };
+        let room = |p: IVec3| def(p).is_some_and(|(b, d, i)| b.is_air() || !i.solid && d.has_tag("grass") && !d.has_tag("tall") && !touched(p));
+        let spot = |x: i32, z: i32| -> Option<(IVec3, u8)> {
+            // Down from a little above the feet to the first solid block: under a canopy,
+            // a roof or a floor that is the leaves or the build, never a spot.
+            let top = (feet.y - 32..=feet.y + 8).rev().map(|y| IVec3::new(x, y, z)).find(|&p| def(p).is_some_and(|(_, _, i)| i.solid))?;
             let (_, ground, info) = def(top)?;
-            let firm = info.render == RenderKind::Opaque && ground.has_tag("natural") && !placed(top);
-            (firm && (1..=tallest).all(|dy| room(top + IVec3::Y * dy))).then_some(top + IVec3::Y)
+            let firm = info.render == RenderKind::Opaque && ground.has_tag("natural") && !touched(top);
+            let built_over = (1..=ROOF).any(|dy| touched(top + IVec3::Y * dy));
+            let free = (1..=tallest).take_while(|&dy| room(top + IVec3::Y * dy)).count() as u8;
+            (firm && !built_over && free > 0).then_some((top + IVec3::Y, free))
         };
         let (lo, hi) = self.near;
-        let mut spots: Vec<(bool, u64, IVec3)> = self
+        let mut spots: Vec<(bool, u64, IVec3, u8)> = self
             .columns(spawn)
             .into_iter()
             .filter(|c| world.contains(*c))
@@ -126,21 +124,35 @@ impl SpawnKit {
                 if d < lo {
                     return None;
                 }
-                let at = spot(x, z)?;
+                let (at, free) = spot(x, z)?;
                 let order = if d > hi { (d * 16.0) as u64 } else { mix(seed ^ 0x5b17, (x as u64) << 32 ^ z as u32 as u64) };
-                Some((d > hi, order, at))
+                Some((d > hi, order, at, free))
             })
             .collect();
-        spots.sort_unstable_by_key(|&(far, order, at)| (far, order, at.x, at.z));
-        let mut spots = spots.into_iter().map(|(_, _, at)| at);
+        spots.sort_unstable_by_key(|&(far, order, at, _)| (far, order, at.x, at.z));
+        let mut spots: Vec<(IVec3, u8)> = spots.into_iter().map(|(_, _, at, free)| (at, free)).collect();
         let mut laid = Vec::new();
         for (i, &(block, least, most, height)) in self.pieces.iter().enumerate() {
             let count = least + (mix(seed ^ 0x5b18, i as u64) % u64::from(most - least + 1)) as u8;
-            for at in spots.by_ref().take(count as usize) {
+            for _ in 0..count {
+                let Some(next) = spots.iter().position(|&(_, free)| free >= height) else { break };
+                let (at, _) = spots.remove(next);
                 laid.extend((0..height as i32).map(|dy| (at + IVec3::Y * dy, block)));
             }
         }
         laid
+    }
+
+    /// The pieces `laid` (from `plan`) holds fewer of than their least count: name, laid and
+    /// least, for a warning.
+    pub fn short(&self, registry: &BlockRegistry, laid: &[(IVec3, BlockId)]) -> Vec<(String, usize, u8)> {
+        self.pieces
+            .iter()
+            .filter_map(|&(block, least, _, height)| {
+                let cells = laid.iter().filter(|&&(_, b)| b == block).count() / height as usize;
+                (cells < least as usize).then(|| (registry.def(block).name.clone(), cells, least))
+            })
+            .collect()
     }
 }
 
@@ -215,6 +227,36 @@ mod tests {
     }
 
     /// The kit lays only into air on natural ground, never on what a player placed.
+    /// Where the band by the spawn is all built over, the kit still goes down: in the next
+    /// columns for a spawn on a column's corner, and past the band's far edge.
+    #[test]
+    fn the_kit_reaches_past_a_built_spawn() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        let content = voxmar_engine::content::Content::load(&dir).unwrap();
+        let world_content = voxmar_worldgen::WorldContent::load(&content).unwrap();
+        let blocks = &content.blocks;
+        let kit = SpawnKit::load(&content.files, blocks).unwrap();
+        let overworld = voxmar_worldgen::Overworld::shared(7, &content, &world_content);
+        let start = overworld.spawn_point();
+        let mut world = VoxelWorld::default();
+        let corner = ColumnPos::of_block(start).origin();
+        world.insert(ColumnPos::of_block(start), Arc::new(overworld.generate(ColumnPos::of_block(start))));
+        let ground = crate::find_ground(&world, blocks, IVec3::new(corner.x, start.y, corner.z));
+        // On the corner of its column, a quarter of the band each way.
+        let spawn = Vec3::new(corner.x as f32, ground.y, corner.z as f32);
+        for at in kit.columns(spawn) {
+            if !world.contains(at) {
+                world.insert(at, Arc::new(overworld.generate(at)));
+            }
+        }
+        let own = ColumnPos::of_block(spawn.floor().as_ivec3());
+        let next = kit.plan(&world, blocks, spawn, 7, |p| ColumnPos::of_block(p) == own);
+        assert!(kit.short(blocks, &next).is_empty() && next.iter().all(|&(p, _)| ColumnPos::of_block(p) != own), "{next:?}");
+        let across = |p: IVec3| Vec3::new(p.x as f32 + 0.5 - spawn.x, 0.0, p.z as f32 + 0.5 - spawn.z).length();
+        let far = kit.plan(&world, blocks, spawn, 7, |p| across(p) <= kit.near.1);
+        assert!(kit.short(blocks, &far).is_empty() && far.iter().all(|&(p, _)| across(p) > kit.near.1), "{far:?}");
+    }
+
     #[test]
     fn the_kit_keeps_off_placed_ground() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
@@ -238,5 +280,22 @@ mod tests {
         let kept = kit.plan(&world, blocks, spawn, 7, |p| grounds.contains(&p));
         assert!(!kept.is_empty() && kept.iter().all(|&(p, _)| !grounds.contains(&(p - IVec3::Y))), "{free:?} then {kept:?}");
         assert!(free.iter().all(|&(p, _)| world.block(p).is_some_and(|b| b.is_air() || content.blocks.def(b).has_tag("grass"))));
+        // A roof a player set over a spot (an older save's house on unbuilt ground) keeps the
+        // kit out from under it.
+        let roofs: Vec<IVec3> = grounds.iter().map(|&g| g + IVec3::Y * 6).collect();
+        let sheltered = kit.plan(&world, blocks, spawn, 7, |p| roofs.contains(&p));
+        assert!(!sheltered.is_empty() && sheltered.iter().all(|&(p, _)| !grounds.contains(&(p - IVec3::Y))), "{free:?} then {sheltered:?}");
+        // A spot with room for one block only still takes a flint, where the snag would not fit.
+        let (flint, snag) = (blocks.expect("base:loose_flint"), blocks.expect("base:dead_log"));
+        let first_flint = free.iter().find(|&&(_, b)| b == flint).map(|&(p, _)| p).unwrap();
+        let snag_bases: Vec<IVec3> = free.iter().filter(|&&(p, b)| b == snag && !free.contains(&(p - IVec3::Y, snag))).map(|&(p, _)| p).collect();
+        for &base in snag_bases.iter().chain([&first_flint]) {
+            // Tall grass: no ground, so the search goes on down past it, but no room for a piece.
+            world.set_block(base + IVec3::Y, blocks.expect("base:tall_grass"));
+        }
+        let squeezed = kit.plan(&world, blocks, spawn, 7, |_| false);
+        assert!(squeezed.contains(&(first_flint, flint)), "a one-high spot still takes its flint: {squeezed:?}");
+        assert!(snag_bases.iter().all(|&b| !squeezed.iter().any(|&(p, k)| p == b && k == snag)), "no snag under a ceiling: {squeezed:?}");
+        assert!(squeezed.iter().any(|&(_, k)| k == snag), "the snag finds another spot: {squeezed:?}");
     }
 }
