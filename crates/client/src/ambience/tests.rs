@@ -134,7 +134,7 @@ fn run(ambience: &Ambience, scene: &Scene, seconds: f32) -> (Vec<(f32, Cue)>, Ve
 fn structures_are_heard_as_fires_only_while_lit() {
     let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
     let ambience = base();
-    let kinds = super::kinds(&ambience, &content.blocks, &content.multiblocks, &voxmar_server::home_furniture(&content));
+    let kinds = super::kinds(&ambience, &content.blocks, &content.multiblocks, &voxmar_server::wall_shelters(&content));
     let fire = ambience.groups.iter().position(|g| g.name == "fire").unwrap() as u8;
     for (name, lit_only) in [("base:hearthstone", true), ("base:crucible", true), ("base:campfire", false), ("base:pit_kiln", false)] {
         let id = content.blocks.expect(name).0 as usize;
@@ -328,7 +328,7 @@ fn ambience_survey() {
     let content = voxmar_server::load_content(&assets).unwrap();
     let generator = Overworld::with_content(seed, content.blocks.clone(), &WorldContent::load(&content).unwrap());
     let ambience = Ambience::load(&content.files).unwrap();
-    let kinds = super::kinds(&ambience, &content.blocks, &content.multiblocks, &voxmar_server::home_furniture(&content));
+    let kinds = super::kinds(&ambience, &content.blocks, &content.multiblocks, &voxmar_server::wall_shelters(&content));
     let around = |x: i32, z: i32| {
         let center = ColumnPos::of_block(IVec3::new(x, 0, z));
         let mut world = VoxelWorld::default();
@@ -551,7 +551,7 @@ fn a_draughty_home_whistles_until_daubed() {
     let content = voxmar_server::load_content(&assets).unwrap();
     let blocks = &content.blocks;
     let ambience = Ambience::load(&content.files).unwrap();
-    let kinds = super::kinds(&ambience, blocks, &content.multiblocks, &voxmar_server::home_furniture(&content));
+    let kinds = super::kinds(&ambience, blocks, &content.multiblocks, &voxmar_server::wall_shelters(&content));
     let id = |name: &str| blocks.id(name).unwrap_or_else(|| panic!("{name}"));
     let group = ambience.groups.iter().position(|g| g.name == "draughty").expect("a draughty group");
     let draught = ambience.beds.iter().position(|b| b.name == "base:draught").expect("a draught bed");

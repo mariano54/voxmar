@@ -728,17 +728,11 @@ impl Ambience {
     }
 
     /// Each block's wall group, by block id, for the enclosure scan: the first group
-    /// selecting by `shelter` whose shelter the block has as a wall (`furniture`: the tags
-    /// of blocks looked past, survival.ron's `home_furniture`). Apart from its own group, so
-    /// earth is both the ground a meadow sounds from and a draughty wall.
-    pub fn wall_groups(&self, registry: &BlockRegistry, furniture: &[String]) -> Vec<Option<u8>> {
-        (0..registry.len())
-            .map(|id| {
-                let id = voxmar_engine::block::BlockId(id as u16);
-                let wall = voxmar_engine::effect::Shelter::of_wall(&registry.def(id).tags, registry.info(id).solid, furniture);
-                self.selectors.iter().position(|selector| selector.3.is_some() && selector.3 == wall).map(|g| g as u8)
-            })
-            .collect()
+    /// selecting by `shelter` whose shelter the block has as a wall (`walls`, by block id:
+    /// as the server judges a home's room, `voxmar_server::wall_shelters`). Apart from its
+    /// own group, so earth is both the ground a meadow sounds from and a draughty wall.
+    pub fn wall_groups(&self, walls: &[Option<voxmar_engine::effect::Shelter>]) -> Vec<Option<u8>> {
+        walls.iter().map(|&wall| self.selectors.iter().position(|selector| selector.3.is_some() && selector.3 == wall).map(|g| g as u8)).collect()
     }
 
     /// Each block's group, by block id, for the enclosure scan: the first group that
@@ -906,8 +900,7 @@ mod tests {
             )))
         };
         let by_shelter = walls("").unwrap();
-        let furniture = ["furniture".to_owned()];
-        let wall_groups = by_shelter.wall_groups(&content.blocks, &furniture);
+        let wall_groups = by_shelter.wall_groups(&voxmar_server::wall_shelters(&content));
         let of = |name: &str| wall_groups[content.blocks.id(name).unwrap().0 as usize];
         assert_eq!((of("base:wattle_panel"), of("base:dirt"), of("base:daub"), of("core:air")), (Some(0), Some(0), None, None), "wattle and bare earth are draughty walls; daub and air are not");
         assert!(by_shelter.block_groups(&content.blocks).iter().all(Option::is_none), "a wall group is apart from the blocks' own groups");
