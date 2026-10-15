@@ -26,7 +26,6 @@ use voxmar_engine::traits;
 use voxmar_protocol::{ChatKind, PlayerId, ServerMessage, TICKS_PER_SECOND};
 
 use crate::Server;
-use crate::items::random3;
 use crate::process::Process;
 
 /// Runs the factory.
@@ -122,7 +121,7 @@ impl Server {
         {
             let held = state.inputs.into_iter().chain(state.outputs).chain([state.fuel]).chain(state.bin).flatten();
             for (i, stack) in held.enumerate() {
-                let random = random3(self.tick, pos, 0x3ac4 ^ i as u32);
+                let random = self.meta.next_pop(pos, 0x3ac4 ^ i as u32);
                 self.items.spawn(stack, dropped::popped(pos, random), dropped::PICKUP_DELAY);
             }
         }
@@ -539,7 +538,7 @@ impl Server {
                 }
                 for (i, stack) in spilled.into_iter().enumerate() {
                     tracing::warn!("a machine at {pos} has no room for {} {}; it falls out", stack.count, blocks.def(stack.item).name);
-                    let random = random3(self.tick, pos, 0x5b11 ^ i as u32);
+                    let random = self.meta.next_pop(pos, 0x5b11 ^ i as u32);
                     self.items.spawn(stack, dropped::popped(pos, random), dropped::PICKUP_DELAY);
                 }
             }

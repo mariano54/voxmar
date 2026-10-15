@@ -1375,9 +1375,9 @@ mod tests {
         let (save, meta) = open_world(&mut config(Some(42))).unwrap();
         assert_eq!(meta.draw_key, 42, "made with the config's key");
         assert_eq!(open_world(&mut config(None)).unwrap().1.draw_key, 42, "kept");
-        save.as_ref().unwrap().write_meta(&WorldMeta { drops: 5, loot: 7, ..meta.clone() }).unwrap();
+        save.as_ref().unwrap().write_meta(&WorldMeta { drops: 5, loot: 7, rolls: 11, ..meta.clone() }).unwrap();
         let kept = open_world(&mut config(None)).unwrap().1;
-        assert_eq!((kept.drops, kept.loot), (5, 7), "the counts of drops popped and loot rolled kept");
+        assert_eq!((kept.drops, kept.loot, kept.rolls), (5, 7, 11), "the counts of drops popped, loot rolled and world rolls kept");
         save.unwrap().write_meta(&WorldMeta { draw_key: 0, ..meta }).unwrap();
         assert_ne!(open_world(&mut config(None)).unwrap().1.draw_key, 0, "an older world given one");
         assert_ne!(WorldMeta::new("a", 1, GameMode::Survival).draw_key, WorldMeta::new("a", 1, GameMode::Survival).draw_key, "random without one asked");

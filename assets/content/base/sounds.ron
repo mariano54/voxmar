@@ -27,6 +27,27 @@
     // An item picked up off the ground: a soft pop, when the player's Minecraft sounds are
     // off.
     pickup: ["sounds/pickup_1.ogg", "sounds/pickup_2.ogg", "sounds/pickup_3.ogg", "sounds/pickup_4.ogg"],
+    // What building materials sound like: a step on one, a piece set down, a piece broken.
+    // Every block carrying all of a material's tags sounds as it (of several, the one with
+    // the most tags); mining taps and landings use the steps. A cue a material lists nothing
+    // for is the block's family's (its `sound`). A package that names a material replaces
+    // it; each must be some block's, or the game does not start.
+    materials: [
+        // Rough stone on stone: gritty taps, a heavy knock set down, stones tumbling loose.
+        (
+            name: "cobblestone", tags: ["stone", "cobbled"],
+            step: ["sounds/materials/cobble_step_1.ogg", "sounds/materials/cobble_step_2.ogg", "sounds/materials/cobble_step_3.ogg", "sounds/materials/cobble_step_4.ogg"],
+            place: ["sounds/materials/cobble_place_1.ogg", "sounds/materials/cobble_place_2.ogg", "sounds/materials/cobble_place_3.ogg"],
+            break: ["sounds/materials/cobble_break_1.ogg", "sounds/materials/cobble_break_2.ogg", "sounds/materials/cobble_break_3.ogg"],
+        ),
+        // Dressed stone: a cleaner tap, a brick set with a scrape of mortar, a sharp split.
+        (
+            name: "stone_brick", tags: ["stone", "bricks"],
+            step: ["sounds/materials/brick_step_1.ogg", "sounds/materials/brick_step_2.ogg", "sounds/materials/brick_step_3.ogg", "sounds/materials/brick_step_4.ogg"],
+            place: ["sounds/materials/brick_place_1.ogg", "sounds/materials/brick_place_2.ogg", "sounds/materials/brick_place_3.ogg"],
+            break: ["sounds/materials/brick_break_1.ogg", "sounds/materials/brick_break_2.ogg", "sounds/materials/brick_break_3.ogg"],
+        ),
+    ],
     // A tool in hand nearly worn out (tools.ron's `wear.warn`): a dry creak and a tick as the
     // head shifts. Worn out: the haft snaps and its pieces fall.
     tool_worn: ["sounds/tool_worn_1.ogg", "sounds/tool_worn_2.ogg"],

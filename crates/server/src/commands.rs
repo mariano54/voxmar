@@ -493,7 +493,7 @@ impl Server {
     /// The biome the player stands in, and what makes it.
     /// `/summon <creature> [count]`: creatures on the ground a few blocks in front of the
     /// player.
-    fn summon(&mut self, id: Source, args: &[String]) -> Reply {
+    pub(crate) fn summon(&mut self, id: Source, args: &[String]) -> Reply {
         // `held` last stands them still for a minute from the tick they arrive, as
         // `/creatures hold` would: a hold sent after would find them already moved.
         let (args, held) = match args {

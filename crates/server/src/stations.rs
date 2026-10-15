@@ -17,7 +17,6 @@ use voxmar_engine::traits;
 use voxmar_protocol::{ChatKind, PlayerId, ServerMessage, TICKS_PER_SECOND};
 
 use crate::Server;
-use crate::items::random3;
 use crate::process::Process;
 
 /// What is on a station: `count` of `item`, done at tick `due`.
@@ -220,7 +219,7 @@ impl Server {
         let left = player.inventory.add(work.output, made);
         player.changed(traits::INVENTORY);
         if left > 0 {
-            let body = dropped::popped(pos, random3(self.tick, pos, 0x57a7));
+            let body = dropped::popped(pos, self.meta.next_pop(pos, 0x57a7));
             self.items.spawn(ItemStack::new(work.output, left), body, dropped::PICKUP_DELAY);
         }
         self.grant_xp(agent, work.skill, work.xp * made as f32);
@@ -257,7 +256,7 @@ impl Server {
             Some((_, work)) if self.tick >= load.due => ItemStack::new(work.output, load.count / work.takes * work.gives),
             _ => ItemStack::new(load.item, load.count),
         };
-        let body = dropped::popped(pos, random3(self.tick, pos, 0x57a8));
+        let body = dropped::popped(pos, self.meta.next_pop(pos, 0x57a8));
         self.items.spawn(stack, body, dropped::PICKUP_DELAY);
     }
 
