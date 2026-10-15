@@ -368,7 +368,8 @@ steps! {
     /// swipe shows its reach). Shot with the ring filling.
     BossTells,
     /// How shots and blows show on a creature (`fight_fx`'s shots, `creatures`): a deer this
-    /// side alone is struck and flinches, a bow's arrow loosed at it flies leaving a trail
+    /// side alone is struck and flinches (as much as its body and the blow's share of its
+    /// health weigh), a bow's arrow loosed at it flies leaving a trail
     /// and lands with a puff and its sound, then it is killed, tips over and lies there a
     /// beat before going up in smoke as its loot comes out, each frame a fixed step of its
     /// time (`Creatures::watch_step`, `Shots::step`), so nothing waits on the server or the
@@ -11313,7 +11314,7 @@ fn ranged_feel(world: &mut World, gate: &mut Gate) {
         return;
     };
     let def = &launch.content.creatures.get(species).def;
-    let (health, height, death) = (def.health, def.body.size.1, def.death);
+    let (health, height, death, size) = (def.health, def.body.size.1, def.death, def.body.size);
     let death_seconds = death.seconds;
     // The middle of the beat it lies fallen, from tipped over (after the killing blow's
     // freeze) to starting to go.
@@ -11397,6 +11398,19 @@ fn ranged_feel(world: &mut World, gate: &mut Gate) {
                 Ok(format!("the deer flinches {:.2} s in; the arrow flew {:.2} of {:.2} blocks, leaving {trail} specks", flinch.unwrap_or(0.0), flying[0].0, flying[0].1))
             };
             gate.check("ranged feel: flinch and flight", result);
+            // Its flinch is sized for its body and the share of its health the blow took
+            // (`combat_fx.ron`'s `hit.weigh`), not the hit's own size.
+            let weigh = world.resource::<crate::fight_fx::FightLook>().hit.weigh;
+            let wanted = crate::fight_fx::flinch_size(&weigh, size, 2.0 / f32::from(health.max(1)));
+            let shown = world.resource::<Creatures>().watched.flinch_size;
+            let result = if (wanted - 1.0).abs() < 0.05 {
+                Err(format!("a {PUPPET_SPECIES} struck for 2 of {health} flinches {wanted:.2}, too near the hit's own size to tell weighing from none"))
+            } else if (shown - wanted).abs() > 1e-3 {
+                Err(format!("the deer flinched {shown:.2} of the hit, not the {wanted:.2} its {:.2} x {:.2} body struck for 2 of {health} should", size.0, size.1))
+            } else {
+                Ok(format!("the deer flinched {shown:.2} of the hit for its {:.2} x {:.2} body, struck for 2 of {health}", size.0, size.1))
+            };
+            gate.check("ranged feel: weight", result);
             world.resource_mut::<Creatures>().watch_step = Some(0.0);
             world.resource_mut::<Shots>().step = Some(0.0);
             gate.advance(now);
