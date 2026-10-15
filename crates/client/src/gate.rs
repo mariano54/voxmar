@@ -764,6 +764,10 @@ struct Gate {
     /// The campfire the weather step dries the player by, while it stands, and what the
     /// storm left the player wet with before it was lit.
     dry_fire: Option<IVec3>,
+    /// The roof the weather step sets over the player in the storm, and what the ambience
+    /// heard of the roof overhead out in the open just before.
+    rain_roof: Option<(IVec3, voxmar_engine::block::BlockId)>,
+    rain_open: Option<crate::ambience::RoofHeard>,
     storm_wet: Vec<String>,
     /// Frames in a row the door step's lit or darkened spot has had nothing near it waiting
     /// to be meshed (`light_drawn`); each phase counts afresh.
@@ -974,6 +978,8 @@ impl Gate {
             food_moved: false,
             cook_started: false,
             dry_fire: None,
+            rain_roof: None,
+            rain_open: None,
             storm_wet: Vec::new(),
             light_frames: 0,
             tame_aim: [0; 3],
@@ -1535,7 +1541,7 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         // server's seconds.
         Step::Settlements => SETTLEMENT_LOAD + SETTLEMENT_PEOPLE + STEP_LIMIT,
         // A storm and snow, each waited on, then drying off by a campfire.
-        Step::Weather => STEP_LIMIT + 10.0,
+        Step::Weather => STEP_LIMIT + 10.0 + ROOF_RAIN,
         _ => STEP_LIMIT,
     };
     // A step in the world is too long only by both the server's clock, as its own waits
@@ -8146,21 +8152,50 @@ fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 Err(format!("it barely shows: the view changed by {change:.1} levels"))
             };
             gate.check(&format!("weather: {kind}"), result);
-            match kinds.get(phase as usize) {
-                Some((kind, ..)) => {
-                    world.resource::<Net>().command(&format!("weather {kind} 120"));
-                    // Wet through from the storm, and the rain gone with the snow coming
-                    // (snow is not rain): a campfire two blocks behind the player, out of
-                    // the snow's shot, dries them off while the snow comes. Snowblown is
-                    // the snow's own, whatever fire is near.
-                    gate.storm_wet = wet_through(world);
-                    let at = world.resource::<LocalPlayer>().position.floor().as_ivec3() + IVec3::new(0, 0, 2);
-                    world.resource::<Net>().command(&format!("setblock {} {} {} campfire", at.x, at.y, at.z));
-                    gate.dry_fire = Some(at);
-                    gate.advance(now);
-                }
-                None => gate.advance(now),
+            if phase == 2 {
+                gate.advance(now);
+                return;
             }
+            // In the storm's rain, a thatch roof over the player before the snow.
+            {
+                let content = world.resource::<Launch>().content.clone();
+                let registry = &world.resource::<ClientWorld>().registry;
+                let thatch = (0..registry.len()).map(|id| voxmar_engine::block::BlockId(id as u16)).find(|&id| {
+                    let def = registry.def(id);
+                    def.has_tag("thatch") && def.has_tag("roof") && crate::ambience::defs::is_roof(registry, id) && !def.flipped && def.faces.is_none_or(|f| f == voxmar_engine::block::Facing::North)
+                });
+                let Some(thatch) = thatch else {
+                    gate.check("weather: rain on a roof", Err("no thatch roof block (tags thatch and roof) to stand under".into()));
+                    weather_snow(world, gate, now);
+                    return;
+                };
+                gate.rain_open = crate::ambience::roof_heard(world);
+                let feet = world.resource::<LocalPlayer>().position.floor().as_ivec3();
+                let at = feet + IVec3::new(0, 2, 0);
+                world.resource::<Net>().command(&format!("setblock {} {} {} {}", at.x, at.y, at.z, content.blocks.def(thatch).name));
+                gate.rain_roof = Some((at, thatch));
+                gate.phase = 5;
+                gate.phase_since = now;
+                gate.phase_server = gate.server_now;
+                gate.settled = 0;
+            }
+        }
+        // Under the thatch roof in the same rain: the ambience hears the roof overhead and
+        // picks its patter by the roof's material, and muffles the open rain more than out
+        // in the open just before.
+        5 => {
+            let Some((at, roof)) = gate.rain_roof else { return };
+            let heard = crate::ambience::roof_heard(world);
+            let expected = crate::ambience::patter_of(world, roof);
+            let ready = heard.as_ref().is_some_and(|h| h.under == Some(roof) && h.patter == expected);
+            if !ready && gate.server_in_phase() < ROOF_RAIN {
+                return;
+            }
+            let open = gate.rain_open.take();
+            gate.check("weather: rain on a roof", rain_on_roof(world, open, heard, expected, roof));
+            world.resource::<Net>().command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
+            gate.rain_roof = None;
+            weather_snow(world, gate, now);
         }
         3 => {
             let wet = wet_through(world);
@@ -8206,6 +8241,59 @@ fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.next(Step::Depths, now);
         }
         _ => {}
+    }
+}
+
+/// Seconds of the server's clock the roof over the player in the storm has for the
+/// ambience to hear it (it looks for a roof four times a second, `ambience::ROOF_LOOK`).
+const ROOF_RAIN: f32 = 2.0;
+
+/// The storm over, the snow: wet through from the storm, and the rain gone with the snow
+/// coming (snow is not rain), a campfire two blocks behind the player, out of the snow's
+/// shot, dries them off while the snow comes. Snowblown is the snow's own, whatever fire is
+/// near.
+fn weather_snow(world: &mut World, gate: &mut Gate, now: f32) {
+    world.resource::<Net>().command("weather snow 120");
+    gate.storm_wet = wet_through(world);
+    let at = world.resource::<LocalPlayer>().position.floor().as_ivec3() + IVec3::new(0, 0, 2);
+    world.resource::<Net>().command(&format!("setblock {} {} {} campfire", at.x, at.y, at.z));
+    gate.dry_fire = Some(at);
+    gate.phase = 2;
+    gate.phase_since = now;
+    gate.phase_server = gate.server_now;
+    gate.settled = 0;
+}
+
+/// Judges the ambience under a roof of `roof` against out in the open just before, in the
+/// same rain: in the open no roof and no patter, with every roof bed silent; under it the
+/// roof heard, the patter its material names in `ambience.ron`, a bed playing on it, and
+/// the open rain muffled more than before.
+fn rain_on_roof(world: &World, open: Option<crate::ambience::RoofHeard>, under: Option<crate::ambience::RoofHeard>, expected: Option<String>, roof: voxmar_engine::block::BlockId) -> Result<String, String> {
+    let name = &world.resource::<ClientWorld>().registry.def(roof).name;
+    let (Some(open), Some(under)) = (open, under) else { return Err("the ambience never started".into()) };
+    let Some(expected) = expected else { return Err(format!("{name} makes no patter in ambience.ron's roofs")) };
+    let mut wrong = Vec::new();
+    let playing = |heard: &crate::ambience::RoofHeard| heard.beds.iter().filter(|(_, w)| *w > 0.0).map(|(bed, w)| format!("{bed} {w:.2}")).collect::<Vec<_>>();
+    if open.under.is_some() || open.patter.is_some() || !playing(&open).is_empty() {
+        wrong.push(format!("in the open, a roof {:?}, patter {:?} and roof beds {:?}", open.under, open.patter, playing(&open)));
+    }
+    if under.under != Some(roof) {
+        wrong.push(format!("under {name}, the roof heard is {:?}", under.under.map(|b| world.resource::<ClientWorld>().registry.def(b).name.clone())));
+    }
+    if under.patter.as_ref() != Some(&expected) {
+        wrong.push(format!("under {name}, the patter is {:?}, not its material's {expected}", under.patter));
+    }
+    let beds = playing(&under);
+    if beds.is_empty() {
+        wrong.push(format!("under {name}, no bed plays on the {expected} patter: {:?}", under.beds));
+    }
+    if under.sheltered <= open.sheltered {
+        wrong.push(format!("the open rain is muffled {:.2} under {name}, no more than {:.2} in the open", under.sheltered, open.sheltered));
+    }
+    if wrong.is_empty() {
+        Ok(format!("in the open no roof bed plays; under {name} the {expected} patter plays ({}) and the open rain is muffled {:.2}", beds.join(", "), under.sheltered))
+    } else {
+        Err(wrong.join("; "))
     }
 }
 

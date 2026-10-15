@@ -12,6 +12,14 @@
 //   each full between `min` and `max` and fading out over `fade` beyond them; `biome` and
 //   `not_biome` want or avoid biome tags; `duck` turns the bed down by an axis or another
 //   bed (0.8: to a fifth at its fullest); `fade` is the seconds to fade fully in or out.
+// roofs: rain on the roof overhead. The roof is the lowest solid block (not leaves) within
+//   `height` blocks above the head of any column the player's body passed beneath since the
+//   last look (four looks a second). Its material (a building material of sounds.ron, else
+//   its family sound: stone, wood, soil, ...) names a `patter`, or None for silence; every
+//   roof material must have an entry, or the game does not start. Each patter is an axis,
+//   the rain falling while under a roof of it, for beds to play on. Under any roof the
+//   `sheltered` axis is `muffle`, and a roof block with a `shelter` tag muffles that much
+//   more of what is left; the open rain ducks under it.
 // sounds: one-shots, played `per_minute` times a minute while their conditions fully hold,
 //   then not again for `cooldown` seconds. `at` is Block(group) (a block the scan found),
 //   Around(distance, height) or Listener. `reach` is the distance (blocks) at which they
@@ -25,7 +33,8 @@
 // (below the ground surface here), rain (heard falling, less under a roof), raining
 // (falling at all), wetness (of the ground), snow, storm (0..1), wind (blocks/s, gusts
 // included), gusts (how gusty, 0..1), hail, sleet, dust (0..1, as heard here), cover,
-// underwater, and the groups below.
+// underwater, sheltered (how much a roof overhead muffles the open rain), the groups below,
+// and the roof patters.
 (
     groups: [
         (name: "leaves", tags: ["leaves"], range: (20, 300)),
@@ -49,6 +58,24 @@
         (name: "sand", materials: [Sand], range: (60, 600)),
         (name: "snowpack", materials: [Snow], range: (60, 600)),
     ],
+    roofs: (
+        height: 12,
+        muffle: 0.45,
+        // A sound or fine roof keeps out more of the rain's noise than a draughty one.
+        shelter: {"shelter:sound": 0.3, "shelter:fine": 0.5},
+        patter: {
+            // Soft: straw, hide, turf and earth take the drops in.
+            "thatch": "roof_soft", "hide": "roof_soft", "soil": "roof_soft", "grass": "roof_soft", "mud": "roof_soft", "moss": "roof_soft", "sand": "roof_soft",
+            // A tap: shingles, boards, timber, woven withies and fired tiles.
+            "shingle": "roof_tap", "timber": "roof_tap", "wood": "roof_tap", "wattle": "roof_tap", "terracotta": "roof_tap",
+            // Dull: stone, brick, gravel and clay daub.
+            "stone": "roof_dull", "cobblestone": "roof_dull", "stone_brick": "roof_dull", "gravel": "roof_dull", "daub": "roof_dull",
+            // Bright: glass.
+            "glass": "roof_bright",
+            // Snow takes rain in without a sound; water and leaves are never roofs.
+            "snow": None, "water": None, "leaves": None,
+        },
+    ),
     beds: [
         // Rain, recorded (CC0; see THIRD_PARTY_NOTICES.md) and layered the AmbientSounds
         // way. Out in the open, a patter on leaves and ground that grows with the rain, then
@@ -57,16 +84,30 @@
         (
             name: "rain", recording: ["sounds/rain_light_1.mp3", "sounds/rain_light_2.mp3", "sounds/rain_light_3.mp3"], volume: 0.5, fade: 3,
             when: {"rain": (min: 0.45, max: 0.75, fade: 0.42)},
-            duck: {"hail": 0.7, "sleet": 0.4},
+            duck: {"hail": 0.7, "sleet": 0.4, "sheltered": 1},
         ),
         (
             name: "downpour", recording: ["sounds/rain_heavy_1.mp3", "sounds/rain_heavy_2.mp3", "sounds/rain_heavy_3.mp3"], volume: 0.75, fade: 3,
             when: {"rain": (min: 0.85, fade: 0.4)},
-            duck: {"hail": 0.7},
+            duck: {"hail": 0.7, "sheltered": 1},
         ),
+        // Rain on the roof overhead, by what it is made of (`roofs`), heard near the surface
+        // (not through the rock over a cave).
         (
             name: "rain_on_roof", recording: ["sounds/rain_roof_1.mp3", "sounds/rain_roof_2.mp3", "sounds/rain_roof_3.mp3"], volume: 0.4, fade: 2,
-            when: {"raining": (min: 0.3, fade: 0.25), "sky": (max: 0.15, fade: 0.2), "air": (min: 0.03, fade: 0.05)},
+            when: {"roof_tap": (min: 0.3, fade: 0.25), "depth": (max: 4, fade: 3)},
+        ),
+        (
+            name: "rain_on_thatch", sound: ThatchPatter, volume: 0.35, fade: 2,
+            when: {"roof_soft": (min: 0.3, fade: 0.25), "depth": (max: 4, fade: 3)},
+        ),
+        (
+            name: "rain_on_stone", sound: StonePatter, volume: 0.35, fade: 2,
+            when: {"roof_dull": (min: 0.3, fade: 0.25), "depth": (max: 4, fade: 3)},
+        ),
+        (
+            name: "rain_on_glass", sound: GlassPatter, volume: 0.3, fade: 2,
+            when: {"roof_bright": (min: 0.3, fade: 0.25), "depth": (max: 4, fade: 3)},
         ),
         (
             name: "dripping_trees", recording: ["sounds/drips_1.mp3", "sounds/drips_2.mp3", "sounds/drips_3.mp3"], volume: 0.35, fade: 8,
