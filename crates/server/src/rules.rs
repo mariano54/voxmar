@@ -35,6 +35,10 @@ pub(crate) struct SurvivalRules {
     /// Rain at least this heavy (precipitation 0..1) puts out a light that `rain_douses`
     /// with open sky over it (a torch).
     pub douse_rain: f32,
+    /// A light that `gutters_to:` something does so in this last share of its burn (0..1).
+    pub gutter_share: f32,
+    /// Whether a light set down inside a settlement is tended there and never burns out.
+    pub tend_in_settlements: bool,
     /// A home reaches this many blocks out on each side, this many up and this many down:
     /// the box its furnishings are counted in and a player must stand in to feel it.
     pub home_reach: i32,
@@ -71,6 +75,8 @@ struct SurvivalFile {
     water_chill: Option<f32>,
     roof_scan: Option<i32>,
     douse_rain: Option<f32>,
+    gutter_share: Option<f32>,
+    tend_in_settlements: Option<bool>,
     home_reach: Option<i32>,
     home_up: Option<i32>,
     home_down: Option<i32>,
@@ -93,7 +99,7 @@ impl SurvivalRules {
             macro_rules! later_wins {
                 ($($field:ident),*) => { $(if next.$field.is_some() { merged.$field = next.$field; set.push(stringify!($field)); })* };
             }
-            later_wins!(max_health, starter_kit, pack_end, kits_per_address, kit_window, safe_fall, burn, burn_every, void_below, heat_emission, heat, heat_reach, water_chill, roof_scan, douse_rain, home_reach, home_up, home_down, meal_most, sleep_threat_reach, sleep_after_hurt, heal_most);
+            later_wins!(max_health, starter_kit, pack_end, kits_per_address, kit_window, safe_fall, burn, burn_every, void_below, heat_emission, heat, heat_reach, water_chill, roof_scan, douse_rain, gutter_share, tend_in_settlements, home_reach, home_up, home_down, meal_most, sleep_threat_reach, sleep_after_hurt, heal_most);
             laid.set(&file.package, FILE, "survival rules", set, notes);
         }
         macro_rules! set {
@@ -131,6 +137,8 @@ impl SurvivalRules {
             water_chill: set!(water_chill),
             roof_scan: set!(roof_scan),
             douse_rain: set!(douse_rain),
+            gutter_share: set!(gutter_share),
+            tend_in_settlements: set!(tend_in_settlements),
             home_reach: set!(home_reach),
             home_up: set!(home_up),
             home_down: set!(home_down),
@@ -151,6 +159,7 @@ impl SurvivalRules {
             (rules.water_chill.is_finite(), "water_chill must be a number"),
             ((1..=256).contains(&rules.roof_scan), "roof_scan must be 1 to 256 blocks"),
             (rules.douse_rain.is_finite() && rules.douse_rain > 0.0 && rules.douse_rain <= 1.0, "douse_rain must be above 0, up to 1"),
+            (rules.gutter_share.is_finite() && (0.0..1.0).contains(&rules.gutter_share), "gutter_share must be 0 or more, below 1"),
             ((1..=16).contains(&rules.home_reach), "home_reach must be 1 to 16 blocks"),
             ((0..=16).contains(&rules.home_up) && (0..=16).contains(&rules.home_down), "home_up and home_down must be 0 to 16 blocks"),
             (rules.meal_most.is_finite() && (1.0..=10.0).contains(&rules.meal_most), "meal_most must be 1 to 10"),

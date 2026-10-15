@@ -4990,6 +4990,8 @@ struct TorchPlan {
     torch: BlockId,
     stub: BlockId,
     kindle: BlockId,
+    /// What it gutters into near its end, if it does.
+    gutter: Option<BlockId>,
 }
 
 impl TorchPlan {
@@ -5001,14 +5003,17 @@ impl TorchPlan {
             .ok_or("no light set down on its own in the content burns out and is put out by rain")?;
         let (_, stub) = flames.burns_out(blocks, torch).expect("found by it");
         let kindle = blocks.ids().find(|&b| b != torch && flames.kindles(b)).ok_or("nothing in the content but the light itself kindles")?;
-        Ok(Self { torch, stub, kindle })
+        Ok(Self { torch, stub, kindle, gutter: flames.gutters(blocks, torch) })
     }
 }
 
-/// A torch set down in a sealed dark room lights the floor before the player; a game day on
-/// (`/time add`, so the room is as dark as it was) it is a stub and the same floor, settled,
-/// is dark again. Lit again from a firebrand in hand, then the roof taken off and rain
-/// brought, the rain puts it out.
+/// How much darker (rgb, averaged) the floor before a guttering torch is than before it lit.
+const GUTTER_DIM: f64 = 2.0;
+
+/// A torch set down in a sealed dark room lights the floor before the player; near the end
+/// of its burn (`/time add`) it gutters, the same floor settled darker; a game day on it is
+/// a stub and the floor is dark again. Lit again from a firebrand in hand, then the roof
+/// taken off and rain brought, the rain puts it out.
 fn torch(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let at = gate.feet + IVec3::new(0, 0, 14) + CHOP_FROM_FIRE + IVec3::new(16, 0, 0);
     let light_at = at + IVec3::new(1, 0, 2);
@@ -5023,7 +5028,7 @@ fn torch(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         net.command("weather natural");
         net.command(&format!("fill {} {} {} {} {} {} air", at.x - 3, at.y, at.z - 3, at.x + 3, at.y + 5, at.z + 3));
         if let Some(plan) = gate.torch.take() {
-            for item in [plan.torch, plan.stub, plan.kindle] {
+            for item in [plan.torch, plan.stub, plan.kindle].into_iter().chain(plan.gutter) {
                 net.command(&format!("clear {}", content.blocks.def(item).name));
             }
         }
@@ -5050,7 +5055,7 @@ fn torch(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             net.command("gamemode survival");
             net.command("time set midnight");
             net.command("creatures disperse");
-            for item in [plan.torch, plan.stub, plan.kindle] {
+            for item in [plan.torch, plan.stub, plan.kindle].into_iter().chain(plan.gutter) {
                 net.command(&format!("clear {}", name(item)));
             }
             // A sealed room of stone, floor and all, with the torch set down in it.
@@ -5070,8 +5075,14 @@ fn torch(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 match ground_colour(&shot) {
                     Ok(colour) => {
                         gate.fire_lit = Some(colour);
-                        // A game day on, as dark a night: it has burnt down.
-                        world.resource::<Net>().command("time add 1d");
+                        // Near its end, a twentieth of its burn left (gutters within the last
+                        // tenth): guttering. Else on to a game day on.
+                        let full = content.flames.burns_out(&content.blocks, plan.torch).map_or(0.0, |(days, _)| days as f64 * voxmar_protocol::TICKS_PER_DAY as f64);
+                        let net = world.resource::<Net>();
+                        match plan.gutter {
+                            Some(_) => net.command(&format!("time add {}t", (full * 0.95).floor() as u64)),
+                            None => net.command("time add 1d"),
+                        }
                         gate.advance(now);
                     }
                     Err(why) => fail(world, gate, "torch: burns out", why),
@@ -5080,7 +5091,34 @@ fn torch(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 fail(world, gate, "torch: burns out", format!("the {} set down never reached the client ({:?} there) in {TORCH_WAIT} server seconds", name(plan.torch), here(world).map(|b| name(b))));
             }
         }
+        // Guttering, dimmer than lit; then on past its end, as dark a night.
         2 => {
+            let Some(plan) = gate.torch else { return };
+            let Some(gutter) = plan.gutter else {
+                gate.advance(now);
+                return;
+            };
+            aim_at(world, floor.as_vec3() + Vec3::new(0.5, 1.0, 0.5));
+            if here(world) == Some(gutter) && light_drawn(world, gate, &[light_at, at, floor]) && in_phase > 0.5 {
+                let Some(shot) = fire_shot(world, gate, "torch-guttering") else { return };
+                let judged = match (gate.fire_lit, ground_colour(&shot)) {
+                    (Some(lit), Ok(low)) => {
+                        let dimmed = [0, 1, 2].map(|c| lit[c] - low[c]);
+                        let darker = dimmed.iter().sum::<f64>() / 3.0;
+                        let said = format!("the floor before the player is rgb {:.0} {:.0} {:.0} by the {} and {:.0} {:.0} {:.0} near its end, by its {}: {darker:.1} darker", lit[0], lit[1], lit[2], name(plan.torch), low[0], low[1], low[2], name(gutter));
+                        if darker > GUTTER_DIM { Ok(said) } else { Err(format!("{said}, wanted over {GUTTER_DIM} darker")) }
+                    }
+                    (None, _) => Err("the lit floor was not kept".into()),
+                    (_, Err(why)) => Err(why),
+                };
+                gate.check("torch: gutters", judged);
+                world.resource::<Net>().command("time add 1d");
+                gate.advance(now);
+            } else if waited {
+                fail(world, gate, "torch: gutters", format!("near its end, the {} was {:?}, not its {}, after {TORCH_WAIT} server seconds", name(plan.torch), here(world).map(|b| name(b)), name(gutter)));
+            }
+        }
+        3 => {
             let Some(plan) = gate.torch else { return };
             aim_at(world, floor.as_vec3() + Vec3::new(0.5, 1.0, 0.5));
             let out = here(world) == Some(plan.stub);
@@ -5104,7 +5142,7 @@ fn torch(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
         }
         // Something that kindles in hand, right clicked on the stub.
-        3 => {
+        4 => {
             let Some(plan) = gate.torch else { return };
             let (_, slot) = holding(world, &name(plan.kindle));
             if let Some(slot) = slot.filter(|&s| s < voxmar_engine::inventory::HOTBAR_SLOTS) {
@@ -5116,7 +5154,7 @@ fn torch(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 fail(world, gate, "torch: lights again", format!("a {} never reached the hotbar ({slot:?}) in {TORCH_WAIT} server seconds", name(plan.kindle)));
             }
         }
-        4 => {
+        5 => {
             let Some(plan) = gate.torch else { return };
             aim_at(world, light_at.as_vec3() + Vec3::new(0.5, 0.4, 0.5));
             if here(world) == Some(plan.torch) {

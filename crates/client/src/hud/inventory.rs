@@ -981,9 +981,20 @@ fn seed_line(
 /// How many uses a tool or weapon has left of all it lasts, red when nearly worn out, and
 /// what mends it where; or how long what burns has left.
 fn wear_lines(locale: &Locale, content: &voxmar_engine::content::Content, item: voxmar_engine::block::BlockId, wear: u16) -> Vec<(String, Color)> {
+    // A light: how much of its burn it has left set down, and that a settlement tends it.
+    let flame = content.flames.burn_life(item);
+    if flame > 0 {
+        let per_day = voxmar_engine::flame::WEAR_PER_DAY as f32;
+        let days = |wear: u16| format!("{:.1}", wear as f32 / per_day);
+        let color = if worn_low(content, item, wear) { ERROR } else { SOFT };
+        return vec![
+            (locale.format("item.flame", &[("left", &days(flame.saturating_sub(wear))), ("days", &days(flame))]), color),
+            (locale.get("item.flame.tended").to_owned(), MUTED),
+        ];
+    }
     let burns = content.tools.burns(item);
     if burns > 0 {
-        let color = if worn_low(&content.tools, item, wear) { ERROR } else { SOFT };
+        let color = if worn_low(content, item, wear) { ERROR } else { SOFT };
         return vec![(locale.format("item.burns", &[("left", &burns.saturating_sub(wear))]), color)];
     }
     let uses = content.tools.uses(item);
@@ -991,7 +1002,7 @@ fn wear_lines(locale: &Locale, content: &voxmar_engine::content::Content, item: 
         return Vec::new();
     }
     let left = uses.saturating_sub(wear);
-    let color = if worn_low(&content.tools, item, wear) { ERROR } else { SOFT };
+    let color = if worn_low(content, item, wear) { ERROR } else { SOFT };
     let mut lines = vec![(locale.format("item.uses", &[("left", &left), ("uses", &uses)]), color)];
     // Named by the tag that mends it (Planks, not one wood's), and by the kind of block
     // it is mended at.
@@ -1006,11 +1017,17 @@ fn wear_lines(locale: &Locale, content: &voxmar_engine::content::Content, item: 
     lines
 }
 
-/// Whether a tool worn by `wear` (or a firebrand burnt by it) is down to the share where it
-/// warns (`tool::Wear::warn`).
-pub fn worn_low(tools: &voxmar_engine::tool::ToolRegistry, item: voxmar_engine::block::BlockId, wear: u16) -> bool {
-    let uses = tools.life(item);
-    uses > 0 && wear > 0 && uses.saturating_sub(wear) <= (uses as f32 * tools.wear().warn).ceil() as u16
+/// The wear `item` lasts: a tool's uses, a firebrand's seconds, or a light's burn set down
+/// (`flame::WEAR_PER_DAY` a game day); 0 for what never wears.
+pub fn life(content: &voxmar_engine::content::Content, item: voxmar_engine::block::BlockId) -> u16 {
+    content.tools.life(item).max(content.flames.burn_life(item))
+}
+
+/// Whether a tool worn by `wear` (a firebrand burnt by it, a light picked up burning) is
+/// down to the share where it warns (`tool::Wear::warn`).
+pub fn worn_low(content: &voxmar_engine::content::Content, item: voxmar_engine::block::BlockId, wear: u16) -> bool {
+    let uses = life(content, item);
+    uses > 0 && wear > 0 && uses.saturating_sub(wear) <= (uses as f32 * content.tools.wear().warn).ceil() as u16
 }
 
 fn weapon_lines(locale: &Locale, content: &voxmar_engine::content::Content, player: &LocalPlayer, item: voxmar_engine::block::BlockId) -> Vec<(String, Color)> {

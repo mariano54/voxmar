@@ -216,7 +216,11 @@ impl Server {
             {
                 continue;
             }
-            let stack = ItemStack::new(drops, drop_count);
+            let mut stack = ItemStack::new(drops, drop_count);
+            // A light picked up burning keeps what it has burnt.
+            if drop_count == 1 {
+                stack.wear = self.burnt_wear(cell, drops);
+            }
             // Scattered by the world's count of drops popped, not the tick it breaks on.
             let body = dropped::popped(cell, self.meta.next_pop(cell, i as u32));
             self.items.spawn(stack, body, dropped::PICKUP_DELAY);

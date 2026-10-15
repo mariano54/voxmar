@@ -306,7 +306,7 @@ fn update_slots(
                     image.image = icon.clone();
                 }
                 // Nearly worn out, its icon reddens.
-                let tint = if inventory::worn_low(&launch.content.tools, stack.item, stack.wear) { WORN_TINT } else { Color::WHITE };
+                let tint = if inventory::worn_low(&launch.content, stack.item, stack.wear) { WORN_TINT } else { Color::WHITE };
                 if image.color != tint {
                     image.color = tint;
                 }
@@ -317,17 +317,17 @@ fn update_slots(
             }
         }
     }
-    let tools = &launch.content.tools;
+    let content = &launch.content;
     for (slot, children, mut visibility) in &mut bars {
-        let worn = shown.0.get(slot.0).filter(|s| s.wear > 0 && tools.life(s.item) > 0);
+        let worn = shown.0.get(slot.0).filter(|s| s.wear > 0 && inventory::life(content, s.item) > 0);
         let Some(stack) = worn else {
             visibility.set_if_neq(Visibility::Hidden);
             continue;
         };
         visibility.set_if_neq(Visibility::Inherited);
-        let uses = tools.life(stack.item);
+        let uses = inventory::life(content, stack.item);
         let left = uses.saturating_sub(stack.wear) as f32 / uses as f32;
-        let color = if inventory::worn_low(tools, stack.item, stack.wear) { WEAR_LOW } else { WEAR_LOW.mix(&WEAR_FULL, left) };
+        let color = if inventory::worn_low(content, stack.item, stack.wear) { WEAR_LOW } else { WEAR_LOW.mix(&WEAR_FULL, left) };
         if let Some(&fill) = children.first()
             && let Ok((mut node, mut background)) = fills.get_mut(fill)
         {

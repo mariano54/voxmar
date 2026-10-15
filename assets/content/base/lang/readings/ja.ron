@@ -431,6 +431,8 @@
     "block.base.wall_torch": "かべのたいまつ",
     "block.base.torch_stub": "もえつきたたいまつ",
     "block.base.wall_torch_stub": "もえつきたかべのたいまつ",
+    "block.base.torch_guttering": "きえかけのたいまつ",
+    "block.base.wall_torch_guttering": "きえかけのかべのたいまつ",
     "block.base.candle_end": "もえつきたろうそく",
     "block.base.clay_oil_lamp": "つちのあぶらランプ",
     "block.base.clay_oil_lamp_empty": "からのつちのあぶらランプ",

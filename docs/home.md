@@ -419,6 +419,29 @@ ambience's `fire` group (`lit: true`) hears a hearth or a Crucible Kiln crackle 
 then; a campfire or a pit kiln always. A home hearth lit in a world saved before this is lit
 again when its player joins.
 
+## Lights burn down
+
+Every light set down burns by the world's clock (engine `flame.rs`, server `flames.rs`): a
+torch a game day, a candle three, an oil lamp five on a fill of fat. A home's light steps
+(Camp, Snug, Homely, Cosy, Bedside, Workbench) therefore need tending, not just building.
+
+- **Guttering.** In the last tenth of its burn (`gutter_share`, core/survival.ron) a torch
+  turns into its guttering block (`gutters_to:`): dimmer, its flame low and smoky, burning on
+  to the same end. That is the cue to light it again.
+- **Telling the owner.** When a light going out leaves a home short of a light a step it had
+  asks for, the home's owner (if here) is told once which step, and how many lights it wants
+  (`flame.home_short`).
+- **Picked up burning** a light keeps what it has burnt as its item's wear (`WEAR_PER_DAY`,
+  1200 a game day), shown as a wear bar and in its tooltip, and set down again burns on from
+  there: carrying a light never refreshes it. A lamp picked up lit keeps its fat.
+- **Stubs.** A torch's stub breaks into an unlit stub item. Set down it is a stub, lit again
+  where it stands by anything that kindles; held in any fire it catches into a torch.
+- **Tended.** Inside a settlement its people tend the lights (`tend_in_settlements`): one set
+  down there never goes out, and keeps what it had burnt.
+- **Old lights.** A light with no burn (set down before lights burnt out, or placed by the
+  world outside a settlement) is given a full burn the first time its column loads, once a
+  column (`flame_columns` in the world's save).
+
 ## Light in the windows
 
 A home shows its lit rooms at night: a window glows warm by the light of the room behind it.

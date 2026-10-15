@@ -763,7 +763,7 @@ impl Server {
         });
         let placed = meta.placed.iter().map(|&p| IVec3::from_array(p)).collect();
         let regrowing = regrow::restore(&meta.regrowing, |name| content.blocks.id(name));
-        let flames = flames::restore(&meta.flames, |name| content.blocks.id(name));
+        let flames = flames::restore(&meta.flames, |name| content.blocks.id(name), |block| content.flames.burn_life(block) > 0);
         let lairs = lairs::Lairs::restore(&meta.lairs);
         let planter_grown = meta.planter_grown.iter().map(|&p| IVec3::from_array(p)).collect();
         let apiary = apiary::Apiary::restore(&meta.hives);
@@ -932,6 +932,7 @@ impl Server {
         self.fluids.column_loaded(&self.content.blocks, &self.world, pos, self.tick, loaded.saved);
         self.show_grown_crops(pos);
         self.reconcile_machines(pos, loaded.saved);
+        self.flames_loaded(pos);
     }
 
     fn handle_messages(&mut self) {

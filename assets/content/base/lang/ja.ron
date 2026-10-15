@@ -928,6 +928,8 @@
     "block.base.wall_torch": "壁の松明",
     "block.base.torch_stub": "燃え尽きた松明",
     "block.base.wall_torch_stub": "燃え尽きた壁の松明",
+    "block.base.torch_guttering": "消えかけの松明",
+    "block.base.wall_torch_guttering": "消えかけの壁の松明",
     "block.base.cooked_small_game": "焼いた小動物の肉",
     "block.base.cooked_crab": "焼きガニ",
     "block.base.cooked_duck": "焼いた鴨肉",

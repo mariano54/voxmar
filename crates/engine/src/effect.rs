@@ -231,6 +231,28 @@ impl Condition {
         }
     }
 
+    /// Whether `survey` has what this condition's `HomeHas` asks, taking every other ask
+    /// (and anything under a `Not`) as met.
+    fn home_met(&self, survey: &HomeSurvey) -> bool {
+        match self {
+            Condition::HomeHas(tag, n) => survey.count(tag) >= *n,
+            Condition::All(list) => list.iter().all(|c| c.home_met(survey)),
+            Condition::Any(list) => list.iter().any(|c| c.home_met(survey)),
+            Condition::Sheltered(c) => c.home_met(survey),
+            _ => true,
+        }
+    }
+
+    /// The counts `HomeHas` asks of `tag` anywhere in this condition.
+    fn home_needs(&self, tag: &str, into: &mut Vec<u32>) {
+        match self {
+            Condition::HomeHas(t, n) if t == tag => into.push(*n),
+            Condition::All(list) | Condition::Any(list) => list.iter().for_each(|c| c.home_needs(tag, into)),
+            Condition::Not(c) | Condition::Sheltered(c) => c.home_needs(tag, into),
+            _ => {}
+        }
+    }
+
     /// The tags and reaches `Near` asks about, and the tags `Holding` asks of the item in
     /// hand, anywhere in this condition.
     fn asks<'a>(&'a self, near: &mut Vec<(&'a str, i32)>, held: &mut Vec<&'a str>) {
@@ -717,6 +739,24 @@ impl EffectRegistry {
         &self.home_tags
     }
 
+    /// The highest announced effect (the last listed) whose home asks the home met in
+    /// `before` and not in `after`, by its asks of `tag`, with the count of `tag` it wants:
+    /// what a home loses when one of its lights burns out. Only its `HomeHas` asks are
+    /// judged (the rest, standing at home or a roof, are taken as met).
+    pub fn falls_short(&self, tag: &str, before: &HomeSurvey, after: &HomeSurvey) -> Option<(EffectId, u32)> {
+        let (had, has) = (before.count(tag), after.count(tag));
+        let mut needs = Vec::new();
+        self.ids().filter(|&id| self.get(id).announce).fold(None, |found, id| {
+            let Some(when) = &self.get(id).when else { return found };
+            if !when.home_met(before) || when.home_met(after) {
+                return found;
+            }
+            needs.clear();
+            when.home_needs(tag, &mut needs);
+            needs.iter().copied().filter(|&n| has < n && n <= had).max().map_or(found, |n| Some((id, n)))
+        })
+    }
+
     /// The announced steps of every ladder, by the names `Built` goals and tallies use:
     /// the effect's package, then the ladder and the effect's own name (`base:home_snug`).
     pub fn steps(&self) -> Vec<String> {
@@ -937,6 +977,21 @@ mod tests {
 
     fn home_registry() -> EffectRegistry {
         EffectRegistry::new(vec![EffectRegistry::read("core", HOME).unwrap()]).unwrap()
+    }
+
+    /// Losing a block a home step counts names the highest step it then falls short of,
+    /// among those the home met; losing one more than any step needs, or one no step
+    /// counts, names none.
+    #[test]
+    fn a_home_falling_short_names_the_highest_step_lost() {
+        let effects = home_registry();
+        let (camp, snug) = (effects.id("core:camp").unwrap(), effects.id("core:snug").unwrap());
+        let survey = |bed: u32, seat: u32| HomeSurvey { counts: vec![("bed".into(), bed), ("seat".into(), seat)] };
+        assert_eq!(effects.falls_short("seat", &survey(1, 2), &survey(1, 1)), Some((snug, 2)));
+        assert_eq!(effects.falls_short("bed", &survey(1, 2), &survey(0, 2)), Some((snug, 1)), "camp and snug both want it: the higher is named");
+        assert_eq!(effects.falls_short("bed", &survey(1, 0), &survey(0, 0)), Some((camp, 1)), "snug was never met");
+        assert_eq!(effects.falls_short("seat", &survey(1, 4), &survey(1, 3)), None, "still enough");
+        assert_eq!(effects.falls_short("rug", &survey(1, 2), &survey(1, 2)), None, "nothing counts it");
     }
 
     const KNOW_HOW: &str = r#"(effects: [

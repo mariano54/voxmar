@@ -931,6 +931,8 @@
     "block.base.wall_torch": "Wall Torch",
     "block.base.torch_stub": "Torch Stub",
     "block.base.wall_torch_stub": "Wall Torch Stub",
+    "block.base.torch_guttering": "Guttering Torch",
+    "block.base.wall_torch_guttering": "Guttering Wall Torch",
     "block.base.cooked_small_game": "Cooked Small Game",
     "block.base.cooked_crab": "Cooked Crab",
     "block.base.cooked_duck": "Cooked Duck",

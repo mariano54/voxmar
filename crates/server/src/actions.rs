@@ -357,10 +357,13 @@ impl Server {
                     let cell = placement_cell(&Context { server: self, agent }, block, face);
                     let player = self.players.get_mut(&agent).unwrap();
                     let selected = player.selected;
+                    let wear = player.inventory.get(selected).map_or(0, |s| s.wear);
                     let Some(item) = player.inventory.take_one(selected) else { continue };
                     player.changed(traits::INVENTORY);
                     let placed = placed_block(&Context { server: self, agent }, item, block, face);
                     self.set_block(cell, placed);
+                    // A light picked up burning burns on from where it was.
+                    self.set_down_burnt(cell, item, wear);
                     // Its upper half goes in above with it (a door's top).
                     if let Some(upper) = self.content.blocks.upper(placed) {
                         self.set_block(cell + IVec3::Y, upper);

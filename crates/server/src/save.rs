@@ -106,6 +106,10 @@ pub struct WorldMeta {
     /// Lights set down and burning, and the world's day tick each goes out (`flames`).
     #[serde(default)]
     pub flames: Vec<SavedFlame>,
+    /// Columns whose lights set down before lights burnt out (or by the world) were given a
+    /// burn the first time they loaded, sorted: each is given one once.
+    #[serde(default)]
+    pub flame_columns: Vec<[i32; 2]>,
     #[serde(default)]
     pub planter_grown: Vec<[i32; 3]>,
     /// Kept hives with bees and the seconds each has foraged (`apiary`). Older worlds
@@ -177,12 +181,14 @@ pub fn pop_key(draw_key: u64) -> u64 {
 }
 
 /// How a burning light set down is saved: where, what by name, and the world's day tick
-/// it goes out.
+/// it goes out; or, `tended` in a settlement, the ticks of burn it has left.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SavedFlame {
     pub pos: [i32; 3],
     pub block: String,
     pub out: u64,
+    #[serde(default)]
+    pub tended: bool,
 }
 
 /// How a regrowing plant is saved, by block names.
@@ -239,6 +245,7 @@ impl WorldMeta {
             placed: Vec::new(),
             regrowing: Vec::new(),
             flames: Vec::new(),
+            flame_columns: Vec::new(),
             planter_grown: Vec::new(),
             hives: Vec::new(),
             stations: Vec::new(),
