@@ -125,10 +125,12 @@ pub fn page(locale: &Locale, launch: &Launch, skill: SkillId, entries: &[Entry],
             gives.extend(crop.harvest.iter().map(|(item, _)| *item));
         }
         Source::Cook(output) => {
-            // One way to make it, the one at this entry's level: an item made two ways (copper
-            // ingots from ore or from crushed ore) shows what one of them takes, not both mixed.
+            // One way to make it, the first defined at this entry's level: an item made two
+            // ways (copper ingots from ore or from crushed ore) shows what one of them takes,
+            // not both mixed, and the plain way before the anvil's, as cooking.ron lists them.
             let made: Vec<_> = content.cooking.iter().filter(|(_, recipe)| recipe.output == output).collect();
-            let recipe = made.iter().find(|(_, recipe)| recipe.def.level == entry.level).or(made.first()).map(|(_, recipe)| *recipe);
+            let ways: Vec<_> = content.cooking.recipes().filter(|recipe| recipe.output == output).collect();
+            let recipe = ways.iter().find(|recipe| recipe.def.level == entry.level).or(ways.first()).copied();
             let inputs: Vec<BlockId> = made.iter().filter(|(_, other)| recipe.is_some_and(|r| std::ptr::eq(*other, r))).map(|(input, _)| *input).collect();
             if !inputs.is_empty() {
                 parts.push(Part::Items(inputs));
@@ -222,4 +224,30 @@ fn crop_hints(locale: &Locale, launch: &Launch, crop: &Crop) -> Vec<String> {
         hints.push(locale.get("guide.regrow").to_owned());
     }
     hints
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An item cooked two ways shows the way defined first at its entry's level, whole: the
+    /// bronze page holds copper ingots with tin (any of it), not crushed tin with copper.
+    #[test]
+    fn a_dish_made_two_ways_shows_the_first_way_whole() {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+        let content = voxmar_server::load_content(&assets).unwrap();
+        let locale = Locale::load(&assets.join("content"), "en");
+        let id = |name: &str| content.blocks.id(name).unwrap();
+        let launch = Launch { name: String::new(), host: false, content: content.clone() };
+        let engineering = content.skills.id("core:engineering").unwrap();
+        let entries = entries(&locale, &launch, engineering);
+        let bronze = entries.iter().position(|e| e.source == Source::Cook(id("base:bronze_ingot"))).expect("bronze is in the guide");
+        let (parts, _) = page(&locale, &launch, engineering, &entries, bronze);
+        let items: Vec<&Vec<BlockId>> = parts.iter().filter_map(|p| if let Part::Items(items) = p { Some(items) } else { None }).collect();
+        assert_eq!(items[0], &vec![id("base:copper_ingot")], "{items:?}");
+        assert!(items[1].contains(&id("base:tin_ore")), "{items:?}");
+        // Held, with, gives: no second way's input or with.
+        assert_eq!(items.len(), 3, "{items:?}");
+        assert_eq!(items[2], &vec![id("base:bronze_ingot")], "{items:?}");
+    }
 }
