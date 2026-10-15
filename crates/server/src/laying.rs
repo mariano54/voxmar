@@ -72,6 +72,13 @@ impl Server {
             })
         });
         let Some(grid) = laid else {
+            // A later age's way, before its rite: said as a refusal, as the grid's is.
+            if usable.is_empty()
+                && let Some(age) = making.iter().find_map(|r| self.age_closed(agent, r))
+            {
+                self.refuse_age(agent, &age);
+                return;
+            }
             let words = match usable.first() {
                 Some(recipe) => short_words(recipe, &have, &self.content.blocks),
                 None => Words::key("craft.lay.cannot"),
@@ -159,6 +166,17 @@ impl Server {
                 && r.near.as_deref().is_none_or(|tag| near.iter().any(|t| t == tag))
                 && r.skill.is_none_or(|s| levels.get(&s).is_some_and(|&(own, boosted)| voxmar_engine::level::meets_recipe(r, own, boosted, &inventory, &blocks)))
         }
+    }
+
+    /// The later age `recipe` opens in, while `agent` has not done its rite.
+    pub(crate) fn age_closed(&self, agent: PlayerId, recipe: &Recipe) -> Option<String> {
+        let done = &self.players.get(&agent)?.quests_done;
+        recipe.age.clone().filter(|age| !self.content.quests.opened(age, &|quest| done.iter().any(|d| d == quest)))
+    }
+
+    /// Tells `agent` what they tried opens in a later age.
+    pub(crate) fn refuse_age(&self, agent: PlayerId, age: &str) {
+        self.refuse(agent, Words::key("craft.age").with("age", Words::key(&format!("quest.age.{age}"))));
     }
 
     /// The stores in `agent`'s home, while they stand in it, nearest first.
@@ -414,7 +432,22 @@ mod tests {
             server.players[&1].inventory.slots.iter().flatten().filter(|s| s.item == kiln).count()
         };
         let rite = server.content.quests.rite("farm").expect("a rite opens the Farm age").name.clone();
+        let (client, connection) = voxmar_protocol::local_pair();
+        server.players.get_mut(&1).unwrap().connection = connection;
+        let refused = || {
+            let mut keys = Vec::new();
+            while let Ok(Some(message)) = client.try_recv() {
+                if let voxmar_protocol::ServerMessage::Refused { why: Words::Key(key, _) } = message {
+                    keys.push(key);
+                }
+            }
+            keys
+        };
         assert_eq!(made(&mut server), 0, "the Farm age is not open");
+        assert_eq!(refused(), ["craft.age"], "the grid's craft says why");
+        server.players.get_mut(&1).unwrap().inventory.craft = [None; GRID];
+        lay(&mut server, "base:pit_kiln", 1);
+        assert_eq!(refused(), ["craft.age"], "laying it from the book says why");
         server.players.get_mut(&1).unwrap().quests_done.push(rite);
         assert_eq!(made(&mut server), 1, "its rite done, the kiln is made");
     }

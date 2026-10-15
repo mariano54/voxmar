@@ -108,18 +108,19 @@ pub(crate) fn within_reach(player: &LocalPlayer) -> FxHashMap<BlockId, u32> {
 /// later age (`Reach::Age`) or a level (`Reach::Level`).
 pub(crate) fn reach(recipe: &Recipe, have: &FxHashMap<BlockId, u32>, at_table: bool, lacks: &dyn Fn(&Recipe) -> Option<Reach>) -> Option<Reach> {
     let short = recipe.short(have);
-    if short.is_empty() {
-        // A later age stands before any table: no table makes it yet.
-        return Some(match lacks(recipe) {
-            Some(age @ Reach::Age(_)) => age,
-            _ if recipe.needs_table() && !at_table => Reach::Table,
-            Some(wanted) => wanted,
-            None => Reach::Ready,
-        });
-    }
     let cells = recipe.alternatives().iter().flatten().count() as u32;
     let missing: u32 = short.iter().map(|&(_, n)| n).sum();
-    (2 * missing <= cells).then_some(Reach::Short(short))
+    if 2 * missing > cells {
+        return None;
+    }
+    // A later age stands before any table or shortage: nothing gathered makes it yet.
+    Some(match lacks(recipe) {
+        Some(age @ Reach::Age(_)) => age,
+        _ if !short.is_empty() => Reach::Short(short),
+        _ if recipe.needs_table() && !at_table => Reach::Table,
+        Some(wanted) => wanted,
+        None => Reach::Ready,
+    })
 }
 
 /// Everything the player can make or nearly, from the book and what they hold, in the
@@ -377,6 +378,21 @@ mod tests {
         player.vitals.home_stores.clear();
         let away = plan(&content, &book, &within_reach(&player), false, &none);
         assert_ne!(find(&away, &content, "base:crafting_table").map(|m| &m.reach), Some(&Reach::Ready), "one plank alone is not a table");
+    }
+
+    /// A later age's recipe says so before what it is short of or where it is made: a
+    /// Nomad player is not sent gathering for it.
+    #[test]
+    fn a_later_age_is_said_before_a_shortage() {
+        let content = content();
+        let book = RecipeBook::new(&content);
+        let pit_kiln = content.recipes.iter().find(|r| content.blocks.def(r.output).name == "base:pit_kiln").unwrap();
+        let closed = |r: &Recipe| r.age.clone().map(Reach::Age);
+        let three = have(&content, &[("base:cobblestone", 3)]);
+        assert_eq!(reach(pit_kiln, &three, false, &closed), Some(Reach::Age("farm".into())), "three of five held, the age first");
+        let made = plan(&content, &book, &three, false, &closed);
+        assert_eq!(find(&made, &content, "base:pit_kiln").map(|m| &m.reach), Some(&Reach::Age("farm".into())));
+        assert!(reach(pit_kiln, &FxHashMap::default(), false, &closed).is_none(), "too little held to show at all");
     }
 
     /// A log in an empty pack makes planks at once; with planks, sticks and a crafting

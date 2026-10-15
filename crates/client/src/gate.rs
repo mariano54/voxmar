@@ -7380,6 +7380,11 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             };
             let nodes = world.query_filtered::<(), With<Button>>().iter(world).count();
             gate.check("quests: book", Ok(format!("L opened the quest book on {picked} ({nodes} buttons drawn)")));
+            // Each capstone drawn carries the gold mark the rites point to, and no other quest.
+            let shown: Vec<String> = world.query::<&crate::hud::quests::QuestNode>().iter(world).map(|n| n.0.clone()).collect();
+            let capstones = shown.iter().filter(|name| world.resource::<Launch>().content.quests.get(name).is_some_and(|q| q.capstone)).count();
+            let marks = world.query_filtered::<(), With<crate::hud::quests::CapstoneMark>>().iter(world).count();
+            gate.check("quests: capstones", if capstones > 0 && marks == capstones { Ok(format!("{marks} capstones of {} quests drawn carry the gold mark", shown.len())) } else { Err(format!("{marks} gold marks for {capstones} capstones among {} quests drawn", shown.len())) });
             let words = road_words(world);
             gate.check("quests: road words", words);
             gate.advance(now);

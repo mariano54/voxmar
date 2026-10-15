@@ -514,6 +514,14 @@ impl Content {
         let languages: Vec<Lang> = crate::lang::languages(dir).into_iter().map(|language| Lang::load(dir, &language.code)).collect();
         let codes: Vec<&str> = languages.iter().map(Lang::code).collect();
         refusals.check_words(&codes, |code, key| languages.iter().any(|lang| lang.code() == code && lang.defines(key)))?;
+        // Every age a rite opens has its name in every language: the greyed recipes and the
+        // refusal say it.
+        for age in quests.iter().filter_map(|q| q.opens.as_deref()) {
+            let key = format!("quest.age.{age}");
+            if let Some(lang) = languages.iter().find(|lang| !lang.defines(&key)) {
+                return Err(RegistryError(format!("lang/{}.ron: a quest opens the age `{age}`, and `{key}` has no words", lang.code())));
+            }
+        }
         Ok(Self {
             blocks: Arc::new(blocks),
             actions: Arc::new(actions),

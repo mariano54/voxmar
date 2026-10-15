@@ -559,6 +559,13 @@ impl QuestRegistry {
         self.rite(age).is_none_or(|rite| done(&rite.name))
     }
 
+    /// Whether `quest` is a rite a player is already past: one of the age it opens is done.
+    /// Every quest of that age comes after the rite, so only a save from before rites (or
+    /// `/quest`) holds one; such a player keeps the age they had reached.
+    pub fn behind(&self, quest: &QuestDef, done: &dyn Fn(&str) -> bool) -> bool {
+        quest.opens.as_ref().is_some_and(|age| self.quests.iter().any(|q| q.age == *age && done(&q.name)))
+    }
+
     /// The quest that opens `age`, if one does.
     pub fn rite(&self, age: &str) -> Option<&QuestDef> {
         self.quests.iter().find(|q| q.opens.as_deref() == Some(age))
@@ -597,7 +604,7 @@ impl QuestRegistry {
             let next: Vec<String> = self
                 .quests
                 .iter()
-                .filter(|q| !is_done(&q.name) && self.open(q, &is_done) && q.tasks.iter().any(|t| self.task_done(t, progress, &is_done)))
+                .filter(|q| !is_done(&q.name) && self.open(q, &is_done) && (self.behind(q, &is_done) || q.tasks.iter().any(|t| self.task_done(t, progress, &is_done))))
                 .map(|q| q.name.clone())
                 .collect();
             if next.is_empty() {
@@ -747,6 +754,26 @@ mod tests {
         assert!(!quests.opened("farm", &is(&["t:a", "t:b"])));
         assert!(quests.opened("farm", &is(&["t:rite"])));
         assert_eq!(quests.rite("farm").map(|q| q.name.as_str()), Some("t:rite"));
+    }
+
+    /// A save from before rites, already into the Farm age, gets its rite on the first
+    /// check; a new player at the same place in the Nomad age does not.
+    #[test]
+    fn a_save_already_in_the_next_age_is_past_its_rite() {
+        let source = r#"(quests: [
+            (name: "a", age: "nomad", branch: "main", title: "", why: "", tasks: [[Visit(9)]]),
+            (name: "hearth", age: "nomad", branch: "main", title: "", why: "", tasks: [[Visit(9)]], capstone: true),
+            (name: "rite", age: "nomad", branch: "main", title: "", why: "", tasks: [[QuestsDone("nomad", 2), Capstones("nomad", 1)]], after: ["hearth"], opens: "farm"),
+            (name: "later", age: "farm", branch: "main", title: "", why: "", tasks: [[Visit(9)]], after: ["rite"]),
+        ])"#;
+        let quests = QuestRegistry::new(vec![QuestRegistry::read("t", source).unwrap()]).unwrap();
+        let (journal, tallies) = (Journal::default(), FxHashMap::default());
+        let (level, carried, drops, thriving) = (|_: &str| 1, |_: &str| 0, |_: &str| None, |_: u8| 0);
+        let has_tag = |_: &str, _: &str| false;
+        let progress = Progress { journal: &journal, tallies: &tallies, level: &level, carried: &carried, has_tag: &has_tag, drops: &drops, thriving: &thriving, home: false };
+        let old = ["t:hearth", "t:later"].map(String::from);
+        assert_eq!(quests.newly_done(&old, &progress), ["t:rite"], "the old save keeps its age");
+        assert!(quests.newly_done(&["t:hearth".to_owned()], &progress).is_empty(), "a new player at the hearth has the rite to do");
     }
 
     #[test]

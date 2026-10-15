@@ -151,7 +151,7 @@ impl Server {
 
     /// Finishes `id`'s quests whose tasks hold and tells them their quests' states if they
     /// changed.
-    fn update_quests(&mut self, id: PlayerId) {
+    pub(crate) fn update_quests(&mut self, id: PlayerId) {
         let (finished, states) = self.quest_check(id);
         for name in &finished {
             self.finish_quest(id, name);

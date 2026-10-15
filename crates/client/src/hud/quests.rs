@@ -610,6 +610,11 @@ const GAP_LEAST: Vec2 = Vec2::new(12.0 * PX, 6.0 * PX);
 const GAP_MOST: Vec2 = Vec2::new(90.0 * PX, 40.0 * PX);
 /// How far the picked quest's glow reaches past it.
 const GLOW: f32 = 3.0 * PX;
+/// The gold mark on a capstone's corner.
+const CAPSTONE: f32 = 3.0 * PX;
+/// A capstone's mark, by which the gate finds it.
+#[derive(Component)]
+pub(crate) struct CapstoneMark;
 /// Pinch a trackpad this much for one step of zoom.
 const PINCH_STEP: f32 = 0.15;
 /// The width of a lane's header, at the left of the canvas, which stays as it is dragged:
@@ -943,6 +948,11 @@ fn draw(
                     }
                     area.spawn((Button, crate::ui::widgets::HoverLight, QuestNode(quest.name.clone()), node, piece.image())).with_children(|cell| {
                         cell.spawn((Node { width: Val::Px(icon), height: Val::Px(icon), ..default() }, ImageNode::new(quest_icon(content, &images, quest)).with_color(tint)));
+                        // A capstone (an age's rite counts them), marked gold at its corner.
+                        if quest.capstone {
+                            let mark = Node { position_type: PositionType::Absolute, right: Val::Px(PX), top: Val::Px(PX), width: Val::Px(CAPSTONE), height: Val::Px(CAPSTONE), ..default() };
+                            cell.spawn((mark, CapstoneMark, BackgroundColor(GOLD)));
+                        }
                         // The quest picked, ringed.
                         if picked {
                             let ring = Node { position_type: PositionType::Absolute, left: Val::Px(-2.0 * PX), top: Val::Px(-2.0 * PX), width: Val::Px(side + 4.0 * PX), height: Val::Px(side + 4.0 * PX), ..default() };
@@ -1027,6 +1037,9 @@ fn draw(
             // A pixel in from the left: a Japanese line may begin on a glyph that reaches a
             // pixel left of its start.
             detail.spawn((Node { flex_shrink: 0.0, padding: UiRect::left(Val::Px(PX)), ..default() }, text(font, why(&locale, quest), BODY, SOFT)));
+            if quest.capstone {
+                detail.spawn((Node { flex_shrink: 0.0, padding: UiRect::left(Val::Px(PX)), ..default() }, Localized("quest.capstone"), shadowed(font, "", BODY, GOLD)));
+            }
             // What it gives, one line each: an item with its count, or experience in a skill
             // with the skill's mark.
             if !quest.rewards.is_empty() {

@@ -687,6 +687,8 @@ impl Server {
             return Err(Words::key("command.quest.already").with("quest", title));
         }
         self.finish_quest(player, &quest.name);
+        // Told at once, as a claim is: the stations its rite opens show open straight away.
+        self.update_quests(player);
         Ok(Words::key("command.quest.done").with("quest", title))
     }
 

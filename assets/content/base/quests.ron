@@ -1,8 +1,9 @@
 // Quests (engine/src/quest.rs): the quest book's chapters, one per age. A quest completes
 // the moment one of its `tasks` holds, however long ago it was done: every goal of the task
 // is read from what the player has done (their journal, what they made and cooked, their
-// skills, what they carry, a home). Nothing is locked behind a quest; they point the way
-// and reward the walk. `after` names quests that come first (`"a|b"` for either).
+// skills, what they carry, a home). They point the way and reward the walk; the one thing
+// locked behind a quest is a later age's stations, behind that age's rite (`opens`, and a
+// recipe's `age`). `after` names quests that come first (`"a|b"` for either).
 //
 // Goals: Craft(item, n), Cook(item, n), Catch(fish, n) (Catch("Kinds", n) for kinds),
 // Kill(creature, n), Tame(creature, n), Pick(plant, n), Mine(ore, n), Visit(biomes),
@@ -60,7 +61,7 @@
         ),
         (
             name: "the_farm_age", age: "nomad", branch: "main", title: "The Farm Age",
-            why: "The Farm age opens once you have found your feet: twenty quests of this age done, three of them the last of their path. Its stations then open to you: the pit kiln first, for fired clay, then the cooking pot, the well and the rest.",
+            why: "The Farm age opens once you have found your feet: twenty quests of this age done, three of them path capstones, marked gold at their corner in the book. Its stations then open to you: the pit kiln first, for fired clay, then the cooking pot, the well and the rest.",
             tasks: [[QuestsDone("nomad", 20), Capstones("nomad", 3)]],
             after: ["homestead_hearth"],
             opens: "farm",
@@ -415,7 +416,7 @@
         ),
         (
             name: "the_bronze_age", age: "farm", branch: "main", title: "The Bronze Age",
-            why: "The Bronze age opens once the Farm age is behind you: thirty quests of this age done, four of them the last of their path, and the crucible kiln lit.",
+            why: "The Bronze age opens once the Farm age is behind you: thirty quests of this age done, four of them path capstones, marked gold at their corner, and the crucible kiln lit.",
             tasks: [[QuestsDone("farm", 30), Capstones("farm", 4)]],
             after: ["crucible_kiln"],
             opens: "bronze",
@@ -621,7 +622,7 @@
         ),
         (
             name: "bow_and_arrow", age: "farm", branch: "combat", title: "Bow and Arrow",
-            why: "A short bow reaches twenty blocks and hits twice as hard as a sling. At the crafting table, three sticks bent down one side and three twine down the other make it (Crafting 5). An arrow is a flint or a cobblestone over a stick over a feather, four at a time (Crafting 5): flint comes one gravel in eight, and feathers from junglefowl. The bow needs Ranged 5 to shoot (below it, it strikes as a fist), so keep slinging stones until then. Make the bow and eight arrows, and reach Ranged 5.",
+            why: "A short bow reaches twenty blocks and hits twice as hard as a sling. At the crafting table, three sticks bent down one side and three twine down the other make it (Crafting 3). An arrow is a flint or a cobblestone over a stick over a feather, four at a time (Crafting 3): flint comes one gravel in eight, and feathers from junglefowl. The bow needs Ranged 3 to shoot (below it, it strikes as a fist), so keep slinging stones until then. Make the bow and eight arrows, and reach Ranged 5.",
             tasks: [[Craft("short_bow", 1), Craft("arrow", 8), Level("ranged", 5)]],
             after: ["full_hide_wraps"],
             rewards: [Xp("ranged", 120.0), Xp("crafting", 60.0)],

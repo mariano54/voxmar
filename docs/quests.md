@@ -201,7 +201,7 @@ on the spine gated by a side quest, and a quest that is several steps shown as s
 
 | Check | Before | After |
 |---|---|---|
-| A clear goal per chapter | Nomad's goal Homestead Hearth ("the Farm age opens"); Farm's goal the lit Crucible Kiln ("starts the Bronze age"), with First Bronze after it as the bridge to the next age | Unchanged: both goals are the last spine quest their text names as the age's end |
+| A clear goal per chapter | Nomad's goal Homestead Hearth ("the Farm age opens"; since Oct 15 its rite, The Farm Age, follows it and opens the age); Farm's goal the lit Crucible Kiln ("starts the Bronze age"), with First Bronze after it as the bridge to the next age | Unchanged: both goals are the last spine quest their text names as the age's end |
 | Side branches read as optional | No spine quest comes after a side quest (the_potter, brick_by_brick and crucible_kiln come only after spine quests or the hearth); the wanderer quests say "may" | Unchanged |
 | Nothing unreachable or a dead end | Every `after` names a quest that exists (load-checked); no Nomad quest waits on a Farm one; no Craft or Level goal asks more than Engineering 10 (The Crucible). A Place to Pray stood in the Farm tab with no `after`, so it could finish before the Farm age opened. Stone in Hand had no `after`, so the spine read as three loose starts | A Place to Pray comes after Homestead Hearth like the rest of its tab; Stone in Hand after Crafting Table, so the Nomad spine reads Crafting Table, Stone in Hand, then First Night's line (First Night stays pinned at the start, with no `after`) |
 | Several steps shown as several | Homestead Hearth was one goal (`Home`) for a hearthstone, two chimneys and the lighting | Three parts: the hearthstone, two chimneys, and the lit hearth (`Home`). The book ticks each as it is made |
@@ -324,7 +324,7 @@ and `Trapped(creature, n)` (a catch taken from a sprung trap: `trapped`; whoever
 the snare gets the credit and the catch, as with a shared lit fire, until traps have
 owners). Loading refuses a `Stocked` store that is not a store, a `CraftNear` tag no
 recipe is made near, and a `Trapped` creature no trap catches. A tally goal naming one
-full name reads its one key; only `any` and `tag:` look across a kind's keys. Nomad has 63 quests, Farm 98.
+full name reads its one key; only `any` and `tag:` look across a kind's keys. Nomad has 64 quests, Farm 99, each counting its rite.
 
 ## An age's rite (Oct 15)
 
