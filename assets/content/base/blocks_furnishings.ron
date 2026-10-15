@@ -78,7 +78,9 @@
                 drops: "{name}_ingot", hardness: 0.5, color: (170, 170, 180), tags: ["lantern", "light", "decor", "metal"],
             ),
         ],
-        // A stone lantern or a column of one stone (`{name}`), in that stone's own texture.
+        // A stone lantern or a column of one stone (`{name}`), in that stone's own texture. A
+        // column walls a room as soundly as the stone it is cut from (calcite, sandstone and
+        // stone, all `shelter:sound`).
         "stone_lantern": [
             (
                 name: "{name}_lantern", render: Model, shape: "stone_lantern", light: 10, sound: Stone, textures: All("{name}"),
@@ -88,7 +90,7 @@
         "column": [
             (
                 name: "{name}_column", render: Model, shape: "column", sound: Stone, textures: All("{name}"),
-                drops: "core:air", hardness: 2.0, color: (125, 125, 125), tags: ["column", "decor", "building", "stone"],
+                drops: "core:air", hardness: 2.0, color: (125, 125, 125), tags: ["column", "decor", "building", "stone", "shelter:sound"],
             ),
         ],
     },

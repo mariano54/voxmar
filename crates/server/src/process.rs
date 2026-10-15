@@ -373,8 +373,8 @@ impl Server {
     /// block with none is draughty), or an opening where the way leads out of the reach or
     /// into the unloaded. A wall is a solid block or any with a shelter tag (a closed door, a
     /// window); a door left open lets the scan out, and furniture (survival.ron's
-    /// `home_furniture`, less its `home_wall_furniture`) is looked past to the wall behind
-    /// it, though never stepped down into: a hearthstone set in its ring is floor. Bounded by the home box, so a home in
+    /// `home_furniture`, with no shelter tag: a shelter tag always wins) is looked past to the
+    /// wall behind it, though never stepped down into: a hearthstone set in its ring is floor. Bounded by the home box, so a home in
     /// the open costs no more than the box.
     pub(crate) fn room_walls(&self, anchor: IVec3) -> voxmar_engine::effect::Walls {
         use voxmar_engine::effect::{Shelter, Walls};
@@ -386,17 +386,17 @@ impl Server {
         };
         // What stands at a cell: open (`None`), or a wall of a shelter. Furniture is looked
         // past, as open, whatever it is made of.
-        // Furniture that makes a wall all the same (`home_wall_furniture` with a shelter tag:
-        // cloth hung, a hay bale stacked) is a wall; a sack of cloth is still furniture.
+        // Furniture is a furniture tag with no shelter tag: a shelter tag always wins.
         let furniture = |tags: &[String]| rules.furniture(tags);
+        let furnished = |p: IVec3| self.block(p).is_some_and(|b| furniture(&blocks.def(b).tags));
         let wall = |p: IVec3| -> Option<Option<Shelter>> {
             let block = self.block(p)?;
             let tags = &blocks.def(block).tags;
             let shelter = Shelter::of(tags);
             ((shelter.is_some() || blocks.info(block).solid) && !furniture(tags)).then(|| Some(shelter.unwrap_or(Shelter::Draughty)))
         };
-        // A solid block is never stood in from above: under the room it is floor, a
-        // hearthstone set in its ring as much as the stone round it.
+        // A solid block or furniture is never stepped down into: under the room it is floor,
+        // a hearthstone, a barrel or a well set in it as much as the stone round them.
         let solid = |p: IVec3| self.block(p).is_some_and(|b| blocks.info(b).solid);
         let mut walls = Walls::default();
         // A hearth's home is its hearthstone, solid: the room is the first open cell over it.
@@ -419,7 +419,7 @@ impl Server {
                 match wall(next) {
                     Some(shelter) if face => walls.add(shelter),
                     Some(_) => {}
-                    None if !face && solid(next) => {}
+                    None if !face && (solid(next) || furnished(next)) => {}
                     None => {
                         if seen.insert(next) {
                             queue.push(next);
@@ -624,12 +624,53 @@ mod tests {
         server.set_block(at, block(&server, "base:hearthstone"));
         assert_eq!(server.room_walls(at), plain, "the hearth's floor ring counted as walls");
         assert_eq!(server.room_walls(at + IVec3::Y), plain);
+        // A barrel and a well set into the floor (over open air: the floor is one block
+        // thick) are floor too: the scan does not step down through them and out.
+        for (dx, name) in [(-2, "base:barrel"), (2, "base:well")] {
+            server.set_block(at + IVec3::new(dx, 0, 2), block(&server, name));
+        }
+        assert_eq!(server.room_walls(at + IVec3::Y), plain, "furniture in the floor let the scan under the room");
+        // Cloth hung and hay bales stacked are walls (their shelter tag wins over their
+        // furnishing ones), and so is a stone column mid-wall in a plank room.
         for wall in ["base:white_cloth", "base:hay_bale"] {
             let wall_block = block(&server, wall);
             build(&mut server, wall_block);
             let walls = server.room_walls(at + IVec3::Y);
             assert!(walls.share(Shelter::Draughty) >= 0.99, "a {wall} room is open: {walls:?}");
         }
+        build(&mut server, planks);
+        for y in 1..=3 {
+            server.set_block(at + IVec3::new(3, y, 0), block(&server, "base:stone_column"));
+        }
+        let walls = server.room_walls(at + IVec3::Y);
+        assert!(walls.share(Shelter::Draughty) >= 0.99, "a column mid-wall is a hole: {walls:?}");
+        // A crafting table (a station: furniture, no shelter tag) set in a gap in the wall
+        // plugs nothing: the room is open there.
+        server.set_block(at + IVec3::new(3, 1, 1), block(&server, "base:crafting_table"));
+        let gapped = server.room_walls(at + IVec3::Y);
+        assert!(gapped.share(Shelter::Draughty) < walls.share(Shelter::Draughty), "a station plugged a wall: {gapped:?}");
+    }
+
+    /// The load check on shelter tags: a solid `building` block with no shelter tag, or one
+    /// with two, is refused by name; furniture (a furniture tag, no shelter tag) is let
+    /// through, as is every shelter-tagged block.
+    #[test]
+    fn the_shelter_check_refuses_an_unjudged_wall_and_lets_furniture_through() {
+        let server = crate::test_server();
+        let rules = server.survival.clone();
+        let parse = |source: &str| voxmar_engine::block::BlockRegistry::from_ron("test", source).unwrap();
+        let ok = parse(r#"(blocks: [
+            (name: "wall", textures: All("stone"), tags: ["building", "shelter:sound"]),
+            (name: "chest", textures: All("stone"), tags: ["storage", "building"]),
+            (name: "cloth", textures: All("stone"), tags: ["decor", "building", "shelter:draughty"]),
+            (name: "dirt", textures: All("stone"), tags: ["natural"]),
+        ])"#);
+        assert_eq!(rules.check_shelters(&ok), Ok(()));
+        let unjudged = parse(r#"(blocks: [(name: "wall", textures: All("stone"), tags: ["building"])])"#);
+        let why = rules.check_shelters(&unjudged).unwrap_err();
+        assert!(why.contains("test:wall"), "{why}");
+        let twice = parse(r#"(blocks: [(name: "wall", textures: All("stone"), tags: ["roof", "shelter:sound", "shelter:fine"])])"#);
+        assert!(rules.check_shelters(&twice).unwrap_err().contains("test:wall"));
     }
 
     /// Time past a point of healing is not banked: however long the clock ran (buffs and a

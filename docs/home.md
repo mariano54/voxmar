@@ -82,11 +82,13 @@ wall, or the roof. A wall is any solid block or any with a shelter tag, so a shu
 window closes the room, and an open door lets the scan out. Furniture is not a wall: a block
 with a tag in survival.ron's `home_furniture` (machine, station, furnishing, storage, decor,
 multiblock_core, farm, waters) is looked past to the wall behind it, so a chest or a table
-by the wall leaves the room as it was, and a barrel in a doorway is no door. Furniture with
-a shelter tag and a tag in `home_wall_furniture` (cloth, awning, hay) walls a room all the
-same: cloth hung for a wall and hay bales stacked close a Nomad's first room (a sack of cloth,
-with no shelter tag, is still furniture). The scan never steps down into a solid block: under
-the room is floor, so a hearthstone set in its ring of stone is floor like the ring. A face leading out of the reach
+by the wall leaves the room as it was, and a barrel in a doorway is no door. Furniture is a
+furniture tag and no shelter tag: a shelter tag always wins, so cloth hung for a wall, a hay
+bale and a stone column (`shelter:draughty`, `draughty`, `sound`) wall a room, while machines,
+stations, the chest, the hearthstone, the altar and the planter carry no shelter tag and are
+looked past, so a small station never plugs a gap in a wall. The scan never steps down into a
+solid block or furniture: under the room is floor, so a hearthstone, a barrel or a well set in
+it is floor like the stone round it. A face leading out of the reach
 (or into an unloaded column) is an opening, of no shelter, and counts against the room; the
 floor is not counted. `HomeWalls(Sound, 0.6)` holds when 6 in 10 faces are sound or better
 (effect.rs, `Condition::HomeWalls`, `Walls::share`; load-checked: the share is above 0 and at
