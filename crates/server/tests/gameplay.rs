@@ -3507,6 +3507,100 @@ fn walkers_stand_on_shaped_blocks_where_they_stop_them() {
     assert_eq!(client.teleported.take(), Some(start + Vec3::new(0.0, 1.0, 3.0)), "stood inside the slab");
 }
 
+/// Ground is what the feet rest on as drawn. Pressed into the corner of a shaft walled with
+/// columns and barrels, a player's box reaches into both walls' cells but touches neither,
+/// so it is no ground: a dodge there is refused, and the fall down it hurts. On a slab's top
+/// it is ground.
+#[test]
+fn a_shaft_lined_with_shaped_blocks_is_no_ground_to_dodge_or_break_a_fall_on() {
+    real_time("movement and combat are judged on the clock: how far a player may get between messages, a dodge's grace in seconds");
+    let mut client = on_a_test_floor();
+    client.ok("/gamemode survival");
+    let start = client.position;
+    let at = start.floor().as_ivec3();
+    // Columns on the west, barrels on the south, five high from the floor.
+    client.fill(at, IVec3::new(-1, 0, 0), IVec3::new(-1, 4, 0), "stone_column");
+    client.fill(at, IVec3::new(0, 0, 1), IVec3::new(0, 4, 1), "barrel");
+    let corner = at.as_vec3() + Vec3::new(0.2, 0.0, 0.8);
+    let top = corner + Vec3::Y * 5.0;
+    client.tp(top);
+    // Past the dodge's grace since the floor.
+    client.wait_server(1);
+    assert!(!dodge_taken(&mut client), "a dodge in mid-air beside columns and barrels was taken");
+    client.teleported = None;
+    for y in (0..5).rev() {
+        client.send_position(corner + Vec3::Y * y as f32, false);
+        // A server tick on each step, so the fall is seen block by block.
+        client.after_server_ticks(1);
+    }
+    client.pump_until(|c| c.health < 20);
+    assert_eq!(client.health, 18, "a five block fall down the shaft costs two health");
+    assert!(client.teleported.is_none(), "the fall was put back to {:?}", client.teleported);
+    // A slab's top is ground to dodge from.
+    client.fill(at, IVec3::new(3, 0, 0), IVec3::new(3, 0, 0), "oak_slab");
+    client.tp(start + Vec3::new(3.0, 0.5, 0.0));
+    client.after_server_ticks(2);
+    assert!(dodge_taken(&mut client), "a dodge on a slab's top was refused");
+}
+
+/// A sprint at a low frame rate climbs a slab and then a whole block in one input, under a
+/// ceiling too low over its start to rise there first: neither the straight line, nor
+/// across then up, nor up then across clears, but walking up each step in turn does.
+#[test]
+fn two_half_steps_in_one_input_are_climbed_under_a_low_ceiling() {
+    real_time("movement is checked against the clock: how far a player may get in the seconds between their messages");
+    let mut client = on_a_test_floor();
+    let start = client.position;
+    let at = start.floor().as_ivec3();
+    client.fill(at, IVec3::new(0, 0, 1), IVec3::new(0, 0, 1), "oak_slab");
+    client.fill(at, IVec3::new(0, 0, 2), IVec3::new(0, 0, 2), "oak_planks");
+    // 2.5 over the start, 3 over the slab: room to stand on the slab and step up from it.
+    client.fill(at, IVec3::new(0, 2, 0), IVec3::new(0, 2, 0), "oak_slab_top");
+    client.fill(at, IVec3::new(0, 3, 1), IVec3::new(0, 3, 1), "oak_planks");
+    client.send_position(start + Vec3::new(0.0, 1.0, 2.0), false);
+    assert!(client.all_accepted(), "two half-steps in one input were put back to {:?}", client.teleported);
+    // A whole block is still a jump, not two steps: none of it on a stair of whole blocks.
+    client.tp(start);
+    client.fill(at, IVec3::new(0, 0, 1), IVec3::new(0, 0, 1), "oak_planks");
+    client.fill(at, IVec3::new(0, 1, 2), IVec3::new(0, 1, 2), "oak_planks");
+    client.send_position(start + Vec3::new(0.0, 2.0, 2.0), false);
+    client.pump_until(|c| c.teleported.is_some());
+    assert_eq!(client.teleported.take(), Some(start), "climbed two whole blocks in one input");
+}
+
+/// A gap between shaped blocks narrower or lower than the player is no way through, though
+/// a share of their box would fit: between two pot shelves in a row (9/16 of a block, the
+/// player is 0.6 wide), and on a headstone under an upside-down slab (1.75 high, the
+/// player is 1.8 tall).
+#[test]
+fn gaps_between_shapes_smaller_than_the_player_are_no_way_through() {
+    real_time("movement is checked against the clock: how far a player may get in the seconds between their messages");
+    let mut client = on_a_test_floor();
+    let start = client.position;
+    let at = start.floor().as_ivec3();
+    // Two shelves facing the same way, south of each other: the second's free front is 9/16 deep.
+    client.fill(at, IVec3::new(0, 0, 1), IVec3::new(0, 0, 2), "oak_pot_shelf");
+    let beside = at.as_vec3() + Vec3::new(-0.5, 0.0, 2.0 + 9.0 / 32.0);
+    client.tp(beside);
+    client.send_position(beside + Vec3::X, false);
+    client.pump_until(|c| c.teleported.is_some());
+    assert_eq!(client.teleported.take(), Some(beside), "squeezed between two pot shelves 9/16 apart");
+    // Onto a headstone (three quarters of a block high, a jump): open above, the player
+    // stands on it...
+    client.tp(start);
+    client.fill(at, IVec3::new(2, 0, 0), IVec3::new(2, 0, 0), "stone_headstone");
+    let on = start + Vec3::new(2.0, 0.75, 0.0);
+    client.send_position(start + Vec3::X, false);
+    client.send_position(on, false);
+    assert!(client.all_accepted(), "a jump onto a headstone was put back to {:?}", client.teleported);
+    // ...but not under a slab in the upper half of the cell above the next, 1.75 over its top.
+    client.fill(at, IVec3::new(2, 2, 0), IVec3::new(2, 2, 0), "oak_slab_top");
+    client.tp(start + Vec3::X);
+    client.send_position(on, false);
+    client.pump_until(|c| c.teleported.is_some());
+    assert_eq!(client.teleported.take(), Some(start + Vec3::X), "stood on a headstone with 1.75 blocks of headroom");
+}
+
 #[test]
 fn swimmers_climb_out_onto_a_bank_but_nobody_jumps_out_of_a_dry_pit_or_lava() {
     real_time("movement is checked against the clock: how far a player may get in the seconds between their messages");

@@ -69,7 +69,9 @@ impl Process for Falling {
             let column_loaded = server.world.contains(ColumnPos::of_block(player.position.floor().as_ivec3()));
             let mut below = aabb;
             below.translate(Vec3::new(0.0, -0.05, 0.0));
-            let on_ground = below.intersects(|p| server.is_solid(p));
+            // Ground is what the feet rest on as drawn: a shaft lined with posts or stair corners
+            // is still a fall.
+            let on_ground = below.overlaps(|p| server.boxes(p));
             // Any state of the fluid counts: flowing water (any fluid swum in) breaks a fall,
             // flowing lava burns.
             let touching = |kind: &dyn Fn(FluidId) -> bool| aabb.intersects(|p| server.block(p).and_then(|b| blocks.fluid(b)).is_some_and(|f| kind(f.fluid)));

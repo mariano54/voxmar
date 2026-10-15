@@ -47,7 +47,7 @@ use bevy::input::mouse::MouseButtonInput;
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured};
 use rustc_hash::FxHashMap;
-use voxmar_engine::block::BlockId;
+use voxmar_engine::block::{BlockId, BlockRegistry};
 use voxmar_engine::coords::ColumnPos;
 use voxmar_engine::lang::Words;
 use voxmar_engine::world::VoxelWorld;
@@ -480,10 +480,10 @@ steps! {
     /// eye drops, the server says so, and By the Fire comes on (shot `seat-fire`); a step
     /// forward stands the player up, the eye back where it was.
     Seat,
-    /// Walking forward with jump never pressed climbs a slab, a stair, a block and a slab on
-    /// a block beyond, half a block at a time, never inside one of them; the server keeps
-    /// the player where they climbed to.
-    Climb,
+    /// Walking forward with jump never pressed steps up a slab, a stair, a block and a slab
+    /// on a block beyond (the loaded blocks' own), never inside one of them and never put
+    /// back; the server keeps the player where they climbed to.
+    StepUp,
     /// With a log in the pack, the inventory's Can Make list shows planks ready, the ready
     /// ones first; a click on them lays the log in the grid, as the server does it; pointed
     /// at, a stone pickaxe says what it still wants.
@@ -665,8 +665,14 @@ struct Gate {
     machines_held: f32,
     /// The highest the player's feet reached while climbing out of the pool.
     highest: f32,
-    /// What the climb step saw go wrong while walking: the player inside a block, or jumping.
-    climb_fault: Option<String>,
+    /// What the step-up step saw go wrong while walking: the player inside a block, jumping
+    /// or put back by the server.
+    step_up_fault: Option<String>,
+    /// The step-up course's cells and the blocks picked for them.
+    step_up_cells: Vec<(IVec3, BlockId)>,
+    /// The player's teleports when W went down on the course: one more is the server
+    /// putting them back.
+    step_up_teleports: u32,
     /// Teleport sequence before returning weather/sky views to the open test ground.
     scene_teleport: u32,
     /// The server's clock when `open_scene_pose` last sent its teleport.
@@ -908,7 +914,9 @@ impl Gate {
             machines_seen: false,
             machines_held: f32::MIN,
             highest: f32::MIN,
-            climb_fault: None,
+            step_up_fault: None,
+            step_up_cells: Vec::new(),
+            step_up_teleports: 0,
             scene_teleport: 0,
             scene_sent: 0.0,
             gorge: IVec3::ZERO,
@@ -1823,7 +1831,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Nest => nest(world, gate, now),
         Step::Door => door(world, gate, now, in_phase),
         Step::Seat => seat(world, gate, now),
-        Step::Climb => climb(world, gate, now, in_phase),
+        Step::StepUp => step_up(world, gate, now, in_phase),
         Step::Makeable => makeable(world, gate, now, in_phase),
         Step::Quests => quests(world, gate, now, in_phase),
         Step::Catalogue => catalogue(world, gate, now, in_phase),
@@ -5625,7 +5633,7 @@ fn seat(world: &mut World, gate: &mut Gate, now: f32) {
         let net = world.resource::<Net>();
         net.command(&format!("fill {} {} {} {} {} {} air", table.x, stool.y, stool.z, fire.x, fire.y + 2, fire.z));
         net.command(&format!("tp {} {} {}", stand.x as f32 + 0.5, stand.y, stand.z as f32 + 0.5));
-        gate.next(Step::Climb, now);
+        gate.next(Step::StepUp, now);
     };
     let has = |world: &World, name: &str| {
         let (player, launch) = (world.resource::<LocalPlayer>(), world.resource::<Launch>());
@@ -5728,49 +5736,130 @@ fn seat(world: &mut World, gate: &mut Gate, now: f32) {
     }
 }
 
-/// The climb step's course, from where the player stands (`climb`): blocks along +z at
-/// the stand's height (`0`) and one up (`1`), each top half a block above the last.
-const CLIMB_COURSE: [(i32, i32, &str); 6] = [(2, 0, "oak_slab"), (3, 0, "oak_stairs"), (4, 0, "oak_planks"), (5, 0, "oak_planks"), (5, 1, "oak_slab"), (6, 1, "oak_planks")];
-/// How high the course's last block stands over the floor, and how far along it is.
-const CLIMB_TOP: f32 = 2.0;
-const CLIMB_END: i32 = 6;
+/// The step-up course, from where the player stands (`step_up`): blocks along +z at the
+/// stand's height (`0`) and one up (`1`), a slab-like block, a stair-like one, then whole
+/// blocks with a slab-like one on the first.
+const STEP_UP_COURSE: [(i32, i32, Piece); 6] = [(2, 0, Piece::Slab), (3, 0, Piece::Stair), (4, 0, Piece::Cube), (5, 0, Piece::Cube), (5, 1, Piece::Slab), (6, 1, Piece::Cube)];
+/// How high the course's last block stands over the floor (a whole block on a whole block),
+/// and how far along it is.
+const STEP_UP_TOP: f32 = 2.0;
+const STEP_UP_END: i32 = 6;
 /// Game seconds the walk up the course may take (it takes under two at walking speed),
 /// and server seconds for the server to show the player where they climbed to.
-const CLIMB_WAIT: f32 = 8.0;
+const STEP_UP_WAIT: f32 = 8.0;
+/// How far the server's position for the player may be from the client's at the top.
+const STEP_UP_NEAR: f32 = 0.25;
+
+/// The kinds of block the step-up course is built of.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Piece {
+    Slab,
+    Stair,
+    Cube,
+}
+
+/// The step-up course's blocks, picked from the loaded blocks by their collision boxes so
+/// any pack's slabs and stairs do (the first of each, by id): a slab-like block (one box over
+/// the whole cell's floor, no taller than a step and tall enough that a whole block beyond
+/// it is a step from its top), a stair-like one (such a box with one box on it towards +z,
+/// each tier a step up and a step short of a whole block), and a plain whole block. An `Err`
+/// names what the loaded blocks lack.
+fn step_up_pieces(registry: &BlockRegistry, step_up: f32) -> Result<[BlockId; 3], String> {
+    use voxmar_engine::physics::CUBE;
+    const E: f32 = 1e-4;
+    let near = |a: f32, b: f32| (a - b).abs() < E;
+    // One box over the whole floor of the cell, and its height.
+    let floor_box = |b: &voxmar_engine::physics::Aabb| (near(b.min.x, 0.0) && near(b.min.y, 0.0) && near(b.min.z, 0.0) && near(b.max.x, 1.0) && near(b.max.z, 1.0)).then_some(b.max.y);
+    let plain = |id: BlockId| {
+        let info = registry.info(id);
+        info.solid && info.placeable && info.fluid.is_none() && info.support == voxmar_engine::block::Support::None && info.upper.is_none() && info.swaps.is_none() && info.emission == 0
+    };
+    let slab = registry.ids().find(|&id| {
+        plain(id) && registry.info(id).facing.is_none() && matches!(registry.collision(id), [b] if floor_box(b).is_some_and(|h| h <= step_up + E && 1.0 - h <= step_up + E))
+    });
+    let stair = registry.ids().find(|&id| {
+        plain(id)
+            && registry.info(id).facing.is_some()
+            && match registry.collision(id) {
+                [low, high] => floor_box(low).is_some_and(|h| {
+                    h <= step_up + E
+                        && near(high.min.y, h)
+                        && near(high.min.x, 0.0)
+                        && near(high.max.x, 1.0)
+                        && near(high.max.z, 1.0)
+                        && high.min.z > E
+                        && high.max.y - h <= step_up + E
+                        && high.max.y <= 1.0 + E
+                        && 1.0 - high.max.y <= step_up + E
+                }),
+                _ => false,
+            }
+    });
+    let cube = registry.ids().find(|&id| plain(id) && registry.info(id).occludes && registry.info(id).facing.is_none() && registry.info(id).shape.is_none() && registry.collision(id) == CUBE);
+    match (slab, stair, cube) {
+        (Some(slab), Some(stair), Some(cube)) => Ok([slab, stair, cube]),
+        _ => Err(format!(
+            "the loaded blocks lack a piece for the course (step_up {step_up}): slab-like {:?}, stair-like rising towards +z {:?}, whole block {:?}",
+            slab.map(|b| &registry.def(b).name),
+            stair.map(|b| &registry.def(b).name),
+            cube.map(|b| &registry.def(b).name)
+        )),
+    }
+}
 
 /// A course built a dozen blocks over the test ground, clear of what other steps built: a
-/// stone floor running south, a slab, a stair whose step faces the player, two planks and a
-/// slab on the second, a plank one up beyond it. The player, set on the floor facing south,
-/// holds W and never jump: stepping up half a block at a time takes them to the top. Every
-/// frame of the walk they are checked out of every block's boxes and never moving upwards
-/// (a step lifts without speed; a jump would show as speed upwards).
-fn climb(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+/// floor of whole blocks running south, a slab, a stair whose step faces the player, two
+/// whole blocks and a slab on the second, a whole block one up beyond it, each picked from
+/// the loaded blocks (`step_up_pieces`). The player, set on the floor facing south, holds W
+/// and never jump: stepping up a little at a time takes them to the top. Every frame of the
+/// walk they are checked out of every block's boxes, never moving upwards (a step lifts
+/// without speed; a jump would show as speed upwards) and never put back by the server.
+fn step_up(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     use voxmar_engine::physics::Aabb;
     let floor = gate.feet + IVec3::new(0, 12, 0);
     let stand = floor + IVec3::Y;
-    let cells: Vec<(IVec3, &str)> = CLIMB_COURSE.iter().map(|&(z, y, name)| (stand + IVec3::new(0, y, z), name)).collect();
+    let clear = format!("fill {} {} {} {} {} {} air", floor.x - 1, floor.y, floor.z - 1, floor.x + 1, floor.y + 5, floor.z + STEP_UP_END + 2);
     let leave = |world: &mut World, gate: &mut Gate| {
         key(world, KeyCode::KeyW, false);
         let net = world.resource::<Net>();
-        net.command(&format!("fill {} {} {} {} {} {} air", floor.x - 1, floor.y, floor.z - 1, floor.x + 1, floor.y + 5, floor.z + CLIMB_END + 2));
+        net.command(&clear);
         let feet = gate.feet;
         net.command(&format!("tp {} {} {}", feet.x as f32 + 0.5, feet.y, feet.z as f32 + 0.5));
         gate.next(Step::Makeable, now);
     };
-    let (position, on_ground, flying, velocity) = {
+    let (position, on_ground, flying, velocity, teleports) = {
         let player = world.resource::<LocalPlayer>();
-        (player.position, player.on_ground, player.flying, player.velocity)
+        (player.position, player.on_ground, player.flying, player.velocity, player.teleports)
     };
+    let registry = world.resource::<ClientWorld>().registry.clone();
+    let name = |b: Option<BlockId>| b.map_or("nothing loaded".to_owned(), |b| registry.def(b).name.clone());
+    let from_stand = |at: Vec3| at - stand.as_vec3();
     match gate.phase {
         0 => {
+            let step_up = world.resource::<Launch>().content.movement.step_up;
+            let [slab, stair, cube] = match step_up_pieces(&registry, step_up) {
+                Ok(pieces) => pieces,
+                Err(missing) => {
+                    gate.check("step up", Err(missing));
+                    return leave(world, gate);
+                }
+            };
+            gate.step_up_cells = STEP_UP_COURSE
+                .iter()
+                .map(|&(z, y, piece)| (stand + IVec3::new(0, y, z), match piece {
+                    Piece::Slab => slab,
+                    Piece::Stair => stair,
+                    Piece::Cube => cube,
+                }))
+                .collect();
             let net = world.resource::<Net>();
-            net.command(&format!("fill {} {} {} {} {} {} air", floor.x - 1, floor.y, floor.z - 1, floor.x + 1, floor.y + 5, floor.z + CLIMB_END + 2));
-            net.command(&format!("fill {} {} {} {} {} {} stone", floor.x - 1, floor.y, floor.z - 1, floor.x + 1, floor.y, floor.z + CLIMB_END + 2));
-            for (cell, name) in &cells {
-                net.command(&format!("setblock {} {} {} {name}", cell.x, cell.y, cell.z));
+            net.command(&clear);
+            net.command(&format!("fill {} {} {} {} {} {} {}", floor.x - 1, floor.y, floor.z - 1, floor.x + 1, floor.y, floor.z + STEP_UP_END + 2, registry.def(cube).name));
+            for &(cell, block) in &gate.step_up_cells {
+                net.command(&format!("setblock {} {} {} {}", cell.x, cell.y, cell.z, registry.def(block).name));
             }
             net.command(&format!("tp {} {} {}", stand.x as f32 + 0.5, stand.y, stand.z as f32 + 0.5));
-            gate.climb_fault = None;
+            gate.step_up_fault = None;
             gate.advance(now);
         }
         // The course in the client's world as the server built it, and the player on its
@@ -5778,13 +5867,18 @@ fn climb(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         1 => {
             look(world, 180.0, 0.0);
             let client = world.resource::<ClientWorld>();
-            let built = cells.iter().all(|&(cell, name)| client.registry.id(&format!("base:{name}")).is_some_and(|id| client.block(cell) == Some(id)));
+            let wrong = gate.step_up_cells.iter().find(|&&(cell, block)| client.block(cell) != Some(block)).map(|&(cell, block)| (cell, block, client.block(cell)));
             let placed = on_ground && !flying && (position.y - stand.y as f32).abs() < 0.01 && (position.z - (stand.z as f32 + 0.5)).abs() < 0.1;
-            if built && placed {
+            if wrong.is_none() && placed {
+                gate.step_up_teleports = teleports;
                 key(world, KeyCode::KeyW, true);
                 gate.advance(now);
-            } else if gate.server_in_phase() > CLIMB_WAIT {
-                gate.check("climb", Err(format!("the course or the player never came: course on the client {built}, player at {} from the stand, on the ground {on_ground}, flying {flying}", position - stand.as_vec3())));
+            } else if gate.server_in_phase() > STEP_UP_WAIT {
+                let course = match wrong {
+                    Some((cell, want, have)) => format!("at {} from the stand the client has {}, not {}", cell - stand, name(have), name(Some(want))),
+                    None => "the course is built".to_owned(),
+                };
+                gate.check("step up", Err(format!("the course or the player never came: {course}; player at {} from the stand, on the ground {on_ground}, flying {flying}", from_stand(position))));
                 leave(world, gate);
             }
         }
@@ -5796,47 +5890,57 @@ fn climb(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             core.min += 0.01;
             core.max -= 0.01;
             let boxes = |cell: IVec3| -> &[Aabb] { client.block(cell).map_or(&[], |b| client.registry.collision(b)) };
-            if gate.climb_fault.is_none() {
+            if gate.step_up_fault.is_none() {
                 if core.overlaps(boxes) {
-                    gate.climb_fault = Some(format!("inside a block at {} from the stand", position - stand.as_vec3()));
+                    gate.step_up_fault = Some(format!("inside a block at {} from the stand", from_stand(position)));
                 } else if velocity.y > 0.0 {
-                    gate.climb_fault = Some(format!("moving up at {:.2}: a jump, not a step, at {} from the stand", velocity.y, position - stand.as_vec3()));
+                    gate.step_up_fault = Some(format!("moving up at {:.2}: a jump, not a step, at {} from the stand", velocity.y, from_stand(position)));
+                } else if teleports != gate.step_up_teleports {
+                    gate.step_up_fault = Some(format!("the server put the player back (teleport {} became {teleports}), now at {} from the stand", gate.step_up_teleports, from_stand(position)));
                 }
             }
             let up = position.y - stand.y as f32;
-            let at_top = on_ground && (up - CLIMB_TOP).abs() < 0.01 && position.z > (stand.z + CLIMB_END) as f32;
+            let at_top = on_ground && (up - STEP_UP_TOP).abs() < 0.01 && position.z > (stand.z + STEP_UP_END) as f32;
             if at_top {
                 key(world, KeyCode::KeyW, false);
-                match gate.climb_fault.take() {
+                match gate.step_up_fault.take() {
                     None => {
-                        gate.check("climb", Ok(format!("walked up a slab, a stair, a block and a slab on a block to +{up:.2} in {in_phase:.1} s, jump never pressed, never inside a block")));
+                        let names: Vec<String> = gate.step_up_cells.iter().map(|&(_, b)| name(Some(b))).collect();
+                        gate.check("step up", Ok(format!("walked up {} to +{up:.2} in {in_phase:.1} s, jump never pressed, never inside a block, never put back", names.join(", "))));
                         gate.advance(now);
                     }
                     Some(fault) => {
-                        gate.check("climb", Err(fault));
+                        gate.check("step up", Err(fault));
                         leave(world, gate);
                     }
                 }
-            } else if in_phase > CLIMB_WAIT {
+            } else if in_phase > STEP_UP_WAIT {
                 let cell = position.floor().as_ivec3();
-                let (here, under) = (client.block(cell).map(|b| client.registry.def(b).name.clone()), client.block(cell - IVec3::Y).map(|b| client.registry.def(b).name.clone()));
-                gate.check("climb", Err(format!("{CLIMB_WAIT} s of W held: at {} from the stand, top +{CLIMB_TOP} wanted, on the ground {on_ground}, flying {flying}, velocity {velocity}, in {here:?} on {under:?}, fault {:?}", position - stand.as_vec3(), gate.climb_fault)));
+                let (here, under) = (name(client.block(cell)), name(client.block(cell - IVec3::Y)));
+                gate.check("step up", Err(format!("{STEP_UP_WAIT} s of W held: at {} from the stand, top +{STEP_UP_TOP} past +{STEP_UP_END} wanted, on the ground {on_ground}, flying {flying}, velocity {velocity}, in {here} on {under}, fault {:?}", from_stand(position), gate.step_up_fault)));
                 leave(world, gate);
             }
         }
-        // The server has the player up there too.
+        // The server has the player up there too: at the top's height, past the course's
+        // end, where the client has them.
         _ => {
             let server = gate.observer.as_ref().and_then(|o| o.others.values().next().copied());
-            let near = server.is_some_and(|at| at.distance(position) < 0.25);
-            if !near && gate.server_in_phase() < CLIMB_WAIT {
+            let on_top = |at: Vec3| (at.y - stand.y as f32 - STEP_UP_TOP).abs() < 0.01 && at.z > (stand.z + STEP_UP_END) as f32;
+            let good = server.is_some_and(|at| at.distance(position) < STEP_UP_NEAR && on_top(at));
+            if !good && gate.server_in_phase() < STEP_UP_WAIT {
                 return;
             }
             let result = match server {
-                Some(at) if near => Ok(format!("the server has the player on the course's top, {:.2} blocks from the client", at.distance(position))),
-                Some(at) => Err(format!("the server has the player at {} from the stand, the client at {}: it put them back", at - stand.as_vec3(), position - stand.as_vec3())),
+                Some(at) if good => Ok(format!("the server has the player on the course's top at {} from the stand, {:.2} blocks from the client (at most {STEP_UP_NEAR})", from_stand(at), at.distance(position))),
+                Some(at) => Err(format!(
+                    "the server has the player at {} from the stand, the client at {}: {:.2} blocks apart (at most {STEP_UP_NEAR}), top +{STEP_UP_TOP} past +{STEP_UP_END} wanted",
+                    from_stand(at),
+                    from_stand(position),
+                    at.distance(position)
+                )),
                 None => Err("the server told the observer of no player".into()),
             };
-            gate.check("climb: server", result);
+            gate.check("step up: server", result);
             leave(world, gate);
         }
     }

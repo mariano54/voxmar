@@ -11,7 +11,7 @@ use voxmar_engine::glam::Vec3;
 use voxmar_engine::inventory::{HOTBAR_SLOTS, Inventory, ItemStack, MAX_STACK};
 use voxmar_engine::lang::Words;
 use voxmar_engine::movement::Checks;
-use voxmar_engine::physics::{Aabb, player as dims};
+use voxmar_engine::physics::{Aabb, CUBE, player as dims};
 use voxmar_engine::skill::{SkillRegistry, Skills};
 use voxmar_engine::traits::{self, Health, TraitDecl};
 use voxmar_engine::vitals::Vitals;
@@ -861,11 +861,25 @@ impl Server {
             .unwrap_or(from)
     }
 
-    /// Whether a player at `feet` would be in a wall (with a slightly smaller box than
-    /// theirs, for rounding: `Checks::wall_box`).
+    /// Whether a player at `feet` would be in a wall, with a slightly smaller box than theirs
+    /// for rounding: a share of it against whole blocks (`Checks::wall_box`), their own less
+    /// a fixed margin against shaped blocks' boxes (`Checks::wall_margin`), so a gap between
+    /// shapes narrower than the player is no way through.
     fn inside(&self, feet: Vec3) -> bool {
-        let (width, height) = self.content.movement.checks.wall_box;
-        Aabb::standing(feet, dims::WIDTH * width, dims::HEIGHT * height).overlaps(|cell| self.boxes(cell))
+        let checks = &self.content.movement.checks;
+        let (width, height) = checks.wall_box;
+        let whole = |cell| match self.boxes(cell) {
+            boxes if boxes == CUBE => boxes,
+            _ => &[],
+        };
+        let shaped = |cell| match self.boxes(cell) {
+            boxes if boxes == CUBE => &[],
+            boxes => boxes,
+        };
+        let m = checks.wall_margin;
+        let half = dims::WIDTH / 2.0 - m;
+        let tight = Aabb { min: feet - Vec3::new(half, -m, half), max: feet + Vec3::new(half, dims::HEIGHT - m, half) };
+        Aabb::standing(feet, dims::WIDTH * width, dims::HEIGHT * height).overlaps(whole) || tight.overlaps(shaped)
     }
 
     /// Whether a player could have got from `from` to `to` without passing through a wall.
@@ -886,7 +900,60 @@ impl Server {
         };
         let across_first = Vec3::new(to.x, from.y, to.z);
         let up_first = Vec3::new(from.x, to.y, from.z);
-        clear(from, to) || (clear(from, across_first) && clear(across_first, to)) || (clear(from, up_first) && clear(up_first, to))
+        clear(from, to) || (clear(from, across_first) && clear(across_first, to)) || (clear(from, up_first) && clear(up_first, to)) || self.stepped_between(from, to)
+    }
+
+    /// Whether a walker could have got from `from` to `to` along the ground, stepping up onto
+    /// each block in the way no taller than `step_up` as the client does: between two inputs
+    /// a sprint at a low frame rate climbs a slab and then a stair under a ceiling that no
+    /// straight or one-turn path clears.
+    fn stepped_between(&self, from: Vec3, to: Vec3) -> bool {
+        let tuning = &self.content.movement;
+        if to.y < from.y || to.y - from.y > 2.0 * tuning.step_up {
+            return false;
+        }
+        let across = (to - from).with_y(0.0);
+        let steps = (across.length() / tuning.checks.sweep_step).ceil().max(1.0) as u32;
+        let mut at = from;
+        for i in 1..=steps {
+            let mut next = (from + across * (i as f32 / steps as f32)).with_y(at.y);
+            if self.inside(next) {
+                // Up onto what is in the way, from where the walker was: its top, no more
+                // than a step up.
+                let Some(top) = self.top_within(next, tuning.step_up) else { return false };
+                next.y = top;
+                if self.inside(at.with_y(top)) || self.inside(next) {
+                    return false;
+                }
+            }
+            at = next;
+        }
+        // Then down, if the last step overshot, to where they are.
+        at.y + 1e-3 >= to.y && !self.inside(to)
+    }
+
+    /// The highest top of a block's boxes under a player's footprint at `feet` that is above
+    /// their feet but at most `rise` above.
+    fn top_within(&self, feet: Vec3, rise: f32) -> Option<f32> {
+        let half = dims::WIDTH / 2.0;
+        let (lo, hi) = (feet - Vec3::new(half, 0.0, half), feet + Vec3::new(half, rise, half));
+        let (a, b) = (lo.floor().as_ivec3(), hi.floor().as_ivec3());
+        let mut top = None::<f32>;
+        for x in a.x..=b.x {
+            for y in a.y..=b.y {
+                for z in a.z..=b.z {
+                    let cell = voxmar_engine::glam::IVec3::new(x, y, z);
+                    for b in self.boxes(cell) {
+                        let (min, max) = (b.min + cell.as_vec3(), b.max + cell.as_vec3());
+                        let over = min.x < hi.x && max.x > lo.x && min.z < hi.z && max.z > lo.z;
+                        if over && max.y > feet.y && max.y <= feet.y + rise {
+                            top = Some(top.map_or(max.y, |t| t.max(max.y)));
+                        }
+                    }
+                }
+            }
+        }
+        top
     }
 
     fn settings(&mut self, id: PlayerId, view_distance: u8, fly_speed: f32) {

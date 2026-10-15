@@ -142,7 +142,9 @@ fn apart(lo: f32, hi: f32, a: f32, b: f32) -> Option<()> {
 
 /// [`move_and_slide`] against the boxes `boxes` gives for each cell, in blocks from the
 /// cell's lower corner, rather than whole cells: a slab stops a box at its top, a post at its
-/// sides. A box already overlapping one of them may move out of it, never further in.
+/// sides. A box it already overlaps (by more than rounding) does not stop it, as a whole cell
+/// it is already in does not stop [`move_and_slide`]: a body a block was placed on moves out
+/// of it rather than sticking (and may drop through it to what is below).
 pub fn move_and_slide_boxes<'a>(aabb: &mut Aabb, delta: Vec3, boxes: impl Fn(IVec3) -> &'a [Aabb]) -> [bool; 3] {
     let mut blocked = [false; 3];
     for axis in [1, 0, 2] {
