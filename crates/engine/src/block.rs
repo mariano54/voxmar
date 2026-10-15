@@ -202,6 +202,10 @@ pub struct BlockDef {
     /// Seconds to break by hand. Negative means unbreakable.
     pub hardness: f32,
     pub sound: Sound,
+    /// The building material it sounds as (a `materials` entry of sounds.ron, by name),
+    /// whatever its tags say: cut cobblestone is not `cobbled` for recipes but still sounds
+    /// like cobblestone. Only sounds read it; nothing else may.
+    pub material: Option<String>,
     /// Name of the block dropped when broken, `core:air` for nothing. Defaults to the
     /// block itself.
     pub drops: Option<String>,
@@ -517,6 +521,7 @@ impl Default for BlockDef {
             light_filter: 0,
             hardness: 1.0,
             sound: Sound::Stone,
+            material: None,
             drops: None,
             drop_count: 1,
             color: [255, 0, 255],
@@ -663,6 +668,7 @@ pub struct BlockPatch {
     pub light_filter: Option<u8>,
     pub hardness: Option<f32>,
     pub sound: Option<Sound>,
+    pub material: Option<String>,
     pub drops: Option<String>,
     pub drop_count: Option<u8>,
     pub color: Option<[u8; 3]>,
@@ -689,6 +695,7 @@ impl BlockPatch {
             light_filter,
             hardness,
             sound,
+            material,
             drops,
             drop_count,
             color,
@@ -712,6 +719,7 @@ impl BlockPatch {
         light_filter.into_iter().for_each(|v| def.light_filter = v);
         hardness.into_iter().for_each(|v| def.hardness = v);
         sound.into_iter().for_each(|v| def.sound = v);
+        material.into_iter().for_each(|v| def.material = Some(v));
         drops.into_iter().for_each(|v| def.drops = Some(v));
         drop_count.into_iter().for_each(|v| def.drop_count = v);
         color.into_iter().for_each(|v| def.color = v);
@@ -860,6 +868,8 @@ pub struct BlockRegistry {
     shape_starts: Vec<u32>,
     /// The texture layer of each quad of a block's shape, by block.
     shape_layers: Vec<Vec<u16>>,
+    /// What each shape stops movement with: its boxes' unturned bounds, by shape.
+    shape_collision: Vec<Vec<crate::physics::Aabb>>,
     /// By block, whether it is only a form another takes when placed (`placement_form`).
     placement_forms: Vec<bool>,
     /// Every block's looks: itself and its variants (shared by the variants).
@@ -1278,7 +1288,8 @@ impl BlockRegistry {
                 return Err(RegistryError(format!("`{}` drops merged-away `{}`; drop `{into}` (item_of) instead", defs[i].name, defs[dropped.0 as usize].name)));
             }
         }
-        Ok(Self { defs, info, by_name, textures, shapes, shape_starts, shape_layers, placement_forms, looks, fluids, renamed: FxHashMap::default() })
+        let shape_collision = shapes.iter().map(|s| s.bounds.iter().map(|&(min, max)| crate::physics::Aabb { min, max }).collect()).collect();
+        Ok(Self { defs, info, by_name, textures, shapes, shape_starts, shape_layers, shape_collision, placement_forms, looks, fluids, renamed: FxHashMap::default() })
     }
 
     /// A block's looks for a generator to choose from: the block itself first, then its
@@ -1456,6 +1467,19 @@ impl BlockRegistry {
     /// The shape a block drawn as boxes takes, made ready for its facing.
     pub fn shape(&self, id: BlockId) -> Option<&crate::shape::Shape> {
         self.info(id).shape.map(|s| &self.shapes[s as usize])
+    }
+
+    /// What a block stops movement with, in blocks from its cell's lower corner: nothing for
+    /// one walked through, its shape's boxes for a solid block drawn as one (a slab's lower
+    /// half, a table's top and legs), else the whole cell. Players move against these, on the
+    /// client and as the server judges them.
+    pub fn collision(&self, id: BlockId) -> &[crate::physics::Aabb] {
+        let info = self.info(id);
+        match (info.solid, info.shape) {
+            (false, _) => &[],
+            (true, Some(s)) => &self.shape_collision[s as usize],
+            (true, None) => &crate::physics::CUBE,
+        }
     }
 
     /// Where a block's shape's quads start in all shapes' quads, in order, as the renderer's

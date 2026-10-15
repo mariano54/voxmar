@@ -64,6 +64,13 @@ pub enum Synth {
     /// A wood fire: a soft breathing of flame over a warm low roar, busy with small dry
     /// crackles and the odd louder tick.
     Fire,
+    /// Rain on a thatched roof: a soft, close hush of drops sinking into straw, the odd
+    /// fuller drop among them.
+    ThatchPatter,
+    /// Rain on a stone roof overhead: dull knocks and a low wash of water over the stone.
+    StonePatter,
+    /// Rain on glass overhead: bright, ringing ticks over a thin trickle.
+    GlassPatter,
     /// A settlement's people about their day, heard across it: many voices too far to make
     /// out, talking in turns, now and then a laugh or a call over the rest.
     Murmur,
@@ -122,7 +129,7 @@ pub enum Synth {
 
 impl Synth {
     #[cfg(test)]
-    pub const ALL: [Synth; 39] = [
+    pub const ALL: [Synth; 42] = [
         Synth::Wind,
         Synth::Gale,
         Synth::Rustle,
@@ -137,6 +144,9 @@ impl Synth {
         Synth::Lava,
         Synth::Waterfall,
         Synth::Fire,
+        Synth::ThatchPatter,
+        Synth::StonePatter,
+        Synth::GlassPatter,
         Synth::Murmur,
         Synth::Warbler,
         Synth::Thrush,
@@ -182,6 +192,9 @@ impl Synth {
                 | Synth::Lava
                 | Synth::Waterfall
                 | Synth::Fire
+                | Synth::ThatchPatter
+                | Synth::StonePatter
+                | Synth::GlassPatter
                 | Synth::Murmur
         )
     }
@@ -267,6 +280,9 @@ fn render_bed(synth: Synth, noise: &mut Noise, len: usize) -> Vec<f32> {
         Synth::Lava => lava(noise, len),
         Synth::Waterfall => waterfall(noise, len),
         Synth::Fire => fire(noise, len),
+        Synth::ThatchPatter => thatch_patter(noise, len),
+        Synth::StonePatter => stone_patter(noise, len),
+        Synth::GlassPatter => glass_patter(noise, len),
         Synth::Murmur => murmur(noise, len),
         one_shot => panic!("{one_shot:?} makes one-shots, not a bed"),
     }
@@ -457,6 +473,40 @@ fn hail(noise: &mut Noise, len: usize) -> Vec<f32> {
     let swell = Drift::new(noise, 0.11);
     for (i, sample) in out.iter_mut().enumerate() {
         *sample += hiss.band(noise.next()) * 0.12 * (0.4 + 0.6 * swell.unit(i as f32 / SR));
+    }
+    out
+}
+
+/// Rain on thatch: dense, short, low-pitched drops muffled by the straw, under a soft
+/// hush that swells with the rain.
+fn thatch_patter(noise: &mut Noise, len: usize) -> Vec<f32> {
+    let mut out = impacts(noise, len, 900.0, (0.003, 0.008), (500.0, 1400.0), 0.08);
+    let mut hush = Svf::new(900.0, 0.5);
+    let swell = Drift::new(noise, 0.09);
+    for (i, sample) in out.iter_mut().enumerate() {
+        *sample = *sample * 0.6 + hush.band(noise.next()) * 0.35 * (0.5 + 0.5 * swell.unit(i as f32 / SR));
+    }
+    out
+}
+
+/// Rain on stone overhead: fewer drops, each a dull knock, over a low wash of water.
+fn stone_patter(noise: &mut Noise, len: usize) -> Vec<f32> {
+    let mut out = impacts(noise, len, 380.0, (0.006, 0.016), (250.0, 700.0), 0.5);
+    let mut wash = Svf::new(420.0, 0.6);
+    let swell = Drift::new(noise, 0.07);
+    for (i, sample) in out.iter_mut().enumerate() {
+        *sample += wash.band(noise.next()) * 0.22 * (0.5 + 0.5 * swell.unit(i as f32 / SR));
+    }
+    out
+}
+
+/// Rain on glass overhead: bright ringing ticks, few and clear, over a thin trickle.
+fn glass_patter(noise: &mut Noise, len: usize) -> Vec<f32> {
+    let mut out = impacts(noise, len, 260.0, (0.002, 0.006), (3200.0, 7000.0), 0.0);
+    let mut trickle = Svf::new(2600.0, 0.8);
+    let swell = Drift::new(noise, 0.1);
+    for (i, sample) in out.iter_mut().enumerate() {
+        *sample += trickle.band(noise.next()) * 0.06 * (0.4 + 0.6 * swell.unit(i as f32 / SR));
     }
     out
 }
