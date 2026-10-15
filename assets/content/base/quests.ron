@@ -108,7 +108,7 @@
         (
             name: "an_axe_to_it", age: "nomad", branch: "start", title: "An Axe to It",
             why: "A spare axe: two flint over a stick in the 2×2 grid make another flint axe, so one lost to a fall or a fight never leaves you unable to fell a tree. Make it and chop eight logs; the campfire, planks and sticks ahead all want them. A stone axe, hafted from heads ground at a grindstone, chops twice as fast.",
-            tasks: [[Craft("flint_axe", 1), Have("tag:log", 8)]],
+            tasks: [[Craft("flint_axe", 2), Have("tag:log", 8)]],
             after: ["crafting_table"],
             rewards: [Xp("engineering", 20.0), Item("stick", 4)],
         ),
