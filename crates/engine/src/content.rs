@@ -430,6 +430,25 @@ impl Content {
         if let Some(tag) = effects.near_asks().iter().map(|(tag, _)| tag).chain(effects.held_tags()).find(|tag| !blocks.ids().any(|id| blocks.def(id).has_tag(tag))) {
             return Err(RegistryError(format!("effects.ron: an effect asks for a block or held item tagged `{tag}`, which no block carries")));
         }
+        // Every full solid building block says how well it shelters a room (`HomeWalls`),
+        // once; no block says it twice.
+        {
+            use crate::block::RenderKind;
+            use crate::effect::Shelter;
+            let unjudged: Vec<String> = blocks
+                .ids()
+                .map(|id| blocks.def(id))
+                .filter(|def| {
+                    let shelters = Shelter::ALL.iter().filter(|s| def.has_tag(s.tag())).count();
+                    let full = def.solid && def.shape.is_none() && matches!(def.render, RenderKind::Opaque | RenderKind::Cutout | RenderKind::Leaves | RenderKind::Translucent);
+                    shelters > 1 || (shelters == 0 && full && def.has_tag("building"))
+                })
+                .map(|def| def.name.clone())
+                .collect();
+            if !unjudged.is_empty() {
+                return Err(RegistryError(format!("blocks: each full solid `building` block carries exactly one of `shelter:draughty`, `shelter:sound` or `shelter:fine`, and no block more than one; these do not: {}", unjudged.join(", "))));
+            }
+        }
         // Every kept animal needs water, met by a block tagged `drink` near its home.
         crate::creature::condition::check_drink(&blocks, !creatures.is_empty())?;
         let tools = ToolRegistry::new(tools, &blocks, &skills)?;

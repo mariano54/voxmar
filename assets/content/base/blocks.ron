@@ -56,14 +56,14 @@
     templates: {
         // A wood: bark, the stripped log, bark on every side, planks, leaves and a sapling.
         "wood": [
-            (name: "{name}_log", sound: Wood, textures: Column(end: "{name}_log_top", side: "{name}_log"), hardness: 2.0, color: (109, 85, 50), tags: ["log", "wood", "fuel", "natural"]),
+            (name: "{name}_log", sound: Wood, textures: Column(end: "{name}_log_top", side: "{name}_log"), hardness: 2.0, color: (109, 85, 50), tags: ["log", "wood", "fuel", "natural", "shelter:sound"]),
             (
                 name: "stripped_{name}_log", sound: Wood,
                 textures: Column(end: "stripped_{name}_log_top", side: "stripped_{name}_log"),
-                hardness: 2.0, color: (176, 140, 90), tags: ["log", "stripped", "wood", "fuel"],
+                hardness: 2.0, color: (176, 140, 90), tags: ["log", "stripped", "wood", "fuel", "shelter:sound"],
             ),
-            (name: "{name}_wood", sound: Wood, textures: All("{name}_log"), hardness: 2.0, color: (109, 85, 50), tags: ["wood", "fuel", "building"]),
-            (name: "{name}_planks", sound: Wood, textures: All("{name}_planks"), hardness: 2.0, color: (162, 130, 78), tags: ["planks", "wood", "fuel", "building"]),
+            (name: "{name}_wood", sound: Wood, textures: All("{name}_log"), hardness: 2.0, color: (109, 85, 50), tags: ["wood", "fuel", "building", "shelter:sound"]),
+            (name: "{name}_planks", sound: Wood, textures: All("{name}_planks"), hardness: 2.0, color: (162, 130, 78), tags: ["planks", "wood", "fuel", "building", "shelter:sound"]),
             (
                 name: "{name}_slab", render: Model, shape: "slab", flips: true, sound: Wood, textures: All("{name}_planks"),
                 hardness: 2.0, color: (162, 130, 78), tags: ["slab", "wood", "fuel", "building"],
@@ -85,11 +85,11 @@
         // cut into bricks.
         "stone": [
             (name: "{name}", texture_variety: (turn: true, mirror: true), textures: All("{name}"), hardness: 1.5, drops: "cobbled_{name}", color: (125, 125, 125), tags: ["stone", "natural"]),
-            (name: "cobbled_{name}", textures: All("cobbled_{name}"), hardness: 2.0, color: (110, 110, 110), tags: ["stone", "cobbled", "building"]),
-            (name: "polished_{name}", textures: All("polished_{name}"), hardness: 1.5, color: (135, 135, 135), tags: ["stone", "polished", "building"]),
-            (name: "{name}_bricks", textures: All("{name}_bricks"), hardness: 1.5, color: (120, 120, 120), tags: ["stone", "bricks", "building"]),
-            (name: "mossy_cobbled_{name}", textures: All("mossy_cobbled_{name}"), hardness: 2.0, drops: "cobbled_{name}", color: (100, 118, 90), tags: ["stone", "cobbled", "building", "mossy", "wet"]),
-            (name: "cracked_{name}_bricks", textures: All("cracked_{name}_bricks"), hardness: 1.5, color: (115, 115, 115), tags: ["stone", "bricks", "building", "ruined"]),
+            (name: "cobbled_{name}", textures: All("cobbled_{name}"), hardness: 2.0, color: (110, 110, 110), tags: ["stone", "cobbled", "building", "shelter:sound"]),
+            (name: "polished_{name}", textures: All("polished_{name}"), hardness: 1.5, color: (135, 135, 135), tags: ["stone", "polished", "building", "shelter:fine"]),
+            (name: "{name}_bricks", textures: All("{name}_bricks"), hardness: 1.5, color: (120, 120, 120), tags: ["stone", "bricks", "building", "shelter:fine"]),
+            (name: "mossy_cobbled_{name}", textures: All("mossy_cobbled_{name}"), hardness: 2.0, drops: "cobbled_{name}", color: (100, 118, 90), tags: ["stone", "cobbled", "building", "mossy", "wet", "shelter:sound"]),
+            (name: "cracked_{name}_bricks", textures: All("cracked_{name}_bricks"), hardness: 1.5, color: (115, 115, 115), tags: ["stone", "bricks", "building", "ruined", "shelter:sound"]),
         ],
         // A flower or herb, with two more looks: a pair of blooms and a clump of three,
         // which give that many when picked.
@@ -136,7 +136,7 @@
         ],
         // Fired clay in one colour.
         "terracotta": [
-            (name: "{name}_terracotta", texture_variety: (turn: true, mirror: true), textures: All("{name}_terracotta"), hardness: 1.25, tags: ["terracotta", "clay", "building", "colour:{name}"]),
+            (name: "{name}_terracotta", texture_variety: (turn: true, mirror: true), textures: All("{name}_terracotta"), hardness: 1.25, tags: ["terracotta", "clay", "building", "colour:{name}", "shelter:fine"]),
         ],
     },
     blocks: [
@@ -147,14 +147,14 @@
         // knows the room by (music.ron's `boss.rooms`).
         (name: "hollow_root", sound: Wood, textures: All("hollow_root"), hardness: -1.0, color: (78, 58, 42), tags: ["root", "lair"]),
         (name: "hollow_floor", sound: Soil, textures: All("hollow_floor"), hardness: -1.0, color: (66, 50, 38), tags: ["lair"]),
-        (name: "cobblestone", textures: All("cobblestone"), hardness: 2.0, color: (110, 110, 110), family: "stone", tags: ["stone", "cobbled", "building"]),
-        (name: "mossy_cobblestone", textures: All("mossy_cobblestone"), hardness: 2.0, color: (100, 118, 90), family: "stone", tags: ["stone", "cobbled", "building", "natural", "mossy", "wet"]),
-        (name: "polished_stone", textures: All("polished_stone"), hardness: 1.5, color: (135, 135, 135), family: "stone", tags: ["stone", "polished", "building"]),
-        (name: "stone_bricks", textures: All("stone_bricks"), hardness: 1.5, color: (120, 120, 120), family: "stone", tags: ["stone", "bricks", "building"]),
-        (name: "mossy_stone_bricks", textures: All("mossy_stone_bricks"), hardness: 1.5, color: (105, 118, 95), family: "stone", tags: ["stone", "bricks", "building", "mossy", "wet"]),
-        (name: "cracked_stone_bricks", textures: All("cracked_stone_bricks"), hardness: 1.5, color: (115, 115, 115), family: "stone", tags: ["stone", "bricks", "building", "ruined"]),
+        (name: "cobblestone", textures: All("cobblestone"), hardness: 2.0, color: (110, 110, 110), family: "stone", tags: ["stone", "cobbled", "building", "shelter:sound"]),
+        (name: "mossy_cobblestone", textures: All("mossy_cobblestone"), hardness: 2.0, color: (100, 118, 90), family: "stone", tags: ["stone", "cobbled", "building", "natural", "mossy", "wet", "shelter:sound"]),
+        (name: "polished_stone", textures: All("polished_stone"), hardness: 1.5, color: (135, 135, 135), family: "stone", tags: ["stone", "polished", "building", "shelter:fine"]),
+        (name: "stone_bricks", textures: All("stone_bricks"), hardness: 1.5, color: (120, 120, 120), family: "stone", tags: ["stone", "bricks", "building", "shelter:fine"]),
+        (name: "mossy_stone_bricks", textures: All("mossy_stone_bricks"), hardness: 1.5, color: (105, 118, 95), family: "stone", tags: ["stone", "bricks", "building", "mossy", "wet", "shelter:sound"]),
+        (name: "cracked_stone_bricks", textures: All("cracked_stone_bricks"), hardness: 1.5, color: (115, 115, 115), family: "stone", tags: ["stone", "bricks", "building", "ruined", "shelter:sound"]),
         // Volcanic glass, where lava meets water.
-        (name: "obsidian", texture_variety: (turn: true, mirror: true), sound: Glass, textures: All("obsidian"), hardness: 25.0, color: (24, 18, 36), tags: ["stone", "igneous", "natural", "building", "volcanic", "deep"]),
+        (name: "obsidian", texture_variety: (turn: true, mirror: true), sound: Glass, textures: All("obsidian"), hardness: 25.0, color: (24, 18, 36), tags: ["stone", "igneous", "natural", "building", "volcanic", "deep", "shelter:fine"]),
         // Soil
         (name: "dirt", texture_variety: (turn: true, mirror: true), sound: Soil, textures: All("dirt"), hardness: 0.5, color: (134, 96, 67), tags: ["soil", "fertile", "natural"]),
         (name: "coarse_dirt", texture_variety: (turn: true, mirror: true), sound: Soil, textures: All("coarse_dirt"), hardness: 0.5, color: (119, 85, 59), tags: ["soil", "dry", "natural", "surface"]),
@@ -222,7 +222,7 @@
         // Sand
         (name: "sand", texture_variety: (turn: true, mirror: true), sound: Sand, textures: All("sand"), hardness: 0.5, color: (219, 207, 163), tags: ["sand", "natural", "surface"]),
         (name: "red_sand", texture_variety: (turn: true, mirror: true), sound: Sand, textures: All("red_sand"), hardness: 0.5, color: (190, 102, 33), tags: ["sand", "natural", "surface"]),
-        (name: "terracotta", texture_variety: (turn: true, mirror: true), textures: All("terracotta"), hardness: 1.25, color: (152, 94, 67), tags: ["terracotta", "clay", "natural", "building", "colour:brown"]),
+        (name: "terracotta", texture_variety: (turn: true, mirror: true), textures: All("terracotta"), hardness: 1.25, color: (152, 94, 67), tags: ["terracotta", "clay", "natural", "building", "colour:brown", "shelter:fine"]),
         // Fluids. Each also makes its flowing and falling states (`water_flow_1` ..
         // `water_flow_7`, `water_falling`), and water the river states that carry a current
         // (see engine/src/fluid.rs). `tick`: ticks per step of a flow; `drop`: eighths of
@@ -280,7 +280,7 @@
         (name: "glow_lichen", render: Plant, solid: false, sound: Grass, textures: All("glow_lichen"), light: 7, hardness: 0.0, drops: "core:air", color: (110, 160, 140), tags: ["plant", "cave", "groundcover", "glowing", "alchemy:luminous"]),
         (name: "moss_carpet", render: Plant, solid: false, sound: Moss, textures: All("moss_carpet"), hardness: 0.0, color: (89, 110, 45), tags: ["plant", "groundcover", "cave", "forest_floor", "shade", "wet"]),
         (name: "hanging_roots", render: Plant, solid: false, support: Above, sound: Grass, textures: All("hanging_roots"), hardness: 0.0, color: (160, 120, 90), tags: ["plant", "cave", "hanging", "root", "fibre"]),
-        (name: "crystal_block", texture_variety: (turn: true, mirror: true), sound: Glass, textures: All("crystal_block"), light: 1, hardness: 1.5, color: (150, 130, 200), rarity: Uncommon, tags: ["gem", "natural", "cave", "glowing", "building", "alchemy:clarity"]),
+        (name: "crystal_block", texture_variety: (turn: true, mirror: true), sound: Glass, textures: All("crystal_block"), light: 1, hardness: 1.5, color: (150, 130, 200), rarity: Uncommon, tags: ["gem", "natural", "cave", "glowing", "building", "alchemy:clarity", "shelter:fine"]),
         (name: "crystal_cluster", render: Plant, solid: false, sound: Glass, textures: All("crystal_cluster"), light: 4, hardness: 1.0, color: (170, 150, 220), rarity: Uncommon, tags: ["gem", "cave", "glowing", "alchemy:clarity", "alchemy:aether"]),
         (name: "magma_block", texture_variety: (turn: true, mirror: true), textures: All("magma"), light: 3, hardness: 0.5, color: (140, 50, 20), tags: ["stone", "igneous", "natural", "cave", "deep", "hot", "volcanic", "glowing"]),
         (name: "gloomvein", texture_variety: (turn: true, mirror: true), sound: Soil, textures: All("gloomvein"), light: 1, hardness: 0.6, color: (20, 40, 46), rarity: Rare, tags: ["natural", "cave", "deep", "wonder", "glowing", "alchemy:night_sight", "alchemy:aether"]),
@@ -300,7 +300,7 @@
         // Glowcaps: giant glowing mushrooms of fungal caves and forests.
         (name: "glowcap_stem", sound: Wood, textures: Column(end: "glowcap_stem_top", side: "glowcap_stem"), hardness: 1.5, color: (210, 205, 190), rarity: Rare, family: "glowcap", tags: ["fungus", "wood", "natural", "wonder", "cave"]),
         (name: "glowcap_cap", sound: Wood, textures: All("glowcap_cap"), light: 12, hardness: 0.8, color: (60, 220, 210), rarity: Rare, family: "glowcap", tags: ["fungus", "natural", "wonder", "glowing", "light", "alchemy:luminous"]),
-        (name: "glowcap_planks", sound: Wood, textures: All("glowcap_planks"), hardness: 1.5, color: (200, 195, 175), family: "glowcap", tags: ["planks", "building", "wonder"]),
+        (name: "glowcap_planks", sound: Wood, textures: All("glowcap_planks"), hardness: 1.5, color: (200, 195, 175), family: "glowcap", tags: ["planks", "building", "wonder", "shelter:sound"]),
         (name: "cactus", sound: Wood, textures: Sides(top: "cactus_top", bottom: "cactus_bottom", side: "cactus_side"), hardness: 0.4, color: (80, 130, 40), tags: ["plant", "desert", "hot", "dry", "natural", "thorny"]),
         // Plants
         (name: "short_grass", render: Plant, solid: false, sound: Grass, textures: All("fine_grass"), tint: Grass, hardness: 0.0, drops: "core:air", color: (150, 150, 150), tags: ["plant", "grass", "meadow"]),
@@ -378,15 +378,15 @@
         (name: "emerald_ore_sample", render: Plant, model: Rock, solid: false, sound: Stone, textures: All("emerald_ore"), host: "stone", hardness: 0.5, drops: "emerald_ore", color: (40, 170, 100), tags: ["ore_sample", "ore", "gem", "gem:emerald", "natural"]),
         // Building
         // Windows glow by the light of a lit room behind them (`lit_through`).
-        (name: "glass", sound: Glass, textures: All("glass"), render: Cutout, hardness: 0.3, color: (200, 230, 240), tags: ["glass", "window", "building"], lit_through: true),
+        (name: "glass", sound: Glass, textures: All("glass"), render: Cutout, hardness: 0.3, color: (200, 230, 240), tags: ["glass", "window", "building", "shelter:fine"], lit_through: true),
         // Settlements' windows: old panes that break to nothing, so a village is no free
         // glass while glass has no recipe (settlements.ron `window`).
-        (name: "old_glass", sound: Glass, textures: All("old_glass"), render: Cutout, hardness: 0.3, drops: "core:air", color: (200, 230, 240), tags: ["window", "building"], lit_through: true),
+        (name: "old_glass", sound: Glass, textures: All("old_glass"), render: Cutout, hardness: 0.3, drops: "core:air", color: (200, 230, 240), tags: ["window", "building", "shelter:draughty"], lit_through: true),
         // A window before glass (Farm, Construction 3): oiled hide in a frame of sticks. Light
         // passes it as it does glass, and a lit room behind it shows warm through it at night.
-        (name: "hide_window", sound: Wood, textures: All("hide_window"), render: Cutout, hardness: 0.4, color: (200, 150, 90), tags: ["window", "building"], lit_through: true),
-        (name: "glowstone", sound: Glass, textures: All("glowstone"), light: 15, hardness: 0.3, color: (250, 210, 120), tags: ["light", "building"]),
-        (name: "sea_lantern", sound: Glass, textures: All("sea_lantern"), light: 15, hardness: 0.3, color: (200, 225, 220), tags: ["light", "building"]),
+        (name: "hide_window", sound: Wood, textures: All("hide_window"), render: Cutout, hardness: 0.4, color: (200, 150, 90), tags: ["window", "building", "shelter:draughty"], lit_through: true),
+        (name: "glowstone", sound: Glass, textures: All("glowstone"), light: 15, hardness: 0.3, color: (250, 210, 120), tags: ["light", "building", "shelter:fine"]),
+        (name: "sea_lantern", sound: Glass, textures: All("sea_lantern"), light: 15, hardness: 0.3, color: (200, 225, 220), tags: ["light", "building", "shelter:fine"]),
         // Food made in the crafting grid (recipes.ron).
         (name: "bread", render: Plant, solid: false, item: true, textures: All("bread"), hardness: 0.0, color: (200, 140, 70), tags: ["edible", "heal:4", "baked", "flavour:savoury"]),
         // Locked treasure chests, one an age (treasure.ron, blocks_treasure.ron's lockpicks):

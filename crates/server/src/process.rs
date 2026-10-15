@@ -332,8 +332,9 @@ impl Server {
         let (up, down) = (rules.home_up, rules.home_down);
         let wanted = self.content.effects.home_tags();
         let mut counts: Vec<(String, u32)> = wanted.iter().map(|tag| (tag.clone(), 0)).collect();
+        let walls = if self.content.effects.home_walls() { self.room_walls(anchor) } else { Default::default() };
         if wanted.is_empty() {
-            return HomeSurvey { counts };
+            return HomeSurvey { counts, walls };
         }
         let blocks = &self.content.blocks;
         let reach = rules.home_reach;
@@ -362,7 +363,59 @@ impl Server {
                 }
             }
         }
-        HomeSurvey { counts }
+        HomeSurvey { counts, walls }
+    }
+
+    /// The walls and roof about the room a home at `anchor` stands in: from the cell at
+    /// `anchor` out over every open cell within the home's reach, each face met on the way
+    /// (sideways or up) is a face of the room, of the shelter its block's tag says (a solid
+    /// block with none is draughty), or an opening where the way leads out of the reach or
+    /// into the unloaded. A wall is a solid block or any with a shelter tag (a closed door, a
+    /// window); a door left open lets the scan out. Bounded by the home box, so a home in
+    /// the open costs no more than the box.
+    pub(crate) fn room_walls(&self, anchor: IVec3) -> voxmar_engine::effect::Walls {
+        use voxmar_engine::effect::{Shelter, Walls};
+        let (rules, blocks) = (&self.survival, &self.content.blocks);
+        let (reach, up, down) = (rules.home_reach, rules.home_up, rules.home_down);
+        let inside = |p: IVec3| {
+            let d = p - anchor;
+            d.x.abs() <= reach && d.z.abs() <= reach && d.y <= up && d.y >= -down
+        };
+        // What stands at a cell: open (`None`), or a wall of a shelter.
+        let wall = |p: IVec3| -> Option<Option<Shelter>> {
+            let block = self.block(p)?;
+            let shelter = Shelter::of(&blocks.def(block).tags);
+            (shelter.is_some() || blocks.info(block).solid).then(|| Some(shelter.unwrap_or(Shelter::Draughty)))
+        };
+        let mut walls = Walls::default();
+        if self.block(anchor).is_none() || wall(anchor).is_some() {
+            return walls;
+        }
+        let mut seen = rustc_hash::FxHashSet::default();
+        let mut queue = vec![anchor];
+        seen.insert(anchor);
+        while let Some(cell) = queue.pop() {
+            for side in [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z, IVec3::Y, IVec3::NEG_Y] {
+                let next = cell + side;
+                let face = side != IVec3::NEG_Y;
+                if !inside(next) || self.block(next).is_none() {
+                    if face {
+                        walls.add(None);
+                    }
+                    continue;
+                }
+                match wall(next) {
+                    Some(shelter) if face => walls.add(shelter),
+                    Some(_) => {}
+                    None => {
+                        if seen.insert(next) {
+                            queue.push(next);
+                        }
+                    }
+                }
+            }
+        }
+        walls
     }
 
     /// Whether nothing solid hangs over `at` (within `survival.roof_scan` blocks): out in
@@ -431,6 +484,49 @@ impl Server {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A home's room is judged by its walls and roof: a closed plank room is sound all about,
+    /// a brick in it is a fine face, a hole or an open door lets the outside in, and a closed
+    /// door is a wall.
+    #[test]
+    fn a_room_is_judged_by_its_walls_and_roof() {
+        use voxmar_engine::{block::BlockId, effect::Shelter};
+        let mut server = crate::test_server();
+        let at = voxmar_engine::coords::ColumnPos::of_block(server.spawn.floor().as_ivec3()).origin() + IVec3::new(8, server.spawn.y as i32 + 10, 8);
+        let block = |server: &Server, name: &str| server.content.blocks.expect(name);
+        let (stone, planks) = (block(&server, "base:stone"), block(&server, "base:oak_planks"));
+        // A floor, plank walls three high about a five by five room, and a plank roof.
+        for x in -3..=3 {
+            for z in -3..=3 {
+                server.set_block(at + IVec3::new(x, 0, z), stone);
+                server.set_block(at + IVec3::new(x, 4, z), planks);
+                for y in 1..=3 {
+                    let edge = x.abs() == 3 || z.abs() == 3;
+                    server.set_block(at + IVec3::new(x, y, z), if edge { planks } else { BlockId::AIR });
+                }
+            }
+        }
+        let home = at + IVec3::Y;
+        let walls = server.room_walls(home);
+        assert_eq!(walls.faces, 5 * 3 * 4 + 5 * 5, "the walls and the roof, the floor not counted");
+        assert_eq!((walls.share(Shelter::Draughty), walls.share(Shelter::Sound), walls.share(Shelter::Fine)), (1.0, 1.0, 0.0), "planks are sound");
+        let brick = at + IVec3::new(3, 2, 0);
+        server.set_block(brick, block(&server, "base:stone_bricks"));
+        assert_eq!(server.room_walls(home).at_least, [85, 85, 1], "a brick is a fine face, and sound too");
+        // A hole lets the scan out to the home's reach: open faces, not walled in.
+        let hole = at + IVec3::new(-3, 1, 0);
+        server.set_block(hole, BlockId::AIR);
+        let open = server.room_walls(home);
+        assert!(open.share(Shelter::Draughty) < 0.9, "a hole is an opening: {open:?}");
+        server.set_block(hole, block(&server, "base:wooden_door"));
+        assert_eq!(server.room_walls(home).at_least, [85, 85, 1], "a closed door is a sound wall");
+        server.set_block(hole, block(&server, "base:wooden_door_open"));
+        assert!(server.room_walls(home).share(Shelter::Draughty) < 0.9, "an open one lets the outside in");
+        server.set_block(hole, block(&server, "base:hide_window"));
+        assert_eq!(server.room_walls(home).at_least, [85, 84, 1], "a hide window is draughty");
+        // A solid block where home stands is no room at all.
+        assert_eq!(server.room_walls(at).faces, 0);
+    }
 
     /// Time past a point of healing is not banked: however long the clock ran (buffs and a
     /// prayer stacked, then ended), a pass leaves at most one point's worth waiting.
