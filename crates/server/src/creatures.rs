@@ -3913,4 +3913,45 @@ mod review_tests {
         assert!(first.0.iter().any(|&g| g) && first.0.iter().any(|&g| !g), "24 grazings all went alike: {:?}", first.0);
         assert_eq!(grazed(1_377), first, "the same grazing later went otherwise");
     }
+
+    /// A kill's loot is drawn by the killer's own count of kills, never the tick it dies on
+    /// nor the world's loot rolls before it: the same kills later, after others' deaths
+    /// rolled, drop alike, and each counts on.
+    #[test]
+    fn a_kills_loot_goes_by_the_killers_count_not_the_tick() {
+        let killed = |tick: u64, before: u32| {
+            let mut server = crate::test_server();
+            server.meta.draw_key = 0x0d1a;
+            let at = server.spawn.floor().as_ivec3();
+            server.load_area(at - IVec3::new(2, 0, 2), at + IVec3::new(2, 0, 2));
+            let (_client, connection) = voxmar_protocol::local_pair();
+            let mut player = crate::player::Player::new(1, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
+            player.joined = true;
+            server.players.insert(1, player);
+            for _ in 0..before {
+                server.meta.next_loot();
+            }
+            let species = server.content.creatures.id("base:rabbit").expect("rabbits");
+            server.tick = tick;
+            let mut found = Vec::new();
+            for _ in 0..12 {
+                let id = server.spawn_creature(species, server.spawn, 1).expect("room");
+                server.creatures.live.get_mut(&id).unwrap().hurt_by = Some(1);
+                server.creature_dies(id);
+                // Due out once the body has fallen.
+                let blocks = &server.content.blocks;
+                let mut drops: Vec<(String, u8)> = server.creatures.falling_loot.iter().map(|(_, stack, _)| (blocks.def(stack.item).name.clone(), stack.count)).collect();
+                drops.sort();
+                found.push(drops);
+                server.tick += 37;
+            }
+            (found, server.players[&1].draws.kills)
+        };
+        let first = killed(1_000, 0);
+        assert!(first.1 >= 12, "each kill's loot drawn on the killer's count: {} draws", first.1);
+        let total = |drops: &Vec<(String, u8)>| drops.iter().map(|(_, n)| u32::from(*n)).sum::<u32>();
+        let gains: Vec<u32> = first.0.windows(2).map(|w| total(&w[1]) - total(&w[0])).collect();
+        assert!(gains.iter().any(|&g| g != gains[0]), "12 kills all dropped alike: {:?}", first.0.last());
+        assert_eq!(killed(1_377, 3), first, "the same kills later, after other loot rolls, dropped otherwise");
+    }
 }
