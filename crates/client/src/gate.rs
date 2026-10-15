@@ -396,6 +396,11 @@ steps! {
     /// Raw rabbit used on a campfire comes back cooked (or burnt) into the inventory, and
     /// smoke and embers rise from the fire.
     Cook,
+    /// The home motif (`music.ron`'s `home`): the Cook step's Homestead Hearth, lit and so
+    /// home, roofed over; at midnight the player steps from the open under the roof and a
+    /// `Home` track starts (rehearsed silently, `music::Rehearse`); out and in again that
+    /// night, it does not start again.
+    HomeMotif,
     /// A drying rack stood by the campfire, raw rabbit in hand: a right click hangs it, the
     /// rack the server sends back is the hung one, and chat says where it stands makes it quicker.
     /// Then an earth clamp in its place, clay in hand: a right click sets it smouldering.
@@ -596,6 +601,10 @@ struct Gate {
     count_before: u32,
     /// The time of day before the way home step set dusk, set back after it.
     way_time: u64,
+    /// The time of day before the home motif step set midnight, set back after it, and how
+    /// many times the motif had started before its step in.
+    motif_time: u64,
+    motif_starts: u32,
     /// The window step's lit pane, kept to judge against it snuffed.
     window_lit: Option<[f64; 3]>,
     /// The door step's ground lit by a campfire, kept to judge against it put out.
@@ -895,6 +904,8 @@ impl Gate {
             dug: Vec::new(),
             count_before: 0,
             way_time: 0,
+            motif_time: 0,
+            motif_starts: 0,
             window_lit: None,
             fire_lit: None,
             natural_before: Vec::new(),
@@ -1528,6 +1539,8 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         Step::Home => 75.0,
         // The campfire, its smoke and the chimney's, then a cook at the hearth and the stove.
         Step::Cook => STEP_LIMIT + 30.0,
+        // The roof and the night, then three steps in or out, each waited on.
+        Step::HomeMotif => STEP_LIMIT + 3.0 * QUEST_WAIT,
         // The barrel opened, then a server pass for the egg and a second for the chat; then
         // a rug and a stool set down, broken by hand and picked up.
         Step::Nest => 60.0,
@@ -1831,6 +1844,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::FirstFights => first_fights(world, gate),
         Step::ShotCancel => shot_cancel(world, gate),
         Step::Cook => cook(world, gate, now, in_phase),
+        Step::HomeMotif => home_motif(world, gate, now, in_phase),
         Step::Dry => dry(world, gate, now),
         Step::Snare => snare(world, gate, now),
         Step::Tame => tame(world, gate, now, in_phase),
@@ -12927,10 +12941,119 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         10 => {
             chimney_watch(world, gate, now, chimney[1]);
             if gate.chimney_since.is_none() {
-                hearth_done(world, gate, now, hearth, chimney, stove);
+                gate.next(Step::HomeMotif, now);
             }
         }
         _ => {}
+    }
+}
+
+/// The Cook step's hearth, its stove and chimney, from where that step stood.
+fn cook_hearth(gate: &Gate) -> (IVec3, [IVec3; 2], IVec3) {
+    let fire = gate.feet + IVec3::new(0, 0, 14);
+    let hearth = fire + IVec3::new(3, 0, 0);
+    (hearth, [hearth + IVec3::new(1, 1, 1), hearth + IVec3::new(1, 2, 1)], fire + IVec3::new(-2, 0, 0))
+}
+
+/// The home motif, at the Cook step's Homestead Hearth, lit and so home: a roof of planks
+/// four blocks over it, the night set to midnight, and two pads on the hearth's north side,
+/// one under the roof (`inside`) and one past its edge in the open (`outside`). From the
+/// open to under the roof the player steps (a teleport, which the motif, looking every
+/// frame, sees as a step) and a `Home` track starts; out and in again, the music sees each
+/// and starts nothing more that night. The roof and pads come down and the time goes back,
+/// then the hearth (`hearth_done`).
+fn home_motif(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    let (hearth, chimney, stove) = cook_hearth(gate);
+    let (inside, outside) = (hearth + IVec3::new(0, 0, -2), hearth + IVec3::new(0, 0, -5));
+    let roof = (hearth + IVec3::new(-2, 4, -3), hearth + IVec3::new(2, 4, 2));
+    let heard = crate::music::home_heard(world);
+    let (home, feet) = {
+        let player = world.resource::<LocalPlayer>();
+        (player.vitals.home, player.position)
+    };
+    let lit = world.resource::<ClientWorld>().fires.contains(&hearth);
+    let at = |cell: IVec3| (feet - cell.as_vec3() - Vec3::new(0.5, 0.0, 0.5)).with_y(0.0).length() < 1.0;
+    let tp = |world: &mut World, cell: IVec3| world.resource::<Net>().command(&format!("tp {} {} {}", cell.x as f32 + 0.5, cell.y, cell.z as f32 + 0.5));
+    let finish = |world: &mut World, gate: &mut Gate| {
+        let net = world.resource::<Net>();
+        net.command(&format!("fill {} {} {} {} {} {} air", roof.0.x, roof.0.y, roof.0.z, roof.1.x, roof.1.y, roof.1.z));
+        for pad in [inside, outside] {
+            net.command(&format!("setblock {} {} {} air", pad.x, pad.y - 1, pad.z));
+        }
+        net.command(&format!("time set {}", gate.motif_time));
+        hearth_done(world, gate, now, hearth, chimney, stove);
+    };
+    let Some(heard) = heard else {
+        gate.check("home motif: starts", Err("no music running to hear it (music::Rehearse)".into()));
+        return finish(world, gate);
+    };
+    let waited = gate.server_in_phase() > QUEST_WAIT && in_phase > QUEST_WAIT;
+    let said = |heard: &crate::music::HomeHeard| {
+        format!(
+            "home {home:?} (the hearth {hearth}, lit {lit}), inside by the music's last look {:?}, {} starts, the night now {:?} and last played {:?}, the motif's track playing {:?}",
+            heard.at.inside, heard.at.starts, heard.tonight, heard.at.night, heard.playing
+        )
+    };
+    match gate.phase {
+        0 => {
+            gate.motif_time = world.resource::<crate::render::DayCycle>().ticks.max(0.0) as u64 % voxmar_protocol::TICKS_PER_DAY;
+            let net = world.resource::<Net>();
+            net.command("time set midnight");
+            net.command(&format!("fill {} {} {} {} {} {} oak_planks", roof.0.x, roof.0.y, roof.0.z, roof.1.x, roof.1.y, roof.1.z));
+            for pad in [inside, outside] {
+                net.command(&format!("fill {} {} {} {} {} {} air", pad.x, pad.y, pad.z, pad.x, pad.y + 1, pad.z));
+                net.command(&format!("setblock {} {} {} stone", pad.x, pad.y - 1, pad.z));
+            }
+            tp(world, outside);
+            gate.advance(now);
+        }
+        // Out in the open at night by the motif's own clock, the hearth lit and home, and the
+        // music has looked and seen the player outside: then the step in.
+        1 => {
+            if at(outside) && lit && home == Some(hearth) && heard.tonight.is_some() && heard.at.inside == Some(false) {
+                gate.motif_starts = heard.at.starts;
+                tp(world, inside);
+                gate.advance(now);
+            } else if waited {
+                gate.check("home motif: starts", Err(format!("never out in the open at night by a lit home: on the pad {}, {}", at(outside), said(&heard))));
+                finish(world, gate);
+            }
+        }
+        // Stepped in: the motif starts, once, for this night.
+        2 => {
+            if heard.at.starts == gate.motif_starts + 1 && heard.playing.is_some() && heard.at.night == heard.tonight {
+                gate.check("home motif: starts", Ok(format!("stepping in under the roof by the lit hearth at midnight started {}", heard.playing.as_deref().unwrap_or_default())));
+                tp(world, outside);
+                gate.advance(now);
+            } else if waited {
+                gate.check("home motif: starts", Err(format!("stepping in started no home motif: in {}, {}", at(inside), said(&heard))));
+                finish(world, gate);
+            }
+        }
+        // Back out, seen by the music, then in again.
+        3 => {
+            if at(outside) && heard.at.inside == Some(false) {
+                tp(world, inside);
+                gate.advance(now);
+            } else if waited {
+                gate.check("home motif: once a night", Err(format!("never seen back outside: on the pad {}, {}", at(outside), said(&heard))));
+                finish(world, gate);
+            }
+        }
+        // In again, seen by the music: nothing more started (it starts as it sees the step).
+        _ => {
+            if at(inside) && heard.at.inside == Some(true) {
+                let again = heard.at.starts - gate.motif_starts - 1;
+                gate.check(
+                    "home motif: once a night",
+                    if again == 0 { Ok("out and in again the same night, the music saw both steps and started nothing more".into()) } else { Err(format!("stepping in again the same night started it {again} more times: {}", said(&heard))) },
+                );
+                finish(world, gate);
+            } else if waited {
+                gate.check("home motif: once a night", Err(format!("never seen back inside: in {}, {}", at(inside), said(&heard))));
+                finish(world, gate);
+            }
+        }
     }
 }
 
