@@ -107,8 +107,8 @@
         ),
         (
             name: "an_axe_to_it", age: "nomad", branch: "start", title: "An Axe to It",
-            why: "A second axe, of wood: at the crafting table, three planks and two sticks make one (the recipe viewer shows the shape). Make it and chop eight logs; the campfire, planks and sticks ahead all want them. A stone axe, later, chops twice as fast.",
-            tasks: [[Craft("wooden_axe", 1), Have("tag:log", 8)]],
+            why: "A spare axe: two flint over a stick in the 2×2 grid make another flint axe, so one lost to a fall or a fight never leaves you unable to fell a tree. Make it and chop eight logs; the campfire, planks and sticks ahead all want them. A stone axe, hafted from heads ground at a grindstone, chops twice as fast.",
+            tasks: [[Craft("flint_axe", 1), Have("tag:log", 8)]],
             after: ["crafting_table"],
             rewards: [Xp("engineering", 20.0), Item("stick", 4)],
         ),
@@ -204,8 +204,8 @@
         ),
         (
             name: "break_ground", age: "nomad", branch: "farming", title: "Break Ground",
-            why: "A hoe tills grass or dirt into farmland, where seeds can be sown. Make a hoe at the crafting table: two cobblestone or two planks over two sticks. Right-click soil with it to till.",
-            tasks: [[Craft("stone_hoe", 1)], [Craft("wooden_hoe", 1)], [Craft("copper_hoe", 1)]],
+            why: "A hoe tills grass or dirt into farmland, where seeds can be sown. A hoe needs a stone edge: two stone heads, ground from hard rock at a grindstone, over two sticks at the crafting table. Right-click soil with it to till.",
+            tasks: [[Craft("stone_hoe", 1)], [Craft("copper_hoe", 1)]],
             after: ["daily_bread", "crafting_table"],
             rewards: [Xp("engineering", 40.0), Item("wheat_seeds", 4)],
         ),
@@ -281,8 +281,8 @@
         ),
         (
             name: "a_sharp_edge", age: "nomad", branch: "crafting", title: "A Sharp Edge",
-            why: "A knife is the hunter's tool: it makes a kill drop hide more often and cuts plants cleanly. A wooden knife is a plank over a stick, a stone knife a cobblestone over a stick; both fit the inventory grid.",
-            tasks: [[Craft("stone_knife", 1)], [Craft("wooden_knife", 1)]],
+            why: "A knife is the hunter's tool: it makes a kill drop hide more often and cuts plants cleanly. A flint knife is a flint over a stick, a stone knife a stone head over a stick; both fit the inventory grid.",
+            tasks: [[Craft("stone_knife", 1)], [Craft("flint_knife", 1)]],
             after: ["stone_in_hand"],
             rewards: [Xp("engineering", 30.0)],
         ),

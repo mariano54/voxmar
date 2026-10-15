@@ -8,8 +8,11 @@ grow faster. Everything is content a mod adds the same way.
 
 A tool is an item (`base/blocks_tools.ron`) tagged `tool`, its kind (`pickaxe`, `axe`,
 `shovel`, `hoe`, `knife`, `shears`), a `tier:N`, a `speed:X` and maybe a `yield:Y`. Five
-kinds come in four tiers: wooden (1), stone (2), copper (3) and iron (4), speed 2, 4, 6
-and 8, yield 0 to 0.15.
+kinds come in four tiers: flint (1), stone (2), copper (3) and iron (4), speed 2, 4, 6
+and 8, yield 0 to 0.15. Tier 1 has a flint pickaxe, axe and knife and a digging stick (a
+shovel), but no hoe: tilling waits for a stone edge. There are no wooden tools (Oct 15:
+a plank's edge cuts nothing); an older save's come back as the flint tool, the digging
+stick or the stone hoe that does their work now (`renamed` in `blocks_tools.ron`).
 
 Bare hands break neither natural stone nor a standing log: their rules in `base/tools.ron`
 ask for a pickaxe and an axe of tier 1 (Mariano, Oct 15: the early game was too easy, and
@@ -21,7 +24,7 @@ by the spawn, the **spawn kit** (`base/spawn_kit.ron`, server/src/spawn_kit.rs) 
 to six loose flint and a three-block snag 2 to 6 blocks from it, once per world (new worlds
 and older saves alike, `WorldMeta::spawn_kit`), into air on natural ground no player
 placed; it is wild, so picked flint grows back (`regrowth.ron`'s `loose`). A flint axe is two flint over a stick, a flint pickaxe two flint over
-two sticks, both tier 1 like wood. A click on stone or a log by hand says "Needs a Flint
+two sticks, a flint knife a flint over a stick, and a digging stick two sticks end to end. A click on stone or a log by hand says "Needs a Flint
 Pickaxe or better": a refusal names the least tool that would do, the lowest tier and then
 the cheapest (`Content::least_tool`). Cobblestone, mossy or not, still breaks by hand; a log
 set down as a wall wants an axe like a standing one (whoever has logs has felled them).

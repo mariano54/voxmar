@@ -216,7 +216,7 @@ mod tests {
             block("stone", &["stone", "natural"]),
             block("iron_ore", &["ore", "metal:iron", "natural"]),
             block("log", &["log", "wood"]),
-            block("wooden_pickaxe", &["pickaxe", "tool", "tier:1", "speed:2"]),
+            block("flint_pickaxe", &["pickaxe", "tool", "tier:1", "speed:2"]),
             block("stone_pickaxe", &["pickaxe", "tool", "tier:2", "speed:4", "yield:0.05"]),
             block("stone_axe", &["axe", "tool", "tier:2", "speed:4"]),
         ])
@@ -253,7 +253,7 @@ mod tests {
         let iron = tools.rule(id("iron_ore")).unwrap();
         assert_eq!((iron.skill, iron.level, iron.tier, iron.xp), (skills.id("core:mining"), 15, 2, 35.0));
         assert!(!tools.good_enough(None, id("iron_ore")));
-        assert!(!tools.good_enough(Some(id("wooden_pickaxe")), id("iron_ore")));
+        assert!(!tools.good_enough(Some(id("flint_pickaxe")), id("iron_ore")));
         assert!(tools.good_enough(Some(id("stone_pickaxe")), id("iron_ore")));
         assert!(tools.good_enough(None, id("stone")), "stone needs no tool");
         assert!(tools.rule(id("log")).is_none());

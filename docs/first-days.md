@@ -13,13 +13,14 @@ locked age chests, a sling) have no quest.
 ## The loop, day by day
 
 A new player starts with nothing but the coin purse (`starter_kit` is empty in
-`core/survival.ron`; a mod can list a kit there). The first quests teach the way in: punch
-trees (Timber is pinned first), make planks in the grid, a crafting table, sticks, then a
-wooden pickaxe and axe at the table, then stone. Recipes are never locked by quests; a quest only opens its
+`core/survival.ron`; a mod can list a kit there). The first quests teach the way in: gather
+flint and sticks by hand, make a flint axe and pickaxe in the grid, fell trees (Timber is
+pinned first), make planks, a crafting table, sticks, then stone tools from heads ground
+at a grindstone. Recipes are never locked by quests; a quest only opens its
 own page, and finishing is retroactive (it counts what you already did).
 
-**Day 1, daylight: tools and a fire.** Four logs by hand (Timber), a crafting table, a
-wooden axe for the rest of the wood (An Axe to It), cobblestone (A Pile of Stone), then
+**Day 1, daylight: tools and a fire.** Flint tools by hand, four logs (Timber), a crafting
+table, a spare flint axe for the rest of the wood (An Axe to It), cobblestone (A Pile of Stone), then
 stone pickaxe and axe (Stone in Hand). Hunt a rabbit or hen, make a
 campfire (two logs over two cobblestone in the 2x2 grid) and cook it (First Night). Wild wheat
 and herbs on the way (A Handful of Grain, Wild Harvest). The quest book is the guide: Look It
