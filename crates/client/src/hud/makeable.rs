@@ -119,6 +119,7 @@ pub(crate) fn reach(recipe: &Recipe, have: &FxHashMap<BlockId, u32>, at_table: b
 
 /// Everything the player can make or nearly, from the book and what they hold, in the
 /// order it is shown; each thing once, by its nearest way.
+#[cfg(test)]
 pub(crate) fn plan(content: &Content, book: &RecipeBook, have: &FxHashMap<BlockId, u32>, at_table: bool, lacks: &dyn Fn(&Recipe) -> Option<(SkillId, u8)>) -> Vec<Makeable> {
     plan_cooking_from(content, book, have, have, at_table, lacks)
 }
