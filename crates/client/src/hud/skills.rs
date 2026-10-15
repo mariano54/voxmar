@@ -73,6 +73,15 @@ impl SkillToasts {
         self.push(Line { kind: LineKind::Gain { skill, tenths }, at: now });
     }
 
+    /// A gain line for `skill` that reads exactly `tenths`, kept fresh at `now`: what a view
+    /// shown frame after frame (the text-fit tour) holds still, where `gained` would add up.
+    pub fn showing_gain(&mut self, skill: SkillId, tenths: u32, now: f32) {
+        self.gained(skill, 0, now);
+        if let Some(LineKind::Gain { tenths: total, .. }) = self.lines.iter_mut().rev().find(|l| matches!(l.kind, LineKind::Gain { skill: s, .. } if s == skill)).map(|l| &mut l.kind) {
+            *total = tenths;
+        }
+    }
+
     /// `skill` reached `level`.
     pub fn level_up(&mut self, skill: SkillId, level: u8) {
         self.reached.push((skill, level));
@@ -215,5 +224,18 @@ mod tests {
             ]
         );
         assert_eq!((xp_text(240), xp_text(125)), ("24".to_owned(), "12.5".to_owned()));
+    }
+
+    /// A gain shown frame after frame reads the same each frame, kept fresh, where gains
+    /// would add up.
+    #[test]
+    fn a_gain_shown_each_frame_holds_its_total() {
+        let mut toasts = SkillToasts::default();
+        toasts.gained(SkillId(1), 10, 0.5);
+        for frame in 0..30 {
+            toasts.showing_gain(SkillId(0), 12_345, 1.0 + frame as f32 / 60.0);
+        }
+        let gains: Vec<_> = toasts.lines.iter().map(|l| (l.kind.clone(), l.at)).collect();
+        assert_eq!(gains, vec![(LineKind::Gain { skill: SkillId(1), tenths: 10 }, 0.5), (LineKind::Gain { skill: SkillId(0), tenths: 12_345 }, 1.0 + 29.0 / 60.0)]);
     }
 }
