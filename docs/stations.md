@@ -35,8 +35,9 @@ the server's side in `crates/server/src/stations.rs`.
   Taking from it pops like a pickup (client `sfx::station_cue`).
 - Loaded inside the loader's own home (they stand in it too), a station tops the load up to
   `holds` with more of what is in hand. It takes from the hand, then the rest of the pack,
-  then the home's stores, nearest first. Set `from_stores: false` to turn this off; the
-  compost heap does, so stored grain is not composted (docs/home.md, "Crafting from home's
+  then the home's stores they placed (or nobody did), nearest the hearth or bed first. Set
+  `from_stores: false` to turn this off; the compost heap and the earth clamp do, so stored
+  grain is not composted nor the woodshed charred (docs/home.md, "Crafting from home's
   stores").
 - Breaking (or replacing) a loaded station drops what is on it: the raw input before it is
   done, the output after.

@@ -76,7 +76,7 @@ pub struct StationDef {
     /// else its working block's placing.
     #[serde(default)]
     pub sound: Option<Sound>,
-    /// Whether, loaded in its owner's home, it tops the load up from the home's stores (the
+    /// Whether, loaded in the loader's home, it tops the load up from the home's stores (the
     /// pack's own first): true unless said otherwise.
     #[serde(default = "yes")]
     pub from_stores: bool,

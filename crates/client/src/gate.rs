@@ -5469,6 +5469,7 @@ const HOME_SLEEP_WAIT: f32 = 30.0;
 /// crafting table's recipe fills the grid from the barrel. The blocks go again after, and
 /// the rest with them.
 fn home(world: &mut World, gate: &mut Gate, now: f32) {
+    let lay_planks = lay_planks(&world.resource::<Launch>().content);
     let stand = world.resource::<LocalPlayer>().position.floor().as_ivec3();
     let (bag, torch, barrel) = (stand + IVec3::new(2, 0, 0), stand + IVec3::new(3, 0, 0), stand + IVec3::new(-2, 0, 0));
     let waited = gate.server_in_phase();
@@ -5658,7 +5659,7 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
                 // A barrel at home, four planks in it and none in the pack.
                 let net = world.resource::<Net>();
                 net.command("clear oak_planks");
-                net.command(&format!("give oak_planks {LAY_PLANKS}"));
+                net.command(&format!("give oak_planks {lay_planks}"));
                 net.command(&format!("setblock {} {} {} barrel", barrel.x, barrel.y, barrel.z));
                 gate.advance(now);
             } else if waited > 5.0 {
@@ -5676,13 +5677,19 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
             // what the home's barrel holds, as the server counts it for laying.
             let table = world.resource::<ClientWorld>().registry.id("base:crafting_table");
             let ready = world.resource::<crate::hud::makeable::Drawn>().0.iter().any(|m| Some(m.output) == table && m.reach == crate::hud::makeable::Reach::Ready);
-            if stored == LAY_PLANKS && held == 0 && !ready && waited > 10.0 {
-                let counted = world.resource::<LocalPlayer>().vitals.home_stores.iter().filter(|&&(item, _)| Some(item) == planks).map(|&(_, n)| n).sum::<u32>();
-                gate.check("home: can make", Err(format!("{waited:.1} server s on, the barrel holds {stored} planks and the pack none, but the Can Make list has no crafting table ready (the home's stores counted {counted} planks)")));
+            let counted = world.resource::<LocalPlayer>().vitals.home_stores.iter().filter(|&&(item, _)| Some(item) == planks).map(|&(_, n)| n).sum::<u32>();
+            // Frames counted as taps, so a client starved of them is not failed by the
+            // server's clock alone.
+            if now - gate.tap_at >= TAP_EVERY {
+                gate.tap_at = now;
+                gate.taps += 1;
+            }
+            if stored == lay_planks && held == 0 && !(ready && counted >= lay_planks) && gate.waited_out(10.0) {
+                gate.check("home: can make", Err(format!("{waited:.1} server s on, the barrel holds {stored} planks and the pack none, but the Can Make plan has the crafting table ready {ready} (the home's stores counted {counted} planks of {lay_planks})")));
                 lay_done(world, barrel);
                 leave(world, gate);
-            } else if stored == LAY_PLANKS && held == 0 && ready {
-                gate.check("home: can make", Ok(format!("with {stored} planks in the home barrel and none in the pack, Can Make shows the crafting table ready")));
+            } else if stored == lay_planks && held == 0 && ready && counted >= lay_planks {
+                gate.check("home: can make", Ok(format!("with {stored} planks in the home barrel and none in the pack, the server counted {counted} and the Can Make plan (drawn under the open barrel) has the crafting table ready")));
                 // The crafting table's recipe in the viewer, over the open inventory.
                 // Opened as a click in it does: a trail with the viewer shut reads as Esc.
                 if let Some(table) = table {
@@ -5690,7 +5697,7 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
                     world.resource_mut::<UiState>().recipes_open = true;
                 }
                 gate.advance(now);
-            } else if waited > 10.0 {
+            } else if waited > 10.0 && !(stored == lay_planks && held == 0) {
                 let open = player.inventory.store.is_some();
                 let laid: u32 = player.inventory.craft.iter().flatten().filter(|x| Some(x.item) == planks).map(|x| x.count as u32).sum();
                 let shown = world.resource::<ClientWorld>().registry.id("base:barrel").is_some_and(|b| world.resource::<ClientWorld>().block(barrel) == Some(b));
@@ -5743,7 +5750,7 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
             let (inventory, viewer) = (ui.inventory_open, ui.recipes_open);
             // Laid, the barrel's screen closes onto the grid, drawn with the planks in it;
             // the pack held none, so they came from the barrel.
-            if laid == LAY_PLANKS && held == 0 && !open && inventory && !viewer {
+            if laid == lay_planks && held == 0 && !open && inventory && !viewer {
                 if gate.shot(world, "home-lay").is_none() {
                     return;
                 }
@@ -6618,8 +6625,12 @@ fn fire_circle(lit: [f64; 3], unlit: [f64; 3]) -> Result<String, String> {
 const FIRE_WARMTH: f64 = 15.0;
 const FIRE_LIFT: f64 = 25.0;
 
-/// How many planks the home barrel holds for the table laid from it.
-const LAY_PLANKS: u32 = 4;
+/// How many planks the home barrel holds for the table laid from it: as many as the
+/// crafting table's first recipe takes oak planks, so a pack that changes it changes this.
+fn lay_planks(content: &voxmar_engine::content::Content) -> u32 {
+    let (table, planks) = (content.blocks.expect("base:crafting_table"), content.blocks.expect("base:oak_planks"));
+    content.recipes.iter().find(|r| r.output == table).map_or(0, |r| r.alternatives().iter().flatten().filter(|accepts| accepts.contains(&planks)).count() as u32)
+}
 
 /// After the lay: the viewer and inventory shut (the grid goes back to the pack), the
 /// barrel gone, and the planks the session carries before it given back.

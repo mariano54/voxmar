@@ -8,7 +8,8 @@
 // `sound` is what loading it sounds like (`Water`: stirred in), else its working block's
 // placing; taking what it made pops like a pickup. Loaded inside the loader's own home, a
 // station tops the load up with more of what is in hand, from the pack and then the home's
-// stores, unless `from_stores: false` (docs/home.md, "Crafting from home stores").
+// stores (nearest the hearth or bed first), unless `from_stores: false` or the loader
+// sneaks (docs/home.md, "Crafting from home's stores").
 //
 // `fertilisers`: an item held to a growing crop grows the crops within `reach` a stage.
 (
@@ -56,6 +57,9 @@
                 (input: "clay", output: "fired_clay", minutes: 1.0, skill: "core:crafting", xp: 4.0, counts: Some("cooked")),
                 (input: "tag:log", output: "charcoal", minutes: 1.0, skill: "core:cooking", xp: 3.0, counts: Some("cooked")),
             ],
+            // Logs and clay in the stores are for building: the clamp takes only what is in
+            // hand, or one log would draw the woodshed in.
+            from_stores: false,
         ),
     ],
     fertilisers: [

@@ -120,6 +120,13 @@ pub(crate) fn reach(recipe: &Recipe, have: &FxHashMap<BlockId, u32>, at_table: b
 /// Everything the player can make or nearly, from the book and what they hold, in the
 /// order it is shown; each thing once, by its nearest way.
 pub(crate) fn plan(content: &Content, book: &RecipeBook, have: &FxHashMap<BlockId, u32>, at_table: bool, lacks: &dyn Fn(&Recipe) -> Option<(SkillId, u8)>) -> Vec<Makeable> {
+    plan_cooking_from(content, book, have, have, at_table, lacks)
+}
+
+/// As `plan`, with what a fire or stove cooks counted from `cooks` alone: a fire cooks
+/// what is in hand, never what lies in the home's stores, so raw meat only in the barrel is
+/// not shown as cooked at a campfire.
+pub(crate) fn plan_cooking_from(content: &Content, book: &RecipeBook, have: &FxHashMap<BlockId, u32>, cooks: &FxHashMap<BlockId, u32>, at_table: bool, lacks: &dyn Fn(&Recipe) -> Option<(SkillId, u8)>) -> Vec<Makeable> {
     let recipes: Vec<&Recipe> = content.recipes.iter().collect();
     let mut found: Vec<Makeable> = Vec::new();
     for entry in book.entries() {
@@ -131,7 +138,7 @@ pub(crate) fn plan(content: &Content, book: &RecipeBook, have: &FxHashMap<BlockI
                 .filter_map(|recipe| reach(recipe, have, at_table, lacks))
                 .min_by_key(Reach::rank)
                 .map(|reach| Makeable { output: entry.output, recipes: Some((*first, variants.len())), reach }),
-            Method::Cook { input, station, .. } if have.get(input).is_some_and(|&n| n > 0) => Some(Makeable { output: entry.output, recipes: None, reach: Reach::Station(station.clone()) }),
+            Method::Cook { input, station, .. } if cooks.get(input).is_some_and(|&n| n > 0) => Some(Makeable { output: entry.output, recipes: None, reach: Reach::Station(station.clone()) }),
             _ => None,
         };
         let Some(near) = near else { continue };
@@ -245,7 +252,7 @@ fn draw(
     }
     let content = &launch.content;
     let lacks = lacks(content, &player);
-    let plan = plan(content, book, &within_reach(&player), player.station.is_some(), &lacks);
+    let plan = plan_cooking_from(content, book, &within_reach(&player), &held(&player.inventory), player.station.is_some(), &lacks);
     if drawn.0 == plan {
         return;
     }
@@ -407,6 +414,10 @@ mod tests {
         let (input, cooked) = content.cooking.iter().next().map(|(input, recipe)| (input, recipe.output)).unwrap();
         let cook = plan(&content, &book, &[(content.blocks.item_of(input), 1)].into_iter().collect(), false, &none);
         let found = cook.iter().find(|m| m.output == cooked).expect("the cooked thing shows");
+        // Only in the home's stores, it is not shown cooked: a fire cooks from the hand.
+        let stored: FxHashMap<BlockId, u32> = [(content.blocks.item_of(input), 1)].into_iter().collect();
+        let from_stores = plan_cooking_from(&content, &book, &stored, &FxHashMap::default(), false, &none);
+        assert!(from_stores.iter().all(|m| m.output != cooked), "what lies only in the stores is not cooked at a fire");
         let Reach::Station(station) = &found.reach else { panic!("{found:?}") };
         let line = words(&locale, &content, cooked, &found.reach);
         assert!(!line.contains(station.as_str()) || content.blocks.tagged(station).next().is_none(), "the station is named, not its tag: {line}");
