@@ -166,6 +166,13 @@ impl SurvivalRules {
         }
     }
 
+    /// Whether a block of `tags` is furniture to a home's walls: one of `home_furniture`'s
+    /// tags and no shelter tag. A shelter tag always wins: cloth hung for a wall, a hay bale
+    /// or a stone column walls a room whatever else it is.
+    pub(crate) fn furniture(&self, tags: &[String]) -> bool {
+        tags.iter().any(|tag| self.home_furniture.contains(tag)) && !tags.iter().any(|tag| tag.starts_with("shelter:"))
+    }
+
     /// Every block that walls a room says how well it shelters it (`HomeWalls`), once: each
     /// solid block tagged `building` or `roof`, full or shaped (roofs, slabs, stairs), but
     /// furniture (`home_furniture`), which the survey looks past. No block says it twice.
@@ -176,7 +183,7 @@ impl SurvivalRules {
             .map(|id| blocks.def(id))
             .filter(|def| {
                 let shelters = Shelter::ALL.iter().filter(|s| def.has_tag(s.tag())).count();
-                let furniture = def.tags.iter().any(|tag| self.home_furniture.contains(tag));
+                let furniture = self.furniture(&def.tags);
                 let walls = def.solid && (def.has_tag("building") || def.has_tag("roof")) && !furniture;
                 shelters > 1 || (shelters == 0 && walls)
             })

@@ -82,10 +82,16 @@ pub enum Fixed {
     Cover,
     /// 1 with the head under water.
     Underwater,
+    /// How far the middle of the nearest settlement (its square or green) is, across the
+    /// ground, in blocks; [`NO_SETTLEMENT`] with none near.
+    Settlement,
 }
 
+/// The `settlement` axis with no settlement near.
+pub const NO_SETTLEMENT: f32 = 10_000.0;
+
 impl Fixed {
-    pub const ALL: [Fixed; 27] = [
+    pub const ALL: [Fixed; 28] = [
         Fixed::Air,
         Fixed::Sky,
         Fixed::Canopy,
@@ -113,6 +119,7 @@ impl Fixed {
         Fixed::Dust,
         Fixed::Cover,
         Fixed::Underwater,
+        Fixed::Settlement,
     ];
 
     fn name(self) -> &'static str {
@@ -144,6 +151,7 @@ impl Fixed {
             Fixed::Dust => "dust",
             Fixed::Cover => "cover",
             Fixed::Underwater => "underwater",
+            Fixed::Settlement => "settlement",
         }
     }
 }
@@ -162,7 +170,9 @@ pub struct Environment {
 
 impl Environment {
     pub fn new(groups: usize) -> Self {
-        Self { values: vec![0.0; Fixed::ALL.len() + groups], home: 1.0, ..Self::default() }
+        let mut values = vec![0.0; Fixed::ALL.len() + groups];
+        values[Fixed::Settlement as usize] = NO_SETTLEMENT;
+        Self { values, home: 1.0, ..Self::default() }
     }
 
     pub fn get(&self, axis: Fixed) -> f32 {
@@ -231,6 +241,11 @@ pub struct Conditions {
 }
 
 impl Conditions {
+    /// Whether they hold a range on `axis`.
+    pub fn uses(&self, axis: Fixed) -> bool {
+        self.ranges.iter().any(|&(a, _)| a == axis as usize)
+    }
+
     /// How fully the conditions hold, 0..1.
     pub fn weight(&self, env: &Environment) -> f32 {
         let mut weight = self.ranges.iter().map(|&(axis, range)| range.weight(env.values[axis])).product::<f32>();
@@ -253,6 +268,9 @@ pub struct Group {
     /// Whether a structure's core (a hearthstone, a crucible) counts only while its fire
     /// burns (`ClientWorld::fires`); the group's other blocks always count.
     pub lit: bool,
+    /// Whether its blocks count only while they smoulder (`ClientWorld::smoulders`): thatch
+    /// about to catch, heard crackling before it does.
+    pub smouldering: bool,
 }
 
 /// What a bed plays: a synthesized sound, or recorded segments shipped in its package.
@@ -339,6 +357,9 @@ struct GroupDef {
     #[serde(default)]
     falling: bool,
     range: (f32, f32),
+    /// Its blocks count only while they smoulder.
+    #[serde(default)]
+    smouldering: bool,
     /// A structure's core counts only while lit.
     #[serde(default)]
     lit: bool,
@@ -427,7 +448,7 @@ impl Ambience {
                 if ambience.groups.iter().any(|g| g.name == group.name) || Fixed::ALL.iter().any(|a| a.name() == group.name) {
                     return Err(format!("{package}/{FILE}: group {} is defined twice", group.name));
                 }
-                ambience.groups.push(Group { name: group.name, range: group.range, lit: group.lit });
+                ambience.groups.push(Group { name: group.name, range: group.range, lit: group.lit, smouldering: group.smouldering });
                 ambience.selectors.push((group.tags, group.materials, group.falling));
             }
         }

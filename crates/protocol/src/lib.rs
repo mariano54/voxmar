@@ -39,7 +39,9 @@ pub use voxmar_engine::weather::Weather;
 // 41: ServerMessage::Fires, the lit structures whose fires burn.
 // 42: a staggered creature's tell (STAGGERED).
 // 43: the seat a player sits on (Vitals::seated), for the lower eye.
-pub const PROTOCOL_VERSION: u32 = 43;
+// 44: what the home's stores hold (Vitals::home_stores), for what can be made there.
+// 48: ServerMessage::Smoulders, the blocks about to catch fire, for their smoke.
+pub const PROTOCOL_VERSION: u32 = 48;
 
 /// A creature's `tell` while it rears into a new phase of its fight.
 pub const REARING: u8 = u8::MAX;
@@ -217,6 +219,9 @@ pub enum ServerMessage {
     /// kiln), sent on joining and whenever one is lit, breaks or burns out: they crackle
     /// and their chimneys smoke, an unlit one is cold and quiet.
     Fires { lit: Vec<IVec3> },
+    /// Blocks smouldering, about to catch fire (`fire.ron`), in order: sent whenever that
+    /// changes, to everyone.
+    Smoulders { at: Vec<IVec3> },
 }
 
 /// A creature as players see it. Its velocity lets clients carry it on smoothly between

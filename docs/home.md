@@ -82,7 +82,13 @@ wall, or the roof. A wall is any solid block or any with a shelter tag, so a shu
 window closes the room, and an open door lets the scan out. Furniture is not a wall: a block
 with a tag in survival.ron's `home_furniture` (machine, station, furnishing, storage, decor,
 multiblock_core, farm, waters) is looked past to the wall behind it, so a chest or a table
-by the wall leaves the room as it was, and a barrel in a doorway is no door. A face leading out of the reach
+by the wall leaves the room as it was, and a barrel in a doorway is no door. Furniture is a
+furniture tag and no shelter tag: a shelter tag always wins, so cloth hung for a wall, a hay
+bale and a stone column (`shelter:draughty`, `draughty`, `sound`) wall a room, while machines,
+stations, the chest, the hearthstone, the altar and the planter carry no shelter tag and are
+looked past, so a small station never plugs a gap in a wall. The scan never steps down into a
+solid block or furniture: under the room is floor, so a hearthstone, a barrel or a well set in
+it is floor like the stone round it. A face leading out of the reach
 (or into an unloaded column) is an opening, of no shelter, and counts against the room; the
 floor is not counted. `HomeWalls(Sound, 0.6)` holds when 6 in 10 faces are sound or better
 (effect.rs, `Condition::HomeWalls`, `Walls::share`; load-checked: the share is above 0 and at
@@ -234,6 +240,18 @@ bearing the mark draws from where it sits, which must be within 3° of home's
 ("way home: dusk"). Back at the camp it waits for the mark to fade out ("way home:
 inside"). It then sets the time back and leaves the camp to the Nest step, which takes it down.
 
+**No ghost home.** A home used to be only ever set: break the hearth or the bed and you woke
+at the hole, the mark pointing there. Now every block change asks `Server::home_changed`:
+a player whose bed stood where the new block is no bed forgets the bed ("Your bed is gone:
+you will not wake there again."), and one whose home hearth's core it was forgets the hearth
+("Your hearth is gone: it is your home no more."), en+ja. They wake at what is left (the
+hearth, the bed, else the world's spawn) and `Vitals::home` changes at once, so the mark
+moves or goes. A bed set down where the bed was (a bag swapped for a proper bed) is still
+the bed. Test: `hearth::tests::a_broken_bed_or_hearth_is_forgotten`. Gate: the Nest step's
+last phase breaks the bag that was home and waits for no home, no mark and the chat line
+("home: no ghost"). A bed broken while its sleeper is offline is not seen (their save keeps it
+until they sleep elsewhere).
+
 ## Sleeping
 
 Right clicking a bed used to only set where you wake. It now also gives a **rest** (the
@@ -337,6 +355,48 @@ step puts four planks in a barrel beside the bag, shoots the table's recipe with
 button ("home-lay-recipe"), presses it, and shoots the grid laid from the barrel
 ("home-lay"; check "home: lay").
 
+**Stores count everywhere a home crafts (Oct 14).** The eleventh pass carries the same rule
+to the rest of the home, so the barrel is a larder from the first night:
+
+- **Always on, not a tier perk.** The rule holds wherever the player stands in their own home,
+  at any home step from a bed and a torch up. Tying it to a tier would hide it until the
+  home is Homely, when the first days are already over; the tiers instead grow how much the
+  stores hold. Only the player's own home counts, and only the stores they placed (or that
+  nobody did, as a village's): a guest sleeping in a friend's bed crafts from their own pack
+  and their own barrels, since a friend's barrel is not theirs to empty.
+- **The home bounds** are the box `/home` counts: `home_reach` across, `home_up` and
+  `home_down`, around the lit hearth, else the bed last slept in. The player must stand
+  in it, and a station must stand in it too.
+- **Which stations count.** Crafting (the 2×2 grid and the crafting table) already lays from
+  the stores. Home stations (stations.ron) now count too: loading one tops the load up to
+  what it `holds`, with more of what is in hand. It takes from the hand first, then the
+  rest of the pack, then the stores, nearest the hearth or bed first. Unlike Lay, a station
+  never reaches into a pouch. This is data per station, `from_stores` (true unless said
+  otherwise). The drying rack and the cooking pot take from the stores. The compost heap
+  does not, because grain and seed kept in a barrel are for eating and sowing, and a heap
+  that ate them would punish keeping a larder. Nor does the earth clamp: logs and clay in
+  the stores are for building, and one log in hand would draw the woodshed in. The chat line says how many came from the stores
+  (`station.loaded_from_stores`, en and ja). Cooking at a fire (cooking.ron) and machines
+  are left out. A fire cooks the one item in hand and a machine takes items into its own
+  slots, so there is no load to top up.
+- **What the player sees.** The Can Make list under the inventory, and what the recipe
+  viewer says a recipe still wants, count the home's stores while the player stands in
+  their home. The server sends the tally with the vitals (`Vitals::home_stores`, protocol
+  44). It is recounted on the once-a-second survival pass, which already surveys the same
+  box, and resent only when it changes. With four planks in the barrel and none in the
+  pack, the crafting table shows as ready. What a fire cooks counts the pack alone, since a
+  fire cooks what is in hand: raw meat only in the barrel is not shown cooked.
+- **Tests.** In server/src/laying.rs: `at_home_a_rack_tops_its_load_up_from_the_stores`,
+  `at_home_with_no_store_a_rack_tops_up_from_the_pack`,
+  `a_compost_heap_leaves_the_stores_alone`, `a_guest_draws_on_no_one_elses_stores`,
+  `a_station_and_its_loader_must_both_be_in_the_home` and
+  `the_home_stores_are_counted_only_at_home`. In client/src/hud/makeable.rs:
+  `the_home_stores_count_toward_what_can_be_made`, which also checks a cooked thing is not
+  shown from the stores alone. In the gate's Home step, before Lay, the check
+  "home: can make" asks that the server counted the barrel's planks (as many as the crafting
+  table's recipe takes) and that the Can Make plan, drawn under the open barrel, has the
+  crafting table ready from them alone.
+
 ## Eggs in the stores
 
 A kept hen (any bird whose product `nests`) that lays inside its keeper's home box lays into
@@ -384,6 +444,81 @@ does not cook, and says what the hearth lacks. Cooking at either counts as campf
 for quests (First Night). Test `the_hearth_and_the_stove_cook_as_a_campfire_does`; the gate's
 Cook step rings its hearthstone with stone and cooks small game at it ("hearth: cooks"), then at a
 stove ("stove: cooks").
+
+## Fire in the thatch
+
+Thatch and wattle burn. A torch, a campfire or a brazier one step from a thatch roof or a
+wattle panel (out a face), standing there eight seconds, sets it alight; a lit hearth or kiln
+does the same within two steps. A step goes only through open cells, never through a solid
+block, so reach is the shortest way round: stone between a flame and the thatch shields it,
+and a roof's opening over a hearth lined in stone keeps its fire from the roof (the nearest
+thatch is then two blocks off as the crow flies but three round the stone). What catches
+becomes a **blaze**, a flame itself, so the fire runs on through the thatch and wattle beside
+it, and ten seconds later it is gone, nothing left. Take the torch away before it catches and
+nothing happens; break a blaze (it breaks at a touch) and it is out. Eight seconds is time
+enough to see the smoke, step over and break the thatch or panel by bare hand (about a
+second: hardness 0.8 or 1).
+
+The wait is shown. While a block waits to catch it **smoulders**: grey smoke curls off it
+with the odd ember (`smoke` in fire.ron, the client's emitters) and it crackles (ambience.ron's
+`smoulder` group, `smouldering: true`, and its `smoulder_crackle` sound). The server tells
+every player which blocks smoulder when that changes (`ServerMessage::Smoulders`, protocol 48),
+since only it knows what changed (a village's thatch by its own torches does not smoulder).
+The first time in a session a player's own change sets something smouldering (a torch set, a
+hearth lit, thatch laid by a flame), they are told why in one line, with the ways round it
+(`fire.smoulders`: "Thatch and wattle by a flame smoulder, then catch: move the flame or break
+them in time. Daub the wattle, build in stone, or light with candles."). A candle lights a home
+(its `light` tag counts toward snug's two lights and up) with no flame in it, and is made by
+hand at Crafting 3 from twine and hide, in the Nomad age. A player joining is told at once what
+smoulders, so its smoke shows from their first frame.
+
+An older world's home hearth, relit for its player as they join (`kindle_home`), sets nothing
+smouldering: they changed nothing, and a roof should not go up under someone who just logged
+in. Instead they are told once of the nearest thatch or wattle its fire would reach, and how
+many steps off (`fire.near_hearth`). Their next lighting by hand does set it smouldering.
+
+**Homes catch only from their owner** (fire.ron `homes_catch_only_from_owner`, on unless a pack
+turns it off). Every fire remembers whose it is: the player whose change started it (a torch set,
+a hearth lit, thatch laid by a flame), carried on as it spreads and saved with it. A block in a
+player's home box (`home_reach` across, `home_up` up and `home_down` down from the cell their
+home is at: over a home hearth lit by them, or where an online player's home is; the same box
+they feel at home in) only smoulders or catches from that player's fire, or from any owner's
+where two homes overlap. A home hearth lit before fires were kept by owner is its player's
+again as they join or touch it, so it stays protected while they are away. Another player's torch beside your wattle wall fizzles, and a neighbour's burning shed
+stops at your home's edge; your own careless torch still burns your own roof. A fire a command
+or the world started belongs to no one, so it never takes a home either.
+
+There is no chance in it: the same fire burns the same way every time (catching before burning
+out, in order of place). Only block changes are watched (a player's, a command's, a flood's in
+the one pass over a tick's flow, the fire's own), never a column as the world made it, so a
+village stands by its own torches until someone sets a flame to it. Nothing is hurt by a
+blaze; it only takes blocks. What waits to catch or burn out is timed in ticks of game time,
+looked at once a second, and saved with the world (`blazes` in the save); a pass of no time
+changes nothing.
+
+For mod authors, it is all data: `fire.ron` names the tags that catch (`thatch`, `wattle`) and
+those that are flames (`fire`), the reaches (`reach` 1 to 4, `hearth_reach` 0 to 4, for every
+lit hearth or kiln), the seconds, the burning block (`blaze`, which must be a flame), what is
+left (`ash`, here air) and the smoke a smouldering block gives off (non-empty), load-checked
+(a block cannot both catch and be a flame; what burns and what is left cannot catch). Code:
+`crates/engine/src/fire.rs`, `crates/server/src/blaze.rs`. Tests:
+`a_torch_sets_wattle_alight_and_the_fire_runs_on` (the fire runs on to the next panel, burns
+away, and two worlds burn alike), `a_flame_taken_away_or_put_out_burns_nothing` (and a lit
+hearth two off sets it alight), `a_hearth_lit_under_thatch_smoulders_then_catches` (the hint
+once, the smoulder told, caught only on time), `a_stone_lined_flue_keeps_a_hearths_fire_from_the_roof`,
+`fires_are_saved_with_the_world`. The gate's Blaze step sets a torch by a wattle panel and
+counts the smoke off it before it catches ("fire: smoulders", "fire: catches", "fire: burns out").
+
+## Curing hides
+
+A beast's hide comes off **raw**. The drying rack is the one place it dries (stations.ron,
+the only work that makes hide): hung there (up to eight), it cures to hide in a
+minute, half that with a fire near, and taking it down pays Crafting (stations.ron; test
+`a_raw_hide_hung_on_a_rack_is_hide_a_minute_later`). Everything made of hide (pouches, hide
+armour, the hide lean-to, the wool bag) takes the cured hide; only the first night's bed of
+feathers and hide takes a raw one too, so the first bag does not wait on the rack. A wandering
+party's goods are already cured. Hide and Seek (Nomad) asks for four raw hides, and Hide
+Wraps after it for the rack's cured hide.
 
 ## Smoke over home
 

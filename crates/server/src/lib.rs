@@ -21,6 +21,7 @@ mod journal;
 mod lairs;
 mod machines;
 mod quests;
+mod blaze;
 mod regrow;
 mod farm;
 mod husbandry;
@@ -643,6 +644,16 @@ pub(crate) struct Server {
     /// Picked wild plants waiting to grow back (see `regrow`), and plants a herb planter
     /// grew back, whose picking pays the planter's experience.
     regrowing: FxHashMap<IVec3, regrow::Regrowing>,
+    /// Blocks waiting to catch fire or to burn out (see `blaze`).
+    blazes: FxHashMap<IVec3, blaze::Blaze>,
+    /// Blocks set smouldering this tick, for telling whoever's change did it (`blaze_hint`).
+    blaze_risked: Vec<IVec3>,
+    /// The smouldering blocks players were last told of.
+    smoulders_sent: Vec<IVec3>,
+    /// Whose doing a fire that starts now is (a player's name): the player whose message is
+    /// being handled, a hearth's owner as it is lit, a burning block's own fire as it spreads;
+    /// none for a flood or a command. Homes catch only from their owner (fire.ron).
+    fire_origin: Option<String>,
     planter_grown: FxHashSet<IVec3>,
     /// Kept hives with bees, and how far each is toward its honey (`apiary`).
     apiary: apiary::Apiary,
@@ -760,6 +771,7 @@ impl Server {
         });
         let placed = meta.placed.iter().map(|&p| IVec3::from_array(p)).collect();
         let regrowing = regrow::restore(&meta.regrowing, |name| content.blocks.id(name));
+        let blazes = blaze::restore(&meta.blazes);
         let lairs = lairs::Lairs::restore(&meta.lairs);
         let planter_grown = meta.planter_grown.iter().map(|&p| IVec3::from_array(p)).collect();
         let apiary = apiary::Apiary::restore(&meta.hives);
@@ -787,6 +799,10 @@ impl Server {
             fires_sent: Vec::new(),
             placed,
             regrowing,
+            blazes,
+            blaze_risked: Vec::new(),
+            smoulders_sent: Vec::new(),
+            fire_origin: None,
             planter_grown,
             apiary,
             stations,
@@ -1011,6 +1027,7 @@ impl Server {
         self.ping_players();
         self.tick_prayers();
         self.flow();
+        self.blaze();
         self.watch_stores();
         self.replicate_owned_traits();
         let ids: Vec<PlayerId> = self.players.keys().copied().collect();
@@ -1118,6 +1135,7 @@ impl Server {
         meta.time = self.tick;
         meta.placed = self.placed.iter().map(|p| p.to_array()).collect();
         meta.regrowing = self.saved_regrowing();
+        meta.blazes = self.saved_blazes();
         let mut grown: Vec<[i32; 3]> = self.planter_grown.iter().map(|p| p.to_array()).collect();
         grown.sort();
         meta.planter_grown = grown;
@@ -1255,6 +1273,8 @@ impl Server {
                 self.station_changed(pos, old, block);
                 self.trap_changed(pos, block);
                 self.fire_changed(pos);
+                self.home_changed(pos, block);
+                self.blaze_changed(pos, block);
             }
         }
         for &(pos, _) in &done {
@@ -1292,6 +1312,8 @@ impl Server {
             self.station_changed(pos, old, block);
             self.trap_changed(pos, block);
             self.fire_changed(pos);
+            self.home_changed(pos, block);
+            self.blaze_changed(pos, block);
             for player in self.players.values().filter(|p| p.joined && p.sent.contains(&column)) {
                 player.connection.send(ServerMessage::BlockChanged { pos, block });
             }
