@@ -185,9 +185,17 @@ impl Server {
             self.refuse(agent, lacks);
             return;
         }
+        // Loaded in the loader's home, the rest of the pack and then the home's stores top
+        // the load up with more of what is in hand (docs/home.md).
+        let topped = station.from_stores && self.in_home_with(agent, pos);
+        let stores = if topped { self.home_stores(agent) } else { Vec::new() };
+        let player = &self.players[&agent];
+        let packed: u32 = if !topped { 0 } else { player.inventory.slots.iter().enumerate().filter(|&(slot, _)| slot != selected).filter_map(|(_, s)| s.filter(|s| s.item == stack.item)).map(|s| s.count as u32).sum() };
+        let stored: u32 = stores.iter().filter_map(|&at| self.factory.get(at)).flat_map(|(_, state)| state.bin.iter().flatten()).filter(|s| s.item == stack.item).map(|s| s.count as u32).sum();
+        let within = (stack.count as u32 + packed + stored).min(station.holds as u32) as u8;
         // Whole batches only: the heap rots four greens to one compost, so a load is a
         // multiple of four.
-        let count = stack.count.min(station.holds) / work.takes * work.takes;
+        let count = within / work.takes * work.takes;
         if count == 0 {
             self.refuse(agent, Words::key("station.too_few").with("count", Words::text(work.takes)).with("item", Words::Block(self.content.blocks.def(stack.item).name.clone())));
             return;
@@ -195,13 +203,29 @@ impl Server {
         let speed: f32 = station.faster.iter().filter(|(spot, _)| self.spot_holds(pos, spot)).map(|(_, times)| times).product();
         let ticks = (work.minutes * 60.0 * TICKS_PER_SECOND as f32 / speed).round() as u64;
         let player = self.players.get_mut(&agent).expect("checked above");
-        player.inventory.take(selected, count);
+        let mut left = count - player.inventory.take(selected, count).map_or(0, |taken| taken.count);
+        if topped {
+            for slot in (0..player.inventory.slots.len()).filter(|&slot| slot != selected) {
+                if left > 0 && player.inventory.slots[slot].is_some_and(|s| s.item == stack.item) {
+                    left -= player.inventory.take(slot, left).map_or(0, |taken| taken.count);
+                }
+            }
+        }
         player.changed(traits::INVENTORY);
+        let from_stores = self.take_from_stores(&stores, stack.item, left as u32);
+        debug_assert_eq!(from_stores, left as u32, "counted as there");
+        // A store the loader has open shows what was taken with the same update.
+        if from_stores > 0 {
+            self.pull_store(agent);
+        }
         self.stations.loads.insert(pos, Load { item: stack.item, count, due: self.tick + ticks.max(1) });
         self.set_block(pos, station.working);
         let mut words = Words::key("station.loaded").with("count", Words::text(count)).with("item", Words::Block(self.content.blocks.def(stack.item).name.clone())).with("minutes", Words::text(self.minutes_left(self.tick + ticks.max(1))));
         if speed > 1.0 {
             words = Words::key("station.loaded_faster").with("words", words);
+        }
+        if from_stores > 0 {
+            words = Words::key("station.loaded_from_stores").with("words", words).with("count", Words::text(from_stores));
         }
         self.tell_station(agent, words);
     }
