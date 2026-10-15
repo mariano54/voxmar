@@ -57,6 +57,31 @@ pub enum Kind {
     Villager,
 }
 
+/// A short, wordless sound one of a settlement's people makes as they react to something
+/// (`Server::bark`), heard as their voice's sound of that name (`creature_sounds.ron`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Bark {
+    /// A hum of greeting, to a player they meet.
+    Greet,
+    /// A sharp cry of alarm: a threat, a fire, someone struck.
+    Alarm,
+    /// A content sigh: a meal, rest at home, a job done.
+    Content,
+}
+
+impl Bark {
+    pub const ALL: [Bark; 3] = [Bark::Greet, Bark::Alarm, Bark::Content];
+
+    /// Its name, as commands and logs write it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Bark::Greet => "greet",
+            Bark::Alarm => "alarm",
+            Bark::Content => "content",
+        }
+    }
+}
+
 /// Where a species can be.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
 pub enum Water {

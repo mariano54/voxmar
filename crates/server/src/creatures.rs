@@ -313,6 +313,11 @@ impl Neighbours {
 }
 
 impl Creatures {
+    /// Whether `player` was last told of creature `id`: it is in their sight.
+    pub(crate) fn sees(&self, player: PlayerId, id: u32) -> bool {
+        self.seen.get(&player).is_some_and(|seen| seen.contains(&id))
+    }
+
     /// Which blocks are water (a fluid named for it), by id.
     fn water_blocks(&self, blocks: &voxmar_engine::block::BlockRegistry) -> &[bool] {
         self.water.get_or_init(|| blocks.ids().map(|b| blocks.info(b).fluid.is_some() && blocks.def(b).name.contains("water")).collect())

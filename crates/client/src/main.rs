@@ -352,6 +352,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let recorded = sfx::Recordings::load(&content.files)?;
     recorded.check(&content.actions)?;
     recorded.covers(&content.actions)?;
+    let unbarked = creature_sounds::Bank::load(&content.files, &content.creatures)?.unbarked(&content.creatures);
+    if !unbarked.is_empty() {
+        return Err(format!("{}: settlement people with no greet, alarm or content of their own: {}", creature_sounds::defs::FILE, unbarked.join(", ")).into());
+    }
     recorded.check_materials(&content.blocks)?;
     recorded.mix.check().map_err(|e| format!("sounds.ron: {e}"))?;
     let content_weather = content.weather.clone();

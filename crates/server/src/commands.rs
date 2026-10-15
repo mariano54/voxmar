@@ -575,6 +575,11 @@ impl Server {
             }
             return Ok(Words::key("command.creatures.dispersed").with("count", Words::text(wild.len())));
         }
+        // One of a settlement's people near makes a bark: `/creatures bark greet`.
+        if what == "bark" {
+            let made = species.and_then(|name| self.bark_command(at, name)).ok_or_else(|| Words::key("command.creatures.bark_what"))?;
+            return Ok(Words::key("command.creatures.done").with("count", Words::text(made)));
+        }
         let only = match species {
             Some(species) => Some(self.content.creatures.find(species).ok_or_else(|| Words::key("command.summon.unknown").with("name", species))?),
             None => None,

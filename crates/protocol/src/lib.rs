@@ -217,6 +217,9 @@ pub enum ServerMessage {
     /// kiln), sent on joining and whenever one is lit, breaks or burns out: they crackle
     /// and their chimneys smoke, an unlit one is cold and quiet.
     Fires { lit: Vec<IVec3> },
+    /// A creature the player sees made a short, wordless sound: one of a settlement's people
+    /// greeting, raising the alarm or sighing, content (`Server::bark`).
+    Bark { creature: u32, bark: voxmar_engine::creature::Bark },
 }
 
 /// A creature as players see it. Its velocity lets clients carry it on smoothly between

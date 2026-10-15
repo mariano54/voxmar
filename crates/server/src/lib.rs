@@ -3,6 +3,7 @@
 
 mod actions;
 mod apiary;
+mod barks;
 mod commands;
 mod condition;
 /// The weather in words, for the debug overlay as for `/weather`.

@@ -455,6 +455,8 @@ pub struct Creatures {
     waiting: Vec<CreatureView>,
     /// Creatures our blows landed on since the last frame, to cry out.
     cries: Vec<u32>,
+    /// Barks the server told of since the last frame (`ServerMessage::Bark`): who, and which.
+    barks: Vec<(u32, voxmar_engine::creature::Bark)>,
     /// Our blows the server answered since the last frame: at whom, for how much, what kind,
     /// and whether it killed. Each jolts its creature (`fight_fx`).
     jolts: Vec<(u32, u16, Blow, bool)>,
@@ -547,6 +549,11 @@ pub enum Keeper {
 }
 
 impl Creatures {
+    /// Creature `id` barked, as the server says: heard next frame, if it is shown.
+    pub fn bark(&mut self, id: u32, bark: voxmar_engine::creature::Bark) {
+        self.barks.push((id, bark));
+    }
+
     /// Takes what the server sent.
     pub fn receive(&mut self, changed: Vec<CreatureView>, gone: Vec<CreatureGone>) {
         self.inbox.extend(changed);
@@ -987,6 +994,11 @@ fn show(
     for &id in &cried {
         if let Some(shown) = creatures.shown.get(&id) {
             sounds.push(sound(Sound::Hurt, id, &shown.view, shown.position, 0.0));
+        }
+    }
+    for (id, bark) in std::mem::take(&mut creatures.barks) {
+        if let Some(shown) = creatures.shown.get(&id) {
+            sounds.push(sound(Sound::of_bark(bark), id, &shown.view, shown.position, 0.0));
         }
     }
     // Our blows that landed: a freeze, a white flash and a flinch away from us, as large as
