@@ -133,7 +133,7 @@ impl Default for LocalPlayer {
 
 impl LocalPlayer {
     pub fn eye(&self) -> Vec3 {
-        self.position + Vec3::Y * dims::EYE_HEIGHT
+        voxmar_engine::vitals::eye(self.position, dims::EYE_HEIGHT, self.vitals.seated)
     }
 
     pub fn rotation(&self) -> Quat {
@@ -444,7 +444,7 @@ fn movement(
         fighting.dodge_ready = clock + dodge.cooldown as f64;
         let held = player.inventory.get(player.selected).map(|s| s.item);
         let weapon = combat.wielded(held, |skill| launch.content.skills.level(player.skills.xp(skill)));
-        fighting.rhythm.cancel(clock, &combat.timing(&weapon), &combat.feel);
+        fighting.cancel(clock, &combat.timing(&weapon), &combat.feel);
         net.propose_from(player, dodge_action, voxmar_engine::action::ActionTarget::None);
     }
     // Guarding, the player walks slower and cannot sprint.

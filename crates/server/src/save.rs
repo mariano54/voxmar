@@ -136,6 +136,38 @@ pub struct WorldMeta {
     /// one when they open (`ServerConfig::draw_key`, else a random one).
     #[serde(default)]
     pub draw_key: u64,
+    /// Drops popped from broken blocks so far, which numbers where each lands (`popped`);
+    /// none in older worlds.
+    #[serde(default)]
+    pub drops: u64,
+    /// Loot rolls drawn for creatures killed so far, which number each; none in older
+    /// worlds.
+    #[serde(default)]
+    pub loot: u64,
+    /// Rolls drawn for what no player's draws number (a kept animal's own products, a
+    /// litter, each young born, and a player's kind of draw when no player is there to
+    /// draw it, `Server::draw_for`), each kind by its salt (`ROLL_PRODUCT` and the rest);
+    /// none in older worlds.
+    #[serde(default)]
+    pub rolls: u64,
+}
+
+/// What tells the world's rolls (`WorldMeta::next_roll`) of one kind from another's.
+pub const ROLL_PRODUCT: u64 = 0x9a0d;
+pub const ROLL_LITTER: u64 = 0x1177;
+pub const ROLL_YOUNG: u64 = 0x7a46;
+
+/// The key the world's popped drops scatter by, made from its draw key: where a drop lands
+/// and how it flies are seen by every client, and the draw key must not be read back from
+/// them. This is a hash, not a proven one-way function. What protects the key is that pops
+/// never run on it or on any stream drawn from it (`numbered_draws`), so even this key won
+/// back from many pops foretells only where drops fly; and getting the draw key from this
+/// one means solving the XOR of two of `mix`'s passes over different inputs for a 64-bit
+/// key, where each pass alone is a bijection that unwinds step by step but their XOR has
+/// no known inverse.
+pub fn pop_key(draw_key: u64) -> u64 {
+    use voxmar_engine::creature::mix;
+    mix(draw_key, 0x0909_d50f) ^ mix(draw_key ^ 0x5bd1_e995, 0x2545_f491).rotate_left(29)
 }
 
 /// How a regrowing plant is saved, by block names.
@@ -152,6 +184,29 @@ fn normal_speed() -> f32 {
 }
 
 impl WorldMeta {
+    /// The next of the world's loot rolls (a kill's), counted.
+    pub fn next_loot(&mut self) -> f32 {
+        use voxmar_engine::creature::{mix, unit_from};
+        self.loot += 1;
+        unit_from(mix(mix(self.draw_key ^ 0x1007, self.loot), 0xd2a3))
+    }
+
+    /// The next two of the world's rolls of a kind (`salt`, `ROLL_PRODUCT` and the rest),
+    /// counted.
+    pub fn next_roll(&mut self, salt: u64) -> [f32; 2] {
+        let draws = numbered_draws(self.draw_key, salt, self.rolls);
+        self.rolls += 1;
+        draws
+    }
+
+    /// Where the next drop popped at `cell` flies (`dropped::popped`), by the world's count
+    /// of drops and a key that gives nothing of the draw key away (`pop_key`).
+    pub fn next_pop(&mut self, cell: voxmar_engine::glam::IVec3, salt: u32) -> [f32; 3] {
+        let popped = self.drops;
+        self.drops += 1;
+        crate::items::random3(pop_key(self.draw_key) ^ popped.wrapping_mul(0x9e37_79b9_7f4a_7c15), cell, salt)
+    }
+
     pub fn new(name: impl Into<String>, seed: u64, mode: GameMode) -> Self {
         let now = unix_time();
         Self {
@@ -176,6 +231,9 @@ impl WorldMeta {
             worldgen_content: None,
             lairs: Vec::new(),
             draw_key: random_key(),
+            drops: 0,
+            loot: 0,
+            rolls: 0,
         }
     }
 }
@@ -197,6 +255,120 @@ pub fn random_key() -> u64 {
 /// Seconds since the Unix epoch.
 pub fn unix_time() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
+}
+
+/// What a player's rolls are numbered by, a count for each kind (`Draw`), saved, so no
+/// roll is drawn twice and none hangs on the tick it falls on.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Draws {
+    /// Blows the player has struck at creatures.
+    pub strikes: u64,
+    /// Creatures' blows that have come down on the player.
+    pub blows: u64,
+    /// Feeds given to creatures being tamed.
+    pub feeds: u64,
+    /// Goes cooked at a station.
+    pub cooks: u64,
+    /// Shots that hit, each of which may be left lying to pick up again.
+    pub recovers: u64,
+    /// Flourishes landed, for what their effect rounds by chance.
+    pub flourishes: u64,
+    /// Blocks broken for a reward, for their bonus drop and what they give instead.
+    pub mines: u64,
+    /// Products taken from kept animals, for how many come.
+    pub yields: u64,
+    /// Wild crops taken, for whether one nobody sowed gives anything.
+    pub forages: u64,
+    /// Harvests rolled (a crop's loot, a skep's), each draw of the roll.
+    pub harvests: u64,
+    /// Locks tried, for the lucky pick.
+    pub locks: u64,
+    /// Sprung traps emptied, each draw of the catch's loot roll.
+    pub catches: u64,
+    /// Chests opened, for what wakes beside them.
+    pub wakes: u64,
+    /// Wanderers' rewards given, for how many come and which of several.
+    pub rewards: u64,
+    /// Captives freed, for whether one follows its freer.
+    pub frees: u64,
+}
+
+/// A kind of roll a player's draws number (`Draws`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Draw {
+    Strike,
+    Blow,
+    Feed,
+    Cook,
+    Recover,
+    Flourish,
+    Mine,
+    Yield,
+    Forage,
+    Harvest,
+    Lock,
+    Catch,
+    Wake,
+    Reward,
+    Free,
+}
+
+impl Draw {
+    /// What tells this kind's draws from another's at the same count.
+    pub fn salt(self) -> u64 {
+        match self {
+            Draw::Strike => 0x5717,
+            Draw::Blow => 0x0b10,
+            Draw::Feed => 0x7a3e,
+            Draw::Cook => 0xc00c,
+            Draw::Recover => 0xa770,
+            Draw::Flourish => 0xf10,
+            Draw::Mine => 0xd1ce,
+            Draw::Yield => 0x7ee1,
+            Draw::Forage => 0x5eed,
+            Draw::Harvest => 0x4a27,
+            Draw::Lock => 0x1ac7,
+            Draw::Catch => 0xca7c,
+            Draw::Wake => 0xa4e1,
+            Draw::Reward => 0x7e3a,
+            Draw::Free => 0xf4ee,
+        }
+    }
+}
+
+impl Draws {
+    /// The next two draws of `kind` for the player whose draw key is `key`, counted.
+    pub fn next(&mut self, key: u64, kind: Draw) -> [f32; 2] {
+        let count = match kind {
+            Draw::Strike => &mut self.strikes,
+            Draw::Blow => &mut self.blows,
+            Draw::Feed => &mut self.feeds,
+            Draw::Cook => &mut self.cooks,
+            Draw::Recover => &mut self.recovers,
+            Draw::Flourish => &mut self.flourishes,
+            Draw::Mine => &mut self.mines,
+            Draw::Yield => &mut self.yields,
+            Draw::Forage => &mut self.forages,
+            Draw::Harvest => &mut self.harvests,
+            Draw::Lock => &mut self.locks,
+            Draw::Catch => &mut self.catches,
+            Draw::Wake => &mut self.wakes,
+            Draw::Reward => &mut self.rewards,
+            Draw::Free => &mut self.frees,
+        };
+        let draws = numbered_draws(key, kind.salt(), *count);
+        *count += 1;
+        draws
+    }
+}
+
+/// Two draws for the `count`th roll of a kind (`salt`) by the player whose draw key is
+/// `key`: each count its own, whatever tick it falls on.
+pub fn numbered_draws(key: u64, salt: u64, count: u64) -> [f32; 2] {
+    use voxmar_engine::creature::{mix, unit_from};
+    let h = mix(mix(key ^ salt, count), 0xd2a3);
+    [unit_from(h), unit_from(mix(h, 1))]
 }
 
 /// What is kept of a player between sessions.
@@ -231,6 +403,8 @@ pub struct SavedPlayer {
     pub prayer_points: Option<f32>,
     /// Lines cast so far (none in older saves).
     pub casts: u64,
+    /// What the player's other rolls are numbered by (none in older saves).
+    pub draws: Draws,
 }
 
 /// Tallies quests count (`kind:name`, or `kind:station:name`) under the names items have
@@ -298,6 +472,8 @@ struct PlayerFile {
     prayer_points: Option<f32>,
     #[serde(default)]
     casts: u64,
+    #[serde(default)]
+    draws: Draws,
 }
 
 /// A column file, generic so that saving can borrow the column.
@@ -577,7 +753,7 @@ impl WorldSave {
         }
         let health = Health { current: file.health.current.min(file.health.max), max: file.health.max };
         let yaw = if file.yaw.is_finite() { file.yaw } else { 0.0 };
-        Ok(Some(SavedPlayer { position, yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills, effects: file.effects, home: file.home, bed: file.bed, kindled: file.kindled, journal: merge_journal(file.journal, registry), quests_claimed: file.quests_claimed.unwrap_or_else(|| file.quests.clone()), quests: file.quests, tallies: renamed_tallies(file.tallies, registry), prayer_points: file.prayer_points, casts: file.casts }))
+        Ok(Some(SavedPlayer { position, yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills, effects: file.effects, home: file.home, bed: file.bed, kindled: file.kindled, journal: merge_journal(file.journal, registry), quests_claimed: file.quests_claimed.unwrap_or_else(|| file.quests.clone()), quests: file.quests, tallies: renamed_tallies(file.tallies, registry), prayer_points: file.prayer_points, casts: file.casts, draws: file.draws }))
     }
 
     /// Moves the file of the player called `name` aside, as unreadable (`set_aside`).
@@ -621,6 +797,7 @@ impl WorldSave {
             tallies: player.tallies.clone(),
             prayer_points: player.prayer_points,
             casts: player.casts,
+            draws: player.draws,
         };
         let text = ron::ser::to_string_pretty(&file, ron::ser::PrettyConfig::default()).map_err(io::Error::other)?;
         let path = self.player_path(name);
@@ -1143,6 +1320,7 @@ mod tests {
             tallies: Vec::new(),
             prayer_points: None,
             casts: 0,
+            draws: Draws::default(),
         };
         save.write_player("ada", &player, &registry).unwrap();
         assert_eq!(save.read_player("ada", &registry).unwrap().unwrap().quests_claimed, ["base:a"], "a waiting reward is kept");
@@ -1187,6 +1365,7 @@ mod tests {
             tallies: vec![("crafted:base:torch".into(), 8)],
             prayer_points: Some(7.5),
             casts: 12,
+            draws: Draws { strikes: 31, blows: 9, feeds: 4, cooks: 17, recovers: 5, flourishes: 2, mines: 40, yields: 3, forages: 6, harvests: 11, locks: 1, catches: 8, wakes: 2, rewards: 7, frees: 3 },
         };
         for name in ["steve", "Steve", "a/b", "../x", "ünï cödé"] {
             save.write_player(name, &player, &registry).unwrap();
@@ -1231,6 +1410,27 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// Each kind of roll counts on by itself, and a count's draws are its own: another
+    /// count, kind or player's key draws otherwise.
+    #[test]
+    fn draws_count_on_by_kind_and_differ_by_count_kind_and_key() {
+        let mut draws = Draws::default();
+        let (ada, bea) = (crate::player::player_draw_key(0x0d1a, "ada"), crate::player::player_draw_key(0x0d1a, "bea"));
+        let first = draws.next(ada, Draw::Strike);
+        assert_eq!(first, numbered_draws(ada, Draw::Strike.salt(), 0));
+        assert_eq!(draws.next(ada, Draw::Strike), numbered_draws(ada, Draw::Strike.salt(), 1));
+        draws.next(ada, Draw::Cook);
+        assert_eq!(draws, Draws { strikes: 2, cooks: 1, ..Draws::default() });
+        let kinds = [Draw::Strike, Draw::Blow, Draw::Feed, Draw::Cook, Draw::Recover, Draw::Flourish, Draw::Mine, Draw::Yield, Draw::Forage, Draw::Harvest, Draw::Lock, Draw::Catch, Draw::Wake, Draw::Reward, Draw::Free];
+        // Every kind's salt, the world's kinds of roll and its loot rolls' are told apart.
+        let salts: Vec<u64> = kinds.iter().map(|k| k.salt()).chain([ROLL_PRODUCT, ROLL_LITTER, ROLL_YOUNG, 0x1007]).collect();
+        let unique: std::collections::BTreeSet<_> = salts.iter().collect();
+        assert_eq!(unique.len(), salts.len(), "two kinds of roll share a salt: {salts:x?}");
+        let others: Vec<_> = kinds.iter().skip(1).map(|k| numbered_draws(ada, k.salt(), 0)).chain([numbered_draws(ada, Draw::Strike.salt(), 1), numbered_draws(bea, Draw::Strike.salt(), 0)]).collect();
+        assert!(others.iter().all(|other| *other != first), "{first:?} drawn again among {others:?}");
+        assert!(others.iter().chain([&first]).flatten().all(|d| (0.0..1.0).contains(d)));
+    }
+
     /// Items an older save holds that have since merged into one come back as that item
     /// (every kind of wild herb is kitchen herbs now), pouched ones added up.
     #[test]
@@ -1261,6 +1461,7 @@ mod tests {
             tallies: Vec::new(),
             prayer_points: None,
             casts: 0,
+            draws: Draws::default(),
         };
         save.write_player("herbalist", &player, &registry).unwrap();
         let loaded = save.read_player("herbalist", &registry).unwrap().unwrap();
@@ -1286,6 +1487,7 @@ mod tests {
         std::fs::write(dir.join("players/hunter.ron"), file).unwrap();
         let loaded = save.read_player("hunter", &blocks).unwrap().unwrap();
         assert_eq!(loaded.casts, 0, "an older save has cast nothing yet");
+        assert_eq!(loaded.draws, Draws::default(), "an older save has drawn nothing yet");
         let (raw, cooked) = (blocks.expect("base:raw_small_game"), blocks.expect("base:cooked_small_game"));
         let slots: Vec<(BlockId, u8)> = loaded.inventory.slots.iter().flatten().map(|s| (s.item, s.count)).collect();
         assert_eq!(slots, [(raw, 3), (raw, 2), (cooked, 4)]);
@@ -1353,5 +1555,24 @@ mod tests {
         let names: Vec<String> = list_worlds(&root).into_iter().map(|(_, meta)| meta.name).collect();
         assert_eq!(names, ["new", "middle", "old"]);
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// Where drops pop is seen by every client, so it is drawn from a key made one way
+    /// from the draw key, never the draw key itself; and the world's rolls count on.
+    #[test]
+    fn pops_never_show_the_draw_key_and_world_rolls_count_on() {
+        let mut meta = WorldMeta::new("w", 1, GameMode::Survival);
+        meta.draw_key = 0x0d1a;
+        let cell = voxmar_engine::glam::IVec3::new(4, 70, -2);
+        assert_ne!(pop_key(meta.draw_key), meta.draw_key);
+        assert_ne!(pop_key(1), pop_key(2), "two keys pop alike");
+        let pop = meta.next_pop(cell, 3);
+        assert_eq!(pop, crate::items::random3(pop_key(0x0d1a), cell, 3), "the first pop is not drawn from the pop key");
+        assert_ne!(pop, crate::items::random3(0x0d1a, cell, 3), "a pop was drawn from the draw key itself");
+        assert_eq!(meta.drops, 1);
+        let rolled = meta.next_roll(ROLL_PRODUCT);
+        assert_eq!(rolled, numbered_draws(0x0d1a, ROLL_PRODUCT, 0));
+        assert_ne!(meta.next_roll(ROLL_PRODUCT), rolled, "the next roll drew the same");
+        assert_eq!(meta.rolls, 2);
     }
 }

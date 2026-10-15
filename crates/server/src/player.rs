@@ -21,7 +21,7 @@ use voxmar_protocol::{
 };
 
 use crate::{Limits, Server};
-use crate::save::{GameMode, SavedPlayer};
+use crate::save::{Draw, Draws, GameMode, SavedPlayer};
 
 pub struct Player {
     pub id: PlayerId,
@@ -127,10 +127,17 @@ pub struct Player {
     /// The last tick a blow fell between them and a creature, either way (prayer points
     /// come back only after a calm, `prayers`).
     pub last_blow: u64,
+    /// The last tick a wound fell on them (`Player::wound`: a blow, a fall, a sting; not the
+    /// cold or heat wearing at them): no sleeping off a fight just had (`survival.ron`'s
+    /// `sleep_after_hurt`).
+    pub hurt_at: Option<u64>,
     /// Prayer points and the prayers on, and what the player was last told of them.
     pub praying: voxmar_engine::prayer::Praying,
     /// Lines the player has cast, which numbers each cast's draw (`Server::fish`).
     pub casts: u64,
+    /// What the player's other rolls are numbered by (`Draws::next`): strikes, blows taken,
+    /// feeds and cooks.
+    pub draws: Draws,
     /// The player's own share of the world's draw key (`player_draw_key`), so two players
     /// casting the same count into the same water draw apart, whatever connection each has.
     pub draw_key: u64,
@@ -146,6 +153,13 @@ pub struct Player {
 }
 
 impl Player {
+    /// The player's next two draws of `kind`, by their draw key and their count of that
+    /// kind (`Draws`), counted.
+    pub(crate) fn draw(&mut self, kind: Draw) -> [f32; 2] {
+        let key = self.draw_key;
+        self.draws.next(key, kind)
+    }
+
     /// Where home is, the point a block above where the player stands on waking: the
     /// hearth they made home while it burns (in `lit`, by its core), else the bed they last
     /// slept in. A hearth broken or gone cold is no home; one from a save made before
@@ -216,8 +230,10 @@ impl Player {
             ping: None,
             round_trip: None,
             last_blow: 0,
+            hurt_at: None,
             praying: Default::default(),
             casts: 0,
+            draws: Draws::default(),
             draw_key: 0,
             prayers_sent: None,
             dirty: vec![traits::HEALTH, traits::INVENTORY, traits::SKILLS, traits::VITALS],
@@ -236,7 +252,7 @@ impl Player {
     }
 
     pub fn eye(&self) -> Vec3 {
-        self.position + Vec3::Y * dims::EYE_HEIGHT
+        voxmar_engine::vitals::eye(self.position, dims::EYE_HEIGHT, self.vitals.seated)
     }
 
     /// Where the player looks.
@@ -276,6 +292,15 @@ impl Player {
     }
 
     /// Gives timed effects (eaten food's), topping up any it has to the longer time.
+    /// `amount` health taken by a wound at `tick` (a blow, a fall, a sting), which keeps them
+    /// from sleeping a while even if it heals back at once; true if it killed them.
+    pub fn wound(&mut self, amount: u8, tick: u64) -> bool {
+        if amount > 0 {
+            self.hurt_at = Some(tick);
+        }
+        self.health.damage(amount)
+    }
+
     pub fn give_effects(&mut self, given: &[(EffectId, f32)]) {
         for &(effect, seconds) in given {
             match self.timed_effects.iter_mut().find(|(e, _)| *e == effect) {
@@ -305,6 +330,7 @@ impl Player {
             tallies: { let mut t: Vec<(String, u32)> = self.tallies.iter().map(|(k, &v)| (k.clone(), v)).collect(); t.sort(); t },
             prayer_points: Some(self.praying.points),
             casts: self.casts,
+            draws: self.draws,
         }
     }
 }
@@ -534,8 +560,10 @@ impl Server {
         // Returning players carry on where they left, prayer points and all (the dead with
         // them full); new ones start at spawn with a kit.
         let points = saved.as_ref().filter(|saved| saved.health.alive()).and_then(|saved| saved.prayer_points);
-        // Casts go on being numbered from where they were, alive or dead, so no cast is drawn twice.
+        // Casts and the other rolls go on being numbered from where they were, alive or dead,
+        // so none is drawn twice.
         player.casts = saved.as_ref().map_or(0, |saved| saved.casts);
+        player.draws = saved.as_ref().map_or_else(Draws::default, |saved| saved.draws);
         player.draw_key = player_draw_key(self.meta.draw_key, &player.name);
         match saved {
             Some(saved) if saved.health.alive() => {
@@ -949,13 +977,13 @@ fn same_token(ours: &str, theirs: &str) -> bool {
     ours.len() == theirs.len() && ours.bytes().zip(theirs.bytes()).fold(0u8, |diff, (a, b)| diff | (a ^ b)) == 0
 }
 
-/// Whether two names are one player's: names differ in case only for show.
 /// A player's draw key: the world's secret one mixed with the name their file is kept
 /// under, the same each time they join and never another player's.
 pub(crate) fn player_draw_key(world: u64, name: &str) -> u64 {
     crate::player_key(name).bytes().fold(world ^ 0x5d5e_c7a1_9b3f_0e27, |h, b| (h ^ b as u64).wrapping_mul(0x0000_0100_0000_01b3))
 }
 
+/// Whether two names are one player's: names differ in case only for show.
 pub(crate) fn same_name(a: &str, b: &str) -> bool {
     crate::player_key(a) == crate::player_key(b)
 }

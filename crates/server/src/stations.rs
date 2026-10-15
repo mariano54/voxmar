@@ -17,7 +17,6 @@ use voxmar_engine::traits;
 use voxmar_protocol::{ChatKind, PlayerId, ServerMessage, TICKS_PER_SECOND};
 
 use crate::Server;
-use crate::items::random3;
 use crate::process::Process;
 
 /// What is on a station: `count` of `item`, done at tick `due`.
@@ -179,18 +178,18 @@ impl Server {
         let Some((_, work)) = station.work(stack.item) else { return };
         if self.check_level(agent, work.skill) < work.level {
             let skill = Words::key(&voxmar_engine::lang::def_key("skill", &self.content.skills.get(work.skill).name));
-            self.tell_station(agent, Words::key("station.level").with("skill", skill).with("level", Words::text(work.level)));
+            self.refuse(agent, Words::key("station.level").with("skill", skill).with("level", Words::text(work.level)));
             return;
         }
         if let Some(lacks) = self.lacks(pos, station) {
-            self.tell_station(agent, lacks);
+            self.refuse(agent, lacks);
             return;
         }
         // Whole batches only: the heap rots four greens to one compost, so a load is a
         // multiple of four.
         let count = stack.count.min(station.holds) / work.takes * work.takes;
         if count == 0 {
-            self.tell_station(agent, Words::key("station.too_few").with("count", Words::text(work.takes)).with("item", Words::Block(self.content.blocks.def(stack.item).name.clone())));
+            self.refuse(agent, Words::key("station.too_few").with("count", Words::text(work.takes)).with("item", Words::Block(self.content.blocks.def(stack.item).name.clone())));
             return;
         }
         let speed: f32 = station.faster.iter().filter(|(spot, _)| self.spot_holds(pos, spot)).map(|(_, times)| times).product();
@@ -220,7 +219,7 @@ impl Server {
         let left = player.inventory.add(work.output, made);
         player.changed(traits::INVENTORY);
         if left > 0 {
-            let body = dropped::popped(pos, random3(self.tick, pos, 0x57a7));
+            let body = dropped::popped(pos, self.meta.next_pop(pos, 0x57a7));
             self.items.spawn(ItemStack { item: work.output, count: left }, body, dropped::PICKUP_DELAY);
         }
         self.grant_xp(agent, work.skill, work.xp * made as f32);
@@ -257,7 +256,7 @@ impl Server {
             Some((_, work)) if self.tick >= load.due => ItemStack { item: work.output, count: load.count / work.takes * work.gives },
             _ => ItemStack { item: load.item, count: load.count },
         };
-        let body = dropped::popped(pos, random3(self.tick, pos, 0x57a8));
+        let body = dropped::popped(pos, self.meta.next_pop(pos, 0x57a8));
         self.items.spawn(stack, body, dropped::PICKUP_DELAY);
     }
 
@@ -288,7 +287,7 @@ impl Server {
         let Some(fertiliser) = player.held().and_then(|item| stations.fertiliser(item)) else { return };
         let grown = self.grow_around(pos.as_vec3() + Vec3::splat(0.5), fertiliser.reach, fertiliser.stages);
         if grown == 0 {
-            self.tell_station(agent, Words::key("station.nothing_grows"));
+            self.refuse(agent, Words::key("station.nothing_grows"));
             return;
         }
         let player = self.players.get_mut(&agent).expect("checked above");

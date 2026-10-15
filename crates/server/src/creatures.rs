@@ -41,8 +41,8 @@ use voxmar_engine::skill::SkillId;
 use voxmar_engine::traits;
 use voxmar_protocol::{CreatureGone, CreatureView, PlayerId, ServerMessage, TICKS_PER_DAY, TICKS_PER_SECOND};
 
+use crate::save::Draw;
 use crate::Server;
-use crate::items::random3;
 
 /// Creatures think every this many ticks within `NEAR` blocks of a player, every
 /// `FAR_THINK` beyond.
@@ -904,12 +904,14 @@ impl Server {
         let creature_def = self.content.creatures.get(species);
         let def = &creature_def.def;
         let attack = creature_def.attack_at(self.creatures.live.get(&creature).map_or(0, |c| c.attack))?;
-        let target = self.players.get(&player)?;
+        let target = self.players.get_mut(&player)?;
         if !target.health.alive() || target.allow_flight {
             return Some(0);
         }
+        // By the count of blows that have come down on them, not the tick it falls on.
+        let [hit, amount] = target.draw(Draw::Blow);
+        let target = &self.players[&player];
         let defence_skill = self.skill("core:defence");
-        let [hit, amount] = combat_roll(self.tick, species.0 as u32, player as u64 ^ 0xa7);
         // A Defence boost (a prayer) raises the level the blow is rolled against.
         let book = &self.content.prayers;
         let boost = 1.0 + book.boost(&target.praying.on, voxmar_engine::prayer::Stat::Defence);
@@ -937,8 +939,9 @@ impl Server {
             }
             None => damage,
         };
+        let tick = self.tick;
         let target = self.players.get_mut(&player).expect("checked above");
-        if target.health.damage(damage) {
+        if target.wound(damage, tick) {
             target.connection.send(ServerMessage::Died);
         }
         // Last Breath: left under its share of health, a share comes back, and every prayer
@@ -1013,7 +1016,8 @@ impl Server {
         let level = self.level(player, weapon.skill);
         let sunder = self.fights.sunder(id);
         let defence = voxmar_engine::combat::defence_against(species.def.defence, species.def.weak, weapon.style);
-        let [hit, amount] = combat_roll(self.tick, id, player as u64 ^ 0x5717);
+        // By the count of blows they have struck, not the tick it lands on.
+        let [hit, amount] = self.players.get_mut(&player)?.draw(Draw::Strike);
         // Shares of a level or a max hit round by chance, so a small one still counts.
         let defence = voxmar_engine::combat::by_chance(defence as f32 * (1.0 - sunder), unit_from(mix(hit.to_bits() as u64, 0x5d)))
             .min(u8::MAX as u16) as u8;
@@ -1107,11 +1111,9 @@ impl Server {
             _ => 0.0,
         };
         let moment = Moment { bonus, tool: &tool, night: self.daylight() < 0.3, by_player: killer.is_some() };
-        let mut draws = 0u32;
-        let found = loot::roll(&species.loot, &moment, || {
-            draws += 1;
-            unit_from(mix(creature.seed, draws as u64 ^ self.tick << 8))
-        });
+        // Each roll numbered by the world's count of loot rolls, never by the tick it dies on.
+        let meta = &mut self.meta;
+        let found = loot::roll(&species.loot, &moment, || meta.next_loot());
         let cell = creature.body.position.floor().as_ivec3();
         // The killer's journal: one more of the species (people are not counted), and each
         // drop for the collection log.
@@ -1120,7 +1122,7 @@ impl Server {
         // Its loot comes out once its body has fallen, never from an animal still standing.
         let due = self.tick + (species.def.death.drops_after() * TICKS_PER_SECOND as f32).round() as u64;
         for (i, (item, count)) in found.into_iter().enumerate() {
-            let body = dropped::popped(cell, random3(self.tick, cell, i as u32 + id));
+            let body = dropped::popped(cell, self.meta.next_pop(cell, i as u32 + id));
             self.creatures.falling_loot.push((due, ItemStack { item, count }, body));
         }
         if let (Some(player), Some(skill), true) = (creature.hurt_by, species.xp_skill, xp) {
@@ -1283,6 +1285,8 @@ impl Server {
             sent: None,
             changed: true,
         };
+        // Where it arrived, for a trap it runs through before the traps next look.
+        self.catches.arrived(id, creature.body.position);
         self.creatures.live.insert(id, creature);
         Some(id)
     }
@@ -1685,16 +1689,6 @@ pub(crate) fn ring(r: i32, i: i32) -> (i32, i32) {
     }
 }
 
-
-/// A blow's two rolls (whether it lands, and how hard), from the tick and who strikes whom.
-/// A strong mix of all three: blows come at a steady beat, so a weak one (the tick folded in
-/// once, against a creature standing in one cell) gave long runs of misses or of hits, a
-/// level-1 snail taking anywhere from 4 to 40 swings.
-pub(crate) fn combat_roll(tick: u64, creature: u32, striker: u64) -> [f32; 2] {
-    let h = mix(mix(mix(tick, creature as u64), striker), 0xc0b);
-    [unit_from(h), unit_from(mix(h, 1))]
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1957,25 +1951,88 @@ mod combat_tests {
         assert!(missed && landed, "200 blows at a wolf all missed or all landed");
     }
 
+    /// A kill's loot is rolled, and pops, by the world's counts of loot rolls and drops, not
+    /// the tick it dies on, and each roll counts on.
     #[test]
-    fn blows_at_a_steady_beat_land_as_often_as_the_odds_say() {
-        // A player swinging every seven ticks at a level-1 creature that stands still.
-        let chance = voxmar_engine::combat::hit_chance(1, 0, 1, 0);
-        for creature in 0..20u32 {
-            let (mut landed, mut misses, mut longest) = (0, 0, 0);
-            for blow in 0..400u64 {
-                let [hit, _] = combat_roll(1000 + blow * 7, creature, 1 ^ 0x5717);
-                if hit < chance {
-                    landed += 1;
-                    misses = 0;
-                } else {
-                    misses += 1;
-                    longest = longest.max(misses);
-                }
+    fn a_kills_loot_rolls_by_the_count_of_rolls_not_the_tick() {
+        let killed = |tick: u64| {
+            let mut server = crate::test_server();
+            server.meta.draw_key = 0x0d1a;
+            let wolf = server.content.creatures.id("base:wolf").unwrap();
+            server.tick = tick;
+            let mut found = Vec::new();
+            for i in 0..12 {
+                let id = server.spawn_creature(wolf, server.spawn + Vec3::X, i).expect("room");
+                server.creature_dies(id);
+                found.extend(server.creatures.falling_loot.drain(..).map(|(_, stack, body)| (stack.item, stack.count, body.position.to_array(), body.velocity.to_array())));
             }
-            let rate = landed as f32 / 400.0;
-            assert!((rate - chance).abs() < 0.08, "creature {creature}: {rate} landed, the odds are {chance}");
-            assert!(longest < 20, "creature {creature}: {longest} misses in a row");
+            (found, server.meta.loot)
+        };
+        let (first, rolls) = killed(1_000);
+        assert!(rolls > 0 && !first.is_empty(), "twelve wolves rolled {rolls} times for {first:?}");
+        assert_eq!(killed(1_377), (first, rolls), "the same kills later dropped otherwise");
+    }
+
+    /// A blow, either way, is drawn by its count: struck at another tick, the same count
+    /// does the same, and each blow counts on.
+    #[test]
+    fn a_blow_draws_by_its_count_not_its_tick() {
+        let mut server = crate::test_server();
+        let (_client, connection) = voxmar_protocol::local_pair();
+        let player = 1;
+        let mut joined = crate::player::Player::new(player, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
+        joined.joined = true;
+        joined.draw_key = crate::player::player_draw_key(0x0d1a, "ada");
+        server.players.insert(player, joined);
+        let wolf = server.content.creatures.id("base:wolf").unwrap();
+        let a = server.spawn_creature(wolf, server.spawn + Vec3::X, 1).expect("room");
+        let fist = server.content.combat.wielded(None, |_| 1);
+        let plain = voxmar_engine::combat::Stroke::of(voxmar_engine::combat::Blow::Plain, 1.0, false, false, false, false, &server.content.combat.feel);
+        // Ten blows each way from count 0, at a tick: what each did.
+        let blows = |server: &mut Server, tick: u64| {
+            server.tick = tick;
+            server.players.get_mut(&player).unwrap().draws = Default::default();
+            (0..10)
+                .map(|_| {
+                    let full = server.content.creatures.get(wolf).def.health;
+                    server.creatures.live.get_mut(&a).unwrap().health = full;
+                    server.players.get_mut(&player).unwrap().health = traits::Health::full(server.survival.max_health);
+                    let struck = server.land_blow(player, a, &fist, plain);
+                    let taken = server.creature_strikes(a, wolf, player, 1.0);
+                    (struck, taken)
+                })
+                .collect::<Vec<_>>()
+        };
+        let first = blows(&mut server, 10_000);
+        assert_eq!(blows(&mut server, 10_377), first, "the same counts struck later drew otherwise");
+        let draws = server.players[&player].draws;
+        assert_eq!((draws.strikes, draws.blows), (10, 10), "each blow counted on");
+        assert!(first.windows(2).any(|w| w[0] != w[1]), "ten blows each way all drew alike: {first:?}");
+    }
+
+    #[test]
+    fn numbered_blows_land_as_often_as_the_odds_say() {
+        // A player's blows at a level-1 creature, and a creature's at them, numbered by
+        // their counts, for players of twenty draw keys.
+        let chance = voxmar_engine::combat::hit_chance(1, 0, 1, 0);
+        for kind in [Draw::Strike, Draw::Blow] {
+            for player in 0..20u64 {
+                let key = crate::player::player_draw_key(0x0d1a, &format!("player{player}"));
+                let (mut landed, mut misses, mut longest) = (0, 0, 0);
+                for blow in 0..400u64 {
+                    let [hit, _] = crate::save::numbered_draws(key, kind.salt(), blow);
+                    if hit < chance {
+                        landed += 1;
+                        misses = 0;
+                    } else {
+                        misses += 1;
+                        longest = longest.max(misses);
+                    }
+                }
+                let rate = landed as f32 / 400.0;
+                assert!((rate - chance).abs() < 0.08, "{kind:?}, player {player}: {rate} landed, the odds are {chance}");
+                assert!(longest < 20, "{kind:?}, player {player}: {longest} misses in a row");
+            }
         }
     }
 }

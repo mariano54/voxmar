@@ -382,9 +382,10 @@ mod tests {
             let species = server.creatures.live[&creature].species;
             let player = server.players.get_mut(&1).unwrap();
             player.praying.on = if warded { vec![ward] } else { Vec::new() };
+            // Both runs draw the same 400 blows, so they differ only by the ward.
+            player.draws.blows = 0;
             (0..400u64)
-                .map(|t| {
-                    server.tick = t;
+                .map(|_| {
                     let player = server.players.get_mut(&1).unwrap();
                     player.health.current = player.health.max;
                     server.creature_strikes(creature, species, 1, 1.0).unwrap_or(0) as u32

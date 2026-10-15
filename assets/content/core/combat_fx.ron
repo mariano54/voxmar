@@ -17,6 +17,10 @@
         stop: 0.045, stop_per_share: 0.12, stop_most: 0.11, shake: 0.035,
         white: 0.08, red: 0.26,
         flinch: 0.22, recoil: 0.2, tilt: 16.0, squash: 0.14,
+        // Sized by the creature and the blow (`Weigh`): a wolf or a boar (half a cubic
+        // block) flinches as above; a rabbit up to 1.8 times as far, a bear or an aurochs
+        // two thirds as far; a scratch 0.7 times, half its health or more 1.5 times.
+        weigh: (mass: 0.5, light: 1.8, heavy: 0.4, glancing: 0.7, telling: 1.5),
         sparks: (count: 5, speed: 4.5, life: 0.22, size: 0.07, color: Some((255, 244, 214))),
         tufts: (count: 5, speed: 2.6, life: 0.55, size: 0.07),
     ),
@@ -30,11 +34,12 @@
         "counter": (stop: 1.8, sparks: 2.6, punch: 0.9),
         "bleed": (stop: 0.0, sparks: 0.0, punch: 0.0),
     },
-    // A killing blow: a longer freeze and a heavier dip, then the body tips over (each
-    // creature's `death` says how) and, over the last `shrink` of its death, shrinks into a
-    // puff of smoke where it lay.
+    // A killing blow: a longer freeze and a heavier dip, then the body tips over and lies
+    // there a beat (each creature's `death` says how long), and over the last `shrink` of its
+    // death sinks and shrinks away, going up in a puff of smoke where it lay as its loot
+    // bursts out.
     death: (
-        stop: 0.12, punch: 0.8, shrink: 0.22,
+        stop: 0.12, punch: 0.8, shrink: 0.12,
         poof: (count: 14, speed: 1.4, life: 0.8, size: 0.32, color: Some((236, 236, 232))),
     ),
     // How a creature winds up and strikes, by how it attacks (`attack.style`). Through its

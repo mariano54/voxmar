@@ -200,6 +200,58 @@ mining and speed wherever you go, and a bed always works as a bed (it sets where
 while one lasts, so the buff is a once-a-day habit, not a button to hold. Timed effects count down
 online only.
 
+A proper bed rests better than a bag on the ground: a sleep rule can name a `bed` tag the bed
+slept in must carry, and a bed of furniture (`bed: "furniture"`) is Well rested anywhere,
+where a sleeping bag needs a Snug home or a lit corner. Every sleep also mends: Healing
+Sleep (heal x4) for a minute, two in a proper bed, so coming home hurt and sleeping heals.
+It is no way to heal in a fight: a bed refuses sleep with a creature that hunts players
+(wild, or kept by another player) within `sleep_threat_reach` blocks (12), or within
+`sleep_after_hurt` seconds (15) of a wound (a blow, a fall, a sting; not the cold or heat
+wearing at one) (`core/survival.ron`). A refused sleep still claims the bed. And it stays slower than eating, since food is the heal (design
+draft 63): however many heal buffs and prayers are on, healing by itself is held at
+`heal_most` (1 a second, `survival.ron`), which loading checks is below what the slowest
+food heals a second, a 0.6 s bite at a time; time past a point is never banked to pay out
+after. No night skipping. Loading refuses a sleep rule whose `bed` tag no bed carries.
+Tests: the engine's `a_proper_bed_rests_well_and_every_sleep_mends_slower_than_food` and
+`a_sleep_rule_for_a_bed_nobody_made_is_refused_at_load`, the server's
+`a_proper_bed_rests_well_and_mends_longer_than_a_bag` and
+`no_sleep_with_a_hunter_near_or_wounds_fresh`; the gate's Home step clicks the bag with a
+shambler near and expects the refusal, then waits on every chip the engine says the bag
+gives there.
+
+## Drying off
+
+Rain soaks you (Soaked, Drenched in a downpour), and a roof alone no longer dries you: wet
+through, you stay so for two minutes under cover (three if drenched), colder and, drenched,
+slower to heal, unless you dry off within three blocks of a fire or a hearth (or warmed on a
+cold day). So coming in from the rain, you dry by your own hearth. It is data: an effect
+that `lingers` can name what `ends` it early (core effects.ron's `ends: Some(Any([Warmed,
+Near("fire", 3), Near("hearth", 3)]))`), and loading refuses `ends` on one that does not
+linger. Tests: the engine's `wet_through_you_dry_off_by_a_fire_and_not_before`, the
+server's `health_is_twice_hitpoints_and_a_downpour_drenches_those_out_in_it`; the gate's
+Weather step dries the player by a campfire after its storm ("weather: dries by a fire").
+
+## Sitting by the fire
+
+Seats were only props the ladder counted. Now a right click on one (a stool, chair, bench or
+cushion: anything tagged `seat`), with no block to place in hand and room above it, sits the
+player on it (`base:sit`, `Requirement::Seat`, `Effect::Sit`): the server sets them in it
+(base's seats are not solid, so one under a roof two blocks up is sat on; a mod's solid seat
+sets them on top, and wants two free cells over it), and their eye drops to
+`vitals::SEATED_EYE` (1.3) over their feet, on the server and the client alike (`vitals::eye`; `Vitals::seated`, protocol
+40). They sit until they move off it or it goes (`vitals::still_seated`, checked once a
+second). Effects can ask `Seated`; base's **By the Fire** (`fireside`: heal x1.5, 4° warmer)
+holds sat with a fire or the hearth within 3, so a Nomad's stool at the campfire and a chair
+at home both rest the player after a day out. Tests: server `seats.rs`. The gate's Seat step
+sits on a stool under a block two up, by a campfire (shot `seat-fire`), and steps off it.
+
+Sat with a table within 2, the player is **At the Table** (`at_table`): a meal eaten there
+heals a quarter more and its good lasts a quarter longer (`meal_heal`, `meal_time`, as the
+pantry and larder rooms give; they multiply, up to core `survival.ron`'s `meal_most`, 2: with
+every meal effect on, the heal is 1.82 times and the good's length 2.27, held to 2). A supper at the kitchen table is worth sitting
+down for. Test: `a_meal_at_the_table_does_more`. The gate's Seat step sets a table by the
+stool ("seat: at the table").
+
 ## Numbers and tuning
 
 All of it is data. Multipliers stack with food buffs; xp stops at `MAX_XP_BOOST` (1.25).

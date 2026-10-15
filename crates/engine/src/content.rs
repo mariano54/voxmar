@@ -75,6 +75,8 @@ pub struct Content {
     pub value: Arc<crate::value::Value>,
     /// Parties that come by on their own errands (`wandering.ron`).
     pub wandering: Arc<crate::wander::WanderRegistry>,
+    /// Why refused actions failed, in words (`refusals.ron`).
+    pub refusals: Arc<crate::refusal::Refusals>,
     /// Every other definition file, by package then file name.
     pub files: Arc<Vec<ContentFile>>,
     /// The packages' words in English (`lang/en.ron`), for the server's log and console.
@@ -497,6 +499,16 @@ impl Content {
                 blocks.def(id).name
             )));
         }
+        // A sleep rule's `bed` tag names a kind of bed: some bed must carry it, or the rest it
+        // gives could never be had.
+        if let Some(tag) = effects.sleep_beds().find(|tag| !blocks.ids().any(|id| blocks.def(id).has_tag("bed") && blocks.def(id).has_tag(tag))) {
+            return Err(RegistryError(format!("effects.ron: a sleep rule asks for a bed tagged `{tag}`, and no block tagged `bed` carries it")));
+        }
+        // Every refusal is said in every language the game has.
+        let refusals = crate::refusal::Refusals::load(&files)?;
+        let languages: Vec<Lang> = crate::lang::languages(dir).into_iter().map(|language| Lang::load(dir, &language.code)).collect();
+        let codes: Vec<&str> = languages.iter().map(Lang::code).collect();
+        refusals.check_words(&codes, |code, key| languages.iter().any(|lang| lang.code() == code && lang.defines(key)))?;
         Ok(Self {
             blocks: Arc::new(blocks),
             actions: Arc::new(actions),
@@ -525,6 +537,7 @@ impl Content {
             quests: Arc::new(quests),
             quest_paths: Arc::new(quest_paths),
             journal: Arc::new(crate::journal::JournalRules::merge(journal, &mut notes)),
+            refusals: Arc::new(refusals),
             files: Arc::new(files),
             english: Arc::new(Lang::load(dir, ENGLISH)),
             notes: Arc::new(notes),

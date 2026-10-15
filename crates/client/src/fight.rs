@@ -48,6 +48,9 @@ pub struct Fighting {
     /// How many blows this side has asked the server to strike, ever (`core:attack`): a click
     /// at nothing in reach, or one held for the beat, asks nothing.
     pub strikes: u32,
+    /// How many swings the player has cancelled before their blow, ever (raising the guard,
+    /// dodging, or changing what is held): the server judges no blow for them (`fight_fx`'s shots).
+    pub cancels: u32,
     /// How many of the server's pings (`ServerMessage::Ping`), which time the round trip
     /// guards and dodges are judged by, have been answered, ever.
     pub pings: u32,
@@ -106,12 +109,20 @@ impl Fighting {
         matches!(self.rhythm.click(now, timing, feel), Click::Swing(_))
     }
 
+    /// Guarding, dodging or switching what is held cancels a swing not yet landed
+    /// (`Rhythm::cancel`), counted in `cancels`.
+    pub fn cancel(&mut self, now: f64, timing: &Timing, feel: &voxmar_engine::combat::Feel) {
+        if self.rhythm.cancel(now, timing, feel) {
+            self.cancels += 1;
+        }
+    }
+
     /// What is in hand at `now`: switching it drops the swing under way and the pips, as the
     /// server does. `timing` is the rhythm of what was held.
     pub fn holding(&mut self, now: f64, timing: &Timing, held: Option<voxmar_engine::block::BlockId>, feel: &voxmar_engine::combat::Feel) {
         if held != self.held {
             if self.rhythm.pending().is_some() {
-                self.rhythm.cancel(now, timing, feel);
+                self.cancel(now, timing, feel);
             }
             self.rhythm.lose_pips();
             self.held = held;
@@ -160,7 +171,7 @@ pub fn guard(
         fighting.guard = up.then_some(now);
         if up {
             let timing = combat.timing(&weapon);
-            fighting.rhythm.cancel(now, &timing, &combat.feel);
+            fighting.cancel(now, &timing, &combat.feel);
         }
         net.guard(up);
     }
@@ -178,5 +189,30 @@ pub fn quick_prayers(keys: Res<ButtonInput<KeyCode>>, settings: Res<crate::setti
         {
             net.pray(prayer, !fighting.prayers.on.contains(&prayer));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every way a swing is cancelled (the guard, a dodge, a switch of what is held) goes
+    /// through `Fighting::cancel`, which counts it only when a swing was under way.
+    #[test]
+    fn a_cancelled_swing_is_counted_once() {
+        let (timing, feel) = (Timing { cooldown: 1.0, windup: 0.4, buffer: 0.2, beat: 0.1 }, voxmar_engine::combat::Feel::default());
+        let mut fighting = Fighting::default();
+        fighting.cancel(0.0, &timing, &feel);
+        assert_eq!(fighting.cancels, 0, "nothing under way to cancel");
+        assert!(matches!(fighting.rhythm.click(0.0, &timing, &feel), Click::Swing(_)));
+        fighting.cancel(0.1, &timing, &feel);
+        assert_eq!(fighting.cancels, 1);
+        fighting.cancel(0.2, &timing, &feel);
+        assert_eq!(fighting.cancels, 1, "the swing is already cancelled");
+        // A switch of what is held cancels the swing under way the same way.
+        let later = 5.0;
+        assert!(matches!(fighting.rhythm.click(later, &timing, &feel), Click::Swing(_)));
+        fighting.holding(later + 0.1, &timing, Some(voxmar_engine::block::BlockId(3)), &feel);
+        assert_eq!(fighting.cancels, 2);
     }
 }

@@ -257,6 +257,32 @@
             "mbmmbmwwmm",
             "mmmmmmmmmm",
         ])]),
+        // By the Fire: a stool drawn up to a small fire.
+        "ui/effect/fireside": (size: (10, 10), layers: [Grid(legend: {'k': "#2a1406", 'r': "#c22a1a", 'o': "#f07818", 'y': "#ffd04a", 'w': "#a06a3a", 'd': "#6a4222"}, rows: [
+            "......r...",
+            ".....ror..",
+            ".....oyo..",
+            "....royor.",
+            "....oyyyo.",
+            "wwww.oyo..",
+            "wwww.kkk..",
+            "d..d.dkd..",
+            "d..d.kdk..",
+            "d..d......",
+        ])]),
+        // At the Table: a bowl on a table, a stool drawn up.
+        "ui/effect/at_table": (size: (10, 10), layers: [Grid(legend: {'b': "#8a5a2a", 'c': "#e8d8b0", 's': "#d0a060", 'w': "#a06a3a", 'd': "#6a4222"}, rows: [
+            "..........",
+            "...s.s....",
+            "....s.....",
+            "..cccccc..",
+            "...cbbc...",
+            "wwwwwwwwww",
+            "dddddddddd",
+            ".d......d.",
+            ".d......d.",
+            ".d......d.",
+        ])]),
         // The home's steps and rest (effects.ron's ladder, docs/home.md): a tent, a hearth fire,
         // a quilt, a house, its window lit, a heart at its middle; and the moon for rest.
         // A tent pitched on grass, its door dark.
@@ -336,6 +362,19 @@
             ".kwwhhhwk.",
             ".kwwwhwwk.",
             ".kkkkkkkk.",
+        ])]),
+        // A crescent moon and a small heart: a sleep that mends.
+        "ui/effect/healing_sleep": (size: (10, 10), layers: [Grid(legend: {'k': "#10142a", 'M': "#f2e6a8", 'r': "#e0465a", 'p': "#ff9aa8"}, rows: [
+            "...kkk....",
+            "..kMMk.r.r",
+            ".kMMk.rprr",
+            ".kMk..rrrr",
+            "kMMk...rr.",
+            "kMMk......",
+            ".kMMk.....",
+            "..kMMMMk..",
+            "...kkkk...",
+            "..........",
         ])]),
         // A crescent moon and a sleeper's z.
         "ui/effect/rested": (size: (10, 10), layers: [Grid(legend: {'k': "#10142a", 'M': "#f2e6a8", 'z': "#c8d4ff"}, rows: [
