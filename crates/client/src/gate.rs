@@ -10330,8 +10330,8 @@ struct NarrowRun {
     hurts: u32,
     /// The bear's blows that landed on the player once they stood past the doorway.
     landed: u32,
-    /// Across the ground from the player once they stood past the doorway: at first, at its
-    /// nearest since, and now.
+    /// From the player across the wall (along z, so a slide along the wall is no going
+    /// off) once they stood past the doorway: at first, at its nearest since, and now.
     first: Option<f32>,
     nearest: f32,
     last: f32,
@@ -10514,16 +10514,18 @@ fn narrow(world: &mut World, gate: &mut Gate, now: f32) {
             let new = (fighting.hurt_count - gate.narrow.hurts) as usize;
             gate.narrow.hurts = fighting.hurt_count;
             gate.narrow.landed += fighting.hurt.iter().rev().take(new).filter(|h| h.0 == view.id).count() as u32;
-            let distance = me.xz().distance(view.position.xz());
+            // Across the wall only (along z): sliding along the wall is not going off.
+            let distance = me.z - view.position.z;
             let first = *gate.narrow.first.get_or_insert(distance);
             gate.narrow.nearest = gate.narrow.nearest.min(distance);
             gate.narrow.last = distance;
             let (nearest, landed) = (gate.narrow.nearest, gate.narrow.landed);
             // At the wall: its middle within half a block of the nearest the wall lets it
-            // come (half its width behind the wall's face, which is `past` from the player).
+            // come, half its width behind the wall's face on its side (`at.z`, a block and
+            // the two and a half past it from the player).
             let wall = past.z - at.z as f32 + gate.narrow.width / 2.0;
             let came = nearest < wall + 0.5;
-            let what = format!("from {first:.2} it came to {nearest:.2} blocks off (the wall lets it to {wall:.2}) and is {distance:.2} off, {landed} blows landed (a bear {:.2} wide, a doorway {} across)", gate.narrow.width, gate.narrow.door_width);
+            let what = format!("from {first:.2} across the wall it came to {nearest:.2} blocks off (the wall lets it to {wall:.2}) and is {distance:.2} off, {landed} blows landed (a bear {:.2} wide, a doorway {} across)", gate.narrow.width, gate.narrow.door_width);
             if landed > 0 {
                 fail(world, gate, format!("it landed a blow through a doorway too narrow for it: {what}"));
             } else if came && distance > nearest + 1.0 {
