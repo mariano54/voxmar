@@ -60,5 +60,7 @@
         "station.level", "station.too_few", "station.nothing_grows", "station.needs.sky", "station.needs.spot", "station.needs.water",
         // A catch in a trap taken below its skill's level.
         "trap.needs",
+        // No sleep with a hunter near or a wound fresh.
+        "bed.threatened", "bed.just_hurt",
     ],
 )
