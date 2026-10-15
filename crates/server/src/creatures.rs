@@ -773,7 +773,7 @@ impl Server {
                     cells.remove(0);
                 }
                 let wish = cells.first().map_or(drive.wish, |cell| (walker.middle(*cell) - body.position).with_y(0.0).normalize_or_zero());
-                let (heading, side) = motion::steer(&body, &Ground::of(self), movement, water, wish, creature.detour);
+                let (heading, side) = motion::steer(&body, &Ground::of(self), movement, water, wish, creature.detour, drive.speed);
                 way = cells;
                 (Drive { wish: heading, ..drive }, side)
             }
@@ -3782,6 +3782,58 @@ mod fight_tests {
                 });
             }
         });
+    }
+
+    /// Every long-headed jumper in the content (its head beyond its box), at scales 0.88,
+    /// 1 and 1.12, driven straight up a flight of steps a block deep and three high, at a
+    /// walk, a run and (Old Tusk) his charge: its head is never in a block, and at a run or
+    /// faster, where a hop at that pace carries it its head's reach and a little (not a
+    /// tortoise) and its head fits on a step a block deep, it gets to the top. Before: Old Tusk's snout met the second riser mid-hop and
+    /// the head stop held him at the first; a hound's snout spent ticks in each riser.
+    #[test]
+    fn long_heads_climb_a_flight_of_steps_with_their_heads_out() {
+        let mut server = crate::test_server();
+        let c = pen(&mut server, 9);
+        for x in 1..=3 {
+            set(&mut server, "base:stone", (0..x).flat_map(|y| (-8..=8).map(move |z| c + IVec3::new(x, y, z))));
+        }
+        set(&mut server, "base:stone", (4..=8).flat_map(|x| (0..3).flat_map(move |y| (-8..=8).map(move |z| c + IVec3::new(x, y, z)))));
+        let ground = Ground::of(&server);
+        let tusk = server.content.creatures.find("old_tusk");
+        let mut tried = 0;
+        for (id, species) in server.content.creatures.iter() {
+            let movement = species.def.movement;
+            let size = species.def.body.size;
+            if movement.jump <= 0.0 || species.reach <= size.0 * 0.5 + 0.05 || species.def.movement.style == voxmar_engine::creature::Style::Flier {
+                continue;
+            }
+            let charge = if Some(id) == tusk { Some(9.0) } else { None };
+            for scale in [0.88, 1.0, 1.12] {
+                for (pace, speed) in [("walk", movement.walk), ("run", movement.run)].into_iter().chain(charge.map(|c| ("charge", c))) {
+                    let mut body = Body::new(c.as_vec3() + Vec3::new(-2.5, 0.0, 0.5), motion::yaw_of(Vec3::X), (size.0 * scale, size.1 * scale));
+                    (body.reach, body.head, body.on_ground) = (species.reach * scale, species.head * scale, true);
+                    // Until it is on the top: the six blocks to it at its pace, and five seconds.
+                    for t in 0..((6.0 / speed + 5.0) * TICKS_PER_SECOND as f32) as u32 {
+                        motion::step(&mut body, &ground, &movement, Water::Land, Drive { wish: Vec3::X, speed, face: None }, 1.0 / TICKS_PER_SECOND as f32);
+                        assert!(!body.head_blocked(&ground), "{} at {scale} ({pace}): its head in a step {t} ticks on, at {:.2}", species.def.name, body.position - c.as_vec3());
+                        if body.position.y >= c.y as f32 + 3.0 {
+                            break;
+                        }
+                    }
+                    // A hop at its pace carries it its head's reach and a little (`head_step`).
+                    let hops_far = speed * 2.0 * movement.jump / motion::GRAVITY >= body.reach - body.size.0 * 0.5 + 0.3;
+                    // Standing on a step a block deep with room to land (a fifth of a block),
+                    // its head is short of the next riser, or carried over it: not a full
+                    // grown crocodile's, low and nine tenths of a block out from its box.
+                    let fits = body.reach - body.size.0 * 0.5 < 0.8 || body.head * 0.7 >= 1.0;
+                    if pace != "walk" && hops_far && fits {
+                        assert!(body.position.y >= c.y as f32 + 3.0, "{} at {scale} ({pace}) never got up the flight: at {:.2}", species.def.name, body.position - c.as_vec3());
+                    }
+                    tried += 1;
+                }
+            }
+        }
+        assert!(tried > 0 && tusk.is_some(), "no long-headed jumper, or no Old Tusk, in the content");
     }
 
     /// Prints the table (`cargo test -p voxmar_server --lib fight_table -- --ignored --nocapture`).
