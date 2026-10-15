@@ -392,8 +392,7 @@ impl Server {
         let wall = |p: IVec3| -> Option<Option<Shelter>> {
             let block = self.block(p)?;
             let tags = &blocks.def(block).tags;
-            let shelter = Shelter::of(tags);
-            ((shelter.is_some() || blocks.info(block).solid) && !furniture(tags)).then(|| Some(shelter.unwrap_or(Shelter::Draughty)))
+            Shelter::of_wall(tags, blocks.info(block).solid, furniture(tags)).map(Some)
         };
         // A solid block or furniture is never stepped down into: under the room it is floor,
         // a hearthstone, a barrel or a well set in it as much as the stone round them.
