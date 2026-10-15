@@ -2,14 +2,19 @@
 """Composes the game's event jingles: a quest finished, its rewards claimed, a level reached
 and every tenth level reached.
 
-Our own work, synthesized from scratch (no samples): plucked harp, marimba, glockenspiel and
-a soft pad, played into a small room. Run once offline; the clips are written to
-assets/content/base/sounds/ as Ogg Vorbis and listed in sounds.ron, so nothing is synthesized
-at runtime and a package can replace any of them. Needs numpy and ffmpeg.
+Our own work. The three tunes are short brass fanfares (trumpets, horns, trombone, strings,
+timpani, harp and glockenspiel), written here as notes and played by FluidSynth from the
+FluidR3 General MIDI sound font (Frank Wen, MIT; see THIRD_PARTY_NOTICES.md). The claim's
+coins and glint are synthesized from scratch. Run once offline; the clips are written to
+assets/content/base/sounds/ as Ogg Vorbis and listed in sounds.ron, so nothing is played
+from a sound font at runtime and a package can replace any of them. Needs numpy, ffmpeg,
+fluidsynth and FluidR3_GM.sf2 (found at the usual places, or named by VOXMAR_SF2).
 
     python3 tools/generate_jingles.py
 """
 
+import os
+import struct
 import subprocess
 import sys
 import tempfile
@@ -50,20 +55,6 @@ def modes(freq, seconds, partials, attack=0.002):
     return out * np.minimum(t / attack, 1.0)
 
 
-def harp(freq, velocity=1.0):
-    """A plucked string: nearly whole harmonics, the high ones dying first, brighter when
-    plucked harder."""
-    decay = 0.95 * (440 / freq) ** 0.35
-    partials = [(n * np.sqrt(1 + 0.00012 * n * n), (velocity ** (0.3 * (n - 1))) / n ** 1.6, decay / (1 + 0.9 * (n - 1))) for n in range(1, 9)]
-    return modes(freq, 2.6, partials, attack=0.0015)
-
-
-def marimba(freq, velocity=1.0):
-    """A warm wooden bar: the fundamental with its fourth and tenth (as tuned bars ring)."""
-    decay = 0.9 * (262 / freq) ** 0.5
-    return modes(freq, 2.0, [(1.0, 1.0, decay), (3.99, 0.22 * velocity, decay * 0.18), (9.9, 0.05 * velocity, decay * 0.06)], attack=0.001)
-
-
 def glock(freq, velocity=1.0, ring=1.0):
     """A small bright bell bar: the partials of a glockenspiel, ringing long (shorter for a
     smaller `ring`)."""
@@ -78,33 +69,6 @@ def coin(freq, rng):
     tick = rng.standard_normal(int(0.004 * RATE)) * np.exp(-np.arange(int(0.004 * RATE)) / (0.0008 * RATE))
     out[: tick.size] += 0.35 * (tick - np.convolve(tick, np.ones(4) / 4, mode="same"))
     return out
-
-
-def pad(freqs, seconds, rise=0.18, fall=0.6):
-    """A soft held chord: two slightly detuned, rounded voices per note, swelling in and
-    dying away."""
-    t = np.arange(int(seconds * RATE)) / RATE
-    out = np.zeros_like(t)
-    for f in freqs:
-        for cents in (-5, 5):
-            g = f * 2 ** (cents / 1200)
-            out += np.sin(2 * np.pi * g * t) + np.sin(2 * np.pi * 3 * g * t) / 9 + np.sin(2 * np.pi * 5 * g * t) / 25
-    envelope = np.minimum(t / rise, 1.0) * np.exp(-np.maximum(t - rise, 0.0) / fall) * np.minimum((seconds - t) / 0.3, 1.0)
-    return out * envelope / (2 * len(freqs))
-
-
-def whoosh(seconds, rng):
-    """A breath of noise that brightens and swells, under a run of notes."""
-    n = int(seconds * RATE)
-    noise = rng.standard_normal(n)
-    out = np.zeros(n)
-    low = 0.0
-    for i in range(n):
-        k = 0.02 + 0.25 * (i / n) ** 2
-        low += k * (noise[i] - low)
-        out[i] = low
-    t = np.arange(n) / n
-    return out * t ** 2 * (1 - t) ** 0.4 * 4
 
 
 class Mix:
@@ -125,11 +89,6 @@ class Mix:
         angle = (pan + 1) * np.pi / 4
         self.out[0, start:end] += samples * level * np.cos(angle)
         self.out[1, start:end] += samples * level * np.sin(angle)
-
-
-def pan_of(freq):
-    """Higher notes sit a little to the right, as on a keyboard."""
-    return float(np.clip(np.log2(freq / 523.0) * 0.18, -0.35, 0.35))
 
 
 def room(dry, rng, wet=0.2, seconds=1.4, decay=0.32):
@@ -177,22 +136,98 @@ def finish(stereo, name):
     return stereo
 
 
+SOUND_FONTS = ["/usr/share/sounds/sf2/FluidR3_GM.sf2", "/usr/share/soundfonts/FluidR3_GM.sf2", "/opt/homebrew/share/soundfonts/FluidR3_GM.sf2", "/usr/local/share/soundfonts/FluidR3_GM.sf2"]
+
+# General MIDI programs and the drum channel.
+TRUMPET, TROMBONE, BRASS, HORN, STRINGS, TIMPANI, GLOCK, HARP = 56, 57, 61, 60, 48, 47, 9, 46
+DRUMS = 9
+CRASH = 49
+TICKS = 960  # per second: 480 a beat at 120 beats a minute
+
+
+def key(name: str) -> int:
+    """The MIDI key of a note such as "F#5" (middle C, C4, is 60)."""
+    steps = {"C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11}
+    pitch, octave = name[:-1], int(name[-1])
+    return 12 * (octave + 1) + steps[pitch[0]] + pitch.count("#") - pitch.count("b")
+
+
+class Score:
+    """Notes for a band, each on its instrument's channel, at times in seconds."""
+
+    def __init__(self, band):
+        """`band`: (channel, program, volume, pan) for each instrument, 0-127 each."""
+        self.events = []
+        for channel, program, volume, pan in band:
+            if channel != DRUMS:
+                self.events.append((0, 0, bytes([0xC0 | channel, program])))
+            for control, value in [(7, volume), (10, pan), (91, 50)]:
+                self.events.append((0, 1, bytes([0xB0 | channel, control, value])))
+
+    def play(self, channel, at, notes, seconds, velocity):
+        """A note, or a chord of them, held `seconds` (a drum's key as a number)."""
+        for name in [notes] if isinstance(notes, (str, int)) else notes:
+            k = name if isinstance(name, int) else key(name)
+            self.events.append((round(at * TICKS), 2, bytes([0x90 | channel, k, velocity])))
+            self.events.append((round((at + seconds) * TICKS), 1, bytes([0x80 | channel, k, 0])))
+
+    def midi(self) -> bytes:
+        """A standard MIDI file of the score: one track, 500 000 microseconds a beat."""
+        def vlq(v):
+            out = [v & 0x7F]
+            v >>= 7
+            while v:
+                out.append(0x80 | (v & 0x7F))
+                v >>= 7
+            return bytes(reversed(out))
+        track = bytearray(b"\x00\xFF\x51\x03\x07\xA1\x20")
+        last = 0
+        for tick, _, message in sorted(self.events, key=lambda e: (e[0], e[1])):
+            track += vlq(tick - last) + message
+            last = tick
+        track += b"\x00\xFF\x2F\x00"
+        return b"MThd" + struct.pack(">IHHH", 6, 0, 1, 480) + b"MTrk" + struct.pack(">I", len(track)) + bytes(track)
+
+
+def sound_font() -> str:
+    named = os.environ.get("VOXMAR_SF2")
+    for path in ([named] if named else []) + SOUND_FONTS:
+        if Path(path).is_file():
+            return path
+    sys.exit("no FluidR3_GM.sf2: install the fluid-soundfont-gm package (or name one in VOXMAR_SF2)")
+
+
+def perform(score: Score):
+    """The score played by FluidSynth in a small hall, as a stereo clip."""
+    with tempfile.TemporaryDirectory() as tmp:
+        mid, wav = Path(tmp) / "score.mid", Path(tmp) / "score.wav"
+        mid.write_bytes(score.midi())
+        settings = ["-o", "synth.reverb.room-size=0.45", "-o", "synth.reverb.level=0.5", "-o", "synth.chorus.active=0"]
+        subprocess.run(["fluidsynth", "-ni", "-q", "-g", "0.4", "-r", str(RATE), *settings, "-F", str(wav), sound_font(), str(mid)], check=True, stdout=subprocess.DEVNULL)
+        with wave.open(str(wav)) as w:
+            pcm = np.frombuffer(w.readframes(w.getnframes()), "<i2")
+    return pcm.reshape(-1, 2).T / 32768.0
+
+
 def quest_done(rng):
-    """A quest finished: a plucked rise on the fourth chord settling home onto the first (the
-    "amen" close), the top note held under a sprinkle of bells."""
-    mix = Mix(4.0)
-    for at, name, vel in [(0.0, "F4", 0.55), (0.075, "A4", 0.6), (0.15, "C5", 0.68)]:
-        mix.add(at + rng.uniform(0, 0.006), harp(note(name), vel), vel, pan_of(note(name)))
-    home = 0.31
-    mix.add(home, marimba(note("C3")), 0.5, -0.15)
-    mix.add(home + 0.004, harp(note("C4"), 0.5), 0.35, -0.1)
-    mix.add(home, pad([note("C4"), note("E4"), note("G4")], 2.2, rise=0.12, fall=0.7), 0.16)
-    for at, name, vel in [(0.0, "E5", 0.7), (0.075, "G5", 0.68), (0.15, "C6", 0.8)]:
-        mix.add(home + at + rng.uniform(0, 0.006), harp(note(name), vel), vel, pan_of(note(name)))
-    mix.add(home + 0.15, marimba(note("C5")), 0.22, 0.05)
-    for at, name, vel in [(0.24, "E6", 0.2), (0.32, "G6", 0.17), (0.40, "C7", 0.15)]:
-        mix.add(home + at, glock(note(name), 0.6), vel, pan_of(note(name)))
-    return mix.out
+    """A quest finished: a trumpet call over the fourth and fifth chords landing home on the
+    first (IV - V - I), held, with a harp sweeping up and two bells above it. About two
+    seconds."""
+    score = Score([(0, TRUMPET, 110, 70), (1, HORN, 100, 50), (2, STRINGS, 90, 64), (3, TIMPANI, 110, 64), (4, GLOCK, 80, 84), (5, HARP, 95, 40), (6, TROMBONE, 85, 56)])
+    home = 0.52
+    for at, name, length, velocity in [(0.0, "A4", 0.16, 96), (0.18, "B4", 0.16, 100), (0.36, "C5", 0.14, 104), (home, "E5", 1.05, 112)]:
+        score.play(0, at, name, length, velocity)
+    for at, chord, bass, length, velocity in [(0.0, ["F3", "A3", "C4"], "F2", 0.17, 84), (0.18, ["G3", "B3", "D4"], "G2", 0.17, 88), (home, ["C4", "E4", "G4"], "C3", 1.05, 96)]:
+        score.play(1, at, chord, length, velocity)
+        score.play(6, at, bass, length, velocity - 4)
+    score.play(2, home, ["C3", "G3", "E4", "C5"], 1.15, 80)
+    score.play(3, 0.18, "G2", 0.2, 90)
+    score.play(3, home, "C2", 0.6, 118)
+    for i, name in enumerate(["C5", "E5", "G5", "C6", "E6", "G6"]):
+        score.play(5, home + i * 0.035, name, 0.9, 70 + 4 * i)
+    score.play(4, home + 0.08, "G6", 0.6, 74)
+    score.play(4, home + 0.2, "C7", 0.8, 70)
+    return perform(score)
 
 
 def quest_claim(rng):
@@ -211,60 +246,57 @@ def quest_claim(rng):
 
 
 def level_up(rng):
-    """A level reached: a quick harp run up the scale (no fourth or seventh, so it only rises
-    brighter) under a breath of air, landing on a full bright chord, with bells shimmering
-    above it."""
-    mix = Mix(3.6)
-    run = ["D5", "E5", "F#5", "A5", "B5", "D6"]
-    for i, name in enumerate(run):
-        vel = 0.42 + 0.06 * i
-        mix.add(i * 0.042 + rng.uniform(0, 0.004), harp(note(name), vel), vel, pan_of(note(name)))
-    mix.add(0.0, whoosh(0.3, rng), 0.05)
-    land = 0.29
-    mix.add(land, marimba(note("D3")), 0.45, -0.2)
-    mix.add(land, marimba(note("A3")), 0.3, -0.1)
-    for i, name in enumerate(["D5", "F#5", "A5", "D6"]):
-        mix.add(land + i * 0.012, harp(note(name), 0.75), 0.5, pan_of(note(name)))
-    mix.add(land, pad([note("D4"), note("F#4"), note("A4")], 1.8, rise=0.06, fall=0.55), 0.18)
-    mix.add(land + 0.01, glock(note("A6"), 0.8), 0.3, 0.2)
-    mix.add(land + 0.09, glock(note("D7"), 0.8), 0.26, 0.28)
-    for i in range(8):
-        name = "F#6" if i % 2 == 0 else "A6"
-        mix.add(land + 0.2 + i * 0.065, glock(note(name), 0.4), 0.16 * 0.78 ** i, 0.3 if i % 2 else 0.1)
-    return mix.out
+    """A level reached: a quick trumpet arpeggio up the home chord to a bright held top note,
+    the brass and strings striking the chord under it with a timpani hit, a harp sweeping up
+    and bells above. Brighter and quicker than a quest's call."""
+    score = Score([(0, TRUMPET, 112, 72), (1, BRASS, 100, 56), (2, STRINGS, 88, 64), (3, TIMPANI, 105, 64), (4, GLOCK, 82, 84), (5, HARP, 95, 40)])
+    top = 0.255
+    for i, name in enumerate(["D5", "F#5", "A5"]):
+        score.play(0, i * 0.085, name, 0.08, 92 + 6 * i)
+    score.play(0, top, "D6", 0.85, 112)
+    score.play(1, top, ["D4", "F#4", "A4", "D5"], 0.85, 100)
+    score.play(2, top, ["D3", "A3", "F#4", "D5"], 0.95, 80)
+    score.play(3, top, "D2", 0.5, 116)
+    for i, name in enumerate(["D5", "F#5", "A5", "D6", "F#6"]):
+        score.play(5, i * 0.05, name, 0.8, 64 + 5 * i)
+    score.play(4, top + 0.045, "A6", 0.5, 76)
+    score.play(4, top + 0.145, "D7", 0.7, 72)
+    return perform(score)
 
 
 def level_milestone(rng):
-    """A tenth level reached: the level-up run stretched over two octaves, a fuller landing, and
-    a little rising call answered on the home note."""
-    mix = Mix(4.6)
-    run = ["D4", "E4", "F#4", "A4", "B4", "D5", "E5", "F#5", "A5", "B5", "D6"]
-    for i, name in enumerate(run):
-        vel = 0.38 + 0.04 * i
-        mix.add(i * 0.036 + rng.uniform(0, 0.004), harp(note(name), vel), vel, pan_of(note(name)))
-    mix.add(0.0, whoosh(0.42, rng), 0.06)
-    land = 0.42
-    mix.add(land, marimba(note("D3")), 0.5, -0.2)
-    mix.add(land, marimba(note("A3")), 0.32, -0.1)
-    for i, name in enumerate(["D5", "F#5", "A5", "D6"]):
-        mix.add(land + i * 0.012, harp(note(name), 0.8), 0.5, pan_of(note(name)))
-    mix.add(land + 0.01, glock(note("A6"), 0.8), 0.28, 0.2)
-    mix.add(land, pad([note("D4"), note("F#4"), note("A4")], 1.0, rise=0.05, fall=0.4), 0.16)
-    call = land + 0.42
-    mix.add(call, pad([note("G3"), note("B3"), note("D4")], 0.6, rise=0.05, fall=0.3), 0.14)
-    for at, name, vel in [(0.0, "B5", 0.55), (0.12, "D6", 0.6)]:
-        mix.add(call + at, harp(note(name), vel), vel, pan_of(note(name)))
-        mix.add(call + at, glock(note(name), 0.4), 0.12, pan_of(note(name)))
-    home = call + 0.3
-    mix.add(home, marimba(note("D3")), 0.5, -0.2)
-    mix.add(home, pad([note("D4"), note("F#4"), note("A4"), note("D5")], 2.2, rise=0.1, fall=0.8), 0.17)
-    mix.add(home, harp(note("A5"), 0.7), 0.45, 0.1)
-    mix.add(home + 0.01, harp(note("D6"), 0.85), 0.62, 0.15)
-    for i in range(10):
-        name = "F#6" if i % 2 == 0 else "A6"
-        mix.add(home + 0.12 + i * 0.06, glock(note(name), 0.4), 0.15 * 0.8 ** i, 0.3 if i % 2 else 0.1)
-    mix.add(home + 0.75, glock(note("D7"), 0.5), 0.12, 0.25)
-    return mix.out
+    """A tenth level reached: a timpani roll into a trumpet call on the home chord, answered a
+    step higher, then a rising close (IV - V - I) held full under a cymbal, harp and bells.
+    About three seconds, the grandest of the three."""
+    score = Score([(0, TRUMPET, 112, 72), (1, BRASS, 104, 56), (2, STRINGS, 92, 64), (3, TIMPANI, 110, 64), (4, GLOCK, 82, 84), (5, HARP, 95, 40), (6, TROMBONE, 92, 52), (7, HORN, 96, 48), (DRUMS, 0, 90, 64)])
+    for i in range(7):
+        score.play(3, i * 0.04, "A1", 0.05, 50 + 6 * i)
+    for start, chord, bass, root, top in [(0.0, ["D4", "F#4", "A4"], "D3", "D2", "D5"), (0.62, ["C4", "E4", "G4"], "C3", "C2", "E5")]:
+        pickup = "A4" if top == "D5" else "C5"
+        score.play(0, start, pickup, 0.12, 96)
+        score.play(0, start + 0.14, pickup, 0.12, 96)
+        score.play(0, start + 0.28, top, 0.3, 110)
+        score.play(1, start + 0.28, chord, 0.3, 98)
+        score.play(6, start + 0.28, bass, 0.3, 92)
+        score.play(3, start + 0.28, root, 0.3, 118)
+    close = 1.56
+    for at, name, chord in [(1.24, "G5", ["G3", "B3", "D4"]), (1.40, "F#5", ["A3", "C#4", "E4"])]:
+        score.play(0, at, name, 0.14, 104)
+        score.play(7, at, chord, 0.15, 90)
+    for i in range(8):
+        score.play(3, 1.24 + i * 0.04, "A1", 0.05, 60 + 6 * i)
+    score.play(0, close, "A5", 1.4, 118)
+    score.play(1, close, ["D4", "F#4", "A4", "D5"], 1.4, 108)
+    score.play(7, close, ["D3", "A3", "F#4"], 1.4, 100)
+    score.play(6, close, "D2", 1.4, 100)
+    score.play(2, close, ["D3", "A3", "F#4", "D5", "A5"], 1.6, 88)
+    score.play(3, close, "D2", 0.8, 124)
+    score.play(DRUMS, close, CRASH, 1.2, 70)
+    for i, name in enumerate(["D5", "F#5", "A5", "D6", "F#6", "A6"]):
+        score.play(5, close + i * 0.03, name, 1.0, 66 + 5 * i)
+    for i, name in enumerate(["A6", "D7", "F#6", "A6", "D7"]):
+        score.play(4, close + 0.08 + i * 0.11, name, 0.5, 74 - 4 * i)
+    return perform(score)
 
 
 def write_ogg(stereo, path):
@@ -278,20 +310,23 @@ def write_ogg(stereo, path):
         subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", tmp.name, "-c:a", "libvorbis", "-q:a", "6", str(path)], check=True)
 
 
+# Each jingle: how it is composed, how many takes, and whether it is put in the small room
+# (the fanfares have FluidSynth's hall already).
 JINGLES = {
-    "quest_done": (quest_done, 1),
-    "quest_claim": (quest_claim, 3),
-    "level_up": (level_up, 1),
-    "level_milestone": (level_milestone, 1),
+    "quest_done": (quest_done, 1, False),
+    "quest_claim": (quest_claim, 3, True),
+    "level_up": (level_up, 1, False),
+    "level_milestone": (level_milestone, 1, False),
 }
 
 
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
-    for name, (compose, takes) in JINGLES.items():
+    for name, (compose, takes, roomed) in JINGLES.items():
         for take in range(1, takes + 1):
             rng = np.random.default_rng(1000 * take + sum(map(ord, name)))
-            stereo = finish(room(compose(rng), rng), name)
+            played = compose(rng)
+            stereo = finish(room(played, rng) if roomed else played, name)
             path = OUT / f"{name}_{take}.ogg"
             write_ogg(stereo, path)
             print(f"{path.relative_to(ROOT)}: {stereo.shape[1] / RATE:.2f} s, loudest {loudness(stereo):.3f}, peak {np.abs(stereo).max():.2f}", file=sys.stderr)

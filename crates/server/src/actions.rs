@@ -471,6 +471,11 @@ impl Server {
         player.bed = Some(bed.as_vec3() + Vec3::new(0.5, 1.0, 0.5));
         let key = if player.home.is_some() { "bed.set_home" } else { "bed.set" };
         player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: Words::key(key) });
+        // Claimed all the same: only the rest waits.
+        if let Some(why) = self.unsafe_to_sleep(agent) {
+            self.refuse(agent, Words::key(why));
+            return;
+        }
         let effects = self.content.effects.clone();
         if effects.rested(&self.players[&agent].timed_effects) {
             let player = &self.players[&agent];
@@ -482,7 +487,9 @@ impl Server {
         let outdoors = self.open_sky(feet + IVec3::Y * 2);
         let calm = voxmar_engine::weather::Weather::NONE;
         let situation = voxmar_engine::effect::Situation { felt: 0.0, warmed: false, outdoors, weather: &calm, biome: "", biome_tags: &[], home: home.as_ref(), done: &self.players[&agent].quests_done, held: &[], near: &[], worn: &[], seated: false };
-        let given = effects.given_by_sleep(&situation);
+        // A proper bed rests better than a bag on the ground (effects.ron's `bed` tags).
+        let bed_tags = self.block(bed).map(|b| self.content.blocks.def(b).tags.clone()).unwrap_or_default();
+        let given = effects.given_by_sleep(&situation, &bed_tags);
         // The best rest it gives (the one the others are hidden by) is the one it says.
         let best = given.iter().map(|&(id, _)| id).filter(|&id| !given.iter().any(|&(other, _)| other != id && effects.hides(other, id))).next_back();
         let player = self.players.get_mut(&agent).unwrap();
@@ -493,6 +500,30 @@ impl Server {
             let key = voxmar_engine::lang::def_key("effect", &def.name);
             let words = Words::key("bed.rested").with("name", Words::Own(key.clone(), def.title.clone())).with("what", Words::Own(format!("{key}.description"), def.description.clone()));
             player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: words });
+        }
+    }
+
+    /// Why `agent` cannot lie down now, if they cannot: a creature that hunts players (but
+    /// not one they keep: it hunts everyone else) within `sleep_threat_reach` blocks, or
+    /// wounded within the last `sleep_after_hurt` seconds (`survival.ron`). No sleeping off a
+    /// fight for the rest it gives. Nothing hunts one in creative, so nothing stops them.
+    pub(crate) fn unsafe_to_sleep(&self, agent: PlayerId) -> Option<&'static str> {
+        let player = self.players.get(&agent)?;
+        if player.allow_flight {
+            return None;
+        }
+        let reach = self.survival.sleep_threat_reach;
+        let hunted = self.creatures.live.values().any(|c| {
+            c.health > 0 && !c.companion && c.owner.as_deref() != Some(player.name.as_str()) && c.body.position.distance(player.position) <= reach
+                && self.content.creatures.get(c.species).behaviours.iter().any(|b| matches!(b.behaviour, voxmar_engine::creature::Behaviour::Hunt { .. }))
+        });
+        let after = (self.survival.sleep_after_hurt * voxmar_protocol::TICKS_PER_SECOND as f32).round() as u64;
+        if hunted {
+            Some("bed.threatened")
+        } else if player.hurt_at.is_some_and(|at| self.tick < at + after) {
+            Some("bed.just_hurt")
+        } else {
+            None
         }
     }
 
@@ -613,6 +644,32 @@ impl Server {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod sleep_tests {
+    use super::*;
+
+    /// A wolf hunts players: wild, or kept by another player, it keeps one from sleeping; kept
+    /// by the sleeper, it does not, and in creative nothing does.
+    #[test]
+    fn only_a_hunter_one_keeps_lets_one_sleep() {
+        let mut server = crate::test_server();
+        let (_client, connection) = voxmar_protocol::local_pair();
+        let mut joined = crate::player::Player::new(1, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
+        (joined.joined, joined.name) = (true, "sleeper".into());
+        server.players.insert(1, joined);
+        let wolf = server.content.creatures.id("base:wolf").expect("wolves");
+        let id = server.spawn_creature(wolf, server.spawn + Vec3::X * 4.0, 1).expect("room");
+        assert_eq!(server.unsafe_to_sleep(1), Some("bed.threatened"), "a wild wolf");
+        server.creatures.live.get_mut(&id).unwrap().owner = Some("someone_else".into());
+        assert_eq!(server.unsafe_to_sleep(1), Some("bed.threatened"), "another's kept wolf hunts the sleeper all the same");
+        server.creatures.live.get_mut(&id).unwrap().owner = Some("sleeper".into());
+        assert_eq!(server.unsafe_to_sleep(1), None, "one's own kept wolf");
+        server.creatures.live.get_mut(&id).unwrap().owner = None;
+        server.players.get_mut(&1).unwrap().allow_flight = true;
+        assert_eq!(server.unsafe_to_sleep(1), None, "nothing hunts one in creative");
     }
 }
 
