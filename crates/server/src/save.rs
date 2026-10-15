@@ -217,6 +217,9 @@ pub struct SavedPlayer {
     /// slept in.
     pub home: Option<[f32; 3]>,
     pub bed: Option<[f32; 3]>,
+    /// Whether their home hearth has been kept lit since hearths kept their fire; a save
+    /// from before has its standing hearth lit again once (`hearth::kindle_home`).
+    pub kindled: bool,
     /// Everything they have discovered.
     pub journal: Vec<voxmar_engine::journal::Entry>,
     /// Quests finished, those of them whose rewards were claimed, and the tallies quests
@@ -276,6 +279,8 @@ struct PlayerFile {
     home: Option<[f32; 3]>,
     #[serde(default)]
     bed: Option<[f32; 3]>,
+    #[serde(default)]
+    kindled: bool,
     /// What pouches hold, by item name.
     #[serde(default)]
     pouched: Vec<(String, u16)>,
@@ -572,7 +577,7 @@ impl WorldSave {
         }
         let health = Health { current: file.health.current.min(file.health.max), max: file.health.max };
         let yaw = if file.yaw.is_finite() { file.yaw } else { 0.0 };
-        Ok(Some(SavedPlayer { position, yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills, effects: file.effects, home: file.home, bed: file.bed, journal: merge_journal(file.journal, registry), quests_claimed: file.quests_claimed.unwrap_or_else(|| file.quests.clone()), quests: file.quests, tallies: renamed_tallies(file.tallies, registry), prayer_points: file.prayer_points, casts: file.casts }))
+        Ok(Some(SavedPlayer { position, yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills, effects: file.effects, home: file.home, bed: file.bed, kindled: file.kindled, journal: merge_journal(file.journal, registry), quests_claimed: file.quests_claimed.unwrap_or_else(|| file.quests.clone()), quests: file.quests, tallies: renamed_tallies(file.tallies, registry), prayer_points: file.prayer_points, casts: file.casts }))
     }
 
     /// Moves the file of the player called `name` aside, as unreadable (`set_aside`).
@@ -608,6 +613,7 @@ impl WorldSave {
             effects: player.effects.clone(),
             home: player.home,
             bed: player.bed,
+            kindled: player.kindled,
             pouched: held.pouched.iter().map(|&(item, count)| (registry.def(item).name.clone(), count)).collect(),
             journal: player.journal.clone(),
             quests: player.quests.clone(),
@@ -1130,6 +1136,7 @@ mod tests {
             effects: Vec::new(),
             home: None,
             bed: None,
+            kindled: true,
             journal: Vec::new(),
             quests: vec!["base:a".into(), "base:b".into()],
             quests_claimed: vec!["base:a".into()],
@@ -1173,6 +1180,7 @@ mod tests {
             effects: vec![("base:hearty".into(), 120.5)],
             home: Some([3.5, 70.0, -2.5]),
             bed: Some([1.5, 64.0, 9.5]),
+            kindled: true,
             journal: vec![voxmar_engine::journal::Entry { page: voxmar_engine::journal::Page::Fish, name: "base:trout".into(), stage: voxmar_engine::journal::Stage::Studied, count: 12, found: 400 }],
             quests: vec!["base:first_night".into(), "base:stone_in_hand".into()],
             quests_claimed: vec!["base:first_night".into()],
@@ -1246,6 +1254,7 @@ mod tests {
             effects: Vec::new(),
             home: None,
             bed: None,
+            kindled: true,
             journal: Vec::new(),
             quests: Vec::new(),
             quests_claimed: Vec::new(),
@@ -1284,6 +1293,7 @@ mod tests {
         assert_eq!(blocks.item_named("base:cooked_rabbit"), Some(cooked), "dropped items and station loads resolve the same way");
         assert_eq!(blocks.saved_id("base:raw_chicken"), Some(raw), "and a column's block names");
         assert_eq!(blocks.id("base:raw_rabbit"), None, "the old names are no items now");
+        assert!(!loaded.kindled, "a save from before hearths kept their fire is not yet kindled");
         assert_eq!(blocks.item_named("base:cooked_shrimp"), Some(blocks.expect("base:cooked_minnow")), "shrimp are minnows now");
         assert_eq!(blocks.item_named("base:raw_frog"), Some(blocks.expect("base:raw_small_game")), "frog is small game now");
         assert_eq!(blocks.item_named("base:bronze_blend"), Some(blocks.expect("base:bronze_ingot")), "a blend is the bronze it smelted into");

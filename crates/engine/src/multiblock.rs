@@ -211,6 +211,12 @@ impl MultiblockRegistry {
         self.multiblocks.iter()
     }
 
+    /// How far from its core any structure's farthest cell lies, on any one axis: a change
+    /// farther than this from a core can break nothing built round it.
+    pub fn reach(&self) -> i32 {
+        self.multiblocks.iter().flat_map(|m| m.cells.iter()).map(|(at, _)| at.abs().max_element()).max().unwrap_or(0)
+    }
+
     /// The multiblocks a block can be the core of.
     pub fn with_core(&self, block: BlockId) -> impl Iterator<Item = &Multiblock> {
         self.multiblocks.iter().filter(move |m| m.core.binary_search(&block).is_ok())
