@@ -6922,7 +6922,9 @@ impl Fresh {
         let ring = |r: f32, at: Vec3| (0..24).map(|i| (i as f32 * 15.0).to_radians()).map(move |a| Vec3::new(goal.x + r * a.cos(), at.y, goal.z + r * a.sin()));
         let nearest = |spots: Vec<Vec3>, at: Vec3| spots.into_iter().min_by(|a, b| across(*a, at).total_cmp(&across(*b, at)));
         let roomy = nearest(ring(r, self.at).filter(|&p| room(self, p)).collect(), self.at);
-        let tight = || nearest([0.05, 0.15, 0.25, 0.35, 0.45].into_iter().filter(|&r| r < stop).flat_map(|r| ring(r, self.at)).filter(|&p| self.has_room(p)).collect(), self.at);
+        // Where it is tight, the nearest spot the body just fits, the goal itself among them:
+        // a stop too short for any ring (0.05, beside a drop) still has the goal.
+        let tight = || nearest([0.0, 0.05, 0.15, 0.25, 0.35, 0.45].into_iter().filter(|&r| r == 0.0 || r < stop).flat_map(|r| ring(r, self.at)).filter(|&p| self.has_room(p)).collect(), self.at);
         let Some(to) = roomy.or_else(tight) else { return false };
         self.c.tp(to);
         self.at = to;
@@ -7513,6 +7515,28 @@ fn the_bot_takes_a_drop_under_a_cut_trunk_from_beside_it() {
     f.c.pump_until(|c| loose(c, "base:cobblestone") == 1);
     f.collect("base:cobblestone", 1);
     assert_eq!(f.have("base:cobblestone"), 1);
+}
+
+/// A spot the body just fits, off the middle of a one-wide nook, is somewhere to hop to: the
+/// walk's way round, caught, ends there rather than finding no room (the Nomad bot, going
+/// to a drop beside a trunk: "no way round ... and no room near it").
+#[test]
+fn the_bot_hops_to_a_spot_it_just_fits_in_a_one_wide_nook() {
+    lockstep("a bot hopping into a one-wide nook");
+    let c = on_a_test_floor();
+    let (feet, ticks) = (c.position, c.ticks());
+    let origin = feet.floor().as_ivec3();
+    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0, swung: Vec::new() };
+    // Walls either side of a row of cells four to five blocks off, shut at its far end.
+    f.c.fill(origin, IVec3::new(3, 0, -1), IVec3::new(6, 1, -1), "stone");
+    f.c.fill(origin, IVec3::new(3, 0, 1), IVec3::new(6, 1, 1), "stone");
+    f.c.fill(origin, IVec3::new(6, 0, 0), IVec3::new(6, 1, 0), "stone");
+    let shut = origin + IVec3::new(6, 1, 0);
+    f.c.pump_until(|c| c.world.block(shut) == c.content.blocks.id("base:stone"));
+    let goal = Vec3::new(origin.x as f32 + 5.4, feet.y, origin.z as f32 + 0.45);
+    assert!(f.has_room(goal), "the body fits at {goal:?}");
+    assert!(f.hop_near(goal, 0.05), "no room near {goal:?}, where the body fits");
+    assert!(across(f.at, goal) <= 0.05, "hopped to {:?}, not within 0.05 of {goal:?}", f.at);
 }
 
 /// A drop with no room for a body anywhere in reach of it (a slot one block high under the
