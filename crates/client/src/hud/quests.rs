@@ -44,6 +44,7 @@ pub struct QuestsPlugin;
 impl Plugin for QuestsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<QuestView>()
+            .init_resource::<TrackerRoom>()
             .init_resource::<Recentre>()
             .init_resource::<ZoomAt>()
             .add_systems(PostStartup, (spawn, spawn_tracker))
@@ -54,7 +55,7 @@ impl Plugin for QuestsPlugin {
                     shown.set_if_neq(Visibility::Hidden);
                 }
             })
-            .add_systems(Update, ((open_start, choose_on_open, show, pick, go_to_path, claim, turn_ways, keep_web_in_range, drag_web, zoom_web, go_to_current, draw, fit_lines.after(crate::ui::widgets::scroll_lists)).chain().after(ScreenSystems), (seed_pins, retire, track, squeeze).chain(), hear_quests).run_if(in_state(Screen::InGame)));
+            .add_systems(Update, ((open_start, choose_on_open, show, pick, go_to_path, claim, turn_ways, keep_web_in_range, drag_web, zoom_web, go_to_current, draw, fit_lines.after(crate::ui::widgets::scroll_lists)).chain().after(ScreenSystems), (seed_pins, retire, track, measure_room, squeeze).chain(), hear_quests).run_if(in_state(Screen::InGame)));
     }
 }
 
@@ -1544,6 +1545,17 @@ struct TrackerGoal;
 #[derive(Component)]
 struct TrackerMore;
 
+/// The room the tracker is laid out in: the size of the screen it is drawn on, in
+/// physical pixels, and the interface's scale.
+#[derive(Resource, Default, Clone, Copy, PartialEq, Debug)]
+pub(crate) struct TrackerRoom(pub UVec2, pub f32);
+
+/// Measures [`TrackerRoom`], for `squeeze`.
+fn measure_room(tracker: Query<&bevy::ui::ComputedUiRenderTargetInfo, With<Tracker>>, scale: Res<UiScale>, mut room: ResMut<TrackerRoom>) {
+    let Ok(target) = tracker.single() else { return };
+    room.set_if_neq(TrackerRoom(target.physical_size(), scale.0));
+}
+
 /// Folds goal lines away while the pinned cards run past the bottom of the tracker, which
 /// would cut a card off mid-line: the last card's last lines first, a card's first goal
 /// only once every other is folded, as many as the overrun's height at once (and more the next frame, should a card's
@@ -1551,16 +1563,17 @@ struct TrackerMore;
 /// has. The cards are drawn whole again whenever the tracker is redrawn.
 fn squeeze(
     locale: Res<Locale>,
-    (tracker, scale): (Query<(&ComputedNode, &bevy::ui::UiGlobalTransform, &Children, &bevy::ui::ComputedUiRenderTargetInfo), With<Tracker>>, Res<UiScale>),
+    (tracker, given): (Query<(&ComputedNode, &bevy::ui::UiGlobalTransform, &Children), With<Tracker>>, Res<TrackerRoom>),
     cards: Query<(&ComputedNode, &bevy::ui::UiGlobalTransform, &Children)>,
     mut goals: Query<(&mut Node, &ComputedNode), (With<TrackerGoal>, Without<TrackerMore>)>,
     mut more: Query<(&mut Node, &mut Text), (With<TrackerMore>, Without<TrackerGoal>)>,
-    mut room: Local<(UVec2, f32)>,
+    mut room: Local<TrackerRoom>,
 ) {
-    let Ok((column, at, children, target)) = tracker.single() else { return };
+    let Ok((column, at, children)) = tracker.single() else { return };
     // A tracker given more room or less (the window resized, the interface scaled) unfolds
-    // every card, to fold them again to the new room from the next frame's layout.
-    let now = (target.physical_size(), scale.0);
+    // every card, to fold them again to the new room from the next frame's layout. (The
+    // tracker's own height follows its folding, so it is no measure of its room.)
+    let now = *given;
     if now != *room {
         *room = now;
         for (mut node, _) in &mut goals {
@@ -1617,6 +1630,43 @@ fn squeeze(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Two pinned cards of three 20-pixel goals each run 45 pixels past the tracker's foot.
+    /// Folding from the last card up, each card's More note (shown, but not yet laid out)
+    /// is reckoned once: the last card folds all three goals, the first keeps its first.
+    /// Given a bigger window, every goal comes back and the notes go.
+    #[test]
+    fn the_tracker_folds_to_its_room_and_unfolds_when_it_grows() {
+        let mut app = App::new();
+        let content_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        app.insert_resource(Locale::load(&content_dir, "en")).insert_resource(TrackerRoom(UVec2::new(1280, 720), 1.0)).add_systems(Update, squeeze);
+        let sized = |height: f32| ComputedNode { size: Vec2::new(200.0, height), inverse_scale_factor: 1.0, ..Default::default() };
+        let at = |y: f32| bevy::ui::UiGlobalTransform::from(bevy::math::Affine2::from_translation(Vec2::new(100.0, y)));
+        let world = app.world_mut();
+        let card = |world: &mut World, middle: f32| {
+            let goals: Vec<Entity> = (0..3).map(|_| world.spawn((TrackerGoal, Node::default(), sized(20.0))).id()).collect();
+            let note = world.spawn((TrackerMore, Node { display: Display::None, ..default() }, Text::default(), sized(0.0))).id();
+            let card = world.spawn((sized(80.0), at(middle))).add_children(&goals).add_children(&[note]).id();
+            (card, goals, note)
+        };
+        let (first, first_goals, first_note) = card(world, 25.0);
+        let (last, last_goals, last_note) = card(world, 105.0);
+        // The tracker's foot at 100, the last card's at 145.
+        world.spawn((Tracker, sized(100.0), at(50.0))).add_children(&[first, last]);
+        let shown = |app: &App, line: Entity| app.world().get::<Node>(line).unwrap().display != Display::None;
+        // The first frame learns the room; the next folds.
+        app.update();
+        app.update();
+        assert_eq!(last_goals.iter().map(|&g| shown(&app, g)).collect::<Vec<_>>(), [false; 3], "the last card folds every goal");
+        assert_eq!(first_goals.iter().map(|&g| shown(&app, g)).collect::<Vec<_>>(), [true, false, false], "the first card keeps its first goal: its note counted once");
+        assert!(shown(&app, first_note) && shown(&app, last_note));
+        assert_eq!(app.world().get::<Text>(first_note).unwrap().0, "+2 More");
+        // A bigger window: everything unfolds, to be folded again to the new room.
+        app.world_mut().insert_resource(TrackerRoom(UVec2::new(2560, 1440), 1.0));
+        app.update();
+        assert!(first_goals.iter().chain(&last_goals).all(|&g| shown(&app, g)), "a bigger window unfolds every goal");
+        assert!(!shown(&app, first_note) && !shown(&app, last_note), "and puts the notes away");
+    }
 
     fn content() -> Content {
         voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap()
