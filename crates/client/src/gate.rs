@@ -523,6 +523,9 @@ struct Gate {
     /// When the step started (seconds of game time), and frames since.
     since: f32,
     frames: u32,
+    /// While the world loads, since when each part of being loaded has held (`LOAD_PARTS`),
+    /// for the load line: which one the load waited on last.
+    load_parts: [Option<f32>; LOAD_PARTS.len()],
     /// Progress through a step's own stages, and when the current one began.
     phase: u32,
     phase_since: f32,
@@ -786,6 +789,7 @@ impl Gate {
             step: Step::Load,
             since: 0.0,
             frames: 0,
+            load_parts: [None; LOAD_PARTS.len()],
             phase: 0,
             phase_since: 0.0,
             settled: 0,
@@ -1440,9 +1444,14 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
     let feet = gate.feet;
     match gate.step {
         Step::Load => {
+            let held = load_parts(world);
+            for (since, held) in gate.load_parts.iter_mut().zip(held) {
+                *since = held.then(|| since.unwrap_or(now));
+            }
             // As a loading screen would, waiting for the weather to show too.
-            if loaded(world) && world.resource::<crate::weather::WeatherReady>().0 {
-                gate.check("load", Ok(format!("the world loaded in {now:.1}s")));
+            if held.iter().all(|&held| held) {
+                let parts: Vec<String> = LOAD_PARTS.iter().zip(gate.load_parts).map(|(part, since)| format!("{part} {:.1}s", since.unwrap_or(now))).collect();
+                gate.check("load", Ok(format!("the world loaded in {now:.1}s ({})", parts.join(", "))));
                 land(world, gate);
                 // From here on, anything first drawn compiles its pipeline in that frame
                 // unless it was warmed at load (render::warm); `pipelines` lists any.
@@ -12841,10 +12850,22 @@ fn land(world: &World, gate: &mut Gate) {
 
 /// Whether the world around the player has loaded and been meshed, distant terrain
 /// included.
-fn loaded(world: &World) -> bool {
+/// What being loaded takes, in `load_parts`'s order, as the load line names them.
+const LOAD_PARTS: [&str; 5] = ["joined", "columns in", "meshed", "distant land", "weather"];
+
+/// Whether each part of being loaded holds: the player joined, every column around it
+/// arrived (nine at least), none waits to be lit or meshed, the distant land is drawn, and
+/// the server's weather shows.
+fn load_parts(world: &World) -> [bool; LOAD_PARTS.len()] {
     let (player, client, lod) = (world.resource::<LocalPlayer>(), world.resource::<ClientWorld>(), world.resource::<Lod>());
     let (tiles, wanted) = lod.progress();
-    player.joined && client.stats.jobs_in_flight == 0 && client.stats.pending_columns == 0 && client.voxels.len() >= 9 && tiles >= wanted
+    [
+        player.joined,
+        client.stats.pending_columns == 0 && client.voxels.len() >= 9,
+        client.stats.jobs_in_flight == 0,
+        tiles >= wanted,
+        world.resource::<crate::weather::WeatherReady>().0,
+    ]
 }
 
 /// Columns within `AGREE_WITHIN` of `feet`.
