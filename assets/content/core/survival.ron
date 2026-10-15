@@ -42,6 +42,10 @@
     // block with one of these tags (whatever its shelter tag) to the wall behind it, so a chest or a
     // table by the wall never counts as a draughty face, and a barrel in a doorway is no door.
     home_furniture: ["machine", "station", "furnishing", "storage", "decor", "multiblock_core", "farm", "waters"],
+    // But a block with one of these and a shelter tag walls a room in all the same: cloth
+    // hung for a wall or an awning (a Nomad's first walls), a hay bale stacked. A sack of
+    // cloth, with no shelter tag, is still furniture.
+    home_wall_furniture: ["cloth", "awning", "hay"],
     // The most a home's meal effects together (a pantry, a larder, a kitchen garden, home
     // cooking, a seat at the table: effects.ron's meal_heal and meal_time, which multiply)
     // make of a meal's heal, and of how long its good lasts.
