@@ -321,12 +321,31 @@ pub fn step(body: &mut Body, world: &impl Surroundings, movement: &Movement, wat
     // its feet, not only its head stopped at a door frame. Paddling at a bank, anything
     // that walks hauls itself out the same way.
     let paddling = body.in_water && water != Water::Swim && !floating && !flying;
+    // Rising from a hop its head's step began: the head goes on over the step, not stopped
+    // at it, or the body would bounce at the foot of the step for ever.
+    let mut head_hop = false;
     if (body.on_ground && movement.jump > 0.0 || paddling) && body.against_wall && along != Vec3::ZERO {
         let (mut level, mut raised) = (body.aabb(), body.aabb());
         level.translate(along * 0.3);
         raised.translate(Vec3::Y * 1.05 + along * 0.3);
-        if level.intersects(|p| world.solid(p)) && !raised.intersects(|p| world.solid(p)) {
+        let boxed = level.intersects(|p| world.solid(p));
+        // A long head (a boar's snout) stops the body short of a step its box never meets.
+        // Judged at the feet, as the box's step is: the cell before the head, at the feet's
+        // level, is solid with room above it for the whole body, and the body raised a
+        // block clears it once over the step. A wall, a lintel at head height or a step
+        // under a low ceiling is no step. Only charges and tracking drive a body straight
+        // at such a step: steering (`open_way`) still goes round it.
+        let half = body.size.0 * 0.5;
+        let head_step = !boxed && body.reach > half + 0.05 && along.dot(body.forward()) > 0.7 && {
+            let ahead = body.position + along * (body.reach + 0.3);
+            let cell = IVec3::new(ahead.x.floor() as i32, (body.position.y + 0.01).floor() as i32, ahead.z.floor() as i32);
+            let mut over = body.aabb();
+            over.translate(Vec3::Y * 1.05 + along * (body.reach - half + 0.3));
+            world.solid(cell) && (1..=body.size.1.ceil() as i32).all(|up| !world.solid(cell + IVec3::Y * up)) && !over.intersects(|p| world.solid(p))
+        };
+        if (boxed && !raised.intersects(|p| world.solid(p))) || head_step {
             body.velocity.y = movement.jump.max(climb_speed(dt));
+            head_hop = head_step;
         }
     }
     // Hoppers move in hops whenever they move, and so do fliers on the ground: each hop
@@ -354,7 +373,7 @@ pub fn step(body: &mut Body, world: &impl Surroundings, movement: &Movement, wat
     // Where nothing is clear (a long head turning in a doorway) it turns where it stood,
     // its head brushing the frame for a moment, rather than spin or walk on backwards. A
     // step undone counts as against the wall, so it climbs or turns away.
-    if !head_was_blocked && body.head_blocked(world) {
+    if !head_was_blocked && !head_hop && body.head_blocked(world) {
         let (moved, turned) = (body.position, body.yaw);
         let fits = |at: Vec3| !Aabb::standing(at, body.size.0, body.size.1).intersects(|p| world.solid(p));
         let clear = |at: Vec3, yaw: f32| fits(at) && !Body { position: at, yaw, ..*body }.head_blocked(world);
@@ -503,6 +522,74 @@ mod tests {
             step(&mut walker, &step_up, &low, Water::Land, Drive { wish: Vec3::X, speed: 2.0, face: None }, 0.05);
         }
         assert!(walker.position.y >= 1.0 && walker.position.x > 3.5, "it never got up the step: {}", walker.position);
+    }
+
+    /// A long head meets a step before the body does, and stops it there (its head stops at
+    /// what its box does not): it hops the step all the same, as a short-headed walker does.
+    #[test]
+    fn a_long_headed_walker_hops_a_single_block_its_snout_meets_first() {
+        let step_up = Ledge { high: 1 };
+        let movement = Movement { jump: 6.0, ..Movement::default() };
+        let mut boar = Body::new(Vec3::new(0.5, 0.0, 0.5), yaw_of(Vec3::X), (1.2, 1.2));
+        (boar.on_ground, boar.reach, boar.head) = (true, 1.6, 0.9);
+        assert!(!Body { position: Vec3::new(1.6, 0.0, 0.5), ..boar }.aabb().intersects(|p| step_up.solid(p)), "the box clears the step where the head meets it");
+        assert!(Body { position: Vec3::new(1.6, 0.0, 0.5), ..boar }.head_blocked(&step_up), "the head meets the step first");
+        for _ in 0..80 {
+            step(&mut boar, &step_up, &movement, Water::Land, Drive { wish: Vec3::X, speed: 4.0, face: None }, 0.05);
+        }
+        assert!(boar.position.y >= 1.0 && boar.position.x > 3.5, "its snout held it at the step: {}", boar.position);
+    }
+
+    /// A low snout (a badger's) meets a step its body does not reach either: driven straight
+    /// at it, it gets up, not bouncing at its foot.
+    #[test]
+    fn a_low_snout_driven_at_a_step_gets_up_it() {
+        let step_up = Ledge { high: 1 };
+        let movement = Movement { jump: 6.0, ..Movement::default() };
+        let mut badger = Body::new(Vec3::new(0.5, 0.0, 0.5), yaw_of(Vec3::X), (0.6, 0.5));
+        (badger.on_ground, badger.reach, badger.head) = (true, 0.7, 0.42);
+        for _ in 0..80 {
+            step(&mut badger, &step_up, &movement, Water::Land, Drive { wish: Vec3::X, speed: 3.0, face: None }, 0.05);
+        }
+        assert!(badger.position.y >= 1.0 && badger.position.x > 3.3, "it never got up the step: {}", badger.position);
+    }
+
+    /// What its head meets is judged at its feet: a tall head over a wall two high, or under
+    /// a beam at head height with open ground beneath, finds no step and never hops.
+    #[test]
+    fn a_tall_head_finds_no_step_in_a_wall_two_high_or_a_beam() {
+        struct Beam;
+        impl Surroundings for Beam {
+            fn solid(&self, cell: IVec3) -> bool {
+                cell.y < 0 || (cell.x >= 3 && cell.y == 1)
+            }
+            fn water(&self, _: IVec3) -> bool {
+                false
+            }
+        }
+        let movement = Movement { jump: 12.0, ..Movement::default() };
+        let stag = || {
+            let mut stag = Body::new(Vec3::new(0.5, 0.0, 0.5), yaw_of(Vec3::X), (0.8, 1.6));
+            (stag.on_ground, stag.reach, stag.head) = (true, 1.2, 1.55);
+            stag
+        };
+        let run = |world: &dyn Fn(&mut Body)| {
+            let mut stag = stag();
+            let mut hops = 0;
+            for _ in 0..200 {
+                let was = stag.velocity.y;
+                world(&mut stag);
+                if stag.velocity.y > 0.0 && was <= 0.0 {
+                    hops += 1;
+                }
+            }
+            (hops, stag.position)
+        };
+        let wall = Ledge { high: 2 };
+        let (hops, at) = run(&|stag| step(stag, &wall, &movement, Water::Land, Drive { wish: Vec3::X, speed: 4.0, face: None }, 0.05));
+        assert!(hops == 0 && at.y < 0.5 && at.x < 3.0, "a wall two high: {hops} hops, at {at}");
+        let (hops, at) = run(&|stag| step(stag, &Beam, &movement, Water::Land, Drive { wish: Vec3::X, speed: 4.0, face: None }, 0.05));
+        assert!(hops == 0 && at.y < 0.5, "a beam at head height: {hops} hops, at {at}");
     }
 
     #[test]

@@ -231,6 +231,9 @@ pub struct SavedPlayer {
     pub prayer_points: Option<f32>,
     /// Lines cast so far (none in older saves).
     pub casts: u64,
+    /// Blocks set down that a quest's `Placed` counts, by cell and item (none in older
+    /// saves), so one broken after a restart still comes off.
+    pub placed: Vec<([i32; 3], String)>,
 }
 
 /// Tallies quests count (`kind:name`, or `kind:station:name`) under the names items have
@@ -298,6 +301,8 @@ struct PlayerFile {
     prayer_points: Option<f32>,
     #[serde(default)]
     casts: u64,
+    #[serde(default)]
+    placed: Vec<([i32; 3], String)>,
 }
 
 /// A column file, generic so that saving can borrow the column.
@@ -577,7 +582,7 @@ impl WorldSave {
         }
         let health = Health { current: file.health.current.min(file.health.max), max: file.health.max };
         let yaw = if file.yaw.is_finite() { file.yaw } else { 0.0 };
-        Ok(Some(SavedPlayer { position, yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills, effects: file.effects, home: file.home, bed: file.bed, kindled: file.kindled, journal: merge_journal(file.journal, registry), quests_claimed: file.quests_claimed.unwrap_or_else(|| file.quests.clone()), quests: file.quests, tallies: renamed_tallies(file.tallies, registry), prayer_points: file.prayer_points, casts: file.casts }))
+        Ok(Some(SavedPlayer { position, yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills, effects: file.effects, home: file.home, bed: file.bed, kindled: file.kindled, journal: merge_journal(file.journal, registry), quests_claimed: file.quests_claimed.unwrap_or_else(|| file.quests.clone()), quests: file.quests, tallies: renamed_tallies(file.tallies, registry), prayer_points: file.prayer_points, casts: file.casts, placed: file.placed }))
     }
 
     /// Moves the file of the player called `name` aside, as unreadable (`set_aside`).
@@ -621,6 +626,7 @@ impl WorldSave {
             tallies: player.tallies.clone(),
             prayer_points: player.prayer_points,
             casts: player.casts,
+            placed: player.placed.clone(),
         };
         let text = ron::ser::to_string_pretty(&file, ron::ser::PrettyConfig::default()).map_err(io::Error::other)?;
         let path = self.player_path(name);
@@ -1143,6 +1149,7 @@ mod tests {
             tallies: Vec::new(),
             prayer_points: None,
             casts: 0,
+            placed: Vec::new(),
         };
         save.write_player("ada", &player, &registry).unwrap();
         assert_eq!(save.read_player("ada", &registry).unwrap().unwrap().quests_claimed, ["base:a"], "a waiting reward is kept");
@@ -1187,6 +1194,7 @@ mod tests {
             tallies: vec![("crafted:base:torch".into(), 8)],
             prayer_points: Some(7.5),
             casts: 12,
+            placed: vec![([4, 65, -7], "base:feed_trough".into())],
         };
         for name in ["steve", "Steve", "a/b", "../x", "ünï cödé"] {
             save.write_player(name, &player, &registry).unwrap();
@@ -1261,6 +1269,7 @@ mod tests {
             tallies: Vec::new(),
             prayer_points: None,
             casts: 0,
+            placed: Vec::new(),
         };
         save.write_player("herbalist", &player, &registry).unwrap();
         let loaded = save.read_player("herbalist", &registry).unwrap().unwrap();
