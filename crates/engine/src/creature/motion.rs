@@ -89,11 +89,25 @@ impl Body {
         // Nearest first, so on a flight of steps it is the first step, not the next.
         let far = self.reach + 0.5;
         let samples = ((far - half) / 0.1).ceil() as i32;
-        let met = (0..=samples).map(|k| half + (far - half) * k as f32 / samples as f32).find_map(|out| {
+        // Ground under its front and under every sample short of the step: a block across a
+        // gap from it (a trench, or a gap before a fence two high) is no stair up to what is
+        // beyond.
+        let front = self.position + forward * (half - 0.01);
+        if !world.solid(IVec3::new(front.x.floor() as i32, feet - 1, front.z.floor() as i32)) {
+            return false;
+        }
+        let mut met = None;
+        for out in (0..=samples).map(|k| half + (far - half) * k as f32 / samples as f32) {
             let at = self.position + forward * out;
             let cell = IVec3::new(at.x.floor() as i32, feet, at.z.floor() as i32);
-            world.solid(cell).then_some((out, cell))
-        });
+            if world.solid(cell) {
+                met = Some((out, cell));
+                break;
+            }
+            if !world.solid(cell - IVec3::Y) {
+                return false;
+            }
+        }
         let Some((out, cell)) = met else { return false };
         // Held off by its head, its box may be as much as its head's reach short of the
         // step: the hop must carry it that far and a little over.
@@ -180,12 +194,20 @@ fn climb_speed(dt: f32) -> f32 {
     high
 }
 
+/// How fast a hop up a step goes, stepped as `dt` steps it: its own jump, or the least that
+/// gets up a block (`climb_speed`). Steering (`open_way`) and the hop (`step`) judge a step
+/// by the same hop.
+pub fn hop_speed(movement: &Movement, dt: f32) -> f32 {
+    movement.jump.max(climb_speed(dt))
+}
+
 /// Whether the body can go a little way along `heading` (horizontal, unit length): sliding
 /// along a wall counts, and so does a single step up for anything that jumps; its head must
 /// not meet rock there, and on the ground it must not step off a drop deeper than
 /// `SAFE_DROP` or, a land animal on dry land, into water two deep. `pace` is the speed it
-/// goes at: a step its head meets is up only for a hop that carries it there at that pace.
-pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, water: Water, heading: Vec3, pace: f32) -> bool {
+/// goes at: a step its head meets is up only for a hop that carries it there at that pace;
+/// `dt` is how long a `step` is, which the hop is judged by.
+pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, water: Water, heading: Vec3, pace: f32, dt: f32) -> bool {
     let probe = body.size.0 * 0.5 + 0.3;
     let solid = |p: IVec3| world.solid(p);
     let goes = |lift: f32| {
@@ -204,7 +226,7 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
     // not round it. A high head at a wall two high, or under a lintel, finds no way there.
     let ahead = |to: Vec3| Body { position: to, yaw: yaw_of(heading), ..*body };
     let level = goes(0.0);
-    let up = movement.jump > 0.0 && level.is_none_or(|to| ahead(to).head_step(world, heading, pace, movement.jump));
+    let up = movement.jump > 0.0 && level.is_none_or(|to| ahead(to).head_step(world, heading, pace, hop_speed(movement, dt)));
     let Some(to) = level.filter(|&to| !ahead(to).head_blocked(world)).or_else(|| if up { goes(1.05).filter(|&to| !ahead(to).head_blocked(world)) } else { None }) else {
         return false;
     };
@@ -259,8 +281,8 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
 /// and 0) rather than press into a wall or step off a cliff. This is
 /// how anything walking gets round a wall, a corner or a tree rather than pressing into it.
 /// `pace` is the speed it goes at (`open_way`).
-pub fn steer(body: &Body, world: &impl Surroundings, movement: &Movement, water: Water, wish: Vec3, side: f32, pace: f32) -> (Vec3, f32) {
-    if wish == Vec3::ZERO || open_way(body, world, movement, water, wish, pace) {
+pub fn steer(body: &Body, world: &impl Surroundings, movement: &Movement, water: Water, wish: Vec3, side: f32, pace: f32, dt: f32) -> (Vec3, f32) {
+    if wish == Vec3::ZERO || open_way(body, world, movement, water, wish, pace, dt) {
         return (wish, 0.0);
     }
     let turned = |sign: f32, degrees: f32| glam::Quat::from_rotation_y(sign * degrees.to_radians()) * wish;
@@ -279,7 +301,7 @@ pub fn steer(body: &Body, world: &impl Surroundings, movement: &Movement, water:
     } else {
         DETOURS.into_iter().flat_map(|degrees| [(first, degrees), (-first, degrees)]).collect()
     };
-    tries.into_iter().map(|(sign, degrees)| (turned(sign, degrees), sign)).find(|&(heading, _)| open_way(body, world, movement, water, heading, pace)).unwrap_or((Vec3::ZERO, 0.0))
+    tries.into_iter().map(|(sign, degrees)| (turned(sign, degrees), sign)).find(|&(heading, _)| open_way(body, world, movement, water, heading, pace, dt)).unwrap_or((Vec3::ZERO, 0.0))
 }
 
 /// Whether a body moving with this drive walks on the land, where `steer` finds its way:
@@ -363,24 +385,29 @@ pub fn step(body: &mut Body, world: &impl Surroundings, movement: &Movement, wat
     }
 
     // Hop up a step it walks into, if it can jump and there is room above: a block before
-    // its feet, not only its head stopped at a door frame. Paddling at a bank, anything
-    // that walks hauls itself out the same way.
+    // its feet, not only its head stopped at a door frame, with ground under its front.
+    // Paddling at a bank, anything that walks hauls itself out the same way.
     let paddling = body.in_water && water != Water::Swim && !floating && !flying;
     if (body.on_ground && movement.jump > 0.0 || paddling) && body.against_wall && along != Vec3::ZERO {
         let (mut level, mut raised) = (body.aabb(), body.aabb());
         level.translate(along * 0.3);
         raised.translate(Vec3::Y * 1.05 + along * 0.3);
-        let boxed = level.intersects(|p| world.solid(p));
+        // Ground under its front: a body standing on a block's edge with its front out over a
+        // gap (a deer on a block beside a fence a block off) takes the fence for no step,
+        // or it would leap onto a fence two high. Paddling, it hauls itself out of the water.
+        let front = body.position + along * (body.size.0 * 0.5 - 0.01);
+        let footed = paddling || world.solid(IVec3::new(front.x.floor() as i32, (body.position.y - 0.01).floor() as i32, front.z.floor() as i32));
+        let boxed = footed && level.intersects(|p| world.solid(p));
         // A long head (a boar's snout, a badger's) stops the body short of a step its box
-        // never meets (`Body::head_step`): it hops all the same, springing on toward the
-        // step, or it would go straight up and come down where it was.
-        let head_step = !boxed && body.head_step(world, along, target.length(), movement.jump.max(climb_speed(dt)));
+        // never meets (`Body::head_step`): it hops all the same. Either hop springs on toward
+        // the step at its pace, its way along having been stopped at the step: else it goes
+        // nearly straight up and, slow (a tortoise), comes down short of the step's edge,
+        // where it was.
+        let head_step = !boxed && body.head_step(world, along, target.length(), hop_speed(movement, dt));
         if (boxed && !raised.intersects(|p| world.solid(p))) || head_step {
-            body.velocity.y = movement.jump.max(climb_speed(dt));
-            if head_step {
-                body.velocity.x = target.x;
-                body.velocity.z = target.z;
-            }
+            body.velocity.y = hop_speed(movement, dt);
+            body.velocity.x = target.x;
+            body.velocity.z = target.z;
         }
     }
     // Hoppers move in hops whenever they move, and so do fliers on the ground: each hop
@@ -439,8 +466,11 @@ pub fn step(body: &mut Body, world: &impl Surroundings, movement: &Movement, wat
             } else if let Some(at) = (1..=backs).map(|k| moved - body.forward() * (0.12 * k as f32)).find(|&at| clear(at, turned)) {
                 body.position = at;
             } else if !rising && clear(start, turned) {
+                // Put back on what it stood or hung on: on the ground, or it falls into
+                // the same place again next step and hangs there.
                 body.position = start;
                 body.velocity.y = 0.0;
+                body.on_ground = true;
             } else if turned != start_yaw && fits(back) {
                 // Committed to its way round, it keeps turning.
                 body.position = back;
@@ -536,18 +566,18 @@ mod tests {
         let movement = Movement::default();
         // Flush against the wall, facing a little toward +z.
         let mut body = Body::new(Vec3::new(2.7, 0.0, 0.5), yaw_of(Vec3::new(0.3, 0.0, 1.0)), (0.6, 0.8));
-        let (heading, side) = steer(&body, &wall, &movement, Water::Land, Vec3::X, 0.0, 2.0);
+        let (heading, side) = steer(&body, &wall, &movement, Water::Land, Vec3::X, 0.0, 2.0, 0.05);
         assert!(side != 0.0 && heading.dot(Vec3::X).abs() < 0.5, "it pressed on into the wall: {heading}");
         assert!(heading.z > 0.0, "it went round the way it faced less: {heading}");
         // Going round, it keeps to its side though the other is as open.
-        let (again, kept) = steer(&body, &wall, &movement, Water::Land, Vec3::X, -side, 2.0);
+        let (again, kept) = steer(&body, &wall, &movement, Water::Land, Vec3::X, -side, 2.0, 0.05);
         assert_eq!(kept, -side, "it changed sides going round");
         assert!(again.z < 0.0);
         // An open way is taken as it is.
-        assert_eq!(steer(&body, &wall, &movement, Water::Land, -Vec3::X, side, 2.0), (-Vec3::X, 0.0));
+        assert_eq!(steer(&body, &wall, &movement, Water::Land, -Vec3::X, side, 2.0, 0.05), (-Vec3::X, 0.0));
         // Walking it, it slides along and is never pressed still.
         for _ in 0..40 {
-            let (heading, _) = steer(&body, &wall, &movement, Water::Land, Vec3::X, side, 2.0);
+            let (heading, _) = steer(&body, &wall, &movement, Water::Land, Vec3::X, side, 2.0, 0.05);
             step(&mut body, &wall, &movement, Water::Land, Drive { wish: heading, speed: 2.0, face: None }, 0.05);
         }
         assert!(body.position.z > 2.5, "it barely moved along the wall: {}", body.position);
@@ -560,9 +590,9 @@ mod tests {
         let body = Body::new(Vec3::new(2.7, 0.0, 0.5), yaw_of(Vec3::X), (0.6, 0.8));
         let (low, none) = (Movement { jump: 6.0, ..Movement::default() }, Movement { jump: 0.0, ..Movement::default() });
         assert!(hop_height(6.0, 0.05) < 1.0 && hop_height(climb_speed(0.05), 0.05) >= 1.1);
-        assert!(open_way(&body, &step_up, &low, Water::Land, Vec3::X, 3.0), "a low jumper found a single block a wall");
-        assert!(!open_way(&body, &step_up, &none, Water::Land, Vec3::X, 3.0), "a block was open to one that cannot jump");
-        assert!(!open_way(&body, &Ledge { high: 2 }, &low, Water::Land, Vec3::X, 3.0), "a wall two high was open");
+        assert!(open_way(&body, &step_up, &low, Water::Land, Vec3::X, 3.0, 0.05), "a low jumper found a single block a wall");
+        assert!(!open_way(&body, &step_up, &none, Water::Land, Vec3::X, 3.0, 0.05), "a block was open to one that cannot jump");
+        assert!(!open_way(&body, &Ledge { high: 2 }, &low, Water::Land, Vec3::X, 3.0, 0.05), "a wall two high was open");
         // And it really gets up, though its own jump would not lift it a block.
         let mut walker = Body::new(Vec3::new(1.5, 0.0, 0.5), yaw_of(Vec3::X), (0.6, 0.8));
         walker.on_ground = true;
@@ -584,7 +614,7 @@ mod tests {
         (body.reach, body.head, body.on_ground) = (0.75, 0.3, true);
         let short = Body { position: Vec3::new(2.3, 0.0, 0.5), ..body };
         assert!(short.head_blocked(&step_up) && !Aabb::standing(short.position, 0.6, 0.45).intersects(|p| step_up.solid(p)), "the fixture means its head to meet the step first");
-        assert!(open_way(&short, &step_up, &movement, Water::Land, Vec3::X, 3.0), "the step read as a wall to its head");
+        assert!(open_way(&short, &step_up, &movement, Water::Land, Vec3::X, 3.0, 0.05), "the step read as a wall to its head");
         for i in 0..30 {
             step(&mut body, &step_up, &movement, Water::Land, Drive { wish: Vec3::X, speed: 3.0, face: None }, 0.05);
             assert!(!body.head_blocked(&step_up), "its head went into the step {i} steps on, at {}", body.position);
@@ -606,7 +636,7 @@ mod tests {
         let short = Body { position: Vec3::new(2.0, 0.0, 0.5), ..body };
         assert!(short.head_blocked(&wall) && !Aabb::standing(short.position, 1.0, 1.4).intersects(|p| wall.solid(p)), "the fixture means its head to meet the wall first");
         assert!(!Body { position: short.position + Vec3::Y * 1.05, ..short }.head_blocked(&wall), "the fixture means its head a block up to be over the wall");
-        assert!(!open_way(&short, &wall, &movement, Water::Land, Vec3::X, 3.0), "the wall read as open");
+        assert!(!open_way(&short, &wall, &movement, Water::Land, Vec3::X, 3.0, 0.05), "the wall read as open");
         for i in 0..40 {
             step(&mut body, &wall, &movement, Water::Land, Drive { wish: Vec3::X, speed: 3.0, face: None }, 0.05);
             assert!(!body.head_blocked(&wall), "its head went into the wall {i} steps on, at {}", body.position);
@@ -739,8 +769,8 @@ mod tests {
                     assert!(inside == 0 && high < 1.0, "{name} (jump {jump}, standing {standing}): its head in {inside} ticks of 200, its feet up to {high:.2}, {hops} hops");
                 }
             };
-            check("a wall two high", &|b: &mut Body, standing| drive(b, &wall, &movement, standing, 200), open_way(&deer(), &wall, &movement, Water::Land, Vec3::X, 3.0));
-            check("a beam", &|b: &mut Body, standing| drive(b, &beam, &movement, standing, 200), open_way(&deer(), &beam, &movement, Water::Land, Vec3::X, 3.0));
+            check("a wall two high", &|b: &mut Body, standing| drive(b, &wall, &movement, standing, 200), open_way(&deer(), &wall, &movement, Water::Land, Vec3::X, 3.0, 0.05));
+            check("a beam", &|b: &mut Body, standing| drive(b, &beam, &movement, standing, 200), open_way(&deer(), &beam, &movement, Water::Land, Vec3::X, 3.0, 0.05));
         }
     }
 
@@ -777,7 +807,7 @@ mod tests {
         }
         assert!(hops <= 1, "{hops} hops in 10 s at a walk, at {}", tusk.position);
         let at = Body { position: Vec3::new(3.0 - 0.57 - 0.6, 0.0, 0.5), ..tusk };
-        assert!(!open_way(&at, &step_up, &movement, Water::Land, Vec3::X, 1.06), "a step too far to hop at a walk read as a way");
+        assert!(!open_way(&at, &step_up, &movement, Water::Land, Vec3::X, 1.06, 0.05), "a step too far to hop at a walk read as a way");
     }
 
     /// Up a flight of steps a block deep, a long head meets the next riser as it lands on
@@ -846,7 +876,7 @@ mod tests {
         let movement = Movement::default();
         let mut body = Body::new(Vec3::new(2.6, 0.0, 0.5), yaw_of(Vec3::X), (0.6, 0.8));
         body.on_ground = true;
-        let open = |edge: &Edge, water: Water| open_way(&body, edge, &movement, water, Vec3::X, 3.0);
+        let open = |edge: &Edge, water: Water| open_way(&body, edge, &movement, water, Vec3::X, 3.0, 0.05);
         assert!(open(&Edge { drop: SAFE_DROP, wet: 0 }, Water::Land), "a short drop was a wall");
         assert!(!open(&Edge { drop: SAFE_DROP + 3, wet: 0 }, Water::Land), "it stepped off a cliff");
         assert!(open(&Edge { drop: 1, wet: 1 }, Water::Land), "a puddle was a wall");
@@ -865,16 +895,16 @@ mod tests {
         }
         let mut wading = Body::new(Vec3::new(2.6, -1.0, 0.5), yaw_of(Vec3::X), (0.6, 0.8));
         (wading.on_ground, wading.in_water) = (true, true);
-        assert!(!open_way(&wading, &Shelf, &movement, Water::Land, Vec3::X, 3.0), "wading, it walked on into deep water");
+        assert!(!open_way(&wading, &Shelf, &movement, Water::Land, Vec3::X, 3.0, 0.05), "wading, it walked on into deep water");
         let mut swimming = Body::new(Vec3::new(3.5, -2.0, 0.5), yaw_of(Vec3::X), (0.6, 0.8));
         swimming.in_water = true;
-        assert!(open_way(&swimming, &Shelf, &movement, Water::Land, Vec3::X, 3.0), "out of its depth, deeper water was a wall");
+        assert!(open_way(&swimming, &Shelf, &movement, Water::Land, Vec3::X, 3.0, 0.05), "out of its depth, deeper water was a wall");
         // Steered at the edge, it goes along it; boxed in by cliffs, it stands.
         let cliff = Edge { drop: 8, wet: 0 };
-        let (heading, side) = steer(&body, &cliff, &movement, Water::Land, Vec3::X, 0.0, 2.0);
+        let (heading, side) = steer(&body, &cliff, &movement, Water::Land, Vec3::X, 0.0, 2.0, 0.05);
         assert!(side != 0.0 && heading.x < 0.5, "it went over the edge: {heading}");
         for _ in 0..60 {
-            let (heading, _) = steer(&body, &cliff, &movement, Water::Land, Vec3::X, side, 2.0);
+            let (heading, _) = steer(&body, &cliff, &movement, Water::Land, Vec3::X, side, 2.0, 0.05);
             step(&mut body, &cliff, &movement, Water::Land, Drive { wish: heading, speed: 4.0, face: None }, 0.05);
             assert!(body.position.y > -0.5, "it fell off the cliff at {}", body.position);
         }

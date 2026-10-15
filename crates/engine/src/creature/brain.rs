@@ -613,7 +613,7 @@ pub(super) mod tests {
         let mut mind = Mind::new(&wolf.def.temperament, 2);
         mind.find_no_way();
         mind.hurt(&wolf, Some(1), 1.0);
-        assert_eq!((mind.fear, mind.anger), (1.0, 0.0), "it fought back");
+        assert_eq!((mind.fear, mind.anger), (1.0, 0.0), "struck with no way, it fought back rather than ran");
         mind.fear = 0.0;
         let _ = think(&wolf, &mut mind, &situation(&near));
         assert_ne!(doing(&wolf, &mind), "hunt");
