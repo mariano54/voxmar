@@ -1538,8 +1538,6 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         Step::Door => STEP_LIMIT + 25.0,
         // Two blocks mined with a tool, and a mend crafted, each waited on.
         Step::ToolWear => STEP_LIMIT + 15.0,
-        // The anvil's viewer check waits as its crush does.
-        Step::Anvil => STEP_LIMIT + CHOP_WAIT,
         // A party walks in, is talked to, traded with and sent away, each in server seconds.
         Step::Party => 60.0,
         // The effects are judged once a second by the server, and a rest is a sleep away.
