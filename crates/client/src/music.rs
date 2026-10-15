@@ -617,7 +617,16 @@ fn home_motif(
         music.home.inside = None;
         return;
     }
-    let inside = inside_home(&music.rules.home, player.position, player.vitals.home, &world.fires, |p| world.voxels.block(p), |b| crate::ambience::defs::is_roof(&world.registry, b));
+    // Not before the ground under the player and the hearth have loaded: a roof not yet
+    // there is not a step out.
+    let feet = player.position;
+    let loaded = |at: Vec3| world.voxels.contains(voxmar_engine::coords::ColumnPos::of_block(at.floor().as_ivec3()));
+    let half = voxmar_engine::physics::player::WIDTH / 2.0;
+    let corners = [Vec3::new(-half, 0.0, -half), Vec3::new(half, 0.0, -half), Vec3::new(-half, 0.0, half), Vec3::new(half, 0.0, half)];
+    if !corners.iter().all(|&c| loaded(feet + c)) || player.vitals.home.is_some_and(|home| !loaded(home.as_vec3())) {
+        return;
+    }
+    let inside = inside_home(&music.rules.home, feet, player.vitals.home, &world.fires, |p| world.voxels.block(p), |b| crate::ambience::defs::is_roof(&world.registry, b));
     // Only a step in: the first look in a world, or after dying, finds the player where
     // they are.
     if music.home.inside.replace(inside) != Some(false) || !inside {
@@ -693,7 +702,8 @@ fn start_game(mut commands: Commands, time: Res<Time>, music: Option<ResMut<Musi
     music.fade_out(&mut commands);
     music.next_at = Some(time.elapsed() + music.gap(&time, false));
     music.fighting = false;
-    music.home.inside = None;
+    // Another world counts its nights afresh.
+    (music.home.inside, music.home.night) = (None, None);
 }
 
 /// Back in the menus, the game's music fades out and the menu's starts again soon.

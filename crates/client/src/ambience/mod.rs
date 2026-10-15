@@ -553,7 +553,7 @@ fn listen(
         let axis = ambient.ambience.patter_axis(p);
         ambient.env.values[axis] = if patter == Some(p as u8) { falling } else { 0.0 };
     }
-    let sheltered = ambient.roof.under.map_or(0.0, |b| roofs.sheltered(|tag| registry.def(b).has_tag(tag)));
+    let sheltered = ambient.roof.under.map_or(0.0, |b| roofs.sheltered(|tag| registry.def(b).has_tag(tag), patter.map(usize::from)));
     ambient.env.set(Fixed::Sheltered, sheltered);
 }
 
