@@ -439,6 +439,9 @@ steps! {
     /// laid in the grid with what mends it, by the block it is mended at, shows itself mended
     /// and crafted comes back its mend's share the better, as the server mends it.
     ToolWear,
+    /// A stick held in a fire catches as a firebrand in the hand, which lights the dark
+    /// floor before the player warm while held, and burns out to a charred stick.
+    Firebrand,
     /// A survival player's inventory search finds the stone pickaxe by "pick"; its recipe
     /// opened in the viewer finishes the "Look It Up" quest; the quest book's page for the
     /// pickaxe shows its recipe inline, an item clicked there opens the viewer, and Back
@@ -620,6 +623,8 @@ struct Gate {
     pot_ground: Option<String>,
     /// What the tool wear step wears, breaks and mends.
     tool_wear: Option<WearPlan>,
+    /// What the firebrand step lights.
+    firebrand: Option<BrandPlan>,
     /// Raw small game carried, slots and pouch, as the dry step hangs the rack, so its
     /// readout can count what hung.
     rack_rabbits: u32,
@@ -908,6 +913,7 @@ impl Gate {
             chimney_since: None,
             pot_ground: None,
             tool_wear: None,
+            firebrand: None,
             rack_rabbits: 0,
             dry_clearing: None,
             dry_pickup: None,
@@ -1534,6 +1540,7 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         Step::Door => STEP_LIMIT + 25.0,
         // Two blocks mined with a tool, and a mend crafted, each waited on.
         Step::ToolWear => STEP_LIMIT + 15.0,
+        Step::Firebrand => STEP_LIMIT + 15.0,
         // A party walks in, is talked to, traded with and sent away, each in server seconds.
         Step::Party => 60.0,
         // The effects are judged once a second by the server, and a rest is a sleep away.
@@ -1855,6 +1862,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Recipes => recipes(world, gate, now, in_phase),
         Step::Chop => chop(world, gate, now),
         Step::ToolWear => tool_wear(world, gate, now),
+        Step::Firebrand => firebrand(world, gate, now, in_phase),
         Step::LookUp => look_up(world, gate, now, in_phase),
         Step::Refusal => refusal(world, gate, now, in_phase),
         Step::Merged => merged(world, gate, now, in_phase),
@@ -4552,7 +4560,7 @@ fn tool_wear(world: &mut World, gate: &mut Gate, now: f32) {
                 net.command(&format!("clear {}", content.blocks.def(item).name));
             }
         }
-        gate.next(Step::LookUp, now);
+        gate.next(Step::Firebrand, now);
     };
     let fail = |world: &mut World, gate: &mut Gate, check: &str, why: String| {
         let why = format!("{why} (crosshair on {}; screens {:?})", crosshair_on(world), covering_screens(world));
@@ -4585,8 +4593,8 @@ fn tool_wear(world: &mut World, gate: &mut Gate, now: f32) {
             gate.advance(now);
         }
         1 => {
-            // A frame later, the slot in hand sent: the tool given lands in it, worn to one
-            // use more than where it warns.
+            // The tool given lands in the first empty slot, the one picked; its wear (to one
+            // use more than where it warns) waits on it being there.
             let Some(plan) = gate.tool_wear else { return };
             let net = world.resource::<Net>();
             net.command(&format!("give {} 1", name(plan.tool)));
@@ -4597,7 +4605,7 @@ fn tool_wear(world: &mut World, gate: &mut Gate, now: f32) {
         2 => {
             let Some(plan) = gate.tool_wear else { return };
             if held(world, &plan).is_some_and(|s| s.item == plan.tool && s.wear == 0) {
-                world.resource::<Net>().command(&format!("wear {}", plan.warn_at + 1));
+                world.resource::<Net>().command(&format!("wear {} {}", plan.warn_at + 1, plan.slot + 1));
                 gate.advance(now);
             } else if waited {
                 let got = held(world, &plan).map(|s| (name(s.item), s.wear));
@@ -4647,7 +4655,7 @@ fn tool_wear(world: &mut World, gate: &mut Gate, now: f32) {
                     return;
                 }
                 gate.check("tool wear: warns", Ok(format!("a {} worn to {} of {} uses creaked as it broke a {}; its icon reddened and its wear bar shows {left:.0}%", name(plan.tool), plan.warn_at, plan.uses, name(plan.block))));
-                world.resource::<Net>().command("wear 1");
+                world.resource::<Net>().command(&format!("wear 1 {}", plan.slot + 1));
                 world.resource::<Net>().command(&format!("setblock {} {} {} {}", block_at.x, block_at.y, block_at.z, name(plan.block)));
                 gate.advance(now);
             } else {
@@ -4697,7 +4705,7 @@ fn tool_wear(world: &mut World, gate: &mut Gate, now: f32) {
         8 => {
             let Some(plan) = gate.tool_wear else { return };
             if held(world, &plan).is_some_and(|s| s.item == plan.tool && s.wear == 0) {
-                world.resource::<Net>().command(&format!("wear {}", plan.uses / 4));
+                world.resource::<Net>().command(&format!("wear {} {}", plan.uses / 4, plan.slot + 1));
                 gate.advance(now);
             } else if waited {
                 let got = held(world, &plan).map(|s| (name(s.item), s.wear));
@@ -4759,6 +4767,192 @@ fn tool_wear(world: &mut World, gate: &mut Gate, now: f32) {
                 end(world, gate);
             } else if waited {
                 fail(world, gate, "tool wear: mends", format!("crafted, the {} came back at wear {mended:?} (wanted {after}), grid emptied {empty}, in {WEAR_WAIT} server seconds", name(plan.tool)));
+            }
+        }
+    }
+}
+
+/// Server seconds the firebrand step waits on each answer.
+const BRAND_WAIT: f32 = 10.0;
+/// What a light held in the hand must add to the dark floor before the player, of 255: a
+/// brighter floor (`BRAND_LIFT`), redder than it is blue (`BRAND_WARMTH`), as a flame lights.
+/// A firebrand measured 43 brighter and 31 redder than blue at midnight; half that passes.
+const BRAND_LIFT: f64 = 20.0;
+const BRAND_WARMTH: f64 = 15.0;
+
+/// What the firebrand step lights and holds, picked from the content by what each is: the
+/// item that gives light held and burns away, what is held in a fire to make it, the fire
+/// (a placeable block of the station tag its recipe asks), and what it leaves burnt out.
+#[derive(Clone, Copy, Debug)]
+struct BrandPlan {
+    brand: BlockId,
+    stick: BlockId,
+    fire: BlockId,
+    burnt: Option<BlockId>,
+}
+
+impl BrandPlan {
+    fn of(content: &voxmar_engine::content::Content) -> Result<Self, String> {
+        let (blocks, tools) = (&content.blocks, &content.tools);
+        for (input, recipe) in content.cooking.iter() {
+            let brand = recipe.output;
+            if tools.held_light(brand) == 0 || tools.burns(brand) == 0 || recipe.def.level > 1 || !recipe.with.is_empty() {
+                continue;
+            }
+            let fire = blocks.ids().find(|&b| blocks.def(b).has_tag(&recipe.def.station) && blocks.info(b).placeable && blocks.item_of(b) == b && blocks.info(b).emission > 0);
+            if let Some(fire) = fire {
+                return Ok(Self { brand, stick: input, fire, burnt: tools.burnt(brand) });
+            }
+        }
+        Err("nothing in the content gives light held and burns, made at level 1 at a fire that can be set down".into())
+    }
+}
+
+/// A stick held in a fire becomes a firebrand in the hand; in a sealed dark room, with the
+/// fire gone, the floor before the player is lit warm while it is held and dark when it is
+/// put away (the same floor, settled, shots `firebrand-lit` and `firebrand-unlit`); burnt
+/// down to its last second it leaves what it burns to.
+fn firebrand(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    let at = gate.feet + IVec3::new(0, 0, 14) + CHOP_FROM_FIRE + IVec3::new(8, 0, 0);
+    let fire_at = at + IVec3::new(2, 0, 0);
+    let floor = at + IVec3::new(0, -1, 2);
+    let waited = gate.server_in_phase() > BRAND_WAIT;
+    let content = world.resource::<Launch>().content.clone();
+    let name = |id: BlockId| content.blocks.def(id).name.clone();
+    let end = |world: &mut World, gate: &mut Gate| {
+        mouse(world, MouseButton::Right, false);
+        world.resource_mut::<crate::render::particles::Particles>().hidden = false;
+        let net = world.resource::<Net>();
+        net.command(&format!("fill {} {} {} {} {} {} air", at.x - 3, at.y, at.z - 3, at.x + 3, at.y + 5, at.z + 3));
+        if let Some(plan) = gate.firebrand.take() {
+            for item in [Some(plan.brand), Some(plan.stick), plan.burnt].into_iter().flatten() {
+                net.command(&format!("clear {}", content.blocks.def(item).name));
+            }
+        }
+        gate.next(Step::LookUp, now);
+    };
+    let fail = |world: &mut World, gate: &mut Gate, check: &str, why: String| {
+        let why = format!("{why} (crosshair on {}; screens {:?})", crosshair_on(world), covering_screens(world));
+        gate.check(check, Err(why));
+        end(world, gate);
+    };
+    let in_hand = |world: &World| {
+        let player = world.resource::<LocalPlayer>();
+        player.inventory.get(player.selected)
+    };
+    match gate.phase {
+        0 => {
+            let plan = match BrandPlan::of(&content) {
+                Ok(plan) => plan,
+                Err(why) => return fail(world, gate, "firebrand", why),
+            };
+            gate.firebrand = Some(plan);
+            let net = world.resource::<Net>();
+            net.command("gamemode survival");
+            net.command("time set midnight");
+            net.command("creatures disperse");
+            for item in [Some(plan.brand), Some(plan.stick), plan.burnt].into_iter().flatten() {
+                net.command(&format!("clear {}", name(item)));
+            }
+            // A sealed room of stone, floor and all, with the fire in it.
+            net.command(&format!("fill {} {} {} {} {} {} stone", at.x - 3, at.y - 1, at.z - 3, at.x + 3, at.y + 5, at.z + 3));
+            net.command(&format!("fill {} {} {} {} {} {} air", at.x - 2, at.y, at.z - 2, at.x + 2, at.y + 4, at.z + 2));
+            net.command(&format!("setblock {} {} {} {}", fire_at.x, fire_at.y, fire_at.z, name(plan.fire)));
+            net.command(&format!("tp {} {} {}", at.x as f32 + 0.5, at.y, at.z as f32 + 0.5));
+            net.command(&format!("give {} 1", name(plan.stick)));
+            gate.advance(now);
+        }
+        // The stick in hand and the fire there: held into the fire until it catches.
+        1 => {
+            let Some(plan) = gate.firebrand else { return };
+            let burning = world.resource::<ClientWorld>().block(fire_at) == Some(plan.fire);
+            let (_, slot) = holding(world, &name(plan.stick));
+            if let (true, Some(slot)) = (burning, slot.filter(|&s| s < voxmar_engine::inventory::HOTBAR_SLOTS)) {
+                world.resource_mut::<LocalPlayer>().selected = slot;
+                aim_at(world, fire_at.as_vec3() + Vec3::new(0.5, 0.3, 0.5));
+                mouse(world, MouseButton::Right, true);
+                gate.advance(now);
+            } else if waited {
+                fail(world, gate, "firebrand: lit", format!("the {} ({burning}) or a {} in the hotbar ({slot:?}) never came in {BRAND_WAIT} server seconds", name(plan.fire), name(plan.stick)));
+            }
+        }
+        2 => {
+            let Some(plan) = gate.firebrand else { return };
+            aim_at(world, fire_at.as_vec3() + Vec3::new(0.5, 0.3, 0.5));
+            let held = in_hand(world);
+            if held.is_some_and(|s| s.item == plan.brand) {
+                mouse(world, MouseButton::Right, false);
+                gate.check("firebrand: lit", Ok(format!("a {} held in a {} came back a {} in hand", name(plan.stick), name(plan.fire), name(plan.brand))));
+                world.resource::<Net>().command(&format!("setblock {} {} {} air", fire_at.x, fire_at.y, fire_at.z));
+                gate.advance(now);
+            } else if gate.server_in_phase() > BRAND_WAIT + 5.0 {
+                let held = held.map(|s| name(s.item));
+                fail(world, gate, "firebrand: lit", format!("holding the {} in the {} for {:.1} server seconds left {held:?} in hand", name(plan.stick), name(plan.fire), gate.server_in_phase()));
+            }
+        }
+        // The fire gone and the room's light drawn: the floor before the player, lit by the
+        // brand alone.
+        3 => {
+            let Some(plan) = gate.firebrand else { return };
+            aim_at(world, floor.as_vec3() + Vec3::new(0.5, 1.0, 0.5));
+            let out = world.resource::<ClientWorld>().block(fire_at).is_some_and(|b| b == BlockId::AIR);
+            let held = in_hand(world).is_some_and(|s| s.item == plan.brand);
+            if out && held && light_drawn(world, gate, &[fire_at, at, floor]) && in_phase > 0.5 {
+                let Some(shot) = fire_shot(world, gate, "firebrand-lit") else { return };
+                match ground_colour(&shot) {
+                    Ok(colour) => {
+                        gate.fire_lit = Some(colour);
+                        // Put away: an empty hand, the same floor.
+                        if !empty_hand(world) {
+                            return fail(world, gate, "firebrand: lights", "no empty hotbar slot to put the firebrand away by".into());
+                        }
+                        gate.advance(now);
+                    }
+                    Err(why) => fail(world, gate, "firebrand: lights", why),
+                }
+            } else if waited {
+                fail(world, gate, "firebrand: lights", format!("the {} gone from the client ({out}) with the {} in hand ({held}) never came in {BRAND_WAIT} server seconds", name(plan.fire), name(plan.brand)));
+            }
+        }
+        4 => {
+            let Some(plan) = gate.firebrand else { return };
+            aim_at(world, floor.as_vec3() + Vec3::new(0.5, 1.0, 0.5));
+            if in_hand(world).is_none() && light_drawn(world, gate, &[fire_at, at, floor]) && in_phase > 0.5 {
+                let Some(shot) = fire_shot(world, gate, "firebrand-unlit") else { return };
+                let judged = match (gate.fire_lit.take(), ground_colour(&shot)) {
+                    (Some(lit), Ok(unlit)) => {
+                        let added = [0, 1, 2].map(|c| lit[c] - unlit[c]);
+                        let brighter = added.iter().sum::<f64>() / 3.0;
+                        let said = format!("the floor before the player is rgb {:.0} {:.0} {:.0} with the {} held and {:.0} {:.0} {:.0} put away: it adds {:.0} {:.0} {:.0}", lit[0], lit[1], lit[2], name(plan.brand), unlit[0], unlit[1], unlit[2], added[0], added[1], added[2]);
+                        if brighter > BRAND_LIFT && added[0] > added[2] + BRAND_WARMTH { Ok(said) } else { Err(format!("{said}, wanted over {BRAND_LIFT} brighter and {BRAND_WARMTH} redder than blue")) }
+                    }
+                    (None, _) => Err("the lit floor was not kept".into()),
+                    (_, Err(why)) => Err(why),
+                };
+                gate.check("firebrand: lights", judged);
+                // Back in hand, down to its last second.
+                let (_, slot) = holding(world, &name(plan.brand));
+                let Some(slot) = slot.filter(|&s| s < voxmar_engine::inventory::HOTBAR_SLOTS) else {
+                    return fail(world, gate, "firebrand: burns out", format!("the {} is not in the hotbar", name(plan.brand)));
+                };
+                // Its slot named, so the wear needs no wait on the server hearing the hand.
+                world.resource_mut::<LocalPlayer>().selected = slot;
+                world.resource::<Net>().command(&format!("wear 1 {}", slot + 1));
+                gate.advance(now);
+            } else if waited {
+                fail(world, gate, "firebrand: lights", format!("the hand never came empty in {BRAND_WAIT} server seconds"));
+            }
+        }
+        _ => {
+            let Some(plan) = gate.firebrand else { return };
+            let held = in_hand(world).map(|s| s.item);
+            if held == plan.burnt {
+                let left = plan.burnt.map_or_else(|| "nothing".to_owned(), |b| format!("a {}", name(b)));
+                gate.check("firebrand: burns out", Ok(format!("at its last second the {} burnt out, leaving {left} in hand", name(plan.brand))));
+                end(world, gate);
+            } else if waited {
+                let held = held.map(|b| name(b));
+                fail(world, gate, "firebrand: burns out", format!("a second from burnt out, the {} still left {held:?} in hand after {BRAND_WAIT} server seconds (wanted {:?})", name(plan.brand), plan.burnt.map(|b| name(b))));
             }
         }
     }

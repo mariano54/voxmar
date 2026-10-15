@@ -951,14 +951,28 @@ impl Server {
         if left > 0 { Ok(Words::key("command.give.spilled").with("gave", gave).with("left", Words::text(left))) } else { Ok(gave) }
     }
 
-    /// `/wear <uses left>`: the tool in hand worn down (or mended) to that many uses left.
-    fn wear_command(&mut self, source: Source, args: &[String]) -> Reply {
+    /// `/wear <uses left> [hotbar slot]`: the tool in hand (or in that hotbar slot, counted
+    /// from 1) worn down (or mended) to that many uses left, or what burns there (a
+    /// firebrand) to that many seconds. Naming the slot needs no wait for the server to hear
+    /// which slot is in hand.
+    pub(crate) fn wear_command(&mut self, source: Source, args: &[String]) -> Reply {
         let player = self.players.get_mut(&Self::me(source)?).ok_or_else(|| Words::key("command.error.nobody_to_give_to"))?;
-        let slot = player.selected;
+        let (left, slot) = match args {
+            [left] => (left, player.selected),
+            [left, slot] => {
+                let most = voxmar_engine::inventory::HOTBAR_SLOTS;
+                let slot = slot
+                    .parse::<usize>()
+                    .ok()
+                    .filter(|n| (1..=most).contains(n))
+                    .ok_or_else(|| Words::key("command.error.not_a_count").with("word", slot.as_str()).with("max", Words::text(most)))?;
+                (left, slot - 1)
+            }
+            _ => return Err(Words::key("command.error.wear_what")),
+        };
         let held = player.inventory.get(slot);
-        let uses = held.map_or(0, |stack| self.content.tools.uses(stack.item));
+        let uses = held.map_or(0, |stack| self.content.tools.life(stack.item));
         let (Some(mut stack), true) = (held, uses > 0) else { return Err(Words::key("command.error.wear_nothing")) };
-        let [left] = args else { return Err(Words::key("command.error.wear_what")) };
         let left = left
             .parse::<u16>()
             .ok()

@@ -319,13 +319,13 @@ fn update_slots(
     }
     let tools = &launch.content.tools;
     for (slot, children, mut visibility) in &mut bars {
-        let worn = shown.0.get(slot.0).filter(|s| s.wear > 0 && tools.uses(s.item) > 0);
+        let worn = shown.0.get(slot.0).filter(|s| s.wear > 0 && tools.life(s.item) > 0);
         let Some(stack) = worn else {
             visibility.set_if_neq(Visibility::Hidden);
             continue;
         };
         visibility.set_if_neq(Visibility::Inherited);
-        let uses = tools.uses(stack.item);
+        let uses = tools.life(stack.item);
         let left = uses.saturating_sub(stack.wear) as f32 / uses as f32;
         let color = if inventory::worn_low(tools, stack.item, stack.wear) { WEAR_LOW } else { WEAR_LOW.mix(&WEAR_FULL, left) };
         if let Some(&fill) = children.first()

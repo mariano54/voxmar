@@ -591,6 +591,8 @@
     "quest.base.sweet_relief": "あまいいやし",
     "block.base.farmland": "こうち",
     "block.base.stick": "ぼう",
+    "block.base.firebrand": "ひのついたぼう",
+    "block.base.charred_stick": "こげたぼう",
     "block.base.copper_ingot": "どうのいんごっと",
     "block.base.iron_ingot": "てつのいんごっと",
     "block.base.taming_treat": "てなずけのおやつ",

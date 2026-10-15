@@ -1383,6 +1383,8 @@
     "quest.base.found_and_thanked.why": "A child lost far from home wanders one spot. Food in your hand and they follow you to the nearest settlement. Days later the parents come looking for you near your home, with coins and bread for your trouble. Bring the child home, then meet the parents.",
     "block.base.farmland": "Farmland",
     "block.base.stick": "Stick",
+    "block.base.firebrand": "Firebrand",
+    "block.base.charred_stick": "Charred Stick",
     "block.base.dead_log": "Dead Log",
     "block.base.copper_ingot": "Copper Ingot",
     "block.base.iron_ingot": "Iron Ingot",

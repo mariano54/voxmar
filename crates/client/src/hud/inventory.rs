@@ -979,8 +979,13 @@ fn seed_line(
 /// player's is short of it), then its max hit at their level and how often it strikes, and
 /// its reach if it is not the usual.
 /// How many uses a tool or weapon has left of all it lasts, red when nearly worn out, and
-/// what mends it where.
+/// what mends it where; or how long what burns has left.
 fn wear_lines(locale: &Locale, content: &voxmar_engine::content::Content, item: voxmar_engine::block::BlockId, wear: u16) -> Vec<(String, Color)> {
+    let burns = content.tools.burns(item);
+    if burns > 0 {
+        let color = if worn_low(&content.tools, item, wear) { ERROR } else { SOFT };
+        return vec![(locale.format("item.burns", &[("left", &burns.saturating_sub(wear))]), color)];
+    }
     let uses = content.tools.uses(item);
     if uses == 0 {
         return Vec::new();
@@ -1001,9 +1006,10 @@ fn wear_lines(locale: &Locale, content: &voxmar_engine::content::Content, item: 
     lines
 }
 
-/// Whether a tool worn by `wear` is down to the share where it warns (`tool::Wear::warn`).
+/// Whether a tool worn by `wear` (or a firebrand burnt by it) is down to the share where it
+/// warns (`tool::Wear::warn`).
 pub fn worn_low(tools: &voxmar_engine::tool::ToolRegistry, item: voxmar_engine::block::BlockId, wear: u16) -> bool {
-    let uses = tools.uses(item);
+    let uses = tools.life(item);
     uses > 0 && wear > 0 && uses.saturating_sub(wear) <= (uses as f32 * tools.wear().warn).ceil() as u16
 }
 

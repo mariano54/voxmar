@@ -67,8 +67,8 @@
         ),
         (
             name: "wear",
-            usage: "<uses left>",
-            help: "Wears the tool in your hand down (or mends it) to that many uses left.",
+            usage: "<uses left> [hotbar slot]",
+            help: "Wears the tool in your hand (or in that hotbar slot, 1 to 9) down (or mends it) to that many uses left, or burns what is there down to that many seconds.",
             permission: Admin,
             run: Wear,
         ),

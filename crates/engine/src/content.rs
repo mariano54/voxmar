@@ -591,7 +591,7 @@ fn stack_limits(blocks: &BlockRegistry, files: &[String]) -> Result<Vec<u8>, Reg
         .map(|id| {
             let tags = &blocks.def(id).tags;
             let own = tags.iter().find_map(|t| t.strip_prefix("stack:")?.parse::<u8>().ok()).filter(|&n| n > 0);
-            let wears = tags.iter().any(|t| t.starts_with("uses:"));
+            let wears = tags.iter().any(|t| t.starts_with("uses:") || t.starts_with("burns:"));
             own.filter(|_| !wears).unwrap_or(if wears || tags.iter().any(|t| single.contains(t)) { 1 } else { crate::inventory::MAX_STACK }).min(crate::inventory::MAX_STACK)
         })
         .collect())

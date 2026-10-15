@@ -14,6 +14,10 @@
 //! `head:ITEM` if it names one, and `mend:ITEM` (or `mend:#TAG`) says what mends it at the
 //! block `Wear::mend_near` names (or its own `mend_near:TAG`): back by `Wear::mend` of its
 //! uses, never for free.
+//!
+//! What burns as it is carried (a firebrand) says `burns:N`: it lasts N seconds, counted in
+//! its stack's wear as a tool's uses are, and leaves `burns_to:ITEM` if it names one. A
+//! thing either wears or burns. `held_light:N` lights what is around the hand holding it.
 
 use serde::Deserialize;
 
@@ -168,6 +172,10 @@ pub struct Tool {
     pub yield_: f32,
     /// Uses it lasts (`uses:N`); 0 if it never wears.
     pub uses: u16,
+    /// Seconds it burns, carried, before it is spent (`burns:N`); 0 if it never burns.
+    pub burns: u16,
+    /// How much light it gives held (`held_light:N`, 1 to 15); 0 for none.
+    pub held_light: u8,
 }
 
 /// Every kind of tool and every block rule, with each item's tool worked out once.
@@ -197,6 +205,8 @@ pub struct ToolRegistry {
     /// Each item mended by any item with a tag (`mend:#TAG`): the first such tag, for
     /// naming what mends it (`item.mend.tag.TAG`).
     mend_by_tag: Vec<Option<String>>,
+    /// Each item that burns: what it leaves once burnt out (`burns_to:ITEM`), if anything.
+    burnt: Vec<Option<BlockId>>,
 }
 
 /// The tag of a tool that never wears (a pail, a fishing rod): every other tool says
@@ -262,11 +272,12 @@ impl ToolRegistry {
         let mut suited = Vec::with_capacity(blocks.len());
         let (mut heads, mut mends, mut mended_near) = (Vec::with_capacity(blocks.len()), Vec::with_capacity(blocks.len()), Vec::with_capacity(blocks.len()));
         let mut mend_by_tag = Vec::with_capacity(blocks.len());
+        let mut burnt = Vec::with_capacity(blocks.len());
         for id in blocks.ids() {
             let def = blocks.def(id);
             let tags = &def.tags;
             let bad = |why: String| RegistryError(format!("`{}`: {why}", def.name));
-            for once in ["uses:", "head:", "mend_near:"] {
+            for once in ["uses:", "head:", "mend_near:", "burns:", "burns_to:", "held_light:"] {
                 if tags.iter().filter(|t| t.starts_with(once)).count() > 1 {
                     return Err(bad(format!("more than one `{once}` tag")));
                 }
@@ -305,7 +316,23 @@ impl ToolRegistry {
             if (head.is_some() || !mend.is_empty()) && uses == 0 {
                 return Err(bad("a head or mend, but no `uses:N` to wear".into()));
             }
-            if uses == 0 && tags.iter().any(|t| t == "tool") && !tags.iter().any(|t| t == NEVER_WEARS) {
+            let burns = match tags.iter().find_map(|t| t.strip_prefix("burns:")) {
+                None => 0,
+                Some(n) => n.parse::<u16>().ok().filter(|&n| n > 0).ok_or_else(|| bad(format!("`burns:{n}` is not a count of seconds above 0")))?,
+            };
+            if burns > 0 && uses > 0 {
+                return Err(bad("both `uses:N` and `burns:N`: a thing either wears or burns".into()));
+            }
+            let burnt_to = tags.iter().find_map(|t| t.strip_prefix("burns_to:")).map(item).transpose()?;
+            if burnt_to.is_some() && burns == 0 {
+                return Err(bad("`burns_to:` but no `burns:N` to burn".into()));
+            }
+            let held_light = match tags.iter().find_map(|t| t.strip_prefix("held_light:")) {
+                None => 0,
+                Some(n) => n.parse::<u8>().ok().filter(|n| (1..=crate::light::MAX_LIGHT).contains(n)).ok_or_else(|| bad(format!("`held_light:{n}` is not a light level from 1 to {}", crate::light::MAX_LIGHT)))?,
+            };
+            burnt.push(burnt_to);
+            if uses == 0 && tags.iter().any(|t| t == "tool") && burns == 0 && !tags.iter().any(|t| t == NEVER_WEARS) {
                 return Err(bad(format!("a tool with no `uses:N` to wear; give it one, or `{NEVER_WEARS}`")));
             }
             heads.push(head);
@@ -319,16 +346,39 @@ impl ToolRegistry {
                 speed: number(tags, "speed:").unwrap_or(1.0).max(0.1),
                 yield_: number(tags, "yield:").unwrap_or(0.0).max(0.0),
                 uses,
+                burns,
+                held_light,
             });
             covered.push(rules.iter().position(|rule| rule.tags.iter().all(has)));
             suited.push(kinds.iter().enumerate().filter(|(_, k)| k.mines.iter().any(has)).map(|(i, _)| i).collect());
         }
-        Ok(Self { kinds, rules, tools, covered, suited, wear, savers, heads, mends, mended_near, mend_share: Vec::new(), mend_skill: Vec::new(), mend_firm: Vec::new(), mend_by_tag })
+        Ok(Self { kinds, rules, tools, covered, suited, wear, savers, heads, mends, mended_near, mend_share: Vec::new(), mend_skill: Vec::new(), mend_firm: Vec::new(), mend_by_tag, burnt })
     }
 
     /// How tools and weapons wear.
     pub fn wear(&self) -> &Wear {
         &self.wear
+    }
+
+    /// Seconds `item` burns while carried; 0 if it never burns.
+    pub fn burns(&self, item: BlockId) -> u16 {
+        self.tools.get(item.0 as usize).map_or(0, |tool| tool.burns)
+    }
+
+    /// What `item` leaves once burnt out, if anything.
+    pub fn burnt(&self, item: BlockId) -> Option<BlockId> {
+        self.burnt.get(item.0 as usize).copied().flatten()
+    }
+
+    /// The light `item` gives in the hand; 0 for none.
+    pub fn held_light(&self, item: BlockId) -> u8 {
+        self.tools.get(item.0 as usize).map_or(0, |tool| tool.held_light)
+    }
+
+    /// What `item` has to spend, worn by use or burnt by time (an `ItemStack`'s `wear` counts
+    /// it down); 0 if it lasts for ever.
+    pub fn life(&self, item: BlockId) -> u16 {
+        self.uses(item).max(self.burns(item))
     }
 
     /// Uses `item` lasts; 0 if it never wears.
@@ -649,6 +699,30 @@ mod tests {
         tools.mends[pick.0 as usize] = vec![cobblestone];
         let error = ToolRegistry::link(&content).unwrap_err().to_string();
         assert!(error.contains("iron_pickaxe") && error.contains("no piece of"), "{error}");
+    }
+
+    /// What burns carried (`burns:N`) lasts that many seconds, counted as wear, leaves what
+    /// `burns_to:` names and may light the hand (`held_light:N`); load refuses a thing that
+    /// both wears and burns, burns to nothing that exists or lights past full light.
+    #[test]
+    fn what_burns_is_told_by_its_tags_and_checked() {
+        let block = |name: &str, tags: &[&str]| BlockDef { name: format!("t:{name}"), tags: tags.iter().map(|t| t.to_string()).collect(), ..Default::default() };
+        let skills = SkillRegistry::default();
+        let load = |brand: &[&str]| {
+            let blocks = BlockRegistry::new(vec![block("air", &[]), block("ash", &[]), block("brand", brand)]).unwrap();
+            let (brand, ash) = (blocks.expect("t:brand"), blocks.expect("t:ash"));
+            ToolRegistry::new(vec![ToolRegistry::read("t", "(kinds: [], blocks: [])").unwrap()], &blocks, &skills).map(|tools| (tools.burns(brand), tools.burnt(brand).map(|b| b == ash), tools.held_light(brand), tools.life(brand)))
+        };
+        assert_eq!(load(&["burns:90", "burns_to:t:ash", "held_light:8"]).unwrap(), (90, Some(true), 8, 90));
+        assert_eq!(load(&[]).unwrap(), (0, None, 0, 0), "nothing burns unless it says");
+        for bad in [&["burns:0"][..], &["burns:90", "uses:20"], &["burns_to:t:ash"], &["burns:9", "burns_to:t:soot"], &["held_light:16"], &["held_light:0"]] {
+            assert!(load(bad).is_err(), "{bad:?} loaded");
+        }
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        let content = crate::content::Content::load(&assets).unwrap();
+        let brand = content.blocks.expect("base:firebrand");
+        assert_eq!((content.tools.burns(brand), content.tools.burnt(brand), content.tools.held_light(brand)), (90, Some(content.blocks.expect("base:charred_stick")), 8));
+        assert_eq!(crate::inventory::max_stack(brand), 1, "what burns is carried one at a time");
     }
 
     /// The game's tools wear, break to nothing and mend by what made them, at a
