@@ -24,6 +24,16 @@
             Paint(palette: "main", base: 0.55, shade: [Noise(cells: (8, 8), amount: 0.35), Noise(cells: (32, 32), amount: 0.6), Border(width: 1, amount: -0.35)], clean: true),
             Paint(palette: "tie", base: 0.5, mask: [Stripes(period: 16.0, width: 0.0625, amount: 1.0, vertical: true, phase: 7.0)], above: 0.5, shadow: -1),
         ]),
+        // Thatch on a roof: straw running down the slope in fine streaks, laid in courses a
+        // quarter of the face high (as the roof shape steps, shapes.ron "roof"), each
+        // course's ragged lower edge dark where it hangs over the next.
+        "block/thatch": (size: (32, 32), palettes: {"main": "hay_straw"}, layers: [
+            Paint(palette: "main", base: 0.6, shade: [
+                Noise(cells: (16, 2), octaves: 2, amount: 0.35), Noise(cells: (32, 8), amount: 0.45),
+                Stripes(period: 8.0, width: 0.25, amount: -0.55, warp: 1.0, phase: 6.0),
+                Stripes(period: 8.0, width: 0.125, amount: 0.25, phase: 0.0),
+            ], clean: true),
+        ]),
         // Four staves round, their seams dark, grain running up them, darker towards the
         // edges where the barrel turns away. Its iron hoops are drawn where the barrel
         // shape's hoop boxes are (shaped.ron, block/barrel_side).

@@ -1,0 +1,47 @@
+// Building pieces (design: the first set of shaped pieces a home or a village is built
+// with): posts and beams to frame a wall, a lattice window, roofs that step down in courses
+// to an eave with a ridge along the top, and slabs and stairs in cobblestone and stone
+// bricks. Their boxes are in shapes.ron, and each collides as its boxes (a post is walked
+// round, a roof walked up course by course), so none is only a look.
+//
+// Timber comes in the three woods furniture does, its greyscale drawings tinted the wood's
+// colour (the family lines below). A roof stops light as a solid block does, so a roofed
+// room is dark until it is lit; its faces take the light of the open side they face
+// (`light_filter: 14`, see mesh.rs `emit_model`). Placed, a roof's eave and a lattice's face
+// turn to whoever set them; a beam runs away from them, and set against a block's
+// underside it hangs at the top of its cell, a joist under a floor (`flips`). A lattice lets
+// light through the squares between its laths, so it is no `window` (a pane that glows by
+// the light through it, `lit_through`): its laths share the timber's drawing, which glowing
+// would light every oak post and chair leg.
+(
+    templates: {
+        // Timber in one wood (`{name}`).
+        "timber": [
+            (name: "{name}_post", render: Model, shape: "post", sound: Wood, textures: All("furniture_grain"), hardness: 2.0, color: (160, 120, 70), tags: ["timber", "post", "wood", "building", "fuel"]),
+            (name: "{name}_beam", render: Model, shape: "beam", facing: true, flips: true, sound: Wood, textures: All("furniture_grain"), hardness: 2.0, color: (160, 120, 70), tags: ["timber", "beam", "wood", "building", "fuel"]),
+            (name: "{name}_lattice_window", render: Model, shape: "lattice_window", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 1.0, color: (160, 120, 70), tags: ["timber", "lattice", "wood", "building"]),
+            (name: "{name}_shingles", render: Model, shape: "roof", facing: true, light_filter: 14, sound: Wood, textures: All("shingles_grey"), hardness: 1.5, color: (160, 120, 70), tags: ["roof", "shingle", "wood", "building", "fuel"]),
+            (name: "{name}_shingle_ridge", render: Model, shape: "roof_ridge", facing: true, light_filter: 14, sound: Wood, textures: All("shingles_grey"), hardness: 1.5, color: (160, 120, 70), tags: ["roof", "ridge", "shingle", "wood", "building", "fuel"]),
+        ],
+        // Slabs and stairs of one cut stone (`{name}`, by default the full block's name and
+        // texture too).
+        "cut_stone": [
+            (name: "{name}_slab", render: Model, shape: "slab", flips: true, textures: All("{name}"), hardness: 2.0, color: (115, 115, 115), tags: ["slab", "stone", "building"]),
+            (name: "{name}_stairs", render: Model, shape: "stairs", facing: true, flips: true, textures: All("{name}"), hardness: 2.0, color: (115, 115, 115), tags: ["stairs", "stone", "building"]),
+        ],
+    },
+    families: [
+        // The furniture's three tones: pale birch, warm oak, dark oak.
+        (template: "timber", name: "birch", all: (tint: Fixed(236, 212, 164), color: (200, 175, 125))),
+        (template: "timber", name: "oak", all: (tint: Fixed(205, 150, 86), color: (160, 120, 70))),
+        (template: "timber", name: "dark_oak", all: (tint: Fixed(130, 88, 58), color: (100, 70, 45))),
+        (template: "cut_stone", name: "cobblestone", tags: ["cobbled"], all: (color: (110, 110, 110))),
+        (template: "cut_stone", name: "stone_brick", tags: ["bricks"], all: (textures: All("stone_bricks"), color: (120, 120, 120))),
+    ],
+    blocks: [
+        // Thatch: straw laid in courses on a roof, the first roof anyone can make (grass
+        // twine or wheat). It stops rain and light as shingles do, and feeds a fire as straw does.
+        (name: "thatch_roof", render: Model, shape: "roof", facing: true, light_filter: 14, sound: Grass, textures: All("thatch"), hardness: 0.8, color: (196, 166, 82), tags: ["roof", "thatch", "building", "fuel"]),
+        (name: "thatch_ridge", render: Model, shape: "roof_ridge", facing: true, light_filter: 14, sound: Grass, textures: All("thatch"), hardness: 0.8, color: (196, 166, 82), tags: ["roof", "ridge", "thatch", "building", "fuel"]),
+    ],
+)
