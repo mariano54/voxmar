@@ -21,13 +21,29 @@ and a pixel, `core/movement.ron`) without jumping; a whole block still takes a j
 | Half-timber | `half_timber` | a whole block: daub in a braced timber frame | | 2 beams, 2 daub make 4 (4) |
 | Shutters | `wooden_shutters` (`_open`) | two plank leaves across the middle; open, folded back to the jambs and stopping nothing | face the placer; a right click opens and shuts them | 4 planks, 2 sticks make 2 (2) |
 | Chimney | `chimney_stack`, `chimney_pot` | a brick flue 3/4 of a block across; a clay pot with a rim | | 4 stone bricks make 2 (6); 4 fired clay round a flue make 2 (3) |
+| Stone flue, hood | `stone_flue`, `chimney_hood` | a cobble flue as the brick one; a brick skirt round a hearth narrowing to a flue | | 4 cobblestone and clay make 2 (2); 5 stone bricks make 1 (6) |
+| Jetty beam | `<timber>_jetty_beam` | a joist along the top of the cell, out past the wall, a brace stepping down to the wall | overhang towards the placer | 2 beams, a post make 2 (4) |
+| Door frame | `<timber>_door_frame` (`_top`) | jambs either side and a lintel, two blocks high; stops nothing | placed whole, as a door; faces the placer | 2 posts, a beam make 1 (3) |
 
 The home's ladder runs from a hide lean-to through wattle and daub and timber to stone and
 brick. Every piece on it carries a shelter tag for how well it keeps the weather out of a
 room: `shelter:draughty` (hide, wattle), `shelter:sound` (daub, half-timber, shutters, the
 wooden door) or `shelter:fine` (the chimney pieces); the home's wall scan reads them. Their
 recipes start from worked materials (sticks, twine, hide, fired clay, bricks, beams), never
-from blocks straight out of the ground; daub also takes clay, smoothed onto a wattle panel.
+from blocks straight out of the ground; daub also takes clay, smoothed onto a wattle panel,
+and the stone flue cobbles laid in clay.
+
+Every piece and every whole block a building is made of has exactly one shelter grade, and
+every piece a material (wood, timber, stone, bricks, thatch, shingle, hide, wattle, daub,
+terracotta, cloth, metal, glass); devices, furniture, goods and an open door or shutter
+are graded by what they stand in (engine test `every_building_block_has_one_shelter_grade_and_a_piece_its_material`).
+
+Chimney pieces (`chimney_piece`: the stone and brick flues, the hood, the pot) carry a
+hearth's smoke up through a roof: the stone flue comes at Construction 2, before brick, so a
+thatched house can have one, and the home's fire rule keeps a chimney's roof from catching.
+A jetty beam sticks out of the wall under an upper floor that overhangs the street; a door
+frame finishes a doorway with no door, and stops nothing, so villagers and animals walk
+through it as through any open way.
 
 Cut stone keeps its stone's tags (a cobblestone slab is `stone`) but never stands in for a
 whole block: a recipe's or a multiblock's `tag:` cell that whole blocks answer takes no piece

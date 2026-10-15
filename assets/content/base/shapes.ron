@@ -441,6 +441,34 @@
             (from: (5, 0, 5), to: (11, 9, 11)),
             (from: (4.5, 9, 4.5), to: (11.5, 11, 11.5)),
         ]),
+        // A hood: a skirt of brick round the hearth below it, narrowing to the flue above.
+        "chimney_hood": (boxes: [
+            (from: (0, 0, 0), to: (16, 6, 2)),
+            (from: (0, 0, 14), to: (16, 6, 16)),
+            (from: (0, 0, 2), to: (2, 6, 14)),
+            (from: (14, 0, 2), to: (16, 6, 14)),
+            (from: (1, 6, 1), to: (15, 10, 15)),
+            (from: (2, 10, 2), to: (14, 16, 14)),
+        ]),
+        // A jetty beam: a joist along the top of the cell from front (north, the overhang)
+        // to back (the wall it comes out of), its end cut square, and a brace under it
+        // stepping down to the wall.
+        "jetty_beam": (boxes: [
+            (from: (5, 11, 0), to: (11, 16, 16)),
+            (from: (5.5, 7, 9), to: (10.5, 11, 16)),
+            (from: (5.5, 3, 13), to: (10.5, 7, 16)),
+        ]),
+        // A door frame across the middle of the cell: a jamb on either side, and above them
+        // a lintel. The way between is eleven sixteenths across, wider than anyone who walks.
+        "door_frame": (boxes: [
+            (from: (0, 0, 5.5), to: (2.5, 16, 10.5)),
+            (from: (13.5, 0, 5.5), to: (16, 16, 10.5)),
+        ]),
+        "door_frame_top": (boxes: [
+            (from: (0, 0, 5.5), to: (2.5, 13, 10.5)),
+            (from: (13.5, 0, 5.5), to: (16, 13, 10.5)),
+            (from: (0, 13, 5), to: (16, 16, 11)),
+        ]),
         "roof_ridge": (boxes: [
             (from: (0, 0, 0), to: (16, 4, 16), cull: true),
             (from: (0, 4, 4), to: (16, 8, 12), cull: true),
