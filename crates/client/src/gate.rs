@@ -502,6 +502,10 @@ steps! {
     /// Every journal page, in English and Japanese: no text reaches past the element it
     /// sits in. Each page has the time a step has, to be drawn and read.
     FitJournal,
+    /// The screens with keys under them in a window of `SMALL` (the interface at 75%), in
+    /// English and Japanese: no text reaches past the element it sits in, and the keys under
+    /// each screen are clear of it and of the HUD along the bottom.
+    FitSmall,
     /// Leaving the world for the title screen.
     Leave,
     /// The title screen and every menu before a game, in English and Japanese: no text
@@ -733,6 +737,8 @@ struct Gate {
     cover_checked: bool,
     /// Texts found not to fit, each once per language: what, and where it was first seen.
     spills: Vec<(String, String)>,
+    /// What the keys under a screen ran into on the views of a text-fit step, each once.
+    keys_blocked: Vec<String>,
     /// The text-fit views read only once `FIT_SETTLE` passed, their layout never settled.
     fit_settled: Vec<String>,
     /// Views in a language with line rules where no text had its line breaks checked.
@@ -951,6 +957,7 @@ impl Gate {
             fall_judged: false,
             cover_checked: false,
             spills: Vec::new(),
+            keys_blocked: Vec::new(),
             fit_settled: Vec::new(),
             unbroken: Vec::new(),
             fit_layout: ((Step::Load, 0), 0, false, 0, false, 0),
@@ -1338,7 +1345,7 @@ fn run(world: &mut World) {
         gate.killed_on_purpose = false;
     }
     // (The text-fit steps put the player through the death screen on purpose.)
-    if screen == Screen::InGame && !matches!(gate.step, Step::Fit | Step::FitJournal | Step::FitMenus | Step::Leave | Step::Done) {
+    if screen == Screen::InGame && !matches!(gate.step, Step::Fit | Step::FitJournal | Step::FitSmall | Step::FitMenus | Step::Leave | Step::Done) {
         watch_health(world, &mut gate);
     }
     let frame_ms = world.resource::<Time<Real>>().delta_secs() * 1000.0;
@@ -1530,7 +1537,7 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
     // view by view: sixty views at a settle each take most of a step's time on their own,
     // and a lagging machine draws each later, not wrongly.
     let (taken, clock) = match gate.step {
-        Step::Fit | Step::FitJournal | Step::FitMenus => (now - gate.phase_since, "s"),
+        Step::Fit | Step::FitJournal | Step::FitSmall | Step::FitMenus => (now - gate.phase_since, "s"),
         Step::Load | Step::Leave => (now - gate.since, "s"),
         _ => (gate.server_in_step().min(now - gate.since), " s by the server's clock and the game's"),
     };
@@ -1838,7 +1845,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Quests => quests(world, gate, now, in_phase),
         Step::Catalogue => catalogue(world, gate, now, in_phase),
         Step::Screenshot => screenshot(world, gate, now, in_phase),
-        Step::Fit | Step::FitJournal => fit(world, gate, now, in_phase),
+        Step::Fit | Step::FitJournal | Step::FitSmall => fit(world, gate, now, in_phase),
         Step::FitMenus => fit(world, gate, now, in_phase),
         Step::Leave => {
             if gate.phase == 0 {
@@ -7289,9 +7296,34 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.advance(now);
             }
         }
+        // + on the keypad, the pointer over the web, zooms it back in a step.
+        24 => {
+            let Some((_, cell)) = web_well(world) else {
+                return quit(world, gate, "quests: zoom keys", "the quest book has no web or no quests".into());
+            };
+            gate.web_cell = cell;
+            key(world, KeyCode::NumpadAdd, true);
+            gate.advance(now);
+        }
+        25 => {
+            key(world, KeyCode::NumpadAdd, false);
+            let zoom = world.resource::<crate::hud::quests::QuestView>().zoom;
+            let cell = web_well(world).map_or(0.0, |(_, cell)| cell);
+            let settled = zoom == 0 && cell > gate.web_cell && in_phase > 0.2;
+            if !settled && in_phase < 2.0 {
+                return;
+            }
+            let result = if settled {
+                Ok(format!("+ zoomed the web back in to zoom {zoom}: quests {cell:.0} pixels across (were {:.0})", gate.web_cell))
+            } else {
+                Err(format!("2 s after + over the web: zoom {zoom}, quests {cell:.0} pixels across (were {:.0})", gate.web_cell))
+            };
+            gate.check("quests: zoom keys", result);
+            gate.advance(now);
+        }
         // Turned to the last chapter and another quest, Current Quest brings the book back
         // to the quest the player is on, picked, its cell inside the well.
-        24 => {
+        26 => {
             let current = {
                 let (launch, player, settings) = (world.resource::<Launch>(), world.resource::<LocalPlayer>(), world.resource::<crate::settings::Settings>());
                 crate::hud::quests::current(&launch.content, player, settings).map(|q| q.name.clone())
@@ -7319,7 +7351,7 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             world.resource_mut::<UiClicks>().next = Some((button, MouseButton::Left));
             gate.advance(now);
         }
-        25 => {
+        27 => {
             let picked = world.resource::<crate::hud::quests::QuestView>().picked.clone();
             let well = web_well(world).map(|(well, _)| well);
             let node = world.query::<(&crate::hud::quests::QuestNode, &bevy::ui::UiGlobalTransform)>().iter(world).find(|(n, _)| Some(&n.0) == gate.web_head.as_ref()).map(|(_, at)| at.translation);
@@ -7546,6 +7578,8 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let skills = world.resource::<Launch>().content.skills.len();
     let views: Vec<View> = if gate.step == Step::FitJournal {
         (0..voxmar_engine::journal::Page::ALL.len()).map(View::Journal).collect()
+    } else if gate.step == Step::FitSmall {
+        vec![View::Inventory, View::Character, View::Prayers, View::Journal(0), View::Quests, View::FirstNight, View::Menu(0)]
     } else if gate.step == Step::FitMenus {
         [View::Title, View::Worlds, View::Create, View::Join].into_iter().chain((0..crate::settings::TABS).map(View::Settings)).collect()
     } else {
@@ -7571,15 +7605,30 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         } else {
             Err(format!("{} texts do not fit: {}", spills.len(), spills.join("; ")))
         };
-        let journal = gate.step == Step::FitJournal;
+        let (journal, small) = (gate.step == Step::FitJournal, gate.step == Step::FitSmall);
         let settled = std::mem::take(&mut gate.fit_settled);
         if !settled.is_empty() {
             info!("gate: {:?} read {} views only once {FIT_SETTLE}s passed: {}", gate.step, settled.len(), settled.join(", "));
         }
-        gate.check(if menus { "text fits: menus" } else if journal { "text fits: journal" } else { "text fits" }, result);
+        gate.check(if menus { "text fits: menus" } else if journal { "text fits: journal" } else if small { "text fits: 1280x720" } else { "text fits" }, result);
+        if !menus {
+            let blocked = std::mem::take(&mut gate.keys_blocked);
+            let result = if blocked.is_empty() {
+                Ok(format!("the keys under every screen are clear of it and of the HUD on {} views in {}", views.len(), FIT_LANGUAGES.join(" and ")))
+            } else {
+                Err(format!("{} times the keys under a screen run into something: {}", blocked.len(), blocked.join("; ")))
+            };
+            gate.check(if journal { "keys clear: journal" } else if small { "keys clear: 1280x720" } else { "keys clear" }, result);
+        }
         show_view(world, None, now);
         set_language(world, "en");
-        gate.next(if menus { Step::Done } else if journal { Step::Leave } else { Step::FitJournal }, now);
+        // The small window's views, then the gate's own window back.
+        if journal {
+            retarget(world, gate, SMALL);
+        } else if small {
+            retarget(world, gate, SHOT);
+        }
+        gate.next(if menus { Step::Done } else if journal { Step::FitSmall } else if small { Step::Leave } else { Step::FitJournal }, now);
         return;
     };
     let shown = (gate.step, gate.phase);
@@ -7637,7 +7686,86 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     if checked(world).none_since(&before) {
         gate.unbroken.push(format!("{language}, {view:?}"));
     }
+    for blocked in keys_blocked(world) {
+        let what = format!("{language}, {view:?}: {blocked}");
+        if !gate.keys_blocked.contains(&what) {
+            gate.keys_blocked.push(what);
+        }
+    }
     gate.advance(now);
+}
+
+/// A window smaller than the gate's own, where the interface steps down to 75% and the HUD
+/// along the bottom takes more of the height.
+const SMALL: UVec2 = UVec2::new(1280, 720);
+
+/// Points the world's camera, and the interface with it, at a new image `size` across, as
+/// the gate's own at the start: laid out for it from the next frame.
+fn retarget(world: &mut World, gate: &mut Gate, size: UVec2) {
+    let mut state = bevy::ecs::system::SystemState::<(Commands, ResMut<Assets<Image>>, Query<Entity, With<Camera3d>>)>::new(world);
+    let Ok((mut commands, mut images, camera)) = state.get_mut(world) else { return };
+    let old = gate.target.clone();
+    gate.target = crate::capture::offscreen(&mut commands, &mut images, &camera, size, 1.0);
+    images.remove(&old);
+    state.apply(world);
+}
+
+/// What the keys under the screen shown run into: a panel of the screen beside them, or
+/// anything drawn along the bottom by the HUD, which stays in sight with a screen open.
+fn keys_blocked(world: &mut World) -> Vec<String> {
+    use crate::hud::screens::HotkeyBar;
+    let rect = |node: &ComputedNode, at: &bevy::ui::UiGlobalTransform| Rect::from_center_size(at.translation, node.size());
+    let meets = |a: Rect, b: Rect| {
+        let both = a.intersect(b);
+        both.width() > 0.5 && both.height() > 0.5
+    };
+    let bars: Vec<(Entity, Rect, Entity)> = world
+        .query_filtered::<(Entity, &ComputedNode, &bevy::ui::UiGlobalTransform, &InheritedVisibility, &ChildOf), With<HotkeyBar>>()
+        .iter(world)
+        .filter(|(_, node, _, shown, _)| shown.get() && node.size().min_element() > 0.0)
+        .map(|(bar, node, at, _, root)| (bar, rect(node, at), root.parent()))
+        .collect();
+    let Some(bottom) = world.query_filtered::<Entity, With<crate::hud::Bottom>>().iter(world).next() else { return Vec::new() };
+    // Everything drawn of the HUD along the bottom: its pictures and words, wherever shown.
+    let mut drawn = world.query::<(Entity, &ComputedNode, &bevy::ui::UiGlobalTransform, &InheritedVisibility, Option<&Text>, Has<ImageNode>)>();
+    let mut hud = Vec::new();
+    for (entity, node, at, shown, text, image) in drawn.iter(world) {
+        let words = text.is_some_and(|t| !t.0.trim().is_empty());
+        if shown.get() && node.size().min_element() > 0.0 && (words || image) {
+            hud.push((entity, rect(node, at), text.map(|t| t.0.clone())));
+        }
+    }
+    let under = |world: &World, mut entity: Entity, ancestor: Entity| loop {
+        if entity == ancestor {
+            return true;
+        }
+        match world.get::<ChildOf>(entity) {
+            Some(parent) => entity = parent.parent(),
+            None => return false,
+        }
+    };
+    let mut found = Vec::new();
+    for (bar, keys, root) in bars {
+        let panels: Vec<Entity> = world.get::<Children>(root).map_or_else(Vec::new, |children| children.iter().filter(|&child| child != bar).collect());
+        for panel in panels {
+            let (Some(node), Some(at)) = (world.get::<ComputedNode>(panel), world.get::<bevy::ui::UiGlobalTransform>(panel)) else { continue };
+            let shown = world.get::<InheritedVisibility>(panel).is_some_and(|v| v.get());
+            if shown && node.size().min_element() > 0.0 && meets(keys, rect(node, at)) {
+                found.push("the keys run into the screen's panel".to_owned());
+            }
+        }
+        for (entity, at, words) in &hud {
+            if under(world, *entity, bottom) && meets(keys, *at) {
+                found.push(match words {
+                    Some(words) => format!("the keys run into {words:?} along the bottom"),
+                    None => "the keys run into a picture along the bottom".to_owned(),
+                });
+            }
+        }
+    }
+    found.sort();
+    found.dedup();
+    found
 }
 
 /// The player's own pins while [`fit_pins`] pins others.

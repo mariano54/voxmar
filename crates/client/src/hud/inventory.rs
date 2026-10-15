@@ -1272,7 +1272,23 @@ mod tests {
         assert_eq!((style.home_hidden_within, style.home_icon.as_deref()), (8.0, Some("base:hearthstone")), "core's distance, base's icon");
         assert_eq!((style.home_shown_beyond, style.home_dusk, style.home_dawn, style.home_fade), (48.0, 16500, 23500, 0.5));
         // Each way home number is checked as it loads.
-        for bad in ["(home_hidden_within: -1.0)", "(home_shown_beyond: 4.0)", "(home_dusk: 24000)", "(home_dawn: 16500)", "(home_fade: -0.5)", "(home_fade: 9.0)"] {
+        assert_eq!((style.book_zooms.len(), style.book_zoom_at, style.book_width), (5, 1, 96.0));
+        // As is each of the quest book's: sharp zooms from small to big, opening at one of
+        // them, across most of the window.
+        for bad in [
+            "(home_hidden_within: -1.0)",
+            "(home_shown_beyond: 4.0)",
+            "(home_dusk: 24000)",
+            "(home_dawn: 16500)",
+            "(home_fade: -0.5)",
+            "(home_fade: 9.0)",
+            "(book_zooms: [])",
+            "(book_zooms: [16.0, 20.0])",
+            "(book_zooms: [24.0, 16.0])",
+            "(book_zoom_at: 5)",
+            "(book_width: 40.0)",
+            "(book_width: 101.0)",
+        ] {
             files.push(file(bad));
             assert!(InterfaceStyle::load(&files).is_err(), "{bad}");
             files.pop();

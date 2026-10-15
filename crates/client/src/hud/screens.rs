@@ -17,7 +17,7 @@ pub struct ScreensPlugin;
 
 impl Plugin for ScreensPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (switch, click_hotkeys, label_hotkeys).chain().in_set(ScreenSystems).run_if(in_state(Screen::InGame)));
+        app.add_systems(Update, ((switch, click_hotkeys, label_hotkeys).chain(), clear_of_hud).in_set(ScreenSystems).run_if(in_state(Screen::InGame)));
     }
 }
 
@@ -152,5 +152,26 @@ fn label_hotkeys(
                 });
             }
         });
+    }
+}
+
+/// Keeps every screen, and the keys under it, clear of what stays in sight along the bottom
+/// edge with a screen open (the hotbar, health, the prayer strip and effects): each screen's
+/// root leaves that much room at its foot, however tall the HUD there grows.
+fn clear_of_hud(
+    hud: Query<(&ComputedNode, &bevy::ui::UiGlobalTransform), With<super::Bottom>>,
+    bars: Query<&ChildOf, With<HotkeyBar>>,
+    mut roots: Query<(&mut Node, &ComputedNode)>,
+) {
+    let Ok((bottom, at)) = hud.single() else { return };
+    let scale = bottom.inverse_scale_factor();
+    let top = at.translation.y - bottom.size().y / 2.0;
+    for bar in &bars {
+        let Ok((mut node, root)) = roots.get_mut(bar.parent()) else { continue };
+        // From the HUD's top to the foot of the screen, in interface pixels, and a gap.
+        let room = ((root.size().y - top) * scale).max(0.0) + space::GAP;
+        if !matches!(node.padding.bottom, Val::Px(now) if (now - room).abs() < 0.5) {
+            node.padding.bottom = Val::Px(room);
+        }
     }
 }
