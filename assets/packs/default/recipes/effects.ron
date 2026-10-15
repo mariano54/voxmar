@@ -363,6 +363,19 @@
             ".kwwwhwwk.",
             ".kkkkkkkk.",
         ])]),
+        // A crescent moon and a small heart: a sleep that mends.
+        "ui/effect/healing_sleep": (size: (10, 10), layers: [Grid(legend: {'k': "#10142a", 'M': "#f2e6a8", 'r': "#e0465a", 'p': "#ff9aa8"}, rows: [
+            "...kkk....",
+            "..kMMk.r.r",
+            ".kMMk.rprr",
+            ".kMk..rrrr",
+            "kMMk...rr.",
+            "kMMk......",
+            ".kMMk.....",
+            "..kMMMMk..",
+            "...kkkk...",
+            "..........",
+        ])]),
         // A crescent moon and a sleeper's z.
         "ui/effect/rested": (size: (10, 10), layers: [Grid(legend: {'k': "#10142a", 'M': "#f2e6a8", 'z': "#c8d4ff"}, rows: [
             "...kkk.zzz",
