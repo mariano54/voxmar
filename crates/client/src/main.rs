@@ -336,6 +336,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(blow) = fight_look.untold(&content.creatures).first() {
         return Err(format!("{}: no tell for the blow `{blow}`", fight_fx::style::FILE).into());
     }
+    if let Some(name) = fight_look.unlain(&content.creatures).first() {
+        return Err(format!("{}: `{name}` dies lying fallen less than {} s, past the killing blow's freeze and its going", fight_fx::style::FILE, voxmar_engine::creature::LIES).into());
+    }
     if let Some(class) = fight_look.unshot(content.combat.classes()).first() {
         return Err(format!("{}: no shot for the {class} class, which shoots", fight_fx::style::FILE).into());
     }
