@@ -36,7 +36,10 @@ fn bevy_sources() -> Vec<PathBuf> {
             name.starts_with("bevy_").then(|| format!("{name}-{version}"))
         })
         .collect();
-    let home = std::env::var_os("CARGO_HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap()).join(".cargo"));
+    let home = std::env::var_os("CARGO_HOME").map(PathBuf::from).unwrap_or_else(|| {
+        let user = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).expect("CARGO_HOME, HOME or USERPROFILE names where Cargo keeps its registry");
+        PathBuf::from(user).join(".cargo")
+    });
     let sources = home.join("registry/src");
     let registries: Vec<PathBuf> = std::fs::read_dir(&sources)
         .unwrap_or_else(|e| panic!("Bevy's shader sources are read from Cargo's registry, {}: {e} (set CARGO_HOME; `cargo fetch` fills it)", sources.display()))
