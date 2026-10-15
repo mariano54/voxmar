@@ -435,7 +435,7 @@ impl EffectRegistry {
         for def in &mut file.effects {
             qualify(&mut def.name);
             def.replaces.iter_mut().for_each(qualify);
-            if let Some(when) = &mut def.when {
+            for when in def.when.iter_mut().chain(&mut def.ends) {
                 when.qualify_quests(&qualify);
             }
             // Skills are all core's.
@@ -859,6 +859,9 @@ mod tests {
         assert_eq!(timed, [(soaked, 120.0)], "indoors, still wet");
         effects.linger(&Situation { near: &fire, ..situation(&rain, false, 15.0, false) }, &mut timed);
         assert!(timed.is_empty(), "indoors by a fire, dry");
+        let quest = r#"(effects: [(name: "x", kind: Debuff, title: "X", description: "", when: Some(Rain(0.3)), lingers: 60.0, ends: Some(Done("dry_kit")))])"#;
+        let quest = EffectRegistry::new(vec![EffectRegistry::read("core", quest).unwrap()]).unwrap();
+        assert_eq!(quest.quests(), ["core:dry_kit"], "a quest in `ends` is qualified by the package too");
         let bad = r#"(effects: [(name: "x", kind: Debuff, title: "X", description: "", when: Some(Rain(0.3)), ends: Some(Warmed))])"#;
         assert!(EffectRegistry::new(vec![EffectRegistry::read("core", bad).unwrap()]).is_err(), "only what lingers ends");
     }
