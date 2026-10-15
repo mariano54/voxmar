@@ -1302,8 +1302,10 @@ mod tests {
         let six = dir.join("players/six.ron");
         save.write_player("six", &player, &registry).unwrap();
         let text = std::fs::read_to_string(&six).unwrap();
-        let charm = text.find(", Some(\"base:charge_charm\")").expect("the charm saved last of the worn");
-        std::fs::write(&six, format!("{}{}", &text[..charm], &text[charm + ", Some(\"base:charge_charm\")".len()..])).unwrap();
+        // Pretty-printed, the worn list has an entry a line: the charm's, last, goes.
+        assert_eq!(text.lines().filter(|line| line.contains("base:charge_charm")).count(), 1, "the charm saved once: {text}");
+        let without: Vec<&str> = text.lines().filter(|line| !line.contains("base:charge_charm")).collect();
+        std::fs::write(&six, without.join("\n")).unwrap();
         let old = save.read_player("six", &registry).unwrap().unwrap().inventory.worn;
         assert_eq!((old[..6].to_vec(), old[6]), (player.inventory.worn[..6].to_vec(), None), "a six-slot save's worn, the charm slot empty");
         std::fs::remove_file(&six).unwrap();
