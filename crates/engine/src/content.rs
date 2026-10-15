@@ -451,6 +451,10 @@ impl Content {
         }
         let value = crate::value::Value::merge(value, &mut notes);
         value.check()?;
+        // A price or level set for a thing no package has would price nothing.
+        if let Some(name) = value.fixed.keys().chain(value.levels.keys()).find(|name| blocks.id(name).is_none()) {
+            return Err(RegistryError(format!("value.ron: a worth is set for `{name}`, which no package has")));
+        }
         let limits = stack_limits(&blocks, &stacking)?;
         for structure in multiblocks.iter() {
             for &(fuel, count) in &structure.fuels {
@@ -490,10 +494,16 @@ impl Content {
             }
             *at = Some(crate::combat::Slot::Charm.index() as u8);
         }
-        // `Wearing` asks of what is worn: a tag only things that are never worn carry (a
-        // torch's `fire`) would be an effect that can never hold.
-        if let Some(tag) = effects.worn_tags().iter().find(|tag| !blocks.ids().any(|id| worn[id.0 as usize].is_some() && blocks.def(id).has_tag(tag))) {
-            return Err(RegistryError(format!("effects.ron: an effect asks for something worn tagged `{tag}`, which nothing worn carries")));
+        // `Wearing` asks of the charm worn: a tag no charm carries (a torch's `fire`, a
+        // helmet's) would be an effect that can never hold, or two at once.
+        let charm = Some(crate::combat::Slot::Charm.index() as u8);
+        let charms: Vec<_> = blocks.ids().filter(|&id| worn[id.0 as usize] == charm).collect();
+        if let Some(tag) = effects.worn_tags().iter().find(|tag| !charms.iter().any(|&id| blocks.def(id).has_tag(tag))) {
+            return Err(RegistryError(format!("effects.ron: an effect asks for a charm tagged `{tag}`, which nothing worn carries")));
+        }
+        // And a charm that no effect asks for would be worn for nothing.
+        if let Some(&id) = charms.iter().find(|&&id| !effects.worn_tags().iter().any(|tag| blocks.def(id).has_tag(tag))) {
+            return Err(RegistryError(format!("blocks: `{}` is a charm, but no effect asks for it worn (effects.ron's `Wearing`)", blocks.def(id).name)));
         }
         crate::inventory::set_worn_slots(worn);
         // A store's slots follow the player's own in a slot number of a byte.

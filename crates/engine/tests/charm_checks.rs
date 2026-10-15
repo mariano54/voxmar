@@ -1,6 +1,6 @@
 //! The charm slot is checked as content loads: a charm is worn there and is no piece of a
-//! set too, no set puts a piece there, and `Wearing` asks only for what something worn
-//! carries. Each tried as a later package over the game's own.
+//! set too, no set puts a piece there, `Wearing` asks only for what a charm carries, and
+//! every charm is asked for by some effect. Each tried as a later package over the game's own.
 
 use std::path::{Path, PathBuf};
 
@@ -46,4 +46,19 @@ fn wearing_asks_only_for_what_something_worn_carries() {
     // The game's own charm passes.
     let assets = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
     assert!(Content::load(&assets).is_ok());
+}
+
+#[test]
+fn every_charm_is_asked_for_by_some_effect() {
+    // A charm no `Wearing` effect asks for would be worn for nothing.
+    let dir = with("idle", "blocks_charms.ron", r#"(blocks: [(name: "lucky_pebble", render: Plant, solid: false, item: true, textures: All("lucky_pebble"), hardness: 0.0, tags: ["charm"])])"#);
+    let error = refused(&dir);
+    assert!(error.contains("`zz_charm:lucky_pebble` is a charm, but no effect asks for it worn"), "an idle charm refused: {error:?}");
+}
+
+#[test]
+fn a_worth_is_set_only_for_what_some_package_has() {
+    let dir = with("worth", "value.ron", r#"(levels: {"base:no_such_charm": 10})"#);
+    let error = refused(&dir);
+    assert!(error.contains("a worth is set for `base:no_such_charm`, which no package has"), "an unknown name refused: {error:?}");
 }
