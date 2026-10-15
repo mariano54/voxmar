@@ -96,6 +96,42 @@ pub enum Goal {
     Watering(String, u32),
 }
 
+impl Goal {
+    /// The item (a name, `tag:TAG` or `any`) a goal asks the player to make, carry, get or
+    /// use, if it asks for one.
+    pub fn item(&self) -> Option<&str> {
+        match self {
+            Goal::Catch(item, _) if item == "Kinds" => None,
+            Goal::Craft(item, _)
+            | Goal::Cook(item, _)
+            | Goal::CookAt(item, _, _)
+            | Goal::Catch(item, _)
+            | Goal::Pick(item, _)
+            | Goal::Mine(item, _)
+            | Goal::Have(item, _)
+            | Goal::LookUp(item)
+            | Goal::Offered(item, _)
+            | Goal::Ate(item, _)
+            | Goal::Laid(item, _)
+            | Goal::Watering(item, _)
+            | Goal::Fertilised(item, _) => Some(item),
+            _ => None,
+        }
+    }
+}
+
+/// The quests with a goal that names `item` (by name, short name or one of its tags; a
+/// goal for `any` names nothing), in the book's order: what the recipe viewer lists as
+/// asking for it.
+pub fn asking<'a>(quests: &'a QuestRegistry, blocks: &crate::block::BlockRegistry, item: crate::block::BlockId) -> Vec<&'a QuestDef> {
+    let def = blocks.def(item);
+    let names = |want: &str| match want.strip_prefix("tag:") {
+        Some(tag) => def.has_tag(tag),
+        None => def.name == want || def.name.rsplit(':').next() == Some(want),
+    };
+    quests.iter().filter(|quest| quest.tasks.iter().flatten().filter_map(Goal::item).any(names)).collect()
+}
+
 /// One way to finish a quest: every goal must hold.
 pub type Task = Vec<Goal>;
 

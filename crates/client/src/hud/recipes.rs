@@ -30,7 +30,7 @@ use crate::ui::sound::Silent;
 use crate::ui::widgets::{BODY, ButtonStyle, GOLD, LARGE, MUTED, SCRIM, SOFT, TEXT, UiFont, panel, screen, shadowed, space, spawn_button, text};
 
 /// Ways shown on one page.
-const PER_PAGE: usize = 2;
+pub(crate) const PER_PAGE: usize = 2;
 const WIDTH: f32 = 300.0 * PX;
 
 pub struct RecipesPlugin;
@@ -114,7 +114,7 @@ struct ViewerRoot;
 #[derive(Component)]
 struct ViewerTitle;
 #[derive(Component)]
-struct ViewerBody;
+pub(crate) struct ViewerBody;
 #[derive(Component)]
 struct ViewerPage;
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
@@ -131,6 +131,14 @@ pub(crate) struct LayButton {
     first: u16,
     ways: u8,
 }
+/// Where the quests that ask for the item looked up are listed.
+#[derive(Component)]
+struct ViewerQuests;
+/// A quest that asks for the item looked up: click to open the quest book on it.
+#[derive(Component)]
+pub(crate) struct QuestLink(pub(crate) String);
+/// Quests listed under a look-up at most; more are counted.
+pub(crate) const QUESTS_SHOWN: usize = 4;
 /// An item drawn in the viewer: hover to look it up, click for its recipes.
 #[derive(Component)]
 pub struct ViewerItem(pub BlockId);
@@ -143,6 +151,8 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
             card.spawn(title).with_child((shadowed(font, "", LARGE, GOLD), ViewerTitle));
             let body = Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(space::GAP), min_height: Val::Px(2.0 * (2.0 * SLOT + space::SECTION * 2.0)), ..default() };
             card.spawn((body, ViewerBody));
+            let quests = Node { flex_wrap: FlexWrap::Wrap, align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), row_gap: Val::Px(space::HAIR), margin: UiRect::top(Val::Px(space::GAP)), ..default() };
+            card.spawn((quests, ViewerQuests));
             let footer = Node { align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), margin: UiRect::top(Val::Px(space::SECTION)), ..default() };
             card.spawn(footer).with_children(|footer| {
                 let small = |footer: &mut ChildSpawnerCommands, key: &'static str, which: ViewerButton| {
@@ -219,6 +229,7 @@ fn click(
     hovered_items: Query<(&ViewerItem, &RelativeCursorPosition, &InheritedVisibility)>,
     mut viewer: ResMut<RecipeViewer>,
     mut ui: ResMut<UiState>,
+    (links, mut commands): (Query<(&QuestLink, &Interaction, &InheritedVisibility), Changed<Interaction>>, Commands),
 ) {
     // The quest book's item icons look their item up too, opening the viewer over it.
     if viewer.trail.is_empty() && !ui.quests_open {
@@ -262,6 +273,15 @@ fn click(
             net.propose_from(&player, action, voxmar_engine::action::ActionTarget::Recipe { first: lay.first, ways: lay.ways, count });
             viewer.trail.clear();
             ui.recipes_open = false;
+        }
+    }
+    // A quest asking for the item opens the book on it, the viewer and the screen under it
+    // put away.
+    for (link, interaction, visible) in &links {
+        if visible.get() && *interaction == Interaction::Pressed {
+            commands.insert_resource(super::quests::StartQuest(link.0.clone()));
+            viewer.trail.clear();
+            (ui.recipes_open, ui.inventory_open, ui.character_open, ui.journal_open) = (false, false, false, false);
         }
     }
     // A right click on an item looks up its uses (Interaction answers only the left).
@@ -318,7 +338,7 @@ fn draw(
     mut root: Query<&mut Visibility, With<ViewerRoot>>,
     mut title: Query<&mut Text, (With<ViewerTitle>, Without<ViewerPage>)>,
     mut page_text: Query<&mut Text, (With<ViewerPage>, Without<ViewerTitle>)>,
-    body: Query<Entity, With<ViewerBody>>,
+    (body, quests_row): (Query<Entity, With<ViewerBody>>, Query<Entity, With<ViewerQuests>>),
 ) {
     if let Ok(mut visibility) = root.single_mut() {
         visibility.set_if_neq(if ui.recipes_open { Visibility::Inherited } else { Visibility::Hidden });
@@ -361,8 +381,26 @@ fn draw(
     if let Ok(mut text) = page_text.single_mut() {
         text.0 = if found.is_empty() { String::new() } else { locale.format("recipes.page", &[("page", &(lookup.page + 1)), ("pages", &pages)]) };
     }
-    let Ok(body) = body.single() else { return };
     let font = &font.0;
+    // The quests that ask for it, whichever way it is looked up.
+    if let Ok(row) = quests_row.single() {
+        let asking = voxmar_engine::quest::asking(&content.quests, &content.blocks, lookup.item);
+        commands.entity(row).despawn_children().with_children(|row| {
+            if asking.is_empty() {
+                return;
+            }
+            row.spawn(text(font, locale.get("recipes.quests"), BODY, MUTED));
+            for quest in asking.iter().take(QUESTS_SHOWN) {
+                let node = Node { height: Val::Px(crate::ui::widgets::BUTTON), padding: UiRect::horizontal(Val::Px(space::INNER)), justify_content: JustifyContent::Center, align_items: AlignItems::Center, ..default() };
+                row.spawn((Button, ButtonStyle::Secondary, node, ButtonStyle::Secondary.pieces()[0].image(), QuestLink(quest.name.clone())))
+                    .with_child(shadowed(font, super::quests::title(&locale, quest), BODY, TEXT));
+            }
+            if asking.len() > QUESTS_SHOWN {
+                row.spawn(text(font, locale.format("recipes.quests.more", &[("count", &(asking.len() - QUESTS_SHOWN))]), BODY, MUTED));
+            }
+        });
+    }
+    let Ok(body) = body.single() else { return };
     let entries: Vec<Entry> = found.iter().skip(lookup.page * PER_PAGE).take(PER_PAGE).map(|e| (*e).clone()).collect();
     commands.entity(body).despawn_children().with_children(|body| {
         if entries.is_empty() {
@@ -450,23 +488,82 @@ pub(super) fn way_inputs(card: &mut ChildSpawnerCommands, font: &Handle<Font>, i
                 item_cell(card, font, images, Some(tool), None);
             }
         }
-        Method::Drop { .. } => {}
+        Method::Process { machines, inputs, .. } => {
+            for (i, &(item, n)) in inputs.iter().enumerate() {
+                if i > 0 {
+                    card.spawn(text(font, "+", BODY, MUTED));
+                }
+                item_cell(card, font, images, Some(item), (n > 1).then(|| n.to_string()));
+            }
+            if let Some(&machine) = machines.first() {
+                card.spawn(text(font, "+", BODY, MUTED));
+                item_cell(card, font, images, Some(machine), None);
+            }
+        }
+        Method::Work { station, input, takes, .. } => {
+            item_cell(card, font, images, Some(*input), (*takes > 1).then(|| takes.to_string()));
+            card.spawn(text(font, "+", BODY, MUTED));
+            item_cell(card, font, images, Some(*station), None);
+        }
+        Method::Harvest { crop, .. } => {
+            // What plants it, if players plant it; else the crop itself.
+            let crops = &content.crops;
+            let seed = crops.iter().find(|(_, c)| c.ripe() == *crop).and_then(|(_, c)| c.seed);
+            item_cell(card, font, images, Some(seed.unwrap_or(*crop)), None);
+        }
+        Method::Break { block, tool, .. } => {
+            item_cell(card, font, images, Some(content.blocks.item_of(*block)), None);
+            if let Some(tool) = tool {
+                card.spawn(text(font, "+", BODY, MUTED));
+                item_cell(card, font, images, Some(*tool), None);
+            }
+        }
+        Method::Drop { .. } | Method::Catch { .. } => {}
     }
 }
 
 /// The words under a way's result: how it is done, and what it takes.
-fn describe(locale: &Locale, launch: &Launch, method: &Method) -> Vec<(String, Color)> {
+pub(crate) fn describe(locale: &Locale, launch: &Launch, method: &Method) -> Vec<(String, Color)> {
     let content = &launch.content;
     let creature = |id| locale.creature(&content.creatures.get(id).def);
+    let block = |id: BlockId| locale.block(content.blocks.def(id));
+    // The level a way takes in its skill (past the first), and how often it comes when not
+    // always.
+    let level = |skill: Option<voxmar_engine::skill::SkillId>, level: u8| skill.filter(|_| level > 1).map(|id| (locale.format("recipes.level", &[("skill", &locale.skill(content.skills.get(id))), ("level", &level)]), SOFT));
+    let chance = |chance: f32| (chance < 1.0).then(|| (locale.format("recipes.chance", &[("chance", &((chance * 100.0).round().max(1.0) as u32))]), SOFT));
     match method {
-        Method::Craft { shapeless, near, .. } => {
+        Method::Craft { shapeless, near, skill, level: at, .. } => {
             let mut lines = vec![(locale.get(if *shapeless { "recipes.shapeless" } else { "recipes.craft" }).to_owned(), MUTED)];
             if let Some(tag) = near {
-                let block = content.blocks.tagged(tag).next().map_or_else(|| tag.clone(), |block| locale.block(content.blocks.def(block)));
+                let block = content.blocks.tagged(tag).next().map_or_else(|| tag.clone(), block);
                 lines.push((locale.format("recipes.near", &[("block", &block)]), SOFT));
             }
+            lines.extend(level(*skill, *at));
             lines
         }
+        Method::Process { machines, tier, chance: odds, .. } => {
+            let machine = machines.first().map_or_else(String::new, |&m| block(m));
+            let mut lines = vec![(locale.format("recipes.process", &[("machine", &machine)]), MUTED)];
+            if *tier > 0 {
+                lines.push((locale.format("recipes.process.tier", &[("tier", tier)]), SOFT));
+            }
+            lines.extend(chance(*odds));
+            lines
+        }
+        Method::Work { station, skill, level: at, .. } => [(locale.format("recipes.work", &[("station", &block(*station))]), MUTED)].into_iter().chain(level(Some(*skill), *at)).collect(),
+        Method::Harvest { crop, forage, chance: odds, skill, level: at } => {
+            let crop = block(content.blocks.item_of(*crop));
+            [(locale.format(if *forage { "recipes.forage" } else { "recipes.harvest" }, &[("crop", &crop)]), MUTED)].into_iter().chain(chance(*odds)).chain(level(Some(*skill), *at)).collect()
+        }
+        Method::Break { block: broken, tool, skill, level: at, chance: odds } => {
+            let broken = block(content.blocks.item_of(*broken));
+            let line = match tool {
+                Some(tool) => locale.format("recipes.break.tool", &[("block", &broken), ("tool", &block(*tool))]),
+                None => locale.format("recipes.break", &[("block", &broken)]),
+            };
+            [(line, MUTED)].into_iter().chain(chance(*odds)).chain(level(*skill, *at)).collect()
+        }
+        Method::Catch { skill, level: at } => [(locale.get("recipes.catch").to_owned(), MUTED)].into_iter().chain(level(*skill, *at)).collect(),
         Method::Cook { station, skill, level, burnt, .. } => {
             let station = content.blocks.tagged(station).next().map_or_else(|| station.clone(), |block| locale.block(content.blocks.def(block)));
             let mut lines = vec![(locale.format("recipes.cook", &[("station", &station)]), MUTED)];

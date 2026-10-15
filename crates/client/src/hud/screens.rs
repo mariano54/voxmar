@@ -112,9 +112,13 @@ pub struct HotkeyBar(pub GameScreen);
 #[derive(Component)]
 struct Hotkey(GameScreen);
 
+/// A look-up key's hint in a bar: hover an item and press it.
+#[derive(Component)]
+pub struct LookKey;
+
 /// A bar of the in-game screens' keys, for the foot of `current`.
 pub fn spawn_hotkeys(parent: &mut ChildSpawnerCommands, current: GameScreen) -> Entity {
-    let bar = Node { margin: UiRect::top(Val::Px(space::GAP)), justify_content: JustifyContent::Center, column_gap: Val::Px(space::SECTION), ..default() };
+    let bar = Node { margin: UiRect::top(Val::Px(space::GAP)), flex_direction: FlexDirection::Column, align_items: AlignItems::Center, row_gap: Val::Px(space::HAIR), ..default() };
     parent.spawn((HotkeyBar(current), bar)).id()
 }
 
@@ -139,16 +143,31 @@ fn label_hotkeys(
         if !added.is_added() && !settings.is_changed() && !locale.is_changed() {
             continue;
         }
-        commands.entity(entity).despawn_children().with_children(|row| {
-            for screen in GameScreen::ALL {
-                let current = screen == bar.0;
-                let node = Node { align_items: AlignItems::Center, column_gap: Val::Px(space::INNER), ..default() };
-                row.spawn((Button, Hotkey(screen), node)).with_children(|key| {
-                    let cap = Node { padding: UiRect::axes(Val::Px(space::INNER), Val::Px(space::HAIR)), min_width: Val::Px(crate::ui::skin::CAP_MIN), justify_content: JustifyContent::Center, ..default() };
-                    let piece = if current { Piece::ButtonSelected } else { Piece::Button };
-                    let label = shadowed(&font.0, screen.key_label(&settings, &locale), BODY, if current { GOLD } else { TEXT });
-                    key.spawn((cap, piece.image(), crate::ui::widgets::HoverLight)).with_child((label, crate::lang::TightLine));
-                    key.spawn((Localized(screen.title()), text(&font.0, "", BODY, if current { GOLD } else { MUTED })));
+        let keys = || Node { justify_content: JustifyContent::Center, column_gap: Val::Px(space::SECTION), ..default() };
+        let cap = || Node { padding: UiRect::axes(Val::Px(space::INNER), Val::Px(space::HAIR)), min_width: Val::Px(crate::ui::skin::CAP_MIN), justify_content: JustifyContent::Center, ..default() };
+        let pair = || Node { align_items: AlignItems::Center, column_gap: Val::Px(space::INNER), ..default() };
+        commands.entity(entity).despawn_children().with_children(|rows| {
+            rows.spawn(keys()).with_children(|row| {
+                for screen in GameScreen::ALL {
+                    let current = screen == bar.0;
+                    row.spawn((Button, Hotkey(screen), pair())).with_children(|key| {
+                        let piece = if current { Piece::ButtonSelected } else { Piece::Button };
+                        let label = shadowed(&font.0, screen.key_label(&settings, &locale), BODY, if current { GOLD } else { TEXT });
+                        key.spawn((cap(), piece.image(), crate::ui::widgets::HoverLight)).with_child((label, crate::lang::TightLine));
+                        key.spawn((Localized(screen.title()), text(&font.0, "", BODY, if current { GOLD } else { MUTED })));
+                    });
+                }
+            });
+            // Where items show that can be looked up, the keys that look them up, on a row
+            // of their own under the screens'.
+            if matches!(bar.0, GameScreen::Inventory | GameScreen::Quests) {
+                rows.spawn(keys()).with_children(|row| {
+                    for (binding, title) in [(&settings.recipes_key, "screen.look.recipes"), (&settings.uses_key, "screen.look.uses")] {
+                        row.spawn((LookKey, pair())).with_children(|key| {
+                            key.spawn((cap(), Piece::Well.image())).with_child((shadowed(&font.0, binding.name(&locale), BODY, TEXT), crate::lang::TightLine));
+                            key.spawn((Localized(title), text(&font.0, "", BODY, MUTED)));
+                        });
+                    }
                 });
             }
         });
