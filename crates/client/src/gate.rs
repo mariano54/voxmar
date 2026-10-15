@@ -2499,8 +2499,8 @@ fn skill_level(world: &World, name: &str) -> (u8, u32) {
 }
 
 /// Crafting, a crafting table, tool tiers and Mining levels, and tilling: see `Step::Workshop`.
-/// The shaped recipe the mirror step makes: of the hand's grid, made anywhere, of single
-/// items, and unlike its mirror image; the fewest cells, then the output's name. Its output
+/// The shaped recipe the mirror step makes: of the hand's grid, made anywhere at level 1, of
+/// single items, and unlike its mirror image; the fewest cells, then the output's name. Its output
 /// and its cells laid mirrored, by grid cell.
 fn mirror_recipe(world: &World) -> Option<(String, Vec<(usize, String)>)> {
     use voxmar_engine::craft::SIDE;
@@ -2509,7 +2509,7 @@ fn mirror_recipe(world: &World) -> Option<(String, Vec<(usize, String)>)> {
     content
         .recipes
         .iter()
-        .filter(|r| !r.shapeless() && !r.needs_table() && r.near.is_none())
+        .filter(|r| !r.shapeless() && !r.needs_table() && r.near.is_none() && r.level <= 1)
         .filter_map(|r| {
             let width = r.size().1;
             let cells = r.cells();
