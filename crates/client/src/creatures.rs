@@ -725,7 +725,7 @@ impl Creatures {
             .min_by(|a, b| a.1.total_cmp(&b.1))
     }
 
-    fn aabb(&self, launch: &Launch, id: u32) -> Option<Aabb> {
+    pub(crate) fn aabb(&self, launch: &Launch, id: u32) -> Option<Aabb> {
         let shown = self.shown.get(&id).filter(|s| s.dying.is_none())?;
         let size = launch.content.creatures.get(shown.view.species).def.body.size;
         Some(Aabb::standing(shown.position, size.0 * shown.view.scale, size.1 * shown.view.scale))
@@ -1846,6 +1846,11 @@ pub fn aim(
     {
         net.propose_from(&player, attack, ActionTarget::Creature(id));
         fighting.strikes += 1;
+    }
+    // A left click at one out of reach swings at the air (`Fighting::whiff`): the hand and
+    // a whoosh say the click was heard, and nothing is struck.
+    if target.creature.is_some() && !in_reach && ui.cursor_locked && !player.dead && mouse.just_pressed(MouseButton::Left) {
+        fighting.whiff(time.elapsed_secs_f64(), &combat.timing(&weapon));
     }
 }
 

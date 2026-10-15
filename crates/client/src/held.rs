@@ -488,6 +488,8 @@ pub struct Motion {
     speed: f32,
     /// The rhythm's seconds into the last swing, last frame.
     since_swing: f32,
+    /// The swings at the air seen (`Fighting::whiffs`).
+    whiffs: u32,
     /// Whether a dodge was under way last frame, and how many blows at the player had been
     /// heard.
     dashing: bool,
@@ -634,6 +636,14 @@ impl Motion {
         self.drawn
     }
 
+    /// Whether a swing at the air began (`Fighting::whiff`), not for a switch of what is
+    /// held.
+    pub fn whiff_began(&mut self, whiffs: u32, switched: bool) -> bool {
+        let began = !switched && whiffs != self.whiffs;
+        self.whiffs = whiffs;
+        began
+    }
+
     /// Whether a swing began: the rhythm's seconds into its swing dropped (a click starts
     /// the meter again from 0), not for a switch of what is held.
     pub fn swing_began(&mut self, since: f32, switched: bool) -> bool {
@@ -736,7 +746,8 @@ fn show(
     let since = fighting.rhythm.meter(time.elapsed_secs_f64(), &timing) * timing.cooldown;
     let guarding = fighting.guard.is_some();
     let eating = target.eating_until > now;
-    let swung = motion.swing_began(since, switched) && !guarding && !eating;
+    let whiffed = motion.whiff_began(fighting.whiffs, switched);
+    let swung = (motion.swing_began(since, switched) || whiffed) && !guarding && !eating;
     let dodged = motion.dodge_began(fighting.dash.map(|(dir, ..)| dir), player.rotation() * Vec3::X);
     let flinched = motion.flinch_began(fighting.hurt_count, fighting.hurt.iter().rev().map(|&(_, damage, defended, _)| (damage, defended)));
     let locked = ui.cursor_locked && !player.dead;

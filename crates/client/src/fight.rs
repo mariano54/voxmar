@@ -54,6 +54,10 @@ pub struct Fighting {
     /// How many of the server's pings (`ServerMessage::Ping`), which time the round trip
     /// guards and dodges are judged by, have been answered, ever.
     pub pings: u32,
+    /// How many clicks at a creature out of reach have swung at the air, ever (`whiff`),
+    /// and when the last did (app seconds).
+    pub whiffs: u32,
+    whiffed: f64,
     /// The item last swung, to lose the pips on a switch as the server does.
     held: Option<voxmar_engine::block::BlockId>,
     /// When the player and each creature last traded blows, either way (app seconds).
@@ -107,6 +111,19 @@ impl Fighting {
         }
         self.holding(now, timing, held, feel);
         matches!(self.rhythm.click(now, timing, feel), Click::Swing(_))
+    }
+
+    /// A click at a creature out of the weapon's reach at `now`: the hand swings at the air,
+    /// asking nothing of the server and leaving the rhythm as it is. Only with the meter
+    /// full and no swing under way, at most once a cooldown, and not while guarding.
+    pub fn whiff(&mut self, now: f64, timing: &Timing) -> bool {
+        let rested = self.rhythm.pending().is_none() && self.rhythm.meter(now, timing) >= 1.0;
+        if self.guard.is_some() || !rested || now - self.whiffed < timing.cooldown as f64 {
+            return false;
+        }
+        self.whiffed = now;
+        self.whiffs += 1;
+        true
     }
 
     /// Guarding, dodging or switching what is held cancels a swing not yet landed
@@ -214,5 +231,27 @@ mod tests {
         assert!(matches!(fighting.rhythm.click(later, &timing, &feel), Click::Swing(_)));
         fighting.holding(later + 0.1, &timing, Some(voxmar_engine::block::BlockId(3)), &feel);
         assert_eq!(fighting.cancels, 2);
+    }
+
+    /// A click at a creature out of reach swings at the air: once a cooldown, only from
+    /// rest (no swing under way, the meter full), never while guarding, and the rhythm is
+    /// left as it was, so the next real swing is timed as if it never happened.
+    #[test]
+    fn a_click_out_of_reach_whiffs_from_rest_and_leaves_the_rhythm() {
+        let (timing, feel) = (Timing { cooldown: 1.0, windup: 0.4, buffer: 0.2, beat: 0.1 }, voxmar_engine::combat::Feel::default());
+        let mut fighting = Fighting::default();
+        assert!(fighting.whiff(10.0, &timing));
+        assert_eq!((fighting.whiffs, fighting.rhythm.pending().is_none(), fighting.rhythm.meter(10.0, &timing)), (1, true, 1.0), "a whiff touched the rhythm");
+        assert!(!fighting.whiff(10.5, &timing), "two whiffs within a cooldown");
+        assert!(fighting.whiff(11.0, &timing));
+        // Not mid-swing: a real swing winding up, or its meter not yet full.
+        assert!(matches!(fighting.rhythm.click(20.0, &timing, &feel), Click::Swing(_)));
+        assert!(!fighting.whiff(20.1, &timing), "a whiff over a swing winding up");
+        let _ = fighting.rhythm.landed(20.5);
+        assert!(!fighting.whiff(20.6, &timing), "a whiff before the meter was full");
+        assert!(fighting.whiff(21.0, &timing));
+        fighting.guard = Some(30.0);
+        assert!(!fighting.whiff(30.0, &timing), "a whiff while guarding");
+        assert_eq!(fighting.whiffs, 3);
     }
 }
