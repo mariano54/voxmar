@@ -39,7 +39,8 @@ pub use voxmar_engine::weather::Weather;
 // 41: ServerMessage::Fires, the lit structures whose fires burn.
 // 42: a staggered creature's tell (STAGGERED).
 // 43: the seat a player sits on (Vitals::seated), for the lower eye.
-pub const PROTOCOL_VERSION: u32 = 43;
+// 49: how another player looks up or down and what is in their hand (PlayerView::pitch, held).
+pub const PROTOCOL_VERSION: u32 = 49;
 
 /// A creature's `tell` while it rears into a new phase of its fight.
 pub const REARING: u8 = u8::MAX;
@@ -305,4 +306,10 @@ pub struct PlayerView {
     pub name: String,
     pub position: Vec3,
     pub yaw: f32,
+    /// How far they look up (positive) or down, radians.
+    #[serde(default)]
+    pub pitch: f32,
+    /// What is in their hand.
+    #[serde(default)]
+    pub held: Option<BlockId>,
 }

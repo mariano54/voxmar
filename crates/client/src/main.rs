@@ -38,6 +38,7 @@ mod capture;
 mod creature_sounds;
 mod creatures;
 mod drops;
+mod figures;
 mod emitters;
 mod fight;
 mod creature_motion;
@@ -348,6 +349,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let look = hud::target::LookStyle::load(&content.files)?;
     let night_light = render::night_light::NightLight::load(&content.files)?;
+    let player_look = figures::PlayerLook::load(&content.files)?;
     let celebrations = hud::celebrate::Celebrations::load(&content.files)?;
     let recorded = sfx::Recordings::load(&content.files)?;
     recorded.check(&content.actions)?;
@@ -447,6 +449,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     app.add_plugins((creatures::CreaturesPlugin, creature_sounds::CreatureSoundsPlugin, butterflies::ButterfliesPlugin));
     app.add_plugins(emitters::EmittersPlugin);
     app.add_plugins(held::HeldPlugin);
+    app.add_plugins(figures::FiguresPlugin);
     app.add_plugins(fight_fx::FightFxPlugin);
     // GPU time per render pass (timestamp queries, Vulkan and DX12), which captures print
     // beside their frame statistics.
@@ -496,7 +499,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         Screen::Title
     };
-    app.insert_resource(FirstScreen(first)).insert_resource(launch).insert_resource(interface).insert_resource(combat_marks).insert_resource(fight_look).insert_resource(creature_motion).insert_resource(look).insert_resource(celebrations).insert_resource(night_light);
+    app.insert_resource(FirstScreen(first)).insert_resource(launch).insert_resource(interface).insert_resource(combat_marks).insert_resource(fight_look).insert_resource(creature_motion).insert_resource(look).insert_resource(celebrations).insert_resource(night_light).insert_resource(player_look);
     if options.loading {
         app.insert_resource(menu::HoldCover);
     }

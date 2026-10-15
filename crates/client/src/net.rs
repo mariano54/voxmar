@@ -1,7 +1,6 @@
 //! Connection to the (local or remote) server: applies replicated state and sends the
 //! player's input and actions. Present while in game.
 
-use bevy::light::NotShadowCaster;
 use bevy::prelude::*;
 use rustc_hash::FxHashMap;
 use voxmar_protocol::{
@@ -35,7 +34,7 @@ impl Plugin for NetPlugin {
             .init_resource::<Clock>()
             .add_systems(PreUpdate, receive.run_if(in_game.clone()))
             .add_systems(Update, advance_day.run_if(in_game.clone()))
-            .add_systems(PostUpdate, (send_input, sync_remote_players).run_if(in_game));
+            .add_systems(PostUpdate, send_input.run_if(in_game));
     }
 }
 
@@ -185,15 +184,32 @@ impl Clock {
     }
 }
 
+/// Other players as the server last told them (drawn by `figures`).
 #[derive(Resource, Default)]
 pub struct RemotePlayers {
-    players: FxHashMap<PlayerId, (PlayerView, Option<Entity>)>,
+    players: FxHashMap<PlayerId, PlayerView>,
 }
 
 impl RemotePlayers {
+    /// Every other player here.
+    pub fn views(&self) -> impl Iterator<Item = &PlayerView> {
+        self.players.values()
+    }
+
+    /// Shows another player as if the server had told of them, or moves one shown so (the
+    /// gate's stand-in, as no second client plays it).
+    pub fn puppet(&mut self, view: PlayerView) {
+        self.players.insert(view.id, view);
+    }
+
+    /// Stops showing another player.
+    pub fn forget(&mut self, id: PlayerId) {
+        self.players.remove(&id);
+    }
+
     /// What another player is called, while they are here.
     pub fn name(&self, id: PlayerId) -> Option<&str> {
-        self.players.get(&id).map(|(view, _)| view.name.as_str())
+        self.players.get(&id).map(|view| view.name.as_str())
     }
 
     /// The player nearest along the look ray within `within` blocks of the eye, and how far.
@@ -201,14 +217,14 @@ impl RemotePlayers {
         use voxmar_engine::physics::{Aabb, player};
         self.players
             .iter()
-            .filter_map(|(&id, (view, _))| Some((id, crate::creatures::ray_box(eye, look, &Aabb::standing(view.position, player::WIDTH, player::HEIGHT))?)))
+            .filter_map(|(&id, view)| Some((id, crate::creatures::ray_box(eye, look, &Aabb::standing(view.position, player::WIDTH, player::HEIGHT))?)))
             .filter(|&(_, distance)| distance <= within)
             .min_by(|a, b| a.1.total_cmp(&b.1))
     }
 
     /// Where another player stands, if they are in sight.
     pub fn position(&self, id: PlayerId) -> Option<Vec3> {
-        self.players.get(&id).map(|(view, _)| view.position)
+        self.players.get(&id).map(|view| view.position)
     }
 }
 
@@ -216,7 +232,6 @@ impl RemotePlayers {
 /// the reason.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn receive(
-    mut commands: Commands,
     net: Res<Net>,
     mut world: ResMut<ClientWorld>,
     mut player: ResMut<LocalPlayer>,
@@ -338,18 +353,7 @@ pub(crate) fn receive(
                 }
             }
             ServerMessage::Players { players } => {
-                let seen: Vec<PlayerId> = players.iter().map(|p| p.id).collect();
-                for view in players {
-                    let entry = remote.players.entry(view.id).or_insert((view.clone(), None));
-                    entry.0 = view;
-                }
-                remote.players.retain(|id, (_, entity)| {
-                    let keep = seen.contains(id);
-                    if !keep && let Some(entity) = entity {
-                        commands.entity(*entity).despawn();
-                    }
-                    keep
-                });
+                remote.players = players.into_iter().map(|view| (view.id, view)).collect();
             }
             ServerMessage::Time { tick, day, day_speed } => {
                 *clock = Clock { day: day as f64, day_speed, told_at: time.elapsed_secs_f64() };
@@ -444,42 +448,6 @@ fn input(player: &LocalPlayer) -> PlayerInput {
     }
 }
 
-/// Other players are drawn as simple boxes, which cast no shadow. Their pipelines compile as
-/// the world loads (`render::warm`), not when the first other player comes into view.
-fn sync_remote_players(
-    mut commands: Commands,
-    mut remote: ResMut<RemotePlayers>,
-    mut transforms: Query<&mut Transform>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut look: Local<Option<(Handle<Mesh>, Handle<StandardMaterial>)>>,
-) {
-    let (mesh, material) = look
-        .get_or_insert_with(|| {
-            let size = voxmar_engine::physics::player::WIDTH;
-            let mesh = meshes.add(Cuboid::new(size, voxmar_engine::physics::player::HEIGHT, size));
-            let material = materials.add(StandardMaterial { base_color: Color::srgb(0.85, 0.35, 0.3), unlit: true, ..default() });
-            crate::render::warm::warm(&mut commands, mesh.clone(), material.clone(), false, DespawnOnExit(Screen::InGame));
-            (mesh, material)
-        })
-        .clone();
-    for (view, entity) in remote.players.values_mut() {
-        let transform = Transform::from_translation(view.position + Vec3::Y * voxmar_engine::physics::player::HEIGHT / 2.0)
-            .with_rotation(Quat::from_rotation_y(view.yaw));
-        match entity {
-            Some(entity) => {
-                if let Ok(mut t) = transforms.get_mut(*entity) {
-                    *t = transform;
-                }
-            }
-            None => {
-                let body = (Mesh3d(mesh.clone()), MeshMaterial3d(material.clone()), transform, NotShadowCaster, DespawnOnExit(Screen::InGame));
-                *entity = Some(commands.spawn(body).id());
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -503,8 +471,8 @@ mod tests {
     #[test]
     fn a_player_is_looked_at_within_range_and_aim() {
         let mut players = RemotePlayers::default();
-        let view = PlayerView { id: 9, name: "Ada".to_owned(), position: Vec3::new(0.0, 0.0, -10.0), yaw: 0.0 };
-        players.players.insert(9, (view, None));
+        let view = PlayerView { id: 9, name: "Ada".to_owned(), position: Vec3::new(0.0, 0.0, -10.0), yaw: 0.0, pitch: 0.0, held: None };
+        players.players.insert(9, view);
         let eye = Vec3::new(0.0, 1.62, 0.0);
         let (who, distance) = players.looked_at(eye, Vec3::NEG_Z, 24.0).unwrap();
         assert_eq!(who, 9);
