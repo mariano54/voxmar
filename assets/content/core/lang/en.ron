@@ -662,7 +662,7 @@
     "refusal.bees": "The bees have nothing for that",
     "refusal.station": "It can't work that",
     "refusal.doorway": "Someone is in the doorway",
-    "refusal.needs_flame": "Needs a flame to light it: a firebrand or a torch",
+    "refusal.needs_flame": "That will not light it",
     "effect.core.by_the_fire": "By the fire",
     "effect.core.by_the_fire.description": "Warmed by a fire or torch nearby.",
     "effect.core.chilly": "Chilly",

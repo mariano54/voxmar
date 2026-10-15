@@ -447,6 +447,10 @@ steps! {
     /// `torch-lit` and `torch-stub`). A firebrand right clicked on the stub lights it again,
     /// and rain on it, the roof gone, puts it out.
     Torch,
+    /// An empty oil lamp set down in a sealed dark room, filled from fat in hand, lights the
+    /// floor before the player warm (the same floor, settled, shots `lamp-empty` and
+    /// `lamp-lit`); burnt dry it is empty again, and a candle beside it burns to its end.
+    Lamp,
     /// A survival player's inventory search finds the stone pickaxe by "pick"; its recipe
     /// opened in the viewer finishes the "Look It Up" quest; the quest book's page for the
     /// pickaxe shows its recipe inline, an item clicked there opens the viewer, and Back
@@ -632,6 +636,8 @@ struct Gate {
     firebrand: Option<BrandPlan>,
     /// What the torch step burns out and lights again.
     torch: Option<TorchPlan>,
+    /// What the lamp step fills, and the candle it burns down.
+    lamp: Option<LampPlan>,
     /// Raw small game carried, slots and pouch, as the dry step hangs the rack, so its
     /// readout can count what hung.
     rack_rabbits: u32,
@@ -922,6 +928,7 @@ impl Gate {
             tool_wear: None,
             firebrand: None,
             torch: None,
+            lamp: None,
             rack_rabbits: 0,
             dry_clearing: None,
             dry_pickup: None,
@@ -1551,6 +1558,8 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         Step::Firebrand => STEP_LIMIT + 15.0,
         // A torch burnt out, lit again and rained out, each waited on.
         Step::Torch => STEP_LIMIT + 20.0,
+        // A lamp filled, then burnt dry with a candle by it, each waited on.
+        Step::Lamp => STEP_LIMIT + 20.0,
         // A party walks in, is talked to, traded with and sent away, each in server seconds.
         Step::Party => 60.0,
         // The effects are judged once a second by the server, and a rest is a sleep away.
@@ -1874,6 +1883,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::ToolWear => tool_wear(world, gate, now),
         Step::Firebrand => firebrand(world, gate, now, in_phase),
         Step::Torch => torch(world, gate, now, in_phase),
+        Step::Lamp => lamp(world, gate, now, in_phase),
         Step::LookUp => look_up(world, gate, now, in_phase),
         Step::Refusal => refusal(world, gate, now, in_phase),
         Step::Merged => merged(world, gate, now, in_phase),
@@ -5018,7 +5028,7 @@ fn torch(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
         }
         gate.fire_lit = None;
-        gate.next(Step::LookUp, now);
+        gate.next(Step::Lamp, now);
     };
     let fail = |world: &mut World, gate: &mut Gate, check: &str, why: String| {
         let why = format!("{why} (crosshair on {}; screens {:?})", crosshair_on(world), covering_screens(world));
@@ -5128,6 +5138,186 @@ fn torch(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 end(world, gate);
             } else if waited {
                 fail(world, gate, "torch: rain puts out", format!("in rain under open sky the {} was still {:?} after {TORCH_WAIT} server seconds", name(plan.torch), here(world).map(|b| name(b))));
+            }
+        }
+    }
+}
+
+/// What the lamp step fills and burns down, picked from the content by what each is: a light
+/// that burns out to something lit again only by using up what is in hand (an oil lamp, and
+/// its fat), and one that burns out to something never lit again (a candle, and its end).
+#[derive(Clone, Copy, Debug)]
+struct LampPlan {
+    lamp: BlockId,
+    empty: BlockId,
+    fuel: BlockId,
+    candle: BlockId,
+    end: BlockId,
+}
+
+impl LampPlan {
+    fn of(content: &voxmar_engine::content::Content) -> Result<Self, String> {
+        let (blocks, flames) = (&content.blocks, &content.flames);
+        let set_down = |b: BlockId| blocks.info(b).facing.is_none() && blocks.info(b).placeable && blocks.item_of(b) == b && blocks.info(b).emission > 0;
+        let (lamp, empty) = blocks
+            .ids()
+            .filter(|&b| set_down(b))
+            .find_map(|b| flames.burns_out(blocks, b).map(|(_, to)| (b, to)).filter(|&(_, to)| flames.uses_up(to) && blocks.info(to).placeable))
+            .ok_or("no light set down burns out to something filled again from the hand")?;
+        let fuel = blocks.ids().find(|&b| flames.lights(blocks, empty, b)).ok_or("nothing fills the burnt-out lamp")?;
+        let (candle, end) = blocks
+            .ids()
+            .filter(|&b| set_down(b))
+            .find_map(|b| flames.burns_out(blocks, b).map(|(_, to)| (b, to)).filter(|&(_, to)| flames.relit(blocks, to).is_none()))
+            .ok_or("no light set down burns out to something never lit again")?;
+        Ok(Self { lamp, empty, fuel, candle, end })
+    }
+}
+
+/// An empty oil lamp in a sealed dark room is filled from the fat in hand and lights the
+/// floor before the player (that floor, settled, empty and lit); then a candle set beside
+/// it, five game days on (`/time add`) the lamp is burnt dry and the candle at its end.
+fn lamp(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    let at = gate.feet + IVec3::new(0, 0, 14) + CHOP_FROM_FIRE + IVec3::new(24, 0, 0);
+    let light_at = at + IVec3::new(1, 0, 2);
+    let candle_at = at + IVec3::new(-1, 0, 2);
+    let floor = at + IVec3::new(0, -1, 2);
+    let waited = gate.server_in_phase() > TORCH_WAIT;
+    let content = world.resource::<Launch>().content.clone();
+    let name = |id: BlockId| content.blocks.def(id).name.clone();
+    let end = |world: &mut World, gate: &mut Gate| {
+        mouse(world, MouseButton::Right, false);
+        world.resource_mut::<crate::render::particles::Particles>().hidden = false;
+        let net = world.resource::<Net>();
+        net.command(&format!("fill {} {} {} {} {} {} air", at.x - 3, at.y - 1, at.z - 3, at.x + 3, at.y + 5, at.z + 3));
+        if let Some(plan) = gate.lamp.take() {
+            for item in [plan.lamp, plan.empty, plan.fuel, plan.candle, plan.end] {
+                net.command(&format!("clear {}", content.blocks.def(item).name));
+            }
+        }
+        gate.fire_lit = None;
+        gate.next(Step::LookUp, now);
+    };
+    let fail = |world: &mut World, gate: &mut Gate, check: &str, why: String| {
+        let why = format!("{why} (crosshair on {}; screens {:?})", crosshair_on(world), covering_screens(world));
+        gate.check(check, Err(why));
+        end(world, gate);
+    };
+    let block = |world: &World, pos: IVec3| world.resource::<ClientWorld>().block(pos);
+    let named = |b: Option<BlockId>| b.map(|b| content.blocks.def(b).name.clone());
+    match gate.phase {
+        0 => {
+            let plan = match LampPlan::of(&content) {
+                Ok(plan) => plan,
+                Err(why) => return fail(world, gate, "lamp: filled and lit", why),
+            };
+            gate.lamp = Some(plan);
+            if !empty_hand(world) {
+                return fail(world, gate, "lamp: filled and lit", "no empty hotbar slot, so no light is held".into());
+            }
+            let net = world.resource::<Net>();
+            net.command("gamemode survival");
+            net.command("time set midnight");
+            net.command("creatures disperse");
+            for item in [plan.lamp, plan.empty, plan.fuel, plan.candle, plan.end] {
+                net.command(&format!("clear {}", name(item)));
+            }
+            // A sealed room of stone, floor and all, with the empty lamp set down in it.
+            net.command(&format!("fill {} {} {} {} {} {} stone", at.x - 3, at.y - 1, at.z - 3, at.x + 3, at.y + 5, at.z + 3));
+            net.command(&format!("fill {} {} {} {} {} {} air", at.x - 2, at.y, at.z - 2, at.x + 2, at.y + 4, at.z + 2));
+            net.command(&format!("setblock {} {} {} {}", light_at.x, light_at.y, light_at.z, name(plan.empty)));
+            net.command(&format!("tp {} {} {}", at.x as f32 + 0.5, at.y, at.z as f32 + 0.5));
+            gate.advance(now);
+        }
+        // The empty lamp there and the room drawn dark: the floor before the player.
+        1 => {
+            let Some(plan) = gate.lamp else { return };
+            aim_at(world, floor.as_vec3() + Vec3::new(0.5, 1.0, 0.5));
+            let set = block(world, light_at) == Some(plan.empty);
+            if set && light_drawn(world, gate, &[light_at, at, floor]) && in_phase > 0.5 {
+                let Some(shot) = fire_shot(world, gate, "lamp-empty") else { return };
+                match ground_colour(&shot) {
+                    Ok(colour) => {
+                        gate.fire_lit = Some(colour);
+                        world.resource::<Net>().command(&format!("give {} 2", name(plan.fuel)));
+                        gate.advance(now);
+                    }
+                    Err(why) => fail(world, gate, "lamp: filled and lit", why),
+                }
+            } else if waited {
+                fail(world, gate, "lamp: filled and lit", format!("the {} set down never reached the client ({:?} there) in {TORCH_WAIT} server seconds", name(plan.empty), named(block(world, light_at))));
+            }
+        }
+        // The fat in hand, right clicked on the lamp.
+        2 => {
+            let Some(plan) = gate.lamp else { return };
+            let (count, slot) = holding(world, &name(plan.fuel));
+            if let (2, Some(slot)) = (count, slot.filter(|&s| s < voxmar_engine::inventory::HOTBAR_SLOTS)) {
+                world.resource_mut::<LocalPlayer>().selected = slot;
+                aim_at(world, light_at.as_vec3() + Vec3::new(0.5, 0.2, 0.5));
+                mouse(world, MouseButton::Right, true);
+                gate.advance(now);
+            } else if waited {
+                fail(world, gate, "lamp: filled and lit", format!("two {} never reached the hotbar ({count} carried, {slot:?}) in {TORCH_WAIT} server seconds", name(plan.fuel)));
+            }
+        }
+        3 => {
+            let Some(plan) = gate.lamp else { return };
+            aim_at(world, light_at.as_vec3() + Vec3::new(0.5, 0.2, 0.5));
+            let (count, _) = holding(world, &name(plan.fuel));
+            if block(world, light_at) == Some(plan.lamp) && count == 1 {
+                mouse(world, MouseButton::Right, false);
+                // Put away, so only the lamp lights the floor.
+                if !empty_hand(world) {
+                    return fail(world, gate, "lamp: filled and lit", "no empty hotbar slot to put the fat away by".into());
+                }
+                gate.advance(now);
+            } else if waited {
+                fail(world, gate, "lamp: filled and lit", format!("right clicking the {} with {} left {:?} there and {count} {} carried (wanted one used up) after {TORCH_WAIT} server seconds", name(plan.empty), name(plan.fuel), named(block(world, light_at)), name(plan.fuel)));
+            }
+        }
+        4 => {
+            let Some(plan) = gate.lamp else { return };
+            aim_at(world, floor.as_vec3() + Vec3::new(0.5, 1.0, 0.5));
+            if light_drawn(world, gate, &[light_at, at, floor]) && in_phase > 0.5 {
+                let Some(shot) = fire_shot(world, gate, "lamp-lit") else { return };
+                let judged = match (gate.fire_lit.take(), ground_colour(&shot)) {
+                    (Some(unlit), Ok(lit)) => {
+                        let added = [0, 1, 2].map(|c| lit[c] - unlit[c]);
+                        let brighter = added.iter().sum::<f64>() / 3.0;
+                        let said = format!("filled with {}, the floor before the player is rgb {:.0} {:.0} {:.0} by the {} and was {:.0} {:.0} {:.0} by it empty: it adds {:.0} {:.0} {:.0}", name(plan.fuel), lit[0], lit[1], lit[2], name(plan.lamp), unlit[0], unlit[1], unlit[2], added[0], added[1], added[2]);
+                        if brighter > BRAND_LIFT && added[0] > added[2] + BRAND_WARMTH { Ok(said) } else { Err(format!("{said}, wanted over {BRAND_LIFT} brighter and {BRAND_WARMTH} redder than blue")) }
+                    }
+                    (None, _) => Err("the empty lamp's floor was not kept".into()),
+                    (_, Err(why)) => Err(why),
+                };
+                gate.check("lamp: filled and lit", judged);
+                // A candle beside it, then five game days on.
+                let net = world.resource::<Net>();
+                net.command(&format!("setblock {} {} {} {}", candle_at.x, candle_at.y, candle_at.z, name(plan.candle)));
+                gate.advance(now);
+            } else if waited {
+                fail(world, gate, "lamp: filled and lit", format!("the lit {} never settled in {TORCH_WAIT} server seconds", name(plan.lamp)));
+            }
+        }
+        5 => {
+            let Some(plan) = gate.lamp else { return };
+            if block(world, candle_at) == Some(plan.candle) {
+                let days = [plan.lamp, plan.candle].map(|b| content.flames.burns_out(&content.blocks, b).map_or(0.0, |(d, _)| d));
+                world.resource::<Net>().command(&format!("time add {}d", days[0].max(days[1]).ceil()));
+                gate.advance(now);
+            } else if waited {
+                fail(world, gate, "lamp: burns dry", format!("the {} set down never reached the client ({:?} there) in {TORCH_WAIT} server seconds", name(plan.candle), named(block(world, candle_at))));
+            }
+        }
+        _ => {
+            let Some(plan) = gate.lamp else { return };
+            let (lamp, candle) = (block(world, light_at), block(world, candle_at));
+            if lamp == Some(plan.empty) && candle == Some(plan.end) {
+                gate.check("lamp: burns dry", Ok(format!("days on, the {} burnt dry to a {} and the {} beside it to its {}", name(plan.lamp), name(plan.empty), name(plan.candle), name(plan.end))));
+                end(world, gate);
+            } else if waited {
+                fail(world, gate, "lamp: burns dry", format!("days on, the lamp was {:?} (wanted {}) and the candle {:?} (wanted {}) after {TORCH_WAIT} server seconds", named(lamp), name(plan.empty), named(candle), name(plan.end)));
             }
         }
     }
