@@ -6243,7 +6243,7 @@ fn door(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let client = world.resource::<ClientWorld>();
             let burning = client.block(fire).is_some_and(|b| client.registry.def(b).name == "base:campfire");
             if burning && light_drawn(world, gate, &[fire, world.resource::<LocalPlayer>().position.floor().as_ivec3()]) {
-                let Some(shot) = gate.shot(world, "campfire-night") else { return };
+                let Some(shot) = fire_shot(world, gate, "campfire-night") else { return };
                 match ground_colour(&shot) {
                     Ok(colour) => {
                         gate.fire_lit = Some(colour);
@@ -6266,7 +6266,7 @@ fn door(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             aim_at(world, fire.as_vec3() + Vec3::new(0.5, 0.3, 0.5));
             let out = world.resource::<ClientWorld>().block(fire).is_some_and(|b| b == BlockId::AIR);
             if out && light_drawn(world, gate, &[fire, world.resource::<LocalPlayer>().position.floor().as_ivec3()]) {
-                let Some(shot) = gate.shot(world, "campfire-night-out") else { return };
+                let Some(shot) = fire_shot(world, gate, "campfire-night-out") else { return };
                 let judged = match (gate.fire_lit.take(), ground_colour(&shot)) {
                     (Some(lit), Ok(unlit)) => fire_circle(lit, unlit),
                     (None, _) => Err("the lit ground was not kept".into()),
@@ -6293,8 +6293,21 @@ fn window_done(world: &mut World, gate: &mut Gate, nook: IVec3, fire: IVec3, now
     to_phase(gate, 7, now);
 }
 
+/// A shot of the ground by the campfire, drawn without particles: the fire's flames, embers
+/// and smoke are spawned at random moments, are first found up to half a second after the
+/// fire is (`emitters`), and live on for seconds after it is put out, so with them the
+/// ground's colour would hang on when it was taken. What is judged is the light the fire
+/// casts (`fire_circle`), which is in the terrain's meshes once `light_drawn`.
+fn fire_shot(world: &mut World, gate: &mut Gate, name: &'static str) -> Option<Image> {
+    world.resource_mut::<crate::render::particles::Particles>().hidden = true;
+    let shot = gate.shot(world, name)?;
+    world.resource_mut::<crate::render::particles::Particles>().hidden = false;
+    Some(shot)
+}
+
 /// The step's end: the fire gone, noon again, on to the seat.
 fn fire_done(world: &mut World, gate: &mut Gate, fire: IVec3, now: f32) {
+    world.resource_mut::<crate::render::particles::Particles>().hidden = false;
     let net = world.resource::<Net>();
     net.command(&format!("setblock {} {} {} air", fire.x, fire.y, fire.z));
     net.command("time set noon");
