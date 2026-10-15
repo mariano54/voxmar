@@ -549,9 +549,10 @@ struct Gate {
     /// While the world loads, since when each part of being loaded has held (`LOAD_PARTS`),
     /// for the load line: which one the load waited on last.
     load_parts: [Option<f32>; LOAD_PARTS.len()],
-    /// When the player first stood ready on the test ground (`Step::Arrive`), for how long
-    /// placing then waited for the distant land.
+    /// When the gathering step was done (`Step::Collect`), for how long breaking then waited
+    /// for the distant land, and how many of its tiles were in when placing began.
     arrive_ready: Option<f32>,
+    land_at_place: (usize, usize),
     /// Progress through a step's own stages, and when the current one began.
     phase: u32,
     phase_since: f32,
@@ -837,6 +838,7 @@ impl Gate {
             frames: 0,
             load_parts: [None; LOAD_PARTS.len()],
             arrive_ready: None,
+            land_at_place: (0, 0),
             phase: 0,
             phase_since: 0.0,
             settled: 0,
@@ -1449,6 +1451,8 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         Step::Load => LOAD_LIMIT,
         // Waiting on the distant land the load no longer waits for.
         Step::Arrive => LOAD_LIMIT,
+        // Gathering ends waiting on the distant land, as long as loading may take.
+        Step::Collect => LOAD_LIMIT,
         // A fresh area of the world to generate and mesh.
         Step::Gorge | Step::Ore | Step::Tarns => GORGE_OVERLOADED_LIMIT + STEP_LIMIT,
         // Striking judges itself by the blows the server answers (see `strike`).
@@ -1602,13 +1606,11 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
                 mouse(world, MouseButton::Left, false);
             }
             if since > 0.5 && settled(world, feet) {
-                // Placing, its shots and its frame check wait on the distant land being in,
-                // whenever that is, so none of them sees it still building.
-                let ready = *gate.arrive_ready.get_or_insert(now);
-                if !load_parts(world)[DISTANT_LAND] {
-                    return;
-                }
-                info!("gate: Place waited {:.1}s for distant land (in at {now:.1}s)", now - ready);
+                // Placing, digging and gathering go on while the distant land builds: their
+                // shots are of the ground just ahead, looked down at, and the land's work on
+                // the main thread is a few tiles a frame (`lod::TILES_PER_FRAME`) handed to
+                // the renderer, far under a hitch (`HITCH_MS`). Breaking waits for it.
+                gate.land_at_place = world.resource::<Lod>().progress();
                 let locked = world.resource::<UiState>().cursor_locked;
                 gate.check("arrive", if locked { Ok(format!("standing on the test ground at {feet}")) } else { Err("a click did not grab the mouse".into()) });
                 aim(world, feet + IVec3::new(0, -1, 2));
@@ -1693,6 +1695,17 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
             look(world, 0.0, 0.0);
             gate.next(Step::Collect, now);
         }
+        // Breaking, and every step after, once the distant land is in, so none sees it still
+        // building.
+        Step::Collect if gate.phase == 2 => {
+            let ready = *gate.arrive_ready.get_or_insert(now);
+            if !load_parts(world)[DISTANT_LAND] {
+                return;
+            }
+            let (tiles, wanted) = gate.land_at_place;
+            info!("gate: Breaks waited {:.1}s for distant land (in at {now:.1}s; {tiles} of {wanted} tiles in when placing began)", now - ready);
+            gate.next(Step::Breaks, now);
+        }
         Step::Collect => {
             key(world, KeyCode::KeyW, since <= 1.0);
             let wanted = gate.count_before + gate.dug.len() as u32;
@@ -1730,7 +1743,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
                 };
                 gate.check("drops", result);
                 key(world, KeyCode::KeyW, false);
-                gate.next(Step::Breaks, now);
+                gate.phase = 2;
             }
         }
         Step::Breaks => breaks(world, gate, now, in_phase),
@@ -14010,9 +14023,9 @@ mod tests {
         assert!(left_out(true).is_empty());
     }
 
-    /// Placing waits on the part of being loaded the load line names as the distant land.
+    /// Breaking waits on the part of being loaded the load line names as the distant land.
     #[test]
-    fn placing_waits_on_the_distant_land() {
+    fn breaking_waits_on_the_distant_land() {
         assert_eq!(super::LOAD_PARTS[super::DISTANT_LAND], "distant land");
     }
 
