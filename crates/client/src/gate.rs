@@ -5380,17 +5380,19 @@ fn seat(world: &mut World, gate: &mut Gate, now: f32) {
     }
     match gate.phase {
         0 => {
-            // A hand that places nothing: an empty hotbar slot, or one with an item.
-            let free = {
+            // A hand that places nothing: an empty hotbar slot, or one with an item; with every
+            // one holding a block, the last slot's block is put away (`/clear`).
+            let (free, last) = {
                 let (player, client) = (world.resource::<LocalPlayer>(), world.resource::<ClientWorld>());
-                (0..voxmar_engine::inventory::HOTBAR_SLOTS).find(|&s| player.inventory.get(s).is_none_or(|stack| !client.registry.info(stack.item).placeable))
+                let free = (0..voxmar_engine::inventory::HOTBAR_SLOTS).find(|&s| player.inventory.get(s).is_none_or(|stack| !client.registry.info(stack.item).placeable));
+                let last = voxmar_engine::inventory::HOTBAR_SLOTS - 1;
+                (free, player.inventory.get(last).map(|stack| client.registry.def(stack.item).name.clone()))
             };
-            let Some(free) = free else {
-                gate.check("seat: sat", Err("every hotbar slot holds a block to place".into()));
-                leave(world, gate);
-                return;
-            };
-            world.resource_mut::<LocalPlayer>().selected = free;
+            let net = world.resource::<Net>();
+            if let (None, Some(name)) = (free, &last) {
+                net.command(&format!("clear {name}"));
+            }
+            world.resource_mut::<LocalPlayer>().selected = free.unwrap_or(voxmar_engine::inventory::HOTBAR_SLOTS - 1);
             let net = world.resource::<Net>();
             // Its own ground: on the test ground's feet, facing the stool, whatever the step
             // before left.
@@ -5413,12 +5415,18 @@ fn seat(world: &mut World, gate: &mut Gate, now: f32) {
                     (player.inventory.get(player.selected).map(|s| s.item), player.vitals.seated)
                 };
                 let shown = world.resource::<ClientWorld>().block(stool).map(|b| world.resource::<ClientWorld>().registry.def(b).name.clone());
-                gate.check("seat: sat", Err(format!("{SEAT_WAIT} server s of right clicks on the stool ({shown:?}) did not seat the player (seated {seated:?}, holding {held:?})")));
+                let on = world.resource::<crate::interact::Target>().hit.as_ref().map(|hit| hit.block);
+                gate.check("seat: sat", Err(format!("{SEAT_WAIT} server s and {} right clicks on the stool ({shown:?}) did not seat the player (seated {seated:?}, holding {held:?}, crosshair on {on:?})", gate.taps)));
                 leave(world, gate);
             } else if open_scene_pose(world, gate) {
                 aim_at(world, stool.as_vec3() + Vec3::new(0.5, 0.6, 0.5));
                 let aimed = world.resource::<crate::interact::Target>().hit.as_ref().is_some_and(|hit| hit.block == stool);
-                gate.tap(world, aimed, now);
+                // Clicked only with a hand that places nothing, once the put-away is seen.
+                let empty_handed = {
+                    let (player, client) = (world.resource::<LocalPlayer>(), world.resource::<ClientWorld>());
+                    player.inventory.get(player.selected).is_none_or(|stack| !client.registry.info(stack.item).placeable)
+                };
+                gate.tap(world, aimed && empty_handed, now);
             }
         }
         // Sat by the fire: the eye drops below standing, and By the Fire comes on.
