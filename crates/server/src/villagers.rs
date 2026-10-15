@@ -161,6 +161,8 @@ struct Person {
     heal_after: Option<u64>,
     /// Injuries survive releasing the body until its quiet recovery time.
     health: Option<u16>,
+    /// Spots looked for in a row and none found: each miss draws its next pick otherwise.
+    misses: u64,
 }
 
 /// What came of looking for a way.
@@ -532,9 +534,12 @@ impl Server {
             let leg = self.villagers.towns[&town].people[i].trip.as_ref().filter(|t| t.place == place).map_or(0, |t| t.leg + 1);
             let mut trip = Trip { place, slot, day, path: Vec::new(), step: 0, pose: Pose::Idle, face: None, next_spot: None, leg, best: (f32::MAX, tick), retry: 0, pursuit: None };
             // Which spot, by the day, the place's slot and the trip's leg there, never the tick
-            // it sets out on.
-            let pick = mix(mix(seed, day as u64), (slot as u64) << 32 | leg as u64);
-            let Some(target) = self.target(town, i, pick, &mut trip, live) else { return };
+            // it sets out on; a miss draws the next try otherwise.
+            let misses = self.villagers.towns[&town].people[i].misses;
+            let pick = mix(mix(mix(seed, day as u64), (slot as u64) << 32 | leg as u64), misses);
+            let found = self.target(town, i, pick, &mut trip, live);
+            self.villagers.towns.get_mut(&town).expect("listed").people[i].misses = if found.is_some() { 0 } else { misses + 1 };
+            let Some(target) = found else { return };
             let start = at.floor().as_ivec3();
             match self.find_way(start, target, town, live) {
                 Way::Found(path) => trip.path = path,
