@@ -41,6 +41,10 @@ pub const THROWN_PICKUP_DELAY: f32 = 2.0;
 /// Seconds of world time a dropped item lasts before it vanishes: half an hour (Mariano,
 /// 2026-10-06), whether or not anyone is near to keep its ground loaded.
 pub const LIFETIME: f32 = 1800.0;
+/// Items within this many blocks of a player's middle, and free to be picked up, drift
+/// towards them.
+pub const MAGNET: f32 = 2.5;
+
 /// Speed a thrown stack leaves the hand at, in blocks per second (Minecraft's 0.3 a tick).
 pub const THROW_SPEED: f32 = 6.0;
 
@@ -130,6 +134,32 @@ pub fn popped(cell: IVec3, random: [f32; 3]) -> Loose {
     Loose::new(cell.as_vec3() + Vec3::new(0.5, 0.25, 0.5) + offset, velocity)
 }
 
+/// The furthest across a broken block's drop comes to rest from the middle of its cell, on
+/// flat open ground: from where it pops out, every way it may be thrown, stepped at the
+/// server's 20 ticks a second.
+pub fn pop_reach() -> f32 {
+    struct Floor;
+    impl Surroundings for Floor {
+        fn solid(&self, cell: IVec3) -> bool {
+            cell.y < 0
+        }
+        fn water(&self, _: &Aabb) -> (f32, glam::Vec2) {
+            (0.0, glam::Vec2::ZERO)
+        }
+    }
+    let mut furthest: f32 = 0.0;
+    for (a, b) in [(0.0, 0.0), (0.0, 1.0), (1.0, 0.0), (1.0, 1.0), (0.5, 0.0), (0.0, 0.5), (1.0, 0.5), (0.5, 1.0)] {
+        for turn in 0..64 {
+            let mut item = popped(IVec3::ZERO, [a, b, turn as f32 / 64.0]);
+            for _ in 0..200 {
+                item.step(&Floor, 0.05);
+            }
+            furthest = furthest.max(Vec3::new(item.position.x - 0.5, 0.0, item.position.z - 0.5).length());
+        }
+    }
+    furthest
+}
+
 /// A stack thrown from `eye` towards `look`, as Minecraft throws one: from just below the
 /// eye, at [`THROW_SPEED`], with a little lift.
 pub fn thrown(eye: Vec3, look: Vec3) -> Loose {
@@ -161,6 +191,17 @@ mod tests {
         for _ in 0..(seconds * 20.0) as usize {
             item.step(world, 0.05);
         }
+    }
+
+    /// A player standing on a broken block's cell draws in its drop wherever it popped to:
+    /// the furthest it comes to rest, from their middle, stays inside `MAGNET` (the gate's
+    /// furnishings come back so).
+    #[test]
+    fn a_drop_comes_to_rest_within_reach_of_one_standing_where_it_broke() {
+        let reach = pop_reach();
+        assert!(reach > 0.5, "drops hardly pop out: {reach}");
+        let from_middle = Vec3::new(reach, crate::physics::player::HEIGHT / 2.0 - SIZE / 2.0, 0.0).length();
+        assert!(from_middle < MAGNET, "a drop rests {from_middle:.2} blocks from the middle of one standing where it broke, past MAGNET {MAGNET}");
     }
 
     #[test]

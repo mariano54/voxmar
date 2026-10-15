@@ -11,7 +11,7 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 use voxmar_engine::block::BlockId;
 use voxmar_engine::coords::ColumnPos;
-use voxmar_engine::dropped::{self, LIFETIME, Loose};
+use voxmar_engine::dropped::{self, LIFETIME, Loose, MAGNET};
 use voxmar_engine::glam::{IVec3, Vec2, Vec3};
 use voxmar_engine::inventory::{ItemStack, MAX_STACK, max_stack};
 use voxmar_engine::movement::{self, Surroundings};
@@ -25,9 +25,6 @@ use crate::save::SavedItem;
 /// Players see dropped items this many blocks away (Minecraft draws them to 64 at most,
 /// and ours are tinier still).
 const SEEN_WITHIN: f32 = 48.0;
-/// Items within this many blocks of a player's middle, and free to be picked up, drift
-/// towards them.
-const MAGNET: f32 = 2.5;
 /// How fast a drawn-in item flies at the player, in blocks per second.
 const MAGNET_SPEED: f32 = 7.0;
 /// How far a player's box reaches for items, across and up and down (Minecraft's 1 and

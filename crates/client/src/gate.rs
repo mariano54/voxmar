@@ -228,9 +228,21 @@ fn render_offscreen(
     gate.target = crate::capture::offscreen(&mut commands, &mut images, &camera, SHOT, 1.0);
 }
 
-/// The steps, in order.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-enum Step {
+/// Defines `Step` and `STEPS`, every step in order, from the one list: a step added is one
+/// the session's end looks for (`Gate::unentered`).
+macro_rules! steps {
+    ($($(#[$doc:meta])* $name:ident,)*) => {
+        /// The steps, in order.
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+        enum Step {
+            $($(#[$doc])* $name,)*
+        }
+        /// Every step, in order.
+        const STEPS: &[Step] = &[$(Step::$name),*];
+    };
+}
+
+steps! {
     /// The world around the player loads.
     Load,
     /// The test ground is built, the clock, weather and chance wandering parties held, and
@@ -547,6 +559,8 @@ struct Gate {
     settled: u32,
     /// Where the player stands on the test ground.
     feet: IVec3,
+    /// Every step entered this session, in the order entered.
+    entered: Vec<Step>,
     observer: Option<Observer>,
     identity_peer: Option<Observer>,
     identity_id: Option<PlayerId>,
@@ -815,6 +829,7 @@ impl Gate {
             phase_since: 0.0,
             settled: 0,
             feet: IVec3::ZERO,
+            entered: vec![Step::Load],
             observer: None,
             identity_peer: None,
             identity_id: None,
@@ -1048,6 +1063,14 @@ impl Gate {
 
     fn next(&mut self, step: Step, now: f32) {
         info!("gate: {step:?} at {now:.1}s, server {:.1}s", self.server_now);
+        if !self.entered.contains(&step) {
+            self.entered.push(step);
+        }
+        // A step no path leads to never fails: the session's end names any not played.
+        if step == Step::Done {
+            let missed = self.unentered(full_gate());
+            self.check("steps", if missed.is_empty() { Ok(format!("all {} steps played but those this gate leaves out ({:?})", STEPS.len(), left_out(full_gate()))) } else { Err(format!("never entered this session: {missed:?}")) });
+        }
         self.swings = 0;
         self.swung = false;
         self.strikes_seen = None;
@@ -1063,6 +1086,11 @@ impl Gate {
         self.phase_server = self.server_now;
         self.food_moved = false;
         self.party_sent = false;
+    }
+
+    /// The steps not entered this session, but for those the gate leaves out (`left_out`).
+    fn unentered(&self, full: bool) -> Vec<Step> {
+        STEPS.iter().copied().filter(|step| !self.entered.contains(step) && !left_out(full).contains(step)).collect()
     }
 
     /// On to the next stage of a step. Logged with the game's and the server's clocks, so a
@@ -1308,6 +1336,12 @@ const FULL_ONLY_PHASES: [(&str, f32); 4] = [("MV washer", 120.0), ("bloomery and
 /// What the full gate's session limits allow on top of the landing gate's.
 fn full_allowance() -> f32 {
     if full_gate() { FULL_ONLY_PHASES.iter().map(|(_, seconds)| seconds).sum() } else { 0.0 }
+}
+
+/// The steps a gate leaves out by design, by mode: the landing gate the full gate's HV age.
+/// Listed, not guessed, so a step no path reaches still fails the session's end.
+fn left_out(full: bool) -> &'static [Step] {
+    if full { &[] } else { &[Step::HvAge] }
 }
 
 /// Whether this is `tools/gate --full`, which sets `VOXMAR_GATE_FULL=1`: the steps too long
@@ -5379,18 +5413,23 @@ fn seat(world: &mut World, gate: &mut Gate, now: f32) {
     }
     match gate.phase {
         0 => {
-            // A hand that places nothing: an empty hotbar slot, or one with an item.
-            let free = {
+            // A hand that places nothing: an empty hotbar slot, or one with an item; with every
+            // one holding a block, the last slot's block is put away (`/clear`).
+            let (free, last) = {
                 let (player, client) = (world.resource::<LocalPlayer>(), world.resource::<ClientWorld>());
-                (0..voxmar_engine::inventory::HOTBAR_SLOTS).find(|&s| player.inventory.get(s).is_none_or(|stack| !client.registry.info(stack.item).placeable))
+                let free = (0..voxmar_engine::inventory::HOTBAR_SLOTS).find(|&s| player.inventory.get(s).is_none_or(|stack| !client.registry.info(stack.item).placeable));
+                let last = voxmar_engine::inventory::HOTBAR_SLOTS - 1;
+                (free, player.inventory.get(last).map(|stack| client.registry.def(stack.item).name.clone()))
             };
-            let Some(free) = free else {
-                gate.check("seat: sat", Err("every hotbar slot holds a block to place".into()));
-                leave(world, gate);
-                return;
-            };
-            world.resource_mut::<LocalPlayer>().selected = free;
             let net = world.resource::<Net>();
+            if let (None, Some(name)) = (free, &last) {
+                net.command(&format!("clear {name}"));
+            }
+            world.resource_mut::<LocalPlayer>().selected = free.unwrap_or(voxmar_engine::inventory::HOTBAR_SLOTS - 1);
+            let net = world.resource::<Net>();
+            // Its own ground: on the test ground's feet, facing the stool, whatever the step
+            // before left.
+            net.command(&format!("tp {} {} {}", stand.x as f32 + 0.5, stand.y, stand.z as f32 + 0.5));
             net.command(&format!("setblock {} {} {} oak_stool", stool.x, stool.y, stool.z));
             net.command(&format!("setblock {} {} {} campfire", fire.x, fire.y, fire.z));
             net.command(&format!("setblock {} {} {} stone", stool.x, stool.y + 2, stool.z));
@@ -5409,12 +5448,18 @@ fn seat(world: &mut World, gate: &mut Gate, now: f32) {
                     (player.inventory.get(player.selected).map(|s| s.item), player.vitals.seated)
                 };
                 let shown = world.resource::<ClientWorld>().block(stool).map(|b| world.resource::<ClientWorld>().registry.def(b).name.clone());
-                gate.check("seat: sat", Err(format!("{SEAT_WAIT} server s of right clicks on the stool ({shown:?}) did not seat the player (seated {seated:?}, holding {held:?})")));
+                let on = world.resource::<crate::interact::Target>().hit.as_ref().map(|hit| hit.block);
+                gate.check("seat: sat", Err(format!("{SEAT_WAIT} server s and {} right clicks on the stool ({shown:?}) did not seat the player (seated {seated:?}, holding {held:?}, crosshair on {on:?})", gate.taps)));
                 leave(world, gate);
             } else if open_scene_pose(world, gate) {
                 aim_at(world, stool.as_vec3() + Vec3::new(0.5, 0.6, 0.5));
                 let aimed = world.resource::<crate::interact::Target>().hit.as_ref().is_some_and(|hit| hit.block == stool);
-                gate.tap(world, aimed, now);
+                // Clicked only with a hand that places nothing, once the put-away is seen.
+                let empty_handed = {
+                    let (player, client) = (world.resource::<LocalPlayer>(), world.resource::<ClientWorld>());
+                    player.inventory.get(player.selected).is_none_or(|stack| !client.registry.info(stack.item).placeable)
+                };
+                gate.tap(world, aimed && empty_handed, now);
             }
         }
         // Sat by the fire: the eye drops below standing, and By the Fire comes on.
@@ -5476,8 +5521,10 @@ fn makeable(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     match gate.phase {
         0 => {
             let net = world.resource::<Net>();
-            net.command("give oak_log 1");
-            net.command("give cobblestone 3");
+            // Its own pack: one log and three cobblestone, whatever earlier steps left.
+            for line in ["clear oak_log", "give oak_log 1", "clear cobblestone", "give cobblestone 3"] {
+                net.command(line);
+            }
             let mut ui = world.resource_mut::<UiState>();
             (ui.recipes_open, ui.quests_open, ui.menu_open, ui.character_open) = (false, false, false, false);
             ui.inventory_open = true;
@@ -5785,13 +5832,19 @@ fn nest(world: &mut World, gate: &mut Gate, now: f32) {
                 None => {}
             }
         }
-        // Both in, then broken by hand one after the other.
+        // Both in, then broken by hand one after the other. Each drop pops out a block or so
+        // whichever way the server's tick throws it, which can be past where a player beside
+        // it draws things in: the player steps onto where it stood, which every pop is in
+        // reach of (`dropped::pop_reach`), so it comes to them.
         6 | 7 => {
             let (name, at, height) = if gate.phase == 6 { ("base:red_rug", rug, 0.03) } else { ("base:oak_stool", stool, 0.4) };
             aim_at(world, at.as_vec3() + Vec3::new(0.5, height, 0.5));
             mouse(world, MouseButton::Left, true);
             if world.resource::<ClientWorld>().block(at).is_some_and(|b| b.is_air()) {
                 mouse(world, MouseButton::Left, false);
+                let onto = Vec3::new(at.x as f32 + 0.5, at.y as f32, at.z as f32 + 0.5);
+                info!("gate: home: furnishings: the {name} broken, the player steps onto ({:.2}, {:.2}, {:.2})", onto.x, onto.y, onto.z);
+                world.resource::<Net>().command(&format!("tp {:.2} {:.2} {:.2}", onto.x, onto.y, onto.z));
                 gate.advance(now);
             } else if waited > 10.0 {
                 mouse(world, MouseButton::Left, false);
@@ -5810,7 +5863,25 @@ fn nest(world: &mut World, gate: &mut Gate, now: f32) {
                 gate.check("home: furnishings: come back", Ok("a rug and a stool the player set down came back whole when broken".into()));
                 leave(world, gate);
             } else if waited > 10.0 {
-                gate.check("home: furnishings: come back", Err(format!("{waited:.1} server s after breaking them, the pack holds {rugs} rug and {stools} stool (want one each)")));
+                // Where each missing piece's drop lies, and how far from the player's middle
+                // against how near it must be to be drawn in.
+                let player = world.resource::<LocalPlayer>();
+                let middle = player.position + Vec3::Y * voxmar_engine::physics::player::HEIGHT / 2.0;
+                let (client, drops) = (world.resource::<ClientWorld>(), world.resource::<crate::drops::Drops>());
+                let lying = |name: &str, have: u32| {
+                    if have >= 1 {
+                        return String::new();
+                    }
+                    let id = client.registry.id(name);
+                    let found: Vec<String> = drops
+                        .lying()
+                        .filter(|(_, stack, _)| Some(stack.item) == id)
+                        .map(|(_, _, at)| format!("{name} lies at ({:.2}, {:.2}, {:.2}), {:.2} blocks from the player's middle (drawn in within {})", at.x, at.y, at.z, (at + Vec3::Y * voxmar_engine::dropped::SIZE / 2.0).distance(middle), voxmar_engine::dropped::MAGNET))
+                        .collect();
+                    if found.is_empty() { format!("; no {name} lies about") } else { format!("; {}", found.join(", ")) }
+                };
+                let missing = lying("base:red_rug", rugs) + &lying("base:oak_stool", stools);
+                gate.check("home: furnishings: come back", Err(format!("{waited:.1} server s after breaking them, the pack holds {rugs} rug and {stools} stool (want one each), the player at ({:.2}, {:.2}, {:.2}){missing}", player.position.x, player.position.y, player.position.z)));
                 leave(world, gate);
             }
         }
@@ -5981,14 +6052,14 @@ fn door(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     }
 }
 
-/// The window step's end: the nook taken down, noon again, on to the quests.
+/// The window step's end: the nook taken down, noon again, on to the seat.
 fn window_done(world: &mut World, gate: &mut Gate, nook: IVec3, now: f32) {
     let net = world.resource::<Net>();
     let (low, high) = (nook - IVec3::ONE, nook + IVec3::ONE);
     net.command(&format!("fill {} {} {} {} {} {} air", low.x, low.y, low.z, high.x, high.y, high.z));
     net.command("time set noon");
     gate.window_lit = None;
-    gate.next(Step::Quests, now);
+    gate.next(Step::Seat, now);
 }
 
 /// The mean colour, of 255, of the middle of a shot aimed at a window's pane.
@@ -13706,6 +13777,17 @@ fn finish(world: &mut World, gate: &Gate, now: f32) {
 #[cfg(test)]
 mod tests {
     use super::{sling_next, warm_window, SlingNext, BEAR, SLING, SLING_LEVEL, SLING_STONES, UNANSWERED};
+
+    /// Every step is listed once, in order from Load to Done, and only listed steps are left
+    /// out, the landing gate leaving out just the full gate's HV age.
+    #[test]
+    fn every_step_is_listed_once_and_only_the_full_gates_are_left_out() {
+        use super::{left_out, Step, STEPS};
+        assert_eq!((STEPS.first(), STEPS.last()), (Some(&Step::Load), Some(&Step::Done)));
+        assert!(STEPS.iter().enumerate().all(|(i, a)| !STEPS[i + 1..].contains(a)));
+        assert_eq!(left_out(false), [Step::HvAge]);
+        assert!(left_out(true).is_empty());
+    }
 
     /// Placing waits on the part of being loaded the load line names as the distant land.
     #[test]
