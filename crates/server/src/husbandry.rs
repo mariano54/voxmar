@@ -9,7 +9,7 @@ use voxmar_engine::coords::ColumnPos;
 use voxmar_engine::creature::husbandry::{self, IN_LOVE_SECONDS, MATE_RANGE, YOUNG_SCALE};
 use voxmar_engine::creature::brain::Mind;
 use voxmar_engine::creature::condition::{self, Met};
-use voxmar_engine::creature::{CreatureId, mix, unit_from};
+use voxmar_engine::creature::CreatureId;
 use voxmar_engine::crop::level_bonus;
 use voxmar_engine::dropped;
 use voxmar_engine::genes;
@@ -25,7 +25,6 @@ use crate::commands::Source;
 use crate::Server;
 use crate::condition::RECKON_EVERY;
 use crate::creatures::product_ticks;
-use crate::items::random3;
 
 /// How close two ready adults come before they breed, in blocks.
 const MEET: f32 = 1.6;
@@ -375,7 +374,8 @@ impl Server {
         }
         for (position, item, (low, high), yield_, id, keeper) in laid {
             let cell = position.floor().as_ivec3();
-            let [a, b, c] = random3(tick, cell, id);
+            // Numbered by the world's count of rolls, never by the tick it is laid on.
+            let [a, c] = self.meta.next_roll(crate::save::ROLL_PRODUCT);
             let count = yielded(low + ((a * (high - low + 1) as f32) as u8).min(high - low), yield_, c);
             // Laid in its keeper's home, it goes into the stores there that take it, nearest
             // first; what finds no room falls as ever.
@@ -399,7 +399,7 @@ impl Server {
                 }
             }
             if let Some(stack) = left {
-                self.items.spawn(stack, dropped::popped(cell, [b, c, a]), dropped::PICKUP_DELAY);
+                self.items.spawn(stack, dropped::popped(cell, self.meta.next_pop(cell, id)), dropped::PICKUP_DELAY);
             }
         }
         // Ready pairs that have met.
@@ -447,7 +447,7 @@ impl Server {
         // Parents in better condition have bigger litters, never more than there is room for.
         let rules = *self.content.creatures.condition();
         let fitness = (self.creatures.live[&a].condition + self.creatures.live[&b].condition) / 2.0;
-        let odds = (unit_from(mix(seed, self.tick)) * rules.output(fitness)).min(0.9999);
+        let odds = (self.meta.next_roll(crate::save::ROLL_LITTER)[0] * rules.output(fitness)).min(0.9999);
         let count = (low + ((odds * (high - low + 1) as f32) as u8).min(high - low)).max(1).min(room.min(u8::MAX as usize) as u8);
         let grows = self.tick + (breeding.growth * 60.0 * TICKS_PER_SECOND as f32) as u64;
         let (mother, father) = (self.creatures.live[&a].genome.clone(), self.creatures.live[&b].genome.clone());
@@ -1392,5 +1392,47 @@ mod tests {
         let back = server.creatures.live.values().next().expect("restored");
         assert_eq!(back.condition, rules.tamed);
         assert!(server.days_since(back.fed).abs() < 1e-3);
+    }
+
+    /// What a kept animal lays by itself, and how many young a pair has, are drawn by the
+    /// world's count of rolls, and what is laid pops by its count of drops, not the tick
+    /// they fall on, and each counts on.
+    #[test]
+    fn a_lay_and_a_litter_draw_by_the_worlds_count_not_the_tick() {
+        let kept_at = |tick: u64| {
+            let mut server = test_server();
+            server.meta.draw_key = 0x0d1a;
+            let (_player, client) = keeper(&mut server);
+            std::mem::forget(client);
+            let hen = kept(&mut server, "base:junglefowl", 1);
+            server.tick = tick.next_multiple_of(EVERY);
+            let mut laid = Vec::new();
+            for _ in 0..12 {
+                server.creatures.live.get_mut(&hen).unwrap().products_due[0] = 0;
+                server.tick_husbandry();
+                server.tick += EVERY;
+                let mut lying: Vec<_> = server.items.all.drain().map(|(_, d)| (d.stack.item, d.stack.count, d.body.position.to_array(), d.body.velocity.to_array())).collect();
+                lying.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                laid.push(lying);
+            }
+            server.creatures.live.clear();
+            let (a, b) = (kept_rabbit(&mut server, 1), kept_rabbit(&mut server, 2));
+            let mut litters = Vec::new();
+            for _ in 0..16 {
+                for id in [a, b] {
+                    let parent = server.creatures.live.get_mut(&id).unwrap();
+                    (parent.ready_until, parent.breeds_again) = (server.tick + 100, 0);
+                }
+                server.breed(a, b);
+                litters.push(server.creatures.live.len() - 2);
+                server.creatures.live.retain(|&id, _| id == a || id == b);
+            }
+            (laid, litters, server.meta.rolls)
+        };
+        let first = kept_at(1_000);
+        assert!(first.0.iter().all(|l| !l.is_empty()), "a hen due to lay laid nothing: {:?}", first.0);
+        assert_eq!(first.2, 12 + 16, "each lay and litter counted on");
+        assert!(first.1.windows(2).any(|w| w[0] != w[1]), "sixteen litters all alike: {:?}", first.1);
+        assert_eq!(kept_at(1_377), first, "the same lays and litters later went otherwise");
     }
 }

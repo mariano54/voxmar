@@ -6,7 +6,7 @@
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use voxmar_engine::block::BlockId;
-use voxmar_engine::creature::{CreatureId, mix, unit_from};
+use voxmar_engine::creature::CreatureId;
 use voxmar_engine::crop::level_bonus;
 use voxmar_engine::dropped;
 use voxmar_engine::glam::IVec3;
@@ -18,7 +18,6 @@ use voxmar_engine::traits;
 use voxmar_protocol::PlayerId;
 
 use crate::Server;
-use crate::items::random3;
 use crate::process::Process;
 
 /// What a sprung trap holds: the species caught, and the seed its loot is rolled from.
@@ -125,12 +124,10 @@ impl Server {
         let tool: Vec<String> = player.held().map_or_else(Vec::new, |item| self.content.blocks.def(item).tags.clone());
         let bonus = species.xp_skill.map_or(0.0, |skill| level_bonus(self.content.skills.level(player.skills.xp(skill)), 1, self.content.skills.max_level()));
         let moment = Moment { bonus, tool: &tool, night: self.daylight() < 0.3, by_player: true };
-        let mut draws = 0u64;
-        let tick = self.tick;
-        let found = loot::roll(&species.loot, &moment, || {
-            draws += 1;
-            unit_from(mix(catch.seed, draws ^ tick << 8))
-        });
+        // Each roll numbered by the world's count of loot rolls, never by the tick it is
+        // emptied on.
+        let meta = &mut self.meta;
+        let found = loot::roll(&species.loot, &moment, || meta.next_loot());
         let name = species.def.name.clone();
         let page = Self::page_of(&species.def);
         let kill = species.xp_skill.map(|skill| (skill, species.def.xp.kill));
@@ -141,7 +138,7 @@ impl Server {
             let left = player.inventory.add(item, count);
             player.changed(traits::INVENTORY);
             if left > 0 {
-                let body = dropped::popped(pos, random3(tick, pos, 0x5a4e + i as u32));
+                let body = dropped::popped(pos, self.meta.next_pop(pos, 0x5a4e + i as u32));
                 self.items.spawn(ItemStack { item, count: left }, body, dropped::PICKUP_DELAY);
             }
         }
@@ -303,5 +300,28 @@ mod tests {
         assert!(restored.get(snare).is_some());
         server.set_block(snare, BlockId::AIR);
         assert!(server.catches.get(snare).is_none(), "broken, the catch is lost");
+    }
+
+    /// A catch's loot is rolled by the world's count of loot rolls, not the tick it is
+    /// taken on, and each roll counts on.
+    #[test]
+    fn a_catch_rolls_by_the_count_of_rolls_not_the_tick() {
+        let taken = |tick: u64| {
+            let (mut server, snare) = field(1);
+            server.meta.draw_key = 0x0d1a;
+            server.tick = tick;
+            let mut found = Vec::new();
+            for _ in 0..12 {
+                put(&mut server, "base:rabbit", snare.as_vec3() + Vec3::new(0.5, 0.0, 0.5));
+                server.spring_traps();
+                server.players.get_mut(&1).unwrap().inventory = Default::default();
+                server.take_from_trap(1, snare);
+                found.push(server.players[&1].inventory.slots.iter().flatten().map(|s| (s.item, s.count)).collect::<Vec<_>>());
+            }
+            (found, server.meta.loot)
+        };
+        let (first, rolls) = taken(1_000);
+        assert!(rolls > 0 && first.iter().all(|f| !f.is_empty()), "twelve catches rolled {rolls} times for {first:?}");
+        assert_eq!(taken(1_377), (first, rolls), "the same catches taken later gave otherwise");
     }
 }
