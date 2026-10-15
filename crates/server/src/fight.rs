@@ -87,6 +87,9 @@ pub(crate) struct Charging {
     /// Ticks in a row it has made no way against something: a wall it cannot hop, even
     /// where its head met it first.
     pub stalled: u8,
+    /// The tick its run is over by, however little way it made: hopping at a stair it
+    /// cannot climb, or swimming.
+    pub until: u64,
 }
 
 impl Charging {
@@ -701,7 +704,7 @@ impl Server {
         live.winding = false;
         live.tracking = None;
         live.decision.pose = brain::Pose::Idle;
-        live.charging = Some(Charging { player, along: live.body.forward(), left: charge.distance, speed: charge.speed, stun: charge.stun, top: live.body.position.y, stalled: 0 });
+        live.charging = Some(Charging { player, along: live.body.forward(), left: charge.distance, speed: charge.speed, stun: charge.stun, top: live.body.position.y, stalled: 0, until: tick + ticks(charge.seconds() + 0.5) });
         // Held from thinking for the run, and a little over; `charge_ran` ends it sooner.
         live.held_until = live.held_until.max(tick + ticks(charge.seconds() + 0.5));
         live.changed = true;
@@ -720,7 +723,9 @@ impl Server {
         let (size, scale, most) = (species.def.body.size, live.scale, species.def.health);
         let moved = (body.position - before).with_y(0.0).dot(charge.along).max(0.0);
         charge.left -= moved;
-        let stuck = body.against_wall && moved < charge.speed * dt * 0.25;
+        // Stuck only on its feet: in the air between hops up a stair its snout meets the
+        // next riser and it falls back onto the step, which is no wall.
+        let stuck = body.on_ground && body.against_wall && moved < charge.speed * dt * 0.25;
         charge.stalled = if stuck { charge.stalled.saturating_add(1) } else { 0 };
         // A fall: counted from the highest its feet were since it last stood.
         let mut fell = 0.0;
@@ -734,7 +739,7 @@ impl Server {
         let fall = fell - safe_fall;
         if fall > 0.0 {
             let damage = ((fall.ceil() * feel.charge_fall * most as f32).round() as u16).max(1);
-            self.hurt_creature(charge.player, creature, damage, None, Blow::Plain);
+            self.fall_hurt_creature(creature, damage);
             if !self.creatures.live.get(&creature).is_some_and(|c| c.charging.is_some()) {
                 return;
             }
@@ -767,8 +772,9 @@ impl Server {
             });
         if rammed {
             self.end_charge(creature, Some(charge.stun));
-        } else if charge.left <= 0.0 && body.on_ground {
-            // Run out: once on its feet, so a fall it ran off still counts when it lands.
+        } else if (charge.left <= 0.0 || self.tick >= charge.until) && (body.on_ground || body.in_water) {
+            // Run out, or out of time: once on its feet, so a fall it ran off still counts
+            // when it lands, or swimming, which has no feet to come down on.
             self.end_charge(creature, None);
         }
     }
@@ -784,6 +790,8 @@ impl Server {
         let recovery = attack.and_then(|a| a.recovery).unwrap_or(feel.creature_recovery).max(0.0);
         let windup = attack.and_then(|a| a.windup).unwrap_or(feel.creature_windup).max(0.0);
         live.held_until = tick + ticks(recovery + stun.unwrap_or(0.0));
+        // Dazed by a wall or a braced point, it reels as from any stagger (`STAGGERED`).
+        live.staggered = stun.is_some();
         // The rest of its `every` after the wind-up and recovery, as a blow that lands
         // leaves it: a miss, a wall or a braced point costs no more than a hit.
         live.mind.cooldown = attack.map_or(1.0, |a| (a.every - windup - recovery).max(0.0));

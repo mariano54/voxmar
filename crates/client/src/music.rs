@@ -448,12 +448,13 @@ pub(crate) fn boss_music(world: &World) -> Option<(bool, Option<(String, bool)>)
 /// second).
 fn in_boss_fight(music: &mut Music, time: &Time, feet: Vec3, creatures: Option<&Creatures>, world: Option<&ClientWorld>) -> Option<Vec<String>> {
     let boss = music.rules.boss.clone();
+    let now = time.elapsed_secs();
     let near = creatures.and_then(|creatures| {
         creatures
             .living()
             .filter_map(|(id, species, at)| {
                 let (_, tags, roams) = music.bosses.iter().find(|(boss, ..)| *boss == species)?;
-                roams.is_none_or(|most| creatures.stirred(id, most)).then_some((at.distance(feet), tags))
+                roams.is_none_or(|_| creatures.stirred(id, now, boss.calm_after)).then_some((at.distance(feet), tags))
             })
             .filter(|(distance, _)| *distance <= boss.within)
             .min_by(|a, b| a.0.total_cmp(&b.0))
