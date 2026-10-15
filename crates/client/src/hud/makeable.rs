@@ -336,7 +336,7 @@ mod tests {
         let plan_log = plan(&content, &book, &have(&content, &[("base:oak_log", 1)]), false, &none);
         assert_eq!(find(&plan_log, &content, "base:oak_planks").map(|m| &m.reach), Some(&Reach::Ready));
         assert_eq!(plan_log[0].reach, Reach::Ready);
-        let planks = plan(&content, &book, &have(&content, &[("base:oak_planks", 4), ("base:cobblestone", 3), ("base:stick", 2)]), false, &none);
+        let planks = plan(&content, &book, &have(&content, &[("base:oak_planks", 4), ("base:stone_head", 3), ("base:stick", 2)]), false, &none);
         for name in ["base:stick", "base:crafting_table"] {
             assert_eq!(find(&planks, &content, name).map(|m| &m.reach), Some(&Reach::Ready), "{name}");
         }
@@ -344,7 +344,7 @@ mod tests {
         let first_table = planks.iter().position(|m| m.reach == Reach::Table).unwrap();
         assert!(planks[..first_table].iter().all(|m| m.reach == Reach::Ready), "ready ones first");
         // At a table, it is ready.
-        let at_table = plan(&content, &book, &have(&content, &[("base:cobblestone", 3), ("base:stick", 2)]), true, &none);
+        let at_table = plan(&content, &book, &have(&content, &[("base:stone_head", 3), ("base:stick", 2)]), true, &none);
         assert_eq!(find(&at_table, &content, "base:stone_pickaxe").map(|m| &m.reach), Some(&Reach::Ready));
         let mut outputs: Vec<BlockId> = planks.iter().map(|m| m.output).collect();
         outputs.sort();
@@ -361,12 +361,12 @@ mod tests {
         let content = content();
         let book = RecipeBook::new(&content);
         let none = |_: &Recipe| None;
-        let plan_short = plan(&content, &book, &have(&content, &[("base:cobblestone", 3), ("base:stick", 1)]), true, &none);
+        let plan_short = plan(&content, &book, &have(&content, &[("base:stone_head", 3), ("base:stick", 1)]), true, &none);
         let stick = content.blocks.id("base:stick").unwrap();
         assert_eq!(find(&plan_short, &content, "base:stone_pickaxe").map(|m| &m.reach), Some(&Reach::Short(vec![(stick, 1)])));
         let engineering = content.skills.id("core:engineering").unwrap();
         let lacking = |r: &Recipe| r.skill.filter(|&s| s == engineering && r.level > 0).map(|s| (s, r.level));
-        let level = plan(&content, &book, &have(&content, &[("base:cobblestone", 3), ("base:stick", 2)]), true, &lacking);
+        let level = plan(&content, &book, &have(&content, &[("base:stone_head", 3), ("base:stick", 2)]), true, &lacking);
         assert_eq!(find(&level, &content, "base:stone_pickaxe").map(|m| &m.reach), Some(&Reach::Level(engineering, 1)));
         let locale = Locale::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content"), "en");
         let line = words(&locale, &content, content.blocks.id("base:stone_pickaxe").unwrap(), &Reach::Short(vec![(stick, 1)]));

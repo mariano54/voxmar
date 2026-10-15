@@ -1,6 +1,8 @@
 // Workshop blocks (content/base/blocks_workshop.ron), for this pack and Voxmar HD alike: a
 // chopping block's top, a log end's rings scored by the wedge, ringed with bark; its side,
-// rough oak bark; and the flint wedge left in it, dark with a pale knapped edge.
+// rough oak bark; and the flint wedge left in it, dark with a pale knapped edge. A
+// grindstone's frame, split oak posts, and its wheel, grey cobble worn smooth and banded
+// by sand, a pale rim where the edge is ground.
 (
     textures: {
         "block/chopping_block_top": (size: (16, 16), layers: [Grid(legend: {'b': "#3e2e1b", 'B': "#523e25", 'w': "#967447", 'W': "#b8935e", 'r': "#7d5c36", 'x': "#5a4026"}, rows: [
@@ -55,6 +57,42 @@
             "hhghhghhhhghhghh",
             "eheeheeeeheeheee",
             "eeeeeeeeeeeeeeee",
+            "eeeeeeeeeeeeeeee",
+        ])]),
+        "block/grindstone_frame": (size: (16, 16), layers: [Grid(legend: {'a': "#4a3720", 'b': "#5e4629", 'c': "#765a36", 'd': "#8e6e44"}, rows: [
+            "bccdcbbccdcbbccd",
+            "bcdccbbcdccbbcdc",
+            "acdcdbacdcdbacdc",
+            "bccdcbbccdcbbccd",
+            "bcdcdbbcdcdbbcdc",
+            "bccdcaaccdcbbccd",
+            "bcdccbbcdccbacdc",
+            "acdcdbbcdcdbbcdc",
+            "bccdcbbccdcbbccd",
+            "bcdccbacdccbbcdc",
+            "bcdcdbbcdcdbbcdc",
+            "bccdcbbccdcaaccd",
+            "acdccbbcdccbbcdc",
+            "bcdcdbbcdcdbbcdc",
+            "bccdcbbccdcbbccd",
+            "bcdccbbcdccbacdc",
+        ])]),
+        "block/grindstone_wheel": (size: (16, 16), layers: [Grid(legend: {'f': "#5a5a5e", 'g': "#6e6e72", 'h': "#86868a", 's': "#a49a80", 'e': "#c0c0c4"}, rows: [
+            "eeeeeeeeeeeeeeee",
+            "ehghgghghhgghghe",
+            "eghgsghgghgsghge",
+            "ehgghgfghgghgfge",
+            "egsghghggsghghge",
+            "ehghgghghhgghghe",
+            "egghsghgfghsghge",
+            "ehgfghgghgfghgge",
+            "eghgghsghgghsghe",
+            "ehghfgghghfgghge",
+            "egsghghggsghghge",
+            "ehgghgfghgghgfge",
+            "egghsghggghsghge",
+            "ehghgghghhgghghe",
+            "eghgfghgghgfghge",
             "eeeeeeeeeeeeeeee",
         ])]),
     },

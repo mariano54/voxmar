@@ -20,6 +20,13 @@ over a stick, a flint pickaxe two flint over two sticks, both tier 1 like wood. 
 stone or a log by hand says "Needs a Flint Pickaxe or better" (the flint tools are listed
 first, so the refusal names them). Placed logs and cobblestone still break by hand.
 
+Stone tools want hard rock. Their heads are **stone heads**, ground at a **grindstone**
+(sand over any cobble, on two sticks, in the hand's grid) from **toolstone**: granite,
+diorite, andesite and basalt, which only some rock provinces bare (`rocks.ron`), and the
+deepslate under every province, so a player in limestone or sandstone country walks to find
+it or mines down. Plain stone and cobblestone will not take an edge. A stone pickaxe or axe
+takes three heads, a hoe two, a shovel or knife one.
+
 `base/tools.ron` (engine/src/tool.rs) says what each kind is made for, by block tags (a
 pickaxe for stone and ore, an axe for logs and planks, a shovel for soil, sand, gravel,
 clay and snow, a hoe for crops and leaves, shears for leaves and wool, a knife for plants).

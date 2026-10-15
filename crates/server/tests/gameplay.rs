@@ -7449,6 +7449,11 @@ impl Fresh {
         // A patch of natural stone one block high, with two coal ores on its near edge.
         c.fill(origin, v(9, 0, -3), v(17, 0, 4), "stone");
         c.fill(origin, v(9, 0, 3), v(9, 0, 4), "coal_ore");
+        // Granite, the hard rock stone heads are ground from, in a far corner: nine blocks
+        // one high, so what is left over stands out of the way. And a block of sand, for the
+        // grindstone's dressing.
+        c.fill(origin, v(18, 0, -10), v(20, 0, -8), "granite");
+        c.fill(origin, v(3, 0, 1), v(3, 0, 1), "sand");
         // A pond two blocks wide, one block of water over two of clay.
         c.fill(origin, v(-2, -3, 2), v(-1, -2, 11), "clay");
         c.fill(origin, v(-2, -1, 2), v(-1, -1, 11), "water");
@@ -7461,7 +7466,7 @@ impl Fresh {
         // A low bank of dirt, eight blocks, for the earth clamp: the only dirt above the
         // ground, so the bot finds it by looking (`Fresh::raised_dirt`).
         c.fill(origin, v(-7, 0, 8), v(-4, 0, 9), "dirt");
-        let probes = [(v(7, 3, -5), "base:oak_log"), (v(17, 0, 4), "base:stone"), (v(-2, -1, 11), "base:water"), (v(-8, 1, 0), "base:stone"), (v(-7, 0, 2), "base:wild_wheat"), (v(-4, 0, 9), "base:dirt"), (v(8, 3, 12), "base:oak_leaves"), (v(17, 2, 13), "base:gravel")];
+        let probes = [(v(7, 3, -5), "base:oak_log"), (v(17, 0, 4), "base:stone"), (v(-2, -1, 11), "base:water"), (v(-8, 1, 0), "base:stone"), (v(-7, 0, 2), "base:wild_wheat"), (v(-4, 0, 9), "base:dirt"), (v(8, 3, 12), "base:oak_leaves"), (v(17, 2, 13), "base:gravel"), (v(20, 0, -8), "base:granite"), (v(3, 0, 1), "base:sand")];
         c.pump_until(|c| probes.iter().all(|&(at, name)| c.world.block(origin + at) == c.content.blocks.id(name)) && c.world.block(origin + v(-9, 1, 0)) == Some(BlockId::AIR));
         let (at, t0) = (c.position, c.ticks());
         let epoch = (t0, Instant::now());
@@ -7706,12 +7711,22 @@ fn the_first_days(f: &mut Fresh) -> Site {
     f.gather("base:wooden_axe", trunks, log, 12);
     f.mark("an_axe_to_it");
 
-    // Stone in Hand: cobblestone with the flint pickaxe, then a stone pickaxe and axe.
+    // Stone in Hand: cobblestone with the flint pickaxe; sand by hand, and a grindstone (a
+    // wheel of cobble dressed with sand, on two sticks) set down by the table; granite, the
+    // hard rock, ground on it to seven stone heads: a stone pickaxe and axe hafted from six,
+    // the seventh kept for the shovel.
     let stone = rel(f, (9..=17).flat_map(|x| (-3..=4).map(move |z| v(x, 0, z))).filter(|p| !(p.x == 9 && p.z >= 3)).collect());
-    f.gather("base:flint_pickaxe", stone.clone(), cobble, 9);
+    f.gather("base:flint_pickaxe", stone.clone(), cobble, 3);
+    let (sand, granite, head) = ("base:sand", "base:cobbled_granite", "base:stone_head");
+    f.gather("base:flint_pickaxe", vec![f.rel(3, 0, 1)], sand, 1);
+    f.craft(&[(0, sand, 1), (1, cobble, 1), (3, stick, 1), (4, stick, 1)], "base:grindstone", 1);
+    f.walk_toward(Fresh::middle(table), 3.0);
+    f.place("base:grindstone", f.rel(7, -1, -1));
+    f.gather("base:flint_pickaxe", rel(f, (18..=20).flat_map(|x| (-10..=-8).map(move |z| v(x, 0, z))).collect()), granite, 7);
     f.at_table(table);
-    f.craft(&[(0, cobble, 1), (1, cobble, 1), (2, cobble, 1), (4, stick, 1), (7, stick, 1)], "base:stone_pickaxe", 1);
-    f.craft(&[(0, cobble, 1), (1, cobble, 1), (3, cobble, 1), (4, stick, 1), (7, stick, 1)], "base:stone_axe", 1);
+    f.craft(&[(0, granite, 7)], head, 7);
+    f.craft(&[(0, head, 1), (1, head, 1), (2, head, 1), (4, stick, 1), (7, stick, 1)], "base:stone_pickaxe", 1);
+    f.craft(&[(0, head, 1), (1, head, 1), (3, head, 1), (4, stick, 1), (7, stick, 1)], "base:stone_axe", 1);
     f.mark("stone_in_hand");
 
     // First Night: a campfire (two logs over two cobblestones), set down; three animals
@@ -7807,7 +7822,7 @@ fn the_first_days(f: &mut Fresh) -> Site {
     let bed = rel(f, (2..=11).flat_map(|z| [-2, -1].into_iter().flat_map(move |x| [-2, -3].into_iter().map(move |y| v(x, y, z)))).collect());
     let banks: Vec<Vec3> = (2..=11).step_by(2).map(|z| Fresh::middle(f.rel(0, 0, z))).collect();
     f.at_table(table);
-    f.craft(&[(0, cobble, 1), (3, stick, 1), (6, stick, 1)], "base:stone_shovel", 1);
+    f.craft(&[(0, "base:stone_head", 1), (3, stick, 1), (6, stick, 1)], "base:stone_shovel", 1);
     f.gather_from("base:stone_shovel", &banks, bed.clone(), clay, 4);
     f.gather("base:stone_pickaxe", stone.clone(), cobble, 28);
     f.mark("hearth_materials");
