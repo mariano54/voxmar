@@ -42,6 +42,8 @@ pub const NO_WAY: f32 = 30.0;
 pub const STRUCK_LATELY: f32 = 3.0;
 /// How long a creature that gave up a chase makes for home (`Memory::Homeward`).
 pub const HOMEWARD: f32 = 20.0;
+/// Seconds a creature remembers the player who hurt it (`Memory::HurtBy`).
+pub const HURT_REMEMBERED: f32 = 45.0;
 const ANGER_FADE: f32 = 1.0 / 45.0;
 /// Within a band, modules within this share of the best score are all in the draw, and
 /// the running one keeps going while it is.
@@ -315,7 +317,7 @@ impl Mind {
             self.fear = 1.0;
         }
         if let Some(id) = by {
-            self.remember(Memory::HurtBy(id), 45.0);
+            self.remember(Memory::HurtBy(id), HURT_REMEMBERED);
         }
         // Struck again, it takes up the fight it gave up.
         self.memories.retain(|(m, _)| !matches!(m, Memory::GaveUp | Memory::Homeward));

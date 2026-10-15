@@ -1105,13 +1105,17 @@ impl Server {
 
     /// A creature hurts itself (a fall its charge ran off): no player's blow, so no player
     /// is shown a hit or earns experience for it. Killed so, it dies as one felled by no
-    /// hand, its loot for the player who last hurt it.
+    /// hand, its loot for the player who hurt it lately (as long as it remembers who hurt
+    /// it, `brain::HURT_REMEMBERED`); hurt by nobody lately, it dies with nothing.
     pub(crate) fn fall_hurt_creature(&mut self, id: u32, damage: u16) {
+        let tick = self.tick;
         let Some(creature) = self.creatures.live.get_mut(&id) else { return };
         let damage = damage.min(creature.health);
         creature.health -= damage;
         creature.changed = true;
-        let (killed, last) = (creature.health == 0, creature.hurt_by);
+        let lately = (brain::HURT_REMEMBERED * TICKS_PER_SECOND as f32) as u64;
+        let last = creature.fought.filter(|&(_, at)| tick.saturating_sub(at) <= lately).map(|(by, _)| by);
+        let killed = creature.health == 0;
         if killed {
             self.creature_felled(id, last);
         } else if damage > 0 {
@@ -1191,6 +1195,7 @@ impl Server {
             self.creatures.gone.push(CreatureGone { id, died: true });
             self.villager_died(id);
             self.wandering_died(id);
+            self.lair_boss_died(id);
         }
     }
 
