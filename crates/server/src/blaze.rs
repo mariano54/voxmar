@@ -101,8 +101,11 @@ impl Server {
         };
         let multiblocks = &self.content.multiblocks;
         // Each home's box is the one its owner feels at home in (`in_home_box`): about the
-        // cell home is at, the one over a hearthstone.
-        let hearths = self.lit.iter().filter(|(_, lit)| lit.until > self.tick && multiblocks.get(&lit.structure).is_some_and(|m| m.home)).map(|(&core, lit)| (core + IVec3::Y, lit.owner.as_deref()));
+        // cell home is at, the one over a hearthstone. A home hearth is its owner's lit or
+        // cold, also with a piece of it broken (`hearth_owners`), so breaking a stone of
+        // someone's hearth never opens their home to your fire.
+        let lit = self.lit.iter().filter(|(_, lit)| lit.until > self.tick && multiblocks.get(&lit.structure).is_some_and(|m| m.home)).map(|(&core, lit)| (core, lit.owner.as_deref()));
+        let hearths = lit.chain(self.hearth_owners.iter().map(|(&core, owner)| (core, owner.as_deref()))).map(|(core, owner)| (core + IVec3::Y, owner));
         let beds = self.players.values().filter_map(|p| Some((p.home_spot(&self.lit)?.floor().as_ivec3(), Some(p.name.as_str()))));
         // Where homes overlap (housemates, a neighbour's hearth close by), the block is in
         // each of them, and a fire reaches it only if every one of them is its owner's.
@@ -531,8 +534,9 @@ mod tests {
     }
 
     /// Ada lights her home hearth and leaves; Bo breaks a stone of its ring (its fire goes
-    /// out), puts it back and lights it: it is still Ada's, and his torch fizzles at her
-    /// wall. Only breaking the hearthstone makes it no one's, for whoever builds there next.
+    /// out) and his torch at her wall still fizzles; he puts the stone back and lights it:
+    /// it is still Ada's. Breaking and laying the hearthstone himself changes nothing either;
+    /// only Ada breaking it makes it no one's, for whoever builds there next.
     #[test]
     fn mending_and_relighting_someone_elses_hearth_never_takes_it() {
         let mut server = crate::test_server();
@@ -542,24 +546,78 @@ mod tests {
         server.light(1, core);
         server.leave(1);
         let _bo = join(&mut server, 2, "Bo");
-        let (ring, stone) = (core + IVec3::new(1, 0, 1), server.content.blocks.expect("base:cobblestone"));
-        server.set_block(ring, BlockId::AIR);
-        assert!(!server.lit.contains_key(&core), "the broken ring left the fire burning");
-        server.set_block(ring, stone);
-        server.light(2, core);
-        assert_eq!(server.lit[&core].owner.as_deref(), Some("ada"), "Bo's relighting took Ada's hearth");
         let wall = core + IVec3::new(4, 0, 0);
         server.set_block(wall, server.content.blocks.expect("base:wattle_panel"));
+        // What Bo's message sets before his change lands (`handle_message`).
+        let by = |server: &mut Server, who: &str, at: IVec3, block: BlockId| {
+            server.fire_origin = Some(crate::player_key(who));
+            server.set_block(at, block);
+            server.fire_origin = None;
+        };
+        let (ring, stone) = (core + IVec3::new(1, 0, 1), server.content.blocks.expect("base:cobblestone"));
+        by(&mut server, "Bo", ring, BlockId::AIR);
+        assert!(!server.lit.contains_key(&core), "the broken ring left the fire burning");
+        assert!(!torch_smoulders(&mut server, "Bo", wall + IVec3::Z, wall), "Bo's torch at Ada's wall, her hearth broken");
+        by(&mut server, "Bo", ring, stone);
+        server.light(2, core);
+        assert_eq!(server.lit[&core].owner.as_deref(), Some("ada"), "Bo's relighting took Ada's hearth");
         assert!(!torch_smoulders(&mut server, "Bo", wall + IVec3::Z, wall), "Bo's torch at Ada's wall");
-        // Saved and opened again, it is still hers, lit or cold.
-        let saved = crate::hearth::HearthOwner::saved(&server.hearth_owners);
-        assert_eq!(saved, [crate::hearth::HearthOwner { position: core.to_array(), owner: Some("ada".into()) }]);
-        // The hearthstone broken and laid again, it is whoever lights it next.
+        assert_eq!(crate::hearth::HearthOwner::saved(&server.hearth_owners), [crate::hearth::HearthOwner { position: core.to_array(), owner: Some("ada".into()) }]);
+        // Bo breaking the hearthstone and laying it again: still Ada's.
         let hearthstone = server.content.blocks.expect("base:hearthstone");
-        server.set_block(core, BlockId::AIR);
-        server.set_block(core, hearthstone);
+        by(&mut server, "Bo", core, BlockId::AIR);
+        assert!(!torch_smoulders(&mut server, "Bo", wall + IVec3::Z, wall), "Bo's torch at Ada's wall, her hearthstone gone");
+        by(&mut server, "Bo", core, hearthstone);
+        server.light(2, core);
+        assert_eq!(server.lit[&core].owner.as_deref(), Some("ada"), "Bo's new hearthstone took Ada's hearth");
+        // Ada breaking it herself: it is whoever lights it next.
+        by(&mut server, "Ada", core, BlockId::AIR);
+        by(&mut server, "Bo", core, hearthstone);
         server.light(2, core);
         assert_eq!(server.lit[&core].owner.as_deref(), Some("bo"), "a new hearth on the spot is its builder's");
+        // Bo lighting a home hearth elsewhere: this one is no longer kept as his.
+        let elsewhere = core + IVec3::new(0, 0, 12);
+        build_hearth(&mut server, elsewhere);
+        server.light(2, elsewhere);
+        assert_eq!(crate::hearth::HearthOwner::saved(&server.hearth_owners), [crate::hearth::HearthOwner { position: elsewhere.to_array(), owner: Some("bo".into()) }], "one home hearth a player");
+    }
+
+    /// Whose each home hearth is comes back with the world: an unlit one kept through the
+    /// world's own save, and from a world saved before owners were kept (no
+    /// `hearth_owners`), each lit home hearth's owner. (An older world's cold home hearth
+    /// has no owner kept anywhere, so it comes back as no one's: rare, and safe.)
+    #[test]
+    fn hearth_owners_come_back_with_the_world() {
+        use crate::save::{WorldMeta, WorldSave};
+        let content = crate::test_content();
+        let dir = std::env::temp_dir().join(format!("voxmar-hearth-owners-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let meta = WorldMeta::new("hearth-owners", 1, crate::GameMode::Survival);
+        WorldSave::new(&dir).create(&meta).unwrap();
+        let open = |meta: WorldMeta| {
+            let ((_, incoming), (_, console)) = (crossbeam_channel::unbounded(), crossbeam_channel::unbounded());
+            let config = crate::ServerConfig { view_distance: 2, ..Default::default() };
+            Server::new(config, meta, Some(WorldSave::new(&dir)), crate::save::WorldState::default(), content.clone(), incoming, console)
+        };
+        let mut server = open(meta);
+        let core = IVec3::new(3, 70, -4);
+        server.hearth_owners.insert(core, Some("ada".into()));
+        server.save();
+        let meta = WorldSave::new(&dir).read_meta().unwrap();
+        let loaded = open(meta.clone());
+        assert_eq!(loaded.hearth_owners.get(&core), Some(&Some("ada".to_owned())), "the cold hearth's owner came back");
+        // The same world as one saved before owners were kept, with Ada's home hearth lit.
+        let mut old = meta;
+        old.hearth_owners.clear();
+        old.lit = vec![crate::hearth::Lit { position: core.to_array(), structure: "base:homestead_hearth".into(), until: u64::MAX, owner: Some("Ada".into()) }];
+        let text = ron::to_string(&old).unwrap();
+        let without = text.replace("hearth_owners:[],", "");
+        assert_ne!(text, without, "the field was not written as expected: {text}");
+        let old: WorldMeta = ron::from_str(&without).unwrap();
+        assert!(old.hearth_owners.is_empty());
+        let loaded = open(old);
+        assert_eq!(loaded.hearth_owners.get(&core), Some(&Some("ada".to_owned())), "the lit hearth's owner was not kept");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// The same hearth under the same thatch roof: with the roof's opening over the fire

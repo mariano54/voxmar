@@ -637,8 +637,10 @@ pub(crate) struct Server {
     /// none) until it breaks.
     lit: FxHashMap<IVec3, hearth::Lit>,
     /// Whose each home hearth is (a player's key, or no one's for one lit before fires were
-    /// kept by owner), by core cell: set when it is first lit, kept while its fire is out,
-    /// forgotten only when its hearthstone goes, so relighting never changes it.
+    /// kept by owner), by core cell: set when it is first lit, kept while its fire is out or
+    /// a piece of it is broken, forgotten only when its owner breaks its hearthstone or lights
+    /// a home hearth elsewhere, so relighting never changes it. Its box keeps out others' fire
+    /// all that while. An older world's cold home hearth has none.
     hearth_owners: FxHashMap<IVec3, Option<String>>,
     /// The burning fires players were last told of (`ServerMessage::Fires`).
     fires_sent: Vec<IVec3>,
