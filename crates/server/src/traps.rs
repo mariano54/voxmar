@@ -115,22 +115,28 @@ impl Server {
         let traps = self.content.traps.clone();
         let seen = std::mem::take(&mut self.catches.seen);
         let wild = self.creatures.live.iter().filter(|(_, c)| c.owner.is_none() && c.health > 0);
-        let caught: Vec<(u32, IVec3, BlockId)> = wild
+        // Every set trap each crossed that catches its kind, in the order it crossed them.
+        let crossings: Vec<(u32, Vec<(IVec3, BlockId)>)> = wild
             .clone()
-            .filter_map(|(&id, c)| {
+            .map(|(&id, c)| {
                 let now = c.body.position;
-                crossed(seen.get(&id).copied().unwrap_or(now), now).into_iter().find_map(|cell| {
-                    let trap = self.world.block(cell).and_then(|b| traps.set(b)).filter(|t| t.catches(c.species))?;
-                    Some((id, cell, trap.sprung))
-                })
+                let set = crossed(seen.get(&id).copied().unwrap_or(now), now)
+                    .into_iter()
+                    .filter_map(|cell| {
+                        let trap = self.world.block(cell).and_then(|b| traps.set(b)).filter(|t| t.catches(c.species))?;
+                        Some((cell, trap.sprung))
+                    })
+                    .collect();
+                (id, set)
             })
+            .filter(|(_, set): &(u32, Vec<_>)| !set.is_empty())
             .collect();
         self.catches.seen = wild.map(|(&id, c)| (id, c.body.position)).collect();
-        for (id, cell, sprung) in caught {
-            // One creature to a trap: a second in the same cell on the same look waits.
-            if self.world.block(cell) == Some(sprung) {
-                continue;
-            }
+        for (id, set) in crossings {
+            // One creature to a trap: the first it crossed that is still set when its turn
+            // comes, so a second through a trap another sprang on this look goes on to the
+            // next trap it crossed (or, standing in it, waits for the trap set again).
+            let Some((cell, sprung)) = set.into_iter().find(|&(cell, _)| self.world.block(cell).and_then(|b| traps.set(b)).is_some()) else { continue };
             let Some(creature) = self.creatures.live.get(&id) else { continue };
             let catch = Catch { species: creature.species, seed: creature.seed };
             self.creature_felled(id, None);
@@ -429,5 +435,40 @@ mod tests {
         server.spring_traps();
         assert_eq!(seen(&server), [stays], "only the one still wild and alive is remembered");
         assert!(Catches::restore(&[], |_| None).seen.is_empty(), "a loaded world remembers no last look");
+    }
+
+    /// Two rabbits that ran through the same two snares in a line between two looks are both
+    /// caught, one in each: the second, finding the first snare sprung, is caught in the next.
+    #[test]
+    fn two_rabbits_through_a_line_of_snares_are_caught_one_in_each() {
+        let (mut server, snare) = field(1);
+        let next = snare + IVec3::X;
+        server.set_block(next, server.content.blocks.expect("base:snare"));
+        let ids = [0.3, 0.7].map(|z| put(&mut server, "base:rabbit", snare.as_vec3() + Vec3::new(-1.0, 0.0, z)));
+        server.spring_traps();
+        for (&id, z) in ids.iter().zip([0.3, 0.7]) {
+            server.creatures.live.get_mut(&id).unwrap().body.position = snare.as_vec3() + Vec3::new(3.0, 0.0, z);
+        }
+        server.spring_traps();
+        assert!(server.catches.get(snare).is_some() && server.catches.get(next).is_some(), "one snare of the two stood empty");
+        assert!(ids.iter().all(|id| !server.creatures.live.contains_key(id)), "a rabbit ran through both snares");
+    }
+
+    /// A kept rabbit let go is followed from where it was let go: running through a snare
+    /// before the traps' next look, it is caught there.
+    #[test]
+    fn a_rabbit_let_go_that_runs_through_a_snare_is_caught() {
+        let (mut server, snare) = field(1);
+        let id = put(&mut server, "base:rabbit", snare.as_vec3() + Vec3::new(-1.0, 0.0, 0.5));
+        let keeper = server.players[&1].name.clone();
+        let kept = server.creatures.live.get_mut(&id).unwrap();
+        (kept.owner, kept.owner_id) = (Some(keeper), Some(1));
+        server.spring_traps();
+        server.release(1, id);
+        server.release(1, id);
+        assert!(server.creatures.live[&id].owner.is_none(), "let go");
+        server.creatures.live.get_mut(&id).unwrap().body.position = snare.as_vec3() + Vec3::new(2.0, 0.0, 0.5);
+        server.spring_traps();
+        assert!(server.catches.get(snare).is_some(), "the rabbit let go ran through the snare uncaught");
     }
 }
