@@ -185,6 +185,8 @@ pub enum Condition {
     /// A block carrying this tag lies within this many blocks of the player's feet, every
     /// way (`Near("fire", 4)`: a campfire close by). The reach is 1 to 8.
     Near(String, i32),
+    /// Sitting on a seat (`core:sit`).
+    Seated,
     /// The player has finished this quest (its full name, or its name alone in the package
     /// that lists the effect): what a quest taught stays with them, as an effect that holds
     /// from then on.
@@ -309,6 +311,8 @@ pub struct Situation<'a> {
     pub held: &'a [String],
     /// Which of the `Near` asks (`EffectRegistry::near_asks`) hold where the player stands.
     pub near: &'a [(String, i32)],
+    /// The player sits on a seat.
+    pub seated: bool,
 }
 
 /// How many blocks with each tag lie around a home: the tags are those effects ask of it
@@ -341,6 +345,7 @@ impl Condition {
             Condition::InBiome(t) => s.biome_tags.contains(t) || s.biome == t || s.biome.rsplit(':').next() == Some(t.as_str()),
             Condition::AtHome => s.home.is_some(),
             Condition::Indoors => !s.outdoors,
+            Condition::Seated => s.seated,
             Condition::HomeHas(tag, n) => s.home.is_some_and(|h| h.count(tag) >= *n),
             Condition::Sheltered(c) => !s.outdoors && c.holds(&Situation { outdoors: true, ..*s }),
             Condition::Done(quest) => s.done.iter().any(|d| d == quest),
@@ -789,7 +794,7 @@ mod tests {
     }
 
     fn situation(weather: &Weather, warmed: bool, felt: f32, outdoors: bool) -> Situation<'_> {
-        Situation { felt, warmed, outdoors, weather, biome: "base:plains", biome_tags: &[], home: None, done: &[], held: &[], near: &[] }
+        Situation { felt, warmed, outdoors, weather, biome: "base:plains", biome_tags: &[], home: None, done: &[], held: &[], near: &[], seated: false }
     }
 
     #[test]

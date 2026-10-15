@@ -38,6 +38,10 @@
     home_reach: 7,
     home_up: 4,
     home_down: 2,
+    // The most a home's meal effects together (a pantry, a larder, a kitchen garden, home
+    // cooking, a seat at the table: effects.ron's meal_heal and meal_time, which multiply)
+    // make of a meal's heal, and of how long its good lasts.
+    meal_most: 2.0,
     // No lying down to sleep with a creature that hunts players this many blocks off, or this
     // many seconds after being hurt: rest is not a way to heal in a fight.
     sleep_threat_reach: 12.0,

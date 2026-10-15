@@ -426,11 +426,13 @@ impl Server {
                 (Effect::TendBees, ActionTarget::Block { block, .. }) => self.tend_bees(agent, block),
                 (Effect::Pray, ActionTarget::Block { .. }) => self.pray_at_altar(agent),
                 (Effect::Sleep, ActionTarget::Block { block, .. }) => self.sleep(agent, block),
+                (Effect::Sit, ActionTarget::Block { block, .. }) => self.sit(agent, block),
                 (Effect::UseTable, ActionTarget::Block { block, .. }) => {
                     self.players.get_mut(&agent).unwrap().station = Some(block);
                 }
                 (Effect::EatHeld, _) => {
                     let (blocks, effects) = (self.content.blocks.clone(), self.content.effects.clone());
+                    let most = self.survival.meal_most;
                     let player = self.players.get_mut(&agent).unwrap();
                     let selected = player.selected;
                     let Some(item) = player.inventory.take_one(selected) else { continue };
@@ -439,8 +441,9 @@ impl Server {
                     // Food heals, the same food a little less each time in a row.
                     let share = player.recent_food.share(item);
                     player.recent_food.eat(item);
-                    // A pantry or larder at home makes more of a meal (effects.ron's meal_heal, meal_time).
-                    let (meal_heal, meal_time) = (player.modifiers.meal_heal, player.modifiers.meal_time);
+                    // A pantry or larder at home makes more of a meal (effects.ron's meal_heal, meal_time),
+                    // all together up to survival's meal_most.
+                    let (meal_heal, meal_time) = (player.modifiers.meal_heal.min(most), player.modifiers.meal_time.min(most));
                     let heal = (blocks.info(item).food as f32 * share * meal_heal).round().min(u8::MAX as f32) as u8;
                     // What it does besides (content's effects.ron): hearty, queasy and so on.
                     let mut given = effects.given_by(&blocks.def(item).tags);
@@ -482,7 +485,7 @@ impl Server {
         let feet = self.players[&agent].position.floor().as_ivec3();
         let outdoors = self.open_sky(feet + IVec3::Y * 2);
         let calm = voxmar_engine::weather::Weather::NONE;
-        let situation = voxmar_engine::effect::Situation { felt: 0.0, warmed: false, outdoors, weather: &calm, biome: "", biome_tags: &[], home: home.as_ref(), done: &self.players[&agent].quests_done, held: &[], near: &[] };
+        let situation = voxmar_engine::effect::Situation { felt: 0.0, warmed: false, outdoors, weather: &calm, biome: "", biome_tags: &[], home: home.as_ref(), done: &self.players[&agent].quests_done, held: &[], near: &[], seated: false };
         // A proper bed rests better than a bag on the ground (effects.ron's `bed` tags).
         let bed_tags = self.block(bed).map(|b| self.content.blocks.def(b).tags.clone()).unwrap_or_default();
         let given = effects.given_by_sleep(&situation, &bed_tags);
@@ -528,6 +531,18 @@ impl Server {
             }
             player.health_seen = player.health.current;
         }
+    }
+
+    /// `agent` sits on the seat at `seat`: set on it (on top of a stool, in a cushion),
+    /// facing as they were, their eye lowered (`vitals::eye`), until they move off it.
+    fn sit(&mut self, agent: PlayerId, seat: IVec3) {
+        let solid = self.block(seat).is_some_and(|b| self.content.blocks.info(b).solid);
+        let player = self.players.get_mut(&agent).unwrap();
+        player.teleport(voxmar_engine::vitals::seated_feet(seat, solid));
+        player.vitals.seated = Some(seat);
+        player.changed(traits::VITALS);
+        // What sitting there gives (a table's meal bonus) holds from the first bite.
+        crate::process::Survival::refresh(self, agent);
     }
 
     /// Crafts what `agent`'s grid holds, once or (`all`) as many times as it can: if the

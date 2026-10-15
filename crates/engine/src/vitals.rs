@@ -25,12 +25,43 @@ pub struct Vitals {
     /// player has one: what the interface points the way back to.
     #[serde(default)]
     pub home: Option<glam::IVec3>,
+    /// The seat the player sits on, if they sit: the eye is lower (`eye`).
+    #[serde(default)]
+    pub seated: Option<glam::IVec3>,
 }
 
 impl Default for Vitals {
     fn default() -> Self {
-        Self { felt: 15.0, effects: Vec::new(), home: None }
+        Self { felt: 15.0, effects: Vec::new(), home: None, seated: None }
     }
+}
+
+/// How high a seated player's eye is over their feet: a stool's top and a body sat on it,
+/// a third of a block under a standing eye.
+pub const SEATED_EYE: f32 = 1.3;
+/// How far across from their seat's middle a player may be and still sit on it.
+pub const SEATED_WITHIN: f32 = 0.45;
+
+/// Where a player sitting on the seat at `seat` stands: in one that is not solid (base's
+/// stools, chairs, benches and cushions), on top of a solid one (a mod's), in its middle.
+pub fn seated_feet(seat: glam::IVec3, solid: bool) -> glam::Vec3 {
+    seat.as_vec3() + glam::Vec3::new(0.5, if solid { 1.0 } else { 0.0 }, 0.5)
+}
+
+/// Where the eye is of a player whose feet are at `feet`, standing at `standing` above
+/// them: lower while they sit on `seated` and are still on it.
+pub fn eye(feet: glam::Vec3, standing: f32, seated: Option<glam::IVec3>) -> glam::Vec3 {
+    match seated.filter(|&seat| still_seated(feet, seat)) {
+        Some(_) => feet + glam::Vec3::Y * SEATED_EYE,
+        None => feet + glam::Vec3::Y * standing,
+    }
+}
+
+/// Whether a player whose feet are at `feet` is still on the seat at `seat`: over its
+/// middle and on it, not stepped off.
+pub fn still_seated(feet: glam::Vec3, seat: glam::IVec3) -> bool {
+    let middle = seat.as_vec3() + glam::Vec3::splat(0.5);
+    (feet.x - middle.x).abs() <= SEATED_WITHIN && (feet.z - middle.z).abs() <= SEATED_WITHIN && (seat.y as f32 - 0.1..=seat.y as f32 + 1.2).contains(&feet.y)
 }
 
 /// Felt temperature (°C) below which a fire nearby counts as warming you.
