@@ -249,6 +249,14 @@ enum Step {
     /// A row of blocks of every hardness, broken with the bare hand, a held block and every
     /// tool, under load: client and server agree on every one, and none comes back.
     Breaks,
+    /// On the menu's audio page, a switch for each category of music the player can hear;
+    /// clicking one turns that category off, and again on. A track starting is named, with
+    /// its category, at the top right, and the line fades: while the workshop and swim
+    /// steps go on, which compare no shots, so no view compared has the line in it.
+    Music,
+    /// F3 opens the debug overlay, and PostUpdate (UI layout among it) takes no longer with
+    /// it open than closed.
+    Overlay,
     /// Sticks and a crafting table from planks; the table placed and right clicked opens a
     /// three-by-three grid, where cobblestone and sticks make a stone pickaxe. An iron ore
     /// refuses the hand and a low Mining level, and breaks for the pickaxe at level 15,
@@ -262,13 +270,6 @@ enum Step {
     Swim,
     /// Esc opens and closes the menu, E the inventory.
     Screens,
-    /// On the menu's audio page, a switch for each category of music the player can hear;
-    /// clicking one turns that category off, and again on. A track starting is named, with
-    /// its category, at the top right, and the line fades.
-    Music,
-    /// F3 opens the debug overlay, and PostUpdate (UI layout among it) takes no longer with
-    /// it open than closed.
-    Overlay,
     /// A storm and a snowfall come, drawn with their particles, then clear again.
     Weather,
     /// Mist shows in the open and is gone in a shaft dug down; a crack on a block in a
@@ -560,6 +561,9 @@ struct Gate {
     home_style: Option<crate::hud::inventory::InterfaceStyle>,
     /// Puffs the watched chimney owed so far (its rate times the seconds watched).
     chimney_owed: f32,
+    /// Since when (game seconds) the lit chimney has been watched, while the hearth and
+    /// stove cook (`chimney_watch`).
+    chimney_since: Option<f32>,
     /// What the dry step's pot water replaced, put back after.
     pot_ground: Option<String>,
     /// Raw small game carried, slots and pouch, as the dry step hangs the rack, so its
@@ -810,6 +814,7 @@ impl Gate {
             natural_home: Vec3::ZERO,
             home_style: None,
             chimney_owed: 0.0,
+            chimney_since: None,
             pot_ground: None,
             rack_rabbits: 0,
             marked: None,
@@ -2108,7 +2113,7 @@ fn hold(world: &mut World, holder: Holder) {
 }
 
 /// Lifts the load, puts the last tool away (later steps want room in the hotbar) and goes
-/// on to the workshop.
+/// on to the music and overlay steps, then the workshop.
 fn end_breaks(world: &mut World, gate: &mut Gate, now: f32) {
     gate.breaks.load = None;
     mouse(world, MouseButton::Left, false);
@@ -2119,7 +2124,7 @@ fn end_breaks(world: &mut World, gate: &mut Gate, now: f32) {
     for &tool in gate.breaks.given.iter().filter(|&&tool| held.slots.iter().flatten().any(|s| s.item == tool)) {
         net.command(&format!("clear {}", registry.def(tool).name));
     }
-    gate.next(Step::Workshop, now);
+    gate.next(Step::Music, now);
 }
 
 /// Where the workshop puts the crafting table, the ore, and the soil it tills, from the
@@ -3568,7 +3573,7 @@ fn overlay(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if !shown {
                 if in_phase > SCREEN_WAIT {
                     gate.check("overlay", Err("F3 did not open the debug overlay".into()));
-                    gate.next(Step::Weather, now);
+                    gate.next(Step::Workshop, now);
                 }
                 return;
             }
@@ -3594,7 +3599,7 @@ fn overlay(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if shown {
                 if in_phase > SCREEN_WAIT {
                     gate.check("overlay", Err("F3 did not close the debug overlay".into()));
-                    gate.next(Step::Weather, now);
+                    gate.next(Step::Workshop, now);
                 }
                 return;
             }
@@ -3616,7 +3621,7 @@ fn overlay(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             );
             let result = if gate.overlay_changes > 0 && rate <= most { Ok(detail) } else { Err(detail) };
             gate.check("overlay: no layout every frame", result);
-            gate.next(Step::Weather, now);
+            gate.next(Step::Workshop, now);
         }
         _ => {}
     }
@@ -3627,6 +3632,12 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let (menu, inventory, character, locked) = (ui.menu_open, ui.inventory_open, ui.character_open, ui.cursor_locked);
     match gate.phase {
         0 => {
+            // Not with the music step's now-playing line still fading (`music_fades`): it is
+            // gone by now, the workshop and swim steps being longer than it shows, but a
+            // shot compared must not have it in it however the steps before ran.
+            if gate.music_fade.is_some() {
+                return;
+            }
             look(world, 0.0, 5.0);
             // The loading cover lifted only once the world's weather showed.
             if !gate.cover_checked {
@@ -3805,10 +3816,10 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let count: u32 = inventory.slots.iter().flatten().filter(|s| Some(s.item) == planks).map(|s| s.count as u32).sum();
             if count >= 4 {
                 gate.check("craft", Ok(format!("the crafting grid turned a log into {count} planks")));
-                gate.next(Step::Music, now);
+                gate.next(Step::Weather, now);
             } else if gate.server_in_phase() > 5.0 {
                 gate.check("craft", Err(format!("after crafting a log there are {count} planks and the grid holds {:?}", inventory.grid())));
-                gate.next(Step::Music, now);
+                gate.next(Step::Weather, now);
             }
         }
         _ => {}
@@ -10819,14 +10830,15 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             };
             if placed && lit {
                 world.resource_mut::<crate::emitters::Emitters>().watch(chimney[1]);
-                gate.advance(now);
+                gate.chimney_since = Some(now);
+                hearth_lit(world, gate, now, stove);
             } else if placed {
                 // A cold hearth's chimney gives nothing off.
                 let amount = world.resource::<crate::render::particles::Particles>().amount;
                 let cold = world.resource::<crate::emitters::Emitters>().rate_of(chimney[1], world.resource::<ClientWorld>(), amount);
                 if cold > 0.0 {
                     gate.check("chimney smoke", Err(format!("the chimney of a cold hearth smokes ({cold:.2} a second)")));
-                    gate.phase = 8;
+                    hearth_lit(world, gate, now, stove);
                     return;
                 }
                 // Lit as a player lights it, asked once each `TAP_EVERY` and counted as taps.
@@ -10838,46 +10850,18 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 }
                 if gate.waited_out(10.0) {
                     gate.check("chimney smoke", Err(format!("the hearth was never lit: {} asks in {:.1} server s", gate.taps, gate.server_in_phase())));
-                    gate.phase = 8;
+                    hearth_lit(world, gate, now, stove);
                 }
             } else if in_phase > 5.0 {
                 gate.check("chimney smoke", Err(format!("the chimney was not on the client {in_phase:.1} s after it was placed")));
-                gate.phase = 8;
+                hearth_lit(world, gate, now, stove);
             }
-        }
-        // Watched until enough puffs rose, or until so many were owed (by the chimney's
-        // rate, the particle amount and its share) that missing them is no chance.
-        8 => {
-            let amount = world.resource::<crate::render::particles::Particles>().amount;
-            let owed = {
-                let (emitters, client) = (world.resource::<crate::emitters::Emitters>(), world.resource::<ClientWorld>());
-                gate.chimney_owed += emitters.rate_of(chimney[1], client, amount) * world.resource::<Time>().delta_secs().min(0.1);
-                gate.chimney_owed
-            };
-            let count = world.resource::<crate::emitters::Emitters>().watched;
-            let done = count >= CHIMNEY_PARTICLES;
-            if !done && owed < CHIMNEY_OWED && in_phase < CHIMNEY_WAIT {
-                return;
-            }
-            let mut emitters = world.resource_mut::<crate::emitters::Emitters>();
-            let why = emitters.why_quiet(chimney[1], amount);
-            emitters.watch = None;
-            gate.chimney_owed = 0.0;
-            gate.check("chimney smoke", if done {
-                Ok(format!("no smoke while the hearth was cold; lit, {count} puffs rose from the chimney's top in {in_phase:.1} s ({owed:.1} owed)"))
-            } else {
-                Err(format!("only {count} puffs rose from the chimney's top over a hearthstone in {in_phase:.1} s, under {CHIMNEY_PARTICLES} with {owed:.1} owed ({why})"))
-            });
-            // The hearth stands, ring and all, and burns; a stove the other side of the fire.
-            let net = world.resource::<Net>();
-            net.command(&format!("setblock {} {} {} cottage_stove", stove.x, stove.y, stove.z));
-            net.command("give raw_small_game 2");
-            gate.advance(now);
         }
         // Raw small game in hand, right clicks on the standing hearth, then on the stove, each
-        // cook one as the campfire did.
-        9 | 10 => {
-            let (at, name, check) = if gate.phase == 9 { (hearth, "base:hearthstone", "hearth: cooks") } else { (stove, "base:cottage_stove", "stove: cooks") };
+        // cook one as the campfire did, while the lit chimney is watched.
+        8 | 9 => {
+            chimney_watch(world, gate, now, chimney[1]);
+            let (at, name, check) = if gate.phase == 8 { (hearth, "base:hearthstone", "hearth: cooks") } else { (stove, "base:cottage_stove", "stove: cooks") };
             let (placed, raw) = {
                 let client = world.resource::<ClientWorld>();
                 let ring = client.registry.id("base:cobblestone").is_some_and(|c| client.block(hearth + IVec3::X) == Some(c));
@@ -10904,7 +10888,7 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                         return;
                     }
                     gate.check(check, Err(format!("the {name} ({placed}) or raw small game in the hotbar ({slot:?}) never came")));
-                    hearth_done(world, gate, now, hearth, chimney, stove);
+                    gate.phase = 10;
                 }
                 return;
             }
@@ -10913,10 +10897,10 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 mouse(world, MouseButton::Right, false);
                 gate.check(check, Ok(format!("a right click on the {name} with raw small game cooked {}, as a campfire does", cooked - gate.count_before)));
                 gate.cook_started = false;
-                if gate.phase == 9 {
+                if gate.phase == 8 {
                     gate.advance(now);
                 } else {
-                    hearth_done(world, gate, now, hearth, chimney, stove);
+                    gate.phase = 10;
                 }
             } else if gate.waited_out(15.0) {
                 mouse(world, MouseButton::Right, false);
@@ -10927,13 +10911,59 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 };
                 gate.check(check, Err(format!("right clicks on the {name} at {at} with raw small game cooked nothing in 15 server seconds ({in_phase:.1} game s); the crosshair was on {on}")));
                 gate.cook_started = false;
-                hearth_done(world, gate, now, hearth, chimney, stove);
+                gate.phase = 10;
             } else {
                 gate.tap(world, true, now);
             }
         }
+        // The chimney's watch, if still open, decides before the hearth comes down.
+        10 => {
+            chimney_watch(world, gate, now, chimney[1]);
+            if gate.chimney_since.is_none() {
+                hearth_done(world, gate, now, hearth, chimney, stove);
+            }
+        }
         _ => {}
     }
+}
+
+/// The hearth lit (or its chimney already judged): a stove the other side of the fire and
+/// raw small game to cook at both, the chimney watched meanwhile (`chimney_watch`).
+fn hearth_lit(world: &mut World, gate: &mut Gate, now: f32, stove: IVec3) {
+    let net = world.resource::<Net>();
+    net.command(&format!("setblock {} {} {} cottage_stove", stove.x, stove.y, stove.z));
+    net.command("give raw_small_game 2");
+    gate.phase = 7;
+    gate.advance(now);
+}
+
+/// The lit chimney, watched until enough puffs rose, or until so many were owed (by the
+/// chimney's rate, the particle amount and its share) that missing them is no chance, or
+/// `CHIMNEY_WAIT` passed: then judged, once.
+fn chimney_watch(world: &mut World, gate: &mut Gate, now: f32, top: IVec3) {
+    let Some(since) = gate.chimney_since else { return };
+    let watched = now - since;
+    let amount = world.resource::<crate::render::particles::Particles>().amount;
+    let owed = {
+        let (emitters, client) = (world.resource::<crate::emitters::Emitters>(), world.resource::<ClientWorld>());
+        gate.chimney_owed += emitters.rate_of(top, client, amount) * world.resource::<Time>().delta_secs().min(0.1);
+        gate.chimney_owed
+    };
+    let count = world.resource::<crate::emitters::Emitters>().watched;
+    let done = count >= CHIMNEY_PARTICLES;
+    if !done && owed < CHIMNEY_OWED && watched < CHIMNEY_WAIT {
+        return;
+    }
+    let mut emitters = world.resource_mut::<crate::emitters::Emitters>();
+    let why = emitters.why_quiet(top, amount);
+    emitters.watch = None;
+    gate.chimney_owed = 0.0;
+    gate.chimney_since = None;
+    gate.check("chimney smoke", if done {
+        Ok(format!("no smoke while the hearth was cold; lit, {count} puffs rose from the chimney's top in {watched:.1} s ({owed:.1} owed)"))
+    } else {
+        Err(format!("only {count} puffs rose from the chimney's top over a hearthstone in {watched:.1} s, under {CHIMNEY_PARTICLES} with {owed:.1} owed ({why})"))
+    });
 }
 
 /// The ring of stone around the cook step's hearthstone.
