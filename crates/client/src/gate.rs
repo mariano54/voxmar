@@ -12734,6 +12734,8 @@ const OTHER_WALK: u32 = 60;
 const OTHER_FRAMES: u32 = 240;
 /// The share of the pace their limbs swing full at that the stand-in walks.
 const OTHER_PACE: f32 = 0.7;
+/// How far the stand-in looks up (radians; down, below 0).
+const OTHER_PITCH: f32 = -0.2;
 
 /// The Others step (see [`Step::Others`]).
 fn others(world: &mut World, gate: &mut Gate) {
@@ -12754,7 +12756,7 @@ fn others(world: &mut World, gate: &mut Gate) {
     let start = gate.feet.as_vec3() + Vec3::new(-1.5, 0.0, 6.0);
     let pace = look.full_pace * OTHER_PACE;
     // Facing the eye, so its front and its right fist show.
-    let view = |at: Vec3| voxmar_protocol::PlayerView { id: OTHER, name: "Gate".into(), position: at, yaw: 0.0, pitch: -0.2, held: Some(weapon) };
+    let view = |at: Vec3| voxmar_protocol::PlayerView { id: OTHER, name: "Gate".into(), position: at, yaw: 0.0, pitch: OTHER_PITCH, held: Some(weapon) };
     let walked = |frames: u32| start + Vec3::X * pace * PUPPET_STEP * frames as f32;
     let done = |world: &mut World, gate: &mut Gate, result: Result<String, String>| {
         gate.check("others", result);
@@ -12824,13 +12826,17 @@ fn others(world: &mut World, gate: &mut Gate) {
             let reach = Vec3::new(look.hand.at.0, look.hand.at.1, look.hand.at.2).length() + 0.05;
             let drawn = world.resource::<crate::render::items::ItemModels>().0.iter().any(|m| m.posed.is_some() && read.held_at.is_some_and(|h| m.center.distance(h) < 1e-3));
             let carried = look.carry.to_radians();
+            // Looking down as told (`OTHER_PITCH`): the head tilted `look` of it.
+            let tilt = (OTHER_PITCH.to_degrees() * look.look).clamp(-look.look_most, look.look_most).to_radians();
             let result = match read.held_at {
                 _ if (read.arm - carried).abs() > 0.05 => Err(format!("the arm holding the weapon was swung {:.2} radians standing, {carried:.2} (`carry`) wanted", read.arm)),
+                _ if (read.head - tilt).abs() > 0.02 => Err(format!("told they look {OTHER_PITCH:.2} radians up, its head was tilted {:.2} radians, {tilt:.2} (`look`) wanted", read.head)),
                 Some(held) if held.distance(shoulder) <= reach && drawn => Ok(format!(
-                    "painted with its {} boxes, walking {pace:.2} blocks a second it trailed by the easing and its legs swung {:.2} radians; stopped, it settled in {frames} frames with the weapon {:.2} blocks from its right shoulder",
+                    "painted with its {} boxes, walking {pace:.2} blocks a second it trailed by the easing and its legs swung {:.2} radians; stopped, it settled in {frames} frames with the weapon {:.2} blocks from its right shoulder and its head tilted {:.2} radians as it looks",
                     read.joints,
                     gate.other_swung,
-                    held.distance(shoulder)
+                    held.distance(shoulder),
+                    read.head
                 )),
                 Some(held) => Err(format!("the weapon was drawn {} at {held:.2}, {:.2} blocks from the right shoulder ({reach:.2} at most)", if drawn { "held" } else { "not" }, held.distance(shoulder))),
                 None => Err("nothing was drawn in the stand-in's hand".into()),

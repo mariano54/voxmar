@@ -173,6 +173,7 @@ struct Figure {
     /// and where the middle of what is in its hand is.
     arm: f32,
     leg: f32,
+    head: f32,
     held_at: Option<Vec3>,
 }
 
@@ -198,6 +199,8 @@ pub struct FigureRead {
     /// positive).
     pub arm: f32,
     pub leg: f32,
+    /// How far its head is tilted up (positive) or down, radians.
+    pub head: f32,
     /// Where the middle of what is in its hand is drawn, if anything is.
     pub held_at: Option<Vec3>,
 }
@@ -211,7 +214,7 @@ impl Figures {
 
     pub fn read(&self, id: PlayerId) -> Option<FigureRead> {
         let f = self.shown.get(&id)?;
-        Some(FigureRead { position: f.position, yaw: f.yaw, painted: f.painting.is_none(), joints: f.joints.len(), arm: f.arm, leg: f.leg, held_at: f.held_at })
+        Some(FigureRead { position: f.position, yaw: f.yaw, painted: f.painting.is_none(), joints: f.joints.len(), arm: f.arm, leg: f.leg, head: f.head, held_at: f.held_at })
     }
 }
 
@@ -292,7 +295,7 @@ fn show(
             commands.spawn((Mesh3d(body.mesh.clone()), MeshMaterial3d(material.clone()), skinned, Transform::default(), Visibility::default(), NotShadowCaster, ChildOf(root)));
             let seed = name_hash(&view.name) as u32;
             let painting = Some(crate::creatures::paint_skin(look.body_of(&view.name), parts.clone(), body, seed, false));
-            Figure { root, joints, material, painting, skin: blank.clone(), position: view.position, yaw: view.yaw, pitch: view.pitch, stride: 0.0, pace: 0.0, arm: 0.0, leg: 0.0, held_at: None }
+            Figure { root, joints, material, painting, skin: blank.clone(), position: view.position, yaw: view.yaw, pitch: view.pitch, stride: 0.0, pace: 0.0, arm: 0.0, leg: 0.0, head: 0.0, held_at: None }
         });
         // Its skin, once painted; till then it is not drawn.
         if let Some(task) = figure.painting.as_mut()
@@ -348,6 +351,9 @@ fn show(
             }
             if part.role == Role::Leg && part.pivot.x < 0.0 {
                 figure.leg = turn.to_radians();
+            }
+            if part.swing == Swing::Head {
+                figure.head = turn.to_radians();
             }
             if let Ok(mut transform) = transforms.get_mut(joint) {
                 *transform = Transform::from_translation(part.pivot).with_rotation(q);
