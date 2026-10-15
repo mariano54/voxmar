@@ -307,6 +307,10 @@ enum Step {
     /// boss fight and plays a boss's track; in survival she winds up a move of her own, its
     /// tell shown. Every exit sweeps her away.
     Boss,
+    /// A brown bear struck through a doorway a block across, narrower than its body, with
+    /// the player then two blocks past it: it comes at the wall, lands no blow, gives up and
+    /// goes off rather than press the wall.
+    Narrow,
     /// A torch held a moment leaves the player Smoky (smoke that clings): its chip shows,
     /// timed; then the hand is emptied.
     Smoke,
@@ -742,6 +746,8 @@ struct Gate {
     feel: FeelRun,
     /// Clearing the bears after the weapon and feel steps.
     sweep: Sweep,
+    /// Where the narrow step stands.
+    narrow: NarrowRun,
     /// The weapon step's first swing, watched in the hand.
     swing_watch: SwingWatch,
     /// When the music step checked the now-playing line, while it is watched fading out
@@ -893,6 +899,7 @@ impl Gate {
             overlay_changes: 0,
             feel: FeelRun::default(),
             sweep: Sweep::default(),
+            narrow: NarrowRun::default(),
             swing_watch: SwingWatch::default(),
             music_fade: None,
             worn_states: 0,
@@ -1634,6 +1641,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Sling => sling(world, gate, now, in_phase),
         Step::Feel => feel(world, gate, now, in_phase),
         Step::Boss => boss(world, gate, now),
+        Step::Narrow => narrow(world, gate, now),
         Step::Smoke => smoke(world, gate, now),
         Step::Wear => wear(world, gate, now, in_phase),
         Step::CombatHud => combat_hud(world, gate, now, in_phase),
@@ -9381,7 +9389,174 @@ fn end_boss(world: &mut World, gate: &mut Gate, now: f32) {
     net.command("gamemode survival");
     net.command("skill hitpoints 10");
     net.command(&format!("tp {} {} {}", feet.x as f32 + 0.5, feet.y, feet.z as f32 + 0.5));
-    gate.next(Step::Smoke, now);
+    gate.next(Step::Narrow, now);
+}
+
+/// Where the narrow step builds, from the test ground's feet: the middle of its wall, the
+/// doorway's cell.
+const NARROW_AT: IVec3 = IVec3::new(0, 0, 22);
+/// Server seconds each of the narrow step's waits may take.
+const NARROW_WAIT: f32 = 8.0;
+
+/// Where the narrow step stands.
+#[derive(Default)]
+struct NarrowRun {
+    /// The bears in view before it summoned its own, and its own once seen.
+    before: Vec<u32>,
+    bear: Option<u32>,
+    /// The blows each way the server had answered as it began.
+    struck: u32,
+    hurts: u32,
+    /// Across the ground from the player once they stood past the doorway: at first, and
+    /// at its nearest since.
+    first: Option<f32>,
+    nearest: f32,
+    /// When the player last clicked at it.
+    clicked: f32,
+}
+
+/// A brown bear behind a wall, its doorway a block across: struck from the doorway, then
+/// with the player two blocks past the wall, it comes at the wall, lands no blow, gives up
+/// and goes off (back toward its home) rather than press the wall. Its body is wider than
+/// the doorway (checked from its size and scale), so there is no way through for it. What
+/// is judged derives from that setup: it came nearer the wall than it started, and then
+/// went more than a block back from its nearest, without a blow.
+fn narrow(world: &mut World, gate: &mut Gate, now: f32) {
+    let Some(species) = world.resource::<Launch>().content.creatures.find(BEAR) else {
+        gate.check("narrow doorway", Err(format!("no `{BEAR}` in the content")));
+        gate.next(Step::Smoke, now);
+        return;
+    };
+    let at = gate.feet + NARROW_AT;
+    let view = {
+        let creatures = world.resource::<crate::creatures::Creatures>();
+        match gate.narrow.bear {
+            Some(id) => creatures.views().find(|v| v.id == id).copied(),
+            None => creatures.views().find(|v| v.species == species && !gate.narrow.before.contains(&v.id)).copied(),
+        }
+    };
+    let waited = gate.server_in_phase() > NARROW_WAIT;
+    let fail = |world: &mut World, gate: &mut Gate, why: String| {
+        gate.check("narrow doorway", Err(why));
+        mouse(world, MouseButton::Left, false);
+        to_phase(gate, 4, now);
+    };
+    match gate.phase {
+        0 => {
+            // In creative while it is built, so nothing fights yet: level ground, and a wall
+            // across it three high, its doorway at `at`.
+            gate.narrow = NarrowRun { before: world.resource::<crate::creatures::Creatures>().views().filter(|v| v.species == species).map(|v| v.id).collect(), nearest: f32::MAX, ..default() };
+            let fighting = world.resource::<crate::fight::Fighting>();
+            (gate.narrow.struck, gate.narrow.hurts) = (fighting.struck_count, fighting.hurt_count);
+            let net = world.resource::<Net>();
+            net.command("gamemode creative");
+            net.command(&format!("fill {} {} {} {} {} {} air", at.x - 7, at.y, at.z - 7, at.x + 7, at.y + 4, at.z + 5));
+            net.command(&format!("fill {} {} {} {} {} {} stone", at.x - 7, at.y - 1, at.z - 7, at.x + 7, at.y - 1, at.z + 5));
+            net.command(&format!("fill {} {} {} {} {} {} stone", at.x - 7, at.y, at.z, at.x + 7, at.y + 2, at.z));
+            net.command(&format!("fill {} {} {} {} {} {} air", at.x, at.y, at.z, at.x, at.y + 2, at.z));
+            net.command(&format!("tp {} {} {}", at.x as f32 + 0.5, at.y, at.z as f32 + 0.5));
+            net.command(&format!("summon {} 1 {} {} {}", BEAR.trim_start_matches("base:"), at.x, at.y, at.z - 3));
+            gate.advance(now);
+        }
+        1 => {
+            let Some(view) = view else {
+                if waited {
+                    fail(world, gate, format!("a summoned {BEAR} never reached the client in {NARROW_WAIT} server seconds"));
+                }
+                return;
+            };
+            gate.narrow.bear = Some(view.id);
+            let width = world.resource::<Launch>().content.creatures.get(species).def.body.size.0 * view.scale;
+            if width <= 1.0 {
+                fail(world, gate, format!("the bear is {width:.2} blocks wide: a doorway a block across is not too narrow for it"));
+                return;
+            }
+            if gate.settled == 0 {
+                let net = world.resource::<Net>();
+                net.command("gamemode survival");
+                net.command("skill hitpoints 60");
+                net.command("heal");
+                gate.settled = 1;
+            }
+            if empty_hand(world) {
+                gate.advance(now);
+            } else if waited {
+                fail(world, gate, "no hotbar slot free to strike with an empty hand".into());
+            }
+        }
+        2 => {
+            let Some(view) = view else {
+                fail(world, gate, "the bear went out of view before it was struck".into());
+                return;
+            };
+            aim_at(world, view.position + Vec3::Y * 0.6);
+            let fighting = world.resource::<crate::fight::Fighting>();
+            let new = (fighting.struck_count - gate.narrow.struck) as usize;
+            if fighting.struck.iter().rev().take(new).any(|s| s.0 == view.id) {
+                // Struck: the player steps two blocks past the wall, out of its reach, and
+                // it is watched from there.
+                mouse(world, MouseButton::Left, false);
+                world.resource::<Net>().command(&format!("tp {} {} {}", at.x as f32 + 0.5, at.y, at.z as f32 + 3.0));
+                gate.advance(now);
+            } else if waited {
+                let distance = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz());
+                fail(world, gate, format!("no blow at the bear landed in {NARROW_WAIT} server seconds ({distance:.2} blocks off)"));
+            } else if gate.server_now - gate.narrow.clicked > 0.6 {
+                mouse(world, MouseButton::Left, true);
+                gate.narrow.clicked = gate.server_now;
+            } else {
+                mouse(world, MouseButton::Left, false);
+            }
+        }
+        3 => {
+            let me = world.resource::<LocalPlayer>().position;
+            let Some(view) = view else {
+                fail(world, gate, "the bear went out of view".into());
+                return;
+            };
+            // Only once the player stands past the doorway.
+            if (me.z - (at.z as f32 + 3.0)).abs() > 0.3 {
+                if waited {
+                    fail(world, gate, format!("the player never came to stand past the doorway (at {me:.1})"));
+                }
+                return;
+            }
+            let fighting = world.resource::<crate::fight::Fighting>();
+            let new = (fighting.hurt_count - gate.narrow.hurts) as usize;
+            if let Some(blow) = fighting.hurt.iter().rev().take(new).find(|h| h.0 == view.id) {
+                let why = format!("it landed a blow ({:?}, {} damage) through a doorway too narrow for it", blow.2, blow.1);
+                fail(world, gate, why);
+                return;
+            }
+            let distance = me.xz().distance(view.position.xz());
+            let first = *gate.narrow.first.get_or_insert(distance);
+            gate.narrow.nearest = gate.narrow.nearest.min(distance);
+            let came = gate.narrow.nearest < first - 1.0;
+            if came && distance > gate.narrow.nearest + 1.0 {
+                let result = format!("it came from {first:.1} to {:.1} blocks off at the wall, landed no blow, and went off to {distance:.1} in {:.1} server s", gate.narrow.nearest, gate.server_in_phase());
+                gate.check("narrow doorway", Ok(result));
+                to_phase(gate, 4, now);
+            } else if waited {
+                fail(world, gate, format!("in {NARROW_WAIT} server seconds it came from {first:.1} to {:.1} blocks off and is {distance:.1} off, at {:.1}, moving {:.1}", gate.narrow.nearest, view.position, view.velocity.with_y(0.0).length()));
+            }
+        }
+        _ => {
+            // Swept away with the wall, and back to the test ground for the steps after.
+            let bear = view.map(|v| v.position);
+            let feet = gate.feet;
+            let net = world.resource::<Net>();
+            net.command("gamemode creative");
+            if let Some(bear) = bear {
+                net.command(&format!("tp {} {} {}", bear.x, bear.y, bear.z));
+                net.command("creatures kill");
+            }
+            net.command(&format!("fill {} {} {} {} {} {} air", at.x - 7, at.y, at.z, at.x + 7, at.y + 2, at.z));
+            net.command("gamemode survival");
+            net.command("skill hitpoints 10");
+            net.command(&format!("tp {} {} {}", feet.x as f32 + 0.5, feet.y, feet.z as f32 + 0.5));
+            gate.next(Step::Smoke, now);
+        }
+    }
 }
 
 /// What the smoke step holds, and the effect it leaves.
