@@ -79,6 +79,9 @@
         (template: "drop", name: "stone_shovel", tags: ["shovel", "tool", "tier:2", "speed:4", "yield:0.05"], all: (color: (120, 120, 125))),
         (template: "drop", name: "stone_hoe", tags: ["hoe", "tool", "tier:2", "speed:4", "yield:0.05"], all: (color: (120, 120, 125), action: Some("base:till"))),
         (template: "drop", name: "stone_knife", tags: ["knife", "tool", "tier:2", "speed:4", "yield:0.05"], all: (color: (120, 120, 125))),
+        // A stone hammer: crushes ore on a stone anvil (cooking.ron's `tool: "hammer"`), and
+        // is kept doing it.
+        (template: "drop", name: "stone_hammer", tags: ["hammer", "stack:1"], all: (color: (120, 120, 125))),
         // Copper: tier 3.
         (template: "drop", name: "copper_pickaxe", tags: ["pickaxe", "tool", "tier:3", "speed:6", "yield:0.1"], all: (color: (190, 110, 70))),
         (template: "drop", name: "copper_axe", tags: ["axe", "tool", "tier:3", "speed:6", "yield:0.1"], all: (color: (190, 110, 70))),

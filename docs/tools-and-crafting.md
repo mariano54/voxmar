@@ -58,8 +58,10 @@ train Engineering, bread and animal feed Cooking. A recipe whose level is above 
 shows "Needs Engineering 15" where its result would be. The viewer's **Lay** button fills
 the grid with a recipe from the pack, and at home from its stores too (docs/home.md).
 
-Smelting is by hand for now (ore over coal at the grid makes an ingot); a furnace comes
-with Engineering 30.
+Metal comes only from fire. Ore is first crushed on a stone anvil while you carry a
+hammer (a recipe at a station may name a `tool` tag that must be in the pack; it is kept),
+then two crushed ores smelt in a lit Crucible Kiln into three ingots, half again what
+the ore was. Iron needs the bloomery of the Bronze age (or a bloom hammered by hand).
 
 ## Farming, taming and breeding with tools
 
@@ -132,8 +134,8 @@ you wake after dying until a hearth gives you a home: right click it to sleep
 vials and kiln bricks are made of at the grid. The Crucible Kiln, the Farm age's gate, is a multiblock:
 a crucible (kiln bricks round a clay pot) ringed with kiln bricks, with a pillar on each
 corner. A crucible smelts only in a standing kiln with an unexpired paid fire:
-copper ore into ingots, and three copper ingots held with a tin ore carried into four
-bronze (a station recipe may take several of what is held, `uses`, and other items
+two crushed copper into three ingots, and two crushed tin held with six copper ingots
+carried into nine bronze (a station recipe may take several of what is held, `uses`, and other items
 besides, `with`, and make several, `count`), all Engineering, never burnt (`stop_burning: 0`). To light a cold kiln,
 hold 32 charcoal or 24 coal and right-click the crucible. Lighting consumes the charge
 and quests count it (`Lit("crucible_kiln", 1)`). Its fire uses the fuel times in

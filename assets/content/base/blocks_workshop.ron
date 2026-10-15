@@ -8,5 +8,12 @@
             textures: Sides(top: "chopping_block_top", bottom: "chopping_block_top", side: "chopping_block_side"),
             drops: "chopping_block", hardness: 1.5, color: (120, 92, 58), tags: ["chopping_block", "decor"],
         ),
+        // A stone anvil: a dressed stone top on a block foot. Ore held is crushed on it with a
+        // hammer about you, for half again the metal in the crucible (cooking.ron's `anvil`).
+        (
+            name: "stone_anvil", render: Model, shape: "stone_anvil", solid: true, sound: Stone,
+            textures: Sides(top: "stone", bottom: "cobblestone", side: "cobblestone"),
+            drops: "stone_anvil", hardness: 2.0, color: (128, 128, 132), tags: ["anvil", "stone", "decor"],
+        ),
     ],
 )

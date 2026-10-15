@@ -424,6 +424,10 @@ steps! {
     /// is within reach, so a log in the grid shows six planks, not four, and crafted, the
     /// server gives six.
     Chop,
+    /// A stone anvil where the chopping block stood: copper ore held and clicked on it with
+    /// no hammer about says a hammer is needed; with one in the pack it crushes the ore,
+    /// and the hammer stays.
+    Anvil,
     /// A survival player's inventory search finds the stone pickaxe by "pick"; its recipe
     /// opened in the viewer finishes the "Look It Up" quest; the quest book's page for the
     /// pickaxe shows its recipe inline, an item clicked there opens the viewer, and Back
@@ -1811,6 +1815,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Ore => ore(world, gate, now, in_phase),
         Step::Recipes => recipes(world, gate, now, in_phase),
         Step::Chop => chop(world, gate, now),
+        Step::Anvil => anvil(world, gate, now),
         Step::LookUp => look_up(world, gate, now, in_phase),
         Step::Refusal => refusal(world, gate, now, in_phase),
         Step::Merged => merged(world, gate, now, in_phase),
@@ -4336,7 +4341,7 @@ fn chop(world: &mut World, gate: &mut Gate, now: f32) {
         net.command(&format!("setblock {} {} {} air", block.x, block.y, block.z));
         net.command("clear oak_log");
         net.command("clear oak_planks");
-        gate.next(Step::LookUp, now);
+        gate.next(Step::Anvil, now);
     };
     match gate.phase {
         0 => {
@@ -4406,6 +4411,96 @@ fn chop(world: &mut World, gate: &mut Gate, now: f32) {
                 end(world, gate);
             } else if waited {
                 gate.check("chopping block", Err(format!("a log crafted by a chopping block gave {split} oak planks (grid emptied {empty}), not six, in {CHOP_WAIT} server seconds")));
+                end(world, gate);
+            }
+        }
+    }
+}
+
+/// The anvil step's ore, and the station tag it is crushed at.
+const ANVIL_ORE: &str = "base:copper_ore";
+const ANVIL_TAG: &str = "anvil";
+
+/// Copper ore crushed on a stone anvil, as cooking.ron says: held and clicked on the anvil
+/// with no hammer about, the words under the crosshair say the tool it needs; with a hammer
+/// in the pack the click gives what the recipe makes, and the hammer stays.
+fn anvil(world: &mut World, gate: &mut Gate, now: f32) {
+    let block = gate.feet + IVec3::new(0, 0, 14) + CHOP_FROM_FIRE;
+    let waited = gate.server_in_phase() > CHOP_WAIT;
+    let outwaited = waited && now - gate.phase_since > CHOP_WAIT;
+    let content = world.resource::<Launch>().content.clone();
+    let ore = content.blocks.id(ANVIL_ORE);
+    let recipe = ore.and_then(|ore| content.cooking.for_item(ore, &[ANVIL_TAG.to_owned()]));
+    let anvil_block = content.blocks.tagged(ANVIL_TAG).next();
+    let tool = recipe.and_then(|r| r.def.tool.as_deref()).and_then(|tag| content.blocks.tagged(tag).next());
+    let carried = |world: &World, item: Option<BlockId>| world.resource::<LocalPlayer>().inventory.slots.iter().flatten().filter(|s| Some(s.item) == item).map(|s| s.count as u32).sum::<u32>();
+    let end = |world: &mut World, gate: &mut Gate| {
+        mouse(world, MouseButton::Right, false);
+        let net = world.resource::<Net>();
+        net.command(&format!("setblock {} {} {} air", block.x, block.y, block.z));
+        net.command("clear");
+        gate.next(Step::LookUp, now);
+    };
+    let (Some(recipe), Some(anvil_block), Some(tool)) = (recipe, anvil_block, tool) else {
+        gate.check("anvil", Err(format!("no {ANVIL_ORE} crushed at a block tagged `{ANVIL_TAG}` with a tool something carries")));
+        end(world, gate);
+        return;
+    };
+    let (made, count, level) = (recipe.output, recipe.def.count as u32, recipe.def.level);
+    let (anvil_name, ore_name, tool_name) = (content.blocks.def(anvil_block).name.clone(), content.blocks.def(ore.unwrap()).name.clone(), content.blocks.def(tool).name.clone());
+    let skill = recipe.skill.map(|s| content.skills.get(s).name.clone());
+    let short = |name: &str| name.split_once(':').map_or(name, |(_, n)| n).to_owned();
+    let wanted = {
+        let locale = world.resource::<Locale>();
+        content.refusals.says(voxmar_engine::action::Requirement::CookingTool).map(|key| locale.format(key, &[("tool", &locale.block(content.blocks.def(tool)))]))
+    };
+    match gate.phase {
+        0 => {
+            let net = world.resource::<Net>();
+            net.command("clear");
+            if let Some(skill) = &skill {
+                net.command(&format!("skill {} {level}", short(skill)));
+            }
+            net.command(&format!("give {} 2", short(&ore_name)));
+            net.command(&format!("setblock {} {} {} {}", block.x, block.y, block.z, short(&anvil_name)));
+            net.command(&format!("tp {} {} {}", block.x as f32 + 0.5, block.y, block.z as f32 - 2.5));
+            gate.advance(now);
+        }
+        // Ore in hand, no hammer: one click, and the words say what it needs.
+        1 | 3 => {
+            aim_at(world, block.as_vec3() + Vec3::new(0.5, 0.75, 0.5));
+            let stood = world.resource::<ClientWorld>().block(block) == Some(anvil_block);
+            let ready = stood && drawn(world, block) && carried(world, ore) == 2 && (carried(world, Some(tool)) == 1) == (gate.phase == 3) && select(world, &ore_name);
+            if ready {
+                mouse(world, MouseButton::Right, true);
+                gate.advance(now);
+            } else if outwaited {
+                gate.check("anvil", Err(format!("the {anvil_name} ({stood}), two {ore_name} in hand or the {tool_name} (phase {}) never came in {CHOP_WAIT} seconds; screens {:?}", gate.phase, covering_screens(world))));
+                end(world, gate);
+            }
+        }
+        2 => {
+            mouse(world, MouseButton::Right, false);
+            let toasts = world.resource::<crate::hud::skills::SkillToasts>();
+            let said = wanted.as_ref().is_some_and(|w| toasts.shows_refusal(w));
+            if said && carried(world, made.into()) == 0 && carried(world, ore) == 2 {
+                world.resource::<Net>().command(&format!("give {} 1", short(&tool_name)));
+                gate.advance(now);
+            } else if outwaited {
+                let showing: Vec<String> = toasts.refusals().map(str::to_owned).collect();
+                gate.check("anvil", Err(format!("{ore_name} clicked on the {anvil_name} with no {tool_name} showed {showing:?}, not {wanted:?}; it made {} and left {} ore; the crosshair was on {}", carried(world, made.into()), carried(world, ore), crosshair_on(world))));
+                end(world, gate);
+            }
+        }
+        _ => {
+            mouse(world, MouseButton::Right, false);
+            let (crushed, left, kept) = (carried(world, made.into()), carried(world, ore), carried(world, Some(tool)));
+            if crushed >= count && left == 1 && kept == 1 {
+                let result = if crushed == count { Ok(format!("{ore_name} on the {anvil_name}: with no {tool_name}, \"{}\"; with one, {crushed} {} and the {tool_name} kept", wanted.unwrap_or_default(), content.blocks.def(made).name)) } else { Err(format!("one {ore_name} crushed into {crushed}, not the recipe's {count}")) };
+                gate.check("anvil", result);
+                end(world, gate);
+            } else if waited {
+                gate.check("anvil", Err(format!("{ore_name} clicked on the {anvil_name} with a {tool_name} about made {crushed} {}, left {left} ore and {kept} {tool_name}, in {CHOP_WAIT} server seconds", content.blocks.def(made).name)));
                 end(world, gate);
             }
         }

@@ -2605,6 +2605,71 @@ fn a_crucible_smelts_only_in_its_lit_kiln_and_makes_bronze() {
     client.pump_until(|c| count(c, ingot) == 1 && count(c, ore) == 1);
 }
 
+/// Metal only from fire, and more of it for the work: copper ore held is crushed on a
+/// stone anvil only with a hammer carried, which is kept; two crushed copper smelt to three
+/// ingots in the lit Crucible Kiln, where two ores made two. No grid smelts ore.
+#[test]
+fn ore_crushed_on_an_anvil_with_a_hammer_smelts_to_half_again_the_ingots() {
+    let mut client = Client::join();
+    let anvil = client.position.floor().as_ivec3() + IVec3::new(-3, 0, 0);
+    let core = client.position.floor().as_ivec3() + IVec3::new(4, 0, 0);
+    for line in ["/clear", "/fill ~-3 ~ ~-1 ~5 ~2 ~1 air", "/setblock ~-3 ~ ~ stone_anvil", "/give copper_ore 2", "/skill engineering 20"] {
+        client.ok(line);
+    }
+    let blocks = &client.content.blocks;
+    let (ore, crushed, ingot, hammer) = (blocks.expect("base:copper_ore"), blocks.expect("base:crushed_copper"), blocks.expect("base:copper_ingot"), blocks.expect("base:stone_hammer"));
+    // No recipe at the grid makes an ingot of ore.
+    let by_hand: Vec<_> = client.content.recipes.iter().filter(|r| r.output == ingot && r.alternatives().into_iter().flatten().any(|a| a.contains(&ore))).collect();
+    assert!(by_hand.is_empty(), "ore smelts at the grid");
+    let count = |c: &Client, item| c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
+    client.pump_until(|c| c.world.block(anvil) == c.content.blocks.id("base:stone_anvil") && count(c, ore) == 2);
+    let work = |client: &mut Client, at: IVec3| {
+        client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+        client.propose("base:cook", ActionTarget::Block { block: at, face: Face::PosY });
+    };
+    // No hammer about: the anvil crushes nothing.
+    work(&mut client, anvil);
+    client.pump_ticks(3 * TICKS_PER_SECOND as u64, |c| count(c, crushed) > 0);
+    assert_eq!((count(&client, ore), count(&client, crushed)), (2, 0), "crushed with no hammer");
+    // A hammer in the pack: each ore held crushes to one, and the hammer stays.
+    client.ok("/give stone_hammer 1");
+    client.pump_until(|c| count(c, hammer) == 1);
+    for done in 1..=2 {
+        work(&mut client, anvil);
+        client.pump_until(|c| count(c, crushed) == done);
+    }
+    assert_eq!((count(&client, ore), count(&client, hammer)), (0, 1), "two ores crushed, the hammer kept");
+    // Tin is crushed two ores at a time, into three grains.
+    let (tin, grains) = (client.content.blocks.expect("base:tin_ore"), client.content.blocks.expect("base:crushed_tin"));
+    client.ok("/clear crushed_copper");
+    client.ok("/give tin_ore 2");
+    client.pump_until(|c| count(c, crushed) == 0 && c.inventory.get(0).is_some_and(|s| s.item == tin && s.count == 2));
+    work(&mut client, anvil);
+    client.pump_until(|c| count(c, grains) == 3);
+    assert_eq!(count(&client, tin), 0, "two tin ores crushed to three grains");
+    client.ok("/clear crushed_tin");
+    // The lit kiln smelts the two crushed into three ingots.
+    for line in ["/fill ~3 ~ ~-1 ~5 ~ ~1 kiln_bricks", "/setblock ~4 ~ ~ crucible", "/setblock ~3 ~1 ~-1 kiln_bricks", "/setblock ~5 ~1 ~-1 kiln_bricks", "/setblock ~3 ~1 ~1 kiln_bricks", "/setblock ~5 ~1 ~1 kiln_bricks"] {
+        client.ok(line);
+    }
+    let crucible = client.content.blocks.expect("base:crucible");
+    client.pump_until(|c| c.world.block(core) == Some(crucible) && c.world.block(core + IVec3::new(1, 1, 1)) == c.content.blocks.id("base:kiln_bricks"));
+    client.ok("/clear stone_hammer");
+    client.ok("/give coal_ore 24");
+    let coal = client.content.blocks.expect("base:coal_ore");
+    client.pump_until(|c| count(c, coal) == 24 && count(c, hammer) == 0 && c.inventory.get(0).is_some_and(|s| s.item == coal));
+    client.chat.clear();
+    client.propose("base:light", ActionTarget::Block { block: core, face: Face::PosY });
+    client.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("Crucible Kiln is lit")) && count(c, coal) == 0);
+    // The two crushed, back in hand.
+    client.ok("/clear crushed_copper");
+    client.ok("/give crushed_copper 2");
+    client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == crushed && s.count == 2));
+    work(&mut client, core);
+    client.pump_until(|c| count(c, ingot) == 3);
+    assert_eq!(count(&client, crushed), 0, "two crushed copper made three ingots");
+}
+
 #[test]
 fn a_sleeping_bag_is_where_the_homeless_wake() {
     let mut client = Client::join_remote("sleeper", &["sleeper"]);

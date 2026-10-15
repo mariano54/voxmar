@@ -32,6 +32,7 @@
         "CropLevel": (say: "skills.needs"),
         "SkillLevel": (say: "skills.needs"),
         "CookingLevel": (say: "skills.needs"),
+        "CookingTool": (say: "cooking.needs_tool"),
         // Where, and with what.
         "Replaceable": (say: "refusal.in_the_way"),
         "Unobstructed": (say: "refusal.someone_there"),
