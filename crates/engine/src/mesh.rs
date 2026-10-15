@@ -1500,9 +1500,17 @@ mod tests {
     fn shape_quads_number_up_to_the_whole_table() {
         for index in [0, 1, 4095, 4096, 5000, crate::shape::MAX_SHAPE_QUADS as u32 - 1] {
             let (high, low) = shape_quad_bits(index);
+            assert_eq!(high & !(3 << PLANT_PIECE_SHIFT), 0, "{index}: a shape quad's number spills out of word 0 bits 30..31");
             let w0 = PLANT_DIAGONAL << 18 | (PLANT_SHAPE & 3) << PLANT_MODEL_SHIFT | (PLANT_SHAPE >> 2) << PLANT_MODEL_HIGH_SHIFT | high;
             assert!(is_shape_quad(w0), "{index}: no longer read as a shape quad");
             assert_eq!(shape_quad_index(w0, low), index as usize);
+        }
+        // A plant's quad of its model, in the same bits, never reads it as a shape.
+        for model in PLANT_MODELS {
+            for piece in 0..4u32 {
+                let w0 = PLANT_DIAGONAL << 18 | (model as u32 & 3) << PLANT_MODEL_SHIFT | (model as u32 >> 2) << PLANT_MODEL_HIGH_SHIFT | piece << PLANT_PIECE_SHIFT;
+                assert!(!is_shape_quad(w0), "{model:?} quad {piece} read as a shape quad");
+            }
         }
         let shader = include_str!("../../client/src/render/voxel.wgsl");
         assert!(shader.contains("return ((w1 >> 12u) & 0xFFFu) | (((w0 >> PLANT_PIECE_SHIFT) & 3u) << 12u);"), "voxel.wgsl reads a shape quad's number otherwise");
