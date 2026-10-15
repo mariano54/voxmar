@@ -386,6 +386,11 @@ fn break_and_place(
                         target.used_right = true;
                         // A lock picked opens the chest's slots.
                         player.store_asked |= name == "base:pick_lock";
+                        // The clay a coat spends stays in hand until the server turns the
+                        // wall, so the held press must not lay it as a block meanwhile.
+                        if name == "base:coat" {
+                            target.place_cooldown = 0.4;
+                        }
                         return;
                     }
                     Some(Err(Rejection::Unmet(need))) if unmet.is_none() && meant(&context, hit.block, need) => {

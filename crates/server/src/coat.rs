@@ -123,5 +123,9 @@ mod tests {
         server.propose(1, coat, ActionTarget::Block { block: at, face: Face::NegZ }, std::time::Instant::now());
         assert_eq!(server.block(at), Some(daub), "the earth wall's face was not daubed");
         assert_eq!(server.players[&1].inventory.get(0).unwrap().count, 2, "one clay a block");
+        // Broken, daub gives daub, never the clay back: coating is no clay-to-xp loop.
+        let info = server.content.blocks.info(daub);
+        assert_eq!((info.drops, info.drop_count), (daub, 1), "daub breaks to itself");
+        assert!(!server.content.recipes.iter().any(|r| r.output == clay), "something makes clay back");
     }
 }
