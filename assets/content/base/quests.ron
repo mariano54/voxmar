@@ -121,7 +121,7 @@
         ),
         (
             name: "timber", age: "nomad", branch: "start", title: "Timber",
-            why: "You start with nothing, and bare hands cannot fell a tree. Pull sticks from leaves (one break in five gives one) and break gravel for flint (one in eight). In the 2×2 grid, two flint over a stick make a flint axe, and two flint over two sticks a flint pickaxe. Fell four logs with the axe; woods have the most trees, and plains have a few in groves. A log splits into four planks; four planks make a crafting table, and two planks four sticks.",
+            why: "You start with nothing, and bare hands cannot fell a tree. Flint lies loose on the ground near where you wake, and a dead grey snag breaks by hand to a stick a block. Leaves give sticks too (one break in five), and gravel gives flint (one in eight). In the 2×2 grid, two flint over a stick make a flint axe, and two flint over two sticks a flint pickaxe. Fell four logs with the axe; woods have the most trees, and plains have a few in groves. A log splits into four planks; four planks make a crafting table, and two planks four sticks.",
             tasks: [[Have("tag:log", 4)]],
             rewards: [Xp("engineering", 30.0)],
         ),

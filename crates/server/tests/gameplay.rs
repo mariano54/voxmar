@@ -3386,6 +3386,53 @@ fn leaving_dead_leaves_their_things_behind_too() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// The spawn kit's loose flint the client sees within twelve blocks of where it stands.
+fn kit_flint(c: &Client) -> Vec<IVec3> {
+    let flint = c.content.blocks.id("base:loose_flint");
+    let feet = c.position.floor().as_ivec3();
+    (-12..=12).flat_map(|dx| (-12..=12).flat_map(move |dz| (-32..=8).map(move |dy| feet + IVec3::new(dx, dy, dz)))).filter(|&p| c.world.block(p) == flint).collect()
+}
+
+#[test]
+fn the_spawn_kit_is_laid_once_in_new_worlds_and_old_saves() {
+    let dir = world_dir("spawn-kit");
+    let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
+    let joined = || {
+        let mut c = Client::join_with(config());
+        let feet = c.position.floor().as_ivec3();
+        c.pump_until(|c| (-1..=1).all(|dx| (-1..=1).all(|dz| c.world.block(feet + IVec3::new(dx * 12, 0, dz * 12)).is_some())));
+        c
+    };
+    // A new world has it.
+    let mut client = joined();
+    let laid = kit_flint(&client);
+    assert!(laid.len() >= 4, "the spawn kit's flint: {laid:?}");
+    // Picked up, it is not laid again on the next start.
+    for p in &laid {
+        client.ok(&format!("/setblock {} {} {} air", p.x, p.y, p.z));
+    }
+    client.pump_until(|c| kit_flint(c).len() < laid.len());
+    let left = kit_flint(&client);
+    drop(client);
+    let client = joined();
+    assert_eq!(kit_flint(&client), left, "the kit was laid twice");
+    drop(client);
+    // A save from before the kit (no `spawn_kit` in its world.ron) gets it once.
+    let file = dir.join("world.ron");
+    let text = std::fs::read_to_string(&file).unwrap();
+    let old: String = text.lines().filter(|line| !line.contains("spawn_kit")).collect::<Vec<_>>().join("\n");
+    assert!(text.contains("spawn_kit: true") && !old.contains("spawn_kit"), "{text}");
+    std::fs::write(&file, old).unwrap();
+    let client = joined();
+    let again = kit_flint(&client);
+    assert!(again.len() >= left.len() + 4, "an old save got no kit: {again:?}");
+    drop(client);
+    let client = joined();
+    assert_eq!(kit_flint(&client), again, "an old save got the kit twice");
+    drop(client);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 #[test]
 fn a_player_who_left_dead_wakes_at_home() {
     let dir = world_dir("dead-home");
@@ -7436,18 +7483,22 @@ impl Fresh {
         for x in [1, 3, 5, 7] {
             c.fill(origin, v(x, 0, -5), v(x, 3, -5), "oak_log");
         }
-        // Bushes of oak leaves along the plot's south edge, each a column four high with room
-        // to walk between, for the sticks bare hands pull from leaves, and a gravel bank beside
+        // Bushes of oak leaves along the plot's south edge, each a column four high with two
+        // blocks to walk between (a drop under leaves left standing is in reach from either
+        // side), and a dead snag at their end as the spawn kit lays one, for the sticks bare
+        // hands pull from leaves and snags, and a gravel bank beside
         // them in two rows for flint, with a lane two wide between them, beyond the plot's edge
         // so they stand clear of the kiln's site and of the copper's drops: a new player's
         // first tools are flint on sticks.
-        for x in (-12..=8).step_by(2) {
+        for x in (-12..=9).step_by(3) {
             c.fill(origin, v(x, 0, 12), v(x, 3, 12), "oak_leaves");
         }
-        c.fill(origin, v(9, 0, 14), v(21, 10, 17), "air");
-        c.fill(origin, v(9, -4, 14), v(21, -1, 17), "dirt");
+        c.fill(origin, v(11, 0, 12), v(11, 2, 12), "dead_log");
+        c.fill(origin, v(9, 0, 14), v(25, 10, 17), "air");
+        c.fill(origin, v(9, -4, 14), v(25, -1, 17), "dirt");
+        // Ninety gravel: at one flint in eight, a key whose draws run short still finds four.
         for z in [14, 17] {
-            c.fill(origin, v(10, 0, z), v(20, 2, z), "gravel");
+            c.fill(origin, v(10, 0, z), v(24, 2, z), "gravel");
         }
         // A patch of natural stone one block high, with two coal ores on its near edge.
         c.fill(origin, v(9, 0, -3), v(17, 0, 4), "stone");
@@ -7464,7 +7515,7 @@ impl Fresh {
         // A low bank of dirt, eight blocks, for the earth clamp: the only dirt above the
         // ground, so the bot finds it by looking (`Fresh::raised_dirt`).
         c.fill(origin, v(-7, 0, 8), v(-4, 0, 9), "dirt");
-        let probes = [(v(7, 3, -5), "base:oak_log"), (v(17, 0, 4), "base:stone"), (v(-2, -1, 11), "base:water"), (v(-8, 1, 0), "base:stone"), (v(-7, 0, 2), "base:wild_wheat"), (v(-4, 0, 9), "base:dirt"), (v(8, 3, 12), "base:oak_leaves"), (v(20, 2, 17), "base:gravel")];
+        let probes = [(v(7, 3, -5), "base:oak_log"), (v(17, 0, 4), "base:stone"), (v(-2, -1, 11), "base:water"), (v(-8, 1, 0), "base:stone"), (v(-7, 0, 2), "base:wild_wheat"), (v(-4, 0, 9), "base:dirt"), (v(9, 3, 12), "base:oak_leaves"), (v(11, 2, 12), "base:dead_log"), (v(24, 2, 17), "base:gravel")];
         c.pump_until(|c| probes.iter().all(|&(at, name)| c.world.block(origin + at) == c.content.blocks.id(name)) && c.world.block(origin + v(-9, 1, 0)) == Some(BlockId::AIR));
         let (at, t0) = (c.position, c.ticks());
         let epoch = (t0, Instant::now());
@@ -7680,11 +7731,12 @@ fn the_first_days(f: &mut Fresh) -> Site {
     let (cobble, clay, stick, log) = ("base:cobblestone", "base:clay", "base:stick", "base:oak_log");
 
     // Flint tools, with bare hands (a new player starts with nothing, and a bare hand fells
-    // no tree and breaks no stone): sticks pulled from leaves, flint from gravel, a flint axe
-    // and pickaxe made in the hand's grid.
-    let (flint, leaves) = ("base:flint", rel(f, (-12..=8).step_by(2).flat_map(|x| (0..=3).map(move |y| v(x, y, 12))).collect()));
-    f.gather_chance("", leaves, stick, 3);
-    let gravel = rel(f, (10..=20).flat_map(|x| (0..=2).flat_map(move |y| [14, 17].map(move |z| v(x, y, z)))).collect());
+    // no tree and breaks no stone): sticks pulled from leaves and a snag, flint from gravel,
+    // a flint axe and pickaxe made in the hand's grid.
+    let leaves = (-12..=9).step_by(3).flat_map(|x| (0..=3).map(move |y| v(x, y, 12)));
+    let (flint, sticks) = ("base:flint", rel(f, leaves.chain((0..=2).map(|y| v(11, y, 12))).collect()));
+    f.gather_chance("", sticks, stick, 3);
+    let gravel = rel(f, (10..=24).flat_map(|x| (0..=2).flat_map(move |y| [14, 17].map(move |z| v(x, y, z)))).collect());
     f.gather_chance("", gravel, flint, 4);
     f.craft(&[(0, flint, 1), (1, flint, 1), (3, stick, 1)], "base:flint_axe", 1);
     f.craft(&[(0, flint, 1), (1, flint, 1), (3, stick, 1), (4, stick, 1)], "base:flint_pickaxe", 1);
@@ -7770,8 +7822,11 @@ fn the_first_days(f: &mut Fresh) -> Site {
     if unhurt(&f.c).is_empty() {
         f.stock("junglefowl", -4);
     }
+    // The seeds in hand from the lane's mouth on, so a fowl that wanders while the player
+    // walks in is tempted from wherever it ends up (seeds tempt from under ten blocks).
+    f.hold("base:wheat_seeds");
     // In by the open end to five blocks short of the nearest junglefowl (they huddle at the
-    // far end, and the seeds tempt from ten), where it can walk up the rest.
+    // far end), where it can walk up the rest.
     f.walk_toward(Fresh::middle(f.rel(-9, 0, 2)), 0.3);
     // One may have stepped out by the open end while the player walked in: another is let in.
     let in_lane = |c: &Client| !unhurt(c).is_empty();
@@ -7779,10 +7834,10 @@ fn the_first_days(f: &mut Fresh) -> Site {
         f.stock("junglefowl", -4);
         assert!(f.waited(2.0, in_lane), "the junglefowl let into the lane never showed");
     }
+    // Where the nearest is now, once the player is in.
     let near = unhurt(&f.c).into_iter().fold(f32::MIN, f32::max);
     let lane_x = f.rel(-9, 0, 0).x as f32 + 0.5;
     f.walk_toward(Vec3::new(lane_x, f.at.y, (near + 5.0).min(f.rel(0, 0, 0).z as f32 + 0.5)), 0.3);
-    f.hold("base:wheat_seeds");
     // However crowded the lane's end, one walks out of the heap and up to the seeds.
     let drawn = f.waited(10.0, |c| quest_status(c, "a_tempting_bite").0);
     let fowls: Vec<_> = f.c.creatures.values().filter(|v| v.species == fowl && v.position.distance(f.at) < 12.0).map(|v| (v.id, v.position, v.pose, v.health)).collect();

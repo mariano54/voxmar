@@ -99,16 +99,6 @@
             spacing: 44.0,
         ),
 
-        (
-            // Flint nodules weathered out of the ground, lying loose in the grass and on the
-            // forest floor: a bare hand picks them up, and two make a flint tool's head.
-            // Close enough everywhere a new player starts (the worldgen test
-            // `flint_lies_near_every_spawn` holds it within 64 blocks).
-            name: "loose_flint", tags: ["open", "forest", "grassland", "scrubland", "savanna", "steppe", "tundra", "heath", "highland", "mountain", "rocky", "wetland", "jungle", "desert", "mesa"],
-            shape: Scatter(count: (1, 3), spread: 3.0, block: "loose_flint"),
-            spacing: 12.0,
-        ),
-
         // --- Landmarks and wonders ----------------------------------------------------
         (
             // A ring of old standing stones on open high ground, commoner where the aether
@@ -230,6 +220,16 @@
             shape: Stump(height: (1, 2), growth: 0.4, plants: [Tag("fungus", 2.0), Name("short_grass", 1.0)]),
             spacing: 48.0,
             follows: [(Forest, 0.15, 0.5)],
+        ),
+        // Last, so it takes its chance after every other decoration's (`choose` gives earlier
+        // entries theirs first) and moves none of them.
+        (
+            // Flint nodules weathered out of the ground, lying loose in the grass and on the
+            // forest floor: a bare hand picks them up, and two make a flint tool's head. The
+            // spawn kit (spawn_kit.ron) makes sure of some by every spawn.
+            name: "loose_flint", tags: ["open", "forest", "grassland", "scrubland", "savanna", "steppe", "tundra", "heath", "highland", "mountain", "rocky", "wetland", "jungle", "desert", "mesa"],
+            shape: Scatter(count: (1, 3), spread: 3.0, block: "loose_flint"),
+            spacing: 12.0,
         ),
     ],
 )
