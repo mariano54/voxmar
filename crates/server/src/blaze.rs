@@ -134,10 +134,17 @@ impl Server {
         }
     }
 
-    /// Tells every player which blocks smoulder, when that changed since they were last told.
-    pub(crate) fn send_smoulders(&mut self) {
+    /// The blocks that smoulder (wait to catch), in order of place.
+    pub(crate) fn smouldering(&self) -> Vec<IVec3> {
         let mut at: Vec<IVec3> = self.blazes.values().filter(|b| !b.burning).map(|b| IVec3::from_array(b.pos)).collect();
         at.sort_by_key(|p| p.to_array());
+        at
+    }
+
+    /// Tells every player which blocks smoulder, when that changed since they were last told
+    /// (a player joining is told on joining).
+    pub(crate) fn send_smoulders(&mut self) {
+        let at = self.smouldering();
         if at != self.smoulders_sent {
             self.broadcast(voxmar_protocol::ServerMessage::Smoulders { at: at.clone() });
             self.smoulders_sent = at;
