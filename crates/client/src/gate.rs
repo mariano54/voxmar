@@ -2563,16 +2563,22 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             // spot itself.
             let fell = gate.fell;
             let lying: Vec<Vec3> = world.resource::<crate::drops::Drops>().lying().map(|(_, _, at)| at).filter(|at| at.distance(fell) < 10.0).collect();
-            if gate.frames % 30 == 0 {
+            // Once each `TAP_EVERY` of the game's time, counted as taps, so a client starved
+            // of frames is not given up on before it has been put by the stacks.
+            if now - gate.tap_at >= TAP_EVERY {
+                gate.tap_at = now;
+                gate.taps += 1;
                 let to = lying.iter().copied().min_by(|a, b| a.distance(fell).total_cmp(&b.distance(fell))).unwrap_or(fell);
                 let line = format!("tp {} {} {}", to.x, to.y, to.z);
                 world.resource::<Net>().command(&line);
             }
             let back = carried(world);
             // Picking up is the server's work: under load it gathers slowly, so the wait
-            // runs while the count keeps rising, by the server's clock.
+            // runs while the count keeps rising, by the server's clock and the teleports
+            // since it last rose.
             if back > gate.gathered.0 || gate.gathered.1 == 0.0 {
                 gate.gathered = (back.max(gate.gathered.0), gate.server_now);
+                gate.taps = 0;
             }
             if back >= gate.count_before {
                 gate.check("workshop: grave", Ok(format!("woke and picked all {back} items back up where the player fell")));
@@ -2601,9 +2607,9 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 }
                 gate.kiln = kiln;
                 gate.advance(now);
-            } else if gate.server_now - gate.gathered.1 > 15.0 {
+            } else if gate.server_now - gate.gathered.1 > 15.0 && gate.taps >= UNANSWERED_SWINGS {
                 let left: Vec<String> = lying.iter().map(|at| format!("{:+.1},{:+.1},{:+.1}", at.x - fell.x, at.y - fell.y, at.z - fell.z)).collect();
-                fail(world, gate, "grave", format!("nothing more was picked up for 15 server seconds, carrying {back} of {} items; stacks lying near, from where they fell: [{}]", gate.count_before, left.join(" ")));
+                fail(world, gate, "grave", format!("nothing more was picked up for 15 server seconds and {} teleports to the stacks, carrying {back} of {} items; stacks lying near, from where they fell: [{}]", gate.taps, gate.count_before, left.join(" ")));
             }
         }
         // Right clicking the crucible lights the kiln: the quest that asks for it counts it in its last part.
