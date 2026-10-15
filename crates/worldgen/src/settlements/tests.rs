@@ -3081,7 +3081,7 @@ fn homes_are_furnished_for_their_people() {
     let content = crate::content::WorldContent::base(&registry).unwrap();
     let solid = |b: Option<&BlockId>| b.is_some_and(|&b| registry.info(b).solid);
     let tagged = |b: Option<&BlockId>, tag: &str| b.is_some_and(|&b| registry.def(b).has_tag(tag));
-    let (mut homes, mut wanted, mut beds, mut tables, mut seats, mut tops, mut surfaces, mut bare) = (0, 0, 0, 0, 0, 0, 0, Vec::new());
+    let (mut homes, mut wanted, mut beds, mut tables, mut seats, mut tops, mut surfaces, mut stairs, mut bare) = (0, 0, 0, 0, 0, 0, 0, 0, Vec::new());
     let mut shown = 0;
     for seed in [42u64, 1, 7] {
         let world = Overworld::with_content(seed, registry.clone(), &content);
@@ -3150,6 +3150,18 @@ fn homes_are_furnished_for_their_people() {
                     }
                 }
                 let mut fail = None;
+                // The stair up, if any: its lowest step (a block up from the floor, the next
+                // step beside it a block higher) has a walked-to column beside it.
+                let plain = |p: IVec3| solid(at.get(&p)) && !tagged(at.get(&p), "furniture") && !tagged(at.get(&p), "furnishing");
+                let sides = [IVec2::X, IVec2::NEG_X, IVec2::Y, IVec2::NEG_Y];
+                let lowest: Vec<IVec2> = room.iter().copied().filter(|p| {
+                    plain(IVec3::new(p.x, y + 1, p.y)) && !solid(at.get(&IVec3::new(p.x, y + 2, p.y)))
+                        && sides.iter().any(|s| plain(IVec3::new(p.x + s.x, y + 2, p.y + s.y)) && !solid(at.get(&IVec3::new(p.x + s.x, y + 3, p.y + s.y))))
+                }).collect();
+                stairs += usize::from(!lowest.is_empty());
+                if !lowest.is_empty() && !lowest.iter().any(|p| sides.iter().any(|s| seen.contains(&(*p + *s)))) {
+                    fail = Some(format!("{}'s {} at {:?}: the stair's foot at {lowest:?} can't be walked to", plan.name.0, b.what, b.min));
+                }
                 for bed in b.beds.iter().filter(|p| p.y == y + 1) {
                     let p = IVec2::new(bed.x, bed.z);
                     if ![IVec2::X, IVec2::NEG_X, IVec2::Y, IVec2::NEG_Y].iter().any(|s| seen.contains(&(p + *s))) {
@@ -3206,7 +3218,8 @@ fn homes_are_furnished_for_their_people() {
             }
         }
     }
-    println!("{homes} homes: {beds} beds for {wanted} wanted, {tables} tables, {seats} seats, {tops} things set on {surfaces} tables and cupboards; bare: {bare:?}");
+    println!("{homes} homes: {beds} beds for {wanted} wanted, {tables} tables, {seats} seats, {tops} things set on {surfaces} tables and cupboards, {stairs} stairs; bare: {bare:?}");
+    assert!(stairs > 0, "no stairs to walk to");
     assert!(homes >= 20, "only {homes} homes near spawn");
     assert!(beds * 10 >= wanted * 9, "{beds} beds for {wanted} residents");
     assert!(tables * 20 >= homes * 17, "{tables} tables in {homes} homes");
