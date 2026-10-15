@@ -7096,7 +7096,7 @@ fn show_view(world: &mut World, view: Option<View>, now: f32) {
             let name = locale.skill(skills.get(skill));
             let needs = locale.format("skills.needs", &[("skill", &name), ("level", &99)]);
             let mut toasts = world.resource_mut::<crate::hud::skills::SkillToasts>();
-            toasts.gained(skill, 12_345, now);
+            toasts.showing_gain(skill, 12_345, now);
             toasts.refused(needs, now);
             toasts.level_up(skill, 90);
         }
