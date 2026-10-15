@@ -192,6 +192,9 @@ pub struct QuestRegistry {
     quests: Vec<QuestDef>,
     tracker: Tracker,
     start_pins: Vec<String>,
+    /// Each quest's `Placed` goals, by the quest's name and what it wants set down (a name,
+    /// `any` or `tag:`), gathered once the content is named (`resolve`).
+    placing: Vec<(String, String)>,
 }
 
 /// What a player has done, as quests read it.
@@ -358,7 +361,7 @@ impl QuestRegistry {
         if let Some(name) = start_pins.iter().find(|name| !quests.iter().any(|q| &q.name == *name)) {
             return Err(RegistryError(format!("quests.ron: the start pin `{name}` is not a quest")));
         }
-        Ok(Self { quests, tracker, start_pins })
+        Ok(Self { quests, tracker, start_pins, placing: Vec::new() })
     }
 
     /// The quests a new player's book starts with pinned.
@@ -484,6 +487,11 @@ impl QuestRegistry {
                 }
             }
         }
+        self.placing = self
+            .quests
+            .iter()
+            .flat_map(|q| q.tasks.iter().flatten().filter_map(move |goal| if let Goal::Placed(want, _) = goal { Some((q.name.clone(), want.clone())) } else { None }))
+            .collect();
         Ok(())
     }
 
@@ -500,13 +508,12 @@ impl QuestRegistry {
         self.quests.iter().find(|q| q.name == name)
     }
 
-    /// Whether some quest's `Placed` counts this block (by full name) set down: it, `any`,
-    /// or a tag it has (`has_tag(name, tag)`).
-    pub fn places(&self, name: &str, has_tag: &dyn Fn(&str, &str) -> bool) -> bool {
-        self.quests.iter().flat_map(|q| q.tasks.iter().flatten()).any(|goal| match goal {
-            Goal::Placed(want, _) => want == "any" || want == name || want.strip_prefix("tag:").is_some_and(|tag| has_tag(name, tag)),
-            _ => false,
-        })
+    /// Whether a quest not yet `done` counts this block (by full name) set down with a
+    /// `Placed`: it, `any`, or a tag it has (`has_tag(tag)`).
+    pub fn places(&self, name: &str, has_tag: &dyn Fn(&str) -> bool, done: &dyn Fn(&str) -> bool) -> bool {
+        self.placing
+            .iter()
+            .any(|(quest, want)| !done(quest) && (want == "any" || want == name || want.strip_prefix("tag:").is_some_and(has_tag)))
     }
 
     /// Whether a quest's earlier quests are done.
