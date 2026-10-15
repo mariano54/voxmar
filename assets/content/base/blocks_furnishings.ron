@@ -30,11 +30,13 @@
     ],
     templates: {
         // Furniture in one wood (`{name}`): boxes in a drawing of grain, tinted the wood's
-        // colour (the family line below). Broken, a placed piece gives itself back.
+        // colour (the family line below). Broken, a placed piece gives itself back. Seats
+        // are not solid: a player sits in one, feet on the floor, so a chair under a roof
+        // two blocks up is sat on as one in the open is.
         "furniture": [
-            (name: "{name}_stool", render: Model, shape: "stool", sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "seat", "decor", "wood"]),
-            (name: "{name}_chair", render: Model, shape: "chair", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "seat", "decor", "wood"]),
-            (name: "{name}_bench", render: Model, shape: "bench", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "seat", "decor", "wood"]),
+            (name: "{name}_stool", render: Model, shape: "stool", solid: false, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "seat", "decor", "wood"]),
+            (name: "{name}_chair", render: Model, shape: "chair", facing: true, solid: false, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "seat", "decor", "wood"]),
+            (name: "{name}_bench", render: Model, shape: "bench", facing: true, solid: false, sound: Wood, textures: All("furniture_wood"), hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "seat", "decor", "wood"]),
             (name: "{name}_table", render: Model, shape: "table", sound: Wood, textures: All("furniture_wood"), hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "table", "decor", "wood"]),
             (name: "{name}_bed", render: Model, shape: "bed", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "bed", "decor", "wood"]),
             (name: "{name}_shelf", render: Model, shape: "shelf", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "shelf", "storage", "decor", "wood"]),

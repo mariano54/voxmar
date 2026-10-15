@@ -14,6 +14,8 @@ mod fishing;
 mod death;
 #[cfg(test)]
 mod doors;
+#[cfg(test)]
+mod seats;
 mod hearth;
 mod journal;
 mod lairs;
@@ -625,10 +627,6 @@ pub(crate) struct Server {
     /// grew back, whose picking pays the planter's experience.
     regrowing: FxHashMap<IVec3, regrow::Regrowing>,
     planter_grown: FxHashSet<IVec3>,
-    /// Blocks set down that a quest's `Placed` counts, by cell, with who set each and what
-    /// it was: broken, it is taken back off their tally, so only those standing count. Kept
-    /// for this run only: one broken after a restart stays counted.
-    placed_for_quests: FxHashMap<IVec3, (PlayerId, String)>,
     /// Kept hives with bees, and how far each is toward its honey (`apiary`).
     apiary: apiary::Apiary,
     /// What is on each loaded home station, and when it is done (`stations`).
@@ -773,7 +771,6 @@ impl Server {
             placed,
             regrowing,
             planter_grown,
-            placed_for_quests: FxHashMap::default(),
             apiary,
             stations,
             catches,
@@ -1223,12 +1220,31 @@ impl Server {
 
     /// Changes many blocks at once (a command's), telling each player about those in columns
     /// they have in one message, and waking any fluid they let flow.
+    /// A block a player set down for a quest's `Placed` (`Player::placed`), broken (gone to
+    /// air or a fluid; a sprung snare still stands): it comes off their tally. One whose
+    /// player is away stays counted.
+    fn unplaced(&mut self, pos: IVec3, block: BlockId) {
+        if block != BlockId::AIR && self.content.blocks.info(block).fluid.is_none() {
+            return;
+        }
+        let found = self.players.iter_mut().find_map(|(&id, p)| {
+            let i = p.placed.iter().position(|(cell, _)| *cell == pos)?;
+            let (_, name): (IVec3, String) = p.placed.swap_remove(i);
+            Some((id, name))
+        });
+        let Some((id, name)) = found else {
+            return;
+        };
+        self.untally(id, "placed", &name, 1);
+    }
+
     pub(crate) fn set_blocks(&mut self, changes: &[(IVec3, BlockId)]) {
         let mut done = Vec::with_capacity(changes.len());
         for &(pos, block) in changes {
             if let Some(old) = self.world.set_block(pos, block) {
                 self.dirty.insert(ColumnPos::of_block(pos));
                 self.forget_placed(pos);
+                self.unplaced(pos, block);
                 done.push((pos, block));
                 self.machine_changed(pos, old, block);
                 self.hive_changed(pos, old, block);
@@ -1267,11 +1283,7 @@ impl Server {
         if let Some(old) = self.world.set_block(pos, block) {
             self.dirty.insert(column);
             self.forget_placed(pos);
-            if (block == BlockId::AIR || self.content.blocks.info(block).fluid.is_some())
-                && let Some((by, name)) = self.placed_for_quests.remove(&pos)
-            {
-                self.untally(by, "placed", &name, 1);
-            }
+            self.unplaced(pos, block);
             self.machine_changed(pos, old, block);
             self.hive_changed(pos, old, block);
             self.station_changed(pos, old, block);
