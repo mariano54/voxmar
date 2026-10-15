@@ -635,6 +635,10 @@ pub(crate) struct Server {
     /// Lit multiblocks, by core cell: a kiln burning its fuel charge, a hearth (which needs
     /// none) until it breaks.
     lit: FxHashMap<IVec3, hearth::Lit>,
+    /// Whose each home hearth is (a player's key, or no one's for one lit before fires were
+    /// kept by owner), by core cell: set when it is first lit, kept while its fire is out,
+    /// forgotten only when its hearthstone goes, so relighting never changes it.
+    hearth_owners: FxHashMap<IVec3, Option<String>>,
     /// The burning fires players were last told of (`ServerMessage::Fires`).
     fires_sent: Vec<IVec3>,
     /// Cells whose block a player placed: ores, which then teach nothing; plants, which
@@ -778,7 +782,8 @@ impl Server {
         let stations = stations::Loads::restore(&meta.stations, |name| content.blocks.item_named(name));
         let catches = traps::Catches::restore(&meta.catches, |name| content.creatures.id(name));
         let lit = meta.lit.iter().filter(|fire| fire.until > tick && content.multiblocks.get(&fire.structure).is_some())
-            .map(|fire| (IVec3::from_array(fire.position), fire.clone())).collect();
+            .map(|fire| (IVec3::from_array(fire.position), fire.clone())).collect::<FxHashMap<_, _>>();
+        let hearth_owners = hearth::HearthOwner::restore(&meta.hearth_owners, &lit, |name| content.multiblocks.get(name).is_some_and(|m| m.home));
         let survival = Arc::new(rules::SurvivalRules::load(&content.files, &content.blocks, &mut Vec::new()).expect("checked by load_content"));
         let mut server = Self {
             config,
@@ -796,6 +801,7 @@ impl Server {
             farm,
             factory: voxmar_engine::factory::Factory::default(),
             lit,
+            hearth_owners,
             fires_sent: Vec::new(),
             placed,
             regrowing,
@@ -1145,6 +1151,7 @@ impl Server {
         meta.catches = self.catches.saved(|species| self.content.creatures.get(species).def.name.clone());
         meta.lit = self.lit.values().filter(|fire| fire.until > self.tick).cloned().collect();
         meta.lit.sort_by_key(|fire| fire.position);
+        meta.hearth_owners = hearth::HearthOwner::saved(&self.hearth_owners);
         meta.day = Some(self.day as u64);
         meta.day_speed = self.day_speed;
         meta.last_played = save::unix_time();

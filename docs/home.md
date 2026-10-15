@@ -486,7 +486,9 @@ they feel at home in) only smoulders or catches from that player's fire. Where t
 it is kept from both owners' fires, so lighting a hearth next door, or making your home at
 someone else's hearth, never lets your fire into their home. A home hearth lit before fires were
 kept by owner belongs to no one and keeps out every fire, so it stays protected while its player
-is away and no one can take it over by touching it. Another player's torch beside your wattle wall fizzles, and a neighbour's burning shed
+is away and no one can take it over by touching it. A home hearth stays whose it was first lit by
+while its fire is out and whoever relights it, until its hearthstone is broken, so breaking and
+mending a stranger's hearth to relight it never makes it yours. Another player's torch beside your wattle wall fizzles, and a neighbour's burning shed
 stops at your home's edge; your own careless torch still burns your own roof. A fire a command
 or the world started belongs to no one, so it never takes a home either.
 

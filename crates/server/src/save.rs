@@ -123,6 +123,11 @@ pub struct WorldMeta {
     /// open cold; completed quests stay completed in the player's own file.
     #[serde(default)]
     pub lit: Vec<crate::hearth::Lit>,
+    /// Whose each home hearth is, lit or cold, until its hearthstone is broken
+    /// (`hearth::HearthOwner`). Older worlds have none: their lit hearths keep the owner
+    /// saved with the fire.
+    #[serde(default)]
+    pub hearth_owners: Vec<crate::hearth::HearthOwner>,
     /// The last whole save: files of a later one were cut short and are not used.
     #[serde(default)]
     pub generation: u64,
@@ -235,6 +240,7 @@ impl WorldMeta {
             stations: Vec::new(),
             catches: Vec::new(),
             lit: Vec::new(),
+            hearth_owners: Vec::new(),
             generation: 0,
             worldgen_content: None,
             lairs: Vec::new(),
