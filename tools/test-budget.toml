@@ -270,11 +270,3 @@ binary = "gameplay"
 seconds = 20
 why = "Plays a new player's first two ages from bare hands to the lit Crucible Kiln, quest by quest: some nine minutes of game time at 60x ticks (11 s when measured in the cloud on 2026-10-13)."
 tests = ["a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln"]
-
-[[allow]]
-binary = "voxmar_server"
-seconds = 300
-why = "Two hundred worlds' spawn searches and spawn columns, so the spawn kit is shown to land by every kind of spawn; full gate only (SLOW_TESTS), its hard cases run at every landing (hard_spawns_get_flint_and_sticks). 146 s on a cloud machine, 2026-10-15."
-tests = [
-  "spawn_kit::tests::every_spawn_gets_flint_and_sticks",
-]
