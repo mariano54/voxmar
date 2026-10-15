@@ -42,11 +42,11 @@
         (input: "cobblestone", output: "stone", station: "pit_kiln", skill: "core:construction", level: 1, xp: 1.0, stop_burning: 0),
         // Smelted in the Crucible Kiln (Engineering), which must stand round its crucible:
         // copper ingots from ore, iron too once Engineering 15 (the bloomery does it better),
-        // and bronze from three copper ingots held and a tin ore carried, four at a time
-        // (one step, no blend). Metal never burns.
+        // and bronze from three copper ingots held and a tin ore (or a grain of crushed tin,
+        // anything of tin) carried, four at a time (one step, no blend). Metal never burns.
         (input: "copper_ore", output: "copper_ingot", station: "crucible", skill: "core:engineering", level: 5, xp: 8.0, stop_burning: 0),
         (input: "iron_ore", output: "iron_ingot", station: "crucible", skill: "core:engineering", level: 15, xp: 12.0, stop_burning: 0),
-        (input: "copper_ingot", uses: 3, with: [("tin_ore", 1)], output: "bronze_ingot", count: 4, station: "crucible", skill: "core:engineering", level: 12, xp: 88.0, stop_burning: 0),
+        (input: "copper_ingot", uses: 3, with: [("tag:metal:tin", 1)], output: "bronze_ingot", count: 4, station: "crucible", skill: "core:engineering", level: 12, xp: 88.0, stop_burning: 0),
         // Ore crushed on a stone anvil with a hammer carried (kept), at the level its metal
         // smelts at, gives half again as much: two crushed copper smelt to three ingots, and
         // two tin ores crush to three grains, each held with three copper ingots carried

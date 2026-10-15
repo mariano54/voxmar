@@ -837,7 +837,7 @@ mod tests {
             conversions.push((inputs, vec![(recipe.output, recipe.count as f32)]));
         }
         for (input, recipe) in content.cooking.iter() {
-            let inputs = recipe.ingredients(input).into_iter().map(|(item, n)| (vec![item], n as f32)).collect();
+            let inputs = recipe.ingredients(input).into_iter().map(|(items, n)| (items, n as f32)).collect();
             conversions.push((inputs, vec![(recipe.output, recipe.def.count as f32)]));
         }
         // Worth in ingots, raised until nothing changes: a loop that gains never settles.

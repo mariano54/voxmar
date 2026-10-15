@@ -1519,6 +1519,8 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         Step::Door => STEP_LIMIT + 25.0,
         // Two blocks mined with a tool, and a mend crafted, each waited on.
         Step::ToolWear => STEP_LIMIT + 15.0,
+        // The anvil's viewer check waits as its crush does.
+        Step::Anvil => STEP_LIMIT + CHOP_WAIT,
         // A party walks in, is talked to, traded with and sent away, each in server seconds.
         Step::Party => 60.0,
         // The effects are judged once a second by the server, and a rest is a sleep away.
@@ -4537,16 +4539,42 @@ fn anvil(world: &mut World, gate: &mut Gate, now: f32) {
                 end(world, gate);
             }
         }
-        _ => {
+        4 => {
             mouse(world, MouseButton::Right, false);
             let (crushed, left, kept) = (carried(world, made.into()), carried(world, ore), carried(world, Some(tool)));
-            if crushed >= count && left == 1 && kept == 1 {
-                let result = if crushed == count { Ok(format!("{ore_name} on the {anvil_name}: with no {tool_name}, \"{}\"; with one, {crushed} {} and the {tool_name} kept", wanted.unwrap_or_default(), content.blocks.def(made).name)) } else { Err(format!("one {ore_name} crushed into {crushed}, not the recipe's {count}")) };
-                gate.check("anvil", result);
-                end(world, gate);
+            let worn = world.resource::<LocalPlayer>().inventory.slots.iter().flatten().find(|s| s.item == tool).map_or(0, |s| s.wear);
+            if crushed >= count && left == 1 && kept == 1 && worn >= 1 {
+                if crushed != count {
+                    gate.check("anvil", Err(format!("one {ore_name} crushed into {crushed}, not the recipe's {count}")));
+                    end(world, gate);
+                    return;
+                }
+                gate.check("anvil", Ok(format!("{ore_name} on the {anvil_name}: with no {tool_name}, \"{}\"; with one, {crushed} {} and the {tool_name} kept, {worn} use worn", wanted.unwrap_or_default(), content.blocks.def(made).name)));
+                // What it made, looked up: the way shows the tool it takes.
+                world.resource_mut::<crate::hud::recipes::RecipeViewer>().open(made, false);
+                let mut ui = world.resource_mut::<UiState>();
+                (ui.menu_open, ui.character_open, ui.console_open, ui.quests_open, ui.inventory_open, ui.recipes_open) = (false, false, false, false, true, true);
+                gate.advance(now);
             } else if waited {
-                gate.check("anvil", Err(format!("{ore_name} clicked on the {anvil_name} with a {tool_name} about made {crushed} {}, left {left} ore and {kept} {tool_name}, in {CHOP_WAIT} server seconds", content.blocks.def(made).name)));
+                gate.check("anvil", Err(format!("{ore_name} clicked on the {anvil_name} with a {tool_name} about made {crushed} {}, left {left} ore and {kept} {tool_name} worn {worn}, in {CHOP_WAIT} server seconds", content.blocks.def(made).name)));
                 end(world, gate);
+            }
+        }
+        // The viewer draws the tool beside the station, as cooking.ron's `tool` says.
+        _ => {
+            let drawn = world.query::<(&crate::hud::recipes::ViewerItem, &InheritedVisibility)>().iter(world).any(|(item, shown)| shown.get() && item.0 == tool);
+            if drawn || outwaited {
+                let result = if drawn { Ok(format!("the {} recipe shows the {tool_name} it takes", content.blocks.def(made).name)) } else { Err(format!("the {} recipe never drew the {tool_name}", content.blocks.def(made).name)) };
+                gate.check("anvil: viewer", result);
+                world.resource_mut::<crate::hud::recipes::RecipeViewer>().trail.clear();
+                let mut ui = world.resource_mut::<UiState>();
+                (ui.inventory_open, ui.recipes_open) = (false, false);
+                end(world, gate);
+            }
+        }
+    }
+}
+
 /// What the tool wear step uses, all picked from the content by what it is: the tool that
 /// wears soonest with a mend a new player may do, a block it is made for that breaks
 /// quickly and needs no level, the block it is mended at, what mends it, and the head it

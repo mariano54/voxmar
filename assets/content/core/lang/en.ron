@@ -317,6 +317,7 @@
     "recipes.cook": "Cooked on a {station}",
     "recipes.near": "Near a {block}",
     "recipes.cook.use": "Select the ingredient in your hotbar, then right-click the station. Each item takes two seconds.",
+    "recipes.cook.tool": "With a {tool} carried, which wears a use each time.",
     "recipes.level": "{skill} level {level}",
     "recipes.burnt": "Can burn to {item}",
     "recipes.product": "Left by a kept {creature}",

@@ -493,8 +493,8 @@ mod tests {
         let crushed = blocks.expect("base:crushed_tin");
         let player = server.players.get_mut(&1).unwrap();
         player.inventory.slots.iter_mut().for_each(|slot| *slot = None);
-        player.inventory.slots[0] = Some(ItemStack { item: crushed, count: 2 });
-        player.inventory.slots[5] = Some(ItemStack { item: copper, count: 3 });
+        player.inventory.slots[0] = Some(ItemStack::new(crushed, 2));
+        player.inventory.slots[5] = Some(ItemStack::new(copper, 3));
         server.cook(1, core);
         let player = &server.players[&1];
         assert_eq!((player.inventory.count(crushed), player.inventory.count(copper), player.inventory.count(bronze)), (1, 0, 4));

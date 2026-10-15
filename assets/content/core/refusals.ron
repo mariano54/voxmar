@@ -63,5 +63,7 @@
         "trap.needs",
         // No sleep with a hunter near or a wound fresh.
         "bed.threatened", "bed.just_hurt",
+        // A station recipe's tool not carried (a hammer to crush ore on an anvil).
+        "cooking.needs_tool",
     ],
 )

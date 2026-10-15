@@ -304,6 +304,7 @@
     "recipes.cook": "{station}で調理",
     "recipes.near": "{block}のそばで",
     "recipes.cook.use": "材料をホットバーで選び、調理台を右クリック。1個につき2秒。",
+    "recipes.cook.tool": "{tool}を持っていること。1回ごとに1回分すり減る。",
     "recipes.level": "{skill}レベル{level}",
     "recipes.burnt": "焦げると{item}",
     "recipes.product": "飼育中の{creature}が残す",
