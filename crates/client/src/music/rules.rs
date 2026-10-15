@@ -122,9 +122,10 @@ pub struct NowPlaying {
     pub fade: f32,
 }
 
-/// When the player counts as in a boss fight: a boss alive within `within` blocks, or a
-/// block of a boss's room (one of `rooms`) within `room_reach` blocks.
-#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+/// When the player counts as in a boss fight: a boss alive within `within` blocks (one that
+/// roams, in a fight within the last `calm_after` seconds), or a block of a boss's room (one
+/// of `rooms`) within `room_reach` blocks.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BossMusic {
     pub within: f32,
@@ -132,6 +133,20 @@ pub struct BossMusic {
     pub rooms: Vec<BossRoom>,
     #[serde(default)]
     pub room_reach: i32,
+    /// Seconds after a roaming boss last attacked, showed a tell or was hurt that its fight
+    /// is over and its music ends (`Creatures::stirred`).
+    #[serde(default = "calm_after")]
+    pub calm_after: f32,
+}
+
+fn calm_after() -> f32 {
+    12.0
+}
+
+impl Default for BossMusic {
+    fn default() -> Self {
+        Self { within: 0.0, rooms: Vec::new(), room_reach: 0, calm_after: calm_after() }
+    }
 }
 
 /// A boss's room: a block of it (by name) and the boss whose room it is, whose fight music
@@ -309,6 +324,9 @@ impl MusicRules {
         }
         if let Some(rule) = rules.rules.iter().find(|rule| rules.category(&rule.category).is_none()) {
             return Err(format!("{FILE}: the rule for {:?} puts tracks in category {:?}, which no categories list has", rule.paths, rule.category));
+        }
+        if !(rules.boss.calm_after > 0.0 && rules.boss.calm_after.is_finite()) {
+            return Err(format!("{FILE}: boss `calm_after` is seconds, more than 0 (not {})", rules.boss.calm_after));
         }
         Ok(rules)
     }
