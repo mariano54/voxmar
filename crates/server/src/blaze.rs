@@ -82,7 +82,8 @@ impl Server {
     /// `homes_catch_only_from_owner`, a block in someone's home box (a home hearth lit by
     /// them, or an online player's home) catches only from its owner's fire. A stranger's
     /// torch fizzles at your walls, a neighbour's burning shed stops at your home's edge,
-    /// and your own careless torch still burns your own roof.
+    /// and your own careless torch still burns your own roof, also where your home box and
+    /// someone else's overlap.
     fn kept_out(&self, pos: IVec3, origin: &Option<String>) -> bool {
         if !self.content.fire.rules.homes_catch_only_from_owner {
             return false;
@@ -95,7 +96,10 @@ impl Server {
         let multiblocks = &self.content.multiblocks;
         let hearths = self.lit.iter().filter(|(_, lit)| lit.until > self.tick && multiblocks.get(&lit.structure).is_some_and(|m| m.home)).filter_map(|(&core, lit)| Some((core, lit.owner.as_ref()?)));
         let beds = self.players.values().filter_map(|p| Some((p.home_block(&self.lit)?, &p.name)));
-        hearths.chain(beds).any(|(home, owner)| within(home) && origin.as_ref() != Some(owner))
+        // Where homes overlap (housemates, a neighbour's hearth close by), the block is in
+        // each of them, and any of their owners' fires reaches it.
+        let mut covering = hearths.chain(beds).filter(|&(home, _)| within(home)).peekable();
+        covering.peek().is_some() && !covering.any(|(_, owner)| origin.as_ref() == Some(owner))
     }
 
     /// Starts `pos` waiting to catch, unless something already waits there or the fire
@@ -529,6 +533,15 @@ mod tests {
             assert_eq!(server.blazes.get(&wall).and_then(|b| b.origin.clone()).as_deref(), Some("Ada"));
             run(&mut server, rules.catch_seconds);
             assert_eq!(at(&server, wall), "base:blaze", "Ada's own torch burns her own wall");
+            // Bo's home hearth lit next door, its box over Ada's wall too: Ada's torch still
+            // burns her wall there, and Bo's does as well (the wall is in his home too).
+            let next_door = core + IVec3::new(8, 0, 0);
+            server.lit.insert(next_door, crate::hearth::Lit { position: next_door.to_array(), structure: "base:homestead_hearth".into(), until: u64::MAX, owner: Some("Bo".into()) });
+            let other = beside - IVec3::X;
+            server.set_block(other, wattle);
+            place(&mut server, "Ada", BlockId::AIR);
+            place(&mut server, "Ada", torch);
+            assert_eq!(server.blazes.get(&other).and_then(|b| b.origin.clone()).as_deref(), Some("Ada"), "Ada's torch kept from her own wall where Bo's home overlaps");
         }
     }
 
