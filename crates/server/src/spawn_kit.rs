@@ -310,7 +310,8 @@ mod tests {
         }
         let squeezed = kit.plan(&world, blocks, spawn, 7, |_| false);
         // A stump where a flint would lie: its top is no ground, the flint goes elsewhere.
-        let stump = free.iter().find(|&&(p, b)| b == flint && p != first_flint).map(|&(p, _)| p).unwrap();
+        // Room above it for a flint, so only the log keeps one off.
+        let stump = free.iter().find(|&&(p, b)| b == flint && p != first_flint && world.block(p + IVec3::Y) == Some(BlockId::AIR)).map(|&(p, _)| p).unwrap();
         world.set_block(stump, blocks.expect("base:oak_log"));
         let around = kit.plan(&world, blocks, spawn, 7, |_| false);
         assert!(!around.iter().any(|&(p, _)| p == stump + IVec3::Y), "a piece on the stump: {around:?}");
