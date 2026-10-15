@@ -428,9 +428,10 @@ steps! {
     /// returns to the book.
     LookUp,
     /// Rice sown on the test ground, too cold for it, is refused by the server for that
-    /// reason, and the refusal shows by the hotbar, as a level the player lacks does (the
-    /// server sends it as a refusal, not a console line). Then a well from the hand goes
-    /// down by the plot.
+    /// reason, and the refusal shows under the crosshair, as a level the player lacks does
+    /// (the server sends it as a refusal, not a console line). Then a well from the hand goes
+    /// down by the plot, and a block there that asks for a tool (the first `tools.ron` names
+    /// at level 1) mined by hand says under the crosshair which tool it wants, in words that fit.
     Refusal,
     /// A wild plant whose item merged (oregano into kitchen herbs) is given as the merged
     /// item, and the catalogues (creative, journal, recipe book) list the item, not the plant.
@@ -601,9 +602,9 @@ struct Gate {
     /// Raw small game carried, slots and pouch, as the dry step hangs the rack, so its
     /// readout can count what hung.
     rack_rabbits: u32,
-    /// When the dry step last cleared the raw small game carried (server seconds), and the
-    /// first raw small game seen picked up once it gave its own.
-    dry_cleared: f32,
+    /// What the dry step carried when it last cleared the raw small game carried, until the
+    /// pack is seen cleared, and the first raw small game seen picked up once it gave its own.
+    dry_clearing: Option<u32>,
     dry_pickup: Option<String>,
     /// The creature the combat-marks step tells its blows at, when (game time) it last told
     /// them, and how many runs it has told.
@@ -865,7 +866,7 @@ impl Gate {
             chimney_since: None,
             pot_ground: None,
             rack_rabbits: 0,
-            dry_cleared: 0.0,
+            dry_clearing: None,
             dry_pickup: None,
             marked: None,
             marked_at: 0.0,
@@ -4464,7 +4465,7 @@ const REFUSAL_WAIT: f32 = 8.0;
 const WELL_BY: IVec3 = IVec3::new(1, 0, 0);
 
 /// Rice sown on a dry plot of the test ground: the server refuses it and says why, as a
-/// refusal, which shows by the hotbar with the others, naming the crop as the player holds
+/// refusal, which shows under the crosshair, naming the crop as the player holds
 /// it ("Rice"), not its growing stage. The reason is judged word for word against the one
 /// the plot's climate gives (`refusal_reason`): too cold on today's spawn (about 10 °C,
 /// where rice wants 18 to 34), no water on warmer ground.
@@ -4607,7 +4608,70 @@ fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 gate.advance(now);
             }
         }
+        // A block that wants a tool where the plot was, the well gone from between the eye
+        // and it, and an empty hand.
+        5 => {
+            let well = plot + WELL_BY + IVec3::Y;
+            world.resource::<Net>().command(&format!("setblock {} {} {} air", well.x, well.y, well.z));
+            match needs_a_tool(world) {
+                Some((_, name)) => world.resource::<Net>().command(&format!("setblock {} {} {} {name}", plot.x, plot.y, plot.z)),
+                None => {
+                    gate.check("refusal: by hand", Err("no block in the loaded tools.ron asks for a tool at level 1, so none can say which it wants".into()));
+                    to_phase(gate, 7, now);
+                    return;
+                }
+            }
+            let empty = (0..voxmar_engine::inventory::HOTBAR_SLOTS).find(|&slot| world.resource::<LocalPlayer>().inventory.get(slot).is_none());
+            if let Some(slot) = empty {
+                world.resource_mut::<LocalPlayer>().selected = slot;
+            }
+            gate.advance(now);
+        }
+        // Mined by hand, it says under the crosshair which tool it wants, and the words fit.
+        6 => {
+            let Some((block, name)) = needs_a_tool(world) else { return to_phase(gate, 7, now) };
+            let well = plot + WELL_BY + IVec3::Y;
+            let came = world.resource::<ClientWorld>().block(plot) == Some(block) && !world.resource::<ClientWorld>().is_solid(well);
+            let wanted = why_by_hand(world, block);
+            if !came || wanted.is_none() {
+                if gate.server_in_phase() > REFUSAL_WAIT {
+                    let showing = world.resource::<ClientWorld>().block(plot).map(|b| world.resource::<ClientWorld>().registry.def(b).name.clone());
+                    let standing = world.resource::<ClientWorld>().is_solid(well);
+                    gate.check("refusal: by hand", Err(format!("{name} never came at the plot (it holds {showing:?}), the well before it still stands ({standing}), or the words for its tool are missing ({wanted:?})")));
+                    to_phase(gate, 7, now);
+                }
+                return;
+            }
+            let wanted = wanted.unwrap_or_default();
+            aim_at(world, plot.as_vec3() + Vec3::new(0.5, 0.9, 0.5));
+            let shown = world.resource::<crate::hud::skills::SkillToasts>().shows_refusal(&wanted);
+            let drawn = why_placed(world, &wanted);
+            if shown && let Ok(placed) = drawn.clone() {
+                mouse(world, MouseButton::Left, false);
+                let spills: Vec<String> = crate::ui::fit::find(world).into_iter().filter(|spill| spill.text == wanted).map(|spill| spill.to_string()).collect();
+                let judged = match (placed, spills.is_empty()) {
+                    (Ok(at), true) => Ok(format!("{name} mined by hand said \"{wanted}\" {at}, and it fits")),
+                    (Ok(_), false) => Err(format!("{name} mined by hand said \"{wanted}\", but it does not fit: {}", spills.join("; "))),
+                    (Err(why), _) => Err(why),
+                };
+                gate.check("refusal: by hand", judged);
+                gate.advance(now);
+            } else if gate.server_in_phase() > REFUSAL_WAIT {
+                mouse(world, MouseButton::Left, false);
+                let held = holding_any(world);
+                let showing: Vec<String> = world.resource::<crate::hud::skills::SkillToasts>().refusals().map(str::to_owned).collect();
+                let aimed = crosshair_on(world);
+                let screens = covering_screens(world);
+                let line = drawn.err().unwrap_or_else(|| "the reason line was drawn".into());
+                gate.check("refusal: by hand", Err(format!("clicking {name} at {plot} holding {held:?} never showed \"{wanted}\" under the crosshair (refusals {showing:?}; {line}); the crosshair was on {aimed}, screens open {screens:?}")));
+                gate.advance(now);
+            } else {
+                // A fresh press each time: a held button mines on, it does not ask again.
+                mouse(world, MouseButton::Left, gate.frames.is_multiple_of(2));
+            }
+        }
         _ => {
+            mouse(world, MouseButton::Left, false);
             let net = world.resource::<Net>();
             let well = plot + WELL_BY + IVec3::Y;
             net.command("clear rice");
@@ -4617,6 +4681,82 @@ fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             gate.next(Step::Merged, now);
         }
     }
+}
+
+/// What clicking `block` with no tool should say: `refusals.ron`'s words for the tool it
+/// wants, naming the least tool that would do.
+/// What the crosshair rests on, for a failure to name: the block and its cell, or nothing.
+fn crosshair_on(world: &World) -> String {
+    let client = world.resource::<ClientWorld>();
+    match world.resource::<crate::interact::Target>().hit.as_ref() {
+        Some(hit) => format!("{} at {}", client.block(hit.block).map_or("nothing loaded".into(), |b| client.registry.def(b).name.clone()), hit.block),
+        None => "no block".into(),
+    }
+}
+
+/// The screens open that hide the world (and so the reason under the crosshair), and
+/// whether the pointer is grabbed: a click in the world needs it.
+fn covering_screens(world: &World) -> Vec<&'static str> {
+    let (ui, player) = (world.resource::<UiState>(), world.resource::<LocalPlayer>());
+    [
+        (ui.inventory_open, "inventory"),
+        (ui.character_open, "character"),
+        (ui.journal_open, "journal"),
+        (ui.quests_open, "quests"),
+        (ui.menu_open, "menu"),
+        (ui.recipes_open, "recipes"),
+        (player.dead, "dead"),
+        (!ui.cursor_locked, "pointer not grabbed"),
+    ]
+    .into_iter()
+    .filter_map(|(on, name)| on.then_some(name))
+    .collect()
+}
+
+/// The first block, in registry order, whose rule in the loaded `tools.ron` asks for a tool
+/// and no more than level 1 (so a bare hand is refused for the tool alone), and its name.
+fn needs_a_tool(world: &World) -> Option<(BlockId, String)> {
+    let content = &world.resource::<Launch>().content;
+    content.blocks.ids().find(|&b| content.tools.rule(b).is_some_and(|rule| rule.tool.is_some() && rule.level <= 1)).map(|b| (b, content.blocks.def(b).name.clone()))
+}
+
+fn why_by_hand(world: &World, block: BlockId) -> Option<String> {
+    let (locale, launch) = (world.resource::<Locale>(), world.resource::<Launch>());
+    let content = &launch.content;
+    let key = content.refusals.says(voxmar_engine::action::Requirement::ToolGood)?;
+    let rule = content.tools.rule(block)?;
+    let tool = content.tools.first_of(rule.tool?, rule.tier)?;
+    Some(locale.format(key, &[("tool", &locale.block(content.blocks.def(tool)))]))
+}
+
+/// Where the reason `why` is drawn: under the crosshair, near the middle of the screen, or
+/// what is wrong with it; `Err` while it is not drawn yet, saying what the line holds. The
+/// screen is the cameras' target (the gate has no window).
+fn why_placed(world: &mut World, why: &str) -> Result<Result<String, String>, String> {
+    let screen = world.query::<&Camera>().iter(world).filter_map(|camera| camera.physical_target_size()).map(|size| size.as_vec2()).reduce(Vec2::max).ok_or("no camera has a target to measure the screen by")?;
+    let mut lines = world.query_filtered::<(&Text, &ComputedNode, &bevy::ui::UiGlobalTransform, &InheritedVisibility), With<crate::hud::skills::WhyLine>>();
+    let (text, node, transform, visible) = lines.single(world).map_err(|e| format!("no single reason line ({e})"))?;
+    if text.0 != why || node.size().x <= 0.0 {
+        return Err(format!("the reason line holds \"{}\", {:.0} wide", text.0, node.size().x));
+    }
+    Ok(if visible.get() { under_crosshair(transform.translation, screen, why) } else { Err(format!("the reason \"{why}\" is laid out but hidden")) })
+}
+
+/// Whether a line centred at `center` on a `screen` (both in pixels) sits under the
+/// crosshair: across, within 5% of the middle; down, below it by less than a fifth.
+fn under_crosshair(center: Vec2, screen: Vec2, why: &str) -> Result<String, String> {
+    let (dx, dy) = ((center.x - screen.x / 2.0) / screen.x, (center.y - screen.y / 2.0) / screen.y);
+    if dx.abs() < 0.05 && (0.0..0.2).contains(&dy) {
+        Ok(format!("under the crosshair ({:.0}% below the middle)", dy * 100.0))
+    } else {
+        Err(format!("the reason \"{why}\" is not under the crosshair: {:.0}% across and {:.0}% down from the middle", dx * 100.0, dy * 100.0))
+    }
+}
+
+/// What the selected slot holds, by name.
+fn holding_any(world: &World) -> Option<String> {
+    let (player, client) = (world.resource::<LocalPlayer>(), world.resource::<ClientWorld>());
+    player.inventory.get(player.selected).map(|stack| client.registry.def(stack.item).name.clone())
 }
 
 /// `give oregano` hands out kitchen herbs (oregano is a wild plant now; its item merged
@@ -7077,14 +7217,16 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     if in_phase < FIT_SETTLE && !laid_out {
         return;
     }
-    if !laid_out {
-        gate.fit_settled.push(format!("{language} {view:?}"));
-    }
     // A journal page is read once it is drawn, in this language, however long that takes.
     if let View::Journal(page) = view
         && world.resource::<crate::hud::journal::JournalDrawn>().0.as_ref() != Some(&(page, language.to_owned()))
     {
         return;
+    }
+    // Named once, as it is read, only if read at `FIT_SETTLE` (a journal page waits on
+    // being drawn as long as it takes).
+    if !laid_out {
+        gate.fit_settled.push(format!("{language} {view:?}"));
     }
     let checked = |world: &World| world.get_resource::<crate::ui::fit::LineBreaksChecked>().copied().unwrap_or_default();
     let before = checked(world);
@@ -7217,7 +7359,7 @@ fn show_view(world: &mut World, view: Option<View>, now: f32) {
             let name = locale.skill(skills.get(skill));
             let needs = locale.format("skills.needs", &[("skill", &name), ("level", &99)]);
             let mut toasts = world.resource_mut::<crate::hud::skills::SkillToasts>();
-            toasts.gained(skill, 12_345, now);
+            toasts.showing_gain(skill, 12_345, now);
             toasts.refused(needs, now);
             toasts.level_up(skill, 90);
         }
@@ -11976,7 +12118,7 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
             // None of what earlier steps left: the step hangs only what it gives.
             net.command("clear raw_small_game");
             net.command(&format!("tp {} {} {}", rack.x as f32 + 0.5, rack.y, rack.z as f32 - 2.5));
-            (gate.rack_rabbits, gate.dry_cleared, gate.dry_pickup) = (0, gate.server_now, None);
+            (gate.rack_rabbits, gate.dry_clearing, gate.dry_pickup) = (0, Some(carried_of(world, "base:raw_small_game")), None);
             gate.advance(now);
         }
         1 => {
@@ -11996,9 +12138,14 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
                     let near = if near.is_empty() { String::new() } else { format!("; within {DRY_NEAR} blocks {}", near.join(", ")) };
                     gate.check("drying rack", Err(format!("the raw small game about the rack never cleared in {DRY_WAIT} server seconds: {carried} carried{near}")));
                     gate.next(Step::Snare, now);
-                } else if carried > 0 && gate.server_now - gate.dry_cleared >= 1.0 {
+                } else if carried == 0 {
+                    gate.dry_clearing = None;
+                } else if gate.dry_clearing.is_none_or(|was| carried > was) {
+                    // More came in since the last clear was seen, or since it was sent: clear
+                    // again at once.
+                    info!("gate: Dry: {carried} raw small game carried before the give, cleared again at {:.1}s", gate.server_now);
                     world.resource::<Net>().command("clear raw_small_game");
-                    gate.dry_cleared = gate.server_now;
+                    gate.dry_clearing = Some(carried);
                 }
                 return;
             }
@@ -14011,6 +14158,21 @@ fn finish(world: &mut World, gate: &Gate, now: f32) {
 #[cfg(test)]
 mod tests {
     use super::{sling_next, warm_window, SlingNext, BEAR, SLING, SLING_LEVEL, SLING_STONES, UNANSWERED};
+
+    /// The refusal's line is under the crosshair when centred across and a little below the
+    /// middle, at any screen size; not when off to a side, above, or far below.
+    #[test]
+    fn a_reason_is_under_the_crosshair_just_below_the_middle() {
+        use super::under_crosshair;
+        use bevy::math::Vec2;
+        for screen in [Vec2::new(1920.0, 1080.0), Vec2::new(3840.0, 2160.0)] {
+            let middle = screen / 2.0;
+            assert!(under_crosshair(middle + Vec2::new(0.0, 0.06 * screen.y), screen, "why").is_ok());
+            assert!(under_crosshair(middle + Vec2::new(0.1 * screen.x, 0.06 * screen.y), screen, "why").is_err());
+            assert!(under_crosshair(middle - Vec2::new(0.0, 0.06 * screen.y), screen, "why").is_err());
+            assert!(under_crosshair(middle + Vec2::new(0.0, 0.3 * screen.y), screen, "why").is_err());
+        }
+    }
 
     /// Every step is listed once, in order from Load to Done, and only listed steps are left
     /// out, the landing gate leaving out just the full gate's HV age.
