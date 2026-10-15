@@ -1124,10 +1124,11 @@ impl Server {
             _ => 0.0,
         };
         let moment = Moment { bonus, tool: &tool, night: self.daylight() < 0.3, by_player: killer.is_some() };
-        let mut draws = 0u32;
+        // Each roll numbered by the world's count of loot rolls, never by the tick it dies on.
+        let (key, meta) = (self.meta.draw_key, &mut self.meta);
         let found = loot::roll(&species.loot, &moment, || {
-            draws += 1;
-            unit_from(mix(creature.seed, draws as u64 ^ self.tick << 8))
+            meta.loot += 1;
+            unit_from(mix(mix(key ^ 0x1007, meta.loot), 0xd2a3))
         });
         let cell = creature.body.position.floor().as_ivec3();
         // The killer's journal: one more of the species (people are not counted), and each
@@ -1137,7 +1138,9 @@ impl Server {
         // Its loot comes out once its body has fallen, never from an animal still standing.
         let due = self.tick + (species.def.death.drops_after() * TICKS_PER_SECOND as f32).round() as u64;
         for (i, (item, count)) in found.into_iter().enumerate() {
-            let body = dropped::popped(cell, random3(self.tick, cell, i as u32 + id));
+            let popped = self.meta.drops;
+            self.meta.drops += 1;
+            let body = dropped::popped(cell, random3(self.meta.draw_key ^ popped.wrapping_mul(0x9e37_79b9_7f4a_7c15), cell, i as u32 + id));
             self.creatures.falling_loot.push((due, ItemStack { item, count }, body));
         }
         if let (Some(player), Some(skill), true) = (creature.hurt_by, species.xp_skill, xp) {
@@ -1963,6 +1966,28 @@ mod combat_tests {
             }
         }
         assert!(missed && landed, "200 blows at a wolf all missed or all landed");
+    }
+
+    /// A kill's loot is rolled, and pops, by the world's counts of loot rolls and drops, not
+    /// the tick it dies on, and each roll counts on.
+    #[test]
+    fn a_kills_loot_rolls_by_the_count_of_rolls_not_the_tick() {
+        let killed = |tick: u64| {
+            let mut server = crate::test_server();
+            server.meta.draw_key = 0x0d1a;
+            let wolf = server.content.creatures.id("base:wolf").unwrap();
+            server.tick = tick;
+            let mut found = Vec::new();
+            for i in 0..12 {
+                let id = server.spawn_creature(wolf, server.spawn + Vec3::X, i).expect("room");
+                server.creature_dies(id);
+                found.extend(server.creatures.falling_loot.drain(..).map(|(_, stack, body)| (stack.item, stack.count, body.position.to_array(), body.velocity.to_array())));
+            }
+            (found, server.meta.loot)
+        };
+        let (first, rolls) = killed(1_000);
+        assert!(rolls > 0 && !first.is_empty(), "twelve wolves rolled {rolls} times for {first:?}");
+        assert_eq!(killed(1_377), (first, rolls), "the same kills later dropped otherwise");
     }
 
     /// A blow, either way, is drawn by its count: struck at another tick, the same count

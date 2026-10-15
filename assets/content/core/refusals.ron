@@ -1,0 +1,64 @@
+// Why a refused action failed, said near the crosshair with the soft "no" sound
+// (engine/src/refusal.rs). Under `unmet`, every requirement an action can ask for says
+// why with a lang key, or is `silent: true` when it only decides which action a click
+// meant (holding a block, aiming at a bed), which has nothing to teach. `sent` lists
+// every key the server refuses with itself. The game refuses to start on a requirement
+// left out, or on a key some language has no words for.
+(
+    unmet: {
+        // Which action a click meant: nothing to say.
+        "Alive": (silent: true),
+        "Dead": (silent: true),
+        "InReach": (silent: true),
+        "Breakable": (silent: true),
+        "HoldingBlock": (silent: true),
+        "HoldingSeed": (silent: true),
+        "HoldingFood": (silent: true),
+        "Ripe": (silent: true),
+        "CreatureInReach": (silent: true),
+        "CreatureInTouch": (silent: true),
+        "CraftingTable": (silent: true),
+        "Bed": (silent: true),
+        "Seat": (silent: true),
+        "MultiblockCore": (silent: true),
+        "Machine": (silent: true),
+        "Altar": (silent: true),
+        "Locked": (silent: true),
+        "Store": (silent: true),
+        "SprungTrap": (silent: true),
+        // A tool, a level: what to get or train.
+        "ToolGood": (say: "tools.needs"),
+        "BlockLevel": (say: "skills.needs"),
+        "CropLevel": (say: "skills.needs"),
+        "SkillLevel": (say: "skills.needs"),
+        "CookingLevel": (say: "skills.needs"),
+        // Where, and with what.
+        "Replaceable": (say: "refusal.in_the_way"),
+        "Unobstructed": (say: "refusal.someone_there"),
+        "Supported": (say: "refusal.needs_support"),
+        "Plantable": (say: "refusal.wont_grow"),
+        "Tillable": (say: "refusal.not_soil"),
+        "Fishable": (say: "refusal.no_water"),
+        "Cookable": (say: "refusal.wont_cook"),
+        "Hurt": (say: "skills.full"),
+        "CreatureAccepts": (say: "refusal.not_wanted"),
+        "CreatureIsMine": (say: "refusal.not_yours"),
+        "Fertilisable": (say: "refusal.not_growing"),
+        "Bees": (say: "refusal.bees"),
+        "Station": (say: "refusal.station"),
+        "Swaps": (say: "refusal.doorway"),
+    },
+    sent: [
+        // Sowing where a crop cannot grow (crop.rs `Unsuited`).
+        "farming.too_cold", "farming.too_hot", "farming.too_dry", "farming.too_wet", "farming.too_dark", "farming.needs_water",
+        "farming.planter_needs",
+        // Kept animals.
+        "husbandry.kept_full", "husbandry.no_room_to_breed", "husbandry.world_full", "husbandry.too_poorly_kept", "husbandry.too_poorly_kept_wants",
+        // A hearth or kiln that is cold, or lit with no fuel in hand.
+        "multiblock.fuel", "multiblock.cold",
+        // Home stations.
+        "station.level", "station.too_few", "station.nothing_grows", "station.needs.sky", "station.needs.spot", "station.needs.water",
+        // A catch in a trap taken below its skill's level.
+        "trap.needs",
+    ],
+)

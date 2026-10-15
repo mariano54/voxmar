@@ -45,8 +45,34 @@ pub struct HitLook {
     pub recoil: f32,
     pub tilt: f32,
     pub squash: f32,
+    /// How big the flinch is, by the creature and the blow (`fight_fx::flinch_size`); left
+    /// out, every flinch is the hit's own size.
+    #[serde(default)]
+    pub weigh: Weigh,
     pub sparks: Burst,
     pub tufts: Burst,
+}
+
+/// How a flinch is sized: a creature `mass` cubic blocks big (its width squared by its
+/// height) flinches as the hit says; a lighter one more, by the cube root of how much
+/// lighter, at most `light` times; a heavier one less, at least `heavy` times. And by the
+/// share of its health the blow took: `glancing` times for a scratch, up to `telling` times
+/// for half its health or more.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Weigh {
+    pub mass: f32,
+    pub light: f32,
+    pub heavy: f32,
+    pub glancing: f32,
+    pub telling: f32,
+}
+
+impl Default for Weigh {
+    /// Unweighed: every creature, struck for any share, flinches the hit's own size.
+    fn default() -> Self {
+        Weigh { mass: 1.0, light: 1.0, heavy: 1.0, glancing: 1.0, telling: 1.0 }
+    }
 }
 
 /// What a kind of blow multiplies a hit by, and the camera's dip with it.
@@ -429,6 +455,14 @@ impl FightLook {
             }
         }
         // A hit's freeze is at most a few frames; longer reads as a stall.
+        let weigh = hit.weigh;
+        let sane = |v: f32| v.is_finite() && v > 0.0;
+        if !sane(weigh.mass) || !(0.1..=1.0).contains(&weigh.heavy) || !(1.0..=4.0).contains(&weigh.light) || !(0.1..=1.0).contains(&weigh.glancing) || !(1.0..=3.0).contains(&weigh.telling) {
+            return Err(format!(
+                "{FILE}: hit.weigh has a mass above 0, heavy 0.1 to 1, light 1 to 4, glancing 0.1 to 1 and telling 1 to 3 (mass {}, heavy {}, light {}, glancing {}, telling {})",
+                weigh.mass, weigh.heavy, weigh.light, weigh.glancing, weigh.telling
+            ));
+        }
         if hit.stop_most > 0.25 || death.stop > 0.25 {
             return Err(format!("{FILE}: a freeze longer than 0.25 s reads as a stall (hit.stop_most {}, death.stop {})", hit.stop_most, death.stop));
         }
@@ -614,6 +648,18 @@ mod tests {
         let hit = r#"(hit: (stop: 0.5, stop_per_share: 0, stop_most: 0.5, shake: 0, white: 0, red: 0, flinch: 0, recoil: 0, tilt: 0, squash: 0,
             sparks: (count: 1, speed: 1, life: 1, size: 0.1), tufts: (count: 1, speed: 1, life: 1, size: 0.1)))"#;
         assert!(with(hit).unwrap_err().contains("stall"));
+        let weighed = |weigh: &str| {
+            format!(
+                r#"(hit: (stop: 0.05, stop_per_share: 0.1, stop_most: 0.1, shake: 0, white: 0, red: 0.2, flinch: 0.2, recoil: 0.1, tilt: 0.1, squash: 0.1, weigh: {weigh},
+            sparks: (count: 1, speed: 1, life: 1, size: 0.1), tufts: (count: 1, speed: 1, life: 1, size: 0.1)))"#
+            )
+        };
+        let unweighed = with(&weighed("()").replace(", weigh: ()", "")).unwrap();
+        assert_eq!(super::super::flinch_size(&unweighed.hit.weigh, (0.2, 0.2), 0.9), 1.0, "a hit with no weigh flinches its own size");
+        assert!(with(&weighed("(mass: 0.5, light: 1.8, heavy: 0.4, glancing: 0.7, telling: 1.5)")).is_ok());
+        for weigh in ["(mass: 0, light: 1.8, heavy: 0.4, glancing: 0.7, telling: 1.5)", "(mass: 0.5, light: 0.5, heavy: 0.4, glancing: 0.7, telling: 1.5)", "(mass: 0.5, light: 1.8, heavy: 2, glancing: 0.7, telling: 1.5)", "(mass: 0.5, light: 1.8, heavy: 0.4, glancing: 0, telling: 1.5)", "(mass: 0.5, light: 1.8, heavy: 0.4, glancing: 0.7, telling: 9)"] {
+            assert!(with(&weighed(weigh)).unwrap_err().contains("hit.weigh"), "{weigh} let through");
+        }
         let stagger = |sway: f32, rate: f32, ease: f32, rear: f32| {
             format!(
                 "(stagger: (stance: (nod: 0.5, crouch: 0.1, rear: {rear}, lean: -0.1, paw: 0), sway: {sway}, sway_rate: {rate}, ease: {ease}, sparks: (count: 6, speed: 0.8, life: 0.7, size: 0.06)))"

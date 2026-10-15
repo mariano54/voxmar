@@ -21,13 +21,14 @@ use std::time::Instant;
 use rustc_hash::FxHashMap;
 use voxmar_engine::block::BlockId;
 use voxmar_engine::combat::{Blow, Click, Defended, Effect, Guarding, Pace, Rhythm, Stroke, Swing, Weapon};
-use voxmar_engine::creature::{brain, mix, unit_from};
+use voxmar_engine::creature::brain;
 use voxmar_engine::glam::Vec3;
 use voxmar_engine::physics::Aabb;
 use voxmar_engine::skill::SkillId;
 use voxmar_protocol::{PlayerId, ServerMessage, TICKS_PER_SECOND};
 
 use crate::Server;
+use crate::save::Draw;
 
 /// Half a player's width: how close a creature's lunge comes to them.
 const PLAYER_HALF: f32 = 0.3;
@@ -118,8 +119,6 @@ pub(crate) struct Fights {
     /// lower by the share, until when).
     pinned: FxHashMap<u32, (f32, f64)>,
     sundered: FxHashMap<u32, (f32, f64)>,
-    /// Draws for what rounds by chance (`combat::by_chance`).
-    draws: u64,
 }
 
 impl Default for Fights {
@@ -131,7 +130,6 @@ impl Default for Fights {
             bleeds: Vec::new(),
             pinned: FxHashMap::default(),
             sundered: FxHashMap::default(),
-            draws: 0,
         }
     }
 }
@@ -161,12 +159,6 @@ impl Fights {
     pub(crate) fn pips(&self, player: PlayerId, feel: &voxmar_engine::combat::Feel) -> u8 {
         let now = self.now();
         self.fighters.get(&player).map_or(0, |f| f.rhythm.pips(now, feel))
-    }
-
-    /// A draw in 0..1 for rounding by chance, different each time.
-    fn draw(&mut self, salt: u64) -> f32 {
-        self.draws += 1;
-        unit_from(mix(self.draws, salt))
     }
 }
 
@@ -544,7 +536,7 @@ impl Server {
         let Some(damage) = self.land_blow(player, aim.creature, &weapon, stroke) else { return };
         // A shot that hit may be left lying by the target, to be picked up again.
         if let (Some(item), Some(at), true) = (shot, at, damage > 0)
-            && unit_from(mix(mix(self.tick, aim.creature as u64), 0xa770)) < self.content.combat.recover(&weapon)
+            && self.players.get_mut(&player).is_some_and(|p| p.draw(Draw::Recover)[0] < self.content.combat.recover(&weapon))
         {
             let body = voxmar_engine::dropped::Loose::new(at + Vec3::Y * 0.25, Vec3::ZERO);
             self.items.spawn(voxmar_engine::inventory::ItemStack { item, count: 1 }, body, voxmar_engine::dropped::PICKUP_DELAY);
@@ -567,7 +559,7 @@ impl Server {
         let now = self.fights.now();
         let feel = self.content.combat.feel;
         let Some(flourish) = self.content.combat.flourish(weapon) else { return };
-        let roll = self.fights.draw(0xf10u64 ^ creature as u64);
+        let Some([roll, _]) = self.players.get_mut(&player).map(|p| p.draw(Draw::Flourish)) else { return };
         match flourish.effect(damage, roll) {
             Some(Effect::Bleed { points, every }) => {
                 let every = every as f64;
@@ -859,6 +851,61 @@ mod tests {
     use voxmar_protocol::ClientMessage;
 
     use super::*;
+
+    /// Whether a shot that hit is left lying to pick up again is drawn by the player's count
+    /// of shots that hit, not the tick, and only a hit counts on.
+    #[test]
+    fn a_shot_is_left_lying_by_the_count_of_hits_not_the_tick() {
+        let shot = |tick: u64| {
+            let mut server = crate::test_server();
+            let (_client, connection) = voxmar_protocol::local_pair();
+            let player = 1;
+            let mut joined = crate::player::Player::new(player, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
+            (joined.joined, joined.draw_key) = (true, crate::player::player_draw_key(0x0d1a, "ada"));
+            let (sling, stone) = (server.content.blocks.expect("base:sling"), server.content.blocks.expect("base:cobblestone"));
+            joined.inventory.add(sling, 1);
+            joined.inventory.add(stone, 64);
+            server.players.insert(player, joined);
+            assert_eq!(server.players[&player].held(), Some(sling));
+            let weapon = server.content.combat.wielded(Some(sling), |_| 1);
+            let wolf = server.content.creatures.id("base:wolf").unwrap();
+            let creature = server.spawn_creature(wolf, server.spawn + Vec3::X * 4.0, 1).expect("room");
+            server.tick = tick;
+            for _ in 0..40 {
+                let full = server.content.creatures.get(wolf).def.health;
+                server.creatures.live.get_mut(&creature).unwrap().health = full;
+                let aim = Aim { creature, counter: false, riposte: false, weapon, held: Some(sling) };
+                server.land_swing(player, aim, 1.0, false, Blow::Plain, true);
+            }
+            let lying: u32 = server.items.saved(|item| format!("{item:?}")).iter().map(|d| d.count as u32).sum();
+            (lying, server.players[&player].draws.recovers, server.players[&player].draws.strikes)
+        };
+        let first = shot(1_000);
+        let (lying, hits, strikes) = first;
+        assert_eq!(strikes, 40, "each shot drew to strike");
+        assert!(hits > 0 && hits < strikes, "{hits} of {strikes} shots hit, every one or none");
+        assert!(lying > 0 && (lying as u64) < hits, "{lying} of {hits} shots that hit left lying");
+        assert_eq!(shot(1_377), first, "the same shots later were left otherwise");
+    }
+
+    /// A flourish's roll is the player's next flourish draw: each counts on.
+    #[test]
+    fn a_flourish_counts_on_the_players_flourish_draws() {
+        let mut server = crate::test_server();
+        let (_client, connection) = voxmar_protocol::local_pair();
+        let player = 1;
+        let joined = crate::player::Player::new(player, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
+        server.players.insert(player, joined);
+        let sword = server.content.blocks.expect("base:stone_sword");
+        let weapon = server.content.combat.wielded(Some(sword), |_| 1);
+        assert!(server.content.combat.flourish(&weapon).is_some(), "a sword flourishes");
+        let wolf = server.content.creatures.id("base:wolf").unwrap();
+        let creature = server.spawn_creature(wolf, server.spawn + Vec3::X * 2.0, 1).expect("room");
+        for _ in 0..3 {
+            server.flourish(player, creature, &weapon, 4);
+        }
+        assert_eq!(server.players[&player].draws.flourishes, 3, "each flourish drew once");
+    }
 
     /// Even a wind-up with no tracking ticks starts aimed at its target, whatever the
     /// creature faced before it chose to attack. Its locked lunge follows that same yaw.
