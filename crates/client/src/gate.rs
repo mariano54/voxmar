@@ -816,6 +816,8 @@ struct Gate {
     sweep: Sweep,
     /// The look step's pad still had creatures by it when its wait ran out (said once).
     look_crowded: bool,
+    /// The server's clock when the look step last cleared its pad.
+    look_cleared: f32,
     /// Where the narrow step stands.
     narrow: NarrowRun,
     /// The weapon step's first swing, watched in the hand.
@@ -985,6 +987,7 @@ impl Gate {
             feel: FeelRun::default(),
             sweep: Sweep::default(),
             look_crowded: false,
+            look_cleared: 0.0,
             narrow: NarrowRun::default(),
             swing_watch: SwingWatch::default(),
             music_fade: None,
@@ -5192,6 +5195,24 @@ fn celebrate(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 /// How near the pad's middle no creature may be for the look step's first look.
 const LOOK_CLEAR: f32 = 12.0;
 
+/// Takes every creature within [`LOOK_CLEAR`] of the look step's pad away, whatever its
+/// species: the wild sent away, and the kept taken away from the pad's middle and from a
+/// ring around it, so all are reached by a remove's 8 blocks; then the player stands where
+/// the step looks from.
+fn look_clear(net: &Net, pad: IVec3) {
+    let middle = pad.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
+    for i in 0..=8 {
+        let ring = if i == 0 { Vec3::ZERO } else { Quat::from_rotation_y(i as f32 * std::f32::consts::FRAC_PI_4) * Vec3::new(LOOK_CLEAR - 4.0, 0.0, 0.0) };
+        let at = middle + ring;
+        net.command(&format!("tp {} {} {}", at.x, at.y, at.z));
+        if i == 0 {
+            net.command("creatures disperse");
+        }
+        net.command("creatures remove");
+    }
+    net.command(&format!("tp {} {} {}", pad.x as f32 + 0.5, pad.y, pad.z as f32 + 4.5));
+}
+
 fn look_name(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let pad = gate.feet + IVec3::new(0, 0, 14);
     let planks = pad + IVec3::new(1, 0, 2);
@@ -5207,27 +5228,14 @@ fn look_name(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         // On the creatures' pad (clear stone, air above): a plank block close by, once what the
         // creatures step left there (a grazer or two in the walls, the bird) is gone, since a
         // wanderer on the look ray would take the name. Every creature by the pad goes,
-        // whatever its species: the wild sent away, and the kept taken away from the pad's
-        // middle and from a ring around it, so all within [`LOOK_CLEAR`] are reached by a
-        // remove's 8 blocks.
+        // whatever its species (`look_clear`).
         0 => {
             let net = world.resource::<Net>();
             for species in ["mouflon", "rabbit", "lumen_snail", "shambler", "goldfinch"] {
                 net.command(&format!("creatures remove {species}"));
             }
-            let middle = pad.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
-            for i in 0..=8 {
-                let ring = if i == 0 { Vec3::ZERO } else { Quat::from_rotation_y(i as f32 * std::f32::consts::FRAC_PI_4) * Vec3::new(LOOK_CLEAR - 4.0, 0.0, 0.0) };
-                let at = middle + ring;
-                net.command(&format!("tp {} {} {}", at.x, at.y, at.z));
-                if i == 0 {
-                    net.command("creatures disperse");
-                }
-                net.command("creatures remove");
-            }
-            net.command(&format!("tp {} {} {}", pad.x as f32 + 0.5, pad.y, pad.z as f32 + 4.5));
-            // The bird flies about its home on the pad, out of reach of the first remove.
-            net.command("creatures remove goldfinch");
+            look_clear(net, pad);
+            gate.look_cleared = gate.server_now;
             net.command(&format!("setblock {} {} {} oak_planks", planks.x, planks.y, planks.z));
             net.command("time set noon");
             gate.advance(now);
@@ -5241,6 +5249,11 @@ fn look_name(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             };
             if !near.is_empty() {
                 if gate.server_in_phase() < 6.0 {
+                    // Birds fly back in: cleared again, a server second apart, until none is.
+                    if gate.server_now - gate.look_cleared >= 1.0 {
+                        look_clear(world.resource::<Net>(), pad);
+                        gate.look_cleared = gate.server_now;
+                    }
                     return;
                 }
                 if !gate.look_crowded {
