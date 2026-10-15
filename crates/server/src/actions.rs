@@ -464,9 +464,16 @@ impl Server {
 
     /// `agent` sleeps at the bed at `bed`: it is where they wake after dying (their hearth
     /// first, once they have one), and they wake rested, as well as the home around the
-    /// bed allows (effects.ron's `sleeps`). A bed always works, as a bed; the rest is held back
+    /// bed allows (effects.ron's `sleeps`). A bed a village home was furnished with is its
+    /// resident's and turns them away. A bed always works, as a bed; the rest is held back
     /// while one is still on them, so the buff cannot be had again until it wears off.
     fn sleep(&mut self, agent: PlayerId, bed: IVec3) {
+        // A bed a village furnished a home with is its resident's (no player placed it).
+        if !self.placed.contains(&bed) && self.block(bed).is_some_and(|b| self.content.blocks.def(b).has_tag("furnishing")) {
+            let player = &self.players[&agent];
+            player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: Words::key("bed.someones") });
+            return;
+        }
         let player = self.players.get_mut(&agent).unwrap();
         player.bed = Some(bed.as_vec3() + Vec3::new(0.5, 1.0, 0.5));
         let key = if player.home.is_some() { "bed.set_home" } else { "bed.set" };

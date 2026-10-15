@@ -1079,6 +1079,8 @@ struct SettlementFile {
     centrepieces: Vec<CentreFile>,
     #[serde(default)]
     people: super::people::PeopleFile,
+    #[serde(default)]
+    interiors: super::interior::InteriorsFile,
 }
 
 // ---------------------------------------------------------------------------------------
@@ -1255,6 +1257,8 @@ pub struct SettlementsDef {
     pub roofs: Vec<RoofDef>,
     pub centrepieces: Vec<CentreDef>,
     pub people: super::people::PeopleDef,
+    /// What stands in homes (`interiors`).
+    pub interiors: super::interior::InteriorsDef,
     /// Every crop by its full name (from `crops.ron`), so settlements grow only everyday
     /// crops a newcomer may harvest, and never ripe.
     pub crops: BTreeMap<String, CropInfo>,
@@ -1385,6 +1389,7 @@ impl SettlementsDef {
             }
         }
         self.furnishings = furnishings;
+        self.interiors.extend(at, package, file.interiors)?;
         self.avoid.extend(file.avoid);
         self.kana.extend(file.kana);
         for s in file.sizes {
@@ -1856,6 +1861,7 @@ impl SettlementsDef {
                 return fail(format!("house `{}` needs people fewest to most", h.name));
             }
         }
+        self.interiors.check(registry)?;
         self.people.check(&self.sizes.iter().map(|s| s.name.clone()).collect::<Vec<_>>())
     }
 }

@@ -364,6 +364,7 @@
     "machine.idle": "{machine}：停止中。",
     "bed.set": "家ができるまで、倒れたらここで目覚める。",
     "bed.set_home": "倒れたらここで目覚める。ただし炉が優先される。",
+    "bed.someones": "このベッドはここに住む誰かのものだ。自分の寝床で眠ろう。",
     "screen.prayers": "祈り",
     "character.prayers": "祈り",
     "prayers.points": "祈り",

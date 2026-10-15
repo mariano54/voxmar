@@ -2624,6 +2624,30 @@ fn a_sleeping_bag_is_where_the_homeless_wake() {
 }
 
 #[test]
+fn a_village_bed_is_someones_and_one_you_place_is_yours() {
+    let mut client = on_a_test_floor();
+    let feet = client.position.floor().as_ivec3();
+    let told = |c: &Client, text: &str| c.chat.iter().any(|(_, t)| t.contains(text));
+    let bed = client.content.blocks.expect("base:oak_bed");
+    // One the world set (as a village furnishes a home), one the player sets down.
+    let (village, own) = (feet + IVec3::new(2, 0, 0), feet + IVec3::new(2, 0, 2));
+    for line in ["/clear".to_owned(), "/give oak_bed 1".to_owned(), format!("/setblock {} {} {} oak_bed", village.x, village.y, village.z)] {
+        client.ok(&line);
+    }
+    client.pump_until(|c| c.world.block(village) == Some(bed) && c.inventory.get(0).is_some_and(|s| s.item == bed));
+    client.chat.clear();
+    client.propose("base:sleep", ActionTarget::Block { block: village, face: Face::PosY });
+    client.pump_until(|c| told(c, "belongs to someone"));
+    assert!(!told(&client, "wake here"), "a village bed took as home");
+    client.propose("core:place", ActionTarget::Block { block: own - IVec3::Y, face: Face::PosY });
+    client.pump_until(|c| c.world.block(own) == Some(bed));
+    client.chat.clear();
+    client.propose("base:sleep", ActionTarget::Block { block: own, face: Face::PosY });
+    client.pump_until(|c| told(c, "wake here"));
+    assert!(!told(&client, "belongs to someone"), "the player's own bed was refused");
+}
+
+#[test]
 fn a_furnished_home_heals_faster_and_sleeping_in_it_rests_you_once() {
     let mut client = on_a_test_floor();
     let feet = client.position.floor().as_ivec3();
