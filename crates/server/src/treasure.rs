@@ -182,7 +182,7 @@ mod tests {
     }
 
     /// A lucky pick holds or gives by the player's count of locks tried on luck, and what
-    /// wakes by the world's count of rolls, not the tick the lock is tried on.
+    /// wakes by the opener's count of wakes, not the tick the lock is tried on.
     #[test]
     fn a_lucky_lock_and_what_wakes_draw_by_count_not_the_tick() {
         let tried = |tick: u64| {

@@ -303,8 +303,8 @@ mod tests {
         assert!(server.catches.get(snare).is_none(), "broken, the catch is lost");
     }
 
-    /// A catch's loot is rolled by the world's count of loot rolls, not the tick it is
-    /// taken on, and each roll counts on.
+    /// A catch's loot is rolled by the emptier's own count of catches, not the tick it is
+    /// taken on or what else the world rolled first, and each roll counts on.
     #[test]
     fn a_catch_rolls_by_the_emptiers_count_not_the_tick_or_other_rolls() {
         // Later, and with the world's other loot rolls (kills elsewhere) drawn in between.

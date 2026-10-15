@@ -1138,8 +1138,10 @@ impl Server {
         let Some(freed) = event.def.freed.clone() else { return };
         let Some(at) = inst.members.iter().position(|m| event.groups[m.group].1.role == Role::Captive) else { return };
         let captive = inst.members[at].creature;
-        let seed = mix(inst.seed, 0xf4ee ^ self.tick);
-        let follows = by.filter(|p| self.players.get(p).is_some_and(|p| p.health.alive())).filter(|_| unit_from(seed) < freed.follow);
+        // Whether it follows, by a living freer's own count of captives freed, never the
+        // tick it is freed on; nobody's freeing draws nothing.
+        let freer = by.filter(|p| self.players.get(p).is_some_and(|p| p.health.alive()));
+        let follows = freer.filter(|&p| self.players.get_mut(&p).is_some_and(|p| p.draw(crate::save::Draw::Free)[0] < freed.follow));
         if let Some(player) = by.and_then(|p| self.players.get(&p).map(|_| p)) {
             if let Some(who) = self.speaker_name(captive) {
                 self.players[&player].connection.send(ServerMessage::Chat { kind: ChatKind::Chat, text: Words::key("wander.said").with("who", who).with("text", Words::key(&event.key("thanks"))) });
@@ -2927,6 +2929,49 @@ mod tests {
             }
         }
         assert!(follows > 0 && alone > 0, "both happen: {follows} follow, {alone} go alone");
+    }
+
+    /// Whether a freed captive follows is drawn by its living freer's own count of captives
+    /// freed: the same freeings later go the same way, each counts on, and a freeing by
+    /// nobody, or by a freer who is dead, draws nothing.
+    #[test]
+    fn a_freed_captive_follows_by_the_freers_count_not_the_tick() {
+        let freed = |tick: u64| {
+            let mut server = fixture();
+            server.players.get_mut(&1).unwrap().draw_key = crate::player::player_draw_key(0x0d1a, "Tëster");
+            server.tick = tick;
+            let mut followed = Vec::new();
+            for seed in 0..12u64 {
+                clear(&mut server);
+                let event = event(&server, "prison_convoy");
+                let spot = server.standing_spot(68, 128, 200).unwrap();
+                let id = server.begin_event_at(Some(1), event, spot, seed * 7919 + 3, true).unwrap();
+                let captive = members_of(&server, id, 2)[0];
+                server.free_in_test(id);
+                followed.push(server.wandering.by_creature.get(&captive).is_some_and(|&(i, _)| matches!(server.wandering.active[&i].plan, Plan::Follow { player: 1, .. })));
+                server.tick += 37;
+            }
+            let frees = server.players[&1].draws.frees;
+            // Freed by nobody, and by a freer who is dead: nothing drawn.
+            for by in [None, Some(1)] {
+                clear(&mut server);
+                if by.is_some() {
+                    server.players.get_mut(&1).unwrap().health.damage(u8::MAX);
+                }
+                let event = event(&server, "prison_convoy");
+                let spot = server.standing_spot(68, 128, 200).unwrap();
+                let id = server.begin_event_at(Some(1), event, spot, 5, true).unwrap();
+                let mut inst = server.wandering.active.remove(&id).unwrap();
+                server.free_captive(&mut inst, by);
+                server.keep(inst);
+            }
+            (followed, frees, server.players[&1].draws.frees)
+        };
+        let first = freed(1_000);
+        assert_eq!(first.1, 12, "each freeing by a living player counted on");
+        assert_eq!(first.2, first.1, "a freeing by nobody or by the dead drew");
+        assert!(first.0.iter().any(|&f| f) && first.0.iter().any(|&f| !f), "twelve freed captives all went alike: {:?}", first.0);
+        assert_eq!(freed(1_377), first, "the same freeings later went otherwise");
     }
 
     impl Server {
