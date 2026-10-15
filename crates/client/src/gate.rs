@@ -10652,7 +10652,7 @@ fn smoke(world: &mut World, gate: &mut Gate, now: f32) {
         3 => {
             if empty_hand(world) {
                 world.resource::<Net>().command("effect clear");
-                gate.next(Step::Wear, now);
+                gate.next(Step::Charm, now);
             } else {
                 world.resource::<Net>().command(&format!("clear {}", SMOKE_ITEM.trim_start_matches("base:")));
                 gate.advance(now);
