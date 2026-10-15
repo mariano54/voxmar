@@ -2289,6 +2289,10 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     match gate.phase {
         // Two planks, one over the other in the two-by-two grid, make four sticks.
         0 => {
+            // A screen a failed music or overlay step left open would take the clicks
+            // after it: close them all, as Esc would.
+            let mut ui = world.resource_mut::<UiState>();
+            (ui.menu_open, ui.inventory_open, ui.character_open, ui.console_open) = (false, false, false, false);
             mouse(world, MouseButton::Left, false);
             gate.count_before = holding(world, "base:stick").0;
             if lay_and_craft(world, &[(0, "base:oak_planks"), (3, "base:oak_planks")]) {
