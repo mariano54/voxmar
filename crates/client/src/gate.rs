@@ -471,6 +471,10 @@ steps! {
     /// chat says so with what to add next, and the sleep is a rest. At home, Lay on a
     /// recipe fills the crafting grid from a barrel there.
     Home,
+    /// Walls make the home: the camp under a plank roof with a hearth and a second light is
+    /// Hearthside while open to the outside, and `/home` asks for walls; walled in with
+    /// planks it turns Snug.
+    HomeWalls,
     /// Fire in the thatch: a wattle panel with a torch set beside it catches, burns, and is
     /// gone.
     Blaze,
@@ -1525,6 +1529,11 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         Step::Party => 60.0,
         // The effects are judged once a second by the server, and a rest is a sleep away.
         Step::Home => 75.0,
+        // Two answers waited on, each up to `WALLS_WAIT` server seconds.
+        Step::HomeWalls => STEP_LIMIT + 10.0,
+        // A smoulder and its catch, waited on up to fire.ron's catching time and 4 s, then
+        // the burning out, up to its burning time and 4 s.
+        Step::Blaze => STEP_LIMIT + 10.0,
         // The campfire, its smoke and the chimney's, then a cook at the hearth and the stove.
         Step::Cook => STEP_LIMIT + 30.0,
         // The barrel opened, then a server pass for the egg and a second for the chat; then
@@ -1852,6 +1861,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Journal => journal(world, gate, now, in_phase),
         Step::Prayers => prayers(world, gate, now, in_phase),
         Step::Home => home(world, gate, now),
+        Step::HomeWalls => home_walls(world, gate, now),
         Step::Blaze => blaze(world, gate, now),
         Step::WayHome => way_home(world, gate, now, in_phase),
         Step::Nest => nest(world, gate, now),
@@ -5584,7 +5594,7 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
                 net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
             }
         }
-        gate.next(Step::Blaze, now);
+        gate.next(Step::HomeWalls, now);
     };
     match gate.phase {
         0 => {
@@ -5679,7 +5689,7 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
             let (given, short): (Vec<String>, Vec<String>) = {
                 let (player, launch, client) = (world.resource::<LocalPlayer>(), world.resource::<Launch>(), world.resource::<ClientWorld>());
                 let effects = &launch.content.effects;
-                let survey = voxmar_engine::effect::HomeSurvey { counts: effects.home_tags().iter().map(|tag| (tag.clone(), u32::from(tag == "bed" || tag == "light"))).collect() };
+                let survey = voxmar_engine::effect::HomeSurvey { counts: effects.home_tags().iter().map(|tag| (tag.clone(), u32::from(tag == "bed" || tag == "light"))).collect(), ..Default::default() };
                 let calm = voxmar_engine::weather::Weather::NONE;
                 let situation = voxmar_engine::effect::Situation { felt: 15.0, warmed: false, outdoors: true, weather: &calm, biome: "", biome_tags: &[], home: Some(&survey), done: &[], held: &[], near: &[], seated: false };
                 let tags = client.registry.id("base:sleeping_bag").map(|b| client.registry.def(b).tags.clone()).unwrap_or_default();
@@ -5849,14 +5859,104 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
     }
 }
 
-/// Fire in the thatch. Three blocks south of where the Home step stood, a wattle panel and a
+/// Server seconds the walls step waits on each answer (Hearthside with `/home` asking for
+/// walls, then Snug), with frames paced as taps in them.
+const WALLS_WAIT: f32 = 8.0;
+
+/// Walls make the home. About the camp the Home step left (the bag home, a torch beside it),
+/// a hearthstone and a second torch, and a plank roof over the room: open to the outside it
+/// is Hearthside, and `/home` names the walls it lacks; walled in with planks (sound) it
+/// turns Snug. All of it goes again after, the camp left for the way home.
+fn home_walls(world: &mut World, gate: &mut Gate, now: f32) {
+    let waited = gate.server_in_phase();
+    let Some(bag) = world.resource::<LocalPlayer>().vitals.home else {
+        gate.check("home: walls", Err("no home after the Home step to wall in: the server named none".into()));
+        gate.next(Step::Blaze, now);
+        return;
+    };
+    // The room: the Home step's stand (two west of the bag) and the camp inside it, walls one
+    // beyond, the roof over the walls.
+    let (low, high) = (bag + IVec3::new(-5, 0, -3), bag + IVec3::new(3, 3, 3));
+    let (hearth, light) = (bag + IVec3::new(0, 0, 2), bag + IVec3::new(-3, 0, -2));
+    let walls = |net: &Net, block: &str| {
+        for (a, b) in [
+            (low, IVec3::new(low.x, high.y, high.z)),
+            (IVec3::new(high.x, low.y, low.z), high),
+            (low, IVec3::new(high.x, high.y, low.z)),
+            (IVec3::new(low.x, low.y, high.z), high),
+        ] {
+            net.command(&format!("fill {} {} {} {} {} {} {block}", a.x, a.y, a.z, b.x, b.y, b.z));
+        }
+    };
+    let roof = |net: &Net, block: &str| net.command(&format!("fill {} {} {} {} {} {} {block}", low.x, high.y + 1, low.z, high.x, high.y + 1, high.z));
+    let leave = |world: &mut World, gate: &mut Gate| {
+        let net = world.resource::<Net>();
+        walls(net, "air");
+        roof(net, "air");
+        for at in [hearth, light] {
+            net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
+        }
+        net.command("effect clear");
+        gate.next(Step::Blaze, now);
+    };
+    let has = |world: &World, name: &str| {
+        let (player, launch) = (world.resource::<LocalPlayer>(), world.resource::<Launch>());
+        launch.content.effects.id(name).is_some_and(|id| player.vitals.effects.iter().any(|a| a.effect == id))
+    };
+    // Frames counted as taps, so a client starved of them is not failed by the server's
+    // clock alone.
+    if now - gate.tap_at >= TAP_EVERY {
+        gate.tap_at = now;
+        gate.taps += 1;
+    }
+    match gate.phase {
+        0 => {
+            let net = world.resource::<Net>();
+            net.command(&format!("setblock {} {} {} hearthstone", hearth.x, hearth.y, hearth.z));
+            net.command(&format!("setblock {} {} {} torch", light.x, light.y, light.z));
+            roof(net, "oak_planks");
+            net.command("home");
+            gate.advance(now);
+        }
+        // Roofed but open: Hearthside, and `/home` asks for walls (the line after the ask).
+        1 => {
+            let wanted = {
+                let (locale, launch) = (world.resource::<Locale>(), world.resource::<Launch>());
+                locale.render(&voxmar_engine::lang::Words::key("home.shelter.draughty"), &launch.content.blocks)
+            };
+            let lines: Vec<String> = world.resource::<crate::hud::console::Console>().since(gate.phase_since).map(str::to_owned).collect();
+            let asked = lines.iter().any(|l| l.contains(&wanted));
+            let (hearthside, snug) = (has(world, "base:hearthside"), has(world, "base:snug"));
+            if asked && hearthside && !snug {
+                walls(world.resource::<Net>(), "oak_planks");
+                gate.advance(now);
+            } else if gate.waited_out(WALLS_WAIT) {
+                gate.check("home: walls", Err(format!("{waited:.1} server s on, roofed but open to the outside: Hearthside {hearthside}, Snug {snug} (want Hearthside alone), /home asked for \"{wanted}\" walls {asked}; lines since: {lines:?}")));
+                leave(world, gate);
+            }
+        }
+        // Walled in with planks: Snug.
+        _ => {
+            if has(world, "base:snug") {
+                gate.check("home: walls", Ok("roofed but open, the camp with its hearth stayed Hearthside and /home asked for walls; walled in with planks it turned Snug".into()));
+                leave(world, gate);
+            } else if gate.waited_out(WALLS_WAIT) {
+                gate.check("home: walls", Err(format!("{waited:.1} server s after walling the room in with planks ({low} to {high}), no Snug: Hearthside {}", has(world, "base:hearthside"))));
+                leave(world, gate);
+            }
+        }
+    }
+}
+
+/// Fire in the thatch. Five blocks south of where the Home step stood (outside the walls
+/// step's room), a wattle panel and a
 /// torch set beside it: first it smoulders (told by the server, and smoke counted rising
 /// from it), and once the catching time has passed (fire.ron) the panel is a blaze,
 /// and once the burning time has, it is gone. Each answer waited on in the server's seconds,
 /// with frames paced as taps; the torch goes after.
 fn blaze(world: &mut World, gate: &mut Gate, now: f32) {
     let stand = world.resource::<LocalPlayer>().position.floor().as_ivec3();
-    let (panel, torch) = (stand + IVec3::new(0, 0, 3), stand + IVec3::new(1, 0, 3));
+    let (panel, torch) = (stand + IVec3::new(0, 0, 5), stand + IVec3::new(1, 0, 5));
     let waited = gate.server_in_phase();
     let rules = world.resource::<Launch>().content.fire.rules.clone();
     let leave = |world: &mut World, gate: &mut Gate| {

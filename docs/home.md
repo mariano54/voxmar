@@ -39,10 +39,10 @@ the gate's Home step, "home: icons", shot `home-chips`).
 | --- | --- | --- | --- |
 | Camp | Nomad | a bed (sleeping bag) slept in, 1 light | heal x1.2 |
 | Hearthside | Nomad end | the lit hearth | heal x1.33, warmth +4 |
-| Snug | Nomad end / Farm start | roof, hearth, bed, 2 lights | heal x1.5, warmth +6 |
-| Homely | Farm | + 2 seats, 1 table, 2 storage, 3 lights | + xp x1.05 |
-| Cosy | Farm | + 2 rugs, 2 curtains, 1 cushion, 3 crockery, 4 lights | heal x1.75, xp x1.1 |
-| Heart of the Home | Farm end | + books, cooking, workshop, banner | heal x2, xp x1.125 |
+| Snug | Nomad end / Farm start | roof, walled in (9 in 10 faces draughty or better), hearth, bed, 2 lights | heal x1.5, warmth +6 |
+| Homely | Farm | + 6 in 10 faces sound, 2 seats, 1 table, 2 storage, 3 lights | warmth +8, xp x1.05 |
+| Cosy | Farm | + 9 in 10 faces sound, 2 rugs, 2 curtains, 1 cushion, 3 crockery, 4 lights | heal x1.75, warmth +9, xp x1.1 |
+| Heart of the Home | Farm end | + half the faces fine, books, cooking, workshop, banner | heal x2, warmth +10, xp x1.125 |
 
 Seats are stools, chairs, benches and cushions; tables include desks and counters; storage is
 whatever a home keeps things in or on: chests, cupboards and wardrobes, shelves (pot shelves
@@ -53,6 +53,49 @@ of a chest and a barrel by a campfire, "home: storage"); cooking is the cottage 
 workshop is the loom frame, spindle stand and quern. All are craftable in the first two ages
 (Construction 1 to 8, Crafting 2 to 8), so each step is a few minutes of gathering and
 crafting, not a grind.
+
+## Walls (how well a home is built)
+
+Each step from Snug up wants better walls about the room the home stands in, and is warmer
+for them: a hide lean-to walled in all about is Snug, a log or plank house Homely, the same
+with hardly a draughty board Cosy, and a house half of dressed stone, brick or glass the Heart
+of the Home.
+
+A building block says how well it shelters with a tag: `shelter:draughty` (the hide lean-to,
+wattle panels, hide windows, cloth, awnings), `shelter:sound` (logs, planks, cobble, cracked
+and mossy bricks, daub, half-timber, shut doors and shutters) or `shelter:fine` (stone and
+other bricks, polished stone, terracotta, glass, chimney pieces). A better one counts for every
+worse. An open door or shutter carries none: it shelters nothing. Roofs are judged as walls:
+thatch and shingles are both sound (the trade between them is fire, not draught: thatch is
+cheap and cosy but catches, shingles do not), as are timber posts and beams and plank and
+cobble slabs and stairs; a lattice window is draughty. Natural rock and the ores in it are
+sound, so a home cut into a hillside can be Cosy after the mining it took; earth, gravel, sand
+and any other solid block with no tag count as draughty, until daub coats them. Every solid
+block tagged `building` or `roof`, full or shaped, that is not furniture carries exactly one
+shelter tag, and no block more than one, checked when content loads (server `rules.rs`
+`check_shelters`), so a new one cannot slip in unjudged.
+
+How it is judged (`Server::room_walls`, beside the home survey): from where home stands, a
+scan goes out over the open cells within the home's reach (survival.ron's `home_reach`,
+`home_up`, `home_down`), starting from the first open cell over a hearthstone. Every face it meets sideways or overhead is a face of the room: a
+wall, or the roof. A wall is any solid block or any with a shelter tag, so a shut door or a
+window closes the room, and an open door lets the scan out. Furniture is not a wall: a block
+with a tag in survival.ron's `home_furniture` (machine, station, furnishing, storage, decor,
+multiblock_core, farm, waters) is looked past to the wall behind it, so a chest or a table
+by the wall leaves the room as it was, and a barrel in a doorway is no door. A face leading out of the reach
+(or into an unloaded column) is an opening, of no shelter, and counts against the room; the
+floor is not counted. `HomeWalls(Sound, 0.6)` holds when 6 in 10 faces are sound or better
+(effect.rs, `Condition::HomeWalls`, `Walls::share`; load-checked: the share is above 0 and at
+most 1). The scan runs only when an effect asks after walls (`EffectRegistry::home_walls`) and
+is bounded by the home box, so a home out in the open costs no more than the box. `/home`
+names what is short: "sound or better walls and roof all about 52%/60%".
+
+Tests: `a_room_is_judged_by_its_walls_and_roof` (planks sound, a brick fine, a hole or an open
+door an opening, a shut door a wall, a hide window draughty),
+`a_home_shows_the_highest_step_it_has_and_a_rest_to_match` (each step walled for the one below
+is the one below, and each step up is warmer), and the ladder's climb test (each step asks
+walls at least as good as the one below). The gate's Home step walls a camp in and checks it
+("home: walls").
 
 ## Rooms (side branches)
 

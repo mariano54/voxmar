@@ -6177,13 +6177,20 @@ mod tests {
             place(&mut server, name, home + IVec3::new(i as i32 + 1, 0, 0));
         }
         assert!(!comes_at(&server, "fireside_guests", spot), "a bare camp draws no callers");
-        // Seats, a table, stores, more light and a roof over it all: homely.
+        // Seats, a table, stores, more light, and sound plank walls and roof over it all
+        // on a floor: homely.
         for (i, name) in ["base:oak_stool", "base:oak_stool", "base:oak_table", "base:crate", "base:crate", "base:candle", "base:candle"].iter().enumerate() {
             place(&mut server, name, home + IVec3::new(i as i32 - 3, 0, 2));
         }
         for x in -6..=6 {
             for z in -6..=6 {
-                place(&mut server, "base:stone", home + IVec3::new(x, 4, z));
+                place(&mut server, "base:stone", home + IVec3::new(x, -1, z));
+                place(&mut server, "base:oak_planks", home + IVec3::new(x, 4, z));
+                if x.abs() == 6 || z.abs() == 6 {
+                    for y in 0..4 {
+                        place(&mut server, "base:oak_planks", home + IVec3::new(x, y, z));
+                    }
+                }
             }
         }
         assert!(comes_at(&server, "fireside_guests", spot), "a homely home has callers");
