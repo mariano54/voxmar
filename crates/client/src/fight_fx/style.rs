@@ -332,6 +332,17 @@ impl FightLook {
     }
 
     /// Weapon classes that shoot (take ammunition) with no shot to show.
+    /// The creatures whose death, as this draws it, lies fallen less than
+    /// `voxmar_engine::creature::LIES`: from the killing blow's freeze and the tip over
+    /// (`death.fall`) to starting to go (the last `death.shrink` of its time to its loot).
+    pub fn unlain(&self, creatures: &voxmar_engine::creature::CreatureRegistry) -> Vec<String> {
+        creatures
+            .iter()
+            .filter(|(_, c)| lies(&c.def.death, self.death.stop, self.death.shrink) < voxmar_engine::creature::LIES - 1e-4)
+            .map(|(_, c)| c.def.name.clone())
+            .collect()
+    }
+
     pub fn unshot<'a>(&self, classes: impl IntoIterator<Item = &'a voxmar_engine::combat::ClassDef>) -> Vec<String> {
         classes.into_iter().filter(|c| c.ammo.is_some() && !self.shots.contains_key(&c.name)).map(|c| c.name.clone()).collect()
     }
@@ -543,6 +554,12 @@ fn check_sound(name: &str, sound: &SoundDef) -> Result<(), String> {
     Ok(())
 }
 
+/// Seconds a body lies fallen: from its tip over, after the killing blow's `stop`, to
+/// starting to go over the last `shrink` of its time to its loot.
+fn lies(death: &voxmar_engine::creature::Death, stop: f32, shrink: f32) -> f32 {
+    death.drops_after() * (1.0 - shrink) - death.fall - stop
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -563,6 +580,16 @@ mod tests {
             // A sword's is the plain swing every other weapon falls back to.
             assert!(class == "sword" || look.sounds.contains_key(&format!("swing.{class}")), "no swing sound for the {class} class");
         }
+    }
+
+    /// A death lies fallen a beat past its killing blow's freeze, its tip over and its going;
+    /// a look that takes half its death to go leaves it no time to lie, and is refused.
+    #[test]
+    fn a_death_must_lie_a_beat() {
+        let look = FightLook::load(&[core()]).unwrap();
+        let death = voxmar_engine::creature::Death::default();
+        assert!(lies(&death, look.death.stop, look.death.shrink) >= voxmar_engine::creature::LIES, "the shipped look lies {}", lies(&death, look.death.stop, look.death.shrink));
+        assert!(lies(&death, look.death.stop, 0.5) < voxmar_engine::creature::LIES, "a shrink of 0.5 was let lie");
     }
 
     #[test]
