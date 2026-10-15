@@ -453,7 +453,7 @@ impl Server {
         }
     }
 
-    fn hello(&mut self, id: PlayerId, name: String, protocol: u32, content: u64, admin_token: Option<String>) {
+    pub(crate) fn hello(&mut self, id: PlayerId, name: String, protocol: u32, content: u64, admin_token: Option<String>) {
         let fingerprint = self.content.fingerprint();
         let blocks = self.content.blocks.clone();
         let (seed, allow_flight) = (self.meta.seed, self.config.allow_flight);
@@ -634,11 +634,14 @@ impl Server {
         let entries = self.players[&id].journal.entries().cloned().collect();
         self.players[&id].connection.send(ServerMessage::Journal { entries });
         self.kindle_home(id);
-        // An older save's stacked tools with no slot left fall at their feet.
+        // An older save's stacked tools with no slot left fall at their feet, theirs and
+        // lying as long as a grave does: the pack was full, so they wait for room.
         let feet = self.players[&id].position.floor().as_ivec3();
+        let owner = crate::items::owner_of(&self.players[&id].name);
+        let lifetime = (self.content.value.death.grave * voxmar_protocol::TICKS_PER_SECOND as f32) as u32;
         for (i, stack) in spilled.into_iter().enumerate() {
             let random = self.meta.next_pop(feet, 0x5b1d ^ i as u32);
-            self.items.spawn(stack, voxmar_engine::dropped::popped(feet, random), voxmar_engine::dropped::PICKUP_DELAY);
+            self.items.spawn_for(stack, voxmar_engine::dropped::popped(feet, random), voxmar_engine::dropped::PICKUP_DELAY, Some(owner), lifetime);
         }
         self.players[&id].connection.send(ServerMessage::Fires { lit: self.fires() });
         if let Some(file) = set_aside {

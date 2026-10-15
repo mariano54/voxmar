@@ -1,7 +1,7 @@
 //! Tools and weapons wearing out in the hand (`voxmar_engine::tool::Wear`, each package's
 //! `tools.ron`): a block broken, soil tilled or a blow that lands takes uses from what the
 //! player holds, the skill its kind trains saves one now and then, and worn to nothing it
-//! breaks (leaving its head in the hand, if it names one). The player hears it warn once it is nearly worn
+//! breaks (leaving nothing, or a head a pack names). The player hears it warn once it is nearly worn
 //! out, and hears and sees it break (`ServerMessage::ToolWore`). Creative play wears nothing.
 
 use voxmar_engine::inventory::ItemStack;
@@ -14,9 +14,15 @@ use crate::save::Draw;
 impl Server {
     /// Wears what `agent` holds by `uses` (it says how many a use takes).
     pub(crate) fn wear_held(&mut self, agent: PlayerId, uses: u16) {
+        let Some(slot) = self.players.get(&agent).map(|p| p.selected) else { return };
+        self.wear_slot(agent, slot, uses);
+    }
+
+    /// Wears what lies in `agent`'s `slot` by `uses`: the one that did the work, such as
+    /// the weapon a swing began with.
+    pub(crate) fn wear_slot(&mut self, agent: PlayerId, slot: usize, uses: u16) {
         let (tools, blocks, skills) = (self.content.tools.clone(), self.content.blocks.clone(), self.content.skills.clone());
         let Some(player) = self.players.get_mut(&agent) else { return };
-        let slot = player.selected;
         let Some(mut stack) = player.inventory.get(slot) else { return };
         let total = tools.uses(stack.item);
         if total == 0 || uses == 0 || player.mode() == crate::save::GameMode::Creative {
@@ -32,14 +38,33 @@ impl Server {
             }
         }
         let item = stack.item;
+        // Only one wears: were there ever more than one in the stack, the rest stay as
+        // they were, apart from it (in the pack, or at the feet with no room, theirs and
+        // lying as long as a grave).
+        let rest = (stack.count > 1).then(|| ItemStack { count: stack.count - 1, ..stack });
+        stack.count = 1;
         let worn = wear_down(&mut stack, uses, total, tools.wear().warn);
         player.inventory.slots[slot] = match worn {
             Worn::Broke => tools.head(item).map(|head| ItemStack::new(head, 1)),
             _ => Some(stack),
         };
+        let mut left = Vec::new();
+        for piece in rest.into_iter().flat_map(voxmar_engine::inventory::split_stack) {
+            let over = player.inventory.add_stack(piece);
+            if over > 0 {
+                left.push(ItemStack { count: over, ..piece });
+            }
+        }
         player.changed(voxmar_engine::traits::INVENTORY);
         if worn != Worn::Fine {
             player.connection.send(ServerMessage::ToolWore { item, broke: worn == Worn::Broke });
+        }
+        let (feet, owner) = (player.position.floor().as_ivec3(), crate::items::owner_of(&player.name));
+        let lifetime = (self.content.value.death.grave * voxmar_protocol::TICKS_PER_SECOND as f32) as u32;
+        for (i, stack) in left.into_iter().enumerate() {
+            let random = self.meta.next_pop(feet, 0x3ea7 ^ i as u32);
+            let body = voxmar_engine::dropped::popped(feet, random);
+            self.items.spawn_for(stack, body, voxmar_engine::dropped::PICKUP_DELAY, Some(owner), lifetime);
         }
     }
 
@@ -99,9 +124,9 @@ mod tests {
 
     /// A pickaxe wears a use for each stone it breaks, two for a block it is not made for
     /// (planks), none for one that breaks at a touch; it warns once at a tenth left, and worn
-    /// out it breaks to its head and the player hears it.
+    /// out it breaks to nothing (or a head a pack names) and the player hears it.
     #[test]
-    fn a_tool_wears_by_use_and_breaks_to_its_head() {
+    fn a_tool_wears_by_use_and_breaks() {
         let (mut server, client) = holding("base:wooden_pickaxe", 0);
         let uses = server.content.tools.uses(server.content.blocks.expect("base:wooden_pickaxe"));
         assert!(uses >= 10, "a wooden pickaxe lasts {uses} uses");
@@ -159,6 +184,36 @@ mod tests {
         assert_eq!(wear, expected(99), "each draw by its count");
         assert!((70..130).contains(&wear), "at 99 about half the uses wear: {wear} of 200");
         assert_eq!(worn(1_377, 99), (wear, draws), "the same uses later wore otherwise");
+    }
+
+    /// Were a stack of tools ever in hand, one wears and the rest stay as they were, apart
+    /// from it: in the pack, or with no room at the feet, theirs and lying as long as a grave.
+    #[test]
+    fn only_one_of_a_stack_wears() {
+        let (mut server, _client) = holding("base:iron_pickaxe", 4);
+        let pick = server.content.blocks.expect("base:iron_pickaxe");
+        server.players.get_mut(&1).unwrap().inventory.slots[0].as_mut().unwrap().count = 3;
+        // Skill may save a use now and then; enough uses that some wear.
+        server.wear_held(1, 20);
+        let slots = server.players[&1].inventory.slots.clone();
+        let held = slots[0].expect("still in hand");
+        assert_eq!((held.item, held.count), (pick, 1));
+        assert!(held.wear > 4, "the one in hand wore: {}", held.wear);
+        let rest: Vec<ItemStack> = slots.iter().skip(1).flatten().copied().collect();
+        assert_eq!(rest, [ItemStack { wear: 4, ..ItemStack::new(pick, 1) }; 2], "the rest kept their wear");
+        // A full pack: the rest fall at the feet.
+        let dirt = server.content.blocks.expect("base:dirt");
+        let player = server.players.get_mut(&1).unwrap();
+        for slot in player.inventory.slots.iter_mut().skip(1) {
+            *slot = Some(ItemStack::new(dirt, 1));
+        }
+        player.inventory.slots[0] = Some(ItemStack { wear: 4, ..ItemStack::new(pick, 2) });
+        let owner = crate::items::owner_of(&player.name);
+        server.wear_held(1, 20);
+        // A save writes a lifetime only where it is not the usual one.
+        let grave = Some(server.content.value.death.grave).filter(|&g| g != voxmar_engine::dropped::LIFETIME);
+        let lying: Vec<_> = server.items.saved(|item| server.content.blocks.def(item).name.clone()).into_iter().map(|i| (i.item, i.count, i.wear, i.owner, i.lifetime)).collect();
+        assert_eq!(lying, [("base:iron_pickaxe".to_string(), 1, 4, Some(owner), grave)]);
     }
 
     /// A hoe wears as it tills; in creative nothing wears; a block a player holds that never
@@ -253,6 +308,17 @@ mod tests {
         save.write_player("bo", &player, &blocks).unwrap();
         let read = save.read_player("bo", &blocks).unwrap().unwrap();
         assert_eq!((read.inventory.slots[0], read.spilled), (Some(ItemStack::new(pick, 1)), vec![ItemStack::new(pick, 1); 2]));
+        // Joining, those fall at their feet: theirs alone, and lying as long as a grave.
+        server.save = Some(save.clone());
+        let (_bo, connection) = voxmar_protocol::local_pair();
+        let joined = crate::player::Player::new(2, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
+        server.players.insert(2, joined);
+        server.hello(2, "bo".into(), voxmar_protocol::PROTOCOL_VERSION, server.content.fingerprint(), None);
+        // A save writes a lifetime only where it is not the usual one.
+        let grave = Some(server.content.value.death.grave).filter(|&g| g != voxmar_engine::dropped::LIFETIME);
+        let lying: Vec<_> = server.items.saved(|item| blocks.def(item).name.clone()).into_iter().map(|i| (i.item, i.count, i.owner, i.lifetime)).collect();
+        assert_eq!(lying, vec![("base:iron_pickaxe".to_string(), 1, Some(crate::items::owner_of("bo")), grave); 2]);
+        server.items = crate::items::Items::default();
         let _ = std::fs::remove_dir_all(&dir);
         // A chest's bin, as saved before and as saved worn.
         let at = put(&mut server, "base:chest");

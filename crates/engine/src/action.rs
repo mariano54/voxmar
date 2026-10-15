@@ -260,7 +260,7 @@ pub enum Effect {
     Till,
     /// Wear what the actor holds by a use on the target (`tool::Wear`): a block broken,
     /// more if the tool is not made for it, or soil tilled. Skill saves a use now and then;
-    /// worn out, it breaks to its head.
+    /// worn out, it breaks to nothing (or a head a pack names).
     WearHeld,
     /// Turn the target into what it swaps for, its upper or lower half with it: open or
     /// shut a door (see [`swapping`]).

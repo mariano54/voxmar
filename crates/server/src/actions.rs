@@ -554,7 +554,12 @@ impl Server {
         // its recipe asks.
         if let Some(mended) = self.content.tools.mended(&player.inventory.craft, near) {
             let item = mended.item;
-            let able = self.content.tools.mend_skill(item).is_none_or(|(skill, level)| self.content.skills.level(player.skills.xp(skill)) >= level);
+            let content = &self.content;
+            let level = |skill| {
+                let boosted = voxmar_engine::level::check_level(&content.skills, &content.effects, &player.skills, &player.vitals.effects, skill);
+                (content.skills.level(player.skills.xp(skill)), boosted)
+            };
+            let able = voxmar_engine::level::lacks_for_mend(&content.tools, item, level, &player.inventory, &content.blocks).is_none();
             if able && player.inventory.mend(mended, all) {
                 let name = self.content.blocks.def(item).name.clone();
                 self.tally(agent, "mended", &name, 1);

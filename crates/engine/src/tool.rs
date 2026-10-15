@@ -192,6 +192,8 @@ pub struct ToolRegistry {
     /// level its recipe asks, which mending asks too (`ToolRegistry::link`).
     mend_share: Vec<f32>,
     mend_skill: Vec<Option<(SkillId, u8)>>,
+    /// Each item whose recipe is firm: mending it takes no boost or schematic either.
+    mend_firm: Vec<bool>,
     /// Each item mended by any item with a tag (`mend:#TAG`): the first such tag, for
     /// naming what mends it (`item.mend.tag.TAG`).
     mend_by_tag: Vec<Option<String>>,
@@ -200,6 +202,10 @@ pub struct ToolRegistry {
 /// The tag of a tool that never wears (a pail, a fishing rod): every other tool says
 /// `uses:N`.
 pub const NEVER_WEARS: &str = "never_wears";
+
+/// What [`ToolRegistry::link`] finds for each item: its mend share, the skill and level
+/// mending it asks, and whether that level is firm.
+pub type MendTerms = (Vec<f32>, Vec<Option<(SkillId, u8)>>, Vec<bool>);
 
 impl ToolRegistry {
     pub fn read(namespace: &str, source: &str) -> Result<ToolFile, RegistryError> {
@@ -317,7 +323,7 @@ impl ToolRegistry {
             covered.push(rules.iter().position(|rule| rule.tags.iter().all(has)));
             suited.push(kinds.iter().enumerate().filter(|(_, k)| k.mines.iter().any(has)).map(|(i, _)| i).collect());
         }
-        Ok(Self { kinds, rules, tools, covered, suited, wear, savers, heads, mends, mended_near, mend_share: Vec::new(), mend_skill: Vec::new(), mend_by_tag })
+        Ok(Self { kinds, rules, tools, covered, suited, wear, savers, heads, mends, mended_near, mend_share: Vec::new(), mend_skill: Vec::new(), mend_firm: Vec::new(), mend_by_tag })
     }
 
     /// How tools and weapons wear.
@@ -423,14 +429,19 @@ impl ToolRegistry {
         self.mend_skill.get(item.0 as usize).copied().flatten()
     }
 
+    /// Whether mending `item` asks its level with no boost or schematic, its recipe being firm.
+    pub fn mend_firm(&self, item: BlockId) -> bool {
+        self.mend_firm.get(item.0 as usize).copied().unwrap_or(false)
+    }
+
     /// Ties wear to recipes once all content is loaded: each wearing item's mend share and
     /// skill come from the cheapest recipe that makes it, every weapon must wear (or say
     /// `never_wears`), and making a new one after a break must cost at least what mending
     /// one through a whole life does, or breaking would be a cheap mend.
-    pub fn link(content: &crate::content::Content) -> Result<(Vec<f32>, Vec<Option<(SkillId, u8)>>), RegistryError> {
+    pub fn link(content: &crate::content::Content) -> Result<MendTerms, RegistryError> {
         let (blocks, tools) = (&content.blocks, &content.tools);
         let mut known = std::collections::HashMap::new();
-        let (mut shares, mut skills) = (vec![tools.wear.mend; blocks.len()], vec![None; blocks.len()]);
+        let (mut shares, mut skills, mut firm) = (vec![tools.wear.mend; blocks.len()], vec![None; blocks.len()], vec![false; blocks.len()]);
         for item in blocks.ids() {
             let def = blocks.def(item);
             let uses = tools.uses(item);
@@ -455,9 +466,16 @@ impl ToolRegistry {
             }
             let Some((cost, recipe)) = cheapest else { continue };
             let pieces = recipe.alternatives().into_iter().flatten().filter(|cell| cell.iter().any(|i| mends.contains(i))).count();
-            let share = if pieces > 0 { tools.wear.mend.max(1.0 / pieces as f32) } else { tools.wear.mend };
+            if pieces == 0 {
+                return Err(RegistryError(format!(
+                    "`{}`: mended with what its recipe has no piece of; a mend puts back what it is made of, so mend it with one of its own materials",
+                    def.name
+                )));
+            }
+            let share = tools.wear.mend.max(1.0 / pieces as f32);
             shares[item.0 as usize] = share;
             skills[item.0 as usize] = recipe.skill.map(|skill| (skill, recipe.level));
+            firm[item.0 as usize] = recipe.firm;
             // What a break gives back counts off what a new one costs.
             let back = tools.head(item).map_or(0.0, |head| crate::value::worth_in(content, head, &mut known) as f32);
             let mend = mends.iter().map(|&m| crate::value::worth_in(content, m, &mut known) as f32).reduce(f32::min).unwrap_or(0.0);
@@ -470,12 +488,12 @@ impl ToolRegistry {
                 )));
             }
         }
-        Ok((shares, skills))
+        Ok((shares, skills, firm))
     }
 
     /// Sets what [`ToolRegistry::link`] found.
-    pub fn set_mend_terms(&mut self, (shares, skills): (Vec<f32>, Vec<Option<(SkillId, u8)>>)) {
-        (self.mend_share, self.mend_skill) = (shares, skills);
+    pub fn set_mend_terms(&mut self, (shares, skills, firm): MendTerms) {
+        (self.mend_share, self.mend_skill, self.mend_firm) = (shares, skills, firm);
     }
 
     /// What `item` is as a tool (nothing held is a bare hand).
@@ -619,7 +637,21 @@ mod tests {
         assert!(load(&["tool", NEVER_WEARS]).is_ok());
     }
 
-    /// The game's tools wear, break to their heads and mend by what made them, at a
+    /// A mend puts back what a tool is made of: one whose recipe has no piece of what mends
+    /// it fails at load, and the game's own all pass.
+    #[test]
+    fn a_mend_must_be_of_what_the_recipe_uses() {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        let mut content = crate::content::Content::load(&assets).unwrap();
+        assert!(ToolRegistry::link(&content).is_ok());
+        let (pick, cobblestone) = (content.blocks.expect("base:iron_pickaxe"), content.blocks.expect("base:cobblestone"));
+        let tools = std::sync::Arc::get_mut(&mut content.tools).expect("only the loaded content holds its tools");
+        tools.mends[pick.0 as usize] = vec![cobblestone];
+        let error = ToolRegistry::link(&content).unwrap_err().to_string();
+        assert!(error.contains("iron_pickaxe") && error.contains("no piece of"), "{error}");
+    }
+
+    /// The game's tools wear, break to nothing and mend by what made them, at a
     /// chopping block and nowhere else, by half their uses, never past new; a grid with
     /// anything else in it, or a tool not worn, mends nothing.
     #[test]
@@ -656,6 +688,9 @@ mod tests {
         assert_eq!((tools.mend_share(pick), tools.mend_share(knife)), (0.5, 1.0));
         let engineering = content.skills.id("core:engineering").unwrap();
         assert_eq!(tools.mend_skill(id("base:iron_pickaxe")), Some((engineering, 15)));
+        // Met as making one is: boosts count, as a schematic would.
+        let lacks = |own: u8, boosted: u8| crate::level::lacks_for_mend(tools, id("base:iron_pickaxe"), |_| (own, boosted), &crate::inventory::Inventory::default(), &content.blocks);
+        assert_eq!((lacks(14, 14), lacks(14, 15), lacks(15, 15)), (Some((engineering, 15)), None, None));
         grid[0] = Some(crate::inventory::ItemStack { wear: tools.uses(knife) - 1, ..crate::inventory::ItemStack::new(knife, 1) });
         grid[4] = Some(crate::inventory::ItemStack::new(id("base:oak_planks"), 1));
         assert_eq!(tools.mended(&grid, by_block).map(|m| m.wear), Some(0));

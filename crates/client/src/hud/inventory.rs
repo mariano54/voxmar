@@ -438,7 +438,8 @@ fn craft(
     let tools = launch.content.tools.clone();
     let mending = tools.mended(&player.inventory.craft, near);
     // At the level its recipe asks, as the server checks it.
-    let mend_short = mending.and_then(|m| tools.mend_skill(m.item)).filter(|&(skill, level)| skills.level(player.skills.xp(skill)) < level);
+    let level = |skill| (skills.level(player.skills.xp(skill)), voxmar_engine::level::check_level(&skills, effects, &player.skills, &player.vitals.effects, skill));
+    let mend_short = mending.and_then(|m| voxmar_engine::level::lacks_for_mend(&tools, m.item, level, &player.inventory, blocks));
     let mended = mending.filter(|_| mend_short.is_none());
     let found = recipes.find_near(&player.inventory.grid(), near).filter(|_| mending.is_none());
     let lacking = mend_short.or_else(|| found.and_then(|r| short(r).map(|skill| (skill, r.level))));

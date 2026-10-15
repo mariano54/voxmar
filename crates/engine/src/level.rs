@@ -42,11 +42,23 @@ pub fn schematic_discount(inventory: &Inventory, blocks: &BlockRegistry, output:
 /// Whether a player whose own level (with boosts) in a recipe's skill is `level` may make
 /// it, with what their schematics take off.
 pub fn meets_recipe(recipe: &crate::craft::Recipe, own: u8, boosted: u8, inventory: &Inventory, blocks: &BlockRegistry) -> bool {
-    if recipe.firm {
-        return own >= recipe.level;
+    meets(recipe.level, recipe.firm, recipe.output, own, boosted, inventory, blocks)
+}
+
+/// The skill and level mending `item` asks that a player lacks, if any: its recipe's, met
+/// as making one is (`level` gives their own level in a skill and that with boosts).
+pub fn lacks_for_mend(tools: &crate::tool::ToolRegistry, item: crate::block::BlockId, level: impl Fn(SkillId) -> (u8, u8), inventory: &Inventory, blocks: &BlockRegistry) -> Option<(SkillId, u8)> {
+    let (skill, asks) = tools.mend_skill(item)?;
+    let (own, boosted) = level(skill);
+    (!meets(asks, tools.mend_firm(item), item, own, boosted, inventory, blocks)).then_some((skill, asks))
+}
+
+fn meets(level: u8, firm: bool, output: crate::block::BlockId, own: u8, boosted: u8, inventory: &Inventory, blocks: &BlockRegistry) -> bool {
+    if firm {
+        return own >= level;
     }
-    let discount = schematic_discount(inventory, blocks, &blocks.def(recipe.output).name);
-    effective(boosted, 0, discount) >= recipe.level
+    let discount = schematic_discount(inventory, blocks, &blocks.def(output).name);
+    effective(boosted, 0, discount) >= level
 }
 
 #[cfg(test)]
