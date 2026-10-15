@@ -2952,7 +2952,7 @@ mod tests {
             }
             // The player has a home a little way off; the prisoner walks with them and stays.
             let player = server.players.get_mut(&1).unwrap();
-            (player.home, player.position) = (Some(home), home);
+            (player.bed, player.position) = (Some(home), home);
             run(server, 20 * 120);
             return captive;
         }
@@ -3301,7 +3301,7 @@ mod tests {
         assert!(walked < 6.0, "it kept up: {walked:.1} blocks behind");
         // At journey's end (here, the player's home) the family pays and the child stays.
         let player = server.players.get_mut(&1).unwrap();
-        player.home = Some(player.position);
+        player.bed = Some(player.position);
         let party = server.wandering.by_creature[&child].0;
         if let Plan::Follow { arrive, .. } = &mut server.wandering.active.get_mut(&party).unwrap().plan {
             *arrive = Arrival::Home;
@@ -4092,7 +4092,7 @@ mod tests {
     #[test]
     fn a_cowherd_sells_the_calf_only_to_one_who_could_keep_it() {
         let mut server = fixture();
-        server.players.get_mut(&1).unwrap().home = Some(Vec3::new(128.5, 200.0, 128.5));
+        server.players.get_mut(&1).unwrap().bed = Some(Vec3::new(128.5, 200.0, 128.5));
         let id = start(&mut server, "cowherd", (110, 128));
         let herder = members_of(&server, id, 0)[0];
         let calf = members_of(&server, id, 2)[0];
@@ -4119,7 +4119,7 @@ mod tests {
     #[test]
     fn a_pail_held_out_is_filled_once() {
         let mut server = fixture();
-        server.players.get_mut(&1).unwrap().home = Some(Vec3::new(128.5, 200.0, 128.5));
+        server.players.get_mut(&1).unwrap().bed = Some(Vec3::new(128.5, 200.0, 128.5));
         let id = start(&mut server, "cowherd", (110, 128));
         let herder = members_of(&server, id, 0)[0];
         give_held(&mut server, "base:pail", 1);
@@ -4186,7 +4186,7 @@ mod tests {
     fn water_carriers_come_only_where_water_and_a_field_lie_together() {
         let mut server = fixture();
         server.day = TICKS_PER_DAY as f64 * 3.4;
-        server.players.get_mut(&1).unwrap().home = Some(Vec3::new(128.5, 200.0, 128.5));
+        server.players.get_mut(&1).unwrap().bed = Some(Vec3::new(128.5, 200.0, 128.5));
         let carriers = event(&server, "water_carriers");
         let spot = IVec3::new(150, 200, 128);
         place(&mut server, "base:water", IVec3::new(160, 199, 128));
@@ -4595,7 +4595,7 @@ mod tests {
         // Home: they stay as one of the player's people, and the seed is the player's.
         let home = Vec3::new(near.x + 30.0, 200.0, near.z);
         let player = server.players.get_mut(&1).unwrap();
-        (player.position, player.home) = (home, Some(home));
+        (player.position, player.bed) = (home, Some(home));
         for _ in 0..60 {
             run(&mut server, 20);
             if !server.wandering.by_creature.contains_key(&refugee) {
@@ -5107,7 +5107,7 @@ mod tests {
         let spot = IVec3::new(128, 200, 128);
         let comes = |server: &Server| (0..800u64).any(|seed| server.pick_event(1, spot, mix(seed, 3)) == Some(neighbours));
         assert!(!comes(&server), "no home, no neighbours");
-        server.players.get_mut(&1).unwrap().home = Some(Vec3::new(140.5, 200.0, 128.5));
+        server.players.get_mut(&1).unwrap().bed = Some(Vec3::new(140.5, 200.0, 128.5));
         assert!(comes(&server), "at home");
         server.players.get_mut(&1).unwrap().position = Vec3::new(140.5 + 300.0, 200.0, 128.5);
         assert!(!comes(&server), "away from it");
@@ -5169,7 +5169,7 @@ mod tests {
         let home = spot.as_vec3() + Vec3::new(10.0, 0.0, 0.0);
         server.players.get_mut(&1).unwrap().position = home;
         assert!(!comes(&server), "no home, no harvest home");
-        server.players.get_mut(&1).unwrap().home = Some(home);
+        server.players.get_mut(&1).unwrap().bed = Some(home);
         assert!(comes(&server), "at home");
         server.players.get_mut(&1).unwrap().position = home + Vec3::new(200.0, 0.0, 0.0);
         assert!(!comes(&server), "away from it");
@@ -5520,7 +5520,7 @@ mod tests {
         let home = spot.as_vec3() + Vec3::new(10.0, 0.0, 0.0);
         server.players.get_mut(&1).unwrap().position = home;
         assert!(!comes(&server), "no home, no wassail");
-        server.players.get_mut(&1).unwrap().home = Some(home);
+        server.players.get_mut(&1).unwrap().bed = Some(home);
         assert!(comes(&server), "at home, at night");
         broad_day(&mut server);
         assert!(!comes(&server), "not by day");
@@ -5665,7 +5665,7 @@ mod tests {
         let home = spot.as_vec3() + Vec3::new(10.0, 0.0, 0.0);
         server.players.get_mut(&1).unwrap().position = home;
         assert!(!comes(&server), "no home, nobody's sleepwalker");
-        server.players.get_mut(&1).unwrap().home = Some(home);
+        server.players.get_mut(&1).unwrap().bed = Some(home);
         assert!(comes(&server), "near home at night");
         broad_day(&mut server);
         assert!(!comes(&server), "awake by day");
@@ -5782,7 +5782,7 @@ mod tests {
         skill_to(&mut server, "core:farming", 3);
         server.meet(1, wife);
         assert_eq!(count_of(&server, "base:wheat_seeds"), 6, "nor for one without a home");
-        server.players.get_mut(&1).unwrap().home = Some(Vec3::new(128.5, 200.0, 128.5));
+        server.players.get_mut(&1).unwrap().bed = Some(Vec3::new(128.5, 200.0, 128.5));
         assert!(server.meet(1, wife));
         assert_eq!(count_of(&server, "base:wheat_seeds"), 0);
         assert_eq!(hens.iter().filter(|h| server.creatures.live[h].owner.as_deref() == Some("Tëster")).count(), 1, "one hen is the player's");
@@ -5960,14 +5960,14 @@ mod tests {
         broad_day(&mut server);
         server.day += 6.0 * TICKS_PER_DAY as f64;
         let home = Vec3::new(128.5, 200.0, 128.5);
-        server.players.get_mut(&1).unwrap().home = Some(home);
+        server.players.get_mut(&1).unwrap().bed = Some(home);
         let comes = |server: &Server, name: &str| {
             let kind = event(server, name);
             let spot = land_for(server, kind, home, |_| true);
             (0..800u64).any(|seed| server.pick_event_in(1, spot, mix(seed, 3), false) == Some(kind))
         };
         let spot = land_for(&server, event(&server, "refugee_kin"), home, |_| true);
-        server.players.get_mut(&1).unwrap().home = Some(spot.as_vec3());
+        server.players.get_mut(&1).unwrap().bed = Some(spot.as_vec3());
         server.players.get_mut(&1).unwrap().position = spot.as_vec3();
         assert!(!comes(&server, "refugee_kin") && !comes(&server, "christening"), "nobody met, nobody comes back");
         server.tally(1, "met", "base:refugees", 1);
@@ -5994,7 +5994,7 @@ mod tests {
         skill_to(&mut server, "core:attack", 10);
         skill_to(&mut server, "core:defence", 10);
         skill_to(&mut server, "core:hitpoints", 10);
-        server.players.get_mut(&1).unwrap().home = Some(Vec3::new(128.0, 200.0, 128.0));
+        server.players.get_mut(&1).unwrap().bed = Some(Vec3::new(128.0, 200.0, 128.0));
         let spot = land_for(&server, event(&server, "poachers_gang"), Vec3::new(128.0, 200.0, 128.0), |_| true);
         assert!(!comes_at(&server, "poachers_gang", spot), "a stranger to him");
         server.tally(1, "met", "base:poacher", 1);
@@ -6013,7 +6013,7 @@ mod tests {
         broad_day(&mut server);
         server.day += 5.0 * TICKS_PER_DAY as f64;
         let spot = land_for(&server, event(&server, "grateful_parents"), Vec3::new(128.0, 200.0, 128.0), |_| true);
-        server.players.get_mut(&1).unwrap().home = Some(spot.as_vec3());
+        server.players.get_mut(&1).unwrap().bed = Some(spot.as_vec3());
         server.players.get_mut(&1).unwrap().position = spot.as_vec3();
         assert!(!comes_at(&server, "grateful_parents", spot) && !comes_at(&server, "journeyman", spot), "nobody helped, nobody comes back");
         server.tally(1, "met", "base:lost_child", 1);
