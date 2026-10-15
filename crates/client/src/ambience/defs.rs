@@ -87,12 +87,18 @@ pub enum Fixed {
     Cover,
     /// 1 with the head under water.
     Underwater,
+    /// How far the middle of the nearest settlement (its square or green) is, across the
+    /// ground, in blocks; [`NO_SETTLEMENT`] with none near.
+    Settlement,
     /// How much a roof overhead muffles the open rain, 0 (none overhead) to 1 (`roofs`).
     Sheltered,
 }
 
+/// The `settlement` axis with no settlement near.
+pub const NO_SETTLEMENT: f32 = 10_000.0;
+
 impl Fixed {
-    pub const ALL: [Fixed; 28] = [
+    pub const ALL: [Fixed; 29] = [
         Fixed::Air,
         Fixed::Sky,
         Fixed::Canopy,
@@ -120,6 +126,7 @@ impl Fixed {
         Fixed::Dust,
         Fixed::Cover,
         Fixed::Underwater,
+        Fixed::Settlement,
         Fixed::Sheltered,
     ];
 
@@ -152,6 +159,7 @@ impl Fixed {
             Fixed::Dust => "dust",
             Fixed::Cover => "cover",
             Fixed::Underwater => "underwater",
+            Fixed::Settlement => "settlement",
             Fixed::Sheltered => "sheltered",
         }
     }
@@ -173,7 +181,9 @@ pub struct Environment {
 impl Environment {
     /// With `axes` axes after the fixed ones: the groups', then the roof patters'.
     pub fn new(axes: usize) -> Self {
-        Self { values: vec![0.0; Fixed::ALL.len() + axes], home: 1.0, ..Self::default() }
+        let mut values = vec![0.0; Fixed::ALL.len() + axes];
+        values[Fixed::Settlement as usize] = NO_SETTLEMENT;
+        Self { values, home: 1.0, ..Self::default() }
     }
 
     pub fn get(&self, axis: Fixed) -> f32 {
@@ -242,8 +252,13 @@ pub struct Conditions {
 }
 
 impl Conditions {
-    /// Whether the conditions test axis `axis`.
-    pub fn uses(&self, axis: usize) -> bool {
+    /// Whether they hold a range on `axis`.
+    pub fn uses(&self, axis: Fixed) -> bool {
+        self.uses_axis(axis as usize)
+    }
+
+    /// Whether they hold a range on the axis numbered `axis` (a group's or a patter's too).
+    pub fn uses_axis(&self, axis: usize) -> bool {
         self.ranges.iter().any(|&(a, _)| a == axis)
     }
 
@@ -758,7 +773,7 @@ mod tests {
         let ambience = Ambience::load(&files(r#"(roofs: (patter: {"wood": "dull"}))"#)).unwrap();
         assert_eq!(ambience.roofs.patters, ["dull", "tap"]);
         assert_eq!((ambience.roofs.height, ambience.roofs.muffle), (10, 0.4));
-        assert!(ambience.beds[0].when.uses(ambience.patter_axis(0)));
+        assert!(ambience.beds[0].when.uses_axis(ambience.patter_axis(0)));
         assert!((ambience.roofs.sheltered(|t| t == "shelter:fine") - 0.7).abs() < 1e-6 && (ambience.roofs.sheltered(|_| false) - 0.4).abs() < 1e-6);
         let family = |id| family(blocks.info(id).sound);
         let listed: Vec<String> = ambience.roofs.patter.iter().map(|(m, _)| m.clone()).collect();

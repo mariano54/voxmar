@@ -505,3 +505,28 @@ fn a_home_muffles_the_weather_outside() {
         assert!(inside[bed] < 0.5 * open[bed], "{name} is {} inside, {} in the open", inside[bed], open[bed]);
     }
 }
+
+/// The `settlement` axis is how far it is to the nearest settlement's middle, across the
+/// ground, and [`NO_SETTLEMENT`](super::defs::NO_SETTLEMENT) where none is in hearing.
+#[test]
+fn the_settlement_axis_is_the_way_to_the_nearest_middle() {
+    use bevy::math::Vec3Swizzles;
+    use voxmar_worldgen::{Generator, Overworld, WorldContent};
+
+    let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+    let content = voxmar_server::load_content(&assets).unwrap();
+    let generator = Overworld::with_content(7, content.blocks.clone(), &WorldContent::load(&content).unwrap());
+    let spawn = generator.spawn_point();
+    let found = generator.settlements_near(spawn.xz(), 1500);
+    let near = found.iter().min_by_key(|s| (s.centre - spawn).xz().length_squared()).expect("a settlement near spawn");
+    let place = super::place(&generator, near.centre + IVec3::new(3, 2, 4));
+    let expected = bevy::math::Vec2::new(3.5, 4.5).length();
+    assert!((place.settlement - expected).abs() < 1e-3, "{} blocks off, not {expected}", place.settlement);
+    let alone = [IVec2::new(1, 0), IVec2::new(0, 1), IVec2::new(-1, 0), IVec2::new(0, -1)]
+        .into_iter()
+        .map(|way| near.centre.xz() + way * 700)
+        .find(|&at| generator.settlements_near(at, super::SETTLEMENTS_HEARD).is_empty())
+        .expect("somewhere 700 blocks off with no settlement in hearing");
+    let place = super::place(&generator, IVec3::new(alone.x, near.centre.y, alone.y));
+    assert_eq!(place.settlement, super::defs::NO_SETTLEMENT);
+}
