@@ -375,7 +375,7 @@
         ),
         (
             name: "hammer_and_anvil", age: "farm", branch: "main", title: "Hammer and Anvil",
-            why: "Ore gives up its metal only to fire, and gives more of it crushed first. At the table make a stone hammer (two cobblestones over a stick) and a stone anvil (three stone over one cobblestone over three cobblestones). Set the anvil down, then hold copper ore and right-click the anvil with the hammer in your pack. Crush six; breaking copper ore takes Mining 5, which the Charcoal quest's reward brings. Two crushed copper smelt to three ingots once your Crucible Kiln is lit.",
+            why: "Ore gives up its metal only to fire, and gives more of it crushed first. At the table make a stone hammer (two cobblestones over a stick) and a stone anvil (three stone over one cobblestone over three cobblestones; stone is cobblestone fired in the pit kiln). Set the anvil down, then hold copper ore and right-click the anvil with the hammer in your pack. Crush six; breaking copper ore takes Mining 5, which the Charcoal quest's reward brings. Two crushed copper smelt to three ingots once your Crucible Kiln is lit.",
             tasks: [[Craft("stone_anvil", 1), Craft("stone_hammer", 1), Cook("crushed_copper", 6)]],
             after: ["charcoal"],
             rewards: [Xp("engineering", 750.0)],
