@@ -576,6 +576,9 @@
             roofs: [(Gable, 2), (Hip, 2), (Flat, 1), (Conical, 0.6)],
             window: None, window_chance: 0.4,
             roof_pieces: [(slope: "thatch_roof", ridge: "thatch_ridge", weight: 1)], pieced: 0.35,
+            // Upper rooms carried out over the lane on timber brought in, as in old Anatolian
+            // towns (a cumba).
+            jetty: Some((beam: "dark_oak_jetty_beam", chance: 0.4)),
             paving: [Name("packed_earth", 3), Name("coarse_dirt", 2), Name("red_sand", 1)],
             hedge: [Name("acacia_leaves", 1)],
             crops: [Name("wheat", 2), Name("chickpea", 1), Name("potato", 1)],

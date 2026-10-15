@@ -432,8 +432,8 @@ steps! {
     /// what its plan says: a well on its square, doors open onto a floor, and houses dry;
     /// the ambience hears it at work by day, not by night; then `/locate settlement town`
     /// finds a town, and the wall of the walled town nearest it stands where planned, its
-    /// shaped roofs as planned with none of its flames in reach of its thatch; and the
-    /// found town's jettied houses stand out on their beams.
+    /// shaped roofs as planned with none of its flames in reach of its thatch, and its
+    /// jettied houses stand out on their beams.
     Settlements,
     /// Over a log in the inventory, the uses key shows what it goes into (planks, a
     /// campfire); clicking planks shows their recipe, and Back returns.
@@ -725,10 +725,8 @@ struct Gate {
     /// What `/locate settlement` answered, English, for the culture it names.
     settlement_reply: String,
     /// The walled town nearest the one `/locate settlement town` found, where the observer
-    /// judges walls and roofs: the middle of its square.
+    /// judges walls, roofs and jetties: the middle of its square.
     town: IVec3,
-    /// The town `/locate settlement town` found, where the observer judges jetties.
-    located: IVec3,
     /// Where the struck creature was last seen, for walking over its loot.
     quarry: Vec3,
     /// The snail struck, so a fallen mark on another creature cannot end its watch.
@@ -976,7 +974,6 @@ impl Gate {
             settlement: IVec3::ZERO,
             settlement_reply: String::new(),
             town: IVec3::ZERO,
-            located: IVec3::ZERO,
             ore: IVec3::ZERO,
             quarry: Vec3::ZERO,
             quarry_id: None,
@@ -1580,7 +1577,7 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         Step::Tame => STEP_LIMIT + TROUGH_WAIT,
         // A fresh area around the settlement to generate: up to `SETTLEMENT_LOAD` of the
         // server's seconds.
-        Step::Settlements => 3.0 * SETTLEMENT_LOAD + SETTLEMENT_PEOPLE + STEP_LIMIT,
+        Step::Settlements => 2.0 * SETTLEMENT_LOAD + SETTLEMENT_PEOPLE + STEP_LIMIT,
         // A storm and snow, each waited on, then drying off by a campfire.
         Step::Weather => STEP_LIMIT + 10.0,
         _ => STEP_LIMIT,
@@ -14683,7 +14680,7 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                     gate.check("town walls", Err(format!("no answer to /locate settlement town {TOWN_RADIUS}")));
                     gate.check("settlement roofs", Err("no town to judge the roofs of".into()));
                     gate.check("settlement jetties", Err("no town to judge the jetties of".into()));
-                    gate.phase = 6;
+                    gate.phase = 5;
                     gate.advance(now);
                 }
                 return;
@@ -14696,11 +14693,10 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 gate.check("town walls", Err(format!("/locate settlement town: {reply}")));
                 gate.check("settlement roofs", Err("no town to judge the roofs of".into()));
                 gate.check("settlement jetties", Err("no town to judge the jetties of".into()));
-                gate.phase = 6;
+                gate.phase = 5;
                 gate.advance(now);
                 return;
             };
-            gate.located = at;
             // Not every town is walled (a size's `walls` chance): the walls are judged at
             // the walled town nearest the one found.
             let walled = world
@@ -14711,7 +14707,7 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             let Some(walled) = walled else {
                 gate.check("town walls", Err(format!("no walled town within {TOWN_RADIUS} of the town /locate found at {at}")));
                 gate.check("settlement roofs", Err("no town to judge the roofs of".into()));
-                to_located(gate);
+                gate.check("settlement jetties", Err("no town to judge the jetties of".into()));
                 gate.phase = 5;
                 gate.advance(now);
                 return;
@@ -14734,7 +14730,7 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                     let n = columns.len();
                     gate.check("town walls", Err(format!("the world around the town at {at} did not load: the server sent {held} of its {n} columns in {SETTLEMENT_LOAD} server seconds")));
                     gate.check("settlement roofs", Err("no town to judge the roofs of".into()));
-                    to_located(gate);
+                    gate.check("settlement jetties", Err("no town to judge the jetties of".into()));
                     gate.phase = 5;
                     gate.advance(now);
                 }
@@ -14744,23 +14740,6 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             gate.check("town walls", result);
             let roofs = judge_roofs(world, gate, at);
             gate.check("settlement roofs", roofs);
-            to_located(gate);
-            gate.advance(now);
-        }
-        // Then the town /locate found, for its jettied houses.
-        6 => {
-            let at = gate.located;
-            let (low, high) = (ColumnPos::of_block(at - IVec3::splat(TOWN_REACH)).0, ColumnPos::of_block(at + IVec3::splat(TOWN_REACH)).0);
-            let columns: Vec<ColumnPos> = (low.x..=high.x).flat_map(|x| (low.y..=high.y).map(move |z| ColumnPos::new(x, z))).collect();
-            let held = gate.observer.as_ref().map_or(0, |o| columns.iter().filter(|&&c| o.world.contains(c)).count());
-            if held < columns.len() {
-                if gate.server_in_phase() > SETTLEMENT_LOAD {
-                    let n = columns.len();
-                    gate.check("settlement jetties", Err(format!("the world around the town at {at} did not load: the server sent {held} of its {n} columns in {SETTLEMENT_LOAD} server seconds")));
-                    gate.advance(now);
-                }
-                return;
-            }
             let jetties = judge_jetties(world, gate, at);
             gate.check("settlement jetties", jetties);
             gate.advance(now);
@@ -14971,14 +14950,6 @@ fn judge_town(world: &World, gate: &Gate, at: IVec3) -> Result<String, String> {
         Ok(format!("{name}, a town at {at}: {standing} columns of its {block_name} wall within {TOWN_REACH} stand as planned ({} in all)", plan.walls.len()))
     } else {
         Err(format!("{name}, a town at {at}: {standing} of {judged} columns of its {block_name} wall stand: {}", wrong.join("; ")))
-    }
-}
-
-/// Sends the observer over the town `/locate` found.
-fn to_located(gate: &mut Gate) {
-    let at = gate.located;
-    if let Some(observer) = gate.observer.as_mut() {
-        observer.connection.send(ClientMessage::Command { line: format!("tp {} {} {}", at.x, at.y + 60, at.z) });
     }
 }
 

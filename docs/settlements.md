@@ -313,10 +313,12 @@ and unbounded mutation counts before a world can be created.
   runs out over it, and a row of jetty beams (tagged `jetty` and `shelter:`, so the house
   stays a home) holds the overhang up under its front edge. The roof covers the deeper
   top. The chance grows with crowding, so jetties gather in town streets: timber frame
-  most (0.6), birch cottages, maple lodges and stone cottages a little. Loading fails on
+  most (0.6), mudbrick towns (a cumba, on timber brought in), birch cottages, maple
+  lodges and stone cottages a little. Loading fails on
   a beam missing a facing in any of its style's woods, or without its `jetty` and
-  `shelter:` tags. The gate's "settlement jetties" checks each beam near the town it
-  visits stands with the house behind and above it.
+  `shelter:` tags. The gate's "settlement jetties" checks, at the walled town it
+  already visits for walls and roofs, that each beam stands with the house behind and
+  above it.
 - `extras`: chimney, porch, lean-to shed, flower boxes, garden, hedge, lamp, woodpile,
   moss, wing, dormer, balcony, outside stair, shutters, awning, sign board, rain barrel,
   weathervane, dovecote and herbs drying under the eaves, each by its own chance; a
