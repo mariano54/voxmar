@@ -2622,12 +2622,18 @@ mod tests {
         }
     }
 
+    /// The worlds `rare_herbs_grow_at_their_rates` counts, in order: the first four hold
+    /// every herb biome near each of `PLACES` and big enough that they usually cover all of
+    /// them (silverwood glades and moonlit meadows the scarcest), so few worlds are made;
+    /// the rest are the next best, should a count fall short.
+    const HERB_SEEDS: [u64; 16] = [26, 14, 37, 6, 22, 33, 31, 13, 25, 4, 28, 19, 21, 3, 12, 32];
+
     /// Design's rates for the rare herbs (draft 89): in every biome naming it, each herb
     /// grows within 0.5 to 1.6 times its own `aim` (plants.ron), in patches of 3 to 6
     /// (2.5 to 6.5 measured), and the classes keep their order: Legendary herbs rarer than
     /// VeryRare ones, VeryRare than Rare, on the same samples. Each biome is counted in more
     /// places (three a seed) until every herb in it has 25 patches (a count's noise under
-    /// about ±20%) over at least twelve places, up to 16 seeds; a biome too small to get
+    /// about ±20%) over at least twelve places, up to 16 seeds (`HERB_SEEDS`); a biome too small to get
     /// there is printed and left to the census.
     /// Generated for real, so slow: the full gate runs it.
     #[test]
@@ -2650,12 +2656,15 @@ mod tests {
         assert!((12..=48).contains(&min_places), "HERB_MIN_PLACES must be in 12..=48");
         println!("rare-herb coverage: at least {min_places} places and 25 clusters per pair, up to 16 seeds");
         let done = |tally: &[(usize, u64, Vec<(usize, usize)>)], b: usize| tally[b].0 >= min_places && pairs.iter().filter(|p| p.1 == biomes[b]).all(|p| tally[b].2[herb_index(&p.0)].1 >= 25);
+        // HERB_SEEDS=a,b,... counts other worlds instead, to check the rates hold beyond these.
+        let order: Vec<u64> = std::env::var("HERB_SEEDS").map(|s| s.split(',').map(|n| n.trim().parse().expect("HERB_SEEDS must be seeds")).collect()).unwrap_or_else(|_| HERB_SEEDS.to_vec());
         let mut seeds = 0;
-        while seeds < 16 && (0..biomes.len()).any(|b| !done(&tally, b)) {
+        while seeds < order.len().min(16) && (0..biomes.len()).any(|b| !done(&tally, b)) {
+            let seed = order[seeds];
             seeds += 1;
-            let world = shared_world(seeds);
+            let world = shared_world(seed);
             let open: Vec<usize> = (0..biomes.len()).filter(|&b| !done(&tally, b)).collect();
-            println!("seed {seeds}: counting {}", open.iter().map(|&b| biomes[b].as_str()).collect::<Vec<_>>().join(", "));
+            println!("seed {seed}: counting {}", open.iter().map(|&b| biomes[b].as_str()).collect::<Vec<_>>().join(", "));
             // Every place of every open biome side by side, counted in order.
             use rayon::prelude::*;
             let wanted: Vec<(usize, IVec2)> = open.iter().flat_map(|&b| PLACES.map(|from| (b, from))).collect();
