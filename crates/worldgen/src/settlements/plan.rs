@@ -762,6 +762,7 @@ struct Kit {
     window: Option<BlockId>,
     roof_pieces: Vec<(super::roofs::RoofPieces, f32)>,
     pieced: f32,
+    jetty: Option<([BlockId; 4], f32)>,
 }
 
 fn kit(ctx: &Ctx, style: &StyleDef, levers: &Levers, culture: &Culture, crop_level: u32, rng: &mut Rng) -> Kit {
@@ -831,6 +832,15 @@ fn kit(ctx: &Ctx, style: &StyleDef, levers: &Levers, culture: &Culture, crop_lev
             .filter_map(|p| Some((super::roofs::RoofPieces::resolve(p, &wood, &trim, |n| ctx.resolved.get(n))?, p.weight)))
             .collect(),
         pieced: style.pieced,
+        // More jettied where the place is crowded, its street narrow.
+        jetty: style.jetty.as_ref().and_then(|j| {
+            let name = fill(&j.beam, &wood, &trim);
+            let mut ids = [BlockId::AIR; 4];
+            for (i, suffix) in super::roofs::SUFFIXES.iter().enumerate() {
+                ids[i] = ctx.resolved.get(&format!("{name}{suffix}"))?;
+            }
+            Some((ids, (j.chance * (0.5 + levers.get(Lever::Crowding))).min(1.0)))
+        }),
         log: style.log.clone(),
         wood,
     }
@@ -860,6 +870,7 @@ impl Kit {
             fruit: self.fruit.clone(),
             roof_pieces: self.roof_pieces.clone(),
             pieced: self.pieced,
+            jetty: self.jetty,
         }
     }
 }
@@ -3481,7 +3492,7 @@ mod level_tests {
         let kit = Kit { wood: String::new(), log: String::new(), foundation: Palette(Vec::new()),
             floor: Vec::new(), walls: Vec::new(), frame: Vec::new(), roof: Vec::new(), trims: Vec::new(),
             paving: Palette(Vec::new()), hedge: Palette(Vec::new()), weathered: Palette(Vec::new()),
-            chimney: Vec::new(), crops: Vec::new(), fruit: Palette(Vec::new()), roofs: Vec::new(), window: None, roof_pieces: Vec::new(), pieced: 0.0 };
+            chimney: Vec::new(), crops: Vec::new(), fruit: Palette(Vec::new()), roofs: Vec::new(), window: None, roof_pieces: Vec::new(), pieced: 0.0, jetty: None };
         let rect = Rect::new(IVec2::ZERO, IVec2::ONE);
         let new = || Town { ctx: &ctx, kit: &kit, levers: &levers, house_weights: vec![1.0; def.houses.len()],
             extra_chances: vec![0.5; def.extras.len()], style, size: "village", built: FxHashMap::default(),
@@ -3542,7 +3553,7 @@ mod level_tests {
         let kit = Kit { wood: String::new(), log: String::new(), foundation: Palette(Vec::new()),
             floor: Vec::new(), walls: Vec::new(), frame: Vec::new(), roof: Vec::new(), trims: Vec::new(),
             paving: Palette(Vec::new()), hedge: Palette(Vec::new()), weathered: Palette(Vec::new()),
-            chimney: Vec::new(), crops: Vec::new(), fruit: Palette(Vec::new()), roofs: Vec::new(), window: None, roof_pieces: Vec::new(), pieced: 0.0 };
+            chimney: Vec::new(), crops: Vec::new(), fruit: Palette(Vec::new()), roofs: Vec::new(), window: None, roof_pieces: Vec::new(), pieced: 0.0, jetty: None };
         let rect = Rect::new(IVec2::ZERO, IVec2::ONE);
         let mut town = Town { ctx: &ctx, kit: &kit, levers: &levers, house_weights: vec![1.0; def.houses.len()],
             extra_chances: vec![0.0; def.extras.len()], style, size: "village", built: FxHashMap::default(), choices: Vec::new(), spare_extras: Vec::new(), bounds: rect, square: rect, gap: 1 };

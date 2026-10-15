@@ -648,6 +648,12 @@ impl Overworld {
         self.settlements.roofs_of(self, centre).unwrap_or_default()
     }
 
+    /// The blocks `keep` picks that the settlement whose square's middle is at `centre`
+    /// sets, each where it goes.
+    pub fn settlement_planned(&self, centre: IVec2, keep: &dyn Fn(voxmar_engine::block::BlockId) -> bool) -> Vec<(IVec3, voxmar_engine::block::BlockId)> {
+        self.settlements.planned(self, centre, keep).unwrap_or_default()
+    }
+
     /// Every block that catches fire (thatch, wattle) a flame among `blocks` reaches, as
     /// settlements keep their own flames from it (`rules.fire`): each flame and what it
     /// reaches.

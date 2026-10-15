@@ -742,6 +742,17 @@ fn one_f() -> f32 {
     1.0
 }
 
+/// Jettied houses: the storeys over the ground stand a block out over the street, on a
+/// row of `beam`s (a block that faces four ways, its overhang the way it faces; `{wood}`
+/// the house's wood), on `chance` of the houses that can be (two storeys or more over
+/// four walls), more where the place is crowded.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct JettyDef {
+    pub beam: String,
+    pub chance: f32,
+}
+
 /// What a village's own flames must not reach: none of its blocks that catch (`catch`, by
 /// tag) stands within `reach` steps of one of its flames (`flames`, by tag), stepping only
 /// through open cells, as fire catches in a home; a roof of them there is laid in `instead`.
@@ -1103,6 +1114,8 @@ struct StyleFile {
     roof_pieces: Vec<RoofPiecesDef>,
     #[serde(default)]
     pieced: f32,
+    #[serde(default)]
+    jetty: Option<JettyDef>,
 }
 
 /// A package's `rules`: each section it names replaces the earlier one whole, each
@@ -1315,6 +1328,7 @@ pub struct StyleDef {
     /// roof is (only a steep gable over four walls can be).
     pub roof_pieces: Vec<RoofPiecesDef>,
     pub pieced: f32,
+    pub jetty: Option<JettyDef>,
 }
 
 /// Every package's `settlements.ron` together.
@@ -1590,6 +1604,7 @@ impl SettlementsDef {
                 window_chance: s.window_chance,
                 roof_pieces: s.roof_pieces.into_iter().map(|p| RoofPiecesDef { slope: qualify(package, &p.slope), ridge: qualify(package, &p.ridge), weight: p.weight }).collect(),
                 pieced: s.pieced,
+                jetty: s.jetty.map(|j| JettyDef { beam: qualify(package, &j.beam), chance: j.chance }),
             });
         }
         self.people.extend(at, package, file.people)?;
@@ -1818,6 +1833,9 @@ impl SettlementsDef {
             }
         }
         for style in &self.styles {
+            if style.jetty.as_ref().is_some_and(|j| !(0.0..=1.0).contains(&j.chance)) {
+                return fail(format!("style `{}`: a jetty's `chance` is a share (0 to 1)", style.name));
+            }
             if !(0.0..=1.0).contains(&style.pieced) || style.roof_pieces.iter().any(|p| !(p.weight >= 0.0)) {
                 return fail(format!("style `{}`: `pieced` is a share (0 to 1) and each roof piece's weight at least 0", style.name));
             }
@@ -1900,6 +1918,25 @@ impl SettlementsDef {
         }
         if let Some(p) = &self.rules.fire.instead {
             pieces("rules.fire's", p, "", "")?;
+        }
+        // A jetty beam faces four ways in every wood of its style, tagged `jetty` and with
+        // a shelter tag of its own (it is part of a home's walls).
+        for style in &self.styles {
+            let Some(jetty) = &style.jetty else { continue };
+            for (wood, _) in &style.woods {
+                for (trim, _) in &style.woods {
+                    let name = fill(&jetty.beam, wood, trim);
+                    for suffix in super::roofs::SUFFIXES {
+                        let Some(id) = registry.id(&format!("{name}{suffix}")) else {
+                            return fail(format!("style `{}`'s jetty beam `{name}{suffix}` is no block (a jetty beam faces four ways)", style.name));
+                        };
+                        let def = registry.def(id);
+                        if !def.has_tag("jetty") || !def.tags.iter().any(|t| t.starts_with("shelter:")) {
+                            return fail(format!("style `{}`'s jetty beam `{name}{suffix}` is not tagged `jetty` with a `shelter:` tag", style.name));
+                        }
+                    }
+                }
+            }
         }
         for style in &self.styles {
             for (crop, _) in &style.crops {
@@ -2071,6 +2108,18 @@ impl Resolved {
                 let log = fill(&style.log, wood, wood);
                 if let Some(id) = registry.id(&log) {
                     map.insert(log, id);
+                }
+            }
+            for name in &style.jetty.iter().map(|j| j.beam.clone()).collect::<Vec<_>>() {
+                for (wood, _) in &style.woods {
+                    for (trim, _) in &style.woods {
+                        for suffix in super::roofs::SUFFIXES {
+                            let name = format!("{}{suffix}", fill(name, wood, trim));
+                            if let Some(id) = registry.id(&name) {
+                                map.insert(name, id);
+                            }
+                        }
+                    }
                 }
             }
             for piece in &style.roof_pieces {

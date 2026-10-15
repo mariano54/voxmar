@@ -89,6 +89,9 @@ pub struct Mats {
     /// that are.
     pub roof_pieces: Vec<(super::roofs::RoofPieces, f32)>,
     pub pieced: f32,
+    /// The beam a jettied house's upper storeys stand out on, in each facing, and the share
+    /// of houses that can be that are.
+    pub jetty: Option<([BlockId; 4], f32)>,
 }
 
 impl Mats {
@@ -106,6 +109,11 @@ impl Mats {
             t -= w;
         }
         self.roof_pieces.last().map(|p| p.0)
+    }
+
+    /// The beams the building `seed` is jettied on, if it is.
+    pub fn jetty(&self, seed: u64) -> Option<[BlockId; 4]> {
+        self.jetty.filter(|j| unit(hash3(seed, 0x7e77, 0, 0)) < j.1).map(|j| j.0)
     }
 
     /// The first stone of the foundation, for hearths, ovens and plinths.
@@ -706,7 +714,16 @@ fn house(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Ca
     }
 
     let gable_windows = if spec.form == Form::AFrame { 3 } else { 1 };
-    let heights = roof(spec, &mut pen, mats, top, &foot, spec.ridge_x, spec.roof, mats.roof, gable_windows, chimney.map(|c| c.1));
+    // A jettied house: its storeys over the ground stand a block out over the street (moved
+    // out once the front is drawn), so its roof covers a block more at the front. Not over
+    // a porch, an awning or a balcony, nor with a dormer in the roof's front.
+    let jetty = (spec.form == Form::Box
+        && spec.storeys >= 2
+        && ![Extra::Porch, Extra::Awning, Extra::Balcony, Extra::Dormer].iter().any(|&e| spec.has(e)))
+    .then(|| mats.jetty(spec.seed))
+    .flatten();
+    let covered = if jetty.is_some() { Foot { z0: -1, d: d + 1, ..foot } } else { foot };
+    let heights = roof(spec, &mut pen, mats, top, &covered, spec.ridge_x, spec.roof, mats.roof, gable_windows, chimney.map(|c| c.1));
 
     // The door, a lintel over it, and a step or stair to it; barns, boathouses and inns
     // have wide doors.
@@ -1112,6 +1129,39 @@ fn house(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Ca
                 pen.set(x, top, -1, herbs);
             }
         }
+    }
+    if let Some(beams) = jetty {
+        jettied(&mut pen, spec, mats, lift, top, beams);
+    }
+}
+
+/// Moves the front of a house's storeys over the ground a block out, with what hangs on
+/// it (shutters, flower boxes), the floor of the first carried on a row of jetty `beams`
+/// whose braces rest on the wall below; the old front of each storey becomes room.
+fn jettied(pen: &mut Pen, spec: &Spec, mats: &Mats, lift: i32, top: i32, beams: [BlockId; 4]) {
+    let w = spec.w;
+    let floor = lift + spec.wall + 1;
+    for y in floor..=top {
+        for z in [-1, 0] {
+            for x in -1..=w {
+                let (from, to) = (pen.frame.at(x, y, z), pen.frame.at(x, y, z - 1));
+                match pen.canvas.absolute.get(&from).copied() {
+                    Some(put) => pen.canvas.put(to, put),
+                    None => {
+                        pen.canvas.absolute.remove(&to);
+                    }
+                }
+                if z == 0 && x > 0 && x < w - 1 {
+                    if y == floor { pen.set(x, y, 0, mats.floor) } else { pen.clear(x, y, 0) }
+                } else if z == 0 && (x < 0 || x >= w) {
+                    pen.canvas.absolute.remove(&from);
+                }
+            }
+        }
+    }
+    let out = super::roofs::facing_of(turned(pen.frame.facing, IVec2::new(0, -1)));
+    for x in 0..w {
+        pen.set(x, floor - 1, -1, beams[out]);
     }
 }
 

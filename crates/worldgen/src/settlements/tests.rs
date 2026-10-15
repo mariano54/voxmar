@@ -571,7 +571,7 @@ fn house_catalogue() {
         log: id("oak_log"),
         chimney: id("cobblestone"),
         crops: Vec::new(),
-        fruit: palette("apple_leaves_2"), roof_pieces: Vec::new(), pieced: 0.0,
+        fruit: palette("apple_leaves_2"), roof_pieces: Vec::new(), pieced: 0.0, jetty: None,
     };
     // Each house with the roof and extras it is shown with.
     use Extra::*;
@@ -691,7 +691,7 @@ fn house_catalogue() {
             log: registry.id(&super::def::fill(&style.log, wood, wood)).unwrap(),
             chimney: block(&style.chimney),
             crops: Vec::new(),
-            fruit: palette("apple_leaves_2"), roof_pieces: Vec::new(), pieced: 0.0,
+            fruit: palette("apple_leaves_2"), roof_pieces: Vec::new(), pieced: 0.0, jetty: None,
         };
         let row: [(&str, Vec<Extra>); 6] = [
             ("cottage", vec![Chimney, Shutters]),
@@ -1120,7 +1120,7 @@ fn chimneys_stand_inside_and_just_clear_the_roof() {
         log: id("oak_log"),
         chimney: stack,
         crops: Vec::new(),
-        fruit: palette("apple_leaves_2"), roof_pieces: Vec::new(), pieced: 0.0,
+        fruit: palette("apple_leaves_2"), roof_pieces: Vec::new(), pieced: 0.0, jetty: None,
     };
     let mut drawn = 0;
     for (n, h) in def.houses.iter().enumerate() {
@@ -1548,7 +1548,7 @@ fn every_storey_can_be_walked_to() {
     let mats = Mats {
         foundation: palette("cobblestone"), floor: id("spruce_planks"), wall: id("polished_calcite"), frame: id("dark_oak_log"),
         roof: id("dark_oak_planks"), trim: id("spruce_planks"), window: Some(id("old_glass")), weathered: palette("mossy_cobblestone"),
-        hedge: palette("oak_leaves"), log: id("oak_log"), chimney: id("cobblestone"), crops: Vec::new(), fruit: palette("apple_leaves_2"), roof_pieces: Vec::new(), pieced: 0.0,
+        hedge: palette("oak_leaves"), log: id("oak_log"), chimney: id("cobblestone"), crops: Vec::new(), fruit: palette("apple_leaves_2"), roof_pieces: Vec::new(), pieced: 0.0, jetty: None,
     };
     let solid = |b: BlockId| registry.def(b).solid;
     let mut walked = 0;
@@ -3378,6 +3378,12 @@ fn roof_pieces_and_fire_are_load_checked() {
     assert!(refused(&|d| d.rules.fire.instead = Some(piece("thatch_roof", "thatch_ridge"))), "the fire's roof catches itself");
     assert!(refused(&|d| { let i = timber(d); d.styles[i].pieced = 1.5 }));
     assert!(refused(&|d| d.rules.fire.reach = 5));
+    use super::def::JettyDef;
+    let jetty = |beam: &str, chance: f32| Some(JettyDef { beam: format!("base:{beam}"), chance });
+    assert!(base.styles.iter().any(|s| s.jetty.is_some()));
+    assert!(refused(&|d| { let i = timber(d); d.styles[i].jetty = jetty("dark_oak_jetty_beam", 1.5) }));
+    assert!(refused(&|d| { let i = timber(d); d.styles[i].jetty = jetty("dark_oak_beam", 0.5) }), "a beam not tagged jetty");
+    assert!(refused(&|d| { let i = timber(d); d.styles[i].jetty = jetty("no_such_jetty_beam", 0.5) }));
 }
 
 /// Trails come into a walled place through its gates: none runs over a column of its wall.
@@ -3405,4 +3411,60 @@ fn trails_never_cross_a_wall() {
     }
     assert!(places >= 6 && trails >= 20, "only {places} walled places and {trails} trails by them to judge");
     assert!(over.is_empty(), "{} trail points on a wall: {:?}", over.len(), &over);
+}
+
+/// Jettied houses in full content: each jetty beam stands out from the wall below it (its
+/// brace against that wall), under the overhanging floor, with that storey's wall a block
+/// further over the street than the one below.
+#[test]
+fn jettied_storeys_stand_out_on_their_beams() {
+    use super::roofs::{SIDES, SUFFIXES};
+    use voxmar_engine::coords::ColumnPos;
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+    let content = voxmar_engine::content::Content::load(&dir).unwrap();
+    let world_content = crate::content::WorldContent::load(&content).unwrap();
+    let registry = content.blocks.clone();
+    let solid = |b: BlockId| registry.info(b).solid;
+    let (mut places, mut beams, mut wrong) = (0, 0, Vec::new());
+    for seed in [42u64, 7] {
+        let world = Overworld::with_content(seed, registry.clone(), &world_content);
+        let spawn = world.spawn_point();
+        for slot in world.settlements.near(&world, IVec2::new(spawn.x, spawn.z), 2500) {
+            let Some(plan) = slot.0.as_ref() else { continue };
+            places += 1;
+            let mut columns: rustc_hash::FxHashMap<ColumnPos, voxmar_engine::world::Column> = Default::default();
+            let mut at = |p: IVec3| -> BlockId {
+                let pos = ColumnPos::of_block(p);
+                let column = columns.entry(pos).or_insert_with(|| world.generate(pos));
+                let o = pos.origin();
+                column.block(IVec3::new(p.x - o.x, p.y, p.z - o.z))
+            };
+            let low = plan.buildings.iter().map(|b| b.floor).min().unwrap_or(crate::SEA_LEVEL) + 1;
+            let high = plan.buildings.iter().map(|b| b.floor).max().unwrap_or(crate::SEA_LEVEL) + 12;
+            for z in plan.min.y..=plan.max.y {
+                for x in plan.min.x..=plan.max.x {
+                    for y in low..=high {
+                        let p = IVec3::new(x, y, z);
+                        let b = at(p);
+                        if !registry.def(b).has_tag("jetty") {
+                            continue;
+                        }
+                        beams += 1;
+                        let name = &registry.def(b).name;
+                        let d = SIDES[(1..4).find(|&i| name.ends_with(SUFFIXES[i])).unwrap_or(0)];
+                        let out = IVec3::new(d.x, 0, d.y);
+                        // Behind it the wall below; over it the floor, and over that the
+                        // storey's wall, standing over the street where the floor below ends.
+                        let ok = solid(at(p - out)) && solid(at(p + IVec3::Y)) && solid(at(p - out + IVec3::Y)) && !solid(at(p + out));
+                        if !ok && wrong.len() < 6 {
+                            wrong.push(format!("{} at {p} ({name})", plan.name.0));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    eprintln!("{places} places, {beams} jetty beams");
+    assert!(beams >= 10, "only {beams} jetty beams in {places} places");
+    assert!(wrong.is_empty(), "jetty beams not under a jetty: {wrong:?}");
 }

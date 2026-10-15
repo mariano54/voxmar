@@ -714,6 +714,12 @@ impl Settlements {
     /// sets, and where: for tools judging a settlement as the world holds it.
     pub fn roofs_of(&self, world: &Overworld, centre: IVec2) -> Option<Vec<(IVec3, BlockId)>> {
         let fixed = self.fixed.as_ref()?;
+        self.planned(world, centre, &|b| fixed.fire.piece(b))
+    }
+
+    /// The blocks `keep` picks that the plan of the settlement whose square's middle is at
+    /// `centre` sets, and where.
+    pub fn planned(&self, world: &Overworld, centre: IVec2, keep: &dyn Fn(BlockId) -> bool) -> Option<Vec<(IVec3, BlockId)>> {
         let slot = self.slot(world, self.cell_of(centre.x, centre.y));
         let plan = slot.0.as_ref().filter(|p| p.centre == centre)?;
         let mut roofs: Vec<(IVec3, BlockId)> = plan
@@ -722,7 +728,7 @@ impl Settlements {
             .flatten()
             .filter(|v| !v.ground)
             .filter_map(|v| match v.put {
-                Put::Set(b) if fixed.fire.piece(b) => Some((v.pos, b)),
+                Put::Set(b) if keep(b) => Some((v.pos, b)),
                 _ => None,
             })
             .collect();
