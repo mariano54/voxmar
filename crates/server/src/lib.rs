@@ -315,6 +315,7 @@ pub fn load_content(assets: &Path) -> Result<Content, Box<dyn std::error::Error>
     let mut notes = Vec::new();
     let survival = rules::SurvivalRules::load(&content.files, &content.blocks, &mut notes)?;
     heal_most_below_food(&content, survival.heal_most)?;
+    survival.check_shelters(&content.blocks)?;
     std::sync::Arc::make_mut(&mut content.notes).extend(notes);
     for fluid in content.blocks.fluids().iter().filter(|fluid| !swum_or_burns(&content.blocks, fluid)) {
         tracing::warn!("the fluid {} is neither swum in (swim: true) nor burns (tagged \"lava\"): players wade through it unharmed", fluid.name);
@@ -650,6 +651,10 @@ pub(crate) struct Server {
     blaze_risked: Vec<IVec3>,
     /// The smouldering blocks players were last told of.
     smoulders_sent: Vec<IVec3>,
+    /// Whose doing a fire that starts now is (a player's name): the player whose message is
+    /// being handled, a hearth's owner as it is lit, a burning block's own fire as it spreads;
+    /// none for a flood or a command. Homes catch only from their owner (fire.ron).
+    fire_origin: Option<String>,
     planter_grown: FxHashSet<IVec3>,
     /// Kept hives with bees, and how far each is toward its honey (`apiary`).
     apiary: apiary::Apiary,
@@ -798,6 +803,7 @@ impl Server {
             blazes,
             blaze_risked: Vec::new(),
             smoulders_sent: Vec::new(),
+            fire_origin: None,
             planter_grown,
             apiary,
             stations,

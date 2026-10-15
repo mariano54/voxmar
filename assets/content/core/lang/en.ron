@@ -1422,4 +1422,8 @@
     "home.lack.away": "you to be at home",
     "home.lack.tag": "{tag} {have}/{need}",
     "home.lack.either": "one of {options}",
+    "home.lack.walls": "{shelter} walls and roof all about {have}%/{need}%",
+    "home.shelter.draughty": "draughty or better",
+    "home.shelter.sound": "sound or better",
+    "home.shelter.fine": "fine",
 }

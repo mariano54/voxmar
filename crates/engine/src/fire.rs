@@ -37,6 +37,15 @@ pub struct FireFile {
     /// about to go up (the crackle is ambience.ron's `smoulder` group).
     #[serde(default)]
     pub smoke: Vec<crate::block::Emission>,
+    /// A block inside a player's home box (their lit home hearth's reach, or where their bed
+    /// says home is) only smoulders or catches from a fire that player started, so nobody can
+    /// burn down someone else's house with a torch at the wall. On unless a pack turns it off.
+    #[serde(default = "yes")]
+    pub homes_catch_only_from_owner: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 /// The fire rules, with what each block is to them looked up once.

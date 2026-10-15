@@ -15,12 +15,18 @@ use voxmar_protocol::TICKS_PER_SECOND;
 use crate::Server;
 
 /// Something that will happen to a block by fire at tick `due`: it catches (`burning`
-/// false), or what burns is gone (`burning` true).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// false), or what burns is gone (`burning` true). `origin` is whose fire it is (a player's
+/// name; see `Server::fire_origin`), carried on as it spreads.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Blaze {
+    #[serde(default)]
     pub pos: [i32; 3],
+    #[serde(default)]
     pub due: u64,
+    #[serde(default)]
     pub burning: bool,
+    #[serde(default)]
+    pub origin: Option<String>,
 }
 
 /// Seconds between looks at what is due.
@@ -72,11 +78,32 @@ impl Server {
         found
     }
 
-    /// Starts `pos` waiting to catch, unless something already waits there.
+    /// Whether a fire of `origin`'s is kept from `pos`: with fire.ron's
+    /// `homes_catch_only_from_owner`, a block in someone's home box (a home hearth lit by
+    /// them, or an online player's home) catches only from its owner's fire. A stranger's
+    /// torch fizzles at your walls, a neighbour's burning shed stops at your home's edge,
+    /// and your own careless torch still burns your own roof.
+    fn kept_out(&self, pos: IVec3, origin: &Option<String>) -> bool {
+        if !self.content.fire.rules.homes_catch_only_from_owner {
+            return false;
+        }
+        let (reach, up, down) = (self.survival.home_reach, self.survival.home_up, self.survival.home_down);
+        let within = |home: IVec3| {
+            let d = pos - home;
+            d.x.abs() <= reach && d.z.abs() <= reach && d.y <= up && d.y >= -down
+        };
+        let multiblocks = &self.content.multiblocks;
+        let hearths = self.lit.iter().filter(|(_, lit)| lit.until > self.tick && multiblocks.get(&lit.structure).is_some_and(|m| m.home)).filter_map(|(&core, lit)| Some((core, lit.owner.as_ref()?)));
+        let beds = self.players.values().filter_map(|p| Some((p.home_block(&self.lit)?, &p.name)));
+        hearths.chain(beds).any(|(home, owner)| within(home) && origin.as_ref() != Some(owner))
+    }
+
+    /// Starts `pos` waiting to catch, unless something already waits there or the fire
+    /// (`fire_origin`'s) is kept from it.
     fn smoulder(&mut self, pos: IVec3) {
         let due = self.tick + ticks(self.content.fire.rules.catch_seconds);
-        if !self.blazes.contains_key(&pos) {
-            self.blazes.insert(pos, Blaze { pos: pos.to_array(), due, burning: false });
+        if !self.blazes.contains_key(&pos) && !self.kept_out(pos, &self.fire_origin) {
+            self.blazes.insert(pos, Blaze { pos: pos.to_array(), due, burning: false, origin: self.fire_origin.clone() });
             self.blaze_risked.push(pos);
         }
     }
@@ -99,9 +126,15 @@ impl Server {
         }
         if Some(block) == fire.burning {
             let due = self.tick + ticks(fire.rules.burn_seconds);
-            self.blazes.insert(pos, Blaze { pos: pos.to_array(), due, burning: true });
-        }
-        if flame {
+            // Whose fire caught here, else whoever set the burning block down.
+            let origin = self.blazes.get(&pos).map_or(self.fire_origin.clone(), |b| b.origin.clone());
+            self.blazes.insert(pos, Blaze { pos: pos.to_array(), due, burning: true, origin: origin.clone() });
+            if flame {
+                let set_by = std::mem::replace(&mut self.fire_origin, origin);
+                self.light_about(pos, fire.rules.reach);
+                self.fire_origin = set_by;
+            }
+        } else if flame {
             self.light_about(pos, fire.rules.reach);
         }
     }
@@ -134,21 +167,56 @@ impl Server {
         }
     }
 
-    /// Tells every player which blocks smoulder, when that changed since they were last told.
-    pub(crate) fn send_smoulders(&mut self) {
+    /// The blocks that smoulder (wait to catch), in order of place.
+    pub(crate) fn smouldering(&self) -> Vec<IVec3> {
         let mut at: Vec<IVec3> = self.blazes.values().filter(|b| !b.burning).map(|b| IVec3::from_array(b.pos)).collect();
         at.sort_by_key(|p| p.to_array());
+        at
+    }
+
+    /// Tells every player which blocks smoulder, when that changed since they were last told
+    /// (a player joining is told on joining).
+    pub(crate) fn send_smoulders(&mut self) {
+        let at = self.smouldering();
         if at != self.smoulders_sent {
             self.broadcast(voxmar_protocol::ServerMessage::Smoulders { at: at.clone() });
             self.smoulders_sent = at;
         }
     }
 
-    /// A hearth or kiln was lit at `core`: what catches near it starts waiting to catch.
+    /// A hearth or kiln was lit at `core`: what catches near it starts waiting to catch, as
+    /// its owner's fire.
     pub(crate) fn hearth_blaze(&mut self, core: IVec3) {
         if self.content.fire.on() && self.content.fire.rules.hearth_reach > 0 {
+            let owner = self.lit.get(&core).and_then(|lit| lit.owner.clone());
+            let set_by = std::mem::replace(&mut self.fire_origin, owner);
             self.light_about(core, self.content.fire.rules.hearth_reach);
+            self.fire_origin = set_by;
         }
+    }
+
+    /// A home hearth relit for `agent` as they join (an older world's): nothing starts to
+    /// burn, since they changed nothing, but they are told once of the nearest thatch or
+    /// wattle its fire reaches, and what to do about it.
+    pub(crate) fn hearth_hint(&mut self, agent: voxmar_protocol::PlayerId, core: IVec3) {
+        let fire = self.content.fire.clone();
+        if !fire.on() || self.players.get(&agent).is_none_or(|p| p.told_fire) {
+            return;
+        }
+        let mut nearest: Option<(i32, IVec3)> = None;
+        self.reached(core, fire.rules.hearth_reach, |pos, step| {
+            if self.block(pos).is_some_and(|b| fire.catches(b)) && nearest.is_none_or(|(s, p)| (step, pos.to_array()) < (s, p.to_array())) {
+                nearest = Some((step, pos));
+            }
+        });
+        let Some((steps, pos)) = nearest else { return };
+        let block = self.content.blocks.def(self.block(pos).unwrap()).name.clone();
+        let player = self.players.get_mut(&agent).unwrap();
+        player.told_fire = true;
+        let text = voxmar_engine::lang::Words::key("fire.near_hearth")
+            .with("block", voxmar_engine::lang::Words::key(&voxmar_engine::lang::def_key("block", &block)))
+            .with("steps", voxmar_engine::lang::Words::text(steps));
+        player.connection.send(voxmar_protocol::ServerMessage::Chat { kind: voxmar_protocol::ChatKind::Info, text });
     }
 
     /// What is due: a block still beside a flame catches, one no longer is let be; what has
@@ -165,8 +233,9 @@ impl Server {
             return;
         }
         let tick = self.tick;
-        let mut due: Vec<Blaze> = self.blazes.values().filter(|b| b.due <= tick).copied().collect();
+        let mut due: Vec<Blaze> = self.blazes.values().filter(|b| b.due <= tick).cloned().collect();
         due.sort_by_key(|b| (b.burning, b.pos));
+        let set_by = self.fire_origin.take();
         let fire = self.content.fire.clone();
         let (Some(burning), Some(ash)) = (fire.burning, fire.ash) else { return };
         for blaze in due {
@@ -174,12 +243,17 @@ impl Server {
             // A column away is left to wait until it is back.
             let Some(here) = self.block(pos) else { continue };
             self.blazes.remove(&pos);
-            if !blaze.burning && fire.catches(here) && self.exposed(pos) {
+            if !blaze.burning && fire.catches(here) && self.exposed(pos) && !self.kept_out(pos, &blaze.origin) {
+                // It burns as the fire that caught it, and spreads as that fire.
+                self.blazes.insert(pos, blaze.clone());
+                self.fire_origin = blaze.origin.clone();
                 self.set_block(pos, burning);
+                self.fire_origin = None;
             } else if blaze.burning && here == burning {
                 self.set_block(pos, ash);
             }
         }
+        self.fire_origin = set_by;
         self.send_smoulders();
         // A fire's own spreading is no one's to be told of.
         self.blaze_risked.clear();
@@ -187,7 +261,7 @@ impl Server {
 
     /// What waits on fire, to save, in order of place.
     pub(crate) fn saved_blazes(&self) -> Vec<Blaze> {
-        let mut saved: Vec<Blaze> = self.blazes.values().copied().collect();
+        let mut saved: Vec<Blaze> = self.blazes.values().cloned().collect();
         saved.sort_by_key(|b| b.pos);
         saved
     }
@@ -195,7 +269,7 @@ impl Server {
 
 /// Saved fires back by place.
 pub(crate) fn restore(saved: &[Blaze]) -> FxHashMap<IVec3, Blaze> {
-    saved.iter().map(|b| (IVec3::from_array(b.pos), *b)).collect()
+    saved.iter().map(|b| (IVec3::from_array(b.pos), b.clone())).collect()
 }
 
 #[cfg(test)]
@@ -288,7 +362,7 @@ mod tests {
         assert_eq!(at(&server, base + IVec3::X), "base:wattle_panel", "put out in time");
         // A hearth lit two blocks off sets it alight.
         let core = base + IVec3::new(rules.hearth_reach + 1, 0, 0);
-        server.lit.insert(core, crate::hearth::Lit { position: core.to_array(), structure: "base:homestead_hearth".into(), until: u64::MAX });
+        server.lit.insert(core, crate::hearth::Lit { position: core.to_array(), structure: "base:homestead_hearth".into(), until: u64::MAX, owner: None });
         server.hearth_blaze(core);
         run(&mut server, rules.catch_seconds);
         assert_eq!(at(&server, base + IVec3::X), "base:blaze", "the hearth's fire reached it");
@@ -366,6 +440,33 @@ mod tests {
         assert_eq!(hints(&client), 0, "told twice");
     }
 
+    /// An older world's home hearth, relit for its player as they join under a thatch roof:
+    /// nothing starts to smoulder (they changed nothing), but they are told once which block
+    /// its fire reaches and how far off; their next lighting by hand does set it smouldering.
+    #[test]
+    fn a_hearth_relit_on_joining_names_the_thatch_and_burns_nothing() {
+        let mut server = crate::test_server();
+        let (core, client) = hearth(&mut server);
+        let above = core + IVec3::Y * 2;
+        server.set_block(above, server.content.blocks.expect("base:thatch_roof"));
+        let player = server.players.get_mut(&1).unwrap();
+        (player.home, player.kindled) = (Some(core.as_vec3() + voxmar_engine::glam::Vec3::new(0.5, 1.0, 0.5)), false);
+        told(&client);
+        server.kindle_home(1);
+        assert!(server.lit.contains_key(&core), "the old home hearth was not lit again");
+        assert!(server.blazes.is_empty(), "relit on joining set the thatch smouldering");
+        let hints: Vec<_> = told(&client).into_iter().filter_map(|m| match m {
+            voxmar_protocol::ServerMessage::Chat { text: voxmar_engine::lang::Words::Key(k, args), .. } if k == "fire.near_hearth" => Some(args),
+            _ => None,
+        }).collect();
+        assert_eq!(hints.len(), 1, "told once of what the fire reaches");
+        let said = format!("{:?}", hints[0]);
+        assert!(said.contains("block.base.thatch_roof") && said.contains("\"2\""), "names the thatch two steps off: {said}");
+        server.lit.remove(&core);
+        server.light(1, core);
+        assert_eq!(server.blazes.get(&above).map(|b| b.burning), Some(false), "lit by hand, the thatch smoulders");
+    }
+
     /// The same hearth under the same thatch roof: with the roof's opening over the fire
     /// lined in stone, the fire reaches no thatch (the nearest is two blocks off as the crow
     /// flies, but three round the stone); with thatch over the fire, it catches.
@@ -385,6 +486,133 @@ mod tests {
                 assert_eq!(burning, [core + IVec3::Y * 2], "the thatch over the fire, and only it, caught first");
             }
         }
+    }
+
+    /// Fire.ron's `homes_catch_only_from_owner`: player 2's torch set beside the wattle in
+    /// player 1's home (the box round the home hearth 1 lit) never sets it smouldering, nor
+    /// does it catch; player 1's own torch in the same place does. Turned off, anyone's does.
+    #[test]
+    fn a_strangers_torch_never_burns_your_home_but_your_own_does() {
+        for only_owner in [true, false] {
+            let mut server = crate::test_server();
+            if !only_owner {
+                server.content.fire = std::sync::Arc::new({
+                    let mut fire = (*server.content.fire).clone();
+                    fire.rules.homes_catch_only_from_owner = false;
+                    fire
+                });
+            }
+            let (core, _client) = hearth(&mut server);
+            server.players.get_mut(&1).unwrap().name = "Ada".into();
+            server.light(1, core);
+            assert_eq!(server.lit.get(&core).and_then(|l| l.owner.clone()).as_deref(), Some("Ada"), "the hearth is Ada's");
+            // Four off the hearth, out of its own fire's reach, well inside the home box.
+            let (wall, beside) = (core + IVec3::new(4, 0, 0), core + IVec3::new(4, 0, 1));
+            let (wattle, torch) = (server.content.blocks.expect("base:wattle_panel"), server.content.blocks.expect("base:torch"));
+            server.set_block(wall, wattle);
+            let rules = server.content.fire.rules.clone();
+            // What a player's message sets before their change lands (`handle_message`).
+            let place = |server: &mut Server, who: &str, block: BlockId| {
+                server.fire_origin = Some(who.to_owned());
+                server.set_block(beside, block);
+                server.fire_origin = None;
+            };
+            place(&mut server, "Bo", torch);
+            assert_eq!(server.blazes.contains_key(&wall), !only_owner, "Bo's torch at Ada's wall");
+            run(&mut server, rules.catch_seconds + 1.0);
+            assert_eq!(at(&server, wall), if only_owner { "base:wattle_panel" } else { "base:blaze" });
+            if !only_owner {
+                continue;
+            }
+            place(&mut server, "Bo", BlockId::AIR);
+            place(&mut server, "Ada", torch);
+            assert_eq!(server.blazes.get(&wall).and_then(|b| b.origin.clone()).as_deref(), Some("Ada"));
+            run(&mut server, rules.catch_seconds);
+            assert_eq!(at(&server, wall), "base:blaze", "Ada's own torch burns her own wall");
+        }
+    }
+
+    /// The same fire, run twice, stands the same halfway through: what waits and burns, with
+    /// its due tick and whose it is, and every block it touches.
+    #[test]
+    fn a_fire_halfway_through_is_the_same_every_time() {
+        let snapshot = |server: &mut Server| {
+            let base = floor(server);
+            let (wattle, thatch, torch) = (server.content.blocks.expect("base:wattle_panel"), server.content.blocks.expect("base:thatch_roof"), server.content.blocks.expect("base:torch"));
+            for x in 0..4 {
+                for z in -1..=1 {
+                    server.set_block(base + IVec3::new(x, 0, z), if z == 0 { wattle } else { thatch });
+                }
+            }
+            server.fire_origin = Some("Ada".into());
+            server.set_block(base - IVec3::X, torch);
+            server.fire_origin = None;
+            let rules = server.content.fire.rules.clone();
+            run(server, rules.catch_seconds * 2.0 + rules.burn_seconds * 0.5);
+            let blocks: Vec<String> = (-1..4).flat_map(|x| (-1..=1).map(move |z| base + IVec3::new(x, 0, z))).map(|p| at(server, p)).collect();
+            let saved = server.saved_blazes();
+            assert!(saved.iter().any(|b| b.burning) && blocks.iter().any(|b| b == "base:blaze"), "nothing burning halfway: {blocks:?}");
+            assert!(saved.iter().all(|b| b.origin.as_deref() == Some("Ada")), "the fire stays Ada's as it runs: {saved:?}");
+            (saved, blocks)
+        };
+        let (mut a, mut b) = (crate::test_server(), crate::test_server());
+        assert_eq!(snapshot(&mut a), snapshot(&mut b));
+    }
+
+    /// Saved halfway to catching, through the world's own save, and opened by a new server:
+    /// the panel catches at the game tick it would have, not a tick sooner.
+    #[test]
+    fn a_smoulder_saved_and_loaded_catches_on_its_tick() {
+        use crate::save::{WorldMeta, WorldSave};
+        let content = crate::test_content();
+        let dir = std::env::temp_dir().join(format!("voxmar-smoulder-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let meta = WorldMeta::new("smoulder", 1, crate::GameMode::Survival);
+        WorldSave::new(&dir).create(&meta).unwrap();
+        let open = |meta: WorldMeta| {
+            let ((_, incoming), (_, console)) = (crossbeam_channel::unbounded(), crossbeam_channel::unbounded());
+            let config = crate::ServerConfig { view_distance: 2, ..Default::default() };
+            Server::new(config, meta, Some(WorldSave::new(&dir)), crate::save::WorldState::default(), content.clone(), incoming, console)
+        };
+        let mut server = open(meta);
+        let base = floor(&mut server);
+        let (wattle, torch) = (server.content.blocks.expect("base:wattle_panel"), server.content.blocks.expect("base:torch"));
+        server.set_block(base, wattle);
+        server.set_block(base + IVec3::X, torch);
+        let due = server.blazes[&base].due;
+        let half = server.content.fire.rules.catch_seconds / 2.0;
+        run(&mut server, half);
+        server.save();
+        let mut loaded = open(WorldSave::new(&dir).read_meta().unwrap());
+        assert_eq!(loaded.tick, server.tick, "the clock came back");
+        assert_eq!(loaded.saved_blazes(), server.saved_blazes(), "what smoulders came back");
+        // The world's blocks come back with their columns; set them as they were (each is
+        // already waiting, so its due tick stands).
+        loaded.set_block(base, wattle);
+        loaded.set_block(base + IVec3::X, torch);
+        assert_eq!(loaded.blazes[&base].due, due);
+        while loaded.tick + 1 < due {
+            loaded.tick += 1;
+            loaded.blaze();
+        }
+        assert_eq!(at(&loaded, base), "base:wattle_panel", "caught early");
+        loaded.tick += 1;
+        loaded.blaze();
+        assert_eq!(at(&loaded, base), "base:blaze", "caught on its tick");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The light a hint sends a player to: a candle lights a home (snug counts a `light`)
+    /// and no flame stands in it, and it is made by hand at Crafting 3, in the Nomad age.
+    #[test]
+    fn a_candle_lights_a_home_without_setting_it_alight() {
+        let server = crate::test_server();
+        let blocks = &server.content.blocks;
+        let candle = blocks.expect("base:candle");
+        assert!(blocks.def(candle).has_tag("light") && !server.content.fire.flame(candle) && !server.content.fire.catches(candle));
+        assert!(blocks.def(candle).light > 0);
+        let recipes: Vec<_> = server.content.recipes.iter().filter(|r| r.output == candle).collect();
+        assert!(recipes.iter().any(|r| r.near.is_none() && r.level <= 3), "a candle is made by hand, early: {recipes:?}");
     }
 
     /// What waits on fire is saved and comes back as it was.
