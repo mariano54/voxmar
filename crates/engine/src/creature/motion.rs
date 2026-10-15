@@ -262,25 +262,49 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
     let wary = water == Water::Land && !(body.in_water && world.water(feet - IVec3::Y));
     // Along the way it really goes, sliding along a wall as its box would, a step at a
     // time; ahead of its middle by half its width.
-    // Down into a space where its head, landed, meets what is before it and it cannot hop
-    // up what its head meets at its pace (a trench a block wide, its far side a wall to a
-    // long head at a walk): no way, or it walks in and is held there, its head stopping it at
-    // every step. Landed where its box fits nearest `middle` along its way: a sample over
-    // the trench's far edge comes down short of it, a middle just past the near lip a
-    // little on. Into water it swims, its head up, and is held by nothing.
+    // Down into a space it cannot climb out of (a trench a block wide, its far side a wall to
+    // a long head that cannot hop up what its head meets at a walk): no way at a walk, or it
+    // walks in and stands trapped there. Judged once, at the first place its way
+    // goes down, over all of that space along its way it fits in: a pit with room to land
+    // short of its far wall is open. Running or chasing, a creature drops in (a hop carries
+    // it, and its brain gives a held way up); into water it swims, its head up.
+    // Down is below where its feet are: at a lip its box's corners may all be over the drop
+    // (`now`) while its edge still stands on it.
+    let feet = (body.position.y + 0.01).floor() as i32;
     let held = |middle: Vec3, then: IVec3| {
-        then.y < now
-            && !world.water(then)
-            && (0..=20)
-                .map(|k| Body { position: Vec3::new(middle.x, then.y as f32, middle.z) - heading * (0.1 * ((k + 1) / 2) as f32 * if k % 2 == 1 { 1.0 } else { -1.0 }), yaw: yaw_of(heading), ..*body })
-                .find(|landed| !landed.aabb().intersects(solid))
-                .is_some_and(|landed| landed.head_blocked(world) && !landed.head_step(world, heading, pace, hop_speed(movement, dt)))
+        if then.y >= feet || pace > movement.walk || world.water(then) {
+            return false;
+        }
+        let at = |k: i32| Vec3::new(middle.x, then.y as f32, middle.z) + heading * (0.1 * k as f32);
+        // Too narrow along its way for its box (a crack): it never comes down in it.
+        let open = (-4..=4).filter(|&k| !world.solid((at(k * 5) + Vec3::Y * 0.01).floor().as_ivec3())).count() as f32 * 0.5;
+        if open < body.size.0 {
+            return false;
+        }
+        let landed = |k: i32| Body { position: at(k), yaw: yaw_of(heading), ..*body };
+        let fits = |k: i32| !landed(k).aabb().intersects(solid);
+        let Some(near) = (0..=20).map(|k| if k % 2 == 1 { -(k + 1) / 2 } else { k / 2 }).find(|&k| fits(k)) else {
+            return false;
+        };
+        // Down there, where it fits with its head clear, it must have a way up and out
+        // (`climbs_out`); nowhere its head is clear, it would hang where its head stops it
+        // coming down.
+        let first = (-20..near).rev().take_while(|&k| fits(k)).last().unwrap_or(near);
+        let last = (near..=20).take_while(|&k| fits(k)).last().unwrap_or(near);
+        (first..=last).find(|&k| !landed(k).head_blocked(world)).is_none_or(|k| !climbs_out(&landed(k), world, movement, pace, dt))
     };
     // From under its own middle too: edging over a trench's lip, it may stand with its middle
     // over the trench, and where it gets to may be past it.
     let under = (body.position + Vec3::Y * 0.01).floor().as_ivec3();
-    if !world.solid(under) && landing(under).is_some_and(|then| held(body.position, then)) {
-        return false;
+    let mut judged = false;
+    if !world.solid(under)
+        && let Some(then) = landing(under)
+        && then.y < feet
+    {
+        judged = true;
+        if held(body.position, then) {
+            return false;
+        }
     }
     let samples = (ahead / 0.4).ceil().max(1.0) as i32;
     let step = heading * (ahead / samples as f32);
@@ -296,8 +320,45 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
         }
         match landing(cell) {
             None => false,
-            Some(then) => now - then.y <= SAFE_DROP && !(wary && world.water(then) && world.water(then - IVec3::Y)) && !held(middle, then),
+            Some(then) => {
+                let first_down = then.y < feet && !std::mem::replace(&mut judged, true);
+                now - then.y <= SAFE_DROP && !(wary && world.water(then) && world.water(then - IVec3::Y)) && !(first_down && held(middle, then))
+            }
         }
+    })
+}
+
+/// Whether a body standing low (down in a trench or a hole) has a way up and out at
+/// `pace`: walking any of eight ways, as far as its head stays clear, its box meets a step a
+/// block high it hops (its head clear over it), or its head meets one it hops up
+/// (`head_step`). Along a trench's floor, meeting nothing a few blocks on, is no way out.
+fn climbs_out(down: &Body, world: &impl Surroundings, movement: &Movement, pace: f32, dt: f32) -> bool {
+    let solid = |p: IVec3| world.solid(p);
+    let middle = |aabb: &Aabb| Vec3::new((aabb.min.x + aabb.max.x) / 2.0, aabb.min.y, (aabb.min.z + aabb.max.z) / 2.0);
+    (0..8).any(|i| {
+        let along = glam::Quat::from_rotation_y(i as f32 * std::f32::consts::FRAC_PI_4) * Vec3::X;
+        let mut at = Body { yaw: yaw_of(along), velocity: Vec3::ZERO, ..*down };
+        for _ in 0..8 {
+            let mut aabb = at.aabb();
+            let start = aabb.min;
+            move_and_slide(&mut aabb, along * 0.3, solid);
+            let next = Body { position: middle(&aabb), ..at };
+            if next.head_blocked(world) {
+                return at.head_step(world, along, pace, hop_speed(movement, dt));
+            }
+            if (aabb.min - start).dot(along) < 0.15 {
+                let mut lifted = at.aabb();
+                lifted.translate(Vec3::Y * 1.05);
+                if movement.jump <= 0.0 || lifted.intersects(solid) {
+                    return false;
+                }
+                let start = lifted.min;
+                move_and_slide(&mut lifted, along * 0.3, solid);
+                return (lifted.min - start).dot(along) >= 0.15 && !Body { position: middle(&lifted), ..at }.head_blocked(world);
+            }
+            at = next;
+        }
+        false
     })
 }
 
@@ -492,6 +553,15 @@ pub fn step(body: &mut Body, world: &impl Surroundings, movement: &Movement, wat
                 body.position = back;
             } else if let Some(at) = (1..=backs).map(|k| moved - body.forward() * (0.12 * k as f32)).find(|&at| clear(at, turned)) {
                 body.position = at;
+            } else if let Some(yaw) = (body.velocity.y < -0.5)
+                .then(|| [0.0f32, 30.0, -30.0, 60.0, -60.0, 90.0, -90.0].map(|d| start_yaw + d.to_radians()).into_iter().find(|&yaw| clear(back, yaw)))
+                .flatten()
+            {
+                // Falling, it twists to where its head is clear and goes on down (a long
+                // head in a trench a block wide turns along it) rather than be held in the
+                // air where it was.
+                body.position = back;
+                body.yaw = yaw;
             } else if !rising && clear(start, turned) {
                 // Put back on what it stood or hung on: on the ground, or it falls into
                 // the same place again next step and hangs there.
