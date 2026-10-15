@@ -81,6 +81,10 @@ pub const SERVER_LAG: Lag = Lag {
     proposal_stall: Duration::from_millis(600),
 };
 
+/// The key the gate's world draws by (`ServerConfig::draw_key`): fixed, so a cast lands
+/// alike every run and its step takes the same time.
+pub const DRAW_KEY: u64 = 0x6a7e_d1ce_0f15_4e55;
+
 /// Size of the gate's shots: enough to judge, quick to read back.
 const SHOT: UVec2 = UVec2::new(960, 540);
 /// Longest the whole session may take, and the world to load, in seconds of game time.
@@ -307,6 +311,10 @@ enum Step {
     /// boss fight and plays a boss's track; in survival she winds up a move of her own, its
     /// tell shown. Every exit sweeps her away.
     Boss,
+    /// A brown bear struck through a doorway a block across, narrower than its body, with
+    /// the player then two and a half blocks past it: it comes at the wall, lands no blow, gives up and
+    /// goes off rather than press the wall.
+    Narrow,
     /// A torch held a moment leaves the player Smoky (smoke that clings): its chip shows,
     /// timed; then the hand is emptied.
     Smoke,
@@ -514,6 +522,12 @@ struct Gate {
     /// When the step started (seconds of game time), and frames since.
     since: f32,
     frames: u32,
+    /// While the world loads, since when each part of being loaded has held (`LOAD_PARTS`),
+    /// for the load line: which one the load waited on last.
+    load_parts: [Option<f32>; LOAD_PARTS.len()],
+    /// When the player first stood ready on the test ground (`Step::Arrive`), for how long
+    /// placing then waited for the distant land.
+    arrive_ready: Option<f32>,
     /// Progress through a step's own stages, and when the current one began.
     phase: u32,
     phase_since: f32,
@@ -552,6 +566,9 @@ struct Gate {
     chimney_owed: f32,
     /// What the dry step's pot water replaced, put back after.
     pot_ground: Option<String>,
+    /// Raw small game carried, slots and pouch, as the dry step hangs the rack, so its
+    /// readout can count what hung.
+    rack_rabbits: u32,
     /// The creature the combat-marks step tells its blows at, when (game time) it last told
     /// them, and how many runs it has told.
     marked: Option<u32>,
@@ -742,6 +759,8 @@ struct Gate {
     feel: FeelRun,
     /// Clearing the bears after the weapon and feel steps.
     sweep: Sweep,
+    /// Where the narrow step stands.
+    narrow: NarrowRun,
     /// The weapon step's first swing, watched in the hand.
     swing_watch: SwingWatch,
     /// When the music step checked the now-playing line, while it is watched fading out
@@ -774,6 +793,8 @@ impl Gate {
             step: Step::Load,
             since: 0.0,
             frames: 0,
+            load_parts: [None; LOAD_PARTS.len()],
+            arrive_ready: None,
             phase: 0,
             phase_since: 0.0,
             settled: 0,
@@ -796,6 +817,7 @@ impl Gate {
             home_style: None,
             chimney_owed: 0.0,
             pot_ground: None,
+            rack_rabbits: 0,
             marked: None,
             marked_at: 0.0,
             marked_tries: 0,
@@ -893,6 +915,7 @@ impl Gate {
             overlay_changes: 0,
             feel: FeelRun::default(),
             sweep: Sweep::default(),
+            narrow: NarrowRun::default(),
             swing_watch: SwingWatch::default(),
             music_fade: None,
             worn_states: 0,
@@ -1355,6 +1378,8 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
     }
     let limit = match gate.step {
         Step::Load => LOAD_LIMIT,
+        // Waiting on the distant land the load no longer waits for.
+        Step::Arrive => LOAD_LIMIT,
         // A fresh area of the world to generate and mesh.
         Step::Gorge | Step::Ore | Step::Tarns => GORGE_OVERLOADED_LIMIT + STEP_LIMIT,
         // Striking judges itself by the blows the server answers (see `strike`).
@@ -1379,8 +1404,8 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         // The barrel opened, then a server pass for the egg and a second for the chat; then
         // a rug and a stool set down, broken by hand and picked up.
         Step::Nest => 60.0,
-        // A rack hung, then a pot set simmering, each answer waited on.
-        Step::Dry => 5.0 * DRY_WAIT + STEP_LIMIT,
+        // A rack hung and read, a clamp lit, then a pot set simmering, each answer waited on.
+        Step::Dry => 6.0 * DRY_WAIT + STEP_LIMIT,
         // The refusal waited on, then a well set down by the plot.
         Step::Refusal => UNANSWERED + 3.0 * REFUSAL_WAIT + STEP_LIMIT,
         // Taming, then a feed trough opened, waited on up to `TROUGH_WAIT`.
@@ -1420,9 +1445,22 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
     let feet = gate.feet;
     match gate.step {
         Step::Load => {
-            // As a loading screen would, waiting for the weather to show too.
-            if loaded(world) && world.resource::<crate::weather::WeatherReady>().0 {
-                gate.check("load", Ok(format!("the world loaded in {now:.1}s")));
+            let held = load_parts(world);
+            for (since, held) in gate.load_parts.iter_mut().zip(held) {
+                *since = held.then(|| since.unwrap_or(now));
+            }
+            // As a loading screen would, waiting for the weather to show too; but not for the
+            // distant land, the slowest part, which keeps building while the test ground is
+            // built and walked onto, as nothing there looks at it: placing waits for it
+            // (`Step::Arrive`).
+            let land_free = held.iter().enumerate().all(|(part, &held)| held || part == DISTANT_LAND);
+            if land_free {
+                let parts: Vec<String> = LOAD_PARTS
+                    .iter()
+                    .zip(gate.load_parts)
+                    .map(|(part, since)| since.map_or(format!("{part} still building"), |since| format!("{part} {since:.1}s")))
+                    .collect();
+                gate.check("load", Ok(format!("the world loaded in {now:.1}s ({})", parts.join(", "))));
                 land(world, gate);
                 // From here on, anything first drawn compiles its pipeline in that frame
                 // unless it was warmed at load (render::warm); `pipelines` lists any.
@@ -1490,6 +1528,13 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
                 mouse(world, MouseButton::Left, false);
             }
             if since > 0.5 && settled(world, feet) {
+                // Placing, its shots and its frame check wait on the distant land being in,
+                // whenever that is, so none of them sees it still building.
+                let ready = *gate.arrive_ready.get_or_insert(now);
+                if !load_parts(world)[DISTANT_LAND] {
+                    return;
+                }
+                info!("gate: Place waited {:.1}s for distant land (in at {now:.1}s)", now - ready);
                 let locked = world.resource::<UiState>().cursor_locked;
                 gate.check("arrive", if locked { Ok(format!("standing on the test ground at {feet}")) } else { Err("a click did not grab the mouse".into()) });
                 aim(world, feet + IVec3::new(0, -1, 2));
@@ -1634,6 +1679,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Sling => sling(world, gate, now, in_phase),
         Step::Feel => feel(world, gate, now, in_phase),
         Step::Boss => boss(world, gate, now),
+        Step::Narrow => narrow(world, gate, now),
         Step::Smoke => smoke(world, gate, now),
         Step::Wear => wear(world, gate, now, in_phase),
         Step::CombatHud => combat_hud(world, gate, now, in_phase),
@@ -2101,6 +2147,14 @@ fn holding(world: &World, name: &str) -> (u32, Option<usize>) {
     (count, slots.iter().position(|s| s.is_some_and(|s| s.item == item)))
 }
 
+/// How many of item `name` the player carries, in slots and pouches (`carried` counts
+/// everything).
+fn carried_of(world: &World, name: &str) -> u32 {
+    let (player, client) = (world.resource::<LocalPlayer>(), world.resource::<ClientWorld>());
+    let Some(item) = client.registry.id(name) else { return 0 };
+    holding(world, name).0 + player.inventory.pouched.iter().filter(|(i, _)| *i == item).map(|&(_, n)| n as u32).sum::<u32>()
+}
+
 /// Puts one of item `name` into each crafting cell in `cells` and crafts as many as it
 /// can, as the inventory's clicks would: the server moves and crafts.
 fn lay_and_craft(world: &mut World, cells: &[(usize, &str)]) -> bool {
@@ -2175,6 +2229,24 @@ fn empty_hand(world: &mut World) -> bool {
     let Some(slot) = (0..voxmar_engine::inventory::HOTBAR_SLOTS).find(|&s| player.inventory.get(s).is_none()) else { return false };
     world.resource_mut::<LocalPlayer>().selected = slot;
     true
+}
+
+/// Empties the hand for a step that strikes bare-handed, whatever the steps before left
+/// in the hotbar: an empty hotbar slot selected, or, with none, the held stack moved to a
+/// free slot of the pack (predicted, as a click would). `Some(true)` once the hand is
+/// empty, `Some(false)` while it is being emptied, `None` with no free slot anywhere.
+fn clear_hand(world: &mut World) -> Option<bool> {
+    if empty_hand(world) {
+        return Some(true);
+    }
+    let player = world.resource::<LocalPlayer>();
+    let selected = player.selected;
+    let free = (voxmar_engine::inventory::HOTBAR_SLOTS..voxmar_engine::inventory::SLOTS).find(|&s| player.inventory.get(s).is_none())?;
+    let actions = world.resource::<crate::Actions>().0.clone();
+    let target = voxmar_engine::action::ActionTarget::Slots { from: selected as u8, to: free as u8, count: u8::MAX };
+    world.resource::<Net>().propose(actions.expect("core:transfer"), target);
+    world.resource_mut::<LocalPlayer>().inventory.move_items(selected, free, u8::MAX);
+    Some(false)
 }
 
 /// The level of a skill, as the client was last told.
@@ -9381,7 +9453,253 @@ fn end_boss(world: &mut World, gate: &mut Gate, now: f32) {
     net.command("gamemode survival");
     net.command("skill hitpoints 10");
     net.command(&format!("tp {} {} {}", feet.x as f32 + 0.5, feet.y, feet.z as f32 + 0.5));
-    gate.next(Step::Smoke, now);
+    gate.next(Step::Narrow, now);
+}
+
+/// Where the narrow step builds, from the test ground's feet: the middle of its wall.
+const NARROW_AT: IVec3 = IVec3::new(0, 0, 22);
+/// What each of the narrow step's waits takes before it gives up: this many seconds of the
+/// server's clock and of the game's, and `NARROW_FRAMES` frames drawn, so neither a server
+/// nor a client starved by a loaded machine is taken for a bear that did nothing.
+const NARROW_WAIT: f32 = 8.0;
+const NARROW_FRAMES: u32 = 30;
+
+/// Where the narrow step stands.
+#[derive(Default)]
+struct NarrowRun {
+    /// The bears in view before it summoned its own, and its own once seen.
+    before: Vec<u32>,
+    bear: Option<u32>,
+    /// The bear's width as it landed, and the doorway's middle (at its feet) and width,
+    /// cut to be narrower than the bear.
+    width: f32,
+    door: Vec3,
+    door_width: i32,
+    /// The blows each way the server had answered as the phase began.
+    struck: u32,
+    hurts: u32,
+    /// The bear's blows that landed on the player once they stood past the doorway.
+    landed: u32,
+    /// Across the ground from the player once they stood past the doorway: at first, at its
+    /// nearest since, and now.
+    first: Option<f32>,
+    nearest: f32,
+    last: f32,
+    /// `Gate::frames` as the phase began.
+    frames_at: u32,
+}
+
+/// A brown bear behind a wall: a doorway narrower than the bear (a block less than its
+/// measured width, rounded up) cut where it landed, it is struck from the doorway; then,
+/// with the player two and a half blocks past the wall, it comes at the wall, lands no blow, gives up
+/// and goes off (back toward its home) rather than press the wall. What is judged derives
+/// from that setup: it came to the wall (within half a block of the nearest the wall lets
+/// its middle come), and then went more than a block back from its nearest, with no blow
+/// landed.
+fn narrow(world: &mut World, gate: &mut Gate, now: f32) {
+    let Some(species) = world.resource::<Launch>().content.creatures.find(BEAR) else {
+        gate.check("narrow doorway", Err(format!("no `{BEAR}` in the content")));
+        gate.next(Step::Smoke, now);
+        return;
+    };
+    let at = gate.feet + NARROW_AT;
+    // Where the player stands to watch: two and a half blocks past the wall's far face, on
+    // the doorway's line. The teleport and the check are both this one point (written to
+    // the hundredth, so `/tp` never takes it for a block and centres it).
+    let past = Vec3::new(gate.narrow.door.x, at.y as f32, at.z as f32 + 3.5);
+    // This client's own view of the bear (not the observer's).
+    let view = {
+        let creatures = world.resource::<crate::creatures::Creatures>();
+        match gate.narrow.bear {
+            Some(id) => creatures.views().find(|v| v.id == id).copied(),
+            None => creatures.views().find(|v| v.species == species && !gate.narrow.before.contains(&v.id)).copied(),
+        }
+    };
+    let in_phase = now - gate.phase_since;
+    let waited = gate.server_in_phase() > NARROW_WAIT && in_phase > NARROW_WAIT && gate.frames.saturating_sub(gate.narrow.frames_at) >= NARROW_FRAMES;
+    // What the crosshair rests on, for a failure's record.
+    let aimed = |world: &World| {
+        let (target, cells) = (world.resource::<crate::interact::Target>(), world.resource::<ClientWorld>());
+        match (target.creature, target.block_hit) {
+            (Some(id), _) => format!("creature {id}"),
+            (None, Some(hit)) => format!("{} at {}", cells.block(hit.block).map_or("an unloaded block", |b| cells.registry.def(b).name.as_str()), hit.block),
+            (None, None) => "nothing".to_owned(),
+        }
+    };
+    let fail = |world: &mut World, gate: &mut Gate, why: String| {
+        let why = format!("{why}; the crosshair was on {}", aimed(world));
+        gate.check("narrow doorway", Err(why));
+        mouse(world, MouseButton::Left, false);
+        to_phase(gate, 4, now);
+    };
+    let advance = |gate: &mut Gate| {
+        gate.narrow.frames_at = gate.frames;
+        gate.advance(now);
+    };
+    match gate.phase {
+        0 => {
+            // In creative while it is built, so nothing fights yet: level ground, a wall
+            // across it three high (its doorway cut once the bear is measured), and the bear
+            // summoned behind it.
+            gate.narrow = NarrowRun { before: world.resource::<crate::creatures::Creatures>().views().filter(|v| v.species == species).map(|v| v.id).collect(), nearest: f32::MAX, ..default() };
+            let net = world.resource::<Net>();
+            net.command("gamemode creative");
+            net.command(&format!("fill {} {} {} {} {} {} air", at.x - 7, at.y, at.z - 7, at.x + 7, at.y + 4, at.z + 5));
+            net.command(&format!("fill {} {} {} {} {} {} stone", at.x - 7, at.y - 1, at.z - 7, at.x + 7, at.y - 1, at.z + 5));
+            net.command(&format!("fill {} {} {} {} {} {} stone", at.x - 7, at.y, at.z, at.x + 7, at.y + 2, at.z));
+            net.command(&format!("tp {:.2} {:.2} {:.2}", at.x as f32 + 0.5, at.y as f32, at.z as f32 + 1.5));
+            // /summon sets the first one 1.8 blocks west of the cell's middle (`summon`):
+            // asked two east, it lands about the wall's middle, and two blocks behind it,
+            // so a fist from the doorway reaches it (the server measures from the eye to its
+            // box: about 1.3 blocks, under the fist's 2.5). Where it really lands is what
+            // the doorway is cut to.
+            net.command(&format!("summon {} 1 {} {} {}", BEAR.trim_start_matches("base:"), at.x + 2, at.y, at.z - 2));
+            advance(gate);
+        }
+        1 => {
+            let Some(view) = view else {
+                if waited {
+                    fail(world, gate, format!("a summoned {BEAR} never reached the client in {NARROW_WAIT} server and game seconds"));
+                }
+                return;
+            };
+            if gate.settled == 0 {
+                gate.narrow.bear = Some(view.id);
+                let width = world.resource::<Launch>().content.creatures.get(species).def.body.size.0 * view.scale;
+                // A block less than its width, rounded up: narrower than it whatever it is.
+                let door_width = (width.ceil() as i32 - 1).max(1);
+                if door_width as f32 >= width {
+                    fail(world, gate, format!("the bear is {width:.2} blocks wide: no doorway a whole number of blocks across is narrower and lets a strike through"));
+                    return;
+                }
+                // Clear of the wall where it landed, its body behind the wall's face.
+                let clear = at.z as f32 - (view.position.z + width / 2.0);
+                if clear < 0.1 {
+                    fail(world, gate, format!("the bear landed at {:.2}, {clear:.2} blocks clear of the wall at z {}", view.position, at.z));
+                    return;
+                }
+                let start = (view.position.x - door_width as f32 / 2.0).round() as i32;
+                let door = Vec3::new(start as f32 + door_width as f32 / 2.0, at.y as f32, at.z as f32 + 0.5);
+                (gate.narrow.width, gate.narrow.door, gate.narrow.door_width) = (width, door, door_width);
+                let net = world.resource::<Net>();
+                net.command(&format!("fill {} {} {} {} {} {} air", start, at.y, at.z, start + door_width - 1, at.y + 2, at.z));
+                // In the doorway, facing the bear across it.
+                net.command(&format!("tp {:.2} {:.2} {:.2}", door.x, door.y, door.z));
+                net.command("gamemode survival");
+                net.command("skill hitpoints 60");
+                net.command("heal");
+                gate.settled = 1;
+                info!("gate: narrow: bear {} landed at {:.2}, {width:.2} wide; doorway {door_width} across at {door:.2}", view.id, view.position);
+            }
+            // Facing the bear's middle from the start, not whatever the last step faced.
+            aim_at(world, view.position + Vec3::Y * 0.6);
+            let me = world.resource::<LocalPlayer>().position;
+            // The hand emptied here, whatever the steps before left in the hotbar. With
+            // nowhere at all to put what it holds, the blow is struck with it: any blow
+            // provokes the bear.
+            let hand = clear_hand(world);
+            if me.xz().distance(gate.narrow.door.xz()) < 0.3 && hand != Some(false) {
+                if hand.is_none() {
+                    info!("gate: narrow: the pack is full, so the bear is struck with what is in hand");
+                }
+                info!("gate: narrow: ready to strike from {me:.2}, the bear at {:.2}", view.position);
+                let fighting = world.resource::<crate::fight::Fighting>();
+                gate.narrow.struck = fighting.struck_count;
+                advance(gate);
+            } else if waited {
+                fail(world, gate, format!("not ready to strike: the player at {me:.2} (the doorway at {:.2}), the hand emptied {hand:?}", gate.narrow.door));
+            }
+        }
+        2 => {
+            let Some(view) = view else {
+                fail(world, gate, "the bear went out of view before it was struck".into());
+                return;
+            };
+            aim_at(world, view.position + Vec3::Y * 0.6);
+            // The line from the eye to it clear: only the doorway between them.
+            let eye = world.resource::<LocalPlayer>().eye();
+            let blocking = {
+                let client = world.resource::<ClientWorld>();
+                shot_lines(eye, view.position).into_iter().find(|&cell| client.block(cell).is_some_and(|b| !b.is_air()))
+            };
+            let fighting = world.resource::<crate::fight::Fighting>();
+            let new = (fighting.struck_count - gate.narrow.struck) as usize;
+            if fighting.struck.iter().rev().take(new).any(|s| s.0 == view.id) {
+                // Struck: the player steps to `past`, out of its reach, and
+                // it is watched from there.
+                gate.narrow.hurts = fighting.hurt_count;
+                mouse(world, MouseButton::Left, false);
+                world.resource::<Net>().command(&format!("tp {:.2} {:.2} {:.2}", past.x, past.y, past.z));
+                info!("gate: narrow: struck the bear at {:.2} from {:.2}; to {past:.2}", view.position, world.resource::<LocalPlayer>().position);
+                advance(gate);
+            } else if gate.waited_out(NARROW_WAIT) || (blocking.is_some() && waited) {
+                let distance = eye.xz().distance(view.position.xz());
+                let line = blocking.map_or("clear".to_owned(), |cell| format!("blocked at {cell}"));
+                fail(world, gate, format!("no blow at the bear landed in {} clicks ({distance:.2} blocks off, the line to it {line})", gate.taps));
+            } else if blocking.is_none() {
+                // Swung as a player swings, each press counted for `waited_out`.
+                let swings = gate.swings;
+                gate.swing(world, now);
+                gate.taps += gate.swings - swings;
+            }
+        }
+        3 => {
+            let me = world.resource::<LocalPlayer>().position;
+            let Some(view) = view else {
+                fail(world, gate, format!("the bear went out of view (nearest {:.2}, last {:.2}, {} blows landed)", gate.narrow.nearest, gate.narrow.last, gate.narrow.landed));
+                return;
+            };
+            // Only once this client's player stands at `past`, within a quarter block across
+            // the ground.
+            if me.xz().distance(past.xz()) > 0.25 {
+                if waited {
+                    fail(world, gate, format!("the player never came to stand past the doorway: at {me:.2}, sent to {past:.2}"));
+                }
+                return;
+            }
+            if gate.narrow.first.is_none() {
+                info!("gate: narrow: the player stands past the doorway at {me:.2}, the bear at {:.2}", view.position);
+            }
+            let fighting = world.resource::<crate::fight::Fighting>();
+            let new = (fighting.hurt_count - gate.narrow.hurts) as usize;
+            gate.narrow.hurts = fighting.hurt_count;
+            gate.narrow.landed += fighting.hurt.iter().rev().take(new).filter(|h| h.0 == view.id).count() as u32;
+            let distance = me.xz().distance(view.position.xz());
+            let first = *gate.narrow.first.get_or_insert(distance);
+            gate.narrow.nearest = gate.narrow.nearest.min(distance);
+            gate.narrow.last = distance;
+            let (nearest, landed) = (gate.narrow.nearest, gate.narrow.landed);
+            // At the wall: its middle within half a block of the nearest the wall lets it
+            // come (half its width behind the wall's face, which is `past` from the player).
+            let wall = past.z - at.z as f32 + gate.narrow.width / 2.0;
+            let came = nearest < wall + 0.5;
+            let what = format!("from {first:.2} it came to {nearest:.2} blocks off (the wall lets it to {wall:.2}) and is {distance:.2} off, {landed} blows landed (a bear {:.2} wide, a doorway {} across)", gate.narrow.width, gate.narrow.door_width);
+            if landed > 0 {
+                fail(world, gate, format!("it landed a blow through a doorway too narrow for it: {what}"));
+            } else if came && distance > nearest + 1.0 {
+                gate.check("narrow doorway", Ok(format!("{what}, in {:.1} server s", gate.server_in_phase())));
+                to_phase(gate, 4, now);
+            } else if waited {
+                fail(world, gate, format!("in {NARROW_WAIT} server and game seconds {what}, at {:.1}, moving {:.1}", view.position, view.velocity.with_y(0.0).length()));
+            }
+        }
+        _ => {
+            // Swept away with the wall, and back to the test ground for the steps after.
+            let bear = view.map(|v| v.position);
+            let feet = gate.feet;
+            let net = world.resource::<Net>();
+            net.command("gamemode creative");
+            if let Some(bear) = bear {
+                net.command(&format!("tp {:.2} {:.2} {:.2}", bear.x, bear.y, bear.z));
+                net.command("creatures kill");
+            }
+            net.command(&format!("fill {} {} {} {} {} {} air", at.x - 7, at.y, at.z, at.x + 7, at.y + 2, at.z));
+            net.command("gamemode survival");
+            net.command("skill hitpoints 10");
+            net.command(&format!("tp {} {} {}", feet.x as f32 + 0.5, feet.y, feet.z as f32 + 0.5));
+            gate.next(Step::Smoke, now);
+        }
+    }
 }
 
 /// What the smoke step holds, and the effect it leaves.
@@ -10755,21 +11073,45 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             };
             gate.check("campfire smoke", result);
             let net = world.resource::<Net>();
+            for at in hearth_ring(hearth) {
+                net.command(&format!("setblock {} {} {} cobblestone", at.x, at.y, at.z));
+            }
             for (at, block) in [(hearth, "hearthstone"), (chimney[0], "chimney"), (chimney[1], "chimney")] {
                 net.command(&format!("setblock {} {} {} {block}", at.x, at.y, at.z));
             }
             gate.advance(now);
         }
-        // A hearthstone beside it, with a chimney two tall at its corner: the chimney's top
-        // smokes (`over` the hearth), as home does from across a valley.
+        // A Homestead Hearth beside it, a hearthstone in a ring of stone with a chimney two
+        // tall at its corner: cold, the chimney does not smoke; lit, its top smokes (`over`
+        // the hearth), as home does from across a valley.
         7 => {
-            let placed = {
+            let (placed, lit) = {
                 let client = world.resource::<ClientWorld>();
-                client.registry.id("base:chimney").is_some_and(|c| client.block(chimney[1]) == Some(c))
+                (client.registry.id("base:chimney").is_some_and(|c| client.block(chimney[1]) == Some(c)), client.fires.contains(&hearth))
             };
-            if placed {
+            if placed && lit {
                 world.resource_mut::<crate::emitters::Emitters>().watch(chimney[1]);
                 gate.advance(now);
+            } else if placed {
+                // A cold hearth's chimney gives nothing off.
+                let amount = world.resource::<crate::render::particles::Particles>().amount;
+                let cold = world.resource::<crate::emitters::Emitters>().rate_of(chimney[1], world.resource::<ClientWorld>(), amount);
+                if cold > 0.0 {
+                    gate.check("chimney smoke", Err(format!("the chimney of a cold hearth smokes ({cold:.2} a second)")));
+                    gate.phase = 8;
+                    return;
+                }
+                // Lit as a player lights it, asked once each `TAP_EVERY` and counted as taps.
+                if now - gate.tap_at >= TAP_EVERY {
+                    gate.tap_at = now;
+                    gate.taps += 1;
+                    let actions = world.resource::<crate::Actions>().0.clone();
+                    world.resource::<Net>().propose(actions.expect("base:light"), voxmar_engine::action::ActionTarget::Block { block: hearth, face: voxmar_engine::coords::Face::PosY });
+                }
+                if gate.waited_out(10.0) {
+                    gate.check("chimney smoke", Err(format!("the hearth was never lit: {} asks in {:.1} server s", gate.taps, gate.server_in_phase())));
+                    gate.phase = 8;
+                }
             } else if in_phase > 5.0 {
                 gate.check("chimney smoke", Err(format!("the chimney was not on the client {in_phase:.1} s after it was placed")));
                 gate.phase = 8;
@@ -10794,15 +11136,12 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             emitters.watch = None;
             gate.chimney_owed = 0.0;
             gate.check("chimney smoke", if done {
-                Ok(format!("{count} puffs rose from the chimney's top over the hearthstone in {in_phase:.1} s ({owed:.1} owed)"))
+                Ok(format!("no smoke while the hearth was cold; lit, {count} puffs rose from the chimney's top in {in_phase:.1} s ({owed:.1} owed)"))
             } else {
                 Err(format!("only {count} puffs rose from the chimney's top over a hearthstone in {in_phase:.1} s, under {CHIMNEY_PARTICLES} with {owed:.1} owed ({why})"))
             });
-            // The ring of stone round it, and the hearth stands; a stove the other side of
-            // the fire.
+            // The hearth stands, ring and all, and burns; a stove the other side of the fire.
             let net = world.resource::<Net>();
-            net.command(&format!("fill {} {} {} {} {} {} cobblestone", hearth.x - 1, hearth.y, hearth.z - 1, hearth.x + 1, hearth.y, hearth.z + 1));
-            net.command(&format!("setblock {} {} {} hearthstone", hearth.x, hearth.y, hearth.z));
             net.command(&format!("setblock {} {} {} cottage_stove", stove.x, stove.y, stove.z));
             net.command("give raw_small_game 2");
             gate.advance(now);
@@ -10869,6 +11208,11 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     }
 }
 
+/// The ring of stone around the cook step's hearthstone.
+fn hearth_ring(hearth: IVec3) -> impl Iterator<Item = IVec3> {
+    (-1..=1).flat_map(move |x| (-1..=1).map(move |z| hearth + IVec3::new(x, 0, z))).filter(move |&at| at != hearth)
+}
+
 /// Takes the Cook step's hearth, its ring and chimney, and the stove down, and goes on.
 fn hearth_done(world: &mut World, gate: &mut Gate, now: f32, hearth: IVec3, chimney: [IVec3; 2], stove: IVec3) {
     let net = world.resource::<Net>();
@@ -10894,12 +11238,17 @@ const POT_WATER: IVec3 = IVec3::new(-2, -1, 0);
 /// the bare rack's: the strips cover about half the middle of the hung rack.
 const MEAT_SHOWS: f32 = 0.08;
 
+/// Raw small game the dry step gives to hang on the rack.
+const RACK_GIVEN: u32 = 2;
+
 /// A drying rack by the campfire, seen from three blocks at eye height (shot `rack_bare`
 /// once the renderer has it), raw rabbit selected: right clicks on it hang the rabbit
 /// (`base:use_station`), so the server sends the hung rack back, and once the renderer has
-/// that too (shot `rack`) the meat must show in the middle of the shot. Then the rack goes,
-/// letting the rabbit fall as a broken rack does, and an earth clamp loaded with clay in its
-/// place smoulders (shot `clamp`, once drawn) until it goes too. Then a cooking pot against the
+/// that too (shot `rack`) the meat must show in the middle of the shot; looked at, the
+/// plate under its name says what hangs and what it makes (shot `rack_readout`). Then the
+/// rack goes, letting the rabbit fall as a broken rack does, and an earth clamp loaded with
+/// clay in its place smoulders (shot `clamp`, once drawn) until it goes too. Then a cooking
+/// pot against the
 /// fire, water near, is set simmering with wheat (shot `pot`).
 fn dry(world: &mut World, gate: &mut Gate, now: f32) {
     let rack = gate.feet + IVec3::new(0, 0, 14) + RACK_FROM_FIRE;
@@ -10908,8 +11257,10 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
         0 => {
             let net = world.resource::<Net>();
             net.command(&format!("setblock {} {} {} drying_rack", rack.x, rack.y, rack.z));
-            net.command("give raw_small_game 2");
+            net.command(&format!("give raw_small_game {RACK_GIVEN}"));
             net.command(&format!("tp {} {} {}", rack.x as f32 + 0.5, rack.y, rack.z as f32 - 2.5));
+            // What will be carried once the gift comes: earlier steps may have left some.
+            gate.rack_rabbits = carried_of(world, "base:raw_small_game") + RACK_GIVEN;
             gate.advance(now);
         }
         1 => {
@@ -10917,10 +11268,12 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
             let client = world.resource::<ClientWorld>();
             let stood = client.registry.id("base:drying_rack").is_some_and(|r| client.block(rack) == Some(r));
             let there = world.resource::<LocalPlayer>().position.distance(Vec3::new(rack.x as f32 + 0.5, rack.y as f32, rack.z as f32 - 2.5)) < 0.5;
-            if stood && there && drawn(world, rack) && gate.shot(world, "rack_bare").is_some() && select(world, "base:raw_small_game") {
+            let given = carried_of(world, "base:raw_small_game") >= gate.rack_rabbits;
+            if stood && there && given && drawn(world, rack) && gate.shot(world, "rack_bare").is_some() && select(world, "base:raw_small_game") {
+                gate.rack_rabbits = carried_of(world, "base:raw_small_game");
                 gate.advance(now);
             } else if waited {
-                gate.check("drying rack", Err(format!("the rack ({stood}) or raw rabbit in hand never came in {DRY_WAIT} server seconds")));
+                gate.check("drying rack", Err(format!("the rack ({stood}) or the {RACK_GIVEN} raw small game given ({given}) never came in {DRY_WAIT} server seconds")));
                 gate.next(Step::Snare, now);
             }
         }
@@ -10971,15 +11324,41 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
                     }
                 };
                 gate.check("drying rack", result);
-                // The rack goes, and an earth clamp stands in its place with clay to load it.
-                let net = world.resource::<Net>();
-                net.command(&format!("setblock {} {} {} air", rack.x, rack.y, rack.z));
-                net.command(&format!("setblock {} {} {} earth_clamp", rack.x, rack.y, rack.z));
-                net.command("give clay 16");
                 gate.advance(now);
             }
         }
+        // Looked at, the plate under the rack's name says what hangs on it and what it
+        // makes, with the time left, as the server answers the look. The client asks on its
+        // own clock, so giving up wants the server's seconds and the client's both.
         4 => {
+            aim_at(world, rack.as_vec3() + RACK_MEAT);
+            let (holds, makes) = {
+                let (locale, launch, client) = (world.resource::<Locale>(), world.resource::<Launch>(), world.resource::<ClientWorld>());
+                let (raw, hung) = (client.registry.id("base:raw_small_game"), client.registry.id("base:drying_rack_hung"));
+                let output = hung.zip(raw).and_then(|(hung, raw)| Some(launch.content.stations.of(hung)?.0.work(raw)?.1.output));
+                // What hung: what was carried before, less what is carried now (a rack takes
+                // what the pouch holds too).
+                let count = gate.rack_rabbits.saturating_sub(carried_of(world, "base:raw_small_game"));
+                let name = |item: BlockId| locale.block(launch.content.blocks.def(item));
+                (raw.map(|raw| locale.format("target.station.holds", &[("count", &count), ("item", &name(raw))])), output.map(name))
+            };
+            let tags: Vec<String> = world.resource::<crate::hud::target::Readout>().tags.iter().map(|(words, _)| words.clone()).collect();
+            let shown = holds.as_ref().is_some_and(|holds| tags.contains(holds)) && makes.as_ref().is_some_and(|makes| tags.iter().any(|t| t.contains(makes.as_str())));
+            if shown && gate.shot(world, "rack_readout").is_some() {
+                gate.check("station readout", Ok(format!("looked at, the hung rack reads {tags:?}")));
+            } else if shown || gate.server_in_phase() <= DRY_WAIT || now - gate.phase_since <= DRY_WAIT {
+                return;
+            } else {
+                gate.check("station readout", Err(format!("looked at for {DRY_WAIT} server and game seconds, the hung rack reads {tags:?}, not {holds:?} and a line making {makes:?}")));
+            }
+            // The rack goes, and an earth clamp stands in its place with clay to load it.
+            let net = world.resource::<Net>();
+            net.command(&format!("setblock {} {} {} air", rack.x, rack.y, rack.z));
+            net.command(&format!("setblock {} {} {} earth_clamp", rack.x, rack.y, rack.z));
+            net.command("give clay 16");
+            gate.advance(now);
+        }
+        5 => {
             let client = world.resource::<ClientWorld>();
             let stood = client.registry.id("base:earth_clamp").is_some_and(|c| client.block(rack) == Some(c));
             if stood && select(world, "base:clay") {
@@ -10987,10 +11366,10 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
             } else if waited {
                 gate.check("earth clamp", Err(format!("the clamp ({stood}) or clay in hand never came in {DRY_WAIT} server seconds")));
                 world.resource::<Net>().command(&format!("setblock {} {} {} air", rack.x, rack.y, rack.z));
-                to_phase(gate, 7, now);
+                to_phase(gate, 8, now);
             }
         }
-        5 => {
+        6 => {
             aim_at(world, rack.as_vec3() + Vec3::new(0.5, 0.5, 0.5));
             let client = world.resource::<ClientWorld>();
             let lit = client.registry.id("base:earth_clamp_lit").is_some_and(|c| client.block(rack) == Some(c));
@@ -11001,12 +11380,12 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
                 mouse(world, MouseButton::Right, false);
                 gate.check("earth clamp", Err(format!("right clicks with clay in hand never lit the clamp in {DRY_WAIT} server seconds")));
                 world.resource::<Net>().command(&format!("setblock {} {} {} air", rack.x, rack.y, rack.z));
-                to_phase(gate, 7, now);
+                to_phase(gate, 8, now);
             } else {
                 mouse(world, MouseButton::Right, ((now - gate.since) * 2.0).fract() < 0.2);
             }
         }
-        6 => {
+        7 => {
             aim_at(world, rack.as_vec3() + Vec3::new(0.5, 0.5, 0.5));
             if (drawn(world, rack) || waited) && gate.shot(world, "clamp").is_some() {
                 gate.check("earth clamp", Ok("clay loaded into an earth clamp: the server sent back the smouldering clamp".into()));
@@ -11015,7 +11394,7 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
             }
         }
         // A cooking pot beside the campfire, water sunk in the ground near it, wheat in hand.
-        7 => {
+        8 => {
             let pot = rack + POT_FROM_RACK;
             let water = pot + POT_WATER;
             let ground = {
@@ -11032,7 +11411,7 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
             gate.advance(now);
         }
         // Right clicks put the wheat on to simmer: the server sends back the simmering pot.
-        8 => {
+        9 => {
             let pot = rack + POT_FROM_RACK;
             aim_at(world, pot.as_vec3() + Vec3::new(0.5, 0.5, 0.5));
             let (stood, simmering) = {
@@ -11056,7 +11435,7 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
                 mouse(world, MouseButton::Right, ((now - gate.since) * 2.0).fract() < 0.2);
             }
         }
-        9 => {
+        10 => {
             let pot = rack + POT_FROM_RACK;
             let water = pot + POT_WATER;
             let ground = gate.pot_ground.take().unwrap_or_else(|| "stone".to_owned());
@@ -12555,12 +12934,24 @@ fn land(world: &World, gate: &mut Gate) {
     );
 }
 
-/// Whether the world around the player has loaded and been meshed, distant terrain
-/// included.
-fn loaded(world: &World) -> bool {
+/// What being loaded takes, in `load_parts`'s order, as the load line names them.
+const LOAD_PARTS: [&str; 5] = ["joined", "columns in", "meshed", "distant land", "weather"];
+/// The distant land's place in `LOAD_PARTS`.
+const DISTANT_LAND: usize = 3;
+
+/// Whether each part of being loaded holds: the player joined, every column around it
+/// arrived (nine at least), none waits to be lit or meshed, the distant land is drawn, and
+/// the server's weather shows.
+fn load_parts(world: &World) -> [bool; LOAD_PARTS.len()] {
     let (player, client, lod) = (world.resource::<LocalPlayer>(), world.resource::<ClientWorld>(), world.resource::<Lod>());
     let (tiles, wanted) = lod.progress();
-    player.joined && client.stats.jobs_in_flight == 0 && client.stats.pending_columns == 0 && client.voxels.len() >= 9 && tiles >= wanted
+    [
+        player.joined,
+        client.stats.pending_columns == 0 && client.voxels.len() >= 9,
+        client.stats.jobs_in_flight == 0,
+        tiles >= wanted,
+        world.resource::<crate::weather::WeatherReady>().0,
+    ]
 }
 
 /// Columns within `AGREE_WITHIN` of `feet`.
@@ -12873,6 +13264,12 @@ fn finish(world: &mut World, gate: &Gate, now: f32) {
 #[cfg(test)]
 mod tests {
     use super::{sling_next, warm_window, SlingNext, BEAR, SLING, SLING_LEVEL, SLING_STONES, UNANSWERED};
+
+    /// Placing waits on the part of being loaded the load line names as the distant land.
+    #[test]
+    fn placing_waits_on_the_distant_land() {
+        assert_eq!(super::LOAD_PARTS[super::DISTANT_LAND], "distant land");
+    }
 
     /// The window is judged by what the candle adds to its pane, so a brighter night (a
     /// full moon lighting the pane too) changes nothing; a pane the candle leaves as it was,
