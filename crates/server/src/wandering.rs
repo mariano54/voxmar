@@ -2294,12 +2294,21 @@ impl Server {
             }),
             _ => None,
         };
-        let variant = ((unit_from(mix(self.tick, id as u64 ^ 0x6e37)) * meeting.greets as f32) as u8).min(meeting.greets - 1);
+        let (freed, guided) = (inst.freed, inst.guided);
         let (words, gives, wants, mark) = match line {
             Some((i, line)) => (Words::key(&event.key(&line.name)), line.gives.clone(), line.wants_of(seed), Some((i + meeting.who * 64, line.once))),
-            None if inst.freed => (Words::key(&event.key("freed")), Vec::new(), None, None),
-            None if inst.guided => (Words::key(&event.key("company")), Vec::new(), None, None),
-            None => (asked.unwrap_or_else(|| Words::key(&event.greeting(meeting, variant))), Vec::new(), None, None),
+            None if freed => (Words::key(&event.key("freed")), Vec::new(), None, None),
+            None if guided => (Words::key(&event.key("company")), Vec::new(), None, None),
+            None => match asked {
+                Some(asked) => (asked, Vec::new(), None, None),
+                // Which greeting, by the listener's own count of greetings heard, never the
+                // tick: drawn only when one is said.
+                None => {
+                    let greet = self.draw_for(player, crate::save::Draw::Greet)[0];
+                    let variant = ((greet * meeting.greets as f32) as u8).min(meeting.greets - 1);
+                    (Words::key(&event.greeting(meeting, variant)), Vec::new(), None, None)
+                }
+            },
         };
         // A line that takes or gives something; one said for its words alone is no dealing.
         let dealt = line.is_some_and(|(_, line)| !line.gives.is_empty() || line.wants_of(seed).is_some());
@@ -2479,8 +2488,10 @@ impl Server {
             tracing::info!("wandering: no standing room ahead of {feet} or at it for {name}");
             return Err(Words::key("command.wander.no_room"));
         };
-        // Seen or not: the admin asked for it.
-        let seed = mix(self.meta.seed, self.tick);
+        // Seen or not: the admin asked for it. Cast by the world's count of rolls, never the
+        // tick.
+        let [a, b] = self.meta.next_roll(crate::save::ROLL_WANDER);
+        let seed = mix(self.meta.seed, u64::from(a.to_bits()) << 32 | u64::from(b.to_bits()));
         if self.begin_event_at(player, event, spot, seed, true).is_none() {
             tracing::info!("wandering: no cast of {name} could be brought to {spot}");
             return Err(Words::key("command.wander.no_room"));

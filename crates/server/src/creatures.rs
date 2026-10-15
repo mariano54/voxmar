@@ -1112,9 +1112,14 @@ impl Server {
             _ => 0.0,
         };
         let moment = Moment { bonus, tool: &tool, night: self.daylight() < 0.3, by_player: killer.is_some() };
-        // Each roll numbered by the world's count of loot rolls, never by the tick it dies on.
-        let meta = &mut self.meta;
-        let found = loot::roll(&species.loot, &moment, || meta.next_loot());
+        // Each roll numbered by the killer's own count of kills, or the world's count of loot
+        // rolls for a death nobody dealt; never by the tick it dies on.
+        let by = creature.hurt_by.filter(|p| self.players.contains_key(p));
+        let (players, meta) = (&mut self.players, &mut self.meta);
+        let found = loot::roll(&species.loot, &moment, || match by.and_then(|p| players.get_mut(&p)) {
+            Some(player) => player.draw(crate::save::Draw::Kill)[0],
+            None => meta.next_loot(),
+        });
         let cell = creature.body.position.floor().as_ivec3();
         // The killer's journal: one more of the species (people are not counted), and each
         // drop for the collection log.

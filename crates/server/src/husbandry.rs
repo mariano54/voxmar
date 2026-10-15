@@ -131,9 +131,10 @@ impl Server {
             }
             let (item, (low, high), every, xp) = (species.products[index], product.count, product.every, product.xp);
             // By the player's count of products taken, never by the tick.
-            let Some([roll, _]) = self.players.get_mut(&player).map(|p| p.draw(crate::save::Draw::Yield)) else { return };
+            // One draw for how many, the other for the yield gene's fraction.
+            let Some([roll, fraction]) = self.players.get_mut(&player).map(|p| p.draw(crate::save::Draw::Yield)) else { return };
             let creature = &self.creatures.live[&id];
-            let count = yielded(low + ((roll * (high - low + 1) as f32) as u8).min(high - low), creature.traits.yield_, roll);
+            let count = yielded(low + ((roll * (high - low + 1) as f32) as u8).min(high - low), creature.traits.yield_, fraction);
             // Condition sets how soon the next is due (0.5 to 1.2 as often), its yield gene
             // how many come.
             let (seed, often) = (creature.seed, self.content.creatures.condition().output(creature.condition).max(0.05));
