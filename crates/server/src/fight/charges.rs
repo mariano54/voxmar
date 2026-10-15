@@ -279,3 +279,39 @@ fn struck_old_tusk_turns_and_charges() {
     }
     assert!(charged, "he charged the one who struck him");
 }
+
+/// His charge runs the way he faced when its aim locked: the blow that sets him off waits
+/// out the player's round trip (`lag_allowance`) past the wind-up, and in that wait he does
+/// not think, turn or walk after a player who stepped aside, so the line they read holds.
+#[test]
+fn a_charge_runs_the_line_its_aim_locked_on_through_the_lag_wait() {
+    let mut field = Field::new(Vec3::new(40.5, STAND, 36.5), Vec3::new(40.5, STAND, 46.5));
+    let lag = field.server.content.combat.feel.lag_allowance;
+    assert!(lag > 0.0, "a wait to hold through");
+    field.server.players.get_mut(&1).unwrap().round_trip = Some(lag);
+    field.server.hurt_creature(1, field.tusk, 1, None, voxmar_engine::combat::Blow::Plain);
+    let index = {
+        let species = field.server.content.creatures.get(field.server.creatures.live[&field.tusk].species);
+        species.def.moves.iter().position(|m| m.name == "charge").unwrap() as u8 + 1
+    };
+    let mut locked: Option<Vec3> = None;
+    for n in 1..=10 * TICKS_PER_SECOND {
+        field.server.tick += 1;
+        field.server.arrival = field.server.fights.epoch + std::time::Duration::from_secs_f64(n as f64 / TICKS_PER_SECOND as f64);
+        field.server.tick_creatures();
+        field.server.tick_fights();
+        let live = &field.server.creatures.live[&field.tusk];
+        if let Some(charging) = live.charging {
+            let along = locked.expect("his aim locked before he set off");
+            assert!(charging.along.dot(along) > 0.999, "he ran {:?}, not the line he locked on, {along:?}", charging.along);
+            return;
+        }
+        // His aim locked (the tracking window over, the wind-up under way): the player
+        // steps well aside, and the rest of the wind-up and the lag wait follow.
+        if locked.is_none() && live.winding && live.attack == index && live.tracking.is_none_or(|(_, until)| field.server.tick >= until) {
+            locked = Some(live.body.forward());
+            field.server.players.get_mut(&1).unwrap().position.x += 5.0;
+        }
+    }
+    panic!("he never charged");
+}

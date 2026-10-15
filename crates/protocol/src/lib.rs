@@ -38,7 +38,8 @@ pub use voxmar_engine::weather::Weather;
 // 40: ClientMessage::LookAtStation and ServerMessage::Station, what is on a station looked at.
 // 41: ServerMessage::Fires, the lit structures whose fires burn.
 // 42: a staggered creature's tell (STAGGERED).
-pub const PROTOCOL_VERSION: u32 = 42;
+// 43: the seat a player sits on (Vitals::seated), for the lower eye.
+pub const PROTOCOL_VERSION: u32 = 43;
 
 /// A creature's `tell` while it rears into a new phase of its fight.
 pub const REARING: u8 = u8::MAX;

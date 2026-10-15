@@ -539,7 +539,10 @@ impl Server {
                 };
                 let wet = Ground::of(self).water_at(position.floor().as_ivec3());
                 let creature = self.creatures.live.get_mut(&id).expect("listed");
-                let decision = if self.tick < creature.held_until || creature.charging.is_some() {
+                // A charge's wind-up holds him to its locked line until he sets off, through
+                // the wait for the player's round trip past the wind-up (`lag_allowance`).
+                let winding_a_charge = creature.winding && species.attack_at(creature.attack).is_some_and(|a| a.charge.is_some());
+                let decision = if self.tick < creature.held_until || creature.charging.is_some() || winding_a_charge {
                     brain::Decision { pose: brain::Pose::Idle, ..Default::default() }
                 } else {
                     // Done rearing into a new phase, or reeling from a stagger: it fights on
@@ -1277,8 +1280,8 @@ impl Server {
             attack: 0,
             phase: 0,
             rearing: false,
-            staggered: false,
             charging: None,
+            staggered: false,
             mended: 0,
             genome,
             traits,
