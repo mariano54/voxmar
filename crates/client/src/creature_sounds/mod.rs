@@ -233,13 +233,17 @@ impl Voices {
 }
 
 /// How many sounds of each kind were asked for and how many played, since startup.
+/// How many of the latest barks [`Heard`] keeps: enough for any check, bounded in a long
+/// game with villagers barking all day.
+pub const BARKS_KEPT: usize = 64;
+
 #[derive(Resource, Default, Debug)]
 pub struct Heard {
     pub asked: FxHashMap<Kind, u32>,
     pub played: u32,
-    /// Barks asked for since startup, played or not (the gate is silent): which creature,
-    /// which bark, and the clips its voice gives that bark.
-    pub barks: Vec<(u32, Kind, Vec<String>)>,
+    /// The latest barks asked for (up to [`BARKS_KEPT`]), played or not (the gate is
+    /// silent): which creature, which bark, and the clips its voice gives that bark.
+    pub barks: std::collections::VecDeque<(u32, Kind, Vec<String>)>,
 }
 
 /// For the gate: every species has a voice, and every clip has loaded (and been
@@ -259,12 +263,23 @@ pub fn loaded(world: &World) -> Result<String, String> {
     }
 }
 
-fn load(mut commands: Commands, assets: Res<AssetServer>, launch: Res<Launch>) {
+/// The bank the launch checks loaded (and found every settlement person barking in), handed
+/// on so it is not read twice.
+#[derive(Resource)]
+pub struct Checked(pub Bank);
+
+fn load(mut commands: Commands, assets: Res<AssetServer>, launch: Res<Launch>, checked: Option<ResMut<Checked>>) {
     let content = &launch.content;
-    let bank = Bank::load(&content.files, &content.creatures).unwrap_or_else(|e| {
-        error!("no creature sounds: {e}");
-        Bank::default()
-    });
+    let bank = match checked {
+        Some(mut checked) => {
+            commands.remove_resource::<Checked>();
+            std::mem::take(&mut checked.0)
+        }
+        None => Bank::load(&content.files, &content.creatures).unwrap_or_else(|e| {
+            error!("no creature sounds: {e}");
+            Bank::default()
+        }),
+    };
     let voiced = bank.species.iter().flatten().count();
     let silent: Vec<_> =
         content.creatures.iter().filter(|(id, _)| bank.voice(*id).is_none()).map(|(_, c)| c.def.name.as_str()).collect();
@@ -365,7 +380,10 @@ fn play(
     let Voices { bank, sources, last, counter, .. } = &mut *voices;
     for sound in asked.iter().filter(|s| matches!(s.kind, Kind::Greet | Kind::Alarm | Kind::Content)) {
         let clips = bank.voice(sound.species).and_then(|v| v.event(sound.kind)).map(|e| e.clips.iter().map(|&i| bank.clips[i].path.clone()).collect());
-        heard.barks.push((sound.id, sound.kind, clips.unwrap_or_default()));
+        if heard.barks.len() == BARKS_KEPT {
+            heard.barks.pop_front();
+        }
+        heard.barks.push_back((sound.id, sound.kind, clips.unwrap_or_default()));
     }
     // A silent run (a capture, VOXMAR_MUTE, the gate) decides nothing and plays nothing.
     if asked.is_empty() || !sfx::sound_on(global) {

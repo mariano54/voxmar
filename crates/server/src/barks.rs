@@ -8,7 +8,7 @@ use voxmar_protocol::ServerMessage;
 use crate::Server;
 
 /// Blocks within which `/creatures bark` finds one of a settlement's people to bark.
-const BARK_COMMAND_REACH: f32 = 32.0;
+pub(crate) const BARK_COMMAND_REACH: f32 = 32.0;
 
 impl Server {
     /// Creature `id` makes `bark`, heard by every player who sees it now. The one hook for
@@ -52,7 +52,8 @@ mod tests {
     use voxmar_protocol::ServerMessage;
 
     /// A bark is told to the players who see the creature, and none is told of one that
-    /// is not there; `/creatures bark` makes the nearest of a settlement's people bark.
+    /// is not there; `/creatures bark` makes the nearest of a settlement's people bark, and
+    /// says so, or that no one was near.
     #[test]
     fn a_bark_reaches_those_who_see_the_barker() {
         let mut server = crate::test_server();
@@ -85,5 +86,17 @@ mod tests {
         assert_eq!(server.bark_command(Vec3::new(4.5, 65.0, 4.5), "content"), Some(1));
         assert_eq!(barks(&client), [(id, Bark::Content)]);
         assert_eq!(server.bark_command(Vec3::new(4.5, 65.0, 4.5), "sing"), None);
+        // The command says how far it looked, and that no one barked with no one near.
+        let said = |client: &voxmar_protocol::ClientConnection| {
+            std::iter::from_fn(|| client.try_recv().ok().flatten())
+                .filter_map(|m| if let ServerMessage::Chat { text: voxmar_engine::lang::Words::Key(key, _), .. } = m { Some(key) } else { None })
+                .collect::<Vec<_>>()
+        };
+        server.players.get_mut(&1).unwrap().admin = true;
+        server.command(1, "creatures bark greet");
+        assert_eq!(said(&client), ["command.creatures.barked"]);
+        server.creatures.take_away(id);
+        server.command(1, "creatures bark greet");
+        assert_eq!(said(&client), ["command.creatures.no_one_to_bark"]);
     }
 }

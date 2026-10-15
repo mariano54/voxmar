@@ -13545,7 +13545,7 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
         }
         // The greeting asked for its voice's own greeting clips (silently: asked, not heard).
         4 => {
-            let asked = world.resource::<crate::creature_sounds::Heard>().barks.clone();
+            let asked: Vec<_> = world.resource::<crate::creature_sounds::Heard>().barks.iter().cloned().collect();
             if asked.is_empty() && gate.server_in_phase() < SETTLEMENT_BARK {
                 return;
             }

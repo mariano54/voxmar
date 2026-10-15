@@ -895,6 +895,8 @@
     "command.creatures.dispersed": "Removed {count} wild creatures within 64 blocks.",
     "command.creatures.what": "Tame, ready, hasten, hold, kill, remove, populate, disperse or bark?",
     "command.creatures.bark_what": "Bark greet, alarm or content?",
+    "command.creatures.barked": "The nearest of a settlement's people within {reach} blocks gave a {bark}.",
+    "command.creatures.no_one_to_bark": "None of a settlement's people within {reach} blocks to give a {bark}.",
     "command.creatures.done.one": "Done, for {count} creature within 8 blocks.",
     "command.creatures.done.other": "Done, for {count} creatures within 8 blocks.",
     "command.machine.none": "There is no machine at {place}.",
