@@ -591,6 +591,23 @@ pub(crate) fn follow_camera(
 mod tests {
     use super::*;
 
+    /// The same case as the server's `an_unloaded_cell_stops_a_player_as_a_whole_cube`: a
+    /// cell in a loaded column of air stops nothing; one in the next column, not loaded, and
+    /// one under the world stop the player as a whole cube, as the server judges them.
+    #[test]
+    fn an_unloaded_cell_stops_a_player_as_a_whole_cube() {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+        let content = voxmar_server::load_content(&assets).unwrap();
+        let mut world = ClientWorld::new(content.blocks, 2, crate::render::terrain::Terrain::detached());
+        let loaded = IVec3::new(1, 64, 1);
+        world.insert_column(ColumnPos::of_block(loaded), std::sync::Arc::new(voxmar_engine::world::Column::default()));
+        let around = Around { world: &world };
+        assert!(around.boxes(loaded).is_empty());
+        for unloaded in [loaded + IVec3::X * voxmar_engine::coords::CHUNK_SIZE, IVec3::new(1, -1, 1)] {
+            assert_eq!(around.boxes(unloaded), &voxmar_engine::physics::CUBE, "{unloaded}");
+        }
+    }
+
     /// Flat ground below y 0.
     struct Floor;
 

@@ -998,6 +998,30 @@ mod tests {
     use crate::items::{Items, owner_of};
     use crate::save::WorldSave;
 
+    /// The same case as the client's `an_unloaded_cell_stops_a_player_as_a_whole_cube`: a
+    /// cell in a loaded column of air stops nothing; one in the next column, not loaded, and
+    /// one under the world stop a player as a whole cube, so the server's move checks agree
+    /// with the client's prediction at the edge of the loaded world. Before: the server took
+    /// them for empty, so a player the client held at the edge could walk or fall on there.
+    #[test]
+    fn an_unloaded_cell_stops_a_player_as_a_whole_cube() {
+        use voxmar_engine::glam::IVec3;
+        let mut server = crate::test_server();
+        // Far from spawn, where nothing is loaded.
+        let base = IVec3::new(1 << 16, 0, 1 << 16);
+        let loaded = base + IVec3::new(1, 64, 1);
+        server.world.insert(ColumnPos::of_block(loaded), std::sync::Arc::new(voxmar_engine::world::Column::default()));
+        assert!(!server.world.contains(ColumnPos::of_block(loaded + IVec3::X * voxmar_engine::coords::CHUNK_SIZE)), "the fixture means the next column unloaded");
+        assert!(server.boxes(loaded).is_empty());
+        for unloaded in [loaded + IVec3::X * voxmar_engine::coords::CHUNK_SIZE, IVec3::new(loaded.x, -1, loaded.z)] {
+            assert_eq!(server.boxes(unloaded), &voxmar_engine::physics::CUBE, "{unloaded}");
+        }
+        // A player at the edge, stepping over it, would be in a wall there.
+        let size = voxmar_engine::coords::CHUNK_SIZE;
+        let edge = Vec3::new((loaded.x - loaded.x.rem_euclid(size) + size) as f32 - 0.1, loaded.y as f32, loaded.z as f32 + 0.5);
+        assert!(server.inside(edge + Vec3::X * 0.5) && !server.inside(edge - Vec3::X * 0.5));
+    }
+
     fn join(server: &mut Server, id: PlayerId, name: &str) -> ClientConnection {
         let (connection, server_side) = local_pair();
         let player = Player::new(id, server_side, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
