@@ -2,6 +2,7 @@
 //! content-defined fuel charge and smelts only while that fire and its structure hold.
 //! The fire uses server ticks and is saved with the world, so reconnecting cannot refuel it.
 
+use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use voxmar_engine::glam::{IVec3, Vec3};
 use voxmar_engine::lang::{Words, def_key};
@@ -21,6 +22,31 @@ pub struct Lit {
     /// (fire.ron's `homes_catch_only_from_owner`). None for a fire lit before this was kept.
     #[serde(default, deserialize_with = "crate::blaze::keyed")]
     pub owner: Option<String>,
+}
+
+/// Whose a home hearth is, saved: its core and its owner's key, None for one lit before
+/// fires were kept by owner (which keeps every fire out, and stays no one's).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HearthOwner {
+    pub position: [i32; 3],
+    #[serde(default, deserialize_with = "crate::blaze::keyed")]
+    pub owner: Option<String>,
+}
+
+impl HearthOwner {
+    /// The saved owners, and for a world from before they were kept, those of the home
+    /// hearths still lit (each fire kept its owner).
+    pub(crate) fn restore(saved: &[HearthOwner], lit: &FxHashMap<IVec3, Lit>, home: impl Fn(&str) -> bool) -> FxHashMap<IVec3, Option<String>> {
+        let mut owners: FxHashMap<IVec3, Option<String>> = lit.iter().filter(|(_, fire)| home(&fire.structure)).map(|(&core, fire)| (core, fire.owner.clone())).collect();
+        owners.extend(saved.iter().map(|h| (IVec3::from_array(h.position), h.owner.clone())));
+        owners
+    }
+
+    pub(crate) fn saved(owners: &FxHashMap<IVec3, Option<String>>) -> Vec<HearthOwner> {
+        let mut saved: Vec<HearthOwner> = owners.iter().map(|(core, owner)| HearthOwner { position: core.to_array(), owner: owner.clone() }).collect();
+        saved.sort_by_key(|h| h.position);
+        saved
+    }
 }
 
 fn structure_words(structure: &Multiblock) -> Words {
@@ -57,14 +83,14 @@ impl Server {
             player.inventory.take(player.selected, count);
             player.changed(traits::INVENTORY);
             let until = self.tick.saturating_add((seconds * TICKS_PER_SECOND as f32).ceil() as u64);
-            let owner = self.players.get(&agent).map(|p| crate::player_key(&p.name));
+            let owner = self.hearth_owner(agent, core, structure);
             self.lit.insert(core, Lit { position: core.to_array(), structure: structure.name.clone(), until, owner });
             self.hearth_blaze(core);
             self.tally(agent, "lit", &structure.name, 1);
         } else if structure.fuels.is_empty() && !self.lit.contains_key(&core) {
             // A fire that needs no fuel burns until the structure breaks; lit again while it
             // burns, it is the same fire (and the same lighting, for quests).
-            let owner = self.players.get(&agent).map(|p| crate::player_key(&p.name));
+            let owner = self.hearth_owner(agent, core, structure);
             self.lit.insert(core, Lit { position: core.to_array(), structure: structure.name.clone(), until: u64::MAX, owner });
             self.hearth_blaze(core);
             self.tally(agent, "lit", &structure.name, 1);
@@ -75,6 +101,17 @@ impl Server {
         }
         let key = if structure.home { "multiblock.home" } else { "multiblock.lit" };
         self.structure_reply(agent, Words::key(key).with("structure", structure_words(structure)));
+    }
+
+    /// Whose a fire `agent` lights at `core` is: a home hearth's is the one it was first lit
+    /// by, kept while it is out and relit by anyone, until its hearthstone is broken
+    /// (`home_changed`), so a stranger who breaks and mends it to relight it never takes it.
+    fn hearth_owner(&mut self, agent: PlayerId, core: IVec3, structure: &Multiblock) -> Option<String> {
+        let lighter = self.players.get(&agent).map(|p| crate::player_key(&p.name));
+        if !structure.home {
+            return lighter;
+        }
+        self.hearth_owners.entry(core).or_insert(lighter).clone()
     }
 
     fn structure_reply(&self, agent: PlayerId, words: Words) {
@@ -143,6 +180,11 @@ impl Server {
     /// told. They wake at what is left (the bed, the hearth, else the world's spawn), and the
     /// home mark goes with it.
     pub(crate) fn home_changed(&mut self, pos: IVec3, block: voxmar_engine::block::BlockId) {
+        // The hearthstone gone, the home hearth is no one's any more: whoever builds one
+        // there next lights it as theirs.
+        if self.hearth_owners.contains_key(&pos) && !self.content.multiblocks.with_core(block).any(|m| m.home) {
+            self.hearth_owners.remove(&pos);
+        }
         let at = |spot: Option<Vec3>| spot.is_some_and(|spot| (spot - Vec3::new(0.5, 1.0, 0.5)).round().as_ivec3() == pos);
         // A flood changes thousands of cells a tick: one that is no online player's bed or
         // hearth goes no further than these compares (two a player, no lookups).
@@ -209,12 +251,16 @@ impl Server {
         }
         self.players.get_mut(&id).unwrap().kindled = true;
         if let Some(structure) = standing.filter(|_| !self.lit.contains_key(&core)) {
-            // Relit, it is still no one's: whoever's home is at it now need not be who built
-            // it, and an unowned home hearth keeps every fire out.
-            self.lit.insert(core, Lit { position: core.to_array(), structure, until: u64::MAX, owner: None });
+            // Relit, it is whose it was, or no one's: whoever's home is at it now need not be
+            // who built it, and an unowned home hearth keeps every fire out.
+            let owner = self.hearth_owners.entry(core).or_insert(None).clone();
+            let owned = owner.is_some();
+            self.lit.insert(core, Lit { position: core.to_array(), structure, until: u64::MAX, owner });
             // Relit for them, not by them: nothing they changed starts a fire, but they are
-            // told, once, what by it would catch if it did.
-            self.hearth_hint(id, core);
+            // told, once, what by it would catch if it did. One no one owns catches nothing.
+            if owned {
+                self.hearth_hint(id, core);
+            }
         }
     }
 }

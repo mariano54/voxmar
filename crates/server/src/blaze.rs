@@ -482,30 +482,84 @@ mod tests {
     }
 
     /// An older world's home hearth, relit for its player as they join under a thatch roof:
-    /// nothing starts to smoulder (they changed nothing), but they are told once which block
-    /// its fire reaches and how far off; their next lighting by hand does set it smouldering.
+    /// nothing starts to smoulder (they changed nothing). One no one is known to own is relit
+    /// as no one's, says nothing, and stays no one's when lit by hand, so it never catches.
+    /// One known to be Ada's is relit as hers: she is told once which block its fire reaches
+    /// and how far off, and her next lighting by hand does set it smouldering.
     #[test]
     fn a_hearth_relit_on_joining_names_the_thatch_and_burns_nothing() {
         let mut server = crate::test_server();
         let (core, client) = hearth(&mut server);
         let above = core + IVec3::Y * 2;
         server.set_block(above, server.content.blocks.expect("base:thatch_roof"));
-        let player = server.players.get_mut(&1).unwrap();
-        (player.home, player.kindled) = (Some(core.as_vec3() + voxmar_engine::glam::Vec3::new(0.5, 1.0, 0.5)), false);
-        told(&client);
-        server.kindle_home(1);
-        assert!(server.lit.contains_key(&core), "the old home hearth was not lit again");
-        assert!(server.blazes.is_empty(), "relit on joining set the thatch smouldering");
-        let hints: Vec<_> = told(&client).into_iter().filter_map(|m| match m {
-            voxmar_protocol::ServerMessage::Chat { text: voxmar_engine::lang::Words::Key(k, args), .. } if k == "fire.near_hearth" => Some(args),
-            _ => None,
-        }).collect();
-        assert_eq!(hints.len(), 1, "told once of what the fire reaches");
-        let said = format!("{:?}", hints[0]);
-        assert!(said.contains("block.base.thatch_roof") && said.contains("\"2\""), "names the thatch two steps off: {said}");
-        server.lit.remove(&core);
+        let hints = |client: &voxmar_protocol::ClientConnection| -> Vec<_> {
+            told(client).into_iter().filter_map(|m| match m {
+                voxmar_protocol::ServerMessage::Chat { text: voxmar_engine::lang::Words::Key(k, args), .. } if k == "fire.near_hearth" => Some(args),
+                _ => None,
+            }).collect()
+        };
+        for known in [false, true] {
+            server.lit.remove(&core);
+            server.hearth_owners.clear();
+            if known {
+                server.hearth_owners.insert(core, Some("ada".into()));
+            }
+            let player = server.players.get_mut(&1).unwrap();
+            player.name = "Ada".into();
+            (player.home, player.kindled) = (Some(core.as_vec3() + voxmar_engine::glam::Vec3::new(0.5, 1.0, 0.5)), false);
+            told(&client);
+            server.kindle_home(1);
+            assert!(server.lit.contains_key(&core), "the old home hearth was not lit again");
+            assert_eq!(server.lit[&core].owner.as_deref(), known.then_some("ada"), "relit on joining as whose");
+            assert!(server.blazes.is_empty(), "relit on joining set the thatch smouldering");
+            let said = hints(&client);
+            if !known {
+                assert!(said.is_empty(), "told of a fire that keeps out its own: {said:?}");
+                server.lit.remove(&core);
+                server.light(1, core);
+                assert_eq!(server.lit[&core].owner, None, "lighting it by hand took the old hearth");
+                assert!(server.blazes.is_empty(), "the hearth no one owns set its thatch smouldering");
+                continue;
+            }
+            assert_eq!(said.len(), 1, "told once of what the fire reaches");
+            let said = format!("{:?}", said[0]);
+            assert!(said.contains("block.base.thatch_roof") && said.contains("\"2\""), "names the thatch two steps off: {said}");
+            server.lit.remove(&core);
+            server.light(1, core);
+            assert_eq!(server.blazes.get(&above).map(|b| b.burning), Some(false), "lit by hand, the thatch smoulders");
+        }
+    }
+
+    /// Ada lights her home hearth and leaves; Bo breaks a stone of its ring (its fire goes
+    /// out), puts it back and lights it: it is still Ada's, and his torch fizzles at her
+    /// wall. Only breaking the hearthstone makes it no one's, for whoever builds there next.
+    #[test]
+    fn mending_and_relighting_someone_elses_hearth_never_takes_it() {
+        let mut server = crate::test_server();
+        let (core, _client) = hearth(&mut server);
+        server.players.remove(&1);
+        let _ada = join(&mut server, 1, "Ada");
         server.light(1, core);
-        assert_eq!(server.blazes.get(&above).map(|b| b.burning), Some(false), "lit by hand, the thatch smoulders");
+        server.leave(1);
+        let _bo = join(&mut server, 2, "Bo");
+        let (ring, stone) = (core + IVec3::new(1, 0, 1), server.content.blocks.expect("base:cobblestone"));
+        server.set_block(ring, BlockId::AIR);
+        assert!(!server.lit.contains_key(&core), "the broken ring left the fire burning");
+        server.set_block(ring, stone);
+        server.light(2, core);
+        assert_eq!(server.lit[&core].owner.as_deref(), Some("ada"), "Bo's relighting took Ada's hearth");
+        let wall = core + IVec3::new(4, 0, 0);
+        server.set_block(wall, server.content.blocks.expect("base:wattle_panel"));
+        assert!(!torch_smoulders(&mut server, "Bo", wall + IVec3::Z, wall), "Bo's torch at Ada's wall");
+        // Saved and opened again, it is still hers, lit or cold.
+        let saved = crate::hearth::HearthOwner::saved(&server.hearth_owners);
+        assert_eq!(saved, [crate::hearth::HearthOwner { position: core.to_array(), owner: Some("ada".into()) }]);
+        // The hearthstone broken and laid again, it is whoever lights it next.
+        let hearthstone = server.content.blocks.expect("base:hearthstone");
+        server.set_block(core, BlockId::AIR);
+        server.set_block(core, hearthstone);
+        server.light(2, core);
+        assert_eq!(server.lit[&core].owner.as_deref(), Some("bo"), "a new hearth on the spot is its builder's");
     }
 
     /// The same hearth under the same thatch roof: with the roof's opening over the fire
