@@ -163,9 +163,10 @@ pub(super) fn fly(
     let eye = player.eye();
     // Drawn shots letting go: from the hand, at the creature's middle (or what stands in
     // the way), and on past it as far as it reaches for one that misses.
+    // A swing cancelled since (even this frame, as it would let go) takes its shot back first.
+    shots.cancels(fighting.cancels);
     let (due, waiting): (Vec<_>, Vec<_>) = shots.drawn.drain(..).partition(|(when, ..)| *when <= now);
     shots.drawn = waiting;
-    shots.cancels(fighting.cancels);
     for (_, class, at, reach, swing) in due {
         let aim = player.look_direction().normalize_or(Vec3::NEG_Z);
         let middle = at.and_then(|id| creatures.centre(&launch, id)).filter(|(_, dying)| !dying).map(|(middle, _)| middle);
