@@ -259,7 +259,8 @@ steps! {
     /// Walking into the hole picks up what the dug blocks dropped.
     Collect,
     /// A row of blocks of every hardness, broken with the bare hand, a held block and every
-    /// tool, under load: client and server agree on every one, and none comes back.
+    /// tool, under load: client and server agree on every one, and none comes back. Those
+    /// of a building material (the cobblestone) sound as it.
     Breaks,
     /// On the menu's audio page, a switch for each category of music the player can hear;
     /// clicking one turns that category off, and again on. A track starting is named, with
@@ -2041,6 +2042,7 @@ fn breaks(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 net.command(&format!("setblock {} {} {} {}", cell.x, cell.y, cell.z, registry.def(block).name));
             }
             gate.breaks = Breaks { row, ..default() };
+            world.resource_mut::<crate::sfx::MaterialsAsked>().0.clear();
             gate.advance(now);
         }
         1 => {
@@ -2154,9 +2156,45 @@ fn breaks(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 Err(wrong.join("; "))
             };
             gate.check("breaks", result);
+            let sounded = material_sounds(world, &gate.breaks.row);
+            gate.check("breaks: material sounds", sounded);
             end_breaks(world, gate, now);
         }
     }
+}
+
+/// Whether every block of the breaks row that is of a building material (`sounds.ron`'s
+/// `materials`) asked, as it broke, for that material's break clips, and its taps (when it
+/// took long enough to tap) for its step clips, not its family's; with sound off, by what
+/// was asked rather than heard. Some block of the row must be of one.
+fn material_sounds(world: &World, row: &[(IVec3, BlockId, Holder)]) -> Result<String, String> {
+    use crate::sfx::Cue;
+    let recorded = crate::sfx::Recordings::load(&world.resource::<Launch>().content.files)?;
+    let registry = &world.resource::<ClientWorld>().registry;
+    let asked = &world.resource::<crate::sfx::MaterialsAsked>().0;
+    let mut blocks: Vec<BlockId> = row.iter().map(|&(_, block, _)| block).collect();
+    blocks.dedup();
+    let of_material: Vec<(BlockId, &crate::sfx::MaterialSound)> =
+        blocks.iter().filter_map(|&block| Some((block, &recorded.materials[recorded.material_of(registry, block)?]))).collect();
+    if of_material.is_empty() {
+        let names: Vec<&str> = blocks.iter().map(|&b| registry.def(b).name.as_str()).collect();
+        return Err(format!("no block of the row ({}) is of a building material", names.join(", ")));
+    }
+    let mut wrong = Vec::new();
+    let mut heard = Vec::new();
+    for (block, material) in of_material {
+        let name = &registry.def(block).name;
+        for (cue, needed) in [(Cue::Break, true), (Cue::Hit, false)] {
+            let wanted: Vec<String> = material.clips(cue).map(|(paths, _)| paths.to_vec()).unwrap_or_default();
+            match asked.iter().find(|&&(b, c, _)| b == block && c == cue) {
+                Some((.., paths)) if *paths == wanted => heard.push(format!("{name} {cue:?} as {} ({} clips)", material.name, paths.len())),
+                Some((.., paths)) => wrong.push(format!("{name} {cue:?} asked for {paths:?}, not {}'s {wanted:?}", material.name)),
+                None if needed => wrong.push(format!("{name} broke but never asked for its {cue:?} sound (asked: {asked:?})")),
+                None => {}
+            }
+        }
+    }
+    if wrong.is_empty() { Ok(heard.join(", ")) } else { Err(wrong.join("; ")) }
 }
 
 /// The breaks step's row: every holder once, in order, each with a block, and every block

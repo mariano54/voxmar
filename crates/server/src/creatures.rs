@@ -43,7 +43,6 @@ use voxmar_protocol::{CreatureGone, CreatureView, PlayerId, ServerMessage, TICKS
 
 use crate::save::Draw;
 use crate::Server;
-use crate::items::random3;
 
 /// Creatures think every this many ticks within `NEAR` blocks of a player, every
 /// `FAR_THINK` beyond.
@@ -1126,11 +1125,8 @@ impl Server {
         };
         let moment = Moment { bonus, tool: &tool, night: self.daylight() < 0.3, by_player: killer.is_some() };
         // Each roll numbered by the world's count of loot rolls, never by the tick it dies on.
-        let (key, meta) = (self.meta.draw_key, &mut self.meta);
-        let found = loot::roll(&species.loot, &moment, || {
-            meta.loot += 1;
-            unit_from(mix(mix(key ^ 0x1007, meta.loot), 0xd2a3))
-        });
+        let meta = &mut self.meta;
+        let found = loot::roll(&species.loot, &moment, || meta.next_loot());
         let cell = creature.body.position.floor().as_ivec3();
         // The killer's journal: one more of the species (people are not counted), and each
         // drop for the collection log.
@@ -1139,9 +1135,7 @@ impl Server {
         // Its loot comes out once its body has fallen, never from an animal still standing.
         let due = self.tick + (species.def.death.drops_after() * TICKS_PER_SECOND as f32).round() as u64;
         for (i, (item, count)) in found.into_iter().enumerate() {
-            let popped = self.meta.drops;
-            self.meta.drops += 1;
-            let body = dropped::popped(cell, random3(self.meta.draw_key ^ popped.wrapping_mul(0x9e37_79b9_7f4a_7c15), cell, i as u32 + id));
+            let body = dropped::popped(cell, self.meta.next_pop(cell, i as u32 + id));
             self.creatures.falling_loot.push((due, ItemStack { item, count }, body));
         }
         if let (Some(player), Some(skill), true) = (creature.hurt_by, species.xp_skill, xp) {
