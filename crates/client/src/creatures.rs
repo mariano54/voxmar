@@ -349,6 +349,56 @@ struct Shown {
     /// The move (`moves`, from 1) it winds up and strikes with, 0 for its plain attack:
     /// what it showed as the wind-up began, kept through the strike after.
     move_shown: u8,
+    /// Seconds of game time into its stagger (`STAGGERED`), while it shows one, and how far
+    /// into its stagger stance it is (`fight_fx::stagger_depth`); its entry in
+    /// `Creatures::stagger_reads`.
+    staggered: Option<f32>,
+    stagger_depth: f32,
+    stagger_read: Option<usize>,
+}
+
+/// What one stagger showed, for the gate: whose it was, whether its blow had been shown as
+/// it came (a perfect block parries a blow that came; a daze cuts a wind-up short, which
+/// must not read as the blow landing), the most of its stagger stance it showed (0 to 1),
+/// the frames drawn while it reeled, and the move (0 its plain attack) whose wind-up or
+/// strike it was in, if any.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct StaggerRead {
+    pub id: u32,
+    pub struck: bool,
+    pub deepest: f32,
+    pub frames: u32,
+    pub interrupted: Option<u8>,
+}
+
+/// What a creature's new view does to its wind-up, from the one before.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Turn {
+    /// Told it is staggered: any wind-up is over, and `struck` says whether its blow had
+    /// already been shown.
+    Staggered { struck: bool },
+    WindsUp,
+    /// Its wind-up ended at the server's word before its own time: the blow shows now.
+    Strikes,
+    /// Its wind-up ended, its blow shown already (or it is dying).
+    Ends,
+    Same,
+}
+
+/// The `Turn` from view `before` to `after`, for a creature `coiling` (its blow shown by its
+/// own time if `coil_struck`), `striking` (its strike still showing) or `dying`.
+fn turn(before: &CreatureView, after: &CreatureView, coiling: bool, coil_struck: bool, striking: bool, dying: bool) -> Turn {
+    let attacking = |view: &CreatureView| view.pose == Pose::Attacking;
+    let staggered = |view: &CreatureView| view.tell == voxmar_protocol::STAGGERED;
+    if staggered(after) && !staggered(before) {
+        Turn::Staggered { struck: coil_struck || striking }
+    } else if attacking(after) && !attacking(before) {
+        Turn::WindsUp
+    } else if !attacking(after) && attacking(before) {
+        if !coil_struck && coiling && !dying { Turn::Strikes } else { Turn::Ends }
+    } else {
+        Turn::Same
+    }
 }
 
 
@@ -399,6 +449,12 @@ pub struct Creatures {
     /// Bodies vanishing since `fight_fx` last looked: where their middle is, how tall they
     /// are and their coat's colour, for the puff of smoke they go in.
     pub poofs: Vec<(Vec3, f32, [u8; 3])>,
+    /// Creatures staggered since `fight_fx` last looked: over their head, how tall they are
+    /// and their coat, for the sound and the dizzy sparks.
+    pub staggers: Vec<(Vec3, f32, [u8; 3])>,
+    /// Staggers seen since joining, and what each showed, for the gate.
+    pub staggers_seen: u32,
+    pub stagger_reads: Vec<StaggerRead>,
     /// Blows creatures were seen to strike since joining (their wind-up ended in a snap),
     /// for the gate.
     pub strikes: u32,
@@ -971,18 +1027,40 @@ fn show(
                 sounds.push(sound(Sound::Ready, view.id, &view, shown.position, 0.0));
             }
             // A wind-up starts its coil; its end is the blow, struck now unless the wind-up's
-            // own time struck it already.
-            let attacking = |pose| pose == Pose::Attacking;
-            if attacking(view.pose) && !attacking(shown.view.pose) {
-                wind_up(shown, &view, registry, launch.content.combat.feel.creature_windup, false, &mut creatures.told);
-            } else if !attacking(view.pose) && attacking(shown.view.pose) {
-                if !shown.coil_struck && shown.coiling.is_some() && shown.dying.is_none() {
+            // own time struck it already. Staggered, its wind-up is over and it reels
+            // (`fight_fx`'s stagger): after its blow if that showed (a perfect block parries
+            // a blow that came), else with none (a daze cuts the wind-up short).
+            match turn(&shown.view, &view, shown.coiling.is_some(), shown.coil_struck, shown.striking.is_some(), shown.dying.is_some()) {
+                Turn::Staggered { struck } => {
+                    let interrupted = if shown.coiling.is_some() || shown.striking.is_some() { Some(shown.move_shown) } else { None };
+                    shown.coiling = None;
+                    // A strike still showing keeps its move's look until it is out.
+                    if shown.striking.is_none() {
+                        shown.move_shown = 0;
+                    }
+                    shown.staggered = Some(0.0);
+                    if shown.dying.is_none() {
+                        let def = &registry.get(view.species).def;
+                        let height = def.body.size.1 * view.scale;
+                        let forward = Quat::from_rotation_y(shown.yaw) * Vec3::NEG_Z;
+                        let head = shown.position + forward * def.body.size.0 * view.scale * 0.35 + Vec3::Y * height * 1.1;
+                        let coat = def.body.colours.first().copied().unwrap_or([200, 200, 200]);
+                        creatures.staggers.push((head, height, coat));
+                    }
+                    creatures.staggers_seen += 1;
+                    shown.stagger_read = Some(creatures.stagger_reads.len());
+                    creatures.stagger_reads.push(StaggerRead { id: view.id, struck, deepest: 0.0, frames: 0, interrupted });
+                }
+                Turn::WindsUp => wind_up(shown, &view, registry, launch.content.combat.feel.creature_windup, false, &mut creatures.told),
+                Turn::Strikes => {
                     shown.striking = Some(0.0);
                     shown.coil_reached = word_reached(shown.coiling.unwrap_or(0.0), dt);
                     (shown.read_due, shown.coil_word) = (true, true);
                     creatures.strikes += 1;
+                    shown.coiling = None;
                 }
-                shown.coiling = None;
+                Turn::Ends => shown.coiling = None,
+                Turn::Same => {}
             }
             shown.view = view;
             shown.told_at = now;
@@ -1071,6 +1149,10 @@ fn show(
                 read_due: false,
                 poofed: false,
                 move_shown: 0,
+                // One first seen staggered reels from the start, unheard and with no sparks.
+                staggered: (view.tell == voxmar_protocol::STAGGERED).then_some(0.0),
+                stagger_depth: 0.0,
+                stagger_read: None,
             },
         );
         // One first seen already winding up (come into view, or joined, mid-blow) coils and
@@ -1223,6 +1305,29 @@ fn show(
         if struck_out {
             shown.striking = None;
         }
+        // Staggered, it reels where it stands (`combat_fx.ron`'s `stagger`): eased into its
+        // stagger stance by game time, swaying, whatever of its strike still shows giving way
+        // to it; eased back out once the stagger is over. The most of it shown is kept for
+        // the gate.
+        let reeling = shown.view.tell == voxmar_protocol::STAGGERED && shown.dying.is_none();
+        if let Some(t) = shown.staggered.as_mut() {
+            *t += dt;
+        }
+        let stance = match (fx, shown.staggered) {
+            (Some(fx), Some(t)) => {
+                shown.stagger_depth = crate::fight_fx::stagger_depth(&fx.stagger, shown.stagger_depth, reeling, dt);
+                let share = crate::fight_fx::stagger_share(shown.stagger_depth);
+                if let Some(read) = shown.stagger_read.and_then(|i| creatures.stagger_reads.get_mut(i)) {
+                    read.deepest = read.deepest.max(share);
+                    read.frames += u32::from(reeling);
+                }
+                stance.scaled(1.0 - share).plus(crate::fight_fx::stagger_stance(&fx.stagger, shown.stagger_depth, t))
+            }
+            _ => stance,
+        };
+        if !reeling && shown.stagger_depth <= 0.0 {
+            (shown.staggered, shown.stagger_read, shown.stagger_depth) = (None, None, 0.0);
+        }
         // Its flinch from our blow: pushed back and tipped away, squashed, then easing back.
         if let Some(flinch) = shown.flinch.as_mut() {
             *flinch += dt;
@@ -1244,9 +1349,10 @@ fn show(
             Pose::Idle => (0.0, 0.0),
         };
         // A boss's move shows its own tell, so each reads apart; rearing into a new phase,
-        // it rears right up.
+        // it rears right up. Staggered, its stagger stance (above) is what shows.
         let (nod, crouch, rear) = match shown.view.tell {
             voxmar_protocol::REARING => (-0.4, 0.0, 1.0),
+            voxmar_protocol::STAGGERED => (nod, crouch, 0.0),
             0 => (nod, crouch, 0.0),
             index => {
                 let tell = registry.get(shown.view.species).tell_at(index);
@@ -1255,7 +1361,7 @@ fn show(
         };
         // Standing about, now and then it sniffs at the ground; running away, its head
         // goes out low.
-        let idle = shown.view.pose == Pose::Idle && speed < 0.2 && shown.coiling.is_none() && shown.dying.is_none();
+        let idle = shown.view.pose == Pose::Idle && speed < 0.2 && shown.coiling.is_none() && shown.staggered.is_none() && shown.dying.is_none();
         let sniff = motion::now_and_then(&moves.idle.sniff, now, shown.view.seed, 2).filter(|_| idle).map_or(0.0, |t| (t * std::f32::consts::TAU * 2.0).sin().abs());
         let nod = nod + sniff * moves.idle.sniff.size + moves.flee.head * shown.flee;
         shown.nod += (nod - shown.nod) * (6.0 * dt).min(1.0);
@@ -1714,7 +1820,7 @@ pub fn aim(
 fn wind_up(shown: &mut Shown, view: &voxmar_protocol::CreatureView, registry: &creature::CreatureRegistry, creature_windup: f32, late: bool, told: &mut Vec<Told>) {
     (shown.coiling, shown.striking, shown.coil_struck) = (Some(0.0), None, false);
     (shown.coil_from, shown.coil_far, shown.coil_kept, shown.coil_slid, shown.coil_deepest, shown.recover_most) = (shown.position, 0.0, 1.0, 0.0, 0.0, 0.0);
-    shown.move_shown = if view.tell == voxmar_protocol::REARING { 0 } else { view.tell };
+    shown.move_shown = if matches!(view.tell, voxmar_protocol::REARING | voxmar_protocol::STAGGERED) { 0 } else { view.tell };
     let species = registry.get(view.species);
     let name = species.def.name.rsplit(':').next().unwrap_or(&species.def.name);
     let (key, attack) = match shown.move_shown {
@@ -1762,6 +1868,44 @@ mod tests {
             ear_lean: 0.0,
         }
         .parts(1.0)
+    }
+
+    fn view_of(pose: Pose, tell: u8) -> CreatureView {
+        CreatureView {
+            id: 1,
+            species: CreatureId(0),
+            position: Vec3::ZERO,
+            velocity: Vec3::ZERO,
+            yaw: 0.0,
+            pose,
+            tell,
+            health: 10,
+            scale: 1.0,
+            seed: 1,
+            kept: false,
+            owner: None,
+            young: false,
+            ready: false,
+            trust: 0,
+            genes: [0; voxmar_engine::genes::MOST],
+        }
+    }
+
+    /// A daze cuts a wind-up short mid-coil: it reels with no blow shown. A perfect block
+    /// staggers it once its blow has come, shown by the wind-up's own time: it reels after
+    /// the blow, and the stagger says the blow showed.
+    #[test]
+    fn a_daze_shows_no_blow_and_a_parried_blow_still_shows() {
+        let winding = view_of(Pose::Attacking, 0);
+        let staggered = view_of(Pose::Idle, voxmar_protocol::STAGGERED);
+        assert_eq!(turn(&winding, &staggered, true, false, false, false), Turn::Staggered { struck: false });
+        assert_eq!(turn(&winding, &staggered, true, true, true, false), Turn::Staggered { struck: true });
+        // Its blow at the server's word, and its wind-up's start.
+        let idle = view_of(Pose::Idle, 0);
+        assert_eq!(turn(&winding, &idle, true, false, false, false), Turn::Strikes);
+        assert_eq!(turn(&winding, &idle, true, true, true, false), Turn::Ends);
+        assert_eq!(turn(&idle, &winding, false, false, false, false), Turn::WindsUp);
+        assert_eq!(turn(&staggered, &staggered, false, false, false, false), Turn::Same);
     }
 
     /// A 0.6 s wind-up the player's blows land on twice, each freezing it 0.09 s (a heavy
