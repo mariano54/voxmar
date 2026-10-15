@@ -1102,6 +1102,22 @@ impl Server {
         Some(damage)
     }
 
+    /// A creature hurts itself (a fall its charge ran off): no player's blow, so no player
+    /// is shown a hit or earns experience for it. Killed so, it dies as one felled by no
+    /// hand, its loot for the player who last hurt it.
+    pub(crate) fn fall_hurt_creature(&mut self, id: u32, damage: u16) {
+        let Some(creature) = self.creatures.live.get_mut(&id) else { return };
+        let damage = damage.min(creature.health);
+        creature.health -= damage;
+        creature.changed = true;
+        let (killed, last) = (creature.health == 0, creature.hurt_by);
+        if killed {
+            self.creature_felled(id, last);
+        } else if damage > 0 {
+            self.phase_check(id);
+        }
+    }
+
     /// A creature dies: its loot pops out, its killer earns experience.
     pub(crate) fn creature_dies(&mut self, id: u32) {
         self.creature_dies_by(id, true);

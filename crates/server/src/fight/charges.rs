@@ -173,6 +173,7 @@ fn a_braced_spear_stops_a_charge_on_its_point() {
     assert_eq!(field.server.players[&1].health.current, player_before, "the bracer took nothing");
     assert_eq!(field.told(), vec![Defended::Perfect]);
     assert!(field.held() >= field.charge().stun, "he stands dazed for his charge's stun ({} s)", field.held());
+    assert_eq!(field.server.creatures.live[&field.tusk].tell(), voxmar_protocol::STAGGERED, "dazed on the point, he reels");
 
     let mut field = Field::new(Vec3::new(40.5, STAND, 48.5), Vec3::new(40.5, STAND, 40.5));
     field.hold("base:stone_sword");
@@ -200,6 +201,7 @@ fn a_charge_into_a_wall_dazes_the_charger_and_hops_a_step() {
     let at = field.at();
     assert!(at.z > 41.0 && at.z < 47.0, "he hopped the step and stopped at the wall: {at}");
     assert!(field.held() >= field.charge().stun, "the wall dazed him ({} s)", field.held());
+    assert_eq!(field.server.creatures.live[&field.tusk].tell(), voxmar_protocol::STAGGERED, "dazed, he reels, and players see it");
     // Then he waits out only the rest of the charge's `every`, as after a blow that lands.
     let live = &field.server.creatures.live[&field.tusk];
     let attack = field.server.content.creatures.get(live.species).attack_at(live.attack).unwrap();
@@ -273,6 +275,10 @@ fn a_charge_off_a_cliff_hurts_and_a_pit_holds_the_charger() {
     let fall = 10.0 - field.server.survival.safe_fall;
     let lost = (fall.ceil() * field.server.content.combat.feel.charge_fall * most as f32).round() as u16;
     assert_eq!(most - field.health(), lost, "the fall cost him a tenth a block past the safe fall");
+    // His own fall: the player he charged struck nothing, so is shown no hit and earns
+    // nothing for it.
+    let heard: Vec<ServerMessage> = std::iter::from_fn(|| field.client.try_recv().ok().flatten()).collect();
+    assert!(!heard.iter().any(|m| matches!(m, ServerMessage::Struck { .. } | ServerMessage::Xp { .. })), "his fall was no blow of the player's: {heard:?}");
 
     // A pit two deep across his way, the player at its far edge.
     let mut field = Field::new(Vec3::new(40.5, STAND, 45.5), Vec3::new(40.5, STAND, 36.5));
