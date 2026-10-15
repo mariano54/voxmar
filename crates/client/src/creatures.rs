@@ -360,13 +360,15 @@ struct Shown {
 /// What one stagger showed, for the gate: whose it was, whether its blow had been shown as
 /// it came (a perfect block parries a blow that came; a daze cuts a wind-up short, which
 /// must not read as the blow landing), the most of its stagger stance it showed (0 to 1),
-/// and the frames drawn while it reeled.
+/// the frames drawn while it reeled, and the move (0 its plain attack) whose wind-up or
+/// strike it was in, if any.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct StaggerRead {
     pub id: u32,
     pub struck: bool,
     pub deepest: f32,
     pub frames: u32,
+    pub interrupted: Option<u8>,
 }
 
 /// What a creature's new view does to its wind-up, from the one before.
@@ -1030,6 +1032,7 @@ fn show(
             // a blow that came), else with none (a daze cuts the wind-up short).
             match turn(&shown.view, &view, shown.coiling.is_some(), shown.coil_struck, shown.striking.is_some(), shown.dying.is_some()) {
                 Turn::Staggered { struck } => {
+                    let interrupted = if shown.coiling.is_some() || shown.striking.is_some() { Some(shown.move_shown) } else { None };
                     shown.coiling = None;
                     // A strike still showing keeps its move's look until it is out.
                     if shown.striking.is_none() {
@@ -1046,7 +1049,7 @@ fn show(
                     }
                     creatures.staggers_seen += 1;
                     shown.stagger_read = Some(creatures.stagger_reads.len());
-                    creatures.stagger_reads.push(StaggerRead { id: view.id, struck, deepest: 0.0, frames: 0 });
+                    creatures.stagger_reads.push(StaggerRead { id: view.id, struck, deepest: 0.0, frames: 0, interrupted });
                 }
                 Turn::WindsUp => wind_up(shown, &view, registry, launch.content.combat.feel.creature_windup, false, &mut creatures.told),
                 Turn::Strikes => {

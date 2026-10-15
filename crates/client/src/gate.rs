@@ -8763,6 +8763,8 @@ struct FeelRun {
     stagger_from: usize,
     stagger_due: Option<(f32, f32, u32)>,
     stagger_judged: bool,
+    /// Frames drawn since the perfect block staggered it, while its stagger is judged.
+    stagger_frames: u32,
 }
 
 impl FeelRun {
@@ -9120,7 +9122,7 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 // The perfect block staggers the bear on the server: how that shows is judged
                 // from here on (`judge_stagger`).
                 if blocking && !gate.feel.stagger_judged && gate.feel.stagger_due.is_none() {
-                    gate.feel.stagger_due = Some((gate.server_now, now, view.id));
+                    (gate.feel.stagger_due, gate.feel.stagger_frames) = (Some((gate.server_now, now, view.id)), 0);
                 }
                 if blocking {
                     gate.feel.found = Some(gate.feel.after);
@@ -9236,16 +9238,19 @@ fn slow_try(gate: &mut Gate, late: f32, blocking: bool, windup: f32, perfect: f3
 /// for rounding (`fight_fx::stagger_depth` reaches 1 once it has reeled `stagger.ease`
 /// seconds of game time).
 const STAGGER_SHOWN: f32 = 0.999;
+/// The least frames drawn after the perfect block before a stagger that never showed is
+/// judged.
+const STAGGER_FRAMES: u32 = 10;
 
 /// The bear the perfect block staggered (`FeelRun::stagger_due`), judged each frame of the
 /// step until it is: shown staggered (`STAGGERED` reached the client) and its stagger
 /// stance shown whole, which it is once it has reeled `stagger.ease` seconds of game time
 /// however the frames fell; a shot of it then, still reeling. Its blow, parried, may show
 /// before it reels (only a daze, cutting a wind-up short, must show none: the client's
-/// tests judge that). Failed when the stagger ended without its stance shown whole over
-/// frames drawn while it reeled (one that came and went between two frames says nothing),
-/// or when none showed in the `hold` the server holds it and `UNANSWERED` seconds more, by
-/// the server's clock and the game's both (a game starved of frames sees it late).
+/// tests judge that). Failed when the stagger ended without its stance shown whole, or was
+/// never drawn reeling at all, or when none showed: the last two once the `hold` the server
+/// holds it and `UNANSWERED` seconds more have passed by the server's clock and the game's
+/// both, and `STAGGER_FRAMES` frames have been drawn (a game starved of frames sees it late).
 fn judge_stagger(world: &mut World, gate: &mut Gate, view: Option<voxmar_protocol::CreatureView>, hold: f32, now: f32) {
     let Some((since, since_game, bear)) = gate.feel.stagger_due else { return };
     let creatures = world.resource::<crate::creatures::Creatures>();
@@ -9253,7 +9258,10 @@ fn judge_stagger(world: &mut World, gate: &mut Gate, view: Option<voxmar_protoco
     let seen = creatures.staggers_seen;
     let reeling = view.is_some_and(|v| v.id == bear && v.tell == voxmar_protocol::STAGGERED);
     let waited = gate.server_now - since;
-    let given_up = waited > hold + UNANSWERED && now - since_game > hold + UNANSWERED;
+    gate.feel.stagger_frames += 1;
+    let frames = gate.feel.stagger_frames;
+    let given_up = waited > hold + UNANSWERED && now - since_game > hold + UNANSWERED && frames >= STAGGER_FRAMES;
+    let clocks = format!("{waited:.2} server s and {:.2} game s after the perfect block, {frames} frames drawn", now - since_game);
     match read {
         Some(read) if read.deepest >= STAGGER_SHOWN => {
             if reeling {
@@ -9263,11 +9271,17 @@ fn judge_stagger(world: &mut World, gate: &mut Gate, view: Option<voxmar_protoco
             let late = if reeling { "" } else { ", too late for a shot" };
             gate.check("combat feel: stagger", Ok(format!("the bear was shown staggered {waited:.2} server s after the perfect block, {blow}, its stagger stance shown whole ({:.3}){late}", read.deepest)));
         }
+        // Never drawn reeling: the player never saw it. Judged once the clocks and the
+        // frames have run, so a starved game that has yet to draw it is not failed early.
         Some(read) if !reeling && read.frames == 0 => {
-            gate.known("combat feel: stagger", Err(format!("the bear's stagger came and went between two frames ({waited:.2} server s after the perfect block)")), "no frame was drawn while it reeled");
+            if !given_up {
+                return;
+            }
+            let interrupted = read.interrupted.map_or("in no wind-up".to_owned(), |m| if m == 0 { "in its plain attack".to_owned() } else { format!("in its move {m}") });
+            gate.check("combat feel: stagger", Err(format!("the bear's stagger ({interrupted}) was never drawn reeling: 0 of {frames} frames, {clocks}")));
         }
         Some(read) if !reeling => gate.check("combat feel: stagger", Err(format!("its stagger ended with its stance shown {:.2} of the way at most over {} frames", read.deepest, read.frames))),
-        None if given_up => gate.check("combat feel: stagger", Err(format!("the bear was never shown staggered {waited:.1} server s after the perfect block (the server holds it {hold:.1} s); {seen} staggers seen in all"))),
+        None if given_up => gate.check("combat feel: stagger", Err(format!("the bear was never shown staggered, {clocks} (the server holds it {hold:.1} s); {seen} staggers seen in all"))),
         _ => return,
     }
     (gate.feel.stagger_due, gate.feel.stagger_judged) = (None, true);
