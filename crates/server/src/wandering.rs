@@ -700,13 +700,14 @@ impl Server {
         let combat = self.combat_level(player);
         let recent = self.wandering.recent.get(&player);
         // The player's home, surveyed once and only if a kind asks how far it has come.
-        let anchor = p.home.or(p.bed).map(|h| h.floor().as_ivec3());
+        let home = p.home_spot(&self.lit);
+        let anchor = home.map(|h| h.floor().as_ivec3());
         let survey = std::cell::OnceCell::new();
         let home_is = |step: voxmar_engine::effect::EffectId| {
             let Some(anchor) = anchor else { return false };
             let survey = survey.get_or_init(|| self.survey_around(anchor, Some(player)));
             let calm = voxmar_engine::weather::Weather::NONE;
-            let situation = voxmar_engine::effect::Situation { felt: 0.0, warmed: false, outdoors: self.open_sky(anchor + IVec3::Y * 2), weather: &calm, biome: "", biome_tags: &[], home: Some(survey), done: &p.quests_done, held: &[], near: &[] };
+            let situation = voxmar_engine::effect::Situation { felt: 0.0, warmed: false, outdoors: self.open_sky(anchor + IVec3::Y * 2), weather: &calm, biome: "", biome_tags: &[], home: Some(survey), done: &p.quests_done, held: &[], near: &[], seated: false };
             self.content.effects.get(step).when.as_ref().is_some_and(|when| when.holds(&situation))
         };
         let mut choices: Vec<(usize, f32)> = Vec::new();
@@ -718,11 +719,11 @@ impl Server {
             let suits = event.suits_light(daylight)
                 && event.suits_distance(flat(spot.as_vec3(), self.spawn))
                 && days >= needs.days
-                && needs.home.is_none_or(|h| h == p.home.is_some())
+                && needs.home.is_none_or(|h| h == home.is_some())
                 && needs.combat.is_none_or(|(low, high)| (low..=high).contains(&combat))
                 && needs.town.is_none_or(|reach| self.town_near(spot.as_vec3(), reach).is_some())
                 && needs.wet.is_none_or(|w| w == wet)
-                && needs.near_home.is_none_or(|near| p.home.is_some_and(|home| flat(home, p.position) <= near))
+                && needs.near_home.is_none_or(|near| home.is_some_and(|home| flat(home, p.position) <= near))
                 && needs.after.as_ref().is_none_or(|(name, reach)| self.forerunner_near(spot.as_vec3(), name, *reach).is_some())
                 && needs.met.as_ref().is_none_or(|name| p.tallies.get(&format!("met:{name}")).is_some_and(|&n| n > 0))
                 && event.home_is.is_none_or(home_is);
@@ -1653,7 +1654,7 @@ impl Server {
                 Some(p) if self.tick < *until => {
                     heading = (xz(p.position) - xz(lead)).try_normalize().unwrap_or(heading);
                     let arrived = match arrive {
-                        Arrival::Home => p.home.is_some_and(|h| flat(h, lead) < SETTLE_AT),
+                        Arrival::Home => p.home_spot(&self.lit).is_some_and(|h| flat(h, lead) < SETTLE_AT),
                         Arrival::Town => self.villagers.town_within(lead, TOWN_AT),
                     };
                     if arrived {
@@ -2224,7 +2225,7 @@ impl Server {
         let Some(p) = self.players.get(&player).filter(|p| p.health.alive()) else { return false };
         let held = p.inventory.get(p.selected);
         let level = |skill| self.content.skills.level(p.skills.xp(skill));
-        let (has_home, hurt) = (p.home.is_some(), p.health.current < p.health.max);
+        let (has_home, hurt) = (p.home_spot(&self.lit).is_some(), p.health.current < p.health.max);
         // A line that hands over one of the party says so only with one to hand, and room
         // among what the player keeps.
         let kept_room = self.player_name(player).is_some_and(|name| self.kept_by(&name) < self.content.creatures.limits().kept_each);
@@ -6167,7 +6168,9 @@ mod tests {
         let mut server = fixture();
         server.day = (0..40).map(|i| TICKS_PER_DAY as f64 * (4.0 + i as f64 / 40.0)).find(|&day| (0.1..0.5).contains(&voxmar_engine::creature::daylight(day as u64))).expect("an evening");
         let home = IVec3::new(128, 200, 128);
-        server.players.get_mut(&1).unwrap().home = Some(home.as_vec3());
+        // A hearth home, not burning, and the bed beside it: callers judge the bed's home.
+        let player = server.players.get_mut(&1).unwrap();
+        (player.home, player.bed) = (Some(home.as_vec3()), Some(home.as_vec3()));
         let spot = IVec3::new(128, 200, 150);
         let bare = ["base:hearthstone", "base:sleeping_bag", "base:candle"];
         for (i, name) in bare.iter().enumerate() {
@@ -6186,8 +6189,28 @@ mod tests {
         assert!(comes_at(&server, "fireside_guests", spot), "a homely home has callers");
         assert!(!comes_at(&server, "hedgehog_lodger", spot), "homely is not yet cosy");
         // Far from home, nobody calls there.
-        server.players.get_mut(&1).unwrap().home = Some(Vec3::new(600.0, 200.0, 600.0));
+        let player = server.players.get_mut(&1).unwrap();
+        (player.home, player.bed) = (Some(Vec3::new(600.0, 200.0, 600.0)), Some(Vec3::new(600.0, 200.0, 600.0)));
         assert!(!comes_at(&server, "fireside_guests", spot));
+    }
+
+    /// Wanderers who call on a home ask where home is as respawn does (`home_spot`): a
+    /// hearth burning, else the last bed. A hearth gone cold is no home to call on.
+    #[test]
+    fn neighbours_call_only_on_a_home_whose_hearth_burns_or_a_bed() {
+        let mut server = fixture();
+        server.day = (0..40).map(|i| TICKS_PER_DAY as f64 * (4.0 + i as f64 / 40.0)).find(|&day| voxmar_engine::creature::daylight(day as u64) >= 1.0).expect("midday");
+        let core = IVec3::new(128, 199, 128);
+        let player = server.players.get_mut(&1).unwrap();
+        (player.home, player.bed, player.kindled) = (Some(core.as_vec3() + Vec3::new(0.5, 1.0, 0.5)), None, true);
+        player.position = Vec3::new(128.5, 200.0, 140.5);
+        let spot = IVec3::new(128, 200, 150);
+        assert!(!comes_at(&server, "neighbours", spot), "a cold hearth is no home to call on");
+        server.lit.insert(core, crate::hearth::Lit { position: core.to_array(), structure: "base:hearth".into(), until: u64::MAX });
+        assert!(comes_at(&server, "neighbours", spot), "a burning one is");
+        server.lit.clear();
+        server.players.get_mut(&1).unwrap().bed = Some(Vec3::new(130.5, 200.0, 130.5));
+        assert!(comes_at(&server, "neighbours", spot), "and with it cold, the last bed is home");
     }
 
     /// The beekeeper comes by day only to a home with a bee garden: a skep of bees among
@@ -6197,7 +6220,9 @@ mod tests {
         let mut server = fixture();
         server.day = (0..40).map(|i| TICKS_PER_DAY as f64 * (4.0 + i as f64 / 40.0)).find(|&day| voxmar_engine::creature::daylight(day as u64) >= 1.0).expect("midday");
         let home = IVec3::new(128, 200, 128);
-        server.players.get_mut(&1).unwrap().home = Some(home.as_vec3());
+        // A hearth home, not burning, and the bed beside it: callers judge the bed's home.
+        let player = server.players.get_mut(&1).unwrap();
+        (player.home, player.bed) = (Some(home.as_vec3()), Some(home.as_vec3()));
         let spot = IVec3::new(128, 200, 150);
         for (i, name) in ["base:hearthstone", "base:sleeping_bag", "base:dandelion", "base:dandelion", "base:dandelion"].iter().enumerate() {
             place(&mut server, name, home + IVec3::new(i as i32 + 1, 0, 0));

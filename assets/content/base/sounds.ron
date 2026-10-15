@@ -38,6 +38,8 @@
         "core:craft": (sounds: ["sounds/craft_1.ogg", "sounds/craft_2.ogg", "sounds/craft_3.ogg"], volume: 0.8),
         // Loading or emptying a home station (a drying rack, a compost bin) sounds the same.
         "base:use_station": (sounds: ["sounds/craft_1.ogg", "sounds/craft_2.ogg", "sounds/craft_3.ogg"], volume: 0.6),
+        // Taking a catch from a sprung trap (traps.ron): a pouch drawn open and shut.
+        "base:take_from_trap": (sounds: ["sounds/pouch_1.ogg", "sounds/pouch_2.ogg"], volume: 0.6),
         // Flint struck, sparks, and the tinder catching: a fire or a kiln lit.
         "base:light": (sounds: ["sounds/light_1.ogg", "sounds/light_2.ogg"]),
         // A lid lifted: a short creak and the lid knocking back.
@@ -49,6 +51,8 @@
         "base:cook": (sounds: ["sounds/cook_1.ogg", "sounds/cook_2.ogg"], volume: 0.9),
         // Lying down: rustles of cloth and straw.
         "base:sleep": (sounds: ["sounds/sleep_1.ogg"], volume: 0.7),
+        // Settling onto a seat: the same rustle, softer.
+        "base:sit": (sounds: ["sounds/sleep_1.ogg"], volume: 0.4),
         // A line whipped out over the water (the plop is the water's own).
         "base:fish": (sounds: ["sounds/cast_1.ogg", "sounds/cast_2.ogg"], volume: 0.7),
         // A handful of grain shaken out to an animal, and a pat.

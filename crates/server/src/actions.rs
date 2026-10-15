@@ -167,6 +167,9 @@ impl ActionContext for Context<'_> {
     fn stations(&self) -> Option<&voxmar_engine::station::Stations> {
         Some(&self.server.content.stations)
     }
+    fn traps(&self) -> Option<&voxmar_engine::trap::Traps> {
+        Some(&self.server.content.traps)
+    }
 
     fn creature_accepts(&self, id: u32, item: BlockId) -> bool {
         self.server.creature_accepts(self.agent, id, item)
@@ -322,6 +325,7 @@ impl Server {
                 (Effect::Dodge, _) => self.dodge(agent),
                 (Effect::Cook, ActionTarget::Block { block, .. }) => self.cook(agent, block),
                 (Effect::UseStation, ActionTarget::Block { block, .. }) => self.use_station(agent, block),
+                (Effect::TakeFromTrap, ActionTarget::Block { block, .. }) => self.take_from_trap(agent, block),
                 (Effect::Fertilise, ActionTarget::Block { block, .. }) => self.fertilise(agent, block),
                 (Effect::Tend, ActionTarget::Creature(id)) => self.tend(agent, id),
                 (Effect::Inspect, ActionTarget::Creature(id)) => self.inspect(agent, id),
@@ -384,7 +388,7 @@ impl Server {
                     // world spawn. What they carried is left where they fell first.
                     self.bury_if_dead(agent);
                     let player = self.players.get_mut(&agent).unwrap();
-                    let spawn = player.home.or(player.bed).unwrap_or(self.spawn);
+                    let spawn = player.home_spot(&self.lit).unwrap_or(self.spawn);
                     player.buried = false;
                     player.health.heal(u8::MAX);
                     // Where they wake is where a grave goes until they stand elsewhere,
@@ -422,6 +426,7 @@ impl Server {
                 (Effect::TendBees, ActionTarget::Block { block, .. }) => self.tend_bees(agent, block),
                 (Effect::Pray, ActionTarget::Block { .. }) => self.pray_at_altar(agent),
                 (Effect::Sleep, ActionTarget::Block { block, .. }) => self.sleep(agent, block),
+                (Effect::Sit, ActionTarget::Block { block, .. }) => self.sit(agent, block),
                 (Effect::UseTable, ActionTarget::Block { block, .. }) => {
                     self.players.get_mut(&agent).unwrap().station = Some(block);
                 }
@@ -474,7 +479,7 @@ impl Server {
         let feet = self.players[&agent].position.floor().as_ivec3();
         let outdoors = self.open_sky(feet + IVec3::Y * 2);
         let calm = voxmar_engine::weather::Weather::NONE;
-        let situation = voxmar_engine::effect::Situation { felt: 0.0, warmed: false, outdoors, weather: &calm, biome: "", biome_tags: &[], home: home.as_ref(), done: &self.players[&agent].quests_done, held: &[], near: &[] };
+        let situation = voxmar_engine::effect::Situation { felt: 0.0, warmed: false, outdoors, weather: &calm, biome: "", biome_tags: &[], home: home.as_ref(), done: &self.players[&agent].quests_done, held: &[], near: &[], seated: false };
         let given = effects.given_by_sleep(&situation);
         // The best rest it gives (the one the others are hidden by) is the one it says.
         let best = given.iter().map(|&(id, _)| id).filter(|&id| !given.iter().any(|&(other, _)| other != id && effects.hides(other, id))).next_back();
@@ -487,6 +492,16 @@ impl Server {
             let words = Words::key("bed.rested").with("name", Words::Own(key.clone(), def.title.clone())).with("what", Words::Own(format!("{key}.description"), def.description.clone()));
             player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: words });
         }
+    }
+
+    /// `agent` sits on the seat at `seat`: set on it (on top of a stool, in a cushion),
+    /// facing as they were, their eye lowered (`vitals::eye`), until they move off it.
+    fn sit(&mut self, agent: PlayerId, seat: IVec3) {
+        let solid = self.block(seat).is_some_and(|b| self.content.blocks.info(b).solid);
+        let player = self.players.get_mut(&agent).unwrap();
+        player.teleport(voxmar_engine::vitals::seated_feet(seat, solid));
+        player.vitals.seated = Some(seat);
+        player.changed(traits::VITALS);
     }
 
     /// Crafts what `agent`'s grid holds, once or (`all`) as many times as it can: if the

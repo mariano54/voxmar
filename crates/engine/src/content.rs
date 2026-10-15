@@ -67,6 +67,8 @@ pub struct Content {
     pub bees: Arc<crate::bees::Bees>,
     /// Home stations left to work, and fertilisers (`stations.ron`).
     pub stations: Arc<crate::station::Stations>,
+    /// Traps set for small animals (`traps.ron`).
+    pub traps: Arc<crate::trap::Traps>,
     /// Locked chests, the lockpicks that open them and what they hold.
     pub treasure: Arc<crate::treasure::Treasure>,
     /// What things are worth (`value`).
@@ -231,6 +233,7 @@ impl Content {
         let mut regrowth = Vec::new();
         let mut bees = Vec::new();
         let mut stations = Vec::new();
+        let mut traps = Vec::new();
         let mut treasure = Vec::new();
         let mut journal = Vec::new();
         let mut multiblocks = Vec::new();
@@ -344,6 +347,10 @@ impl Content {
                         stations.push(crate::station::Stations::read(package, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
+                    "traps.ron" => {
+                        traps.push(crate::trap::Traps::read(package, &source)?);
+                        files.push(ContentFile { package: package.clone(), name, source });
+                    }
                     "treasure.ron" => {
                         treasure.push((package.clone(), crate::treasure::Treasure::read(package, &source)?));
                         files.push(ContentFile { package: package.clone(), name, source });
@@ -421,6 +428,8 @@ impl Content {
         if let Some(tag) = effects.near_asks().iter().map(|(tag, _)| tag).chain(effects.held_tags()).find(|tag| !blocks.ids().any(|id| blocks.def(id).has_tag(tag))) {
             return Err(RegistryError(format!("effects.ron: an effect asks for a block or held item tagged `{tag}`, which no block carries")));
         }
+        // Every kept animal needs water, met by a block tagged `drink` near its home.
+        crate::creature::condition::check_drink(&blocks, !creatures.is_empty())?;
         let tools = ToolRegistry::new(tools, &blocks, &skills)?;
         let combat = crate::combat::CombatRegistry::new(combat, &blocks, &skills)?;
         let prayers = crate::prayer::PrayerRegistry::new(prayers, &blocks, &skills)?;
@@ -459,6 +468,7 @@ impl Content {
         }
         let bees = crate::bees::Bees::new(bees, &blocks, &skills, &effects, &creatures)?;
         let stations = crate::station::Stations::new(stations, &blocks, &skills)?;
+        let traps = crate::trap::Traps::new(traps, &blocks, &creatures, &skills)?;
         let wandering = crate::wander::WanderRegistry::new(wandering, wander_rules.value, &creatures, &blocks, &skills, &effects, &cooking, &weather)?;
         let mut quests = crate::quest::QuestRegistry::new(quests)?;
         quests.resolve(&crate::quest::Named { blocks: &blocks, skills: &skills, creatures: &creatures, fishing: &fishing, multiblocks: &multiblocks, steps: &effects.steps(), events: &wandering.iter().map(|(_, e)| e.def.name.clone()).collect::<Vec<_>>(), prayers: &prayers.all().map(|(_, p)| p.name.clone()).collect::<Vec<_>>(), effects: &effects.ids().map(|id| effects.get(id).name.clone()).collect::<Vec<_>>() })?;
@@ -506,6 +516,7 @@ impl Content {
             regrowth: Arc::new(regrowth),
             bees: Arc::new(bees),
             stations: Arc::new(stations),
+            traps: Arc::new(traps),
             treasure: Arc::new(treasure),
             value: Arc::new(value),
             wandering: Arc::new(wandering),

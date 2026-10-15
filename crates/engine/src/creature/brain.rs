@@ -34,6 +34,12 @@ const HUNGER_RATE: f32 = 1.0 / 240.0;
 const FEAR_FADE: f32 = 0.12;
 /// How long a creature that gave up a chase leaves players be (`Mind::give_up`).
 pub const GAVE_UP: f32 = 45.0;
+/// How long a creature that found no way to its attacker runs from their blows rather
+/// than fight back (`Memory::NoWay`).
+pub const NO_WAY: f32 = 30.0;
+/// How long a blow counts as just landed (`Memory::Struck`): a hunter past its leash
+/// struck within it fights back rather than go home.
+pub const STRUCK_LATELY: f32 = 3.0;
 /// How long a creature that gave up a chase makes for home (`Memory::Homeward`).
 pub const HOMEWARD: f32 = 20.0;
 const ANGER_FADE: f32 = 1.0 / 45.0;
@@ -220,6 +226,11 @@ pub enum Memory {
     GaveUp,
     /// Having given up a chase, it makes for home.
     Homeward,
+    /// It gave up a chase for want of any way to its target (a player behind a fence or
+    /// up a ledge): struck again while it remembers, it runs rather than fight back.
+    NoWay,
+    /// A player's blow (not a bleed) landed on it within `STRUCK_LATELY` seconds.
+    Struck,
 }
 
 /// A creature's state of mind, kept between decisions.
@@ -296,7 +307,8 @@ impl Mind {
     /// lasts longer, and bravery decides fight or flight).
     pub fn hurt(&mut self, creature: &Creature, by: Option<u32>, health: f32) {
         // A boss never runs: it fights to the end.
-        let fights = creature.fights() && (creature.def.boss || health > 0.5 - 0.35 * self.personality.bravery);
+        // Nor does one that has just found no way to its attacker: it takes itself off.
+        let fights = creature.fights() && (creature.def.boss || (!self.recalls(Memory::NoWay) && health > 0.5 - 0.35 * self.personality.bravery));
         if fights {
             self.anger = 1.0;
         } else {
@@ -317,6 +329,13 @@ impl Mind {
         self.memories.retain(|(m, _)| !matches!(m, Memory::HurtBy(_)));
         self.remember(Memory::GaveUp, GAVE_UP);
         self.remember(Memory::Homeward, HOMEWARD);
+    }
+
+    /// Gives up a chase it found no way to win (`give_up`), and remembers it for `NO_WAY`
+    /// seconds (`Memory::NoWay`).
+    pub fn find_no_way(&mut self) {
+        self.give_up();
+        self.remember(Memory::NoWay, NO_WAY);
     }
 
     /// Lets go of every grudge and fright: it was hurt by no one.

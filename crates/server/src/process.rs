@@ -35,6 +35,7 @@ pub(crate) fn core_processes() -> Vec<Box<dyn Process>> {
         Box::new(crate::machines::Machines),
         Box::new(crate::apiary::Bees::default()),
         Box::new(crate::stations::Stations),
+        Box::new(crate::traps::Traps),
         Box::new(crate::lairs::Bosses),
     ]
 }
@@ -157,6 +158,11 @@ impl Process for Survival {
             let max_level = hitpoints.map(|skill| server.content.skills.level(server.players[&id].skills.xp(skill)));
             // Mending (a prayer) brings health back faster.
             let mending = server.content.prayers.mending(&server.players[&id].praying.on);
+            // Sat on a seat until they step off it, or it goes.
+            let seated = server.players[&id].vitals.seated.filter(|&seat| {
+                vitals::still_seated(server.players[&id].position, seat)
+                    && server.block(seat).is_some_and(|b| server.content.blocks.def(b).has_tag(voxmar_engine::action::SEAT_TAG))
+            });
 
             let player = server.players.get_mut(&id).unwrap();
             let creative = player.allow_flight;
@@ -175,7 +181,7 @@ impl Process for Survival {
             // Warmth from what was eaten and the weather counts before the bands of warmth
             // are judged: soaked through, a mild day feels chilly.
             let biome = server.overworld.biome_at(feet.x, feet.z);
-            let mut situation = Situation { felt: cold_air + heat, warmed, outdoors, weather: &weather, biome: &biome.name, biome_tags: &biome.tags, home: home.as_ref(), done: &player.quests_done, held: &held, near: &near };
+            let mut situation = Situation { felt: cold_air + heat, warmed, outdoors, weather: &weather, biome: &biome.name, biome_tags: &biome.tags, home: home.as_ref(), done: &player.quests_done, held: &held, near: &near, seated: seated.is_some() };
             // What clings (smoke) is topped up while it holds, and lasts after.
             effects.linger(&situation, &mut player.timed_effects);
             let first = effects.active(&situation, &player.timed_effects);
@@ -226,7 +232,8 @@ impl Process for Survival {
             // The felt temperature is sent to the degree, so it does not resend every tick.
             player.vitals.felt = situation.felt.round();
             player.vitals.effects = effects.active(&situation, &player.timed_effects);
-            player.vitals.home = player.home_block();
+            player.vitals.home = player.home_block(&server.lit);
+            player.vitals.seated = seated;
             player.vitals.home_stores = home_stores;
             // What kept animals laid into the home's stores is told once the keeper is home.
             if home.is_some() && !player.nested.is_empty() {
@@ -276,14 +283,14 @@ impl Server {
     /// Where player `id`'s home is, if they stand within its reach.
     pub(crate) fn at_home(&self, id: PlayerId) -> Option<IVec3> {
         let player = self.players.get(&id)?;
-        let anchor = player.home.or(player.bed)?.floor().as_ivec3();
+        let anchor = player.home_spot(&self.lit)?.floor().as_ivec3();
         self.in_home_box(anchor, player.position).then_some(anchor)
     }
 
     /// Where player `id`'s home is, if `at` lies within its reach.
     pub(crate) fn home_holding(&self, id: PlayerId, at: Vec3) -> Option<IVec3> {
         let player = self.players.get(&id)?;
-        let anchor = player.home.or(player.bed)?.floor().as_ivec3();
+        let anchor = player.home_spot(&self.lit)?.floor().as_ivec3();
         self.in_home_box(anchor, at).then_some(anchor)
     }
 
@@ -385,7 +392,7 @@ impl Server {
             debug_assert!(player.dirty.iter().all(|d| d.replication == Replication::Owner));
             player.dirty.clear();
             // Joining and sleeping send vitals before the next survival pass would.
-            player.vitals.home = player.home_block();
+            player.vitals.home = player.home_block(&self.lit);
             player
                 .connection
                 .send(ServerMessage::PlayerState {

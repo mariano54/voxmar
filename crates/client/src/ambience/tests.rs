@@ -123,6 +123,21 @@ fn run(ambience: &Ambience, scene: &Scene, seconds: f32) -> (Vec<(f32, Cue)>, Ve
     (timeline, levels)
 }
 
+/// A hearth or a Crucible Kiln is heard as a fire only while it burns; a campfire or a pit
+/// kiln, always a fire, always.
+#[test]
+fn structures_are_heard_as_fires_only_while_lit() {
+    let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+    let ambience = base();
+    let kinds = super::kinds(&ambience, &content.blocks, &content.multiblocks);
+    let fire = ambience.groups.iter().position(|g| g.name == "fire").unwrap() as u8;
+    for (name, lit_only) in [("base:hearthstone", true), ("base:crucible", true), ("base:campfire", false), ("base:pit_kiln", false)] {
+        let id = content.blocks.expect(name).0 as usize;
+        assert_eq!(kinds.group[id], Some(fire), "{name} is not heard as a fire");
+        assert_eq!(kinds.lit_only[id], lit_only, "{name}");
+    }
+}
+
 #[test]
 fn each_place_has_its_own_sound() {
     let ambience = base();
@@ -307,7 +322,7 @@ fn ambience_survey() {
     let content = voxmar_server::load_content(&assets).unwrap();
     let generator = Overworld::with_content(seed, content.blocks.clone(), &WorldContent::load(&content).unwrap());
     let ambience = Ambience::load(&content.files).unwrap();
-    let kinds = super::kinds(&ambience, &content.blocks);
+    let kinds = super::kinds(&ambience, &content.blocks, &content.multiblocks);
     let around = |x: i32, z: i32| {
         let center = ColumnPos::of_block(IVec3::new(x, 0, z));
         let mut world = VoxelWorld::default();
@@ -319,7 +334,7 @@ fn ambience_survey() {
         world
     };
     let report = |name: &str, world: &VoxelWorld, eye: IVec3| {
-        let found = super::enclosure::scan(eye, |p| world.block(p), &kinds, 1);
+        let found = super::enclosure::scan(eye, |p| world.block(p), |_| true, &kinds, 1);
         let place = super::place(&generator, eye);
         let groups: Vec<String> = ambience
             .groups

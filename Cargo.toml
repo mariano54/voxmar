@@ -54,3 +54,8 @@ inherits = "release"
 codegen-units = 256
 lto = false
 incremental = true
+# With debuginfo off, cargo strips by default (`strip = "debuginfo"`), which on macOS runs the
+# strip tool once per binary after each link, about 30 runs a gate. The gate never ships these
+# binaries, so keep what the linker wrote: same code, only bigger files. The play build (release)
+# still strips.
+strip = "none"
