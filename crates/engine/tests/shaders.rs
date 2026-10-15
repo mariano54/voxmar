@@ -36,10 +36,18 @@ fn bevy_sources() -> Vec<PathBuf> {
         })
         .collect();
     let home = std::env::var_os("CARGO_HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap()).join(".cargo"));
-    let registries: Vec<PathBuf> = std::fs::read_dir(home.join("registry/src")).expect("Cargo's registry sources").flatten().map(|e| e.path()).collect();
-    let found: Vec<PathBuf> = crates.iter().filter_map(|c| registries.iter().map(|r| r.join(c)).find(|p| p.is_dir())).collect();
-    assert!(found.iter().any(|p| p.ends_with(format!("bevy_pbr-{}", crates.iter().find_map(|c| c.strip_prefix("bevy_pbr-")).unwrap()))), "bevy_pbr's sources are not in Cargo's registry");
-    found
+    let sources = home.join("registry/src");
+    let registries: Vec<PathBuf> = std::fs::read_dir(&sources)
+        .unwrap_or_else(|e| panic!("Bevy's shader sources are read from Cargo's registry, {}: {e} (set CARGO_HOME; `cargo fetch` fills it)", sources.display()))
+        .flatten()
+        .map(|e| e.path())
+        .collect();
+    // Crates for other targets (bevy_android) need not be fetched; the two the terrain
+    // shader imports from must be.
+    let needed = |c: &&String| c.starts_with("bevy_pbr-") || c.starts_with("bevy_render-");
+    let missing: Vec<&String> = crates.iter().filter(needed).filter(|c| !registries.iter().any(|r| r.join(c).is_dir())).collect();
+    assert!(missing.is_empty(), "not in Cargo's registry at {} (set CARGO_HOME; `cargo fetch` fills it): {missing:?}", sources.display());
+    crates.iter().filter_map(|c| registries.iter().map(|r| r.join(c)).find(|p| p.is_dir())).collect()
 }
 
 /// The defs Bevy loads its view types with (`MeshRenderPlugin`), as its `light.rs` limits.
