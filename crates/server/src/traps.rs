@@ -6,7 +6,7 @@
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use voxmar_engine::block::BlockId;
-use voxmar_engine::creature::{CreatureId, mix, unit_from};
+use voxmar_engine::creature::CreatureId;
 use voxmar_engine::crop::level_bonus;
 use voxmar_engine::dropped;
 use voxmar_engine::glam::IVec3;
@@ -18,10 +18,10 @@ use voxmar_engine::traits;
 use voxmar_protocol::PlayerId;
 
 use crate::Server;
-use crate::items::random3;
 use crate::process::Process;
 
-/// What a sprung trap holds: the species caught, and the seed its loot is rolled from.
+/// What a sprung trap holds: the species caught, and the caught creature's own seed, kept
+/// with it in saves (its loot rolls by the emptier's count of catches, `Draw::Catch`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Catch {
     pub species: CreatureId,
@@ -125,12 +125,10 @@ impl Server {
         let tool: Vec<String> = player.held().map_or_else(Vec::new, |item| self.content.blocks.def(item).tags.clone());
         let bonus = species.xp_skill.map_or(0.0, |skill| level_bonus(self.content.skills.level(player.skills.xp(skill)), 1, self.content.skills.max_level()));
         let moment = Moment { bonus, tool: &tool, night: self.daylight() < 0.3, by_player: true };
-        let mut draws = 0u64;
-        let tick = self.tick;
-        let found = loot::roll(&species.loot, &moment, || {
-            draws += 1;
-            unit_from(mix(catch.seed, draws ^ tick << 8))
-        });
+        // Each roll numbered by the emptier's own count of catches, never by the tick it is
+        // emptied on or by what else rolled first.
+        let player = self.players.get_mut(&agent).expect("checked above");
+        let found = loot::roll(&species.loot, &moment, || player.draw(crate::save::Draw::Catch)[0]);
         let name = species.def.name.clone();
         let page = Self::page_of(&species.def);
         let kill = species.xp_skill.map(|skill| (skill, species.def.xp.kill));
@@ -141,7 +139,7 @@ impl Server {
             let left = player.inventory.add(item, count);
             player.changed(traits::INVENTORY);
             if left > 0 {
-                let body = dropped::popped(pos, random3(tick, pos, 0x5a4e + i as u32));
+                let body = dropped::popped(pos, self.meta.next_pop(pos, 0x5a4e + i as u32));
                 self.items.spawn(ItemStack { item, count: left }, body, dropped::PICKUP_DELAY);
             }
         }
@@ -303,5 +301,53 @@ mod tests {
         assert!(restored.get(snare).is_some());
         server.set_block(snare, BlockId::AIR);
         assert!(server.catches.get(snare).is_none(), "broken, the catch is lost");
+    }
+
+    /// A catch's loot is rolled by the emptier's own count of catches, not the tick it is
+    /// taken on or what else the world rolled first, and each roll counts on.
+    #[test]
+    fn a_catch_rolls_by_the_emptiers_count_not_the_tick_or_other_rolls() {
+        // Later, and with the world's other loot rolls (kills elsewhere) drawn in between.
+        let taken = |tick: u64, others: usize| {
+            let (mut server, snare) = field(1);
+            server.meta.draw_key = 0x0d1a;
+            server.tick = tick;
+            let mut found = Vec::new();
+            for _ in 0..12 {
+                for _ in 0..others {
+                    server.meta.next_loot();
+                }
+                put(&mut server, "base:rabbit", snare.as_vec3() + Vec3::new(0.5, 0.0, 0.5));
+                server.spring_traps();
+                server.players.get_mut(&1).unwrap().inventory = Default::default();
+                server.take_from_trap(1, snare);
+                found.push(server.players[&1].inventory.slots.iter().flatten().map(|s| (s.item, s.count)).collect::<Vec<_>>());
+            }
+            (found, server.players[&1].draws.catches)
+        };
+        let (first, rolls) = taken(1_000, 0);
+        assert!(rolls > 0 && first.iter().all(|f| !f.is_empty()), "twelve catches rolled {rolls} times for {first:?}");
+        assert_eq!(taken(1_377, 3), (first, rolls), "the same catches taken later, after other rolls, gave otherwise");
+    }
+
+    /// A rabbit summoned held into a set snare, with a player by it as the gate's snare
+    /// step stands, is caught at the traps' next look whatever tick it arrives on. One not
+    /// held can run out of the cell first: arriving just after a look, it did, and never
+    /// came back, so the gate's step summons it held.
+    #[test]
+    fn a_rabbit_summoned_held_into_a_snare_is_caught_at_the_next_look() {
+        for phase in 0..Tier::Medium.period() {
+            let (mut server, snare) = field(1);
+            server.players.get_mut(&1).unwrap().position = Vec3::new(snare.x as f32 + 0.5, snare.y as f32, snare.z as f32 - 2.5);
+            server.tick = 1000 + phase;
+            let at = [snare.x + 2, snare.y, snare.z].map(|v| v.to_string());
+            let args: Vec<String> = ["rabbit", "1"].into_iter().map(str::to_owned).chain(at).chain(["held".to_owned()]).collect();
+            server.summon(crate::commands::Source::Player(1), &args).expect("summoned");
+            let caught = (0..Tier::Medium.period()).position(|_| {
+                server.tick();
+                server.catches.get(snare).is_some()
+            });
+            assert!(caught.is_some(), "arriving {phase} ticks past a look, a held rabbit in the snare was not caught at the next");
+        }
     }
 }

@@ -55,7 +55,7 @@ impl Server {
             rod_yield: rod.yield_,
             luck: player.modifiers.fishing,
         };
-        let [land, pick, kick] = cast_draws(player.draw_key, cast, at);
+        let [land, pick, _] = cast_draws(player.draw_key, cast, at);
         let Some(catch) = fishing.cast(&spot, land, pick).cloned() else {
             if let Some(p) = self.players.get(&agent) {
                 p.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: Words::key("fishing.nothing") });
@@ -66,7 +66,8 @@ impl Server {
         let left = player.inventory.add(catch.item, 1);
         player.changed(traits::INVENTORY);
         if left > 0 {
-            let body = dropped::popped(at + IVec3::Y, [kick, land, pick]);
+            // Where it pops is seen by all, so it draws nothing from the cast's draws.
+            let body = dropped::popped(at + IVec3::Y, self.meta.next_pop(at + IVec3::Y, 0xf15));
             self.items.spawn(ItemStack { item: catch.item, count: left }, body, dropped::PICKUP_DELAY);
         }
         if let Some(skill) = fishing.skill {
