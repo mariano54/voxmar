@@ -377,7 +377,8 @@ steps! {
     /// swipe shows its reach). Shot with the ring filling.
     BossTells,
     /// How shots and blows show on a creature (`fight_fx`'s shots, `creatures`): a deer this
-    /// side alone is struck and flinches, a bow's arrow loosed at it flies leaving a trail
+    /// side alone is struck and flinches (as much as its body and the blow's share of its
+    /// health weigh), a bow's arrow loosed at it flies leaving a trail
     /// and lands with a puff and its sound, then it is killed, tips over and lies there a
     /// beat before going up in smoke as its loot comes out, each frame a fixed step of its
     /// time (`Creatures::watch_step`, `Shots::step`), so nothing waits on the server or the
@@ -749,6 +750,9 @@ struct Gate {
     /// storm left the player wet with before it was lit.
     dry_fire: Option<IVec3>,
     storm_wet: Vec<String>,
+    /// Frames in a row the door step's lit or darkened spot has had nothing near it waiting
+    /// to be meshed (`light_drawn`).
+    light_frames: u32,
     /// While taming, frames the junglefowl was under the crosshair, another creature was,
     /// or none was, and the nearest the player came to it.
     tame_aim: [u32; 3],
@@ -947,6 +951,7 @@ impl Gate {
             cook_started: false,
             dry_fire: None,
             storm_wet: Vec::new(),
+            light_frames: 0,
             tame_aim: [0; 3],
             tame_nearest: f32::MAX,
             party_after: 0,
@@ -6202,8 +6207,10 @@ fn door(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let client = world.resource::<ClientWorld>();
             let window = client.block(pane).map(|b| client.registry.def(b)).filter(|d| d.name == "base:hide_window").map(|d| d.lit_through);
             let lit = client.block(nook).is_some_and(|b| client.registry.def(b).name == "base:candle");
+            let night = voxmar_engine::creature::daylight(world.resource::<crate::render::DayCycle>().ticks as u64) == 0.0;
+            let drawn = window.is_some() && lit && night && light_drawn(world, gate, &[nook, pane]);
             match window {
-                Some(through) if lit && waited > 2.0 => {
+                Some(through) if drawn => {
                     let Some(shot) = gate.shot(world, "window-night") else { return };
                     if !through {
                         gate.check("window: glows", Err("the hide window is not `lit_through`".into()));
@@ -6233,7 +6240,7 @@ fn door(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         6 => {
             aim_at(world, pane.as_vec3() + Vec3::splat(0.5));
             let snuffed = world.resource::<ClientWorld>().block(nook).is_some_and(|b| b == BlockId::AIR);
-            if snuffed && waited > 2.0 && in_phase > WINDOW_SETTLE {
+            if snuffed && light_drawn(world, gate, &[nook, pane]) {
                 let Some(shot) = gate.shot(world, "window-night-unlit") else { return };
                 let judged = match (gate.window_lit.take(), pane_colour(&shot)) {
                     (Some(lit), Ok(unlit)) => warm_window(lit, unlit),
@@ -6253,7 +6260,7 @@ fn door(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             aim_at(world, fire.as_vec3() + Vec3::new(0.5, 0.3, 0.5));
             let client = world.resource::<ClientWorld>();
             let burning = client.block(fire).is_some_and(|b| client.registry.def(b).name == "base:campfire");
-            if burning && waited > 2.0 && in_phase > FIRE_SETTLE {
+            if burning && light_drawn(world, gate, &[fire, world.resource::<LocalPlayer>().position.floor().as_ivec3()]) {
                 let Some(shot) = gate.shot(world, "campfire-night") else { return };
                 match ground_colour(&shot) {
                     Ok(colour) => {
@@ -6276,7 +6283,7 @@ fn door(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         _ => {
             aim_at(world, fire.as_vec3() + Vec3::new(0.5, 0.3, 0.5));
             let out = world.resource::<ClientWorld>().block(fire).is_some_and(|b| b == BlockId::AIR);
-            if out && waited > 2.0 && in_phase > FIRE_SETTLE {
+            if out && light_drawn(world, gate, &[fire, world.resource::<LocalPlayer>().position.floor().as_ivec3()]) {
                 let Some(shot) = gate.shot(world, "campfire-night-out") else { return };
                 let judged = match (gate.fire_lit.take(), ground_colour(&shot)) {
                     (Some(lit), Ok(unlit)) => fire_circle(lit, unlit),
@@ -6345,10 +6352,37 @@ fn warm_window(lit: [f64; 3], unlit: [f64; 3]) -> Result<String, String> {
 }
 
 /// How much redder than blue the candle's light makes a window's pane, and how much
-/// brighter, of 255; and the game seconds the snuffed nook is drawn before its shot.
+/// brighter, of 255.
 const WINDOW_WARMTH: f64 = 12.0;
 const WINDOW_LIFT: f64 = 15.0;
-const WINDOW_SETTLE: f32 = 1.5;
+
+/// Frames a lit or darkened spot is drawn as the renderer now has it before its shot.
+const LIGHT_DRAWN_FRAMES: u32 = 3;
+
+/// Whether the renderer draws the light at each of `at` (the light and what its shot is
+/// of) as their blocks now are: for `LIGHT_DRAWN_FRAMES` in a row no column within a
+/// light's reach of them (their own and the eight around each) has waited to be meshed,
+/// and their own columns' meshes are the ones their blocks and light make now
+/// (`check_meshed`). Called only once the client has the block the shot is of; any frame
+/// it is not is a new start.
+fn light_drawn(world: &World, gate: &mut Gate, at: &[IVec3]) -> bool {
+    let client = world.resource::<ClientWorld>();
+    let quiet = at.iter().all(|&at| {
+        let column = ColumnPos::of_block(at).0;
+        (-1..=1).all(|dx| (-1..=1).all(|dz| !client.meshing(ColumnPos::new(column.x + dx, column.y + dz))))
+    });
+    gate.light_frames = if quiet { gate.light_frames + 1 } else { 0 };
+    if gate.light_frames < LIGHT_DRAWN_FRAMES {
+        return false;
+    }
+    let mut columns: Vec<ColumnPos> = at.iter().map(|&at| ColumnPos::of_block(at)).collect();
+    columns.dedup();
+    if columns.into_iter().any(|column| client.check_meshed(column).is_err()) {
+        gate.light_frames = 0;
+        return false;
+    }
+    true
+}
 
 /// The mean colour, of 255, of the ground before a campfire in a shot aimed at it from
 /// three blocks off: the bottom middle of the screen, a block or two from the fire.
@@ -6383,11 +6417,9 @@ fn fire_circle(lit: [f64; 3], unlit: [f64; 3]) -> Result<String, String> {
 
 /// How much redder than blue a campfire's light makes the ground a block or two from it, and
 /// how much brighter, of 255: a circle to work in (by the light model, about 100 of 255 near
-/// the fire against a night of about 20); and the game seconds the fire, lit or put out, is
-/// drawn before its shot.
+/// the fire against a night of about 20).
 const FIRE_WARMTH: f64 = 15.0;
 const FIRE_LIFT: f64 = 25.0;
-const FIRE_SETTLE: f32 = 1.5;
 
 /// How many planks the home barrel holds for the table laid from it.
 const LAY_PLANKS: u32 = 4;
@@ -11564,7 +11596,7 @@ fn ranged_feel(world: &mut World, gate: &mut Gate) {
         return;
     };
     let def = &launch.content.creatures.get(species).def;
-    let (health, height, death) = (def.health, def.body.size.1, def.death);
+    let (health, height, death, size) = (def.health, def.body.size.1, def.death, def.body.size);
     let death_seconds = death.seconds;
     // The middle of the beat it lies fallen, from tipped over (after the killing blow's
     // freeze) to starting to go.
@@ -11648,6 +11680,19 @@ fn ranged_feel(world: &mut World, gate: &mut Gate) {
                 Ok(format!("the deer flinches {:.2} s in; the arrow flew {:.2} of {:.2} blocks, leaving {trail} specks", flinch.unwrap_or(0.0), flying[0].0, flying[0].1))
             };
             gate.check("ranged feel: flinch and flight", result);
+            // Its flinch is sized for its body and the share of its health the blow took
+            // (`combat_fx.ron`'s `hit.weigh`), not the hit's own size.
+            let weigh = world.resource::<crate::fight_fx::FightLook>().hit.weigh;
+            let wanted = crate::fight_fx::flinch_size(&weigh, size, 2.0 / f32::from(health.max(1)));
+            let shown = world.resource::<Creatures>().watched.flinch_size;
+            let result = if (wanted - 1.0).abs() < 0.05 {
+                Err(format!("a {PUPPET_SPECIES} struck for 2 of {health} flinches {wanted:.2}, too near the hit's own size to tell weighing from none"))
+            } else if (shown - wanted).abs() > 1e-3 {
+                Err(format!("the deer flinched {shown:.2} of the hit, not the {wanted:.2} its {:.2} x {:.2} body struck for 2 of {health} should", size.0, size.1))
+            } else {
+                Ok(format!("the deer flinched {shown:.2} of the hit for its {:.2} x {:.2} body, struck for 2 of {health}", size.0, size.1))
+            };
+            gate.check("ranged feel: weight", result);
             world.resource_mut::<Creatures>().watch_step = Some(0.0);
             world.resource_mut::<Shots>().step = Some(0.0);
             gate.advance(now);
