@@ -198,6 +198,7 @@ struct Figure {
     /// and where the middle of what is in its hand is.
     arm: f32,
     leg: f32,
+    head: f32,
     held_at: Option<Vec3>,
     /// The right arm's fight pose (degrees), eased, and the guard's share of the turn of what
     /// is held, eased; the left arm's draw, eased.
@@ -235,6 +236,8 @@ pub struct FigureRead {
     /// positive).
     pub arm: f32,
     pub leg: f32,
+    /// How far its head is tilted up (positive) or down, radians.
+    pub head: f32,
     /// Where the middle of what is in its hand is drawn, if anything is.
     pub held_at: Option<Vec3>,
     /// How far its left arm is swung from hanging, radians, and how far what it holds is
@@ -246,6 +249,12 @@ pub struct FigureRead {
 }
 
 impl Figures {
+    /// Where another player's body is drawn, once it is (what the eye sees of them, eased
+    /// behind where the server says they are).
+    pub fn drawn_at(&self, id: PlayerId) -> Option<Vec3> {
+        self.shown.get(&id).filter(|f| f.painting.is_none()).map(|f| f.position)
+    }
+
     pub fn read(&self, id: PlayerId) -> Option<FigureRead> {
         let f = self.shown.get(&id)?;
         Some(FigureRead {
@@ -255,6 +264,7 @@ impl Figures {
             joints: f.joints.len(),
             arm: f.arm,
             leg: f.leg,
+            head: f.head,
             held_at: f.held_at,
             left: f.left,
             guarding: f.guarding,
@@ -269,7 +279,19 @@ impl Plugin for FiguresPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Figures>()
             .add_systems(Update, show.after(crate::drops::show).run_if(in_state(Screen::InGame)))
-            .add_systems(OnExit(Screen::InGame), |mut figures: ResMut<Figures>| figures.shown.clear());
+            .add_systems(OnExit(Screen::InGame), |mut figures: ResMut<Figures>, mut skins: ResMut<Assets<SkinMaterial>>, mut images: ResMut<Assets<Image>>| {
+                for (_, figure) in figures.shown.drain() {
+                    forget(&figure, &mut skins, &mut images);
+                }
+            });
+    }
+}
+
+/// Lets a figure's material and painted skin go (the blank one all share stays).
+fn forget(figure: &Figure, skins: &mut Assets<SkinMaterial>, images: &mut Assets<Image>) {
+    skins.remove(&figure.material);
+    if figure.painting.is_none() {
+        images.remove(&figure.skin);
     }
 }
 
@@ -309,7 +331,7 @@ fn show(
         let here = remote.views().any(|view| view.id == id);
         if !here {
             commands.entity(figure.root).despawn();
-            skins.remove(&figure.material);
+            forget(figure, skins, images);
         }
         here
     });
@@ -341,6 +363,7 @@ fn show(
                 pace: 0.0,
                 arm: 0.0,
                 leg: 0.0,
+                head: 0.0,
                 held_at: None,
                 pose: look.carry,
                 guarding: 0.0,
@@ -418,6 +441,8 @@ fn show(
             }
             if part.role == Role::Arm && part.pivot.x < 0.0 {
                 figure.left = turn.to_radians();
+            if part.swing == Swing::Head {
+                figure.head = turn.to_radians();
             }
             if let Ok(mut transform) = transforms.get_mut(joint) {
                 *transform = Transform::from_translation(part.pivot).with_rotation(q);

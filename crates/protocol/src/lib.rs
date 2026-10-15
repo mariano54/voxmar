@@ -40,7 +40,9 @@ pub use voxmar_engine::weather::Weather;
 // 42: a staggered creature's tell (STAGGERED).
 // 43: the seat a player sits on (Vitals::seated), for the lower eye.
 // 44: what the home's stores hold (Vitals::home_stores), for what can be made there.
-// 49: how another player looks up or down and what is in their hand (PlayerView::pitch, held).
+// 45 to 49: kept for branches landing ahead of this one, each with its own line (47 the
+// 341 branch, 48 the home fire, 49 the 157 branch).
+// 50: how another player looks up or down and what is in their hand (PlayerView::pitch, held).
 // 52: what another player is doing in a fight (PlayerView::fight): their swing, blows, guard.
 pub const PROTOCOL_VERSION: u32 = 52;
 
@@ -309,13 +311,10 @@ pub struct PlayerView {
     pub position: Vec3,
     pub yaw: f32,
     /// How far they look up (positive) or down, radians.
-    #[serde(default)]
     pub pitch: f32,
     /// What is in their hand.
-    #[serde(default)]
     pub held: Option<BlockId>,
     /// What they are doing in a fight, as the server has it.
-    #[serde(default)]
     pub fight: FightView,
 }
 

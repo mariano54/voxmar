@@ -212,12 +212,17 @@ impl RemotePlayers {
         self.players.get(&id).map(|view| view.name.as_str())
     }
 
-    /// The player nearest along the look ray within `within` blocks of the eye, and how far.
-    pub fn looked_at(&self, eye: Vec3, look: Vec3, within: f32) -> Option<(PlayerId, f32)> {
+    /// The player nearest along the look ray within `within` blocks of the eye, and how far:
+    /// each where `drawn` says their body is shown (`Figures::drawn_at`), else where the
+    /// server says they are.
+    pub fn looked_at(&self, eye: Vec3, look: Vec3, within: f32, drawn: impl Fn(PlayerId) -> Option<Vec3>) -> Option<(PlayerId, f32)> {
         use voxmar_engine::physics::{Aabb, player};
         self.players
             .iter()
-            .filter_map(|(&id, view)| Some((id, crate::creatures::ray_box(eye, look, &Aabb::standing(view.position, player::WIDTH, player::HEIGHT))?)))
+            .filter_map(|(&id, view)| {
+                let at = drawn(id).unwrap_or(view.position);
+                Some((id, crate::creatures::ray_box(eye, look, &Aabb::standing(at, player::WIDTH, player::HEIGHT))?))
+            })
             .filter(|&(_, distance)| distance <= within)
             .min_by(|a, b| a.1.total_cmp(&b.1))
     }
@@ -474,10 +479,13 @@ mod tests {
         let view = PlayerView { id: 9, name: "Ada".to_owned(), position: Vec3::new(0.0, 0.0, -10.0), yaw: 0.0, pitch: 0.0, held: None, fight: Default::default() };
         players.players.insert(9, view);
         let eye = Vec3::new(0.0, 1.62, 0.0);
-        let (who, distance) = players.looked_at(eye, Vec3::NEG_Z, 24.0).unwrap();
+        let (who, distance) = players.looked_at(eye, Vec3::NEG_Z, 24.0, |_| None).unwrap();
         assert_eq!(who, 9);
         assert!((distance - 9.7).abs() < 1e-4, "met at their near face: {distance}");
-        assert_eq!(players.looked_at(eye, Vec3::NEG_Z, 8.0), None, "further than they are named from");
-        assert_eq!(players.looked_at(eye + Vec3::X * 2.0, Vec3::NEG_Z, 24.0), None, "looking past them");
+        assert_eq!(players.looked_at(eye, Vec3::NEG_Z, 8.0, |_| None), None, "further than they are named from");
+        assert_eq!(players.looked_at(eye + Vec3::X * 2.0, Vec3::NEG_Z, 24.0, |_| None), None, "looking past them");
+        let drawn = |_| Some(Vec3::new(2.0, 0.0, -10.0));
+        assert_eq!(players.looked_at(eye + Vec3::X * 2.0, Vec3::NEG_Z, 24.0, drawn).map(|(who, _)| who), Some(9), "looking at their body as drawn");
+        assert_eq!(players.looked_at(eye, Vec3::NEG_Z, 24.0, drawn), None, "looking where the server has them, not where they are drawn");
     }
 }
