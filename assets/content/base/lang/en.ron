@@ -1000,6 +1000,8 @@
     "block.base.snare": "Snare",
     "block.base.snare_sprung": "Sprung Snare",
     "block.base.chopping_block": "Chopping Block",
+    "item.mend.tag.planks": "Planks",
+    "item.mend.near.chopping_block": "Chopping Block",
     "block.base.drying_rack_hung": "Hung Drying Rack",
     "block.base.drying_rack_dry": "Drying Rack of Jerky",
     "block.base.compost_heap": "Compost Heap",

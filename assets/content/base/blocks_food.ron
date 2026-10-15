@@ -95,8 +95,8 @@
         (template: "drop", name: "raw_glimmer_koi", tags: ["fish", "raw", "edible", "seafood"], all: (color: (150, 170, 190), rarity: VeryRare)),
         (template: "drop", name: "cooked_glimmer_koi", tags: ["fish", "cooked", "edible", "heal:30", "seafood", "flavour:savoury"], all: (color: (200, 150, 100), rarity: VeryRare)),
         // Tools for what kept animals give.
-        (template: "drop", name: "shears", tags: ["shears", "tool"], all: (color: (150, 150, 155))),
-        (template: "drop", name: "pail", tags: ["pail", "tool"], all: (color: (150, 110, 70))),
+        (template: "drop", name: "shears", tags: ["uses:200", "mend:cobblestone", "shears", "tool"], all: (color: (150, 150, 155))),
+        (template: "drop", name: "pail", tags: ["pail", "tool", "never_wears"], all: (color: (150, 110, 70))),
         (template: "drop", name: "burnt_food", tags: ["burnt", "compost", "bait"], all: (color: (40, 34, 30))),
     ],
     // Rabbit, chicken and frog were one meat in all but name (Cooking 1, healing 4; frog

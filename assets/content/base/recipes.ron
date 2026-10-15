@@ -37,9 +37,9 @@
         (pattern: [["feather", "feather"], ["hide", "hide"]], output: "sleeping_bag", level: 1, xp: 30.0),
         // A herb planter: a box of soil herbs grow back in.
         (pattern: [["{name}_planks", "dirt", "{name}_planks"], ["{name}_planks", "{name}_planks", "{name}_planks"]], output: "herb_planter", skill: "core:construction", level: 3, xp: 10.0),
-        // Metal comes only from fire: copper from the Crucible Kiln, iron from the bloomery.
-        // Ore is crushed first on a stone anvil with a hammer (cooking.ron's `anvil`), for
-        // half again the metal: the hammer and the anvil that does it.
+        // Metal comes only from fire: ore smelts in the Crucible Kiln (iron at Engineering
+        // 15) or the bloomery. Ore crushed first on a stone anvil with a hammer (cooking.ron's
+        // `anvil`) goes half again as far: the hammer and the anvil that does it.
         (pattern: [["cobblestone", "cobblestone"], ["", "stick"]], output: "stone_hammer", skill: "core:crafting", level: 3, xp: 8.0),
         (pattern: [["stone", "stone", "stone"], ["", "cobblestone", ""], ["cobblestone", "cobblestone", "cobblestone"]], output: "stone_anvil", skill: "core:crafting", level: 5, xp: 20.0),
         // Wooden tools (tier 1), Engineering 1.

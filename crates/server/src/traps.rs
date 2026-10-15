@@ -181,7 +181,7 @@ impl Server {
             player.changed(traits::INVENTORY);
             if left > 0 {
                 let body = dropped::popped(pos, self.meta.next_pop(pos, 0x5a4e + i as u32));
-                self.items.spawn(ItemStack { item, count: left }, body, dropped::PICKUP_DELAY);
+                self.items.spawn(ItemStack::new(item, left), body, dropped::PICKUP_DELAY);
             }
         }
         if let Some((skill, xp)) = kill {

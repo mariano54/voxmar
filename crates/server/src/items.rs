@@ -216,7 +216,7 @@ impl Server {
             {
                 continue;
             }
-            let stack = ItemStack { item: drops, count: drop_count };
+            let stack = ItemStack::new(drops, drop_count);
             // Scattered by the world's count of drops popped, not the tick it breaks on.
             let body = dropped::popped(cell, self.meta.next_pop(cell, i as u32));
             self.items.spawn(stack, body, dropped::PICKUP_DELAY);
@@ -327,7 +327,7 @@ impl Server {
             let inside = item.body.aabb().min.cmple(reach.max).all() && item.body.aabb().max.cmpge(reach.min).all();
             if inside {
                 let player = self.players.get_mut(&collector).expect("a collector");
-                let left = player.inventory.add(item.stack.item, item.stack.count);
+                let left = player.inventory.add_stack(item.stack);
                 if left == item.stack.count {
                     continue;
                 }
@@ -448,7 +448,7 @@ impl Items {
             .map(|(&id, item)| {
                 let age = item.age as f32 / TICKS_PER_SECOND as f32;
                 let lifetime = (item.lifetime != self::lifetime()).then(|| item.lifetime as f32 / TICKS_PER_SECOND as f32);
-                (id, SavedItem { item: name(item.stack.item), count: item.stack.count, position: item.body.position.to_array(), age, owner: item.owner, lifetime })
+                (id, SavedItem { item: name(item.stack.item), count: item.stack.count, position: item.body.position.to_array(), age, owner: item.owner, lifetime, wear: item.stack.wear })
             })
             .collect();
         saved.sort_by_key(|(id, _)| *id);
@@ -463,10 +463,13 @@ impl Items {
             if item.count == 0 || !position.is_finite() {
                 continue;
             }
-            let stack = ItemStack { item: block, count: item.count.min(MAX_STACK) };
+            let stack = ItemStack { wear: if item.count == 1 { item.wear } else { 0 }, ..ItemStack::new(block, item.count.min(MAX_STACK)) };
             let life = item.lifetime.map_or(lifetime(), |seconds| (seconds * TICKS_PER_SECOND as f32) as u32);
-            let new = items.spawn_for(stack, Loose::new(position, Vec3::ZERO), 0.0, item.owner, life);
-            items.all.get_mut(&new).expect("just spawned").age = (item.age * TICKS_PER_SECOND as f32) as u32;
+            // Tools stacked before they wore lie as one item each.
+            for stack in voxmar_engine::inventory::split_stack(stack) {
+                let new = items.spawn_for(stack, Loose::new(position, Vec3::ZERO), 0.0, item.owner, life);
+                items.all.get_mut(&new).expect("just spawned").age = (item.age * TICKS_PER_SECOND as f32) as u32;
+            }
         }
         items
     }
@@ -520,7 +523,7 @@ mod tests {
 
     fn item(count: u8, x: f32, age: u32) -> Dropped {
         let body = Loose { position: Vec3::new(x, 0.0, 0.5), velocity: Vec3::ZERO, on_ground: true };
-        Dropped { stack: ItemStack { item: BlockId(5), count }, body, age, pickup_in: 0, owner: None, lifetime: lifetime() }
+        Dropped { stack: ItemStack::new(BlockId(5), count), body, age, pickup_in: 0, owner: None, lifetime: lifetime() }
     }
 
     #[test]

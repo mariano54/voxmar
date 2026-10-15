@@ -2,7 +2,8 @@
 """Synthesizes the everyday action sounds: eating, crafting, lighting a fire, opening a
 chest or a door, cooking, lying down to sleep, casting a line, picking an item up, feeding
 an animal, emptying a pouch, loading a machine, picking a lock, praying at an altar,
-spreading fertiliser, throwing an item down, and a snare springing shut; and the building
+spreading fertiliser, throwing an item down, a snare springing shut, and a tool nearly
+worn out and breaking; and the building
 materials' steps, placings and breakings (timber, thatch, shingle, cobblestone, stone
 brick) under materials/.
 
@@ -348,6 +349,28 @@ def snare(rng):
     return out
 
 
+def tool_worn(rng):
+    """A tool nearly worn out: the haft giving a short dry creak, and a small tick as the
+    head shifts in its binding."""
+    out = np.zeros(int(0.3 * RATE))
+    place(out, 0.0, creak(rng, 0.12, 30, 60, rng.uniform(700, 900)), 0.5)
+    place(out, 0.1, knock(rng, rng.uniform(900, 1100)), 0.6)
+    return out
+
+
+def tool_break(rng):
+    """A tool breaking: the haft snapping with a sharp crack and splintering, then its
+    pieces falling."""
+    out = np.zeros(int(0.7 * RATE))
+    n = int(0.05 * RATE)
+    snap = rng.standard_normal(n) * envelope(n, 0.0002, 0.012)
+    place(out, 0.0, bandpass(snap, 2200, 0.8), 1.0)
+    place(out, 0.0, knock(rng, rng.uniform(380, 460)), 0.8)
+    place(out, 0.01, crackles(rng, 0.12, 300, 0.7))
+    place(out, 0.18, trickle(rng, 0.4, 2400, 40), 0.5)
+    return out
+
+
 # Building materials (sounds.ron's `materials`): a step, a placing and a breaking for each
 # material the building pieces are made of. A step is the material's short signature,
 # placing adds the weight of a piece set down, breaking is longer and comes apart.
@@ -556,6 +579,8 @@ SOUNDS = {
     "sprinkle": (sprinkle, 2),
     "toss": (toss, 2),
     "snare": (snare, 2),
+    "tool_worn": (tool_worn, 2),
+    "tool_break": (tool_break, 2),
     "materials/timber_step": (timber_step, 4),
     "materials/timber_place": (timber_place, 3),
     "materials/timber_break": (timber_break, 3),

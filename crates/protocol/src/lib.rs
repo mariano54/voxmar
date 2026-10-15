@@ -40,7 +40,9 @@ pub use voxmar_engine::weather::Weather;
 // 42: a staggered creature's tell (STAGGERED).
 // 43: the seat a player sits on (Vitals::seated), for the lower eye.
 // 44: what the home's stores hold (Vitals::home_stores), for what can be made there.
-pub const PROTOCOL_VERSION: u32 = 44;
+// 48: tools wear (ItemStack::wear) and ServerMessage::ToolWore; 45 to 47 are handed to
+// other lanes.
+pub const PROTOCOL_VERSION: u32 = 48;
 
 /// A creature's `tell` while it rears into a new phase of its fight.
 pub const REARING: u8 = u8::MAX;
@@ -218,6 +220,9 @@ pub enum ServerMessage {
     /// kiln), sent on joining and whenever one is lit, breaks or burns out: they crackle
     /// and their chimneys smoke, an unlit one is cold and quiet.
     Fires { lit: Vec<IVec3> },
+    /// What the player holds wore down past its warning (`tool::Wear::warn`), or with
+    /// `broke` wore out and broke: the hand hears it, and a break shows a puff of chips.
+    ToolWore { item: BlockId, broke: bool },
 }
 
 /// A creature as players see it. Its velocity lets clients carry it on smoothly between

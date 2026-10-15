@@ -351,6 +351,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let celebrations = hud::celebrate::Celebrations::load(&content.files)?;
     let recorded = sfx::Recordings::load(&content.files)?;
     recorded.check(&content.actions)?;
+    recorded.check_wear()?;
     recorded.covers(&content.actions)?;
     recorded.check_materials(&content.blocks)?;
     recorded.mix.check().map_err(|e| format!("sounds.ron: {e}"))?;

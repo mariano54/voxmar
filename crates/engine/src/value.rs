@@ -264,6 +264,10 @@ mod tests {
         // The wiki's P51 (draft 73): raw materials count 0.5 each inside a made thing.
         let pinned = ["hearthstone", "iron_ingot", "iron_sword", "iron_pickaxe", "chainmail_shirt", "bread"].map(of);
         assert_eq!(pinned, [5, 5, 15, 24, 50, 2], "hearthstone, ingot, sword, pickaxe, chainmail shirt, bread");
+        // What is fired or smelted is worth its station's level, not a raw material's half:
+        // the 1.25 premium counts at each step (adopted at the piece 6 review).
+        let fired = ["crucible", "bloomery", "bronze_ingot", "kiln_bricks"].map(of);
+        assert_eq!(fired, [95, 90, 4, 10], "crucible, bloomery, bronze ingot, kiln bricks");
         // Every item has a worth, and none is worth nothing.
         let mut known = HashMap::new();
         for item in (0..content.blocks.len() as u16).map(BlockId) {
