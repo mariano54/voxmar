@@ -3588,7 +3588,8 @@ fn a_shaft_lined_with_shaped_blocks_is_no_ground_to_dodge_or_break_a_fall_on() {
     // Columns on the west, barrels on the south, five high from the floor.
     client.fill(at, IVec3::new(-1, 0, 0), IVec3::new(-1, 4, 0), "stone_column");
     client.fill(at, IVec3::new(0, 0, 1), IVec3::new(0, 4, 1), "barrel");
-    let corner = at.as_vec3() + Vec3::new(0.2, 0.0, 0.8);
+    // Clear of the columns' bases and capitals (2/16 in) and the barrels' hoops (1.5/16 in).
+    let corner = at.as_vec3() + Vec3::new(0.2, 0.0, 0.75);
     let top = corner + Vec3::Y * 5.0;
     client.tp(top);
     // Past the dodge's grace since the floor.

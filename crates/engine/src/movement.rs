@@ -384,18 +384,23 @@ pub fn step(body: &mut Body, world: &impl Surroundings, tuning: &Tuning, control
     let mut blocked = move_and_slide_boxes(&mut aabb, motion, |p| world.boxes(p));
     // Stopped across while on the ground: stepping up onto what stopped it (a slab, a stair)
     // goes further, as in Minecraft, if it fits; whole blocks are still jumped onto.
-    if (blocked[0] || blocked[2]) && body.on_ground && !body.flying && !swimming && motion.y <= 0.0 && tuning.step_up > 0.0 {
-        if let Some((stepped, across)) = step_up(start, motion, tuning.step_up, world) {
-            // Up and further across; or not yet over the step but no longer stopped by it,
-            // so the walker keeps its speed and goes up next time: one starting off against
-            // the step moves less in a short frame, far from the origin less than positions
-            // round to, than it takes to come down on it.
-            let gone = |b: &Aabb| (b.min - start.min).with_y(0.0).length_squared();
-            let freed = [0, 2].into_iter().any(|k| blocked[k] && !across[k]);
-            if freed || (stepped.min.y > start.min.y && gone(&stepped) > gone(&aabb) + 1e-8) {
-                aabb = stepped;
-                blocked = [across[0], true, across[2]];
-            }
+    if (blocked[0] || blocked[2])
+        && body.on_ground
+        && !body.flying
+        && !swimming
+        && motion.y <= 0.0
+        && tuning.step_up > 0.0
+        && let Some((stepped, across)) = step_up(start, motion, tuning.step_up, world)
+    {
+        // Up and further across; or not yet over the step but no longer stopped by it,
+        // so the walker keeps its speed and goes up next time: one starting off against
+        // the step moves less in a short frame, far from the origin less than positions
+        // round to, than it takes to come down on it.
+        let gone = |b: &Aabb| (b.min - start.min).with_y(0.0).length_squared();
+        let freed = [0, 2].into_iter().any(|k| blocked[k] && !across[k]);
+        if freed || (stepped.min.y > start.min.y && gone(&stepped) > gone(&aabb) + 1e-8) {
+            aabb = stepped;
+            blocked = [across[0], true, across[2]];
         }
     }
     body.on_ground = blocked[1] && body.velocity.y <= 0.0;
