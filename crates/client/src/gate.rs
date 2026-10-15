@@ -9677,9 +9677,9 @@ fn sweep_bears(world: &mut World, gate: &mut Gate, species: voxmar_engine::creat
     mouse(world, MouseButton::Right, false);
     key(world, KeyCode::KeyW, false);
     if let Some(since) = gate.sweep.asked {
-        // Only a line after the frame the kill went out: the last kill's answer may have
-        // come in that same frame.
-        match counted_in(world, "command.creatures.done", world.resource::<crate::hud::console::Console>().after(since)) {
+        // Only a line after the frame the kill went out (`Console::since`): the last kill's
+        // answer may have come in that same frame.
+        match counted(world, "command.creatures.done", since) {
             Some(killed) => (gate.sweep.asked, gate.sweep.answered) = (None, Some(killed)),
             None if gate.server_now - gate.sweep.killed < SWEEP_REPLY => return false,
             None => {
@@ -12634,7 +12634,7 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
             // The word that the fire near makes it quicker: the tail of `station.loaded_faster`,
             // which nothing before this step says.
             let faster = world.resource::<crate::lang::Locale>().get("station.loaded_faster").replace("{words}", "").trim().to_owned();
-            let said = world.resource::<crate::hud::console::Console>().since(0.0).any(|line| line.contains(faster.as_str()));
+            let said = world.resource::<crate::hud::console::Console>().all().any(|line| line.contains(faster.as_str()));
             if !(said && drawn(world, rack)) && !waited {
                 return;
             }
@@ -14702,11 +14702,34 @@ mod tests {
                 assert_eq!(super::counted(&world, "command.creatures.done", 2.5), None, "{code}: told before the kill");
                 // A sweep's next kill sent in the frame the last answer came reads only what
                 // comes after it, never that same answer again.
-                let console = world.resource::<crate::hud::console::Console>();
-                assert_eq!(super::counted_in(&world, "command.creatures.done", console.after(2.0)), None, "{code}: the last kill's answer read again");
-                assert_eq!(super::counted_in(&world, "command.creatures.done", console.after(1.5)), Some(killed as usize), "{code}: {reply}");
+                assert_eq!(super::counted(&world, "command.creatures.done", 2.0), None, "{code}: the last kill's answer read again");
             }
         }
+    }
+
+    /// Two kills asked in the same game moment, each once the last is answered, read each its
+    /// own answer: the first's answer, come in the frame the second went out, is never the
+    /// second's, which is the one that comes after it.
+    #[test]
+    fn two_asks_in_the_same_moment_each_read_their_own_reply() {
+        use bevy::prelude::World;
+        let content = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        let mut world = World::new();
+        let locale = crate::lang::Locale::load(&content, "en");
+        let (first, second) = (locale.count("command.creatures.done", 3, &[]), locale.count("command.creatures.done", 0, &[]));
+        world.insert_resource(locale);
+        world.insert_resource(crate::hud::console::Console::default());
+        // The first kill goes out at 2.0; its answer comes in the frame at 2.5.
+        let asked = 2.0;
+        assert_eq!(super::counted(&world, "command.creatures.done", asked), None, "not yet told");
+        world.resource_mut::<crate::hud::console::Console>().push(voxmar_protocol::ChatKind::Info, &first, 2.5);
+        assert_eq!(super::counted(&world, "command.creatures.done", asked), Some(3), "the first kill's own answer");
+        // Read in that frame, the second kill goes out at the same moment: the first's answer
+        // is not its own, nor is anything until its answer comes.
+        let asked = 2.5;
+        assert_eq!(super::counted(&world, "command.creatures.done", asked), None, "the first kill's answer read as the second's");
+        world.resource_mut::<crate::hud::console::Console>().push(voxmar_protocol::ChatKind::Info, &second, 2.6);
+        assert_eq!(super::counted(&world, "command.creatures.done", asked), Some(0), "the second kill's own answer");
     }
 
     /// At the sling step's Ranged level, against its bear, every stone missing is a broken
