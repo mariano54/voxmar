@@ -367,6 +367,12 @@ enum Step {
     /// first seen already winding up, coils and is told by its style's. Each frame a fixed
     /// step of their time (`Creatures::watch_step`). Shot with the wolf coiled.
     FirstFights,
+    /// A cancelled swing's shot strikes nothing (`fight_fx`'s shots): a bow's arrow drawn
+    /// at a deer this side alone is loosed from the hand, and the swing is cancelled (as
+    /// raising the guard does) while it flies. It sails on past the deer and is gone where
+    /// it lands without a puff or a sound. Each frame a fixed step (`Shots::step`). Shot
+    /// with the arrow past the deer.
+    ShotCancel,
     /// Raw rabbit used on a campfire comes back cooked (or burnt) into the inventory, and
     /// smoke and embers rise from the fire.
     Cook,
@@ -1690,6 +1696,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::BossTells => boss_tells(world, gate),
         Step::RangedFeel => ranged_feel(world, gate),
         Step::FirstFights => first_fights(world, gate),
+        Step::ShotCancel => shot_cancel(world, gate),
         Step::Cook => cook(world, gate, now, in_phase),
         Step::Dry => dry(world, gate, now),
         Step::Snare => snare(world, gate, now),
@@ -10756,7 +10763,7 @@ fn ranged_feel(world: &mut World, gate: &mut Gate) {
             // Loosed from off to the left, so the shot shows its flight across the view
             // (from the hand it flies straight away from the eye, end on).
             let from = middle - right * 7.5 + Vec3::Y * 0.4 + (eye - middle).normalize() * 2.0;
-            world.resource_mut::<Shots>().loosed.push(Loose { class: MARK_CLASS.into(), from, to: middle, at: Some(MARK), beyond: middle + (middle - eye).normalize() * 6.0 });
+            world.resource_mut::<Shots>().loosed.push(Loose { class: MARK_CLASS.into(), from, to: middle, at: Some(MARK), beyond: middle + (middle - eye).normalize() * 6.0, swing: 0 });
             gate.puppet.1 = 0;
             gate.advance(now);
         }
@@ -10963,7 +10970,139 @@ fn first_fights(world: &mut World, gate: &mut Gate) {
             let mut creatures = world.resource_mut::<Creatures>();
             creatures.receive(vec![], vec![voxmar_protocol::CreatureGone { id: FALLBACK, died: false }]);
             (creatures.watch, creatures.watch_step) = (None, None);
-            gate.next(Step::Cook, now);
+            gate.next(Step::ShotCancel, now);
+        }
+        _ => {}
+    }
+}
+
+/// The deer the ShotCancel step's arrow is drawn at, an id the server never gives; frames
+/// into the flight the swing is cancelled.
+const SPARED: u32 = u32::MAX - 12;
+const SPARED_AT: u32 = 2;
+
+/// The ShotCancel step (see [`Step::ShotCancel`]).
+fn shot_cancel(world: &mut World, gate: &mut Gate) {
+    use crate::creatures::Creatures;
+    use crate::fight_fx::Heard;
+    use crate::fight_fx::shot::{Shot, Shots};
+    let now = world.resource::<Time>().elapsed_secs();
+    let launch = world.resource::<Launch>();
+    let (Some(species), Some(shot)) = (launch.content.creatures.find(PUPPET_SPECIES), world.resource::<crate::fight_fx::FightLook>().shots.get(MARK_CLASS).cloned()) else {
+        gate.check("shot cancel", Err(format!("no {PUPPET_SPECIES} in the content, or no shot for the {MARK_CLASS}")));
+        gate.next(Step::Cook, now);
+        return;
+    };
+    let (health, height) = (launch.content.creatures.get(species).def.health, launch.content.creatures.get(species).def.body.size.1);
+    let at = gate.feet.as_vec3() + Vec3::new(-1.5, 0.0, 6.0);
+    aim_at(world, at + Vec3::Y * height * 0.5);
+    let counts = |world: &World| {
+        let heard = world.resource::<Heard>();
+        (heard.shots, heard.impacts, heard.cancelled)
+    };
+    let sounds = |world: &World| {
+        let asked = &world.resource::<Heard>().asked;
+        [&shot.hit, &shot.land].map(|name| asked.get(name).copied().unwrap_or(0))
+    };
+    let flying = |world: &mut World| world.query::<&Shot>().iter(world).filter(|s| s.at == Some(SPARED)).map(|s| (s.gone, s.cancelled, s.missed)).collect::<Vec<_>>();
+    let done = |world: &mut World, gate: &mut Gate, now: f32| {
+        let mut creatures = world.resource_mut::<Creatures>();
+        creatures.receive(vec![], vec![voxmar_protocol::CreatureGone { id: SPARED, died: false }]);
+        (creatures.watch, creatures.watch_step) = (None, None);
+        world.resource_mut::<Shots>().step = None;
+        gate.next(Step::Cook, now);
+    };
+    let frames = gate.puppet.1;
+    match gate.phase {
+        // The deer stands in view, each frame of the shot a fixed step.
+        0 => {
+            let view = voxmar_protocol::CreatureView {
+                id: SPARED,
+                species,
+                position: at,
+                velocity: Vec3::ZERO,
+                yaw: 0.0,
+                pose: voxmar_engine::creature::brain::Pose::Idle,
+                tell: 0,
+                health,
+                scale: 1.0,
+                seed: 6,
+                kept: false,
+                owner: None,
+                young: false,
+                ready: false,
+                trust: 0,
+                genes: [0; voxmar_engine::genes::MOST],
+            };
+            let mut creatures = world.resource_mut::<Creatures>();
+            creatures.receive(vec![view], vec![]);
+            (creatures.watch, creatures.watch_step) = (Some(SPARED), Some(PUPPET_STEP));
+            world.resource_mut::<Shots>().step = Some(PUPPET_STEP);
+            gate.advance(now);
+        }
+        // Shown: an arrow drawn at it, letting go at once.
+        1 => {
+            (gate.shots_before, gate.feel_asked) = (counts(world), world.resource::<Heard>().asked.clone());
+            world.resource_mut::<Shots>().draw(now, MARK_CLASS, Some(SPARED), 12.0);
+            gate.puppet.1 = 0;
+            gate.advance(now);
+        }
+        // In flight a few frames: the swing is cancelled, as raising the guard does.
+        2 => {
+            gate.puppet.1 = frames + 1;
+            let flight = flying(world);
+            if flight.first().is_none_or(|&(gone, ..)| gone <= 0.0) || frames < SPARED_AT {
+                if frames >= MARK_FLIGHT {
+                    gate.check("shot cancel", Err(format!("no arrow flying at the deer {MARK_FLIGHT} frames after it was drawn")));
+                    done(world, gate, now);
+                }
+                return;
+            }
+            world.resource_mut::<crate::fight::Fighting>().cancels += 1;
+            gate.puppet.1 = 0;
+            gate.advance(now);
+        }
+        // The frame after: the arrow sails on past, held there for the shot.
+        3 => {
+            let flight = flying(world);
+            let result = match flight.as_slice() {
+                [(_, true, true)] => Ok(()),
+                _ => Err(format!("after the cancel the arrows at the deer are (blocks flown, cancelled, missed) {flight:?}, one cancelled and sailing past wanted")),
+            };
+            if let Err(error) = result {
+                gate.check("shot cancel", Err(error));
+                done(world, gate, now);
+                return;
+            }
+            world.resource_mut::<Shots>().step = Some(0.0);
+            gate.advance(now);
+        }
+        4 => {
+            if gate.shot(world, "shot-cancel").is_some() {
+                world.resource_mut::<Shots>().step = Some(PUPPET_STEP);
+                gate.advance(now);
+            }
+        }
+        // Gone where it lands: no puff, no sound.
+        5 => {
+            gate.puppet.1 = frames + 1;
+            let (shots, impacts, cancelled) = counts(world);
+            let (shots, impacts, cancelled) = (shots - gate.shots_before.0, impacts - gate.shots_before.1, cancelled - gate.shots_before.2);
+            if cancelled == 0 && impacts == 0 && frames < MARK_FLIGHT {
+                return;
+            }
+            let before = [&shot.hit, &shot.land].map(|name| gate.feel_asked.get(name).copied().unwrap_or(0));
+            let result = if shots != 1 {
+                Err(format!("{shots} arrows loosed at the deer, 1 wanted"))
+            } else if impacts > 0 || sounds(world) != before {
+                Err(format!("the cancelled arrow arrived with a puff ({impacts} impacts) or asked for {} or {}", shot.hit, shot.land))
+            } else if cancelled != 1 {
+                Err(format!("the cancelled arrow was never gone in {MARK_FLIGHT} frames"))
+            } else {
+                Ok(format!("the arrow of the swing cancelled {SPARED_AT} frames into its flight sailed past and was gone {frames} frames later without a puff or a sound"))
+            };
+            gate.check("shot cancel", result);
+            done(world, gate, now);
         }
         _ => {}
     }

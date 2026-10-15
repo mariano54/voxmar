@@ -20,9 +20,9 @@ use voxmar_engine::block::ParticleBlend;
 /// Shots drawn, loosed and flying.
 #[derive(Resource, Default)]
 pub struct Shots {
-    /// Drawn and not yet loosed: when they let go (app seconds), the class, and the creature
-    /// aimed at with the most blocks the shot reaches.
-    drawn: Vec<(f32, String, Option<u32>, f32)>,
+    /// Drawn and not yet loosed: when they let go (app seconds), the class, the creature
+    /// aimed at with the most blocks the shot reaches, and the swing it is.
+    drawn: Vec<(f32, String, Option<u32>, f32, u64)>,
     /// To fly from this frame.
     pub loosed: Vec<Loose>,
     /// The server's answers to shots, in the order it gave them: the creature shot at, and
@@ -31,6 +31,14 @@ pub struct Shots {
     pub(super) verdicts: Vec<(u32, bool)>,
     /// Missiles loosed so far, numbering each in turn.
     loosed_count: u64,
+    /// Swings that drew a shot so far, numbering each in turn; the latest one's, while it
+    /// may yet be cancelled; and the player's cancelled swings (`Fighting::cancels`) seen.
+    swings: u64,
+    pub last: Option<u64>,
+    cancels: u32,
+    /// Swings cancelled (the guard went up, or what was held changed, before the blow): the
+    /// server judges no blow, so their shots strike nothing and make no sound arriving.
+    cancelled: Vec<u64>,
     /// Seconds each frame moves a shot on whatever the frame took: the gate's, so a slow
     /// machine shows the same flight (unset: the frame's own).
     pub step: Option<f32>,
@@ -45,6 +53,8 @@ pub struct Loose {
     pub to: Vec3,
     pub at: Option<u32>,
     pub beyond: Vec3,
+    /// The swing it was loosed by (`Shots::swing`; 0, none).
+    pub swing: u64,
 }
 
 /// A missile in flight.
@@ -66,6 +76,10 @@ pub struct Shot {
     waited: f32,
     /// Its number among the missiles loosed, so answers go to them in turn.
     serial: u64,
+    /// The swing it was loosed by, and whether that swing was cancelled: it then sails on
+    /// past and goes without a puff or a sound.
+    swing: u64,
+    pub cancelled: bool,
 }
 
 /// The most seconds a shot that reached its creature waits there for the server's word
@@ -74,9 +88,31 @@ pub struct Shot {
 const VERDICT_WAIT: f32 = 0.3;
 
 impl Shots {
+    /// A new swing's number, its shot's to be cancelled by (`Shots::last`).
+    pub fn swing(&mut self) -> u64 {
+        self.swings += 1;
+        self.last = Some(self.swings);
+        self.swings
+    }
+
     /// A shot drawn at `at` (or nothing) by `class`, letting go at `when`.
-    pub(super) fn draw(&mut self, when: f32, class: &str, at: Option<u32>, reach: f32) {
-        self.drawn.push((when, class.to_owned(), at, reach));
+    pub fn draw(&mut self, when: f32, class: &str, at: Option<u32>, reach: f32) {
+        let swing = self.swing();
+        self.drawn.push((when, class.to_owned(), at, reach, swing));
+    }
+
+    /// The player has cancelled `cancels` swings ever: on a new one, the latest swing's
+    /// shot is cancelled. Not yet loosed, it never is; flying, it strikes nothing.
+    pub fn cancels(&mut self, cancels: u32) {
+        if cancels == self.cancels {
+            return;
+        }
+        self.cancels = cancels;
+        if let Some(swing) = self.last.take() {
+            self.drawn.retain(|drawn| drawn.4 != swing);
+            self.loosed.retain(|loose| loose.swing != swing);
+            self.cancelled.push(swing);
+        }
     }
 }
 
@@ -119,6 +155,7 @@ pub(super) fn fly(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut made: Local<FxHashMap<String, (Handle<Mesh>, Handle<StandardMaterial>)>>,
+    fighting: Res<crate::fight::Fighting>,
     mut flying: Query<(Entity, &mut Shot, &mut Transform)>,
 ) {
     let Some(look) = look else { return };
@@ -128,7 +165,8 @@ pub(super) fn fly(
     // the way), and on past it as far as it reaches for one that misses.
     let (due, waiting): (Vec<_>, Vec<_>) = shots.drawn.drain(..).partition(|(when, ..)| *when <= now);
     shots.drawn = waiting;
-    for (_, class, at, reach) in due {
+    shots.cancels(fighting.cancels);
+    for (_, class, at, reach, swing) in due {
         let aim = player.look_direction().normalize_or(Vec3::NEG_Z);
         let middle = at.and_then(|id| creatures.centre(&launch, id)).filter(|(_, dying)| !dying).map(|(middle, _)| middle);
         let to = mark(&world, eye, middle.unwrap_or(eye + aim * reach), reach);
@@ -136,7 +174,7 @@ pub(super) fn fly(
         let beyond = mark(&world, eye, eye + on * reach, reach);
         let right = player.rotation() * Vec3::X;
         let from = eye + right * 0.26 - Vec3::Y * 0.16 + aim * 0.55;
-        shots.loosed.push(Loose { class, from, to, at: middle.and(at), beyond });
+        shots.loosed.push(Loose { class, from, to, at: middle.and(at), beyond, swing });
     }
     for loose in std::mem::take(&mut shots.loosed) {
         let Some(shot) = look.shots.get(&loose.class) else { continue };
@@ -155,11 +193,20 @@ pub(super) fn fly(
             Mesh3d(mesh),
             MeshMaterial3d(material),
             Transform::from_translation(loose.from).looking_to((loose.to - loose.from).normalize_or(Vec3::NEG_Z), Vec3::Y),
-            Shot { class: loose.class, from: loose.from, to: loose.to, beyond: loose.beyond, at: loose.at, gone: 0.0, length, trailed: 0.0, missed: false, hit: false, waited: 0.0, serial: shots.loosed_count },
+            Shot { class: loose.class, from: loose.from, to: loose.to, beyond: loose.beyond, at: loose.at, gone: 0.0, length, trailed: 0.0, missed: false, hit: false, waited: 0.0, serial: shots.loosed_count, swing: loose.swing, cancelled: false },
             bevy::light::NotShadowCaster,
             DespawnOnExit(Screen::InGame),
         ));
         shots.loosed_count += 1;
+    }
+    // Shots of cancelled swings that are flying: missed, as the server judged no blow, they
+    // fly on past from where they are.
+    let cancelled = std::mem::take(&mut shots.cancelled);
+    for (_, mut flight, transform) in &mut flying {
+        if cancelled.contains(&flight.swing) && !flight.hit && !flight.missed {
+            flight.cancelled = true;
+            pass(&mut flight, transform.translation);
+        }
     }
     // The server's answers, each to the oldest missile at that creature still waiting for
     // one: two shots at one creature take their own answers, not each other's. One with no
@@ -175,10 +222,7 @@ pub(super) fn fly(
                 flight.hit = true;
             } else {
                 // Missed: it flies on past, from where it is now, to land beyond.
-                let here = transform.translation;
-                (flight.missed, flight.from, flight.to, flight.gone) = (true, here, flight.beyond, 0.0);
-                flight.length = here.distance(flight.beyond);
-                flight.trailed = 0.0;
+                pass(&mut flight, transform.translation);
             }
         }
     }
@@ -230,6 +274,12 @@ pub(super) fn fly(
             flight.waited += step;
             continue;
         }
+        // A cancelled swing's: gone where it lands, without a word.
+        if flight.cancelled {
+            heard.cancelled += 1;
+            commands.entity(entity).despawn();
+            continue;
+        }
         // Arrived: a puff and a sound, quieter the further off.
         let on_creature = flight.at.is_some() && !flight.missed;
         let coat = flight.at.filter(|_| on_creature).and_then(|id| creatures.body(id)).map(|(species, ..)| launch.content.creatures.get(species).def.body.colours.first().copied().unwrap_or([180, 160, 140]));
@@ -249,6 +299,13 @@ pub(super) fn fly(
         }
         commands.entity(entity).despawn();
     }
+}
+
+/// A shot that misses flies on past, from `here` where it is now, to land beyond.
+fn pass(flight: &mut Shot, here: Vec3) {
+    (flight.missed, flight.from, flight.to, flight.gone) = (true, here, flight.beyond, 0.0);
+    flight.length = here.distance(flight.beyond);
+    flight.trailed = 0.0;
 }
 
 /// Drops every shot drawn or flying on leaving the game.
@@ -271,5 +328,31 @@ mod tests {
         assert!((rise(0.3, 10.0, 0.5) - 0.3).abs() < 1e-6);
         assert!(rise(0.3, 20.0, 0.5) > rise(0.3, 10.0, 0.5));
         assert_eq!(rise(0.3, 10.0, 1.0), 0.0);
+    }
+
+    #[test]
+    fn a_cancelled_swing_takes_its_shot_back() {
+        let mut shots = Shots::default();
+        shots.draw(1.0, "bow", Some(7), 12.0);
+        shots.draw(2.0, "bow", Some(7), 12.0);
+        // No new cancel: nothing goes.
+        shots.cancels(0);
+        assert_eq!(shots.drawn.len(), 2);
+        // The latest swing cancelled: its shot is never loosed, the earlier one still is,
+        // and a flight of it would strike nothing.
+        shots.cancels(1);
+        assert_eq!(shots.drawn.iter().map(|d| d.4).collect::<Vec<_>>(), vec![1]);
+        assert_eq!(shots.cancelled, vec![2]);
+        assert_eq!(shots.last, None);
+        // A swing started since drew no shot (`last` cleared): a cancel of it takes none.
+        shots.cancels(2);
+        assert_eq!(shots.drawn.len(), 1);
+        assert_eq!(shots.cancelled, vec![2]);
+        // One loosed but not yet flying is taken back too.
+        let swing = shots.swing();
+        shots.loosed.push(Loose { class: "bow".into(), from: Vec3::ZERO, to: Vec3::X, at: Some(7), beyond: Vec3::X * 2.0, swing });
+        shots.cancels(3);
+        assert!(shots.loosed.is_empty());
+        assert_eq!(shots.cancelled, vec![2, swing]);
     }
 }
