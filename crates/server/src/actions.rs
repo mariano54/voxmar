@@ -167,6 +167,9 @@ impl ActionContext for Context<'_> {
     fn stations(&self) -> Option<&voxmar_engine::station::Stations> {
         Some(&self.server.content.stations)
     }
+    fn traps(&self) -> Option<&voxmar_engine::trap::Traps> {
+        Some(&self.server.content.traps)
+    }
 
     fn creature_accepts(&self, id: u32, item: BlockId) -> bool {
         self.server.creature_accepts(self.agent, id, item)
@@ -322,6 +325,7 @@ impl Server {
                 (Effect::Dodge, _) => self.dodge(agent),
                 (Effect::Cook, ActionTarget::Block { block, .. }) => self.cook(agent, block),
                 (Effect::UseStation, ActionTarget::Block { block, .. }) => self.use_station(agent, block),
+                (Effect::TakeFromTrap, ActionTarget::Block { block, .. }) => self.take_from_trap(agent, block),
                 (Effect::Fertilise, ActionTarget::Block { block, .. }) => self.fertilise(agent, block),
                 (Effect::Tend, ActionTarget::Creature(id)) => self.tend(agent, id),
                 (Effect::Inspect, ActionTarget::Creature(id)) => self.inspect(agent, id),
@@ -384,7 +388,7 @@ impl Server {
                     // world spawn. What they carried is left where they fell first.
                     self.bury_if_dead(agent);
                     let player = self.players.get_mut(&agent).unwrap();
-                    let spawn = player.home.or(player.bed).unwrap_or(self.spawn);
+                    let spawn = player.home_spot(&self.lit).unwrap_or(self.spawn);
                     player.buried = false;
                     player.health.heal(u8::MAX);
                     // Where they wake is where a grave goes until they stand elsewhere,
