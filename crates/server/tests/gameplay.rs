@@ -7438,13 +7438,16 @@ impl Fresh {
         }
         // Bushes of oak leaves along the plot's south edge, each a column four high with room
         // to walk between, for the sticks bare hands pull from leaves, and a gravel bank beside
-        // them in three rows (clear of the farm's copper) for flint: a new player's first tools are
-        // flint on sticks.
+        // them in two rows for flint, with a lane two wide between them, beyond the plot's edge
+        // so they stand clear of the kiln's site and of the copper's drops: a new player's
+        // first tools are flint on sticks.
         for x in (-12..=8).step_by(2) {
             c.fill(origin, v(x, 0, 12), v(x, 3, 12), "oak_leaves");
         }
-        for z in [7, 10, 13] {
-            c.fill(origin, v(10, 0, z), v(17, 2, z), "gravel");
+        c.fill(origin, v(9, 0, 14), v(21, 10, 17), "air");
+        c.fill(origin, v(9, -4, 14), v(21, -1, 17), "dirt");
+        for z in [14, 17] {
+            c.fill(origin, v(10, 0, z), v(20, 2, z), "gravel");
         }
         // A patch of natural stone one block high, with two coal ores on its near edge.
         c.fill(origin, v(9, 0, -3), v(17, 0, 4), "stone");
@@ -7461,7 +7464,7 @@ impl Fresh {
         // A low bank of dirt, eight blocks, for the earth clamp: the only dirt above the
         // ground, so the bot finds it by looking (`Fresh::raised_dirt`).
         c.fill(origin, v(-7, 0, 8), v(-4, 0, 9), "dirt");
-        let probes = [(v(7, 3, -5), "base:oak_log"), (v(17, 0, 4), "base:stone"), (v(-2, -1, 11), "base:water"), (v(-8, 1, 0), "base:stone"), (v(-7, 0, 2), "base:wild_wheat"), (v(-4, 0, 9), "base:dirt"), (v(8, 3, 12), "base:oak_leaves"), (v(17, 2, 13), "base:gravel")];
+        let probes = [(v(7, 3, -5), "base:oak_log"), (v(17, 0, 4), "base:stone"), (v(-2, -1, 11), "base:water"), (v(-8, 1, 0), "base:stone"), (v(-7, 0, 2), "base:wild_wheat"), (v(-4, 0, 9), "base:dirt"), (v(8, 3, 12), "base:oak_leaves"), (v(20, 2, 17), "base:gravel")];
         c.pump_until(|c| probes.iter().all(|&(at, name)| c.world.block(origin + at) == c.content.blocks.id(name)) && c.world.block(origin + v(-9, 1, 0)) == Some(BlockId::AIR));
         let (at, t0) = (c.position, c.ticks());
         let epoch = (t0, Instant::now());
@@ -7637,6 +7640,10 @@ fn the_bot_places_from_the_slot_it_holds_after_a_correction() {
     f.place("base:cobblestone", origin + IVec3::new(2, -1, 0));
 }
 
+/// The fresh player's rolls (sticks from leaves, flint from gravel, burnt meat): one key, so
+/// the plot plays the same each run and a failure can be run again.
+const FRESH_DRAWS: u64 = 0x0f1a;
+
 /// Takes 3 to 4 minutes (it plays real server time), too slow for every run: use
 /// `cargo test -p voxmar_server --test gameplay a_fresh_survival -- --ignored --nocapture`
 /// after changing early-age content, quests or recipes, and read the milestone block.
@@ -7644,7 +7651,7 @@ fn the_bot_places_from_the_slot_it_holds_after_a_correction() {
 #[ignore = "plays 3 to 4 minutes of real server time; run it after changing early-age content"]
 fn a_fresh_survival_player_reaches_each_nomad_milestone() {
     real_time("it measures the early game's pace in server seconds, and a hunt's blows land by the clock");
-    let c = Client::join_with(ServerConfig { view_distance: 2, ..Default::default() });
+    let c = Client::join_with(ServerConfig { view_distance: 2, draw_key: Some(FRESH_DRAWS), ..Default::default() });
     let mut f = Fresh::lay_out(c);
     the_first_days(&mut f);
     finish(f)
@@ -7677,7 +7684,7 @@ fn the_first_days(f: &mut Fresh) -> Site {
     // and pickaxe made in the hand's grid.
     let (flint, leaves) = ("base:flint", rel(f, (-12..=8).step_by(2).flat_map(|x| (0..=3).map(move |y| v(x, y, 12))).collect()));
     f.gather_chance("", leaves, stick, 3);
-    let gravel = rel(f, (10..=17).flat_map(|x| (0..=2).flat_map(move |y| [7, 10, 13].map(move |z| v(x, y, z)))).collect());
+    let gravel = rel(f, (10..=20).flat_map(|x| (0..=2).flat_map(move |y| [14, 17].map(move |z| v(x, y, z)))).collect());
     f.gather_chance("", gravel, flint, 4);
     f.craft(&[(0, flint, 1), (1, flint, 1), (3, stick, 1)], "base:flint_axe", 1);
     f.craft(&[(0, flint, 1), (1, flint, 1), (3, stick, 1), (4, stick, 1)], "base:flint_pickaxe", 1);
@@ -8030,7 +8037,7 @@ impl Fresh {
 fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     lockstep("some eleven minutes of game time, from bare hands to the lit Crucible Kiln");
     let wall = Instant::now();
-    let c = Client::join_with(ServerConfig { view_distance: 2, ..Default::default() });
+    let c = Client::join_with(ServerConfig { view_distance: 2, draw_key: Some(FRESH_DRAWS), ..Default::default() });
     let mut f = Fresh::lay_out(c);
     f.lay_out_the_farm();
     let o = f.origin;
@@ -8119,6 +8126,10 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     // each corner of the ring; thirty-two charcoal held and the crucible right-clicked.
     f.burn_charcoal(&site, 32);
     let centre = f.rel(13, 0, 9);
+    // The site cleared first, whatever the earlier steps left on it.
+    f.c.fill(f.origin, IVec3::new(12, 0, 8), IVec3::new(14, 2, 10), "air");
+    let site: Vec<IVec3> = (12..=14).flat_map(|x| (0..=2).flat_map(move |y| (8..=10).map(move |z| IVec3::new(x, y, z)))).map(|p| f.origin + p).collect();
+    f.c.pump_until(|c| site.iter().all(|&p| c.world.block(p) == Some(BlockId::AIR)));
     f.walk_toward(Fresh::middle(f.rel(13, 0, 6)), 0.05);
     let core = f.place("base:crucible", centre - IVec3::Y);
     for (dx, dz) in [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)] {

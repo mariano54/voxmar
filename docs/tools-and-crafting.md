@@ -18,7 +18,8 @@ hand's grid from what hands can gather: flint (gravel gives it one break in eigh
 sticks (natural leaves give one in five, a dead snag always). A flint axe is two flint
 over a stick, a flint pickaxe two flint over two sticks, both tier 1 like wood. A click on
 stone or a log by hand says "Needs a Flint Pickaxe or better" (the flint tools are listed
-first, so the refusal names them). Placed logs and cobblestone still break by hand.
+first, so the refusal names them). Cobblestone, mossy or not, still breaks by hand; a log
+set down as a wall wants an axe like a standing one (whoever has logs has felled them).
 
 `base/tools.ron` (engine/src/tool.rs) says what each kind is made for, by block tags (a
 pickaxe for stone and ore, an axe for logs and planks, a shovel for soil, sand, gravel,

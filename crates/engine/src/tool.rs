@@ -307,6 +307,9 @@ mod tests {
             assert!(unreachable.is_empty(), "{}: bare hands gather no {unreachable:?}", blocks.def(tool).name);
             assert!(tools.good_enough(Some(tool), block), "the {} breaks {name}", blocks.def(tool).name);
         }
+        // Cobble, the hand's own building stone, mossy too where the world grew it.
+        let refused: Vec<&str> = blocks.tagged("cobbled").filter(|&b| !tools.good_enough(None, b)).map(|b| blocks.def(b).name.as_str()).collect();
+        assert!(refused.is_empty(), "cobble a bare hand cannot break: {refused:?}");
     }
 
     /// What Mining teaches rises with the level it asks (design draft 63): nothing a lower
