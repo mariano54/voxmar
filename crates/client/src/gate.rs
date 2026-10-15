@@ -12321,8 +12321,10 @@ fn shot_cancel(world: &mut World, gate: &mut Gate) {
             gate.puppet.1 = 0;
             gate.advance(now);
         }
-        // Brought out of reach under the crosshair (`at`, from this phase on), the frame
-        // after aimed at and out of reach, the left button pressed.
+        // Brought out of reach under the crosshair (`at`, from this phase on); once aimed at
+        // out of reach and ready to swing (the meter full, no swing under way, a cooldown
+        // since the last whiff: `Fighting::can_whiff`), the left button pressed. Waited for
+        // on the server's clock, not frames.
         WHIFF_PHASE => {
             let (eye, look) = {
                 let player = world.resource::<LocalPlayer>();
@@ -12337,34 +12339,37 @@ fn shot_cancel(world: &mut World, gate: &mut Gate) {
             let creatures = world.resource::<Creatures>();
             let off = creatures.aabb(world.resource::<Launch>(), SPARED).and_then(|b| crate::creatures::ray_box(eye, look, &b));
             let set = off.filter(|&d| aimed == Some(SPARED) && d > reach && d <= touch);
-            // The crosshair finds it a frame or so after it moves.
-            if set.is_none() && frames < WHIFF_AIM_FRAMES {
-                gate.puppet.1 = frames + 1;
-                return;
-            }
-            let Some(off) = set else {
-                gate.check("whiff", Err(format!("the deer was not set up out of reach under the crosshair: aimed at {aimed:?}, {off:?} blocks off, reach {reach:.2}, touch {touch:.2}")));
-                done(world, gate, now);
-                return;
-            };
-            let fighting = world.resource::<crate::fight::Fighting>();
-            gate.whiff_from = (fighting.whiffs, fighting.strikes, false);
-            gate.feel_asked = world.resource::<Heard>().asked.clone();
-            gate.puppet.0 = Vec3::new(off, 0.0, 0.0);
             let timing = {
                 let (launch, player) = (world.resource::<Launch>(), world.resource::<LocalPlayer>());
                 let held = player.inventory.get(player.selected).map(|s| s.item);
                 let combat = &launch.content.combat;
                 combat.timing(&combat.wielded(held, |skill| launch.content.skills.level(player.skills.xp(skill))))
             };
-            let rhythm = &world.resource::<crate::fight::Fighting>().rhythm;
-            gate.puppet.2 = rhythm.pending().is_none() && rhythm.meter(world.resource::<Time>().elapsed_secs_f64(), &timing) >= 1.0;
+            let ready = world.resource::<crate::fight::Fighting>().can_whiff(world.resource::<Time>().elapsed_secs_f64(), &timing);
+            if !(set.is_some() && ready) {
+                if gate.server_in_phase() <= WHIFF_READY_WAIT {
+                    return;
+                }
+                gate.check(
+                    "whiff",
+                    Err(format!(
+                        "in {WHIFF_READY_WAIT} s of the server's clock the deer was not set up out of reach under the crosshair with the hand ready to swing: aimed at {aimed:?}, {off:?} blocks off, reach {reach:.2}, touch {touch:.2}; ready {ready}"
+                    )),
+                );
+                done(world, gate, now);
+                return;
+            }
+            let off = set.expect("set");
+            let fighting = world.resource::<crate::fight::Fighting>();
+            gate.whiff_from = (fighting.whiffs, fighting.strikes, false);
+            gate.feel_asked = world.resource::<Heard>().asked.clone();
+            gate.puppet.0 = Vec3::new(off, 0.0, 0.0);
             mouse(world, MouseButton::Left, true);
             gate.puppet.1 = 0;
             gate.advance(now);
         }
-        // Let go; then, frame by frame, the hand swings at the air and the whoosh is asked
-        // for, with no blow sent.
+        // Let go; then the hand swings at the air and the whoosh is asked for, with no blow
+        // sent: waited for on the server's clock.
         _ => {
             if frames == 0 {
                 mouse(world, MouseButton::Left, false);
@@ -12376,16 +12381,15 @@ fn shot_cancel(world: &mut World, gate: &mut Gate) {
             let swung = gate.whiff_from.2;
             let asked = |name: &str, from: &std::collections::BTreeMap<String, u32>| from.get(name).copied().unwrap_or(0);
             let whooshed = asked("whiff", &world.resource::<Heard>().asked) > asked("whiff", &gate.feel_asked);
-            if !(whiffs > 0 && swung && whooshed) && frames < WHIFF_FRAMES {
+            if !(whiffs > 0 && swung && whooshed) && gate.server_in_phase() <= WHIFF_WAIT {
                 return;
             }
             let off = gate.puppet.0.x;
             let result = if sent > 0 {
                 Err(format!("a click at the deer {off:.2} blocks off, past the {reach:.2} reach, sent {sent} swings to the server"))
             } else if whiffs != 1 || !swung || !whooshed {
-                let rested = gate.puppet.2;
                 Err(format!(
-                    "a click at the deer {off:.2} blocks off, past the {reach:.2} reach, in {WHIFF_FRAMES} frames: {whiffs} swings at the air (1 wanted), the hand swung {swung}, the whoosh asked for {whooshed}; at the press the swing meter was full and no swing under way: {rested}"
+                    "a click at the deer {off:.2} blocks off, past the {reach:.2} reach, with the hand ready, in {WHIFF_WAIT} s of the server's clock: {whiffs} swings at the air (1 wanted), the hand swung {swung}, the whoosh asked for {whooshed}"
                 ))
             } else {
                 Ok(format!("a click at the deer {off:.2} blocks off, past the {reach:.2} reach: the hand swung at the air with a whoosh {frames} frames on, nothing sent"))
@@ -12396,12 +12400,13 @@ fn shot_cancel(world: &mut World, gate: &mut Gate) {
     }
 }
 
-/// The ShotCancel step's phase that clicks at the deer out of reach, and the frames the
-/// hand and the whoosh have to answer the click.
+/// The ShotCancel step's phase that clicks at the deer out of reach.
 const WHIFF_PHASE: u32 = 6;
-const WHIFF_FRAMES: u32 = 20;
-/// Frames the crosshair has to find the deer once it is brought out of reach.
-const WHIFF_AIM_FRAMES: u32 = 10;
+/// Seconds of the server's clock for the deer to be brought under the crosshair out of
+/// reach and the hand to be ready to swing (the meter refilled after the shots before).
+const WHIFF_READY_WAIT: f32 = 4.0;
+/// Seconds of the server's clock for the hand and the whoosh to answer the click.
+const WHIFF_WAIT: f32 = 1.0;
 
 /// A campfire on the pad, raw rabbit in hand: a right click on the fire cooks one, which
 /// comes back two seconds later as cooked rabbit or, at a low Cooking level, sometimes

@@ -113,12 +113,18 @@ impl Fighting {
         matches!(self.rhythm.click(now, timing, feel), Click::Swing(_))
     }
 
+    /// Whether a click out of reach at `now` would swing at the air (`whiff`): the meter
+    /// full, no swing under way, no guard up, and a cooldown since the last whiff.
+    pub fn can_whiff(&self, now: f64, timing: &Timing) -> bool {
+        let rested = self.rhythm.pending().is_none() && self.rhythm.meter(now, timing) >= 1.0;
+        self.guard.is_none() && rested && now - self.whiffed >= timing.cooldown as f64
+    }
+
     /// A click at a creature out of the weapon's reach at `now`: the hand swings at the air,
     /// asking nothing of the server and leaving the rhythm as it is. Only with the meter
     /// full and no swing under way, at most once a cooldown, and not while guarding.
     pub fn whiff(&mut self, now: f64, timing: &Timing) -> bool {
-        let rested = self.rhythm.pending().is_none() && self.rhythm.meter(now, timing) >= 1.0;
-        if self.guard.is_some() || !rested || now - self.whiffed < timing.cooldown as f64 {
+        if !self.can_whiff(now, timing) {
             return false;
         }
         self.whiffed = now;
