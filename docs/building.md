@@ -28,15 +28,15 @@ and a pixel, `core/movement.ron`) without jumping; a whole block still takes a j
 The home's ladder runs from a hide lean-to through wattle and daub and timber to stone and
 brick. Every piece on it carries a shelter tag for how well it keeps the weather out of a
 room: `shelter:draughty` (hide, wattle), `shelter:sound` (daub, half-timber, shutters, the
-wooden door) or `shelter:fine` (the chimney pieces); the home's wall scan reads them. Their
+wooden door, roofs) or `shelter:fine` (brick); the home's wall scan reads them. Their
 recipes start from worked materials (sticks, twine, hide, fired clay, bricks, beams), never
 from blocks straight out of the ground; daub also takes clay, smoothed onto a wattle panel,
 and the stone flue cobbles laid in clay.
 
-Every piece and every whole block a building is made of has exactly one shelter grade, and
-every piece a material (wood, timber, stone, bricks, thatch, shingle, hide, wattle, daub,
-terracotta, cloth, metal, glass); devices, furniture, goods and an open door or shutter
-are graded by what they stand in (engine test `every_building_block_has_one_shelter_grade_and_a_piece_its_material`).
+Timber posts, beams, lattices and jetty beams are draughty; thatch and shingles are both
+sound (the trade between them is fire); the stone flue and the hood are sound. A door frame
+is an opening, not a wall, and carries no grade, as an open door or shutter does not. The
+home lane's load check holds every solid building block to exactly one grade.
 
 Chimney pieces (`chimney_piece`: the stone and brick flues, the hood, the pot) carry a
 hearth's smoke up through a roof: the stone flue comes at Construction 2, before brick, so a
