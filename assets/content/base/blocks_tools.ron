@@ -13,10 +13,11 @@
         ),
         // The Homestead Hearth's pieces (multiblocks.ron): a hearthstone, ringed with stone
         // and lit with a right click, and a chimney two blocks tall at a corner. The
-        // chimney's top smokes over a hearthstone, seen from across a valley: home.
+        // chimney's top smokes over a hearthstone, seen from across a valley: home. Its glow
+        // (9) fills a small room warm enough to work by at night.
         (
             name: "hearthstone", sound: Stone, textures: Sides(top: "hearthstone_top", bottom: "cobblestone", side: "hearthstone_side"),
-            hardness: 2.0, color: (150, 120, 100), tags: ["hearth", "multiblock_core", "station", "hob", "campfire", "building"], light: 6,
+            hardness: 2.0, color: (150, 120, 100), tags: ["hearth", "multiblock_core", "station", "hob", "campfire", "building"], light: 9,
         ),
         (
             name: "chimney", sound: Stone, textures: Sides(top: "chimney_top", bottom: "cobblestone", side: "chimney_side"),
