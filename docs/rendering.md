@@ -428,9 +428,11 @@ Inventory icons draw a shape's own quads at the cube icon's angle (texgen
 A block that `flips` also comes upside down (`<name>_top`: a top slab, stairs under a
 ceiling), and one with `facing` in four facings. Placed against the underside of a block
 it goes upside down, and it faces whoever places it, so stairs climb away from the player
-(engine `action::placed_block`, which client and server both run). Phase 2 takes collision
-and selection from the same boxes, stepping up by `movement.ron`'s `step_up`; phase 3
-brings doors and beds.
+(engine `action::placed_block`, which client and server both run). Players collide with
+the same boxes (`BlockRegistry::collision`), on the client and as the server judges their
+moves, and step up by `movement.ron`'s `step_up`; near a shape the server checks every
+block against the player's box less a fixed `wall_margin`, not a share of it. Targeting (what the crosshair
+picks) and creatures still take whole cells.
 
 ## Leaves
 
