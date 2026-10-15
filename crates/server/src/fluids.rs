@@ -20,8 +20,10 @@ impl Server {
         if changes.is_empty() {
             return;
         }
-        for &(pos, _) in &changes {
+        for &(pos, block) in &changes {
             self.dirty.insert(ColumnPos::of_block(pos));
+            // A flood can wash a bag away: no ghost home where it lay.
+            self.home_changed(pos, block);
         }
         self.send_changes(changes);
     }

@@ -38,6 +38,7 @@ mod stores;
 mod treasure;
 mod troughs;
 pub mod save;
+mod spawn_kit;
 mod villagers;
 mod wandering;
 mod weather;
@@ -310,6 +311,7 @@ pub fn load_content(assets: &Path) -> Result<Content, Box<dyn std::error::Error>
     }
     WorldContent::load(&content)?;
     wear::WearRules::load(&content.files, &content.blocks, 0)?;
+    spawn_kit::SpawnKit::load(&content.files, &content.blocks)?;
     let mut notes = Vec::new();
     let survival = rules::SurvivalRules::load(&content.files, &content.blocks, &mut notes)?;
     heal_most_below_food(&content, survival.heal_most)?;
@@ -821,10 +823,34 @@ impl Server {
             spawn,
         };
         server.show_grown_crops(spawn_column);
+        server.lay_spawn_kit();
         server.restore_creatures(state.creatures);
         server.restore_companions(state.companions);
         server.restore_machines(state.machines);
         server
+    }
+
+    /// Lays the spawn kit by the spawn, once per world (`WorldMeta::spawn_kit`): its column is
+    /// loaded by now. Not marked placed, so it is wild.
+    fn lay_spawn_kit(&mut self) {
+        if self.meta.spawn_kit {
+            return;
+        }
+        let kit = spawn_kit::SpawnKit::load(&self.content.files, &self.content.blocks).expect("checked by load_content");
+        // A spawn by a column's edge has the kit's ground in its neighbours too.
+        let today = wear::day(self.day);
+        for pos in kit.columns(self.spawn) {
+            if self.world.contains(pos) {
+                continue;
+            }
+            let loaded = load_column(self.save.as_ref(), &*self.generator, &self.content.blocks, &self.wear_rules, today, pos);
+            self.insert_column(pos, loaded);
+        }
+        let laid = kit.plan(&self.world, &self.content.blocks, self.spawn, self.meta.seed, |p| self.placed.contains(&p));
+        for (at, block) in laid {
+            self.set_block(at, block);
+        }
+        self.meta.spawn_kit = true;
     }
 
     /// Runs fixed-rate ticks until `stop` is set, then saves. Between ticks, messages are
@@ -1248,6 +1274,7 @@ impl Server {
                 self.station_changed(pos, old, block);
                 self.trap_changed(pos, block);
                 self.fire_changed(pos);
+                self.home_changed(pos, block);
             }
         }
         for &(pos, _) in &done {
@@ -1285,6 +1312,7 @@ impl Server {
             self.station_changed(pos, old, block);
             self.trap_changed(pos, block);
             self.fire_changed(pos);
+            self.home_changed(pos, block);
             for player in self.players.values().filter(|p| p.joined && p.sent.contains(&column)) {
                 player.connection.send(ServerMessage::BlockChanged { pos, block });
             }
