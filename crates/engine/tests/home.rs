@@ -297,7 +297,7 @@ fn a_proper_bed_rests_well_and_every_sleep_mends_slower_than_food() {
     let calm = Weather::NONE;
     let survey = |counts: &[(&str, u32)]| HomeSurvey { counts: effects.home_tags().iter().map(|tag| (tag.clone(), counts.iter().find(|(t, _)| t == tag).map_or(0, |&(_, n)| n))).collect() };
     let camp = survey(&[("bed", 1), ("light", 1)]);
-    let situation = Situation { felt: 15.0, warmed: false, outdoors: true, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(&camp), done: &[], held: &[], near: &[] };
+    let situation = Situation { felt: 15.0, warmed: false, outdoors: true, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(&camp), done: &[], held: &[], near: &[], seated: false };
     let bed = content.blocks.def(content.blocks.expect("base:oak_bed")).tags.clone();
     let rest = |tags: &[String]| effects.given_by_sleep(&situation, tags).iter().map(|&(id, seconds)| (effects.get(id).name.clone(), seconds)).collect::<Vec<_>>();
     assert_eq!(rest(&bag()), [("base:healing_sleep".to_owned(), 60.0), ("base:rested".to_owned(), 600.0)], "a bag under the sky");
