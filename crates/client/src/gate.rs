@@ -5721,7 +5721,10 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
         }
         6 => {
             let shown = world.query_filtered::<&Visibility, With<crate::hud::home::HomeMark>>().iter(world).any(|v| *v != Visibility::Hidden);
-            if !shown {
+            if !shown && lay_planks == 0 {
+                gate.check("home: can make", Err("no crafting table recipe in the loaded data takes oak planks, so there is nothing to lay from the home barrel".into()));
+                leave(world, gate);
+            } else if !shown {
                 let within = world.resource::<crate::hud::inventory::InterfaceStyle>().home_hidden_within;
                 gate.check("home: near", Ok(format!("within {within} blocks of home the mark was gone")));
                 // A barrel at home, four planks in it and none in the pack.
@@ -5753,7 +5756,14 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
                 gate.taps += 1;
             }
             if stored == lay_planks && held == 0 && !(ready && counted >= lay_planks) && gate.waited_out(10.0) {
-                gate.check("home: can make", Err(format!("{waited:.1} server s on, the barrel holds {stored} planks and the pack none, but the Can Make plan has the crafting table ready {ready} (the home's stores counted {counted} planks of {lay_planks})")));
+                // Which side fell short: the server not counting the barrel among the
+                // home's stores (its owner or the home's box), or the client's plan.
+                let why = if counted < lay_planks {
+                    format!("the server counted {counted} planks of {lay_planks} in the home's stores (all it counts: {:?}), so the barrel at {barrel} beside the home at {:?} is not one of them", world.resource::<LocalPlayer>().vitals.home_stores, world.resource::<LocalPlayer>().vitals.home)
+                } else {
+                    format!("the server counted all {counted} planks in the home's stores, but the Can Make plan has the crafting table ready {ready}")
+                };
+                gate.check("home: can make", Err(format!("{waited:.1} server s on, the barrel holds {stored} planks and the pack none: {why}")));
                 lay_done(world, barrel);
                 leave(world, gate);
             } else if stored == lay_planks && held == 0 && ready && counted >= lay_planks {
@@ -6697,7 +6707,8 @@ const FIRE_LIFT: f64 = 25.0;
 /// crafting table's first recipe takes oak planks, so a pack that changes it changes this.
 fn lay_planks(content: &voxmar_engine::content::Content) -> u32 {
     let (table, planks) = (content.blocks.expect("base:crafting_table"), content.blocks.expect("base:oak_planks"));
-    content.recipes.iter().find(|r| r.output == table).map_or(0, |r| r.alternatives().iter().flatten().filter(|accepts| accepts.contains(&planks)).count() as u32)
+    // Each wood has its own table recipe (`{name}_planks`), so the one oak planks lay.
+    content.recipes.iter().filter(|r| r.output == table).map(|r| r.alternatives().iter().flatten().filter(|accepts| accepts.contains(&planks)).count() as u32).max().unwrap_or(0)
 }
 
 /// After the lay: the viewer and inventory shut (the grid goes back to the pack), the
@@ -14535,6 +14546,14 @@ fn finish(world: &mut World, gate: &Gate, now: f32) {
 #[cfg(test)]
 mod tests {
     use super::{sling_next, warm_window, SlingNext, BEAR, SLING, SLING_LEVEL, SLING_STONES, UNANSWERED};
+
+    /// The Home step lays the crafting table from oak planks in the home barrel: the
+    /// loaded data has a table recipe of oak planks to lay, whichever wood's comes first.
+    #[test]
+    fn the_home_lay_has_oak_planks_to_lay() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        assert_eq!(super::lay_planks(&content), 4);
+    }
 
     /// The refusal's line is under the crosshair when centred across and a little below the
     /// middle, at any screen size; not when off to a side, above, or far below.
