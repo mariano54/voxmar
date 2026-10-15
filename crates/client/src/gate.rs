@@ -271,7 +271,7 @@ steps! {
     /// it open than closed.
     Overlay,
     /// Sticks and a crafting table from planks; the table placed and right clicked opens a
-    /// three-by-three grid, where cobblestone and sticks make a stone pickaxe. An iron ore
+    /// three-by-three grid, where stone heads and sticks make a stone pickaxe. An iron ore
     /// refuses the hand and a low Mining level, and breaks for the pickaxe at level 15,
     /// teaching Mining; a hoe tills dirt into farmland; cooked food takes a slot each; a rod
     /// cast into the pool catches a fish. Then the player dies: three items stay in hand,
@@ -2616,6 +2616,8 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 let learnt = xp.saturating_sub(gate.count_before);
                 let result = if learnt > 0 { Ok(format!("four planks made a crafting table, {:.1} Engineering experience", learnt as f32 / 10.0)) } else { Err("a crafting table was made but taught no Engineering".into()) };
                 gate.check("workshop: table", result);
+                // Three stone heads for the pickaxe (the Grind step grinds them; here they are given).
+                world.resource::<Net>().command("give stone_head 3");
                 select(world, "base:crafting_table");
                 aim(world, table - IVec3::Y);
                 gate.advance(now);
@@ -2639,7 +2641,7 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
         }
         // Right clicking the table opens the inventory with a three-by-three grid, where
-        // three cobblestone over two sticks make a stone pickaxe.
+        // three stone heads over two sticks make a stone pickaxe.
         4 => {
             let open = world.resource::<UiState>().inventory_open && world.resource::<LocalPlayer>().station == Some(table);
             if !open {
@@ -2662,11 +2664,11 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
             gate.check("workshop: table: open", Ok(format!("a right click opened the table's grid of {shown} cells")));
             gate.count_before = skill_level(world, "core:engineering").1;
-            let laid = lay_and_craft(world, &[(0, "base:cobblestone"), (1, "base:cobblestone"), (2, "base:cobblestone"), (4, "base:stick"), (7, "base:stick")]);
+            let laid = lay_and_craft(world, &[(0, "base:stone_head"), (1, "base:stone_head"), (2, "base:stone_head"), (4, "base:stick"), (7, "base:stick")]);
             if laid {
                 gate.advance(now);
             } else {
-                fail(world, gate, "pickaxe", "no cobblestone or sticks for a pickaxe".into());
+                fail(world, gate, "pickaxe", "no stone heads or sticks for a pickaxe".into());
             }
         }
         5 => {
@@ -2675,7 +2677,7 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 if gate.shot(world, "table-grid").is_none() {
                     return;
                 }
-                gate.check("workshop: pickaxe", Ok("three cobblestone over two sticks made a stone pickaxe at the table".into()));
+                gate.check("workshop: pickaxe", Ok("three stone heads over two sticks made a stone pickaxe at the table".into()));
                 // Leaving the screen leaves the table.
                 world.resource_mut::<UiState>().inventory_open = false;
                 let net = world.resource::<Net>();
@@ -6341,8 +6343,8 @@ fn makeable(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     match gate.phase {
         0 => {
             let net = world.resource::<Net>();
-            // Its own pack: one log and three cobblestone, whatever earlier steps left.
-            for line in ["clear oak_log", "give oak_log 1", "clear cobblestone", "give cobblestone 3"] {
+            // Its own pack: one log and three stone heads, whatever earlier steps left.
+            for line in ["clear oak_log", "give oak_log 1", "clear stone_head", "give stone_head 3"] {
                 net.command(line);
             }
             let mut ui = world.resource_mut::<UiState>();
@@ -6389,7 +6391,7 @@ fn makeable(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         _ => {
             let Some(cell) = cell_of(world, pickaxe) else {
                 if in_phase > 2.0 {
-                    gate.check("make: wants", Err(format!("{in_phase:.1} s on, with three cobblestone the stone pickaxe is not on the list")));
+                    gate.check("make: wants", Err(format!("{in_phase:.1} s on, with three stone heads the stone pickaxe is not on the list")));
                     leave(world, gate);
                 }
                 return;

@@ -1644,7 +1644,7 @@ fn ores_ask_for_a_mining_level_and_a_pickaxe_and_teach_mining() {
 fn a_crafting_table_makes_what_the_two_by_two_grid_cannot() {
     let mut client = Client::join();
     let table = client.position.floor().as_ivec3() + IVec3::new(1, 0, 1);
-    for line in ["/clear", "/give cobblestone 3", "/give stick 2", "/fill ~1 ~ ~1 ~1 ~ ~1 crafting_table"] {
+    for line in ["/clear", "/give stone_head 3", "/give stick 2", "/fill ~1 ~ ~1 ~1 ~ ~1 crafting_table"] {
         client.ok(line);
     }
     client.pump_until(|c| c.world.block(table) == c.content.blocks.id("base:crafting_table"));
