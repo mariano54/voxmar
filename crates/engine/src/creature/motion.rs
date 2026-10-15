@@ -262,9 +262,8 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
     let wary = water == Water::Land && !(body.in_water && world.water(feet - IVec3::Y));
     // Along the way it really goes, sliding along a wall as its box would, a step at a
     // time; ahead of its middle by half its width.
-    // Down into a space it cannot climb out of (a trench a block wide, its far side a wall to
-    // a long head that cannot hop up what its head meets at a walk): no way at a walk, or it
-    // walks in and stands trapped there. Judged once, at the first place its way
+    // Down into a space it would hang in (a trench too short for a long head to come down
+    // into with its head clear): no way at a walk, or it walks in and stands stuck there. Judged once, at the first place its way
     // goes down, over all of that space along its way it fits in: a pit with room to land
     // short of its far wall is open. Running or chasing, a creature drops in (a hop carries
     // it, and its brain gives a held way up); into water it swims, its head up.
@@ -286,12 +285,11 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
         let Some(near) = (0..=20).map(|k| if k % 2 == 1 { -(k + 1) / 2 } else { k / 2 }).find(|&k| fits(k)) else {
             return false;
         };
-        // Down there, where it fits with its head clear, it must have a way up and out
-        // (`climbs_out`); nowhere its head is clear, it would hang where its head stops it
-        // coming down.
+        // Down there, nowhere it fits with its head clear, it would hang where its head stops
+        // it coming down. Open ground below a ledge is a way down, however far it walks on.
         let first = (-20..near).rev().take_while(|&k| fits(k)).last().unwrap_or(near);
         let last = (near..=20).take_while(|&k| fits(k)).last().unwrap_or(near);
-        (first..=last).find(|&k| !landed(k).head_blocked(world)).is_none_or(|k| !climbs_out(&landed(k), world, movement, pace, dt))
+        (first..=last).find(|&k| !landed(k).head_blocked(world)).is_none()
     };
     // From under its own middle too: edging over a trench's lip, it may stand with its middle
     // over the trench, and where it gets to may be past it.
@@ -325,40 +323,6 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
                 now - then.y <= SAFE_DROP && !(wary && world.water(then) && world.water(then - IVec3::Y)) && !(first_down && held(middle, then))
             }
         }
-    })
-}
-
-/// Whether a body standing low (down in a trench or a hole) has a way up and out at
-/// `pace`: walking any of eight ways, as far as its head stays clear, its box meets a step a
-/// block high it hops (its head clear over it), or its head meets one it hops up
-/// (`head_step`). Along a trench's floor, meeting nothing a few blocks on, is no way out.
-fn climbs_out(down: &Body, world: &impl Surroundings, movement: &Movement, pace: f32, dt: f32) -> bool {
-    let solid = |p: IVec3| world.solid(p);
-    let middle = |aabb: &Aabb| Vec3::new((aabb.min.x + aabb.max.x) / 2.0, aabb.min.y, (aabb.min.z + aabb.max.z) / 2.0);
-    (0..8).any(|i| {
-        let along = glam::Quat::from_rotation_y(i as f32 * std::f32::consts::FRAC_PI_4) * Vec3::X;
-        let mut at = Body { yaw: yaw_of(along), velocity: Vec3::ZERO, ..*down };
-        for _ in 0..8 {
-            let mut aabb = at.aabb();
-            let start = aabb.min;
-            move_and_slide(&mut aabb, along * 0.3, solid);
-            let next = Body { position: middle(&aabb), ..at };
-            if next.head_blocked(world) {
-                return at.head_step(world, along, pace, hop_speed(movement, dt));
-            }
-            if (aabb.min - start).dot(along) < 0.15 {
-                let mut lifted = at.aabb();
-                lifted.translate(Vec3::Y * 1.05);
-                if movement.jump <= 0.0 || lifted.intersects(solid) {
-                    return false;
-                }
-                let start = lifted.min;
-                move_and_slide(&mut lifted, along * 0.3, solid);
-                return (lifted.min - start).dot(along) >= 0.15 && !Body { position: middle(&lifted), ..at }.head_blocked(world);
-            }
-            at = next;
-        }
-        false
     })
 }
 

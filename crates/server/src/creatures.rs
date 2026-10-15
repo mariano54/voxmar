@@ -767,17 +767,7 @@ impl Server {
                 // meeting nothing: through a doorway barely wider than it, only once lined up
                 // with it.
                 let ground = Ground::of(self);
-                // Swept in steps a tenth of a block long, not an axis at a time, which would
-                // go round the corner of a stair's turn.
-                let straight = |cell: &IVec3| {
-                    let along = (walker.middle(*cell) - body.position).with_y(0.0);
-                    let steps = (along.length() / 0.1).ceil().max(1.0) as i32;
-                    (1..=steps).all(|i| {
-                        let mut aabb = body.aabb();
-                        aabb.translate(Vec3::Y * 0.01 + along * (i as f32 / steps as f32));
-                        !aabb.intersects(|p| motion::Surroundings::solid(&ground, p))
-                    })
-                };
+                let straight = |cell: &IVec3| goes_straight(body.aabb(), (walker.middle(*cell) - body.position).with_y(0.0), |p| motion::Surroundings::solid(&ground, p));
                 while let Some(cell) = cells.first() {
                     // Level with it: a cell a block up is not reached until it has climbed.
                     // In water its feet bob at the surface, a block over a ford's cells.
@@ -787,7 +777,7 @@ impl Server {
                     // cell's middle first, lining up with the gap ahead (a boar at a doorway a
                     // block across), rather than cut the corner into its frame and dither
                     // there. At the middle it goes on whatever.
-                    let on = cells.get(1).is_none_or(|after| after.y != cell.y || straight(after));
+                    let on = || cells.get(1).is_none_or(|after| after.y != cell.y || straight(after));
                     // Past the middle on the line to the next cell by no more than a step
                     // takes it, and lined up with that line (a run overshooting the middle),
                     // it goes on rather than circle back for it.
@@ -796,7 +786,7 @@ impl Server {
                         let off = (body.position - walker.middle(*cell)).with_y(0.0);
                         (0.0..0.1 + drive.speed * dt).contains(&off.dot(along)) && (off - along * off.dot(along)).length() < 0.1
                     });
-                    if !(level && (off(cell) < 0.1 || past || ((off(cell) < 0.6 || cells.get(1).is_some_and(|after| off(after) < 1.0)) && on))) {
+                    if !(level && (off(cell) < 0.1 || past || ((off(cell) < 0.6 || cells.get(1).is_some_and(|after| off(after) < 1.0)) && on()))) {
                         break;
                     }
                     cells.remove(0);
@@ -1757,6 +1747,18 @@ pub(crate) fn ring(r: i32, i: i32) -> (i32, i32) {
         2 => (-t, r),
         _ => (-r, -t),
     }
+}
+
+/// Whether a box goes `along` (horizontal) meeting nothing, swept in steps a tenth of a
+/// block long: not an axis at a time, which goes round a corner (a stair's turn, a doorway's
+/// frame) the straight line cuts through.
+fn goes_straight(aabb: voxmar_engine::physics::Aabb, along: Vec3, solid: impl Fn(IVec3) -> bool) -> bool {
+    let steps = (along.length() / 0.1).ceil().max(1.0) as i32;
+    (1..=steps).all(|i| {
+        let mut at = aabb;
+        at.translate(Vec3::Y * 0.01 + along * (i as f32 / steps as f32));
+        !at.intersects(&solid)
+    })
 }
 
 #[cfg(test)]
@@ -4031,7 +4033,7 @@ mod fight_tests {
                         motion::step(&mut body, &ground, &movement, Water::Land, Drive { wish: Vec3::X, speed, face: None }, 1.0 / TICKS_PER_SECOND as f32);
                         hung = if unsupported(&body) && body.position == was { hung + 1 } else { 0 };
                         assert!(pace == "walk" || hung < 2, "{} at {scale} ({pace}) hangs in the air {t} ticks on, at {:.2}", species.def.name, body.position - c.as_vec3());
-                        was = body.position;
+                    was = body.position;
                         if body.position.x - c.x as f32 > 3.0 {
                             break;
                         }
@@ -4093,7 +4095,7 @@ mod fight_tests {
                     under.translate(Vec3::Y * -0.05);
                     hung = if !under.intersects(|p| motion::Surroundings::solid(&ground, p)) && body.position == was { hung + 1 } else { 0 };
                     assert!(hung < 2, "{} at {scale} hangs in the air {t} ticks on, at {:.2}", species.def.name, body.position - c.as_vec3());
-                        was = body.position;
+                    was = body.position;
                     held_down = if body.position.y < c.y as f32 - 0.5 { held_down + 1 } else { 0 };
                     if body.position.x - c.x as f32 > 3.0 {
                         break;
@@ -4110,6 +4112,61 @@ mod fight_tests {
         }
         // Both kinds are tried: some get over, some long heads keep out.
         assert!(tried > 0 && crossed > 0 && refused > 0, "{crossed} of {tried} got over, {refused} kept out");
+    }
+
+    /// Going straight to a cell is the straight line: a box a block diagonally from its next
+    /// cell, a block on the corner between, does not go straight there. Before: swept an axis
+    /// at a time (along x, then z) it went round the corner and counted as straight, and a
+    /// walker cut the corner of a stair's turn into the block.
+    #[test]
+    fn a_way_round_a_corner_is_not_straight() {
+        let body = Body::new(Vec3::new(0.5, 0.0, 0.5), 0.0, (0.6, 1.0));
+        let corner = |p: IVec3| p == IVec3::new(0, 0, 1);
+        assert!(!goes_straight(body.aabb(), Vec3::new(1.0, 0.0, 1.0), corner));
+        assert!(goes_straight(body.aabb(), Vec3::new(1.0, 0.0, 0.0), corner));
+        assert!(goes_straight(body.aabb(), Vec3::new(1.0, 0.0, 1.0), |_| false));
+    }
+
+    /// Every land kind walking (grazing, herding, an errand) for open floor below a ledge 1,
+    /// 2 or 3 blocks high goes down onto it: open ground below is a way on, however far it
+    /// walks there. Before (375's first cut): a way down where walking eight ways met nothing
+    /// to climb out by was refused at a walk, and long heads stayed up at a 1-block ledge,
+    /// and nearly every kind (rabbits, wolves, every villager) at 2 or 3.
+    #[test]
+    fn walkers_go_down_a_ledge_onto_open_ground() {
+        let dt = 1.0 / TICKS_PER_SECOND as f32;
+        for high in 1..=3 {
+            let mut server = crate::test_server();
+            let c = pen(&mut server, 9);
+            // A plateau `high` up west of x = 1, the pen's walls raised over it.
+            set(&mut server, "base:stone", (-8..=0).flat_map(|x| (-8..=8).flat_map(move |z| (0..high).map(move |y| c + IVec3::new(x, y, z)))));
+            let rim = (-9..=9).flat_map(|i| [IVec3::new(i, high, -9), IVec3::new(i, high, 9), IVec3::new(-9, high, i), IVec3::new(9, high, i)]);
+            wall(&mut server, rim.map(|cell| c + cell).collect::<Vec<_>>(), 3);
+            let ground = Ground::of(&server);
+            let mut tried = 0;
+            for (_, species) in server.content.creatures.iter() {
+                let movement = species.def.movement;
+                if species.def.habitat.water != Water::Land || matches!(movement.style, voxmar_engine::creature::Style::Flier | voxmar_engine::creature::Style::Drifter) {
+                    continue;
+                }
+                let size = species.def.body.size;
+                let mut body = Body::new(c.as_vec3() + Vec3::new(-3.5, high as f32, 0.5), motion::yaw_of(Vec3::X), size);
+                (body.reach, body.head, body.on_ground) = (species.reach, species.head, true);
+                // Long enough to walk the 4.5 blocks to the lip and off it, slow as a snail.
+                let (mut side, ticks) = (0.0, ((4.5 / movement.walk + 4.0) * TICKS_PER_SECOND as f32) as u32);
+                for _ in 0..ticks {
+                    let (heading, turned) = motion::steer(&body, &ground, &movement, Water::Land, Vec3::X, side, movement.walk, dt);
+                    side = turned;
+                    motion::step(&mut body, &ground, &movement, Water::Land, Drive { wish: heading, speed: movement.walk, face: None }, dt);
+                    if body.on_ground && body.position.y < c.y as f32 + 0.5 && body.position.x > c.x as f32 + 1.0 {
+                        break;
+                    }
+                }
+                assert!(body.position.y < c.y as f32 + 0.5, "{} stays up a ledge {high} high at a walk: at {:.2}", species.def.name, body.position - c.as_vec3());
+                tried += 1;
+            }
+            assert!(tried > 0);
+        }
     }
 
     /// A pit `n` across and three deep from x = 2, its walls and floor stone, the player in
@@ -4160,7 +4217,7 @@ mod fight_tests {
         let scenes: [(&str, Scene); 3] = [("pit 2", |s, c| pit(s, c, 2)), ("pit 3", |s, c| pit(s, c, 3)), ("L-stair", l_stair)];
         let scaled: [(f32, fn(&mut Server, u32)); 3] = [
             (0.88, |s, id| rescale(s, id, 0.88)),
-            (1.0, |_, _| {}),
+            (1.0, |s, id| rescale(s, id, 1.0)),
             (1.12, |s, id| rescale(s, id, 1.12)),
         ];
         for (scene, set) in scenes {
