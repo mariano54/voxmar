@@ -197,8 +197,9 @@ Right clicking a bed used to only set where you wake. It now also gives a **rest
 `sleeps` rules): Rested (10 minutes) anywhere, Well rested (15) if the bed is in a Snug home,
 Deep rest (20) in a Cosy one (a game day is 20 minutes). Rest gives a little heal, xp,
 mining and speed wherever you go, and a bed always works as a bed (it sets where you wake and your home) but gives no new rest
-(save a bed a village furnished a home with: it is its resident's, and sleeping in it is refused
-with `bed.someones`, outside creative; one you place yourself, or another player's, works)
+(save a bed a village furnished a home with, where its plan put one and no player has set one
+down since: it is its resident's, and sleeping in it is refused with `bed.someones`, outside
+creative; any other bed works, placed, another player's, or set by command)
 while one lasts, so the buff is a once-a-day habit, not a button to hold. Timed effects count down
 online only.
 

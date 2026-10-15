@@ -29,7 +29,7 @@ use voxmar_engine::action::{ActionContext, ActionDef, ActionId, ActionTarget, Ef
 use voxmar_engine::block::{BlockId, BlockInfo, BlockRegistry};
 use voxmar_engine::crop::CropRegistry;
 use voxmar_engine::skill::SkillId;
-use voxmar_engine::glam::{IVec3, Vec3};
+use voxmar_engine::glam::{IVec2, IVec3, Vec3};
 use voxmar_engine::traits;
 use voxmar_engine::lang::Words;
 use voxmar_protocol::{ChatKind, PlayerId, ServerMessage, TICKS_PER_SECOND};
@@ -468,10 +468,11 @@ impl Server {
     /// resident's and turns them away, but in creative. A bed always works, as a bed; the rest is held back
     /// while one is still on them, so the buff cannot be had again until it wears off.
     fn sleep(&mut self, agent: PlayerId, bed: IVec3) {
-        // A bed a village furnished a home with is its resident's (no player placed it);
-        // in creative, as with the rest's own rules, nothing stops them.
+        // A bed a village furnished a home with (its settlement's plan says so, and no player
+        // has set one down there since) is its resident's; any other works, however it came
+        // to be (placed, /setblock, an older save). In creative nothing stops them.
         let creative = self.players.get(&agent).is_some_and(|p| p.allow_flight);
-        if !creative && !self.placed.contains(&bed) && self.block(bed).is_some_and(|b| self.content.blocks.def(b).has_tag("furnishing")) {
+        if !creative && !self.placed.contains(&bed) && self.planned_bed(bed) {
             self.refuse(agent, Words::key("bed.someones"));
             return;
         }
@@ -509,6 +510,13 @@ impl Server {
             let words = Words::key("bed.rested").with("name", Words::Own(key.clone(), def.title.clone())).with("what", Words::Own(format!("{key}.description"), def.description.clone()));
             player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: words });
         }
+    }
+
+    /// Whether a settlement's plan furnished one of its homes with a bed at `bed`, and a bed
+    /// still stands there.
+    fn planned_bed(&self, bed: IVec3) -> bool {
+        self.block(bed).is_some_and(|b| self.content.blocks.def(b).has_tag("bed"))
+            && self.overworld.settlements_near(IVec2::new(bed.x, bed.z), 64).iter().any(|s| s.buildings.iter().any(|b| b.beds.contains(&bed)))
     }
 
     /// Why `agent` cannot lie down now, if they cannot: a creature that hunts players (but

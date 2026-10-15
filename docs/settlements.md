@@ -399,8 +399,8 @@ without may get one. Only plain homes are furnished: inns, temples and workshops
 own insides.
 
 Every piece is a furnishing (P58a), so breaking it in a village gives nothing, and a bed in
-someone's home will not take as yours: sleeping in it is refused (`bed.someones`). One you
-place yourself works as any bed. Each building reports where its beds and seats stand
+someone's home will not take as yours: sleeping in a bed where the plan put one is refused
+(`bed.someones`). Any other bed works, one you place in its stead included. Each building reports where its beds and seats stand
 (`Building::beds`, `seats`), for villagers to sleep and sit at their own.
 
 ## What else knows about them
