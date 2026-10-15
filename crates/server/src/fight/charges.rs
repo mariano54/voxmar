@@ -173,6 +173,7 @@ fn a_braced_spear_stops_a_charge_on_its_point() {
     assert_eq!(field.server.players[&1].health.current, player_before, "the bracer took nothing");
     assert_eq!(field.told(), vec![Defended::Perfect]);
     assert!(field.held() >= field.charge().stun, "he stands dazed for his charge's stun ({} s)", field.held());
+    assert_eq!(field.server.creatures.live[&field.tusk].tell(), voxmar_protocol::STAGGERED, "dazed on the point, he reels");
 
     let mut field = Field::new(Vec3::new(40.5, STAND, 48.5), Vec3::new(40.5, STAND, 40.5));
     field.hold("base:stone_sword");
@@ -200,6 +201,7 @@ fn a_charge_into_a_wall_dazes_the_charger_and_hops_a_step() {
     let at = field.at();
     assert!(at.z > 41.0 && at.z < 47.0, "he hopped the step and stopped at the wall: {at}");
     assert!(field.held() >= field.charge().stun, "the wall dazed him ({} s)", field.held());
+    assert_eq!(field.server.creatures.live[&field.tusk].tell(), voxmar_protocol::STAGGERED, "dazed, he reels, and players see it");
     // Then he waits out only the rest of the charge's `every`, as after a blow that lands.
     let live = &field.server.creatures.live[&field.tusk];
     let attack = field.server.content.creatures.get(live.species).attack_at(live.attack).unwrap();
@@ -273,6 +275,10 @@ fn a_charge_off_a_cliff_hurts_and_a_pit_holds_the_charger() {
     let fall = 10.0 - field.server.survival.safe_fall;
     let lost = (fall.ceil() * field.server.content.combat.feel.charge_fall * most as f32).round() as u16;
     assert_eq!(most - field.health(), lost, "the fall cost him a tenth a block past the safe fall");
+    // His own fall: the player he charged struck nothing, so is shown no hit and earns
+    // nothing for it.
+    let heard: Vec<ServerMessage> = std::iter::from_fn(|| field.client.try_recv().ok().flatten()).collect();
+    assert!(!heard.iter().any(|m| matches!(m, ServerMessage::Struck { .. } | ServerMessage::Xp { .. })), "his fall was no blow of the player's: {heard:?}");
 
     // A pit two deep across his way, the player at its far edge.
     let mut field = Field::new(Vec3::new(40.5, STAND, 45.5), Vec3::new(40.5, STAND, 36.5));
@@ -303,6 +309,45 @@ fn a_charge_off_a_cliff_hurts_and_a_pit_holds_the_charger() {
     }
     let at = field.at();
     assert!(at.y < STAND - 0.9 && at.z < 44.0, "he climbed out: {at}");
+}
+
+/// A fall that kills him is no player's kill: nobody earns its experience. Its loot drops
+/// for the player who hurt him lately, and he goes in their journal; hurt by nobody lately
+/// (longer ago than he remembers a hurt), he dies with nothing.
+#[test]
+fn a_fatal_fall_drops_his_loot_only_for_the_player_who_hurt_him_lately() {
+    let killed = |ago: Option<f32>| {
+        let mut field = Field::new(Vec3::new(40.5, STAND, 75.0), Vec3::new(40.5, STAND, 36.5));
+        for x in 30..52 {
+            for z in 40..64 {
+                for y in FLOOR - 19..=FLOOR {
+                    field.set(IVec3::new(x, y, z), "air");
+                }
+                field.set(IVec3::new(x, FLOOR - 20, z), "base:stone");
+            }
+        }
+        field.server.tick = 100 * TICKS_PER_SECOND as u64;
+        let tick = field.server.tick;
+        let live = field.server.creatures.live.get_mut(&field.tusk).unwrap();
+        live.health = 1;
+        live.hurt_by = Some(1);
+        live.fought = ago.map(|seconds| (1, tick - (seconds * TICKS_PER_SECOND as f32) as u64));
+        let name = field.server.content.creatures.get(live.species).def.name.clone();
+        field.sets_off();
+        field.run(6.0);
+        assert!(!field.server.creatures.live.contains_key(&field.tusk), "the fall killed him");
+        let heard: Vec<ServerMessage> = std::iter::from_fn(|| field.client.try_recv().ok().flatten()).collect();
+        assert!(!heard.iter().any(|m| matches!(m, ServerMessage::Struck { .. } | ServerMessage::Xp { .. })), "his fall earned nobody anything: {heard:?}");
+        let loot = field.server.creatures.falling_loot.len();
+        let journal = field.server.players[&1].journal.get(voxmar_engine::journal::Page::Bosses, &name).is_some();
+        (loot, journal)
+    };
+    let lately = voxmar_engine::creature::brain::HURT_REMEMBERED;
+    let (loot, journal) = killed(Some(lately - 5.0));
+    assert!(loot > 0 && journal, "hurt lately: his loot drops for the player ({loot} stacks) and he is in their journal ({journal})");
+    for ago in [Some(lately + 5.0), None] {
+        assert_eq!(killed(ago), (0, false), "hurt {ago:?} s ago: he dies with nothing");
+    }
 }
 
 /// Struck from afar, he does not flee but turns on the one who struck him and charges:
