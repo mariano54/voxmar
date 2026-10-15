@@ -252,6 +252,9 @@ pub struct Mind {
     pub pause: f32,
     /// Seconds until it may attack again.
     pub cooldown: f32,
+    /// Seconds left of circling its target between blows (`Attack::circle`), its recovery
+    /// first.
+    pub circling: f32,
     /// Zigzag side when fleeing, and other modules' small counters.
     pub zig: f32,
     /// The individual's own hash, for choices that stay its own (which of its kin it keeps
@@ -273,6 +276,7 @@ impl Mind {
             goal: None,
             pause: 0.0,
             cooldown: 0.0,
+            circling: 0.0,
             seed,
             zig: 1.0,
         }
@@ -444,6 +448,7 @@ pub fn think(creature: &Creature, mind: &mut Mind, at: &Situation) -> Decision {
     mind.fear = (mind.fear - FEAR_FADE * dt * (1.5 - mind.personality.nervousness)).max(0.0);
     mind.anger = (mind.anger - ANGER_FADE * dt).max(0.0);
     mind.cooldown = (mind.cooldown - dt).max(0.0);
+    mind.circling = (mind.circling - dt).max(0.0);
     mind.pause = (mind.pause - dt).max(0.0);
     mind.since += dt;
     mind.memories.retain_mut(|(_, left)| {

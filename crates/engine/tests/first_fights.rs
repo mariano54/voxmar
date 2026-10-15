@@ -35,7 +35,10 @@ fn fight(content: &Content, name: &str) -> Fight {
     let seconds = f32::from(creature.health) / per_second;
     let Some(attack) = creature.attack else { return Fight { seconds, health_left: 1.0 } };
     let windup = attack.windup.unwrap_or(feel.creature_windup);
-    let cycle = attack.every.max(windup + attack.recovery.unwrap_or(feel.creature_recovery));
+    let recovery = attack.recovery.unwrap_or(feel.creature_recovery);
+    // One that circles between blows comes in again only once it has (`Attack::circle`).
+    let circled = attack.circle.map_or(0.0, |c| windup + recovery + c.seconds);
+    let cycle = attack.every.max(windup + recovery).max(circled);
     let accuracy = attack.accuracy.unwrap_or((feel.creature_accuracy * f32::from(creature.level)).round() as u16);
     let theirs = hit_chance(creature.level, accuracy, 1, 0);
     let blows = if seconds > windup { (seconds - windup) / cycle + 1.0 } else { 0.0 };

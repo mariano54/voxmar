@@ -593,6 +593,12 @@ impl Server {
         live.decision.pose = brain::Pose::Idle;
         live.held_until = live.held_until.max(tick + ticks(recovery));
         live.mind.cooldown = (attack.every - windup - recovery).max(0.0);
+        // One that circles between blows does so once it has recovered, and only then
+        // comes in again (`Attack::circle`).
+        if let Some(circle) = attack.circle {
+            live.mind.circling = recovery + circle.seconds;
+            live.mind.cooldown = live.mind.cooldown.max(live.mind.circling);
+        }
         live.changed = true;
         let Some(target) = self.players.get(&player) else { return };
         if !target.health.alive() || target.allow_flight {
