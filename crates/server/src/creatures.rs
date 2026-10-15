@@ -2518,9 +2518,10 @@ mod cornered_tests {
 
     /// Runs `seconds` of creature ticks, the player landing a harmless blow on `id` each
     /// second it is within reach, and checks every tick that no body or head is in a
-    /// block. Returns the furthest it got from the player.
-    fn hunted(server: &mut Server, id: u32, player: PlayerId, seconds: f32) -> f32 {
-        let mut furthest = 0.0f32;
+    /// block. Returns the furthest it got from the player, and whether it struck at them
+    /// (began a blow; the player is healed each tick).
+    fn hunted(server: &mut Server, id: u32, player: PlayerId, seconds: f32) -> (f32, bool) {
+        let (mut furthest, mut struck) = (0.0f32, false);
         for t in 0..(seconds * TICKS_PER_SECOND as f32) as u64 {
             server.tick += 1;
             let reach = server.players[&player].position.distance(server.creatures.live[&id].body.position);
@@ -2534,8 +2535,10 @@ mod cornered_tests {
                 assert!(!c.body.head_blocked(&ground), "creature {other}'s head went into a block at {} (tick {t})", c.body.position);
             }
             furthest = furthest.max(server.players[&player].position.distance(server.creatures.live[&id].body.position));
+            struck |= server.creatures.live[&id].decision.attack.is_some();
+            server.players.get_mut(&player).unwrap().health = traits::Health::full(server.survival.max_health);
         }
-        furthest
+        (furthest, struck)
     }
 
     /// One of `name` put at `at` facing `facing`, if its kind fights back, struck at full
@@ -2547,12 +2550,8 @@ mod cornered_tests {
             return;
         }
         let id = put(server, name, at, facing);
-        let most = server.players[&player].health.max;
-        server.players.get_mut(&player).unwrap().health.current = most;
-        let _ = hunted(server, id, player, 3.0);
-        let left = server.players[&player].health.current;
-        assert!(left < most, "{name} struck at full health did not strike back within 3 s");
-        server.players.get_mut(&player).unwrap().health.current = most;
+        let (_, struck) = hunted(server, id, player, 3.0);
+        assert!(struck, "{name} struck at full health did not strike back within 3 s");
         server.creatures.live.remove(&id);
     }
 
@@ -2568,7 +2567,7 @@ mod cornered_tests {
             fights_back_hale(&mut server, name, centre.as_vec3() + Vec3::new(-1.5, 0.0, 0.5), Vec3::X, player);
             let id = put(&mut server, name, centre.as_vec3() + Vec3::new(-1.5, 0.0, 0.5), Vec3::X);
             badly_hurt(&mut server, id);
-            let away = hunted(&mut server, id, player, 5.0);
+            let (away, _) = hunted(&mut server, id, player, 5.0);
             assert!(away > 6.0, "{name} struck against a wall got only {away:.1} blocks from the player");
             server.creatures.live.remove(&id);
         }
@@ -2610,7 +2609,7 @@ mod cornered_tests {
             fights_back_hale(&mut server, name, corner, Vec3::new(1.0, 0.0, 1.0).normalize(), player);
             let id = put(&mut server, name, corner, Vec3::new(1.0, 0.0, 1.0).normalize());
             badly_hurt(&mut server, id);
-            let away = hunted(&mut server, id, player, 6.0);
+            let (away, _) = hunted(&mut server, id, player, 6.0);
             assert!(away > 5.0, "{name} struck in a corner got only {away:.1} blocks from the player");
             server.creatures.live.remove(&id);
         }
@@ -2630,7 +2629,7 @@ mod cornered_tests {
             fights_back_hale(&mut server, name, centre.as_vec3() + Vec3::new(-1.3, 0.0, 0.5), Vec3::X, player);
             let id = put(&mut server, name, centre.as_vec3() + Vec3::new(-1.3, 0.0, 0.5), Vec3::X);
             badly_hurt(&mut server, id);
-            let away = hunted(&mut server, id, player, 5.0);
+            let (away, _) = hunted(&mut server, id, player, 5.0);
             assert!(away > 6.0, "{name} struck before a tree got only {away:.1} blocks from the player");
             server.creatures.live.remove(&id);
         }
