@@ -50,6 +50,22 @@ fn farm_quests_come_after_farm_quests_or_the_rite() {
     assert!(wrong.is_empty(), "{wrong:#?}");
 }
 
+/// A Farm quest that could be finished before the Farm age's rite would grant the rite
+/// to a new player (an old save's way in), so the content refuses to load one: Clay Banks
+/// with its `after` dropped is refused by name.
+#[test]
+fn a_farm_quest_that_skips_the_rite_is_refused() {
+    use voxmar_engine::quest::QuestRegistry;
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content/base/quests.ron");
+    let source = std::fs::read_to_string(path).unwrap();
+    assert!(QuestRegistry::new(vec![QuestRegistry::read("base", &source).unwrap()]).is_ok(), "the quests as they ship load");
+    let at = source.find(r#"name: "clay_banks""#).expect("Clay Banks");
+    let after = at + source[at..].find(r#"after: ["the_farm_age"],"#).expect("Clay Banks follows the rite");
+    let skipped = format!("{}after: [],{}", &source[..after], &source[after + r#"after: ["the_farm_age"],"#.len()..]);
+    let refused = QuestRegistry::new(vec![QuestRegistry::read("base", &skipped).unwrap()]).err().expect("Clay Banks without its rite loads");
+    assert!(refused.0.contains("base:clay_banks") && refused.0.contains("base:the_farm_age"), "{}", refused.0);
+}
+
 #[test]
 fn every_early_quest_names_things_the_content_has() {
     let content = content();

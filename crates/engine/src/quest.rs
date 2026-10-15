@@ -390,6 +390,14 @@ impl QuestRegistry {
                 }
             }
         }
+        // Every quest of an age a rite opens follows that rite on every route: one done
+        // shows the age reached (`behind`), so none may be finished before it.
+        for rite in quests.iter().filter(|q| q.opens.is_some()) {
+            let age = rite.opens.as_deref().unwrap_or_default();
+            if let Some(quest) = quests.iter().find(|q| q.age == age && !follows(&quests, q, &rite.name, 64)) {
+                return Err(RegistryError(format!("quest {} is of the age `{age}`, yet a way to it skips its rite {}: one `after` must be the rite or follow it", quest.name, rite.name)));
+            }
+        }
         if start_pins.len() > tracker.pins {
             return Err(RegistryError(format!("quests.ron: {} start pins, but the tracker follows {}", start_pins.len(), tracker.pins)));
         }
@@ -656,6 +664,14 @@ pub struct Named<'a> {
 /// The one of `names` a quest in package `namespace` means by `name`: a full name as
 /// written, else the package's own of that name, else the one of that name in any package
 /// (two packages' are refused rather than guessed between).
+/// Whether every route to `quest` passes through `rite`: one with no `after` (a start)
+/// does not. Every `after` is needed, so one that is the rite or follows it is enough; of
+/// an `a|b`, either may be the way, so both must. Past `depth` steps it is taken not to.
+fn follows(quests: &[QuestDef], quest: &QuestDef, rite: &str, depth: u32) -> bool {
+    depth > 0
+        && quest.after.iter().any(|group| group.split('|').all(|name| name == rite || quests.iter().find(|q| q.name == name).is_some_and(|q| follows(quests, q, rite, depth - 1))))
+}
+
 fn full_name(names: &[&str], namespace: &str, name: &str) -> Option<String> {
     if name.contains(':') {
         return names.contains(&name).then(|| name.to_owned());
@@ -774,6 +790,29 @@ mod tests {
         let old = ["t:hearth", "t:later"].map(String::from);
         assert_eq!(quests.newly_done(&old, &progress), ["t:rite"], "the old save keeps its age");
         assert!(quests.newly_done(&["t:hearth".to_owned()], &progress).is_empty(), "a new player at the hearth has the rite to do");
+    }
+
+    /// Each way to a quest of the age a rite opens goes through the rite: a start does not,
+    /// nor an either-or with one way round it; a second need beside the rite is fine.
+    #[test]
+    fn every_way_into_an_age_goes_through_its_rite() {
+        let load = |later: &str| {
+            let source = format!(
+                r#"(quests: [
+                (name: "a", age: "nomad", branch: "main", title: "", why: "", tasks: [[Home]], capstone: true),
+                (name: "rite", age: "nomad", branch: "main", title: "", why: "", tasks: [[QuestsDone("nomad", 1)]], after: ["a"], opens: "farm"),
+                (name: "b", age: "farm", branch: "main", title: "", why: "", tasks: [[Home]], after: ["rite"]),
+                (name: "later", age: "farm", branch: "main", title: "", why: "", tasks: [[Home]], {later}),
+            ])"#
+            );
+            QuestRegistry::new(vec![QuestRegistry::read("t", &source).unwrap()]).err().map(|e| e.0)
+        };
+        assert_eq!(load(r#"after: ["b"]"#), None, "through a quest that follows it");
+        assert_eq!(load(r#"after: ["rite", "a"]"#), None, "the rite and a Nomad quest both needed");
+        assert_eq!(load(r#"after: ["b|rite"]"#), None);
+        assert!(load("after: []").unwrap().contains("t:later"), "a start skips it");
+        assert!(load(r#"after: ["a"]"#).unwrap().contains("t:later"));
+        assert!(load(r#"after: ["b|a"]"#).unwrap().contains("skips its rite t:rite"), "one way of an either-or skips it");
     }
 
     #[test]

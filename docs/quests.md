@@ -344,6 +344,21 @@ quest is in, or more than the age holds besides the rite.
 
 The Farm quests that followed Homestead Hearth follow The Farm Age.
 
+- **Old saves.** A rite also finishes when any quest of the age it opens is done
+  (`QuestRegistry::behind`), so a save from before rites that had reached the Farm age keeps
+  its stations. That is safe only while no quest of the age can be done before its rite, so
+  loading refuses a quest of the age that any way round skips the rite (every `after` is
+  needed, so one that is the rite or follows it is enough; of an `a|b`, both must).
+- **Refused out loud.** A locked recipe crafted in the grid or laid from the book is refused
+  with `craft.age` ("That opens in the Farm Age"), listed under `sent` in `refusals.ron`.
+  Can Make shows it greyed ("Cooking Pot opens in the Farm Age") once half of it is held, after
+  everything that is only short of something, so it never crowds out what can be made.
+- **Capstones are marked.** A quest with `capstone: true` has a gold corner on its cell in the
+  book and a line in its detail ("A path's capstone, gold at its corner"); the rites' texts
+  point to the mark. The gate's `quests: capstones` checks each one drawn carries it.
+- `/quest <name>` (admin) marks a quest done, its rewards left to claim. The kiln bot uses
+  it for The Farm Age until piece 12 has it earn the rite.
+
 ## Readable to a newcomer (Oct 13)
 
 Every Nomad and Farm quest was read as someone who has never played would: does its text

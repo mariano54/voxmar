@@ -57,15 +57,16 @@ pub(crate) enum Reach {
 
 impl Reach {
     /// The order it is shown in: ready first, then wanting one thing, then short (fewest
-    /// short first).
+    /// short first), and last what opens in a later age: nothing done now makes it, so it
+    /// never crowds out what can be.
     pub(crate) fn rank(&self) -> u32 {
         match self {
             Reach::Ready => 0,
             Reach::Table => 1,
             Reach::Level(..) => 2,
-            Reach::Age(_) => 3,
-            Reach::Station(_) => 4,
-            Reach::Short(items) => 5 + items.iter().map(|&(_, n)| n).sum::<u32>(),
+            Reach::Station(_) => 3,
+            Reach::Short(items) => 4 + items.iter().map(|&(_, n)| n).sum::<u32>(),
+            Reach::Age(_) => u32::MAX,
         }
     }
 }
@@ -393,6 +394,12 @@ mod tests {
         let made = plan(&content, &book, &three, false, &closed);
         assert_eq!(find(&made, &content, "base:pit_kiln").map(|m| &m.reach), Some(&Reach::Age("farm".into())));
         assert!(reach(pit_kiln, &FxHashMap::default(), false, &closed).is_none(), "too little held to show at all");
+        // Shown after everything short: the later age never crowds out the top rows.
+        let pack = have(&content, &[("base:cobblestone", 3), ("base:oak_planks", 3), ("base:stick", 1), ("base:fired_clay", 4)]);
+        let made = plan(&content, &book, &pack, false, &closed);
+        let first_age = made.iter().position(|m| matches!(m.reach, Reach::Age(_))).expect("a later age's station shown");
+        let last_short = made.iter().rposition(|m| matches!(m.reach, Reach::Short(_))).expect("something short shown");
+        assert!(last_short < first_age, "a later age comes after every shortage: {:?}", made.iter().map(|m| m.reach.rank()).collect::<Vec<_>>());
     }
 
     /// A log in an empty pack makes planks at once; with planks, sticks and a crafting
