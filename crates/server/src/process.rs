@@ -373,7 +373,8 @@ impl Server {
     /// block with none is draughty), or an opening where the way leads out of the reach or
     /// into the unloaded. A wall is a solid block or any with a shelter tag (a closed door, a
     /// window); a door left open lets the scan out, and furniture (survival.ron's
-    /// `home_furniture`) is looked past to the wall behind it. Bounded by the home box, so a home in
+    /// `home_furniture`, less its `home_wall_furniture`) is looked past to the wall behind
+    /// it, though never stepped down into: a hearthstone set in its ring is floor. Bounded by the home box, so a home in
     /// the open costs no more than the box.
     pub(crate) fn room_walls(&self, anchor: IVec3) -> voxmar_engine::effect::Walls {
         use voxmar_engine::effect::{Shelter, Walls};
@@ -385,16 +386,21 @@ impl Server {
         };
         // What stands at a cell: open (`None`), or a wall of a shelter. Furniture is looked
         // past, as open, whatever it is made of.
-        let furniture = |tags: &[String]| tags.iter().any(|tag| rules.home_furniture.contains(tag));
+        // Furniture that makes a wall all the same (`home_wall_furniture` with a shelter tag:
+        // cloth hung, a hay bale stacked) is a wall; a sack of cloth is still furniture.
+        let furniture = |tags: &[String]| rules.furniture(tags);
         let wall = |p: IVec3| -> Option<Option<Shelter>> {
             let block = self.block(p)?;
             let tags = &blocks.def(block).tags;
             let shelter = Shelter::of(tags);
             ((shelter.is_some() || blocks.info(block).solid) && !furniture(tags)).then(|| Some(shelter.unwrap_or(Shelter::Draughty)))
         };
+        // A solid block is never stood in from above: under the room it is floor, a
+        // hearthstone set in its ring as much as the stone round it.
+        let solid = |p: IVec3| self.block(p).is_some_and(|b| blocks.info(b).solid);
         let mut walls = Walls::default();
-        // A hearth's home is its hearthstone, solid: the room is the open cell over it.
-        let Some(anchor) = (0..=up).map(|dy| anchor + IVec3::Y * dy).take_while(|&p| self.block(p).is_some()).find(|&p| wall(p).is_none()) else {
+        // A hearth's home is its hearthstone, solid: the room is the first open cell over it.
+        let Some(anchor) = (0..=up).map(|dy| anchor + IVec3::Y * dy).take_while(|&p| self.block(p).is_some()).find(|&p| wall(p).is_none() && !solid(p)) else {
             return walls;
         };
         let mut seen = rustc_hash::FxHashSet::default();
@@ -413,6 +419,7 @@ impl Server {
                 match wall(next) {
                     Some(shelter) if face => walls.add(shelter),
                     Some(_) => {}
+                    None if !face && solid(next) => {}
                     None => {
                         if seen.insert(next) {
                             queue.push(next);
@@ -580,6 +587,48 @@ mod tests {
             build(&mut server, roof_block);
             let walls = server.room_walls(home);
             assert!(walls.share(Shelter::Sound) >= 0.9, "a {roof} ceiling is not sound: {walls:?}");
+        }
+    }
+
+    /// A hearthstone set in its floor ring is floor, not wall: the room about it judged from
+    /// the hearthstone and from the cell over it is the room of a plain stone floor. Cloth
+    /// hung for walls and hay bales stacked wall a room in (draughty), though both are
+    /// furnishings: a cloth room is closed, not open to the sky.
+    #[test]
+    fn a_hearth_in_its_floor_and_cloth_walls_wall_the_room_as_they_should() {
+        use voxmar_engine::{block::BlockId, effect::Shelter};
+        let mut server = crate::test_server();
+        let at = voxmar_engine::coords::ColumnPos::of_block(server.spawn.floor().as_ivec3()).origin() + IVec3::new(8, server.spawn.y as i32 + 10, 8);
+        let block = |server: &Server, name: &str| server.content.blocks.expect(name);
+        let (stone, cobble, planks) = (block(&server, "base:stone"), block(&server, "base:cobblestone"), block(&server, "base:oak_planks"));
+        let build = |server: &mut Server, wall: BlockId| {
+            for x in -3..=3 {
+                for z in -3..=3 {
+                    server.set_block(at + IVec3::new(x, 0, z), stone);
+                    server.set_block(at + IVec3::new(x, 4, z), planks);
+                    for y in 1..=3 {
+                        let edge = x.abs() == 3 || z.abs() == 3;
+                        server.set_block(at + IVec3::new(x, y, z), if edge { wall } else { BlockId::AIR });
+                    }
+                }
+            }
+        };
+        let bricks = block(&server, "base:stone_bricks");
+        build(&mut server, bricks);
+        let plain = server.room_walls(at + IVec3::Y);
+        for x in -1..=1 {
+            for z in -1..=1 {
+                server.set_block(at + IVec3::new(x, 0, z), cobble);
+            }
+        }
+        server.set_block(at, block(&server, "base:hearthstone"));
+        assert_eq!(server.room_walls(at), plain, "the hearth's floor ring counted as walls");
+        assert_eq!(server.room_walls(at + IVec3::Y), plain);
+        for wall in ["base:white_cloth", "base:hay_bale"] {
+            let wall_block = block(&server, wall);
+            build(&mut server, wall_block);
+            let walls = server.room_walls(at + IVec3::Y);
+            assert!(walls.share(Shelter::Draughty) >= 0.99, "a {wall} room is open: {walls:?}");
         }
     }
 
