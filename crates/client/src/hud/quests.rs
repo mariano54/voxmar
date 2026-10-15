@@ -1545,12 +1545,26 @@ struct TrackerMore;
 /// has. The cards are drawn whole again whenever the tracker is redrawn.
 fn squeeze(
     locale: Res<Locale>,
-    tracker: Query<(&ComputedNode, &bevy::ui::UiGlobalTransform, &Children), With<Tracker>>,
+    (tracker, scale): (Query<(&ComputedNode, &bevy::ui::UiGlobalTransform, &Children, &bevy::ui::ComputedUiRenderTargetInfo), With<Tracker>>, Res<UiScale>),
     cards: Query<(&ComputedNode, &bevy::ui::UiGlobalTransform, &Children)>,
     mut goals: Query<(&mut Node, &ComputedNode), (With<TrackerGoal>, Without<TrackerMore>)>,
-    mut more: Query<(&mut Node, &mut Text, &ComputedNode), (With<TrackerMore>, Without<TrackerGoal>)>,
+    mut more: Query<(&mut Node, &mut Text), (With<TrackerMore>, Without<TrackerGoal>)>,
+    mut room: Local<(UVec2, f32)>,
 ) {
-    let Ok((column, at, children)) = tracker.single() else { return };
+    let Ok((column, at, children, target)) = tracker.single() else { return };
+    // A tracker given more room or less (the window resized, the interface scaled) unfolds
+    // every card, to fold them again to the new room from the next frame's layout.
+    let now = (target.physical_size(), scale.0);
+    if now != *room {
+        *room = now;
+        for (mut node, _) in &mut goals {
+            node.display = Display::Flex;
+        }
+        for (mut node, _) in &mut more {
+            node.display = Display::None;
+        }
+        return;
+    }
     let bottom = |node: &ComputedNode, at: &bevy::ui::UiGlobalTransform| at.translation.y + node.size().y / 2.0;
     let Some(last) = children.iter().filter_map(|card| cards.get(card).ok()).filter(|(node, ..)| node.size().y > 0.0).last() else { return };
     // Past the bottom by more than a pixel's rounding.
@@ -1565,9 +1579,9 @@ fn squeeze(
             let Ok((_, _, lines)) = cards.get(card) else { continue };
             let shown: Vec<(Entity, f32)> = lines.iter().filter_map(|line| goals.get(line).ok().filter(|(node, _)| node.display != Display::None).map(|(_, size)| (line, size.size().y))).collect();
             let Some(note) = lines.iter().find(|&line| more.contains(line)).filter(|_| shown.len() > keep) else { continue };
-            let Ok((_, _, note_size)) = more.get(note) else { continue };
-            // The note, once shown, takes a line of its own.
-            if note_size.size().y == 0.0 {
+            let Ok((note_node, _)) = more.get(note) else { continue };
+            // The note, once shown (this frame or before), takes a line of its own.
+            if note_node.display == Display::None {
                 over += shown.iter().map(|(_, height)| *height).fold(f32::MAX, f32::min);
             }
             let mut folded = 0;
@@ -1583,7 +1597,7 @@ fn squeeze(
                 continue;
             }
             let hidden = lines.iter().filter(|&line| goals.get(line).is_ok_and(|(node, _)| node.display == Display::None)).count();
-            if let Ok((mut node, mut text, _)) = more.get_mut(note) {
+            if let Ok((mut node, mut text)) = more.get_mut(note) {
                 node.display = Display::Flex;
                 text.0 = locale.format("quest.tracker.more", &[("count", &hidden)]);
             }
