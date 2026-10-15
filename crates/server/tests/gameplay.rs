@@ -3214,8 +3214,9 @@ fn a_player_who_left_dead_wakes_at_home() {
     drop(Client::join_with(config()));
     let file = dir.join("players/test.ron");
     let text = std::fs::read_to_string(&file).unwrap();
-    let dead = text.replace("current: 20", "current: 0").replace("home: None", "home: Some((3.5, 90.0, -7.5))");
-    assert!(dead.contains("current: 0") && dead.contains("home: Some"), "{text}");
+    // Home with no hearth burning is the bed last slept in.
+    let dead = text.replace("current: 20", "current: 0").replace("bed: None", "bed: Some((3.5, 90.0, -7.5))");
+    assert!(dead.contains("current: 0") && dead.contains("bed: Some"), "{text}");
     std::fs::write(&file, dead).unwrap();
     let client = Client::join_with(config());
     assert_eq!(client.position, Vec3::new(3.5, 90.0, -7.5), "woke at the spawn point rather than at home");

@@ -163,7 +163,7 @@ fn start(mut commands: Commands, launch: Res<Launch>, world: Res<ClientWorld>) {
             Ambience::default()
         }
     };
-    let kinds = Arc::new(kinds(&ambience, &world.registry));
+    let kinds = Arc::new(kinds(&ambience, &world.registry, &launch.content.multiblocks));
     let bed_synths = ambience.beds.iter().filter_map(|b| match b.sound {
         BedSound::Synth(synth) => Some(synth),
         BedSound::Recorded(_) => None,
@@ -210,12 +210,20 @@ fn start(mut commands: Commands, launch: Res<Launch>, world: Res<ClientWorld>) {
 }
 
 /// What the enclosure scan needs of each block.
-fn kinds(ambience: &Ambience, registry: &BlockRegistry) -> Kinds {
+fn kinds(ambience: &Ambience, registry: &BlockRegistry, multiblocks: &voxmar_engine::multiblock::MultiblockRegistry) -> Kinds {
     let ids = (0..registry.len()).map(|id| registry.info(voxmar_engine::block::BlockId(id as u16)));
+    let group = ambience.block_groups(registry);
+    // A structure's core in a group heard only while lit.
+    let lit_only = group
+        .iter()
+        .enumerate()
+        .map(|(id, g)| g.is_some_and(|g| ambience.groups[g as usize].lit) && multiblocks.with_core(voxmar_engine::block::BlockId(id as u16)).next().is_some())
+        .collect();
     Kinds {
         open: ids.clone().map(|info| !info.solid || info.render == RenderKind::Leaves).collect(),
         leaves: ids.map(|info| info.render == RenderKind::Leaves).collect(),
-        group: ambience.block_groups(registry),
+        group,
+        lit_only,
         groups: ambience.groups.len(),
     }
 }
@@ -294,10 +302,11 @@ fn survey(
     }
     let (seed, generator) = ambient.generator.clone().expect("set above");
     let (kinds, content, tx) = (ambient.kinds.clone(), ambient.content.clone(), ambient.surveys.0.clone());
+    let fires = world.fires.clone();
     let random = mix(time.elapsed().as_nanos() as u64);
     ambient.surveying = true;
     rayon::spawn(move || {
-        let enclosure = enclosure::scan(eye, |p| snapshot.block(p), &kinds, random);
+        let enclosure = enclosure::scan(eye, |p| snapshot.block(p), |p| fires.contains(&p), &kinds, random);
         let generator = generator.get_or_init(|| match WorldContent::load(&content) {
             Ok(world) => Some(Overworld::shared(seed, &content, &world)),
             Err(e) => {
