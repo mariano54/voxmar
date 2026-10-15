@@ -520,8 +520,8 @@ impl Server {
         let falling = p.fall_start.is_some_and(|top| p.position.y < top - feel.falling_drop);
         if !in_reach {
             // Swung at the air: still answered, as a miss.
-            if let Some(item) = shot {
-                self.leave_shot(player, item, &weapon, aim.creature, false);
+            if let (Some(item), Some(target)) = (shot, self.creatures.live.get(&aim.creature).map(|c| c.body.position)) {
+                self.leave_shot(player, item, &weapon, target, false);
             }
             self.struck(player, aim.creature, 0, false, Blow::Plain);
             return;
@@ -537,44 +537,42 @@ impl Server {
             self.stir_bees(player, at);
         }
         let Some(damage) = self.land_blow(player, aim.creature, &weapon, stroke) else { return };
-        // A shot that hit may be left lying by the target, a miss more often (`recover_miss`).
-        if let (Some(item), Some(_)) = (shot, at) {
-            self.leave_shot(player, item, &weapon, aim.creature, damage > 0);
+        // A shot that hit may be left lying where the target stood (gone, if it killed), a
+        // miss more often (`recover_miss`).
+        if let (Some(item), Some(at)) = (shot, at) {
+            self.leave_shot(player, item, &weapon, at, damage > 0);
         }
         if kind == Blow::Flourish && damage > 0 {
             self.flourish(player, aim.creature, &weapon, damage);
         }
     }
 
-    /// What becomes of a shot spent at `creature`: by the player's own count of hits or of
-    /// misses (`Draw::Recover`, `Draw::Stray`), it is left lying to be picked up again, by
-    /// the class's `recover` share on a hit and its `recover_miss` share on a miss, else lost
-    /// (broken, or flown out of sight). A hit lies by the target; a miss flew past it,
-    /// landing by it if it was in reach, else as far as the weapon reaches toward it, short
-    /// of anything solid on the way.
-    fn leave_shot(&mut self, player: PlayerId, item: BlockId, weapon: &Weapon, creature: u32, hit: bool) {
+    /// What becomes of a shot spent at a creature standing at `target`: by the player's own
+    /// count of hits or of misses (`Draw::Recover`, `Draw::Stray`), it is left lying to be
+    /// picked up again, by the class's `recover` share on a hit and its `recover_miss` share
+    /// on a miss, else lost (broken, or flown out of sight). A hit lies where the target
+    /// stood; a miss flew past it, landing there if it was in reach, else as far as the
+    /// weapon reaches toward it. Either stops short of anything solid on the way (`raycast`,
+    /// as the shot's line is judged), and backs off along it until the item's own box
+    /// touches nothing solid, so it falls to the ground rather than hanging in a wall.
+    fn leave_shot(&mut self, player: PlayerId, item: BlockId, weapon: &Weapon, target: Vec3, hit: bool) {
+        use voxmar_engine::dropped::{Loose, SIZE};
         let combat = &self.content.combat;
         let (share, reach) = (if hit { combat.recover(weapon) } else { combat.recover_miss(weapon) }, weapon.reach);
-        let Some(target) = self.creatures.live.get(&creature).map(|c| c.body.position) else { return };
         let Some(p) = self.players.get_mut(&player) else { return };
         if p.draw(if hit { Draw::Recover } else { Draw::Stray })[0] >= share {
             return;
         }
         let from = p.eye();
         let (way, far) = ((target - from).normalize_or_zero(), (target - from).length().min(reach));
-        // Along the flight a quarter block at a time, to where it ends or meets anything solid.
-        let mut at = from;
-        let mut flown = 0.0;
-        while flown < far {
-            flown = (flown + 0.25).min(far);
-            let next = from + way * flown;
-            if self.is_solid(next.floor().as_ivec3()) {
-                break;
-            }
-            at = next;
+        let stop = voxmar_engine::physics::raycast(from, way, far, |cell| self.is_solid(cell)).map_or(far, |hit| hit.distance);
+        // The item's box, centred on the flight, backed off until clear of anything solid.
+        let mut flown = stop;
+        let body = |flown: f32| Loose::new(from + way * flown - Vec3::Y * (SIZE / 2.0), Vec3::ZERO);
+        while flown > 0.0 && body(flown).aabb().intersects(|cell| self.is_solid(cell)) {
+            flown -= 0.05;
         }
-        let body = voxmar_engine::dropped::Loose::new(at + Vec3::Y * 0.25, Vec3::ZERO);
-        self.items.spawn(voxmar_engine::inventory::ItemStack { item, count: 1 }, body, voxmar_engine::dropped::PICKUP_DELAY);
+        self.items.spawn(voxmar_engine::inventory::ItemStack { item, count: 1 }, body(flown.max(0.0)), voxmar_engine::dropped::PICKUP_DELAY);
     }
 
     /// A hit taken spoils a shot being drawn with a weapon whose class says so
@@ -1017,12 +1015,49 @@ mod tests {
         shoot(&mut server, 20);
         let walled: Vec<_> = lying(&server).into_iter().skip(open.len()).collect();
         assert!(!walled.is_empty(), "no arrow landed short of the wall");
+        let boxed = |at: Vec3| voxmar_engine::physics::Aabb::standing(at, voxmar_engine::dropped::SIZE, voxmar_engine::dropped::SIZE);
         for (_, at) in &walled {
-            assert!(at.x < 10.0 && !server.is_solid(at.floor().as_ivec3()), "an arrow landed at {at}, in or past the wall");
+            assert!(at.x < 10.0 && !boxed(*at).intersects(|cell| server.is_solid(cell)), "an arrow landed at {at}, in or past the wall");
+        }
+        // Let fall, every one comes to rest on the floor (its top at y 100), clear of the wall.
+        for _ in 0..3 * TICKS_PER_SECOND {
+            server.tick_items();
+        }
+        for (_, at) in lying(&server) {
+            assert!((100.0..100.05).contains(&at.y) && !boxed(at).intersects(|cell| server.is_solid(cell)), "an arrow came to rest at {at}, not on the floor");
         }
         let draws = server.players[&1].draws;
         assert_eq!((draws.strays, draws.recovers), (40, 0), "each miss drew as a stray, none as a hit");
         assert_eq!(server.players[&1].inventory.count(server.content.blocks.expect("base:arrow")), 64 - 40, "each shot spent an arrow");
+    }
+
+    /// The shot that kills is left lying where its target stood, by `recover`, as any hit
+    /// is: shot at rabbits of 1 health, every hit kills, and each one drew to be left.
+    #[test]
+    fn the_killing_shot_may_be_left_where_its_target_fell() {
+        let mut server = crate::test_server();
+        shooting_range(&mut server);
+        let (_client, weapon) = archer(&mut server, "base:short_bow", Some("base:arrow"));
+        let held = server.players[&1].held();
+        let rabbit = server.content.creatures.id("base:rabbit").unwrap();
+        let mut kills = 0;
+        for _ in 0..40 {
+            let creature = server.spawn_creature(rabbit, Vec3::new(6.5, 100.0, 0.5), 1).expect("room");
+            server.creatures.live.get_mut(&creature).unwrap().health = 1;
+            let aim = Aim { creature, counter: false, riposte: false, weapon, held };
+            server.land_swing(1, aim, 1.0, true, Blow::Plain, true);
+            if server.creatures.live.contains_key(&creature) {
+                server.creatures.take_away(creature);
+            } else {
+                kills += 1;
+            }
+        }
+        let draws = server.players[&1].draws;
+        assert!(kills > 0 && kills < 40, "{kills} of 40 shots killed: every one or none");
+        assert_eq!(draws.recovers, kills, "each kill drew to leave its arrow");
+        assert_eq!(draws.recovers + draws.strays, 40, "each shot drew once");
+        let by_kills = server.items.saved(|item| format!("{item:?}")).iter().filter(|d| Vec3::from_array(d.position).distance(Vec3::new(6.5, 100.0, 0.5)) < 1.5).count();
+        assert!(by_kills > 0, "no arrow lay where the rabbits fell");
     }
 
     /// A blow that hurts the player spoils a bow being drawn (`spoiled_by_hits`): the shot

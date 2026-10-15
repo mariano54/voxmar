@@ -4378,10 +4378,16 @@ fn a_sling_shoots_a_stone_a_clear_line_away_and_trains_ranged() {
     let (sling, stone) = (client.content.blocks.expect("base:sling"), client.content.blocks.expect("base:cobblestone"));
     let ranged = client.content.skills.id("core:ranged").expect("a ranged skill");
     let bear = client.content.creatures.find("brown_bear").expect("a brown bear in the content");
-    // Creative, so the bear's blows pass us by, on a wide flat floor.
+    // Creative, so the bear's blows pass us by, on a wide flat floor: the land round loaded
+    // first (a busy server streams it late), then the floor seen laid, by the server's word.
     client.ok("/gamemode creative");
+    let feet = client.position.floor().as_ivec3();
+    let corners = [(-12, -12), (-12, 12), (12, -12), (12, 12), (0, 0)].map(|(x, z)| feet + IVec3::new(x, -1, z));
+    client.pump_until(|c| corners.iter().all(|&p| c.world.block(p).is_some()));
     client.ok("/fill ~-12 ~-1 ~-12 ~12 ~-1 ~12 stone");
     client.ok("/fill ~-12 ~ ~-12 ~12 ~4 ~12 air");
+    let floor = client.content.blocks.id("base:stone");
+    client.pump_until(|c| corners.iter().all(|&p| c.world.block(p) == floor && c.world.block(p + IVec3::Y).is_some_and(|b| b.is_air())));
     client.ok("/clear");
     client.ok("/skill ranged 10");
     client.ok("/give sling 1");
@@ -4425,13 +4431,15 @@ fn a_sling_shoots_a_stone_a_clear_line_away_and_trains_ranged() {
     // A wall between is a miss, and the stone is still spent.
     let x = at.x + 4.0;
     client.ok(&format!("/fill {} {} {} {} {} {} stone", x.floor(), at.y.floor(), at.z.floor() - 3.0, x.floor(), at.y.floor() + 4.0, at.z.floor() + 3.0));
-    client.wait_server(1);
-    // Two shots, the second on the sling's beat (0.53 s): both are at the air, so off the
-    // beat, and earn no pip.
+    let wall = [0.0, 1.0, 2.0].map(|y| Vec3::new(x, at.y + y, at.z).floor().as_ivec3());
+    client.pump_until(|c| wall.iter().all(|&p| c.world.block(p) == floor));
+    // Two shots, the second on the sling's beat (its cooldown, from the content): both are
+    // at the air, so off the beat, and earn no pip.
+    let beat = client.content.combat.timing(&client.content.combat.wielded(Some(sling), |_| 10)).cooldown;
     let (blows, left, pips) = (client.blows, carried_of(&client, stone), client.pips.last().copied().unwrap_or(0));
     let start = Instant::now();
     for k in 0..2u32 {
-        client.propose_at("core:attack", ActionTarget::Creature(id), start + Duration::from_secs_f32(0.53 * k as f32 - if k == 0 { 0.0 } else { 0.06 }));
+        client.propose_at("core:attack", ActionTarget::Creature(id), start + Duration::from_secs_f32(beat * k as f32 - if k == 0 { 0.0 } else { 0.06 }));
         client.pump_until(|c| c.blows == blows + k + 1);
         assert_eq!(client.damage.last(), Some(&0), "a shot through a wall hit");
     }

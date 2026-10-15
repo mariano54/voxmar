@@ -44,10 +44,11 @@ A ranged weapon is a class with `ammo` (an item or `tag:`): each shot spends one
 lands, hit or miss, and with none the server starts no swing and says what it needs. A shot
 needs a clear line from the eye to the middle of the target as well as reach; otherwise it
 is the same blow, rhythm and experience as any other. A shot that hits may be left lying
-by the target to pick up again: `recover` is that chance (sling stones 0.25, arrows 0.5).
-A miss lands to pick up again by `recover_miss` (stones 0.5, arrows 0.8): by the target
-if it was in reach, else as far as the weapon reaches toward it, short of anything solid
-on the way. The rest break or fly out of sight. Both are rolled by the player's own count
+where the target stood to pick up again, the shot that kills it too: `recover` is that
+chance (sling stones 0.25, arrows 0.5). A miss lands to pick up again by `recover_miss`
+(stones 0.5, arrows 0.8): by the target if it was in reach, else as far as the weapon
+reaches toward it. Either stops short of anything solid on the flight's line and backs off
+until its own box is clear, then falls to the ground. The rest break or fly out of sight. Both are rolled by the player's own count
 of hits and of misses (`Draw::Recover`, `Draw::Stray`), never the tick. Arrows: four from
 flint or cobblestone, a stick and a feather, Crafting 5.
 
@@ -57,6 +58,12 @@ raising the guard does (the meter starts again from `cancel_to`, and the shot sp
 nothing), and `drawing_speed` is the share of their pace the player keeps while a shot is
 drawn (bow 0.4, sling 0.7). Both the server and the client spoil the draw, the client on
 the hit it is told of. The slowing is the client's own, as the guard's is (gate check `sling draw`).
+A draw's last moments cannot be spoiled across a slow connection: the server lands a swing
+as its wind-up ends, and a creature's blow is judged up to the player's round trip later
+(`lag_allowance`), so at a 200 ms round trip about the last tenth of a second of a draw has
+already loosed. For about one round trip the client and server can also disagree on a
+spoil, the client going by the `Hurt` it is told of; telling it on `Hurt` itself needs a
+protocol change, left for after the Nomad hunting pass.
 
 Creatures' styles and weaknesses (systems agreed them, 7 Oct): wolves, foxes, cave crawlers
 and crocodiles bite (stab) and are weak to crush; bears and snow leopards claw (slash),
@@ -192,20 +199,27 @@ fight at level 3, never on the clock. The model is one line of ground. The playe
 24 blocks off and closes at a sprint, or at `drawing_speed` of one while drawn. Each
 creature acts by its behaviour data: one that `fights()` (Defend or Hunt) charges and
 strikes on its attack's timing, and the rest bolt while fear lasts (`FEAR_FADE`) and keep
-the player out of their Flee radius. A hit taken spoils a draw where the class says so.
-Arrows are kept by `recover` on a hit and `recover_miss` on a miss. Times are seconds to
-the kill, hurt is the share of health lost, and spent is arrows used up per kill:
+the player out of their Flee radius. Any blow that reaches it, hit or miss, rouses it as
+`land_blow` does (`Mind::hurt`), so a miss gives no free second shot at grazing game. A
+hit taken spoils a draw where the class says so. Arrows are kept by `recover` on a hit
+(the killing one too) and `recover_miss` on a miss. Times are seconds to the kill, hurt is
+the share of health lost, and spent is arrows used up per kill. "Before" is the bow's old
+data in the same model:
 
 | Creature | Spear | Club | Bow before | Bow after |
 | --- | --- | --- | --- | --- |
-| Rabbit | never caught | never caught | 7.3 s, 1.7 spent | 8.1 s, 0.9 spent |
-| Junglefowl | 11.0 s | 12.3 s | 2.2 s, 1.7 spent | 6.9 s, 1.5 spent |
-| Red deer | never caught | never caught | 33.0 s, 4.0 spent | 35.0 s, 2.2 spent |
-| Wild boar | 17.9 s | 21.0 s | 5.9 s, 6.4 spent | 33.3 s, 5.1 spent |
-| Aurochs | 12.8 s, 26% hurt | 16.7 s, 35% hurt, 1% died | 7.7 s, 8% hurt, 8.7 spent | 12.7 s, 19% hurt, 4.2 spent |
+| Rabbit | never caught | never caught | 16.4 s, 1.7 spent | 17.1 s, 0.9 spent |
+| Junglefowl | 11.0 s | 12.3 s | 2.2 s, 1.7 spent | 12.9 s, 2.3 spent |
+| Red deer | never caught | never caught | 57.1 s, 4.0 spent | 58.8 s, 2.2 spent |
+| Wild boar | 17.9 s | 21.0 s | 5.9 s, 6.4 spent | 61.1 s, 7.5 spent |
+| Aurochs | 12.8 s, 27% hurt | 16.7 s, 39% hurt | 7.6 s, 10% hurt, 8.5 spent | 12.5 s, 23% hurt, 4.2 spent |
 
-Over the game melee can take (junglefowl, boar, aurochs) the bow took 16 s against
-melee's 42 s before, and 53 s after.
+Over the game melee can take (junglefowl, boar, aurochs) the bow took 15.6 s against
+melee's 41.7 s before, and 86.5 s after. The bow is the tool for skittish game (rabbit,
+deer), a little safer against an aurochs, and slower than melee on whatever melee can
+catch. The sling takes no skittish game at all (its 12 blocks are inside their ground):
+a boar in 90 s and an aurochs in 17.5 s, at 40% of health lost, against 9.8 s and 12.6 s
+before.
 
 What changed, in `combat.ron`:
 
@@ -215,17 +229,20 @@ What changed, in `combat.ron`:
   hits; 0.7 of the pace while drawn.
 
 Prey reacts as it already did, through its behaviour data: a deer or rabbit that is shot
-is frightened and bolts out of reach (Flee, fear fading at 0.12 a second), and an aurochs
-charges (Defend). A wild boar flees for now; with PR 302 it fights back to about 40% of
-its health, which makes the bow safer still against it.
+at is frightened and bolts out of reach (Flee, fear fading at 0.12 a second), and an
+aurochs charges (Defend). A wild boar flees for now; with PR 302 it fights back to about
+40% of its health, which makes the bow safer still against it.
 
-The test pins, so a later change cannot make the bow strictly better than melee:
+The test pins, so a later change cannot make a shot strictly better than melee:
 
-- against every creature melee kills at least half the time, the bow costs no more than
-  2 points of health more than the best melee weapon;
+- on every creature melee kills at least half the time, the bow and the sling each take
+  at least 0.95 times as long as the best melee weapon;
+- there, the bow costs no more than 2 points of health more than the best melee weapon;
 - every kill with the bow uses up at least half an arrow;
-- over the game melee can take, the bow takes longer;
 - the bow takes a red deer at least 30 points more often than melee.
+
+With the bow's and sling's old data the first pin fails on the junglefowl, boar and
+aurochs.
 
 ## First-age fight balance
 

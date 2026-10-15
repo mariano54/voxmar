@@ -9324,7 +9324,7 @@ fn weapon(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
 const SLING: &str = "base:sling";
 const SLING_LEVEL: u8 = 70;
 const SLING_STONES: u32 = 12;
-/// Seconds between shots (past the sling's 0.53 s cooldown), by the game's clock.
+/// Seconds between shots (past the sling's 0.8 s cooldown), by the game's clock.
 const SLING_EVERY: f32 = 1.0;
 
 /// The sling step's run: what stood before it began, its bear, and its shots.
