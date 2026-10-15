@@ -543,7 +543,7 @@
         ),
         (
             name: "wool_gathering", age: "farm", branch: "husbandry", title: "Wool Gathering",
-            why: "Wool makes beds, cloth and sleeping bags. Right-click a kept sheep with shears in hand whenever its wool has grown back, and gather six. Wool grows back in about six minutes: dye the first of it into cloth meanwhile (A Rug Underfoot), or go after milk (The Milk Pail).",
+            why: "Wool makes beds, cloth and sleeping bags. Right-click a kept sheep with shears in hand whenever its wool has grown back, and gather six. Wool grows back in about six minutes: dye the first of it into cloth meanwhile, for a rug once the home is homely, or go after milk (The Milk Pail).",
             tasks: [[Have("wool", 6)]],
             after: ["a_woolly_flock"],
             rewards: [Xp("farming", 120.0), Xp("crafting", 60.0)],
@@ -704,13 +704,13 @@
         ),
         (
             name: "a_rug_underfoot", age: "farm", branch: "home", title: "A Rug Underfoot",
-            why: "A cloth is a wool and a flower of the colour you want, side by side in the grid (Crafting 2): white from a daisy, yellow from a dandelion, red from a poppy. Daisies grow on plains, dandelions in flower meadows, poppies on the steppe. Make two. Two cloths side by side make three rugs (Crafting 3). Lay them on the floor; curtains, cushions and banners are made from cloth too.",
+            why: "A homely home (A Homely Home) wants a rug, and wool from your flock (Wool Gathering) makes one. A cloth is a wool and a flower of the colour you want, side by side in the grid (Crafting 2): white from a daisy, yellow from a dandelion, red from a poppy. Daisies grow on plains, dandelions in flower meadows, poppies on the steppe. Make two. Two cloths side by side make three rugs (Crafting 3). Lay them on the floor; curtains, cushions and banners are made from cloth too.",
             tasks: [[Craft("tag:cloth", 2), Craft("tag:rug", 1)]],
-            after: ["wool_gathering"],
+            after: ["a_homely_home", "wool_gathering"],
             rewards: [Xp("crafting", 180.0)],
         ),
         (
-            name: "earthenware", age: "farm", branch: "home", title: "Earthenware",
+            name: "earthenware", age: "farm", branch: "pottery", title: "Earthenware",
             why: "Fired clay makes plates, bowls, jars and jugs for the shelf. Two fired clay side by side make two plates, and three in a V make two bowls (Crafting 2); a jar takes three and a jug five (Crafting 3), and a basket is five twine. Make three pieces of crockery at the crafting table.",
             tasks: [[Craft("tag:crockery", 3)]],
             after: ["a_kiln_load"],
@@ -718,9 +718,9 @@
         ),
         (
             name: "candlelight", age: "farm", branch: "home", title: "Candlelight",
-            why: "Twine and two hides make two candles (Crafting 3): a softer light than a torch for a table or shelf.",
+            why: "With shelves and cupboards up (Shelves and Cupboards), light them: twine and two hides make two candles (Crafting 3), a softer light than a torch for a table or shelf.",
             tasks: [[Craft("candle", 2)]],
-            after: ["a_proper_bed"],
+            after: ["shelves_and_cupboards"],
             rewards: [Xp("crafting", 60.0)],
         ),
         (
@@ -746,9 +746,9 @@
         ),
         (
             name: "snug_for_winter", age: "farm", branch: "home", title: "Snug for Winter",
-            why: "Put a roof over the Hearth with your bed and two lights beside it, and the home turns snug: warm under a roof, you heal half as fast again there, and a night's sleep in it rests you better.",
+            why: "With a proper bed (A Proper Bed) and candles (Candlelight), put a roof over the Hearth with the bed and two lights beside it, and the home turns snug: warm under a roof, you heal half as fast again there, and a night's sleep in it rests you better.",
             tasks: [[Built("home_snug", 1)], [Built("home_homely", 1)], [Built("home_cosy", 1)], [Built("home_heart_of_the_home", 1)]],
-            after: ["candlelight"],
+            after: ["a_proper_bed", "candlelight"],
             rewards: [Xp("construction", 120.0), Item("candle", 4)],
         ),
         (
@@ -759,7 +759,7 @@
             rewards: [Xp("construction", 60.0)],
         ),
         (
-            name: "workshop_and_stove", age: "farm", branch: "home", title: "A Stove and a Quern",
+            name: "workshop_and_stove", age: "farm", branch: "rooms", title: "A Stove and a Quern",
             why: "A home that works for you. A stove is a campfire under a row of three cobblestones with one more on each side of it, five in all (Construction 5). For the workshop, make one of these: quern stones are four cobblestones in a square under a stick (Crafting 5); a spindle stand is an oak plank, two sticks and a twine in a square (Crafting 6); a loom frame is oak planks, sticks and a twine (Crafting 8). All at the crafting table.",
             tasks: [[Craft("cottage_stove", 1), Craft("tag:workshop", 1)]],
             after: ["snug_for_winter"],
@@ -790,14 +790,14 @@
             name: "a_cosy_home", age: "farm", branch: "home", title: "A Cosy Home",
             why: "Soft and bright: two rugs, two curtains, a cushion, three pieces of crockery and a fourth light. A cosy home heals you faster and teaches a tenth more, and a night in it is a deep rest.",
             tasks: [[Built("home_cosy", 1)], [Built("home_heart_of_the_home", 1)]],
-            after: ["a_homely_home", "a_rug_underfoot", "earthenware", "candlelight"],
+            after: ["a_rug_underfoot", "light_in_the_window", "earthenware"],
             rewards: [Xp("construction", 300.0), Item("candle", 6)],
         ),
         (
             name: "heart_of_the_home", age: "farm", branch: "home", title: "Heart of the Home",
             why: "Everything a home needs: a bookshelf, a stove or cauldron, a quern, spindle or loom, and a banner, all in a cosy home. Heal twice as fast and learn an eighth more where you live.",
             tasks: [[Built("home_heart_of_the_home", 1)]],
-            after: ["a_cosy_home", "workshop_and_stove", "books_and_banners"],
+            after: ["a_cosy_home", "books_and_banners", "a_proper_workshop"],
             rewards: [Xp("construction", 500.0), Xp("cooking", 200.0), Item("bread", 12), Item("chest", 2)],
         ),
         (
@@ -880,14 +880,14 @@
             rewards: [Xp("cooking", 180.0), Xp("hitpoints", 40.0)],
         ),
         (
-            name: "a_proper_workshop", age: "farm", branch: "home", title: "A Proper Workshop",
+            name: "a_proper_workshop", age: "farm", branch: "rooms", title: "A Proper Workshop",
             why: "Under a roof, beside your bench, seat and two lights, add a loom frame, spindle stand or quern and two places to store things. At home you then craft and build as if two levels higher, and engineer a level higher.",
             tasks: [[Built("home_workshop", 1)]],
             after: ["workshop_and_stove"],
             rewards: [Xp("construction", 150.0), Xp("engineering", 80.0)],
         ),
         (
-            name: "a_larder", age: "farm", branch: "home", title: "A Larder",
+            name: "a_larder", age: "farm", branch: "rooms", title: "A Larder",
             why: "Four places to store things, a stove or cauldron and a table, under a roof by the fire: meals eaten here heal a fifth more and their good lasts half again as long.",
             tasks: [[Built("home_larder", 1)]],
             after: ["a_herb_nook"],
@@ -950,7 +950,7 @@
             rewards: [Xp("mining", 80.0)],
         ),
         (
-            name: "neighbourly", age: "farm", branch: "home", title: "Neighbourly",
+            name: "neighbourly", age: "farm", branch: "callers", title: "Neighbourly",
             why: "Once your hearth is lit, neighbours from over the hill may call while you are near home. The first to call bring a plate for the house, crockery toward a cosy home; share a cooked meal and they leave seed for the garden.",
             tasks: [[Met("neighbours", 1)]],
             after: ["shut_the_door"],
@@ -964,7 +964,7 @@
             rewards: [Xp("construction", 40.0), Xp("crafting", 20.0)],
         ),
         (
-            name: "a_herb_nook", age: "farm", branch: "home", title: "A Herb Nook",
+            name: "a_herb_nook", age: "farm", branch: "rooms", title: "A Herb Nook",
             why: "Tie two herbs with twine and they hang to dry (Crafting 4); a drying rack hung with meat counts as a bunch. Two bunches and a jar, basket or crate at home make a herb nook: there you farm and brew as if a level higher, so a kitchen garden at the door takes seed a level early, and a meal's good lasts a tenth longer.",
             tasks: [[Built("home_herb_nook", 1)]],
             after: ["a_proper_workshop"],
@@ -1011,7 +1011,7 @@
             rewards: [Xp("farming", 120.0)],
         ),
         (
-            name: "a_bee_garden", age: "farm", branch: "home", title: "A Bee Garden",
+            name: "a_bee_garden", age: "farm", branch: "rooms", title: "A Bee Garden",
             why: "Set your skep of bees down at home with three flowers near: a bee garden, where you heal a tenth faster and crops within eight blocks of the hive grow a quarter faster. The bees forage by day in dry weather, quicker with more flowers about (a honeydew lily counts for four), and a full skep drips honey. A fire right beside it drives them off; one within four blocks smokes them calm. Right-click a full skep for two or three honey, and half the time a cake of beeswax. While it fills, sow a Kitchen Garden by the hive or plant a Herb Garden.",
             tasks: [[Built("home_bee_garden", 1), Have("honey", 3)]],
             after: ["humming_in_the_meadow"],
@@ -1025,14 +1025,14 @@
             rewards: [Xp("cooking", 80.0), Xp("farming", 60.0)],
         ),
         (
-            name: "the_beekeeper_calls", age: "farm", branch: "home", title: "The Beekeeper Calls",
+            name: "the_beekeeper_calls", age: "farm", branch: "callers", title: "The Beekeeper Calls",
             why: "A home with bees draws the beekeeper by day, to look over your skeps and walk your garden with you; three honey buys a spare skep for a second hive. Beeswax makes the best light a Farm home has before coal: a wick of twine over a cake of wax gives three candles. Meet the beekeeper and make three candles, or, with no visit yet, keep two cakes of wax and make six.",
             tasks: [[Met("beekeeper", 1), Craft("candle", 3)], [Have("beeswax", 2), Craft("candle", 6)]],
             after: ["smoke_that_clings"],
             rewards: [Xp("farming", 200.0), Xp("crafting", 60.0), Item("skep", 1)],
         ),
         (
-            name: "callers_at_the_door", age: "farm", branch: "home", title: "Callers at the Door",
+            name: "callers_at_the_door", age: "farm", branch: "callers", title: "Callers at the Door",
             why: "A homely home draws callers. With seats, a table and stores under your roof, guests may come of an evening to sit by your fire while you are home: talk with them, share a cooked supper. Make it cosy and, by night, something smaller may come to the door for the crumbs.",
             tasks: [[Met("fireside_guests", 1)]],
             after: ["a_homely_home"],
@@ -1081,11 +1081,11 @@
             rewards: [Xp("farming", 150.0), Item("rye", 4)],
         ),
         (
-            name: "mice_in_the_stores", age: "farm", branch: "home", title: "Mice in the Stores",
+            name: "mice_in_the_stores", age: "farm", branch: "rooms", title: "Mice in the Stores",
             why: "At dusk a piper may come by homes, the field mice of folk's stores at his heels. Follow him to the end of his tune and he leaves the seed they would have eaten. Keep a pantry by your fire as well, two crates or baskets beside it, so your stores are worth the guarding.",
             tasks: [[Met("rat_catcher", 1), Built("home_pantry", 1)], [Met("rat_catcher", 1), Built("home_larder", 1)]],
             after: ["a_larder"],
-            rewards: [Xp("farming", 100.0), Item("seed_mix", 4)],
+            rewards: [Xp("farming", 100.0), Item("seed_mix", 4), Item("earthen_jar", 3)],
         ),
         (
             name: "the_keepers_word", age: "farm", branch: "hunter", title: "The Keepers' Word",
@@ -1109,11 +1109,11 @@
             rewards: [Xp("magic", 60.0), Xp("cooking", 60.0), Item("gold_coin", 8)],
         ),
         (
-            name: "those_taken_in", age: "farm", branch: "home", title: "Those Taken In",
+            name: "those_taken_in", age: "farm", branch: "callers", title: "Those Taken In",
             why: "Refugees roam near homes, hungry. Food in your hand and they follow you home, where they thank you with seed. Days later their kin come looking for them and camp near your home to thank you too. Take them in, then meet their kin.",
             tasks: [[Met("refugees", 1), Met("refugee_kin", 1)]],
-            after: ["neighbourly"],
-            rewards: [Xp("farming", 100.0), Xp("construction", 100.0)],
+            after: ["neighbourly", "callers_at_the_door"],
+            rewards: [Xp("farming", 100.0), Xp("construction", 100.0), Item("gold_coin", 6)],
         ),
         (
             name: "first_metal", age: "farm", branch: "mining", title: "First Metal",
