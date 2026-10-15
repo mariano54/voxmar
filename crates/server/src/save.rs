@@ -105,6 +105,9 @@ pub struct WorldMeta {
     pub regrowing: Vec<SavedRegrowing>,
     #[serde(default)]
     pub planter_grown: Vec<[i32; 3]>,
+    /// Blocks waiting to catch fire or to burn out (`blaze`). Older worlds have none.
+    #[serde(default)]
+    pub blazes: Vec<crate::blaze::Blaze>,
     /// Kept hives with bees and the seconds each has foraged (`apiary`). Older worlds
     /// have none: their skeps start over.
     #[serde(default)]
@@ -227,6 +230,7 @@ impl WorldMeta {
             placed: Vec::new(),
             regrowing: Vec::new(),
             planter_grown: Vec::new(),
+            blazes: Vec::new(),
             hives: Vec::new(),
             stations: Vec::new(),
             catches: Vec::new(),

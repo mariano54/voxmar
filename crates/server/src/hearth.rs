@@ -17,6 +17,10 @@ pub struct Lit {
     pub position: [i32; 3],
     pub structure: String,
     pub until: u64,
+    /// Who lit it, by name: a home hearth's owner, whose home it is for fire (fire.ron's
+    /// `homes_catch_only_from_owner`). None for a fire lit before this was kept.
+    #[serde(default)]
+    pub owner: Option<String>,
 }
 
 fn structure_words(structure: &Multiblock) -> Words {
@@ -53,20 +57,43 @@ impl Server {
             player.inventory.take(player.selected, count);
             player.changed(traits::INVENTORY);
             let until = self.tick.saturating_add((seconds * TICKS_PER_SECOND as f32).ceil() as u64);
-            self.lit.insert(core, Lit { position: core.to_array(), structure: structure.name.clone(), until });
+            let owner = self.players.get(&agent).map(|p| p.name.clone());
+            self.lit.insert(core, Lit { position: core.to_array(), structure: structure.name.clone(), until, owner });
+            self.hearth_blaze(core);
             self.tally(agent, "lit", &structure.name, 1);
         } else if structure.fuels.is_empty() && !self.lit.contains_key(&core) {
             // A fire that needs no fuel burns until the structure breaks; lit again while it
             // burns, it is the same fire (and the same lighting, for quests).
-            self.lit.insert(core, Lit { position: core.to_array(), structure: structure.name.clone(), until: u64::MAX });
+            let owner = self.players.get(&agent).map(|p| p.name.clone());
+            self.lit.insert(core, Lit { position: core.to_array(), structure: structure.name.clone(), until: u64::MAX, owner });
+            self.hearth_blaze(core);
             self.tally(agent, "lit", &structure.name, 1);
         }
         self.send_fires();
         if structure.home && let Some(player) = self.players.get_mut(&agent) {
             player.home = Some(core.as_vec3() + Vec3::new(0.5, 1.0, 0.5));
         }
+        self.claim_home_hearth(agent);
         let key = if structure.home { "multiblock.home" } else { "multiblock.lit" };
         self.structure_reply(agent, Words::key(key).with("structure", structure_words(structure)));
+    }
+
+    /// A home hearth lit before fires were kept by owner (`Lit::owner` None) is its
+    /// player's again as they join, or as they touch it: the one their home is at, so their
+    /// home is kept from others' fires (fire.ron `homes_catch_only_from_owner`) even while
+    /// they are away. A hearth already someone's is left theirs.
+    pub(crate) fn claim_home_hearth(&mut self, agent: PlayerId) {
+        let Some(player) = self.players.get(&agent) else { return };
+        let Some(home) = player.home else { return };
+        let core = (home - Vec3::new(0.5, 1.0, 0.5)).round().as_ivec3();
+        let name = player.name.clone();
+        let multiblocks = &self.content.multiblocks;
+        if let Some(lit) = self.lit.get_mut(&core)
+            && lit.owner.is_none()
+            && multiblocks.get(&lit.structure).is_some_and(|m| m.home)
+        {
+            lit.owner = Some(name);
+        }
     }
 
     fn structure_reply(&self, agent: PlayerId, words: Words) {
@@ -201,7 +228,11 @@ impl Server {
         }
         self.players.get_mut(&id).unwrap().kindled = true;
         if let Some(structure) = standing.filter(|_| !self.lit.contains_key(&core)) {
-            self.lit.insert(core, Lit { position: core.to_array(), structure, until: u64::MAX });
+            let owner = self.players.get(&id).map(|p| p.name.clone());
+            self.lit.insert(core, Lit { position: core.to_array(), structure, until: u64::MAX, owner });
+            // Relit for them, not by them: nothing they changed starts a fire, but they are
+            // told, once, what by it would catch if it did.
+            self.hearth_hint(id, core);
         }
     }
 }

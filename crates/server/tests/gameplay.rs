@@ -7864,7 +7864,8 @@ fn the_first_days(f: &mut Fresh) -> Site {
 
     // A Bed of Your Own: two feathers (junglefowl) and two hides (rabbits) for a sleeping
     // bag, crafted in the two by two grid.
-    let (feather, hide) = ("base:feather", "base:hide");
+    // Rabbits give raw hide; the first bag takes it as it is.
+    let (feather, hide) = ("base:feather", "base:raw_hide");
     let (feathers, hides) = (|c: &Client| holding(c, feather) + loose(c, feather), |c: &Client| holding(c, hide) + loose(c, hide));
     f.hunt(|c| if hides(c) < 2 { "rabbit" } else { "junglefowl" }, |c| feathers(c) >= 2 && hides(c) >= 2);
     f.collect(feather, 2);

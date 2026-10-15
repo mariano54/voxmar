@@ -15,12 +15,14 @@
 (
     stations: [
         // A drying rack (Nomad): raw meat or fish hung in the open air dries to jerky, which
-        // stacks where cooked food does not. A fire near smokes it, twice as fast.
+        // stacks where cooked food does not; a raw hide off a beast cures to hide in ten minutes.
+        // A fire near smokes it, twice as fast.
         (
             empty: "drying_rack", working: "drying_rack_hung", ready: "drying_rack_dry", holds: 8,
             works: [
                 (input: "tag:raw+meat", output: "jerky", minutes: 10.0, skill: "core:cooking", xp: 6.0),
                 (input: "tag:raw+fish", output: "jerky", minutes: 10.0, skill: "core:cooking", xp: 6.0),
+                (input: "raw_hide", output: "hide", minutes: 10.0, skill: "core:crafting", xp: 2.0),
             ],
             needs: [OpenSky],
             faster: [(Near("fire", 3), 2.0)],

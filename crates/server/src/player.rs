@@ -77,6 +77,9 @@ pub struct Player {
     /// Whether their home hearth needs no lighting again from an older save
     /// (`hearth::kindle_home`): new players' and those already seen to.
     pub kindled: bool,
+    /// Whether they have been told this session why something of theirs smoulders
+    /// (`blaze_hint`).
+    pub told_fire: bool,
     pub buried: bool,
     /// Everything the player has discovered (`journal`).
     pub journal: voxmar_engine::journal::Journal,
@@ -204,6 +207,7 @@ impl Player {
             home: None,
             bed: None,
             kindled: true,
+            told_fire: false,
             buried: false,
             journal: Default::default(),
             quests_done: Vec::new(),
@@ -340,6 +344,8 @@ impl Server {
     /// completes first: the player saw it done before sending this.
     pub(crate) fn handle_message(&mut self, id: PlayerId, message: ClientMessage, at: Instant) {
         self.arrival = at;
+        // A fire this sets off is theirs.
+        self.fire_origin = self.players.get(&id).map(|p| p.name.clone());
         if let Some(player) = self.players.get_mut(&id) {
             player.last_heard = player.last_heard.max(at);
         }
@@ -372,6 +378,9 @@ impl Server {
             ClientMessage::ClaimQuest { name } => self.claim_quest(id, &name),
             ClientMessage::LookAtStation { block } => self.look_at_station(id, block),
         }
+        // What they did that set something smouldering, they are told why.
+        self.blaze_hint(id);
+        self.fire_origin = None;
     }
 
     /// A player looked an item up in the recipe viewer: counted once for quests, if the item
@@ -628,8 +637,11 @@ impl Server {
         self.players[&id].connection.send(time);
         let entries = self.players[&id].journal.entries().cloned().collect();
         self.players[&id].connection.send(ServerMessage::Journal { entries });
+        self.claim_home_hearth(id);
         self.kindle_home(id);
         self.players[&id].connection.send(ServerMessage::Fires { lit: self.fires() });
+        // What smoulders now: the others were told as it began, and are told only of changes.
+        self.players[&id].connection.send(ServerMessage::Smoulders { at: self.smouldering() });
         if let Some(file) = set_aside {
             let text = Words::key("save.player_set_aside").with("file", Words::text(file));
             self.players[&id].connection.send(ServerMessage::Chat { kind: ChatKind::Error, text });
@@ -1207,5 +1219,22 @@ mod tests {
         drop(returning);
         drop(server);
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A player joining while thatch smoulders is told where at once, though the others
+    /// were told as it began and nothing has changed since.
+    #[test]
+    fn a_player_joining_is_told_what_smoulders() {
+        use voxmar_engine::glam::IVec3;
+        let mut server = crate::test_server();
+        let at = voxmar_engine::coords::ColumnPos::of_block(server.spawn.floor().as_ivec3()).origin() + IVec3::new(8, server.spawn.y as i32 + 10, 8);
+        server.set_block(at - IVec3::Y, server.content.blocks.expect("base:stone"));
+        server.set_block(at + IVec3::X - IVec3::Y, server.content.blocks.expect("base:stone"));
+        server.set_block(at, server.content.blocks.expect("base:wattle_panel"));
+        server.set_block(at + IVec3::X, server.content.blocks.expect("base:torch"));
+        server.send_smoulders();
+        let client = join(&mut server, 2, "Late");
+        let told: Vec<Vec<IVec3>> = std::iter::from_fn(|| client.try_recv().ok().flatten()).filter_map(|m| match m { ServerMessage::Smoulders { at } => Some(at), _ => None }).collect();
+        assert_eq!(told, [vec![at]]);
     }
 }

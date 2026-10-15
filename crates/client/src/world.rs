@@ -125,6 +125,9 @@ pub struct ClientWorld {
     /// The cores of lit structures whose fire burns, as the server last said
     /// (`ServerMessage::Fires`): a hearth crackles and smokes only while lit.
     pub fires: FxHashSet<IVec3>,
+    /// Blocks smouldering, about to catch fire, as the server last said
+    /// (`ServerMessage::Smoulders`): they smoke and crackle until they catch or are saved.
+    pub smoulders: FxHashSet<IVec3>,
 }
 
 #[derive(Default, Clone, Copy)]
@@ -160,6 +163,7 @@ impl ClientWorld {
             view_distance,
             stats: WorldStats::default(),
             fires: FxHashSet::default(),
+            smoulders: FxHashSet::default(),
         }
     }
 
