@@ -110,6 +110,9 @@ pub enum Requirement {
     CraftingTable,
     /// The target is somewhere to sleep (tagged `bed`): a sleeping bag.
     Bed,
+    /// The target is a seat (tagged `seat`: a stool, chair, bench or cushion) with room to
+    /// sit on it, and the actor holds no block to place against it.
+    Seat,
     /// The target is the core of a multiblock (tagged `multiblock_core`): a hearthstone,
     /// a crucible; for a machine's core, the actor holds no block to place against it.
     MultiblockCore,
@@ -130,6 +133,8 @@ pub enum Requirement {
     /// The target is a home station (`stations.ron`): an empty one with something it works
     /// in hand, or one working or ready.
     Station,
+    /// The target is a sprung trap (`traps.ron`), with what it caught to take.
+    SprungTrap,
     /// The actor holds a fertiliser and the target is a crop still growing
     /// (`stations.ron`'s `fertilisers`).
     Fertilisable,
@@ -204,6 +209,8 @@ pub enum Effect {
     Fish,
     /// Sleep at the target bed: the actor wakes there after dying, until they have a home.
     Sleep,
+    /// Sit on the target seat: the actor is set on it, and sits until they move off.
+    Sit,
     /// Light the multiblock whose core is the target, if it stands around it: the
     /// Homestead Hearth becomes the actor's home, a crucible kiln starts smelting.
     Light,
@@ -222,6 +229,8 @@ pub enum Effect {
     /// Use the target home station (`stations.ron`): load it with what is in hand, take
     /// what it made, or be told how it goes.
     UseStation,
+    /// Take what the target sprung trap caught (`traps.ron`), and set it again.
+    TakeFromTrap,
     /// Spread one held fertiliser on the target crop: the crops within its reach grow.
     Fertilise,
     /// Open the target store beside the actor's inventory, its slots theirs to move items
@@ -280,6 +289,11 @@ impl ActionRegistry {
 
     pub fn id(&self, name: &str) -> Option<ActionId> {
         self.by_name.get(name).copied()
+    }
+
+    /// Every action's full name (`core:eat`), in the order they were added.
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.defs.iter().map(|def| def.name.as_str())
     }
 
     pub fn expect(&self, name: &str) -> ActionId {
@@ -364,6 +378,10 @@ pub trait ActionContext {
     fn stations(&self) -> Option<&crate::station::Stations> {
         None
     }
+    /// The traps, where the context knows them.
+    fn traps(&self) -> Option<&crate::trap::Traps> {
+        None
+    }
     /// Whether the creature with that id takes `item` from the actor's hand.
     fn creature_accepts(&self, _id: u32, _item: BlockId) -> bool {
         false
@@ -437,6 +455,9 @@ pub fn crop_level_met(ctx: &impl ActionContext, cell: IVec3) -> bool {
         stage != crop.ripe_stage() || ctx.actor_level(crop.skill) >= crop.def.level
     })
 }
+
+/// The tag of a block a player can sit on (`Requirement::Seat`).
+pub const SEAT_TAG: &str = "seat";
 
 /// What using the block at `pos` changes (see [`crate::block::BlockDef::swaps`]): it and
 /// its other half (the upper half above a lower one, or the lower below an upper), each
@@ -596,6 +617,14 @@ impl ActionDef {
                 let (block, _) = block_target()?;
                 ctx.block(block).is_some_and(|b| ctx.blocks().def(b).has_tag("bed"))
             }
+            Requirement::Seat => {
+                let (block, _) = block_target()?;
+                let seat = ctx.block(block).is_some_and(|b| ctx.blocks().def(b).has_tag(SEAT_TAG));
+                let free = |p: IVec3| ctx.block(p).is_some_and(|b| !ctx.info(b).solid);
+                let feet = crate::vitals::seated_feet(block, ctx.block(block).is_some_and(|b| ctx.info(b).solid)).floor().as_ivec3();
+                let hand_free = ctx.actor_held().is_none_or(|item| !ctx.info(item).placeable);
+                seat && free(feet) && free(feet + IVec3::Y) && hand_free
+            }
             Requirement::Locked => {
                 let (block, _) = block_target()?;
                 ctx.block(block).is_some_and(|b| ctx.blocks().def(b).has_tag(crate::treasure::LOCKED_TAG))
@@ -609,6 +638,11 @@ impl ActionDef {
                 let (block, _) = block_target()?;
                 let Some(stations) = ctx.stations() else { return Ok(false) };
                 ctx.block(block).is_some_and(|b| stations.usable(b, ctx.actor_held()))
+            }
+            Requirement::SprungTrap => {
+                let (block, _) = block_target()?;
+                let Some(traps) = ctx.traps() else { return Ok(false) };
+                ctx.block(block).is_some_and(|b| traps.sprung(b).is_some())
             }
             Requirement::Fertilisable => {
                 let (block, _) = block_target()?;

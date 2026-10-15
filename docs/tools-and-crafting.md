@@ -40,6 +40,15 @@ the bigger grid, for as long as you are within reach of it and the screen is ope
 Anything bigger than two by two, or with more than four ingredients, needs a table; the
 server checks.
 
+A recipe may be made only `near` a block with a tag, within a player's reach
+(`craft::tags_near`, the same for the server and the client's prediction): where the grid
+holds both that recipe and one made anywhere, the one near the block is made, and away from
+it the plain one. The **chopping block** (`blocks_workshop.ron`; flint over any log,
+Crafting 2) is the first: a log split by it gives six planks, not the grid's four, so it
+pays back the log it took after two. The recipe viewer shows the block beside the grid and
+"Near a Chopping Block". A mod adds a workshop block by giving a block a tag and a recipe
+`near: "<tag>"`; the load refuses a tag no block has.
+
 A cell or ingredient can accept several items: `tag:log` takes any log, `coal_ore|charcoal`
 either (`Recipe::alternatives`; the viewer shows the first). Torches use it.
 
@@ -150,7 +159,10 @@ Raw and cooked rabbit and chicken were the same meat (Cooking 1, the same experi
 healing) and are **small game** now (Oct 14). A package's blocks file lists what it renamed
 or merged, old name to new (`renamed: {"raw_rabbit": "raw_small_game"}`), and an older save
 loads those items, in slots, pouches, on the ground and on stations, as the new one. Load
-refuses a rename to a block that does not exist, or of a name a block still has.
+refuses a rename to a block that does not exist, or of a name a block still has. Shrimp, which
+were minnows in all but name (level, experience, healing, weight), are minnows too, and
+minnows bite in any water. Frog, also Cooking 1 and healing 4 but teaching less, is small
+game too: a frog drops it and a heron still favours it.
 
 ## Dying
 

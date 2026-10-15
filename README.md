@@ -116,7 +116,7 @@ in hand sows its seeds (the first your Farming level allows), and right click em
 Fishing: twine (three wheat) and sticks make a fishing rod at a crafting table. Hold right
 click with it over water to cast, again each time the line comes up: after a few seconds a
 fish bites or nothing does. What bites depends on your Fishing level, salt or fresh water,
-the biome, day or night and rain (`fishing.ron`): shrimp and minnows at 1, trout in cold
+the biome, day or night and rain (`fishing.ron`): minnows at 1, trout in cold
 rivers at 15, eels at night at 45, tuna in warm seas at 50, and glimmer koi in fantastical
 waters on rainy nights at 75. Levels and a fine rod land more often; fish cook on a
 campfire.
@@ -873,7 +873,7 @@ random pitch change so nothing repeats exactly. Footsteps come from whatever is 
 ground, the rustle of plants, flowers and moss carpet walked through (with the ground softer
 under them), a splash when wading, strokes when swimming. Every broken block plays its break
 sound once, whether the player's own break or one the server reports, fading out over 16 blocks
-for others' breaks.
+for others' breaks, panned to the nearer ear.
 Rain is a synthesized loop of tiny drops over a soft hiss, as loud as the rain is heavy and
 quieter under cover. `cargo test -p voxmar_client sfx_preview -- --ignored` writes every
 synthesized cue to `target/sfx_preview.wav`.
@@ -902,10 +902,13 @@ writes about twenty seconds of each of seventeen typical places to `target/ambie
 
 What the player does is heard as they do it: eating, crafting at the grid, loading a home
 station, lighting a fire or a kiln, opening a chest or a door, putting food on to cook,
-lying down to sleep and casting a line. `sounds.ron`'s `actions` gives each action, by name,
-its clips (one picked at random, at a slightly different pitch) and a volume, around the
-loudness of placing a block; a later package replaces an action's sound, and the launch
-fails on one for an action the content lacks. The clips, and the pop of an item picked up
+lying down to sleep, casting a line, feeding an animal, emptying a pouch, feeding a machine,
+picking a lock, praying at an altar, spreading fertiliser and throwing something down.
+`sounds.ron`'s `actions` gives each action, by name, its clips (one picked at random, at a
+slightly different pitch) and a volume, around the loudness of placing a block, or says it is
+`silent` on purpose or `heard` elsewhere (by the block touched, the interface or the fight). A
+later package replaces an action's sound; the launch fails on a sound for an action the content
+lacks, and on an action, a mod's too, that says nothing of how it sounds. The clips, and the pop of an item picked up
 when Minecraft's own sounds are off, are our own, synthesized by `tools/generate_sfx.py`.
 
 Creatures are heard: footsteps on whatever block they walk, bleats, grunts and clucks while
@@ -923,6 +926,16 @@ are Freesound's (CC0 and CC-BY, credited in THIRD_PARTY_NOTICES.md); hisses, sli
 clicks, embers and the wisps' chimes are synthesized. `cargo test -p voxmar_client
 creature_sound_preview -- --ignored` writes every species' sounds, as each plays them, to
 `target/creature_sounds/`.
+
+The mix (`sounds.ron`'s `mix`, crates/client/src/mix.rs) holds it all together. Each kind of
+sound (music, ambience, interface, everyday, combat, jingles, creatures, weather) has a loudness
+band, and tests measure every clip we ship, as the game plays it, against its band; Voxmar's own
+music tracks are each brought to one loudness by levels `music.ron` lists (a test measures the
+files again and says what to write when one is off). The music dips under a jingle and under a
+boss's voice, and comes back after. Each kind has a cap on sounds playing at once: past it, the
+farthest, then the oldest, fades out to make room. Things the player can walk up to (blocks,
+creatures) fade along one curve to silence at their reach; the ambience's distant birds and
+thunder fade by their own reach, never quite to nothing.
 
 ## Rendering and performance
 

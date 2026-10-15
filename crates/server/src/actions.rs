@@ -167,6 +167,9 @@ impl ActionContext for Context<'_> {
     fn stations(&self) -> Option<&voxmar_engine::station::Stations> {
         Some(&self.server.content.stations)
     }
+    fn traps(&self) -> Option<&voxmar_engine::trap::Traps> {
+        Some(&self.server.content.traps)
+    }
 
     fn creature_accepts(&self, id: u32, item: BlockId) -> bool {
         self.server.creature_accepts(self.agent, id, item)
@@ -322,6 +325,7 @@ impl Server {
                 (Effect::Dodge, _) => self.dodge(agent),
                 (Effect::Cook, ActionTarget::Block { block, .. }) => self.cook(agent, block),
                 (Effect::UseStation, ActionTarget::Block { block, .. }) => self.use_station(agent, block),
+                (Effect::TakeFromTrap, ActionTarget::Block { block, .. }) => self.take_from_trap(agent, block),
                 (Effect::Fertilise, ActionTarget::Block { block, .. }) => self.fertilise(agent, block),
                 (Effect::Tend, ActionTarget::Creature(id)) => self.tend(agent, id),
                 (Effect::Inspect, ActionTarget::Creature(id)) => self.inspect(agent, id),
@@ -352,6 +356,7 @@ impl Server {
                     }
                     self.placed_plant(item, cell);
                     self.placed_machine(agent, cell);
+                    self.placed_by_field(agent, item, cell);
                 }
                 (Effect::MoveItems, ActionTarget::Slots { from, to, count }) => {
                     // An open store's slots as it holds them now, and what moved written back.
@@ -383,7 +388,7 @@ impl Server {
                     // world spawn. What they carried is left where they fell first.
                     self.bury_if_dead(agent);
                     let player = self.players.get_mut(&agent).unwrap();
-                    let spawn = player.home.or(player.bed).unwrap_or(self.spawn);
+                    let spawn = player.home_spot(&self.lit).unwrap_or(self.spawn);
                     player.buried = false;
                     player.health.heal(u8::MAX);
                     // Where they wake is where a grave goes until they stand elsewhere,
@@ -421,11 +426,13 @@ impl Server {
                 (Effect::TendBees, ActionTarget::Block { block, .. }) => self.tend_bees(agent, block),
                 (Effect::Pray, ActionTarget::Block { .. }) => self.pray_at_altar(agent),
                 (Effect::Sleep, ActionTarget::Block { block, .. }) => self.sleep(agent, block),
+                (Effect::Sit, ActionTarget::Block { block, .. }) => self.sit(agent, block),
                 (Effect::UseTable, ActionTarget::Block { block, .. }) => {
                     self.players.get_mut(&agent).unwrap().station = Some(block);
                 }
                 (Effect::EatHeld, _) => {
                     let (blocks, effects) = (self.content.blocks.clone(), self.content.effects.clone());
+                    let most = self.survival.meal_most;
                     let player = self.players.get_mut(&agent).unwrap();
                     let selected = player.selected;
                     let Some(item) = player.inventory.take_one(selected) else { continue };
@@ -434,8 +441,9 @@ impl Server {
                     // Food heals, the same food a little less each time in a row.
                     let share = player.recent_food.share(item);
                     player.recent_food.eat(item);
-                    // A pantry or larder at home makes more of a meal (effects.ron's meal_heal, meal_time).
-                    let (meal_heal, meal_time) = (player.modifiers.meal_heal, player.modifiers.meal_time);
+                    // A pantry or larder at home makes more of a meal (effects.ron's meal_heal, meal_time),
+                    // all together up to survival's meal_most.
+                    let (meal_heal, meal_time) = (player.modifiers.meal_heal.min(most), player.modifiers.meal_time.min(most));
                     let heal = (blocks.info(item).food as f32 * share * meal_heal).round().min(u8::MAX as f32) as u8;
                     // What it does besides (content's effects.ron): hearty, queasy and so on.
                     let mut given = effects.given_by(&blocks.def(item).tags);
@@ -473,7 +481,7 @@ impl Server {
         let feet = self.players[&agent].position.floor().as_ivec3();
         let outdoors = self.open_sky(feet + IVec3::Y * 2);
         let calm = voxmar_engine::weather::Weather::NONE;
-        let situation = voxmar_engine::effect::Situation { felt: 0.0, warmed: false, outdoors, weather: &calm, biome: "", biome_tags: &[], home: home.as_ref(), done: &self.players[&agent].quests_done, held: &[], near: &[] };
+        let situation = voxmar_engine::effect::Situation { felt: 0.0, warmed: false, outdoors, weather: &calm, biome: "", biome_tags: &[], home: home.as_ref(), done: &self.players[&agent].quests_done, held: &[], near: &[], seated: false };
         let given = effects.given_by_sleep(&situation);
         // The best rest it gives (the one the others are hidden by) is the one it says.
         let best = given.iter().map(|&(id, _)| id).filter(|&id| !given.iter().any(|&(other, _)| other != id && effects.hides(other, id))).next_back();
@@ -488,18 +496,33 @@ impl Server {
         }
     }
 
+    /// `agent` sits on the seat at `seat`: set on it (on top of a stool, in a cushion),
+    /// facing as they were, their eye lowered (`vitals::eye`), until they move off it.
+    fn sit(&mut self, agent: PlayerId, seat: IVec3) {
+        let solid = self.block(seat).is_some_and(|b| self.content.blocks.info(b).solid);
+        let player = self.players.get_mut(&agent).unwrap();
+        player.teleport(voxmar_engine::vitals::seated_feet(seat, solid));
+        player.vitals.seated = Some(seat);
+        player.changed(traits::VITALS);
+        // What sitting there gives (a table's meal bonus) holds from the first bite.
+        crate::process::Survival::refresh(self, agent);
+    }
+
     /// Crafts what `agent`'s grid holds, once or (`all`) as many times as it can: if the
-    /// recipe's skill level is met, and for a recipe bigger than two by two, at a crafting
-    /// table within reach. Experience comes for every one made.
+    /// recipe's skill level is met, for a recipe bigger than two by two, at a crafting
+    /// table within reach, and for one made near a block, within reach of one. Experience
+    /// comes for every one made.
     fn craft(&mut self, agent: PlayerId, all: bool) {
         let recipes = self.content.recipes.clone();
         let allowed = self.allowed_recipes(agent);
+        let near = self.near_tags(agent);
+        let near = |tag: &str| near.iter().any(|t| t == tag);
         let player = self.players.get_mut(&agent).unwrap();
         // Crafting all goes on only while the grid still makes the same recipe: experience
         // and tallies are this recipe's, once for each one made.
-        let first = recipes.find(&player.inventory.grid()).filter(|r| allowed(r));
+        let first = recipes.find_near(&player.inventory.grid(), near).filter(|r| allowed(r));
         let found = first.map(|r| (r.skill, r.xp, r.output, r.count));
-        let made = player.inventory.craft(recipes.while_making(first), all);
+        let made = player.inventory.craft(recipes.while_making(first, near), all);
         // Always: a refused craft the client predicted is undone.
         player.changed(traits::INVENTORY);
         if let Some((skill, xp, output, count)) = found.filter(|_| made > 0) {
@@ -554,6 +577,14 @@ impl Server {
     pub(crate) fn check_level(&self, agent: PlayerId, skill: SkillId) -> u8 {
         let Some(player) = self.players.get(&agent) else { return 1 };
         voxmar_engine::level::check_level(&self.content.skills, &self.content.effects, &player.skills, &player.vitals.effects, skill)
+    }
+
+    /// The tags recipes are made near (a chopping block's) that some block within `agent`'s
+    /// reach has.
+    pub(crate) fn near_tags(&self, agent: PlayerId) -> Vec<String> {
+        let Some(player) = self.players.get(&agent) else { return Vec::new() };
+        let tags = self.content.recipes.near_tags();
+        voxmar_engine::craft::tags_near(&tags, &self.content.blocks, player.eye(), |pos| self.block(pos))
     }
 
     /// Whether `agent` is at the crafting table they last opened, still within reach.

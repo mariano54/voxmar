@@ -17,7 +17,7 @@
         // (9) fills a small room warm enough to work by at night.
         (
             name: "hearthstone", sound: Stone, textures: Sides(top: "hearthstone_top", bottom: "cobblestone", side: "hearthstone_side"),
-            hardness: 2.0, color: (150, 120, 100), tags: ["hearth", "multiblock_core", "station", "hob", "building"], light: 9,
+            hardness: 2.0, color: (150, 120, 100), tags: ["hearth", "multiblock_core", "station", "hob", "campfire", "building"], light: 9,
         ),
         (
             name: "chimney", sound: Stone, textures: Sides(top: "chimney_top", bottom: "cobblestone", side: "chimney_side"),

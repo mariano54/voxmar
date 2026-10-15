@@ -699,11 +699,11 @@ impl Server {
     /// one lacks, judged as if the player stood in it.
     fn home_command(&self, id: Source) -> Reply {
         let player = self.players.get(&Self::me(id)?).ok_or_else(|| Words::key("command.error.nobody_to_give_to"))?;
-        let Some(home) = player.home.or(player.bed) else { return Err(Words::key("home.none")) };
+        let Some(home) = player.home_spot(&self.lit) else { return Err(Words::key("home.none")) };
         let anchor = home.floor().as_ivec3();
         let survey = self.survey_around(anchor, Some(Self::me(id)?));
         let calm = voxmar_engine::weather::Weather::NONE;
-        let situation = voxmar_engine::effect::Situation { felt: 0.0, warmed: false, outdoors: self.open_sky(anchor + IVec3::Y * 2), weather: &calm, biome: "", biome_tags: &[], home: Some(&survey), done: &player.quests_done, held: &[], near: &[] };
+        let situation = voxmar_engine::effect::Situation { felt: 0.0, warmed: false, outdoors: self.open_sky(anchor + IVec3::Y * 2), weather: &calm, biome: "", biome_tags: &[], home: Some(&survey), done: &player.quests_done, held: &[], near: &[], seated: false };
         let effects = &self.content.effects;
         let name = |effect| {
             let def = effects.get(effect);

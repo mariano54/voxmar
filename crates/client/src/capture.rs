@@ -531,7 +531,7 @@ fn showcase(
     if let Some(name) = state.level_up.take() {
         let skills = &launch.content.skills;
         match skills.named("core", &name) {
-            Some(id) => toasts.level_up(id, (skills.level(player.skills.xp(id)) + 1).min(skills.max_level()), now),
+            Some(id) => toasts.level_up(id, (skills.level(player.skills.xp(id)) + 1).min(skills.max_level())),
             None => warn!("--level-up: no skill called `{name}`"),
         }
     }

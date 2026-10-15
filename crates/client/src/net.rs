@@ -157,6 +157,11 @@ impl Net {
         self.connection.send(ClientMessage::ClaimQuest { name: name.into() });
     }
 
+    /// Asks what is on the station at `block`, looked at (see `ClientMessage::LookAtStation`).
+    pub fn look_at_station(&self, block: IVec3) {
+        self.connection.send(ClientMessage::LookAtStation { block });
+    }
+
     /// Says something to everyone.
     pub fn chat(&self, text: &str) {
         self.connection.send(ClientMessage::Chat { text: text.into() });
@@ -225,6 +230,7 @@ pub(crate) fn receive(
     (mut drops, mut toasts, launch, locale, mut creatures): (ResMut<Drops>, ResMut<SkillToasts>, Res<Launch>, Res<Locale>, ResMut<crate::creatures::Creatures>),
     mut broken: MessageWriter<BlockBroken>,
     mut fighting: ResMut<crate::fight::Fighting>,
+    mut stations: ResMut<crate::hud::target::StationSeen>,
 ) {
     let menu = if net.is_remote() { Screen::Join } else { Screen::Title };
     // Counted before reading: a tick's messages are all sent before it counts, so this many
@@ -311,7 +317,7 @@ pub(crate) fn receive(
                     for id in registry.ids() {
                         let level = registry.level(skills.xp(id));
                         if level > registry.level(player.skills.xp(id)) {
-                            toasts.level_up(id, level, time.elapsed_secs());
+                            toasts.level_up(id, level);
                         }
                     }
                 }
@@ -388,7 +394,9 @@ pub(crate) fn receive(
                 fighting.pings += 1;
             }
             ServerMessage::Prayers { points, most, on } => fighting.prayers = crate::fight::Prayers { points, most, on },
+            ServerMessage::Fires { lit } => world.fires = lit.into_iter().collect(),
             ServerMessage::Xp { skill, tenths } => toasts.gained(skill, tenths, time.elapsed_secs()),
+            ServerMessage::Station { block, load, fire } => stations.tell(block, load, fire, time.elapsed_secs_f64()),
         }
     }
 }
