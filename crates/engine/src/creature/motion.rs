@@ -262,6 +262,26 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
     let wary = water == Water::Land && !(body.in_water && world.water(feet - IVec3::Y));
     // Along the way it really goes, sliding along a wall as its box would, a step at a
     // time; ahead of its middle by half its width.
+    // Down into a space where its head, landed, meets what is before it and it cannot hop
+    // up what its head meets at its pace (a trench a block wide, its far side a wall to a
+    // long head at a walk): no way, or it walks in and is held there, its head stopping it at
+    // every step. Landed where its box fits nearest `middle` along its way: a sample over
+    // the trench's far edge comes down short of it, a middle just past the near lip a
+    // little on. Into water it swims, its head up, and is held by nothing.
+    let held = |middle: Vec3, then: IVec3| {
+        then.y < now
+            && !world.water(then)
+            && (0..=20)
+                .map(|k| Body { position: Vec3::new(middle.x, then.y as f32, middle.z) - heading * (0.1 * ((k + 1) / 2) as f32 * if k % 2 == 1 { 1.0 } else { -1.0 }), yaw: yaw_of(heading), ..*body })
+                .find(|landed| !landed.aabb().intersects(solid))
+                .is_some_and(|landed| landed.head_blocked(world) && !landed.head_step(world, heading, pace, hop_speed(movement, dt)))
+    };
+    // From under its own middle too: edging over a trench's lip, it may stand with its middle
+    // over the trench, and where it gets to may be past it.
+    let under = (body.position + Vec3::Y * 0.01).floor().as_ivec3();
+    if !world.solid(under) && landing(under).is_some_and(|then| held(body.position, then)) {
+        return false;
+    }
     let samples = (ahead / 0.4).ceil().max(1.0) as i32;
     let step = heading * (ahead / samples as f32);
     let mut aabb = Aabb::standing(to, body.size.0, body.size.1);
@@ -276,7 +296,7 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
         }
         match landing(cell) {
             None => false,
-            Some(then) => now - then.y <= SAFE_DROP && !(wary && world.water(then) && world.water(then - IVec3::Y)),
+            Some(then) => now - then.y <= SAFE_DROP && !(wary && world.water(then) && world.water(then - IVec3::Y)) && !held(middle, then),
         }
     })
 }
