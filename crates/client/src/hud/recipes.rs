@@ -330,10 +330,11 @@ fn draw(
     // Families of recipes show each of their variants in turn, a second each.
     let cycles = viewer.found().iter().skip(lookup.page * PER_PAGE).take(PER_PAGE).any(|e| matches!(&e.method, Method::Craft { variants, .. } if variants.len() > 1));
     let tick = time.elapsed_secs() as u32;
-    // What each crafting way on the page still wants, from what the pack holds.
+    // What each crafting way on the page still wants, from what the pack holds (and the
+    // home's stores, standing in it).
     let content = &launch.content;
     let lacks = super::makeable::lacks(content, &player);
-    let have = super::makeable::held(&player.inventory);
+    let have = super::makeable::within_reach(&player);
     let wants: Vec<Option<(String, Color)>> = viewer
         .found()
         .iter()
