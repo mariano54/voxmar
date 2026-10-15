@@ -191,3 +191,28 @@ pub fn quick_prayers(keys: Res<ButtonInput<KeyCode>>, settings: Res<crate::setti
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every way a swing is cancelled (the guard, a dodge, a switch of what is held) goes
+    /// through `Fighting::cancel`, which counts it only when a swing was under way.
+    #[test]
+    fn a_cancelled_swing_is_counted_once() {
+        let (timing, feel) = (Timing { cooldown: 1.0, windup: 0.4, buffer: 0.2, beat: 0.1 }, voxmar_engine::combat::Feel::default());
+        let mut fighting = Fighting::default();
+        fighting.cancel(0.0, &timing, &feel);
+        assert_eq!(fighting.cancels, 0, "nothing under way to cancel");
+        assert!(matches!(fighting.rhythm.click(0.0, &timing, &feel), Click::Swing(_)));
+        fighting.cancel(0.1, &timing, &feel);
+        assert_eq!(fighting.cancels, 1);
+        fighting.cancel(0.2, &timing, &feel);
+        assert_eq!(fighting.cancels, 1, "the swing is already cancelled");
+        // A switch of what is held cancels the swing under way the same way.
+        let later = 5.0;
+        assert!(matches!(fighting.rhythm.click(later, &timing, &feel), Click::Swing(_)));
+        fighting.holding(later + 0.1, &timing, Some(voxmar_engine::block::BlockId(3)), &feel);
+        assert_eq!(fighting.cancels, 2);
+    }
+}

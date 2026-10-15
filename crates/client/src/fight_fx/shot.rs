@@ -101,6 +101,15 @@ impl Shots {
         self.drawn.push((when, class.to_owned(), at, reach, swing));
     }
 
+    /// The shots drawn that let go by `now`, the player having cancelled `cancels` swings
+    /// ever: a swing cancelled since (even as it lets go) takes its shot back first.
+    fn due(&mut self, now: f32, cancels: u32) -> Vec<(f32, String, Option<u32>, f32, u64)> {
+        self.cancels(cancels);
+        let (due, waiting): (Vec<_>, Vec<_>) = self.drawn.drain(..).partition(|(when, ..)| *when <= now);
+        self.drawn = waiting;
+        due
+    }
+
     /// The player has cancelled `cancels` swings ever: on a new one, the latest swing's
     /// shot is cancelled. Not yet loosed, it never is; flying, it strikes nothing.
     pub fn cancels(&mut self, cancels: u32) {
@@ -163,11 +172,7 @@ pub(super) fn fly(
     let eye = player.eye();
     // Drawn shots letting go: from the hand, at the creature's middle (or what stands in
     // the way), and on past it as far as it reaches for one that misses.
-    // A swing cancelled since (even this frame, as it would let go) takes its shot back first.
-    shots.cancels(fighting.cancels);
-    let (due, waiting): (Vec<_>, Vec<_>) = shots.drawn.drain(..).partition(|(when, ..)| *when <= now);
-    shots.drawn = waiting;
-    for (_, class, at, reach, swing) in due {
+    for (_, class, at, reach, swing) in shots.due(now, fighting.cancels) {
         let aim = player.look_direction().normalize_or(Vec3::NEG_Z);
         let middle = at.and_then(|id| creatures.centre(&launch, id)).filter(|(_, dying)| !dying).map(|(middle, _)| middle);
         let to = mark(&world, eye, middle.unwrap_or(eye + aim * reach), reach);
@@ -355,5 +360,18 @@ mod tests {
         shots.cancels(3);
         assert!(shots.loosed.is_empty());
         assert_eq!(shots.cancelled, vec![2, swing]);
+    }
+
+    #[test]
+    fn a_swing_cancelled_as_its_shot_lets_go_looses_nothing() {
+        let mut shots = Shots::default();
+        shots.draw(1.0, "bow", Some(7), 12.0);
+        // Due this frame, cancelled this frame: never loosed.
+        assert!(shots.due(1.0, 1).is_empty());
+        assert!(shots.drawn.is_empty());
+        // Not cancelled, it lets go when due and not before.
+        shots.draw(2.0, "bow", Some(7), 12.0);
+        assert!(shots.due(1.5, 1).is_empty());
+        assert_eq!(shots.due(2.0, 1).len(), 1);
     }
 }
