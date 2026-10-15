@@ -14,6 +14,8 @@
         "weapon_horn": ["#3a2c22", "#5a4434", "#7e624a"],
         "weapon_wood": ["#4a3018", "#7e5a34", "#a87c48"],
         "weapon_leather": ["#3e2616", "#6a4428", "#8e623c"],
+        "weapon_flint": ["#2e2e34", "#55555e", "#86868f"],
+        "weapon_ivory": ["#b4a684", "#e2d8bc", "#fffaec"],
     },
     textures: {
         // A sword: a straight blade, a cross guard and a short grip.
@@ -58,6 +60,7 @@
             "..D.............",
         ])]),
         // A dagger: a fang for a blade, a horn guard and a bound grip.
+        "block/tusk_club": (base: "block/bone_club", palettes: {"blade": "weapon_ivory", "guard": "weapon_ivory", "grip": "weapon_leather"}),
         "block/fang_dagger": (base: "shape/plant", palettes: {"blade": "weapon_bone", "guard": "weapon_horn", "grip": "weapon_leather"}, layers: [Grid(rows: [
             "................",
             "................",
@@ -96,6 +99,7 @@
             "..D.............",
         ])]),
         // A sling: two twine cords from their loops down to a hide pouch with a stone in it.
+        "block/flint_spear": (base: "block/bronze_spear", palettes: {"blade": "weapon_flint", "guard": "weapon_leather", "grip": "weapon_wood"}),
         "block/sling": (base: "shape/plant", palettes: {"blade": "weapon_leather", "guard": "weapon_stone", "grip": "weapon_wood"}, layers: [Grid(rows: [
             "................",
             ".DD..........DD.",
