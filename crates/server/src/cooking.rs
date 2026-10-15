@@ -9,7 +9,7 @@ use voxmar_engine::lang::Words;
 use voxmar_protocol::{ChatKind, PlayerId, ServerMessage};
 
 use crate::Server;
-use crate::items::random3;
+use crate::save::Draw;
 
 impl Server {
     /// Cooks one of what `agent` holds at the station at `block`.
@@ -31,7 +31,6 @@ impl Server {
         let tags = self.content.blocks.def(station).tags.clone();
         let cooking = self.content.cooking.clone();
         let skills = self.content.skills.clone();
-        let tick = self.tick;
         let Some(player) = self.players.get_mut(&agent) else { return };
         let selected = player.selected;
         let Some(item) = player.held() else { return };
@@ -53,7 +52,8 @@ impl Server {
             return;
         }
         player.inventory = after;
-        let [roll, ..] = random3(tick, block, agent ^ 0xc00c);
+        // By the count of goes they have cooked, not the tick it comes out on.
+        let [roll, _] = player.draw(Draw::Cook);
         let burnt = roll < recipe.burn_chance(level);
         let result = if burnt { recipe.burnt.map(|b| (b, 1)) } else { Some((recipe.output, recipe.def.count)) };
         if let Some((made, n)) = result {
