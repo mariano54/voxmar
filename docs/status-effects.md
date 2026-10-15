@@ -36,7 +36,8 @@ the tag; `Near("tag", reach)` while a block carrying it lies within `reach` bloc
 every way) of the player's feet. A tag no block carries is refused at launch. `Seated` holds
 while the player sits on a seat (`base:sit`, right click on a stool, chair, bench or cushion
 with no block in hand; they sit until they move off it); base's `fireside` (By the Fire: heal
-x1.5, 4° warmer) asks for it with a fire or the hearth within 3. **Effects that
+x1.5, 4° warmer) asks for it with a fire or the hearth within 3, and `at_table` (At the Table:
+a meal heals x1.25 and its good lasts x1.25, as `meal_heal`/`meal_time`) with a table within 2. **Effects that
 cling:** `lingers: SECONDS` makes an effect stay that long after its `when` stops holding (it
 is kept topped up while it holds, as a timed effect). Base's `smoky`: a torch in hand or a
 fire within 2 blocks leaves the player Smoky for 30 s, and bees treat a Smoky player as
