@@ -226,7 +226,7 @@ impl Process for Survival {
             // The felt temperature is sent to the degree, so it does not resend every tick.
             player.vitals.felt = situation.felt.round();
             player.vitals.effects = effects.active(&situation, &player.timed_effects);
-            player.vitals.home = player.home_block();
+            player.vitals.home = player.home_block(&server.lit);
             // What kept animals laid into the home's stores is told once the keeper is home.
             if home.is_some() && !player.nested.is_empty() {
                 let items = std::mem::take(&mut player.nested).into_iter().map(|(item, n)| Words::key("multiblock.fuel_stack").with("count", n.to_string()).with("item", Words::Block(item))).collect();
@@ -275,14 +275,14 @@ impl Server {
     /// Where player `id`'s home is, if they stand within its reach.
     pub(crate) fn at_home(&self, id: PlayerId) -> Option<IVec3> {
         let player = self.players.get(&id)?;
-        let anchor = player.home.or(player.bed)?.floor().as_ivec3();
+        let anchor = player.home_spot(&self.lit)?.floor().as_ivec3();
         self.in_home_box(anchor, player.position).then_some(anchor)
     }
 
     /// Where player `id`'s home is, if `at` lies within its reach.
     pub(crate) fn home_holding(&self, id: PlayerId, at: Vec3) -> Option<IVec3> {
         let player = self.players.get(&id)?;
-        let anchor = player.home.or(player.bed)?.floor().as_ivec3();
+        let anchor = player.home_spot(&self.lit)?.floor().as_ivec3();
         self.in_home_box(anchor, at).then_some(anchor)
     }
 
@@ -384,7 +384,7 @@ impl Server {
             debug_assert!(player.dirty.iter().all(|d| d.replication == Replication::Owner));
             player.dirty.clear();
             // Joining and sleeping send vitals before the next survival pass would.
-            player.vitals.home = player.home_block();
+            player.vitals.home = player.home_block(&self.lit);
             player
                 .connection
                 .send(ServerMessage::PlayerState {
