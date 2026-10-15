@@ -288,7 +288,7 @@
         ),
         (
             name: "full_stone_kit", age: "nomad", branch: "crafting", title: "A Full Stone Kit",
-            why: "A stone tool works twice as fast as a wooden one and finds a little more. Carry the whole kit: pickaxe, axe, shovel (one cobblestone over two sticks), hoe and knife.",
+            why: "A stone tool works twice as fast as a flint one and finds a little more. Carry the whole kit: pickaxe, axe, shovel (one stone head over two sticks), hoe and knife.",
             tasks: [[Have("stone_pickaxe", 1), Have("stone_axe", 1), Have("stone_shovel", 1), Have("stone_hoe", 1), Have("stone_knife", 1)]],
             after: ["a_sharp_edge", "break_ground"],
             rewards: [Xp("engineering", 30.0), Item("torch", 8)],
@@ -375,7 +375,7 @@
         ),
         (
             name: "clay_banks", age: "farm", branch: "pottery", title: "Clay Banks",
-            why: "Pots, vials and kiln bricks are all clay. It lies in patches on the bottom of ponds, lakes and rivers: wade in and dig it with a shovel (one cobblestone over two sticks). Carry out twenty-four.",
+            why: "Pots, vials and kiln bricks are all clay. It lies in patches on the bottom of ponds, lakes and rivers: wade in and dig it with a shovel (one stone head over two sticks). Carry out twenty-four.",
             tasks: [[Have("clay", 24)]],
             after: ["homestead_hearth"],
             rewards: [Xp("crafting", 60.0)],
