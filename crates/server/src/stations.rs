@@ -179,11 +179,11 @@ impl Server {
         let Some((_, work)) = station.work(stack.item) else { return };
         if self.check_level(agent, work.skill) < work.level {
             let skill = Words::key(&voxmar_engine::lang::def_key("skill", &self.content.skills.get(work.skill).name));
-            self.tell_station(agent, Words::key("station.level").with("skill", skill).with("level", Words::text(work.level)));
+            self.refuse(agent, Words::key("station.level").with("skill", skill).with("level", Words::text(work.level)));
             return;
         }
         if let Some(lacks) = self.lacks(pos, station) {
-            self.tell_station(agent, lacks);
+            self.refuse(agent, lacks);
             return;
         }
         // Loaded in the loader's home, the rest of the pack and then the home's stores top
@@ -198,7 +198,7 @@ impl Server {
         // multiple of four.
         let count = within / work.takes * work.takes;
         if count == 0 {
-            self.tell_station(agent, Words::key("station.too_few").with("count", Words::text(work.takes)).with("item", Words::Block(self.content.blocks.def(stack.item).name.clone())));
+            self.refuse(agent, Words::key("station.too_few").with("count", Words::text(work.takes)).with("item", Words::Block(self.content.blocks.def(stack.item).name.clone())));
             return;
         }
         let speed: f32 = station.faster.iter().filter(|(spot, _)| self.spot_holds(pos, spot)).map(|(_, times)| times).product();
@@ -312,7 +312,7 @@ impl Server {
         let Some(fertiliser) = player.held().and_then(|item| stations.fertiliser(item)) else { return };
         let grown = self.grow_around(pos.as_vec3() + Vec3::splat(0.5), fertiliser.reach, fertiliser.stages);
         if grown == 0 {
-            self.tell_station(agent, Words::key("station.nothing_grows"));
+            self.refuse(agent, Words::key("station.nothing_grows"));
             return;
         }
         let player = self.players.get_mut(&agent).expect("checked above");

@@ -228,6 +228,8 @@ pub struct Watched {
     pub death_roll: f32,
     pub death_scale: f32,
     pub death_sink: f32,
+    /// How big its last flinch was (`fight_fx::flinch_size`).
+    pub flinch_size: f32,
 }
 
 impl Watched {
@@ -328,6 +330,8 @@ struct Shown {
     white: f32,
     flinch: Option<f32>,
     flinch_away: Vec3,
+    /// How big its flinch is (`fight_fx::flinch_size`).
+    flinch_size: f32,
     /// Seconds into its wind-up while it winds up, and into its strike once the blow lands;
     /// whether this wind-up has struck already (the client times it, the server's word
     /// that the wind-up is over comes after).
@@ -1000,8 +1004,9 @@ fn show(
         if blow == Blow::Bleed {
             continue;
         }
-        let health = registry.get(shown.view.species).def.health.max(1);
-        let stop = crate::fight_fx::stop_for(look, blow, f32::from(damage) / f32::from(health), killed);
+        let def = &registry.get(shown.view.species).def;
+        let share = f32::from(damage) / f32::from(def.health.max(1));
+        let stop = crate::fight_fx::stop_for(look, blow, share, killed);
         if stop > shown.stopped {
             (shown.stopped, shown.stop_from) = (stop, stop);
         }
@@ -1009,6 +1014,12 @@ fn show(
         if shown.dying.is_none() && !killed {
             shown.flinch = Some(0.0);
             shown.flinch_away = (shown.position - eye).with_y(0.0).normalize_or(Vec3::X);
+            let scale = shown.view.scale;
+            shown.flinch_size = crate::fight_fx::flinch_size(&look.hit.weigh, (def.body.size.0 * scale, def.body.size.1 * scale), share);
+            let size = shown.flinch_size;
+            if creatures.watch == Some(id) {
+                creatures.watched.flinch_size = size;
+            }
         }
     }
     let mut built = 0;
@@ -1146,6 +1157,7 @@ fn show(
                 white: 0.0,
                 flinch: None,
                 flinch_away: Vec3::X,
+                flinch_size: 1.0,
                 coiling: None,
                 striking: None,
                 coil_struck: false,
@@ -1445,9 +1457,10 @@ fn show(
         root.translation += forward * stance.lean * def.body.size.0.max(def.body.size.1) * scale;
         if let Some(fx) = fx.filter(|_| flinch > 0.0) {
             let away = shown.flinch_away;
+            let flinch = flinch * shown.flinch_size;
             root.translation += away * fx.hit.recoil * height * flinch;
             root.rotation = Quat::from_axis_angle(Vec3::Y.cross(away).normalize_or(Vec3::X), fx.hit.tilt.to_radians() * flinch) * root.rotation;
-            let squash = fx.hit.squash * flinch;
+            let squash = (fx.hit.squash * flinch).min(0.9);
             root.scale *= Vec3::new(1.0 + squash * 0.5, 1.0 - squash, 1.0 + squash * 0.5);
         }
         if shake > 0.0 && let Some(fx) = fx {

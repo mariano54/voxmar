@@ -140,6 +140,10 @@ pub struct WorldMeta {
     /// none in older worlds.
     #[serde(default)]
     pub drops: u64,
+    /// Loot rolls drawn for creatures killed so far, which number each; none in older
+    /// worlds.
+    #[serde(default)]
+    pub loot: u64,
 }
 
 /// How a regrowing plant is saved, by block names.
@@ -181,6 +185,7 @@ impl WorldMeta {
             lairs: Vec::new(),
             draw_key: random_key(),
             drops: 0,
+            loot: 0,
         }
     }
 }
@@ -217,6 +222,14 @@ pub struct Draws {
     pub feeds: u64,
     /// Goes cooked at a station.
     pub cooks: u64,
+    /// Shots that hit, each of which may be left lying to pick up again.
+    pub recovers: u64,
+    /// Flourishes landed, for what their effect rounds by chance.
+    pub flourishes: u64,
+    /// Blocks broken for a reward, for their bonus drop and what they give instead.
+    pub mines: u64,
+    /// Products taken from kept animals, for how many come.
+    pub yields: u64,
 }
 
 /// A kind of roll a player's draws number (`Draws`).
@@ -226,6 +239,10 @@ pub enum Draw {
     Blow,
     Feed,
     Cook,
+    Recover,
+    Flourish,
+    Mine,
+    Yield,
 }
 
 impl Draw {
@@ -236,6 +253,10 @@ impl Draw {
             Draw::Blow => 0x0b10,
             Draw::Feed => 0x7a3e,
             Draw::Cook => 0xc00c,
+            Draw::Recover => 0xa770,
+            Draw::Flourish => 0xf10,
+            Draw::Mine => 0xd1ce,
+            Draw::Yield => 0x7ee1,
         }
     }
 }
@@ -248,6 +269,10 @@ impl Draws {
             Draw::Blow => &mut self.blows,
             Draw::Feed => &mut self.feeds,
             Draw::Cook => &mut self.cooks,
+            Draw::Recover => &mut self.recovers,
+            Draw::Flourish => &mut self.flourishes,
+            Draw::Mine => &mut self.mines,
+            Draw::Yield => &mut self.yields,
         };
         let draws = numbered_draws(key, kind.salt(), *count);
         *count += 1;
@@ -1257,7 +1282,7 @@ mod tests {
             tallies: vec![("crafted:base:torch".into(), 8)],
             prayer_points: Some(7.5),
             casts: 12,
-            draws: Draws { strikes: 31, blows: 9, feeds: 4, cooks: 17 },
+            draws: Draws { strikes: 31, blows: 9, feeds: 4, cooks: 17, recovers: 5, flourishes: 2, mines: 40, yields: 3 },
         };
         for name in ["steve", "Steve", "a/b", "../x", "ünï cödé"] {
             save.write_player(name, &player, &registry).unwrap();
@@ -1312,8 +1337,8 @@ mod tests {
         assert_eq!(first, numbered_draws(ada, Draw::Strike.salt(), 0));
         assert_eq!(draws.next(ada, Draw::Strike), numbered_draws(ada, Draw::Strike.salt(), 1));
         draws.next(ada, Draw::Cook);
-        assert_eq!(draws, Draws { strikes: 2, blows: 0, feeds: 0, cooks: 1 });
-        let others = [numbered_draws(ada, Draw::Strike.salt(), 1), numbered_draws(ada, Draw::Blow.salt(), 0), numbered_draws(ada, Draw::Feed.salt(), 0), numbered_draws(ada, Draw::Cook.salt(), 0), numbered_draws(bea, Draw::Strike.salt(), 0)];
+        assert_eq!(draws, Draws { strikes: 2, cooks: 1, ..Draws::default() });
+        let others = [numbered_draws(ada, Draw::Strike.salt(), 1), numbered_draws(ada, Draw::Blow.salt(), 0), numbered_draws(ada, Draw::Feed.salt(), 0), numbered_draws(ada, Draw::Cook.salt(), 0), numbered_draws(ada, Draw::Recover.salt(), 0), numbered_draws(ada, Draw::Flourish.salt(), 0), numbered_draws(ada, Draw::Mine.salt(), 0), numbered_draws(ada, Draw::Yield.salt(), 0), numbered_draws(bea, Draw::Strike.salt(), 0)];
         assert!(others.iter().all(|other| *other != first), "{first:?} drawn again among {others:?}");
         assert!(others.iter().chain([&first]).flatten().all(|d| (0.0..1.0).contains(d)));
     }
