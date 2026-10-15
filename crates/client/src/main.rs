@@ -366,7 +366,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let registry = content.blocks.clone();
     let world_content = Arc::new(WorldContent::load(&content)?);
     // Every building an ambient sound comes from is one settlements have (ambience.ron).
-    ambience::defs::Ambience::load(&content.files)?.check_buildings(&world_content.settlements.building_names())?;
+    ambience.check_buildings(&world_content.settlements.building_names())?;
     let launch = Launch { name: options.name.clone(), host: options.host, content: content.clone() };
     // Captures are benchmarks and visual checks, so they ignore the player's saved settings,
     // unless a configuration directory is given explicitly.

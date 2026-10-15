@@ -478,16 +478,16 @@ fn place(generator: &Overworld, eye: IVec3, sets: &[defs::BuildingSet]) -> Place
     let at = eye.xz().as_vec2() + 0.5;
     let near = generator.settlements_near(eye.xz(), SETTLEMENTS_HEARD);
     let nearest = near.iter().map(|s| (s, s.centre.xz().as_vec2().distance(at))).min_by(|a, b| a.1.total_cmp(&b.1));
-    let (settlement, edge, people, id, buildings) = match nearest {
+    let (settlement, outside, people, id, buildings) = match nearest {
         Some((s, settlement)) => {
-            let (edge, buildings) = settlement_bounds(s, at, sets);
-            (settlement, edge, s.people.len() as f32, Some(s.id), buildings)
+            let (outside, buildings) = settlement_bounds(s, at, sets);
+            (settlement, outside, s.people.len() as f32, Some(s.id), buildings)
         }
         None => (NO_SETTLEMENT, NO_SETTLEMENT, 0.0, None, vec![Vec::new(); sets.len()]),
     };
     Place {
         settlement,
-        edge,
+        edge: outside,
         people,
         id,
         buildings,
@@ -682,11 +682,12 @@ fn play(
 }
 
 /// What the settlement around is heard as, for the gate: the `settlement` axis now (blocks
-/// to the nearest one's middle), and each one-shot that hangs on it with how fully it would
+/// to the nearest one's middle), the `settlement_edge` and `settlement_people` axes (how far
+/// outside its bounds, and how many live there), and each one-shot that hangs on it with how fully it would
 /// play here at noon, at midnight, and here with no settlement near, all at the surface
 /// (the player may have dropped into the well on the square). Nothing before the ambience
 /// has started.
-pub fn settlement_heard(world: &World) -> Option<(f32, Vec<(String, [f32; 3])>)> {
+pub fn settlement_heard(world: &World) -> Option<(f32, [f32; 2], Vec<(String, [f32; 3])>)> {
     let ambient = world.get_resource::<Ambient>()?;
     let env = &ambient.env;
     let with = |axis: Fixed, value: f32| {
@@ -703,7 +704,7 @@ pub fn settlement_heard(world: &World) -> Option<(f32, Vec<(String, [f32; 3])>)>
         .filter(|s| s.when.uses(Fixed::Settlement))
         .map(|s| (short(&s.name).to_owned(), [&noon, &midnight, &alone].map(|env| s.when.weight(env))))
         .collect();
-    Some((env.get(Fixed::Settlement), sounds))
+    Some((env.get(Fixed::Settlement), [env.get(Fixed::SettlementEdge), env.get(Fixed::SettlementPeople)], sounds))
 }
 
 /// A layer's name without its package, for logs.

@@ -14754,11 +14754,18 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
 /// surveyed), and its work sounds (`ambience.ron`'s one-shots on that axis) would play
 /// here fully at noon, and not at all at midnight or with no settlement near.
 fn settlement_heard(world: &World, at: IVec3) -> Result<String, String> {
-    let Some((axis, sounds)) = crate::ambience::settlement_heard(world) else { return Err("the ambience never started".into()) };
+    let Some((axis, [edge, people], sounds)) = crate::ambience::settlement_heard(world) else { return Err("the ambience never started".into()) };
     let expected = world.resource::<LocalPlayer>().position.xz().distance(at.xz().as_vec2() + 0.5);
     let mut wrong = Vec::new();
     if (axis - expected).abs() > 3.0 {
         wrong.push(format!("the ambience puts the settlement's middle {axis:.0} blocks off; the player stands {expected:.1} from it"));
+    }
+    // Standing in its square, the player is within its bounds, and someone lives there.
+    if edge > 0.0 {
+        wrong.push(format!("the ambience puts the player {edge:.0} blocks outside the settlement's bounds, standing in its square"));
+    }
+    if people < 1.0 {
+        wrong.push("the ambience hears no one living in the settlement".into());
     }
     if sounds.is_empty() {
         wrong.push("no ambience one-shot hangs on the settlement axis".into());
@@ -14770,7 +14777,7 @@ fn settlement_heard(world: &World, at: IVec3) -> Result<String, String> {
     }
     let names: Vec<&str> = sounds.iter().map(|(name, _)| name.as_str()).collect();
     if wrong.is_empty() {
-        Ok(format!("{expected:.1} blocks from its middle (heard as {axis:.1}): {} at noon, quiet at midnight and away", names.join(", ")))
+        Ok(format!("{expected:.1} blocks from its middle (heard as {axis:.1}), within its bounds, {people:.0} living there: {} at noon, quiet at midnight and away", names.join(", ")))
     } else {
         Err(wrong.join("; "))
     }

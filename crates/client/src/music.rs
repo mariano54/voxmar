@@ -63,7 +63,7 @@ impl Plugin for MusicPlugin {
                 Update,
                 (
                     toggle_music,
-                    (receive_found, home_motif, schedule_music, start_loaded).chain().run_if(sound_on.or_else(resource_exists::<Rehearse>)),
+                    (receive_found, home_motif, settlement_motif, schedule_music, start_loaded).chain().run_if(sound_on.or_else(resource_exists::<Rehearse>)),
                     show_now_playing,
                     fade_out,
                     set_volume,
@@ -146,6 +146,7 @@ struct Music {
     fighting: bool,
     fight_music: Vec<String>,
     home: AtHome,
+    settlement: AtSettlement,
 }
 
 /// What the home motif knows: whether the player was inside their lit home when last
@@ -155,6 +156,16 @@ struct Music {
 pub(crate) struct AtHome {
     pub inside: Option<bool>,
     pub night: Option<u64>,
+    pub starts: u32,
+}
+
+/// What the settlement motif knows, as [`AtHome`]: whether the player was within a
+/// settlement's bounds when last looked, the game day it last played, and how many times
+/// it has started.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct AtSettlement {
+    pub inside: Option<bool>,
+    pub day: Option<u64>,
     pub starts: u32,
 }
 
@@ -307,6 +318,7 @@ fn load_tracks(mut commands: Commands, assets: Res<AssetServer>, settings: Res<S
         fighting: false,
         fight_music: Vec::new(),
         home: AtHome::default(),
+        settlement: AtSettlement::default(),
     });
 }
 
@@ -652,6 +664,59 @@ fn home_motif(
     music.start(&mut commands, &time, &settings, index, handle);
 }
 
+/// Whether a motif (the home's or a settlement's) is the track playing: another holds
+/// back for it, so they never play over each other.
+fn motif_playing(music: &Music) -> bool {
+    music.current.is_some_and(|index| music.tracks[index].contexts.iter().any(|c| Context::MOTIFS.contains(c)))
+}
+
+/// The settlement motif: on stepping within a settlement's bounds by day (the home
+/// motif's day), the first time that game day, outside a boss fight and not over the home
+/// motif, a `Settlement` track starts, the one playing fading for it. Where the bounds are
+/// is the ambience's survey of the world (`Surroundings::settlement`).
+#[allow(clippy::too_many_arguments)]
+fn settlement_motif(
+    mut commands: Commands,
+    time: Res<Time>,
+    player: Res<LocalPlayer>,
+    menu: Option<Res<State<InMenu>>>,
+    settings: Res<Settings>,
+    cycle: Option<Res<crate::render::DayCycle>>,
+    surroundings: Option<Res<crate::ambience::Surroundings>>,
+    mut music: ResMut<Music>,
+) {
+    let (Some(cycle), Some(surroundings)) = (cycle, surroundings) else { return };
+    if menu.is_some() || !player.joined || player.dead {
+        music.settlement.inside = None;
+        return;
+    }
+    let inside = within_settlement(surroundings.settlement);
+    // Only a step in: the first look in a world, or after dying, finds the player where
+    // they are.
+    if music.settlement.inside.replace(inside) != Some(false) || !inside {
+        return;
+    }
+    let Some(day) = music.rules.home.day(cycle.ticks.max(0.0) as u64) else { return };
+    if music.settlement.day == Some(day) || music.fighting || motif_playing(&music) || !music.enabled || settings.music_volume == 0 {
+        return;
+    }
+    let rolls = [random_in(&time, 5, (0.0, 1.0)), random_in(&time, 6, (0.0, 1.0))];
+    let Some(index) = pick(&music.tracks, Context::Settlement, &[], &settings, &VecDeque::new(), music.rules.own_share, rolls) else { return };
+    // Only own tracks are `Settlement`'s (`MusicRules::load`).
+    let Source::Own(ref handle) = music.tracks[index].source else { return };
+    let handle = handle.clone();
+    music.settlement.day = Some(day);
+    music.settlement.starts += 1;
+    music.fade_out(&mut commands);
+    music.start(&mut commands, &time, &settings, index, handle);
+}
+
+/// Whether the player is within the nearest settlement's bounds (`settlement`: its id and
+/// how far outside them, from the ambience's survey).
+fn within_settlement(settlement: Option<(u64, f32)>) -> bool {
+    settlement.is_some_and(|(_, edge)| edge <= 0.0)
+}
+
 /// What the gate sees of the home motif: what it knows, the night it is now by its rules
 /// (none by day), and the track playing if it is the motif's.
 pub(crate) struct HomeHeard {
@@ -708,6 +773,7 @@ fn start_game(mut commands: Commands, time: Res<Time>, music: Option<ResMut<Musi
     music.fighting = false;
     // Another world counts its nights afresh.
     (music.home.inside, music.home.night) = (None, None);
+    (music.settlement.inside, music.settlement.day) = (None, None);
 }
 
 /// Back in the menus, the game's music fades out and the menu's starts again soon.
@@ -869,6 +935,15 @@ mod tests {
         let wide = |p: IVec3| Some(if p.y == 14 { roof } else { BlockId::AIR });
         assert!(inside_home(&rules, at(7.0, -7.0), Some(hearth), &lit, wide, is_roof));
         assert!(!inside_home(&rules, at(8.0, 0.0), Some(hearth), &lit, wide, is_roof), "past its reach, under another roof");
+    }
+
+    /// The settlement motif's step in is into a settlement's bounds as the ambience last
+    /// surveyed them: none near, or outside them, is not in.
+    #[test]
+    fn the_settlement_motif_is_within_the_bounds() {
+        assert!(!within_settlement(None));
+        assert!(!within_settlement(Some((7, 3.0))), "three blocks outside");
+        assert!(within_settlement(Some((7, 0.0))));
     }
 
     /// The motif waits for the server's word on the player (which brings the home) and for

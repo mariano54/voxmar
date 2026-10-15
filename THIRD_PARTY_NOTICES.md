@@ -442,7 +442,8 @@ sound font, Copyright (c) 2000-2002, 2008 Frank Wen and (c) 2008 Toby Smithe, re
 the MIT licence (the font's README and COPYING; checked in the Ubuntu fluid-soundfont-gm
 package on 14 October 2026). The font itself is not shipped. The home motif
 (`assets/music/home/hearth_welcome.ogg`) is our own lullaby, written in
-`tools/generate_home_motif.py` and played the same way.
+`tools/generate_home_motif.py` and played the same way, as is the settlement motif
+(`assets/music/settlement/market_day.ogg`), our own tune in `tools/generate_settlement_motif.py`.
 
 > Permission is hereby granted, free of charge, to any person obtaining a copy of this
 > software and associated documentation files (the "Software"), to deal in the Software

@@ -827,6 +827,35 @@ mod tests {
     /// Roof patters are axes beds play on; a later package's entries replace an earlier
     /// one's; a roof material with no entry, an entry naming no material, or a patter no
     /// bed plays on fails the launch check.
+    /// A one-shot can sound from a settlement's buildings by name, at their doors or from
+    /// their middles; sets asked for twice are one, a set of no names is a mistake, and the
+    /// names must be buildings settlements have.
+    #[test]
+    fn building_sounds_resolve_and_are_checked() {
+        let ambience = Ambience::load(&file(
+            r#"(sounds: [
+                (name: "anvil", sound: Hammer, volume: 0.3, at: Building(buildings: ["smithy"]), per_minute: 2, cooldown: 3),
+                (name: "door", sound: Door, volume: 0.3, at: Building(buildings: ["house"], door: true), per_minute: 2, cooldown: 3),
+                (name: "again", sound: Hammer, volume: 0.3, at: Building(buildings: ["smithy"]), per_minute: 2, cooldown: 3),
+            ])"#,
+        ))
+        .unwrap();
+        assert_eq!(ambience.buildings, [BuildingSet { names: vec!["smithy".into()], door: false }, BuildingSet { names: vec!["house".into()], door: true }]);
+        assert_eq!(ambience.sounds.iter().map(|s| s.at).collect::<Vec<_>>(), [Placement::Building(0), Placement::Building(1), Placement::Building(0)]);
+        let known: std::collections::BTreeSet<String> = ["smithy", "house"].map(String::from).into();
+        assert_eq!(ambience.check_buildings(&known), Ok(()));
+        let unknown = ambience.check_buildings(&["house".to_owned()].into());
+        assert!(unknown.as_ref().is_err_and(|e| e.contains("smithy")), "{unknown:?}");
+        let none = Ambience::load(&file(r#"(sounds: [(name: "x", sound: Hammer, volume: 0.3, at: Building(buildings: []), per_minute: 2, cooldown: 3)])"#));
+        assert!(none.as_ref().is_err_and(|e| e.contains("no building")), "{:?}", none.map(|_| ()));
+        // The shipped sounds name buildings the shipped settlements have.
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let world = voxmar_worldgen::WorldContent::load(&content).unwrap();
+        let shipped = Ambience::load(&content.files).unwrap();
+        assert!(!shipped.buildings.is_empty());
+        assert_eq!(shipped.check_buildings(&world.settlements.building_names()), Ok(()));
+    }
+
     #[test]
     fn roof_patters_resolve_and_are_checked() {
         let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();

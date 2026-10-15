@@ -431,7 +431,7 @@
         // Night: the place asleep. Now and then a dog somewhere barks, and an owl calls
         // from the roofs; nothing else.
         (
-            name: "night_dog", sound: Bark, volume: 0.26, at: Around(distance: (20, 45), height: (0, 3)), per_minute: 0.5, cooldown: 40,
+            name: "night_dog", sound: Bark, volume: 0.26, at: Around(distance: (20, 45), height: (0, 3)), per_minute: 0.8, cooldown: 30,
             pitch: (0.9, 1.1), reach: 16,
             when: {"settlement_edge": (max: 0, fade: 50), "sun": (max: -0.2, fade: 0.1), "depth": (max: 2, fade: 4)},
             duck: {"rain": 0.8},
