@@ -129,6 +129,13 @@
             "................", "................", "................", "................",
         ])]),
         "block/horn": (base: "block/fang", palettes: {"fruit": "horn_dark"}),
+        // A great tusk: a long ivory curve, thick at the root.
+        "block/great_tusk": (base: "shape/plant", palettes: {"fruit": "bone_pale"}, layers: [Grid(rows: [
+            "................", "..........jj....", ".........jhhf...", "........jhhhf...",
+            "........hhhf....", ".......hhhf.....", "......hhhf......", ".....hhhf.......",
+            "....hhhhf.......", "...jhhhf........", "...hhhhf........", "..jhhhf.........",
+            "..hhhhf.........", "..jhhf..........", "...ff...........", "................",
+        ])]),
         "block/ember_scale": (base: "block/fang", palettes: {"fruit": "ember_glow"}),
         "block/quill": (base: "block/feather", palettes: {"fruit": "quill_ash", "wood": "quill_ash"}),
         "block/squirrel_tail": (base: "block/rabbit_foot", palettes: {"fruit": "squirrel_red", "wood": "fur_light"}),

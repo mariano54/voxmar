@@ -100,7 +100,9 @@
     // of a boss's room (`rooms`: the block, and whose room it is) within `room_reach`
     // blocks. Only that boss's tracks play then (its `music` tags, else the untagged boss
     // tracks): the calm track playing fades as they start, and the boss's when it ends.
-    boss: (within: 32.0, rooms: [(block: "base:hollow_floor", boss: "base:rootmother")], room_reach: 12),
+    // A boss that roams (Old Tusk) is in a fight only while it attacks, shows a tell or is
+    // hurt, and for `calm_after` seconds after: one nicked that goes back to grazing is not.
+    boss: (within: 32.0, rooms: [(block: "base:hollow_floor", boss: "base:rootmother")], room_reach: 12, calm_after: 12.0),
         // Underground: this many blocks below the surface, with this little of the air
     // around open to the sky.
     underground: (depth: 12.0, max_sky: 0.05),

@@ -254,6 +254,8 @@ struct Shown {
     view: CreatureView,
     /// When the view arrived, in seconds since startup.
     told_at: f32,
+    /// When it last showed a fight (attacking, a tell, or hurt), in seconds since startup.
+    fought_at: Option<f32>,
     position: Vec3,
     yaw: f32,
     entity: Entity,
@@ -582,6 +584,14 @@ impl Creatures {
     /// Every living creature shown, by id: its species and where its feet are.
     pub fn living(&self) -> impl Iterator<Item = (u32, CreatureId, Vec3)> + '_ {
         self.shown.iter().filter(|(_, shown)| shown.dying.is_none()).map(|(&id, shown)| (id, shown.view.species, shown.position))
+    }
+
+    /// Whether creature `id` is in a fight at `now` (seconds since startup): winding up or
+    /// charging, or it attacked, showed a tell or was hurt within the last `calm_after`
+    /// seconds (a roaming boss's fight music waits for one, and ends once it has calmed:
+    /// one nicked that goes back to grazing is no fight, though it never mends).
+    pub fn stirred(&self, id: u32, now: f32, calm_after: f32) -> bool {
+        self.shown.get(&id).is_some_and(|shown| in_fight(&shown.view, shown.fought_at, now, calm_after))
     }
 
     pub fn sighting(&self, id: u32) -> Option<Sighting> {
@@ -1083,6 +1093,9 @@ fn show(
                 Turn::Ends => shown.coiling = None,
                 Turn::Same => {}
             }
+            if shows_fight(Some(&shown.view), &view) {
+                shown.fought_at = Some(now);
+            }
             shown.view = view;
             shown.told_at = now;
             continue;
@@ -1111,11 +1124,13 @@ fn show(
         let joints: Vec<(Entity, Part)> = species.parts.iter().map(|&part| (commands.spawn((Transform::from_translation(part.pivot), ChildOf(entity))).id(), part)).collect();
         let skinned = SkinnedMesh { inverse_bindposes: body.binds.clone(), joints: joints.iter().map(|(e, _)| *e).collect() };
         let body = commands.spawn((Mesh3d(body.mesh.clone()), MeshMaterial3d(material.clone()), skinned, Transform::default(), Visibility::default(), ChildOf(entity))).id();
+        let fought_at = shows_fight(None, &view).then_some(now);
         creatures.shown.insert(
             view.id,
             Shown {
                 view,
                 told_at: now,
+                fought_at,
                 position: view.position,
                 yaw: view.yaw,
                 entity,
@@ -1880,9 +1895,45 @@ pub(crate) fn ray_box(origin: Vec3, direction: Vec3, aabb: &Aabb) -> Option<f32>
     (far >= near.max(0.0)).then_some(near.max(0.0))
 }
 
+/// Whether `view` shows a creature in a fight, after the view `before` it: attacking,
+/// winding up a move (its tell), or hurt since.
+fn shows_fight(before: Option<&CreatureView>, view: &CreatureView) -> bool {
+    view.pose == Pose::Attacking || view.tell != 0 || before.is_some_and(|before| view.health < before.health)
+}
+
+/// Whether a creature shown as `view`, last in a fight at `fought_at`, is in one at `now`:
+/// attacking now, or within `calm_after` seconds of its last fight.
+fn in_fight(view: &CreatureView, fought_at: Option<f32>, now: f32, calm_after: f32) -> bool {
+    view.pose == Pose::Attacking || fought_at.is_some_and(|at| now - at < calm_after)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A roaming boss nicked once is in a fight, and out of it once it has gone back to
+    /// grazing for `calm_after`, though it never mends: its fight music ends.
+    #[test]
+    fn a_nicked_boss_that_calms_down_is_no_longer_in_a_fight() {
+        let calm_after = 12.0;
+        let (grazing, full) = (Pose::Grazing, 60);
+        let at = |pose: Pose, tell: u8, health: u16| CreatureView { health, ..view_of(pose, tell) };
+        let mut fought = None;
+        let mut before = at(grazing, 0, full);
+        let mut step = |view: CreatureView, now: f32, fought: &mut Option<f32>| {
+            if shows_fight(Some(&before), &view) {
+                *fought = Some(now);
+            }
+            before = view;
+            in_fight(&before, *fought, now, calm_after)
+        };
+        assert!(!step(at(grazing, 0, full), 0.0, &mut fought), "grazing unhurt: no fight");
+        assert!(step(at(Pose::Alert, 0, full - 1), 1.0, &mut fought), "nicked: a fight");
+        assert!(step(at(grazing, 0, full - 1), 1.0 + calm_after - 0.5, &mut fought), "still in it a while after");
+        assert!(!step(at(grazing, 0, full - 1), 1.0 + calm_after + 0.5, &mut fought), "calmed and grazing, still hurt: the fight is over");
+        assert!(step(at(Pose::Idle, 3, full - 1), 20.0, &mut fought), "a move wound up: a fight again");
+        assert!(in_fight(&at(Pose::Attacking, 0, full), None, 100.0, calm_after), "attacking is always a fight");
+    }
 
     fn bear() -> Vec<Part> {
         creature::Model::Quadruped {
