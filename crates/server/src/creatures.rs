@@ -148,6 +148,9 @@ pub struct Live {
     pub winding: bool,
     /// Following the player it winds up at, until a tick, before its aim locks (`fight`).
     pub tracking: Option<(PlayerId, u64)>,
+    /// Running a charge it wound up (`fight`, `creature::moves::Charge`): straight on, held
+    /// from thinking until it ends.
+    pub charging: Option<crate::fight::Charging>,
     /// The attack it winds up or last used (`Creature::attack_at`): 0 its plain one, then
     /// its moves (`fight`).
     pub attack: u8,
@@ -184,7 +187,7 @@ pub struct Live {
 impl Live {
     /// Its pose as players see it: attacking all through a wind-up.
     fn pose(&self) -> brain::Pose {
-        if self.winding { brain::Pose::Attacking } else { self.decision.pose }
+        if self.winding || self.charging.is_some() { brain::Pose::Attacking } else { self.decision.pose }
     }
 
     /// The tell it shows (`CreatureView::tell`): its move while it winds one up, `REARING`
@@ -536,7 +539,7 @@ impl Server {
                 };
                 let wet = Ground::of(self).water_at(position.floor().as_ivec3());
                 let creature = self.creatures.live.get_mut(&id).expect("listed");
-                let decision = if self.tick < creature.held_until {
+                let decision = if self.tick < creature.held_until || creature.charging.is_some() {
                     brain::Decision { pose: brain::Pose::Idle, ..Default::default() }
                 } else {
                     // Done rearing into a new phase, or reeling from a stagger: it fights on
@@ -675,7 +678,7 @@ impl Server {
     }
 
     /// Moves one creature's body a tick along its decision.
-    fn move_creature(&mut self, id: u32, dt: f32) {
+    pub(crate) fn move_creature(&mut self, id: u32, dt: f32) {
         let Some(creature) = self.creatures.live.get(&id) else { return };
         let species = self.content.creatures.get(creature.species);
         let mut body = creature.body;
@@ -703,9 +706,12 @@ impl Server {
             decision.goal = Some(cell.as_vec3() + Vec3::new(0.5, 0.0, 0.5));
             decision.speed = decision.speed.max(species.def.movement.walk);
         }
-        // Winding up, it still turns and walks at its target until its aim locks.
+        // Winding up, it still turns and walks at its target until its aim locks; charging,
+        // it runs straight on.
+        let charging = creature.charging;
         let tracking = if held { self.tracking_drive(id) } else { None };
         let drive = match decision.goal {
+            _ if charging.is_some() => charging.map(|c| c.drive(creature.scale)).unwrap_or_default(),
             _ if held => tracking.unwrap_or_default(),
             Some(goal) if goal.with_y(0.0).distance(body.position.with_y(0.0)) > 0.4 => {
                 let wish = (goal - body.position).with_y(if species.def.habitat.water == Water::Swim { goal.y - body.position.y } else { 0.0 });
@@ -713,7 +719,7 @@ impl Server {
             }
             _ => Drive { wish: Vec3::ZERO, speed: 0.0, face: decision.face.map(|f| f - body.position) },
         };
-        if held && tracking.is_none() {
+        if held && tracking.is_none() && charging.is_none() {
             // Held still: nothing carries it along, neither its legs nor a neighbour's push.
             body.velocity.x = 0.0;
             body.velocity.z = 0.0;
@@ -835,6 +841,10 @@ impl Server {
             let mind = &mut self.creatures.live.get_mut(&id).expect("still there").mind;
             if no_way { mind.find_no_way() } else { mind.give_up() }
         }
+        if charging.is_some() {
+            self.charge_ran(id, before);
+        }
+        let Some(body) = self.creatures.live.get(&id).map(|c| c.body) else { return };
         if body.position.y < -64.0 {
             self.creatures.live.remove(&id);
             self.creatures.gone.push(CreatureGone { id, died: false });
@@ -1268,6 +1278,7 @@ impl Server {
             phase: 0,
             rearing: false,
             staggered: false,
+            charging: None,
             mended: 0,
             genome,
             traits,
@@ -2466,6 +2477,30 @@ mod cornered_tests {
             let id = put(&mut server, name, centre.as_vec3() + Vec3::new(-1.5, 0.0, 0.5), Vec3::X);
             let away = hunted(&mut server, id, player, 5.0);
             assert!(away > 6.0, "{name} struck against a wall got only {away:.1} blocks from the player");
+            server.creatures.live.remove(&id);
+        }
+    }
+
+    /// A pen walled two high keeps its animals, struck and running, tall heads and all: a
+    /// head over the wall is no step (motion's head-met step is judged at the feet).
+    #[test]
+    fn a_pen_two_high_keeps_its_animals_struck_and_running() {
+        let mut server = crate::test_server();
+        let half = 5;
+        let centre = pen(&mut server, half);
+        for i in -half..=half {
+            for cell in [IVec3::new(i, 2, -half), IVec3::new(i, 2, half), IVec3::new(-half, 2, i), IVec3::new(half, 2, i)] {
+                server.world.set_block(centre + cell, voxmar_engine::block::BlockId::AIR);
+            }
+        }
+        let player = join(&mut server, centre.as_vec3() + Vec3::new(0.5, 0.0, 0.5));
+        for name in ["base:red_deer", "base:wild_boar", "base:aurochs", "base:brown_bear"] {
+            let Some(species) = server.content.creatures.id(name) else { continue };
+            let id = put(&mut server, name, centre.as_vec3() + Vec3::new(-2.5, 0.0, 0.5), Vec3::NEG_X);
+            server.creatures.live.get_mut(&id).unwrap().owner = Some("1".into());
+            let _ = hunted(&mut server, id, player, 10.0);
+            let at = server.creatures.live[&id].body.position - centre.as_vec3();
+            assert!(at.x.abs() < half as f32 && at.z.abs() < half as f32 && at.y < 1.5, "{name} ({species:?}) left a pen two high: at {at}");
             server.creatures.live.remove(&id);
         }
     }
@@ -3716,7 +3751,7 @@ mod fight_tests {
     /// On uneven ground (a step, a flight of steps, a slab, logs lying about, tall grass)
     /// every fighter gets up to the player and strikes within 3 s, pressing a wall under
     /// 1 s of the 10. Behind a fence or up a ledge two blocks high, it never gets over (its
-    /// feet never two up, its middle never in the first column), and strikes over it within
+    /// feet never a block and a half up, its middle never in the first column), and strikes over it within
     /// 3.5 s or gives up, pressing under 4 s. Before: a wolf took 4.2 s to its first
     /// strike up three steps (pressing 2.0 s) and a badger 4.0 s, their heads meeting each
     /// step before their feet and turning them along it; and a wolf pressed the fence 16 s
@@ -3731,9 +3766,9 @@ mod fight_tests {
                         let f = fight(name, set, 10.0);
                         if matches!(scene, "fence" | "ledge") {
                             // Two blocks high: no creature hops it. Its feet never come up
-                            // to the top, nor its middle into the fence's or ledge's first
+                            // half way, nor its middle into the fence's or ledge's first
                             // column (x 1).
-                            assert!(f.highest < 2.0 && f.farthest < 1.0, "{scene}: {name} got over: its feet {:.2} up, its middle {:.2} east", f.highest, f.farthest);
+                            assert!(f.highest < 1.5 && f.farthest < 1.0, "{scene}: {name} got over: its feet {:.2} up, its middle {:.2} east", f.highest, f.farthest);
                             let gave_up = f.strikes == 0 && f.pressing < 4.0;
                             assert!(f.first.is_some_and(|s| s < 3.5) || gave_up, "{scene}: {name} first struck at {:?}, pressed {:.1} s", f.first, f.pressing);
                         } else {

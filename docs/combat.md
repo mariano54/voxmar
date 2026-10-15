@@ -28,6 +28,8 @@ and "Items" tabs); the code is `engine/src/combat.rs`, the data each package's
 | Stone sword | sword (slash) | Attack 1 | 3 | two cobblestone and a stick, Crafting 1 |
 | Wooden axe | axe (slash) | Attack 1 | 2 | the tool |
 | Stone axe | axe (slash) | Attack 1 | 3 | the tool |
+| Flint spear | spear (stab, reach, braces) | Attack 1 | 3 | a flint on two sticks, Crafting 2; 1 in 9 from Old Tusk |
+| Tusk club | mace (crush) | Attack 5 | 5 | Old Tusk's great tusk and a stick, Crafting 3 |
 | Copper sword | sword (slash) | Attack 5 | 5 | two copper ingots and a stick, Engineering 5 |
 | Copper axe | axe (slash) | Attack 5 | 6 | the tool |
 | Fang dagger | dagger (stab) | Attack 10 | 5 | a fang and a stick, Crafting 10 |
@@ -111,7 +113,7 @@ for "Armour ×", and "Combat feel" for shields and dodges by weight). Data in `c
 | 2 | Armour | A piece gives its slot's share of a bronze set's 36 (head 6, body 14, legs 10, hands 3, feet 3; `armour.slots`) times its set's material: hide 0.5 (tanned leather 0.65 to come), copper 0.7, bronze 1.0, iron 1.2. It adds to the defence roll as RuneScape's armour does. A creature's attack roll adds 0.8 of its level (`creature_accuracy`) unless it sets its own `accuracy` (the wiki's draft 62). |
 | 3 | Weight | Light (hide, leather) counts 0.8 against crush and full against the rest; medium full against all; heavy (plate) 1.2 against melee and arrows, 0.6 against spells; robes 1.5 against spells, 0.7 arrows, 0.5 melee, and dodge as light. A set's `resists` count half again (`armour.resisted`; chainmail against slash). All in `combat.ron`'s `armour:`. |
 | 4 | Levels | Worn below its Defence level a piece gives nothing, and a shield does not guard: your own level, boosts never count. |
-| 5 | Shields | In the off-hand a shield guards in place of the weapon: hide buckler 45% over 120° with a 0.28 s perfect window; wooden 55%, copper 60%, bronze 65%, iron 70%, each over 150° with 0.20 s. Shields stop arrows and thrown things too, never spells. A spear (two-handed) guards with itself, shield or not. A shield's own armour (1 to 7) adds to the defence roll. |
+| 5 | Shields | In the off-hand a shield guards in place of the weapon: hide buckler 45% over 120° with a 0.28 s perfect window; wooden 55%, copper 60%, bronze 65%, iron 70%, each over 150° with 0.20 s. Shields stop arrows and thrown things too, never spells. A spear (two-handed) guards with itself, shield or not, and its guard braces (`brace`): held up facing a charge, the charger runs onto the point and is stopped, heavy or not (docs/bosses.md, "Charges"). A shield's own armour (1 to 7) adds to the defence roll. |
 | 6 | Dodge | The heaviest armour worn picks the dodge: light or none 3.0 blocks, safe 0.04 to 0.22 s, every 1.0 s; medium 2.6, to 0.20, 1.2 s; heavy 2.2, to 0.18, 1.5 s. |
 | 7 | Death | What is worn counts with the rest: the three things carried worth most are kept, counted a unit at a time (a stack or a pouch keeps one), a grave-ward amulet keeping a fourth besides itself. Worth is gold on the wiki's P51 curve (`engine/src/value.rs`, `value.ron`): 2 × 2.5^((level − 1) / 15), to the nearest 5 above 100, × the rarity's 1, 2, 5, 12 or 30, where the level is what wears or wields it or the least recipe level that makes it; a made thing is worth at least 1.25 × what goes into one. An iron sword is 15, an iron pickaxe 24, a chainmail shirt 50, an iron ingot 5. The numbers, and how many are kept and for how long, are `value.ron`'s. |
 
