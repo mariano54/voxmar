@@ -2201,6 +2201,24 @@ fn empty_hand(world: &mut World) -> bool {
     true
 }
 
+/// Empties the hand for a step that strikes bare-handed, whatever the steps before left
+/// in the hotbar: an empty hotbar slot selected, or, with none, the held stack moved to a
+/// free slot of the pack (predicted, as a click would). `Some(true)` once the hand is
+/// empty, `Some(false)` while it is being emptied, `None` with no free slot anywhere.
+fn clear_hand(world: &mut World) -> Option<bool> {
+    if empty_hand(world) {
+        return Some(true);
+    }
+    let player = world.resource::<LocalPlayer>();
+    let selected = player.selected;
+    let free = (voxmar_engine::inventory::HOTBAR_SLOTS..voxmar_engine::inventory::SLOTS).find(|&s| player.inventory.get(s).is_none())?;
+    let actions = world.resource::<crate::Actions>().0.clone();
+    let target = voxmar_engine::action::ActionTarget::Slots { from: selected as u8, to: free as u8, count: u8::MAX };
+    world.resource::<Net>().propose(actions.expect("core:transfer"), target);
+    world.resource_mut::<LocalPlayer>().inventory.move_items(selected, free, u8::MAX);
+    Some(false)
+}
+
 /// The level of a skill, as the client was last told.
 fn skill_level(world: &World, name: &str) -> (u8, u32) {
     let (player, launch) = (world.resource::<LocalPlayer>(), world.resource::<Launch>());
@@ -9497,8 +9515,10 @@ fn narrow(world: &mut World, gate: &mut Gate, now: f32) {
             net.command(&format!("fill {} {} {} {} {} {} stone", at.x - 7, at.y, at.z, at.x + 7, at.y + 2, at.z));
             net.command(&format!("tp {} {} {}", at.x as f32 + 0.5, at.y, at.z as f32 + 1.5));
             // /summon sets the first one 1.8 blocks west of the cell's middle (`summon`):
-            // asked two east, it lands about the wall's middle; where it really lands is
-            // what the doorway is cut to.
+            // asked two east, it lands about the wall's middle, and two blocks behind it,
+            // so a fist from the doorway reaches it (the server measures from the eye to its
+            // box: about 1.3 blocks, under the fist's 2.5). Where it really lands is what
+            // the doorway is cut to.
             net.command(&format!("summon {} 1 {} {} {}", BEAR.trim_start_matches("base:"), at.x + 2, at.y, at.z - 2));
             advance(gate);
         }
@@ -9537,14 +9557,22 @@ fn narrow(world: &mut World, gate: &mut Gate, now: f32) {
                 gate.settled = 1;
                 info!("gate: narrow: bear {} landed at {:.2}, {width:.2} wide; doorway {door_width} across at {door:.2}", view.id, view.position);
             }
+            // Facing the bear's middle from the start, not whatever the last step faced.
+            aim_at(world, view.position + Vec3::Y * 0.6);
             let me = world.resource::<LocalPlayer>().position;
-            let free = empty_hand(world);
-            if me.xz().distance(gate.narrow.door.xz()) < 0.3 && free {
+            // The hand emptied here, whatever the steps before left in the hotbar. With
+            // nowhere at all to put what it holds, the blow is struck with it: any blow
+            // provokes the bear.
+            let hand = clear_hand(world);
+            if me.xz().distance(gate.narrow.door.xz()) < 0.3 && hand != Some(false) {
+                if hand.is_none() {
+                    info!("gate: narrow: the pack is full, so the bear is struck with what is in hand");
+                }
                 let fighting = world.resource::<crate::fight::Fighting>();
                 gate.narrow.struck = fighting.struck_count;
                 advance(gate);
             } else if waited {
-                fail(world, gate, format!("not ready to strike: the player at {me:.2} (the doorway at {:.2}), a free hotbar slot {free}", gate.narrow.door));
+                fail(world, gate, format!("not ready to strike: the player at {me:.2} (the doorway at {:.2}), the hand emptied {hand:?}", gate.narrow.door));
             }
         }
         2 => {
