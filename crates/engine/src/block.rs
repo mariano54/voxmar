@@ -384,6 +384,13 @@ pub const MAX_EMISSION_RANGE: f32 = 128.0;
 /// The deepest a block looks for what it smokes over (`Emission::over`), in blocks.
 pub const MAX_EMISSION_OVER: u8 = 8;
 
+/// Tags of a window, a block light comes in through (a pane, a lattice, a window frame, an
+/// arrow slit, or a wall a draught comes through), refused at load if it keeps light out.
+pub const LIGHT_THROUGH_TAGS: [&str; 5] = ["window", "lattice", "window_frame", "slit", "draught"];
+/// The most a window may dim the light through it (`light_filter`): a shut shutter's 14
+/// is a wall's.
+pub const MAX_WINDOW_FILTER: u8 = 2;
+
 /// How a particle is drawn over what lies behind it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ParticleBlend {
@@ -1280,6 +1287,19 @@ impl BlockRegistry {
                 return Err(RegistryError(format!("`{}` drops merged-away `{}`; drop `{into}` (item_of) instead", defs[i].name, defs[dropped.0 as usize].name)));
             }
         }
+        // A window lets light through: a pane, a lattice, a frame or a slit, anything a
+        // draught comes through, and anything lit by the light through it. None of them is
+        // a whole cube or dims light as a shut shutter does.
+        for (def, block) in defs.iter().zip(&info) {
+            let tag = def.tags.iter().find(|t| LIGHT_THROUGH_TAGS.contains(&t.as_str()));
+            if (def.lit_through || tag.is_some()) && (block.occludes || def.light_filter > MAX_WINDOW_FILTER) {
+                let why = tag.map_or("`lit_through`".to_owned(), |t| format!("tagged `{t}`"));
+                return Err(RegistryError(format!(
+                    "`{}` is a window ({why}) but keeps the light out: a window is no whole cube, and its `light_filter` is {MAX_WINDOW_FILTER} at most, not {}",
+                    def.name, def.light_filter
+                )));
+            }
+        }
         let shape_collision = shapes.iter().map(|s| s.bounds.iter().map(|&(min, max)| crate::physics::Aabb { min, max }).collect()).collect();
         Ok(Self { defs, info, by_name, textures, shapes, shape_starts, shape_layers, shape_collision, placement_forms, looks, fluids, renamed: FxHashMap::default() })
     }
@@ -1764,6 +1784,25 @@ mod tests {
         assert!(refused(r#"(name: "a", flips: true)"#).contains("upside down"));
         // A torch goes on walls only as a block that rests on a wall, and goes with it.
         assert!(refused(r#"(name: "torch", wall: "lamp"), (name: "lamp", facing: true)"#).contains("does not rest on a wall"));
+    }
+
+    /// A window lets light in: one tagged as a window, a lattice, a frame, a slit or a
+    /// draughty gap, or lit through, is refused if it is a whole cube or dims light as a
+    /// shut shutter does; a slab-thin pane or a lattice of boxes is let through.
+    #[test]
+    fn a_window_that_keeps_the_light_out_is_refused() {
+        let load = |blocks: &str| {
+            let defs = BlockRegistry::parse("base", &format!("(blocks: [{blocks}])")).unwrap();
+            BlockRegistry::with_shapes(defs, &shapes()).map(|_| ()).map_err(|e| e.0)
+        };
+        assert_eq!(load(r#"(name: "pane", render: Cutout, tags: ["window"], lit_through: true)"#), Ok(()));
+        assert_eq!(load(r#"(name: "lattice", render: Model, shape: "slab", tags: ["lattice", "draught"])"#), Ok(()));
+        let whole = load(r#"(name: "pane", tags: ["window"])"#).unwrap_err();
+        assert!(whole.contains("`base:pane` is a window (tagged `window`)"), "{whole}");
+        let dim = load(r#"(name: "slit", render: Model, shape: "slab", light_filter: 14, tags: ["slit"])"#).unwrap_err();
+        assert!(dim.contains("`light_filter` is 2 at most, not 14"), "{dim}");
+        assert!(load(r#"(name: "glow", lit_through: true)"#).unwrap_err().contains("(`lit_through`)"));
+        assert!(load(r#"(name: "gap", render: Model, shape: "slab", light_filter: 3, tags: ["draught"])"#).is_err());
     }
 
     #[test]
