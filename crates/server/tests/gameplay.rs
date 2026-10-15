@@ -7122,11 +7122,15 @@ impl Fresh {
     /// `gather`, what lies out of every reach is dug again.
     fn gather_chance(&mut self, tool: &str, mut targets: Vec<IVec3>, item: &str, need: u32) {
         self.hold(tool);
+        // Only a target that can give `item`, as its drop or `instead`, is broken: another
+        // block laid over the plot (the farm's copper) is passed over.
+        let id = self.c.content.blocks.expect(item);
+        let gives = |c: &Client, t: IVec3| c.world.block(t).is_some_and(|b| c.content.blocks.info(b).drops == id || c.content.tools.rule(b).and_then(|r| r.instead).is_some_and(|(given, _)| given == id));
         // Drops left lying out of every reach, still counted loose.
         let mut lost = 0;
         loop {
             while self.have(item) + loose(&self.c, item) < need + lost {
-                targets.retain(|&t| solid(&self.c, t));
+                targets.retain(|&t| solid(&self.c, t) && gives(&self.c, t));
                 let from = self.at;
                 let Some(target) = targets.iter().copied().min_by_key(|t| ((across(Self::middle(*t), from) * 10.0) as i32, t.y)) else {
                     panic!("{item}: every block was broken for {} of {need} ({lost} out of reach)", self.have(item) + loose(&self.c, item));
@@ -7432,14 +7436,15 @@ impl Fresh {
         for x in [1, 3, 5, 7] {
             c.fill(origin, v(x, 0, -5), v(x, 3, -5), "oak_log");
         }
-        // Bushes of oak leaves along the plot's south edge, each a column three high with room
+        // Bushes of oak leaves along the plot's south edge, each a column four high with room
         // to walk between, for the sticks bare hands pull from leaves, and a gravel bank beside
-        // them in two rows for flint: a new player's first tools are flint on sticks.
-        for x in (-6..=8).step_by(2) {
-            c.fill(origin, v(x, 0, 12), v(x, 2, 12), "oak_leaves");
+        // them in three rows (clear of the farm's copper) for flint: a new player's first tools are
+        // flint on sticks.
+        for x in (-12..=8).step_by(2) {
+            c.fill(origin, v(x, 0, 12), v(x, 3, 12), "oak_leaves");
         }
-        for z in [10, 13] {
-            c.fill(origin, v(10, 0, z), v(20, 1, z), "gravel");
+        for z in [7, 10, 13] {
+            c.fill(origin, v(10, 0, z), v(17, 2, z), "gravel");
         }
         // A patch of natural stone one block high, with two coal ores on its near edge.
         c.fill(origin, v(9, 0, -3), v(17, 0, 4), "stone");
@@ -7456,7 +7461,7 @@ impl Fresh {
         // A low bank of dirt, eight blocks, for the earth clamp: the only dirt above the
         // ground, so the bot finds it by looking (`Fresh::raised_dirt`).
         c.fill(origin, v(-7, 0, 8), v(-4, 0, 9), "dirt");
-        let probes = [(v(7, 3, -5), "base:oak_log"), (v(17, 0, 4), "base:stone"), (v(-2, -1, 11), "base:water"), (v(-8, 1, 0), "base:stone"), (v(-7, 0, 2), "base:wild_wheat"), (v(-4, 0, 9), "base:dirt"), (v(8, 2, 12), "base:oak_leaves"), (v(20, 1, 13), "base:gravel")];
+        let probes = [(v(7, 3, -5), "base:oak_log"), (v(17, 0, 4), "base:stone"), (v(-2, -1, 11), "base:water"), (v(-8, 1, 0), "base:stone"), (v(-7, 0, 2), "base:wild_wheat"), (v(-4, 0, 9), "base:dirt"), (v(8, 3, 12), "base:oak_leaves"), (v(17, 2, 13), "base:gravel")];
         c.pump_until(|c| probes.iter().all(|&(at, name)| c.world.block(origin + at) == c.content.blocks.id(name)) && c.world.block(origin + v(-9, 1, 0)) == Some(BlockId::AIR));
         let (at, t0) = (c.position, c.ticks());
         let epoch = (t0, Instant::now());
@@ -7670,9 +7675,9 @@ fn the_first_days(f: &mut Fresh) -> Site {
     // Flint tools, with bare hands (a new player starts with nothing, and a bare hand fells
     // no tree and breaks no stone): sticks pulled from leaves, flint from gravel, a flint axe
     // and pickaxe made in the hand's grid.
-    let (flint, leaves) = ("base:flint", rel(f, (-6..=8).step_by(2).flat_map(|x| (0..=2).map(move |y| v(x, y, 12))).collect()));
+    let (flint, leaves) = ("base:flint", rel(f, (-12..=8).step_by(2).flat_map(|x| (0..=3).map(move |y| v(x, y, 12))).collect()));
     f.gather_chance("", leaves, stick, 3);
-    let gravel = rel(f, (10..=20).flat_map(|x| (0..=1).flat_map(move |y| [10, 13].map(move |z| v(x, y, z)))).collect());
+    let gravel = rel(f, (10..=17).flat_map(|x| (0..=2).flat_map(move |y| [7, 10, 13].map(move |z| v(x, y, z)))).collect());
     f.gather_chance("", gravel, flint, 4);
     f.craft(&[(0, flint, 1), (1, flint, 1), (3, stick, 1)], "base:flint_axe", 1);
     f.craft(&[(0, flint, 1), (1, flint, 1), (3, stick, 1), (4, stick, 1)], "base:flint_pickaxe", 1);
