@@ -131,6 +131,11 @@ pub struct WorldMeta {
     /// Lairs standing empty after their boss fell, until a time of day (`lairs`).
     #[serde(default)]
     pub lairs: Vec<crate::lairs::SavedLair>,
+    /// The secret the world's draws hash (a cast's catch), never sent to a player, so no
+    /// client can work out what a cast will bring up. 0 in older worlds, which are given
+    /// one when they open (`ServerConfig::draw_key`, else a random one).
+    #[serde(default)]
+    pub draw_key: u64,
 }
 
 /// How a regrowing plant is saved, by block names.
@@ -170,6 +175,21 @@ impl WorldMeta {
             generation: 0,
             worldgen_content: None,
             lairs: Vec::new(),
+            draw_key: random_key(),
+        }
+    }
+}
+
+/// A random key, never 0 (which marks a world or player without one).
+pub fn random_key() -> u64 {
+    use std::hash::{BuildHasher, Hasher};
+    loop {
+        // The standard library seeds each `RandomState` from the system's randomness.
+        let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+        hasher.write_u64(unix_time());
+        let key = hasher.finish();
+        if key != 0 {
+            return key;
         }
     }
 }
@@ -209,6 +229,8 @@ pub struct SavedPlayer {
     pub tallies: Vec<(String, u32)>,
     /// Prayer points left; none in older saves, which come back full.
     pub prayer_points: Option<f32>,
+    /// Lines cast so far (none in older saves).
+    pub casts: u64,
 }
 
 /// Tallies quests count (`kind:name`, or `kind:station:name`) under the names items have
@@ -274,6 +296,8 @@ struct PlayerFile {
     tallies: Vec<(String, u32)>,
     #[serde(default)]
     prayer_points: Option<f32>,
+    #[serde(default)]
+    casts: u64,
 }
 
 /// A column file, generic so that saving can borrow the column.
@@ -553,7 +577,7 @@ impl WorldSave {
         }
         let health = Health { current: file.health.current.min(file.health.max), max: file.health.max };
         let yaw = if file.yaw.is_finite() { file.yaw } else { 0.0 };
-        Ok(Some(SavedPlayer { position, yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills, effects: file.effects, home: file.home, bed: file.bed, kindled: file.kindled, journal: merge_journal(file.journal, registry), quests_claimed: file.quests_claimed.unwrap_or_else(|| file.quests.clone()), quests: file.quests, tallies: renamed_tallies(file.tallies, registry), prayer_points: file.prayer_points }))
+        Ok(Some(SavedPlayer { position, yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills, effects: file.effects, home: file.home, bed: file.bed, kindled: file.kindled, journal: merge_journal(file.journal, registry), quests_claimed: file.quests_claimed.unwrap_or_else(|| file.quests.clone()), quests: file.quests, tallies: renamed_tallies(file.tallies, registry), prayer_points: file.prayer_points, casts: file.casts }))
     }
 
     /// Moves the file of the player called `name` aside, as unreadable (`set_aside`).
@@ -596,6 +620,7 @@ impl WorldSave {
             quests_claimed: Some(player.quests_claimed.clone()),
             tallies: player.tallies.clone(),
             prayer_points: player.prayer_points,
+            casts: player.casts,
         };
         let text = ron::ser::to_string_pretty(&file, ron::ser::PrettyConfig::default()).map_err(io::Error::other)?;
         let path = self.player_path(name);
@@ -1117,6 +1142,7 @@ mod tests {
             quests_claimed: vec!["base:a".into()],
             tallies: Vec::new(),
             prayer_points: None,
+            casts: 0,
         };
         save.write_player("ada", &player, &registry).unwrap();
         assert_eq!(save.read_player("ada", &registry).unwrap().unwrap().quests_claimed, ["base:a"], "a waiting reward is kept");
@@ -1160,6 +1186,7 @@ mod tests {
             quests_claimed: vec!["base:first_night".into()],
             tallies: vec![("crafted:base:torch".into(), 8)],
             prayer_points: Some(7.5),
+            casts: 12,
         };
         for name in ["steve", "Steve", "a/b", "../x", "ünï cödé"] {
             save.write_player(name, &player, &registry).unwrap();
@@ -1233,6 +1260,7 @@ mod tests {
             quests_claimed: Vec::new(),
             tallies: Vec::new(),
             prayer_points: None,
+            casts: 0,
         };
         save.write_player("herbalist", &player, &registry).unwrap();
         let loaded = save.read_player("herbalist", &registry).unwrap().unwrap();
@@ -1257,6 +1285,7 @@ mod tests {
             pouched: [("base:raw_rabbit", 5), ("base:raw_chicken", 6)])"#;
         std::fs::write(dir.join("players/hunter.ron"), file).unwrap();
         let loaded = save.read_player("hunter", &blocks).unwrap().unwrap();
+        assert_eq!(loaded.casts, 0, "an older save has cast nothing yet");
         let (raw, cooked) = (blocks.expect("base:raw_small_game"), blocks.expect("base:cooked_small_game"));
         let slots: Vec<(BlockId, u8)> = loaded.inventory.slots.iter().flatten().map(|s| (s.item, s.count)).collect();
         assert_eq!(slots, [(raw, 3), (raw, 2), (cooked, 4)]);
