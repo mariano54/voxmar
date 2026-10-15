@@ -577,25 +577,30 @@ impl Server {
         if self.placed.remove(&pos) {
             return false;
         }
-        let Some(player) = self.players.get(&agent) else { return false };
+        let Some(player) = self.players.get_mut(&agent) else { return false };
+        // By the player's count of blocks broken, and where a drop pops by the world's count
+        // of drops, never by the tick it breaks on.
+        let [roll, other] = player.draw(crate::save::Draw::Mine);
         let held = player.held();
         let level = rule.skill.map_or(1, |skill| self.content.skills.level(player.skills.xp(skill)));
         let bonus = voxmar_engine::crop::level_bonus(level, rule.level, self.content.skills.max_level()) + tools.yield_bonus(held, block) + player.modifiers.finds;
         let info = self.content.blocks.info(block);
-        let [roll, kick, ..] = crate::items::random3(self.tick, pos, agent ^ 0xd1ce);
+        let popped = self.meta.drops;
+        self.meta.drops += 1;
+        // The pops show where each drop flies, so they draw nothing from the player's rolls.
+        let [a, b, c] = crate::items::random3(self.meta.draw_key ^ popped.wrapping_mul(0x9e37_79b9_7f4a_7c15), pos, agent ^ 0xd1ce);
         // Never a furnishing's: it gives itself back only where a player placed it.
         if roll < bonus && !info.drops.is_air() && info.drop_count > 0 && !self.content.blocks.def(block).has_tag("furnishing") {
             let stack = voxmar_engine::inventory::ItemStack { item: info.drops, count: 1 };
-            let body = voxmar_engine::dropped::popped(pos, [kick, roll, kick * roll]);
+            let body = voxmar_engine::dropped::popped(pos, [a, b, c]);
             self.items.spawn(stack, body, voxmar_engine::dropped::PICKUP_DELAY);
         }
         if let Some(skill) = rule.skill.filter(|_| rule.xp > 0.0) {
             self.grant_xp(agent, skill, rule.xp);
         }
-        let [other, ..] = crate::items::random3(self.tick, pos, agent ^ 0x1257);
         match rule.instead {
             Some((item, chance)) if other < chance => {
-                let body = voxmar_engine::dropped::popped(pos, [kick, other, roll]);
+                let body = voxmar_engine::dropped::popped(pos, [b, c, a]);
                 self.items.spawn(voxmar_engine::inventory::ItemStack { item, count: 1 }, body, voxmar_engine::dropped::PICKUP_DELAY);
                 true
             }
@@ -665,5 +670,48 @@ mod sleep_tests {
         server.creatures.live.get_mut(&id).unwrap().owner = None;
         server.players.get_mut(&1).unwrap().allow_flight = true;
         assert_eq!(server.unsafe_to_sleep(1), None, "nothing hunts one in creative");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use voxmar_engine::glam::IVec3;
+
+    /// What breaking a block gives besides its own drop (gravel's flint instead, a bonus
+    /// drop) is drawn by the player's count of blocks broken, not the tick it breaks on,
+    /// and where it pops by the world's count of drops.
+    #[test]
+    fn a_break_rewards_by_the_count_of_breaks_not_the_tick() {
+        let broken = |tick: u64| {
+            let mut server = crate::test_server();
+            server.meta.draw_key = 0x0d1a;
+            let (_client, connection) = voxmar_protocol::local_pair();
+            let mut player = crate::player::Player::new(1, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
+            (player.joined, player.draw_key) = (true, crate::player::player_draw_key(0x0d1a, "ada"));
+            // Finds enough that some breaks give a bonus drop besides.
+            player.modifiers.finds = 0.5;
+            server.players.insert(1, player);
+            let gravel = server.content.blocks.expect("base:gravel");
+            let pos = server.spawn.floor().as_ivec3() + IVec3::new(2, 0, 0);
+            server.tick = tick;
+            let instead: Vec<bool> = (0..64)
+                .map(|_| {
+                    server.set_block(pos, gravel);
+                    server.reward_break(1, pos)
+                })
+                .collect();
+            let gravel_drops = server.content.blocks.def(server.content.blocks.info(gravel).drops).name.clone();
+            let blocks = server.content.blocks.clone();
+            let mut bodies: Vec<_> = server.items.saved(|item| blocks.def(item).name.clone()).into_iter().map(|d| (d.item, d.count, d.position)).collect();
+            bodies.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            let bonus: u32 = bodies.iter().filter(|(item, ..)| *item == gravel_drops).map(|&(_, count, _)| count as u32).sum();
+            (instead, bodies, server.players[&1].draws.mines, bonus)
+        };
+        let first = broken(1_000);
+        assert_eq!(first.2, 64, "each break counted on");
+        let flint = first.0.iter().filter(|&&f| f).count();
+        assert!((1..64).contains(&flint), "flint {flint} times in 64 breaks of gravel");
+        assert!((1..64).contains(&first.3), "a bonus drop {} times in 64 breaks with finds", first.3);
+        assert_eq!(broken(1_377), first, "the same breaks later gave otherwise");
     }
 }
