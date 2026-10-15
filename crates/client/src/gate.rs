@@ -5780,13 +5780,19 @@ fn nest(world: &mut World, gate: &mut Gate, now: f32) {
                 None => {}
             }
         }
-        // Both in, then broken by hand one after the other.
+        // Both in, then broken by hand one after the other. Each drop pops out a block or so
+        // whichever way the server's tick throws it, which can be past where a player beside
+        // it draws things in: the player steps onto where it stood, which every pop is in
+        // reach of (`dropped::pop_reach`), so it comes to them.
         6 | 7 => {
             let (name, at, height) = if gate.phase == 6 { ("base:red_rug", rug, 0.03) } else { ("base:oak_stool", stool, 0.4) };
             aim_at(world, at.as_vec3() + Vec3::new(0.5, height, 0.5));
             mouse(world, MouseButton::Left, true);
             if world.resource::<ClientWorld>().block(at).is_some_and(|b| b.is_air()) {
                 mouse(world, MouseButton::Left, false);
+                let onto = Vec3::new(at.x as f32 + 0.5, at.y as f32, at.z as f32 + 0.5);
+                info!("gate: home: furnishings: the {name} broken, the player steps onto ({:.2}, {:.2}, {:.2})", onto.x, onto.y, onto.z);
+                world.resource::<Net>().command(&format!("tp {:.2} {:.2} {:.2}", onto.x, onto.y, onto.z));
                 gate.advance(now);
             } else if waited > 10.0 {
                 mouse(world, MouseButton::Left, false);
@@ -5805,7 +5811,25 @@ fn nest(world: &mut World, gate: &mut Gate, now: f32) {
                 gate.check("home: furnishings: come back", Ok("a rug and a stool the player set down came back whole when broken".into()));
                 leave(world, gate);
             } else if waited > 10.0 {
-                gate.check("home: furnishings: come back", Err(format!("{waited:.1} server s after breaking them, the pack holds {rugs} rug and {stools} stool (want one each)")));
+                // Where each missing piece's drop lies, and how far from the player's middle
+                // against how near it must be to be drawn in.
+                let player = world.resource::<LocalPlayer>();
+                let middle = player.position + Vec3::Y * voxmar_engine::physics::player::HEIGHT / 2.0;
+                let (client, drops) = (world.resource::<ClientWorld>(), world.resource::<crate::drops::Drops>());
+                let lying = |name: &str, have: u32| {
+                    if have >= 1 {
+                        return String::new();
+                    }
+                    let id = client.registry.id(name);
+                    let found: Vec<String> = drops
+                        .lying()
+                        .filter(|(_, stack, _)| Some(stack.item) == id)
+                        .map(|(_, _, at)| format!("{name} lies at ({:.2}, {:.2}, {:.2}), {:.2} blocks from the player's middle (drawn in within {})", at.x, at.y, at.z, (at + Vec3::Y * voxmar_engine::dropped::SIZE / 2.0).distance(middle), voxmar_engine::dropped::MAGNET))
+                        .collect();
+                    if found.is_empty() { format!("; no {name} lies about") } else { format!("; {}", found.join(", ")) }
+                };
+                let missing = lying("base:red_rug", rugs) + &lying("base:oak_stool", stools);
+                gate.check("home: furnishings: come back", Err(format!("{waited:.1} server s after breaking them, the pack holds {rugs} rug and {stools} stool (want one each), the player at ({:.2}, {:.2}, {:.2}){missing}", player.position.x, player.position.y, player.position.z)));
                 leave(world, gate);
             }
         }
