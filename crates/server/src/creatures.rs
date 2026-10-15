@@ -2415,6 +2415,40 @@ mod density_tests {
         assert_eq!(draws[0], draws[1], "the same loaded world, count of rolls and players must draw the same creatures");
     }
 
+    /// Where a creature comes near a player, and what it is like, is drawn by the world's
+    /// count of rolls, never the tick it is tried on.
+    #[test]
+    fn a_spawn_draws_by_the_worlds_count_not_the_tick() {
+        let content = crate::test_content();
+        let spawned = |tick: u64| {
+            let mut server = crate::test_server_on(content.clone());
+            server.meta.draw_key = 0x0d1a;
+            let spot = find_biome(&server, "plains").expect("plains");
+            let height = server.overworld.site(spot.0, spot.1).height;
+            let at = Vec3::new(spot.0 as f32 + 0.5, height as f32 + 1.0, spot.1 as f32 + 0.5);
+            let (client, connection) = voxmar_protocol::local_pair();
+            std::mem::forget(client);
+            let mut player = crate::player::Player::new(1, connection, at, 2, server.tick, server.survival.max_health, &server.config.limits);
+            player.joined = true;
+            server.players.insert(1, player);
+            let cell = at.floor().as_ivec3();
+            server.load_area(cell - IVec3::new(80, 0, 80), cell + IVec3::new(80, 0, 80));
+            server.day = (LATER + 6_000) as f64;
+            server.tick = tick;
+            let mut made = Vec::new();
+            for salt in 0..60u64 {
+                server.creatures.live.clear();
+                server.spawn_near(1, salt);
+                made.extend(server.creatures.live.values().map(|c| (salt, c.species, c.seed, c.body.position.to_array())));
+                server.tick += 7;
+            }
+            (made, server.meta.rolls)
+        };
+        let first = spawned(40);
+        assert!(!first.0.is_empty() && first.1 >= 60, "{} spawned over {} rolls", first.0.len(), first.1);
+        assert_eq!(spawned(40_977), first, "the same tries later drew otherwise");
+    }
+
     #[test]
     fn unseen_spawning_checks_other_players_and_heads_above_walls() {
         let mut server = crate::test_server();

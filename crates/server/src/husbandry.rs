@@ -1446,6 +1446,31 @@ mod tests {
         assert!(server.days_since(back.fed).abs() < 1e-3);
     }
 
+    /// When a kept animal's next product is due is drawn by its own count of rolls, never
+    /// the tick it lays on.
+    #[test]
+    fn a_products_timing_draws_by_its_own_count_not_the_tick() {
+        let due_at = |tick: u64| {
+            let mut server = test_server();
+            let (_player, client) = keeper(&mut server);
+            std::mem::forget(client);
+            let hen = kept(&mut server, "base:junglefowl", 1);
+            server.tick = tick.next_multiple_of(EVERY);
+            let mut waits = Vec::new();
+            for _ in 0..12 {
+                server.creatures.live.get_mut(&hen).unwrap().products_due[0] = 0;
+                server.tick_husbandry();
+                waits.push(server.creatures.live[&hen].products_due[0] - server.tick);
+                server.tick += EVERY;
+            }
+            (waits, server.creatures.live[&hen].rolls)
+        };
+        let first = due_at(2_000);
+        assert_eq!(first.1, 12, "each lay counted on");
+        assert!(first.0.windows(2).any(|w| w[0] != w[1]), "every wait alike: {:?}", first.0);
+        assert_eq!(due_at(9_337), first, "the same lays later came due otherwise");
+    }
+
     /// What a kept animal lays by itself, and how many young a pair has, are drawn by the
     /// world's count of rolls, and what is laid pops by its count of drops, not the tick
     /// they fall on, and each counts on.

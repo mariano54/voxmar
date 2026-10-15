@@ -1614,7 +1614,7 @@ impl Server {
                         }
                     }
                     None if flat(lead, stop) < THERE => {
-                        *wait_until = Some(self.tick + ticks(pause.0 + unit_from(mix(inst.seed, *next as u64 * 7 + inst.born)) * (pause.1 - pause.0)));
+                        *wait_until = Some(self.tick + ticks(pause.0 + unit_from(next_party_roll(inst.seed, &inst.rolls, 0x9a05)) * (pause.1 - pause.0)));
                         last = true;
                     }
                     None => goal = Some(stop),
