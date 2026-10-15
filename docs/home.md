@@ -200,6 +200,27 @@ mining and speed wherever you go, and a bed always works as a bed (it sets where
 while one lasts, so the buff is a once-a-day habit, not a button to hold. Timed effects count down
 online only.
 
+## Sitting by the fire
+
+Seats were only props the ladder counted. Now a right click on one (a stool, chair, bench or
+cushion: anything tagged `seat`), with no block to place in hand and room above it, sits the
+player on it (`base:sit`, `Requirement::Seat`, `Effect::Sit`): the server sets them in it
+(base's seats are not solid, so one under a roof two blocks up is sat on; a mod's solid seat
+sets them on top, and wants two free cells over it), and their eye drops to
+`vitals::SEATED_EYE` (1.3) over their feet, on the server and the client alike (`vitals::eye`; `Vitals::seated`, protocol
+40). They sit until they move off it or it goes (`vitals::still_seated`, checked once a
+second). Effects can ask `Seated`; base's **By the Fire** (`fireside`: heal x1.5, 4° warmer)
+holds sat with a fire or the hearth within 3, so a Nomad's stool at the campfire and a chair
+at home both rest the player after a day out. Tests: server `seats.rs`. The gate's Seat step
+sits on a stool under a block two up, by a campfire (shot `seat-fire`), and steps off it.
+
+Sat with a table within 2, the player is **At the Table** (`at_table`): a meal eaten there
+heals a quarter more and its good lasts a quarter longer (`meal_heal`, `meal_time`, as the
+pantry and larder rooms give; they multiply, up to core `survival.ron`'s `meal_most`, 2: with
+every meal effect on, the heal is 1.82 times and the good's length 2.27, held to 2). A supper at the kitchen table is worth sitting
+down for. Test: `a_meal_at_the_table_does_more`. The gate's Seat step sets a table by the
+stool ("seat: at the table").
+
 ## Numbers and tuning
 
 All of it is data. Multipliers stack with food buffs; xp stops at `MAX_XP_BOOST` (1.25).
