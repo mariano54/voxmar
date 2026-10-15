@@ -602,9 +602,9 @@ struct Gate {
     /// Raw small game carried, slots and pouch, as the dry step hangs the rack, so its
     /// readout can count what hung.
     rack_rabbits: u32,
-    /// When the dry step last cleared the raw small game carried (server seconds), and the
-    /// first raw small game seen picked up once it gave its own.
-    dry_cleared: f32,
+    /// What the dry step carried when it last cleared the raw small game carried, until the
+    /// pack is seen cleared, and the first raw small game seen picked up once it gave its own.
+    dry_clearing: Option<u32>,
     dry_pickup: Option<String>,
     /// The creature the combat-marks step tells its blows at, when (game time) it last told
     /// them, and how many runs it has told.
@@ -736,8 +736,10 @@ struct Gate {
     food_moved: bool,
     /// The Cook step's hearth or stove has raw rabbit selected and is being clicked.
     cook_started: bool,
-    /// The campfire the weather step dries the player by, while it stands.
+    /// The campfire the weather step dries the player by, while it stands, and what the
+    /// storm left the player wet with before it was lit.
     dry_fire: Option<IVec3>,
+    storm_wet: Vec<String>,
     /// While taming, frames the junglefowl was under the crosshair, another creature was,
     /// or none was, and the nearest the player came to it.
     tame_aim: [u32; 3],
@@ -865,7 +867,7 @@ impl Gate {
             chimney_since: None,
             pot_ground: None,
             rack_rabbits: 0,
-            dry_cleared: 0.0,
+            dry_clearing: None,
             dry_pickup: None,
             marked: None,
             marked_at: 0.0,
@@ -934,6 +936,7 @@ impl Gate {
             food_moved: false,
             cook_started: false,
             dry_fire: None,
+            storm_wet: Vec::new(),
             tame_aim: [0; 3],
             tame_nearest: f32::MAX,
             party_after: 0,
@@ -7246,14 +7249,16 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     if in_phase < FIT_SETTLE && !laid_out {
         return;
     }
-    if !laid_out {
-        gate.fit_settled.push(format!("{language} {view:?}"));
-    }
     // A journal page is read once it is drawn, in this language, however long that takes.
     if let View::Journal(page) = view
         && world.resource::<crate::hud::journal::JournalDrawn>().0.as_ref() != Some(&(page, language.to_owned()))
     {
         return;
+    }
+    // Named once, as it is read, only if read at `FIT_SETTLE` (a journal page waits on
+    // being drawn as long as it takes).
+    if !laid_out {
+        gate.fit_settled.push(format!("{language} {view:?}"));
     }
     let checked = |world: &World| world.get_resource::<crate::ui::fit::LineBreaksChecked>().copied().unwrap_or_default();
     let before = checked(world);
@@ -7386,7 +7391,7 @@ fn show_view(world: &mut World, view: Option<View>, now: f32) {
             let name = locale.skill(skills.get(skill));
             let needs = locale.format("skills.needs", &[("skill", &name), ("level", &99)]);
             let mut toasts = world.resource_mut::<crate::hud::skills::SkillToasts>();
-            toasts.gained(skill, 12_345, now);
+            toasts.showing_gain(skill, 12_345, now);
             toasts.refused(needs, now);
             toasts.level_up(skill, 90);
         }
@@ -7571,23 +7576,21 @@ fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             match kinds.get(phase as usize) {
                 Some((kind, ..)) => {
                     world.resource::<Net>().command(&format!("weather {kind} 120"));
-                    gate.advance(now);
-                }
-                // Wet through from the storm, and the rain gone (snow is not rain): a
-                // campfire beside the player dries them off.
-                None => {
-                    let at = world.resource::<LocalPlayer>().position.floor().as_ivec3() + IVec3::new(2, 0, 0);
+                    // Wet through from the storm, and the rain gone with the snow coming
+                    // (snow is not rain): a campfire two blocks behind the player, out of
+                    // the snow's shot, dries them off while the snow comes. Snowblown is
+                    // the snow's own, whatever fire is near.
+                    gate.storm_wet = wet_through(world);
+                    let at = world.resource::<LocalPlayer>().position.floor().as_ivec3() + IVec3::new(0, 0, 2);
                     world.resource::<Net>().command(&format!("setblock {} {} {} campfire", at.x, at.y, at.z));
                     gate.dry_fire = Some(at);
                     gate.advance(now);
                 }
+                None => gate.advance(now),
             }
         }
         3 => {
-            let wet: Vec<String> = {
-                let (player, launch) = (world.resource::<LocalPlayer>(), world.resource::<Launch>());
-                player.vitals.effects.iter().map(|a| launch.content.effects.get(a.effect)).filter(|def| def.lingers > 0.0 && def.ends.is_some()).map(|def| def.title.to_lowercase()).collect()
-            };
+            let wet = wet_through(world);
             let dried = wet.is_empty();
             if !dried && !gate.waited_out(10.0) {
                 // Each look at the player, once every `TAP_EVERY` of the game's time, counts
@@ -7598,7 +7601,17 @@ fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 }
                 return;
             }
-            gate.check("weather: dries by a fire", if dried { Ok("wet through from the storm, the player dried off beside a campfire once the rain had gone".into()) } else { Err(format!("{:.1} server s beside a campfire, out of the rain, the player is still {}", gate.server_in_phase(), wet.join(", "))) });
+            let storm_wet = std::mem::take(&mut gate.storm_wet);
+            gate.check(
+                "weather: dries by a fire",
+                if storm_wet.is_empty() {
+                    Err("the storm never left the player wet through, so nothing was there to dry".into())
+                } else if dried {
+                    Ok(format!("{} from the storm, the player dried off beside a campfire once the rain had gone", storm_wet.join(", ")))
+                } else {
+                    Err(format!("{:.1} server s beside a campfire, out of the rain, the player is still {}", gate.server_in_phase(), wet.join(", ")))
+                },
+            );
             if let Some(at) = gate.dry_fire.take() {
                 world.resource::<Net>().command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
             }
@@ -7606,6 +7619,9 @@ fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             // end: one clearing waited for, not two back to back.
             gate.weather_clear_owed = true;
             gate.next(Step::Depths, now);
+        }
+        4 if let Some(at) = gate.dry_fire.take() => {
+            world.resource::<Net>().command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
         }
         4 if sky_clear(&shown) => {
             eased(gate);
@@ -7618,6 +7634,13 @@ fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         }
         _ => {}
     }
+}
+
+/// What the player is wet through with: the lingering effects a fire ends (soaked,
+/// drenched).
+fn wet_through(world: &World) -> Vec<String> {
+    let (player, launch) = (world.resource::<LocalPlayer>(), world.resource::<Launch>());
+    player.vitals.effects.iter().map(|a| launch.content.effects.get(a.effect)).filter(|def| def.lingers > 0.0 && def.ends.is_some()).map(|def| def.title.to_lowercase()).collect()
 }
 
 /// Dug down, in a cave or in a room, mist is gone; cracks are lit as the face under them is.
@@ -12145,7 +12168,7 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
             // None of what earlier steps left: the step hangs only what it gives.
             net.command("clear raw_small_game");
             net.command(&format!("tp {} {} {}", rack.x as f32 + 0.5, rack.y, rack.z as f32 - 2.5));
-            (gate.rack_rabbits, gate.dry_cleared, gate.dry_pickup) = (0, gate.server_now, None);
+            (gate.rack_rabbits, gate.dry_clearing, gate.dry_pickup) = (0, Some(carried_of(world, "base:raw_small_game")), None);
             gate.advance(now);
         }
         1 => {
@@ -12165,9 +12188,14 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
                     let near = if near.is_empty() { String::new() } else { format!("; within {DRY_NEAR} blocks {}", near.join(", ")) };
                     gate.check("drying rack", Err(format!("the raw small game about the rack never cleared in {DRY_WAIT} server seconds: {carried} carried{near}")));
                     gate.next(Step::Snare, now);
-                } else if carried > 0 && gate.server_now - gate.dry_cleared >= 1.0 {
+                } else if carried == 0 {
+                    gate.dry_clearing = None;
+                } else if gate.dry_clearing.is_none_or(|was| carried > was) {
+                    // More came in since the last clear was seen, or since it was sent: clear
+                    // again at once.
+                    info!("gate: Dry: {carried} raw small game carried before the give, cleared again at {:.1}s", gate.server_now);
                     world.resource::<Net>().command("clear raw_small_game");
-                    gate.dry_cleared = gate.server_now;
+                    gate.dry_clearing = Some(carried);
                 }
                 return;
             }
