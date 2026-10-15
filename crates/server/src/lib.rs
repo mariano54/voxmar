@@ -153,11 +153,14 @@ pub struct Limits {
     pub rejoin_silence: f32,
     /// Blocks from a player within which they are told of others (`ServerMessage::Players`).
     pub players_seen: f32,
+    /// Blocks past `players_seen` a player already told of must go before they are told
+    /// gone, so one hovering at the edge is not told of and gone again on alternate ticks.
+    pub players_seen_margin: f32,
 }
 
 impl Default for Limits {
     fn default() -> Self {
-        Self { messages_per_tick: 64, chat_burst: 8.0, chat_per_second: 2.0, hello_seconds: 3.0, max_pending: 16, max_pending_per_address: 4, name_length: 32, ipv6_prefix: 64, rejoin_silence: KEEPALIVE.as_secs_f32() + 1.0, players_seen: 160.0 }
+        Self { messages_per_tick: 64, chat_burst: 8.0, chat_per_second: 2.0, hello_seconds: 3.0, max_pending: 16, max_pending_per_address: 4, name_length: 32, ipv6_prefix: 64, rejoin_silence: KEEPALIVE.as_secs_f32() + 1.0, players_seen: 160.0, players_seen_margin: 8.0 }
     }
 }
 
@@ -166,7 +169,7 @@ impl Limits {
     /// one connection hold the server up.
     pub fn from_ron(source: &str) -> Result<Self, String> {
         let limits: Limits = ron::from_str(source).map_err(|e| e.to_string())?;
-        let Limits { messages_per_tick, chat_burst, chat_per_second, hello_seconds, max_pending, max_pending_per_address, name_length, ipv6_prefix, rejoin_silence, players_seen } = limits;
+        let Limits { messages_per_tick, chat_burst, chat_per_second, hello_seconds, max_pending, max_pending_per_address, name_length, ipv6_prefix, rejoin_silence, players_seen, players_seen_margin } = limits;
         let rates = [chat_burst, chat_per_second, hello_seconds];
         if rates.iter().any(|n| !n.is_finite() || *n < 0.0) {
             Err("chat_burst, chat_per_second and hello_seconds must be zero or more".into())
@@ -184,6 +187,8 @@ impl Limits {
             Err(format!("rejoin_silence must be over the client's keepalive ({} s), or a playing session could be ended, and at most 3600", KEEPALIVE.as_secs()))
         } else if !(8.0..=2048.0).contains(&players_seen) {
             Err("players_seen must be from 8 to 2048 blocks".into())
+        } else if !(0.0..=64.0).contains(&players_seen_margin) {
+            Err("players_seen_margin must be from 0 to 64 blocks".into())
         } else {
             Ok(limits)
         }
@@ -1160,12 +1165,16 @@ impl Server {
 
     /// Tells each player of the others near enough to see (`Limits::players_seen`), only
     /// as they change: a view sent again only once it differs from the last one sent them, a
-    /// name only the first time, and those gone or out of sight named once as gone.
+    /// name only the first time, and those gone or out of sight named once as gone. One
+    /// already told of goes out of sight only past `players_seen_margin` more.
     fn broadcast_players(&mut self) {
         let views: Vec<voxmar_protocol::PlayerView> = self.players.values().filter(|p| p.joined).map(|p| voxmar_protocol::PlayerView { fight: self.fight_view(p.id), ..p.view() }).collect();
-        let seen = self.config.limits.players_seen;
+        let (seen, margin) = (self.config.limits.players_seen, self.config.limits.players_seen_margin);
         for player in self.players.values_mut().filter(|p| p.joined) {
-            let near: Vec<&voxmar_protocol::PlayerView> = views.iter().filter(|v| v.id != player.id && v.position.distance(player.position) <= seen).collect();
+            let near: Vec<&voxmar_protocol::PlayerView> = views
+                .iter()
+                .filter(|v| v.id != player.id && v.position.distance(player.position) <= if player.told.contains_key(&v.id) { seen + margin } else { seen })
+                .collect();
             let mut told = Vec::new();
             for &view in &near {
                 let last = player.told.get(&view.id);
@@ -1561,7 +1570,7 @@ mod tests {
         assert_eq!(limits, Limits { chat_burst: 4.0, max_pending_per_address: 2, ..Limits::default() });
         assert_eq!(Limits::from_ron("()").unwrap(), Limits::default());
         assert_eq!(Limits::default().rejoin_silence, 6.0, "a keepalive and a second");
-        for bad in ["(max_pending: 0)", "(max_pending_per_address: 0)", "(messages_per_tick: 1)", "(hello_seconds: 0.0)", "(chat_per_second: -1.0)", "(name_length: 0)", "(ipv6_prefix: 8)", "(ipv6_prefix: 129)", "(rejoin_silence: 5.0)", "(rejoin_silence: 4000.0)", "(chat_brust: 4.0)", "(players_seen: 2.0)", "(players_seen: 5000.0)"] {
+        for bad in ["(max_pending: 0)", "(max_pending_per_address: 0)", "(messages_per_tick: 1)", "(hello_seconds: 0.0)", "(chat_per_second: -1.0)", "(name_length: 0)", "(ipv6_prefix: 8)", "(ipv6_prefix: 129)", "(rejoin_silence: 5.0)", "(rejoin_silence: 4000.0)", "(chat_brust: 4.0)", "(players_seen: 2.0)", "(players_seen: 5000.0)", "(players_seen_margin: -1.0)", "(players_seen_margin: 100.0)"] {
             assert!(Limits::from_ron(bad).is_err(), "{bad} is accepted");
         }
     }

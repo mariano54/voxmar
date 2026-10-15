@@ -193,6 +193,10 @@ struct Figure {
     material: Handle<SkinMaterial>,
     painting: Option<Task<Image>>,
     skin: Handle<Image>,
+    /// The name its skin is painted from, and a skin being painted again from a name told
+    /// since (one first seen nameless), worn once done.
+    painted: String,
+    repainting: Option<Task<Image>>,
     position: Vec3,
     yaw: f32,
     pitch: f32,
@@ -305,6 +309,13 @@ fn forget(figure: &Figure, skins: &mut Assets<SkinMaterial>, images: &mut Assets
     }
 }
 
+/// The name to paint a figure's skin from again, if the name told now is not the one it
+/// was painted from: a figure first seen without a name is painted from the empty name's
+/// look, and from its own once the name comes. No name told keeps the skin.
+fn repaint_for<'a>(painted: &str, told: Option<&'a str>) -> Option<&'a str> {
+    told.filter(|name| *name != painted)
+}
+
 /// The turn about x by `degrees`.
 fn about_x(degrees: f32) -> Quat {
     Quat::from_rotation_x(degrees.to_radians())
@@ -367,6 +378,8 @@ fn show(
                 material,
                 painting,
                 skin: blank.clone(),
+                painted: name.to_string(),
+                repainting: None,
                 position: view.position,
                 yaw: view.yaw,
                 pitch: view.pitch,
@@ -386,6 +399,23 @@ fn show(
                 striking: None,
             }
         });
+        // A name told after the figure was first painted (one seen nameless): painted again
+        // from it, the old skin worn till the new one is done.
+        if let Some(name) = repaint_for(&figure.painted, view.name.as_deref()) {
+            figure.painted = name.to_string();
+            figure.repainting = Some(crate::creatures::paint_skin(look.body_of(name), parts.clone(), body, name_hash(name) as u32, false));
+        }
+        if figure.painting.is_none()
+            && let Some(task) = figure.repainting.as_mut()
+            && let Some(image) = block_on(future::poll_once(task))
+        {
+            figure.repainting = None;
+            images.remove(&figure.skin);
+            figure.skin = images.add(image);
+            if let Some(mut material) = skins.get_mut(&figure.material) {
+                material.extension.skin = figure.skin.clone();
+            }
+        }
         // Its skin, once painted; till then it is not drawn.
         if let Some(task) = figure.painting.as_mut()
             && let Some(image) = block_on(future::poll_once(task))
@@ -577,6 +607,16 @@ mod tests {
         assert!(broken.check().unwrap_err().contains("right arm"));
     }
 
+    /// A figure first seen without a name is painted again once its name is told, and
+    /// only then: the same name told again, or none, keeps the skin.
+    #[test]
+    fn a_figure_first_seen_nameless_is_painted_again_by_name() {
+        assert_eq!(repaint_for("", Some("Bob")), Some("Bob"));
+        assert_eq!(repaint_for("Bob", Some("Bob")), None);
+        assert_eq!(repaint_for("Bob", None), None);
+        assert_eq!(repaint_for("", None), None);
+    }
+
     fn standing(look: &PlayerLook) -> Figure {
         Figure {
             root: Entity::PLACEHOLDER,
@@ -584,6 +624,8 @@ mod tests {
             material: Handle::default(),
             painting: None,
             skin: Handle::default(),
+            painted: String::new(),
+            repainting: None,
             position: Vec3::ZERO,
             yaw: 0.0,
             pitch: 0.0,

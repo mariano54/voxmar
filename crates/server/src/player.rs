@@ -1121,6 +1121,37 @@ mod tests {
         assert!(told.len() == 1 && told[0].1 == [2], "Ada was not told Bob went out of sight: {told:?}");
     }
 
+    /// A player told of, hovering just past `players_seen`, stays told of until they go
+    /// past `players_seen_margin` more: never told of and gone again tick by tick.
+    #[test]
+    fn a_player_at_the_edge_of_sight_stays_told_of() {
+        let (mut server, ada, _bob, _) = ada_and_bob();
+        let (seen, margin) = (server.config.limits.players_seen, server.config.limits.players_seen_margin);
+        assert!(margin > 1.0, "the margin is some blocks");
+        let at = |server: &Server, x: f32| server.players[&1].position + Vec3::new(x, 0.0, 0.0);
+        let to = at(&server, seen - 0.5);
+        server.players.get_mut(&2).unwrap().position = to;
+        server.broadcast_players();
+        assert_eq!(told_of_others(&ada).len(), 1, "Ada was not told of Bob just inside sight");
+        for (tick, x) in [seen + 0.5, seen - 0.5, seen + margin - 0.5, seen - 0.25].into_iter().enumerate() {
+            let to = at(&server, x);
+            server.players.get_mut(&2).unwrap().position = to;
+            server.broadcast_players();
+            let told = told_of_others(&ada);
+            assert!(told.iter().all(|t| t.1.is_empty()), "Ada was told Bob went out of sight {x} blocks off (move {tick}): {told:?}");
+        }
+        let to = at(&server, seen + margin + 0.5);
+        server.players.get_mut(&2).unwrap().position = to;
+        server.broadcast_players();
+        let told = told_of_others(&ada);
+        assert!(told.len() == 1 && told[0].1 == [2], "Ada was not told Bob went out of sight past the margin: {told:?}");
+        // Gone, he is told of again only once back inside `players_seen`.
+        let to = at(&server, seen + margin - 0.5);
+        server.players.get_mut(&2).unwrap().position = to;
+        server.broadcast_players();
+        assert!(told_of_others(&ada).is_empty(), "Ada was told of Bob again inside the margin, not inside sight");
+    }
+
     /// Drive the server directly: no tick race can hide an identity change or a cap bypass.
     #[test]
     fn the_saved_name_keeps_identity_herd_caps_births_and_death_drops() {
