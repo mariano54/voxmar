@@ -8772,8 +8772,15 @@ fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     if landed > 0 {
                         gate.struck_heights = (gate.struck_heights.0.min(view.position.y), gate.struck_heights.1.max(view.position.y));
                     }
-                    // Close in to striking reach, then strike.
-                    let far = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz()) > 1.6;
+                    // Close in to striking reach, then strike. Held once near (a hold
+                    // reaches 8 blocks), so the watched punch is pressed at a snail
+                    // standing where it was aimed at.
+                    let off = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz());
+                    if !gate.swing_watch.held && off < 6.0 {
+                        world.resource::<Net>().command(&format!("creatures hold {}", CREATURE.trim_start_matches("base:")));
+                        gate.swing_watch.held = true;
+                    }
+                    let far = off > 1.6;
                     key(world, KeyCode::KeyW, far);
                     aim_at(world, view.position + Vec3::Y * 0.2);
                     if now - gate.since < PUNCH_AFTER || !watch_swing(world, gate, far, now) {
@@ -8953,7 +8960,8 @@ fn weapon(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             net.command("gamemode creative");
             net.command(&format!("skill attack {WEAPON_LEVEL}"));
             net.command(&format!("give {} 1", WEAPON.trim_start_matches("base:")));
-            net.command(&format!("summon {} 1 {} {} {}", BEAR.trim_start_matches("base:"), pad.x, pad.y, pad.z + 1));
+            // Held, so the watched swing is pressed at a bear standing where it was aimed at.
+            net.command(&format!("summon {} 1 {} {} {} held", BEAR.trim_start_matches("base:"), pad.x, pad.y, pad.z + 1));
             gate.blows_seen = world.resource::<crate::creatures::Creatures>().blows;
             gate.weapon_from = (gate.blows_seen, world.resource::<crate::creatures::Creatures>().landed);
             gate.feel = FeelRun::default();
@@ -9360,12 +9368,12 @@ struct SwingWatch {
     frames: Vec<(f32, f32, f32)>,
     /// The server's seconds at its press, and the blows the server had answered then.
     pressed: (f32, u32),
-    /// The swings the client had sent at its press (`Fighting::strikes`), the frames since
-    /// it, and the presses the client took for no swing (the quarry out of the crosshair or
-    /// reach as the click was read), each pressed again.
+    /// The swings the client had sent at its press (`Fighting::strikes`), and how far
+    /// the quarry under the crosshair was then, against the weapon's reach.
     sent: u32,
-    since_press: u32,
-    untaken: u32,
+    reach: (f32, f32),
+    /// The quarry was asked to stand still.
+    held: bool,
     /// Its stroke has run its course, back to rest.
     ended: bool,
     /// The shot taken as it connects, and the models the hand was drawn with then.
@@ -9383,9 +9391,6 @@ impl SwingWatch {
 const SWING_FRAME: f32 = 1.0 / 60.0;
 /// Server seconds the watched swing has to play out and be answered.
 const SWING_WAIT: f32 = 4.0;
-/// Presses the client may take for no swing (its quarry out of the crosshair or reach as
-/// the click is read) before the watched swing is judged a failure.
-const SWING_UNTAKEN: u32 = 4;
 
 /// Watches the weapon step's first swing: pressed once the bear is in reach and aimed at,
 /// then followed each frame until its stroke is back at rest and the server has answered
@@ -9393,15 +9398,18 @@ const SWING_UNTAKEN: u32 = 4;
 fn watch_swing(world: &mut World, gate: &mut Gate, far: bool, now: f32) -> bool {
     match gate.swing_watch.stage {
         0 => {
-            let aimed = world.resource::<crate::interact::Target>().creature.is_some();
-            if far || !aimed || gate.swung || now - gate.swing_at < voxmar_engine::combat::FULL_CHARGE + 0.05 {
+            // Pressed only with the quarry under the crosshair within the held weapon's
+            // reach (the crosshair finds creatures as far as they can be touched, past a
+            // sword's reach, and a click there strikes nothing), so the press swings.
+            let Some(reach) = in_reach(world) else { return false };
+            if far || reach.0 > reach.1 || gate.swung || now - gate.swing_at < voxmar_engine::combat::FULL_CHARGE + 0.05 {
                 return false;
             }
+            gate.swing_watch.reach = reach;
             world.resource_mut::<crate::held::HeldClock>().step = Some(SWING_FRAME);
             gate.swing_watch.stage = 1;
             gate.swing_watch.pressed = (gate.server_now, world.resource::<crate::creatures::Creatures>().blows);
             gate.swing_watch.sent = world.resource::<crate::fight::Fighting>().strikes;
-            gate.swing_watch.since_press = 0;
             gate.swing(world, now);
             true
         }
@@ -9411,17 +9419,7 @@ fn watch_swing(world: &mut World, gate: &mut Gate, far: bool, now: f32) -> bool 
                 gate.swing(world, now);
             }
             let seen = world.resource::<crate::held::Motion>().swing();
-            let sent = world.resource::<crate::fight::Fighting>().strikes;
             let watch = &mut gate.swing_watch;
-            watch.since_press += 1;
-            // The press read (the frame after it) and let go (the frame after that) with no
-            // swing sent: the click met no quarry in reach. Pressed again once it is.
-            if watch.since_press > 2 && sent == watch.sent && watch.frames.is_empty() && watch.untaken < SWING_UNTAKEN {
-                watch.untaken += 1;
-                watch.stage = 0;
-                world.resource_mut::<crate::held::HeldClock>().step = None;
-                return true;
-            }
             match seen {
                 Some(frame) if !watch.ended => {
                     if watch.frames.last().is_none_or(|last| last.0 != frame.0) {
@@ -9452,6 +9450,20 @@ fn watch_swing(world: &mut World, gate: &mut Gate, far: bool, now: f32) -> bool 
     }
 }
 
+/// How far the creature under the crosshair is, along the look, and the reach of what is
+/// held, as the client's own aim measures them (`creatures::aim`); none with no creature
+/// there.
+fn in_reach(world: &World) -> Option<(f32, f32)> {
+    let (launch, player) = (world.resource::<Launch>(), world.resource::<LocalPlayer>());
+    let id = world.resource::<crate::interact::Target>().creature?;
+    let combat = &launch.content.combat;
+    let held = player.inventory.get(player.selected).map(|s| s.item);
+    let weapon = combat.wielded(held, |skill| launch.content.skills.level(player.skills.xp(skill)));
+    let aabb = world.resource::<crate::creatures::Creatures>().aabb(launch, id)?;
+    let distance = crate::creatures::ray_box(player.eye(), player.look_direction().normalize_or_zero(), &aabb)?;
+    Some((distance, weapon.reach))
+}
+
 /// Judges the watched swing: it peaked as its blow is judged (the class wind-up the server
 /// times it by), went out all the way, came back to rest and was answered; the hand's clock
 /// is the frame's own again.
@@ -9478,10 +9490,11 @@ fn judge_swing(world: &mut World, gate: &mut Gate, answered: bool) {
     let result = match peak {
         _ if watch.stage == 0 => Err(format!("{quarry} was never in reach and aimed at for the watched swing")),
         None => Err(format!(
-            "the swing at {quarry} never played in the hand: {} presses taken for no swing; {} swings sent since the press ({} then)",
-            watch.untaken,
+            "the swing at {quarry} never played in the hand: {} swings sent since the press ({} then); {quarry} {:.2} blocks off under the crosshair at the press, the weapon reaching {:.2}",
             sent - watch.sent,
-            watch.sent
+            watch.sent,
+            watch.reach.0,
+            watch.reach.1
         )),
         Some((_, connect, _)) if (connect - windup).abs() > 1e-4 => Err(format!("the swing was timed to connect {connect:.3} s in, not at the wind-up of {windup:.3} s")),
         Some((at, _, _)) if (at - windup).abs() > SWING_FRAME + 1e-3 => Err(format!("the swing peaked {at:.3} s in, where the server judges its blow at {windup:.3} s")),
@@ -9491,10 +9504,11 @@ fn judge_swing(world: &mut World, gate: &mut Gate, answered: bool) {
         Some(_) if !watch.shot => Err("the swing was never shot as it connected".to_string()),
         Some(_) if watch.drawn != models || models == 0 => Err(format!("the hand was drawn with {} models as it connected, where it takes {models}", watch.drawn)),
         Some((at, _, weight)) => Ok(format!(
-            "{} frames of 1/60 s: out {weight:.2} at {at:.3} s, the blow judged at {windup:.3} s; at rest {:.2} s in; its blow answered; drawn with {models} models; {} presses taken for no swing first",
+            "{} frames of 1/60 s: out {weight:.2} at {at:.3} s, the blow judged at {windup:.3} s; at rest {:.2} s in; its blow answered; drawn with {models} models; pressed {:.2} blocks off, in a reach of {:.2}",
             watch.frames.len(),
             watch.frames.last().map_or(0.0, |f| f.0),
-            watch.untaken
+            watch.reach.0,
+            watch.reach.1
         )),
     };
     gate.check(watch.name, result);
