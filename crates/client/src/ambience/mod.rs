@@ -57,6 +57,10 @@ const SURVEY_INTERVAL: f32 = 1.0;
 const SETTLE: f32 = 2.0;
 /// How far from the player settlements are looked for, in blocks: past this, none is heard.
 const SETTLEMENTS_HEARD: i32 = 192;
+/// Blocks round a settlement's buildings still counted as within it (`settlement_edge`).
+const SETTLEMENT_MARGIN: i32 = 6;
+/// How far off a settlement's buildings are heard from, in blocks (`Building` sounds).
+pub const BUILDINGS_HEARD: f32 = 48.0;
 /// Ambience sits under everything else: every bed and one-shot is this much quieter than
 /// its `volume` in the data says, relative to the sound effects.
 const AMBIENCE_GAIN: f32 = 0.65;
@@ -74,6 +78,9 @@ pub struct Surroundings {
     pub sky: f32,
     /// The tags of the biome the player is in (`biomes.ron`), for the music of a place.
     pub biome: Vec<String>,
+    /// The nearest settlement (by its id) and how far outside its bounds the player is, in
+    /// blocks (0 within), for the settlement motif.
+    pub settlement: Option<(u64, f32)>,
 }
 
 impl Plugin for AmbiencePlugin {
@@ -122,8 +129,15 @@ struct Place {
     home_tags: Vec<String>,
     neighbour_tags: Vec<String>,
     home: f32,
-    /// Blocks to the middle of the nearest settlement, across the ground.
+    /// Blocks to the middle of the nearest settlement, across the ground; how far outside
+    /// its bounds (0 within); how many live there; and its id.
     settlement: f32,
+    edge: f32,
+    people: f32,
+    id: Option<u64>,
+    /// Where each of the ambience's sets of buildings (`Ambience::buildings`) is heard
+    /// from, of the nearest settlement's, within [`BUILDINGS_HEARD`].
+    buildings: Vec<Vec<Vec3>>,
 }
 
 struct Survey {
@@ -305,7 +319,7 @@ fn survey(
         ambient.generator = Some((player.seed, Arc::new(OnceLock::new())));
     }
     let (seed, generator) = ambient.generator.clone().expect("set above");
-    let (kinds, content, tx) = (ambient.kinds.clone(), ambient.content.clone(), ambient.surveys.0.clone());
+    let (kinds, content, tx, ambience) = (ambient.kinds.clone(), ambient.content.clone(), ambient.surveys.0.clone(), ambient.ambience.clone());
     let fires = world.fires.clone();
     let random = mix(time.elapsed().as_nanos() as u64);
     ambient.surveying = true;
@@ -318,13 +332,13 @@ fn survey(
                 None
             }
         });
-        let place = generator.as_ref().map(|generator| place(generator, eye));
+        let place = generator.as_ref().map(|generator| place(generator, eye, &ambience.buildings));
         let _ = tx.send(Survey { enclosure, place });
     });
 }
 
 /// The climate, biome and lie of the land at `eye`.
-fn place(generator: &Overworld, eye: IVec3) -> Place {
+fn place(generator: &Overworld, eye: IVec3, sets: &[defs::BuildingSet]) -> Place {
     let site = generator.site(eye.x, eye.z);
     let biomes = generator.biomes();
     let mut land = 0.0;
@@ -334,13 +348,22 @@ fn place(generator: &Overworld, eye: IVec3) -> Place {
         }
     }
     let edge = (site.edge / 48.0).clamp(0.0, 1.0);
-    let settlement = generator
-        .settlements_near(eye.xz(), SETTLEMENTS_HEARD)
-        .iter()
-        .map(|s| s.centre.xz().as_vec2().distance(eye.xz().as_vec2() + 0.5))
-        .fold(NO_SETTLEMENT, f32::min);
+    let at = eye.xz().as_vec2() + 0.5;
+    let near = generator.settlements_near(eye.xz(), SETTLEMENTS_HEARD);
+    let nearest = near.iter().map(|s| (s, s.centre.xz().as_vec2().distance(at))).min_by(|a, b| a.1.total_cmp(&b.1));
+    let (settlement, edge, people, id, buildings) = match nearest {
+        Some((s, settlement)) => {
+            let (edge, buildings) = settlement_bounds(s, at, sets);
+            (settlement, edge, s.people.len() as f32, Some(s.id), buildings)
+        }
+        None => (NO_SETTLEMENT, NO_SETTLEMENT, 0.0, None, vec![Vec::new(); sets.len()]),
+    };
     Place {
         settlement,
+        edge,
+        people,
+        id,
+        buildings,
         temperature: site.temperature,
         moisture: site.moisture,
         continentalness: site.continentalness,
@@ -354,6 +377,30 @@ fn place(generator: &Overworld, eye: IVec3) -> Place {
         neighbour_tags: biomes.get(site.neighbour).tags.clone(),
         home: 0.5 + 0.5 * edge * edge * (3.0 - 2.0 * edge),
     }
+}
+
+/// How far `at` is outside settlement `s`'s bounds (the ground its buildings and square
+/// stand on, and [`SETTLEMENT_MARGIN`] round them), 0 within; and where each of `sets` of
+/// its buildings is heard from (the door, or else the middle), within [`BUILDINGS_HEARD`].
+fn settlement_bounds(s: &voxmar_worldgen::SettlementInfo, at: Vec2, sets: &[defs::BuildingSet]) -> (f32, Vec<Vec<Vec3>>) {
+    let (low, high) = s.buildings.iter().fold((s.centre.xz(), s.centre.xz()), |(low, high), b| (low.min(b.min), high.max(b.max)));
+    let (low, high) = ((low - SETTLEMENT_MARGIN).as_vec2(), (high + SETTLEMENT_MARGIN + 1).as_vec2());
+    let edge = (low - at).max(at - high).max(Vec2::ZERO).length();
+    let buildings = sets
+        .iter()
+        .map(|set| {
+            s.buildings
+                .iter()
+                .filter(|b| set.names.iter().any(|name| b.answers(name)))
+                .map(|b| match b.door.filter(|_| set.door) {
+                    Some(door) => door.as_vec3() + 0.5,
+                    None => Vec3::new((b.min.x + b.max.x + 1) as f32 / 2.0, b.floor as f32 + 2.0, (b.min.y + b.max.y + 1) as f32 / 2.0),
+                })
+                .filter(|p| p.xz().distance(at) < BUILDINGS_HEARD)
+                .collect()
+        })
+        .collect();
+    (edge, buildings)
 }
 
 /// Fills in the environment vector from the scan, the place, the weather and the time.
@@ -400,6 +447,9 @@ fn listen(
         env.home = place.home;
     }
     env.set(Fixed::Settlement, ambient.place.as_ref().map_or(NO_SETTLEMENT, |place| place.settlement));
+    env.set(Fixed::SettlementEdge, ambient.place.as_ref().map_or(NO_SETTLEMENT, |place| place.edge));
+    env.set(Fixed::SettlementPeople, ambient.place.as_ref().map_or(0.0, |place| place.people));
+    surroundings.settlement = ambient.place.as_ref().and_then(|place| Some((place.id?, place.edge)));
     let shown = &weather.current;
     let falling = shown.precipitation * (1.0 - shown.snow);
     env.set(Fixed::Rain, falling * smooth.sky.max(0.3 * smooth.air));
@@ -441,7 +491,8 @@ fn play(
     let mut cues = std::mem::take(&mut ambient.cues);
     let length = |sound: usize, variant: usize| clips.sounds[sound].get(variant).map_or(1.0, |c| c.dry.len() as f32 / sfx::RATE as f32);
     let variants = (synth::BED_VARIANTS, synth::ONE_SHOT_VARIANTS);
-    ambient.mixer.update(&ambient.ambience, &ambient.env, &ambient.enclosure.samples, ears, time.delta_secs(), length, variants, &mut cues);
+    let buildings = ambient.place.as_ref().map_or(&[][..], |place| &place.buildings[..]);
+    ambient.mixer.update(&ambient.ambience, &ambient.env, &ambient.enclosure.samples, buildings, ears, time.delta_secs(), length, variants, &mut cues);
     let audible = master > 0.0;
     for cue in cues.drain(..) {
         if let Cue::Sound { sound, .. } = cue {

@@ -40,6 +40,8 @@ struct Scene {
     name: &'static str,
     env: Environment,
     samples: Vec<Vec<IVec3>>,
+    /// Each set of buildings one-shots sound from: one, a dozen blocks off.
+    buildings: Vec<Vec<Vec3>>,
 }
 
 fn scene(ambience: &Ambience, name: &'static str, tags: &[&str], set: &[(&str, f32)]) -> Scene {
@@ -76,7 +78,8 @@ fn scene(ambience: &Ambience, name: &'static str, tags: &[&str], set: &[(&str, f
                 .collect()
         })
         .collect();
-    Scene { name, env, samples }
+    let buildings = vec![vec![Vec3::new(12.0, 0.0, 0.0)]; ambience.buildings.len()];
+    Scene { name, env, samples, buildings }
 }
 
 fn scenes(ambience: &Ambience) -> Vec<Scene> {
@@ -116,7 +119,7 @@ fn run(ambience: &Ambience, scene: &Scene, seconds: f32) -> (Vec<(f32, Cue)>, Ve
     let mut cues = Vec::new();
     let steps = (seconds * 100.0) as usize;
     for step in 0..steps {
-        mixer.update(ambience, &scene.env, &scene.samples, Vec3::ZERO, 0.01, |_, _| 2.0, (synth::BED_VARIANTS, synth::ONE_SHOT_VARIANTS), &mut cues);
+        mixer.update(ambience, &scene.env, &scene.samples, &scene.buildings, Vec3::ZERO, 0.01, |_, _| 2.0, (synth::BED_VARIANTS, synth::ONE_SHOT_VARIANTS), &mut cues);
         timeline.extend(cues.drain(..).map(|c| (step as f32 * 0.01, c)));
     }
     let levels = (0..ambience.beds.len()).map(|b| mixer.level(b)).collect();
@@ -245,7 +248,7 @@ fn ambience_preview() {
         // Skip the warm-up and the beds' fade-in, as if the player had been there a while.
         let mut cues = Vec::new();
         for _ in 0..1000 {
-            mixer.update(&ambience, &scene.env, &scene.samples, Vec3::ZERO, 0.01, |_, _| 2.0, (synth::BED_VARIANTS, synth::ONE_SHOT_VARIANTS), &mut cues);
+            mixer.update(&ambience, &scene.env, &scene.samples, &scene.buildings, Vec3::ZERO, 0.01, |_, _| 2.0, (synth::BED_VARIANTS, synth::ONE_SHOT_VARIANTS), &mut cues);
         }
         cues.clear();
         let mut playing: Vec<(usize, usize, usize)> = (0..ambience.beds.len())
@@ -254,7 +257,7 @@ fn ambience_preview() {
             .collect();
         for step in 0..total / block {
             let at = start + step * block;
-            mixer.update(&ambience, &scene.env, &scene.samples, Vec3::ZERO, 0.01, |s, v| sounds[s][v].0.len() as f32 / RATE as f32, (synth::BED_VARIANTS, synth::ONE_SHOT_VARIANTS), &mut cues);
+            mixer.update(&ambience, &scene.env, &scene.samples, &scene.buildings, Vec3::ZERO, 0.01, |s, v| sounds[s][v].0.len() as f32 / RATE as f32, (synth::BED_VARIANTS, synth::ONE_SHOT_VARIANTS), &mut cues);
             for cue in cues.drain(..) {
                 match cue {
                     Cue::Segment { bed, variant } => playing.push((bed, variant, 0)),

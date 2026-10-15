@@ -85,13 +85,18 @@ pub enum Fixed {
     /// How far the middle of the nearest settlement (its square or green) is, across the
     /// ground, in blocks; [`NO_SETTLEMENT`] with none near.
     Settlement,
+    /// How far outside the nearest settlement's bounds (the ground its buildings stand
+    /// on, with a margin) the player is, in blocks: 0 within; [`NO_SETTLEMENT`] with none.
+    SettlementEdge,
+    /// How many people live in the nearest settlement (0 with none): its size.
+    SettlementPeople,
 }
 
 /// The `settlement` axis with no settlement near.
 pub const NO_SETTLEMENT: f32 = 10_000.0;
 
 impl Fixed {
-    pub const ALL: [Fixed; 28] = [
+    pub const ALL: [Fixed; 30] = [
         Fixed::Air,
         Fixed::Sky,
         Fixed::Canopy,
@@ -120,6 +125,8 @@ impl Fixed {
         Fixed::Cover,
         Fixed::Underwater,
         Fixed::Settlement,
+        Fixed::SettlementEdge,
+        Fixed::SettlementPeople,
     ];
 
     fn name(self) -> &'static str {
@@ -152,6 +159,8 @@ impl Fixed {
             Fixed::Cover => "cover",
             Fixed::Underwater => "underwater",
             Fixed::Settlement => "settlement",
+            Fixed::SettlementEdge => "settlement_edge",
+            Fixed::SettlementPeople => "settlement_people",
         }
     }
 }
@@ -172,6 +181,7 @@ impl Environment {
     pub fn new(groups: usize) -> Self {
         let mut values = vec![0.0; Fixed::ALL.len() + groups];
         values[Fixed::Settlement as usize] = NO_SETTLEMENT;
+        values[Fixed::SettlementEdge as usize] = NO_SETTLEMENT;
         Self { values, home: 1.0, ..Self::default() }
     }
 
@@ -301,6 +311,19 @@ pub enum Placement {
     Around { distance: (f32, f32), height: (f32, f32) },
     /// At the player, from no direction.
     Listener,
+    /// At one of the nearest settlement's buildings near (`BUILDINGS_HEARD`) that answer to
+    /// a name of the set (`Ambience::buildings`): its door, or its middle. None near, none
+    /// heard.
+    Building(usize),
+}
+
+/// Buildings a one-shot sounds from (`Building` in ambience.ron): those answering to any
+/// of `names` (a kind, a house, a work: `voxmar_worldgen::SettlementBuilding::answers`),
+/// heard at the `door` or else from the middle.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BuildingSet {
+    pub names: Vec<String>,
+    pub door: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -329,6 +352,8 @@ pub struct Ambience {
     selectors: Vec<(Vec<String>, Vec<Material>, bool)>,
     pub beds: Vec<Bed>,
     pub sounds: Vec<OneShot>,
+    /// The sets of buildings one-shots sound from, each once.
+    pub buildings: Vec<BuildingSet>,
 }
 
 #[derive(Deserialize)]
@@ -391,6 +416,11 @@ enum PlacementDef {
     Block(String),
     Around { distance: (f32, f32), height: (f32, f32) },
     Listener,
+    Building {
+        buildings: Vec<String>,
+        #[serde(default)]
+        door: bool,
+    },
 }
 
 #[derive(Deserialize)]
@@ -479,6 +509,16 @@ impl Ambience {
                     ),
                     PlacementDef::Around { distance, height } => Placement::Around { distance, height },
                     PlacementDef::Listener => Placement::Listener,
+                    PlacementDef::Building { buildings, door } => {
+                        if buildings.is_empty() {
+                            return Err(format!("{}: sounds from no building", context(&sound.name)));
+                        }
+                        let set = BuildingSet { names: buildings, door };
+                        Placement::Building(ambience.buildings.iter().position(|s| *s == set).unwrap_or_else(|| {
+                            ambience.buildings.push(set);
+                            ambience.buildings.len() - 1
+                        }))
+                    }
                 };
                 let when =
                     ambience.conditions(sound.when, sound.biome, sound.not_biome).map_err(|e| format!("{}: {e}", context(&sound.name)))?;
@@ -547,6 +587,18 @@ impl Ambience {
     }
 
     /// The environment for a group's weighted count from the scan: 0..1.
+    /// Whether every building a one-shot sounds from is one settlements have (`known`:
+    /// `SettlementsDef::building_names`), so a mistyped name is not a sound never heard.
+    pub fn check_buildings(&self, known: &std::collections::BTreeSet<String>) -> Result<(), String> {
+        for sound in &self.sounds {
+            let Placement::Building(set) = sound.at else { continue };
+            if let Some(name) = self.buildings[set].names.iter().find(|name| !known.contains(*name)) {
+                return Err(format!("{FILE}: {} sounds from building {name}, which no settlement has", sound.name));
+            }
+        }
+        Ok(())
+    }
+
     pub fn presence(&self, group: usize, count: f32) -> f32 {
         let (low, high) = self.groups[group].range;
         ((count - low) / (high - low).max(1e-3)).clamp(0.0, 1.0)
