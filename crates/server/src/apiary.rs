@@ -153,13 +153,14 @@ impl Server {
     fn sting(&mut self, agent: PlayerId) {
         let Some(hive) = &self.content.bees.hive else { return };
         let (damage, effect, seconds) = (hive.def.sting, hive.stung, hive.def.stung_seconds);
+        let tick = self.tick;
         let Some(player) = self.players.get_mut(&agent) else { return };
         if player.allow_flight {
             return;
         }
         let damage = damage.min(player.health.current.saturating_sub(1));
         if damage > 0 {
-            player.health.damage(damage);
+            player.wound(damage, tick);
             player.changed(traits::HEALTH);
         }
         player.give_effects(&[(effect, seconds)]);

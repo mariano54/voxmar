@@ -734,7 +734,7 @@ mod tests {
         let content = voxmar_server::load_content(&assets).expect("content");
         let mut pack = Pack::open(&assets.join("packs").join("default")).expect("default pack");
         let mut drawn = Vec::new();
-        for name in ["camp", "hearthside", "snug", "homely", "cosy", "heart_of_the_home", "rested", "well_rested", "deep_rest"] {
+        for name in ["camp", "hearthside", "snug", "homely", "cosy", "heart_of_the_home", "rested", "well_rested", "deep_rest", "healing_sleep"] {
             let id = content.effects.id(&format!("base:{name}")).unwrap_or_else(|| panic!("no effect {name}"));
             let icon = &content.effects.get(id).icon;
             let image = pack.read(&format!("ui/effect/{icon}")).unwrap_or_else(|| panic!("{name} has no icon of its own"));
