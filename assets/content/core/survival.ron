@@ -38,4 +38,8 @@
     home_reach: 7,
     home_up: 4,
     home_down: 2,
+    // The most a home's meal effects together (a pantry, a larder, a kitchen garden, home
+    // cooking, a seat at the table: effects.ron's meal_heal and meal_time, which multiply)
+    // make of a meal's heal, and of how long its good lasts.
+    meal_most: 2.0,
 )
