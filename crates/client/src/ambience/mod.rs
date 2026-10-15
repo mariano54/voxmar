@@ -494,13 +494,15 @@ fn play(
 
 /// What the settlement around is heard as, for the gate: the `settlement` axis now (blocks
 /// to the nearest one's middle), and each one-shot that hangs on it with how fully it would
-/// play here at noon, at midnight, and here with no settlement near. Nothing before the
-/// ambience has started.
+/// play here at noon, at midnight, and here with no settlement near, all at the surface
+/// (the player may have dropped into the well on the square). Nothing before the ambience
+/// has started.
 pub fn settlement_heard(world: &World) -> Option<(f32, Vec<(String, [f32; 3])>)> {
     let ambient = world.get_resource::<Ambient>()?;
     let env = &ambient.env;
     let with = |axis: Fixed, value: f32| {
         let mut env = env.clone();
+        env.set(Fixed::Depth, 0.0);
         env.set(axis, value);
         env
     };
