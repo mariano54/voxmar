@@ -11,6 +11,15 @@ A tool is an item (`base/blocks_tools.ron`) tagged `tool`, its kind (`pickaxe`, 
 kinds come in four tiers: wooden (1), stone (2), copper (3) and iron (4), speed 2, 4, 6
 and 8, yield 0 to 0.15.
 
+Bare hands break neither natural stone nor a standing log: their rules in `base/tools.ron`
+ask for a pickaxe and an axe of tier 1 (Mariano, Oct 15: the early game was too easy, and
+the first tool must matter). So a new player's first tools are flint ones, made in the
+hand's grid from what hands can gather: flint (gravel gives it one break in eight) and
+sticks (natural leaves give one in five, a dead snag always). A flint axe is two flint
+over a stick, a flint pickaxe two flint over two sticks, both tier 1 like wood. A click on
+stone or a log by hand says "Needs a Flint Pickaxe or better" (the flint tools are listed
+first, so the refusal names them). Placed logs and cobblestone still break by hand.
+
 `base/tools.ron` (engine/src/tool.rs) says what each kind is made for, by block tags (a
 pickaxe for stone and ore, an axe for logs and planks, a shovel for soil, sand, gravel,
 clay and snow, a hoe for crops and leaves, shears for leaves and wool, a knife for plants).

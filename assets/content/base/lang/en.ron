@@ -1382,6 +1382,8 @@
     "block.base.iron_ingot": "Iron Ingot",
     "block.base.taming_treat": "Taming Treat",
     "block.base.seed_mix": "Seed Mix",
+    "block.base.flint_pickaxe": "Flint Pickaxe",
+    "block.base.flint_axe": "Flint Axe",
     "block.base.wooden_pickaxe": "Wooden Pickaxe",
     "block.base.wooden_axe": "Wooden Axe",
     "block.base.wooden_shovel": "Wooden Shovel",

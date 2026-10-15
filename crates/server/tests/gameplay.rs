@@ -600,10 +600,10 @@ fn break_and_place_blocks() {
     let mut client = Client::join();
     client.clear();
     let below = client.position.floor().as_ivec3() - IVec3::Y;
-    // Stone, which takes long enough to mine that a server catching up cannot finish it
+    // Cobblestone (a bare hand breaks it, unlike natural stone), which takes long enough to mine that a server catching up cannot finish it
     // anywhere near at once.
-    client.ok("/setblock ~ ~-1 ~ stone");
-    client.pump_until(|c| c.world.block(below) == c.content.blocks.id("base:stone"));
+    client.ok("/setblock ~ ~-1 ~ cobblestone");
+    client.pump_until(|c| c.world.block(below) == c.content.blocks.id("base:cobblestone"));
     let ground = client.world.block(below).unwrap();
     let hardness = Duration::from_secs_f32(client.content.blocks.info(ground).hardness);
 
@@ -726,16 +726,16 @@ fn crops_are_sown_at_their_level_grow_and_are_harvested_for_experience() {
 fn a_block_mined_nearly_long_enough_still_breaks_when_the_next_is_started() {
     // A busy server can complete a break later than the client, which shows it done and
     // starts on the next block; that must not cancel the first. Too early, it still does.
-    // Stone takes long enough that a server catching up on its ticks cannot finish the
+    // Cobblestone (bare hands break it, unlike natural stone) takes long enough that a server catching up on its ticks cannot finish the
     // block only begun before it is replaced.
     let mut client = Client::join();
     let feet = client.position.floor().as_ivec3();
     let (a, b, c) = (feet + IVec3::new(0, -1, 1), feet + IVec3::new(0, -1, 2), feet + IVec3::new(1, -1, 1));
-    client.ok("/fill ~ ~-1 ~1 ~1 ~-1 ~2 stone");
-    client.pump_until(|cl| [a, b, c].into_iter().all(|p| cl.world.block(p) == cl.content.blocks.id("base:stone")));
+    client.ok("/fill ~ ~-1 ~1 ~1 ~-1 ~2 cobblestone");
+    client.pump_until(|cl| [a, b, c].into_iter().all(|p| cl.world.block(p) == cl.content.blocks.id("base:cobblestone")));
     let stone = client.world.block(a).unwrap();
     let hardness = client.content.blocks.info(stone).hardness;
-    assert!(Duration::from_secs_f32(hardness) > CATCH_UP * 2, "stone mines too fast for this test");
+    assert!(Duration::from_secs_f32(hardness) > CATCH_UP * 2, "cobblestone mines too fast for this test");
     // Clicked 50 ms apart, then the next once 85% of the second's time has passed.
     let mine = |client: &Client, block: IVec3, at: Instant| client.propose_at("core:mine", ActionTarget::Block { block, face: Face::PosY }, at);
     let start = Instant::now();
@@ -755,8 +755,8 @@ fn a_block_the_client_finished_breaks_even_if_the_server_started_it_late() {
     let mut client = Client::join();
     let feet = client.position.floor().as_ivec3();
     let (a, b) = (feet + IVec3::new(0, -1, 1), feet + IVec3::new(0, -1, 2));
-    client.ok("/fill ~ ~-1 ~1 ~ ~-1 ~2 stone");
-    client.pump_until(|cl| [a, b].into_iter().all(|p| cl.world.block(p) == cl.content.blocks.id("base:stone")));
+    client.ok("/fill ~ ~-1 ~1 ~ ~-1 ~2 cobblestone");
+    client.pump_until(|cl| [a, b].into_iter().all(|p| cl.world.block(p) == cl.content.blocks.id("base:cobblestone")));
     let mine = |client: &Client, block: IVec3| client.propose("core:mine", ActionTarget::Block { block, face: Face::PosY });
     mine(&client, a);
     client.connection.send(ClientMessage::Finished { target: ActionTarget::Block { block: a, face: Face::PosY } });
@@ -1516,14 +1516,14 @@ fn looking_closely_shows_more_with_farming() {
 
 #[test]
 fn a_break_completes_on_time_by_the_clock_when_the_server_runs_behind_on_ticks() {
-    // About nine ticks a second instead of twenty: judged by its ticks, stone would take
+    // About nine ticks a second instead of twenty: judged by its ticks, cobblestone would take
     // the server more than twice its time, long after the player saw it break.
     let lag = voxmar_server::Lag { per_tick: Duration::from_millis(60), ..Default::default() };
     let mut client = Client::join_with(ServerConfig { view_distance: 2, lag, ..Default::default() });
     client.clear();
     let below = client.position.floor().as_ivec3() - IVec3::Y;
-    client.ok("/setblock ~ ~-1 ~ stone");
-    client.pump_until(|c| c.world.block(below) == c.content.blocks.id("base:stone"));
+    client.ok("/setblock ~ ~-1 ~ cobblestone");
+    client.pump_until(|c| c.world.block(below) == c.content.blocks.id("base:cobblestone"));
     let hardness = client.content.blocks.info(client.world.block(below).unwrap()).hardness;
     let (started, from) = (Instant::now(), client.ticks());
     client.propose("core:mine", ActionTarget::Block { block: below, face: Face::PosY });
@@ -1534,11 +1534,11 @@ fn a_break_completes_on_time_by_the_clock_when_the_server_runs_behind_on_ticks()
     });
     let ran = ran.get();
     let took = started.elapsed().as_secs_f32();
-    assert!(took >= hardness - 0.05, "stone ({hardness} s) broke after {took:.2} s");
+    assert!(took >= hardness - 0.05, "cobblestone ({hardness} s) broke after {took:.2} s");
     // Each tick takes at least 60 ms, so the clock finishes it in fewer ticks than counting
     // them would.
     let by_ticks = (hardness * TICKS_PER_SECOND as f32) as u64;
-    assert!(ran < by_ticks, "stone broke after {ran} ticks, as many as {by_ticks} would take counted");
+    assert!(ran < by_ticks, "cobblestone broke after {ran} ticks, as many as {by_ticks} would take counted");
 }
 
 #[test]
@@ -1548,8 +1548,8 @@ fn placing_or_throwing_while_mining_does_not_cancel_the_mining() {
     let mut client = Client::join_with(ServerConfig { view_distance: 2, lag: SLOW, ..Default::default() });
     let feet = client.position.floor().as_ivec3();
     let (a, b) = (feet + IVec3::new(0, -1, 1), feet + IVec3::new(0, -1, 2));
-    client.ok("/fill ~ ~-1 ~1 ~ ~-1 ~2 stone");
-    client.pump_until(|cl| [a, b].into_iter().all(|p| cl.world.block(p) == cl.content.blocks.id("base:stone")));
+    client.ok("/fill ~ ~-1 ~1 ~ ~-1 ~2 cobblestone");
+    client.pump_until(|cl| [a, b].into_iter().all(|p| cl.world.block(p) == cl.content.blocks.id("base:cobblestone")));
     let hardness = client.content.blocks.info(client.world.block(a).unwrap()).hardness;
     // Each click half the break's time after the last, by the clock the server judges by.
     let (mut at, half) = (Instant::now(), Duration::from_secs_f32(hardness * 0.5));
@@ -1573,8 +1573,8 @@ fn a_finished_break_the_server_refused_is_undone_on_the_client() {
     // client must be told what is really there rather than keep a block only it broke.
     let mut client = Client::join();
     let far = client.position.floor().as_ivec3() + IVec3::new(0, -1, 9);
-    client.ok("/setblock ~ ~-1 ~9 stone");
-    client.pump_until(|c| c.world.block(far) == c.content.blocks.id("base:stone"));
+    client.ok("/setblock ~ ~-1 ~9 cobblestone");
+    client.pump_until(|c| c.world.block(far) == c.content.blocks.id("base:cobblestone"));
     let stone = client.world.block(far).unwrap();
     let target = ActionTarget::Block { block: far, face: Face::PosY };
     client.propose("core:mine", target);
@@ -2971,6 +2971,31 @@ fn gravel_sometimes_breaks_to_flint_instead() {
         }
     }
     assert!(flints > 0, "sixty gravel broke without a flint");
+}
+
+/// A standing log refuses a bare hand: the client's break it claims finished is undone, the
+/// log put back. Held, a flint axe fells it, and the log comes to hand.
+#[test]
+fn a_bare_hand_fells_no_tree_and_a_flint_axe_does() {
+    let mut client = Client::join();
+    let below = client.position.floor().as_ivec3() - IVec3::Y;
+    client.ok("/clear");
+    client.ok("/setblock ~ ~-1 ~ oak_log");
+    let (log, axe) = (client.content.blocks.expect("base:oak_log"), client.content.blocks.expect("base:flint_axe"));
+    client.pump_until(|c| c.world.block(below) == Some(log));
+    let target = ActionTarget::Block { block: below, face: Face::PosY };
+    client.propose("core:mine", target);
+    client.settle();
+    client.world.set_block(below, BlockId::AIR);
+    client.connection.send(ClientMessage::Finished { target });
+    client.pump_until(|c| c.world.block(below) == Some(log));
+    assert!(client.inventory.slots.iter().flatten().all(|s| s.item != log), "a bare hand took a log");
+    client.ok("/give flint_axe 1");
+    client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == axe));
+    client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    client.propose("core:mine", target);
+    client.pump_until(|c| c.world.block(below) == Some(BlockId::AIR));
+    client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == log));
 }
 
 // Seed 3 has a village at (368, 135, 784), 421 blocks from spawn (432, 134, 368).
@@ -7091,6 +7116,27 @@ impl Fresh {
         }
     }
 
+    /// As [`Fresh::gather`], for what a block gives only sometimes in place of its own drop
+    /// (`instead` in tools.ron: flint from gravel, a stick from leaves): breaks the nearest of
+    /// `targets` until `need` of `item` are carried or lie loose, then collects them.
+    fn gather_chance(&mut self, tool: &str, mut targets: Vec<IVec3>, item: &str, need: u32) {
+        self.hold(tool);
+        while self.have(item) + loose(&self.c, item) < need {
+            targets.retain(|&t| solid(&self.c, t));
+            let from = self.at;
+            let Some(target) = targets.iter().copied().min_by_key(|t| ((across(Self::middle(*t), from) * 10.0) as i32, t.y)) else {
+                panic!("{item}: every block was broken for {} of {need}", self.have(item) + loose(&self.c, item));
+            };
+            let centre = Self::middle(target);
+            if across(centre, self.at) > 2.3 {
+                self.walk_toward(centre, 1.3);
+            } else {
+                self.mine(target);
+            }
+        }
+        self.collect(item, need);
+    }
+
     /// Waits until `need` of `item` are carried, closing on the nearest loose one until it is
     /// taken: walking to one out of the pull, and onto one in reach that has lain there untaken.
     fn collect(&mut self, item: &str, need: u32) {
@@ -7378,6 +7424,15 @@ impl Fresh {
         for x in [1, 3, 5, 7] {
             c.fill(origin, v(x, 0, -5), v(x, 3, -5), "oak_log");
         }
+        // Bushes of oak leaves along the plot's south edge, each a column three high with room
+        // to walk between, for the sticks bare hands pull from leaves, and a gravel bank beside
+        // them in two rows for flint: a new player's first tools are flint on sticks.
+        for x in (-6..=8).step_by(2) {
+            c.fill(origin, v(x, 0, 12), v(x, 2, 12), "oak_leaves");
+        }
+        for z in [10, 13] {
+            c.fill(origin, v(10, 0, z), v(20, 1, z), "gravel");
+        }
         // A patch of natural stone one block high, with two coal ores on its near edge.
         c.fill(origin, v(9, 0, -3), v(17, 0, 4), "stone");
         c.fill(origin, v(9, 0, 3), v(9, 0, 4), "coal_ore");
@@ -7393,7 +7448,7 @@ impl Fresh {
         // A low bank of dirt, eight blocks, for the earth clamp: the only dirt above the
         // ground, so the bot finds it by looking (`Fresh::raised_dirt`).
         c.fill(origin, v(-7, 0, 8), v(-4, 0, 9), "dirt");
-        let probes = [(v(7, 3, -5), "base:oak_log"), (v(17, 0, 4), "base:stone"), (v(-2, -1, 11), "base:water"), (v(-8, 1, 0), "base:stone"), (v(-7, 0, 2), "base:wild_wheat"), (v(-4, 0, 9), "base:dirt")];
+        let probes = [(v(7, 3, -5), "base:oak_log"), (v(17, 0, 4), "base:stone"), (v(-2, -1, 11), "base:water"), (v(-8, 1, 0), "base:stone"), (v(-7, 0, 2), "base:wild_wheat"), (v(-4, 0, 9), "base:dirt"), (v(8, 2, 12), "base:oak_leaves"), (v(20, 1, 13), "base:gravel")];
         c.pump_until(|c| probes.iter().all(|&(at, name)| c.world.block(origin + at) == c.content.blocks.id(name)) && c.world.block(origin + v(-9, 1, 0)) == Some(BlockId::AIR));
         let (at, t0) = (c.position, c.ticks());
         let epoch = (t0, Instant::now());
@@ -7604,10 +7659,21 @@ fn the_first_days(f: &mut Fresh) -> Site {
     let rel = |f: &Fresh, cells: Vec<IVec3>| -> Vec<IVec3> { cells.into_iter().map(|p| f.origin + p).collect() };
     let (cobble, clay, stick, log) = ("base:cobblestone", "base:clay", "base:stick", "base:oak_log");
 
-    // Timber, with bare hands (a new player starts with nothing): four logs, for the planks
-    // that make the table, the sticks and the first two tools.
+    // Flint tools, with bare hands (a new player starts with nothing, and a bare hand fells
+    // no tree and breaks no stone): sticks pulled from leaves, flint from gravel, a flint axe
+    // and pickaxe made in the hand's grid.
+    let (flint, leaves) = ("base:flint", rel(f, (-6..=8).step_by(2).flat_map(|x| (0..=2).map(move |y| v(x, y, 12))).collect()));
+    f.gather_chance("", leaves, stick, 3);
+    let gravel = rel(f, (10..=20).flat_map(|x| (0..=1).flat_map(move |y| [10, 13].map(move |z| v(x, y, z)))).collect());
+    f.gather_chance("", gravel, flint, 4);
+    f.craft(&[(0, flint, 1), (1, flint, 1), (3, stick, 1)], "base:flint_axe", 1);
+    f.craft(&[(0, flint, 1), (1, flint, 1), (3, stick, 1), (4, stick, 1)], "base:flint_pickaxe", 1);
+    f.mark("flint_tools");
+
+    // Timber, with the flint axe: four logs, for the planks that make the table, the sticks
+    // and the next tools.
     let trunks = rel(f, [1, 3, 5, 7].into_iter().flat_map(|x| (0..4).map(move |y| v(x, y, -5))).collect());
-    f.gather("", trunks.clone(), log, 4);
+    f.gather("base:flint_axe", trunks.clone(), log, 4);
     f.mark("timber");
     f.craft(&[(0, log, 4)], "base:oak_planks", 16);
 
@@ -7620,7 +7686,6 @@ fn the_first_days(f: &mut Fresh) -> Site {
     f.place("base:crafting_table", table - up);
     f.craft(&[(0, "base:oak_planks", 3), (3, "base:oak_planks", 3)], stick, 12);
     f.at_table(table);
-    f.craft(&[(0, "base:oak_planks", 1), (1, "base:oak_planks", 1), (2, "base:oak_planks", 1), (4, stick, 1), (7, stick, 1)], "base:wooden_pickaxe", 1);
 
     // An Axe to It: a wooden axe, and the twelve logs the campfires and later planks want
     // chopped with it, in half the time a fist takes.
@@ -7628,9 +7693,9 @@ fn the_first_days(f: &mut Fresh) -> Site {
     f.gather("base:wooden_axe", trunks, log, 12);
     f.mark("an_axe_to_it");
 
-    // Stone in Hand: cobblestone with the wooden pickaxe, then a stone pickaxe and axe.
+    // Stone in Hand: cobblestone with the flint pickaxe, then a stone pickaxe and axe.
     let stone = rel(f, (9..=17).flat_map(|x| (-3..=4).map(move |z| v(x, 0, z))).filter(|p| !(p.x == 9 && p.z >= 3)).collect());
-    f.gather("base:wooden_pickaxe", stone.clone(), cobble, 9);
+    f.gather("base:flint_pickaxe", stone.clone(), cobble, 9);
     f.at_table(table);
     f.craft(&[(0, cobble, 1), (1, cobble, 1), (2, cobble, 1), (4, stick, 1), (7, stick, 1)], "base:stone_pickaxe", 1);
     f.craft(&[(0, cobble, 1), (1, cobble, 1), (3, cobble, 1), (4, stick, 1), (7, stick, 1)], "base:stone_axe", 1);
@@ -7878,7 +7943,7 @@ impl Fresh {
     /// takes nothing more in (a quest's reward, a craft, dug clay), and cooked food takes a
     /// slot each, so by the Farm age a player clears theirs out as this does.
     fn make_room(&mut self, free: usize) {
-        const SPARE: [&str; 7] = ["base:burnt_food", "base:feather", "base:wooden_pickaxe", "base:raw_small_game", "base:cooked_small_game", "base:oak_planks", "base:bread"];
+        const SPARE: [&str; 7] = ["base:burnt_food", "base:feather", "base:flint_pickaxe", "base:raw_small_game", "base:cooked_small_game", "base:oak_planks", "base:bread"];
         let slots = voxmar_engine::inventory::SLOTS;
         let empty = |c: &Client| (0..slots).filter(|&s| c.inventory.get(s).is_none()).count();
         if empty(&self.c) >= free {

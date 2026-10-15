@@ -1379,6 +1379,8 @@
     "block.base.iron_ingot": "鉄のインゴット",
     "block.base.taming_treat": "手なずけのおやつ",
     "block.base.seed_mix": "混ぜ種",
+    "block.base.flint_pickaxe": "火打ち石のつるはし",
+    "block.base.flint_axe": "火打ち石の斧",
     "block.base.wooden_pickaxe": "木のつるはし",
     "block.base.wooden_axe": "木の斧",
     "block.base.wooden_shovel": "木のシャベル",

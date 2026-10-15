@@ -423,6 +423,10 @@ steps! {
     /// is within reach, so a log in the grid shows six planks, not four, and crafted, the
     /// server gives six.
     Chop,
+    /// Bare hands are refused a standing log, the refusal naming the least axe; that axe
+    /// made in the hand's grid from its recipe (flint and sticks in the base game) fells it,
+    /// and the log comes to hand.
+    Flint,
     /// A survival player's inventory search finds the stone pickaxe by "pick"; its recipe
     /// opened in the viewer finishes the "Look It Up" quest; the quest book's page for the
     /// pickaxe shows its recipe inline, an item clicked there opens the viewer, and Back
@@ -1810,6 +1814,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Ore => ore(world, gate, now, in_phase),
         Step::Recipes => recipes(world, gate, now, in_phase),
         Step::Chop => chop(world, gate, now),
+        Step::Flint => flint(world, gate, now),
         Step::LookUp => look_up(world, gate, now, in_phase),
         Step::Refusal => refusal(world, gate, now, in_phase),
         Step::Merged => merged(world, gate, now, in_phase),
@@ -4298,7 +4303,7 @@ fn chop(world: &mut World, gate: &mut Gate, now: f32) {
         net.command(&format!("setblock {} {} {} air", block.x, block.y, block.z));
         net.command("clear oak_log");
         net.command("clear oak_planks");
-        gate.next(Step::LookUp, now);
+        gate.next(Step::Flint, now);
     };
     match gate.phase {
         0 => {
@@ -4369,6 +4374,154 @@ fn chop(world: &mut World, gate: &mut Gate, now: f32) {
             } else if waited {
                 gate.check("chopping block", Err(format!("a log crafted by a chopping block gave {split} oak planks (grid emptied {empty}), not six, in {CHOP_WAIT} server seconds")));
                 end(world, gate);
+            }
+        }
+    }
+}
+
+/// Longest a flint stage may wait for the server.
+const FLINT_WAIT: f32 = 10.0;
+
+/// The first block, in registry order, that is a log whose rule in the loaded `tools.ron`
+/// asks for a tool at level 1, the least tool that does, and that tool's recipe made in the
+/// hand's grid: a tree a bare hand cannot fell, and what the hand makes to fell it.
+fn felled_by(content: &voxmar_engine::content::Content) -> Option<(BlockId, BlockId, voxmar_engine::craft::Recipe)> {
+    let (blocks, tools) = (&content.blocks, &content.tools);
+    let log = blocks.ids().find(|&b| blocks.def(b).has_tag("log") && tools.rule(b).is_some_and(|rule| rule.tool.is_some() && rule.level <= 1))?;
+    let rule = tools.rule(log)?;
+    let tool = tools.first_of(rule.tool?, rule.tier)?;
+    let recipe = content.recipes.iter().find(|r| r.output == tool && !r.needs_table())?.clone();
+    Some((log, tool, recipe))
+}
+
+/// The flint step: a standing log refuses an empty hand and names the least axe; that axe,
+/// crafted in the hand's grid from what its recipe asks, fells it and the log comes to hand.
+fn flint(world: &mut World, gate: &mut Gate, now: f32) {
+    let block = gate.feet + IVec3::new(0, 0, 14) + CHOP_FROM_FIRE;
+    let stand = Vec3::new(block.x as f32 + 0.5, block.y as f32, block.z as f32 - 2.0);
+    let waited = gate.server_in_phase() > FLINT_WAIT;
+    let content = world.resource::<Launch>().content.clone();
+    let Some((log, tool, recipe)) = felled_by(&content) else {
+        gate.check("flint", Err("no log in the loaded tools.ron asks for a tool at level 1 that the hand's grid can make".into()));
+        gate.next(Step::LookUp, now);
+        return;
+    };
+    let name = |b: BlockId| content.blocks.def(b).name.clone();
+    let cells: Vec<(usize, String)> = recipe.cells().iter().enumerate().filter_map(|(cell, item)| item.map(|item| (cell, name(item)))).collect();
+    let short = |n: &str| n.strip_prefix("base:").unwrap_or(n).to_owned();
+    let end = |world: &mut World, gate: &mut Gate| {
+        mouse(world, MouseButton::Left, false);
+        let net = world.resource::<Net>();
+        net.command(&format!("setblock {} {} {} air", block.x, block.y, block.z));
+        for item in [log, tool].into_iter().chain(recipe.cells().into_iter().flatten()) {
+            net.command(&format!("clear {}", short(&name(item))));
+        }
+        gate.next(Step::LookUp, now);
+    };
+    match gate.phase {
+        // An empty hand by a standing log: whatever the earlier steps left of the log, the
+        // tool and its makings cleared, the log set and the player stood before it.
+        0 => {
+            let net = world.resource::<Net>();
+            for item in [log, tool].into_iter().chain(recipe.cells().into_iter().flatten()) {
+                net.command(&format!("clear {}", short(&name(item))));
+            }
+            net.command(&format!("setblock {} {} {} {}", block.x, block.y, block.z, short(&name(log))));
+            net.command(&format!("tp {} {} {}", stand.x, stand.y, stand.z));
+            let empty = (0..voxmar_engine::inventory::HOTBAR_SLOTS).find(|&slot| world.resource::<LocalPlayer>().inventory.get(slot).is_none());
+            if let Some(slot) = empty {
+                world.resource_mut::<LocalPlayer>().selected = slot;
+            }
+            gate.advance(now);
+        }
+        // Struck by hand it says under the crosshair which tool it wants, naming the axe.
+        1 => {
+            let stood = world.resource::<ClientWorld>().block(block) == Some(log);
+            let there = world.resource::<LocalPlayer>().position.distance(stand) < 0.5;
+            let held = holding_any(world);
+            let wanted = why_by_hand(world, log);
+            let tool_name = world.resource::<Locale>().block(content.blocks.def(tool));
+            if !(stood && there && held.is_none() && drawn(world, block)) {
+                if waited {
+                    gate.check("flint: by hand", Err(format!("the {} never stood drawn at {block} with the player before it and an empty hand (stands {stood}, there {there}, holding {held:?})", name(log))));
+                    end(world, gate);
+                }
+                return;
+            }
+            aim_at(world, block.as_vec3() + Vec3::splat(0.5));
+            match wanted {
+                Some(wanted) if world.resource::<crate::hud::skills::SkillToasts>().shows_refusal(&wanted) => {
+                    mouse(world, MouseButton::Left, false);
+                    let still = world.resource::<ClientWorld>().block(block) == Some(log);
+                    let judged = if !wanted.contains(&tool_name) {
+                        Err(format!("the {} refused by hand said \"{wanted}\", which does not name the {tool_name}", name(log)))
+                    } else if !still {
+                        Err(format!("the {} said \"{wanted}\" but was felled by hand all the same", name(log)))
+                    } else {
+                        Ok(format!("the {} refused an empty hand: \"{wanted}\"", name(log)))
+                    };
+                    gate.check("flint: by hand", judged);
+                    gate.advance(now);
+                }
+                wanted if waited => {
+                    mouse(world, MouseButton::Left, false);
+                    let showing: Vec<String> = world.resource::<crate::hud::skills::SkillToasts>().refusals().map(str::to_owned).collect();
+                    gate.check("flint: by hand", Err(format!("the {} struck by hand never showed {wanted:?} (refusals {showing:?}); the crosshair was on {}, screens open {:?}", name(log), crosshair_on(world), covering_screens(world))));
+                    end(world, gate);
+                }
+                // A fresh press each time: a held button mines on, it does not ask again.
+                _ => mouse(world, MouseButton::Left, gate.frames.is_multiple_of(2)),
+            }
+        }
+        // The makings given, one for each cell of the recipe.
+        2 => {
+            if gate.settled == 0 {
+                let net = world.resource::<Net>();
+                for (_, item) in &cells {
+                    net.command(&format!("give {} 1", short(item)));
+                }
+                gate.settled = 1;
+            }
+            let wants = |item: &str| cells.iter().filter(|(_, i)| i == item).count() as u32;
+            let given = cells.iter().all(|(_, item)| holding(world, item).0 >= wants(item));
+            if given {
+                let laid: Vec<(usize, &str)> = cells.iter().map(|(cell, item)| (*cell, item.as_str())).collect();
+                if lay_and_craft(world, &laid) {
+                    gate.advance(now);
+                }
+            } else if waited {
+                let had: Vec<(String, u32)> = cells.iter().map(|(_, item)| (item.clone(), holding(world, item).0)).collect();
+                gate.check("flint: made", Err(format!("the makings of the {} never all came to hand: carried {had:?}", name(tool))));
+                end(world, gate);
+            }
+        }
+        // Crafted, it is taken in hand.
+        3 => {
+            let made = holding(world, &name(tool)).0;
+            let grid = world.resource::<LocalPlayer>().inventory.grid().iter().all(Option::is_none);
+            if made == 1 && grid && select(world, &name(tool)) {
+                let inputs: Vec<String> = cells.iter().map(|(_, item)| short(item)).collect();
+                gate.check("flint: made", Ok(format!("the {} was made in the hand's grid from {}", name(tool), inputs.join(", "))));
+                gate.advance(now);
+            } else if waited {
+                gate.check("flint: made", Err(format!("crafting the {} left {made} of it carried (grid emptied {grid}), and it never came to hand", name(tool))));
+                end(world, gate);
+            }
+        }
+        // Held, it fells the log, and the log comes to hand.
+        _ => {
+            let felled = world.resource::<ClientWorld>().block(block) != Some(log);
+            let got = holding(world, &name(log)).0;
+            if felled && got >= 1 {
+                mouse(world, MouseButton::Left, false);
+                gate.check("flint: felled", Ok(format!("held, the {} felled the {} and its log came to hand", name(tool), name(log))));
+                end(world, gate);
+            } else if waited {
+                gate.check("flint: felled", Err(format!("holding {:?}, the {} at {block} felled {felled}, {got} logs carried; the crosshair was on {}, screens open {:?}", holding_any(world), name(log), crosshair_on(world), covering_screens(world))));
+                end(world, gate);
+            } else {
+                aim_at(world, block.as_vec3() + Vec3::splat(0.5));
+                mouse(world, MouseButton::Left, true);
             }
         }
     }
