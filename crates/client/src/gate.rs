@@ -735,8 +735,10 @@ struct Gate {
     food_moved: bool,
     /// The Cook step's hearth or stove has raw rabbit selected and is being clicked.
     cook_started: bool,
-    /// The campfire the weather step dries the player by, while it stands.
+    /// The campfire the weather step dries the player by, while it stands, and what the
+    /// storm left the player wet with before it was lit.
     dry_fire: Option<IVec3>,
+    storm_wet: Vec<String>,
     /// Frames in a row the door step's lit or darkened spot has had nothing near it waiting
     /// to be meshed (`light_drawn`).
     light_frames: u32,
@@ -936,6 +938,7 @@ impl Gate {
             food_moved: false,
             cook_started: false,
             dry_fire: None,
+            storm_wet: Vec::new(),
             light_frames: 0,
             tame_aim: [0; 3],
             tame_nearest: f32::MAX,
@@ -7562,23 +7565,21 @@ fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             match kinds.get(phase as usize) {
                 Some((kind, ..)) => {
                     world.resource::<Net>().command(&format!("weather {kind} 120"));
-                    gate.advance(now);
-                }
-                // Wet through from the storm, and the rain gone (snow is not rain): a
-                // campfire beside the player dries them off.
-                None => {
-                    let at = world.resource::<LocalPlayer>().position.floor().as_ivec3() + IVec3::new(2, 0, 0);
+                    // Wet through from the storm, and the rain gone with the snow coming
+                    // (snow is not rain): a campfire two blocks behind the player, out of
+                    // the snow's shot, dries them off while the snow comes. Snowblown is
+                    // the snow's own, whatever fire is near.
+                    gate.storm_wet = wet_through(world);
+                    let at = world.resource::<LocalPlayer>().position.floor().as_ivec3() + IVec3::new(0, 0, 2);
                     world.resource::<Net>().command(&format!("setblock {} {} {} campfire", at.x, at.y, at.z));
                     gate.dry_fire = Some(at);
                     gate.advance(now);
                 }
+                None => gate.advance(now),
             }
         }
         3 => {
-            let wet: Vec<String> = {
-                let (player, launch) = (world.resource::<LocalPlayer>(), world.resource::<Launch>());
-                player.vitals.effects.iter().map(|a| launch.content.effects.get(a.effect)).filter(|def| def.lingers > 0.0 && def.ends.is_some()).map(|def| def.title.to_lowercase()).collect()
-            };
+            let wet = wet_through(world);
             let dried = wet.is_empty();
             if !dried && !gate.waited_out(10.0) {
                 // Each look at the player, once every `TAP_EVERY` of the game's time, counts
@@ -7589,7 +7590,17 @@ fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 }
                 return;
             }
-            gate.check("weather: dries by a fire", if dried { Ok("wet through from the storm, the player dried off beside a campfire once the rain had gone".into()) } else { Err(format!("{:.1} server s beside a campfire, out of the rain, the player is still {}", gate.server_in_phase(), wet.join(", "))) });
+            let storm_wet = std::mem::take(&mut gate.storm_wet);
+            gate.check(
+                "weather: dries by a fire",
+                if storm_wet.is_empty() {
+                    Err("the storm never left the player wet through, so nothing was there to dry".into())
+                } else if dried {
+                    Ok(format!("{} from the storm, the player dried off beside a campfire once the rain had gone", storm_wet.join(", ")))
+                } else {
+                    Err(format!("{:.1} server s beside a campfire, out of the rain, the player is still {}", gate.server_in_phase(), wet.join(", ")))
+                },
+            );
             if let Some(at) = gate.dry_fire.take() {
                 world.resource::<Net>().command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
             }
@@ -7597,6 +7608,9 @@ fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             // end: one clearing waited for, not two back to back.
             gate.weather_clear_owed = true;
             gate.next(Step::Depths, now);
+        }
+        4 if let Some(at) = gate.dry_fire.take() => {
+            world.resource::<Net>().command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
         }
         4 if sky_clear(&shown) => {
             eased(gate);
@@ -7609,6 +7623,13 @@ fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         }
         _ => {}
     }
+}
+
+/// What the player is wet through with: the lingering effects a fire ends (soaked,
+/// drenched).
+fn wet_through(world: &World) -> Vec<String> {
+    let (player, launch) = (world.resource::<LocalPlayer>(), world.resource::<Launch>());
+    player.vitals.effects.iter().map(|a| launch.content.effects.get(a.effect)).filter(|def| def.lingers > 0.0 && def.ends.is_some()).map(|def| def.title.to_lowercase()).collect()
 }
 
 /// Dug down, in a cave or in a room, mist is gone; cracks are lit as the face under them is.
