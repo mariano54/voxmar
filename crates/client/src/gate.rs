@@ -8548,13 +8548,18 @@ fn populated(world: &World, since: f32) -> Option<usize> {
 /// from the first such line in the chat since `since` (the game's clock); none until the
 /// reply has come.
 fn counted(world: &World, key: &str, since: f32) -> Option<usize> {
+    counted_in(world, key, world.resource::<crate::hud::console::Console>().since(since))
+}
+
+/// The count the first line of `lines` worded by `key` gave.
+fn counted_in<'a>(world: &World, key: &str, mut lines: impl Iterator<Item = &'a str>) -> Option<usize> {
     const COUNT: &str = "\u{1}";
     let locale = world.resource::<Locale>();
     let forms: Vec<(String, String)> = [key.to_owned(), format!("{key}.one"), format!("{key}.other")]
         .iter()
         .filter_map(|key| locale.format(key, &[("count", &COUNT)]).split_once(COUNT).map(|(b, a)| (b.to_owned(), a.to_owned())))
         .collect();
-    world.resource::<crate::hud::console::Console>().since(since).find_map(|line| {
+    lines.find_map(|line| {
         forms.iter().find_map(|(before, after)| {
             let (_, rest) = line.split_once(before.as_str())?;
             rest.strip_suffix(after.as_str())?.trim().parse().ok()
@@ -9630,7 +9635,9 @@ fn sweep_bears(world: &mut World, gate: &mut Gate, species: voxmar_engine::creat
     mouse(world, MouseButton::Right, false);
     key(world, KeyCode::KeyW, false);
     if let Some(since) = gate.sweep.asked {
-        match counted(world, "command.creatures.done", since) {
+        // Only a line after the frame the kill went out: the last kill's answer may have
+        // come in that same frame.
+        match counted_in(world, "command.creatures.done", world.resource::<crate::hud::console::Console>().after(since)) {
             Some(killed) => (gate.sweep.asked, gate.sweep.answered) = (None, Some(killed)),
             None if gate.server_now - gate.sweep.killed < SWEEP_REPLY => return false,
             None => {
@@ -14640,6 +14647,11 @@ mod tests {
                 world.resource_mut::<crate::hud::console::Console>().push(voxmar_protocol::ChatKind::Info, &reply, 2.0);
                 assert_eq!(super::counted(&world, "command.creatures.done", 1.5), Some(killed as usize), "{code}: {reply}");
                 assert_eq!(super::counted(&world, "command.creatures.done", 2.5), None, "{code}: told before the kill");
+                // A sweep's next kill sent in the frame the last answer came reads only what
+                // comes after it, never that same answer again.
+                let console = world.resource::<crate::hud::console::Console>();
+                assert_eq!(super::counted_in(&world, "command.creatures.done", console.after(2.0)), None, "{code}: the last kill's answer read again");
+                assert_eq!(super::counted_in(&world, "command.creatures.done", console.after(1.5)), Some(killed as usize), "{code}: {reply}");
             }
         }
     }
