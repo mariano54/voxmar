@@ -13020,8 +13020,16 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     };
     match gate.phase {
         0 => {
+            // On the pad's middle with nothing else about it: what the steps before left there
+            // (a wild one wandering in, a kept one of ours) can neither be fed the wheat nor
+            // stand in the way, and the walk to the hen is the same whichever step came first.
             let net = world.resource::<Net>();
-            net.command(&format!("summon junglefowl 1 {} {} {}", pad.x - 2, pad.y, pad.z));
+            net.command(&format!("tp {} {} {}", pad.x as f32 + 0.5, pad.y, pad.z as f32 + 0.5));
+            net.command("creatures disperse");
+            net.command("creatures remove");
+            // Held, it stands where it arrives for the minute the step takes: fed, read and let
+            // go where the player reaches it, never chased about the pad as a kept one wanders.
+            net.command(&format!("summon junglefowl 1 {} {} {} held", pad.x - 2, pad.y, pad.z));
             net.command("give wheat 16");
             gate.advance(now);
         }
@@ -13173,7 +13181,8 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.check("release", Err("8 server seconds of Shift and right clicks on our junglefowl did not let it go".into()));
                 gate.next(Step::Party, now);
             } else {
-                // It wanders (up to 7 blocks from home) and reach is 5: walk toward it while far.
+                // Held where it was summoned, a step or two from where feeding left the player:
+                // walk toward it while far.
                 let far = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz()) > 1.8;
                 key(world, KeyCode::KeyW, far);
                 aim_at(world, view.position + Vec3::Y * 0.3);
