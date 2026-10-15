@@ -11100,11 +11100,13 @@ fn ranged_feel(world: &mut World, gate: &mut Gate) {
             }
             // Lying there: rolled over all the way, at its own size, not sinking.
             let w = world.resource::<Creatures>().watched;
+            let drawn = format!("{lying:.2} s into its death the deer was drawn rolled {:.1} of {:.0} degrees (within 3 wanted), at {:.3} of its size (0.99 or more), sunk {:.4} blocks (none)", w.death_roll, death.roll, w.death_scale, w.death_sink);
             if (w.death_roll - death.roll).abs() > 3.0 || w.death_scale < 0.99 || w.death_sink > 1e-4 {
-                gate.check("ranged feel: death", Err(format!("{lying:.2} s into its death the deer was drawn rolled {:.0} of {:.0} degrees, at {:.2} of its size, sunk {:.2} blocks", w.death_roll, death.roll, w.death_scale, w.death_sink)));
+                gate.check("ranged feel: lying", Err(drawn));
                 done(world, gate, now);
                 return;
             }
+            gate.check("ranged feel: lying", Ok(drawn));
             world.resource_mut::<Creatures>().watch_step = Some(0.0);
             gate.advance(now);
         }
