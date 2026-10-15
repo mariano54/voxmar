@@ -57,6 +57,10 @@ pub struct SavedCreature {
     pub condition: Option<f32>,
     #[serde(default)]
     pub fed_days_ago: Option<f32>,
+    /// Its own rolls drawn so far (`Live::rolls`); none in saves from before they were
+    /// counted.
+    #[serde(default)]
+    pub rolls: u64,
 }
 
 impl Server {
@@ -367,7 +371,10 @@ impl Server {
             let often = self.content.creatures.condition().output(creature.condition).max(0.05);
             for (index, product) in species.def.products.iter().enumerate() {
                 if product.tool.is_none() && tick >= creature.products_due[index] {
-                    creature.products_due[index] = tick + product_ticks(product.every / often, creature.seed ^ tick, index);
+                    // By its own count of rolls, never the tick it is laid on.
+                    let roll = voxmar_engine::creature::mix(creature.seed, creature.rolls ^ crate::creatures::PRODUCT);
+                    creature.rolls += 1;
+                    creature.products_due[index] = tick + product_ticks(product.every / often, roll, index);
                     let keeper = creature.owner_id.filter(|_| product.nests);
                     laid.push((creature.body.position, species.products[index], product.count, creature.traits.yield_, id, keeper));
                 }
@@ -533,6 +540,7 @@ impl Server {
                     genome: Some(c.genome.clone()),
                     condition: Some(c.condition),
                     fed_days_ago: Some(self.days_since(c.fed)),
+                    rolls: c.rolls,
                 })
             })
             .chain(waiting)
@@ -573,6 +581,7 @@ impl Server {
             let (tick, day) = (self.tick, self.day);
             let creature = self.creatures.live.get_mut(&id).expect("just made");
             creature.seed = s.seed;
+            creature.rolls = s.rolls;
             creature.home = Vec3::from_array(s.home);
             creature.climate_fit = fit;
             creature.body.yaw = s.yaw;
@@ -628,6 +637,7 @@ mod tests {
             genome: None,
             condition: None,
             fed_days_ago: None,
+            rolls: 0,
         }
     }
 
@@ -957,6 +967,8 @@ mod tests {
         let mut trimmed = 0;
         for salt in 0..4000 {
             server.creatures.unplaced.clear();
+            // The same spot again: the second try is drawn by the same count of rolls.
+            let rolls = server.meta.rolls;
             server.spawn_near(player, salt);
             let free = server.creatures.live.len();
             server.creatures.live.clear();
@@ -965,6 +977,7 @@ mod tests {
             }
             server.creatures.unplaced = full.clone();
             assert_eq!(server.wild_room(), 1);
+            server.meta.rolls = rolls;
             server.spawn_near(player, salt);
             assert_eq!(server.creatures.live.len(), 1, "{} came for one place, {free} with room", server.creatures.live.len());
             server.creatures.live.clear();

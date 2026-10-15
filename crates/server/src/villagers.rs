@@ -531,7 +531,10 @@ impl Server {
         if fresh {
             let leg = self.villagers.towns[&town].people[i].trip.as_ref().filter(|t| t.place == place).map_or(0, |t| t.leg + 1);
             let mut trip = Trip { place, slot, day, path: Vec::new(), step: 0, pose: Pose::Idle, face: None, next_spot: None, leg, best: (f32::MAX, tick), retry: 0, pursuit: None };
-            let Some(target) = self.target(town, i, mix(seed, tick / 200), &mut trip, live) else { return };
+            // Which spot, by the day, the place's slot and the trip's leg there, never the tick
+            // it sets out on.
+            let pick = mix(mix(seed, day as u64), (slot as u64) << 32 | leg as u64);
+            let Some(target) = self.target(town, i, pick, &mut trip, live) else { return };
             let start = at.floor().as_ivec3();
             match self.find_way(start, target, town, live) {
                 Way::Found(path) => trip.path = path,

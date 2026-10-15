@@ -127,6 +127,9 @@ struct Instance {
     id: u64,
     event: usize,
     seed: u64,
+    /// Rolls of the party's own drawn so far (how long it holds, pauses, waits), so each is
+    /// numbered by them, never by the tick it falls on.
+    rolls: std::cell::Cell<u64>,
     born: u64,
     members: Vec<Member>,
     plan: Plan,
@@ -187,6 +190,7 @@ impl Instance {
             id,
             event,
             seed,
+            rolls: Default::default(),
             born,
             members,
             plan,
@@ -217,6 +221,24 @@ impl Instance {
             shown: Default::default(),
         }
     }
+
+    /// The party's next roll of a kind (`salt`), counted.
+    fn next_roll(&self, salt: u64) -> u64 {
+        next_party_roll(self.seed, &self.rolls, salt)
+    }
+
+    /// The party's next roll of a kind, as a share of one.
+    fn roll(&self, salt: u64) -> f32 {
+        unit_from(self.next_roll(salt))
+    }
+}
+
+/// A party's next roll of a kind (`salt`) by its seed and count of rolls (`Instance::rolls`),
+/// counted: for where the party is borrowed in part.
+fn next_party_roll(seed: u64, rolls: &std::cell::Cell<u64>, salt: u64) -> u64 {
+    let n = rolls.get();
+    rolls.set(n + 1);
+    mix(mix(seed, n), salt)
 }
 
 struct Member {
@@ -250,7 +272,7 @@ enum Plan {
     /// A ring of stops, each paused at, a number of laps.
     Patrol { anchor: Vec3, next: usize, stops: u8, laps_left: u8, wait_until: Option<u64>, turn: f32 },
     /// To a spot, a stay there, then away.
-    Camp { spot: Vec3, since: u64, stay_until: Option<u64>, arrive_by: u64, away: f32 },
+    Camp { spot: Vec3, stay_until: Option<u64>, arrive_by: u64, away: f32 },
     /// Keeping to a player, until a tick.
     Shadow { until: u64 },
     /// Turned on a player: the party fights on by its own nature while they stay near.
@@ -438,7 +460,8 @@ impl Server {
             return;
         }
         let rules = *self.content.wandering.rules();
-        let seed = mix(mix(self.meta.seed, self.tick), salt ^ 0x3a9d);
+        // By the world's count of rolls, never the tick it is tried on.
+        let seed = mix(self.meta.roll_seed(crate::save::ROLL_PARTY), salt ^ 0x3a9d);
         if unit_from(mix(seed, 1)) >= rules.chance {
             return;
         }
@@ -484,7 +507,7 @@ impl Server {
         if ready.is_empty() {
             return;
         }
-        let seed = mix(mix(self.meta.seed, self.tick), salt ^ 0x5f0d);
+        let seed = mix(self.meta.roll_seed(crate::save::ROLL_FOLLOWER), salt ^ 0x5f0d);
         if unit_from(mix(seed, 1)) >= rules.chance {
             return;
         }
@@ -876,7 +899,7 @@ impl Server {
                 let spot = at + Vec3::new(towards.x, 0.0, towards.y) * ahead;
                 let arrive_by = self.tick + ticks(ahead / 1.2 + 60.0);
                 let _ = stay;
-                Plan::Camp { spot, since: self.tick, stay_until: None, arrive_by, away }
+                Plan::Camp { spot, stay_until: None, arrive_by, away }
             }
             Script::Shadow { seconds, .. } => Plan::Shadow { until: self.tick + ticks(seconds) },
             Script::Chase { pass, length, pace, .. } => {
@@ -976,7 +999,7 @@ impl Server {
                     creature.mind.forgive();
                 }
             }
-            let seconds = hold.0 + unit_from(mix(inst.seed, self.tick ^ 0x3c0)) * (hold.1 - hold.0);
+            let seconds = hold.0 + inst.roll(0x3c0) * (hold.1 - hold.0);
             let lead = positions.first().copied().unwrap_or(Vec3::ZERO);
             let nearest = players.iter().map(|&(_, p)| p).min_by(|a, b| a.distance(lead).total_cmp(&b.distance(lead)));
             let away = self.march_away(lead, nearest, Vec2::X, 0.9, leaves(event.def.script));
@@ -1175,7 +1198,7 @@ impl Server {
         self.wandering.next += 1;
         // What was said to whom goes with it: a line its party has used up (the meal that
         // befriended it) is not offered again by the one who left.
-        let mut alone = Instance::new(id, inst.event, mix(inst.seed, 0xde7a ^ self.tick), self.tick, vec![member], Plan::Shadow { until: 0 });
+        let mut alone = Instance::new(id, inst.event, inst.next_roll(0xde7a), self.tick, vec![member], Plan::Shadow { until: 0 });
         (alone.told, alone.spent) = (inst.told.clone(), inst.spent.clone());
         Some(alone)
     }
@@ -1499,7 +1522,7 @@ impl Server {
                 inst.halt = (0, self.tick + ticks(halt.cooldown));
                 inst.aim = None;
             } else if self.tick >= inst.halt.1 && close.is_some() {
-                let seconds = halt.seconds.0 + unit_from(mix(inst.seed, self.tick)) * (halt.seconds.1 - halt.seconds.0);
+                let seconds = halt.seconds.0 + inst.roll(0x4a17) * (halt.seconds.1 - halt.seconds.0);
                 inst.halt.0 = self.tick + ticks(seconds);
                 halted = true;
             }
@@ -1597,11 +1620,11 @@ impl Server {
                     None => goal = Some(stop),
                 }
             }
-            (Plan::Camp { spot, since, stay_until, arrive_by, away }, Script::Camp { stay, .. }) => {
+            (Plan::Camp { spot, stay_until, arrive_by, away, .. }, Script::Camp { stay, .. }) => {
                 heading = (xz(*spot) - xz(lead)).try_normalize().unwrap_or(heading);
                 match *stay_until {
                     None if flat(lead, *spot) < THERE * 1.5 || self.tick >= *arrive_by => {
-                        *stay_until = Some(self.tick + ticks(stay.0 + unit_from(mix(inst.seed, *since)) * (stay.1 - stay.0)));
+                        *stay_until = Some(self.tick + ticks(stay.0 + unit_from(next_party_roll(inst.seed, &inst.rolls, 0x57a7)) * (stay.1 - stay.0)));
                         last = true;
                     }
                     None => goal = Some(*spot),
@@ -1684,7 +1707,7 @@ impl Server {
                     Script::Drift { pause, leg, .. } => (pause, false, leg, 0.0),
                     _ => ((4.0, 8.0), false, (6.0, 12.0), 8.0),
                 };
-                let roll = |salt: u64| unit_from(mix(inst.seed, self.tick ^ salt << 32));
+                let roll = |salt: u64| unit_from(next_party_roll(inst.seed, &inst.rolls, salt << 32));
                 heading = *h;
                 pace = 0.7;
                 if self.tick >= *until {
@@ -1723,7 +1746,7 @@ impl Server {
                     // No quarry left to run down, or no one left to run it down.
                     resume = Some(Plan::March { heading: *h, goal: *g, pace: *p });
                 } else if chasers.iter().any(|c| flat(*c, lead) <= CATCH) {
-                    caught = Some(hold.0 + unit_from(mix(inst.seed, self.tick ^ 0xca7)) * (hold.1 - hold.0));
+                    caught = Some(hold.0 + inst.roll(0xca7) * (hold.1 - hold.0));
                 } else if flat(lead, *g) < THERE * 2.0 {
                     inst.done = true;
                     last = true;
@@ -1787,7 +1810,7 @@ impl Server {
                             (None, Some(_)) if mood.wary => {
                                 wary_since.get_or_insert(self.tick);
                             }
-                            (None, Some(player)) => *sprung = Some((self.tick + ticks(delay.0 + unit_from(mix(inst.seed, self.tick ^ 0x5b7)) * (delay.1 - delay.0)), player)),
+                            (None, Some(player)) => *sprung = Some((self.tick + ticks(delay.0 + unit_from(next_party_roll(inst.seed, &inst.rolls, 0x5b7)) * (delay.1 - delay.0)), player)),
                             (None, None) => *wary_since = None,
                             (Some((at, player)), _) if self.tick >= at => spring = Some(player),
                             _ => {}
@@ -2096,11 +2119,11 @@ impl Server {
             {
                 let member = &mut inst.members[i];
                 if self.tick >= member.mill_until {
-                    let a = unit_from(mix(inst.seed, self.tick ^ (i as u64) << 20)) * std::f32::consts::TAU;
-                    let r = unit_from(mix(inst.seed, self.tick ^ (i as u64) << 24)) * mill;
+                    let a = unit_from(next_party_roll(inst.seed, &inst.rolls, (i as u64) << 20)) * std::f32::consts::TAU;
+                    let r = unit_from(next_party_roll(inst.seed, &inst.rolls, (i as u64) << 24)) * mill;
                     let at = *spot + Vec3::new(a.cos(), 0.0, a.sin()) * r;
                     member.mill_at = at;
-                    member.mill_until = self.tick + ticks(6.0 + 10.0 * unit_from(mix(inst.seed, self.tick ^ (i as u64) << 28)));
+                    member.mill_until = self.tick + ticks(6.0 + 10.0 * unit_from(next_party_roll(inst.seed, &inst.rolls, (i as u64) << 28)));
                 }
                 let there = flat(me, inst.members[i].mill_at) < 1.0;
                 errands[i] = Some(errand(inst.members[i].mill_at, there, if night && there { Pose::Resting } else { Pose::Idle }, Some(*spot), 1.0));
@@ -2170,7 +2193,7 @@ impl Server {
                         Some(w) => {
                             let there = flat(me, w.stand) < 1.0;
                             if there && w.until.is_none() {
-                                let roll = unit_from(mix(inst.seed, self.tick ^ (i as u64) << 40));
+                                let roll = unit_from(next_party_roll(inst.seed, &inst.rolls, (i as u64) << 40));
                                 let (least, most) = match carry {
                                     Some(c) if w.carrying => c.set,
                                     _ => work,
@@ -2490,8 +2513,7 @@ impl Server {
         };
         // Seen or not: the admin asked for it. Cast by the world's count of rolls, never the
         // tick.
-        let [a, b] = self.meta.next_roll(crate::save::ROLL_WANDER);
-        let seed = mix(self.meta.seed, u64::from(a.to_bits()) << 32 | u64::from(b.to_bits()));
+        let seed = self.meta.roll_seed(crate::save::ROLL_WANDER);
         if self.begin_event_at(player, event, spot, seed, true).is_none() {
             tracing::info!("wandering: no cast of {name} could be brought to {spot}");
             return Err(Words::key("command.wander.no_room"));

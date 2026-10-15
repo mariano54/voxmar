@@ -159,6 +159,9 @@ pub const ROLL_YOUNG: u64 = 0x7a46;
 pub const ROLL_GRAZE: u64 = 0x6a2e;
 pub const ROLL_SUMMON: u64 = 0x5c3d;
 pub const ROLL_WANDER: u64 = 0x3a9e;
+pub const ROLL_SPAWN: u64 = 0x5b4a;
+pub const ROLL_PARTY: u64 = 0x9a27;
+pub const ROLL_FOLLOWER: u64 = 0xf011;
 
 /// The key the world's popped drops scatter by, made from its draw key: where a drop lands
 /// and how it flies are seen by every client, and the draw key must not be read back from
@@ -201,6 +204,13 @@ impl WorldMeta {
         let draws = numbered_draws(self.draw_key, salt, self.rolls);
         self.rolls += 1;
         draws
+    }
+
+    /// A seed made from the world's next roll of a kind (`next_roll`), for what is cast
+    /// from it (a spawn's place, a party's cast).
+    pub fn roll_seed(&mut self, salt: u64) -> u64 {
+        let [a, b] = self.next_roll(salt);
+        voxmar_engine::creature::mix(self.seed, u64::from(a.to_bits()) << 32 | u64::from(b.to_bits()))
     }
 
     /// Where the next drop popped at `cell` flies (`dropped::popped`), by the world's count
@@ -1468,7 +1478,7 @@ mod tests {
         assert_eq!(draws, Draws { strikes: 2, cooks: 1, ..Draws::default() });
         let kinds = [Draw::Strike, Draw::Blow, Draw::Feed, Draw::Cook, Draw::Recover, Draw::Flourish, Draw::Mine, Draw::Yield, Draw::Forage, Draw::Harvest, Draw::Lock, Draw::Catch, Draw::Wake, Draw::Reward, Draw::Free, Draw::Kill, Draw::Greet];
         // Every kind's salt, the world's kinds of roll and its loot rolls' are told apart.
-        let salts: Vec<u64> = kinds.iter().map(|k| k.salt()).chain([ROLL_PRODUCT, ROLL_LITTER, ROLL_YOUNG, ROLL_GRAZE, ROLL_SUMMON, ROLL_WANDER, 0x1007]).collect();
+        let salts: Vec<u64> = kinds.iter().map(|k| k.salt()).chain([ROLL_PRODUCT, ROLL_LITTER, ROLL_YOUNG, ROLL_GRAZE, ROLL_SUMMON, ROLL_WANDER, ROLL_SPAWN, ROLL_PARTY, ROLL_FOLLOWER, 0x1007]).collect();
         let unique: std::collections::BTreeSet<_> = salts.iter().collect();
         assert_eq!(unique.len(), salts.len(), "two kinds of roll share a salt: {salts:x?}");
         let others: Vec<_> = kinds.iter().skip(1).map(|k| numbered_draws(ada, k.salt(), 0)).chain([numbered_draws(ada, Draw::Strike.salt(), 1), numbered_draws(bea, Draw::Strike.salt(), 0)]).collect();
