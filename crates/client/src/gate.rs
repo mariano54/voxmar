@@ -2349,6 +2349,18 @@ fn clear_hand(world: &mut World) -> Option<bool> {
     Some(false)
 }
 
+/// Server seconds the processor `machine` takes to work one `input` at full power, as the
+/// loaded data has it (its recipe's seconds over its speed); `None` if it works no such
+/// recipe.
+fn work_seconds(world: &World, machine: &str, input: &str) -> Option<f32> {
+    let content = &world.resource::<Launch>().content;
+    let (block, item) = (content.blocks.id(machine)?, content.blocks.id(input)?);
+    let machine = content.machines.get(block)?;
+    let voxmar_engine::machine::Role::Processor { speed, .. } = machine.role else { return None };
+    let process = machine.processes.iter().map(|&p| content.machines.process(p)).find(|p| p.inputs.iter().any(|(accepts, _)| accepts.contains(&item)))?;
+    Some(process.seconds / speed)
+}
+
 /// The level of a skill, as the client was last told.
 fn skill_level(world: &World, name: &str) -> (u8, u32) {
     let (player, launch) = (world.resource::<LocalPlayer>(), world.resource::<Launch>());
@@ -2865,9 +2877,18 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 Some(name) => select(world, name),
                 None => empty_hand(world),
             };
-            // Used only every few server seconds (see the kiln above); the crusher takes a
-            // few of them to work the ore.
-            if ready && gate.server_now - gate.machines_asked >= 3.0 {
+            // Used only every few server seconds (see the kiln above). The dust is asked for
+            // once the crusher has had the seconds its recipe takes (from the loaded data),
+            // then each second: asked on the three-second beat, a crush done just after one
+            // ask waited nearly three more for the next.
+            let due = match gate.machines_stage {
+                0 | 1 => gate.server_now - gate.machines_asked >= 3.0,
+                _ => {
+                    let work = work_seconds(world, "base:steam_crusher", "base:copper_ore").unwrap_or(0.0);
+                    gate.server_now - gate.machines_since >= work && gate.server_now - gate.machines_asked >= 1.0
+                }
+            };
+            if ready && due {
                 gate.machines_asked = gate.server_now;
                 let actions = world.resource::<crate::Actions>().0.clone();
                 // With the player's input first, as a click sends it: the slot just selected
