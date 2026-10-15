@@ -475,7 +475,8 @@ steps! {
     /// says so.
     Nest,
     /// A wooden door placed before the player goes in whole, both halves facing them, and a
-    /// right click on it opens it and another shuts it, as the server turns it.
+    /// right click on it opens it and another shuts it, as the server turns it. At midnight
+    /// a lit room's window glows, and a campfire lights the ground around it warm.
     Door,
     /// A stool by a campfire, right-clicked with nothing to place in hand, is sat on: the
     /// eye drops, the server says so, and By the Fire comes on (shot `seat-fire`); a step
@@ -588,6 +589,8 @@ struct Gate {
     way_time: u64,
     /// The window step's lit pane, kept to judge against it snuffed.
     window_lit: Option<[f64; 3]>,
+    /// The door step's ground lit by a campfire, kept to judge against it put out.
+    fire_lit: Option<[f64; 3]>,
     natural_before: Vec<u32>,
     natural_home: Vec3,
     /// The way home's numbers, while the Home step shows the mark close up at any hour.
@@ -736,6 +739,8 @@ struct Gate {
     food_moved: bool,
     /// The Cook step's hearth or stove has raw rabbit selected and is being clicked.
     cook_started: bool,
+    /// The campfire the weather step dries the player by, while it stands.
+    dry_fire: Option<IVec3>,
     /// While taming, frames the junglefowl was under the crosshair, another creature was,
     /// or none was, and the nearest the player came to it.
     tame_aim: [u32; 3],
@@ -855,6 +860,7 @@ impl Gate {
             count_before: 0,
             way_time: 0,
             window_lit: None,
+            fire_lit: None,
             natural_before: Vec::new(),
             natural_home: Vec3::ZERO,
             home_style: None,
@@ -930,6 +936,7 @@ impl Gate {
             font: None,
             food_moved: false,
             cook_started: false,
+            dry_fire: None,
             tame_aim: [0; 3],
             tame_nearest: f32::MAX,
             party_after: 0,
@@ -1469,6 +1476,9 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         // Torches crafted for a pinned quest, waited on in the server's seconds, and a quest
         // done left to drop off.
         Step::Quests => 60.0,
+        // A door placed, opened and shut, a lit window and a campfire at midnight, each
+        // waited on.
+        Step::Door => STEP_LIMIT + 25.0,
         // A party walks in, is talked to, traded with and sent away, each in server seconds.
         Step::Party => 60.0,
         // The effects are judged once a second by the server, and a rest is a sleep away.
@@ -1487,6 +1497,8 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         // A fresh area around the settlement to generate: up to `SETTLEMENT_LOAD` of the
         // server's seconds.
         Step::Settlements => SETTLEMENT_LOAD + SETTLEMENT_PEOPLE + STEP_LIMIT,
+        // A storm and snow, each waited on, then drying off by a campfire.
+        Step::Weather => STEP_LIMIT + 10.0,
         _ => STEP_LIMIT,
     };
     // A step in the world is too long only by both the server's clock, as its own waits
@@ -5929,12 +5941,16 @@ fn door_cells(world: &World, at: IVec3) -> Option<(bool, bool)> {
 /// A wooden door set in the ground two blocks before the player, opened and shut by right
 /// clicks the server answers (it holds the collision, so the client never guesses); then a
 /// hide window in a candle-lit nook, seen glowing at midnight (shot `window-night`) against
-/// the same pane with the candle snuffed (`window-night-unlit`).
+/// the same pane with the candle snuffed (`window-night-unlit`); then a campfire where the
+/// nook stood, the ground before it lit warm (`campfire-night`) against the same ground with
+/// the fire put out (`campfire-night-out`).
 fn door(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let stand = world.resource::<LocalPlayer>().position.floor().as_ivec3();
     let at = stand + IVec3::new(0, 0, -2);
     // The window's nook, standing on the ground a block beyond the door, and its pane.
     let (nook, pane) = (stand + IVec3::new(0, 1, -4), stand + IVec3::new(0, 1, -3));
+    // The campfire, on the ground where the pane stood.
+    let fire = stand + IVec3::new(0, 0, -3);
     let waited = gate.server_in_phase();
     let leave = |world: &mut World, gate: &mut Gate| {
         let net = world.resource::<Net>();
@@ -6030,7 +6046,7 @@ fn door(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     let Some(shot) = gate.shot(world, "window-night") else { return };
                     if !through {
                         gate.check("window: glows", Err("the hide window is not `lit_through`".into()));
-                        return window_done(world, gate, nook, now);
+                        return window_done(world, gate, nook, fire, now);
                     }
                     match pane_colour(&shot) {
                         Ok(colour) => {
@@ -6040,20 +6056,20 @@ fn door(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                         }
                         Err(why) => {
                             gate.check("window: glows", Err(why));
-                            window_done(world, gate, nook, now);
+                            window_done(world, gate, nook, fire, now);
                         }
                     }
                 }
                 _ if waited > 10.0 => {
                     gate.check("window: glows", Err(format!("{waited:.1} server s after building the nook, its window is {window:?} and its candle is there: {lit}")));
-                    window_done(world, gate, nook, now);
+                    window_done(world, gate, nook, fire, now);
                 }
                 _ => {}
             }
         }
         // Snuffed: once the client has the nook dark and has drawn it for a while, the same
         // pane unlit.
-        _ => {
+        6 => {
             aim_at(world, pane.as_vec3() + Vec3::splat(0.5));
             let snuffed = world.resource::<ClientWorld>().block(nook).is_some_and(|b| b == BlockId::AIR);
             if snuffed && waited > 2.0 && in_phase > WINDOW_SETTLE {
@@ -6064,22 +6080,75 @@ fn door(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     (_, Err(why)) => Err(why),
                 };
                 gate.check("window: glows", judged);
-                window_done(world, gate, nook, now);
+                window_done(world, gate, nook, fire, now);
             } else if waited > 10.0 && in_phase > 10.0 {
                 gate.check("window: glows", Err(format!("{waited:.1} server s and {in_phase:.1} game s after the candle was snuffed, the client has it gone: {snuffed}")));
-                window_done(world, gate, nook, now);
+                window_done(world, gate, nook, fire, now);
+            }
+        }
+        // A campfire at midnight, seen from three blocks off: once the client has it and has
+        // drawn its light for a while, the ground before it is kept, then the fire is put out.
+        7 => {
+            aim_at(world, fire.as_vec3() + Vec3::new(0.5, 0.3, 0.5));
+            let client = world.resource::<ClientWorld>();
+            let burning = client.block(fire).is_some_and(|b| client.registry.def(b).name == "base:campfire");
+            if burning && waited > 2.0 && in_phase > FIRE_SETTLE {
+                let Some(shot) = gate.shot(world, "campfire-night") else { return };
+                match ground_colour(&shot) {
+                    Ok(colour) => {
+                        gate.fire_lit = Some(colour);
+                        world.resource::<Net>().command(&format!("setblock {} {} {} air", fire.x, fire.y, fire.z));
+                        gate.advance(now);
+                    }
+                    Err(why) => {
+                        gate.check("night: campfire", Err(why));
+                        fire_done(world, gate, fire, now);
+                    }
+                }
+            } else if waited > 10.0 && in_phase > 10.0 {
+                gate.check("night: campfire", Err(format!("{waited:.1} server s and {in_phase:.1} game s after setting a campfire down, it is there on the client: {burning}")));
+                fire_done(world, gate, fire, now);
+            }
+        }
+        // Put out: once the client has the fire gone and has drawn the dark for a while, the
+        // same ground unlit, under the same sky and moon.
+        _ => {
+            aim_at(world, fire.as_vec3() + Vec3::new(0.5, 0.3, 0.5));
+            let out = world.resource::<ClientWorld>().block(fire).is_some_and(|b| b == BlockId::AIR);
+            if out && waited > 2.0 && in_phase > FIRE_SETTLE {
+                let Some(shot) = gate.shot(world, "campfire-night-out") else { return };
+                let judged = match (gate.fire_lit.take(), ground_colour(&shot)) {
+                    (Some(lit), Ok(unlit)) => fire_circle(lit, unlit),
+                    (None, _) => Err("the lit ground was not kept".into()),
+                    (_, Err(why)) => Err(why),
+                };
+                gate.check("night: campfire", judged);
+                fire_done(world, gate, fire, now);
+            } else if waited > 10.0 && in_phase > 10.0 {
+                gate.check("night: campfire", Err(format!("{waited:.1} server s and {in_phase:.1} game s after the campfire was put out, the client has it gone: {out}")));
+                fire_done(world, gate, fire, now);
             }
         }
     }
 }
 
-/// The window step's end: the nook taken down, noon again, on to the seat.
-fn window_done(world: &mut World, gate: &mut Gate, nook: IVec3, now: f32) {
+/// The window's end: the nook taken down and a campfire set where its pane stood, still at
+/// midnight, on to the fire (phase 7).
+fn window_done(world: &mut World, gate: &mut Gate, nook: IVec3, fire: IVec3, now: f32) {
     let net = world.resource::<Net>();
     let (low, high) = (nook - IVec3::ONE, nook + IVec3::ONE);
     net.command(&format!("fill {} {} {} {} {} {} air", low.x, low.y, low.z, high.x, high.y, high.z));
-    net.command("time set noon");
+    net.command(&format!("setblock {} {} {} campfire", fire.x, fire.y, fire.z));
     gate.window_lit = None;
+    to_phase(gate, 7, now);
+}
+
+/// The step's end: the fire gone, noon again, on to the seat.
+fn fire_done(world: &mut World, gate: &mut Gate, fire: IVec3, now: f32) {
+    let net = world.resource::<Net>();
+    net.command(&format!("setblock {} {} {} air", fire.x, fire.y, fire.z));
+    net.command("time set noon");
+    gate.fire_lit = None;
     gate.next(Step::Seat, now);
 }
 
@@ -6119,6 +6188,45 @@ fn warm_window(lit: [f64; 3], unlit: [f64; 3]) -> Result<String, String> {
 const WINDOW_WARMTH: f64 = 12.0;
 const WINDOW_LIFT: f64 = 15.0;
 const WINDOW_SETTLE: f32 = 1.5;
+
+/// The mean colour, of 255, of the ground before a campfire in a shot aimed at it from
+/// three blocks off: the bottom middle of the screen, a block or two from the fire.
+fn ground_colour(shot: &Image) -> Result<[f64; 3], String> {
+    let (w, h, data) = pixels(shot)?;
+    let size = (w.min(h) / 12).max(1);
+    let (x0, y0) = (w / 2 - size / 2, h * 3 / 4 - size / 2);
+    let mut sum = [0.0f64; 3];
+    for y in y0..y0 + size {
+        for x in x0..x0 + size {
+            let i = (y * w + x) * 4;
+            (0..3).for_each(|c| sum[c] += data[i + c] as f64);
+        }
+    }
+    Ok(sum.map(|v| v / (size * size) as f64))
+}
+
+/// Whether a campfire lights a warm circle to work in at midnight: what the fire adds to the
+/// ground before it (lit, less the same ground a moment later with the fire put out, under
+/// the same sky and moon) is redder than it is blue and brightens it well. The night's own
+/// light, whatever the moon or the day, is in both and cancels.
+fn fire_circle(lit: [f64; 3], unlit: [f64; 3]) -> Result<String, String> {
+    let added = [0, 1, 2].map(|c| lit[c] - unlit[c]);
+    let brighter = added.iter().sum::<f64>() / 3.0;
+    let said = format!("the ground by the fire is rgb {:.0} {:.0} {:.0} lit and {:.0} {:.0} {:.0} put out: the fire adds {:.0} {:.0} {:.0}", lit[0], lit[1], lit[2], unlit[0], unlit[1], unlit[2], added[0], added[1], added[2]);
+    if added[0] > added[2] + FIRE_WARMTH && brighter > FIRE_LIFT {
+        Ok(format!("{said}, a warm working circle"))
+    } else {
+        Err(format!("{said}: no warm working circle"))
+    }
+}
+
+/// How much redder than blue a campfire's light makes the ground a block or two from it, and
+/// how much brighter, of 255: a circle to work in (by the light model, about 100 of 255 near
+/// the fire against a night of about 20); and the game seconds the fire, lit or put out, is
+/// drawn before its shot.
+const FIRE_WARMTH: f64 = 15.0;
+const FIRE_LIFT: f64 = 25.0;
+const FIRE_SETTLE: f32 = 1.5;
 
 /// How many planks the home barrel holds for the table laid from it.
 const LAY_PLANKS: u32 = 4;
@@ -7267,7 +7375,7 @@ fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 if gate.server_in_phase() > 12.0 {
                     gate.check(&format!("weather: {kind}"), Err(format!("it did not come: {}", shown.summary())));
                     world.resource::<Net>().command("weather clear 600");
-                    gate.phase = 3;
+                    gate.phase = 4;
                 }
                 return;
             }
@@ -7296,19 +7404,45 @@ fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     world.resource::<Net>().command(&format!("weather {kind} 120"));
                     gate.advance(now);
                 }
-                // The depths step brings its fog straight over the snow and clears both at
-                // its end: one clearing waited for, not two back to back.
+                // Wet through from the storm, and the rain gone (snow is not rain): a
+                // campfire beside the player dries them off.
                 None => {
-                    gate.weather_clear_owed = true;
-                    gate.next(Step::Depths, now);
+                    let at = world.resource::<LocalPlayer>().position.floor().as_ivec3() + IVec3::new(2, 0, 0);
+                    world.resource::<Net>().command(&format!("setblock {} {} {} campfire", at.x, at.y, at.z));
+                    gate.dry_fire = Some(at);
+                    gate.advance(now);
                 }
             }
         }
-        3 if sky_clear(&shown) => {
+        3 => {
+            let wet: Vec<String> = {
+                let (player, launch) = (world.resource::<LocalPlayer>(), world.resource::<Launch>());
+                player.vitals.effects.iter().map(|a| launch.content.effects.get(a.effect)).filter(|def| def.lingers > 0.0 && def.ends.is_some()).map(|def| def.title.to_lowercase()).collect()
+            };
+            let dried = wet.is_empty();
+            if !dried && !gate.waited_out(10.0) {
+                // Each look at the player, once every `TAP_EVERY` of the game's time, counts
+                // for `waited_out`, so both clocks bound the wait.
+                if now - gate.tap_at >= TAP_EVERY {
+                    gate.tap_at = now;
+                    gate.taps += 1;
+                }
+                return;
+            }
+            gate.check("weather: dries by a fire", if dried { Ok("wet through from the storm, the player dried off beside a campfire once the rain had gone".into()) } else { Err(format!("{:.1} server s beside a campfire, out of the rain, the player is still {}", gate.server_in_phase(), wet.join(", "))) });
+            if let Some(at) = gate.dry_fire.take() {
+                world.resource::<Net>().command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
+            }
+            // The depths step brings its fog straight over the snow and clears both at its
+            // end: one clearing waited for, not two back to back.
+            gate.weather_clear_owed = true;
+            gate.next(Step::Depths, now);
+        }
+        4 if sky_clear(&shown) => {
             eased(gate);
             gate.next(Step::Depths, now);
         }
-        3 if gate.server_in_phase() > 12.0 => {
+        4 if gate.server_in_phase() > 12.0 => {
             gate.check("weather: clear", Err(format!("the sky did not clear: {}", shown.summary())));
             eased(gate);
             gate.next(Step::Depths, now);
