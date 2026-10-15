@@ -1138,8 +1138,10 @@ impl Server {
         let Some(freed) = event.def.freed.clone() else { return };
         let Some(at) = inst.members.iter().position(|m| event.groups[m.group].1.role == Role::Captive) else { return };
         let captive = inst.members[at].creature;
-        let seed = mix(inst.seed, 0xf4ee ^ self.tick);
-        let follows = by.filter(|p| self.players.get(p).is_some_and(|p| p.health.alive())).filter(|_| unit_from(seed) < freed.follow);
+        // Whether it follows, by a living freer's own count of captives freed, never the
+        // tick it is freed on; nobody's freeing draws nothing.
+        let freer = by.filter(|p| self.players.get(p).is_some_and(|p| p.health.alive()));
+        let follows = freer.filter(|&p| self.players.get_mut(&p).is_some_and(|p| p.draw(crate::save::Draw::Free)[0] < freed.follow));
         if let Some(player) = by.and_then(|p| self.players.get(&p).map(|_| p)) {
             if let Some(who) = self.speaker_name(captive) {
                 self.players[&player].connection.send(ServerMessage::Chat { kind: ChatKind::Chat, text: Words::key("wander.said").with("who", who).with("text", Words::key(&event.key("thanks"))) });
@@ -1194,7 +1196,8 @@ impl Server {
         }
     }
 
-    /// Reward `gifts` to `player`, from creature `source` (whose id seeds the draws).
+    /// Reward `gifts` to `player`, from creature `source` (where those that point the way
+    /// start from); what is drawn, by the player's own count of rewards.
     fn hand_out(&mut self, player: PlayerId, source: u32, gifts: &[ResolvedReward]) {
         for gift in gifts {
             match *gift {
@@ -1240,7 +1243,9 @@ impl Server {
                     p.connection.send(ServerMessage::Chat { kind: ChatKind::Chat, text });
                 }
                 ResolvedReward::Item(item, (low, high)) => {
-                    let count = low + (unit_from(mix(self.tick, source as u64 ^ item.0 as u64)) * (high - low + 1) as f32) as u8;
+                    // By the player's own count of rewards, never the tick it is given on.
+                    let roll = self.draw_for(player, crate::save::Draw::Reward)[0];
+                    let count = low + (roll * (high - low + 1) as f32) as u8;
                     let Some(p) = self.players.get_mut(&player) else { return };
                     let left = p.inventory.add(item, count.min(high));
                     p.changed(traits::INVENTORY);
@@ -1267,7 +1272,8 @@ impl Server {
                     if open.is_empty() {
                         continue;
                     }
-                    let pick = ((unit_from(mix(self.tick, source as u64 ^ 0x0f07)) * open.len() as f32) as usize).min(open.len() - 1);
+                    let roll = self.draw_for(player, crate::save::Draw::Reward)[0];
+                    let pick = ((roll * open.len() as f32) as usize).min(open.len() - 1);
                     self.hand_out(player, source, &open[pick..=pick]);
                 }
                 ResolvedReward::Weather(ref name, seconds) => {
@@ -2288,12 +2294,21 @@ impl Server {
             }),
             _ => None,
         };
-        let variant = ((unit_from(mix(self.tick, id as u64 ^ 0x6e37)) * meeting.greets as f32) as u8).min(meeting.greets - 1);
+        let (freed, guided) = (inst.freed, inst.guided);
         let (words, gives, wants, mark) = match line {
             Some((i, line)) => (Words::key(&event.key(&line.name)), line.gives.clone(), line.wants_of(seed), Some((i + meeting.who * 64, line.once))),
-            None if inst.freed => (Words::key(&event.key("freed")), Vec::new(), None, None),
-            None if inst.guided => (Words::key(&event.key("company")), Vec::new(), None, None),
-            None => (asked.unwrap_or_else(|| Words::key(&event.greeting(meeting, variant))), Vec::new(), None, None),
+            None if freed => (Words::key(&event.key("freed")), Vec::new(), None, None),
+            None if guided => (Words::key(&event.key("company")), Vec::new(), None, None),
+            None => match asked {
+                Some(asked) => (asked, Vec::new(), None, None),
+                // Which greeting, by the listener's own count of greetings heard, never the
+                // tick: drawn only when one is said.
+                None => {
+                    let greet = self.draw_for(player, crate::save::Draw::Greet)[0];
+                    let variant = ((greet * meeting.greets as f32) as u8).min(meeting.greets - 1);
+                    (Words::key(&event.greeting(meeting, variant)), Vec::new(), None, None)
+                }
+            },
         };
         // A line that takes or gives something; one said for its words alone is no dealing.
         let dealt = line.is_some_and(|(_, line)| !line.gives.is_empty() || line.wants_of(seed).is_some());
@@ -2473,8 +2488,10 @@ impl Server {
             tracing::info!("wandering: no standing room ahead of {feet} or at it for {name}");
             return Err(Words::key("command.wander.no_room"));
         };
-        // Seen or not: the admin asked for it.
-        let seed = mix(self.meta.seed, self.tick);
+        // Seen or not: the admin asked for it. Cast by the world's count of rolls, never the
+        // tick.
+        let [a, b] = self.meta.next_roll(crate::save::ROLL_WANDER);
+        let seed = mix(self.meta.seed, u64::from(a.to_bits()) << 32 | u64::from(b.to_bits()));
         if self.begin_event_at(player, event, spot, seed, true).is_none() {
             tracing::info!("wandering: no cast of {name} could be brought to {spot}");
             return Err(Words::key("command.wander.no_room"));
@@ -2923,6 +2940,49 @@ mod tests {
             }
         }
         assert!(follows > 0 && alone > 0, "both happen: {follows} follow, {alone} go alone");
+    }
+
+    /// Whether a freed captive follows is drawn by its living freer's own count of captives
+    /// freed: the same freeings later go the same way, each counts on, and a freeing by
+    /// nobody, or by a freer who is dead, draws nothing.
+    #[test]
+    fn a_freed_captive_follows_by_the_freers_count_not_the_tick() {
+        let freed = |tick: u64| {
+            let mut server = fixture();
+            server.players.get_mut(&1).unwrap().draw_key = crate::player::player_draw_key(0x0d1a, "Tëster");
+            server.tick = tick;
+            let mut followed = Vec::new();
+            for seed in 0..12u64 {
+                clear(&mut server);
+                let event = event(&server, "prison_convoy");
+                let spot = server.standing_spot(68, 128, 200).unwrap();
+                let id = server.begin_event_at(Some(1), event, spot, seed * 7919 + 3, true).unwrap();
+                let captive = members_of(&server, id, 2)[0];
+                server.free_in_test(id);
+                followed.push(server.wandering.by_creature.get(&captive).is_some_and(|&(i, _)| matches!(server.wandering.active[&i].plan, Plan::Follow { player: 1, .. })));
+                server.tick += 37;
+            }
+            let frees = server.players[&1].draws.frees;
+            // Freed by nobody, and by a freer who is dead: nothing drawn.
+            for by in [None, Some(1)] {
+                clear(&mut server);
+                if by.is_some() {
+                    server.players.get_mut(&1).unwrap().health.damage(u8::MAX);
+                }
+                let event = event(&server, "prison_convoy");
+                let spot = server.standing_spot(68, 128, 200).unwrap();
+                let id = server.begin_event_at(Some(1), event, spot, 5, true).unwrap();
+                let mut inst = server.wandering.active.remove(&id).unwrap();
+                server.free_captive(&mut inst, by);
+                server.keep(inst);
+            }
+            (followed, frees, server.players[&1].draws.frees)
+        };
+        let first = freed(1_000);
+        assert_eq!(first.1, 12, "each freeing by a living player counted on");
+        assert_eq!(first.2, first.1, "a freeing by nobody or by the dead drew");
+        assert!(first.0.iter().any(|&f| f) && first.0.iter().any(|&f| !f), "twelve freed captives all went alike: {:?}", first.0);
+        assert_eq!(freed(1_377), first, "the same freeings later went otherwise");
     }
 
     impl Server {
@@ -6283,5 +6343,100 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// What a wanderer gives, how many and which of several, is drawn by the player's own
+    /// count of rewards: the same rewards given later, after the world rolled otherwise,
+    /// give the same, and each draw counts on.
+    #[test]
+    fn rewards_draw_by_the_players_count_not_the_tick() {
+        let given = |tick: u64, others: usize| {
+            let mut server = fixture();
+            server.meta.draw_key = 0x0d1a;
+            server.players.get_mut(&1).unwrap().draw_key = crate::player::player_draw_key(0x0d1a, "Tëster");
+            server.tick = tick;
+            let (stick, cobble) = (server.content.blocks.expect("base:stick"), server.content.blocks.expect("base:cobblestone"));
+            let mut got = Vec::new();
+            for _ in 0..16 {
+                for _ in 0..others {
+                    server.meta.next_loot();
+                    server.meta.next_roll(crate::save::ROLL_LITTER);
+                }
+                let player = server.players.get_mut(&1).unwrap();
+                player.inventory.clear(|_| true);
+                server.hand_out(1, 0, &[ResolvedReward::Item(stick, (1, 4)), ResolvedReward::OneOf(vec![ResolvedReward::Item(stick, (1, 1)), ResolvedReward::Item(cobble, (1, 1))])]);
+                let inventory = &server.players[&1].inventory;
+                got.push((inventory.count(stick), inventory.count(cobble)));
+                server.tick += 37;
+            }
+            (got, server.players[&1].draws.rewards)
+        };
+        let first = given(1_000, 0);
+        assert_eq!(first.1, 16 * 3, "each count, pick and picked count drawn on");
+        assert!(first.0.windows(2).any(|w| w[0].0 != w[1].0), "sixteen rewards gave the same count: {:?}", first.0);
+        assert!(first.0.iter().any(|g| g.1 > 0) && first.0.iter().any(|g| g.1 == 0), "sixteen picks of one of two all went alike: {:?}", first.0);
+        assert_eq!(given(1_377, 3), first, "the same rewards given later, after other rolls, gave otherwise");
+    }
+
+    /// Which greeting a wanderer says is drawn by the listener's own count of greetings heard,
+    /// never the tick: the same greetings heard later, after the world's other rolls, are the
+    /// same words, and each one said counts on.
+    #[test]
+    fn a_greeting_goes_by_the_listeners_count_not_the_tick() {
+        let heard = |tick: u64, rolls: u32| {
+            let mut server = fixture();
+            server.meta.draw_key = 0x0d1a;
+            let (client, connection) = voxmar_protocol::local_pair();
+            server.players.get_mut(&1).unwrap().connection = connection;
+            let id = start(&mut server, "pedlar_and_hound", (68, 128));
+            let pedlar = server.wandering.active[&id].members[0].creature;
+            for _ in 0..rolls {
+                server.meta.next_roll(crate::save::ROLL_SUMMON);
+            }
+            // One hide is not enough for a swap: only the greeting.
+            give_held(&mut server, "base:hide", 1);
+            server.tick = tick;
+            while let Ok(Some(_)) = client.try_recv() {}
+            let mut said = Vec::new();
+            for _ in 0..12 {
+                assert!(server.meet(1, pedlar));
+                while let Ok(Some(message)) = client.try_recv() {
+                    // Who said it, and the words said.
+                    if let voxmar_protocol::ServerMessage::Chat { text, .. } = message {
+                        said.push(format!("{text:?}"));
+                    }
+                }
+                server.tick += 37;
+            }
+            (said, server.players[&1].draws.greets)
+        };
+        let first = heard(1_000, 0);
+        assert_eq!(first.1, 12, "each greeting counted on");
+        assert!(first.0.iter().any(|k| *k != first.0[0]), "12 greetings all alike: {:?}", first.0);
+        assert_eq!(heard(1_377, 3), first, "the same greetings heard later, after other rolls, were otherwise");
+    }
+
+    /// A party `/wander start` brings is cast by the world's count of rolls, never the tick:
+    /// the same ask later casts the same party, and the next ask another.
+    #[test]
+    fn a_wander_start_casts_by_the_worlds_count_not_the_tick() {
+        let cast = |tick: u64| {
+            let mut server = fixture();
+            server.meta.draw_key = 0x0d1a;
+            server.tick = tick;
+            let mut seeds = Vec::new();
+            for _ in 0..2 {
+                server.wander_command(Source::Player(1), &["start".to_owned(), "pedlar_and_hound".to_owned()]).expect("started");
+                let newest = server.wandering.active.keys().max().copied().expect("a party");
+                seeds.push(server.wandering.active[&newest].seed);
+                server.end_all_events();
+                server.tick += 37;
+            }
+            (seeds, server.meta.rolls)
+        };
+        let first = cast(1_000);
+        assert_eq!(first.1, 2, "each ask counted on");
+        assert_ne!(first.0[0], first.0[1], "two asks cast alike");
+        assert_eq!(cast(1_377), first, "the same asks later cast otherwise");
     }
 }

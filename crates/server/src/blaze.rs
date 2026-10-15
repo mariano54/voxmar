@@ -19,12 +19,10 @@ use crate::Server;
 /// name; see `Server::fire_origin`), carried on as it spreads.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Blaze {
-    #[serde(default)]
     pub pos: [i32; 3],
-    #[serde(default)]
     pub due: u64,
-    #[serde(default)]
     pub burning: bool,
+    /// None in a save from before fires were kept by owner.
     #[serde(default)]
     pub origin: Option<String>,
 }
@@ -94,8 +92,10 @@ impl Server {
             d.x.abs() <= reach && d.z.abs() <= reach && d.y <= up && d.y >= -down
         };
         let multiblocks = &self.content.multiblocks;
-        let hearths = self.lit.iter().filter(|(_, lit)| lit.until > self.tick && multiblocks.get(&lit.structure).is_some_and(|m| m.home)).filter_map(|(&core, lit)| Some((core, lit.owner.as_ref()?)));
-        let beds = self.players.values().filter_map(|p| Some((p.home_block(&self.lit)?, &p.name)));
+        // Each home's box is the one its owner feels at home in (`in_home_box`): about the
+        // cell home is at, the one over a hearthstone.
+        let hearths = self.lit.iter().filter(|(_, lit)| lit.until > self.tick && multiblocks.get(&lit.structure).is_some_and(|m| m.home)).filter_map(|(&core, lit)| Some((core + IVec3::Y, lit.owner.as_ref()?)));
+        let beds = self.players.values().filter_map(|p| Some((p.home_spot(&self.lit)?.floor().as_ivec3(), &p.name)));
         // Where homes overlap (housemates, a neighbour's hearth close by), the block is in
         // each of them, and any of their owners' fires reaches it.
         let mut covering = hearths.chain(beds).filter(|&(home, _)| within(home)).peekable();
@@ -329,13 +329,16 @@ mod tests {
             assert_eq!(at(server, second), "base:wattle_panel", "the second was out of the torch's reach");
             run(server, rules.catch_seconds);
             assert_eq!(at(server, second), "base:blaze", "the fire ran on");
+            // Midway, what stands about the torch and what waits on fire, to compare.
+            let midway: Vec<String> = (-1..=3).map(|x| at(server, base + IVec3::X * x)).collect();
+            let waiting = server.saved_blazes();
             run(server, rules.burn_seconds);
             assert_eq!(at(server, first), "core:air", "burned away");
             assert_eq!(at(server, far), "base:wattle_panel", "three blocks off, never in reach of a flame");
             run(server, rules.burn_seconds);
             assert_eq!(at(server, second), "core:air");
             assert!(server.blazes.is_empty(), "nothing left waiting");
-            server.saved_blazes()
+            (midway, waiting, server.tick)
         };
         let (mut a, mut b) = (crate::test_server(), crate::test_server());
         assert_eq!(burn(&mut a), burn(&mut b));
@@ -543,6 +546,42 @@ mod tests {
             place(&mut server, "Ada", torch);
             assert_eq!(server.blazes.get(&other).and_then(|b| b.origin.clone()).as_deref(), Some("Ada"), "Ada's torch kept from her own wall where Bo's home overlaps");
         }
+    }
+
+    /// A home hearth lit before fires were kept by owner (no owner saved) is its player's
+    /// again once they join, and stays protected after they leave: Bo's torch by Ada's wall
+    /// and by her roof's top layer (the home box's top, `home_up` over the cell above the
+    /// hearthstone, as Ada feels at home in) sets nothing smouldering while she is away.
+    #[test]
+    fn an_old_home_is_its_owners_again_and_kept_while_they_are_away() {
+        let mut server = crate::test_server();
+        let (core, _client) = hearth(&mut server);
+        server.lit.insert(core, crate::hearth::Lit { position: core.to_array(), structure: "base:homestead_hearth".into(), until: u64::MAX, owner: None });
+        let player = server.players.get_mut(&1).unwrap();
+        player.name = "Ada".into();
+        player.home = Some(core.as_vec3() + voxmar_engine::glam::Vec3::new(0.5, 1.0, 0.5));
+        // What joining does before the home hearth is kindled.
+        server.claim_home_hearth(1);
+        assert_eq!(server.lit[&core].owner.as_deref(), Some("Ada"), "the old hearth was not Ada's again");
+        server.players.remove(&1);
+        let (wattle, thatch, torch) = (server.content.blocks.expect("base:wattle_panel"), server.content.blocks.expect("base:thatch_roof"), server.content.blocks.expect("base:torch"));
+        let top = core + IVec3::Y * (1 + server.survival.home_up);
+        let (wall, ridge) = (core + IVec3::new(4, 0, 0), top);
+        server.set_block(wall, wattle);
+        server.set_block(ridge, thatch);
+        server.fire_origin = Some("Bo".into());
+        server.set_block(wall + IVec3::Z, torch);
+        server.set_block(ridge + IVec3::X, torch);
+        server.fire_origin = None;
+        assert!(!server.blazes.contains_key(&wall), "Bo's torch smoulders Ada's wall while she is away");
+        assert!(!server.blazes.contains_key(&ridge), "Bo's torch smoulders the top of Ada's roof");
+        // One above the box is no longer her home's.
+        let above = top + IVec3::Y;
+        server.set_block(above, thatch);
+        server.fire_origin = Some("Bo".into());
+        server.set_block(above + IVec3::X, torch);
+        server.fire_origin = None;
+        assert!(server.blazes.contains_key(&above), "the home box reaches past home_up");
     }
 
     /// The same fire, run twice, stands the same halfway through: what waits and burns, with

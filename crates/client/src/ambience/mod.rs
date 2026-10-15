@@ -37,7 +37,7 @@ use voxmar_engine::world::VoxelWorld;
 use voxmar_protocol::TICKS_PER_DAY;
 use voxmar_worldgen::{Body, Overworld, SEA_LEVEL, WorldContent};
 
-use self::defs::{Ambience, BedSound, Environment, Fixed};
+use self::defs::{Ambience, BedSound, Environment, Fixed, NO_SETTLEMENT};
 use self::enclosure::{Enclosure, Kinds};
 use self::mixer::{Cue, Mixer};
 use self::synth::Synth;
@@ -55,6 +55,8 @@ use crate::world::ClientWorld;
 const SURVEY_INTERVAL: f32 = 1.0;
 /// Seconds over which the environment follows a new scan.
 const SETTLE: f32 = 2.0;
+/// How far from the player settlements are looked for, in blocks: past this, none is heard.
+const SETTLEMENTS_HEARD: i32 = 192;
 /// Ambience sits under everything else: every bed and one-shot is this much quieter than
 /// its `volume` in the data says, relative to the sound effects.
 const AMBIENCE_GAIN: f32 = 0.65;
@@ -120,6 +122,8 @@ struct Place {
     home_tags: Vec<String>,
     neighbour_tags: Vec<String>,
     home: f32,
+    /// Blocks to the middle of the nearest settlement, across the ground.
+    settlement: f32,
 }
 
 struct Survey {
@@ -337,7 +341,13 @@ fn place(generator: &Overworld, eye: IVec3) -> Place {
         }
     }
     let edge = (site.edge / 48.0).clamp(0.0, 1.0);
+    let settlement = generator
+        .settlements_near(eye.xz(), SETTLEMENTS_HEARD)
+        .iter()
+        .map(|s| s.centre.xz().as_vec2().distance(eye.xz().as_vec2() + 0.5))
+        .fold(NO_SETTLEMENT, f32::min);
     Place {
+        settlement,
         temperature: site.temperature,
         moisture: site.moisture,
         continentalness: site.continentalness,
@@ -396,6 +406,7 @@ fn listen(
         env.neighbour_tags.clone_from(&place.neighbour_tags);
         env.home = place.home;
     }
+    env.set(Fixed::Settlement, ambient.place.as_ref().map_or(NO_SETTLEMENT, |place| place.settlement));
     let shown = &weather.current;
     let falling = shown.precipitation * (1.0 - shown.snow);
     env.set(Fixed::Rain, falling * smooth.sky.max(0.3 * smooth.air));
@@ -486,6 +497,31 @@ fn play(
         info!("ambience: [{beds}] air {air:.2} sky {sky:.2} reverb {reverb:.2} relief {relief:.0} depth {depth:.0}");
         ambient.logged = beds;
     }
+}
+
+/// What the settlement around is heard as, for the gate: the `settlement` axis now (blocks
+/// to the nearest one's middle), and each one-shot that hangs on it with how fully it would
+/// play here at noon, at midnight, and here with no settlement near, all at the surface
+/// (the player may have dropped into the well on the square). Nothing before the ambience
+/// has started.
+pub fn settlement_heard(world: &World) -> Option<(f32, Vec<(String, [f32; 3])>)> {
+    let ambient = world.get_resource::<Ambient>()?;
+    let env = &ambient.env;
+    let with = |axis: Fixed, value: f32| {
+        let mut env = env.clone();
+        env.set(Fixed::Depth, 0.0);
+        env.set(axis, value);
+        env
+    };
+    let (noon, midnight, alone) = (with(Fixed::Sun, 1.0), with(Fixed::Sun, -1.0), with(Fixed::Settlement, NO_SETTLEMENT));
+    let sounds = ambient
+        .ambience
+        .sounds
+        .iter()
+        .filter(|s| s.when.uses(Fixed::Settlement))
+        .map(|s| (short(&s.name).to_owned(), [&noon, &midnight, &alone].map(|env| s.when.weight(env))))
+        .collect();
+    Some((env.get(Fixed::Settlement), sounds))
 }
 
 /// A layer's name without its package, for logs.

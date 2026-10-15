@@ -21,7 +21,6 @@ impl Server {
         let treasure = self.content.treasure.clone();
         let Some(block) = self.block(pos) else { return };
         let Some(chest) = treasure.chest(block).cloned() else { return };
-        let lucky = random3(self.tick, pos, 0x1ac7)[0] < treasure.lucky;
         let Some(player) = self.players.get_mut(&agent) else { return };
         let selected = player.selected;
         let pick = player.inventory.get(selected).and_then(|s| treasure.pick_age(s.item));
@@ -40,7 +39,8 @@ impl Server {
                 return;
             }
             Try::Opens => true,
-            Try::Lucky => lucky,
+            // By the player's count of locks tried on luck, never the tick it is tried on.
+            Try::Lucky => player.draw(crate::save::Draw::Lock)[0] < treasure.lucky,
         };
         player.inventory.take(selected, 1);
         player.changed(traits::INVENTORY);
@@ -57,14 +57,16 @@ impl Server {
         self.open_chest(pos, &chest);
         // Opened, it shows what it held, as any chest does.
         self.open_store(agent, pos);
-        self.wake_beside(pos, &chest);
+        self.wake_beside(agent, pos, &chest);
     }
 
     /// Wakes what slept beside the chest at `pos` as it opened (`wakes`), each on its chance,
     /// over the chest, where the floor it was left on has room.
-    fn wake_beside(&mut self, pos: IVec3, chest: &Chest) {
+    fn wake_beside(&mut self, agent: PlayerId, pos: IVec3, chest: &Chest) {
         for (i, &(species, (low, high), chance)) in chest.wakes.iter().enumerate() {
-            let roll = random3(self.tick, pos, 0x3a4e ^ i as u32);
+            // By the opener's own count of wakes, never the tick it is opened on or what
+            // else the world rolled first.
+            let roll = self.draw_for(agent, crate::save::Draw::Wake);
             if roll[0] >= chance {
                 continue;
             }
@@ -92,7 +94,7 @@ impl Server {
         for (i, (item, count)) in found.into_iter().enumerate() {
             // What the chest has no room for (a mod's table) lies beside it.
             if let Some(left) = self.factory.put(pos, ItemStack { item, count }, &machines) {
-                let random = random3(self.tick, pos, 0x7e46 ^ i as u32);
+                let random = self.meta.next_pop(pos, 0x7e46 ^ i as u32);
                 self.items.spawn(left, dropped::popped(pos, random), dropped::PICKUP_DELAY);
             }
         }
@@ -177,5 +179,48 @@ mod tests {
         player.selected = 0;
         server.pick_lock(1, iron);
         assert!(server.creatures.live.is_empty());
+    }
+
+    /// A lucky pick holds or gives by the player's count of locks tried on luck, and what
+    /// wakes by the opener's count of wakes, not the tick the lock is tried on.
+    #[test]
+    fn a_lucky_lock_and_what_wakes_draw_by_count_not_the_tick() {
+        let tried = |tick: u64| {
+            let mut server = crate::test_server();
+            server.meta.draw_key = 0x0d1a;
+            let (client, connection) = voxmar_protocol::local_pair();
+            std::mem::forget(client);
+            let mut player = crate::player::Player::new(1, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
+            (player.joined, player.draw_key) = (true, crate::player::player_draw_key(0x0d1a, "ada"));
+            server.players.insert(1, player);
+            let blocks = server.content.blocks.clone();
+            let pick = blocks.expect("base:bone_lockpick");
+            server.tick = tick;
+            let at = server.spawn.floor().as_ivec3();
+            let mut opened = Vec::new();
+            for (n, chest) in ["base:bronze_treasure_chest", "base:nomad_treasure_chest"].into_iter().flat_map(|c| [c; 24]).enumerate() {
+                server.creatures.live.clear();
+                let pos = at + IVec3::new(3 + n as i32 % 8, 0, 3 + n as i32 / 8);
+                server.set_block(pos, blocks.expect(chest));
+                let player = server.players.get_mut(&1).unwrap();
+                player.inventory.clear(|_| true);
+                player.inventory.add(pick, 1);
+                player.selected = 0;
+                server.pick_lock(1, pos);
+                let open = server.block(pos) != Some(blocks.expect(chest));
+                let wakes = if open { server.content.treasure.chest(blocks.expect(chest)).map_or(0, |c| c.wakes.len()) } else { 0 };
+                opened.push((open, server.creatures.live.len(), wakes));
+            }
+            (opened, server.players[&1].draws.locks, server.players[&1].draws.wakes)
+        };
+        let first = tried(1_000);
+        let (lucky, woke) = first.0.split_at(24);
+        assert_eq!(first.1, 24, "each lock tried on luck counted on");
+        let wakes: usize = first.0.iter().map(|t| t.2).sum();
+        assert!(wakes > 0, "no opened chest had anything to wake: {:?}", first.0);
+        assert_eq!(first.2, wakes as u64, "each of an opened chest's wakes counted on");
+        assert!(lucky.iter().any(|t| t.0) && lucky.iter().any(|t| !t.0), "24 lucky tries all went alike: {lucky:?}");
+        assert!(woke.iter().any(|t| t.1 > 0) && woke.iter().any(|t| t.1 == 0), "24 opened chests all woke alike: {woke:?}");
+        assert_eq!(tried(1_377), first, "the same locks tried later went otherwise");
     }
 }

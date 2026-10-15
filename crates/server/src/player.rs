@@ -637,6 +637,7 @@ impl Server {
         self.players[&id].connection.send(time);
         let entries = self.players[&id].journal.entries().cloned().collect();
         self.players[&id].connection.send(ServerMessage::Journal { entries });
+        self.claim_home_hearth(id);
         self.kindle_home(id);
         self.players[&id].connection.send(ServerMessage::Fires { lit: self.fires() });
         // What smoulders now: the others were told as it began, and are told only of changes.

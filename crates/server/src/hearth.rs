@@ -73,8 +73,27 @@ impl Server {
         if structure.home && let Some(player) = self.players.get_mut(&agent) {
             player.home = Some(core.as_vec3() + Vec3::new(0.5, 1.0, 0.5));
         }
+        self.claim_home_hearth(agent);
         let key = if structure.home { "multiblock.home" } else { "multiblock.lit" };
         self.structure_reply(agent, Words::key(key).with("structure", structure_words(structure)));
+    }
+
+    /// A home hearth lit before fires were kept by owner (`Lit::owner` None) is its
+    /// player's again as they join, or as they touch it: the one their home is at, so their
+    /// home is kept from others' fires (fire.ron `homes_catch_only_from_owner`) even while
+    /// they are away. A hearth already someone's is left theirs.
+    pub(crate) fn claim_home_hearth(&mut self, agent: PlayerId) {
+        let Some(player) = self.players.get(&agent) else { return };
+        let Some(home) = player.home else { return };
+        let core = (home - Vec3::new(0.5, 1.0, 0.5)).round().as_ivec3();
+        let name = player.name.clone();
+        let multiblocks = &self.content.multiblocks;
+        if let Some(lit) = self.lit.get_mut(&core)
+            && lit.owner.is_none()
+            && multiblocks.get(&lit.structure).is_some_and(|m| m.home)
+        {
+            lit.owner = Some(name);
+        }
     }
 
     fn structure_reply(&self, agent: PlayerId, words: Words) {
@@ -135,6 +154,36 @@ impl Server {
             .is_some_and(|m| !m.includes(core, changed) || m.stands(core, |p| world.block(p)))));
         if self.lit.len() != before {
             self.send_fires();
+        }
+    }
+
+    /// A bed or home hearth broken (or built over) is no home: each player whose bed or hearth
+    /// stood at `pos` forgets it, as the new block there is no bed (no home's core), and is
+    /// told. They wake at what is left (the bed, the hearth, else the world's spawn), and the
+    /// home mark goes with it.
+    pub(crate) fn home_changed(&mut self, pos: IVec3, block: voxmar_engine::block::BlockId) {
+        let at = |spot: Option<Vec3>| spot.is_some_and(|spot| (spot - Vec3::new(0.5, 1.0, 0.5)).round().as_ivec3() == pos);
+        // A flood changes thousands of cells a tick: one that is no online player's bed or
+        // hearth goes no further than these compares (two a player, no lookups).
+        if !self.players.values().any(|p| at(p.bed) || at(p.home)) {
+            return;
+        }
+        let bed = self.content.blocks.def(block).has_tag("bed");
+        let hearth = self.content.multiblocks.with_core(block).any(|m| m.home);
+        for player in self.players.values_mut() {
+            let (bed_lost, hearth_lost) = (!bed && at(player.bed), !hearth && at(player.home));
+            if bed_lost {
+                player.bed = None;
+                player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: Words::key("bed.lost") });
+            }
+            if hearth_lost {
+                player.home = None;
+                player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: Words::key("home.lost") });
+            }
+            if bed_lost || hearth_lost {
+                player.vitals.home = player.home_block(&self.lit);
+                player.changed(traits::VITALS);
+            }
         }
     }
 
@@ -239,6 +288,68 @@ mod tests {
         assert_eq!(server.players[&1].tallies["lit:base:crucible_kiln"], 2);
         server.set_block(core, BlockId::AIR);
         assert!(!server.lit.contains_key(&core));
+    }
+
+    /// A bed or home hearth broken leaves no ghost home: the player forgets it, is told, and
+    /// wakes at what is left. Another bed set down where the bed was keeps it.
+    #[test]
+    fn a_broken_bed_or_hearth_is_forgotten() {
+        let mut server = crate::test_server();
+        player(&mut server);
+        let core = ColumnPos::of_block(server.spawn.floor().as_ivec3()).origin() + IVec3::new(8, server.spawn.y as i32 + 4, 8);
+        let (stone, chimney) = (server.content.blocks.expect("base:cobblestone"), server.content.blocks.expect("base:chimney"));
+        for x in -1..=1 { for z in -1..=1 {
+            server.set_block(core + IVec3::new(x, 0, z), stone);
+        }}
+        server.set_block(core, server.content.blocks.expect("base:hearthstone"));
+        for y in 1..=2 { server.set_block(core + IVec3::new(-1, y, -1), chimney); }
+        let (bag, oak_bed) = (server.content.blocks.expect("base:sleeping_bag"), server.content.blocks.expect("base:oak_bed"));
+        let bed = core + IVec3::new(5, 1, 0);
+        server.set_block(bed, bag);
+        server.players.get_mut(&1).unwrap().bed = Some(bed.as_vec3() + Vec3::new(0.5, 1.0, 0.5));
+        server.light(1, core);
+        let home = |server: &Server| server.players[&1].home_block(&server.lit);
+        assert_eq!(home(&server), Some(core), "the lit hearth is home");
+        // A bed swapped for another bed is still the bed.
+        server.set_block(bed, oak_bed);
+        assert!(server.players[&1].bed.is_some(), "a bed set where the bag was is still slept in");
+        // The hearthstone broken: no home there, the bed is.
+        server.set_block(core, BlockId::AIR);
+        assert_eq!(server.players[&1].home, None, "a broken hearth is forgotten");
+        assert_eq!(home(&server), Some(bed), "home is the bed");
+        assert_eq!(server.players[&1].vitals.home, Some(bed), "and the mark says so at once");
+        // The bed broken: nothing left, they wake at the world's spawn.
+        server.set_block(bed, BlockId::AIR);
+        assert_eq!(server.players[&1].bed, None, "a broken bed is forgotten");
+        assert_eq!(home(&server), None, "no home left");
+        assert_eq!(server.players[&1].vitals.home, None);
+    }
+
+    /// A flood that washes the bed away leaves no ghost home either.
+    #[test]
+    fn a_bed_washed_away_is_forgotten() {
+        let mut server = crate::test_server();
+        player(&mut server);
+        let floor = ColumnPos::of_block(server.spawn.floor().as_ivec3()).origin() + IVec3::new(8, server.spawn.y as i32 + 4, 8);
+        let stone = server.content.blocks.expect("base:cobblestone");
+        for x in -3..=3 { for z in -3..=3 {
+            server.set_block(floor + IVec3::new(x, 0, z), stone);
+        }}
+        // The bag between the water and the floor's nearer edge, so it lies on the water's
+        // way down (water runs only toward the nearest drop).
+        let bed = floor + IVec3::new(2, 1, 0);
+        server.set_block(bed, server.content.blocks.expect("base:sleeping_bag"));
+        server.players.get_mut(&1).unwrap().bed = Some(bed.as_vec3() + Vec3::new(0.5, 1.0, 0.5));
+        server.set_block(bed - IVec3::X, server.content.blocks.expect("base:water"));
+        for _ in 0..200 {
+            server.tick += 1;
+            server.flow();
+            if server.players[&1].bed.is_none() {
+                break;
+            }
+        }
+        assert_ne!(server.block(bed), server.content.blocks.id("base:sleeping_bag"), "the water took the bag");
+        assert_eq!(server.players[&1].bed, None, "and the bed is forgotten");
     }
 
     /// Home is the hearth lit as home while it burns, else the last bed: a hearth broken
