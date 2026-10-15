@@ -79,10 +79,13 @@ pub struct Rates {
 /// Seconds between healing a point by itself: slow, as RuneScape's, so food matters.
 const HEAL_EVERY: f32 = 10.0;
 
-/// How fast things happen under some effects' combined modifiers.
-pub fn rates(modifiers: &Modifiers) -> Rates {
-    let heal = (modifiers.heal > 0.0).then(|| HEAL_EVERY / modifiers.heal);
-    Rates { heal_every: heal, hurt_every: modifiers.hurt_every }
+/// How fast things happen under some effects' combined modifiers, and `boost` on healing
+/// besides (a prayer's): healing by itself comes no faster than `heal_most` points a second
+/// (`survival.ron`), however many buffs stack, as `skill::MAX_XP_BOOST` caps experience.
+pub fn rates(modifiers: &Modifiers, boost: f32, heal_most: f32) -> Rates {
+    let heal = modifiers.heal * boost;
+    let heal_every = (heal > 0.0).then(|| (HEAL_EVERY / heal).max(1.0 / heal_most));
+    Rates { heal_every, hurt_every: modifiers.hurt_every }
 }
 
 /// How much eating an item heals, from its tags: `heal:N` says it outright (cooked food,
@@ -156,12 +159,18 @@ mod tests {
 
     #[test]
     fn rates_follow_modifiers() {
-        let calm = rates(&Modifiers::default());
+        let calm = rates(&Modifiers::default(), 1.0, 1.0);
         assert_eq!((calm.heal_every, calm.hurt_every), (Some(HEAL_EVERY), None));
-        let soothed = rates(&Modifiers { heal: 2.0, ..Default::default() });
+        let soothed = rates(&Modifiers { heal: 2.0, ..Default::default() }, 1.0, 1.0);
         assert_eq!(soothed.heal_every, Some(HEAL_EVERY / 2.0));
-        let worst = rates(&Modifiers { heal: 0.0, hurt_every: Some(8.0), ..Default::default() });
+        let prayed = rates(&Modifiers { heal: 2.0, ..Default::default() }, 2.0, 1.0);
+        assert_eq!(prayed.heal_every, Some(HEAL_EVERY / 4.0));
+        let worst = rates(&Modifiers { heal: 0.0, hurt_every: Some(8.0), ..Default::default() }, 2.0, 1.0);
         assert_eq!((worst.heal_every, worst.hurt_every), (None, Some(8.0)));
+        // However much stacks, no faster than `heal_most` a second.
+        let stacked = rates(&Modifiers { heal: 40.0, ..Default::default() }, 2.0, 1.0);
+        assert_eq!(stacked.heal_every, Some(1.0));
+        assert_eq!(rates(&Modifiers { heal: 40.0, ..Default::default() }, 1.0, 0.5).heal_every, Some(2.0));
     }
 
     #[test]

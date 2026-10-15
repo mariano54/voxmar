@@ -97,6 +97,17 @@ pub fn stop_for(look: &FightLook, blow: Blow, share: f32, killed: bool) -> f32 {
     if killed { stop.max(look.death.stop) } else { stop }
 }
 
+/// How big a creature's flinch is, as a share of the hit's `recoil`, `tilt` and `squash`:
+/// one of `size` (width, height, already at its own scale) struck for `share` of its
+/// health. A rabbit is thrown about, a bear barely rocked; a telling blow rocks harder than
+/// a scratch.
+pub fn flinch_size(weigh: &style::Weigh, size: (f32, f32), share: f32) -> f32 {
+    let mass = (size.0 * size.0 * size.1).max(1e-3);
+    let body = (weigh.mass / mass).cbrt().clamp(weigh.heavy, weigh.light);
+    let blow = weigh.glancing + (weigh.telling - weigh.glancing) * (share / 0.5).clamp(0.0, 1.0);
+    body * blow
+}
+
 /// How far a flinch `t` seconds in (of `seconds`) has the creature pushed back, 0 to 1:
 /// quickly there, easing back.
 pub fn flinch_weight(t: f32, seconds: f32) -> f32 {
@@ -995,6 +1006,31 @@ mod tests {
         assert_eq!(marker_fill(0.0, 1.1), 0.0);
         assert!((marker_fill(0.55, 1.1) - 0.5).abs() < 1e-5);
         assert_eq!(marker_fill(1.2, 1.1), 1.0);
+    }
+
+    /// A small creature is thrown about by a blow and a big one barely rocked; a blow that
+    /// takes much of its health rocks it harder than a scratch, and the weights stay inside
+    /// their bounds however small or huge the body.
+    #[test]
+    fn small_creatures_flinch_more_and_telling_blows_more_than_scratches() {
+        let look = look();
+        let weigh = &look.hit.weigh;
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let size = |name: &str| {
+            let (_, creature) = content.creatures.iter().find(|(_, c)| c.def.name.rsplit(':').next() == Some(name)).unwrap_or_else(|| panic!("no {name}"));
+            creature.def.body.size
+        };
+        let at = |name: &str, share: f32| flinch_size(weigh, size(name), share);
+        let (rabbit, wolf, bear) = (at("rabbit", 0.25), at("wolf", 0.25), at("brown_bear", 0.25));
+        assert!(rabbit > wolf * 1.4, "a rabbit flinches {rabbit}, hardly more than a wolf's {wolf}");
+        assert!(bear < wolf * 0.8, "a bear flinches {bear}, hardly less than a wolf's {wolf}");
+        assert!((0.7..1.4).contains(&wolf), "a wolf, the middling body, flinches {wolf}, far from the hit's own size");
+        assert!(at("wolf", 0.05) < at("wolf", 0.5), "a scratch rocks a wolf as hard as a telling blow");
+        assert_eq!(at("wolf", 0.5), at("wolf", 1.0), "a blow past half its health rocks no harder");
+        let most = weigh.light * weigh.telling;
+        let least = weigh.heavy * weigh.glancing;
+        assert_eq!(flinch_size(weigh, (0.01, 0.01), 1.0), most);
+        assert_eq!(flinch_size(weigh, (40.0, 40.0), 0.0), least);
     }
 
     #[test]
