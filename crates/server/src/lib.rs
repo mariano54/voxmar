@@ -762,18 +762,7 @@ impl Server {
             crops.iter().find(|(_, c)| c.def.name == name).map(|(id, c)| (id, c.stages.len() as u8))
         });
         let placed = meta.placed.iter().map(|&p| IVec3::from_array(p)).collect();
-        // A renamed item's records go on under its new name, as tallies do.
-        let quest_placed = meta
-            .quest_placed
-            .iter()
-            .filter_map(|(cell, owner, item)| {
-                let item = match content.blocks.id(item) {
-                    Some(_) => item.clone(),
-                    None => content.blocks.def(content.blocks.saved_id(item)?).name.clone(),
-                };
-                Some((IVec3::from_array(*cell), (owner.clone(), item)))
-            })
-            .collect();
+        let quest_placed = quests::restore_placed(&meta.quest_placed, &content.blocks, &content.quests);
         let regrowing = regrow::restore(&meta.regrowing, |name| content.blocks.id(name));
         let lairs = lairs::Lairs::restore(&meta.lairs);
         let planter_grown = meta.planter_grown.iter().map(|&p| IVec3::from_array(p)).collect();

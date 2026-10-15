@@ -1840,7 +1840,10 @@ fn a_placed_block_broken_after_joining_again_comes_off_the_quest_tally() {
     let cell = place_a_trough(&mut client);
     drop(client);
     assert_eq!(troughs_saved(&dir, "test"), Some((1, vec![cell.to_array()])), "the trough set down counts, its cell kept with the world");
-    // After a restart, the same player breaks it: it comes off, though the server that saw
+    // After a restart, kept standing, it still counts.
+    drop(Client::join_with(config()));
+    assert_eq!(troughs_saved(&dir, "test"), Some((1, vec![cell.to_array()])), "the kept trough still counts after the restart");
+    // After another, the same player breaks it: it comes off, though the server that saw
     // it placed is gone.
     let mut client = Client::join_with(config());
     clear_cell(&mut client, cell);

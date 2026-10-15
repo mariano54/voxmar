@@ -1046,7 +1046,11 @@ fn draw(
                 }
                 for (g, goal) in task.iter().enumerate() {
                     let progress = state.and_then(|s| s.tasks.get(t)?.get(g).copied()).unwrap_or((0, 1));
-                    let met = progress.0 >= progress.1 || standing == Standing::Done;
+                    // Done, its goals read as met, though what they counted has since gone
+                    // (a trough set down, broken after; a carried item, used).
+                    let done = standing == Standing::Done;
+                    let progress = if done { (progress.1, progress.1) } else { progress };
+                    let met = progress.0 >= progress.1 || done;
                     // Waiting, its goals are what is ahead, not progress under way.
                     let color = match (standing, met) {
                         (Standing::Waiting, _) => MUTED,
