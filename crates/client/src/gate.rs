@@ -8574,7 +8574,8 @@ const PIECES: [&str; 14] = [
 const WALLS: [&str; 2] = ["daub", "half_timber"];
 /// The building pieces in a row in the air three blocks behind the shapes step's, seen
 /// against the sky: they must reach the client and the server alike and change the view.
-/// Then each in turn, the crosshair turned to its middle names it, and what it stops
+/// Then each in turn, from a stone ledge laid along the row two blocks before it (the row
+/// runs past reach from where the player stood), the crosshair turned to its middle names it, and what it stops
 /// movement with is its shape's boxes, filling some of its cell but not all (a whole cube
 /// would be a block that only looks shaped), or for the home's walls (daub, half-timber)
 /// the whole cell. A right click on the shutters folds them back, open on client and
@@ -8587,8 +8588,21 @@ fn pieces(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let canopy = row + IVec3::new(names.len() as i32 + 2, 0, 0);
     let shutters = cells[PIECES.iter().position(|&name| name == "wooden_shutters").expect("shutters among the pieces")];
     let under = canopy - IVec3::Y;
+    // Where the player stands to judge a piece: on the ledge, two blocks before it, eyes
+    // level with the row.
+    let stand = |cell: IVec3| Vec3::new(cell.x as f32 + 0.5, (row.y - 1) as f32, (row.z - 2) as f32 + 0.5);
+    let go = |world: &World, cell: IVec3| {
+        let at = stand(cell);
+        world.resource::<Net>().command(&format!("tp {:?} {:?} {:?}", at.x, at.y, at.z));
+    };
+    let stood = |world: &World, cell: IVec3| world.resource::<LocalPlayer>().position.distance(stand(cell)) < 0.05;
+    let ledge = (IVec3::new(row.x - 1, row.y - 2, row.z - 3), IVec3::new(cells[cells.len() - 1].x + 1, row.y - 2, row.z - 1));
     let leave = |world: &mut World, gate: &mut Gate| {
         let net = world.resource::<Net>();
+        // Back where the shapes step left the player, and the ledge taken away.
+        let home = gate.shapes_row - IVec3::new(-3, 3, 4);
+        net.command(&format!("tp {:?} {:?} {:?}", home.x as f32 + 0.5, home.y as f32, home.z as f32 + 0.5));
+        net.command(&format!("fill {} {} {} {} {} {} air", ledge.0.x, ledge.0.y, ledge.0.z, ledge.1.x, ledge.1.y, ledge.1.z));
         net.command(&format!("fill {} {} {} {} {} {} air", row.x, row.y, row.z, canopy.x + 1, row.y, row.z + 1));
         net.command(&format!("fill {} {} {} {} {} {} air", canopy.x - 1, canopy.y, canopy.z - 1, canopy.x + 1, canopy.y, canopy.z + 1));
         gate.next(Step::Held, now);
@@ -8628,6 +8642,10 @@ fn pieces(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             };
             gate.check("pieces", result);
             if missing.is_empty() {
+                let net = world.resource::<Net>();
+                net.command(&format!("fill {} {} {} {} {} {} stone", ledge.0.x, ledge.0.y, ledge.0.z, ledge.1.x, ledge.1.y, ledge.1.z));
+                net.command(&format!("fill {} {} {} {} {} {} air", ledge.0.x, row.y - 1, row.z - 2, ledge.1.x, row.y, row.z - 2));
+                go(world, cells[0]);
                 aim(world, cells[0]);
                 gate.advance(now);
             } else {
@@ -8640,7 +8658,7 @@ fn pieces(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let i = (p - first_piece) as usize;
             let (cell, name) = (cells[i], names[i]);
             let on = world.resource::<crate::interact::Target>().hit.as_ref().map(|hit| hit.block);
-            if on != Some(cell) && in_phase < SETTLE_LIMIT {
+            if !(stood(world, cell) && on == Some(cell)) && in_phase < SETTLE_LIMIT {
                 aim(world, cell);
                 return;
             }
@@ -8648,7 +8666,9 @@ fn pieces(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let boxes = client.block(cell).map(|b| client.registry.collision(b).to_vec()).unwrap_or_default();
             let filled: f32 = boxes.iter().map(|b| (b.max - b.min).element_product()).sum();
             let shaped = i < PIECES.len();
-            let result = if on != Some(cell) {
+            let result = if !stood(world, cell) {
+                Err(format!("sent to stand before {name} at {}, the player is at {}", stand(cell), world.resource::<LocalPlayer>().position))
+            } else if on != Some(cell) {
                 Err(format!("aimed at {name}, the crosshair is on {on:?}, not {cell}"))
             } else if shaped && (boxes.is_empty() || filled >= 0.999) {
                 Err(format!("{name} stops movement with {} boxes filling {:.0}% of its cell: not its shape", boxes.len(), filled * 100.0))
@@ -8658,19 +8678,31 @@ fn pieces(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 Ok(format!("under the crosshair, on client and server, stopping movement with {} boxes filling {:.0}% of its cell", boxes.len(), filled * 100.0))
             };
             gate.check(&format!("pieces: {name}"), result);
-            if let Some(&next) = cells.get(i + 1) {
-                aim(world, next);
-            } else {
-                // Then the shutters opened, as a door is.
-                aim(world, shutters);
-                let actions = world.resource::<crate::Actions>().0.clone();
-                world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("base:open"), voxmar_engine::action::ActionTarget::Block { block: shutters, face: voxmar_engine::coords::Face::NegZ });
+            // Then the next, or the shutters again to open them.
+            let next = cells.get(i + 1).copied().unwrap_or(shutters);
+            go(world, next);
+            aim(world, next);
+            gate.advance(now);
+        }
+        // Stood before the shutters with them under the crosshair, opened as a door is.
+        p if p == first_piece + names.len() as u32 => {
+            let on = world.resource::<crate::interact::Target>().hit.as_ref().map(|hit| hit.block);
+            if !(stood(world, shutters) && on == Some(shutters)) {
+                if in_phase < SETTLE_LIMIT {
+                    aim(world, shutters);
+                    return;
+                }
+                gate.check("pieces: shutters open", Err(format!("sent before the shutters at {}, the player is at {} with the crosshair on {on:?}", stand(shutters), world.resource::<LocalPlayer>().position)));
+                leave(world, gate);
+                return;
             }
+            let actions = world.resource::<crate::Actions>().0.clone();
+            world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("base:open"), voxmar_engine::action::ActionTarget::Block { block: shutters, face: voxmar_engine::coords::Face::NegZ });
             gate.advance(now);
         }
         // The shutters folded back on client and server, nothing to stop on; then a thatch
         // canopy beside the row.
-        p if p == first_piece + names.len() as u32 => {
+        p if p == first_piece + names.len() as u32 + 1 => {
             let open = here(world, gate, shutters, "wooden_shutters_open");
             let solid = world.resource::<ClientWorld>().is_solid(shutters);
             if !(open && !solid) && gate.server_in_phase() < STEP_LIMIT / 4.0 {
