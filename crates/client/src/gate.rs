@@ -10303,8 +10303,10 @@ fn ranged_feel(world: &mut World, gate: &mut Gate) {
     let def = &launch.content.creatures.get(species).def;
     let (health, height, death) = (def.health, def.body.size.1, def.death);
     let death_seconds = death.seconds;
-    // The middle of the beat it lies fallen, from tipped over to starting to go.
-    let lying = (death.fall + death.seconds * (1.0 - world.resource::<crate::fight_fx::FightLook>().death.shrink)) / 2.0;
+    // The middle of the beat it lies fallen, from tipped over (after the killing blow's
+    // freeze) to starting to go.
+    let ends = world.resource::<crate::fight_fx::FightLook>().death;
+    let lying = (ends.stop + death.fall + death.drops_after() * (1.0 - ends.shrink)) / 2.0;
     let at = gate.feet.as_vec3() + Vec3::new(1.5, 0.0, 6.0);
     let middle = at + Vec3::Y * height * 0.5;
     aim_at(world, middle);
@@ -10427,7 +10429,15 @@ fn ranged_feel(world: &mut World, gate: &mut Gate) {
                 done(world, gate, now);
                 return;
             }
-            if (frames as f32 * MARK_DEATH_STEP) < lying {
+            // The gate looks after the frame is drawn: this frame's step is already taken.
+            if ((frames + 1) as f32 * MARK_DEATH_STEP) < lying {
+                return;
+            }
+            // Lying there: rolled over all the way, at its own size, not sinking.
+            let w = world.resource::<Creatures>().watched;
+            if (w.death_roll - death.roll).abs() > 3.0 || w.death_scale < 0.99 || w.death_sink > 1e-4 {
+                gate.check("ranged feel: death", Err(format!("{lying:.2} s into its death the deer was drawn rolled {:.0} of {:.0} degrees, at {:.2} of its size, sunk {:.2} blocks", w.death_roll, death.roll, w.death_scale, w.death_sink)));
+                done(world, gate, now);
                 return;
             }
             world.resource_mut::<Creatures>().watch_step = Some(0.0);
@@ -10447,7 +10457,7 @@ fn ranged_feel(world: &mut World, gate: &mut Gate) {
             if !gone && frames < MARK_DEATH {
                 return;
             }
-            let (at, loot) = (frames as f32 * MARK_DEATH_STEP, death.drops_after());
+            let (at, loot) = ((frames + 1) as f32 * MARK_DEATH_STEP, death.drops_after());
             let result = if !gone {
                 Err(format!("the deer still lay there {MARK_DEATH} frames ({:.1} s) into its {death_seconds:.2} s death", MARK_DEATH as f32 * MARK_DEATH_STEP))
             } else if (at - loot).abs() > MARK_DEATH_STEP * 1.5 {
