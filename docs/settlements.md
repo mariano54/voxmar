@@ -30,6 +30,28 @@ them must average `site.fertility` (0.3; 0.15 in cold and desert biomes, `site.p
 These are design's numbers (wiki, settlements, draft 60). With them about one square in
 seven holds a settlement, four hamlets to every village.
 
+**Towns.** A third size, `town` (wiki: 20 to 60 buildings with walls, a temple and shops),
+is drawn where the place is wealthy, trading, orderly and crowded: 16 to 30 homes, 5 to 8
+working buildings, a temple (a chapel grown tall and long, `temple`), three to five market
+stalls round a wider square, broad paved streets,
+and 3 to 6 guards. It is rare: about one settlement in fifteen. Where a town's ground will
+not take that many houses it is laid out as its `smaller` size (a village) with the same
+draws, so a good site is never lost to a town that does not fit.
+
+**Walls.** A size's `walls` is the chance it is walled and how that leans (towns 0.85,
+more where martial and orderly; villages 0.12, mostly martial ones; hamlets never), drawn
+from a stream of its own so an unwalled place is laid out as it would be anyway. The wall
+(`rules.walls`, `settlements/walls.rs`) runs `margin` (4) blocks out round the convex ring
+of the square and its buildings, leaving out the fields, pens, orchards, woodyards and
+shrines out at the ends of the lanes. It is a palisade of the place's logs (3 high) where
+it is poor, and of its foundation stone (4 high, a merlon on every other block) past
+`stone` (0.5) wealth. A gate is left wherever a lane passes, with a post either side and a
+lintel over it with three blocks clear where the wall is high enough; a tower three
+blocks square stands at each corner and every `towers.0` (24) blocks along it, `towers.1`
+(2) higher. The wall stands on the ground of each column, leaves out any column in water
+or against a building, and no tree or prop stands in or against it. Plans report each
+column and its height (`walls`, `wall_block`) for maps and the gate.
+
 A new player finds one within `rules.spawn_settlement_within` (1024) blocks of where they
 spawn: where no square near is settled within that reach anyway, the nearest square in
 reach that can hold one always does, its climate ruling no spot out and its next best

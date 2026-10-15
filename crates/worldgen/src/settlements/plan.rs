@@ -359,7 +359,7 @@ impl Rect {
         if d.max_element() > 0.0 { d.max(Vec2::ZERO).length() } else { d.max_element() }
     }
 
-    fn grow(&self, by: i32) -> Rect {
+    pub(super) fn grow(&self, by: i32) -> Rect {
         Rect { min: self.min - by, max: self.max + by }
     }
 
@@ -844,6 +844,27 @@ impl Lot {
 }
 
 /// What planning a lot needs to know about it.
+/// A block column of a place's wall, and what part of it.
+#[derive(Clone, Copy, Debug)]
+struct Walling {
+    at: IVec2,
+    part: WallPart,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WallPart {
+    Wall,
+    /// A block higher, every other block along a stone wall.
+    Merlon,
+    /// Either side of a gate, a block higher.
+    Post,
+    /// Over a gate, three blocks clear above the lane.
+    Lintel,
+    Tower,
+    /// A tower's corner, a block higher.
+    TowerCorner,
+}
+
 struct Lot {
     spec: Spec,
     rect: Rect,
@@ -907,6 +928,10 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
 /// The stream names are drawn from, apart from the rest of the plan so a square's
 /// neighbours can draw the names it may take without planning it.
 const NAMING: u64 = 0x4a3e_5eed;
+
+/// The stream a place's wall draws from, apart from the rest so an unwalled place is laid
+/// out as it would be anyway.
+const WALLS: u64 = 0x3a11_5eed;
 
 /// How many names each square offers to take; its neighbours keep off all of them.
 pub(super) const NAME_OFFERS: u32 = 3;
@@ -1122,7 +1147,15 @@ fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, rng: Rng, smalles
     let before = (ground.queries, ground.misses, ground.clears, ground.levels, LANE_COUNTS.with(|c| c.get()), ground.prefetched);
     #[cfg(test)]
     let failures = time.map(|_| (PLACE_FAILS.each_ref().map(|c| c.load(std::sync::atomic::Ordering::Relaxed)), GIVEN_UP.each_ref().map(|c| c.load(std::sync::atomic::Ordering::Relaxed))));
-    let result = layout(ctx, cell, centre, fresh, rng, smallest, ground);
+    // A size too big for the ground lays out as its `smaller` (a town as a village), with
+    // the same draws.
+    let mut drawn = None;
+    let result = layout(ctx, cell, centre, fresh, rng.clone(), smallest, None, &mut drawn, ground);
+    let smaller = drawn.and_then(|i| ctx.def.sizes[i].smaller.as_ref()).and_then(|name| ctx.def.sizes.iter().position(|s| s.name == *name));
+    let result = match smaller {
+        Some(smaller) if result.is_none() && !smallest => layout(ctx, cell, centre, fresh, rng, false, Some(smaller), &mut drawn, ground),
+        _ => result,
+    };
     #[cfg(test)]
     if time.is_some() {
         let lane = LANE_COUNTS.with(|c| c.get());
@@ -1145,7 +1178,7 @@ fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, rng: Rng, smalles
 }
 
 #[allow(clippy::too_many_arguments)]
-fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smallest: bool, mut ground: &mut Ground) -> Option<Plan> {
+fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smallest: bool, instead: Option<usize>, drawn: &mut Option<usize>, mut ground: &mut Ground) -> Option<Plan> {
     #[cfg(test)]
     let time = phase_start();
     let def = ctx.def;
@@ -1172,6 +1205,8 @@ fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smal
     let sizes: Vec<(usize, f32)> = def.sizes.iter().enumerate().map(|(i, s)| (i, s.lean.weigh(s.weight, &levers))).collect();
     let size_index = pick(&mut rng, &sizes)?;
     let size_index = if smallest { (0..def.sizes.len()).min_by_key(|&i| def.sizes[i].houses).unwrap_or(size_index) } else { size_index };
+    *drawn = Some(size_index);
+    let size_index = instead.unwrap_or(size_index);
     let size = &def.sizes[size_index];
     def.cultures.finish(&mut culture, &site, &size.name);
     levers.axes = culture.axes;
@@ -1715,6 +1750,56 @@ fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smal
     #[cfg(test)]
     let props_time = phase_start();
 
+    // A wall round the heart of a walled place (its size's `walls`, `rules.walls`): its
+    // square and buildings, but not the fields, pens, orchards, woodyards and shrines out
+    // at the ends, nor a centrepiece out there. A gate where a lane passes; none where it
+    // would cut a building or stand in water; towers at its corners and along it.
+    let mut walls_rng = Rng::new(ctx.seed, WALLS, cell.x, cell.y);
+    let walled = size.walls.0 > 0.0 && walls_rng.chance(size.walls.1.weigh(size.walls.0, &levers).min(1.0));
+    let wall_rules = &rules.walls;
+    let mut wall: Vec<Walling> = Vec::new();
+    if walled {
+        let heart: Vec<Rect> = lots
+            .iter()
+            .filter(|l| !matches!(l.spec.kind, Kind::Field | Kind::Pen | Kind::Orchard | Kind::Woodyard | Kind::Shrine | Kind::Centrepiece))
+            .map(|l| l.rect)
+            .chain([square_rect])
+            .collect();
+        let corners = super::walls::ring(&heart, wall_rules.margin);
+        let cells = super::walls::trace(&corners);
+        let blocked = |ground: &mut Ground, p: IVec2| !bounds.holds(p) || lots.iter().any(|l| l.rect.grow(1).holds(p)) || !standing(&ground.at(p));
+        let crossed = |p: IVec2, by: f32| lanes.iter().any(|l| l.distance(p.as_vec2()) <= l.half + by);
+        let gates: Vec<bool> = cells.iter().map(|&p| crossed(p, 1.0)).collect();
+        for (i, &p) in cells.iter().enumerate() {
+            if gates[i] || blocked(&mut ground, p) {
+                continue;
+            }
+            let n = cells.len();
+            let post = gates[(i + 1) % n] || gates[(i + n - 1) % n];
+            wall.push(Walling { at: p, part: if post { WallPart::Post } else if i % 2 == 0 { WallPart::Merlon } else { WallPart::Wall } });
+        }
+        // Lintels over the gates where the wall is high enough to walk under one.
+        for (i, &p) in cells.iter().enumerate() {
+            if gates[i] && !blocked(&mut ground, p) {
+                wall.push(Walling { at: p, part: WallPart::Lintel });
+            }
+        }
+        for i in super::walls::towers(&cells, &corners, wall_rules.towers.0 as usize) {
+            for dz in -1..=1 {
+                for dx in -1..=1 {
+                    let p = cells[i] + IVec2::new(dx, dz);
+                    if crossed(p, 0.5) || blocked(&mut ground, p) {
+                        continue;
+                    }
+                    let part = if dx != 0 && dz != 0 { WallPart::TowerCorner } else { WallPart::Tower };
+                    wall.retain(|w| w.at != p);
+                    wall.push(Walling { at: p, part });
+                }
+            }
+        }
+    }
+    let walled_at: rustc_hash::FxHashSet<IVec2> = wall.iter().filter(|w| w.part != WallPart::Lintel).map(|w| w.at).collect();
+
     // Props by the lanes and in the yards, and by the water.
     let mut canvas = Canvas::default();
     let mut props: Vec<(Rect, usize, Facing)> = Vec::new();
@@ -1731,6 +1816,7 @@ fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smal
         let free = bounds.covers(&rect)
             && occupied.iter().all(|o| o.gap(&rect) >= 0)
             && lanes.iter().all(|l| !l.rect_any(&rect, |d| d <= l.half + clearance))
+            && (walled_at.is_empty() || !(rect.min.y - 1..=rect.max.y + 1).any(|z| (rect.min.x - 1..=rect.max.x + 1).any(|x| walled_at.contains(&IVec2::new(x, z)))))
             && [rect.min, rect.max, IVec2::new(rect.min.x, rect.max.y), IVec2::new(rect.max.x, rect.min.y)].iter().all(|&c| walkable(&ground.at(c)));
         free.then_some(rect)
     };
@@ -1831,6 +1917,36 @@ fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smal
             _ => house::draw(&lot.spec, &lot.frame, &lot.mats, ctx.fixed, &mut canvas),
         }
     }
+    // The wall: stone where the place is rich, else a palisade of its logs; merlons on
+    // every other block, posts either side of each gate, a lintel over it.
+    let stone = wealth > wall_rules.stone;
+    let wall_height = if stone { wall_rules.height.1 } else { wall_rules.height.0 } as i32;
+    let wall_block = (!wall.is_empty()).then(|| {
+        let mats = kit.mats(ctx, &mut walls_rng);
+        if stone { mats.stone() } else { mats.log }
+    });
+    let mut walls_out: Vec<(IVec2, i32)> = Vec::with_capacity(wall.len());
+    if let Some(block) = wall_block {
+        let tower = wall_height + wall_rules.towers.1 as i32;
+        for w in &wall {
+            let (from, to) = match w.part {
+                WallPart::Wall => (1, wall_height),
+                WallPart::Merlon => (1, wall_height + i32::from(stone)),
+                WallPart::Post => (1, wall_height + 1),
+                // Three blocks clear under it, and only where there is wall above that.
+                WallPart::Lintel if wall_height > 3 => (4, wall_height),
+                WallPart::Lintel => continue,
+                WallPart::Tower => (1, tower),
+                WallPart::TowerCorner => (1, tower + 1),
+            };
+            for up in from..=to {
+                canvas.on_ground(w.at.x, w.at.y, up, Put::Set(block));
+            }
+            if w.part != WallPart::Lintel {
+                walls_out.push((w.at, to));
+            }
+        }
+    }
     let prop_mats = kit.mats(ctx, &mut rng);
     for &(rect, prop, facing) in &props {
         match &def.props[prop].kind {
@@ -1895,6 +2011,10 @@ fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smal
         min = min.min(rect.min - 2);
         max = max.max(rect.max + 2);
     }
+    for &(p, _) in &walls_out {
+        min = min.min(p - 2);
+        max = max.max(p + 2);
+    }
     let mut raster = Raster::new(min, max);
     // The square: flat in the middle, easing out.
     raster.pad(&Rect { min: centre - square, max: centre + square }, square_height, FALLOFF + 1, 0, true, |p| p.as_vec2().distance(centre.as_vec2()) <= square as f32 + 0.5);
@@ -1952,6 +2072,10 @@ fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smal
     }
     for (rect, ..) in &props {
         raster.clear_rect(rect);
+    }
+    // No tree stands in the wall or against it.
+    for &(p, _) in &walls_out {
+        raster.clear_rect(&Rect { min: p - 1, max: p + 1 });
     }
     // A clearing in the woods, leafier where the place is green.
     let rects: Vec<Rect> = lots.iter().map(|l| l.rect).collect();
@@ -2018,6 +2142,8 @@ fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smal
         lanes: lanes.iter().map(|l| l.points.clone()).collect(),
         people,
         lane_halves: lanes.iter().map(|l| l.half).collect(),
+        walls: walls_out,
+        wall_block,
         min: raster.min,
         max: raster.max,
         raster,
@@ -3179,7 +3305,7 @@ mod level_tests {
         let mut style_excluded = 0;
         for all_zero in [false, true] {
             let weights: Vec<_> = (0..def.houses.len()).map(|i| if all_zero || i % 3 == 0 || i + 1 == def.houses.len() { 0.0 } else { 0.25 + i as f32 * 0.125 }).collect();
-            for size in ["hamlet", "village"] {
+            for size in ["hamlet", "village", "town"] {
                 for style in ["timber_frame", "log_cabin", "turf_house"] {
                     assert!(def.styles.iter().any(|s| s.name == style));
                     for count in 0..=3 {

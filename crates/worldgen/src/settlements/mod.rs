@@ -32,6 +32,7 @@ pub mod people;
 mod plan;
 #[cfg(test)]
 mod tests;
+mod walls;
 
 use std::cell::RefCell;
 use std::sync::Arc;
@@ -122,6 +123,10 @@ pub struct Plan {
     /// Each lane's half width, beside `lanes`.
     #[cfg_attr(not(test), allow(dead_code))]
     pub lane_halves: Vec<f32>,
+    /// Its wall, if it is walled: each column and how many blocks over the ground it
+    /// stands, and what it is built of.
+    pub walls: Vec<(IVec2, i32)>,
+    pub wall_block: Option<voxmar_engine::block::BlockId>,
     /// The blocks the settlement touches, grading included.
     pub min: IVec2,
     pub max: IVec2,
@@ -321,6 +326,7 @@ impl Weigh for Slot {
                 + p.lanes.capacity() * std::mem::size_of::<Vec<Vec2>>()
                 + p.lanes.iter().map(|l| l.capacity() * std::mem::size_of::<Vec2>()).sum::<usize>()
                 + p.lane_halves.capacity() * std::mem::size_of::<f32>()
+                + p.walls.capacity() * std::mem::size_of::<(IVec2, i32)>()
                 + p.size.capacity() + p.layout.capacity() + p.style.capacity() + p.name.0.capacity() + p.name.1.capacity()
                 + p.culture.bytes() - std::mem::size_of::<culture::Culture>()
         })

@@ -232,6 +232,9 @@ fn settlement_preview() {
                 info.dropped.join(", "),
                 info.borrowed.join(", ")
             );
+            if let Some(block) = p.wall_block {
+                println!("    walled: {} columns of {}", p.walls.len(), registry.def(block).name);
+            }
             let named = names.as_ref().is_some_and(|n| n.iter().any(|n| p.name.0.contains(n.as_str()) || p.style == *n || info.family == *n));
             if !(named || names.is_none() && i < count) {
                 continue;
@@ -2970,7 +2973,7 @@ fn culture_planning_budget() {
         if !found.iter().any(|s| s.0.as_ref().is_some_and(|p| p.size == "village")) {
             found = world.settlements.near(&world, centre, 4096);
         }
-        for size in ["hamlet", "village"] {
+        for size in ["hamlet", "village", "town"] {
             let Some(slot) = found.iter().find(|s| s.0.as_ref().is_some_and(|p| p.size == size)) else { continue };
             let plan = slot.0.as_ref().unwrap();
             let cell = world.settlements.cell_of(plan.centre.x, plan.centre.y);
@@ -2986,7 +2989,7 @@ fn culture_planning_budget() {
                 eprintln!("  plan total {ms:.3} ms CPU; river-region creation {:.3} ms elapsed", stages.get(crate::stage::Stage::RiverRegions).as_secs_f64() * 1000.0);
             }
             assert_eq!(again.culture, plan.culture);
-            let budget = match plan.size.as_str() { "hamlet" => 3.0, "village" => 6.0, other => panic!("unbudgeted size {other}") };
+            let budget = match plan.size.as_str() { "hamlet" => 3.0, "village" => 6.0, "town" => 14.0, other => panic!("unbudgeted size {other}") };
             if ms > budget * 2.0 {
                 failures.push(format!("seed {seed} {} at {}: {ms:.2} ms CPU, budget {budget} ms", plan.size, plan.centre));
             }
@@ -3009,4 +3012,57 @@ fn culture_planning_budget() {
     assert!(count >= 20, "only {count} plans");
     println!("culture budget: {count} plans over 20 seeds, peak {peak} bytes including culture");
     assert!(failures.is_empty(), "planning budgets failed:\n{}", failures.join("\n"));
+}
+
+/// Towns are rare and big, and most are walled: a ring round their square and buildings
+/// that cuts no building, leaves a gate wherever a lane passes, and stands a tower at least
+/// every `towers` blocks; a village is now and then walled, a hamlet never.
+#[test]
+fn towns_are_big_rare_and_walled_round_their_heart() {
+    use super::house::Kind;
+    let (mut sizes, mut walled) = (std::collections::BTreeMap::<String, usize>::new(), std::collections::BTreeMap::<String, usize>::new());
+    let mut towns = Vec::new();
+    for seed in [1u64, 42, 7] {
+        let world = shared_world(seed);
+        let rules = &world.settlements.def.rules.walls;
+        for cz in -5..5 {
+            for cx in -5..5 {
+                let slot = world.settlements.slot(&world, IVec2::new(cx, cz));
+                let Some(p) = &slot.0 else { continue };
+                *sizes.entry(p.size.clone()).or_default() += 1;
+                if p.walls.is_empty() {
+                    continue;
+                }
+                *walled.entry(p.size.clone()).or_default() += 1;
+                assert!(p.wall_block.is_some(), "seed {seed}, {}: a wall of nothing", p.name.0);
+                for &(at, top) in &p.walls {
+                    assert!((2..=12).contains(&top), "seed {seed}, {}: the wall at {at} stands {top} high", p.name.0);
+                    for b in &p.buildings {
+                        let inside = at.cmpge(b.min - 1).all() && at.cmple(b.max + 1).all();
+                        assert!(!inside, "seed {seed}, {}: the wall at {at} runs into the {} at {}..{}", p.name.0, b.what, b.min, b.max);
+                    }
+                    // The wall leaves every lane a way through: none of it stands on a lane.
+                    for (lane, half) in p.lanes.iter().zip(&p.lane_halves) {
+                        let near = lane.windows(2).flat_map(|w| (0..=16).map(move |k| w[0].lerp(w[1], k as f32 / 16.0))).map(|q| q.distance(at.as_vec2())).fold(f32::MAX, f32::min);
+                        assert!(near > *half, "seed {seed}, {}: the wall at {at} stands {near:.1} from a lane {half} wide each side", p.name.0);
+                    }
+                }
+                // Towers stand along it: the tallest columns, never too far apart round it.
+                let tall = p.walls.iter().map(|w| w.1).max().unwrap();
+                let towers = p.walls.iter().filter(|w| w.1 == tall).count();
+                assert!(towers >= 4, "seed {seed}, {}: {towers} tower corners along {} blocks of wall", p.name.0, p.walls.len());
+                if p.size == "town" {
+                    let homes = p.buildings.iter().filter(|b| b.kind == Kind::House && b.work.is_none()).count();
+                    towns.push((seed, p.name.0.clone(), homes, p.walls.len(), rules.towers.0));
+                }
+            }
+        }
+    }
+    eprintln!("sizes {sizes:?}, walled {walled:?}, towns {towns:?}");
+    let all: usize = sizes.values().sum();
+    let town_count = sizes.get("town").copied().unwrap_or(0);
+    assert!(town_count >= 2 && town_count * 100 <= all * 15, "{town_count} towns in {all} settlements");
+    assert!(walled.get("hamlet").is_none(), "a hamlet walled");
+    assert!(walled.get("town").copied().unwrap_or(0) * 2 >= town_count, "few towns walled: {walled:?} of {town_count}");
+    assert!(towns.iter().all(|t| t.2 >= 14), "a small town: {towns:?}");
 }

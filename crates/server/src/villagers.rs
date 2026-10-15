@@ -994,6 +994,7 @@ mod tests {
                 room: (6..=10).flat_map(|x| (6..=10).map(move |z| IVec2::new(x, z))).collect(),
                 door: Some(IVec3::new(8, 200, 13)), facing: SettlementFacing::South, what: "cottage".into(), work: None }],
             people: (0..count).map(|i| Resident { species: species.into(), home: 0, work: None, routine, guard: species == "base:guard", seed: 100 + i as u64 }).collect(),
+            walls: Vec::new(), wall_block: None,
         };
         server.villagers.remember_town(info, 12);
         server
