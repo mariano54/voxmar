@@ -6074,6 +6074,10 @@ fn makeable(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         gate.check("make: list", Err("the content lacks the oak log, its planks or the stone pickaxe".into()));
         return leave(world, gate);
     };
+    // A cooked thing that takes more than what is held (bronze: copper ingots held, a tin
+    // ore carried), picked from the data by that: its held input, and what else it wants.
+    let content = world.resource::<Launch>().content.clone();
+    let alloy = content.cooking.iter().find(|(_, r)| !r.with.is_empty()).map(|(input, r)| (content.blocks.item_of(input), r.def.uses, r.with.clone(), r.output));
     let cell_of = |world: &mut World, item: BlockId| {
         let drawn = world.resource::<Drawn>().0.clone();
         world.query::<(Entity, &MakeCell)>().iter(world).find(|(_, cell)| drawn.get(cell.0).is_some_and(|m| m.output == item)).map(|(entity, _)| entity)
@@ -6085,6 +6089,15 @@ fn makeable(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             for line in ["clear oak_log", "give oak_log 1", "clear cobblestone", "give cobblestone 3"] {
                 net.command(line);
             }
+            // As many as one go of the alloy holds, and none of what goes with it.
+            if let Some((input, uses, with, _)) = &alloy {
+                let short = |item: BlockId| content.blocks.def(item).name.split_once(':').map_or(String::new(), |(_, n)| n.to_owned());
+                net.command(&format!("clear {}", short(*input)));
+                net.command(&format!("give {} {uses}", short(*input)));
+                for (item, _) in with {
+                    net.command(&format!("clear {}", short(*item)));
+                }
+            }
             let mut ui = world.resource_mut::<UiState>();
             (ui.recipes_open, ui.quests_open, ui.menu_open, ui.character_open) = (false, false, false, false);
             ui.inventory_open = true;
@@ -6095,12 +6108,23 @@ fn makeable(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         1 => {
             let drawn = world.resource::<Drawn>().0.clone();
             let ready = drawn.iter().find(|m| m.output == planks).is_some_and(|m| m.reach == Reach::Ready);
+            let alloy_held = alloy.as_ref().is_none_or(|(input, uses, with, _)| {
+                let inventory = &world.resource::<LocalPlayer>().inventory;
+                inventory.count(*input) == *uses as u32 && with.iter().all(|&(item, _)| inventory.count(item) == 0)
+            });
             let cell = cell_of(world, planks);
             match cell {
-                Some(_) if ready && holding(world, "base:oak_log").0 >= 1 => {
+                Some(_) if ready && holding(world, "base:oak_log").0 >= 1 && alloy_held => {
                     let first_not = drawn.iter().position(|m| m.reach != Reach::Ready).unwrap_or(drawn.len());
                     let order = drawn[first_not..].iter().all(|m| m.reach != Reach::Ready);
                     gate.check("make: list", if order { Ok(format!("a log in the pack shows planks ready; {first_not} of {} ready, all first", drawn.len())) } else { Err(format!("a ready one comes after one not ready: {:?}", drawn.iter().map(|m| m.reach.rank()).collect::<Vec<_>>())) });
+                    // The alloy's input in hand, what goes with it not: short of exactly that.
+                    if let Some((input, uses, with, output)) = &alloy {
+                        let wanted = Reach::Short(with.iter().map(|&(item, n)| (item, n as u32)).collect());
+                        let reach = drawn.iter().find(|m| m.output == *output).map(|m| m.reach.clone());
+                        let name = |item: BlockId| content.blocks.def(item).name.clone();
+                        gate.check("make: cooked with", if reach.as_ref() == Some(&wanted) { Ok(format!("{uses} {} in the pack show {} short of what goes with it, {wanted:?}", name(*input), name(*output))) } else { Err(format!("{uses} {} in the pack show {} as {reach:?}, not {wanted:?}", name(*input), name(*output))) });
+                    }
                     gate.count_before = world.resource::<LocalPlayer>().inventory.craft.iter().flatten().filter(|s| s.item == log).map(|s| s.count as u32).sum();
                     gate.advance(now);
                 }
