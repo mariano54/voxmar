@@ -259,7 +259,8 @@ steps! {
     /// Walking into the hole picks up what the dug blocks dropped.
     Collect,
     /// A row of blocks of every hardness, broken with the bare hand, a held block and every
-    /// tool, under load: client and server agree on every one, and none comes back.
+    /// tool, under load: client and server agree on every one, and none comes back. Those
+    /// of a building material (the cobblestone) sound as it.
     Breaks,
     /// On the menu's audio page, a switch for each category of music the player can hear;
     /// clicking one turns that category off, and again on. A track starting is named, with
@@ -2023,6 +2024,7 @@ fn breaks(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 net.command(&format!("setblock {} {} {} {}", cell.x, cell.y, cell.z, registry.def(block).name));
             }
             gate.breaks = Breaks { row, ..default() };
+            world.resource_mut::<crate::sfx::MaterialsAsked>().0.clear();
             gate.advance(now);
         }
         1 => {
@@ -2136,9 +2138,45 @@ fn breaks(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 Err(wrong.join("; "))
             };
             gate.check("breaks", result);
+            let sounded = material_sounds(world, &gate.breaks.row);
+            gate.check("breaks: material sounds", sounded);
             end_breaks(world, gate, now);
         }
     }
+}
+
+/// Whether every block of the breaks row that is of a building material (`sounds.ron`'s
+/// `materials`) asked, as it broke, for that material's break clips, and its taps (when it
+/// took long enough to tap) for its step clips, not its family's; with sound off, by what
+/// was asked rather than heard. Some block of the row must be of one.
+fn material_sounds(world: &World, row: &[(IVec3, BlockId, Holder)]) -> Result<String, String> {
+    use crate::sfx::Cue;
+    let recorded = crate::sfx::Recordings::load(&world.resource::<Launch>().content.files)?;
+    let registry = &world.resource::<ClientWorld>().registry;
+    let asked = &world.resource::<crate::sfx::MaterialsAsked>().0;
+    let mut blocks: Vec<BlockId> = row.iter().map(|&(_, block, _)| block).collect();
+    blocks.dedup();
+    let of_material: Vec<(BlockId, &crate::sfx::MaterialSound)> =
+        blocks.iter().filter_map(|&block| Some((block, &recorded.materials[recorded.material_of(registry, block)?]))).collect();
+    if of_material.is_empty() {
+        let names: Vec<&str> = blocks.iter().map(|&b| registry.def(b).name.as_str()).collect();
+        return Err(format!("no block of the row ({}) is of a building material", names.join(", ")));
+    }
+    let mut wrong = Vec::new();
+    let mut heard = Vec::new();
+    for (block, material) in of_material {
+        let name = &registry.def(block).name;
+        for (cue, needed) in [(Cue::Break, true), (Cue::Hit, false)] {
+            let wanted: Vec<String> = material.clips(cue).map(|(paths, _)| paths.to_vec()).unwrap_or_default();
+            match asked.iter().find(|&&(b, c, _)| b == block && c == cue) {
+                Some((.., paths)) if *paths == wanted => heard.push(format!("{name} {cue:?} as {} ({} clips)", material.name, paths.len())),
+                Some((.., paths)) => wrong.push(format!("{name} {cue:?} asked for {paths:?}, not {}'s {wanted:?}", material.name)),
+                None if needed => wrong.push(format!("{name} broke but never asked for its {cue:?} sound (asked: {asked:?})")),
+                None => {}
+            }
+        }
+    }
+    if wrong.is_empty() { Ok(heard.join(", ")) } else { Err(wrong.join("; ")) }
 }
 
 /// The breaks step's row: every holder once, in order, each with a block, and every block
@@ -8510,13 +8548,18 @@ fn populated(world: &World, since: f32) -> Option<usize> {
 /// from the first such line in the chat since `since` (the game's clock); none until the
 /// reply has come.
 fn counted(world: &World, key: &str, since: f32) -> Option<usize> {
+    counted_in(world, key, world.resource::<crate::hud::console::Console>().since(since))
+}
+
+/// The count the first line of `lines` worded by `key` gave.
+fn counted_in<'a>(world: &World, key: &str, mut lines: impl Iterator<Item = &'a str>) -> Option<usize> {
     const COUNT: &str = "\u{1}";
     let locale = world.resource::<Locale>();
     let forms: Vec<(String, String)> = [key.to_owned(), format!("{key}.one"), format!("{key}.other")]
         .iter()
         .filter_map(|key| locale.format(key, &[("count", &COUNT)]).split_once(COUNT).map(|(b, a)| (b.to_owned(), a.to_owned())))
         .collect();
-    world.resource::<crate::hud::console::Console>().since(since).find_map(|line| {
+    lines.find_map(|line| {
         forms.iter().find_map(|(before, after)| {
             let (_, rest) = line.split_once(before.as_str())?;
             rest.strip_suffix(after.as_str())?.trim().parse().ok()
@@ -8825,8 +8868,15 @@ fn strike(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     if landed > 0 {
                         gate.struck_heights = (gate.struck_heights.0.min(view.position.y), gate.struck_heights.1.max(view.position.y));
                     }
-                    // Close in to striking reach, then strike.
-                    let far = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz()) > 1.6;
+                    // Close in to striking reach, then strike. Held once near (a hold
+                    // reaches 8 blocks), so the watched punch is pressed at a snail
+                    // standing where it was aimed at.
+                    let off = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz());
+                    if !gate.swing_watch.held && off < 6.0 {
+                        world.resource::<Net>().command(&format!("creatures hold {}", CREATURE.trim_start_matches("base:")));
+                        gate.swing_watch.held = true;
+                    }
+                    let far = off > 1.6;
                     key(world, KeyCode::KeyW, far);
                     aim_at(world, view.position + Vec3::Y * 0.2);
                     if now - gate.since < PUNCH_AFTER || !watch_swing(world, gate, far, now) {
@@ -9006,7 +9056,8 @@ fn weapon(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             net.command("gamemode creative");
             net.command(&format!("skill attack {WEAPON_LEVEL}"));
             net.command(&format!("give {} 1", WEAPON.trim_start_matches("base:")));
-            net.command(&format!("summon {} 1 {} {} {}", BEAR.trim_start_matches("base:"), pad.x, pad.y, pad.z + 1));
+            // Held, so the watched swing is pressed at a bear standing where it was aimed at.
+            net.command(&format!("summon {} 1 {} {} {} held", BEAR.trim_start_matches("base:"), pad.x, pad.y, pad.z + 1));
             gate.blows_seen = world.resource::<crate::creatures::Creatures>().blows;
             gate.weapon_from = (gate.blows_seen, world.resource::<crate::creatures::Creatures>().landed);
             gate.feel = FeelRun::default();
@@ -9413,6 +9464,12 @@ struct SwingWatch {
     frames: Vec<(f32, f32, f32)>,
     /// The server's seconds at its press, and the blows the server had answered then.
     pressed: (f32, u32),
+    /// The swings the client had sent at its press (`Fighting::strikes`), and how far
+    /// the quarry under the crosshair was then, against the weapon's reach.
+    sent: u32,
+    reach: (f32, f32),
+    /// The quarry was asked to stand still.
+    held: bool,
     /// Its stroke has run its course, back to rest.
     ended: bool,
     /// The shot taken as it connects, and the models the hand was drawn with then.
@@ -9437,13 +9494,18 @@ const SWING_WAIT: f32 = 4.0;
 fn watch_swing(world: &mut World, gate: &mut Gate, far: bool, now: f32) -> bool {
     match gate.swing_watch.stage {
         0 => {
-            let aimed = world.resource::<crate::interact::Target>().creature.is_some();
-            if far || !aimed || gate.swung || now - gate.swing_at < voxmar_engine::combat::FULL_CHARGE + 0.05 {
+            // Pressed only with the quarry under the crosshair within the held weapon's
+            // reach (the crosshair finds creatures as far as they can be touched, past a
+            // sword's reach, and a click there strikes nothing), so the press swings.
+            let Some(reach) = in_reach(world) else { return false };
+            if far || reach.0 > reach.1 || gate.swung || now - gate.swing_at < voxmar_engine::combat::FULL_CHARGE + 0.05 {
                 return false;
             }
+            gate.swing_watch.reach = reach;
             world.resource_mut::<crate::held::HeldClock>().step = Some(SWING_FRAME);
             gate.swing_watch.stage = 1;
             gate.swing_watch.pressed = (gate.server_now, world.resource::<crate::creatures::Creatures>().blows);
+            gate.swing_watch.sent = world.resource::<crate::fight::Fighting>().strikes;
             gate.swing(world, now);
             true
         }
@@ -9484,6 +9546,20 @@ fn watch_swing(world: &mut World, gate: &mut Gate, far: bool, now: f32) -> bool 
     }
 }
 
+/// How far the creature under the crosshair is, along the look, and the reach of what is
+/// held, as the client's own aim measures them (`creatures::aim`); none with no creature
+/// there.
+fn in_reach(world: &World) -> Option<(f32, f32)> {
+    let (launch, player) = (world.resource::<Launch>(), world.resource::<LocalPlayer>());
+    let id = world.resource::<crate::interact::Target>().creature?;
+    let combat = &launch.content.combat;
+    let held = player.inventory.get(player.selected).map(|s| s.item);
+    let weapon = combat.wielded(held, |skill| launch.content.skills.level(player.skills.xp(skill)));
+    let aabb = world.resource::<crate::creatures::Creatures>().aabb(launch, id)?;
+    let distance = crate::creatures::ray_box(player.eye(), player.look_direction().normalize_or_zero(), &aabb)?;
+    Some((distance, weapon.reach))
+}
+
 /// Judges the watched swing: it peaked as its blow is judged (the class wind-up the server
 /// times it by), went out all the way, came back to rest and was answered; the hand's clock
 /// is the frame's own again.
@@ -9492,6 +9568,7 @@ fn judge_swing(world: &mut World, gate: &mut Gate, answered: bool) {
     let judged = SwingWatch { stage: 2, ..SwingWatch::of(gate.swing_watch.name, gate.swing_watch.shot_name, gate.swing_watch.quarry) };
     let watch = std::mem::replace(&mut gate.swing_watch, judged);
     let quarry = watch.quarry;
+    let sent = world.resource::<crate::fight::Fighting>().strikes;
     let (windup, held) = {
         let (launch, player) = (world.resource::<Launch>(), world.resource::<LocalPlayer>());
         let combat = &launch.content.combat;
@@ -9508,7 +9585,13 @@ fn judge_swing(world: &mut World, gate: &mut Gate, answered: bool) {
     let peak = watch.frames.iter().copied().max_by(|a, b| a.2.total_cmp(&b.2));
     let result = match peak {
         _ if watch.stage == 0 => Err(format!("{quarry} was never in reach and aimed at for the watched swing")),
-        None => Err(format!("the swing at {quarry} never played in the hand")),
+        None => Err(format!(
+            "the swing at {quarry} never played in the hand: {} swings sent since the press ({} then); {quarry} {:.2} blocks off under the crosshair at the press, the weapon reaching {:.2}",
+            sent - watch.sent,
+            watch.sent,
+            watch.reach.0,
+            watch.reach.1
+        )),
         Some((_, connect, _)) if (connect - windup).abs() > 1e-4 => Err(format!("the swing was timed to connect {connect:.3} s in, not at the wind-up of {windup:.3} s")),
         Some((at, _, _)) if (at - windup).abs() > SWING_FRAME + 1e-3 => Err(format!("the swing peaked {at:.3} s in, where the server judges its blow at {windup:.3} s")),
         Some((_, _, weight)) if weight < 0.9 => Err(format!("the swing went only {weight:.2} of the way out")),
@@ -9517,9 +9600,11 @@ fn judge_swing(world: &mut World, gate: &mut Gate, answered: bool) {
         Some(_) if !watch.shot => Err("the swing was never shot as it connected".to_string()),
         Some(_) if watch.drawn != models || models == 0 => Err(format!("the hand was drawn with {} models as it connected, where it takes {models}", watch.drawn)),
         Some((at, _, weight)) => Ok(format!(
-            "{} frames of 1/60 s: out {weight:.2} at {at:.3} s, the blow judged at {windup:.3} s; at rest {:.2} s in; its blow answered; drawn with {models} models",
+            "{} frames of 1/60 s: out {weight:.2} at {at:.3} s, the blow judged at {windup:.3} s; at rest {:.2} s in; its blow answered; drawn with {models} models; pressed {:.2} blocks off, in a reach of {:.2}",
             watch.frames.len(),
-            watch.frames.last().map_or(0.0, |f| f.0)
+            watch.frames.last().map_or(0.0, |f| f.0),
+            watch.reach.0,
+            watch.reach.1
         )),
     };
     gate.check(watch.name, result);
@@ -9592,7 +9677,9 @@ fn sweep_bears(world: &mut World, gate: &mut Gate, species: voxmar_engine::creat
     mouse(world, MouseButton::Right, false);
     key(world, KeyCode::KeyW, false);
     if let Some(since) = gate.sweep.asked {
-        match counted(world, "command.creatures.done", since) {
+        // Only a line after the frame the kill went out: the last kill's answer may have
+        // come in that same frame.
+        match counted_in(world, "command.creatures.done", world.resource::<crate::hud::console::Console>().after(since)) {
             Some(killed) => (gate.sweep.asked, gate.sweep.answered) = (None, Some(killed)),
             None if gate.server_now - gate.sweep.killed < SWEEP_REPLY => return false,
             None => {
@@ -12728,8 +12815,10 @@ fn snare(world: &mut World, gate: &mut Gate, now: f32) {
             if set {
                 // `/summon` takes a block cell and stands its first creature 1.8 blocks west
                 // of the cell's middle (the first of a row of four): two cells east of the
-                // snare puts it 0.7 into the snare's own cell.
-                world.resource::<Net>().command(&format!("summon rabbit 1 {} {} {}", snare.x + 2, snare.y, snare.z));
+                // snare puts it in the snare's own cell. Held, it stays there for the traps'
+                // next look: a rabbit let loose arriving just after one could run out first
+                // and never come back, by whichever tick a loaded server took the summon on.
+                world.resource::<Net>().command(&format!("summon rabbit 1 {} {} {} held", snare.x + 2, snare.y, snare.z));
                 gate.advance(now);
             } else if waited {
                 gate.check("snare", Err(format!("the snare never stood in {DRY_WAIT} server seconds")));
@@ -12826,8 +12915,16 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     };
     match gate.phase {
         0 => {
+            // On the pad's middle with nothing else about it: what the steps before left there
+            // (a wild one wandering in, a kept one of ours) can neither be fed the wheat nor
+            // stand in the way, and the walk to the hen is the same whichever step came first.
             let net = world.resource::<Net>();
-            net.command(&format!("summon junglefowl 1 {} {} {}", pad.x - 2, pad.y, pad.z));
+            net.command(&format!("tp {} {} {}", pad.x as f32 + 0.5, pad.y, pad.z as f32 + 0.5));
+            net.command("creatures disperse");
+            net.command("creatures remove");
+            // Held, it stands where it arrives for the minute the step takes: fed, read and let
+            // go where the player reaches it, never chased about the pad as a kept one wanders.
+            net.command(&format!("summon junglefowl 1 {} {} {} held", pad.x - 2, pad.y, pad.z));
             net.command("give wheat 16");
             gate.advance(now);
         }
@@ -12979,7 +13076,8 @@ fn tame(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.check("release", Err("8 server seconds of Shift and right clicks on our junglefowl did not let it go".into()));
                 gate.next(Step::Party, now);
             } else {
-                // It wanders (up to 7 blocks from home) and reach is 5: walk toward it while far.
+                // Held where it was summoned, a step or two from where feeding left the player:
+                // walk toward it while far.
                 let far = world.resource::<LocalPlayer>().position.xz().distance(view.position.xz()) > 1.8;
                 key(world, KeyCode::KeyW, far);
                 aim_at(world, view.position + Vec3::Y * 0.3);
@@ -14602,6 +14700,11 @@ mod tests {
                 world.resource_mut::<crate::hud::console::Console>().push(voxmar_protocol::ChatKind::Info, &reply, 2.0);
                 assert_eq!(super::counted(&world, "command.creatures.done", 1.5), Some(killed as usize), "{code}: {reply}");
                 assert_eq!(super::counted(&world, "command.creatures.done", 2.5), None, "{code}: told before the kill");
+                // A sweep's next kill sent in the frame the last answer came reads only what
+                // comes after it, never that same answer again.
+                let console = world.resource::<crate::hud::console::Console>();
+                assert_eq!(super::counted_in(&world, "command.creatures.done", console.after(2.0)), None, "{code}: the last kill's answer read again");
+                assert_eq!(super::counted_in(&world, "command.creatures.done", console.after(1.5)), Some(killed as usize), "{code}: {reply}");
             }
         }
     }
