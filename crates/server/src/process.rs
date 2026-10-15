@@ -162,6 +162,7 @@ impl Survival {
         let cold_air = air - if wet { server.survival.water_chill } else { 0.0 };
         let warmed = heat > 0.5 && cold_air < vitals::CHILLY;
         let home = server.home_survey(id);
+        let home_stores = server.home_store_tally(id);
         // What effects ask of the item in hand (`Holding`) and of the blocks near
         // (`Near`).
         let held: Vec<String> = player.held().map_or_else(Vec::new, |item| {
@@ -263,6 +264,7 @@ impl Survival {
         player.vitals.effects = effects.active(&situation, &player.timed_effects);
         player.vitals.home = player.home_block(&server.lit);
         player.vitals.seated = seated;
+        player.vitals.home_stores = home_stores;
         // What kept animals laid into the home's stores is told once the keeper is home.
         if home.is_some() && !player.nested.is_empty() {
             let items = std::mem::take(&mut player.nested).into_iter().map(|(item, n)| Words::key("multiblock.fuel_stack").with("count", n.to_string()).with("item", Words::Block(item))).collect();
