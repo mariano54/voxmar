@@ -13417,7 +13417,8 @@ fn judge_homes(world: &World, gate: &Gate, at: IVec3) -> Result<String, String> 
             if !tagged(p, "bed") {
                 problems.push(format!("the {}'s bed at {p} is {}", b.kind.name(), name(p)));
             } else if !reached {
-                problems.push(format!("the {}'s bed at {p} is walled in", b.kind.name()));
+                let sides: Vec<String> = [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z].into_iter().map(|d| format!("{} {} over {}", p + d, name(p + d), name(p + d + IVec3::Y))).collect();
+                problems.push(format!("the {}'s bed at {p} is walled in: beside it {}", b.kind.name(), sides.join(", ")));
             } else {
                 beds += 1;
             }

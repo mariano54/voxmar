@@ -104,6 +104,9 @@ pub struct Count {
     pub range: (u32, u32),
     #[serde(default)]
     lean: BTreeMap<String, f32>,
+    /// `lean`, parsed once at load.
+    #[serde(skip)]
+    parsed: Lean,
 }
 
 /// A chance, leaning like a list entry's weight (and no more than certain).
@@ -113,6 +116,9 @@ pub struct Chance {
     pub chance: f32,
     #[serde(default)]
     lean: BTreeMap<String, f32>,
+    /// `lean`, parsed once at load.
+    #[serde(skip)]
+    parsed: Lean,
 }
 
 /// How full a home is (`counts` in `interiors`).
@@ -140,8 +146,8 @@ pub struct CountsDef {
 
 impl Default for CountsDef {
     fn default() -> Self {
-        let count = |lo, hi| Count { range: (lo, hi), lean: BTreeMap::new() };
-        let chance = |c| Chance { chance: c, lean: BTreeMap::new() };
+        let count = |lo, hi| Count { range: (lo, hi), lean: BTreeMap::new(), parsed: Lean::default() };
+        let chance = |c| Chance { chance: c, lean: BTreeMap::new(), parsed: Lean::default() };
         CountsDef { beds: 4, guests: 1, seats: 4, stores: count(1, 2), trade: count(0, 1), walls: count(0, 1), lights: count(0, 1), rug: chance(0.4), cook: chance(0.4), tops: chance(0.5), roomy: 12 }
     }
 }
@@ -198,9 +204,12 @@ impl InteriorsDef {
         if !file.glazes.is_empty() {
             self.glazes = choices(file.glazes)?;
         }
-        if let Some(counts) = file.counts {
-            for (what, lean) in [("stores", &counts.stores.lean), ("trade", &counts.trade.lean), ("walls", &counts.walls.lean), ("lights", &counts.lights.lean), ("rug", &counts.rug.lean), ("cook", &counts.cook.lean), ("tops", &counts.tops.lean)] {
-                Lean::parse(&format!("{at}: interiors counts' {what}"), lean)?;
+        if let Some(mut counts) = file.counts {
+            for (what, c) in [("stores", &mut counts.stores), ("trade", &mut counts.trade), ("walls", &mut counts.walls), ("lights", &mut counts.lights)] {
+                c.parsed = Lean::parse(&format!("{at}: interiors counts' {what}"), &c.lean)?;
+            }
+            for (what, c) in [("rug", &mut counts.rug), ("cook", &mut counts.cook), ("tops", &mut counts.tops)] {
+                c.parsed = Lean::parse(&format!("{at}: interiors counts' {what}"), &c.lean)?;
             }
             for (what, c) in [("stores", &counts.stores), ("trade", &counts.trade), ("walls", &counts.walls), ("lights", &counts.lights)] {
                 if c.range.0 > c.range.1 || c.range.1 > 16 {
@@ -285,8 +294,9 @@ impl InteriorsDef {
                 if !(info.drops.is_air() || info.drop_count == 0 || def.has_tag("furnishing")) {
                     return fail(format!("`{name}` drops itself from every home: tag it `furnishing`, or have it drop nothing"));
                 }
-                if piece.role == Role::Bed && !def.has_tag("bed") {
-                    return fail(format!("the bed `{name}` is not tagged `bed`"));
+                // A village's bed is its resident's (sleeping in one is refused by the tag).
+                if piece.role == Role::Bed && !(def.has_tag("bed") && def.has_tag("furnishing")) {
+                    return fail(format!("the bed `{name}` is not tagged `bed` and `furnishing`"));
                 }
                 if piece.role == Role::Seat && !def.has_tag("seat") {
                     return fail(format!("the seat `{name}` is not tagged `seat`"));
@@ -343,6 +353,23 @@ pub struct Household {
     pub people: Vec<(String, Option<String>)>,
 }
 
+impl InteriorsDef {
+    /// Every trade piece is for someone who may live in a home: a species settlements' people
+    /// are (`farmer`, `base:farmer`), or a building's work or kind (`field`, `inn`).
+    pub fn check_who(&self, species: &[&str], works: &[String]) -> Result<(), ContentError> {
+        let bare = |s: &str| s.rsplit(':').next().unwrap_or(s).to_owned();
+        for piece in &self.pieces {
+            for who in &piece.who {
+                let who = bare(who);
+                if !species.iter().any(|s| bare(s) == who) && !works.iter().any(|w| *w == who) {
+                    return Err(ContentError(format!("settlements.ron: interiors piece `{}` is for `{who}`, who is no people's species, nor any building's work or kind", piece.block)));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 impl Household {
     fn has(&self, who: &str) -> bool {
         let bare = |s: &str| s.rsplit(':').next().unwrap_or(s).to_owned();
@@ -356,6 +383,8 @@ impl Household {
 pub struct Furnished {
     pub beds: Vec<IVec3>,
     pub seats: Vec<IVec3>,
+    /// Things set on the table and the cupboards.
+    pub tops: Vec<IVec3>,
 }
 
 const SIDES: [IVec2; 4] = [IVec2::new(0, -1), IVec2::new(1, 0), IVec2::new(0, 1), IVec2::new(-1, 0)];
@@ -366,15 +395,13 @@ fn facing_of(d: IVec2) -> usize {
 }
 
 fn count(c: &Count, levers: &Levers, rng: &mut Rng) -> u32 {
-    let lean = Lean::parse("", &c.lean).unwrap_or_default();
-    let bias = lean.weigh(1.0, levers).max(0.05);
+    let bias = c.parsed.weigh(1.0, levers).max(0.05);
     let u = rng.unit().powf(1.0 / bias);
     (c.range.0 + (u * (c.range.1 - c.range.0 + 1) as f32) as u32).min(c.range.1)
 }
 
 fn chance(c: &Chance, levers: &Levers, rng: &mut Rng) -> bool {
-    let lean = Lean::parse("", &c.lean).unwrap_or_default();
-    rng.chance(lean.weigh(c.chance, levers).min(1.0))
+    rng.chance(c.parsed.weigh(c.chance, levers).min(1.0))
 }
 
 fn pick<'a>(choices: &'a [Choice], levers: &Levers, rng: &mut Rng) -> Option<&'a str> {
@@ -580,7 +607,8 @@ pub fn furnish(it: &Interiors, spec: &Spec, frame: &Frame, wood: &str, levers: &
     // the storey walkable.
     let place = |st: &mut Storey, canvas: &mut Canvas, p: IVec2, piece: Turned, dir: IVec2, high: bool| -> bool {
         if high {
-            if st.taken_high.contains(&p) || !st.walk.contains(&p) {
+            // Over open floor (cloth on a wall), or over a piece it stands on (a top).
+            if st.taken_high.contains(&p) || !(st.walk.contains(&p) || st.taken.contains(&p)) {
                 return false;
             }
             canvas.set(IVec3::new(p.x, st.floor + 2, p.y), piece.ids[facing_of(dir)]);
@@ -730,7 +758,9 @@ pub fn furnish(it: &Interiors, spec: &Spec, frame: &Frame, wood: &str, levers: &
         }
         let Some(top) = f.piece(Role::Top) else { continue };
         let dir = SIDES[f.rng.below(4) as usize];
-        place(&mut storeys[s], canvas, p, top, dir, true);
+        if place(&mut storeys[s], canvas, p, top, dir, true) {
+            out.tops.push(IVec3::new(p.x, storeys[s].floor + 2, p.y));
+        }
     }
     out
 }

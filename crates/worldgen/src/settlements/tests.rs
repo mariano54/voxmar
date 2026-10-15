@@ -3023,7 +3023,7 @@ fn homes_are_furnished_for_their_people() {
     let content = crate::content::WorldContent::base(&registry).unwrap();
     let solid = |b: Option<&BlockId>| b.is_some_and(|&b| registry.info(b).solid);
     let tagged = |b: Option<&BlockId>, tag: &str| b.is_some_and(|&b| registry.def(b).has_tag(tag));
-    let (mut homes, mut wanted, mut beds, mut tables, mut seats, mut bare) = (0, 0, 0, 0, 0, Vec::new());
+    let (mut homes, mut wanted, mut beds, mut tables, mut seats, mut tops, mut surfaces, mut bare) = (0, 0, 0, 0, 0, 0, 0, Vec::new());
     let mut shown = 0;
     for seed in [42u64, 1, 7] {
         let world = Overworld::with_content(seed, registry.clone(), &content);
@@ -3058,6 +3058,23 @@ fn homes_are_furnished_for_their_people() {
                 // A table on any storey.
                 if (b.min.x..=b.max.x).any(|x| (b.min.y..=b.max.y).any(|z| (y + 1..y + 16).any(|up| tagged(at.get(&IVec3::new(x, up, z)), "table")))) {
                     tables += 1;
+                }
+                // Things set on the tables and cupboards: on a solid piece of furniture, not
+                // cloth.
+                for x in b.min.x..=b.max.x {
+                    for z in b.min.y..=b.max.y {
+                        for up in y + 1..y + 16 {
+                            let below = at.get(&IVec3::new(x, up, z));
+                            if !(tagged(below, "furniture") && solid(below)) {
+                                continue;
+                            }
+                            surfaces += 1;
+                            let above = at.get(&IVec3::new(x, up + 1, z));
+                            if above.is_some_and(|b| !b.is_air()) && !tagged(above, "cloth") && !tagged(above, "furniture") {
+                                tops += 1;
+                            }
+                        }
+                    }
                 }
                 // On foot from just inside the door.
                 let step = b.facing.step();
@@ -3131,9 +3148,30 @@ fn homes_are_furnished_for_their_people() {
             }
         }
     }
-    println!("{homes} homes: {beds} beds for {wanted} wanted, {tables} tables, {seats} seats; bare: {bare:?}");
+    println!("{homes} homes: {beds} beds for {wanted} wanted, {tables} tables, {seats} seats, {tops} things set on {surfaces} tables and cupboards; bare: {bare:?}");
     assert!(homes >= 20, "only {homes} homes near spawn");
     assert!(beds * 10 >= wanted * 9, "{beds} beds for {wanted} residents");
     assert!(tables * 20 >= homes * 17, "{tables} tables in {homes} homes");
+    // Tops' chance is about a half (leaning): a quarter at least of tables and cupboards.
+    assert!(tops * 4 >= surfaces && surfaces > 0, "{tops} things set on {surfaces} tables and cupboards");
     assert!(bare.len() * 50 <= homes, "homes with nobody's bed: {bare:?}");
+}
+
+/// Loading refuses a trade piece for someone who never lives in a settlement, and a bed
+/// that is not a furnishing (which would be anyone's to sleep in).
+#[test]
+fn interiors_load_checks_refuse_strangers_and_unclaimed_beds() {
+    use super::interior::Role;
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+    let content = voxmar_engine::content::Content::load(&dir).unwrap();
+    let world = crate::content::WorldContent::load(&content).unwrap();
+    let s = &world.settlements;
+    let (species, works) = (s.people.species(), s.works());
+    assert!(s.interiors.check_who(&species, &works).is_ok());
+    let mut stranger = s.interiors.clone();
+    stranger.pieces.iter_mut().find(|p| p.role == Role::Trade).unwrap().who = vec!["nobody_at_all".into()];
+    assert!(stranger.check_who(&species, &works).is_err(), "a trade piece for nobody was let through");
+    let mut bag = s.interiors.clone();
+    bag.pieces.iter_mut().find(|p| p.role == Role::Bed).unwrap().block = "base:sleeping_bag".into();
+    assert!(bag.check(&content.blocks).is_err(), "a bed that is no furnishing was let through");
 }
