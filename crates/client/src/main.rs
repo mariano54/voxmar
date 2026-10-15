@@ -360,6 +360,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let roof_patters = ambience.roof_patters(&content.blocks, &materials, |id| {
         recorded.material_of(&content.blocks, id).map_or_else(|| ambience::defs::family(content.blocks.info(id).sound), |m| recorded.materials[m].name.clone())
     })?;
+    // Every shelter tag on a block says how it sounds: muffling the rain, or whistling.
+    ambience.check_shelter_tags(&content.blocks)?;
     recorded.mix.check().map_err(|e| format!("sounds.ron: {e}"))?;
     let content_weather = content.weather.clone();
     let shader_packs = render::pack::ShaderPacks::load(&assets);

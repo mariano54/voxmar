@@ -535,3 +535,71 @@ fn the_settlement_axis_is_the_way_to_the_nearest_middle() {
     let place = super::place(&generator, IVec3::new(alone.x, near.centre.y, alone.y));
     assert_eq!(place.settlement, super::defs::NO_SETTLEMENT);
 }
+
+/// A draughty home whistles on a windy night, louder the more draughty wall is near: in a
+/// room walled with wattle under thatch the draught plays; the same room daubed is silent;
+/// and outside, by the same wattle walls but under the open sky, it is silent too. The
+/// draughty walls are counted by the enclosure scan, as in the game.
+#[test]
+fn a_draughty_home_whistles_until_daubed() {
+    use voxmar_engine::coords::ColumnPos;
+    use voxmar_engine::world::{Column, VoxelWorld};
+
+    let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+    let content = voxmar_server::load_content(&assets).unwrap();
+    let blocks = &content.blocks;
+    let ambience = Ambience::load(&content.files).unwrap();
+    let kinds = super::kinds(&ambience, blocks, &content.multiblocks);
+    let id = |name: &str| blocks.id(name).unwrap_or_else(|| panic!("{name}"));
+    let group = ambience.groups.iter().position(|g| g.name == "draughty").expect("a draughty group");
+    let draught = ambience.beds.iter().position(|b| b.name == "base:draught").expect("a draught bed");
+    // A room five across inside, walls three high on a stone floor, a thatched roof over it.
+    let room = |wall: &str, roofed: bool| {
+        let mut world = VoxelWorld::default();
+        for dz in -1..=1 {
+            for dx in -1..=1 {
+                world.insert(ColumnPos::of_block(IVec3::ZERO).offset(dx, dz), std::sync::Arc::new(Column::default()));
+            }
+        }
+        for x in -3..=3 {
+            for z in -3..=3 {
+                world.set_block(IVec3::new(x, 9, z), id("base:stone"));
+                for y in 10..13 {
+                    if x.abs() == 3 || z.abs() == 3 {
+                        world.set_block(IVec3::new(x, y, z), id(wall));
+                    }
+                }
+                if roofed {
+                    world.set_block(IVec3::new(x, 13, z), id("base:thatch_roof"));
+                }
+            }
+        }
+        world
+    };
+    let soft = ambience.roofs.patters.iter().position(|p| p == "roof_soft");
+    let night = [("wind", 12.0), ("sun", -0.6), ("raining", 0.0), ("air", 0.1), ("sky", 0.0)];
+    let heard = |world: &VoxelWorld, eye: IVec3, sheltered: f32| {
+        let found = super::enclosure::scan(eye, |p| world.block(p), |_| true, &kinds, 1);
+        let draughty = ambience.presence(group, found.groups[group]);
+        let place = scene(&ambience, "home", &["forest"], &[night.as_slice(), &[("draughty", draughty), ("sheltered", sheltered)]].concat());
+        (draughty, run(&ambience, &place, 20.0).1[draught])
+    };
+    let under_thatch = ambience.roofs.sheltered(|_| false, soft);
+    let full = ambience.beds[draught].volume;
+    let (walls, wattle) = heard(&room("base:wattle_panel", true), IVec3::new(0, 11, 0), under_thatch);
+    assert!(walls > 0.5 && wattle > 0.5 * full, "in a wattle room the draughty walls count {walls:.2} and the draught plays at {wattle:.3} of {full}");
+    let (walls, daubed) = heard(&room("base:daub", true), IVec3::new(0, 11, 0), under_thatch);
+    assert!(walls == 0.0 && daubed < 1e-3, "daubed, the walls still count {walls:.2} as draughty and the draught plays at {daubed:.3}");
+    // Outside, a step from the wattle wall, no roof overhead.
+    let (walls, outside) = heard(&room("base:wattle_panel", false), IVec3::new(5, 11, 0), 0.0);
+    assert!(walls > 0.0 && outside < 1e-3, "outside by the wattle (counting {walls:.2}) the draught plays at {outside:.3}");
+    // Fewer draughty walls, a fainter whistle: one wall of wattle, the rest daubed.
+    let mut patched = room("base:daub", true);
+    for x in -3..=3 {
+        for y in 10..13 {
+            patched.set_block(IVec3::new(x, y, -3), id("base:wattle_panel"));
+        }
+    }
+    let (some, fainter) = heard(&patched, IVec3::new(0, 11, 0), under_thatch);
+    assert!(some > 0.0 && fainter > 0.0 && fainter < wattle, "one wattle wall left plays at {fainter:.3}, not under the {wattle:.3} of four");
+}

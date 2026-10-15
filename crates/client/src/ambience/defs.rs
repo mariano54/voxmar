@@ -377,6 +377,9 @@ pub struct Ambience {
     pub beds: Vec<Bed>,
     pub sounds: Vec<OneShot>,
     pub roofs: Roofs,
+    /// Each draughty shelter tag and the beds its walls whistle with (`draughts`), each
+    /// bed playing on a group that counts that tag.
+    pub draughts: Vec<(String, Vec<usize>)>,
 }
 
 #[derive(Deserialize)]
@@ -390,6 +393,8 @@ struct FileDef {
     sounds: Vec<SoundDef>,
     #[serde(default)]
     roofs: Option<RoofsDef>,
+    #[serde(default)]
+    draughts: BTreeMap<String, Vec<String>>,
 }
 
 /// `roofs`: a later package's height and muffle replace an earlier one's; its shelter and
@@ -550,6 +555,7 @@ impl Ambience {
         ambience.roofs.patter_shelter = patters.iter().map(|p| patter_shelter.get(p).copied().unwrap_or(0.0)).collect();
         ambience.roofs.patters = patters;
         ambience.roofs.shelter = shelter.into_iter().collect();
+        let draughts: Vec<(String, BTreeMap<String, Vec<String>>)> = parsed.iter_mut().map(|(package, def)| (package.to_string(), std::mem::take(&mut def.draughts))).collect();
         // Beds next, so sounds and beds can be ducked by any bed.
         let bed_names: Vec<String> =
             parsed.iter().flat_map(|(package, def)| def.beds.iter().map(move |b| format!("{package}:{}", b.name))).collect();
@@ -601,7 +607,43 @@ impl Ambience {
                 });
             }
         }
+        // Draughts last, naming beds: a later package's entry for a tag replaces an earlier
+        // one's. Each bed must play on a group that counts the tag, so more of those walls
+        // near is louder and none is silence.
+        let mut resolved: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+        for (package, entries) in draughts {
+            for (tag, names) in entries {
+                let mut beds = Vec::new();
+                for name in names {
+                    let local = format!("{package}:{name}");
+                    let bed = bed_names.iter().position(|b| *b == name || *b == local).ok_or_else(|| format!("{package}/{FILE}: draughts: {tag} whistles with {name}, which is no bed"))?;
+                    let counts = ambience.groups.iter().enumerate().any(|(g, _)| ambience.selectors[g].0.contains(&tag) && ambience.beds[bed].when.uses_axis(Fixed::ALL.len() + g));
+                    if !counts {
+                        return Err(format!("{package}/{FILE}: draughts: {name} plays on no group counting {tag}, so it would not grow with the draughty walls near"));
+                    }
+                    beds.push(bed);
+                }
+                resolved.insert(tag, beds);
+            }
+        }
+        ambience.draughts = resolved.into_iter().collect();
         Ok(ambience)
+    }
+
+    /// Fails, for the launch, on a block's `shelter:` tag that neither keeps the rain's
+    /// noise out (`roofs.shelter`) nor whistles (`draughts`): every grade of shelter a
+    /// block can have says how it sounds.
+    pub fn check_shelter_tags(&self, registry: &BlockRegistry) -> Result<(), String> {
+        for id in 0..registry.len() {
+            let def = registry.def(voxmar_engine::block::BlockId(id as u16));
+            for tag in def.tags.iter().filter(|t| t.starts_with("shelter:")) {
+                let heard = self.roofs.shelter.iter().any(|(t, _)| t == tag) || self.draughts.iter().any(|(t, _)| t == tag);
+                if !heard {
+                    return Err(format!("{FILE}: {} is {tag}, which neither roofs.shelter muffles by nor draughts whistles with", def.name));
+                }
+            }
+        }
+        Ok(())
     }
 
     /// The axis called `name`: a fixed one, a group or a roof patter.
@@ -811,5 +853,31 @@ mod tests {
         assert!(error(&format!(r#"(roofs: (patter: {{"stoen": "dull", {quiet}}}))"#)).contains("stoen"));
         assert!(error(&format!(r#"(roofs: (patter: {{{quiet}"sand": "hiss"}}))"#)).contains("hiss"), "a patter no bed plays on");
         assert!(Ambience::load(&files(r#"(roofs: (patter: {"sand": "rain"}))"#)).unwrap_err().contains("already an axis"));
+    }
+
+    /// A draughty tag names beds playing on a group that counts it, and every `shelter:` tag
+    /// a block has must muffle the rain or whistle: the launch fails on one that does
+    /// neither.
+    #[test]
+    fn draughts_are_checked() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let load = |draughts: &str| {
+            Ambience::load(&file(&format!(
+                r#"(
+                    groups: [(name: "draughty", tags: ["shelter:draughty"], range: (1, 10)), (name: "wood", tags: ["log"], range: (1, 10))],
+                    beds: [(name: "whistle", sound: Draught, volume: 0.2, when: {{"draughty": (min: 1)}}), (name: "creak", sound: Draught, volume: 0.2, when: {{"wood": (min: 1)}})],
+                    roofs: (shelter: {{"shelter:sound": 0.3, "shelter:fine": 0.5}}),
+                    draughts: {draughts},
+                )"#
+            )))
+        };
+        let fine = load(r#"{"shelter:draughty": ["whistle"]}"#).unwrap();
+        assert_eq!(fine.draughts, [("shelter:draughty".to_owned(), vec![0])]);
+        fine.check_shelter_tags(&content.blocks).unwrap();
+        assert!(load(r#"{"shelter:draughty": ["howl"]}"#).unwrap_err().contains("howl, which is no bed"));
+        assert!(load(r#"{"shelter:draughty": ["creak"]}"#).unwrap_err().contains("no group counting shelter:draughty"));
+        // Wattle is draughty: with no whistle for it, the launch fails naming it.
+        let error = load("{}").unwrap().check_shelter_tags(&content.blocks).unwrap_err();
+        assert!(error.contains("shelter:draughty"), "{error}");
     }
 }

@@ -71,6 +71,9 @@ pub enum Synth {
     StonePatter,
     /// Rain on glass overhead: bright, ringing ticks over a thin trickle.
     GlassPatter,
+    /// Wind finding the gaps in a draughty wall: a thin, wavering whistle that comes and
+    /// goes with the gusts, over a faint breathy hiss.
+    Draught,
     /// A quick songbird: trills and twitters.
     Warbler,
     /// A fluting songbird that repeats its phrases.
@@ -117,7 +120,7 @@ pub enum Synth {
 
 impl Synth {
     #[cfg(test)]
-    pub const ALL: [Synth; 37] = [
+    pub const ALL: [Synth; 38] = [
         Synth::Wind,
         Synth::Gale,
         Synth::Rustle,
@@ -135,6 +138,7 @@ impl Synth {
         Synth::ThatchPatter,
         Synth::StonePatter,
         Synth::GlassPatter,
+        Synth::Draught,
         Synth::Warbler,
         Synth::Thrush,
         Synth::Whistler,
@@ -178,6 +182,7 @@ impl Synth {
                 | Synth::ThatchPatter
                 | Synth::StonePatter
                 | Synth::GlassPatter
+                | Synth::Draught
         )
     }
 
@@ -261,6 +266,7 @@ fn render_bed(synth: Synth, noise: &mut Noise, len: usize) -> Vec<f32> {
         Synth::ThatchPatter => thatch_patter(noise, len),
         Synth::StonePatter => stone_patter(noise, len),
         Synth::GlassPatter => glass_patter(noise, len),
+        Synth::Draught => draught(noise, len),
         one_shot => panic!("{one_shot:?} makes one-shots, not a bed"),
     }
 }
@@ -464,6 +470,27 @@ fn thatch_patter(noise: &mut Noise, len: usize) -> Vec<f32> {
         *sample = *sample * 0.6 + hush.band(noise.next()) * 0.35 * (0.5 + 0.5 * swell.unit(i as f32 / SR));
     }
     out
+}
+
+/// Wind through a draughty wall: two narrow whistles a little apart, each sliding with its
+/// own slow drift, swelling only in the gusts and near silent between, over a faint hiss.
+fn draught(noise: &mut Noise, len: usize) -> Vec<f32> {
+    let gust = Drift::new(noise, 0.09);
+    let (pitch_a, pitch_b) = (Drift::new(noise, 0.13), Drift::new(noise, 0.17));
+    let flutter = Drift::new(noise, 2.1);
+    let (mut a, mut b) = (Svf::new(900.0, 30.0), Svf::new(1300.0, 26.0));
+    let mut hiss = Svf::new(2200.0, 0.7);
+    (0..len)
+        .map(|i| {
+            let t = i as f32 / SR;
+            let g = gust.unit(t).powi(3);
+            a.tune(820.0 + 260.0 * pitch_a.at(t) + 40.0 * flutter.at(t));
+            b.tune(1240.0 + 300.0 * pitch_b.at(t) + 50.0 * flutter.at(t * 1.3));
+            let white = noise.next();
+            let whistle = a.band(white) * 0.9 + b.band(white) * 0.5;
+            (whistle * g + hiss.band(noise.next()) * 0.06 * (0.3 + g)) * (0.15 + 0.85 * g)
+        })
+        .collect()
 }
 
 /// Rain on stone overhead: fewer drops, each a dull knock, over a low wash of water.
