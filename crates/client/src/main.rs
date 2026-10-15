@@ -485,7 +485,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let gate_lag = options.gate.as_ref().map(|_| gate::SERVER_LAG);
         let asked = options.server_lag.map(|ms| voxmar_server::Lag { per_tick: Duration::from_millis(ms), ..default() });
         let lag = asked.or(gate_lag).unwrap_or_default();
-        let config = ServerConfig { seed: options.seed, world, lag, ..ServerConfig::default() };
+        // A gate's world draws (a cast's catch) by a fixed key, as it is made on a fixed
+        // seed, so every run casts alike.
+        let draw_key = options.gate.as_ref().map(|_| gate::DRAW_KEY);
+        let config = ServerConfig { seed: options.seed, world, lag, draw_key, ..ServerConfig::default() };
         app.insert_resource(launch.singleplayer(config)?);
         Screen::InGame
     } else {
