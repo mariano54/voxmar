@@ -9,7 +9,7 @@ use voxmar_engine::block::BlockId;
 use voxmar_engine::creature::CreatureId;
 use voxmar_engine::crop::level_bonus;
 use voxmar_engine::dropped;
-use voxmar_engine::glam::IVec3;
+use voxmar_engine::glam::{IVec3, Vec3};
 use voxmar_engine::inventory::ItemStack;
 use voxmar_engine::lang::Words;
 use voxmar_engine::loot::{self, Moment};
@@ -28,10 +28,36 @@ pub struct Catch {
     pub seed: u64,
 }
 
-/// Every sprung trap's catch, by where it stands.
+/// Every sprung trap's catch, by where it stands; and where each wild creature stood at the
+/// traps' last look (or where it arrived since), so one that ran through a set trap's cell
+/// between two looks is caught there.
 #[derive(Default)]
 pub struct Catches {
     caught: FxHashMap<IVec3, Catch>,
+    seen: FxHashMap<u32, Vec3>,
+}
+
+/// The furthest a creature moves between two looks (4 ticks) for the cells it crossed to
+/// count: a sprint is under 2 blocks; a longer move is a blink or a teleport, which crosses
+/// nothing on the way.
+const CROSSED_MOST: f32 = 4.0;
+
+/// The cells a creature's feet crossed going from `from` to `to`, in order, ending with the
+/// one it stands in: the straight path sampled a quarter of a block apart.
+fn crossed(from: Vec3, to: Vec3) -> Vec<IVec3> {
+    let length = from.distance(to);
+    if length > CROSSED_MOST {
+        return vec![to.floor().as_ivec3()];
+    }
+    let steps = (length / 0.25).ceil() as u32;
+    let mut cells: Vec<IVec3> = Vec::new();
+    for i in 0..=steps {
+        let cell = from.lerp(to, if steps == 0 { 1.0 } else { i as f32 / steps as f32 }).floor().as_ivec3();
+        if cells.last() != Some(&cell) {
+            cells.push(cell);
+        }
+    }
+    cells
 }
 
 /// A catch as `world.ron` keeps it.
@@ -51,7 +77,12 @@ impl Catches {
 
     /// The saved catches whose species is still known.
     pub fn restore(saved: &[SavedCatch], id: impl Fn(&str) -> Option<CreatureId>) -> Self {
-        Self { caught: saved.iter().filter_map(|c| Some((IVec3::from_array(c.position), Catch { species: id(&c.species)?, seed: c.seed }))).collect() }
+        Self { caught: saved.iter().filter_map(|c| Some((IVec3::from_array(c.position), Catch { species: id(&c.species)?, seed: c.seed }))).collect(), seen: FxHashMap::default() }
+    }
+
+    /// Creature `id` arrived at `at` since the traps last looked.
+    pub(crate) fn arrived(&mut self, id: u32, at: Vec3) {
+        self.seen.insert(id, at);
     }
 
     #[cfg(test)]
@@ -78,20 +109,23 @@ impl Process for Traps {
 }
 
 impl Server {
-    /// Each wild creature a trap catches, standing in a set one's cell, is caught there.
+    /// Each wild creature a trap catches, standing in a set one's cell or having crossed it
+    /// since the last look, is caught there.
     pub(crate) fn spring_traps(&mut self) {
         let traps = self.content.traps.clone();
-        let caught: Vec<(u32, IVec3, BlockId)> = self
-            .creatures
-            .live
-            .iter()
-            .filter(|(_, c)| c.owner.is_none() && c.health > 0)
+        let seen = std::mem::take(&mut self.catches.seen);
+        let wild = self.creatures.live.iter().filter(|(_, c)| c.owner.is_none() && c.health > 0);
+        let caught: Vec<(u32, IVec3, BlockId)> = wild
+            .clone()
             .filter_map(|(&id, c)| {
-                let cell = c.body.position.floor().as_ivec3();
-                let trap = self.world.block(cell).and_then(|b| traps.set(b)).filter(|t| t.catches(c.species))?;
-                Some((id, cell, trap.sprung))
+                let now = c.body.position;
+                crossed(seen.get(&id).copied().unwrap_or(now), now).into_iter().find_map(|cell| {
+                    let trap = self.world.block(cell).and_then(|b| traps.set(b)).filter(|t| t.catches(c.species))?;
+                    Some((id, cell, trap.sprung))
+                })
             })
             .collect();
+        self.catches.seen = wild.map(|(&id, c)| (id, c.body.position)).collect();
         for (id, cell, sprung) in caught {
             // One creature to a trap: a second in the same cell on the same look waits.
             if self.world.block(cell) == Some(sprung) {
@@ -328,5 +362,44 @@ mod tests {
         let (first, rolls) = taken(1_000, 0);
         assert!(rolls > 0 && first.iter().all(|f| !f.is_empty()), "twelve catches rolled {rolls} times for {first:?}");
         assert_eq!(taken(1_377, 3), (first, rolls), "the same catches taken later, after other rolls, gave otherwise");
+    }
+
+    /// A loose rabbit summoned into a set snare, with a player by it to flee from, is caught
+    /// whatever tick it arrives on: arriving just after a look, it is out of the cell by the
+    /// next, but the traps know where it arrived and the cells it crossed since.
+    #[test]
+    fn a_loose_rabbit_that_runs_out_of_a_snare_between_looks_is_caught() {
+        for phase in 0..Tier::Medium.period() {
+            let (mut server, snare) = field(1);
+            server.players.get_mut(&1).unwrap().position = Vec3::new(snare.x as f32 + 0.5, snare.y as f32, snare.z as f32 - 2.5);
+            server.tick = 1000 + phase;
+            let at = [snare.x + 2, snare.y, snare.z].map(|v| v.to_string());
+            let args: Vec<String> = ["rabbit", "1"].into_iter().map(str::to_owned).chain(at).collect();
+            server.summon(crate::commands::Source::Player(1), &args).expect("summoned");
+            let caught = (0..Tier::Medium.period()).position(|_| {
+                server.tick();
+                server.catches.get(snare).is_some()
+            });
+            assert!(caught.is_some(), "arriving {phase} ticks past a look, a loose rabbit in the snare was not caught at the next");
+        }
+    }
+
+    /// A rabbit that ran across a set snare's cell between two looks, standing either side of
+    /// it at each, is caught in it; one that went round it is not, nor one that blinked
+    /// further than any run.
+    #[test]
+    fn a_rabbit_that_crossed_a_snare_between_looks_is_caught_there() {
+        let ran = |from: Vec3, to: Vec3| {
+            let (mut server, snare) = field(1);
+            let id = put(&mut server, "base:rabbit", snare.as_vec3() + from);
+            server.spring_traps();
+            assert!(server.catches.get(snare).is_none(), "caught before it ran");
+            server.creatures.live.get_mut(&id).unwrap().body.position = snare.as_vec3() + to;
+            server.spring_traps();
+            server.catches.get(snare).is_some()
+        };
+        assert!(ran(Vec3::new(-1.0, 0.0, 0.5), Vec3::new(2.0, 0.0, 0.5)), "ran straight through");
+        assert!(!ran(Vec3::new(-1.0, 0.0, -0.5), Vec3::new(2.0, 0.0, -0.5)), "ran beside it");
+        assert!(!ran(Vec3::new(-3.0, 0.0, 0.5), Vec3::new(3.0, 0.0, 0.5)), "a blink of six blocks");
     }
 }
