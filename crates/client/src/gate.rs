@@ -11607,7 +11607,7 @@ fn tell_blows(world: &mut World, creature: u32) {
         fighting.struck(creature, damage, blow, (i as u8 + 1).min(pips), false, now);
     }
     for (damage, defended) in HURT_SHOWN {
-        fighting.hurt(creature, damage, defended, now);
+        fighting.hurt(creature, damage, defended, now, None);
     }
     // All pips lit: the next blow on the beat would be a flourish.
     fighting.rhythm.set_pips(pips, now);
@@ -11911,7 +11911,7 @@ fn combat_feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let mut fighting = world.resource_mut::<crate::fight::Fighting>();
             fighting.struck(id, FEEL_STRUCK, voxmar_engine::combat::Blow::Flourish, pips, false, at);
             for (damage, defended) in FEEL_HURT {
-                fighting.hurt(id, damage, defended, at);
+                fighting.hurt(id, damage, defended, at, None);
             }
             gate.advance(now);
         }

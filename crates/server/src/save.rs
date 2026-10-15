@@ -300,6 +300,8 @@ pub struct Draws {
     pub kills: u64,
     /// Wanderers' greetings heard, for which of their greetings is said.
     pub greets: u64,
+    /// Shots that missed, each of which may land to pick up again (`recover_miss`).
+    pub strays: u64,
 }
 
 /// A kind of roll a player's draws number (`Draws`).
@@ -322,6 +324,7 @@ pub enum Draw {
     Free,
     Kill,
     Greet,
+    Stray,
 }
 
 impl Draw {
@@ -345,6 +348,7 @@ impl Draw {
             Draw::Free => 0xf4ee,
             Draw::Kill => 0xb10d,
             Draw::Greet => 0x6e37,
+            Draw::Stray => 0x57a7,
         }
     }
 }
@@ -370,6 +374,7 @@ impl Draws {
             Draw::Free => &mut self.frees,
             Draw::Kill => &mut self.kills,
             Draw::Greet => &mut self.greets,
+            Draw::Stray => &mut self.strays,
         };
         let draws = numbered_draws(key, kind.salt(), *count);
         *count += 1;
@@ -1379,7 +1384,7 @@ mod tests {
             tallies: vec![("crafted:base:torch".into(), 8)],
             prayer_points: Some(7.5),
             casts: 12,
-            draws: Draws { strikes: 31, blows: 9, feeds: 4, cooks: 17, recovers: 5, flourishes: 2, mines: 40, yields: 3, forages: 6, harvests: 11, locks: 1, catches: 8, wakes: 2, rewards: 7, frees: 3, kills: 12, greets: 4 },
+            draws: Draws { strikes: 31, blows: 9, feeds: 4, cooks: 17, recovers: 5, flourishes: 2, mines: 40, yields: 3, forages: 6, harvests: 11, locks: 1, catches: 8, wakes: 2, rewards: 7, frees: 3, kills: 12, greets: 4, strays: 6 },
         };
         for name in ["steve", "Steve", "a/b", "../x", "ünï cödé"] {
             save.write_player(name, &player, &registry).unwrap();
@@ -1466,7 +1471,7 @@ mod tests {
         assert_eq!(draws.next(ada, Draw::Strike), numbered_draws(ada, Draw::Strike.salt(), 1));
         draws.next(ada, Draw::Cook);
         assert_eq!(draws, Draws { strikes: 2, cooks: 1, ..Draws::default() });
-        let kinds = [Draw::Strike, Draw::Blow, Draw::Feed, Draw::Cook, Draw::Recover, Draw::Flourish, Draw::Mine, Draw::Yield, Draw::Forage, Draw::Harvest, Draw::Lock, Draw::Catch, Draw::Wake, Draw::Reward, Draw::Free, Draw::Kill, Draw::Greet];
+        let kinds = [Draw::Strike, Draw::Blow, Draw::Feed, Draw::Cook, Draw::Recover, Draw::Flourish, Draw::Mine, Draw::Yield, Draw::Forage, Draw::Harvest, Draw::Lock, Draw::Catch, Draw::Wake, Draw::Reward, Draw::Free, Draw::Kill, Draw::Greet, Draw::Stray];
         // Every kind's salt, the world's kinds of roll and its loot rolls' are told apart.
         let salts: Vec<u64> = kinds.iter().map(|k| k.salt()).chain([ROLL_PRODUCT, ROLL_LITTER, ROLL_YOUNG, ROLL_GRAZE, ROLL_SUMMON, ROLL_WANDER, 0x1007]).collect();
         let unique: std::collections::BTreeSet<_> = salts.iter().collect();
