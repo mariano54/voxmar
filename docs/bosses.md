@@ -45,6 +45,10 @@ counter, no knockback. What it adds, in `creature.rs` and `creature/moves.rs`:
   fits, and closes in across a gap between its moves' reaches.
 - `phases`: health shares it changes at. It rears for `hold` seconds, its blow on the way
   is forgotten, and players within 32 blocks are told (`boss.NS.NAME.phase.N`).
+- What its body shows travels as the creature's `tell` (`CreatureView::tell`): the move it
+  winds up (its `moves` from 1, 0 its plain attack), `REARING` into a phase, or
+  `STAGGERED` while a stagger holds it (any creature's, a boss's too); neither of the last
+  two is a move.
 - `mend`: health it regains every `every` seconds once `after` seconds pass without a
   blow, unless a block with a `fire` tag burns within `fire_reach` or, when `daylight` is
   set, the sky over it is open and the day is that bright.
