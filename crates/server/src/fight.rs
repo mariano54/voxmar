@@ -607,6 +607,19 @@ impl Server {
     /// recovers; what came of it is judged by that moment. A charge instead sets off at the
     /// end of its wind-up (`start_charge`), and its blow is judged when it reaches someone
     /// (`contact`).
+    /// Lands every wind-up whose creature has stood its wind-up out by the tick count, as
+    /// `tick_fights` would by the clock: for tests that run the ticks faster than the clock.
+    #[cfg(test)]
+    pub(crate) fn land_windups_by_ticks(&mut self) {
+        let tick = self.tick;
+        let live = &self.creatures.live;
+        let (due, waiting): (Vec<Windup>, Vec<Windup>) = std::mem::take(&mut self.fights.windups).into_iter().partition(|w| live.get(&w.creature).is_none_or(|c| tick >= c.held_until));
+        self.fights.windups = waiting;
+        for windup in due {
+            self.creature_blow(windup.creature, windup.player, windup.lands, windup.contact);
+        }
+    }
+
     fn creature_blow(&mut self, creature: u32, player: PlayerId, lands: f64, contact: bool) {
         let feel = self.content.combat.feel;
         let Some(live) = self.creatures.live.get(&creature) else { return };

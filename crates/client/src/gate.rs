@@ -11002,6 +11002,8 @@ const WOLF: &str = "base:wolf";
 const CLIMB_AT: IVec3 = IVec3::new(0, 0, 36);
 /// Blocks back along the step's top the player stands once the wolf is struck.
 const CLIMB_BACK: f32 = 3.0;
+/// The climb step's last phase: the wolf killed and the step swept away.
+const CLIMB_DONE: u32 = 5;
 /// What the climb allows past the wolf's run over the way and its wind-up: a beat to turn
 /// and come up the step, which takes it a hop.
 const CLIMB_SPARE: f32 = 1.0;
@@ -11024,6 +11026,13 @@ struct ClimbRun {
     from: Vec3,
     /// `Gate::frames` as the phase began.
     frames_at: u32,
+    /// After its blow, before its next: the furthest the wolf got from the player, how far
+    /// round them it went in degrees, its last bearing from them, and the server seconds
+    /// allowed (`Attack::circle`).
+    far: f32,
+    round: f32,
+    bearing: Option<f32>,
+    circle_allowed: f32,
 }
 
 /// A wolf on level ground below a step a block high: struck from the step's edge, then,
@@ -11032,7 +11041,10 @@ struct ClimbRun {
 /// within the server seconds its own run takes over the way from where it was to its
 /// reach of the player, plus its wind-up and `CLIMB_SPARE`. Before the fix to heads meeting
 /// steps (`motion::step`) a wolf coming straight at a step met it with its head first and
-/// was turned along it.
+/// was turned along it. Then, if its bite circles (`Attack::circle`), from that blow to its
+/// next it backs off to at least its body's half, its reach and half its `away` from the
+/// player, and goes 15 degrees or more round them. Before: it stood nose to nose and bit
+/// again.
 fn climb(world: &mut World, gate: &mut Gate, now: f32) {
     let Some(species) = world.resource::<Launch>().content.creatures.find(WOLF) else {
         gate.check("climb", Err(format!("no `{WOLF}` in the content")));
@@ -11058,7 +11070,7 @@ fn climb(world: &mut World, gate: &mut Gate, now: f32) {
     let fail = |world: &mut World, gate: &mut Gate, why: String| {
         gate.check("climb", Err(why));
         mouse(world, MouseButton::Left, false);
-        to_phase(gate, 4, now);
+        to_phase(gate, CLIMB_DONE, now);
     };
     let advance = |gate: &mut Gate| {
         gate.climb.frames_at = gate.frames;
@@ -11173,11 +11185,63 @@ fn climb(world: &mut World, gate: &mut Gate, now: f32) {
             let what = format!("from {:.2} to {:.2}, its feet {up:.2} up (at most {:.2}), allowed {:.2} server s for {}", gate.climb.from, view.position, gate.climb.highest, gate.climb.allowed, gate.climb.allowance);
             if blow && up > 0.9 {
                 gate.check("climb", Ok(format!("up the step a block high, the wolf struck in {taken:.2} server s: {what}")));
+                gate.climb.frames_at = gate.frames;
                 to_phase(gate, 4, now);
             } else if blow {
                 fail(world, gate, format!("the wolf struck from below the step, {taken:.2} server s on: {what}"));
             } else if waited(gate, gate.climb.allowed) {
                 fail(world, gate, format!("no blow from the wolf in {taken:.2} server s ({in_phase:.2} game s): {what}, moving {:.2}", view.velocity.with_y(0.0).length()));
+            }
+        }
+        4 => {
+            let circled = |world: &mut World, gate: &mut Gate, result: Result<String, String>| {
+                gate.check("circling", result);
+                mouse(world, MouseButton::Left, false);
+                to_phase(gate, CLIMB_DONE, now);
+            };
+            let me = world.resource::<LocalPlayer>().position;
+            let content = &world.resource::<Launch>().content;
+            let def = &content.creatures.get(species).def;
+            let Some((attack, circle)) = def.attack.and_then(|a| a.circle.map(|c| (a, c))) else {
+                circled(world, gate, Ok(format!("{WOLF}'s bite has no `circle` in its data: it bites again where it stands")));
+                return;
+            };
+            let Some(view) = view else {
+                circled(world, gate, Err(format!("the wolf went out of view after its blow (it got {:.2} blocks off, {:.0} degrees round)", gate.climb.far, gate.climb.round)));
+                return;
+            };
+            let half = def.body.size.0 * view.scale / 2.0;
+            let clear = half + attack.reach + circle.away * 0.5;
+            let bearing = (view.position - me).z.atan2((view.position - me).x);
+            if gate.climb.bearing.is_none() {
+                // From the blow: its recovery, then the longer of its circle and the rest
+                // of its `every`; back in from `away` at its run, its wind-up, and the spare.
+                let feel = content.combat.feel;
+                let recovery = attack.recovery.unwrap_or(feel.creature_recovery);
+                let windup = attack.windup.unwrap_or(feel.creature_windup);
+                let run = def.movement.run.max(0.1);
+                gate.climb.circle_allowed = recovery + circle.seconds.max(attack.every - windup - recovery) + circle.away / run + windup + CLIMB_SPARE;
+                gate.climb.far = 0.0;
+                gate.climb.round = 0.0;
+                gate.climb.hurts = world.resource::<crate::fight::Fighting>().hurt_count;
+                info!("gate: circling: the wolf bit at {:.2}; allowed {:.2} server s to its next, wanting {clear:.2} blocks off", view.position, gate.climb.circle_allowed);
+            } else if let Some(last) = gate.climb.bearing {
+                gate.climb.round += ((bearing - last + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI).to_degrees();
+            }
+            gate.climb.bearing = Some(bearing);
+            gate.climb.far = gate.climb.far.max(view.position.xz().distance(me.xz()));
+            let fighting = world.resource::<crate::fight::Fighting>();
+            let new = (fighting.hurt_count - gate.climb.hurts) as usize;
+            gate.climb.hurts = fighting.hurt_count;
+            let blow = fighting.hurt.iter().rev().take(new).any(|h| h.0 == view.id);
+            let taken = gate.server_in_phase();
+            let what = format!("it got {:.2} blocks off ({clear:.2} wanted) and went {:.0} degrees round the player (15 wanted), {taken:.2} server s after its blow", gate.climb.far, gate.climb.round.abs());
+            if blow && gate.climb.far >= clear && gate.climb.round.abs() >= 15.0 {
+                circled(world, gate, Ok(format!("between bites {what}")));
+            } else if blow {
+                circled(world, gate, Err(format!("the wolf bit again before it circled: {what}")));
+            } else if waited(gate, gate.climb.circle_allowed) {
+                circled(world, gate, Err(format!("no second bite in {:.2} server s allowed: {what}, at {:.2}", gate.climb.circle_allowed, view.position)));
             }
         }
         _ => {
