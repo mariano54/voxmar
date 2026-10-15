@@ -950,8 +950,9 @@ impl Server {
             }
             None => damage,
         };
+        let tick = self.tick;
         let target = self.players.get_mut(&player).expect("checked above");
-        if target.health.damage(damage) {
+        if target.wound(damage, tick) {
             target.connection.send(ServerMessage::Died);
         }
         // Last Breath: left under its share of health, a share comes back, and every prayer
