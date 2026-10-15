@@ -675,13 +675,18 @@ fn site_with_water(ctx: &Ctx, cell: IVec2, spawn: Option<IVec2>, water: &mut cra
         // above `taper`.
         let climate = site.climate(ground_site.temperature) * site.level(ctx.world.biomes().get(ground_site.home).level);
         if spawn.is_none() {
-            #[cfg(test)]
-            report_close_scratch(water);
-            if unit(hash3(ctx.seed ^ 0xc11a, cell.x, 0, cell.y)) >= climate {
+            if found.is_empty() && unit(hash3(ctx.seed ^ 0xc11a, cell.x, 0, cell.y)) >= climate {
+                #[cfg(test)]
+                report_close_scratch(water);
                 give_up::<()>(2);
                 return Vec::new();
             }
-            return vec![(at, fresh)];
+            // The best, then `others` more in turn should it not lay out.
+            found.push((at, fresh));
+            if found.len() > site.others {
+                break;
+            }
+            continue;
         }
         found.push((at, fresh));
         if found.len() >= spawn_tries {
@@ -2743,6 +2748,17 @@ fn place(
         let road = ground.at(at.round().as_ivec2()).height;
         if (road - floor).abs() > rules.lots.road {
             return town.reject(spec, 6);
+        }
+    }
+    // Its pad is cut level a block round it, but the ground is never cut below the water
+    // beside it (`Settlements::apply`): where that water stands over the floor, the ground
+    // would stay up against its walls and in its door.
+    let pad = rect.grow(1);
+    for z in pad.min.y..=pad.max.y {
+        for x in pad.min.x..=pad.max.x {
+            if ground.at(IVec2::new(x, z)).water > floor {
+                return town.reject(spec, 4);
+            }
         }
     }
     // Adapt only a placed house. Chimney removal and wall/storey reductions do not
