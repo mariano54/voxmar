@@ -3059,6 +3059,8 @@ fn towns_are_big_rare_and_walled_round_their_heart() {
         }
     }
     eprintln!("sizes {sizes:?}, walled {walled:?}, towns {towns:?}");
+    // The ring closes round every lot it would have run against (a field, a pen, a shrine).
+    assert_eq!(super::plan::WALL_ON_LOTS.load(std::sync::atomic::Ordering::Relaxed), 0, "a wall left open against a lot");
     let all: usize = sizes.values().sum();
     let town_count = sizes.get("town").copied().unwrap_or(0);
     assert!(town_count >= 2 && town_count * 100 <= all * 15, "{town_count} towns in {all} settlements");
