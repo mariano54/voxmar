@@ -202,20 +202,26 @@ pub fn worth_in(content: &crate::content::Content, item: BlockId, known: &mut Ha
     coins
 }
 
-/// Whether `item` is a raw material: worth no set price, and nothing makes, wears or wields it.
+/// Whether `item` is a raw material: worth no set price, and nothing makes (at the grid or a
+/// station), wears or wields it.
 fn raw(content: &crate::content::Content, item: BlockId) -> bool {
     !content.value.fixed.contains_key(&content.blocks.def(item).name)
         && content.combat.wear_level(item).is_none()
         && content.combat.weapon(item).is_none()
         && !content.recipes.iter().any(|r| r.output == item)
+        && !content.cooking.iter().any(|(_, r)| r.output == item)
 }
 
 /// The level of `item` for its worth: the most of what wears or wields it, and the least
-/// level of a recipe that makes it (1 when nothing says).
+/// level of a recipe that makes it, at the grid or smelted or fired at a station (1 when
+/// nothing says). A dish's Cooking level is not its worth: it says how often it burns.
 pub fn level_of(content: &crate::content::Content, item: BlockId) -> u8 {
     let worn = content.combat.wear_level(item);
     let wielded = content.combat.weapon(item).map(|w| w.level);
-    let made = content.recipes.iter().filter(|r| r.output == item).map(|r| r.level).min();
+    let crafted = content.recipes.iter().filter(|r| r.output == item).map(|r| r.level);
+    let cooking = content.cooking.skill;
+    let smelted = content.cooking.iter().filter(|(_, r)| r.output == item && r.skill != cooking).map(|(_, r)| r.def.level);
+    let made = crafted.chain(smelted).min();
     [worn, wielded, made].into_iter().flatten().max().unwrap_or(1).max(1)
 }
 

@@ -132,6 +132,10 @@ impl ActionContext for Context<'_> {
         self.server.players[&self.agent].inventory.pouched.iter().map(|&(item, _)| item).collect()
     }
 
+    fn actor_carried(&self) -> Vec<BlockId> {
+        self.server.players[&self.agent].inventory.slots.iter().flatten().map(|s| s.item).collect()
+    }
+
     fn actor_hurt(&self) -> bool {
         let health = self.server.players[&self.agent].health;
         health.current < health.max

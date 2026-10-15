@@ -10,7 +10,9 @@
 //!
 //! A recipe cooks what is held, `uses` of it at a time (one unless it says), and may take
 //! other items from the inventory too (`with`): a crucible makes four bronze from three
-//! copper ingots in hand and a tin ore carried. It makes `count` of its output. Stations
+//! copper ingots in hand and a tin ore carried. It makes `count` of its output. A recipe
+//! may also ask for a `tool` carried, by tag, which it does not use up: ore is crushed on
+//! a stone anvil only with a hammer about you. Stations
 //! that take time and the dish computation come next (docs/food-and-cooking.md).
 
 use rustc_hash::FxHashMap;
@@ -57,6 +59,10 @@ pub struct RecipeDef {
     /// How many of `output` one go makes (what burns leaves one `burnt`).
     #[serde(default = "one")]
     pub count: u8,
+    /// The tag of a tool one go needs carried (in hand or the pack), kept: a `hammer` to
+    /// crush ore on an anvil.
+    #[serde(default)]
+    pub tool: Option<String>,
 }
 
 fn one() -> u8 {
@@ -100,6 +106,12 @@ impl Recipe {
     /// Everything one go takes when `input` is held: that many of it, then the rest.
     pub fn ingredients(&self, input: BlockId) -> Vec<(BlockId, u8)> {
         std::iter::once((input, self.def.uses)).chain(self.with.iter().copied()).collect()
+    }
+
+    /// Whether `carried` (everything the cook carries) holds the tool it asks for, if any.
+    pub fn has_tool(&self, blocks: &BlockRegistry, carried: impl IntoIterator<Item = BlockId>) -> bool {
+        let Some(tag) = &self.def.tool else { return true };
+        carried.into_iter().any(|item| blocks.def(item).has_tag(tag))
     }
 
     /// The chance of burning it at `level`.
@@ -185,6 +197,11 @@ impl CookingRegistry {
                     return Err(error(format!("`with` takes `{name}` no times, twice, or as well as the input: count it once")));
                 }
                 with.push((item, *n));
+            }
+            if let Some(tag) = &def.tool
+                && (blocks.tagged(tag).next().is_none() || inputs.iter().chain(with.iter().map(|(item, _)| item)).any(|&item| blocks.def(item).has_tag(tag)))
+            {
+                return Err(error(format!("its `tool` `{tag}` is carried by nothing, or by what it cooks")));
             }
             let index = registry.recipes.len();
             for input in inputs {
@@ -295,5 +312,27 @@ mod tests {
         assert!((recipe.burn_chance(6) - BURN_AT_START / 2.0).abs() < 1e-6);
         assert_eq!(recipe.burn_chance(11), 0.0);
         assert_eq!(recipe.burn_chance(50), 0.0);
+    }
+
+    #[test]
+    fn a_tool_is_asked_for_by_tag_and_kept() {
+        let blocks = BlockRegistry::new(vec![
+            BlockDef { name: "base:copper_ore".into(), ..Default::default() },
+            BlockDef { name: "base:crushed_copper".into(), ..Default::default() },
+            BlockDef { name: "base:stone_hammer".into(), tags: vec!["hammer".into()], ..Default::default() },
+        ])
+        .unwrap();
+        let build = |tool: &str| {
+            let source = format!(r#"(recipes: [(input: "copper_ore", output: "crushed_copper", station: "anvil", xp: 1.0, stop_burning: 0, tool: "{tool}")])"#);
+            CookingRegistry::new(CookingRegistry::read("base", &source).unwrap(), &blocks, &SkillRegistry::default())
+        };
+        let registry = build("hammer").unwrap();
+        let (ore, hammer) = (blocks.id("base:copper_ore").unwrap(), blocks.id("base:stone_hammer").unwrap());
+        let recipe = registry.for_item(ore, &["anvil".into()]).unwrap();
+        assert!(recipe.has_tool(&blocks, [ore, hammer]), "a hammer carried");
+        assert!(!recipe.has_tool(&blocks, [ore]), "no hammer");
+        assert_eq!(recipe.ingredients(ore), vec![(ore, 1)], "the hammer is not used up");
+        // A tool nothing carries could never be had.
+        assert!(build("chisel").unwrap_err().0.contains("carried by nothing"));
     }
 }

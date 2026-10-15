@@ -35,6 +35,10 @@ impl Server {
         let selected = player.selected;
         let Some(item) = player.held() else { return };
         let Some(recipe) = cooking.for_item(item, &tags) else { return };
+        // A tool it asks for is carried (`CookingTool` refused the click without it), kept.
+        if !recipe.has_tool(&self.content.blocks, player.inventory.slots.iter().flatten().map(|s| s.item)) {
+            return;
+        }
         let level = recipe.skill.map_or(1, |skill| skills.level(player.skills.xp(skill)));
         // Everything one go takes, from the held stack first, or nothing is cooked: a
         // crucible's bronze wants three copper ingots and a tin ore.
