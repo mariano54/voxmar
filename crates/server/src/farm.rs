@@ -487,6 +487,7 @@ mod tests {
         server.propose(1, place, voxmar_engine::action::ActionTarget::Block { block: IVec3::new(10, FLOOR, 10), face: Face::PosY }, std::time::Instant::now());
         assert!(server.block(IVec3::new(10, FLOOR + 1, 10)).is_some_and(|b| server.content.blocks.def(b).has_tag("waters")));
         assert_eq!(watering(&server), 1, "a well by the field, whichever way it faces");
+        assert_eq!(server.players[&1].tallies.get("placed:base:well"), None, "only a block some quest's `Placed` asks for is tallied set down");
     }
 
     #[test]

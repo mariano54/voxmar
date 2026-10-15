@@ -1796,6 +1796,104 @@ fn the_count_of_goes_cooked_survives_leaving_and_joining_again() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// Sets down a feed trough two blocks south of `client` (some quest's `Placed` counts it),
+/// and gives back its cell.
+fn place_a_trough(client: &mut Client) -> IVec3 {
+    let cell = client.position.floor().as_ivec3() + IVec3::new(0, 0, 2);
+    for line in ["/clear", "/give feed_trough 1", "/fill ~ ~ ~2 ~ ~1 ~2 air", "/fill ~ ~-1 ~2 ~ ~-1 ~2 stone"] {
+        client.ok(line);
+    }
+    let trough = client.content.blocks.expect("base:feed_trough");
+    client.pump_until(|c| c.world.block(cell) == Some(BlockId::AIR) && c.inventory.get(0).is_some_and(|s| s.item == trough));
+    client.propose("core:place", ActionTarget::Block { block: cell - IVec3::Y, face: Face::PosY });
+    client.pump_until(|c| c.world.block(cell) == Some(trough));
+    cell
+}
+
+/// Breaks the block at `cell` (as a command does, through the server's block changes).
+fn clear_cell(client: &mut Client, cell: IVec3) {
+    client.ok(&format!("/fill {0} {1} {2} {0} {1} {2} air", cell.x, cell.y, cell.z));
+    client.pump_until(|c| c.world.block(cell) == Some(BlockId::AIR));
+}
+
+/// The saved count of feed troughs `name` has set down for quests, and the cells the world
+/// keeps for them; none before they are first saved.
+fn troughs_saved(dir: &std::path::Path, name: &str) -> Option<(u32, Vec<[i32; 3]>)> {
+    let save = voxmar_server::save::WorldSave::new(dir);
+    let player = save.read_player(name, &content().blocks).ok()??;
+    let count = player.tallies.iter().find(|(k, _)| k == "placed:base:feed_trough").map_or(0, |(_, n)| *n);
+    let cells = save.read_meta().ok()?.quest_placed.into_iter().filter(|(_, owner, _)| owner == name).map(|(cell, _, _)| cell).collect();
+    Some((count, cells))
+}
+
+/// Waits, up to five of the server's seconds, for the save `name` left to read `want`.
+fn await_troughs(server: &mut Client, dir: &std::path::Path, name: &str, want: (u32, Vec<[i32; 3]>), why: &str) {
+    server.pump_ticks(5 * TICKS_PER_SECOND as u64, |_| troughs_saved(dir, name).as_ref() == Some(&want));
+    assert_eq!(troughs_saved(dir, name), Some(want), "{why}");
+}
+
+#[test]
+fn a_placed_block_broken_after_joining_again_comes_off_the_quest_tally() {
+    let dir = world_dir("placed");
+    let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
+    let mut client = Client::join_with(config());
+    let cell = place_a_trough(&mut client);
+    drop(client);
+    assert_eq!(troughs_saved(&dir, "test"), Some((1, vec![cell.to_array()])), "the trough set down counts, its cell kept with the world");
+    // After a restart, kept standing, it still counts.
+    drop(Client::join_with(config()));
+    assert_eq!(troughs_saved(&dir, "test"), Some((1, vec![cell.to_array()])), "the kept trough still counts after the restart");
+    // After another, the same player breaks it: it comes off, though the server that saw
+    // it placed is gone.
+    let mut client = Client::join_with(config());
+    clear_cell(&mut client, cell);
+    drop(client);
+    assert_eq!(troughs_saved(&dir, "test"), Some((0, vec![])), "the broken trough no longer counts, nor is its cell kept");
+    // Set down once more, it counts once.
+    let mut client = Client::join_with(config());
+    place_a_trough(&mut client);
+    drop(client);
+    assert_eq!(troughs_saved(&dir, "test").map(|(n, _)| n), Some(1), "the trough set down again counts once");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// A block one player set down for a quest and another broke comes off the first one's
+/// count: while they play, while they are away, and while they lie dead away.
+#[test]
+fn a_placed_block_another_player_breaks_comes_off_its_owners_tally() {
+    let dir = world_dir("placed-by-another");
+    let config = ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
+    let mut breaker = Client::join_named(config, "bob");
+    // Both playing: Bob breaks Ada's trough.
+    let mut ada = breaker.another("ada");
+    let cell = place_a_trough(&mut ada);
+    clear_cell(&mut breaker, cell);
+    drop(ada);
+    await_troughs(&mut breaker, &dir, "ada", (0, vec![]), "broken while she played");
+    // Ada away: Bob breaks it, and she finds it off her count when she comes back.
+    let mut ada = breaker.another("ada");
+    let cell = place_a_trough(&mut ada);
+    drop(ada);
+    await_troughs(&mut breaker, &dir, "ada", (1, vec![cell.to_array()]), "set down, as she left");
+    clear_cell(&mut breaker, cell);
+    let ada = breaker.another("ada");
+    drop(ada);
+    await_troughs(&mut breaker, &dir, "ada", (0, vec![]), "broken while she was away");
+    // Ada left dead: the same, as she comes back to life.
+    let mut ada = breaker.another("ada");
+    let cell = place_a_trough(&mut ada);
+    ada.ok("/kill");
+    ada.pump_until(|c| c.health == 0);
+    drop(ada);
+    await_troughs(&mut breaker, &dir, "ada", (1, vec![cell.to_array()]), "set down, as she left dead");
+    clear_cell(&mut breaker, cell);
+    let ada = breaker.another("ada");
+    drop(ada);
+    await_troughs(&mut breaker, &dir, "ada", (0, vec![]), "broken while she lay dead away");
+    drop(breaker);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 #[test]
 fn a_seed_pouch_carries_seeds_in_one_slot_and_sows_from_it() {
     let mut client = Client::join();
@@ -2210,16 +2308,16 @@ fn first_night_needs_a_crafted_campfire_and_food_cooked_on_it() {
     client.propose("core:craft", ActionTarget::Slot(0));
     client.pump_until(|c| done(c) && count(c, "base:campfire") == 1);
     client.wait_server(2);
-    assert_eq!(count(&client, "base:torch"), 0, "finishing paid the torches before they were claimed");
+    assert_eq!(count(&client, "base:feather"), 0, "finishing paid the feathers before they were claimed");
     drop(client);
     // The reward waits through a restart, in the save.
     let mut client = Client::join_with(config());
     client.pump_until(|c| done(c));
     client.wait_server(2);
     assert!(!client.claimed("base:first_night"), "rejoining claimed it");
-    assert_eq!(count(&client, "base:torch"), 0);
+    assert_eq!(count(&client, "base:feather"), 0);
     client.claim("base:first_night");
-    client.pump_until(|c| c.claimed("base:first_night") && count(c, "base:torch") == 4);
+    client.pump_until(|c| c.claimed("base:first_night") && count(c, "base:feather") == 2);
     drop(client);
     let mut client = Client::join_with(config());
     client.pump_until(|c| done(c));
@@ -2227,7 +2325,7 @@ fn first_night_needs_a_crafted_campfire_and_food_cooked_on_it() {
     assert!(client.claimed("base:first_night"), "the claim was not saved");
     client.claim("base:first_night");
     client.wait_server(2);
-    assert_eq!(count(&client, "base:torch"), 4, "rejoining or claiming again paid the quest twice");
+    assert_eq!(count(&client, "base:feather"), 2, "rejoining or claiming again paid the quest twice");
     drop(client);
     std::fs::remove_dir_all(dir).unwrap();
 }
@@ -2971,6 +3069,84 @@ fn gravel_sometimes_breaks_to_flint_instead() {
         }
     }
     assert!(flints > 0, "sixty gravel broke without a flint");
+}
+
+/// Tall grass gives twine one time in five to a knife (a stone one, a quarter), and never
+/// by hand: the first upgrade on twine, which otherwise waits on wild wheat.
+#[test]
+fn a_knife_cuts_twine_from_tall_grass() {
+    let mut client = Client::join();
+    let cell = client.position.floor().as_ivec3() + IVec3::X;
+    client.ok("/clear");
+    let (grass, twine) = (client.content.blocks.expect("base:tall_grass"), client.content.blocks.expect("base:twine"));
+    let twines = |c: &Client| c.items.values().filter(|i| i.stack.item == twine).count() as u32 + c.inventory.slots.iter().flatten().filter(|s| s.item == twine).map(|s| s.count as u32).sum::<u32>();
+    let cut = |client: &mut Client| {
+        client.ok("/setblock ~1 ~ ~ tall_grass");
+        client.pump_until(|c| c.world.block(cell) == Some(grass));
+        client.propose("core:mine", ActionTarget::Block { block: cell, face: Face::NegX });
+        client.pump_until(|c| c.world.block(cell) == Some(BlockId::AIR));
+        // The drop comes just after the block goes.
+        client.after_server_ticks(2);
+        twines(client)
+    };
+    for _ in 0..30 {
+        assert_eq!(cut(&mut client), 0, "bare hands cut twine from tall grass");
+    }
+    client.ok("/give stone_knife 1");
+    let knife = client.content.blocks.expect("base:stone_knife");
+    client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == knife));
+    client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    // A quarter of the time: in sixty, all but certainly some.
+    let mut found = 0;
+    for _ in 0..60 {
+        found = cut(&mut client);
+        if found > 0 {
+            break;
+        }
+    }
+    assert!(found > 0, "sixty tall grasses cut with a stone knife gave no twine");
+}
+
+/// A stone hoe cutting a ripe wheat in a patch of nine reaps all nine, each giving its
+/// harvest; a wooden hoe cuts only the one.
+#[test]
+fn a_stone_hoe_reaps_the_ripe_crops_about_one() {
+    let mut client = Client::join();
+    let centre = client.position.floor().as_ivec3() + IVec3::new(2, 0, 0);
+    let (ripe, wheat, seeds) = (client.content.blocks.expect("base:wheat_crop"), client.content.blocks.expect("base:wheat"), client.content.blocks.expect("base:wheat_seeds"));
+    let cells: Vec<IVec3> = (-1..=1).flat_map(|dx| (-1..=1).map(move |dz| centre + IVec3::new(dx, 0, dz))).collect();
+    let got = |c: &Client| -> u32 {
+        let lying: u32 = c.items.values().filter(|i| i.stack.item == wheat || i.stack.item == seeds).map(|i| i.stack.count as u32).sum();
+        lying + c.inventory.slots.iter().flatten().filter(|s| s.item == wheat || s.item == seeds).map(|s| s.count as u32).sum::<u32>()
+    };
+    for (hoe, reaped) in [("wooden_hoe", 1), ("stone_hoe", 9)] {
+        client.ok("/clear");
+        client.ok(&format!("/give {hoe} 1"));
+        let item = client.content.blocks.expect(&format!("base:{hoe}"));
+        client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == item));
+        client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+        client.ok(&format!("/fill {} {} {} {} {} {} farmland", centre.x - 1, centre.y - 1, centre.z - 1, centre.x + 1, centre.y - 1, centre.z + 1));
+        client.ok(&format!("/fill {} {} {} {} {} {} wheat_crop", centre.x - 1, centre.y, centre.z - 1, centre.x + 1, centre.y, centre.z + 1));
+        client.pump_until(|c| cells.iter().all(|&cell| c.world.block(cell) == Some(ripe)));
+        client.propose("core:mine", ActionTarget::Block { block: centre, face: Face::PosY });
+        client.pump_until(|c| c.world.block(centre) == Some(BlockId::AIR));
+        // The rest go in the same tick as the one cut.
+        client.after_server_ticks(2);
+        let gone = cells.iter().filter(|&&cell| client.world.block(cell) == Some(BlockId::AIR)).count();
+        assert_eq!(gone, reaped, "a {hoe} cut {gone} of the nine ripe wheat");
+        // Each foraged (an unsown ripe wheat): at least a seed from every one.
+        client.after_server_ticks(4);
+        assert!(got(&client) >= reaped as u32, "{reaped} wheat cut with a {hoe} gave {} seeds and wheat", got(&client));
+    }
+    // Fruit on trees is no field: a stone hoe on one ripe apple leaf leaves the canopy about it.
+    let apple = client.content.blocks.expect("base:apple_leaves");
+    client.ok(&format!("/fill {} {} {} {} {} {} apple_leaves", centre.x - 1, centre.y, centre.z - 1, centre.x + 1, centre.y, centre.z + 1));
+    client.pump_until(|c| cells.iter().all(|&cell| c.world.block(cell) == Some(apple)));
+    client.propose("core:mine", ActionTarget::Block { block: centre, face: Face::PosY });
+    client.pump_until(|c| c.world.block(centre) != Some(apple));
+    client.after_server_ticks(2);
+    let left = cells.iter().filter(|&&cell| client.world.block(cell) == Some(apple)).count();
+    assert_eq!(left, 8, "a stone hoe on one ripe apple leaf took {} of the leaves about it", 8 - left);
 }
 
 // Seed 3 has a village at (368, 135, 784), 421 blocks from spawn (432, 134, 368).

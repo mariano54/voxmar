@@ -5,8 +5,9 @@
 //! with what chutes bring and other players take. It closes with the screen, when the
 //! player walks out of reach or dies, or when the store is broken.
 
+use voxmar_engine::block::BlockId;
 use voxmar_engine::glam::IVec3;
-use voxmar_engine::inventory::Store;
+use voxmar_engine::inventory::{ItemStack, Store};
 use voxmar_engine::traits;
 use voxmar_protocol::PlayerId;
 
@@ -50,14 +51,38 @@ impl Server {
         }
     }
 
-    /// Writes `agent`'s copy of their open store back into it, after a move.
+    /// Writes `agent`'s copy of their open store back into it, after a move. What it gained
+    /// and lost of each item is tallied by the store's block, for a quest's `Stocked`: an
+    /// item put in and taken out again counts nothing.
     pub(crate) fn push_store(&mut self, agent: PlayerId) {
         let Some(player) = self.players.get(&agent) else { return };
         let (Some(pos), Some(store)) = (player.store, player.inventory.store.as_ref()) else { return };
-        if let Some(state) = self.factory.state_mut(pos)
-            && state.bin.len() == store.slots.len()
-        {
-            state.bin.clone_from(&store.slots);
+        let mut moved: Vec<(BlockId, i64)> = Vec::new();
+        let mut count = |slots: &[Option<ItemStack>], sign: i64| {
+            for stack in slots.iter().flatten() {
+                match moved.iter_mut().find(|(item, _)| *item == stack.item) {
+                    Some((_, n)) => *n += sign * i64::from(stack.count),
+                    None => moved.push((stack.item, sign * i64::from(stack.count))),
+                }
+            }
+        };
+        let block = store.block;
+        let Some(state) = self.factory.state_mut(pos) else { return };
+        if state.bin.len() != store.slots.len() {
+            return;
+        }
+        count(&store.slots, 1);
+        count(&state.bin, -1);
+        state.bin.clone_from(&store.slots);
+        let blocks = &self.content.blocks;
+        let kind = format!("stocked:{}", blocks.def(block).name);
+        let moved: Vec<(String, i64)> = moved.into_iter().filter(|&(_, n)| n != 0).map(|(item, n)| (blocks.def(item).name.clone(), n)).collect();
+        for (item, n) in moved {
+            if n > 0 {
+                self.tally(agent, &kind, &item, n as u32);
+            } else {
+                self.untally(agent, &kind, &item, n.unsigned_abs() as u32);
+            }
         }
     }
 
@@ -163,6 +188,13 @@ mod tests {
         let dirt = id(&server, "base:dirt");
         assert_eq!(held(&server), vec![(dirt, 10)]);
         assert_eq!(server.players[&1].inventory.slots[0], None);
+        let stocked = |server: &Server| server.players[&1].tallies.get("stocked:base:chest:base:dirt").copied();
+        assert_eq!(stocked(&server), Some(10), "what went in is tallied for quests, by the store and the item");
+        // Taken out and put back, it is still ten in the chest, not twenty.
+        act(&mut server, "core:transfer", ActionTarget::Slots { from: STORE as u8 + 4, to: 0, count: 10 });
+        assert_eq!(stocked(&server), None, "taken out, it counts nothing");
+        act(&mut server, "core:transfer", ActionTarget::Slots { from: 0, to: STORE as u8 + 4, count: 10 });
+        assert_eq!(stocked(&server), Some(10));
         // A chute brings sand.
         let sand = id(&server, "base:sand");
         let machines = server.content.machines.clone();
@@ -172,6 +204,7 @@ mod tests {
         // Shift click takes it into the pack.
         act(&mut server, "core:quick_move", ActionTarget::Slot(STORE as u8));
         assert_eq!(held(&server), vec![(dirt, 10)]);
+        assert_eq!(stocked(&server), Some(10), "what a chute brought, taken out, takes nothing off what was put in");
         assert!(server.players[&1].inventory.slots.iter().flatten().any(|s| s.item == sand && s.count == 5));
         server.players.get_mut(&1).unwrap().position = Vec3::new(28.5, (FLOOR + 1) as f32, 28.5);
         server.watch_stores();

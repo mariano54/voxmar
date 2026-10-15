@@ -262,6 +262,10 @@ steps! {
     /// tool, under load: client and server agree on every one, and none comes back. Those
     /// of a building material (the cobblestone) sound as it.
     Breaks,
+    /// The breaks' stand again, a stone knife in hand: the recipe book says twine is cut
+    /// from tall grass with a knife, and tall grass set beside the player and cut until
+    /// twine drops and is picked up.
+    Twine,
     /// On the menu's audio page, a switch for each category of music the player can hear;
     /// clicking one turns that category off, and again on. A track starting is named, with
     /// its category, at the top right, and the line fades: while the workshop and swim
@@ -446,6 +450,9 @@ steps! {
     /// at level 1) mined by hand says under the crosshair which tool it wants, in words that fit;
     /// an empty drying rack there, right clicked with nothing in hand, says it cannot work that.
     Refusal,
+    /// Nine ripe wheat on farmland, a stone hoe in hand: its tooltip says what it reaps, and
+    /// cutting the middle one takes all nine, on both sides.
+    Reap,
     /// A wild plant whose item merged (oregano into kitchen herbs) is given as the merged
     /// item, and the catalogues (creative, journal, recipe book) list the item, not the plant.
     Merged,
@@ -780,6 +787,8 @@ struct Gate {
     /// for from then on.
     party_given: f32,
     breaks: Breaks,
+    /// Tall grass cut so far in the twine step.
+    cuts: u32,
     /// Mining experience before the workshop's ore was broken.
     mining_before: Option<u32>,
     /// The lowest and highest the struck creature stood while struck: no knockback lifts it.
@@ -982,6 +991,7 @@ impl Gate {
             party_sent: false,
             party_given: 0.0,
             breaks: Breaks::default(),
+            cuts: 0,
             mining_before: None,
             struck_heights: (f32::MAX, f32::MIN),
             failures: Vec::new(),
@@ -1514,6 +1524,8 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         // this is the backstop for a server that stopped.
         Step::Feel => FEEL_LIMIT + 2.0 * UNANSWERED + STEP_LIMIT,
         Step::Breaks => BREAKS_LIMIT + 15.0,
+        // Grass set and cut, a cut a round: each waited on in the server's seconds.
+        Step::Twine => TWINE_CUTS as f32 * 2.0 * TWINE_WAIT,
         // Crafting, mining, tilling and fishing until something bites.
         // In the full gate, with time for its full-only machine phases.
         Step::Workshop => 250.0 + full_allowance(),
@@ -1539,6 +1551,8 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         Step::Refusal => UNANSWERED + 4.0 * REFUSAL_WAIT + STEP_LIMIT,
         // Taming, then a feed trough opened, waited on up to `TROUGH_WAIT`.
         Step::Tame => STEP_LIMIT + TROUGH_WAIT,
+        // The patch set, the hoe in hand, the cut and the reaped patch, each waited on.
+        Step::Reap => 4.0 * REAP_WAIT + STEP_LIMIT,
         // A fresh area around the settlement to generate: up to `SETTLEMENT_LOAD` of the
         // server's seconds.
         Step::Settlements => SETTLEMENT_LOAD + SETTLEMENT_PEOPLE + STEP_LIMIT,
@@ -1800,6 +1814,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
             }
         }
         Step::Breaks => breaks(world, gate, now, in_phase),
+        Step::Twine => twine(world, gate, now),
         Step::Workshop => workshop(world, gate, now, in_phase),
         Step::HvAge => hv_age(world, gate, now),
         Step::Swim => swim(world, gate, now, in_phase),
@@ -1846,6 +1861,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Chop => chop(world, gate, now),
         Step::LookUp => look_up(world, gate, now, in_phase),
         Step::Refusal => refusal(world, gate, now, in_phase),
+        Step::Reap => reap(world, gate, now),
         Step::Merged => merged(world, gate, now, in_phase),
         Step::Identity => identity(world, gate, now),
         Step::Effects => effects(world, gate, now, in_phase),
@@ -2330,7 +2346,126 @@ fn end_breaks(world: &mut World, gate: &mut Gate, now: f32) {
     for &tool in gate.breaks.given.iter().filter(|&&tool| held.slots.iter().flatten().any(|s| s.item == tool)) {
         net.command(&format!("clear {}", registry.def(tool).name));
     }
-    gate.next(Step::Music, now);
+    gate.next(Step::Twine, now);
+}
+
+/// Where the twine step sets its tall grass, from the test ground's middle: a cell of the
+/// broken row beside the breaks' stand, on the ground.
+const TWINE_AT: IVec3 = IVec3::new(-2, 0, -1);
+/// Longest the twine step waits on one answer, in seconds of the server's clock and the game's.
+const TWINE_WAIT: f32 = 8.0;
+/// Most tall grass cut for a twine: a stone knife finds one a quarter of the time, so
+/// sixty go without one about once in thirty million.
+const TWINE_CUTS: u32 = 60;
+
+/// Tall grass cut with a stone knife until it gives twine (`tools.ron`'s `by`), which is
+/// picked up; first the recipe book is asked where twine comes from.
+fn twine(world: &mut World, gate: &mut Gate, now: f32) {
+    let cell = gate.feet + TWINE_AT;
+    let stand = gate.feet + BREAK_STAND;
+    // Given up on only once the server's seconds and the game's have both passed.
+    let waited = gate.server_in_phase() > TWINE_WAIT && now - gate.phase_since > TWINE_WAIT;
+    let content = world.resource::<Launch>().content.clone();
+    let id = |name: &str| content.blocks.id(name);
+    let (grass, twine, knife) = (id("base:tall_grass"), id("base:twine"), id("base:stone_knife"));
+    let carried = |world: &World| world.resource::<LocalPlayer>().inventory.slots.iter().flatten().filter(|s| Some(s.item) == twine).map(|s| s.count as u32).sum::<u32>();
+    let end = |world: &mut World, gate: &mut Gate| {
+        mouse(world, MouseButton::Left, false);
+        let net = world.resource::<Net>();
+        net.command(&format!("setblock {} {} {} air", cell.x, cell.y, cell.z));
+        net.command("clear stone_knife");
+        net.command("clear twine");
+        gate.next(Step::Music, now);
+    };
+    let (Some(grass), Some(twine), Some(knife)) = (grass, twine, knife) else {
+        gate.check("twine", Err("no tall grass, twine or stone knife in the content".into()));
+        end(world, gate);
+        return;
+    };
+    match gate.phase {
+        0 => {
+            let net = world.resource::<Net>();
+            net.command("clear twine");
+            net.command("give stone_knife 1");
+            net.command(&format!("tp {} {} {}", stand.x as f32 + 0.5, stand.y, stand.z as f32 + 0.5));
+            gate.cuts = 0;
+            gate.advance(now);
+        }
+        1 => {
+            // The book says where twine comes from: tall grass, with a knife.
+            let from_grass = world.resource::<crate::hud::recipes::RecipeViewer>().book().is_some_and(|book| {
+                book.making(twine).iter().any(|e| matches!(e.method, voxmar_engine::recipe_book::Method::Break { block, tool: Some(tool), .. } if block == grass && content.blocks.def(tool).has_tag("knife")))
+            });
+            if !from_grass {
+                gate.check("twine", Err("the recipe book does not say twine is cut from tall grass with a knife".into()));
+                end(world, gate);
+                return;
+            }
+            let has = world.resource::<LocalPlayer>().inventory.slots.iter().flatten().any(|s| s.item == knife);
+            if has {
+                hold(world, Holder::Tool(knife));
+            }
+            let player = world.resource::<LocalPlayer>();
+            if player.inventory.get(player.selected).map(|s| s.item) == Some(knife) {
+                gate.advance(now);
+            } else if waited {
+                gate.check("twine", Err(format!("the stone knife never came to hand ({has}) in {TWINE_WAIT} seconds")));
+                end(world, gate);
+            }
+        }
+        2 => {
+            let net = world.resource::<Net>();
+            net.command(&format!("setblock {} {} {} tall_grass", cell.x, cell.y, cell.z));
+            gate.advance(now);
+        }
+        3 => {
+            // Standing on both sides, then cut.
+            let client = world.resource::<ClientWorld>().block(cell) == Some(grass);
+            let server = gate.observer.as_ref().is_none_or(|o| o.world.block(cell) == Some(grass));
+            if client && server {
+                aim_at(world, cell.as_vec3() + Vec3::splat(0.5));
+                mouse(world, MouseButton::Left, true);
+                gate.advance(now);
+            } else if waited {
+                gate.check("twine", Err(format!("tall grass set at {cell} never stood (client {client}, server {server}) in {TWINE_WAIT} seconds")));
+                end(world, gate);
+            }
+        }
+        4 => {
+            aim_at(world, cell.as_vec3() + Vec3::splat(0.5));
+            if world.resource::<ClientWorld>().block(cell).is_some_and(|b| b.is_air()) {
+                mouse(world, MouseButton::Left, false);
+                gate.cuts += 1;
+                gate.advance(now);
+            } else if waited {
+                gate.check("twine", Err(format!("tall grass at {cell} never broke with a stone knife in hand in {TWINE_WAIT} seconds (cut {})", gate.cuts)));
+                end(world, gate);
+            } else {
+                mouse(world, MouseButton::Left, true);
+            }
+        }
+        _ => {
+            // A second of the server's past the cut, whatever it gave has been told; twine
+            // lying is waited on until it is picked up.
+            let lying = world.resource::<crate::drops::Drops>().lying().any(|(_, stack, _)| stack.item == twine);
+            if carried(world) > 0 {
+                let cuts = gate.cuts;
+                gate.check("twine", Ok(format!("the recipe book names tall grass and a knife; a stone knife cut twine from tall grass in {cuts} cuts, and it was picked up")));
+                end(world, gate);
+            } else if lying && waited {
+                gate.check("twine", Err(format!("twine dropped from tall grass but was not picked up in {TWINE_WAIT} seconds")));
+                end(world, gate);
+            } else if !lying && gate.server_in_phase() > 1.0 {
+                if gate.cuts >= TWINE_CUTS {
+                    gate.check("twine", Err(format!("{TWINE_CUTS} tall grasses cut with a stone knife gave no twine")));
+                    end(world, gate);
+                } else {
+                    gate.phase = 1;
+                    gate.advance(now);
+                }
+            }
+        }
+    }
 }
 
 /// Where the workshop puts the crafting table, the ore, and the soil it tills, from the
@@ -4652,7 +4787,7 @@ fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
     let rice = world.resource::<ClientWorld>().registry.id("base:rice");
     let Some(rice) = rice else {
         gate.check("refusal", Err("no rice in the content".into()));
-        gate.next(Step::Merged, now);
+        gate.next(Step::Reap, now);
         return;
     };
     match gate.phase {
@@ -4689,7 +4824,7 @@ fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 _ if gate.server_in_phase() > UNANSWERED => {
                     let at = if posed { "stood at the feet".to_owned() } else { unsettled(world, gate) };
                     gate.check("refusal", Err(format!("the farmland ({tilled}), Farming 10 ({level}) or rice in the hotbar never came, or {at}")));
-                    gate.next(Step::Merged, now);
+                    gate.next(Step::Reap, now);
                 }
                 (ready, slot) => {
                     if gate.frames % 120 == 0 {
@@ -4897,7 +5032,115 @@ fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             net.command("clear well");
             net.command(&format!("setblock {} {} {} air", well.x, well.y, well.z));
             net.command(&format!("setblock {} {} {} dirt", plot.x, plot.y, plot.z));
-            gate.next(Step::Merged, now);
+            gate.next(Step::Reap, now);
+        }
+    }
+}
+
+/// The middle of the patch `reap` cuts, from the test ground's middle: nine wheat on the
+/// dirt `refusal` laid, two blocks ahead of where the player stands to cut, so the look
+/// down to the middle passes over the near row.
+const REAP_AT: IVec3 = IVec3::new(-2, 0, 3);
+const REAP_STAND: IVec3 = IVec3::new(-2, 0, 1);
+/// Longest the reap step waits on one answer, in seconds of the server's clock and the game's.
+const REAP_WAIT: f32 = 8.0;
+
+/// A patch of nine ripe wheat cut in the middle with a stone hoe: the hoe's tooltip line
+/// says it reaps a three by three patch, and the cut takes all nine on the client and the
+/// server alike (`reap:1` in blocks_tools.ron).
+fn reap(world: &mut World, gate: &mut Gate, now: f32) {
+    let (centre, stand) = (gate.feet + REAP_AT, gate.feet + REAP_STAND);
+    let cells: Vec<IVec3> = (-1..=1).flat_map(|dx| (-1..=1).map(move |dz| centre + IVec3::new(dx, 0, dz))).collect();
+    // Given up on only once the server's seconds and the game's have both passed.
+    let waited = gate.server_in_phase() > REAP_WAIT && now - gate.phase_since > REAP_WAIT;
+    let content = world.resource::<Launch>().content.clone();
+    let (ripe, hoe) = (content.blocks.id("base:wheat_crop"), content.blocks.id("base:stone_hoe"));
+    let end = |world: &mut World, gate: &mut Gate| {
+        mouse(world, MouseButton::Left, false);
+        let net = world.resource::<Net>();
+        let (low, high) = (centre - IVec3::new(1, 1, 1), centre + IVec3::new(1, 0, 1));
+        net.command(&format!("fill {} {} {} {} {} {} air", low.x, centre.y, low.z, high.x, high.y, high.z));
+        net.command(&format!("fill {} {} {} {} {} {} dirt", low.x, low.y, low.z, high.x, low.y, high.z));
+        for item in ["stone_hoe", "wheat", "wheat_seeds"] {
+            net.command(&format!("clear {item}"));
+        }
+        gate.next(Step::Merged, now);
+    };
+    let (Some(ripe), Some(hoe)) = (ripe, hoe) else {
+        gate.check("reap", Err("no ripe wheat or stone hoe in the content".into()));
+        end(world, gate);
+        return;
+    };
+    let standing = |side: &dyn Fn(IVec3) -> Option<BlockId>| cells.iter().filter(|&&cell| side(cell) == Some(ripe)).count();
+    match gate.phase {
+        0 => {
+            let net = world.resource::<Net>();
+            let (low, high) = (centre - IVec3::new(2, 1, 3), centre + IVec3::new(2, 3, 2));
+            for line in [
+                format!("fill {} {} {} {} {} {} dirt", low.x, low.y, low.z, high.x, low.y, high.z),
+                format!("fill {} {} {} {} {} {} air", low.x, centre.y, low.z, high.x, high.y, high.z),
+                format!("fill {} {} {} {} {} {} farmland", centre.x - 1, centre.y - 1, centre.z - 1, centre.x + 1, centre.y - 1, centre.z + 1),
+                format!("fill {} {} {} {} {} {} wheat_crop", centre.x - 1, centre.y, centre.z - 1, centre.x + 1, centre.y, centre.z + 1),
+                "clear stone_hoe".to_owned(),
+                "give stone_hoe 1".to_owned(),
+                format!("tp {} {} {}", stand.x as f32 + 0.5, stand.y, stand.z as f32 + 0.5),
+            ] {
+                net.command(&line);
+            }
+            gate.advance(now);
+        }
+        1 => {
+            let client = standing(&|p| world.resource::<ClientWorld>().block(p));
+            let server = gate.observer.as_ref().map_or(9, |o| standing(&|p| o.world.block(p)));
+            let there = world.resource::<LocalPlayer>().position.distance(stand.as_vec3() + Vec3::new(0.5, 0.0, 0.5)) < 0.5;
+            let has = world.resource::<LocalPlayer>().inventory.slots.iter().flatten().any(|s| s.item == hoe);
+            if has {
+                hold(world, Holder::Tool(hoe));
+            }
+            let player = world.resource::<LocalPlayer>();
+            let held = player.inventory.get(player.selected).map(|s| s.item) == Some(hoe);
+            if client == 9 && server == 9 && there && held {
+                let said = crate::hud::inventory::reap_line(world.resource::<Locale>(), &content, hoe).map(|(line, _)| line);
+                let wanted = world.resource::<Locale>().format("item.reaps", &[("side", &3)]);
+                if said.as_deref() != Some(wanted.as_str()) {
+                    gate.check("reap", Err(format!("the stone hoe's tooltip says {said:?}, not \"{wanted}\"")));
+                    end(world, gate);
+                    return;
+                }
+                gate.advance(now);
+            } else if waited {
+                gate.check("reap", Err(format!("of nine ripe wheat {client} stood on the client and {server} on the server, the spot ({there}) or the stone hoe in hand ({has}, {held}) never came in {REAP_WAIT} seconds")));
+                end(world, gate);
+            }
+        }
+        2 => {
+            // Just under the middle crop's top, looking down over the near row.
+            aim_at(world, centre.as_vec3() + Vec3::new(0.5, 0.6, 0.5));
+            let aimed = world.resource::<crate::interact::Target>().hit.as_ref().map(|hit| hit.block);
+            if world.resource::<ClientWorld>().block(centre).is_some_and(|b| b.is_air()) {
+                mouse(world, MouseButton::Left, false);
+                gate.advance(now);
+            } else if waited {
+                gate.check("reap", Err(format!("the middle wheat at {centre} never broke with a stone hoe in hand in {REAP_WAIT} seconds (aimed at {aimed:?})")));
+                end(world, gate);
+            } else {
+                mouse(world, MouseButton::Left, aimed == Some(centre));
+            }
+        }
+        _ => {
+            mouse(world, MouseButton::Left, false);
+            let server = gate.observer.as_ref().map_or(0, |o| cells.iter().filter(|&&cell| !o.world.block(cell).is_some_and(|b| b.is_air())).count());
+            let client_left = cells.iter().filter(|&&cell| !world.resource::<ClientWorld>().block(cell).is_some_and(|b| b.is_air())).count();
+            if client_left == 0 && server == 0 {
+                if gate.shot(world, "reaped").is_none() {
+                    return;
+                }
+                gate.check("reap", Ok("the stone hoe says it reaps a 3×3 patch, and one cut in the middle of nine ripe wheat took all nine on both sides (shot `reaped`)".into()));
+                end(world, gate);
+            } else if waited {
+                gate.check("reap", Err(format!("one cut with a stone hoe left {client_left} of nine ripe wheat on the client and {server} on the server in {REAP_WAIT} seconds")));
+                end(world, gate);
+            }
         }
     }
 }
@@ -6842,6 +7085,71 @@ fn lay_done(world: &mut World, barrel: IVec3) {
     net.command("give oak_planks 64");
 }
 
+/// The quests a newcomer meets first: the Nomad's way to its lit hearth, and the Farm's
+/// opening ones after it.
+const NEWCOMER_GOAL: &str = "base:homestead_hearth";
+
+/// What a newcomer following only the quest book could not find on the way to the lit
+/// hearth and through the Farm's first quests: an item a goal asks for that has no recipe
+/// in the book and that neither its quest's words nor those of a quest before it name, or a
+/// creature none of them name. Each as "quest: thing".
+pub fn newcomer_misses(content: &voxmar_engine::content::Content, locale: &Locale) -> Vec<String> {
+    let quests = &content.quests;
+    // The way to the hearth, every quest before it, then the Farm quests that open with it.
+    let mut opening: Vec<&str> = Vec::new();
+    let mut todo = vec![NEWCOMER_GOAL];
+    while let Some(name) = todo.pop() {
+        if opening.contains(&name) {
+            continue;
+        }
+        opening.push(name);
+        todo.extend(quests.get(name).iter().flat_map(|q| q.after.iter().map(String::as_str)));
+    }
+    opening.extend(quests.iter().filter(|q| q.after.iter().any(|a| a == NEWCOMER_GOAL)).map(|q| q.name.as_str()));
+    unexplained(content, locale, &opening)
+}
+
+/// Of `names`, what a quest asks for that the book cannot make and its words, or those of a
+/// quest before it, do not name (`newcomer_misses`).
+pub fn unexplained(content: &voxmar_engine::content::Content, locale: &Locale, names: &[&str]) -> Vec<String> {
+    use voxmar_engine::quest::Goal;
+    let quests = &content.quests;
+    let book = voxmar_engine::recipe_book::RecipeBook::new(content);
+    let opening = names;
+    let words = |name: &str| quests.get(name).map(|q| locale.get_or(&format!("{}.why", voxmar_engine::lang::def_key("quest", &q.name)), &q.why).to_lowercase()).unwrap_or_default();
+    let mut misses = Vec::new();
+    for &name in opening {
+        let Some(quest) = quests.get(name) else { continue };
+        // Its own words and those of every quest it waits on.
+        let mut told = words(name);
+        let mut before: Vec<&str> = quest.after.iter().map(String::as_str).collect();
+        while let Some(earlier) = before.pop() {
+            told.push_str(&words(earlier));
+            before.extend(quests.get(earlier).iter().flat_map(|q| q.after.iter().map(String::as_str)));
+        }
+        for goal in quest.tasks.iter().flatten() {
+            let (thing, made) = match goal {
+                Goal::Craft(item, _) | Goal::Cook(item, _) | Goal::CookAt(item, _, _) | Goal::Have(item, _) | Goal::Pick(item, _) | Goal::Mine(item, _) | Goal::Placed(item, _) | Goal::CraftNear(item, _, _) | Goal::LookUp(item) => {
+                    let Some(id) = content.blocks.id(item) else { continue };
+                    // A crop or plant picked is found by what it gives (wheat for wheat crop).
+                    let gives = content.blocks.info(id).drops;
+                    let named = matches!(goal, Goal::Pick(..)) && !gives.is_air() && told.contains(&locale.block(content.blocks.def(gives)).to_lowercase());
+                    (locale.block(content.blocks.def(id)), named || !book.making(id).is_empty())
+                }
+                Goal::Kill(creature, _) | Goal::Tame(creature, _) | Goal::Lured(creature, _) | Goal::Trapped(creature, _) => {
+                    let Some(id) = content.creatures.find(creature) else { continue };
+                    (locale.creature(&content.creatures.get(id).def), false)
+                }
+                _ => continue,
+            };
+            if !made && !told.contains(&thing.to_lowercase()) {
+                misses.push(format!("{name}: {thing}"));
+            }
+        }
+    }
+    misses
+}
+
 /// The torch quest the tracker follows, and the quest it sees done.
 const TRACKED: &str = "base:torchlight";
 const DONE_QUEST: &str = "base:crafting_table";
@@ -6984,6 +7292,10 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         // Ten twine, from fifteen wheat in three stacks of five, to finish Twine and Thong, so
         // the book shows a quest done and the line out of it gold.
         0 => {
+            // The way to the lit hearth and the Farm's opening quests, followed by their words
+            // and the recipe book alone: nothing they ask for is left unexplained.
+            let misses = newcomer_misses(&world.resource::<Launch>().content, world.resource::<Locale>());
+            gate.check("quests: a newcomer's way", if misses.is_empty() { Ok("every item and creature the opening quests ask for has a recipe or is named in their words".into()) } else { Err(format!("not found from the quest words or the book: {}", misses.join(", "))) });
             world.resource_mut::<crate::settings::Settings>().pinned_quests.clear();
             let net = world.resource::<Net>();
             net.command("clear wheat");
@@ -15213,6 +15525,42 @@ fn finish(world: &mut World, gate: &Gate, now: f32) {
 
 #[cfg(test)]
 mod tests {
+    /// Every item and creature the opening quests ask for has a recipe in the book or is
+    /// named in the quest's words or an earlier one's, in English and Japanese.
+    #[test]
+    fn a_newcomer_finds_what_the_opening_quests_ask_for() {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        let content = voxmar_engine::content::Content::load(&assets).unwrap();
+        for code in ["en", "ja"] {
+            let misses = super::newcomer_misses(&content, &Locale::load(&assets, code));
+            assert!(misses.is_empty(), "{code}: {misses:?}");
+        }
+    }
+
+    /// The same through the whole Farm age, to the lit Crucible Kiln.
+    #[test]
+    fn every_farm_quest_names_what_it_asks_for() {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        let content = voxmar_engine::content::Content::load(&assets).unwrap();
+        let farm: Vec<&str> = content.quests.iter().filter(|q| q.age == "farm").map(|q| q.name.as_str()).collect();
+        for code in ["en", "ja"] {
+            let misses = super::unexplained(&content, &Locale::load(&assets, code), &farm);
+            assert!(misses.is_empty(), "{code}: {} {misses:?}", misses.len());
+        }
+    }
+
+    /// The Nomad age too: every quest says where what it asks for comes from.
+    #[test]
+    fn every_nomad_quest_names_what_it_asks_for() {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        let content = voxmar_engine::content::Content::load(&assets).unwrap();
+        let nomad: Vec<&str> = content.quests.iter().filter(|q| q.age == "nomad").map(|q| q.name.as_str()).collect();
+        for code in ["en", "ja"] {
+            let misses = super::unexplained(&content, &Locale::load(&assets, code), &nomad);
+            assert!(misses.is_empty(), "{code}: {} {misses:?}", misses.len());
+        }
+    }
+
     use super::{sling_next, warm_window, SlingNext, BEAR, SLING, SLING_LEVEL, SLING_STONES, UNANSWERED};
 
     /// The Home step lays the crafting table from oak planks in the home barrel: the
