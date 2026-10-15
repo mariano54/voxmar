@@ -12,9 +12,13 @@
 //! part, or, raised just in time, all of it, staggering the creature after its recovery and
 //! making the next blow a counter. Each is judged by the moment the blow lands.
 //!
-//! Times are seconds since the server started, on the clock player messages arrive by
-//! (`Server::arrival`), so a busy server neither hurries nor slows anyone's rhythm. A
-//! creature's blow lands on the same clock, a wind-up after it began.
+//! A player's times are seconds since the server started, on the clock player messages
+//! arrive by (`Server::arrival`), so a busy server neither hurries nor slows anyone's
+//! rhythm: their client keeps it by the same clock. A creature's times are the server's
+//! game time, its ticks (`Server::game_secs`), as its moves are: its blow comes down the
+//! tick its wind-up is done, however long the ticks take, and a bleed, pin or sunder runs
+//! as many ticks. A blow is then judged on the players' clock, at the moment its wind-up
+//! ran out, so a guard or dodge is weighed against it as the player saw it.
 
 use std::time::Instant;
 
@@ -61,11 +65,15 @@ struct Aim {
     held: Option<BlockId>,
 }
 
-/// A creature's blow on its way.
+/// A creature's blow on its way: the tick it comes down, and how much of that tick's
+/// length its wind-up had run out by (its seconds rounded up to whole ticks). Once due, the
+/// moment it landed on the players' clock, for judging their guard and dodges.
 struct Windup {
     creature: u32,
     player: PlayerId,
-    lands: f64,
+    due: u64,
+    early: f64,
+    lands: Option<f64>,
 }
 
 /// Bleeding from a flourish: so much more, a point at a time, a second apart, training the
@@ -112,15 +120,13 @@ impl Fights {
         self.secs(Instant::now())
     }
 
-    /// The share a pin slows `creature` by now.
-    pub(crate) fn slow(&self, creature: u32) -> f32 {
-        let now = self.now();
+    /// The share a pin slows `creature` by at `now`, in game seconds (`Server::game_secs`).
+    pub(crate) fn slow(&self, creature: u32, now: f64) -> f32 {
         self.pinned.get(&creature).filter(|&&(_, until)| now <= until).map_or(0.0, |&(share, _)| share)
     }
 
-    /// The share a sunder lowers `creature`'s defence by now.
-    pub(crate) fn sunder(&self, creature: u32) -> f32 {
-        let now = self.now();
+    /// The share a sunder lowers `creature`'s defence by at `now`, in game seconds.
+    pub(crate) fn sunder(&self, creature: u32, now: f64) -> f32 {
         self.sundered.get(&creature).filter(|&&(_, until)| now <= until).map_or(0.0, |&(share, _)| share)
     }
 
@@ -143,6 +149,12 @@ fn ticks(seconds: f32) -> u64 {
 }
 
 impl Server {
+    /// Game seconds: the server's ticks, however long each took. A creature's fight times
+    /// run on them.
+    pub(crate) fn game_secs(&self) -> f64 {
+        self.tick as f64 / TICKS_PER_SECOND as f64
+    }
+
     fn fight_arrival(&self) -> f64 {
         self.fights.secs(self.arrival)
     }
@@ -334,8 +346,9 @@ impl Server {
         let Some(attack) = species.attack_at(index) else { return };
         let feel = self.content.combat.feel;
         let windup = attack.windup.unwrap_or(feel.creature_windup).max(0.0);
-        let lands = self.fights.now() + windup as f64;
         let tick = self.tick;
+        let due = tick + ticks(windup);
+        let early = (due - tick) as f64 / TICKS_PER_SECOND as f64 - windup as f64;
         let live = self.creatures.live.get_mut(&creature).expect("checked above");
         // Begin facing the target, before the tracking window can lock the aim. A slow
         // turn from an old wander goal otherwise spends the whole window facing away,
@@ -350,7 +363,7 @@ impl Server {
         live.held_until = live.held_until.max(tick + ticks(windup));
         live.tracking = Some((player, tick + ticks(windup * feel.creature_tracking.clamp(0.0, 1.0))));
         live.changed = true;
-        self.fights.windups.push(Windup { creature, player, lands });
+        self.fights.windups.push(Windup { creature, player, due, early, lands: None });
     }
 
     /// Where a creature winding up at a player goes this tick, while it still follows them:
@@ -373,7 +386,7 @@ impl Server {
         let walking = to.length() > touching;
         Some(voxmar_engine::creature::motion::Drive {
             wish: if walking { to.normalize_or_zero() } else { Vec3::ZERO },
-            speed: if walking { pace * live.scale.max(0.5) * (1.0 - self.fights.slow(creature)) } else { 0.0 },
+            speed: if walking { pace * live.scale.max(0.5) * (1.0 - self.fights.slow(creature, self.game_secs())) } else { 0.0 },
             face: Some(to),
         })
     }
@@ -386,11 +399,12 @@ impl Server {
         // can stamp its messages with a game clock that runs as quick as the ticks
         // (`Connection::send_at`), and its swings then land by that clock.
         let now = self.fights.now().max(self.fight_arrival());
+        let (tick, game) = (self.tick, self.game_secs());
         let feel = self.content.combat.feel;
         self.fights.fighters.retain(|id, _| self.players.contains_key(id));
         let live = &self.creatures.live;
-        self.fights.pinned.retain(|id, &mut (_, until)| now <= until && live.contains_key(id));
-        self.fights.sundered.retain(|id, &mut (_, until)| now <= until && live.contains_key(id));
+        self.fights.pinned.retain(|id, &mut (_, until)| game <= until && live.contains_key(id));
+        self.fights.sundered.retain(|id, &mut (_, until)| game <= until && live.contains_key(id));
         // A swing whose weapon left the hand is dropped, and the pips with it.
         for (&player, fighter) in &mut self.fights.fighters {
             let Some(aim) = fighter.aim else { continue };
@@ -427,7 +441,8 @@ impl Server {
         for (player, aim, strength, on_beat, kind, in_reach) in landing {
             self.land_swing(player, aim, strength, on_beat, kind, in_reach);
         }
-        // Creatures' blows, each judged at the moment it lands, once every guard and dodge
+        // Creatures' blows, each come down the tick its wind-up is done, and judged at the
+        // moment it ran out on the players' clock, once every guard and dodge
         // that arrived before that moment has been handled: one that arrived after the last
         // messages were taken in, and before the blow landed, still counts. The player saw
         // the wind-up begin late by their round trip, and their answer arrives as late, so
@@ -436,14 +451,17 @@ impl Server {
         // the allowance later), so where the player and the creature stand, for its lunge
         // and reach, is that much later too.
         let heard = self.heard.map_or(now, |at| self.fights.secs(at));
-        let windups = std::mem::take(&mut self.fights.windups);
-        let (due, waiting): (Vec<Windup>, Vec<Windup>) = windups.into_iter().partition(|w| w.lands + self.lag_allowance(w.player) <= heard);
+        let mut windups = std::mem::take(&mut self.fights.windups);
+        for w in windups.iter_mut().filter(|w| w.lands.is_none() && tick >= w.due) {
+            w.lands = Some(now - w.early);
+        }
+        let (due, waiting): (Vec<Windup>, Vec<Windup>) = windups.into_iter().partition(|w| w.lands.is_some_and(|lands| lands + self.lag_allowance(w.player) <= heard));
         self.fights.windups = waiting;
         for windup in due {
-            self.creature_blow(windup.creature, windup.player, windup.lands);
+            self.creature_blow(windup.creature, windup.player, windup.lands.expect("due"));
         }
-        // Bleeding.
-        let (due, waiting): (Vec<Bleed>, Vec<Bleed>) = std::mem::take(&mut self.fights.bleeds).into_iter().partition(|b| b.next <= now);
+        // Bleeding, by game time.
+        let (due, waiting): (Vec<Bleed>, Vec<Bleed>) = std::mem::take(&mut self.fights.bleeds).into_iter().partition(|b| b.next <= game);
         self.fights.bleeds = waiting;
         for mut bleed in due {
             if !self.players.contains_key(&bleed.player) {
@@ -522,7 +540,7 @@ impl Server {
 
     /// What a flourish does besides its max hit, by the weapon's class.
     fn flourish(&mut self, player: PlayerId, creature: u32, weapon: &Weapon, damage: u16) {
-        let now = self.fights.now();
+        let now = self.game_secs();
         let feel = self.content.combat.feel;
         let Some(flourish) = self.content.combat.flourish(weapon) else { return };
         let Some([roll, _]) = self.players.get_mut(&player).map(|p| p.draw(Draw::Flourish)) else { return };
@@ -786,6 +804,58 @@ mod tests {
         assert!(!server.creatures.live[&bear].winding);
     }
 
+    /// The ticks a wolf's blows come down on, standing by a player who never fights back,
+    /// over 10 game seconds of the server's own ticks; with `slow`, each tick takes a tenth
+    /// of a second more of the players' clock than it is, as on a server running behind.
+    fn wolf_blows(slow: bool) -> Vec<u64> {
+        use crate::creatures::cornered_tests::{join, pen, put};
+        let mut server = crate::test_server();
+        let c = pen(&mut server, 9);
+        let stand = c.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
+        let player = join(&mut server, stand);
+        let wolf = put(&mut server, "base:wolf", stand - Vec3::X * 3.0, Vec3::X);
+        server.tick = 1000;
+        server.hurt_creature(player, wolf, 0, None, Blow::Plain);
+        let (mut blows, mut winding) = (Vec::new(), false);
+        for _ in 0..10 * TICKS_PER_SECOND as u64 {
+            if slow {
+                server.fights.epoch = server.fights.epoch.checked_sub(Duration::from_millis(100)).expect("a clock that far back");
+            }
+            // As `Server::tick` runs them: the creatures think and move, then the fights.
+            server.tick += 1;
+            server.think_and_move();
+            server.tick_fights();
+            let max = server.survival.max_health;
+            server.players.get_mut(&player).expect("still here").health = voxmar_engine::traits::Health::full(max);
+            let now = server.creatures.live[&wolf].winding;
+            if winding && !now {
+                blows.push(server.tick);
+            }
+            winding = now;
+        }
+        blows
+    }
+
+    /// A creature's blows come by game time: a server whose ticks run behind the clock (or,
+    /// in a test, ahead of it) gives the same blows on the same ticks, a wolf's `every`
+    /// apart in game seconds. Before: a wind-up ran out by the clock, so a server running
+    /// behind landed it in fewer ticks than the creature held still for, and one running
+    /// ahead (every test) landed none.
+    #[test]
+    fn a_creatures_blows_keep_their_beat_in_game_time_however_long_the_ticks_take() {
+        let quick = wolf_blows(false);
+        let slow = wolf_blows(true);
+        let server = crate::test_server();
+        let wolf = server.content.creatures.find("wolf").map(|s| server.content.creatures.get(s).def.clone()).expect("a wolf");
+        let every = wolf.attack.expect("a wolf bites").every as f64;
+        let gaps: Vec<f64> = quick.windows(2).map(|w| (w[1] - w[0]) as f64 / TICKS_PER_SECOND as f64).collect();
+        assert!(quick.len() >= 6, "the wolf came down only {} times in 10 game seconds: {quick:?}", quick.len());
+        assert_eq!(quick, slow, "a server running behind gave other blows");
+        for gap in &gaps {
+            assert!((every - 0.05..=every + 0.35).contains(gap), "blows {gap:.2} game s apart, its every {every:.2}: {gaps:?}");
+        }
+    }
+
     /// A guard raised just before a creature's blow lands counts, even when the server
     /// takes its message in only after the blow was due (a long tick, a stall): the blow
     /// waits to be judged until every message sent before it landed has been heard.
@@ -809,7 +879,7 @@ mod tests {
         // The guard goes up, and the blow lands just after it, inside the perfect window...
         client.send(ClientMessage::Guard { up: true });
         let raised = server.fights.now();
-        server.fights.windups.push(Windup { creature: bear, player, lands: raised + 0.05 });
+        server.fights.windups.push(Windup { creature: bear, player, due: server.tick, early: 0.0, lands: Some(raised + 0.05) });
         std::thread::sleep(Duration::from_millis(100));
         // ...but the server ticks before it takes the raise in: the blow waits for it.
         server.tick_fights();
