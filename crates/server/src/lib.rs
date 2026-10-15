@@ -1011,7 +1011,6 @@ impl Server {
         self.tick_prayers();
         self.flow();
         self.watch_stores();
-        self.watch_hurt();
         self.replicate_owned_traits();
         let ids: Vec<PlayerId> = self.players.keys().copied().collect();
         for &id in &ids {

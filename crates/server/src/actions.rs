@@ -503,14 +503,18 @@ impl Server {
         }
     }
 
-    /// Why `agent` cannot lie down now, if they cannot: a wild creature that hunts players
-    /// within `sleep_threat_reach` blocks, or hurt within the last `sleep_after_hurt`
-    /// seconds (`survival.ron`). No sleeping off a fight for the rest it gives.
+    /// Why `agent` cannot lie down now, if they cannot: a creature that hunts players (but
+    /// not one they keep: it hunts everyone else) within `sleep_threat_reach` blocks, or
+    /// wounded within the last `sleep_after_hurt` seconds (`survival.ron`). No sleeping off a
+    /// fight for the rest it gives. Nothing hunts one in creative, so nothing stops them.
     pub(crate) fn unsafe_to_sleep(&self, agent: PlayerId) -> Option<&'static str> {
         let player = self.players.get(&agent)?;
+        if player.allow_flight {
+            return None;
+        }
         let reach = self.survival.sleep_threat_reach;
         let hunted = self.creatures.live.values().any(|c| {
-            c.health > 0 && !c.companion && c.owner.is_none() && c.body.position.distance(player.position) <= reach
+            c.health > 0 && !c.companion && c.owner.as_deref() != Some(player.name.as_str()) && c.body.position.distance(player.position) <= reach
                 && self.content.creatures.get(c.species).behaviours.iter().any(|b| matches!(b.behaviour, voxmar_engine::creature::Behaviour::Hunt { .. }))
         });
         let after = (self.survival.sleep_after_hurt * voxmar_protocol::TICKS_PER_SECOND as f32).round() as u64;
@@ -520,18 +524,6 @@ impl Server {
             Some("bed.just_hurt")
         } else {
             None
-        }
-    }
-
-    /// Every tick: the tick each player's health last fell, whatever took it, but not a fall
-    /// that is only the most coming down (a buff to the most wearing off).
-    pub(crate) fn watch_hurt(&mut self) {
-        let tick = self.tick;
-        for player in self.players.values_mut() {
-            if player.health.current < player.health_seen.min(player.health.max) {
-                player.hurt_at = Some(tick);
-            }
-            player.health_seen = player.health.current;
         }
     }
 
@@ -647,5 +639,31 @@ impl Server {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod sleep_tests {
+    use super::*;
+
+    /// A wolf hunts players: wild, or kept by another player, it keeps one from sleeping; kept
+    /// by the sleeper, it does not, and in creative nothing does.
+    #[test]
+    fn only_a_hunter_one_keeps_lets_one_sleep() {
+        let mut server = crate::test_server();
+        let (_client, connection) = voxmar_protocol::local_pair();
+        let mut joined = crate::player::Player::new(1, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
+        (joined.joined, joined.name) = (true, "sleeper".into());
+        server.players.insert(1, joined);
+        let wolf = server.content.creatures.id("base:wolf").expect("wolves");
+        let id = server.spawn_creature(wolf, server.spawn + Vec3::X * 4.0, 1).expect("room");
+        assert_eq!(server.unsafe_to_sleep(1), Some("bed.threatened"), "a wild wolf");
+        server.creatures.live.get_mut(&id).unwrap().owner = Some("someone_else".into());
+        assert_eq!(server.unsafe_to_sleep(1), Some("bed.threatened"), "another's kept wolf hunts the sleeper all the same");
+        server.creatures.live.get_mut(&id).unwrap().owner = Some("sleeper".into());
+        assert_eq!(server.unsafe_to_sleep(1), None, "one's own kept wolf");
+        server.creatures.live.get_mut(&id).unwrap().owner = None;
+        server.players.get_mut(&1).unwrap().allow_flight = true;
+        assert_eq!(server.unsafe_to_sleep(1), None, "nothing hunts one in creative");
     }
 }

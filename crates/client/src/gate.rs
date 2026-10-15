@@ -5174,10 +5174,11 @@ fn prayers(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     }
 }
 
-/// Where the Home step's hunting creature is summoned, from the bag (it lands 1.8 blocks west
-/// of that cell's middle: within `/creatures kill`'s 8 blocks of the player and the server's
-/// `sleep_threat_reach`), what it is, and the server seconds of clicks it waits on the
-/// refusal (the session's cost of the check stays under 5 s).
+/// Where the Home step's hunting creature is summoned, from the bag (it lands 1.5 blocks west
+/// of that cell's middle, 5.5 to 6.5 blocks off: within `/creatures kill`'s 8 blocks of the
+/// player and the server's `sleep_threat_reach`), held still so no blow of its counts as a
+/// fresh wound; what it is, and the server seconds of clicks it waits on the refusal (the
+/// session's cost of the check stays under 5 s).
 const SLEEP_FOE: IVec3 = IVec3::new(6, 0, 0);
 const SLEEP_FOE_KIND: &str = "shambler";
 const SLEEP_FOE_WAIT: f32 = 4.0;
@@ -5236,7 +5237,7 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
                 Some(true) => {
                     // A creature that hunts players, a few blocks off: no sleeping yet.
                     let foe = bag + SLEEP_FOE;
-                    world.resource::<Net>().command(&format!("summon {SLEEP_FOE_KIND} 1 {} {} {}", foe.x, foe.y, foe.z));
+                    world.resource::<Net>().command(&format!("summon {SLEEP_FOE_KIND} 1 {} {} {} held", foe.x, foe.y, foe.z));
                     gate.advance(now);
                 }
                 Some(false) if waited > 10.0 => {
@@ -5282,6 +5283,23 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
                 let (player, launch) = (world.resource::<LocalPlayer>(), world.resource::<Launch>());
                 launch.content.effects.id(name).is_some_and(|id| player.vitals.effects.iter().any(|a| a.effect == id))
             };
+            // Until the sleep shows, the bag is clicked again as a player would, once each
+            // `TAP_EVERY`: a click the server refused (the kill not yet in) is tried again.
+            let slept_in = {
+                let (player, launch) = (world.resource::<LocalPlayer>(), world.resource::<Launch>());
+                player.vitals.effects.iter().any(|a| launch.content.effects.from_sleep(a.effect))
+            };
+            if !slept_in && now - gate.tap_at >= TAP_EVERY {
+                gate.tap_at = now;
+                gate.taps += 1;
+                let actions = world.resource::<crate::Actions>().0.clone();
+                world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("base:sleep"), voxmar_engine::action::ActionTarget::Block { block: bag, face: voxmar_engine::coords::Face::PosY });
+            }
+            // What the bag said when it refused, for the failure.
+            let refusals: Vec<String> = {
+                let (locale, launch, toasts) = (world.resource::<Locale>(), world.resource::<Launch>(), world.resource::<crate::hud::skills::SkillToasts>());
+                ["bed.threatened", "bed.just_hurt"].iter().map(|key| locale.render(&voxmar_engine::lang::Words::key(key), &launch.content.blocks)).filter(|text| toasts.shows_refusal(text)).collect()
+            };
             let (camp, rested) = (has(world, "base:camp"), has(world, "base:rested"));
             // What the sleep gives, as the engine judges this step's own camp (a bed and a
             // light, under the sky) and the bag's tags; each lasting past this wait.
@@ -5322,7 +5340,7 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
                 (style.home_hidden_within, style.home_shown_beyond) = (0.0, 0.0);
                 gate.advance(now);
             } else if waited > HOME_SLEEP_WAIT {
-                gate.check("home: camp", Err(format!("{waited:.1} server s after sleeping at a bag with a torch beside it: Camp chip {camp}, Rested chip {rested}, the sleep's chips missing {given:?}, Camp line with Next {announced}, sleep line {slept}")));
+                gate.check("home: camp", Err(format!("{waited:.1} server s after sleeping at a bag with a torch beside it: Camp chip {camp}, Rested chip {rested}, the sleep's chips missing {given:?}, Camp line with Next {announced}, sleep line {slept}, refusals showing {refusals:?}, {} clicks", gate.taps)));
                 leave(world, gate);
             }
         }

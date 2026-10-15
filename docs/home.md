@@ -205,8 +205,9 @@ slept in must carry, and a bed of furniture (`bed: "furniture"`) is Well rested 
 where a sleeping bag needs a Snug home or a lit corner. Every sleep also mends: Healing
 Sleep (heal x4) for a minute, two in a proper bed, so coming home hurt and sleeping heals.
 It is no way to heal in a fight: a bed refuses sleep with a creature that hunts players
-within `sleep_threat_reach` blocks (12) or within `sleep_after_hurt` seconds (15) of being
-hurt (`core/survival.ron`). And it stays slower than eating, since food is the heal (design
+(wild, or kept by another player) within `sleep_threat_reach` blocks (12), or within
+`sleep_after_hurt` seconds (15) of a wound (a blow, a fall, a sting; not the cold or heat
+wearing at one) (`core/survival.ron`). A refused sleep still claims the bed. And it stays slower than eating, since food is the heal (design
 draft 63): however many heal buffs and prayers are on, healing by itself is held at
 `heal_most` (1 a second, `survival.ron`), which loading checks is below what the slowest
 food heals a second, a 0.6 s bite at a time; time past a point is never banked to pay out

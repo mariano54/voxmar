@@ -127,10 +127,10 @@ pub struct Player {
     /// The last tick a blow fell between them and a creature, either way (prayer points
     /// come back only after a calm, `prayers`).
     pub last_blow: u64,
-    /// The last tick their health fell, from anything (`watch_hurt`), and the health it
-    /// was watched at: no sleeping off a fight just had (`survival.ron`'s `sleep_after_hurt`).
+    /// The last tick a wound fell on them (`Player::wound`: a blow, a fall, a sting; not the
+    /// cold or heat wearing at them): no sleeping off a fight just had (`survival.ron`'s
+    /// `sleep_after_hurt`).
     pub hurt_at: Option<u64>,
-    pub health_seen: u8,
     /// Prayer points and the prayers on, and what the player was last told of them.
     pub praying: voxmar_engine::prayer::Praying,
     /// Lines the player has cast, which numbers each cast's draw (`Server::fish`).
@@ -231,7 +231,6 @@ impl Player {
             round_trip: None,
             last_blow: 0,
             hurt_at: None,
-            health_seen: 0,
             praying: Default::default(),
             casts: 0,
             draws: Draws::default(),
@@ -293,6 +292,15 @@ impl Player {
     }
 
     /// Gives timed effects (eaten food's), topping up any it has to the longer time.
+    /// `amount` health taken by a wound at `tick` (a blow, a fall, a sting), which keeps them
+    /// from sleeping a while even if it heals back at once; true if it killed them.
+    pub fn wound(&mut self, amount: u8, tick: u64) -> bool {
+        if amount > 0 {
+            self.hurt_at = Some(tick);
+        }
+        self.health.damage(amount)
+    }
+
     pub fn give_effects(&mut self, given: &[(EffectId, f32)]) {
         for &(effect, seconds) in given {
             match self.timed_effects.iter_mut().find(|(e, _)| *e == effect) {
