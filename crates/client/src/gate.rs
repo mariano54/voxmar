@@ -6867,6 +6867,17 @@ fn lines_inside(world: &mut World, well: Rect) -> Result<String, String> {
 
 /// The quest book's well, in the window's pixels, and the size of a quest's cell on its
 /// web, in the interface's.
+/// How many pixels across the data makes a quest's cell at zoom `zoom`.
+fn zoom_side(world: &World, zoom: i8) -> f32 {
+    crate::hud::quests::cell_side(world.resource::<crate::hud::inventory::InterfaceStyle>(), zoom)
+}
+
+/// Whether the quest book's cells, `cell` pixels across, are the size the data gives zoom
+/// `zoom`.
+fn zoom_sized(world: &World, zoom: i8, cell: f32) -> bool {
+    (cell - zoom_side(world, zoom)).abs() < 0.5
+}
+
 fn web_well(world: &mut World) -> Option<(Rect, f32)> {
     let well = world.query_filtered::<(&ComputedNode, &bevy::ui::UiGlobalTransform), With<crate::hud::quests::Web>>().iter(world).next().map(|(c, at)| Rect::from_center_size(at.translation, c.size()))?;
     let cell = world.query_filtered::<&ComputedNode, With<crate::hud::quests::QuestNode>>().iter(world).next().map(|c| c.size().x * c.inverse_scale_factor())?;
@@ -7341,8 +7352,10 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 }
                 return;
             };
-            // Drawn anew at the new zoom: the canvas follows the frame after.
-            let settled = zoom < 0 && cell < gate.web_cell && in_phase > 0.2;
+            // Drawn anew at the new zoom, its cells the size the data gives that zoom: the
+            // canvas follows the frame after.
+            let sized = zoom_sized(world, zoom, cell);
+            let settled = zoom < 0 && cell < gate.web_cell && sized && in_phase > 0.2;
             if !settled && in_phase < 2.0 {
                 return;
             }
@@ -7352,9 +7365,9 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let off = (middle - gate.web_middle).abs();
             let held = (!bigger.x || off.x < 0.5) && (!bigger.y || off.y < 0.5);
             let result = if settled && held {
-                Ok(format!("a notch of the wheel zoomed the web out to zoom {zoom}: quests {:.0} pixels across (were {:.0}), the middle of the well still at {middle} steps on the web", cell, gate.web_cell))
+                Ok(format!("a notch of the wheel zoomed the web out to zoom {zoom}: quests {:.0} pixels across (were {:.0}), the next size down in the data, the middle of the well still at {middle} steps on the web", cell, gate.web_cell))
             } else {
-                Err(format!("2 s after a notch of the wheel over the web: zoom {zoom}, quests {cell:.0} pixels across (were {:.0}), the middle of the well at {middle} steps on the web (was {})", gate.web_cell, gate.web_middle))
+                Err(format!("2 s after a notch of the wheel over the web: zoom {zoom}, quests {cell:.0} pixels across (were {:.0}; the data gives {:.0}), the middle of the well at {middle} steps on the web (was {})", gate.web_cell, zoom_side(world, zoom), gate.web_middle))
             };
             gate.check("quests: zoom", result);
             gate.check("quests: lines inside zoomed", lines_inside(world, well));
@@ -7375,14 +7388,14 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             key(world, KeyCode::NumpadAdd, false);
             let zoom = world.resource::<crate::hud::quests::QuestView>().zoom;
             let cell = web_well(world).map_or(0.0, |(_, cell)| cell);
-            let settled = zoom == 0 && cell > gate.web_cell && in_phase > 0.2;
+            let settled = zoom == 0 && cell > gate.web_cell && zoom_sized(world, zoom, cell) && in_phase > 0.2;
             if !settled && in_phase < 2.0 {
                 return;
             }
             let result = if settled {
-                Ok(format!("+ zoomed the web back in to zoom {zoom}: quests {cell:.0} pixels across (were {:.0})", gate.web_cell))
+                Ok(format!("+ zoomed the web back in to zoom {zoom}: quests {cell:.0} pixels across (were {:.0}), the next size up in the data", gate.web_cell))
             } else {
-                Err(format!("2 s after + over the web: zoom {zoom}, quests {cell:.0} pixels across (were {:.0})", gate.web_cell))
+                Err(format!("2 s after + over the web: zoom {zoom}, quests {cell:.0} pixels across (were {:.0}; the data gives {:.0})", gate.web_cell, zoom_side(world, zoom)))
             };
             gate.check("quests: zoom keys", result);
             gate.advance(now);
@@ -7443,7 +7456,43 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             } else {
                 gate.check("quests: current", Err(format!("2 s after Current Quest was pressed (the quest on: {:?}): picked {picked:?}, its cell at {node:?} in the well {well:?}", gate.web_head)));
             }
-            world.resource_mut::<crate::hud::quests::QuestView>().zoom = 0;
+            // Shut, left on another chapter and quest, the book opens again on the quest
+            // the player is on.
+            let other = gate.web_head.as_ref().and_then(|head| {
+                let content = &world.resource::<Launch>().content;
+                content.quests.iter().filter(|q| q.name != *head).last().map(|q| q.name.clone())
+            });
+            let chapters = crate::hud::quests::chapters(&world.resource::<Launch>().content).len();
+            let mut view = world.resource_mut::<crate::hud::quests::QuestView>();
+            (view.zoom, view.chapter, view.picked) = (0, chapters.saturating_sub(1), other);
+            world.resource_mut::<UiState>().quests_open = false;
+            gate.advance(now);
+        }
+        28 => {
+            if in_phase < 0.2 {
+                return;
+            }
+            key(world, key_code, true);
+            gate.advance(now);
+        }
+        29 => {
+            key(world, key_code, false);
+            let picked = world.resource::<crate::hud::quests::QuestView>().picked.clone();
+            let well = web_well(world).map(|(well, _)| well);
+            let node = world.query::<(&crate::hud::quests::QuestNode, &bevy::ui::UiGlobalTransform)>().iter(world).find(|(n, _)| Some(&n.0) == gate.web_head.as_ref()).map(|(_, at)| at.translation);
+            let shown = matches!((well, node), (Some(well), Some(node)) if well.contains(node));
+            let open = world.resource::<UiState>().quests_open;
+            if !(open && gate.web_head.is_some() && picked == gate.web_head && shown) && in_phase < 2.0 {
+                return;
+            }
+            gate.check(
+                "quests: opens on current",
+                if open && gate.web_head.is_some() && picked == gate.web_head && shown {
+                    Ok(format!("shut on another chapter and quest, L opened the book again on {picked:?}, the quest the player is on, inside the well"))
+                } else {
+                    Err(format!("2 s after L (the quest on: {:?}): open {open}, picked {picked:?}, its cell at {node:?} in the well {well:?}", gate.web_head))
+                },
+            );
             world.resource_mut::<UiState>().quests_open = false;
             gate.next(Step::Catalogue, now);
         }

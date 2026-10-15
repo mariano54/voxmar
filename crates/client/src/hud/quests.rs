@@ -853,7 +853,7 @@ fn draw(
     // it scrolls.
     let lanes_room = Vec2::new((room.x - HEADER).max(0.0), room.y);
     let (icon, zoom) = zoom_of(&style, view.zoom);
-    let side = icon + 2.0 * RIM;
+    let side = cell_side(&style, view.zoom);
     let step = Vec2::new(lanes_room.x / columns as f32, lanes_room.y / tallest as f32).clamp(side + GAP_LEAST * zoom, side + GAP_MOST * zoom);
     let place = |i: usize| Vec2::X * HEADER + cells[i] * step + (step - Vec2::splat(side)) / 2.0;
     let centre = |i: usize| place(i) + Vec2::splat(side / 2.0);
@@ -1131,6 +1131,12 @@ fn zoom_of(style: &InterfaceStyle, zoom: i8) -> (f32, f32) {
     let (zooms, usual) = (&style.book_zooms, style.book_zoom_at);
     let icon = zooms[(usual as i32 + i32::from(zoom)).clamp(0, zooms.len() as i32 - 1) as usize];
     (icon * PX, icon / zooms[usual])
+}
+
+/// How many pixels across a quest's cell is at zoom `zoom`: its icon at that zoom's size
+/// from the data, in its rim.
+pub(crate) fn cell_side(style: &InterfaceStyle, zoom: i8) -> f32 {
+    zoom_of(style, zoom).0 + 2.0 * RIM
 }
 
 /// The furthest the web zooms out and in from the usual, in steps.
