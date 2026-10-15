@@ -26,6 +26,8 @@ impl Server {
             // it: what grows there after is the world's, not the player's.
             self.forget_placed(pos);
             self.unplaced(pos, block);
+            // A flood can wash a bag away: no ghost home where it lay.
+            self.home_changed(pos, block);
         }
         self.send_changes(changes);
     }
