@@ -4536,8 +4536,11 @@ fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 gate.advance(now);
             }
         }
-        // A block that wants a tool where the plot was, and an empty hand.
+        // A block that wants a tool where the plot was, the well gone from between the eye
+        // and it, and an empty hand.
         5 => {
+            let well = plot + WELL_BY + IVec3::Y;
+            world.resource::<Net>().command(&format!("setblock {} {} {} air", well.x, well.y, well.z));
             match needs_a_tool(world) {
                 Some((_, name)) => world.resource::<Net>().command(&format!("setblock {} {} {} {name}", plot.x, plot.y, plot.z)),
                 None => {
@@ -4555,12 +4558,14 @@ fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
         // Mined by hand, it says under the crosshair which tool it wants, and the words fit.
         6 => {
             let Some((block, name)) = needs_a_tool(world) else { return to_phase(gate, 7, now) };
-            let came = world.resource::<ClientWorld>().block(plot) == Some(block);
+            let well = plot + WELL_BY + IVec3::Y;
+            let came = world.resource::<ClientWorld>().block(plot) == Some(block) && !world.resource::<ClientWorld>().is_solid(well);
             let wanted = why_by_hand(world, block);
             if !came || wanted.is_none() {
                 if gate.server_in_phase() > REFUSAL_WAIT {
                     let showing = world.resource::<ClientWorld>().block(plot).map(|b| world.resource::<ClientWorld>().registry.def(b).name.clone());
-                    gate.check("refusal: by hand", Err(format!("{name} never came at the plot (it holds {showing:?}), or the words for its tool are missing ({wanted:?})")));
+                    let standing = world.resource::<ClientWorld>().is_solid(well);
+                    gate.check("refusal: by hand", Err(format!("{name} never came at the plot (it holds {showing:?}), the well before it still stands ({standing}), or the words for its tool are missing ({wanted:?})")));
                     to_phase(gate, 7, now);
                 }
                 return;
@@ -4582,7 +4587,9 @@ fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 mouse(world, MouseButton::Left, false);
                 let held = holding_any(world);
                 let showing: Vec<String> = world.resource::<crate::hud::skills::SkillToasts>().refusals().map(str::to_owned).collect();
-                gate.check("refusal: by hand", Err(format!("clicking {name} holding {held:?} never showed \"{wanted}\" under the crosshair (showing {showing:?})")));
+                let aimed = crosshair_on(world);
+                let screens = covering_screens(world);
+                gate.check("refusal: by hand", Err(format!("clicking {name} at {plot} holding {held:?} never showed \"{wanted}\" under the crosshair (showing {showing:?}); the crosshair was on {aimed}, screens open {screens:?}")));
                 gate.advance(now);
             } else {
                 // A fresh press each time: a held button mines on, it does not ask again.
@@ -4604,6 +4611,34 @@ fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
 
 /// What clicking `block` with no tool should say: `refusals.ron`'s words for the tool it
 /// wants, naming the least tool that would do.
+/// What the crosshair rests on, for a failure to name: the block and its cell, or nothing.
+fn crosshair_on(world: &World) -> String {
+    let client = world.resource::<ClientWorld>();
+    match world.resource::<crate::interact::Target>().hit.as_ref() {
+        Some(hit) => format!("{} at {}", client.block(hit.block).map_or("nothing loaded".into(), |b| client.registry.def(b).name.clone()), hit.block),
+        None => "no block".into(),
+    }
+}
+
+/// The screens open that hide the world (and so the reason under the crosshair), and
+/// whether the pointer is grabbed: a click in the world needs it.
+fn covering_screens(world: &World) -> Vec<&'static str> {
+    let (ui, player) = (world.resource::<UiState>(), world.resource::<LocalPlayer>());
+    [
+        (ui.inventory_open, "inventory"),
+        (ui.character_open, "character"),
+        (ui.journal_open, "journal"),
+        (ui.quests_open, "quests"),
+        (ui.menu_open, "menu"),
+        (ui.recipes_open, "recipes"),
+        (player.dead, "dead"),
+        (!ui.cursor_locked, "pointer not grabbed"),
+    ]
+    .into_iter()
+    .filter_map(|(on, name)| on.then_some(name))
+    .collect()
+}
+
 /// The first block, in registry order, whose rule in the loaded `tools.ron` asks for a tool
 /// and no more than level 1 (so a bare hand is refused for the tool alone), and its name.
 fn needs_a_tool(world: &World) -> Option<(BlockId, String)> {

@@ -168,7 +168,7 @@ mod tests {
     use voxmar_engine::coords::ColumnPos;
     use voxmar_engine::glam::Vec3;
     use voxmar_engine::world::Column;
-    use voxmar_protocol::TICKS_PER_SECOND;
+    use voxmar_protocol::{ServerMessage, TICKS_PER_SECOND};
 
     use super::*;
 
@@ -230,6 +230,33 @@ mod tests {
         // Taken once: nothing more.
         server.take_from_trap(1, snare);
         assert_eq!(named(&server, snare), "base:snare");
+    }
+
+    /// Below the trap's level a catch stays where it is, and the player is told why as a
+    /// refusal (under the crosshair), not a chat line. The base snare asks for Hunter 1,
+    /// which every player has, so the test asks for more.
+    #[test]
+    fn a_catch_below_the_traps_level_is_refused_with_why() {
+        let (mut server, snare) = field(1);
+        let mut traps = (*server.content.traps).clone();
+        traps.traps.iter_mut().for_each(|trap| trap.level = 5);
+        server.content.traps = Arc::new(traps);
+        let (client, connection) = voxmar_protocol::local_pair();
+        server.players.get_mut(&1).unwrap().connection = connection;
+        put(&mut server, "base:rabbit", snare.as_vec3() + Vec3::new(0.5, 0.0, 0.5));
+        server.spring_traps();
+        server.take_from_trap(1, snare);
+        assert_eq!(named(&server, snare), "base:snare_sprung", "still holding its catch");
+        assert!(server.catches.caught.contains_key(&snare));
+        let mut refused = Vec::new();
+        while let Ok(Some(message)) = client.try_recv() {
+            match message {
+                ServerMessage::Refused { why: Words::Key(key, _) } => refused.push(key),
+                ServerMessage::Chat { text: Words::Key(key, _), .. } => assert_ne!(key, "trap.needs", "said in chat"),
+                _ => {}
+            }
+        }
+        assert_eq!(refused, ["trap.needs"]);
     }
 
     /// What the gate's Snare step does: a rabbit summoned (by command, with the player two
