@@ -334,10 +334,12 @@ pub struct Heard {
     pub knocks: u32,
     /// Rings drawn on the ground for bosses' blows.
     pub markers: u32,
-    /// Shots loosed, specks of their trails left, and shots arrived.
+    /// Shots loosed, specks of their trails left, and shots arrived; and shots of cancelled
+    /// swings gone without arriving.
     pub shots: u32,
     pub trail: u32,
     pub impacts: u32,
+    pub cancelled: u32,
 }
 
 /// Sounds to play this frame: name, loudness and pitch.
@@ -395,6 +397,8 @@ struct Seen {
     /// The rhythm's seconds into its swing last frame, and what was held.
     since: f32,
     held: Option<voxmar_engine::block::BlockId>,
+    /// The player's cancelled swings (`Fighting::cancels`).
+    cancels: u32,
     dashing: bool,
     guarding: bool,
 }
@@ -676,18 +680,23 @@ fn react(
     };
     // The fight so far is not news on joining.
     if !seen.started {
-        (seen.started, seen.struck, seen.hurt) = (true, fighting.struck_count, fighting.hurt_count);
+        (seen.started, seen.struck, seen.hurt, seen.cancels) = (true, fighting.struck_count, fighting.hurt_count, fighting.cancels);
     }
     let combat = &launch.content.combat;
     let held = player.inventory.get(player.selected).map(|s| s.item);
     let weapon = combat.wielded(held, |skill| launch.content.skills.level(player.skills.xp(skill)));
     let class = combat.class_of(&weapon).map_or(voxmar_engine::combat::FIST_CLASS, |class| class.name.as_str());
-    // A swing starts: the rhythm's meter starts over (not for a switch of what is held).
+    // A swing starts: the rhythm's meter starts over (not for a switch of what is held, nor
+    // a swing cancelled, which sets the meter back too).
     let timing = combat.timing(&weapon);
     let since = fighting.rhythm.meter(time.elapsed_secs_f64(), &timing) * timing.cooldown;
     let shooting = look.shots.get(class);
-    if held == seen.held && since < seen.since - 1e-3 {
+    let cancelled = fighting.cancels != seen.cancels;
+    seen.cancels = fighting.cancels;
+    if held == seen.held && since < seen.since - 1e-3 && !cancelled {
         say(&format!("swing.{class}"), 1.0, 1.0, &mut heard);
+        // Its shot, if it draws one, is the one a cancel takes back.
+        shots.last = None;
         // A shot is drawn, if there is one to loose: it lets go to reach the creature
         // looked at as the wind-up ends.
         let ammo = combat.ammo(&weapon);

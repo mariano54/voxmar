@@ -516,28 +516,51 @@ pub struct CreatureDef {
 }
 
 /// How a creature falls when it dies, as the client draws it: it tips over onto its side
-/// (away from whoever watches) over the first half, then sinks into the ground.
+/// (away from whoever watches) over `fall`, lies there a beat, and as it goes (the last of
+/// its death, `combat_fx.ron`'s `death.shrink`) sinks and shrinks into a puff of smoke, its
+/// loot bursting out with it.
 #[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Death {
-    /// Seconds from the blow to gone.
+    /// Seconds from the blow to gone, its loot bursting out as it goes.
     pub seconds: f32,
+    /// Seconds it takes to tip over, once the killing blow's freeze is over. It then lies a
+    /// beat: the client refuses at launch a death that, less that freeze and the time it
+    /// takes to go (`combat_fx.ron`), lies less than `LIES` (`FightLook::unlain`).
+    pub fall: f32,
     /// Degrees it rolls onto its side.
     pub roll: f32,
-    /// How far it sinks, in its own heights.
+    /// How far it sinks as it goes, in its own heights.
     pub sink: f32,
-    /// Seconds from the blow to its loot coming out; as its body goes unless given.
+    /// Seconds from the blow to its loot coming out, and its body going with it, if sooner
+    /// than `seconds`.
     pub drops: Option<f32>,
 }
 
 impl Default for Death {
     fn default() -> Self {
-        Self { seconds: 0.9, roll: 90.0, sink: 1.0, drops: None }
+        Self { seconds: 0.9, fall: 0.3, roll: 90.0, sink: 0.4, drops: None }
     }
 }
 
+/// The least a creature lies fallen before it goes, in seconds.
+pub const LIES: f32 = 0.3;
+
 impl Death {
-    /// Seconds from the blow to its loot coming out.
+    /// Whether it tips over at all, lies a beat, goes within 10 s, sinks a sensible way and
+    /// lets its loot out by the time it goes.
+    pub fn check(&self) -> Result<(), String> {
+        let lies = self.seconds.is_finite() && self.seconds <= 10.0 && self.fall > 0.0 && self.fall + LIES <= self.drops_after();
+        if !lies || !(0.0..=2.0).contains(&self.sink) || self.drops.is_some_and(|d| !(0.0..=self.seconds).contains(&d)) {
+            return Err(format!(
+                "its `death` tips over in above 0 s, lies at least {LIES} s and is gone within 10 s, sinks 0 to 2 heights as it goes, and drops its loot no later than it goes (seconds {}, fall {}, sink {}, drops {:?})",
+                self.seconds, self.fall, self.sink, self.drops
+            ));
+        }
+        Ok(())
+    }
+
+    /// Seconds from the blow to its loot coming out, and its body going up in smoke.
     pub fn drops_after(&self) -> f32 {
         self.drops.unwrap_or(self.seconds).max(0.0)
     }
@@ -821,6 +844,7 @@ impl CreatureRegistry {
                 return Err(error("needs health, a size and at least one colour".into()));
             }
             moves::check(&def).map_err(error)?;
+            def.death.check().map_err(error)?;
             if !def.boss && !def.music.is_empty() {
                 return Err(error("has fight `music` but is no boss".into()));
             }
@@ -1045,6 +1069,24 @@ mod tests {
         CreatureRegistry::new(defs, Rules::default(), &blocks, &SkillRegistry::default()).unwrap()
     }
 
+
+    /// A death tips over, lies a beat and goes, its loot out by then; one that would vanish
+    /// as it lands, or drop its loot after it is gone, is refused.
+    #[test]
+    fn a_death_lies_a_beat_and_lets_its_loot_out_as_it_goes() {
+        let death = Death::default();
+        assert_eq!(death.check(), Ok(()));
+        assert_eq!(death.drops_after(), death.seconds, "the loot comes out with the puff");
+        for refused in [
+            Death { fall: death.seconds - LIES + 0.05, ..death },
+            Death { fall: 0.0, ..death },
+            Death { seconds: 12.0, ..death },
+            Death { sink: 3.0, ..death },
+            Death { drops: Some(death.seconds + 0.1), ..death },
+        ] {
+            assert!(refused.check().is_err(), "{refused:?} passed");
+        }
+    }
     #[test]
     fn species_load_with_names_resolved_and_behaviours_made() {
         let registry = registry();
