@@ -100,11 +100,16 @@ impl SpawnKit {
         // Room for a piece: air, or a low meadow plant (never one two high).
         let room = |p: IVec3| def(p).is_some_and(|(b, d, i)| b.is_air() || !i.solid && d.has_tag("grass") && !d.has_tag("tall") && !touched(p));
         let spot = |x: i32, z: i32| -> Option<(IVec3, u8)> {
-            // Down from a little above the feet to the first solid block: under a canopy,
-            // a roof or a floor that is the leaves or the build, never a spot.
-            let top = (feet.y - 32..=feet.y + 8).rev().map(|y| IVec3::new(x, y, z)).find(|&p| def(p).is_some_and(|(_, _, i)| i.solid))?;
+            // Down from a little above the feet to the first solid block, past a tree's own
+            // leaves (a spawn may stand on a crown) but never past anything built: a roof or
+            // a floor is the end of the search, not a spot.
+            let top = (feet.y - 32..=feet.y + 8)
+                .rev()
+                .map(|y| IVec3::new(x, y, z))
+                .find(|&p| def(p).is_some_and(|(_, d, i)| i.solid && !(d.has_tag("leaves") && !touched(p))))?;
             let (_, ground, info) = def(top)?;
-            let firm = info.render == RenderKind::Opaque && ground.has_tag("natural") && !touched(top);
+            // Ground, not a stump, a fallen trunk or a cactus top.
+            let firm = info.render == RenderKind::Opaque && ground.has_tag("natural") && !["log", "plant"].iter().any(|t| ground.has_tag(t)) && !touched(top);
             let built_over = (1..=ROOF).any(|dy| touched(top + IVec3::Y * dy));
             let free = (1..=tallest).take_while(|&dy| room(top + IVec3::Y * dy)).count() as u8;
             (firm && !built_over && free > 0).then_some((top + IVec3::Y, free))
@@ -187,6 +192,16 @@ mod tests {
                     world.insert(at, Arc::new(overworld.generate(at)));
                 }
                 let laid = kit.plan(&world, blocks, spawn, seed, |_| false);
+                let on: Vec<String> = laid
+                    .iter()
+                    .filter(|&&(p, _)| !laid.iter().any(|&(q, _)| q == p - IVec3::Y))
+                    .filter_map(|&(p, _)| world.block(p - IVec3::Y).map(|b| blocks.def(b)))
+                    .filter(|d| ["log", "leaves", "plant"].iter().any(|t| d.has_tag(t)))
+                    .map(|d| d.name.clone())
+                    .collect();
+                if !on.is_empty() {
+                    return Some(format!("seed {seed} at {spawn}: a piece stands on {on:?}"));
+                }
                 let within = |block: BlockId| laid.iter().filter(|&&(p, b)| b == block && Vec3::new(p.x as f32 + 0.5 - spawn.x, 0.0, p.z as f32 + 0.5 - spawn.z).length() <= 6.0).count();
                 let (flints, snags) = (within(flint), within(snag));
                 (flints < 4 || snags < 3).then(|| format!("seed {seed} at {spawn}: {flints} flint, {snags} snag blocks within 6"))
@@ -294,6 +309,12 @@ mod tests {
             world.set_block(base + IVec3::Y, blocks.expect("base:tall_grass"));
         }
         let squeezed = kit.plan(&world, blocks, spawn, 7, |_| false);
+        // A stump where a flint would lie: its top is no ground, the flint goes elsewhere.
+        let stump = free.iter().find(|&&(p, b)| b == flint && p != first_flint).map(|&(p, _)| p).unwrap();
+        world.set_block(stump, blocks.expect("base:oak_log"));
+        let around = kit.plan(&world, blocks, spawn, 7, |_| false);
+        assert!(!around.iter().any(|&(p, _)| p == stump + IVec3::Y), "a piece on the stump: {around:?}");
+        world.set_block(stump, BlockId::AIR);
         assert!(squeezed.contains(&(first_flint, flint)), "a one-high spot still takes its flint: {squeezed:?}");
         assert!(snag_bases.iter().all(|&b| !squeezed.iter().any(|&(p, k)| p == b && k == snag)), "no snag under a ceiling: {squeezed:?}");
         assert!(squeezed.iter().any(|&(_, k)| k == snag), "the snag finds another spot: {squeezed:?}");

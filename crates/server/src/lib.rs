@@ -858,7 +858,8 @@ impl Server {
         let touched = |p: IVec3| self.placed.contains(&p) || fresh.contains(ColumnPos::of_block(p)) && fresh.block(p) != self.world.block(p);
         let laid = kit.plan(&self.world, &self.content.blocks, self.spawn, self.meta.seed, touched);
         for (name, laid, least) in kit.short(&self.content.blocks, &laid) {
-            tracing::warn!("the spawn kit laid {laid} {name} by the spawn, short of its {least}: no more untouched ground in reach");
+            let older = if self.meta.generator_version != Overworld::VERSION { " (the save is from an older world generator, so its land rarely matches what is generated now)" } else { "" };
+            tracing::warn!("the spawn kit laid {laid} {name} by the spawn, short of its {least}: no more untouched ground in reach{older}");
         }
         for (at, block) in laid {
             self.set_block(at, block);
