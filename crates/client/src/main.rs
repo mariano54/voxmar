@@ -354,6 +354,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     recorded.covers(&content.actions)?;
     recorded.check_materials(&content.blocks)?;
     recorded.mix.check().map_err(|e| format!("sounds.ron: {e}"))?;
+    if let Some(effect) = textures::Source::bundled(&assets.join("packs")).unpictured(&content.effects).first() {
+        return Err(format!("effects.ron: the effect {effect} has no icon in any bundled texture pack").into());
+    }
     let content_weather = content.weather.clone();
     let shader_packs = render::pack::ShaderPacks::load(&assets);
     let registry = content.blocks.clone();
