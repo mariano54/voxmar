@@ -110,6 +110,9 @@ pub enum Requirement {
     CraftingTable,
     /// The target is somewhere to sleep (tagged `bed`): a sleeping bag.
     Bed,
+    /// The target is a seat (tagged `seat`: a stool, chair, bench or cushion) with room to
+    /// sit on it, and the actor holds no block to place against it.
+    Seat,
     /// The target is the core of a multiblock (tagged `multiblock_core`): a hearthstone,
     /// a crucible; for a machine's core, the actor holds no block to place against it.
     MultiblockCore,
@@ -206,6 +209,8 @@ pub enum Effect {
     Fish,
     /// Sleep at the target bed: the actor wakes there after dying, until they have a home.
     Sleep,
+    /// Sit on the target seat: the actor is set on it, and sits until they move off.
+    Sit,
     /// Light the multiblock whose core is the target, if it stands around it: the
     /// Homestead Hearth becomes the actor's home, a crucible kiln starts smelting.
     Light,
@@ -451,6 +456,9 @@ pub fn crop_level_met(ctx: &impl ActionContext, cell: IVec3) -> bool {
     })
 }
 
+/// The tag of a block a player can sit on (`Requirement::Seat`).
+pub const SEAT_TAG: &str = "seat";
+
 /// What using the block at `pos` changes (see [`crate::block::BlockDef::swaps`]): it and
 /// its other half (the upper half above a lower one, or the lower below an upper), each
 /// with what it turns into. Empty when it swaps for nothing.
@@ -608,6 +616,14 @@ impl ActionDef {
             Requirement::Bed => {
                 let (block, _) = block_target()?;
                 ctx.block(block).is_some_and(|b| ctx.blocks().def(b).has_tag("bed"))
+            }
+            Requirement::Seat => {
+                let (block, _) = block_target()?;
+                let seat = ctx.block(block).is_some_and(|b| ctx.blocks().def(b).has_tag(SEAT_TAG));
+                let free = |p: IVec3| ctx.block(p).is_some_and(|b| !ctx.info(b).solid);
+                let feet = crate::vitals::seated_feet(block, ctx.block(block).is_some_and(|b| ctx.info(b).solid)).floor().as_ivec3();
+                let hand_free = ctx.actor_held().is_none_or(|item| !ctx.info(item).placeable);
+                seat && free(feet) && free(feet + IVec3::Y) && hand_free
             }
             Requirement::Locked => {
                 let (block, _) = block_target()?;

@@ -157,6 +157,11 @@ impl Process for Survival {
             let max_level = hitpoints.map(|skill| server.content.skills.level(server.players[&id].skills.xp(skill)));
             // Mending (a prayer) brings health back faster.
             let mending = server.content.prayers.mending(&server.players[&id].praying.on);
+            // Sat on a seat until they step off it, or it goes.
+            let seated = server.players[&id].vitals.seated.filter(|&seat| {
+                vitals::still_seated(server.players[&id].position, seat)
+                    && server.block(seat).is_some_and(|b| server.content.blocks.def(b).has_tag(voxmar_engine::action::SEAT_TAG))
+            });
 
             let player = server.players.get_mut(&id).unwrap();
             let creative = player.allow_flight;
@@ -175,7 +180,7 @@ impl Process for Survival {
             // Warmth from what was eaten and the weather counts before the bands of warmth
             // are judged: soaked through, a mild day feels chilly.
             let biome = server.overworld.biome_at(feet.x, feet.z);
-            let mut situation = Situation { felt: cold_air + heat, warmed, outdoors, weather: &weather, biome: &biome.name, biome_tags: &biome.tags, home: home.as_ref(), done: &player.quests_done, held: &held, near: &near };
+            let mut situation = Situation { felt: cold_air + heat, warmed, outdoors, weather: &weather, biome: &biome.name, biome_tags: &biome.tags, home: home.as_ref(), done: &player.quests_done, held: &held, near: &near, seated: seated.is_some() };
             // What clings (smoke) is topped up while it holds, and lasts after.
             effects.linger(&situation, &mut player.timed_effects);
             let first = effects.active(&situation, &player.timed_effects);
@@ -227,6 +232,7 @@ impl Process for Survival {
             player.vitals.felt = situation.felt.round();
             player.vitals.effects = effects.active(&situation, &player.timed_effects);
             player.vitals.home = player.home_block(&server.lit);
+            player.vitals.seated = seated;
             // What kept animals laid into the home's stores is told once the keeper is home.
             if home.is_some() && !player.nested.is_empty() {
                 let items = std::mem::take(&mut player.nested).into_iter().map(|(item, n)| Words::key("multiblock.fuel_stack").with("count", n.to_string()).with("item", Words::Block(item))).collect();

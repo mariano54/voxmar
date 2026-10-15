@@ -47,7 +47,7 @@ use crate::items::random3;
 /// Creatures think every this many ticks within `NEAR` blocks of a player, every
 /// `FAR_THINK` beyond.
 const NEAR_THINK: u64 = 4;
-const FAR_THINK: u64 = 20;
+pub(crate) const FAR_THINK: u64 = 20;
 const NEAR: f32 = 64.0;
 /// Wild creatures further than this from every player go.
 const DESPAWN: f32 = 128.0;
@@ -158,6 +158,8 @@ pub struct Live {
     /// coming to one (held still until `held_until`).
     pub phase: u8,
     pub rearing: bool,
+    /// Staggered (`fight`): held still until `held_until`, shown reeling (`STAGGERED`).
+    pub staggered: bool,
     /// The tick it last mended a wound (`lairs`).
     pub mended: u64,
     /// Its genes, and what shows of them.
@@ -189,10 +191,12 @@ impl Live {
     }
 
     /// The tell it shows (`CreatureView::tell`): its move while it winds one up, `REARING`
-    /// while it rears into a new phase, else none.
-    fn tell(&self) -> u8 {
+    /// while it rears into a new phase, `STAGGERED` while it reels from a stagger, else none.
+    pub(crate) fn tell(&self) -> u8 {
         if self.rearing {
             voxmar_protocol::REARING
+        } else if self.staggered {
+            voxmar_protocol::STAGGERED
         } else if self.winding {
             self.attack
         } else {
@@ -226,6 +230,7 @@ impl Live {
         last.position.distance_squared(self.body.position) > 0.0025
             || (last.yaw - self.body.yaw).abs() > 0.05
             || last.pose != self.pose()
+            || last.tell != self.tell()
             || last.health != self.health
             || last.kept != self.owner.is_some()
             || last.owner != self.owner_id
@@ -537,8 +542,10 @@ impl Server {
                 let decision = if self.tick < creature.held_until || creature.charging.is_some() {
                     brain::Decision { pose: brain::Pose::Idle, ..Default::default() }
                 } else {
-                    // Done rearing into a new phase: it fights on.
+                    // Done rearing into a new phase, or reeling from a stagger: it fights on
+                    // (the view goes out below, its tell changed).
                     creature.rearing = false;
+                    creature.staggered = false;
                     brain::think(species, &mut creature.mind, &situation)
                 };
                 // Led by food held up (how a wild one is lured home, or a kept one moved to a
@@ -827,15 +834,15 @@ impl Server {
             creature.body = body;
             creature.changed = true;
         }
-        if charging.is_some() {
-            self.charge_ran(id, before);
-        }
         let handoff = self.overworld.settlement_people().live.handoff;
         if balked && self.villagers.errand(id, handoff).is_none() && self.wandering.errand(id).is_none() {
             // With no way to its target at all, struck again soon it runs rather than come
             // back to the fence (`Memory::NoWay`).
             let mind = &mut self.creatures.live.get_mut(&id).expect("still there").mind;
             if no_way { mind.find_no_way() } else { mind.give_up() }
+        }
+        if charging.is_some() {
+            self.charge_ran(id, before);
         }
         let Some(body) = self.creatures.live.get(&id).map(|c| c.body) else { return };
         if body.position.y < -64.0 {
@@ -1271,6 +1278,7 @@ impl Server {
             phase: 0,
             rearing: false,
             charging: None,
+            staggered: false,
             mended: 0,
             genome,
             traits,
@@ -2473,6 +2481,30 @@ mod cornered_tests {
         }
     }
 
+    /// A pen walled two high keeps its animals, struck and running, tall heads and all: a
+    /// head over the wall is no step (motion's head-met step is judged at the feet).
+    #[test]
+    fn a_pen_two_high_keeps_its_animals_struck_and_running() {
+        let mut server = crate::test_server();
+        let half = 5;
+        let centre = pen(&mut server, half);
+        for i in -half..=half {
+            for cell in [IVec3::new(i, 2, -half), IVec3::new(i, 2, half), IVec3::new(-half, 2, i), IVec3::new(half, 2, i)] {
+                server.world.set_block(centre + cell, voxmar_engine::block::BlockId::AIR);
+            }
+        }
+        let player = join(&mut server, centre.as_vec3() + Vec3::new(0.5, 0.0, 0.5));
+        for name in ["base:red_deer", "base:wild_boar", "base:aurochs", "base:brown_bear"] {
+            let Some(species) = server.content.creatures.id(name) else { continue };
+            let id = put(&mut server, name, centre.as_vec3() + Vec3::new(-2.5, 0.0, 0.5), Vec3::NEG_X);
+            server.creatures.live.get_mut(&id).unwrap().owner = Some("1".into());
+            let _ = hunted(&mut server, id, player, 10.0);
+            let at = server.creatures.live[&id].body.position - centre.as_vec3();
+            assert!(at.x.abs() < half as f32 && at.z.abs() < half as f32 && at.y < 1.5, "{name} ({species:?}) left a pen two high: at {at}");
+            server.creatures.live.remove(&id);
+        }
+    }
+
     /// Struck in a corner, with the player in front: it finds the way out, past them (and,
     /// the pen being small, runs round it).
     #[test]
@@ -3478,7 +3510,7 @@ mod boss_tests {
                 server.tick_creatures();
                 server.players.get_mut(&1).unwrap().health = traits::Health::full(server.survival.max_health);
                 let tell = server.creatures.live[&id].tell();
-                tell != 0 && tell != voxmar_protocol::REARING
+                tell != 0 && tell != voxmar_protocol::REARING && tell != voxmar_protocol::STAGGERED
             })
             .map(|t| t as f32 / TICKS_PER_SECOND as f32)
     }

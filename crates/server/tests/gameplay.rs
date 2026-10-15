@@ -74,6 +74,9 @@ struct Client {
     /// message's stamp is when it was sent): a wind-up's start, however late this thread
     /// read it.
     attacking_since: std::collections::HashMap<u32, Instant>,
+    /// Each time a creature was shown staggered (`STAGGERED`), from not: which, how many of
+    /// creatures' blows at us had been heard by then, and the pose it showed.
+    staggers: Vec<(u32, usize, voxmar_engine::creature::brain::Pose)>,
     /// The stamp of the message being applied.
     stamp: Option<Instant>,
     journal: voxmar_engine::journal::Journal,
@@ -262,6 +265,7 @@ impl Client {
             hurt_at: Vec::new(),
             wound_at: Default::default(),
             attacking_since: Default::default(),
+            staggers: Vec::new(),
             stamp: None,
             journal: Default::default(),
             quests: Vec::new(),
@@ -416,6 +420,10 @@ impl Client {
                         self.attacking_since.remove(&view.id);
                     } else if !self.creatures.get(&view.id).is_some_and(attacking) {
                         self.attacking_since.insert(view.id, self.stamp.unwrap_or_else(Instant::now));
+                    }
+                    let staggered = |v: &voxmar_protocol::CreatureView| v.tell == voxmar_protocol::STAGGERED;
+                    if staggered(&view) && !self.creatures.get(&view.id).is_some_and(staggered) {
+                        self.staggers.push((view.id, self.hurt.len(), view.pose));
                     }
                     self.creatures.insert(view.id, view);
                 }
@@ -1743,6 +1751,46 @@ fn the_count_of_casts_survives_leaving_and_joining_again() {
     casts(&mut client, 1);
     drop(client);
     assert_eq!(saved(), 4, "the next cast numbered on from them");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_placed_block_broken_after_joining_again_comes_off_the_quest_tally() {
+    let dir = world_dir("placed");
+    let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
+    let saved = || voxmar_server::save::WorldSave::new(&dir).read_player("test", &content().blocks).unwrap().expect("the player was saved");
+    let count = |p: &voxmar_server::save::SavedPlayer| p.tallies.iter().find(|(k, _)| k == "placed:base:feed_trough").map_or(0, |(_, n)| *n);
+    let place = |client: &mut Client| {
+        let cell = client.position.floor().as_ivec3() + IVec3::new(0, 0, 2);
+        for line in ["/clear", "/give feed_trough 1", "/fill ~ ~ ~2 ~ ~1 ~2 air", "/fill ~ ~-1 ~2 ~ ~-1 ~2 stone"] {
+            client.ok(line);
+        }
+        let trough = client.content.blocks.expect("base:feed_trough");
+        client.pump_until(|c| c.world.block(cell) == Some(BlockId::AIR) && c.inventory.get(0).is_some_and(|s| s.item == trough));
+        client.propose("core:place", ActionTarget::Block { block: cell - IVec3::Y, face: Face::PosY });
+        client.pump_until(|c| c.world.block(cell) == Some(trough));
+        cell
+    };
+    let mut client = Client::join_with(config());
+    let cell = place(&mut client);
+    drop(client);
+    let player = saved();
+    assert_eq!(count(&player), 1, "the trough set down counts");
+    assert_eq!(player.placed, [(cell.to_array(), "base:feed_trough".to_owned())], "its cell is kept with the player");
+    // Joined again, the same player breaks it: it comes off, though the server that saw it
+    // placed is gone.
+    let mut client = Client::join_with(config());
+    client.ok(&format!("/fill {0} {1} {2} {0} {1} {2} air", cell.x, cell.y, cell.z));
+    client.pump_until(|c| c.world.block(cell) == Some(BlockId::AIR));
+    drop(client);
+    let player = saved();
+    assert_eq!(count(&player), 0, "the broken trough no longer counts");
+    assert!(player.placed.is_empty(), "nor is its cell kept: {:?}", player.placed);
+    // Set down once more, it counts once.
+    let mut client = Client::join_with(config());
+    place(&mut client);
+    drop(client);
+    assert_eq!(count(&saved()), 1, "the trough set down again counts once");
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -4634,6 +4682,13 @@ fn a_perfect_block_staggers_a_bear_and_a_dodge_lets_its_blow_pass() {
     let perfect = answer(&mut client, Defended::Perfect, &raise, &lower);
     assert_eq!(client.hurt[perfect].0, 0, "a perfect block takes nothing");
     assert!(client.health <= health);
+    // Shown staggered by it, at rest (not a blow): the view goes out the tick the blow
+    // came to nothing, after word of it.
+    client.pump_until(|c| c.staggers.iter().any(|&(s, ..)| s == id));
+    let shown: Vec<_> = client.staggers.iter().filter(|&&(s, ..)| s == id).collect();
+    assert_eq!(shown.len(), 1, "staggered once: {shown:?}");
+    assert_eq!(shown[0].1, perfect + 1, "staggered by the perfect block, not before it");
+    assert_ne!(shown[0].2, voxmar_engine::creature::brain::Pose::Attacking, "a staggered bear is shown winding nothing up");
     let blows = client.kinds.len();
     client.propose("core:attack", ActionTarget::Creature(id));
     client.pump_until(|c| c.kinds.len() > blows);
