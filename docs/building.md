@@ -18,7 +18,7 @@ and a pixel, `core/movement.ron`) without jumping; a whole block still takes a j
 
 Cut stone keeps its stone's tags (a cobblestone slab is `stone`) but never stands in for a
 whole block: a recipe's or a multiblock's `tag:` cell that whole blocks answer takes no piece
-(`BlockRegistry::answers_whole`; the hearth's ring of stone takes no slabs), since three
+(`BlockRegistry::answers_whole`; the hearth's ring of stone takes no slabs, headstones or columns), since three
 blocks cut into six would count double. A tag only pieces carry (`tag:beam`) takes them.
 Cobblestone pieces are not `cobbled` (sling ammo, cobble recipes).
 

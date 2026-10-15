@@ -3720,9 +3720,11 @@ impl voxmar_engine::movement::Surroundings for Seen<'_> {
 /// An honest client among shapes: the engine's own movement at 30, 60 and 144 frames a
 /// second, sending where it is twenty times a second, sprinting along each course straight
 /// or drifting into its side (sliding along a wall, past the corners of shapes), jumping
-/// or not, is never put back. Three courses: a slab floor along a plank wall under a plank
+/// or not, is never put back. The courses: a slab floor along a plank wall under a plank
 /// ceiling the jumps hit; a row of barrels, pot shelves, columns, a plank block and
-/// headstones beside the way; and a slab, a stair and plank blocks climbed in half steps.
+/// headstones beside the way; a slab, a stair and plank blocks climbed in half steps; and
+/// a plank wall stepping back a block every four, run into at a slant round its outside
+/// corners, on a slab floor (judged by the margin box) and on the plain floor (the share box).
 /// Each input is stamped with the client's own clock (as `going_silent_does_not_buy_more_time_hovering`),
 /// so the server's ticks may run quick.
 #[test]
@@ -3735,28 +3737,40 @@ fn honest_movement_among_shapes_is_never_put_back() {
     let wall_row = ["barrel", "oak_pot_shelf", "stone_column", "oak_planks", "stone_headstone"];
     // Each course: boxes of blocks to fill, corners from `at`.
     type Fills = Vec<(IVec3, IVec3, &'static str)>;
-    let courses: [(&str, Fills); 3] = [
+    // A plank wall two high north of the way, a block further back every four blocks along.
+    let stepped = |floor: Option<&'static str>| -> Fills {
+        let mut fills: Fills = floor.map(|slab| (IVec3::new(1, 0, -6), IVec3::new(20, 0, 1), slab)).into_iter().collect();
+        fills.extend((0..5).map(|k| (IVec3::new(1 + 4 * k, 0, -2 - k), IVec3::new(4 + 4 * k, 1, -2 - k), "oak_planks")));
+        fills
+    };
+    let (straight, slanting) = (&[0.0, 0.3][..], &[0.3, 0.6, 1.0][..]);
+    let courses: [(&str, Fills, &[f32]); 5] = [
         ("slab floor along a wall under a ceiling", vec![
             (IVec3::new(1, 0, -1), IVec3::new(20, 0, 1), "oak_slab"),
             (IVec3::new(1, 0, -2), IVec3::new(20, 3, -2), "oak_planks"),
             (IVec3::new(1, 3, -1), IVec3::new(20, 3, 1), "oak_planks"),
-        ]),
+        ], straight),
         ("shapes beside the way", (0..20).map(|i| {
             let cell = IVec3::new(1 + i, 0, -1);
             (cell, cell, wall_row[i as usize % wall_row.len()])
-        }).collect()),
+        }).collect(), straight),
         ("slab, stair and planks in half steps", vec![
             (IVec3::new(2, 0, -1), IVec3::new(2, 0, 1), "oak_slab"),
             (IVec3::new(3, 0, -1), IVec3::new(3, 0, 1), "oak_stairs_west"),
             (IVec3::new(4, 0, -1), IVec3::new(5, 0, 1), "oak_planks"),
             (IVec3::new(5, 1, -1), IVec3::new(5, 1, 1), "oak_slab"),
             (IVec3::new(6, 0, -1), IVec3::new(20, 1, 1), "oak_planks"),
-        ]),
+        ], straight),
+        ("a wall stepping back, on slabs", stepped(Some("oak_slab")), slanting),
+        ("a wall stepping back, on the floor", stepped(None), slanting),
     ];
+    // Ground under the stepping wall, which reaches past the test floor's north edge.
+    client.fill(at, IVec3::new(1, -1, -6), IVec3::new(20, -1, -4), "stone");
+    client.fill(at, IVec3::new(1, 0, -6), IVec3::new(20, 3, -4), "air");
     // The client's clock, on past every run's inputs.
     let mut clock = Instant::now();
     let mut put_back = Vec::new();
-    for (course, blocks) in &courses {
+    for (course, blocks, drifts) in &courses {
         for &(from, to, block) in blocks {
             client.fill(at, from, to, block);
         }
@@ -3765,7 +3779,7 @@ fn honest_movement_among_shapes_is_never_put_back() {
         let id = client.content.blocks.expect(&format!("base:{name}"));
         client.pump_until(|c| c.world.block(last) == Some(id));
         for fps in [30.0, 60.0, 144.0] {
-            for (drift, jump) in [(0.0, false), (0.3, false), (0.0, true), (0.3, true)] {
+            for (&drift, jump) in drifts.iter().flat_map(|d| [(d, false), (d, true)]) {
                 client.tp(start);
                 let mut body = Body { position: start, on_ground: true, ..Default::default() };
                 let controls = Controls { wish: Vec3::new(1.0, 0.0, -drift).normalize(), forward: true, sprint: true, jump, descend: false };
@@ -3792,7 +3806,7 @@ fn honest_movement_among_shapes_is_never_put_back() {
                 clock += Duration::from_secs(4);
             }
         }
-        client.fill(at, IVec3::new(1, 0, -2), IVec3::new(20, 3, 1), "air");
+        client.fill(at, IVec3::new(1, 0, -6), IVec3::new(20, 3, 1), "air");
     }
     assert!(put_back.is_empty(), "honest moves put back:\n{}", put_back.join("\n"));
 }

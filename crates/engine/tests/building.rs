@@ -41,4 +41,10 @@ fn no_piece_answers_a_recipes_tag_cell() {
     assert!(blocks.def(cobble_slab).has_tag("stone") && blocks.is_piece(cobble_slab));
     let hearth = content.multiblocks.get("base:homestead_hearth").expect("the Homestead Hearth");
     assert!(hearth.pieces().iter().any(|(cell, _)| cell.contains(&blocks.expect("base:cobblestone"))), "the hearth's ring takes cobblestone");
+    // A piece is any block drawn as a shape, building or not: a headstone of stone is no
+    // block of stone in the ring.
+    for name in ["base:cobblestone_slab", "base:stone_headstone", "base:stone_grave_slab", "base:stone_column"] {
+        let piece = blocks.expect(name);
+        assert!(blocks.def(piece).has_tag("stone") && !hearth.pieces().iter().any(|(cell, _)| cell.contains(&piece)), "{name} stands in for stone in the hearth's ring");
+    }
 }

@@ -1302,10 +1302,10 @@ impl BlockRegistry {
             })
     }
 
-    /// Whether a block is a piece cut down from a block (`building`, drawn as a shape): a
-    /// slab, stairs, a post. See [`Self::answers_whole`].
+    /// Whether a block is less than a whole block: drawn as a shape (a slab, stairs, a post,
+    /// a column, a headstone), whatever its tags. See [`Self::answers_whole`].
     pub fn is_piece(&self, id: BlockId) -> bool {
-        self.def(id).has_tag("building") && self.info(id).shape.is_some()
+        self.info(id).shape.is_some()
     }
 
     /// Blocks that answer `tag:TAG` where whole blocks are counted (a multiblock's cells):
