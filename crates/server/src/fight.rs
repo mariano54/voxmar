@@ -51,6 +51,8 @@ struct Fighter {
     /// perfect dodge).
     counter_until: f64,
     riposte_until: f64,
+    /// Swings landed, counted round, for others to see each blow (`FightView::struck`).
+    struck: u8,
 }
 
 #[derive(Clone, Copy)]
@@ -176,6 +178,19 @@ fn ticks(seconds: f32) -> u64 {
 impl Server {
     fn fight_arrival(&self) -> f64 {
         self.fights.secs(self.arrival)
+    }
+
+    /// What `player` is doing in a fight, for others to see: the swing under way (seconds
+    /// into it on the fight clock), the blows landed and the guard.
+    pub(crate) fn fight_view(&self, player: PlayerId) -> voxmar_protocol::FightView {
+        let Some(fighter) = self.fights.fighters.get(&player) else { return Default::default() };
+        let now = self.fights.now().max(self.fight_arrival());
+        let swing = fighter.rhythm.pending().zip(fighter.aim).map(|(swing, aim)| voxmar_protocol::SwingView {
+            into: (now - swing.starts) as f32,
+            windup: (swing.lands - swing.starts) as f32,
+            shot: !self.content.combat.ammo(&aim.weapon).is_empty(),
+        });
+        voxmar_protocol::FightView { swing, struck: fighter.struck, guard: fighter.guarding.is_up() }
     }
 
     /// How `player` guards: with their shield, or their weapon (`CombatRegistry::guard_of`).
@@ -446,6 +461,7 @@ impl Server {
         for (&player, fighter) in &mut self.fights.fighters {
             if let Some(swing) = fighter.rhythm.landed(now) {
                 let Some(aim) = fighter.aim.take() else { continue };
+                fighter.struck = fighter.struck.wrapping_add(1);
                 let p = self.players.get(&player);
                 let eye = p.map(|p| p.eye());
                 let ammo = combat.ammo(&aim.weapon);
@@ -955,6 +971,42 @@ mod tests {
         server.wind_up(bear, player + 1);
         assert!(server.fights.windups.is_empty());
         assert!(!server.creatures.live[&bear].winding);
+    }
+
+    /// Others see a player's fight as the server has it: the guard up, a swing winding up
+    /// with its wind-up and not a shot, then landed (the count of blows moves on).
+    #[test]
+    fn others_see_a_players_guard_swing_and_blow() {
+        let mut server = crate::test_server();
+        let (client, connection) = voxmar_protocol::local_pair();
+        let player = 1;
+        let mut joined = crate::player::Player::new(player, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
+        joined.joined = true;
+        let sword = server.content.blocks.id("base:iron_sword").expect("a sword");
+        joined.inventory.add(sword, 1);
+        let attack = server.content.skills.id("core:attack").expect("Attack");
+        joined.skills.grant(attack, server.content.skills.xp_for(20));
+        let ahead = joined.position + joined.look().with_y(0.0).normalize() * 1.2;
+        server.players.insert(player, joined);
+        let species = server.content.creatures.id("base:brown_bear").expect("a bear");
+        let bear = server.spawn_creature(species, ahead, 1).expect("room");
+        assert_eq!(server.fight_view(player), voxmar_protocol::FightView::default(), "a player who never fought");
+        client.send(ClientMessage::Guard { up: true });
+        server.handle_messages();
+        assert!(server.fight_view(player).guard, "the guard up was not shown");
+        client.send(ClientMessage::Guard { up: false });
+        server.handle_messages();
+        assert!(!server.fight_view(player).guard, "the guard down was not shown");
+        server.swing_at(player, bear);
+        let view = server.fight_view(player);
+        let swing = view.swing.expect("the swing winding up was not shown");
+        let windup = server.content.combat.timing(&server.wielded_by(player).expect("a sword")).windup;
+        assert!(!swing.shot && (swing.windup - windup).abs() < 1e-4 && (0.0..windup).contains(&swing.into), "{swing:?}, a wind-up of {windup} wanted");
+        // Its wind-up goes by (the epoch put back that much, as no test waits on the clock).
+        server.fights.epoch = server.fights.epoch.checked_sub(Duration::from_secs_f32(windup + 0.05)).expect("a clock that far back");
+        server.tick_fights();
+        let after = server.fight_view(player);
+        assert_eq!((after.swing, after.struck), (None, view.struck.wrapping_add(1)), "the blow landed was not shown");
     }
 
     /// A guard raised just before a creature's blow lands counts, even when the server

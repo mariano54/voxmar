@@ -471,7 +471,7 @@ mod tests {
     #[test]
     fn a_player_is_looked_at_within_range_and_aim() {
         let mut players = RemotePlayers::default();
-        let view = PlayerView { id: 9, name: "Ada".to_owned(), position: Vec3::new(0.0, 0.0, -10.0), yaw: 0.0, pitch: 0.0, held: None };
+        let view = PlayerView { id: 9, name: "Ada".to_owned(), position: Vec3::new(0.0, 0.0, -10.0), yaw: 0.0, pitch: 0.0, held: None, fight: Default::default() };
         players.players.insert(9, view);
         let eye = Vec3::new(0.0, 1.62, 0.0);
         let (who, distance) = players.looked_at(eye, Vec3::NEG_Z, 24.0).unwrap();

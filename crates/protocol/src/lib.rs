@@ -41,7 +41,8 @@ pub use voxmar_engine::weather::Weather;
 // 43: the seat a player sits on (Vitals::seated), for the lower eye.
 // 44: what the home's stores hold (Vitals::home_stores), for what can be made there.
 // 49: how another player looks up or down and what is in their hand (PlayerView::pitch, held).
-pub const PROTOCOL_VERSION: u32 = 49;
+// 52: what another player is doing in a fight (PlayerView::fight): their swing, blows, guard.
+pub const PROTOCOL_VERSION: u32 = 52;
 
 /// A creature's `tell` while it rears into a new phase of its fight.
 pub const REARING: u8 = u8::MAX;
@@ -313,4 +314,31 @@ pub struct PlayerView {
     /// What is in their hand.
     #[serde(default)]
     pub held: Option<BlockId>,
+    /// What they are doing in a fight, as the server has it.
+    #[serde(default)]
+    pub fight: FightView,
+}
+
+/// What a player is doing in a fight, for others to see it: all as the server judges it,
+/// so what others are shown is what struck.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct FightView {
+    /// The swing under way, if one is.
+    pub swing: Option<SwingView>,
+    /// Their swings landed so far, counted round: each change is a blow struck (or a shot
+    /// loosed).
+    pub struck: u8,
+    /// Whether their guard is up.
+    pub guard: bool,
+}
+
+/// A swing winding up (a bow drawing) or held for the beat.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SwingView {
+    /// Seconds into it; below 0 while it is held for the beat.
+    pub into: f32,
+    /// Its wind-up, seconds: it lands as `into` reaches this.
+    pub windup: f32,
+    /// Whether it is a shot (a bow or sling drawn), not a stroke.
+    pub shot: bool,
 }

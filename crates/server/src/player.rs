@@ -244,7 +244,7 @@ impl Player {
     }
 
     pub fn view(&self) -> PlayerView {
-        PlayerView { id: self.id, name: self.name.clone(), position: self.position, yaw: self.yaw, pitch: self.pitch, held: self.held() }
+        PlayerView { id: self.id, name: self.name.clone(), position: self.position, yaw: self.yaw, pitch: self.pitch, held: self.held(), fight: Default::default() }
     }
 
     pub fn aabb(&self) -> Aabb {

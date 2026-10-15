@@ -3,7 +3,9 @@
 //! them, so a friend looks the same every time they come. Each follows where the server says
 //! they are, eased in; legs and arms swing with the ground covered, the head looks up and
 //! down as they do, and what is in their hand is held in their right fist, drawn as dropped
-//! items are (`render::items`, held still).
+//! items are (`render::items`, held still). Their fight is shown as the server has it
+//! (`PlayerView::fight`): a swing raised through its wind-up and brought down as it lands, the
+//! guard held up, a bow or sling drawn with both arms.
 
 use bevy::light::NotShadowCaster;
 use bevy::mesh::skinning::{SkinnedMesh, SkinnedMeshInverseBindposes};
@@ -49,6 +51,22 @@ pub struct PlayerLook {
     pub carry: f32,
     pub carry_swing: f32,
     pub hand: Hand,
+    pub fight: FightLook,
+}
+
+/// How a player's fight is shown (`player_look.ron`): the right arm's angles (degrees
+/// forward of hanging), the strike's seconds, how far what is held turns across the body on
+/// guard, both arms drawing a shot, and how fast the arms ease between poses.
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FightLook {
+    pub raise: f32,
+    pub strike: f32,
+    pub follow: f32,
+    pub guard: f32,
+    pub guard_turn: f32,
+    pub draw: f32,
+    pub ease: f32,
 }
 
 /// What is in a player's hand: where its middle sits from their right shoulder, in the
@@ -116,6 +134,13 @@ impl PlayerLook {
             ("carry_swing", self.carry_swing, 0.0, 1.0),
             ("hand.flat", self.hand.flat, 0.05, 1.5),
             ("hand.block", self.hand.block, 0.05, 1.5),
+            ("fight.raise", self.fight.raise, 0.0, 200.0),
+            ("fight.strike", self.fight.strike, -45.0, 180.0),
+            ("fight.follow", self.fight.follow, 0.02, 1.0),
+            ("fight.guard", self.fight.guard, 0.0, 180.0),
+            ("fight.guard_turn", self.fight.guard_turn, -180.0, 180.0),
+            ("fight.draw", self.fight.draw, 0.0, 180.0),
+            ("fight.ease", self.fight.ease, 1.0, 60.0),
         ];
         for (name, value, least, most) in numbers {
             if !(least..=most).contains(&value) {
@@ -174,6 +199,18 @@ struct Figure {
     arm: f32,
     leg: f32,
     held_at: Option<Vec3>,
+    /// The right arm's fight pose (degrees), eased, and the guard's share of the turn of what
+    /// is held, eased; the left arm's draw, eased.
+    pose: f32,
+    guarding: f32,
+    drawing: f32,
+    left: f32,
+    /// The swing under way as last told (seconds into it), and as run on since; the blows
+    /// counted as last seen, and seconds since the last one landed while it is brought down.
+    told: Option<f32>,
+    into: f32,
+    struck: u8,
+    striking: Option<f32>,
 }
 
 /// Other players as drawn, by id.
@@ -200,12 +237,29 @@ pub struct FigureRead {
     pub leg: f32,
     /// Where the middle of what is in its hand is drawn, if anything is.
     pub held_at: Option<Vec3>,
+    /// How far its left arm is swung from hanging, radians, and how far what it holds is
+    /// turned across its body for the guard, 0 to 1.
+    pub left: f32,
+    pub guarding: f32,
+    /// Whether a blow it landed is being brought down.
+    pub striking: bool,
 }
 
 impl Figures {
     pub fn read(&self, id: PlayerId) -> Option<FigureRead> {
         let f = self.shown.get(&id)?;
-        Some(FigureRead { position: f.position, yaw: f.yaw, painted: f.painting.is_none(), joints: f.joints.len(), arm: f.arm, leg: f.leg, held_at: f.held_at })
+        Some(FigureRead {
+            position: f.position,
+            yaw: f.yaw,
+            painted: f.painting.is_none(),
+            joints: f.joints.len(),
+            arm: f.arm,
+            leg: f.leg,
+            held_at: f.held_at,
+            left: f.left,
+            guarding: f.guarding,
+            striking: f.striking.is_some(),
+        })
     }
 }
 
@@ -274,7 +328,29 @@ fn show(
             commands.spawn((Mesh3d(body.mesh.clone()), MeshMaterial3d(material.clone()), skinned, Transform::default(), Visibility::default(), NotShadowCaster, ChildOf(root)));
             let seed = name_hash(&view.name) as u32;
             let painting = Some(crate::creatures::paint_skin(look.body_of(&view.name), parts.clone(), body, seed, false));
-            Figure { root, joints, material, painting, skin: blank.clone(), position: view.position, yaw: view.yaw, pitch: view.pitch, stride: 0.0, pace: 0.0, arm: 0.0, leg: 0.0, held_at: None }
+            Figure {
+                root,
+                joints,
+                material,
+                painting,
+                skin: blank.clone(),
+                position: view.position,
+                yaw: view.yaw,
+                pitch: view.pitch,
+                stride: 0.0,
+                pace: 0.0,
+                arm: 0.0,
+                leg: 0.0,
+                held_at: None,
+                pose: look.carry,
+                guarding: 0.0,
+                drawing: 0.0,
+                left: 0.0,
+                told: None,
+                into: 0.0,
+                struck: view.fight.struck,
+                striking: None,
+            }
         });
         // Its skin, once painted; till then it is not drawn.
         if let Some(task) = figure.painting.as_mut()
@@ -304,8 +380,11 @@ fn show(
         if let Ok(mut transform) = transforms.get_mut(figure.root) {
             *transform = Transform::from_translation(figure.position).with_rotation(rotation);
         }
+        // The fight, as the server tells it.
+        let fight = fight_pose(figure, &view.fight, &look, view.held.is_some(), dt);
         // Each joint: legs and arms swing with the stride, the right arm held forward with
-        // something in it, the head looks up and down.
+        // something in it (or in its fight pose), the left drawing a shot, the head looks up
+        // and down.
         let holding = view.held.is_some();
         let head = (figure.pitch.to_degrees() * look.look).clamp(-look.look_most, look.look_most);
         let mut arm_turn = Quat::IDENTITY;
@@ -314,8 +393,14 @@ fn show(
             let turn = match part.swing {
                 Swing::Leg { phase, .. } => {
                     let swing = look.swing * going * ((figure.stride + phase) * std::f32::consts::TAU).sin();
-                    if right_arm(&part) && holding {
+                    let calm = 1.0 - fight.share;
+                    if right_arm(&part) && part.role == Role::Arm {
+                        let walking = if holding { look.carry + swing * look.carry_swing } else { swing };
+                        walking * calm + fight.right * fight.share
+                    } else if right_arm(&part) && holding {
                         look.carry + swing * look.carry_swing
+                    } else if part.role == Role::Arm && part.pivot.x < 0.0 {
+                        swing * (1.0 - figure.drawing) + look.fight.draw * figure.drawing
                     } else {
                         swing
                     }
@@ -330,6 +415,9 @@ fn show(
             }
             if part.role == Role::Leg && part.pivot.x < 0.0 {
                 figure.leg = turn.to_radians();
+            }
+            if part.role == Role::Arm && part.pivot.x < 0.0 {
+                figure.left = turn.to_radians();
             }
             if let Ok(mut transform) = transforms.get_mut(joint) {
                 *transform = Transform::from_translation(part.pivot).with_rotation(q);
@@ -353,7 +441,8 @@ fn show(
         let held = rotation * arm_turn;
         let center = figure.position + rotation * shoulder + held * Vec3::new(x, y, z);
         let (tx, ty, tz) = hand.turn;
-        let turn = held * Quat::from_euler(EulerRot::XYZ, tx.to_radians(), ty.to_radians(), tz.to_radians());
+        let across = Quat::from_rotation_z((look.fight.guard_turn * figure.guarding).to_radians());
+        let turn = held * across * Quat::from_euler(EulerRot::XYZ, tx.to_radians(), ty.to_radians(), tz.to_radians());
         let looks = crate::drops::look_of(&world, pieces.as_deref(), item, center.floor().as_ivec3());
         let size = if looks.shape == Shape::Sprite { hand.flat } else { hand.block };
         figure.held_at = Some(center);
@@ -371,6 +460,58 @@ fn show(
             posed: Some(turn.to_scaled_axis()),
         });
     }
+}
+
+/// A figure's right arm this frame from its fight: the angle (degrees) and how much of the
+/// arm it takes over from walking, 0 to 1.
+struct FightPose {
+    right: f32,
+    share: f32,
+}
+
+/// Runs a figure's fight on by `dt` from what the server last told (`view`): the swing's
+/// seconds run on between messages, a blow counted starts the strike, and the arms ease
+/// toward the pose of the moment.
+fn fight_pose(figure: &mut Figure, view: &voxmar_protocol::FightView, look: &PlayerLook, holding: bool, dt: f32) -> FightPose {
+    let fight = look.fight;
+    let ease = 1.0 - (-fight.ease * dt).exp();
+    // The swing's seconds: as told when a new word comes, run on by the frame till then.
+    match view.swing {
+        Some(swing) if figure.told != Some(swing.into) => (figure.told, figure.into) = (Some(swing.into), swing.into),
+        Some(_) => figure.into += dt,
+        None => figure.told = None,
+    }
+    // A blow landed is brought down; a shot loosed is let go from the draw.
+    if view.struck != figure.struck {
+        figure.struck = view.struck;
+        figure.striking = (figure.drawing < 0.5).then_some(0.0);
+    }
+    let rest = if holding { look.carry } else { 0.0 };
+    let shot = view.swing.is_some_and(|s| s.shot);
+    figure.drawing += (f32::from(shot) - figure.drawing) * ease;
+    figure.guarding += (f32::from(view.guard && view.swing.is_none()) - figure.guarding) * ease;
+    // Brought down through the strike, straight from the raise; then eased back.
+    if let Some(t) = figure.striking.as_mut() {
+        *t += dt;
+        let done = (*t / fight.follow).clamp(0.0, 1.0);
+        if done < 1.0 {
+            figure.pose = fight.raise + (fight.strike - fight.raise) * done;
+            return FightPose { right: figure.pose, share: 1.0 };
+        }
+        figure.striking = None;
+    }
+    let target = match view.swing {
+        Some(swing) if swing.shot => fight.draw,
+        Some(swing) if figure.into >= 0.0 => {
+            let wound = (figure.into / swing.windup.max(1e-3)).clamp(0.0, 1.0);
+            rest + (fight.raise - rest) * wound * wound * (3.0 - 2.0 * wound)
+        }
+        _ if view.guard => fight.guard,
+        _ => rest,
+    };
+    figure.pose += (target - figure.pose) * ease;
+    let share = if view.swing.is_some() || view.guard { 1.0 } else { ((figure.pose - rest).abs() / 10.0).min(1.0) };
+    FightPose { right: figure.pose, share }
 }
 
 #[cfg(test)]
@@ -399,6 +540,87 @@ mod tests {
             boxes.retain(|b| b.role != Role::Arm);
         }
         assert!(broken.check().unwrap_err().contains("right arm"));
+    }
+
+    fn standing(look: &PlayerLook) -> Figure {
+        Figure {
+            root: Entity::PLACEHOLDER,
+            joints: Vec::new(),
+            material: Handle::default(),
+            painting: None,
+            skin: Handle::default(),
+            position: Vec3::ZERO,
+            yaw: 0.0,
+            pitch: 0.0,
+            stride: 0.0,
+            pace: 0.0,
+            arm: 0.0,
+            leg: 0.0,
+            held_at: None,
+            pose: look.carry,
+            guarding: 0.0,
+            drawing: 0.0,
+            left: 0.0,
+            told: None,
+            into: 0.0,
+            struck: 0,
+            striking: None,
+        }
+    }
+
+    /// Runs `frames` frames of 1/60 s, the server telling `view` at each twentieth of a
+    /// second (its ticks), the swing's seconds moved on by that much each time.
+    fn run(figure: &mut Figure, look: &PlayerLook, view: &mut voxmar_protocol::FightView, frames: u32) -> f32 {
+        let mut pose = 0.0;
+        for frame in 0..frames {
+            if frame % 3 == 0
+                && frame > 0
+                && let Some(swing) = view.swing.as_mut()
+            {
+                swing.into += 0.05;
+            }
+            pose = fight_pose(figure, view, look, true, 1.0 / 60.0).right;
+        }
+        pose
+    }
+
+    /// A swing told by the server raises the arm through its wind-up; its blow, counted,
+    /// brings it down through the strike in `follow` seconds; then it eases back to the
+    /// carry.
+    #[test]
+    fn a_swing_is_raised_through_its_windup_and_brought_down_as_it_lands() {
+        let look = shipped();
+        let fight = look.fight;
+        let mut figure = standing(&look);
+        let mut view = voxmar_protocol::FightView { swing: Some(voxmar_protocol::SwingView { into: 0.0, windup: 0.4, shot: false }), struck: 0, guard: false };
+        let raised = run(&mut figure, &look, &mut view, 24);
+        assert!(raised > look.carry + (fight.raise - look.carry) * 0.8, "wound up, the arm was at {raised}, {} wanted", fight.raise);
+        view = voxmar_protocol::FightView { swing: None, struck: 1, guard: false };
+        let first = fight_pose(&mut figure, &view, &look, true, 1.0 / 60.0).right;
+        assert!(figure.striking.is_some() && first < raised, "the blow did not start down: {first}");
+        let frames = (fight.follow * 60.0).ceil() as u32;
+        let down = (0..frames).map(|_| fight_pose(&mut figure, &view, &look, true, 1.0 / 60.0).right).fold(f32::MAX, f32::min);
+        assert!((down - fight.strike).abs() < 15.0, "brought down to {down}, {} wanted", fight.strike);
+        let rest = run(&mut figure, &look, &mut view, 60);
+        assert!(figure.striking.is_none() && (rest - look.carry).abs() < 1.0, "after the blow the arm rested at {rest}, {} wanted", look.carry);
+    }
+
+    /// The guard holds the arm up with what is in it turned across; a shot draws both arms
+    /// out, and loosing it brings nothing down.
+    #[test]
+    fn a_guard_and_a_draw_are_held_as_told() {
+        let look = shipped();
+        let fight = look.fight;
+        let mut figure = standing(&look);
+        let mut view = voxmar_protocol::FightView { swing: None, struck: 0, guard: true };
+        let guard = run(&mut figure, &look, &mut view, 30);
+        assert!((guard - fight.guard).abs() < 2.0 && figure.guarding > 0.95, "guarding, the arm at {guard} turned {}", figure.guarding);
+        view = voxmar_protocol::FightView { swing: Some(voxmar_protocol::SwingView { into: 0.0, windup: 0.6, shot: true }), struck: 0, guard: false };
+        let drawn = run(&mut figure, &look, &mut view, 30);
+        assert!((drawn - fight.draw).abs() < 2.0 && figure.drawing > 0.95 && figure.guarding < 0.05, "drawing, the arm at {drawn}, drawn {}", figure.drawing);
+        view = voxmar_protocol::FightView { swing: None, struck: 1, guard: false };
+        fight_pose(&mut figure, &view, &look, true, 1.0 / 60.0);
+        assert!(figure.striking.is_none(), "a shot loosed was struck down like a blow");
     }
 
     /// A name always gives the same look, and names differ.

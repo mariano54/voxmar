@@ -12734,6 +12734,9 @@ const OTHER_WALK: u32 = 60;
 const OTHER_FRAMES: u32 = 240;
 /// The share of the pace their limbs swing full at that the stand-in walks.
 const OTHER_PACE: f32 = 0.7;
+/// The stand-in's swing's wind-up (seconds), and frames it is watched after loosing a shot.
+const OTHER_WINDUP: f32 = 0.4;
+const OTHER_SETTLE: u32 = 20;
 
 /// The Others step (see [`Step::Others`]).
 fn others(world: &mut World, gate: &mut Gate) {
@@ -12746,6 +12749,8 @@ fn others(world: &mut World, gate: &mut Gate) {
     let combat = &launch.content.combat;
     let fists = combat.wielded(None, |_| 1);
     let weapon = launch.content.blocks.ids().find(|&id| combat.wielded(Some(id), |_| 99).class != fists.class);
+    // A bow or sling, to be seen drawn (the weapon again, if none shoots).
+    let shooter = launch.content.blocks.ids().find(|&id| !combat.ammo(&combat.wielded(Some(id), |_| 99)).is_empty());
     let Some(weapon) = weapon else {
         gate.check("others", Err("no item is wielded as a weapon".into()));
         gate.next(Step::Cook, now);
@@ -12754,10 +12759,18 @@ fn others(world: &mut World, gate: &mut Gate) {
     let start = gate.feet.as_vec3() + Vec3::new(-1.5, 0.0, 6.0);
     let pace = look.full_pace * OTHER_PACE;
     // Facing the eye, so its front and its right fist show.
-    let view = |at: Vec3| voxmar_protocol::PlayerView { id: OTHER, name: "Gate".into(), position: at, yaw: 0.0, pitch: -0.2, held: Some(weapon) };
+    let shooter = shooter.unwrap_or(weapon);
+    let fought = |at: Vec3, held: voxmar_engine::block::BlockId, fight: voxmar_protocol::FightView| voxmar_protocol::PlayerView { id: OTHER, name: "Gate".into(), position: at, yaw: 0.0, pitch: -0.2, held: Some(held), fight };
+    let view = |at: Vec3| fought(at, weapon, Default::default());
     let walked = |frames: u32| start + Vec3::X * pace * PUPPET_STEP * frames as f32;
     let done = |world: &mut World, gate: &mut Gate, result: Result<String, String>| {
         gate.check("others", result);
+        world.resource_mut::<RemotePlayers>().forget(OTHER);
+        world.resource_mut::<Figures>().step = None;
+        gate.next(Step::Cook, now);
+    };
+    let fights_done = |world: &mut World, gate: &mut Gate, result: Result<String, String>| {
+        gate.check("others: fights", result);
         world.resource_mut::<RemotePlayers>().forget(OTHER);
         world.resource_mut::<Figures>().step = None;
         gate.next(Step::Cook, now);
@@ -12843,10 +12856,103 @@ fn others(world: &mut World, gate: &mut Gate) {
         }
         4 => {
             if gate.shot(world, "other-player").is_some() {
-                world.resource_mut::<RemotePlayers>().forget(OTHER);
-                world.resource_mut::<Figures>().step = None;
-                gate.next(Step::Cook, now);
+                gate.puppet.1 = 0;
+                gate.advance(now);
             }
+        }
+        // Its fight, as a server would tell it (`PlayerView::fight`). The guard up: the arm
+        // held at `guard`, what is in it turned across.
+        5 => {
+            gate.puppet.1 = frames + 1;
+            let at = walked(OTHER_WALK);
+            world.resource_mut::<RemotePlayers>().puppet(fought(at, weapon, voxmar_protocol::FightView { guard: true, ..Default::default() }));
+            let Some(read) = read else { return fights_done(world, gate, Err("the stand-in was gone as it guarded".into())) };
+            let guard = look.fight.guard.to_radians();
+            if (read.arm - guard).abs() < 0.05 && read.guarding > 0.95 {
+                gate.puppet.1 = 0;
+                gate.advance(now);
+            } else if frames >= OTHER_FRAMES {
+                fights_done(world, gate, Err(format!("told its guard was up, its arm was at {:.2} radians ({guard:.2} wanted) turned {:.2} across, {OTHER_FRAMES} frames on", read.arm, read.guarding)));
+            }
+        }
+        // A swing told winding up, its seconds moved on by the step as a server's would be:
+        // the arm raised to `raise` by the time it lands.
+        6 => {
+            gate.puppet.1 = frames + 1;
+            let at = walked(OTHER_WALK);
+            let into = frames as f32 * PUPPET_STEP;
+            let swing = voxmar_protocol::SwingView { into, windup: OTHER_WINDUP, shot: false };
+            world.resource_mut::<RemotePlayers>().puppet(fought(at, weapon, voxmar_protocol::FightView { swing: Some(swing), ..Default::default() }));
+            if into < OTHER_WINDUP {
+                return;
+            }
+            let Some(read) = read else { return fights_done(world, gate, Err("the stand-in was gone as it swung".into())) };
+            let (raise, carry) = (look.fight.raise.to_radians(), look.carry.to_radians());
+            if read.arm < carry + (raise - carry) * 0.8 {
+                return fights_done(world, gate, Err(format!("wound up for {OTHER_WINDUP} s, its arm was raised to {:.2} radians ({raise:.2} wanted)", read.arm)));
+            }
+            (gate.puppet.0, gate.puppet.1, gate.other_swung) = (Vec3::new(read.arm, 0.0, 0.0), 0, read.arm);
+            gate.advance(now);
+        }
+        // The blow told landed (the count moves on): the arm brought down through `strike`
+        // in `follow` seconds, then back to the carry.
+        7 => {
+            gate.puppet.1 = frames + 1;
+            let at = walked(OTHER_WALK);
+            world.resource_mut::<RemotePlayers>().puppet(fought(at, weapon, voxmar_protocol::FightView { struck: 1, ..Default::default() }));
+            let Some(read) = read else { return fights_done(world, gate, Err("the stand-in was gone as its blow landed".into())) };
+            gate.other_swung = gate.other_swung.min(read.arm);
+            let (strike, carry) = (look.fight.strike.to_radians(), look.carry.to_radians());
+            let follow = (look.fight.follow / PUPPET_STEP).ceil() as u32 + 2;
+            if frames == follow && gate.other_swung > strike + 0.25 {
+                return fights_done(world, gate, Err(format!("its blow landed, the arm came down only to {:.2} radians in {follow} frames ({strike:.2} wanted)", gate.other_swung)));
+            }
+            if frames > follow && !read.striking && (read.arm - carry).abs() < 0.05 {
+                gate.puppet.1 = 0;
+                gate.advance(now);
+            } else if frames >= OTHER_FRAMES {
+                fights_done(world, gate, Err(format!("after its blow its arm was at {:.2} radians, not back at the carry ({carry:.2}), {OTHER_FRAMES} frames on", read.arm)));
+            }
+        }
+        // A shot drawn: both arms held out at `draw`, the bow in the right; loosed (the count
+        // moves on), nothing is struck down.
+        8 => {
+            gate.puppet.1 = frames + 1;
+            let at = walked(OTHER_WALK);
+            let swing = voxmar_protocol::SwingView { into: frames as f32 * PUPPET_STEP, windup: 60.0, shot: true };
+            world.resource_mut::<RemotePlayers>().puppet(fought(at, shooter, voxmar_protocol::FightView { swing: Some(swing), struck: 1, guard: false }));
+            let Some(read) = read else { return fights_done(world, gate, Err("the stand-in was gone as it drew".into())) };
+            let draw = look.fight.draw.to_radians();
+            if (read.arm - draw).abs() < 0.05 && (read.left - draw).abs() < 0.05 && read.held_at.is_some() {
+                if gate.shot(world, "other-player-draw").is_some() {
+                    gate.puppet.1 = 0;
+                    gate.advance(now);
+                }
+            } else if frames >= OTHER_FRAMES {
+                fights_done(world, gate, Err(format!("drawing a shot, its arms were at {:.2} and {:.2} radians ({draw:.2} wanted), {OTHER_FRAMES} frames on", read.arm, read.left)));
+            }
+        }
+        9 => {
+            gate.puppet.1 = frames + 1;
+            let at = walked(OTHER_WALK);
+            world.resource_mut::<RemotePlayers>().puppet(fought(at, shooter, voxmar_protocol::FightView { struck: 2, ..Default::default() }));
+            let Some(read) = read else { return fights_done(world, gate, Err("the stand-in was gone as it loosed".into())) };
+            if read.striking {
+                return fights_done(world, gate, Err("a shot loosed was brought down like a blow".into()));
+            }
+            if frames < OTHER_SETTLE {
+                return;
+            }
+            let (guard, raise, strike, draw) = (look.fight.guard, look.fight.raise, look.fight.strike, look.fight.draw);
+            fights_done(
+                world,
+                gate,
+                Ok(format!(
+                    "fights as told: the guard held at {guard}°, a swing raised to {:.0}° over its {OTHER_WINDUP} s wind-up ({raise}° wanted) and brought down to {:.0}° as it landed ({strike}°), then back to the carry; a shot drawn with both arms at {draw}° and loosed without a blow",
+                    gate.puppet.0.x.to_degrees(),
+                    gate.other_swung.to_degrees()
+                )),
+            );
         }
         _ => {}
     }

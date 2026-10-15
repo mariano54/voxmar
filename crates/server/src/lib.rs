@@ -1158,7 +1158,7 @@ impl Server {
         if self.players.len() < 2 {
             return;
         }
-        let views: Vec<_> = self.players.values().filter(|p| p.joined).map(Player::view).collect();
+        let views: Vec<_> = self.players.values().filter(|p| p.joined).map(|p| voxmar_protocol::PlayerView { fight: self.fight_view(p.id), ..p.view() }).collect();
         for player in self.players.values().filter(|p| p.joined) {
             let others = views.iter().filter(|v| v.id != player.id).cloned().collect();
             player.connection.send(ServerMessage::Players { players: others });
