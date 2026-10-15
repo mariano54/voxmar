@@ -4620,7 +4620,8 @@ fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             let wanted = wanted.unwrap_or_default();
             aim_at(world, plot.as_vec3() + Vec3::new(0.5, 0.9, 0.5));
             let shown = world.resource::<crate::hud::skills::SkillToasts>().shows_refusal(&wanted);
-            if shown && let Some(placed) = why_placed(world, &wanted) {
+            let drawn = why_placed(world, &wanted);
+            if shown && let Ok(placed) = drawn.clone() {
                 mouse(world, MouseButton::Left, false);
                 let spills: Vec<String> = crate::ui::fit::find(world).into_iter().filter(|spill| spill.text == wanted).map(|spill| spill.to_string()).collect();
                 let judged = match (placed, spills.is_empty()) {
@@ -4636,7 +4637,8 @@ fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 let showing: Vec<String> = world.resource::<crate::hud::skills::SkillToasts>().refusals().map(str::to_owned).collect();
                 let aimed = crosshair_on(world);
                 let screens = covering_screens(world);
-                gate.check("refusal: by hand", Err(format!("clicking {name} at {plot} holding {held:?} never showed \"{wanted}\" under the crosshair (showing {showing:?}); the crosshair was on {aimed}, screens open {screens:?}")));
+                let line = drawn.err().unwrap_or_else(|| "the reason line was drawn".into());
+                gate.check("refusal: by hand", Err(format!("clicking {name} at {plot} holding {held:?} never showed \"{wanted}\" under the crosshair (refusals {showing:?}; {line}); the crosshair was on {aimed}, screens open {screens:?}")));
                 gate.advance(now);
             } else {
                 // A fresh press each time: a held button mines on, it does not ask again.
@@ -4703,23 +4705,27 @@ fn why_by_hand(world: &World, block: BlockId) -> Option<String> {
 }
 
 /// Where the reason `why` is drawn: under the crosshair, near the middle of the screen, or
-/// what is wrong with it; none while it is not laid out yet.
-fn why_placed(world: &mut World, why: &str) -> Option<Result<String, String>> {
-    let screen = world.query::<&Window>().iter(world).next().map(|w| w.physical_size().as_vec2())?;
+/// what is wrong with it; `Err` while it is not drawn yet, saying what the line holds. The
+/// screen is the cameras' target (the gate has no window).
+fn why_placed(world: &mut World, why: &str) -> Result<Result<String, String>, String> {
+    let screen = world.query::<&Camera>().iter(world).filter_map(|camera| camera.physical_target_size()).map(|size| size.as_vec2()).reduce(Vec2::max).ok_or("no camera has a target to measure the screen by")?;
     let mut lines = world.query_filtered::<(&Text, &ComputedNode, &bevy::ui::UiGlobalTransform, &InheritedVisibility), With<crate::hud::skills::WhyLine>>();
-    let (text, node, transform, visible) = lines.single(world).ok()?;
+    let (text, node, transform, visible) = lines.single(world).map_err(|e| format!("no single reason line ({e})"))?;
     if text.0 != why || node.size().x <= 0.0 {
-        return None;
+        return Err(format!("the reason line holds \"{}\", {:.0} wide", text.0, node.size().x));
     }
-    let center = transform.translation;
+    Ok(if visible.get() { under_crosshair(transform.translation, screen, why) } else { Err(format!("the reason \"{why}\" is laid out but hidden")) })
+}
+
+/// Whether a line centred at `center` on a `screen` (both in pixels) sits under the
+/// crosshair: across, within 5% of the middle; down, below it by less than a fifth.
+fn under_crosshair(center: Vec2, screen: Vec2, why: &str) -> Result<String, String> {
     let (dx, dy) = ((center.x - screen.x / 2.0) / screen.x, (center.y - screen.y / 2.0) / screen.y);
-    Some(if !visible.get() {
-        Err(format!("the reason \"{why}\" is laid out but hidden"))
-    } else if dx.abs() < 0.05 && (0.0..0.2).contains(&dy) {
+    if dx.abs() < 0.05 && (0.0..0.2).contains(&dy) {
         Ok(format!("under the crosshair ({:.0}% below the middle)", dy * 100.0))
     } else {
         Err(format!("the reason \"{why}\" is not under the crosshair: {:.0}% across and {:.0}% down from the middle", dx * 100.0, dy * 100.0))
-    })
+    }
 }
 
 /// What the selected slot holds, by name.
@@ -13998,6 +14004,21 @@ fn finish(world: &mut World, gate: &Gate, now: f32) {
 #[cfg(test)]
 mod tests {
     use super::{sling_next, warm_window, SlingNext, BEAR, SLING, SLING_LEVEL, SLING_STONES, UNANSWERED};
+
+    /// The refusal's line is under the crosshair when centred across and a little below the
+    /// middle, at any screen size; not when off to a side, above, or far below.
+    #[test]
+    fn a_reason_is_under_the_crosshair_just_below_the_middle() {
+        use super::under_crosshair;
+        use bevy::math::Vec2;
+        for screen in [Vec2::new(1920.0, 1080.0), Vec2::new(3840.0, 2160.0)] {
+            let middle = screen / 2.0;
+            assert!(under_crosshair(middle + Vec2::new(0.0, 0.06 * screen.y), screen, "why").is_ok());
+            assert!(under_crosshair(middle + Vec2::new(0.1 * screen.x, 0.06 * screen.y), screen, "why").is_err());
+            assert!(under_crosshair(middle - Vec2::new(0.0, 0.06 * screen.y), screen, "why").is_err());
+            assert!(under_crosshair(middle + Vec2::new(0.0, 0.3 * screen.y), screen, "why").is_err());
+        }
+    }
 
     /// Every step is listed once, in order from Load to Done, and only listed steps are left
     /// out, the landing gate leaving out just the full gate's HV age.
