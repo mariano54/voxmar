@@ -8435,12 +8435,24 @@ fn wild_near(world: &World, reach: f32) -> Option<String> {
 /// How many births `/creatures populate` said it made, from its reply in the chat since
 /// `since` (the game's clock); none until the reply has come.
 fn populated(world: &World, since: f32) -> Option<usize> {
+    counted(world, "command.creatures.populated", since)
+}
+
+/// The count a reply worded by `key` (with one `count`, in any of its counted forms) gave,
+/// from the first such line in the chat since `since` (the game's clock); none until the
+/// reply has come.
+fn counted(world: &World, key: &str, since: f32) -> Option<usize> {
     const COUNT: &str = "\u{1}";
-    let words = world.resource::<Locale>().format("command.creatures.populated", &[("count", &COUNT)]);
-    let (before, after) = words.split_once(COUNT)?;
+    let locale = world.resource::<Locale>();
+    let forms: Vec<(String, String)> = [key.to_owned(), format!("{key}.one"), format!("{key}.other")]
+        .iter()
+        .filter_map(|key| locale.format(key, &[("count", &COUNT)]).split_once(COUNT).map(|(b, a)| (b.to_owned(), a.to_owned())))
+        .collect();
     world.resource::<crate::hud::console::Console>().since(since).find_map(|line| {
-        let (_, rest) = line.split_once(before)?;
-        rest.strip_suffix(after)?.trim().parse().ok()
+        forms.iter().find_map(|(before, after)| {
+            let (_, rest) = line.split_once(before.as_str())?;
+            rest.strip_suffix(after.as_str())?.trim().parse().ok()
+        })
     })
 }
 
@@ -9015,7 +9027,7 @@ fn weapon(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             }
         }
         _ => {
-            if sweep_bears(world, gate, species, pad) {
+            if sweep_bears(world, gate, species, pad, now) {
                 gate.next(Step::Sling, now);
             }
         }
@@ -9299,7 +9311,7 @@ fn sling(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             for (cell, block) in std::mem::take(&mut gate.sling.cleared) {
                 world.resource::<Net>().command(&set_cell(cell, &block));
             }
-            if sweep_bears(world, gate, species, pad) {
+            if sweep_bears(world, gate, species, pad, now) {
                 gate.next(Step::Feel, now);
             }
         }
@@ -9483,44 +9495,57 @@ fn the_bear(world: &World, gate: &mut Gate, species: voxmar_engine::creature::Cr
 #[derive(Default)]
 struct Sweep {
     /// The server's clock at the last `/creatures kill`, how many there have been, whether
-    /// the pad was swept, and since when no bear has been in view.
+    /// the pad was swept, the bear (by id) the last was sent at, none for the pad; the
+    /// game's clock it was sent at while its answer has yet to come, and how many bears the
+    /// last answer said it killed.
     killed: f32,
     kills: u32,
     pad: bool,
-    quiet: Option<f32>,
+    at: Option<u32>,
+    asked: Option<f32>,
+    answered: Option<usize>,
 }
 
-/// Server seconds without a bear in view, after the pad is swept, that end a sweep; and
+/// Server seconds a `/creatures kill` may go unanswered, and that a bear killed may stay in
+/// view after its answer (its going on the way), before a sweep fails or kills again; and
 /// the most kills it tries.
-const SWEEP_QUIET: f32 = 2.0;
+const SWEEP_REPLY: f32 = 5.0;
+const SWEEP_GONE: f32 = 1.0;
 const SWEEP_KILLS: u32 = 12;
 
 /// Clears away every bear, so none can reach the player in a step about something else: in
 /// creative (no bear can hurt), at each bear in view and then at the pad where they are
-/// summoned, `/creatures kill` takes every wild creature within 8 blocks, a server second
-/// apart. Done once no bear has been in view for [`SWEEP_QUIET`] server seconds after the
-/// pad; failed (and done) if bears outlast [`SWEEP_KILLS`] kills.
-fn sweep_bears(world: &mut World, gate: &mut Gate, species: voxmar_engine::creature::CreatureId, pad: IVec3) -> bool {
+/// summoned, `/creatures kill` takes every wild creature within 8 blocks, each sent once
+/// the last is answered. Done once a kill at the pad is answered with nothing killed and
+/// no bear is in view; failed (and done) if a kill goes unanswered for [`SWEEP_REPLY`] server seconds or
+/// bears outlast [`SWEEP_KILLS`] kills.
+fn sweep_bears(world: &mut World, gate: &mut Gate, species: voxmar_engine::creature::CreatureId, pad: IVec3, now: f32) -> bool {
     mouse(world, MouseButton::Left, false);
     mouse(world, MouseButton::Right, false);
     key(world, KeyCode::KeyW, false);
-    if gate.server_now - gate.sweep.killed < 1.0 && gate.sweep.kills > 0 {
-        return false;
-    }
-    let bear = world.resource::<crate::creatures::Creatures>().views().find(|v| v.species == species).map(|v| v.position);
-    let at = match bear {
-        Some(at) => at,
-        None if !gate.sweep.pad => {
-            gate.sweep.pad = true;
-            pad.as_vec3() + Vec3::new(0.5, 0.0, 0.5)
+    if let Some(since) = gate.sweep.asked {
+        match counted(world, "command.creatures.done", since) {
+            Some(killed) => (gate.sweep.asked, gate.sweep.answered) = (None, Some(killed)),
+            None if gate.server_now - gate.sweep.killed < SWEEP_REPLY => return false,
+            None => {
+                gate.check("bears swept", Err(format!("`/creatures kill` went unanswered for {SWEEP_REPLY} server seconds")));
+                return true;
+            }
         }
+    }
+    let bear = world.resource::<crate::creatures::Creatures>().views().find(|v| v.species == species).map(|v| (v.id, v.position));
+    let (at, id) = match bear {
+        // The one just killed, its going not yet here.
+        Some((id, _)) if gate.sweep.at == Some(id) && gate.sweep.answered.is_some_and(|n| n > 0) && gate.server_now - gate.sweep.killed < SWEEP_GONE => return false,
+        Some((id, at)) => (at, Some(id)),
+        None if gate.sweep.pad && gate.sweep.at.is_none() && gate.sweep.answered == Some(0) => return true,
         None => {
-            let quiet = *gate.sweep.quiet.get_or_insert(gate.server_now);
-            return gate.server_now - quiet > SWEEP_QUIET;
+            gate.sweep.pad = true;
+            (pad.as_vec3() + Vec3::new(0.5, 0.0, 0.5), None)
         }
     };
     if gate.sweep.kills >= SWEEP_KILLS {
-        gate.check("bears swept", Err(format!("a bear was still in view after {SWEEP_KILLS} kills")));
+        gate.check("bears swept", Err(format!("a bear was still in view or by the pad after {SWEEP_KILLS} kills")));
         return true;
     }
     let net = world.resource::<Net>();
@@ -9529,7 +9554,7 @@ fn sweep_bears(world: &mut World, gate: &mut Gate, species: voxmar_engine::creat
     net.command("creatures kill");
     gate.sweep.killed = gate.server_now;
     gate.sweep.kills += 1;
-    gate.sweep.quiet = None;
+    (gate.sweep.at, gate.sweep.asked, gate.sweep.answered) = (id, Some(now), None);
     false
 }
 
@@ -10078,7 +10103,7 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
         }
         5 => {
-            if sweep_bears(world, gate, species, pad) {
+            if sweep_bears(world, gate, species, pad, now) {
                 end_feel(world, gate, now);
             }
         }
@@ -10337,7 +10362,7 @@ fn boss(world: &mut World, gate: &mut Gate, now: f32) {
             }
         }
         _ => {
-            if sweep_bears(world, gate, species, pad) {
+            if sweep_bears(world, gate, species, pad, now) {
                 end_boss(world, gate, now);
             }
         }
@@ -14486,6 +14511,30 @@ mod tests {
             world.resource_mut::<crate::hud::console::Console>().push(voxmar_protocol::ChatKind::Chat, &reply, 2.0);
             assert_eq!(super::populated(&world, 1.5), Some(17), "{code}: {reply}");
             assert_eq!(super::populated(&world, 2.5), None, "{code}: told before the phase");
+        }
+    }
+
+    /// A bear sweep reads how many a `/creatures kill` killed from its reply, in each of its
+    /// counted forms ("1 creature", "3 creatures", "0 creatures"), in English and in
+    /// Japanese, and only a reply since the kill was sent.
+    #[test]
+    fn a_kill_is_counted_from_its_reply_in_every_form() {
+        use bevy::prelude::World;
+        let content = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        for code in ["en", "ja"] {
+            for killed in [0, 1, 3] {
+                let mut world = World::new();
+                let locale = crate::lang::Locale::load(&content, code);
+                let reply = locale.count("command.creatures.done", killed, &[]);
+                world.insert_resource(locale);
+                let mut console = crate::hud::console::Console::default();
+                console.push(voxmar_protocol::ChatKind::Info, "an earlier line", 1.0);
+                world.insert_resource(console);
+                assert_eq!(super::counted(&world, "command.creatures.done", 0.0), None, "{code}: not yet told");
+                world.resource_mut::<crate::hud::console::Console>().push(voxmar_protocol::ChatKind::Info, &reply, 2.0);
+                assert_eq!(super::counted(&world, "command.creatures.done", 1.5), Some(killed as usize), "{code}: {reply}");
+                assert_eq!(super::counted(&world, "command.creatures.done", 2.5), None, "{code}: told before the kill");
+            }
         }
     }
 
