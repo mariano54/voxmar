@@ -137,7 +137,9 @@ fn reachable(content: &Content) -> rustc_hash::FxHashMap<voxmar_engine::block::B
     let loaded = |block: BlockId| content.stations.of(block).is_some_and(|(_, phase)| phase != voxmar_engine::station::Phase::Empty);
     for block in blocks.ids() {
         let def = blocks.def(block);
-        if !def.item && !made.contains(&blocks.item_of(block)) && blocks.info(block).drops != BlockId(0) && !loaded(block) {
+        // Natural ground is the land's even where something also makes it (stone, which a
+        // kiln fires from cobblestone): breaking it is a way to what it drops.
+        if !def.item && (!made.contains(&blocks.item_of(block)) || def.has_tag("natural")) && blocks.info(block).drops != BlockId(0) && !loaded(block) {
             give(&mut ways, blocks.info(block).drops, free);
         }
     }
