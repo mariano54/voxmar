@@ -2017,6 +2017,10 @@ fn breaks(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                         Holder::Planks => registry.id("base:oak_planks"),
                         Holder::Tool(tool) => Some(tool),
                     };
+                    // A holder the block's rule refuses never breaks it (stone by hand or planks).
+                    if !tools.good_enough(item, block) {
+                        return f32::INFINITY;
+                    }
                     registry.info(block).hardness.max(0.0) / tools.speed(item, block).max(0.05)
                 };
                 cells.iter().zip(break_row(&blocks, &holders, seconds)).map(|(&cell, (block, holder))| (feet + cell, block, holder)).collect::<Vec<_>>()
@@ -2194,8 +2198,10 @@ fn material_sounds(world: &World, row: &[(IVec3, BlockId, Holder)]) -> Result<St
 /// blocks left over go to the holders again in turn.
 fn break_row(blocks: &[BlockId], holders: &[Holder], seconds: impl Fn(BlockId, Holder) -> f32) -> Vec<(BlockId, Holder)> {
     let mut row: Vec<Option<BlockId>> = vec![None; holders.len()];
-    let fastest = |holder: Holder, among: &mut dyn Iterator<Item = BlockId>| among.min_by(|&a, &b| seconds(a, holder).total_cmp(&seconds(b, holder)));
-    let slowest = |holder: Holder, among: &mut dyn Iterator<Item = BlockId>| among.max_by(|&a, &b| seconds(a, holder).total_cmp(&seconds(b, holder)));
+    // An infinite time is a block the holder cannot break at all: it is never given one.
+    let breaks = |block: BlockId, holder: Holder| seconds(block, holder).is_finite();
+    let fastest = |holder: Holder, among: &mut dyn Iterator<Item = BlockId>| among.filter(|&b| breaks(b, holder)).min_by(|&a, &b| seconds(a, holder).total_cmp(&seconds(b, holder)));
+    let slowest = |holder: Holder, among: &mut dyn Iterator<Item = BlockId>| among.filter(|&b| breaks(b, holder)).max_by(|&a, &b| seconds(a, holder).total_cmp(&seconds(b, holder)));
     for slow in [Holder::Hand, Holder::Planks] {
         if let Some(i) = holders.iter().position(|&h| h == slow) {
             let taken: Vec<BlockId> = row.iter().flatten().copied().collect();
@@ -2211,7 +2217,7 @@ fn break_row(blocks: &[BlockId], holders: &[Holder], seconds: impl Fn(BlockId, H
             let own = fastest(holders[i], &mut blocks.iter().copied()).map_or(0.0, |b| seconds(b, holders[i]));
             (seconds(block, holders[i]), seconds(block, holders[i]) - own)
         };
-        let free = (0..holders.len()).filter(|&i| row[i].is_none());
+        let free = (0..holders.len()).filter(|&i| row[i].is_none() && breaks(block, holders[i]));
         let Some(i) = free.min_by(|&a, &b| {
             let (a, b) = (cost(a), cost(b));
             a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1))
@@ -2220,11 +2226,14 @@ fn break_row(blocks: &[BlockId], holders: &[Holder], seconds: impl Fn(BlockId, H
         };
         row[i] = Some(block);
     }
-    let mut row: Vec<(BlockId, Holder)> = row.into_iter().zip(holders).map(|(block, &holder)| (block.or_else(|| fastest(holder, &mut blocks.iter().copied())).unwrap_or(blocks[0]), holder)).collect();
-    let mut left = blocks.iter().filter(|b| !row.iter().any(|(r, _)| r == *b)).copied().collect::<Vec<_>>().into_iter();
-    for i in 0.. {
-        let Some(block) = left.next() else { break };
-        row.push((block, holders[i % holders.len()]));
+    let mut row: Vec<(BlockId, Holder)> = row.into_iter().zip(holders).filter_map(|(block, &holder)| block.or_else(|| fastest(holder, &mut blocks.iter().copied())).map(|b| (b, holder))).collect();
+    let left: Vec<BlockId> = blocks.iter().filter(|b| !row.iter().any(|(r, _)| r == *b)).copied().collect();
+    // The rest go round the holders again, each to the next that can break it.
+    let mut next = 0;
+    for block in left {
+        let Some(k) = (0..holders.len()).map(|k| (next + k) % holders.len()).find(|&k| breaks(block, holders[k])) else { continue };
+        row.push((block, holders[k]));
+        next = k + 1;
     }
     row
 }
@@ -4427,7 +4436,7 @@ fn felled_by(content: &voxmar_engine::content::Content) -> Option<(BlockId, Bloc
     let (blocks, tools) = (&content.blocks, &content.tools);
     let log = blocks.ids().find(|&b| blocks.def(b).has_tag("log") && tools.rule(b).is_some_and(|rule| rule.tool.is_some() && rule.level <= 1))?;
     let rule = tools.rule(log)?;
-    let tool = tools.first_of(rule.tool?, rule.tier)?;
+    let tool = content.least_tool(rule.tool?, rule.tier)?;
     let recipe = content.recipes.iter().find(|r| r.output == tool && !r.needs_table())?.clone();
     Some((log, tool, recipe))
 }
@@ -5042,7 +5051,7 @@ fn why_by_hand(world: &World, block: BlockId) -> Option<String> {
     let content = &launch.content;
     let key = content.refusals.says(voxmar_engine::action::Requirement::ToolGood)?;
     let rule = content.tools.rule(block)?;
-    let tool = content.tools.first_of(rule.tool?, rule.tier)?;
+    let tool = content.least_tool(rule.tool?, rule.tier)?;
     Some(locale.format(key, &[("tool", &locale.block(content.blocks.def(tool)))]))
 }
 
@@ -15114,6 +15123,13 @@ mod tests {
         // More blocks than holders: the rest go round the holders again.
         let row = break_row(&blocks, &[Holder::Hand, pick], seconds);
         assert_eq!(row, [(cobble, Holder::Hand), (glass, pick), (dirt, Holder::Hand), (stone, pick)]);
+        // Stone refusing the hand and the planks: neither is given it, though it is slowest.
+        let refusing = |b: BlockId, h: Holder| if b == stone && (h == Holder::Hand || h == Holder::Planks) { f32::INFINITY } else { seconds(b, h) };
+        let row = break_row(&blocks, &holders, refusing);
+        assert!(row.iter().all(|&(b, h)| refusing(b, h).is_finite()), "{row:?}");
+        assert!(blocks.iter().all(|b| row.iter().any(|(r, _)| r == b)), "every block once: {row:?}");
+        let row = break_row(&blocks, &[Holder::Hand, pick], refusing);
+        assert!(row.iter().all(|&(b, h)| refusing(b, h).is_finite()) && row.iter().any(|&(b, _)| b == stone), "{row:?}");
     }
 
     #[test]

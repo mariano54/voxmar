@@ -199,6 +199,14 @@ pub struct ContentFile {
 }
 
 impl Content {
+    /// The least tool that is a `kind` of at least `tier`, by property: the lowest tier, then
+    /// the lowest worth (value.rs), then the first in registry order. What a refusal names
+    /// ("Needs a Flint Pickaxe or better").
+    pub fn least_tool(&self, kind: usize, tier: u8) -> Option<crate::block::BlockId> {
+        let mut known = std::collections::HashMap::new();
+        self.tools.all_of(kind, tier).map(|(t, id)| (t, crate::value::worth_in(self, id, &mut known), id)).min().map(|(_, _, id)| id)
+    }
+
     /// Loads every package in `dir`, in name order so ids are the same everywhere.
     pub fn load(dir: &Path) -> Result<Self, RegistryError> {
         let read_error = |path: &Path, e: std::io::Error| RegistryError(format!("{}: {e}", path.display()));

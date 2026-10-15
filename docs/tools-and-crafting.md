@@ -14,11 +14,13 @@ and 8, yield 0 to 0.15.
 Bare hands break neither natural stone nor a standing log: their rules in `base/tools.ron`
 ask for a pickaxe and an axe of tier 1 (Mariano, Oct 15: the early game was too easy, and
 the first tool must matter). So a new player's first tools are flint ones, made in the
-hand's grid from what hands can gather: flint (gravel gives it one break in eight) and
-sticks (natural leaves give one in five, a dead snag always). A flint axe is two flint
-over a stick, a flint pickaxe two flint over two sticks, both tier 1 like wood. A click on
-stone or a log by hand says "Needs a Flint Pickaxe or better" (the flint tools are listed
-first, so the refusal names them). Cobblestone, mossy or not, still breaks by hand; a log
+hand's grid from what hands can gather: flint (nodules lie loose in the grass and on the
+forest floor, several within 64 blocks of any spawn, and gravel gives it one break in
+eight) and sticks (a tree's leaves give one in five, a dead snag always; leaves a player
+set down give none). A flint axe is two flint over a stick, a flint pickaxe two flint over
+two sticks, both tier 1 like wood. A click on stone or a log by hand says "Needs a Flint
+Pickaxe or better": a refusal names the least tool that would do, the lowest tier and then
+the cheapest (`Content::least_tool`). Cobblestone, mossy or not, still breaks by hand; a log
 set down as a wall wants an axe like a standing one (whoever has logs has felled them).
 
 `base/tools.ron` (engine/src/tool.rs) says what each kind is made for, by block tags (a

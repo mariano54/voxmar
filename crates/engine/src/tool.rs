@@ -185,8 +185,14 @@ impl ToolRegistry {
         tool.kind == Some(kind) && tool.tier >= rule.tier
     }
 
-    /// The first item, in registry order, that is a `kind` of at least `tier`: what to name
-    /// when a better tool is needed.
+    /// Every item that is a `kind` of at least `tier`, with its tier.
+    pub fn all_of(&self, kind: usize, tier: u8) -> impl Iterator<Item = (u8, BlockId)> + '_ {
+        self.tools.iter().enumerate().filter(move |(_, t)| t.kind == Some(kind) && t.tier >= tier).map(|(i, t)| (t.tier, BlockId(i as u16)))
+    }
+
+    /// The first item, in registry order, that is a `kind` of at least `tier` and of the
+    /// lowest such tier. What a refusal names is `Content::least_tool`, which also weighs
+    /// worth.
     pub fn first_of(&self, kind: usize, tier: u8) -> Option<BlockId> {
         let mut best: Option<(u8, BlockId)> = None;
         for (i, tool) in self.tools.iter().enumerate() {
@@ -300,7 +306,12 @@ mod tests {
             let block = blocks.expect(name);
             assert!(!tools.good_enough(None, block), "{name} breaks by bare hand");
             let rule = tools.rule(block).expect("a rule");
-            let tool = tools.first_of(rule.tool.expect("asks for a tool"), rule.tier).expect("a tool that does");
+            let tool = content.least_tool(rule.tool.expect("asks for a tool"), rule.tier).expect("a tool that does");
+            // Named by property: no tool that would do is of a lower tier, or as low and cheaper.
+            let worth = |t: BlockId| crate::value::worth(&content, t);
+            let least = (tools.tool(Some(tool)).tier, worth(tool));
+            let cheaper: Vec<&str> = tools.all_of(rule.tool.unwrap(), rule.tier).filter(|&(tier, t)| (tier, worth(t)) < least).map(|(_, t)| blocks.def(t).name.as_str()).collect();
+            assert!(cheaper.is_empty(), "{name}'s refusal names the {}, but {cheaper:?} would do for less", blocks.def(tool).name);
             let recipe = content.recipes.iter().find(|r| r.output == tool && !r.needs_table());
             let recipe = recipe.unwrap_or_else(|| panic!("{} has no recipe the hand's grid makes", blocks.def(tool).name));
             let unreachable: Vec<&str> = recipe.cells().into_iter().flatten().filter(|&i| !by_hand(i)).map(|i| blocks.def(i).name.as_str()).collect();

@@ -1141,8 +1141,12 @@ mod tests {
     use voxmar_worldgen::Generator;
 
     fn registry(extra_first: bool) -> Arc<BlockRegistry> {
-        let source = include_str!("../../../assets/content/base/blocks.ron");
-        let mut defs = BlockRegistry::parse("base", source).unwrap();
+        // Every base block file, as the game loads them: worldgen places blocks from several.
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content/base");
+        let mut files: Vec<PathBuf> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path()).filter(|p| p.file_name().unwrap().to_str().unwrap().starts_with("blocks")).collect();
+        files.sort();
+        let packages = files.iter().map(|f| ("base".to_owned(), BlockRegistry::read("base", &std::fs::read_to_string(f).unwrap()).unwrap())).collect();
+        let mut defs = BlockRegistry::expand(packages).unwrap();
         if extra_first {
             // A mod loaded before `base` renumbers every base block.
             defs.insert(0, voxmar_engine::block::BlockDef { name: "aaa:marble".into(), ..defs[0].clone() });
