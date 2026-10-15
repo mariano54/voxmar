@@ -45,7 +45,7 @@ impl Server {
             let fuel = self.players.get(&agent).and_then(|p| p.inventory.get(p.selected))
                 .and_then(|stack| structure.fuels.iter().find(|&&(item, count)| item == stack.item && stack.count >= count).copied());
             let Some((item, count)) = fuel else {
-                self.structure_reply(agent, fuel_words(structure, &self.content.blocks));
+                self.refuse(agent, fuel_words(structure, &self.content.blocks));
                 return;
             };
             let seconds = self.content.machines.burn_seconds(item).expect("checked fuel") * count as f32;
@@ -55,9 +55,13 @@ impl Server {
             let until = self.tick.saturating_add((seconds * TICKS_PER_SECOND as f32).ceil() as u64);
             self.lit.insert(core, Lit { position: core.to_array(), structure: structure.name.clone(), until });
             self.tally(agent, "lit", &structure.name, 1);
-        } else if structure.fuels.is_empty() {
+        } else if structure.fuels.is_empty() && !self.lit.contains_key(&core) {
+            // A fire that needs no fuel burns until the structure breaks; lit again while it
+            // burns, it is the same fire (and the same lighting, for quests).
+            self.lit.insert(core, Lit { position: core.to_array(), structure: structure.name.clone(), until: u64::MAX });
             self.tally(agent, "lit", &structure.name, 1);
         }
+        self.send_fires();
         if structure.home && let Some(player) = self.players.get_mut(&agent) {
             player.home = Some(core.as_vec3() + Vec3::new(0.5, 1.0, 0.5));
         }
@@ -76,7 +80,13 @@ impl Server {
         let Some(block) = self.block(core) else { return };
         let structures = &self.content.multiblocks;
         let words = match structures.with_core(block).find(|m| m.stands(core, |p| self.block(p))) {
-            Some(standing) => Words::key("multiblock.cold").with("structure", structure_words(standing)).with("fuel", fuel_words(standing, &self.content.blocks)),
+            // Cold: said where refusals are, with the soft no.
+            Some(standing) => {
+                let words = Words::key("multiblock.cold").with("structure", structure_words(standing)).with("fuel", fuel_words(standing, &self.content.blocks));
+                self.refuse(agent, words);
+                return;
+            }
+            // Not built yet: how to build it is a guide, for the console.
             None => {
                 let Some(first) = structures.with_core(block).next() else { return };
                 Words::Own(format!("{}.hint", def_key("multiblock", &first.name)), first.hint.clone())
@@ -109,8 +119,60 @@ impl Server {
     /// the piece back cannot resurrect a paid charge, even between simulation ticks.
     pub(crate) fn fire_changed(&mut self, changed: IVec3) {
         let (structures, world, tick) = (&self.content.multiblocks, &self.world, self.tick);
-        self.lit.retain(|&core, fire| fire.until > tick && structures.get(&fire.structure)
-            .is_some_and(|m| !m.includes(core, changed) || m.stands(core, |p| world.block(p))));
+        // Every block change comes here (snow settling too): a fire whose core is beyond any
+        // structure's reach of the change is kept without looking its structure up.
+        let reach = structures.reach();
+        let before = self.lit.len();
+        self.lit.retain(|&core, fire| fire.until > tick && ((changed - core).abs().max_element() > reach || structures.get(&fire.structure)
+            .is_some_and(|m| !m.includes(core, changed) || m.stands(core, |p| world.block(p)))));
+        if self.lit.len() != before {
+            self.send_fires();
+        }
+    }
+
+    /// The cores of every fire burning, in order.
+    pub(crate) fn fires(&self) -> Vec<IVec3> {
+        let mut fires: Vec<IVec3> = self.lit.iter().filter(|(_, fire)| fire.until > self.tick).map(|(&core, _)| core).collect();
+        fires.sort_by_key(|core| core.to_array());
+        fires
+    }
+
+    /// Tells every player which fires burn, when that changed since they were last told.
+    pub(crate) fn send_fires(&mut self) {
+        let fires = self.fires();
+        if fires != self.fires_sent {
+            self.broadcast(ServerMessage::Fires { lit: fires.clone() });
+            self.fires_sent = fires;
+        }
+    }
+
+    /// A home hearth lit before hearths kept their fire (a player saved earlier) is lit again
+    /// once its player is back and the land round it is loaded, if it still stands; never
+    /// again after, so a hearth broken, rebuilt and left cold stays cold. Tried as they
+    /// join and every second after until the hearth's land is there to look at.
+    pub(crate) fn kindle_home(&mut self, id: PlayerId) {
+        let Some(player) = self.players.get(&id).filter(|p| !p.kindled) else { return };
+        let Some(home) = player.home else {
+            self.players.get_mut(&id).unwrap().kindled = true;
+            return;
+        };
+        let core = (home - Vec3::new(0.5, 1.0, 0.5)).round().as_ivec3();
+        let Some(block) = self.block(core) else { return };
+        let unloaded = std::cell::Cell::new(false);
+        let look = |p: IVec3| {
+            let block = self.block(p);
+            unloaded.set(unloaded.get() || block.is_none());
+            block
+        };
+        let multiblocks = self.content.multiblocks.clone();
+        let standing = multiblocks.with_core(block).find(|m| m.home && m.fuels.is_empty() && m.stands(core, look)).map(|m| m.name.clone());
+        if standing.is_none() && unloaded.get() {
+            return;
+        }
+        self.players.get_mut(&id).unwrap().kindled = true;
+        if let Some(structure) = standing.filter(|_| !self.lit.contains_key(&core)) {
+            self.lit.insert(core, Lit { position: core.to_array(), structure, until: u64::MAX });
+        }
     }
 }
 
@@ -121,6 +183,7 @@ mod tests {
     use voxmar_engine::coords::ColumnPos;
     use voxmar_engine::inventory::ItemStack;
     use crate::player::Player;
+    use crate::save::Draw;
 
     fn player(server: &mut Server) {
         let (_, connection) = voxmar_protocol::local_pair();
@@ -147,10 +210,14 @@ mod tests {
         server.light(1, core);
         let until = server.lit[&core].until;
         assert_eq!(until - server.tick, (24.0 * server.content.machines.burn_seconds(coal).unwrap() * TICKS_PER_SECOND as f32) as u64);
+        server.players.get_mut(&1).unwrap().position = core.as_vec3() + Vec3::new(0.5, 0.0, 3.5);
+        let burns = (until - server.tick).div_ceil(TICKS_PER_SECOND as u64) as u32;
+        assert_eq!(server.station_seen(1, core), Some((None, Some(burns))), "a look says how long the fire burns");
         server.tick = until - 1;
         assert!(server.station_lit(core));
         server.tick = until;
         assert!(!server.station_lit(core), "the fire outlived its charge");
+        assert_eq!(server.station_seen(1, core), Some((None, Some(0))), "a look says the kiln is cold");
         server.light(1, core);
         assert!(!server.station_lit(core), "an empty hand relit an expired fire");
         assert_eq!(server.players[&1].tallies["lit:base:crucible_kiln"], 1);
@@ -160,6 +227,143 @@ mod tests {
         assert_eq!(server.players[&1].tallies["lit:base:crucible_kiln"], 2);
         server.set_block(core, BlockId::AIR);
         assert!(!server.lit.contains_key(&core));
+    }
+
+    /// Home is the hearth lit as home while it burns, else the last bed: a hearth broken
+    /// sends its player home to their bed, and lit again it is home again.
+    #[test]
+    fn home_is_the_burning_hearth_else_the_last_bed() {
+        let mut server = crate::test_server();
+        player(&mut server);
+        let core = ColumnPos::of_block(server.spawn.floor().as_ivec3()).origin() + IVec3::new(8, server.spawn.y as i32 + 4, 8);
+        let (stone, chimney) = (server.content.blocks.expect("base:cobblestone"), server.content.blocks.expect("base:chimney"));
+        for x in -1..=1 { for z in -1..=1 {
+            server.set_block(core + IVec3::new(x, 0, z), stone);
+        }}
+        server.set_block(core, server.content.blocks.expect("base:hearthstone"));
+        for y in 1..=2 { server.set_block(core + IVec3::new(-1, y, -1), chimney); }
+        let bed = core + IVec3::new(5, 0, 0);
+        server.players.get_mut(&1).unwrap().bed = Some(bed.as_vec3() + Vec3::new(0.5, 1.0, 0.5));
+        let home = |server: &Server| server.players[&1].home_block(&server.lit);
+        assert_eq!(home(&server), Some(bed), "with no hearth lit, home is the bed");
+        server.light(1, core);
+        assert_eq!(home(&server), Some(core), "the lit hearth is home");
+        server.set_block(core + IVec3::new(1, 0, 1), BlockId::AIR);
+        assert_eq!(home(&server), Some(bed), "a broken hearth is no home");
+        // Respawn, home effects and stores and wanderers all agree: the bed.
+        let waking = server.players[&1].home_spot(&server.lit).unwrap();
+        server.players.get_mut(&1).unwrap().position = waking;
+        assert_eq!(server.at_home(1), Some(bed + IVec3::Y), "home effects stay at the broken hearth");
+        assert_eq!(server.home_holding(1, waking), Some(bed + IVec3::Y), "home stores stay at the broken hearth");
+        server.set_block(core + IVec3::new(1, 0, 1), stone);
+        server.light(1, core);
+        assert_eq!(home(&server), Some(core), "the hearth lit again is home again");
+        // A save from before hearths kept their fire: its hearth is home until it is lit
+        // again for them, even while its land is not loaded yet.
+        server.set_block(core + IVec3::new(1, 0, 1), BlockId::AIR);
+        server.set_block(core + IVec3::new(1, 0, 1), stone);
+        server.players.get_mut(&1).unwrap().kindled = false;
+        assert_eq!(home(&server), Some(core), "an old save's hearth is not home before it is kindled");
+    }
+
+    /// A hearth is cold until lit: then it burns, and players are told, until a piece of it
+    /// is taken away, and players are told it went out. A home hearth from a world saved
+    /// before hearths kept their fire is lit again when its player joins and its land is loaded, once.
+    #[test]
+    fn a_hearth_burns_from_lighting_until_it_breaks_and_players_are_told() {
+        let mut server = crate::test_server();
+        let (client, connection) = voxmar_protocol::local_pair();
+        server.players.insert(1, Player::new(1, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits));
+        server.players.get_mut(&1).unwrap().joined = true;
+        let told = |client: &voxmar_protocol::ClientConnection| -> Vec<Vec<IVec3>> {
+            std::iter::from_fn(|| client.try_recv().ok().flatten()).filter_map(|m| match m { ServerMessage::Fires { lit } => Some(lit), _ => None }).collect()
+        };
+        let core = ColumnPos::of_block(server.spawn.floor().as_ivec3()).origin() + IVec3::new(8, server.spawn.y as i32 + 4, 8);
+        let (stone, chimney) = (server.content.blocks.expect("base:cobblestone"), server.content.blocks.expect("base:chimney"));
+        for x in -1..=1 { for z in -1..=1 {
+            server.set_block(core + IVec3::new(x, 0, z), stone);
+        }}
+        server.set_block(core, server.content.blocks.expect("base:hearthstone"));
+        for y in 1..=2 { server.set_block(core + IVec3::new(-1, y, -1), chimney); }
+        server.send_fires();
+        assert!(server.fires().is_empty() && told(&client).is_empty(), "a hearth burned before it was lit");
+        server.light(1, core);
+        assert_eq!(server.fires(), [core], "the hearth was not lit");
+        assert_eq!(told(&client), [vec![core]]);
+        server.light(1, core);
+        let lightings: u32 = server.players[&1].tallies.iter().filter(|(name, _)| name.starts_with("lit:")).map(|(_, &n)| n).sum();
+        assert_eq!(lightings, 1, "lighting a burning hearth again counted as another lighting");
+        assert!(told(&client).is_empty());
+        server.tick += 1_000_000;
+        server.send_fires();
+        assert_eq!(server.fires(), [core], "a hearth burned out");
+        assert!(told(&client).is_empty(), "players were told again of what had not changed");
+        server.set_block(core + IVec3::new(1, 0, 1), BlockId::AIR);
+        assert!(server.fires().is_empty(), "a broken hearth still burns");
+        assert_eq!(told(&client), [Vec::<IVec3>::new()]);
+        // An older world's home hearth: standing, the player's home, but never kept lit.
+        server.set_block(core + IVec3::new(1, 0, 1), stone);
+        assert!(server.fires().is_empty(), "mending a hearth lit it");
+        let player = server.players.get_mut(&1).unwrap();
+        (player.home, player.kindled) = (Some(core.as_vec3() + Vec3::new(0.5, 1.0, 0.5)), false);
+        // Its land not loaded yet (as when they join far from spawn): tried again later.
+        let column = ColumnPos::of_block(core);
+        let held = server.world.remove(column).expect("the hearth's column is loaded");
+        server.kindle_home(1);
+        assert!(server.fires().is_empty() && !server.players[&1].kindled, "gave up on a hearth not yet loaded");
+        server.world.insert(column, held);
+        server.kindle_home(1);
+        assert_eq!(server.fires(), [core], "the old home hearth was not lit again");
+        // Once only: broken, mended and left cold, it stays cold when they join again.
+        server.set_block(core + IVec3::new(1, 0, 1), BlockId::AIR);
+        server.set_block(core + IVec3::new(1, 0, 1), stone);
+        server.kindle_home(1);
+        assert!(server.fires().is_empty(), "joining again lit a hearth left cold");
+    }
+
+    /// A standing Homestead Hearth and a Cottage Stove cook what a campfire cooks; a
+    /// hearthstone with no ring round it does not, and says what it lacks.
+    #[test]
+    fn the_hearth_and_the_stove_cook_as_a_campfire_does() {
+        let mut server = crate::test_server();
+        player(&mut server);
+        let core = ColumnPos::of_block(server.spawn.floor().as_ivec3()).origin() + IVec3::new(8, server.spawn.y as i32 + 4, 8);
+        let stove = core + IVec3::new(4, 0, 0);
+        let block = |server: &Server, name: &str| server.content.blocks.expect(name);
+        let (raw, cooked) = (block(&server, "base:raw_small_game"), block(&server, "base:cooked_small_game"));
+        server.set_block(core, block(&server, "base:hearthstone"));
+        server.set_block(stove, block(&server, "base:cottage_stove"));
+        // A count of goes cooked from which the next two never burn at level 1.
+        let burn = server.content.cooking.for_item(raw, &["campfire".into()]).unwrap().burn_chance(1);
+        let key = server.players[&1].draw_key;
+        let cooks = (0..1000).find(|&n| (n..n + 2).all(|n| crate::save::numbered_draws(key, Draw::Cook.salt(), n)[0] >= burn)).unwrap();
+        server.players.get_mut(&1).unwrap().draws.cooks = cooks;
+        let cook = |server: &mut Server, at: IVec3| {
+            server.players.get_mut(&1).unwrap().inventory.slots.iter_mut().for_each(|slot| *slot = None);
+            server.players.get_mut(&1).unwrap().inventory.slots[0] = Some(ItemStack { item: raw, count: 1 });
+            server.cook(1, at);
+            server.players[&1].inventory.get(0).map(|s| s.item)
+        };
+        assert_eq!(cook(&mut server, core), Some(raw), "a loose hearthstone cooked");
+        let stone = block(&server, "base:cobblestone");
+        for dz in -1..=1 {
+            for dx in -1..=1 {
+                if (dx, dz) != (0, 0) {
+                    server.set_block(core + IVec3::new(dx, 0, dz), stone);
+                }
+            }
+        }
+        for dy in 1..=2 {
+            server.set_block(core + IVec3::new(-1, dy, -1), block(&server, "base:chimney"));
+        }
+        assert!(server.station_stands(core));
+        assert_eq!(cook(&mut server, core), Some(cooked), "the standing hearth cooked nothing");
+        assert_eq!(cook(&mut server, stove), Some(cooked), "the stove cooked nothing");
+        assert_eq!(server.players[&1].tallies["cooked_at:campfire:base:cooked_small_game"], 2, "counted as campfire cooking, for First Night");
+        // The stove is a fire: it warms, and holds a pot.
+        let def = server.content.blocks.def(block(&server, "base:cottage_stove"));
+        assert!(def.has_tag("hob") && def.has_tag("heat"));
+        assert!(server.content.blocks.info(block(&server, "base:cottage_stove")).emission >= server.survival.heat_emission);
     }
 
     /// Bronze is three copper ingots held and a tin ore carried, four at a time, in one
@@ -204,8 +408,9 @@ mod tests {
         let recipe = server.content.cooking.for_item(raw, &["campfire".into()]).unwrap();
         let burn = recipe.burn_chance(1);
         let burnt = recipe.burnt.unwrap();
-        let tick = (server.tick..server.tick + 1000).find(|&tick| crate::items::random3(tick, fire, 1 ^ 0xc00c)[0] < burn).expect("a real burnt roll");
-        server.tick = tick;
+        let key = server.players[&1].draw_key;
+        let cooks = (0..1000).find(|&n| crate::save::numbered_draws(key, Draw::Cook.salt(), n)[0] < burn).expect("a real burnt roll");
+        server.players.get_mut(&1).unwrap().draws.cooks = cooks;
         server.players.get_mut(&1).unwrap().inventory.slots[0] = Some(ItemStack { item: raw, count: 1 });
         server.cook(1, fire);
         assert_eq!(server.players[&1].inventory.get(0).unwrap().item, burnt);
@@ -225,8 +430,9 @@ mod tests {
         let burn = recipe.burn_chance(1);
         assert!(burn > 0.0 && recipe.burnt == Some(clay), "clay cracks back to clay at level 1");
         for cracks in [true, false] {
-            let tick = (server.tick..server.tick + 1000).find(|&tick| (crate::items::random3(tick, kiln, 1 ^ 0xc00c)[0] < burn) == cracks).unwrap();
-            server.tick = tick;
+            let key = server.players[&1].draw_key;
+            let cooks = (0..1000).find(|&n| (crate::save::numbered_draws(key, Draw::Cook.salt(), n)[0] < burn) == cracks).unwrap();
+            server.players.get_mut(&1).unwrap().draws.cooks = cooks;
             let inventory = &mut server.players.get_mut(&1).unwrap().inventory;
             for slot in inventory.slots.iter_mut() {
                 *slot = Some(ItemStack { item: stone, count: 64 });

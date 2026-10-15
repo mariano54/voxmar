@@ -57,6 +57,12 @@
             moves: (attack: Some((at: (-0.04, 0.03, 0.06), turn: (-6.0, 0.0, 0.0), seconds: 0.36,
                 wind: Some((at: (-0.06, 0.06, -0.12), turn: (4.0, 6.0, 0.0), share: 0.5))))),
         ),
+        // A sling is swung up behind the shoulder and whipped forward overhand.
+        (
+            tag: "sling", pose: (at: (0.32, -0.25, 0.58), turn: (0.0, -14.0, 20.0), size: 0.5),
+            moves: (attack: Some((at: (-0.14, 0.02, 0.22), turn: (-58.0, 8.0, 18.0), seconds: 0.36,
+                wind: Some((at: (0.05, 0.17, -0.1), turn: (42.0, -10.0, -24.0), share: 0.42))))),
+        ),
         (tag: "weapon", pose: (at: (0.34, -0.23, 0.62), turn: (0.0, -18.0, 38.0), size: 0.56)),
         // Tools: held up, head forward, and a dig is a chop.
         (tag: "pickaxe", pose: (at: (0.34, -0.23, 0.62), turn: (0.0, -18.0, 38.0), size: 0.56)),

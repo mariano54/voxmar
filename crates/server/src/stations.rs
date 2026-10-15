@@ -60,6 +60,10 @@ impl Loads {
     }
 }
 
+/// How far from a player's eye a station they ask about may stand, in blocks: a little past
+/// reach, so the readout does not flicker at its edge.
+const SEEN_FROM: f32 = 8.0;
+
 /// How often the look at loaded stations comes, in seconds.
 const LOOK_SECONDS: u64 = 5;
 
@@ -116,6 +120,34 @@ impl Server {
         ticks.div_ceil(60 * TICKS_PER_SECOND as u64).max(1)
     }
 
+    /// What is on the station at `pos` as `agent` sees it (`ClientMessage::LookAtStation`):
+    /// None, not answered, if it is no station or too far off to see; else its load, if any,
+    /// and, for a fuelled structure's core (a kiln), the seconds its fire burns on.
+    pub(crate) fn station_seen(&self, agent: PlayerId, pos: IVec3) -> Option<(Option<voxmar_protocol::StationLoad>, Option<u32>)> {
+        let player = self.players.get(&agent)?;
+        if player.eye().distance(pos.as_vec3() + Vec3::splat(0.5)) > SEEN_FROM {
+            return None;
+        }
+        let block = self.block(pos)?;
+        let seconds = |due: u64| due.saturating_sub(self.tick).div_ceil(TICKS_PER_SECOND as u64).min(u32::MAX as u64) as u32;
+        if let Some((station, _)) = self.content.stations.of(block) {
+            let load = self.stations.get(pos).and_then(|load| {
+                let (_, work) = station.work(load.item)?;
+                Some(voxmar_protocol::StationLoad { item: load.item, count: load.count, output: work.output, makes: load.count / work.takes * work.gives, seconds: seconds(load.due) })
+            });
+            return Some((load, None));
+        }
+        let fuelled = self.content.multiblocks.with_core(block).any(|m| !m.fuels.is_empty());
+        fuelled.then(|| (None, Some(if self.station_lit(pos) { self.lit.get(&pos).map_or(0, |fire| seconds(fire.until)) } else { 0 })))
+    }
+
+    /// Answers `agent`'s look at the station at `pos`, when it is one they can see.
+    pub(crate) fn look_at_station(&self, agent: PlayerId, pos: IVec3) {
+        if let (Some((load, fire)), Some(player)) = (self.station_seen(agent, pos), self.players.get(&agent)) {
+            player.connection.send(ServerMessage::Station { block: pos, load, fire });
+        }
+    }
+
     /// `agent` uses the station at `pos` (`base:use_station`): loads it with what is in
     /// hand, takes what it made, or is told how it goes.
     pub(crate) fn use_station(&mut self, agent: PlayerId, pos: IVec3) {
@@ -147,18 +179,18 @@ impl Server {
         let Some((_, work)) = station.work(stack.item) else { return };
         if self.check_level(agent, work.skill) < work.level {
             let skill = Words::key(&voxmar_engine::lang::def_key("skill", &self.content.skills.get(work.skill).name));
-            self.tell_station(agent, Words::key("station.level").with("skill", skill).with("level", Words::text(work.level)));
+            self.refuse(agent, Words::key("station.level").with("skill", skill).with("level", Words::text(work.level)));
             return;
         }
         if let Some(lacks) = self.lacks(pos, station) {
-            self.tell_station(agent, lacks);
+            self.refuse(agent, lacks);
             return;
         }
         // Whole batches only: the heap rots four greens to one compost, so a load is a
         // multiple of four.
         let count = stack.count.min(station.holds) / work.takes * work.takes;
         if count == 0 {
-            self.tell_station(agent, Words::key("station.too_few").with("count", Words::text(work.takes)).with("item", Words::Block(self.content.blocks.def(stack.item).name.clone())));
+            self.refuse(agent, Words::key("station.too_few").with("count", Words::text(work.takes)).with("item", Words::Block(self.content.blocks.def(stack.item).name.clone())));
             return;
         }
         let speed: f32 = station.faster.iter().filter(|(spot, _)| self.spot_holds(pos, spot)).map(|(_, times)| times).product();
@@ -256,7 +288,7 @@ impl Server {
         let Some(fertiliser) = player.held().and_then(|item| stations.fertiliser(item)) else { return };
         let grown = self.grow_around(pos.as_vec3() + Vec3::splat(0.5), fertiliser.reach, fertiliser.stages);
         if grown == 0 {
-            self.tell_station(agent, Words::key("station.nothing_grows"));
+            self.refuse(agent, Words::key("station.nothing_grows"));
             return;
         }
         let player = self.players.get_mut(&agent).expect("checked above");
@@ -363,6 +395,25 @@ mod tests {
         assert_eq!(at(&server, AT), "base:drying_rack");
         assert!(xp(&server, "core:cooking") > cooking, "taking pays Cooking");
         assert_eq!(server.stations.get(AT), None);
+    }
+
+    /// Looked at, a rack at work says what is on it and the seconds left, an empty one
+    /// nothing; one too far off, or a block that is no station, is not answered.
+    #[test]
+    fn a_station_looked_at_says_what_is_on_it_and_how_long() {
+        let mut server = fixture(1);
+        server.set_block(AT, block(&server, "base:drying_rack"));
+        assert_eq!(server.station_seen(1, AT), Some((None, None)), "empty");
+        hold(&mut server, "base:raw_beef", 6);
+        server.use_station(1, AT);
+        server.tick += 4 * MINUTE;
+        let load = server.station_seen(1, AT).and_then(|(load, _)| load).expect("loaded");
+        assert_eq!((load.item, load.count, load.output, load.makes), (block(&server, "base:raw_beef"), 6, block(&server, "base:jerky"), 6));
+        assert_eq!(load.seconds, 6 * 60, "ten minutes, four gone");
+        server.tick += 6 * MINUTE;
+        assert_eq!(server.station_seen(1, AT).and_then(|(load, _)| load).map(|l| l.seconds), Some(0), "done");
+        assert_eq!(server.station_seen(1, AT + IVec3::new(0, 0, 40)), None, "too far");
+        assert_eq!(server.station_seen(1, AT + IVec3::new(1, 0, 0)), None, "no station");
     }
 
     /// A rack works while the column is not even loaded: a done rack still shows its old

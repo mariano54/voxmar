@@ -333,11 +333,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let interface = hud::inventory::InterfaceStyle::load(&content.files)?;
     let combat_marks = hud::combat::CombatStyle::load(&content.files)?;
     let fight_look = fight_fx::FightLook::load(&content.files)?;
+    if let Some(blow) = fight_look.untold(&content.creatures).first() {
+        return Err(format!("{}: no tell for the blow `{blow}`", fight_fx::style::FILE).into());
+    }
+    if let Some(name) = fight_look.unlain(&content.creatures).first() {
+        return Err(format!("{}: `{name}` dies lying fallen less than {} s, past the killing blow's freeze and its going", fight_fx::style::FILE, voxmar_engine::creature::LIES).into());
+    }
+    if let Some(class) = fight_look.unshot(content.combat.classes()).first() {
+        return Err(format!("{}: no shot for the {class} class, which shoots", fight_fx::style::FILE).into());
+    }
     let creature_motion = creature_motion::Motion::load(&content.files)?;
     if let Some(name) = creature_motion.unknown_species(|name| content.creatures.find(name).is_some()).next() {
         return Err(format!("{}: gaits for `{name}`, which is no creature", creature_motion::FILE).into());
     }
     let look = hud::target::LookStyle::load(&content.files)?;
+    let night_light = render::night_light::NightLight::load(&content.files)?;
     let celebrations = hud::celebrate::Celebrations::load(&content.files)?;
     let recorded = sfx::Recordings::load(&content.files)?;
     recorded.check(&content.actions)?;
@@ -476,13 +486,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let gate_lag = options.gate.as_ref().map(|_| gate::SERVER_LAG);
         let asked = options.server_lag.map(|ms| voxmar_server::Lag { per_tick: Duration::from_millis(ms), ..default() });
         let lag = asked.or(gate_lag).unwrap_or_default();
-        let config = ServerConfig { seed: options.seed, world, lag, ..ServerConfig::default() };
+        // A gate's world draws (a cast's catch) by a fixed key, as it is made on a fixed
+        // seed, so every run casts alike.
+        let draw_key = options.gate.as_ref().map(|_| gate::DRAW_KEY);
+        let config = ServerConfig { seed: options.seed, world, lag, draw_key, ..ServerConfig::default() };
         app.insert_resource(launch.singleplayer(config)?);
         Screen::InGame
     } else {
         Screen::Title
     };
-    app.insert_resource(FirstScreen(first)).insert_resource(launch).insert_resource(interface).insert_resource(combat_marks).insert_resource(fight_look).insert_resource(creature_motion).insert_resource(look).insert_resource(celebrations);
+    app.insert_resource(FirstScreen(first)).insert_resource(launch).insert_resource(interface).insert_resource(combat_marks).insert_resource(fight_look).insert_resource(creature_motion).insert_resource(look).insert_resource(celebrations).insert_resource(night_light);
     if options.loading {
         app.insert_resource(menu::HoldCover);
     }

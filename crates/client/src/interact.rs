@@ -220,6 +220,9 @@ impl ActionContext for ClientContext<'_> {
     fn stations(&self) -> Option<&voxmar_engine::station::Stations> {
         Some(&self.content.stations)
     }
+    fn traps(&self) -> Option<&voxmar_engine::trap::Traps> {
+        Some(&self.content.traps)
+    }
 
     fn combat(&self) -> Option<&voxmar_engine::combat::CombatRegistry> {
         Some(&self.content.combat)
@@ -299,11 +302,10 @@ fn break_and_place(
             }
             // A block that asks for a skill level or a better tool says so on a fresh click.
             _ if mouse.just_pressed(MouseButton::Left)
-                && let Err(Rejection::Unmet(need @ (Requirement::BlockLevel | Requirement::CropLevel | Requirement::ToolGood))) = def.validate(&context, action_target) =>
+                && let Err(Rejection::Unmet(need)) = def.validate(&context, action_target)
+                && let Some(words) = refusal(&context, &locale, Some(hit.block), need) =>
             {
-                if let Some(words) = refusal(&context, &locale, hit.block, need) {
-                    toasts.refused(words, time.elapsed_secs());
-                }
+                toasts.refused(words, time.elapsed_secs());
             }
             _ if target.mine_cooldown <= 0.0 && def.validate(&context, action_target).is_ok() => {
                 target.mining_seconds = def.seconds(&context, action_target);
@@ -363,11 +365,12 @@ fn break_and_place(
             }
         }
         // A multiblock's core is lit (the server says whether the structure around it
-        // stands); a sleeping bag is slept in; a locked chest's lock is picked; bees give a
+        // stands); a sleeping bag is slept in; a seat is sat on; a locked chest's lock is picked; bees give a
         // swarm to a skep held up to them, or a full skep its honey; a home station is
-        // loaded or emptied; a fertiliser is spread on a growing crop; a door is opened or
-        // shut, as the server turns it (never predicted: it holds the collision).
-        for name in ["base:light", "base:sleep", "base:pick_lock", "base:tend_bees", "base:use_station", "base:fertilise", "base:open"] {
+        // loaded or emptied; a sprung trap's catch is taken; a fertiliser is spread on a
+        // growing crop; a door is opened or shut, as the server turns it (never predicted:
+        // it holds the collision).
+        for name in ["base:light", "base:sleep", "base:sit", "base:pick_lock", "base:tend_bees", "base:use_station", "base:take_from_trap", "base:fertilise", "base:open"] {
             if let (Some(hit), Some(action)) = (hit, actions.0.id(name)) {
                 let context = ClientContext { world: &world, player: &player, content };
                 let action_target = ActionTarget::Block { block: hit.block, face: hit.face };
@@ -397,12 +400,8 @@ fn break_and_place(
                     target.cooking_until = time.elapsed_secs() + seconds + 0.2;
                     return;
                 }
-                Some(Err(Rejection::Unmet(Requirement::CookingLevel))) => {
-                    let item = context.actor_held();
-                    let station = world.block(hit.block).map(|b| world.registry.def(b).tags.clone()).unwrap_or_default();
-                    if let (Some(recipe), Some(skill)) = { let recipe = item.and_then(|i| content.cooking.for_item(i, &station)); (recipe, recipe.and_then(|r| r.skill)) } {
-                        let skill = locale.skill(content.skills.get(skill));
-                        let words = locale.format("skills.needs", &[("skill", &skill), ("level", &recipe.def.level)]);
+                Some(Err(Rejection::Unmet(need @ Requirement::CookingLevel))) => {
+                    if let Some(words) = refusal(&context, &locale, Some(hit.block), need) {
                         toasts.refused(words, time.elapsed_secs());
                     }
                     return;
@@ -435,7 +434,11 @@ fn break_and_place(
                     target.mine_cooldown = 1.2;
                     target.place_cooldown = 1.2;
                 }
-                Some(Err(Rejection::Unmet(Requirement::Hurt))) => toasts.refused(locale.get("skills.full").into(), time.elapsed_secs()),
+                Some(Err(Rejection::Unmet(need))) => {
+                    if let Some(words) = refusal(&context, &locale, None, need) {
+                        toasts.refused(words, time.elapsed_secs());
+                    }
+                }
                 _ => {}
             }
             return;
@@ -467,8 +470,22 @@ fn break_and_place(
                 world.block(p).is_some_and(|b| world.registry.info(b).solid || world.registry.info(b).fluid.is_some())
             });
             let context = ClientContext { world: &world, player: &player, content };
+            // Cast at no water, or water it cannot reach: said once per click.
+            let say_why = |toasts: &mut SkillToasts| {
+                if mouse.just_pressed(MouseButton::Right)
+                    && let Some(words) = refusal(&context, &locale, None, Requirement::Fishable)
+                {
+                    toasts.refused(words, time.elapsed_secs());
+                }
+            };
+            if water.is_none() {
+                say_why(&mut toasts);
+            }
             if let Some(water) = water {
                 let action_target = ActionTarget::Block { block: water.block, face: water.face };
+                if actions.0.get(fish).is_some_and(|def| def.validate(&context, action_target).is_err()) {
+                    say_why(&mut toasts);
+                }
                 if actions.0.get(fish).is_some_and(|def| def.validate(&context, action_target).is_ok()) {
                     let seconds = actions.0.get(fish).map_or(5.0, |def| def.seconds(&context, action_target));
                     net.propose_from(&player, fish, action_target);
@@ -491,7 +508,7 @@ fn break_and_place(
         let held = context.actor_held();
         // A ripe crop above the player's Farming level says so, and is not built on.
         if let Some(Some(Err(Rejection::Unmet(need @ Requirement::CropLevel)))) = actions.0.id("base:pick").map(valid) {
-            if let Some(words) = refusal(&context, &locale, hit.block, need) {
+            if let Some(words) = refusal(&context, &locale, Some(hit.block), need) {
                 toasts.refused(words, time.elapsed_secs());
             }
             return;
@@ -507,10 +524,9 @@ fn break_and_place(
                     let effects = actions.0.get(action).map_or(Vec::new(), |def| def.effects.clone());
                     predict_use(&mut world, &mut player, content, &effects, hit.block, &mut cues);
                 }
-                Some(Err(Rejection::Unmet(Requirement::SkillLevel))) => {
-                    if let Some(crop) = held.and_then(|item| content.crops.planted_by(item)).map(|id| content.crops.get(id)) {
-                        let skill = locale.skill(content.skills.get(crop.skill));
-                        let words = locale.format("skills.needs", &[("skill", &skill), ("level", &crop.def.level)]);
+                // Why the item's own action failed, once per click (the button repeats).
+                Some(Err(Rejection::Unmet(need))) if mouse.just_pressed(MouseButton::Right) => {
+                    if let Some(words) = refusal(&context, &locale, Some(hit.block), need) {
                         toasts.refused(words, time.elapsed_secs());
                     }
                 }
@@ -519,7 +535,16 @@ fn break_and_place(
             return;
         }
         let Some(place) = actions.named("core:place") else { return };
-        let allowed = actions.0.get(place).is_some_and(|def| def.validate(&context, action_target).is_ok());
+        let placing = actions.0.get(place).map(|def| def.validate(&context, action_target));
+        let allowed = placing.as_ref().is_some_and(Result::is_ok);
+        // A block in hand that cannot go there says why, once per click.
+        if let Some(Err(Rejection::Unmet(need))) = placing
+            && held.is_some_and(|item| world.registry.info(item).placeable)
+            && mouse.just_pressed(MouseButton::Right)
+            && let Some(words) = refusal(&context, &locale, Some(hit.block), need)
+        {
+            toasts.refused(words, time.elapsed_secs());
+        }
         if let Some(item) = held.filter(|_| allowed) {
             let cell = placement_cell(&context, hit.block, hit.face);
             let placed = placed_block(&context, item, hit.block, hit.face);
@@ -577,28 +602,43 @@ fn water_block(world: &ClientWorld, pos: IVec3) -> BlockId {
     world.block(pos).unwrap_or(BlockId::AIR)
 }
 
-/// What to tell a player whose click a block refused: the skill level it asks for, or the
-/// least tool that would do.
-fn refusal(context: &ClientContext, locale: &Locale, block: IVec3, need: Requirement) -> Option<String> {
+/// What to tell a player whose click was refused because `need` failed, at `block` if it
+/// aimed at one: the words `refusals.ron` gives it, with the skill and level it asks for or
+/// the least tool that would do; none for a requirement that is silent there.
+fn refusal(context: &ClientContext, locale: &Locale, block: Option<IVec3>, need: Requirement) -> Option<String> {
     let (world, content) = (context.world, context.content);
-    // A ripe crop above the player's Farming level: the target, or one standing on it.
-    if need == Requirement::CropLevel {
-        let cell = std::iter::once(block).chain(supported_by(context, block)).find(|&c| !voxmar_engine::action::crop_level_met(context, c))?;
-        let (crop, _) = content.crops.stage_of(world.block(cell)?)?;
-        let crop = content.crops.get(crop);
-        let skill = locale.skill(content.skills.get(crop.skill));
-        return Some(locale.format("skills.needs", &[("skill", &skill), ("level", &crop.def.level)]));
-    }
-    let rule = content.tools.rule(world.block(block)?)?;
+    let key = content.refusals.says(need)?;
+    let level = |skill: SkillId, level: u8| Some(locale.format(key, &[("skill", &locale.skill(content.skills.get(skill))), ("level", &level)]));
     match need {
+        // A ripe crop above the player's Farming level: the target, or one standing on it.
+        Requirement::CropLevel => {
+            let block = block?;
+            let cell = std::iter::once(block).chain(supported_by(context, block)).find(|&c| !voxmar_engine::action::crop_level_met(context, c))?;
+            let (crop, _) = content.crops.stage_of(world.block(cell)?)?;
+            let crop = content.crops.get(crop);
+            level(crop.skill, crop.def.level)
+        }
         Requirement::BlockLevel => {
-            let skill = locale.skill(content.skills.get(rule.skill?));
-            Some(locale.format("skills.needs", &[("skill", &skill), ("level", &rule.level)]))
+            let rule = content.tools.rule(world.block(block?)?)?;
+            level(rule.skill?, rule.level)
         }
-        _ => {
+        Requirement::ToolGood => {
+            let rule = content.tools.rule(world.block(block?)?)?;
             let tool = content.tools.first_of(rule.tool?, rule.tier)?;
-            Some(locale.format("tools.needs", &[("tool", &locale.block(world.registry.def(tool)))]))
+            Some(locale.format(key, &[("tool", &locale.block(world.registry.def(tool)))]))
         }
+        // The held seed's crop.
+        Requirement::SkillLevel => {
+            let crop = context.actor_seed().and_then(|seed| content.crops.planted_by(seed)).map(|id| content.crops.get(id))?;
+            level(crop.skill, crop.def.level)
+        }
+        // The held item's recipe at the station aimed at.
+        Requirement::CookingLevel => {
+            let station = world.block(block?).map(|b| world.registry.def(b).tags.clone()).unwrap_or_default();
+            let recipe = content.cooking.for_item(context.actor_held()?, &station)?;
+            level(recipe.skill?, recipe.def.level)
+        }
+        _ => Some(locale.get(key).to_owned()),
     }
 }
 
