@@ -11647,14 +11647,25 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
         0 => {
             let net = world.resource::<Net>();
             net.command(&format!("setblock {} {} {} drying_rack", rack.x, rack.y, rack.z));
-            net.command(&format!("give raw_small_game {RACK_GIVEN}"));
+            // None of what earlier steps left: the step hangs only what it gives.
+            net.command("clear raw_small_game");
             net.command(&format!("tp {} {} {}", rack.x as f32 + 0.5, rack.y, rack.z as f32 - 2.5));
-            // What will be carried once the gift comes: earlier steps may have left some.
-            gate.rack_rabbits = carried_of(world, "base:raw_small_game") + RACK_GIVEN;
+            gate.rack_rabbits = 0;
             gate.advance(now);
         }
         1 => {
             aim_at(world, rack.as_vec3() + RACK_MEAT);
+            // Given once the pack is seen cleared, so what is carried is what was given.
+            if gate.rack_rabbits == 0 {
+                if carried_of(world, "base:raw_small_game") == 0 {
+                    world.resource::<Net>().command(&format!("give raw_small_game {RACK_GIVEN}"));
+                    gate.rack_rabbits = RACK_GIVEN;
+                } else if waited {
+                    gate.check("drying rack", Err(format!("the raw small game carried was never cleared in {DRY_WAIT} server seconds")));
+                    gate.next(Step::Snare, now);
+                }
+                return;
+            }
             let client = world.resource::<ClientWorld>();
             let stood = client.registry.id("base:drying_rack").is_some_and(|r| client.block(rack) == Some(r));
             let there = world.resource::<LocalPlayer>().position.distance(Vec3::new(rack.x as f32 + 0.5, rack.y as f32, rack.z as f32 - 2.5)) < 0.5;
