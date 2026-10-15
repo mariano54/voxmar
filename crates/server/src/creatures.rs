@@ -2592,7 +2592,7 @@ mod cornered_tests {
 }
 
 /// Movement over the land a player meets in the first ages: hunters come at a player round
-/// trees, up steps and through doorways (never through a shut door); a sheep after wheat
+/// trees, up steps and through doorways and open doors (never a shut one); a sheep after wheat
 /// follows through a doorway too; prey runs along a cliff edge or a lake shore rather than
 /// off it; and none is ever made with its head in a trunk.
 #[cfg(test)]
@@ -2617,11 +2617,12 @@ mod way_tests {
         None
     }
 
-    /// A wall across the pen at x = 1, with a gap at z = 3 that `door` fills (shut) or not.
-    fn walled(server: &mut Server, c: IVec3, door: bool) {
+    /// A wall across the pen at x = 1, with a gap at z = 3 that `door` (a door's lower half,
+    /// shut or open, its upper half named after it) fills, or nothing.
+    fn walled(server: &mut Server, c: IVec3, door: Option<&str>) {
         wall(server, (-14..=14).filter(|&z| z != 3).map(|z| c + IVec3::new(1, 0, z)).collect::<Vec<_>>(), 3);
-        if door {
-            let (lower, upper) = (server.content.blocks.expect("base:wooden_door"), server.content.blocks.expect("base:wooden_door_top"));
+        if let Some(door) = door {
+            let (lower, upper) = (server.content.blocks.expect(door), server.content.blocks.expect(&format!("{door}_top")));
             server.world.set_block(c + IVec3::new(1, 0, 3), lower);
             server.world.set_block(c + IVec3::new(1, 1, 3), upper);
         }
@@ -2663,13 +2664,14 @@ mod way_tests {
 
     #[test]
     fn a_hunter_finds_the_doorway_in_a_wall_but_not_through_a_shut_door() {
-        let doorway = |door: bool| move |server: &mut Server, c: IVec3| {
+        let doorway = |door: Option<&'static str>| move |server: &mut Server, c: IVec3| {
             walled(server, c, door);
             c.as_vec3() + Vec3::new(5.5, 0.0, 0.5)
         };
         for name in ["base:wolf", "base:badger"] {
-            assert!(hunter(name, doorway(false), 8).is_some(), "{name} never found the doorway");
-            assert_eq!(hunter(name, doorway(true), 8), None, "{name} came through a shut door");
+            assert!(hunter(name, doorway(None), 8).is_some(), "{name} never found the doorway");
+            assert!(hunter(name, doorway(Some("base:wooden_door_open")), 8).is_some(), "{name} never came through an open door");
+            assert_eq!(hunter(name, doorway(Some("base:wooden_door")), 8), None, "{name} came through a shut door");
         }
     }
 
@@ -2677,7 +2679,7 @@ mod way_tests {
     fn a_sheep_after_wheat_follows_through_a_doorway() {
         let mut server = crate::test_server();
         let c = pen(&mut server, 14);
-        walled(&mut server, c, false);
+        walled(&mut server, c, None);
         let to = c.as_vec3() + Vec3::new(5.5, 0.0, 0.5);
         let player = join(&mut server, to);
         let wheat = server.content.blocks.expect("base:wheat");
