@@ -1357,7 +1357,17 @@ mod tests {
         let blocks = &content.blocks;
         let recorded = Recordings::load(&content.files).unwrap();
         recorded.check_materials(blocks).unwrap();
-        for (block, material) in [("base:cobblestone", "cobblestone"), ("base:mossy_cobblestone", "cobblestone"), ("base:stone_bricks", "stone_brick"), ("base:cracked_stone_bricks", "stone_brick")] {
+        for (block, material) in [("base:cobblestone", "cobblestone"), ("base:mossy_cobblestone", "cobblestone"), ("base:stone_bricks", "stone_brick"), ("base:cracked_stone_bricks", "stone_brick"),
+            ("base:cobblestone_slab", "cobblestone"),
+            ("base:stone_brick_stairs", "stone_brick"),
+            ("base:oak_post", "timber"),
+            ("base:birch_beam", "timber"),
+            ("base:dark_oak_lattice_window", "timber"),
+            ("base:thatch_roof", "thatch"),
+            ("base:thatch_ridge", "thatch"),
+            ("base:oak_shingles", "shingle"),
+            ("base:dark_oak_shingle_ridge", "shingle"),
+        ] {
             let found = recorded.material_of(blocks, blocks.id(block).unwrap()).map(|m| recorded.materials[m].name.as_str());
             assert_eq!(found, Some(material), "{block}");
         }

@@ -47,6 +47,27 @@
             place: ["sounds/materials/brick_place_1.ogg", "sounds/materials/brick_place_2.ogg", "sounds/materials/brick_place_3.ogg"],
             break: ["sounds/materials/brick_break_1.ogg", "sounds/materials/brick_break_2.ogg", "sounds/materials/brick_break_3.ogg"],
         ),
+        // Posts, beams and lattice: a hollow knock underfoot, a firm knock set in place, splintering.
+        (
+            name: "timber", tags: ["timber"],
+            step: ["sounds/materials/timber_step_1.ogg", "sounds/materials/timber_step_2.ogg", "sounds/materials/timber_step_3.ogg", "sounds/materials/timber_step_4.ogg"],
+            place: ["sounds/materials/timber_place_1.ogg", "sounds/materials/timber_place_2.ogg", "sounds/materials/timber_place_3.ogg"],
+            break: ["sounds/materials/timber_break_1.ogg", "sounds/materials/timber_break_2.ogg", "sounds/materials/timber_break_3.ogg"],
+        ),
+        // Thatch: a dry crush of straw, a soft rustle laid down, stalks pattering as it comes apart.
+        (
+            name: "thatch", tags: ["thatch"],
+            step: ["sounds/materials/thatch_step_1.ogg", "sounds/materials/thatch_step_2.ogg", "sounds/materials/thatch_step_3.ogg", "sounds/materials/thatch_step_4.ogg"],
+            place: ["sounds/materials/thatch_place_1.ogg", "sounds/materials/thatch_place_2.ogg", "sounds/materials/thatch_place_3.ogg"],
+            break: ["sounds/materials/thatch_break_1.ogg", "sounds/materials/thatch_break_2.ogg", "sounds/materials/thatch_break_3.ogg"],
+        ),
+        // Shingles: tiles knocking underfoot, a slide and a clack laid, a clatter prised off.
+        (
+            name: "shingle", tags: ["shingle"],
+            step: ["sounds/materials/shingle_step_1.ogg", "sounds/materials/shingle_step_2.ogg", "sounds/materials/shingle_step_3.ogg", "sounds/materials/shingle_step_4.ogg"],
+            place: ["sounds/materials/shingle_place_1.ogg", "sounds/materials/shingle_place_2.ogg", "sounds/materials/shingle_place_3.ogg"],
+            break: ["sounds/materials/shingle_break_1.ogg", "sounds/materials/shingle_break_2.ogg", "sounds/materials/shingle_break_3.ogg"],
+        ),
     ],
     // What the player does, heard as they do it, by action: about as loud as placing a
     // block, times `volume`. A package that names an action replaces its sound. Every
