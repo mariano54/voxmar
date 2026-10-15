@@ -59,6 +59,40 @@ Mostly yes, with these checks:
   91 fired clay between the Potter and the Kiln. That is a long clay session; Clay Banks and
   Fire the Clay split it into steps with rewards so it reads as progress.
 
+## The first day of each age, read as a newcomer (Oct 14)
+
+The first in-game day of each age, followed using only quest text, recipes and what is on
+screen, stopped at these points; each is fixed in the words (en and ja):
+
+| Where | What stopped a newcomer | Now |
+|---|---|---|
+| First tip | Nothing named the inventory key, and Look It Up starts "Open the inventory" | `tip.quests` also names `{inventory}` (bound key) |
+| Timber | "Hold the attack button" names no button | the left mouse button, on the trunk |
+| Crafting Table | "Set it down" did not say how a block is placed | hold it and right-click the ground, then right-click the table |
+| First Night | "Swing the stone axe", while a fresh player has none | swing an axe; a stone one hits three times a fist |
+| A Bed of Your Own | made a bag but never said to place and use it, which is what sets where you wake | set it down where you mean to stay and right-click it |
+| Homestead Hearth | "a shovel" with no recipe on the main line; "a ring of eight stone" read as smooth stone only | shovel recipe given; stone or cobblestone, level with the hearthstone |
+| A Chopping Block | flint from gravel, but not where gravel is | stony slopes, game trails, dry stream beds |
+| First Harvest | "keep water within four blocks", with no way yet to carry water | farm beside a river, pond or lake |
+| First Harvest | seeds named without a source | wild wheat gives them |
+| Bigger Game | asks for red deer and wild boar, while its words said "deer and boar" | names them as the game does |
+| Copper Kit | "six times as fast", where the tool tiers now give seven | seven, and a tool's tooltip says how fast it works |
+| A Varied Table (pacing audit) | 12 cooked meat, 8 fish, 6 bread: about 11 min of the same few actions | 6 meat, 4 fish, 3 bread, about 4 min |
+| Trail Rations (pacing audit) | 12 jerky | 8 jerky |
+| A Handful of Grain (pacing audit) | "the odd ear of wheat" | "often an ear of wheat" (wild wheat now gives an ear 6 times in 10) |
+
+A check keeps it so: `gate::newcomer_misses` walks every quest before the lit hearth and the
+Farm quests that open with it, and lists any item or creature a goal asks for that has no
+recipe in the book and is not named in that quest's words or an earlier one's (a crop picked
+counts by what it gives). The client test `a_newcomer_finds_what_the_opening_quests_ask_for`
+runs it in English and Japanese, and the gate's Quests step runs it on the live words
+("quests: a newcomer's way"). It found First Harvest's wheat crop (now counted by its wheat)
+and Bigger Game's deer and boar.
+
+Checked and fine: the start pins (Timber, Look It Up, First Night) are reachable bare-handed
+(stone breaks to cobblestone by hand, `tools.ron`); every main step names its recipe; the
+Farm's first steps (Pit Kiln, Clay Banks, Fire the Clay) say where clay is and how to fire it.
+
 ## Gaps found, and where each stands
 
 1. **Nothing said "open the quest book".** Fixed: a first-time tip names the bound key
@@ -217,7 +251,8 @@ Mining time is the block's hardness over the tool's speed (tools.ron), so a tool
 | Stone (1.5) | 1.5 s | Wooden pickaxe (13 s) | 3 planks, 2 sticks | x2 | Stone pickaxe at 44 s, x4; copper at 233 s, x6 |
 | Clay (0.6) | 0.6 s | Stone shovel (Dig In, about 100 s) | 1 cobblestone, 2 sticks | x4 | Copper shovel, x6 |
 | Coal ore (3.0) | none | Wooden pickaxe (13 s) | as above | needs a pickaxe | Stone pickaxe, x2 more |
-| Fibre (wild wheat, grass) | instant | none needed | | | Sown wheat in the Farm age |
+| Twine (wild wheat) | 3 wheat for 2; wild wheat gives wheat 3 times in 10, a tuft in about 400 columns | Any knife on tall grass (Oct 14) | a plank or cobblestone over a stick | 10 twine (Twine and Thong) from about 50 tufts to about 40 cuts with a stone knife | Sown wheat in the Farm age |
+| Wheat (a sown field) | a cut each | Stone hoe reaps 3×3 (Oct 14) | 1 cobblestone, 2 sticks | up to x9 cuts | Iron hoe, 5×5 |
 | Meat (hunting) | max hit 1 | Stone axe or sword (44 s) | 3 or 2 cobblestone, sticks | x3 max hit | Copper sword, max hit 5 |
 | Charcoal (a log in the fire) | 2 s each | none: coal ore instead (Charcoal's other route) | | | The Crucible pays 16 |
 

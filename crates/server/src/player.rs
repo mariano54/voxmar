@@ -629,6 +629,7 @@ impl Server {
         let entries = self.players[&id].journal.entries().cloned().collect();
         self.players[&id].connection.send(ServerMessage::Journal { entries });
         self.kindle_home(id);
+        self.recount_placed(id);
         self.players[&id].connection.send(ServerMessage::Fires { lit: self.fires() });
         if let Some(file) = set_aside {
             let text = Words::key("save.player_set_aside").with("file", Words::text(file));

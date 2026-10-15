@@ -100,6 +100,11 @@ pub struct WorldMeta {
     /// by themselves; and furnishings, which give themselves back only from these cells.
     #[serde(default)]
     pub placed: Vec<[i32; 3]>,
+    /// Blocks set down that an unfinished quest's `Placed` counts: cell, whose (their name
+    /// in lower case) and what item (none in older worlds). Saved with the world, so one
+    /// broken while its owner is away, or after a restart, still comes off their count.
+    #[serde(default)]
+    pub quest_placed: Vec<([i32; 3], String, String)>,
     /// Picked wild plants waiting to grow back, and plants herb planters grew back.
     #[serde(default)]
     pub regrowing: Vec<SavedRegrowing>,
@@ -229,6 +234,7 @@ impl WorldMeta {
             day: None,
             day_speed: 1.0,
             placed: Vec::new(),
+            quest_placed: Vec::new(),
             regrowing: Vec::new(),
             planter_grown: Vec::new(),
             hives: Vec::new(),
@@ -1558,6 +1564,22 @@ mod tests {
         let mut tallies = renamed_tallies(tallies, &blocks);
         tallies.sort();
         assert_eq!(tallies, [("cooked:base:cooked_small_game".to_owned(), 3), ("cooked_at:campfire:base:cooked_small_game".to_owned(), 3), ("lit:base:crucible_kiln".to_owned(), 1)]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A player file from when blocks set down for quests were kept in it (`placed`, now
+    /// the world's `quest_placed`) still loads, its tallies as they were.
+    #[test]
+    fn a_player_file_that_kept_placed_blocks_still_loads() {
+        let dir = temp_dir("placed-in-player");
+        let save = WorldSave::new(&dir);
+        let blocks = crate::test_content().blocks;
+        std::fs::create_dir_all(dir.join("players")).unwrap();
+        let file = r#"(position: (0.5, 80.0, 0.5), yaw: 0.0, flying: false, health: (current: 20, max: 20),
+            inventory: [None], tallies: [("placed:base:feed_trough", 1)], placed: [((4, 65, -7), "base:feed_trough")])"#;
+        std::fs::write(dir.join("players/keeper.ron"), file).unwrap();
+        let loaded = save.read_player("keeper", &blocks).unwrap().expect("it loads");
+        assert_eq!(loaded.tallies, [("placed:base:feed_trough".to_owned(), 1)]);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

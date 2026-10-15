@@ -922,6 +922,7 @@ pub fn origins_and_uses(locale: &Locale, content: &voxmar_engine::content::Conte
             Method::Craft { .. } => add(locale.get("tooltip.from.craft").to_owned()),
             Method::Cook { .. } => add(locale.get("tooltip.from.cook").to_owned()),
             Method::Product { creature, .. } | Method::Drop { creature, .. } => add(locale.creature(&content.creatures.get(*creature).def)),
+            Method::Break { block, .. } => add(locale.block(content.blocks.def(*block))),
         }
     }
     if content.crops.iter().any(|(_, crop)| crop.harvest.iter().any(|(got, _)| *got == item)) {
@@ -956,6 +957,13 @@ fn seed_line(
     let ready = content.skills.level(player.skills.xp(crop.skill)) >= crop.def.level;
     let words = locale.format("item.plants", &[("crop", &locale.block_named(&content.blocks, &crop.def.name)), ("skill", &skill), ("level", &crop.def.level)]);
     Some((words, if ready { SOFT } else { ERROR }))
+}
+
+/// A reaping hoe's patch: the ripe crops it takes with the one it cuts (`reap:N`).
+pub(crate) fn reap_line(locale: &Locale, content: &voxmar_engine::content::Content, item: voxmar_engine::block::BlockId) -> Option<(String, Color)> {
+    let reach = content.tools.tool(Some(item)).reap;
+    let side = 2 * reach as u32 + 1;
+    (reach > 0).then(|| (locale.format("item.reaps", &[("side", &side)]), SOFT))
 }
 
 /// How a weapon fights: its class, style and the level that wields it (red while the
@@ -1192,6 +1200,7 @@ fn tooltip(
                 .chain(weapon_lines(&locale, &launch.content, &player, item))
                 .chain(armour_lines(&locale, &launch.content, &player, item))
                 .chain(pouch_lines(&locale, &world.registry, &player, item))
+                .chain(reap_line(&locale, &launch.content, item))
                 .chain(book.into_iter().map(|line| (line, SOFT)))
                 .chain(details(&locale, def, settings.debug_overlay));
             for (line, color) in lines_after {

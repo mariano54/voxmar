@@ -87,7 +87,12 @@ with Engineering 30.
 
 - A **hoe** tills soil into **farmland** (right click); crops are sown on farmland only
   (`ground` in crops.ron says otherwise for a crop that wants something else). A hoe over a
-  ripe crop adds its yield to rarer finds.
+  ripe crop adds its yield to rarer finds. A stone or copper hoe also **reaps**: cutting a
+  ripe crop takes every ripe crop of the same kind in the three by three patch about it, an
+  iron hoe the five by five (`reap:N` on the tool, at most 2, checked at load); fruit on
+  trees is still picked one leaf at a time. Each crop
+  reaped gives its harvest and experience as if cut on its own, so a field goes faster, not
+  richer. The tooltip says so ("Reaps ripe crops in a 3×3 patch").
 - A **taming treat** (Cooking 27) is taken by any animal you are skilled enough to tame,
   and wins its trust twice as fast as its own food (`taming_treat`, `trust:2`).
 - **Seed mix** (Cooking 8) readies any kept animal to breed (`breeding_feed`).
@@ -175,7 +180,11 @@ thing. Every warm pelt is fur (a bear gives two), rabbit hide is hide, duck eggs
 bear fat is lard, bright feathers are feathers, claws are fangs, glimmer dust is moon dust;
 fired clay replaces unfired pots, unfired vials and fired bricks, and tin ore goes straight
 into bronze at the crucible (Oct 14: the bronze blend between them is gone). Flint comes from gravel, one break in eight (tools.ron's `instead`;
-gravel a player placed gives none).
+gravel a player placed gives none). Twine comes from tall grass cut with a knife, one cut in
+five, and a better knife finds more (`by: "knife"`: the knife's yield adds to the chance, so
+a stone knife is 1 in 4, copper 3 in 10, iron 7 in 20); by hand, tall grass gives nothing.
+The recipe book shows both: each `instead` is a way to get its item ("Cut from Tall Grass
+with a Wooden Knife or better (20%+)"), and each knife lists twine among its uses.
 
 Raw and cooked rabbit and chicken were the same meat (Cooking 1, the same experience and
 healing) and are **small game** now (Oct 14). A package's blocks file lists what it renamed

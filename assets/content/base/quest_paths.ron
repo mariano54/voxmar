@@ -23,6 +23,8 @@
         (age: "farm", branch: "cooking", title: "Kitchen", icon: "bread"),
         (age: "farm", branch: "husbandry", title: "Husbandry", icon: "egg"),
         (age: "farm", branch: "home", title: "Home", icon: "candle"),
+        (age: "farm", branch: "rooms", title: "Rooms", icon: "cottage_stove"),
+        (age: "farm", branch: "callers", title: "Callers", icon: "wooden_door"),
         (age: "farm", branch: "hunter", title: "Hunting", icon: "jerky"),
         (age: "farm", branch: "combat", title: "Combat", icon: "short_bow"),
         (age: "farm", branch: "fishing", title: "Fishing", icon: "fishing_rod"),

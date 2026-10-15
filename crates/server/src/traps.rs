@@ -170,6 +170,7 @@ impl Server {
         let player = self.players.get_mut(&agent).expect("checked above");
         let found = loot::roll(&species.loot, &moment, || player.draw(crate::save::Draw::Catch)[0]);
         let name = species.def.name.clone();
+        let trapped = name.clone();
         let page = Self::page_of(&species.def);
         let kill = species.xp_skill.map(|skill| (skill, species.def.xp.kill));
         let mut journal: Vec<(voxmar_engine::journal::Page, String, u32)> = page.map(|page| (page, name, 1)).into_iter().collect();
@@ -189,6 +190,8 @@ impl Server {
         for (page, name, times) in journal {
             self.discover(agent, page, &name, times);
         }
+        // For a quest's `Trapped`.
+        self.tally(agent, "trapped", &trapped, 1);
     }
 
     /// A block changed: a sprung trap broken or replaced loses its catch.
@@ -263,6 +266,7 @@ mod tests {
         server.take_from_trap(1, snare);
         assert_eq!(named(&server, snare), "base:snare", "set again");
         assert!(hunter_xp(&server) > before, "the kill's experience");
+        assert_eq!(server.players[&1].tallies.get("trapped:base:rabbit"), Some(&1), "tallied for quests");
         let carried: u32 = server.players[&1].inventory.slots.iter().flatten().map(|s| s.count as u32).sum();
         assert!(carried > 0, "its loot came to hand");
         // Taken once: nothing more.
