@@ -289,6 +289,31 @@ mod tests {
         assert_eq!(server.players[&1].vitals.home, None);
     }
 
+    /// A flood that washes the bed away leaves no ghost home either.
+    #[test]
+    fn a_bed_washed_away_is_forgotten() {
+        let mut server = crate::test_server();
+        player(&mut server);
+        let floor = ColumnPos::of_block(server.spawn.floor().as_ivec3()).origin() + IVec3::new(8, server.spawn.y as i32 + 4, 8);
+        let stone = server.content.blocks.expect("base:cobblestone");
+        for x in -3..=3 { for z in -3..=3 {
+            server.set_block(floor + IVec3::new(x, 0, z), stone);
+        }}
+        let bed = floor + IVec3::Y;
+        server.set_block(bed, server.content.blocks.expect("base:sleeping_bag"));
+        server.players.get_mut(&1).unwrap().bed = Some(bed.as_vec3() + Vec3::new(0.5, 1.0, 0.5));
+        server.set_block(bed + IVec3::X, server.content.blocks.expect("base:water"));
+        for _ in 0..200 {
+            server.tick += 1;
+            server.flow();
+            if server.players[&1].bed.is_none() {
+                break;
+            }
+        }
+        assert_ne!(server.block(bed), server.content.blocks.id("base:sleeping_bag"), "the water took the bag");
+        assert_eq!(server.players[&1].bed, None, "and the bed is forgotten");
+    }
+
     /// Home is the hearth lit as home while it burns, else the last bed: a hearth broken
     /// sends its player home to their bed, and lit again it is home again.
     #[test]
