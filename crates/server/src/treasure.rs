@@ -57,15 +57,16 @@ impl Server {
         self.open_chest(pos, &chest);
         // Opened, it shows what it held, as any chest does.
         self.open_store(agent, pos);
-        self.wake_beside(pos, &chest);
+        self.wake_beside(agent, pos, &chest);
     }
 
     /// Wakes what slept beside the chest at `pos` as it opened (`wakes`), each on its chance,
     /// over the chest, where the floor it was left on has room.
-    fn wake_beside(&mut self, pos: IVec3, chest: &Chest) {
+    fn wake_beside(&mut self, agent: PlayerId, pos: IVec3, chest: &Chest) {
         for (i, &(species, (low, high), chance)) in chest.wakes.iter().enumerate() {
-            // By the world's count of rolls, never the tick it is opened on.
-            let roll = self.meta.next_roll(crate::save::ROLL_WAKES);
+            // By the opener's own count of wakes, never the tick it is opened on or what
+            // else the world rolled first.
+            let roll = self.draw_for(agent, crate::save::Draw::Wake);
             if roll[0] >= chance {
                 continue;
             }
@@ -206,13 +207,18 @@ mod tests {
                 player.inventory.add(pick, 1);
                 player.selected = 0;
                 server.pick_lock(1, pos);
-                opened.push((server.block(pos) != Some(blocks.expect(chest)), server.creatures.live.len()));
+                let open = server.block(pos) != Some(blocks.expect(chest));
+                let wakes = if open { server.content.treasure.chest(blocks.expect(chest)).map_or(0, |c| c.wakes.len()) } else { 0 };
+                opened.push((open, server.creatures.live.len(), wakes));
             }
-            (opened, server.players[&1].draws.locks, server.meta.rolls)
+            (opened, server.players[&1].draws.locks, server.players[&1].draws.wakes)
         };
         let first = tried(1_000);
         let (lucky, woke) = first.0.split_at(24);
         assert_eq!(first.1, 24, "each lock tried on luck counted on");
+        let wakes: usize = first.0.iter().map(|t| t.2).sum();
+        assert!(wakes > 0, "no opened chest had anything to wake: {:?}", first.0);
+        assert_eq!(first.2, wakes as u64, "each of an opened chest's wakes counted on");
         assert!(lucky.iter().any(|t| t.0) && lucky.iter().any(|t| !t.0), "24 lucky tries all went alike: {lucky:?}");
         assert!(woke.iter().any(|t| t.1 > 0) && woke.iter().any(|t| t.1 == 0), "24 opened chests all woke alike: {woke:?}");
         assert_eq!(tried(1_377), first, "the same locks tried later went otherwise");

@@ -456,7 +456,11 @@ impl Server {
         let mutation = genes::MUTATION * (1.0 + 4.0 * aether.clamp(0.0, 1.0));
         let mut born = 0;
         for i in 0..count {
-            let Some(id) = self.spawn_creature(species, at + Vec3::new(0.3 * i as f32, 0.0, 0.3), seed ^ self.tick ^ i as u64) else { continue };
+            // Each young's genes, looks and mind by the world's count of rolls, never by the
+            // tick it is born on.
+            let [g, h] = self.meta.next_roll(crate::save::ROLL_YOUNG);
+            let salt = seed ^ (u64::from(g.to_bits()) << 32 | u64::from(h.to_bits()));
+            let Some(id) = self.spawn_creature(species, at + Vec3::new(0.3 * i as f32, 0.0, 0.3), salt) else { continue };
             born += 1;
             let def = &self.content.creatures.get(species).def;
             let young = self.creatures.live.get_mut(&id).expect("just made");
@@ -1411,7 +1415,7 @@ mod tests {
                 server.creatures.live.get_mut(&hen).unwrap().products_due[0] = 0;
                 server.tick_husbandry();
                 server.tick += EVERY;
-                let mut lying: Vec<_> = server.items.all.drain().map(|(_, d)| (d.stack.item, d.stack.count, d.body.position.to_array(), d.body.velocity.to_array())).collect();
+                let mut lying: Vec<_> = server.items.take_all().map(|d| (d.stack.item, d.stack.count, d.body.position.to_array(), d.body.velocity.to_array())).collect();
                 lying.sort_by(|a, b| a.partial_cmp(b).unwrap());
                 laid.push(lying);
             }
@@ -1424,15 +1428,20 @@ mod tests {
                     (parent.ready_until, parent.breeds_again) = (server.tick + 100, 0);
                 }
                 server.breed(a, b);
-                litters.push(server.creatures.live.len() - 2);
+                let mut young: Vec<_> = server.creatures.live.iter().filter(|&(&id, _)| id != a && id != b).map(|(&id, c)| (id, c.genome.clone(), c.seed)).collect();
+                young.sort_by_key(|y| y.0);
+                litters.push(young);
                 server.creatures.live.retain(|&id, _| id == a || id == b);
             }
             (laid, litters, server.meta.rolls)
         };
         let first = kept_at(1_000);
         assert!(first.0.iter().all(|l| !l.is_empty()), "a hen due to lay laid nothing: {:?}", first.0);
-        assert_eq!(first.2, 12 + 16, "each lay and litter counted on");
-        assert!(first.1.windows(2).any(|w| w[0] != w[1]), "sixteen litters all alike: {:?}", first.1);
+        let born: usize = first.1.iter().map(Vec::len).sum();
+        assert_eq!(first.2, (12 + 16 + born) as u64, "each lay, litter and young counted on");
+        assert!(first.1.windows(2).any(|w| w[0].len() != w[1].len()), "sixteen litters all one size: {:?}", first.1.iter().map(Vec::len).collect::<Vec<_>>());
+        let genomes: Vec<_> = first.1.iter().flatten().map(|y| &y.1).collect();
+        assert!(genomes.windows(2).any(|w| w[0] != w[1]), "every young born with the same genes");
         assert_eq!(kept_at(1_377), first, "the same lays and litters later went otherwise");
     }
 }

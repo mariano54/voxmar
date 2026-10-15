@@ -1194,7 +1194,8 @@ impl Server {
         }
     }
 
-    /// Reward `gifts` to `player`, from creature `source` (whose id seeds the draws).
+    /// Reward `gifts` to `player`, from creature `source` (where those that point the way
+    /// start from); what is drawn, by the player's own count of rewards.
     fn hand_out(&mut self, player: PlayerId, source: u32, gifts: &[ResolvedReward]) {
         for gift in gifts {
             match *gift {
@@ -1240,7 +1241,9 @@ impl Server {
                     p.connection.send(ServerMessage::Chat { kind: ChatKind::Chat, text });
                 }
                 ResolvedReward::Item(item, (low, high)) => {
-                    let count = low + (unit_from(mix(self.tick, source as u64 ^ item.0 as u64)) * (high - low + 1) as f32) as u8;
+                    // By the player's own count of rewards, never the tick it is given on.
+                    let roll = self.draw_for(player, crate::save::Draw::Reward)[0];
+                    let count = low + (roll * (high - low + 1) as f32) as u8;
                     let Some(p) = self.players.get_mut(&player) else { return };
                     let left = p.inventory.add(item, count.min(high));
                     p.changed(traits::INVENTORY);
@@ -1267,7 +1270,8 @@ impl Server {
                     if open.is_empty() {
                         continue;
                     }
-                    let pick = ((unit_from(mix(self.tick, source as u64 ^ 0x0f07)) * open.len() as f32) as usize).min(open.len() - 1);
+                    let roll = self.draw_for(player, crate::save::Draw::Reward)[0];
+                    let pick = ((roll * open.len() as f32) as usize).min(open.len() - 1);
                     self.hand_out(player, source, &open[pick..=pick]);
                 }
                 ResolvedReward::Weather(ref name, seconds) => {
@@ -6276,5 +6280,38 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// What a wanderer gives, how many and which of several, is drawn by the player's own
+    /// count of rewards: the same rewards given later, after the world rolled otherwise,
+    /// give the same, and each draw counts on.
+    #[test]
+    fn rewards_draw_by_the_players_count_not_the_tick() {
+        let given = |tick: u64, others: usize| {
+            let mut server = fixture();
+            server.meta.draw_key = 0x0d1a;
+            server.players.get_mut(&1).unwrap().draw_key = crate::player::player_draw_key(0x0d1a, "Tëster");
+            server.tick = tick;
+            let (stick, cobble) = (server.content.blocks.expect("base:stick"), server.content.blocks.expect("base:cobblestone"));
+            let mut got = Vec::new();
+            for _ in 0..16 {
+                for _ in 0..others {
+                    server.meta.next_loot();
+                    server.meta.next_roll(crate::save::ROLL_LITTER);
+                }
+                let player = server.players.get_mut(&1).unwrap();
+                player.inventory.clear(|_| true);
+                server.hand_out(1, 0, &[ResolvedReward::Item(stick, (1, 4)), ResolvedReward::OneOf(vec![ResolvedReward::Item(stick, (1, 1)), ResolvedReward::Item(cobble, (1, 1))])]);
+                let inventory = &server.players[&1].inventory;
+                got.push((inventory.count(stick), inventory.count(cobble)));
+                server.tick += 37;
+            }
+            (got, server.players[&1].draws.rewards)
+        };
+        let first = given(1_000, 0);
+        assert_eq!(first.1, 16 * 3, "each count, pick and picked count drawn on");
+        assert!(first.0.windows(2).any(|w| w[0].0 != w[1].0), "sixteen rewards gave the same count: {:?}", first.0);
+        assert!(first.0.iter().any(|g| g.1 > 0) && first.0.iter().any(|g| g.1 == 0), "sixteen picks of one of two all went alike: {:?}", first.0);
+        assert_eq!(given(1_377, 3), first, "the same rewards given later, after other rolls, gave otherwise");
     }
 }

@@ -71,7 +71,7 @@ impl Dropped {
 /// Every dropped item, and what players were last told.
 #[derive(Default)]
 pub struct Items {
-    pub(crate) all: FxHashMap<u32, Dropped>,
+    all: FxHashMap<u32, Dropped>,
     next_id: u32,
     /// Changed since players were last told.
     changed: FxHashSet<u32>,
@@ -80,6 +80,12 @@ pub struct Items {
 }
 
 impl Items {
+    /// Every drop lying in the world, taken out of it, for tests to look over.
+    #[cfg(test)]
+    pub(crate) fn take_all(&mut self) -> impl Iterator<Item = Dropped> + '_ {
+        self.all.drain().map(|(_, d)| d)
+    }
+
     /// Older saves may record several spellings of one keeper. Only hashes of known names
     /// are migrated; a hash with no surviving spelling must remain protected.
     pub(crate) fn canonical_owner(&mut self, aliases: &[u64], canonical: u64) {
@@ -472,13 +478,15 @@ mod tests {
         let def = |name: &str| content.crops.iter().find(|(_, c)| c.def.name == name).unwrap().1.def.clone();
         let tomato = def("base:tomato");
         let chance = tomato.unsown.unwrap();
-        // 10,000 cells at one tick: the share's spread is 0.0036, so this is about three
-        // spreads either side.
-        let cells = (0..100).flat_map(|z| (0..100).map(move |x| IVec3::new(x, 70, z)));
-        let gave = cells.filter(|&cell| unsown_roll(&tomato, random3(12_345, cell, 0x5eed)[0])).count() as f32 / 10_000.0;
+        // A player's first 10,000 forage draws, as `unsown_gives` draws them: the share's
+        // spread is 0.0036, so this is about three spreads either side.
+        use crate::save::{Draw, numbered_draws};
+        let key = crate::player::player_draw_key(0x0d1a, "ada");
+        let forage = |n: u64| numbered_draws(key, Draw::Forage.salt(), n)[0];
+        let gave = (0..10_000).filter(|&n| unsown_roll(&tomato, forage(n))).count() as f32 / 10_000.0;
         assert!((chance - 0.01..=chance + 0.01).contains(&gave), "{gave} of tomatoes nobody sowed gave, for a chance of {chance}");
         let apple = def("base:apple");
-        assert!((0..1000).all(|x| unsown_roll(&apple, random3(12_345, IVec3::new(x, 70, 0), 0x5eed)[0])), "tree fruit held back");
+        assert!((0..1000).all(|n| unsown_roll(&apple, forage(n))), "tree fruit held back");
     }
 
     /// Where a broken block's drop pops to is drawn by the world's count of drops popped,

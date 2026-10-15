@@ -328,7 +328,7 @@ impl Server {
     }
 
     /// What a ripe crop at `pos` yields for `agent`, popped out into the world, and the
-    /// experience it earns. `salt` tells apart several harvests in one tick.
+    /// experience it earns. `salt` is mixed into where its drops pop.
     /// `sown` adds the sowing's experience (a crop broken at harvest, not one picked to
     /// fruit again).
     pub(crate) fn harvest(&mut self, agent: PlayerId, id: CropId, pos: IVec3, salt: u32, sown: bool) {
@@ -527,7 +527,7 @@ mod tests {
             let mut found = Vec::new();
             for salt in 0..12 {
                 server.yield_loot(1, wheat, &loot, pos, salt);
-                let mut lying: Vec<_> = server.items.all.drain().map(|(_, d)| (d.stack.item, d.stack.count, d.body.position.to_array(), d.body.velocity.to_array())).collect();
+                let mut lying: Vec<_> = server.items.take_all().map(|d| (d.stack.item, d.stack.count, d.body.position.to_array(), d.body.velocity.to_array())).collect();
                 lying.sort_by(|a, b| a.partial_cmp(b).unwrap());
                 found.push(lying);
             }
