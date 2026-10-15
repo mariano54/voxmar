@@ -155,6 +155,8 @@ pub struct WorldMeta {
 pub const ROLL_PRODUCT: u64 = 0x9a0d;
 pub const ROLL_LITTER: u64 = 0x1177;
 pub const ROLL_YOUNG: u64 = 0x7a46;
+pub const ROLL_GRAZE: u64 = 0x6a2e;
+pub const ROLL_SUMMON: u64 = 0x5c3d;
 
 /// The key the world's popped drops scatter by, made from its draw key: where a drop lands
 /// and how it flies are seen by every client, and the draw key must not be read back from
@@ -1417,7 +1419,7 @@ mod tests {
         assert_eq!(draws, Draws { strikes: 2, cooks: 1, ..Draws::default() });
         let kinds = [Draw::Strike, Draw::Blow, Draw::Feed, Draw::Cook, Draw::Recover, Draw::Flourish, Draw::Mine, Draw::Yield, Draw::Forage, Draw::Harvest, Draw::Lock, Draw::Catch, Draw::Wake, Draw::Reward];
         // Every kind's salt, the world's kinds of roll and its loot rolls' are told apart.
-        let salts: Vec<u64> = kinds.iter().map(|k| k.salt()).chain([ROLL_PRODUCT, ROLL_LITTER, ROLL_YOUNG, 0x1007]).collect();
+        let salts: Vec<u64> = kinds.iter().map(|k| k.salt()).chain([ROLL_PRODUCT, ROLL_LITTER, ROLL_YOUNG, ROLL_GRAZE, ROLL_SUMMON, 0x1007]).collect();
         let unique: std::collections::BTreeSet<_> = salts.iter().collect();
         assert_eq!(unique.len(), salts.len(), "two kinds of roll share a salt: {salts:x?}");
         let others: Vec<_> = kinds.iter().skip(1).map(|k| numbered_draws(ada, k.salt(), 0)).chain([numbered_draws(ada, Draw::Strike.salt(), 1), numbered_draws(bea, Draw::Strike.salt(), 0)]).collect();

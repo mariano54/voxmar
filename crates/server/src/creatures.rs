@@ -858,7 +858,8 @@ impl Server {
                 creature.fed = day;
             }
             // Grazing wears the land: now and then a tuft goes for good.
-            let roll = unit_from(mix(self.creatures.live[&id].seed, self.tick ^ 0x6a2e));
+            // By the world's count of rolls, never the tick it grazes on.
+            let roll = self.meta.next_roll(crate::save::ROLL_GRAZE)[0];
             let block = self.block(cell);
             if roll < 0.3 && block.is_some_and(|b| self.content.blocks.info(b).replaceable && !self.content.blocks.info(b).solid) {
                 self.set_block(cell, BlockId::AIR);
@@ -3874,5 +3875,35 @@ mod review_tests {
             assert!(!ground.water_at(home) && !ground.water_at(home - IVec3::Y), "its home went over the water at {} (tick {t})", creature.home - c.as_vec3());
         }
         assert!(waded, "the fixture means it to be led through the pool: at {}", server.creatures.live[&id].body.position - c.as_vec3());
+    }
+
+    /// Whether a grazed tuft goes for good is drawn by the world's count of rolls, never the
+    /// tick it is grazed on: the same grazing later goes the same way, and each counts on.
+    #[test]
+    fn a_grazed_tuft_goes_by_the_worlds_count_not_the_tick() {
+        let grazed = |tick: u64| {
+            let mut server = crate::test_server();
+            server.meta.draw_key = 0x0d1a;
+            let at = server.spawn.floor().as_ivec3();
+            server.load_area(at - IVec3::new(2, 0, 2), at + IVec3::new(26, 0, 2));
+            let species = server.content.creatures.id("base:rabbit").expect("rabbits");
+            let id = server.spawn_creature(species, server.spawn, 1).expect("room");
+            let grass = server.content.blocks.expect("base:short_grass");
+            server.tick = tick;
+            let mut gone = Vec::new();
+            for x in 0..24 {
+                let cell = at + IVec3::new(x, 0, 0);
+                server.set_block(cell, grass);
+                let neighbours = Neighbours::of(&server.creatures.live);
+                server.carry_out(id, Decision { eat: Some(cell), ..Default::default() }, &neighbours);
+                gone.push(server.block(cell) != Some(grass));
+                server.tick += 37;
+            }
+            (gone, server.meta.rolls)
+        };
+        let first = grazed(1_000);
+        assert_eq!(first.1, 24, "each grazing counted on");
+        assert!(first.0.iter().any(|&g| g) && first.0.iter().any(|&g| !g), "24 grazings all went alike: {:?}", first.0);
+        assert_eq!(grazed(1_377), first, "the same grazing later went otherwise");
     }
 }
