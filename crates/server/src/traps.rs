@@ -364,23 +364,26 @@ mod tests {
         assert_eq!(taken(1_377, 3), (first, rolls), "the same catches taken later, after other rolls, gave otherwise");
     }
 
-    /// A loose rabbit summoned into a set snare, with a player by it to flee from, is caught
-    /// whatever tick it arrives on: arriving just after a look, it is out of the cell by the
-    /// next, but the traps know where it arrived and the cells it crossed since.
+    /// A rabbit summoned into a set snare, with a player by it as the gate's snare step
+    /// stands, held or loose, is caught whatever tick it arrives on. Held, it is there at the
+    /// traps' next look; loose, arriving just after a look, it is out of the cell by the next,
+    /// but the traps know where it arrived and the cells it crossed since.
     #[test]
-    fn a_loose_rabbit_that_runs_out_of_a_snare_between_looks_is_caught() {
-        for phase in 0..Tier::Medium.period() {
-            let (mut server, snare) = field(1);
-            server.players.get_mut(&1).unwrap().position = Vec3::new(snare.x as f32 + 0.5, snare.y as f32, snare.z as f32 - 2.5);
-            server.tick = 1000 + phase;
-            let at = [snare.x + 2, snare.y, snare.z].map(|v| v.to_string());
-            let args: Vec<String> = ["rabbit", "1"].into_iter().map(str::to_owned).chain(at).collect();
-            server.summon(crate::commands::Source::Player(1), &args).expect("summoned");
-            let caught = (0..Tier::Medium.period()).position(|_| {
-                server.tick();
-                server.catches.get(snare).is_some()
-            });
-            assert!(caught.is_some(), "arriving {phase} ticks past a look, a loose rabbit in the snare was not caught at the next");
+    fn a_rabbit_summoned_into_a_snare_held_or_loose_is_caught() {
+        for held in [true, false] {
+            for phase in 0..Tier::Medium.period() {
+                let (mut server, snare) = field(1);
+                server.players.get_mut(&1).unwrap().position = Vec3::new(snare.x as f32 + 0.5, snare.y as f32, snare.z as f32 - 2.5);
+                server.tick = 1000 + phase;
+                let at = [snare.x + 2, snare.y, snare.z].map(|v| v.to_string());
+                let args: Vec<String> = ["rabbit", "1"].into_iter().map(str::to_owned).chain(at).chain(held.then(|| "held".to_owned())).collect();
+                server.summon(crate::commands::Source::Player(1), &args).expect("summoned");
+                let caught = (0..Tier::Medium.period()).position(|_| {
+                    server.tick();
+                    server.catches.get(snare).is_some()
+                });
+                assert!(caught.is_some(), "arriving {phase} ticks past a look, a rabbit (held {held}) in the snare was not caught at the next");
+            }
         }
     }
 

@@ -83,6 +83,12 @@ impl Console {
         self.lines.iter().filter(move |line| line.at >= since).map(|line| line.text.as_str())
     }
 
+    /// The lines received after `after` (seconds since startup), oldest first: the answers
+    /// to what was sent at that moment, never a line that came in the same frame.
+    pub fn after(&self, after: f32) -> impl Iterator<Item = &str> {
+        self.lines.iter().filter(move |line| line.at > after).map(|line| line.text.as_str())
+    }
+
     /// Runs these lines (commands with a `/`) as soon as the game has started.
     pub fn run_when_joined(&mut self, lines: Vec<String>) {
         self.pending.extend(lines);
