@@ -554,6 +554,16 @@ impl Creatures {
         self.barks.push((id, bark));
     }
 
+    /// The barks to hear now, of creatures shown; those of creatures told of but not yet
+    /// built (with their first view, or behind the spawns a frame allows) wait for them,
+    /// and those of creatures not here at all are dropped.
+    fn barks_heard(&mut self) -> Vec<(u32, voxmar_engine::creature::Bark)> {
+        let (heard, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut self.barks).into_iter().partition(|(id, _)| self.shown.contains_key(id));
+        let coming = |id: u32| self.waiting.iter().chain(&self.inbox).any(|view| view.id == id);
+        self.barks = rest.into_iter().filter(|&(id, _)| coming(id)).collect();
+        heard
+    }
+
     /// Takes what the server sent.
     pub fn receive(&mut self, changed: Vec<CreatureView>, gone: Vec<CreatureGone>) {
         self.inbox.extend(changed);
@@ -996,7 +1006,7 @@ fn show(
             sounds.push(sound(Sound::Hurt, id, &shown.view, shown.position, 0.0));
         }
     }
-    for (id, bark) in std::mem::take(&mut creatures.barks) {
+    for (id, bark) in creatures.barks_heard() {
         if let Some(shown) = creatures.shown.get(&id) {
             sounds.push(sound(Sound::of_bark(bark), id, &shown.view, shown.position, 0.0));
         }
@@ -2042,6 +2052,14 @@ mod tests {
         creatures.receive(vec![], vec![CreatureGone { id: 2, died: false }]);
         creatures.receive(vec![view(2)], vec![]);
         assert_eq!(creatures.inbox.iter().map(|v| v.id).collect::<Vec<_>>(), [2]);
+        // A bark from one told of but not yet built waits for it; one from a stranger goes.
+        creatures.bark(2, voxmar_engine::creature::Bark::Greet);
+        creatures.bark(9, voxmar_engine::creature::Bark::Alarm);
+        assert_eq!(creatures.barks_heard(), []);
+        assert_eq!(creatures.barks, [(2, voxmar_engine::creature::Bark::Greet)]);
+        creatures.inbox.clear();
+        assert_eq!(creatures.barks_heard(), []);
+        assert!(creatures.barks.is_empty(), "a bark kept for one never coming");
     }
 
     #[test]
