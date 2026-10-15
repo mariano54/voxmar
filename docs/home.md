@@ -405,8 +405,26 @@ with the odd ember (`smoke` in fire.ron, the client's emitters) and it crackles 
 every player which blocks smoulder when that changes (`ServerMessage::Smoulders`, protocol 50),
 since only it knows what changed (a village's thatch by its own torches does not smoulder).
 The first time in a session a player's own change sets something smouldering (a torch set, a
-hearth lit, thatch laid by a flame), they are told why in one line (`fire.smoulders`: "Thatch
-and wattle by a flame smoulder, then catch: move the flame or break them in time.").
+hearth lit, thatch laid by a flame), they are told why in one line, with the ways round it
+(`fire.smoulders`: "Thatch and wattle by a flame smoulder, then catch: move the flame or break
+them in time. Daub the wattle, build in stone, or light with candles."). A candle lights a home
+(its `light` tag counts toward snug's two lights and up) with no flame in it, and is made by
+hand at Crafting 3 from twine and hide, in the Nomad age. A player joining is told at once what
+smoulders, so its smoke shows from their first frame.
+
+An older world's home hearth, relit for its player as they join (`kindle_home`), sets nothing
+smouldering: they changed nothing, and a roof should not go up under someone who just logged
+in. Instead they are told once of the nearest thatch or wattle its fire would reach, and how
+many steps off (`fire.near_hearth`). Their next lighting by hand does set it smouldering.
+
+**Homes catch only from their owner** (fire.ron `homes_catch_only_from_owner`, on unless a pack
+turns it off). Every fire remembers whose it is: the player whose change started it (a torch set,
+a hearth lit, thatch laid by a flame), carried on as it spreads and saved with it. A block in a
+player's home box (`home_reach` across, `home_up` up and `home_down` down from a home hearth lit
+by them, or from where an online player's home is) only smoulders or catches from that player's
+fire. Another player's torch beside your wattle wall fizzles, and a neighbour's burning shed
+stops at your home's edge; your own careless torch still burns your own roof. A fire a command
+or the world started belongs to no one, so it never takes a home either.
 
 There is no chance in it: the same fire burns the same way every time (catching before burning
 out, in order of place). Only block changes are watched (a player's, a command's, a flood's in

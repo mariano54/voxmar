@@ -6213,7 +6213,7 @@ mod tests {
         player.position = Vec3::new(128.5, 200.0, 140.5);
         let spot = IVec3::new(128, 200, 150);
         assert!(!comes_at(&server, "neighbours", spot), "a cold hearth is no home to call on");
-        server.lit.insert(core, crate::hearth::Lit { position: core.to_array(), structure: "base:hearth".into(), until: u64::MAX });
+        server.lit.insert(core, crate::hearth::Lit { position: core.to_array(), structure: "base:hearth".into(), until: u64::MAX, owner: None });
         assert!(comes_at(&server, "neighbours", spot), "a burning one is");
         server.lit.clear();
         server.players.get_mut(&1).unwrap().bed = Some(Vec3::new(130.5, 200.0, 130.5));

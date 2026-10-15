@@ -344,6 +344,8 @@ impl Server {
     /// completes first: the player saw it done before sending this.
     pub(crate) fn handle_message(&mut self, id: PlayerId, message: ClientMessage, at: Instant) {
         self.arrival = at;
+        // A fire this sets off is theirs.
+        self.fire_origin = self.players.get(&id).map(|p| p.name.clone());
         if let Some(player) = self.players.get_mut(&id) {
             player.last_heard = player.last_heard.max(at);
         }
@@ -378,6 +380,7 @@ impl Server {
         }
         // What they did that set something smouldering, they are told why.
         self.blaze_hint(id);
+        self.fire_origin = None;
     }
 
     /// A player looked an item up in the recipe viewer: counted once for quests, if the item
