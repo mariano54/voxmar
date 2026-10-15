@@ -246,6 +246,11 @@ impl CookingRegistry {
         inputs.into_iter().flat_map(move |&input| self.by_input[&input].iter().map(move |&i| (input, &self.recipes[i])))
     }
 
+    /// Every recipe, in the order defined.
+    pub fn recipes(&self) -> impl Iterator<Item = &Recipe> {
+        self.recipes.iter()
+    }
+
     pub fn len(&self) -> usize {
         self.recipes.len()
     }
