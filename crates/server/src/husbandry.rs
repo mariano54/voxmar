@@ -131,7 +131,9 @@ impl Server {
                 return;
             }
             let (item, (low, high), every, xp) = (species.products[index], product.count, product.every, product.xp);
-            let [roll, ..] = random3(self.tick, creature.body.position.floor().as_ivec3(), id);
+            // By the player's count of products taken, never by the tick.
+            let Some([roll, _]) = self.players.get_mut(&player).map(|p| p.draw(crate::save::Draw::Yield)) else { return };
+            let creature = &self.creatures.live[&id];
             let count = yielded(low + ((roll * (high - low + 1) as f32) as u8).min(high - low), creature.traits.yield_, roll);
             // Condition sets how soon the next is due (0.5 to 1.2 as often), its yield gene
             // how many come.
@@ -795,6 +797,40 @@ mod tests {
             }
         }
         keys
+    }
+
+    /// How much a kept animal yields is drawn by the keeper's count of products taken, not
+    /// the tick it is taken on, and each counts on.
+    #[test]
+    fn a_yield_draws_by_the_keepers_count_not_the_tick() {
+        let taken = |tick: u64| {
+            let mut server = test_server();
+            let (player, _client) = keeper(&mut server);
+            server.players.get_mut(&player).unwrap().draw_key = crate::player::player_draw_key(0x0d1a, "test");
+            let (species, index) = server.content.creatures.iter().find_map(|(id, c)| c.def.products.iter().position(|p| p.tool.as_deref() == Some("shears")).map(|i| (id, i))).expect("one sheared");
+            let shears = server.content.blocks.expect("base:shears");
+            server.players.get_mut(&player).unwrap().inventory.add(shears, 1);
+            let id = server.spawn_creature(species, server.spawn, 2).expect("room");
+            let kept = server.creatures.live.get_mut(&id).unwrap();
+            (kept.owner, kept.owner_id) = (Some("test".into()), Some(player));
+            let product = server.content.creatures.get(species).products[index];
+            server.tick = tick;
+            (0..12)
+                .map(|_| {
+                    server.creatures.live.get_mut(&id).unwrap().products_due[index] = 0;
+                    let before = server.players[&player].inventory.count(product);
+                    server.tend(player, id);
+                    server.players[&player].inventory.count(product) - before
+                })
+                .collect::<Vec<_>>()
+                .into_iter()
+                .chain([server.players[&player].draws.yields as u32])
+                .collect::<Vec<_>>()
+        };
+        let first = taken(1_000);
+        assert_eq!(first.last(), Some(&12), "each product taken counted on");
+        assert!(first[..12].iter().all(|&n| n > 0), "a product taken gave nothing: {first:?}");
+        assert_eq!(taken(1_377), first, "the same products taken later yielded otherwise");
     }
 
     #[test]
