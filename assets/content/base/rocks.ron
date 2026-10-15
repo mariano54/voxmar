@@ -2,7 +2,10 @@
 // rock, independent of the climate, so a desert may lie on sandstone or on granite. A
 // province's share of the world is its weight times its rarity. Stones are drawn by
 // weight; tagged stones join automatically once blocks carry tags. Bare slopes, cliffs,
-// boulders and scree all show a province's stones, so each region reads differently.
+// boulders and scree all show a province's stones, so each region reads differently. The
+// hard ones (granite, diorite, andesite, basalt; `toolstone` in blocks.ron) are the stone
+// tools' heads: a player in limestone or sandstone country walks to find them, or mines
+// down to the deepslate under everything.
 (
     provinces: [
         (

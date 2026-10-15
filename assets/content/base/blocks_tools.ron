@@ -83,6 +83,9 @@
         (template: "drop", name: "wooden_hoe", tags: ["hoe", "tool", "tier:1", "speed:2"], all: (color: (150, 110, 70), action: Some("base:till"))),
         (template: "drop", name: "wooden_knife", tags: ["knife", "tool", "tier:1", "speed:2"], all: (color: (150, 110, 70))),
         // Stone: tier 2.
+        // A stone head: toolstone ground to an edge at a grindstone (recipes.ron), what every
+        // stone tool is hafted from.
+        (template: "drop", name: "stone_head", tags: ["tool_head"], all: (color: (120, 120, 125))),
         (template: "drop", name: "stone_pickaxe", tags: ["pickaxe", "tool", "tier:2", "speed:4", "yield:0.05"], all: (color: (120, 120, 125))),
         (template: "drop", name: "stone_axe", tags: ["axe", "tool", "tier:2", "speed:4", "yield:0.05"], all: (color: (120, 120, 125))),
         (template: "drop", name: "stone_shovel", tags: ["shovel", "tool", "tier:2", "speed:4", "yield:0.05"], all: (color: (120, 120, 125))),

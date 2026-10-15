@@ -51,12 +51,16 @@
         (pattern: [["{name}_planks"], ["stick"], ["stick"]], output: "wooden_shovel", skill: "core:engineering", level: 1, xp: 4),
         (pattern: [["{name}_planks", "{name}_planks"], ["", "stick"], ["", "stick"]], output: "wooden_hoe", skill: "core:engineering", level: 1, xp: 4),
         (pattern: [["{name}_planks"], ["stick"]], output: "wooden_knife", skill: "core:engineering", level: 1, xp: 4),
-        // Stone tools (tier 2), Engineering 1.
-        (pattern: [["cobblestone", "cobblestone", "cobblestone"], ["", "stick", ""], ["", "stick", ""]], output: "stone_pickaxe", skill: "core:engineering", level: 1, xp: 6),
-        (pattern: [["cobblestone", "cobblestone"], ["cobblestone", "stick"], ["", "stick"]], output: "stone_axe", skill: "core:engineering", level: 1, xp: 6),
-        (pattern: [["cobblestone"], ["stick"], ["stick"]], output: "stone_shovel", skill: "core:engineering", level: 1, xp: 6),
-        (pattern: [["cobblestone", "cobblestone"], ["", "stick"], ["", "stick"]], output: "stone_hoe", skill: "core:engineering", level: 1, xp: 6),
-        (pattern: [["cobblestone"], ["stick"]], output: "stone_knife", skill: "core:engineering", level: 1, xp: 6),
+        // Stone tools (tier 2), Engineering 1, hafted from stone heads: toolstone (hard rock,
+        // blocks.ron) ground at a grindstone, a wheel of cobble dressed with sand on two sticks.
+        // Soft stone will not take an edge, so a player finds the hard rock first.
+        (pattern: [["sand", "tag:cobbled"], ["stick", "stick"]], output: "grindstone", skill: "core:crafting", level: 1, xp: 6),
+        (ingredients: ["tag:toolstone"], output: "stone_head", near: "grindstone", skill: "core:crafting", level: 1, xp: 2),
+        (pattern: [["stone_head", "stone_head", "stone_head"], ["", "stick", ""], ["", "stick", ""]], output: "stone_pickaxe", skill: "core:engineering", level: 1, xp: 6),
+        (pattern: [["stone_head", "stone_head"], ["stone_head", "stick"], ["", "stick"]], output: "stone_axe", skill: "core:engineering", level: 1, xp: 6),
+        (pattern: [["stone_head"], ["stick"], ["stick"]], output: "stone_shovel", skill: "core:engineering", level: 1, xp: 6),
+        (pattern: [["stone_head", "stone_head"], ["", "stick"], ["", "stick"]], output: "stone_hoe", skill: "core:engineering", level: 1, xp: 6),
+        (pattern: [["stone_head"], ["stick"]], output: "stone_knife", skill: "core:engineering", level: 1, xp: 6),
         // Copper tools (tier 3), Engineering 5.
         (pattern: [["copper_ingot", "copper_ingot", "copper_ingot"], ["", "stick", ""], ["", "stick", ""]], output: "copper_pickaxe", skill: "core:engineering", level: 5, xp: 16),
         (pattern: [["copper_ingot", "copper_ingot"], ["copper_ingot", "stick"], ["", "stick"]], output: "copper_axe", skill: "core:engineering", level: 5, xp: 16),

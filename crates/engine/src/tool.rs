@@ -323,6 +323,39 @@ mod tests {
         assert!(refused.is_empty(), "cobble a bare hand cannot break: {refused:?}");
     }
 
+    /// Stone tools want hard rock (Mariano, Oct 15: stone should take searching): every
+    /// recipe of a tier-2 tool asks for something made only near a workshop block from
+    /// toolstone, never plain cobble; that block is made in the hand's grid; and toolstone is
+    /// found as natural rock, deepslate among it so mining down reaches it anywhere, while the
+    /// commonest stone is not.
+    #[test]
+    fn stone_tools_take_toolstone_ground_at_a_workshop() {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        let content = crate::content::Content::load(&assets).unwrap();
+        let blocks = &content.blocks;
+        let toolstone = |item: BlockId| blocks.def(item).has_tag("toolstone");
+        let natural: Vec<&str> = blocks.tagged("toolstone").filter(|&b| blocks.def(b).has_tag("natural")).map(|b| blocks.def(b).name.as_str()).collect();
+        assert!(natural.contains(&"base:deepslate"), "deepslate, under every province, is no toolstone: {natural:?}");
+        assert!(!toolstone(blocks.expect("base:stone")) && !toolstone(blocks.expect("base:cobblestone")), "plain stone takes an edge");
+        let tools: Vec<BlockId> = blocks.tagged("tool").filter(|&t| blocks.def(t).has_tag("tier:2")).collect();
+        assert!(!tools.is_empty(), "no tier-2 tools");
+        for tool in tools {
+            let name = &blocks.def(tool).name;
+            let recipes: Vec<&crate::craft::Recipe> = content.recipes.iter().filter(|r| r.output == tool).collect();
+            assert!(!recipes.is_empty(), "{name} has no recipe");
+            for recipe in recipes {
+                let ground: Vec<BlockId> = recipe.alternatives().into_iter().flatten().flatten().copied().filter(|&i| {
+                    let makes: Vec<&crate::craft::Recipe> = content.recipes.iter().filter(|r| r.output == i).collect();
+                    !makes.is_empty() && makes.iter().all(|r| r.near.is_some() && r.alternatives().into_iter().flatten().all(|cell| cell.iter().all(|&c| toolstone(c))))
+                }).collect();
+                let head = ground.first().unwrap_or_else(|| panic!("{name} is made without a head ground from toolstone"));
+                let near = content.recipes.iter().find(|r| r.output == *head).and_then(|r| r.near.clone()).unwrap();
+                let workshop = blocks.tagged(&near).find(|&b| content.recipes.iter().any(|r| r.output == b && !r.needs_table()));
+                assert!(workshop.is_some(), "no block tagged {near} is made in the hand's grid, for {name}");
+            }
+        }
+    }
+
     /// What Mining teaches rises with the level it asks (design draft 63): nothing a lower
     /// level breaks pays more than what a higher one does, so stone and coal never outpay
     /// the ores above them.

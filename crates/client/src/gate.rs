@@ -271,7 +271,7 @@ steps! {
     /// it open than closed.
     Overlay,
     /// Sticks and a crafting table from planks; the table placed and right clicked opens a
-    /// three-by-three grid, where cobblestone and sticks make a stone pickaxe. An iron ore
+    /// three-by-three grid, where stone heads and sticks make a stone pickaxe. An iron ore
     /// refuses the hand and a low Mining level, and breaks for the pickaxe at level 15,
     /// teaching Mining; a hoe tills dirt into farmland; cooked food takes a slot each; a rod
     /// cast into the pool catches a fish. Then the player dies: three items stay in hand,
@@ -438,6 +438,10 @@ steps! {
     /// made in the hand's grid from its recipe (flint and sticks in the base game) fells it,
     /// and the log comes to hand.
     Flint,
+    /// The workshop block a stone tool's head is made near (a grindstone in the base game)
+    /// draws by the fire; with the inventory open the client finds it within reach, and the
+    /// toolstone laid in the grid there is ground to a head.
+    Grind,
     /// A survival player's inventory search finds the stone pickaxe by "pick"; its recipe
     /// opened in the viewer finishes the "Look It Up" quest; the quest book's page for the
     /// pickaxe shows its recipe inline, an item clicked there opens the viewer, and Back
@@ -1849,6 +1853,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Recipes => recipes(world, gate, now, in_phase),
         Step::Chop => chop(world, gate, now),
         Step::Flint => flint(world, gate, now),
+        Step::Grind => grind(world, gate, now),
         Step::LookUp => look_up(world, gate, now, in_phase),
         Step::Refusal => refusal(world, gate, now, in_phase),
         Step::Merged => merged(world, gate, now, in_phase),
@@ -2611,6 +2616,8 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 let learnt = xp.saturating_sub(gate.count_before);
                 let result = if learnt > 0 { Ok(format!("four planks made a crafting table, {:.1} Engineering experience", learnt as f32 / 10.0)) } else { Err("a crafting table was made but taught no Engineering".into()) };
                 gate.check("workshop: table", result);
+                // Three stone heads for the pickaxe (the Grind step grinds them; here they are given).
+                world.resource::<Net>().command("give stone_head 3");
                 select(world, "base:crafting_table");
                 aim(world, table - IVec3::Y);
                 gate.advance(now);
@@ -2634,7 +2641,7 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
         }
         // Right clicking the table opens the inventory with a three-by-three grid, where
-        // three cobblestone over two sticks make a stone pickaxe.
+        // three stone heads over two sticks make a stone pickaxe.
         4 => {
             let open = world.resource::<UiState>().inventory_open && world.resource::<LocalPlayer>().station == Some(table);
             if !open {
@@ -2657,11 +2664,11 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
             gate.check("workshop: table: open", Ok(format!("a right click opened the table's grid of {shown} cells")));
             gate.count_before = skill_level(world, "core:engineering").1;
-            let laid = lay_and_craft(world, &[(0, "base:cobblestone"), (1, "base:cobblestone"), (2, "base:cobblestone"), (4, "base:stick"), (7, "base:stick")]);
+            let laid = lay_and_craft(world, &[(0, "base:stone_head"), (1, "base:stone_head"), (2, "base:stone_head"), (4, "base:stick"), (7, "base:stick")]);
             if laid {
                 gate.advance(now);
             } else {
-                fail(world, gate, "pickaxe", "no cobblestone or sticks for a pickaxe".into());
+                fail(world, gate, "pickaxe", "no stone heads or sticks for a pickaxe".into());
             }
         }
         5 => {
@@ -2670,7 +2677,7 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 if gate.shot(world, "table-grid").is_none() {
                     return;
                 }
-                gate.check("workshop: pickaxe", Ok("three cobblestone over two sticks made a stone pickaxe at the table".into()));
+                gate.check("workshop: pickaxe", Ok("three stone heads over two sticks made a stone pickaxe at the table".into()));
                 // Leaving the screen leaves the table.
                 world.resource_mut::<UiState>().inventory_open = false;
                 let net = world.resource::<Net>();
@@ -4505,7 +4512,7 @@ fn flint(world: &mut World, gate: &mut Gate, now: f32) {
     let content = world.resource::<Launch>().content.clone();
     let Some((log, tool, recipe)) = felled_by(&content) else {
         gate.check("flint", Err("no log in the loaded tools.ron asks for a tool at level 1 that the hand's grid can make".into()));
-        gate.next(Step::LookUp, now);
+        gate.next(Step::Grind, now);
         return;
     };
     let name = |b: BlockId| content.blocks.def(b).name.clone();
@@ -4518,7 +4525,7 @@ fn flint(world: &mut World, gate: &mut Gate, now: f32) {
         for item in [log, tool].into_iter().chain(recipe.cells().into_iter().flatten()) {
             net.command(&format!("clear {}", short(&name(item))));
         }
-        gate.next(Step::LookUp, now);
+        gate.next(Step::Grind, now);
     };
     match gate.phase {
         // An empty hand by a standing log: whatever the earlier steps left of the log, the
@@ -4624,6 +4631,99 @@ fn flint(world: &mut World, gate: &mut Gate, now: f32) {
             } else {
                 aim_at(world, block.as_vec3() + Vec3::splat(0.5));
                 mouse(world, MouseButton::Left, true);
+            }
+        }
+    }
+}
+
+/// Longest a grind stage may wait for the server.
+const GRIND_WAIT: f32 = 10.0;
+
+/// What a stone tool's head is ground from: the first recipe of something a tier-2 tool
+/// asks for that is made only `near` a block and only from toolstone, the toolstone it
+/// takes, and the block (with the tag) it is made near.
+fn ground_at(content: &voxmar_engine::content::Content) -> Option<(voxmar_engine::craft::Recipe, BlockId, BlockId, String)> {
+    let blocks = &content.blocks;
+    let tier_two = |b: BlockId| blocks.def(b).has_tag("tool") && blocks.def(b).has_tag("tier:2");
+    let wanted: Vec<BlockId> = content.recipes.iter().filter(|r| tier_two(r.output)).flat_map(|r| r.cells().into_iter().flatten()).collect();
+    let recipe = content.recipes.iter().find(|r| {
+        r.near.is_some() && wanted.contains(&r.output) && r.alternatives().into_iter().flatten().all(|cell| cell.iter().all(|&i| blocks.def(i).has_tag("toolstone")))
+    })?;
+    let tag = recipe.near.clone()?;
+    let stone = recipe.cells().into_iter().flatten().next()?;
+    let workshop = blocks.tagged(&tag).find(|&b| !blocks.def(b).item)?;
+    Some((recipe.clone(), stone, workshop, tag))
+}
+
+/// The grind step: a grindstone set by the fire draws; the inventory open, the client finds
+/// it within reach, and a toolstone laid in the grid is ground there to a stone head.
+fn grind(world: &mut World, gate: &mut Gate, now: f32) {
+    let block = gate.feet + IVec3::new(0, 0, 14) + CHOP_FROM_FIRE;
+    let stand = Vec3::new(block.x as f32 + 0.5, block.y as f32, block.z as f32 - 2.5);
+    let waited = gate.server_in_phase() > GRIND_WAIT;
+    // As in the chop step: the client's own work is given up only once its seconds pass too.
+    let outwaited = waited && now - gate.phase_since > GRIND_WAIT;
+    let content = world.resource::<Launch>().content.clone();
+    let Some((recipe, stone, workshop, tag)) = ground_at(&content) else {
+        gate.check("grind", Err("no tier-2 tool in the loaded recipes asks for something ground near a block from toolstone".into()));
+        gate.next(Step::LookUp, now);
+        return;
+    };
+    let name = |b: BlockId| content.blocks.def(b).name.clone();
+    let short = |b: BlockId| name(b).strip_prefix("base:").unwrap_or(&name(b)).to_owned();
+    let end = |world: &mut World, gate: &mut Gate| {
+        world.resource_mut::<UiState>().inventory_open = false;
+        let net = world.resource::<Net>();
+        net.command(&format!("setblock {} {} {} air", block.x, block.y, block.z));
+        net.command(&format!("clear {}", short(stone)));
+        net.command(&format!("clear {}", short(recipe.output)));
+        gate.next(Step::LookUp, now);
+    };
+    match gate.phase {
+        // One toolstone in hand's reach and the workshop block set by the fire.
+        0 => {
+            let net = world.resource::<Net>();
+            net.command(&format!("clear {}", short(stone)));
+            net.command(&format!("clear {}", short(recipe.output)));
+            net.command(&format!("give {} 1", short(stone)));
+            net.command(&format!("setblock {} {} {} {}", block.x, block.y, block.z, short(workshop)));
+            net.command(&format!("tp {} {} {}", stand.x, stand.y, stand.z));
+            gate.advance(now);
+        }
+        1 => {
+            aim_at(world, block.as_vec3() + Vec3::splat(0.5));
+            let stood = world.resource::<ClientWorld>().block(block) == Some(workshop);
+            let there = world.resource::<LocalPlayer>().position.distance(stand) < 0.5;
+            let carried = holding(world, &name(stone)).0;
+            if stood && there && carried == 1 && drawn(world, block) {
+                world.resource_mut::<UiState>().inventory_open = true;
+                gate.advance(now);
+            } else if outwaited {
+                gate.check("grind", Err(format!("the {} ({stood}), the spot ({there}) or one {} (carried {carried}) never came, or it never drew, in {GRIND_WAIT} seconds", name(workshop), name(stone))));
+                end(world, gate);
+            }
+        }
+        // Within reach by the client's own look, the toolstone is laid and crafted.
+        2 => {
+            if world.resource::<crate::hud::inventory::NearTags>().has(&tag) {
+                if lay_and_craft(world, &[(0, &name(stone))]) {
+                    gate.advance(now);
+                }
+            } else if outwaited {
+                gate.check("grind", Err(format!("with the inventory open the client never found the {} within reach in {GRIND_WAIT} seconds", name(workshop))));
+                end(world, gate);
+            }
+        }
+        _ => {
+            let made = holding(world, &name(recipe.output)).0;
+            let left = holding(world, &name(stone)).0;
+            let empty = world.resource::<LocalPlayer>().inventory.grid().iter().all(Option::is_none);
+            if made == recipe.count as u32 && left == 0 && empty {
+                gate.check("grind", Ok(format!("a {} by the fire draws; the client found it within reach, and a {} ground there gave {made} {}", name(workshop), name(stone), name(recipe.output))));
+                end(world, gate);
+            } else if waited {
+                gate.check("grind", Err(format!("a {} ground by the {} gave {made} {} (wanted {}; {left} left, grid emptied {empty}) in {GRIND_WAIT} server seconds", name(stone), name(workshop), name(recipe.output), recipe.count)));
+                end(world, gate);
             }
         }
     }
@@ -6243,8 +6343,8 @@ fn makeable(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     match gate.phase {
         0 => {
             let net = world.resource::<Net>();
-            // Its own pack: one log and three cobblestone, whatever earlier steps left.
-            for line in ["clear oak_log", "give oak_log 1", "clear cobblestone", "give cobblestone 3"] {
+            // Its own pack: one log and three stone heads, whatever earlier steps left.
+            for line in ["clear oak_log", "give oak_log 1", "clear stone_head", "give stone_head 3"] {
                 net.command(line);
             }
             let mut ui = world.resource_mut::<UiState>();
@@ -6291,7 +6391,7 @@ fn makeable(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         _ => {
             let Some(cell) = cell_of(world, pickaxe) else {
                 if in_phase > 2.0 {
-                    gate.check("make: wants", Err(format!("{in_phase:.1} s on, with three cobblestone the stone pickaxe is not on the list")));
+                    gate.check("make: wants", Err(format!("{in_phase:.1} s on, with three stone heads the stone pickaxe is not on the list")));
                     leave(world, gate);
                 }
                 return;

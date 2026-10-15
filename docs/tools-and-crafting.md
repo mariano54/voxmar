@@ -26,6 +26,13 @@ Pickaxe or better": a refusal names the least tool that would do, the lowest tie
 the cheapest (`Content::least_tool`). Cobblestone, mossy or not, still breaks by hand; a log
 set down as a wall wants an axe like a standing one (whoever has logs has felled them).
 
+Stone tools want hard rock. Their heads are **stone heads**, ground at a **grindstone**
+(sand over any cobble, on two sticks, in the hand's grid) from **toolstone**: granite,
+diorite, andesite and basalt, which only some rock provinces bare (`rocks.ron`), and the
+deepslate under every province, so a player in limestone or sandstone country walks to find
+it or mines down. Plain stone and cobblestone will not take an edge. A stone pickaxe or axe
+takes three heads, a hoe two, a shovel or knife one.
+
 `base/tools.ron` (engine/src/tool.rs) says what each kind is made for, by block tags (a
 pickaxe for stone and ore, an axe for logs and planks, a shovel for soil, sand, gravel,
 clay and snow, a hoe for crops and leaves, shears for leaves and wool, a knife for plants).
