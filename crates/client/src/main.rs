@@ -33,6 +33,7 @@
 
 mod ambience;
 mod breaking;
+mod fx;
 mod butterflies;
 mod capture;
 mod creature_sounds;
@@ -370,6 +371,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         recorded.material_of(&content.blocks, id).map_or_else(|| ambience::defs::family(content.blocks.info(id).sound), |m| recorded.materials[m].name.clone())
     })?;
     recorded.mix.check().map_err(|e| format!("sounds.ron: {e}"))?;
+    fx::ActionFx::load(&content.files)?.check(&content.actions)?;
     if let Some(effect) = textures::Source::bundled(&assets.join("packs")).unpictured(&content.effects).first() {
         return Err(format!("effects.ron: the effect {effect} has no icon in any bundled texture pack").into());
     }
@@ -466,7 +468,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ))
     .add_plugins((lang::LangPlugin, mix::MixPlugin));
     app.add_plugins((creatures::CreaturesPlugin, creature_sounds::CreatureSoundsPlugin, butterflies::ButterfliesPlugin));
-    app.add_plugins(emitters::EmittersPlugin);
+    app.add_plugins((emitters::EmittersPlugin, fx::FxPlugin));
     app.add_plugins(held::HeldPlugin);
     app.add_plugins(fight_fx::FightFxPlugin);
     // GPU time per render pass (timestamp queries, Vulkan and DX12), which captures print

@@ -893,7 +893,14 @@ near and far and rumbles in caves, lava bursting bubbles, logs snapping in a fir
 (`assets/content/base/sounds/`, credited in THIRD_PARTY_NOTICES.md), as are thunder near to
 far, swimming strokes and splashes (`sounds.ron`). One-shots sound from real blocks the fill found,
 panned by direction, with a reverb as wet as the place is enclosed. Every condition is a soft
-range with a fade, and rain ducks layers rather than silencing them. Captures run it silently
+range with a fade, and rain ducks layers rather than silencing them. Indoors is asked apart
+(the fill leaks out of an open door): a roof over the eye and walls met by short rays around it
+make the `shelter` axis, and a roof close overhead the `roof` axis. Outdoor layers duck by
+shelter and are muffled as far as they duck (one-shots by a low-pass; beds by a darkened twin,
+made at startup at a quarter of the rate, played beside them), rain drums on the
+roof, a fire's layers never duck, and thunder is quieter (`ambience.ron` `shelter`;
+`indoor_preview -- --ignored` writes a wood and a storm heard outside and then from a home by
+its hearth to `target/indoor_preview.wav`). Captures run it silently
 and log which beds would play. `cargo test -p voxmar_client ambience_preview -- --ignored`
 writes about twenty seconds of each of seventeen typical places to `target/ambience_preview.wav`, and
 `ambience_survey -- --ignored` prints what the scan makes of real places in a world (`SEED`).
@@ -903,13 +910,31 @@ writes about twenty seconds of each of seventeen typical places to `target/ambie
 What the player does is heard as they do it: eating, crafting at the grid, loading a home
 station, lighting a fire or a kiln, opening a chest or a door, putting food on to cook,
 lying down to sleep, casting a line, feeding an animal, emptying a pouch, feeding a machine,
-picking a lock, praying at an altar, spreading fertiliser and throwing something down.
+picking a lock, praying at an altar, spreading fertiliser and throwing something down; and what
+an action brings as it lands in the pack (`brings`, by the item's tags): a fish landed, food off
+the fire done, or burnt.
 `sounds.ron`'s `actions` gives each action, by name, its clips (one picked at random, at a
 slightly different pitch) and a volume, around the loudness of placing a block, or says it is
 `silent` on purpose or `heard` elsewhere (by the block touched, the interface or the fight). A
 later package replaces an action's sound; the launch fails on a sound for an action the content
 lacks, and on an action, a mod's too, that says nothing of how it sounds. The clips, and the pop of an item picked up
 when Minecraft's own sounds are off, are our own, synthesized by `tools/generate_sfx.py`.
+
+The interface is heard the same way: `sounds.ron`'s `interface` names what each thing that
+happens in it sounds like (a button pressed, the pointer over one, an item picked up or put
+down, half a stack split off, a screen opened or closed, a quest picked in the book, something
+refused, and the events' jingles): the chosen set's click or tap at a volume and pitch, clips of
+its own (a page turned, a soft "no"), a jingle, or `silent`. The launch fails on a name the
+interface never makes and on one it makes that says nothing.
+
+What the player does is seen as well (`crates/client/src/fx.rs`): dust settles round a block
+set down, crumbs fall as food is bitten, a crop picked springs a few leaves, a hoe or a seed
+kicks up soil, fertiliser falls as dust, a table, machine or station worked throws chips, food
+on the fire steams, flint sparks, motes rise at an altar, and a glint flashes over what the
+grid made. `action_fx.ron` names how every action shows: an `effect` (where it shows, what its
+particles look like and how they move, all data), `shown` by breaking or the fight, or `none`;
+the launch fails on an action it says nothing of, as for sounds. `fx_contact_sheet -- --ignored`
+sketches every effect's motion to `target/fx_contact_sheet.png`.
 
 Creatures are heard: footsteps on whatever block they walk, bleats, grunts and clucks while
 they wander, munching, sighs and purrs at rest, barks and snorts of alarm, calls carrying far,
