@@ -85,6 +85,8 @@
         (name: "pot", tags: ["simmering"], range: (2, 10)),
         (name: "falls", materials: [Water], falling: true, range: (6, 90)),
         (name: "water", materials: [Water], range: (20, 300)),
+        // Bees at a skep or a wild nest (`bees`): one within a few blocks is heard fully.
+        (name: "hive", tags: ["bees"], range: (1, 6)),
         // Not heard: the air's pollen keeps near flowers (client/src/weather/atmosphere.rs).
         // Before grass, as a block counts for the first group that selects it.
         (name: "flowers", tags: ["flower"], range: (4, 60)),
@@ -274,6 +276,13 @@
         ),
         // A fire burning close by: a warm low roar and the crackle of the wood, so home
         // sounds lived in. Quiet: it sits under the music.
+        // Bees about their hive by day: a warm drone by a skep or a wild nest, quiet at
+        // night and in the cold, when they keep in, and in the rain.
+        (
+            name: "bees", sound: Hum, volume: 0.16, fade: 3,
+            when: {"hive": (min: 0.3, fade: 0.3), "sun": (min: 0.05, fade: 0.1), "temperature": (min: 10, fade: 4)},
+            duck: {"rain": 0.9},
+        ),
         (
             name: "fire", sound: Fire, volume: 0.3, fade: 2,
             when: {"fire": (min: 0.6, fade: 0.55)},

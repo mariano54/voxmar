@@ -944,6 +944,21 @@ fn a_settlement_talks_by_day_comes_home_at_dusk_and_sleeps_at_night() {
 /// air and drips, oftener deep and shut in, where a second tier joins the first; dry rock
 /// (under a desert) has still air and grit ticking down instead, nothing dripping; water
 /// seeping into a pool is heard in either.
+/// Bees drone by their hive on a warm day, and keep in at night, in the cold and the rain.
+#[test]
+fn bees_hum_by_their_hive_on_a_warm_day() {
+    let ambience = base();
+    let bees = ambience.beds.iter().position(|b| b.name == "base:bees").unwrap();
+    let level = |set: &[(&str, f32)]| run(&ambience, &scene(&ambience, "garden", &["grassland", "temperate", "open"], set), 20.0).1[bees];
+    let by_the_hive = [("grass", 0.6), ("hive", 1.0), ("temperature", 18.0)];
+    assert!(level(&by_the_hive) > 0.8 * ambience.beds[bees].volume, "by a skep on a warm day");
+    assert!(level(&[("grass", 0.6), ("temperature", 18.0)]) < 1e-3, "no hive near");
+    for (weather, value) in [("sun", -0.5), ("temperature", 3.0), ("rain", 1.0)] {
+        let set: Vec<_> = by_the_hive.iter().copied().filter(|(axis, _)| *axis != weather).chain([(weather, value)]).collect();
+        assert!(level(&set) < 0.2 * ambience.beds[bees].volume, "{weather} {value}: the bees keep in");
+    }
+}
+
 #[test]
 fn caves_drip_by_their_rock_and_depth() {
     let ambience = base();
