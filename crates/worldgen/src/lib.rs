@@ -1243,19 +1243,26 @@ mod tests {
     }
 
     /// The world of `seed` on the test registry, one for every test that only reads what it
-    /// generates: each new world would trace its rivers, trails and caches from nothing
-    /// again. What a world generates depends on neither which column nor which test asks
-    /// first, nor on what its caches hold (`rivers_never_depend_on_generation_order`,
-    /// `decorations_never_depend_on_generation_order`), and those tests, the timing ones
-    /// and the golden hashes still make worlds of their own.
-    fn shared_world(seed: u64) -> Arc<Overworld> {
-        static WORLDS: std::sync::OnceLock<std::sync::Mutex<rustc_hash::FxHashMap<u64, Arc<Overworld>>>> = std::sync::OnceLock::new();
-        let worlds = WORLDS.get_or_init(Default::default);
-        if let Some(world) = worlds.lock().unwrap().get(&seed) {
-            return world.clone();
-        }
-        let world = Arc::new(Overworld::new(seed, registry()));
-        worlds.lock().unwrap().entry(seed).or_insert(world).clone()
+    /// generates, here and in the settlements' tests: each new world would trace its rivers,
+    /// trails and settlements from nothing again. What a world generates depends on neither
+    /// which column nor which test asks first, nor on what its caches hold
+    /// (`rivers_never_depend_on_generation_order`, `decorations_never_depend_on_generation_order`),
+    /// and those tests, the timing ones and the golden hashes still make worlds of their
+    /// own. Made once however many tests ask for it at once.
+    pub(crate) fn shared_world(seed: u64) -> Arc<Overworld> {
+        static WORLDS: std::sync::Mutex<Vec<(u64, Arc<std::sync::OnceLock<Arc<Overworld>>>)>> = std::sync::Mutex::new(Vec::new());
+        let slot = {
+            let mut worlds = WORLDS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            match worlds.iter().find(|(s, _)| *s == seed) {
+                Some((_, slot)) => slot.clone(),
+                None => {
+                    let slot = Arc::new(std::sync::OnceLock::new());
+                    worlds.push((seed, slot.clone()));
+                    slot
+                }
+            }
+        };
+        slot.get_or_init(|| Arc::new(Overworld::new(seed, registry()))).clone()
     }
 
     #[test]
@@ -2825,8 +2832,16 @@ mod tests {
         // The census on a pool of its own, as many threads as the tests' own: its generation
         // would otherwise fill that pool for minutes, every other test's work queued behind
         // it (`waterfalls_pour`, 7 s alone, took 198 s beside it). What it counts does not
-        // depend on the threads: the places are counted in order.
-        let pool = rayon::ThreadPoolBuilder::new().num_threads(rayon::current_num_threads()).build().unwrap();
+        // depend on the threads: the places are counted in order. Only where the tests'
+        // pool is held to part of the machine (`RAYON_NUM_THREADS`, half the cores in the
+        // gate); on a pool of every core, a second would double the threads.
+        let pool = std::env::var_os("RAYON_NUM_THREADS").map(|_| rayon::ThreadPoolBuilder::new().num_threads(rayon::current_num_threads()).build().unwrap());
+        fn on_pool<R: Send>(pool: &Option<rayon::ThreadPool>, f: impl FnOnce() -> R + Send) -> R {
+            match pool {
+                Some(pool) => pool.install(f),
+                None => f(),
+            }
+        }
         let mut seeds = 0;
         while seeds < order.len().min(16) && (0..biomes.len()).any(|b| !counted(&tally, b)) {
             let seed = order[seeds];
@@ -2837,7 +2852,7 @@ mod tests {
             // Every place of every open biome side by side, counted in order.
             use rayon::prelude::*;
             let wanted: Vec<(usize, IVec2)> = open.iter().flat_map(|&b| PLACES.map(|from| (b, from))).collect();
-            let areas: Vec<_> = pool.install(|| wanted.par_iter().map(|&(b, from)| (b, biome_area(&world, &biomes[b], from, 16, &looks, herbs.len()))).collect());
+            let areas: Vec<_> = on_pool(&pool, || wanted.par_iter().map(|&(b, from)| (b, biome_area(&world, &biomes[b], from, 16, &looks, herbs.len()))).collect());
             for (b, area) in areas {
                 let Some((columns, bank, placed, away)) = area else { continue };
                 tally[b].0 += 1;
