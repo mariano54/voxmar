@@ -354,6 +354,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     recorded.check_wear()?;
     recorded.covers(&content.actions)?;
     recorded.check_materials(&content.blocks)?;
+    // Every roof's rain patters or is silent (ambience.ron's `roofs`), by its building
+    // material or else its family sound.
+    let ambience = ambience::defs::Ambience::load(&content.files)?;
+    let materials: Vec<&str> = recorded.materials.iter().map(|m| m.name.as_str()).collect();
+    let roof_patters = ambience.roof_patters(&content.blocks, &materials, |id| {
+        recorded.material_of(&content.blocks, id).map_or_else(|| ambience::defs::family(content.blocks.info(id).sound), |m| recorded.materials[m].name.clone())
+    })?;
     recorded.mix.check().map_err(|e| format!("sounds.ron: {e}"))?;
     let content_weather = content.weather.clone();
     let shader_packs = render::pack::ShaderPacks::load(&assets);
@@ -498,6 +505,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Screen::Title
     };
     app.insert_resource(FirstScreen(first)).insert_resource(launch).insert_resource(interface).insert_resource(combat_marks).insert_resource(fight_look).insert_resource(creature_motion).insert_resource(look).insert_resource(celebrations).insert_resource(night_light);
+    app.insert_resource(ambience::Checked(ambience, roof_patters));
     if options.loading {
         app.insert_resource(menu::HoldCover);
     }
