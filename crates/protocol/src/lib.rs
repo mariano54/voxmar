@@ -49,10 +49,11 @@ pub use voxmar_engine::weather::Weather;
 // 51: how another player looks up or down and what is in their hand (PlayerView::pitch, held).
 // 52 and 53 are kept for the light ladder and the farm days piece.
 // 54: what another player is doing in a fight (PlayerView::fight): their swing, blows, guard;
-// and Players told as they change (seen, gone), names once, only those near enough.
-// 55: whether a creature's blow spoiled the player's draw (ServerMessage::Hurt::spoiled), and
-// players who left named with no name in Players::names, to be forgotten.
-pub const PROTOCOL_VERSION: u32 = 55;
+// and Players told as they change (seen, gone), names once (players who left named once more
+// with no name, to be forgotten), only those near enough.
+// 55 is kept for the light ladder.
+// 56: whether a creature's blow spoiled the player's draw (ServerMessage::Hurt::spoiled).
+pub const PROTOCOL_VERSION: u32 = 56;
 
 /// A creature's `tell` while it rears into a new phase of its fight.
 pub const REARING: u8 = u8::MAX;

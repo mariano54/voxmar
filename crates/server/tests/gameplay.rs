@@ -4291,6 +4291,46 @@ fn an_honest_climb_up_a_ladder_is_never_put_back() {
     }
 }
 
+/// As `an_honest_climb_up_a_ladder_is_never_put_back`, up a ladder through an open hatch
+/// in a loft's floor three blocks up and out onto the loft: never put back, and the server
+/// has them up there.
+#[test]
+fn an_honest_climb_through_an_open_hatch_is_never_put_back() {
+    use voxmar_engine::movement::{Body, Controls, advance};
+    let mut client = on_a_test_floor();
+    let start = client.position;
+    let at = start.floor().as_ivec3();
+    let tuning = client.content.movement.clone();
+    client.fill(at, IVec3::new(4, 0, -1), IVec3::new(14, 2, 1), "oak_planks");
+    client.fill(at, IVec3::new(0, 3, -1), IVec3::new(14, 3, 1), "oak_planks");
+    client.fill(at, IVec3::new(3, 0, 0), IVec3::new(3, 2, 0), "oak_ladder_west");
+    client.fill(at, IVec3::new(3, 3, 0), IVec3::new(3, 3, 0), "oak_hatch_open_west");
+    let hatch = client.content.blocks.expect("base:oak_hatch_open_west");
+    client.pump_until(|c| c.world.block(at + IVec3::new(3, 3, 0)) == Some(hatch));
+    let mut clock = Instant::now();
+    for fps in [30.0, 60.0, 144.0] {
+        client.tp(start);
+        let mut body = Body { position: start, on_ground: true, ..Default::default() };
+        let controls = Controls { wish: Vec3::X, forward: true, sprint: false, jump: false, descend: false };
+        let (dt, mut t, mut sent) = (1.0 / fps, 0.0f32, 0u32);
+        while t < 3.0 {
+            advance(&mut body, &Seen(&client), &tuning, controls, dt);
+            t += dt;
+            if t >= (sent + 1) as f32 * 0.05 {
+                sent += 1;
+                client.send_position_at(body.position, false, clock + Duration::from_secs_f32(t));
+            }
+        }
+        assert!(body.on_ground && body.position.y - start.y == 4.0 && body.position.x - start.x > 4.0, "at {fps} fps the client did not climb through the hatch: {}", body.position - start);
+        assert!(client.all_accepted(), "an honest climb through a hatch at {fps} fps to {} was put back to {:?}", body.position - start, client.teleported.map(|to| to - start));
+        client.connection.send(ClientMessage::Command { line: "/tp ~ ~ ~".into() });
+        client.pump_until(|c| c.teleported.is_some());
+        let there = client.teleported.take().unwrap();
+        assert!(there.distance(body.position) < 1e-3, "at {fps} fps the client got to {}, the server has {}", body.position - start, there - start);
+        clock += Duration::from_secs(4);
+    }
+}
+
 /// A gap between shaped blocks narrower or lower than the player is no way through, though
 /// a share of their box would fit: between two pot shelves in a row (9/16 of a block, the
 /// player is 0.6 wide), and on a headstone under an upside-down slab (1.75 high, the

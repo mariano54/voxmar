@@ -30,6 +30,9 @@ and a pixel, `core/movement.ron`) without jumping; a whole block still takes a j
 | Railing | `<timber>_railing`, `<timber>_railing_corner` | a handrail and a bottom rail along the back of the cell with balusters between, a block high; the corner turns along the east side too | the rail runs along the side away from the placer | 3 beams, 3 sticks make 3 (3); 2 railings make a corner (3) |
 | Fence, gate | `<timber>_fence`, `<timber>_fence_corner`, `<timber>_fence_gate` | half a post at each end and two rails across the middle of the cell, a block high; the corner turns from the west to the north; the gate a frame of rails and uprights, swung out north against its west post when open | runs across the placer's view | 4 posts, 2 sticks make 6 (2); 2 fences make a corner; 2 fences round a slab make a gate (2) |
 | Ladder | `<timber>_ladder` | two rails and four rungs at the back of the cell, against the wall behind | faces the placer, its back to the wall | 6 posts, 3 sticks make 4 (2) |
+| Stair cupboard | `<timber>_stair_cupboard` | a stair (the step facing north) with panelled doors in its riser: walked up as a stair, counted as storage | faces the placer | a stair, a plank and a stick (5) |
+| Built-ins | `<wood>_window_seat`, `<wood>_sill`, `<wood>_pantry_shelf` (furnishings) | a panelled box under a cushion against the wall (a seat and storage); a deep board on two brackets at the top of its cell (decor); a shelf with two crocks and a keg (storage) | face the placer, their backs to the wall | a bench, 2 planks, wool (5); a slab and a stick make 2 (3); a shelf and 2 clay pots (5) |
+| Hatch | `<timber>_hatch` (`_open`) | boards across the top of the cell over two battens; open, hung against the back of the cell no deeper than a ladder's rungs | faces the placer; a right click opens and shuts it | 2 slabs on 2 sticks make 2 (2) |
 | Newel post | `<timber>_newel_post` | a post five texels square with a cap | | a slab on a post makes 1 (3) |
 | Landing | `<timber>_landing` | boards across the top of the cell on two joists, level with a stair's top | joists run away from the placer | 3 slabs on 2 beams make 3 (3) |
 | Balcony door | `balcony_door` (`_top`, `_open`, `_open_top`) | a plank door whose upper half is a lattice | placed whole, as a door; a right click opens and shuts it | a lattice window on a wooden door makes 1 (4) |
@@ -95,6 +98,14 @@ so a ladder up to a loft leaves the room as walled as it was (engine `movement.r
 `an_honest_climb_up_a_ladder_is_never_put_back`; the gate's Pieces step judges one). At load
 a climbable block must be solid, so there is something to press against. Creatures do not
 climb ladders.
+
+A hatch (`<timber>_hatch`) closes a hole in a loft's floor: shut, its boards are level with
+the floor round it, walked on, and a sound bit of ceiling to the room below. A right click
+swings it open (`swaps`); open, it hangs against the back of its cell and is climbed as a
+ladder is (`climbable`, a draughty face to the room below), so a ladder under it, set with its
+back the same way, climbs on up through it and out onto the loft floor
+(`a_ladder_climbs_through_an_open_hatch_into_a_loft_and_a_shut_one_stops_it`; the gate's
+Pieces step judges one shut and one open).
 The home's load check (`Rules::check_shelters`) holds every solid building or roof block
 but furniture to exactly one grade.
 

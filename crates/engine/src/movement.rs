@@ -887,6 +887,54 @@ mod tests {
         }
         let (body, _) = run(&alone, Body { on_ground: true, ..at(0.5, 0.0, 0.5) }, Controls { jump: true, ..Controls::default() }, 0.5, 60.0);
         assert!(body.position.y > 1.0 && body.velocity.y == tuning.climb_speed, "holding jump did not climb a ladder: {body:?}");
+        // Thrown up into a ladder faster than it is climbed (a jump from beside it), or
+        // falling into one faster than it is slid down, the body goes at `climb_speed`.
+        for thrown in [tuning.jump_velocity, -20.0] {
+            let mut body = Body { velocity: Vec3::Y * thrown, ..at(0.5, 1.0, 0.5) };
+            advance(&mut body, &alone, &tuning, Controls::default(), 1.0 / 120.0);
+            assert!(body.velocity.y.abs() <= tuning.climb_speed, "into a ladder at {thrown}: {body:?}");
+        }
+    }
+
+    /// A ladder up a wall to a loft floor three blocks up, through a hatch: open, the player
+    /// climbs on up through it and steps off onto the loft floor; shut, they are stopped
+    /// under it, never inside it. And a shut hatch is floor: walked onto from the loft
+    /// floor round it, the player stays up.
+    #[test]
+    fn a_ladder_climbs_through_an_open_hatch_into_a_loft_and_a_shut_one_stops_it() {
+        let content = content();
+        let blocks = &content.blocks;
+        for (hatch, through) in [("base:oak_hatch_open", true), ("base:oak_hatch", false)] {
+            let mut cells = rustc_hash::FxHashMap::default();
+            for x in -3..=3 {
+                for z in -3..=12 {
+                    cells.insert(IVec3::new(x, 3, z), blocks.expect("base:oak_planks"));
+                    if z >= 1 {
+                        for y in 0..3 {
+                            cells.insert(IVec3::new(x, y, z), blocks.expect("base:oak_planks"));
+                        }
+                    }
+                }
+            }
+            for y in 0..3 {
+                cells.insert(IVec3::new(0, y, 0), blocks.expect("base:oak_ladder"));
+            }
+            cells.insert(IVec3::new(0, 3, 0), blocks.expect(hatch));
+            let loft = Built { blocks, cells, floor: |_| 0 };
+            for fps in [30.0, 60.0, 144.0] {
+                let (body, inside) = run(&loft, Body { on_ground: true, ..at(0.5, 0.0, -1.5) }, walking(Vec3::Z, false), 3.0, fps);
+                assert!(!inside, "{hatch} at {fps} fps: went into a block: {body:?}");
+                if through {
+                    assert!(body.on_ground && body.position.y == 4.0 && body.position.z > 1.0, "did not climb through the open hatch at {fps} fps: {body:?}");
+                } else {
+                    assert!(body.position.y < 2.0 && body.position.z < 1.0, "went past the shut hatch at {fps} fps: {body:?}");
+                }
+            }
+            if !through {
+                let (body, inside) = run(&loft, Body { on_ground: true, ..at(0.5, 4.0, -2.5) }, walking(Vec3::Z, false), 1.5, 60.0);
+                assert!(!inside && body.on_ground && body.position.y == 4.0 && body.position.z > 1.0, "fell through a shut hatch: {body:?}");
+            }
+        }
     }
 
     /// A whole block is no step: walking into it without jumping stops at it, as does a slab

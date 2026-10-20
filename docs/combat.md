@@ -57,7 +57,7 @@ ammo may): `spoiled_by_hits` lets a draw go when a creature's blow hurts the pla
 raising the guard does (the meter starts again from `cancel_to`, and the shot spends
 nothing), and `drawing_speed` is the share of their pace the player keeps while a shot is
 drawn (bow 0.4, sling 0.7). The server spoils the draw and says so on the `Hurt` it
-sends (`spoiled`, protocol 55); the client lets its draw go only then. The slowing is the client's own, as the guard's is (gate check `sling draw`).
+sends (`spoiled`, protocol 56); the client lets its draw go only then. The slowing is the client's own, as the guard's is (gate check `sling draw`).
 A draw's last moments cannot be spoiled across a slow connection: the server lands a swing
 as its wind-up ends, and a creature's blow is judged up to the player's round trip later
 (`lag_allowance`, at most 0.2 s), and a tick at most after that, so the last round trip of a
