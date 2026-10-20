@@ -270,6 +270,8 @@ steps! {
     /// F3 opens the debug overlay, and PostUpdate (UI layout among it) takes no longer with
     /// it open than closed.
     Overlay,
+    /// A shaped recipe of the hand's grid laid mirrored left to right makes what it makes.
+    Mirror,
     /// Sticks and a crafting table from planks; the table placed and right clicked opens a
     /// three-by-three grid, where cobblestone and sticks make a stone pickaxe. An iron ore
     /// refuses the hand and a low Mining level, and breaks for the pickaxe at level 15,
@@ -1857,6 +1859,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
             }
         }
         Step::Breaks => breaks(world, gate, now, in_phase),
+        Step::Mirror => mirror(world, gate, now),
         Step::Workshop => workshop(world, gate, now, in_phase),
         Step::HvAge => hv_age(world, gate, now),
         Step::Swim => swim(world, gate, now, in_phase),
@@ -2778,6 +2781,81 @@ fn skill_level(world: &World, name: &str) -> (u8, u32) {
 }
 
 /// Crafting, a crafting table, tool tiers and Mining levels, and tilling: see `Step::Workshop`.
+/// The shaped recipe the mirror step makes: of the hand's grid, made anywhere at level 1, of
+/// single items, and unlike its mirror image; the fewest cells, then the output's name. Its output
+/// and its cells laid mirrored, by grid cell.
+fn mirror_recipe(world: &World) -> Option<(String, Vec<(usize, String)>)> {
+    use voxmar_engine::craft::SIDE;
+    let content = &world.resource::<Launch>().content;
+    let name = |id: voxmar_engine::block::BlockId| content.blocks.def(id).name.clone();
+    content
+        .recipes
+        .iter()
+        .filter(|r| !r.shapeless() && !r.needs_table() && r.near.is_none() && r.level <= 1)
+        .filter_map(|r| {
+            let width = r.size().1;
+            let cells = r.cells();
+            let alternatives = r.alternatives();
+            // Empty cells first: a padding column past `width` has no mirror image.
+            let laid: Vec<(usize, String)> = cells.iter().enumerate().filter_map(|(i, item)| item.map(|item| (i / SIDE * SIDE + width - 1 - i % SIDE, name(item)))).collect();
+            let single = alternatives.iter().flatten().all(|a| a.len() == 1);
+            let unlike = (0..cells.len()).any(|i| i % SIDE < width && cells[i] != cells[i / SIDE * SIDE + width - 1 - i % SIDE]);
+            (single && unlike).then(|| (laid.len(), name(r.output), laid))
+        })
+        .min()
+        .map(|(_, output, laid)| (output, laid))
+}
+
+/// A shaped recipe of the hand's grid, laid mirrored, makes what it makes as written.
+fn mirror(world: &mut World, gate: &mut Gate, now: f32) {
+    let Some((output, laid)) = mirror_recipe(world) else {
+        gate.check("mirror", Err("no shaped recipe of the hand's grid differs from its mirror image".into()));
+        gate.next(Step::Workshop, now);
+        return;
+    };
+    match gate.phase {
+        // Screens closed, and what the recipe takes given.
+        0 => {
+            let mut ui = world.resource_mut::<UiState>();
+            (ui.menu_open, ui.inventory_open, ui.character_open, ui.console_open) = (false, false, false, false);
+            mouse(world, MouseButton::Left, false);
+            let net = world.resource::<Net>();
+            for (_, item) in &laid {
+                net.command(&format!("give {item} 1"));
+            }
+            gate.advance(now);
+        }
+        1 => {
+            let mut needed: Vec<(&str, u32)> = Vec::new();
+            for (_, item) in &laid {
+                match needed.iter_mut().find(|(n, _)| *n == item) {
+                    Some((_, count)) => *count += 1,
+                    None => needed.push((item, 1)),
+                }
+            }
+            if needed.iter().all(|&(item, count)| holding(world, item).0 >= count) {
+                gate.count_before = holding(world, &output).0;
+                let cells: Vec<(usize, &str)> = laid.iter().map(|(cell, item)| (*cell, item.as_str())).collect();
+                lay_and_craft(world, &cells);
+                gate.advance(now);
+            } else if gate.server_in_phase() > WORKSHOP_WAIT {
+                gate.check("mirror", Err(format!("what {output} takes never came: {needed:?}")));
+                gate.next(Step::Workshop, now);
+            }
+        }
+        _ => {
+            let made = holding(world, &output).0.saturating_sub(gate.count_before);
+            if made > 0 {
+                gate.check("mirror", Ok(format!("{output}'s recipe laid mirrored ({laid:?}) made {made}")));
+                gate.next(Step::Workshop, now);
+            } else if gate.server_in_phase() > WORKSHOP_WAIT {
+                gate.check("mirror", Err(format!("{output}'s recipe laid mirrored ({laid:?}) made none")));
+                gate.next(Step::Workshop, now);
+            }
+        }
+    }
+}
+
 fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let feet = gate.feet;
     let (table, ore, till) = (feet + TABLE_AT, feet + ORE_AT, feet + TILL_AT);
@@ -4099,7 +4177,7 @@ fn overlay(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if !shown {
                 if in_phase > SCREEN_WAIT {
                     gate.check("overlay", Err("F3 did not open the debug overlay".into()));
-                    gate.next(Step::Workshop, now);
+                    gate.next(Step::Mirror, now);
                 }
                 return;
             }
@@ -4125,7 +4203,7 @@ fn overlay(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if shown {
                 if in_phase > SCREEN_WAIT {
                     gate.check("overlay", Err("F3 did not close the debug overlay".into()));
-                    gate.next(Step::Workshop, now);
+                    gate.next(Step::Mirror, now);
                 }
                 return;
             }
@@ -4147,7 +4225,7 @@ fn overlay(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             );
             let result = if gate.overlay_changes > 0 && rate <= most { Ok(detail) } else { Err(detail) };
             gate.check("overlay: no layout every frame", result);
-            gate.next(Step::Workshop, now);
+            gate.next(Step::Mirror, now);
         }
         _ => {}
     }
