@@ -46,9 +46,11 @@ struct Timed {
     due: Instant,
     /// The player's client shows it done: nothing cancels it now.
     finished: bool,
-    /// What the player held when their client showed it done: what it is judged and done
-    /// by at its time, whatever they take in hand meanwhile (the next block's tool).
-    held: Option<BlockId>,
+    /// For a break, what the player held when their client showed it done: what it is
+    /// judged by at its time, and draws its tool's bonus with, whatever they take in hand
+    /// meanwhile (the next block's tool). Anything else (a bite, a cook, a cast) uses what
+    /// is in hand when it completes, so it is judged by that.
+    held: Option<Option<BlockId>>,
 }
 
 impl Timed {
@@ -216,7 +218,7 @@ impl Server {
             tracing::debug!("player {agent}: {} refused at {target:?}: {why:?}", def.name);
             self.reject(agent, target);
         } else if !timed {
-            self.commit(agent, &def, target);
+            self.commit(agent, &def, target, None);
         } else {
             if def.effects.contains(&Effect::EatHeld) {
                 self.bite_started(agent);
@@ -242,7 +244,8 @@ impl Server {
             let timed = self.executor.timed.swap_remove(i);
             self.finish(&timed);
         } else {
-            let held = self.players[&agent].held();
+            let mining = self.content.actions.get(self.executor.timed[i].action).is_some_and(|def| def.duration == voxmar_engine::action::Duration::TargetHardness);
+            let held = mining.then(|| self.players[&agent].held());
             let timed = &mut self.executor.timed[i];
             (timed.finished, timed.held) = (true, held);
         }
@@ -258,17 +261,17 @@ impl Server {
         }
     }
 
-    /// Commits an action whose time is up, if its requirements still hold: with what the
-    /// player held when their client showed it done, if it did, else what they hold now.
+    /// Commits an action whose time is up, if its requirements still hold: a break with
+    /// what the player held when their client showed it done, if it did (`Timed::held`).
     fn finish(&mut self, timed: &Timed) {
         let (agent, target) = (timed.agent, timed.target);
         if !self.players.contains_key(&agent) {
             return;
         }
         let Some(def) = self.action_def(timed.action) else { return };
-        let held = timed.finished.then_some(timed.held);
+        let held = timed.held;
         if def.validate(&Context { server: self, agent, held }, target).is_ok() {
-            self.commit(agent, &def, target);
+            self.commit(agent, &def, target, held);
         } else {
             self.reject(agent, target);
         }
@@ -301,17 +304,18 @@ impl Server {
 
     /// Applies an action's effects, as `agent`'s doing (`fire_origin`, `changed_by`) whenever
     /// it commits: as their message arrives or later, when it falls due in the run loop.
-    fn commit(&mut self, agent: PlayerId, def: &ActionDef, target: ActionTarget) {
+    /// `held`, if given, is what the agent is taken to hold (`Timed::held`).
+    fn commit(&mut self, agent: PlayerId, def: &ActionDef, target: ActionTarget, held: Option<Option<BlockId>>) {
         let by = self.players.get(&agent).map(|p| crate::player_key(&p.name));
         let fire_was = std::mem::replace(&mut self.fire_origin, by.clone());
         let changed_was = std::mem::replace(&mut self.changed_by, by);
-        self.commit_effects(agent, def, target);
+        self.commit_effects(agent, def, target, held);
         self.fire_origin = fire_was;
         self.changed_by = changed_was;
     }
 
     /// Applies an action's effects. Validation already guaranteed they can all apply.
-    fn commit_effects(&mut self, agent: PlayerId, def: &ActionDef, target: ActionTarget) {
+    fn commit_effects(&mut self, agent: PlayerId, def: &ActionDef, target: ActionTarget, held: Option<Option<BlockId>>) {
         for &effect in &def.effects {
             match (effect, target) {
                 (Effect::GiveDrop, ActionTarget::Block { block, .. }) => {
@@ -334,7 +338,7 @@ impl Server {
                         self.discover_broken(agent, broken);
                     }
                     self.picked(agent, block);
-                    let instead = self.reward_break(agent, block);
+                    let instead = self.reward_break(agent, block, held);
                     // A block that gave something else instead (gravel's flint) drops nothing of its own.
                     let cells: Vec<IVec3> = std::iter::once(block).filter(|_| !instead).chain(plants).collect();
                     self.drop_loot(agent, &cells, &placed);
@@ -626,8 +630,9 @@ impl Server {
     /// What breaking the block at `pos` teaches (`tools.ron`), and sometimes an extra drop:
     /// more often with the skill's level above what the block asks and a better tool. A
     /// block a player placed teaches nothing and gives nothing extra.
-    /// Returns whether it gave something else instead of the block's own drop.
-    fn reward_break(&mut self, agent: PlayerId, pos: IVec3) -> bool {
+    /// Returns whether it gave something else instead of the block's own drop. `held`, if
+    /// given, is the tool it was broken with in place of what is in hand now.
+    fn reward_break(&mut self, agent: PlayerId, pos: IVec3, held: Option<Option<BlockId>>) -> bool {
         let Some(block) = self.block(pos) else { return false };
         let tools = self.content.tools.clone();
         let Some(rule) = tools.rule(block) else { return false };
@@ -638,7 +643,7 @@ impl Server {
         // By the player's count of blocks broken, and where a drop pops by the world's count
         // of drops, never by the tick it breaks on.
         let [roll, other] = player.draw(crate::save::Draw::Mine);
-        let held = player.held();
+        let held = held.unwrap_or_else(|| player.held());
         let level = rule.skill.map_or(1, |skill| self.content.skills.level(player.skills.xp(skill)));
         let bonus = voxmar_engine::crop::level_bonus(level, rule.level, self.content.skills.max_level()) + tools.yield_bonus(held, block) + player.modifiers.finds;
         let info = self.content.blocks.info(block);
@@ -752,7 +757,7 @@ mod tests {
             let instead: Vec<bool> = (0..64)
                 .map(|_| {
                     server.set_block(pos, gravel);
-                    server.reward_break(1, pos)
+                    server.reward_break(1, pos, None)
                 })
                 .collect();
             let gravel_drops = server.content.blocks.def(server.content.blocks.info(gravel).drops).name.clone();
@@ -788,7 +793,7 @@ mod tests {
                 if server.marks_placed(leaves, leaves) {
                     server.placed.insert(pos);
                 }
-                server.reward_break(1, pos)
+                server.reward_break(1, pos, None)
             })
             .count();
         assert_eq!(sticks, 0, "placed leaves gave a stick");
@@ -878,5 +883,49 @@ mod finished_tests {
         server.complete_actions(due);
         let now = server.block(cell).map(|b| server.content.blocks.def(b).name.clone());
         assert_eq!(now.as_deref(), Some("base:stone"), "stone broke by hand once the pickaxe was taken up");
+    }
+
+    /// The world is judged again all the same: a block gone by its time (someone else broke
+    /// it) is not broken twice, and gives nothing.
+    #[test]
+    fn a_break_shown_done_whose_block_went_meanwhile_is_refused() {
+        let mut server = fixture();
+        let cell = IVec3::new(10, FLOOR, 8);
+        let target = ActionTarget::Block { block: cell, face: Face::PosY };
+        let mine = server.content.actions.expect("core:mine");
+        let at = Instant::now();
+        server.propose(1, mine, target, at);
+        let due = server.executor.timed.iter().find(|t| t.target == target).expect("a timed break").due;
+        server.finished_action(1, target, at + (due - at).mul_f32(0.3));
+        server.set_block(cell, voxmar_engine::block::BlockId::AIR);
+        server.complete_actions(due);
+        assert!(server.executor.timed.is_empty(), "it was judged at its time");
+        let had = server.players[&1].inventory.slots.iter().flatten().filter(|s| server.content.blocks.def(s.item).name != "base:stone_pickaxe").count();
+        assert_eq!(had, 0, "a break of a block already gone gave something");
+        assert_eq!(server.items.saved(|_| String::new()).len(), 0, "a break of a block already gone dropped something");
+    }
+
+    /// Only a break keeps what was held: a bite shown done early and then swapped for
+    /// something that is not food is judged by what is in hand at its time, and refused,
+    /// eating neither.
+    #[test]
+    fn a_bite_shown_done_early_is_judged_by_what_is_held_at_its_time() {
+        let mut server = fixture();
+        let (stew, stone) = (server.content.blocks.expect("base:stew"), server.content.blocks.expect("base:stone"));
+        let player = server.players.get_mut(&1).unwrap();
+        player.inventory.slots[0] = Some(ItemStack { item: stew, count: 1 });
+        player.inventory.slots[1] = Some(ItemStack { item: stone, count: 1 });
+        // Hurt, or a bite is refused.
+        player.health.current = 1;
+        let eat = server.content.actions.expect("core:eat");
+        let at = Instant::now();
+        server.propose(1, eat, ActionTarget::None, at);
+        let due = server.executor.timed.iter().find(|t| t.target == ActionTarget::None).expect("a timed bite").due;
+        server.finished_action(1, ActionTarget::None, at + (due - at).mul_f32(0.3));
+        server.players.get_mut(&1).unwrap().selected = 1;
+        server.complete_actions(due);
+        let slots = &server.players[&1].inventory.slots;
+        assert_eq!((slots[0], slots[1]), (Some(ItemStack { item: stew, count: 1 }), Some(ItemStack { item: stone, count: 1 })), "a bite swapped for stone ate something");
+        assert_eq!(server.players[&1].health.current, 1, "a bite swapped for stone healed");
     }
 }
