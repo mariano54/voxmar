@@ -64,7 +64,7 @@ pub struct Target {
     /// When (seconds of game time) the line cast last comes up, and another may be cast.
     fishing_until: f32,
     /// When (seconds of game time) what is cooking comes off the fire, and more may go on.
-    cooking_until: f32,
+    pub(crate) cooking_until: f32,
     /// Seconds until the next block may be mined after one breaks, as Minecraft's five
     /// ticks, so sweeping across a meadow does not mow it flat.
     mine_cooldown: f32,
@@ -648,9 +648,10 @@ fn water_block(world: &ClientWorld, pos: IVec3) -> BlockId {
 }
 
 /// What an action at `block` is done with, to be heard by (`sounds.ron`'s `ways`): the block
-/// worked (a hearthstone lit, a drying rack loaded, a pit kiln fed), then what is in hand.
+/// worked (a hearthstone lit, a drying rack loaded, a pit kiln fed), not what is in hand,
+/// so holding a station's item never sounds as loading one.
 fn worked(context: &ClientContext, block: IVec3) -> Vec<BlockId> {
-    context.world.block(block).into_iter().chain(context.actor_held()).collect()
+    context.world.block(block).into_iter().collect()
 }
 
 /// What to tell a player whose click was refused because `need` failed, at `block` if it
