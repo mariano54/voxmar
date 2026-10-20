@@ -4889,7 +4889,9 @@ fn felled_by(content: &voxmar_engine::content::Content) -> Option<(BlockId, Bloc
 /// crafted in the hand's grid from what its recipe asks, fells it and the log comes to hand.
 fn flint(world: &mut World, gate: &mut Gate, now: f32) {
     let block = gate.feet + IVec3::new(0, 0, 14) + CHOP_FROM_FIRE;
-    let stand = Vec3::new(block.x as f32 + 0.5, block.y as f32, block.z as f32 - 2.0);
+    // In the middle of a cell, one cell short of the log, so the felled log's drop comes
+    // to rest within `MAGNET`: a stand on a cell's edge was never judged reached.
+    let stand = Vec3::new(block.x as f32 + 0.5, block.y as f32, block.z as f32 - 1.5);
     let waited = gate.server_in_phase() > FLINT_WAIT;
     let content = world.resource::<Launch>().content.clone();
     let Some((log, tool, recipe)) = felled_by(&content) else {
@@ -4939,7 +4941,8 @@ fn flint(world: &mut World, gate: &mut Gate, now: f32) {
             let tool_name = world.resource::<Locale>().block(content.blocks.def(tool));
             if !(stood && there && held.is_none() && drawn(world, block)) {
                 if waited {
-                    gate.check("flint: by hand", Err(format!("the {} never stood drawn at {block} with the player before it and an empty hand (stands {stood}, there {there}, holding {held:?})", name(log))));
+                    let at = world.resource::<LocalPlayer>().position;
+                    gate.check("flint: by hand", Err(format!("the {} never stood drawn at {block} with the player before it and an empty hand (stands {stood}, there {there}: at {at} for {stand}, holding {held:?})", name(log))));
                     end(world, gate);
                 }
                 return;
