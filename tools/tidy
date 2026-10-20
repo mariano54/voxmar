@@ -41,6 +41,9 @@
 set -uo pipefail
 
 [[ $(uname -s) == Darwin ]] || { echo "tidy: runs on macOS only (BSD stat, lsof)" >&2; exit 2; }
+# Git variables a caller exported (a hook, `git rebase -x`) would point every git command
+# here, the self-check's scratch repos included, at the caller's repo.
+for var in $(compgen -e); do [[ $var == GIT_* ]] && unset "$var"; done
 
 landed_hours=${VOXMAR_TIDY_LANDED_HOURS:-6}
 pushed_days=${VOXMAR_TIDY_PUSHED_DAYS:-7}
@@ -97,7 +100,7 @@ self_check() {
 
   quietly git init -q --bare "$dir/origin.git"
   quietly git init -q -b main "$repo"
-  printf '/target\n/saves\n' >"$repo/.gitignore"
+  printf '/target\n/saves\n.env\n.DS_Store\n' >"$repo/.gitignore"
   echo a >"$repo/a"
   quietly git -C "$repo" add -A
   commit "$repo" init
@@ -113,6 +116,7 @@ self_check() {
   tree modified; echo edit >"$wt/modified/a"
   tree untracked; echo new >"$wt/untracked/new"
   tree saves; mkdir "$wt/saves/saves"; echo world >"$wt/saves/saves/w"
+  tree env; echo KEY=1 >"$wt/env/.env"; touch "$wt/env/.DS_Store"
   tree unpushed; echo b >"$wt/unpushed/b"; quietly git -C "$wt/unpushed" add b; commit "$wt/unpushed" b
   tree detached-local; echo c >"$wt/detached-local/c"; quietly git -C "$wt/detached-local" add c
   commit "$wt/detached-local" c; quietly git -C "$wt/detached-local" checkout -q --detach
@@ -156,6 +160,7 @@ self_check() {
   expect kept "$wt/modified/a" "an uncommitted edit"
   expect kept "$wt/untracked/new" "an untracked file"
   expect kept "$wt/saves/saves/w" "an ignored save"
+  expect kept "$wt/env/.env" "an ignored .env"
   expect kept "$wt/unpushed/b" "an unpushed commit"
   expect kept "$wt/detached-local/c" "a detached commit on no origin branch"
   expect kept "$wt/play/target/iter/voxmar" "play is never touched"
@@ -184,7 +189,12 @@ case ${1:-} in
   --self-check) self_check; exit ;;
 esac
 
-main_checkout=${VOXMAR_TIDY_REPO:-$(dirname "$(git -C "$(dirname "$0")" rev-parse --path-format=absolute --git-common-dir)")} || exit 2
+if [[ -n ${VOXMAR_TIDY_REPO:-} ]]; then
+  main_checkout=$VOXMAR_TIDY_REPO
+else
+  common=$(git -C "$(dirname "$0")" rev-parse --path-format=absolute --git-common-dir) || exit 2
+  main_checkout=$(dirname "$common")
+fi
 [[ -d $main_checkout/.git ]] || { echo "tidy: cannot find the main checkout" >&2; exit 2; }
 
 case ${1:-} in
@@ -317,7 +327,10 @@ clean() {
   out=$(git -C "$1" status --porcelain --untracked-files=all) || return 1
   [[ -z $out ]] || return 1
   out=$(git -C "$1" status --porcelain --untracked-files=normal --ignored) || return 1
-  ! grep '^!!' <<<"$out" | grep -vqE '^!! (target/|(.*/)?\.DS_Store$|(.*/)?__pycache__/$|.*\.pyc$)'
+  # One process, no pipe: a reader that stops at its first match (grep -q) leaves the
+  # writer to die of SIGPIPE, which pipefail then reports as the result.
+  awk '/^!! / && !/^!! (target\/|(.*\/)?\.DS_Store$|(.*\/)?__pycache__\/$|.*\.pyc$)/ { precious = 1 }
+       END { exit precious }' <<<"$out"
 }
 
 # Where the commit $2 of the worktree $1 is on origin, as of this run's fetch: "landed"
