@@ -114,7 +114,7 @@ announced in chat with a **Next:** line, and the better one hides the other:
 | Workshop | + roof, 2 lights, a loom, spindle stand or quern, 2 storage | crafting and construction +2, engineering +1 |
 | Pantry | 2 storage, a hearth or any heat block | the good effects of a meal last x1.25 (`meal_time`) |
 | Larder | + roof, 4 storage, a stove or cauldron, a table | meals also heal x1.2 (`meal_heal`) and last x1.5 |
-| Bedside | a bed, a seat, 2 lights (no roof needed) | 2° warmer, and sleeping there is a Well rested sleep |
+| Bedside | a bed, a seat, 2 lights (no roof needed) | 2° warmer, and a night's sleep there is Well rested |
 | Herb nook | 2 hanging herbs or hung drying racks (`drying`), 1 storage | farming and alchemy count 1 level higher, a meal's good lasts x1.1 |
 
 Bedside is a Nomad's first comfort: a stool (Construction 1) and two candles (Crafting 3)
@@ -279,6 +279,30 @@ Tests: the engine's `a_proper_bed_rests_well_and_every_sleep_mends_slower_than_f
 `no_sleep_with_a_hunter_near_or_wounds_fresh`; the gate's Home step clicks the bag with a
 shambler near and expects the refusal, then waits on every chip the engine says the bag
 gives there.
+
+## Nights
+
+Nights are told apart (home audit 2, item 6). An effect can ask for `Night`: the sun below
+the horizon (`calendar::night`, the same sun the sky draws), from sunset to sunrise, the last
+third of the day (16000 to 24000 ticks after sunrise, `/time set sunset` to `sunrise`).
+
+- **The better rests are a night's.** A sleep rule marked `night: true` gives its rest only
+  after dark: Well rested (a proper bed, a snug home, a lit corner) and Deep rest (a cosy
+  home). A nap by day still gives Rested and its mend, and says what a night's sleep there
+  would give ("A night's sleep here would rest you better: Well rested").
+- **A nap does not keep a night's rest away.** A bed holds its rest back only while that rest,
+  or a better one, is on the player (`EffectRegistry::rested`): a second nap rests no more,
+  but sleeping that night gives the better rest though the nap's Rested is still on.
+- **An evening in.** After dark, indoors at home within four blocks of a fire to sit by
+  (`campfire`: a campfire, the hearth, the stove; a torch is no fireside): Evening in, heal
+  x1.2 and 2° warmer, announced. Morning ends it.
+
+Tests: the engine's `a_night_sleep_rule_holds_only_after_dark` and
+`sleep_gives_the_rest_the_home_allows_once` (a nap does not keep a better
+rest away), the calendar's night; the server's
+`a_nap_by_day_is_no_nights_rest_and_an_evening_in_is_by_the_fire_after_dark`. The gate's walls
+step sets midnight in the walled room by the hearth and waits on the Evening in chip and line
+("home: evening in"), then sets noon.
 
 ## Drying off
 
@@ -644,5 +668,5 @@ for a supper or a talk with fireside guests.
 
 - Real storage (extra pack slots or a home chest) as a tier perk: needs the inventory and
   protocol to take a slot count.
-- Passing the night by sleeping, and a visible Rested icon (effects use the plain buff icon).
+- Passing the night by sleeping (sleep stays a rest, not a skip).
 - Sleeping, and the ladder, for villagers' houses.

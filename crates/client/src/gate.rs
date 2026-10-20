@@ -6160,7 +6160,7 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
                 let effects = &launch.content.effects;
                 let survey = voxmar_engine::effect::HomeSurvey { counts: effects.home_tags().iter().map(|tag| (tag.clone(), u32::from(tag == "bed" || tag == "light"))).collect(), ..Default::default() };
                 let calm = voxmar_engine::weather::Weather::NONE;
-                let situation = voxmar_engine::effect::Situation { felt: 15.0, warmed: false, outdoors: true, weather: &calm, biome: "", biome_tags: &[], home: Some(&survey), done: &[], held: &[], near: &[], seated: false };
+                let situation = voxmar_engine::effect::Situation { felt: 15.0, warmed: false, outdoors: true, weather: &calm, biome: "", biome_tags: &[], home: Some(&survey), done: &[], held: &[], near: &[], seated: false, night: false };
                 let tags = client.registry.id("base:sleeping_bag").map(|b| client.registry.def(b).tags.clone()).unwrap_or_default();
                 let wanted = effects.given_by_sleep(&situation, &tags);
                 let shown = |id| player.vitals.effects.iter().find(|a| a.effect == id);
@@ -6376,7 +6376,9 @@ const WALLS_WAIT: f32 = 8.0;
 /// Walls make the home. About the camp the Home step left (the bag home, a torch beside it),
 /// a hearthstone and a second torch, and a plank roof over the room: open to the outside it
 /// is Hearthside, and `/home` names the walls it lacks; walled in with planks (sound) it
-/// turns Snug. All of it goes again after, the camp left for the way home.
+/// turns Snug. Then, set to midnight (`/time`, no waiting for dark), indoors by the hearth
+/// it is an evening in, and noon again after. All of it goes again after, the camp left for
+/// the way home.
 fn home_walls(world: &mut World, gate: &mut Gate, now: f32) {
     let waited = gate.server_in_phase();
     let Some(bag) = world.resource::<LocalPlayer>().vitals.home else {
@@ -6446,12 +6448,27 @@ fn home_walls(world: &mut World, gate: &mut Gate, now: f32) {
             }
         }
         // Walled in with planks: Snug.
-        _ => {
+        2 => {
             if has(world, "base:snug") {
                 gate.check("home: walls", Ok("roofed but open, the camp with its hearth stayed Hearthside and /home asked for walls; walled in with planks it turned Snug".into()));
-                leave(world, gate);
+                world.resource::<Net>().command("time set midnight");
+                gate.advance(now);
             } else if gate.waited_out(WALLS_WAIT) {
                 gate.check("home: walls", Err(format!("{waited:.1} server s after walling the room in with planks ({low} to {high}), no Snug: Hearthside {}", has(world, "base:hearthside"))));
+                leave(world, gate);
+            }
+        }
+        // At midnight, indoors at home by the hearth: an evening in, its chip and its line.
+        _ => {
+            let evening = has(world, "base:evening_in");
+            let told = world.resource::<crate::hud::console::Console>().since(gate.phase_since).any(|l| l.contains("Evening in:"));
+            if evening && told {
+                gate.check("home: evening in", Ok("set to midnight, indoors at home by the hearth showed the Evening in chip and the chat named it".into()));
+                world.resource::<Net>().command("time set noon");
+                leave(world, gate);
+            } else if gate.waited_out(WALLS_WAIT) {
+                gate.check("home: evening in", Err(format!("{waited:.1} server s after /time set midnight in the walled room by the hearth: Evening in chip {evening}, line {told}")));
+                world.resource::<Net>().command("time set noon");
                 leave(world, gate);
             }
         }

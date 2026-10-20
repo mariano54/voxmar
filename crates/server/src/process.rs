@@ -159,7 +159,7 @@ impl Survival {
         let wet = server.block(feet).and_then(|b| server.content.blocks.fluid(b)).is_some();
         let outdoors = server.open_sky(feet + voxmar_engine::glam::IVec3::Y * 2);
         let at = voxmar_engine::glam::Vec2::new(player.position.x, player.position.z);
-        let (tick, day) = (server.tick, server.day);
+        let (tick, day, night) = (server.tick, server.day, server.night());
         let weather = server.weather.local(&mut server.temperature, at, tick, day).weather;
         let cold_air = air - if wet { server.survival.water_chill } else { 0.0 };
         let warmed = heat > 0.5 && cold_air < vitals::CHILLY;
@@ -198,7 +198,7 @@ impl Survival {
         // Warmth from what was eaten and the weather counts before the bands of warmth
         // are judged: soaked through, a mild day feels chilly.
         let biome = server.overworld.biome_at(feet.x, feet.z);
-        let mut situation = Situation { felt: cold_air + heat, warmed, outdoors, weather: &weather, biome: &biome.name, biome_tags: &biome.tags, home: home.as_ref(), done: &player.quests_done, held: &held, near: &near, seated: seated.is_some() };
+        let mut situation = Situation { felt: cold_air + heat, warmed, outdoors, weather: &weather, biome: &biome.name, biome_tags: &biome.tags, home: home.as_ref(), done: &player.quests_done, held: &held, near: &near, seated: seated.is_some(), night };
         // What clings (smoke) is topped up while it holds, and lasts after.
         effects.linger(&situation, &mut player.timed_effects);
         let first = effects.active(&situation, &player.timed_effects);

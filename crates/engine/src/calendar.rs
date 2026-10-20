@@ -48,6 +48,12 @@ pub fn sun_height(day_fraction: f64) -> f64 {
     y / (x * x + y * y + z * z).sqrt()
 }
 
+/// Whether it is night at `day_fraction`: the sun below the horizon, from sunset (two
+/// thirds of the way through the day) to sunrise.
+pub fn night(day_fraction: f64) -> bool {
+    sun_height(day_fraction) < 0.0
+}
+
 /// Where in its month the moon is on `days`, 0..1: 0 full, 0.25 waning half, 0.5 new,
 /// 0.75 waxing half. It is full on day 0.
 pub fn moon_phase(days: f64) -> f32 {
@@ -76,6 +82,8 @@ mod tests {
         assert!((up as f64 / 1000.0 - DAYLIGHT_SHARE).abs() < 0.005, "{up}");
         // Highest at a third of the day, lowest at five sixths.
         assert!(sun_height(1.0 / 3.0) > 0.98 && sun_height(5.0 / 6.0) < -0.85);
+        // Night is the third of the day the sun is down, sunset to sunrise.
+        assert!(!night(0.01) && !night(0.5) && !night(0.66) && night(0.67) && night(5.0 / 6.0) && night(0.99));
     }
 
     #[test]
