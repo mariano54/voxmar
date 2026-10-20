@@ -56,6 +56,40 @@
             after: ["a_sharp_edge", "a_chopping_block", "break_ground", "twine_and_thong", "timber"],
             rewards: [Xp("engineering", 30.0), Item("torch", 8)],
         ),
+        // Side quests about camp: each teaches a first tool or a way to shape what you build with.
+        (
+            name: "flint_first", age: "nomad", branch: "start", title: "Flint First",
+            why: "Before stone, flint. Two flint over two sticks make a flint pickaxe, which breaks stone and the hard rock that stone heads come from. One stick over another makes a digging stick, a shovel for dirt and sand. Make both.",
+            tasks: [[Craft("flint_pickaxe", 1), Craft("digging_stick", 1)]],
+            after: ["crafting_table"],
+            side: true,
+            rewards: [Xp("engineering", 20.0), Item("bread", 1)],
+        ),
+        (
+            name: "a_coin_purse", age: "nomad", branch: "start", title: "A Coin Purse",
+            why: "Coins fill a pack fast. A hide and two twine (raw hide cures on a drying rack) make a coin purse that holds a thousand coins in one slot; right-click it to tip them out again. Make one.",
+            tasks: [[Craft("coin_purse", 1)]],
+            after: ["twine_and_thong"],
+            side: true,
+            rewards: [Xp("crafting", 20.0), Item("bread", 1)],
+        ),
+        (
+            name: "steps_and_slabs", age: "nomad", branch: "start", title: "Steps and Slabs",
+            why: "A block need not be whole. Three planks in a row make six slabs, half a block high; six planks in a stair shape make four stairs (Construction 2). Make both and set down two of each: a step up to your door.",
+            tasks: [[Craft("tag:slab", 6), Craft("tag:stairs", 4), Placed("tag:slab", 2), Placed("tag:stairs", 2)]],
+            after: ["a_chopping_block", "a_bench_to_work_at"],
+            side: true,
+            rewards: [Xp("construction", 30.0), Item("bread", 1)],
+        ),
+        (
+            name: "a_fence_and_a_gate", age: "nomad", branch: "start", title: "A Fence and a Gate",
+            why: "Three logs stood end on end make six posts; posts and sticks make fences (Construction 2), and a fence beside a slab and a fence makes a gate. Animals and most creatures take a fence as two blocks high: only a boss, or a fighter on a chase, climbs it. Set down six fences and a gate; right-click the gate to swing it open.",
+            // A gate is tagged fence too: seven of the tag with one gate is six fences and the gate.
+            tasks: [[Craft("tag:fence", 7), Craft("tag:gate", 1), Placed("tag:fence", 7), Placed("tag:gate", 1)]],
+            after: ["steps_and_slabs", "a_bench_to_work_at"],
+            side: true,
+            rewards: [Xp("construction", 40.0), Item("bread", 2)],
+        ),
         // The Hearth: the main line, from the first night to the lit Homestead Hearth and the rite.
         (
             name: "look_it_up", age: "nomad", branch: "main", title: "Look It Up",
@@ -177,7 +211,7 @@
         (
             name: "daily_bread", age: "nomad", branch: "cooking", title: "Daily Bread",
             why: "Two ears of wheat side by side in the crafting grid bake into bread, which heals more than the grain. Bake four loaves.",
-            tasks: [[Craft("bread", 4)]],
+            tasks: [[Craft("bread", 4)], [Cook("bread", 4)]],
             after: ["a_handful_of_grain"],
             rewards: [Xp("cooking", 60.0)],
         ),
@@ -229,7 +263,7 @@
             name: "a_varied_table", age: "nomad", branch: "cooking", title: "A Varied Table",
             capstone: true,
             why: "One food grows dull and heals little. Cook six meat at a fire, cook four fish, and bake three bread: every kind comes from a different part of the land, and together they keep you going.",
-            tasks: [[Cook("tag:meat", 6), Cook("tag:fish", 4), Craft("bread", 3)]],
+            tasks: [[Cook("tag:meat", 6), Cook("tag:fish", 4), Craft("bread", 3)], [Cook("tag:meat", 6), Cook("tag:fish", 4), Cook("bread", 3)]],
             after: ["a_fish_supper", "daily_bread", "trail_rations", "wild_harvest", "break_ground"],
             rewards: [Xp("cooking", 180.0), Xp("hitpoints", 40.0)],
         ),

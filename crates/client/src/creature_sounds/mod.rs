@@ -177,6 +177,9 @@ pub struct CreatureSound {
     /// An answer to the player's own hand (a fed ewe's munch): always heard, as an event's
     /// `chance` thins only what a creature does unbidden.
     pub answering: bool,
+    /// Its own idle noise as it wanders (`kind` is then `Idle`): a call or a contented
+    /// sound, by its voice's share of calls at this hour ([`defs::Calls`]).
+    pub chatter: bool,
 }
 
 /// What creatures did this frame that may be heard; drained each frame.
@@ -354,6 +357,12 @@ fn thinned(chance: f32, answering: bool, roll: impl FnOnce() -> f32) -> bool {
     !answering && chance < 1.0 && roll() > chance
 }
 
+/// What a creature's chatter is, by its voice's share of calls at this hour and a roll
+/// in 0..1.
+fn chatter(calls: f32, roll: f32) -> Kind {
+    if roll < calls { Kind::Call } else { Kind::Idle }
+}
+
 /// A sound about to be played.
 struct Voiced {
     clip: Handle<AudioSource>,
@@ -377,6 +386,7 @@ fn play(
     settings: Res<Settings>,
     global: Option<Res<GlobalVolume>>,
     time: Res<Time>,
+    cycle: Option<Res<crate::render::DayCycle>>,
     listener: Query<&GlobalTransform, With<SpatialListener>>,
     mix: Option<Res<Mix>>,
     mut cues: MessageWriter<SoundCue>,
@@ -401,11 +411,15 @@ fn play(
     let Ok(ear) = listener.single().map(|t| t.translation()) else { return };
     let now = time.elapsed_secs();
     let master = MASTER * settings.sound_volume as f32 / 100.0;
+    let part = defs::Part::at(cycle.map_or(0.25, |cycle| cycle.ticks.rem_euclid(voxmar_protocol::TICKS_PER_DAY as f64) / voxmar_protocol::TICKS_PER_DAY as f64));
     let mut wanted: Vec<Voiced> = Vec::new();
-    for sound in asked {
+    for mut sound in asked {
         let creature = &launch.content.creatures.get(sound.species).def;
         let distance = sound.position.distance(ear);
         let Some(voice) = bank.voice(sound.species) else { continue };
+        if sound.chatter {
+            sound.kind = chatter(voice.calls.at(part), random(counter));
+        }
         // How heavy it is, by the volume of its body, against a sheep's.
         let (width, height) = creature.body.size;
         let scale = sound.scale.max(0.2) * if sound.young { 0.6 } else { 1.0 };

@@ -212,19 +212,34 @@
                 (style: Smoke, rate: 3.0, at: (0.75, 1.05, 0.75), spread: 0.06, size: 0.9, height: 3.0, color: Some((112, 112, 112))),
             ],
         ),
-        // Stand-ins for the Farm age's machines, which will have the plain names: a loom, a
-        // spinning wheel and a quern for a weaver's or a miller's room.
+        // The Farm age's hand stations (cooking.ron): a loom weaves cloth, a spindle spins
+        // twine and a quern grinds flour, held to and worked two seconds a go. Broken, each
+        // drops itself where a player set it down (`furnishing`); one the world set (an older
+        // world's village) gives nothing. Villages set the old_ twins below instead, which look
+        // the same but work nothing (no station tag) and give nothing.
         (
             name: "loom_frame", render: Model, shape: "loom_frame", facing: true, sound: Wood, textures: All("furniture_wood"), tint: Fixed(205, 150, 86),
-            drops: "oak_planks", drop_count: 2, hardness: 1.5, color: (160, 120, 70), tags: ["workshop", "decor", "wood", "furnishing"],
+            hardness: 1.5, color: (160, 120, 70), tags: ["workshop", "decor", "wood", "loom", "furnishing"],
         ),
         (
             name: "spindle_stand", render: Model, shape: "spindle_stand", facing: true, sound: Wood, textures: All("furniture_wood"), tint: Fixed(205, 150, 86),
-            drops: "oak_planks", drop_count: 1, hardness: 1.5, color: (160, 120, 70), tags: ["workshop", "decor", "wood", "furnishing"],
+            hardness: 1.5, color: (160, 120, 70), tags: ["workshop", "decor", "wood", "spindle", "furnishing"],
         ),
         (
             name: "quern_stones", render: Model, shape: "quern_stones", facing: true, sound: Stone, textures: All("cobblestone"),
-            drops: "core:air", hardness: 2.0, color: (110, 110, 110), tags: ["workshop", "decor", "stone"],
+            hardness: 2.0, color: (110, 110, 110), tags: ["workshop", "decor", "stone", "quern", "furnishing"],
+        ),
+        (
+            name: "old_loom_frame", render: Model, shape: "loom_frame", facing: true, sound: Wood, textures: All("furniture_wood"), tint: Fixed(205, 150, 86),
+            drops: "core:air", hardness: 1.5, color: (160, 120, 70), tags: ["creative_only", "decor", "wood"],
+        ),
+        (
+            name: "old_spindle_stand", render: Model, shape: "spindle_stand", facing: true, sound: Wood, textures: All("furniture_wood"), tint: Fixed(205, 150, 86),
+            drops: "core:air", hardness: 1.5, color: (160, 120, 70), tags: ["creative_only", "decor", "wood"],
+        ),
+        (
+            name: "old_quern_stones", render: Model, shape: "quern_stones", facing: true, sound: Stone, textures: All("cobblestone"),
+            drops: "core:air", hardness: 2.0, color: (110, 110, 110), tags: ["creative_only", "decor", "stone"],
         ),
         // Prayer flags in the Cloud monks' five colours, drawn in colour (not a dye).
         (

@@ -177,8 +177,7 @@ burning (each recipe sets the level at which you stop burning it).
 | --- | --- |
 | 1 | Campfire: roast meat, fish, eggs, roots and mushrooms; herb tea |
 | 2 | Baked potato, roast vegetables |
-| 3 | Pot: boiled eggs, porridge |
-| 5 | Quern: flour; flatbread |
+| 3 | Pot: boiled eggs, porridge; quern: flour, baked into bread |
 | 6 | Jam and compote |
 | 8 | Animal feed: mash and seed mix (see [breeding.md](breeding.md)) |
 | 10 | Oven: bread |
