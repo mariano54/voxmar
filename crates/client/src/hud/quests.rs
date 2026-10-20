@@ -193,10 +193,11 @@ fn choose_on_open(
 }
 
 /// The quest the player is on: the first pinned that is not done, else the first open in
-/// the book's order.
+/// the book's order, chapter by chapter.
 pub(crate) fn current<'a>(content: &'a Content, player: &LocalPlayer, settings: &Settings) -> Option<&'a QuestDef> {
     let pinned = settings.pinned_quests.iter().filter_map(|name| content.quests.get(name)).find(|quest| standing(content, player, quest) != Standing::Done);
-    pinned.or_else(|| content.quests.iter().find(|quest| standing(content, player, quest) == Standing::Open))
+    let open = || chapters(content).into_iter().find_map(|age| content.quests.iter().find(|quest| quest.age == age && standing(content, player, quest) == Standing::Open));
+    pinned.or_else(open)
 }
 
 /// Current Quest turns the book to the quest the player is on, picks it, and brings the
@@ -229,15 +230,10 @@ pub enum Standing {
     Waiting,
 }
 
-/// The chapters, by age, in the order the quests first name them.
+/// The chapters, by age, in the order quest_paths.ron lists the ages' paths (every age a
+/// quest names has one), never by the files the quests are written in.
 pub fn chapters(content: &Content) -> Vec<String> {
-    let mut ages: Vec<String> = Vec::new();
-    for quest in content.quests.iter() {
-        if !ages.contains(&quest.age) {
-            ages.push(quest.age.clone());
-        }
-    }
-    ages
+    content.quest_paths.ages().into_iter().map(str::to_owned).collect()
 }
 
 fn state<'a>(player: &'a LocalPlayer, name: &str) -> Option<&'a QuestState> {
@@ -2120,8 +2116,11 @@ pub(crate) mod tests {
         // A full tracker takes none.
         let full: Vec<String> = (0..room).map(|i| format!("base:pinned_{i}")).collect();
         assert!(follow_ons(&content, &full, std::slice::from_ref(&first), &done).is_empty());
-        // Opening nothing new: the age's next open quest, only with nothing else pinned.
-        let last = content.quests.iter().find(|q| content.quests.iter().all(|other| !before(&content, other).iter().any(|b| b.name == q.name))).expect("a quest nothing follows");
+        // Opening nothing new: the age's next open quest, only with nothing else pinned. The
+        // quest is of an age a new player has quests open in (in name order the Farm book
+        // may load first, and none of it opens before its rite).
+        let starts = |age: &str| content.quests.iter().any(|q| q.age == age && content.quests.open(q, &|_: &str| false));
+        let last = content.quests.iter().find(|q| starts(&q.age) && content.quests.iter().all(|other| !before(&content, other).iter().any(|b| b.name == q.name))).expect("a quest nothing follows");
         let none = |name: &str| name == last.name;
         let fallback = follow_ons(&content, &[], std::slice::from_ref(&last.name), &none);
         assert_eq!(fallback.len(), 1, "{fallback:?}");
@@ -2296,5 +2295,16 @@ pub(crate) mod tests {
             assert!(ja.find(&format!("quest.age.{age}")).is_some(), "no Japanese name for the {age} chapter");
         }
         assert_eq!(content.quests.tracker(), voxmar_engine::quest::Tracker { pins: 3, done_stays: 5.0, backing_alpha: 0.5, follow_on: true });
+    }
+
+    /// The Nomad age is the first chapter, and a new player's quest is a Nomad one, though
+    /// the Farm book's file (`quests.ron`) is read before the Nomad's (`quests_nomad.ron`).
+    #[test]
+    fn the_nomad_age_comes_first_whatever_its_file_is_named() {
+        let content = content();
+        assert_eq!(content.quests.iter().next().map(|q| q.age.as_str()), Some("farm"), "the Farm book is read first");
+        assert_eq!(chapters(&content).first().map(String::as_str), Some("nomad"));
+        let quest = current(&content, &LocalPlayer::default(), &Settings::default()).expect("a new player has a quest");
+        assert_eq!(quest.age, "nomad", "{} is a new player's first quest", quest.name);
     }
 }

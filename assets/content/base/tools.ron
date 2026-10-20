@@ -26,28 +26,34 @@
     // Mining xp in level order (design draft 63): stone 1, coal 13, copper 17.5, tin 25,
     // iron 35, zinc and lead 49, cobalt 70, silver 99, gold 140, ruby and sapphire 172,
     // lodestone 198, emerald 227, graphite and diamond 280, bauxite and aetherite 396.
-    // Stone alone no longer trains Mining.
+    // Stone alone no longer trains Mining. The first sample of ore a player breaks over each
+    // vein teaches `prospect` more (three times the ore's xp): finding a vein is the work.
     blocks: [
-        (tags: ["ore", "alchemy:aether"], skill: "core:mining", level: 50, tool: "pickaxe", tier: 4, xp: 396.0),
+        (tags: ["ore", "alchemy:aether"], skill: "core:mining", level: 50, tool: "pickaxe", tier: 4, xp: 396.0, prospect: 1188.0),
         // The ores of ores.ron's second part, by tag so their deepslate forms and surface
         // samples follow. Gems each ahead of the general gem rule.
-        (tags: ["metal:aluminium"], skill: "core:mining", level: 50, tool: "pickaxe", tier: 4, xp: 396.0),
-        (tags: ["graphite"], skill: "core:mining", level: 45, tool: "pickaxe", tier: 4, xp: 280.0),
-        (tags: ["gem:emerald"], skill: "core:mining", level: 42, tool: "pickaxe", tier: 4, xp: 227.0),
-        (tags: ["magnetic"], skill: "core:mining", level: 40, tool: "pickaxe", tier: 4, xp: 198.0),
-        (tags: ["gem:ruby"], skill: "core:mining", level: 38, tool: "pickaxe", tier: 4, xp: 172.0),
-        (tags: ["gem:sapphire"], skill: "core:mining", level: 38, tool: "pickaxe", tier: 4, xp: 172.0),
-        (tags: ["metal:zinc"], skill: "core:mining", level: 20, tool: "pickaxe", tier: 2, xp: 49.0),
-        (tags: ["metal:lead"], skill: "core:mining", level: 20, tool: "pickaxe", tier: 2, xp: 49.0),
-        (tags: ["ore", "gem"], skill: "core:mining", level: 45, tool: "pickaxe", tier: 4, xp: 280.0),
-        (tags: ["ore", "metal:gold"], skill: "core:mining", level: 35, tool: "pickaxe", tier: 3, xp: 140.0),
-        (tags: ["ore", "metal:silver"], skill: "core:mining", level: 30, tool: "pickaxe", tier: 3, xp: 99.0),
-        (tags: ["ore", "metal:cobalt"], skill: "core:mining", level: 25, tool: "pickaxe", tier: 3, xp: 70.0),
-        (tags: ["ore", "metal:iron"], skill: "core:mining", level: 15, tool: "pickaxe", tier: 2, xp: 35.0),
-        (tags: ["ore", "metal:tin"], skill: "core:mining", level: 10, tool: "pickaxe", tier: 1, xp: 25.0),
-        (tags: ["ore", "metal:copper"], skill: "core:mining", level: 5, tool: "pickaxe", tier: 1, xp: 17.5),
-        (tags: ["ore", "fuel"], skill: "core:mining", level: 1, tool: "pickaxe", tier: 1, xp: 13.0),
-        (tags: ["ore"], skill: "core:mining", level: 1, tool: "pickaxe", tier: 1, xp: 10.0),
+        (tags: ["metal:aluminium"], skill: "core:mining", level: 50, tool: "pickaxe", tier: 4, xp: 396.0, prospect: 1188.0),
+        (tags: ["graphite"], skill: "core:mining", level: 45, tool: "pickaxe", tier: 4, xp: 280.0, prospect: 840.0),
+        (tags: ["gem:emerald"], skill: "core:mining", level: 42, tool: "pickaxe", tier: 4, xp: 227.0, prospect: 681.0),
+        (tags: ["magnetic"], skill: "core:mining", level: 40, tool: "pickaxe", tier: 4, xp: 198.0, prospect: 594.0),
+        (tags: ["gem:ruby"], skill: "core:mining", level: 38, tool: "pickaxe", tier: 4, xp: 172.0, prospect: 516.0),
+        (tags: ["gem:sapphire"], skill: "core:mining", level: 38, tool: "pickaxe", tier: 4, xp: 172.0, prospect: 516.0),
+        (tags: ["metal:zinc"], skill: "core:mining", level: 20, tool: "pickaxe", tier: 2, xp: 49.0, prospect: 147.0),
+        (tags: ["metal:lead"], skill: "core:mining", level: 20, tool: "pickaxe", tier: 2, xp: 49.0, prospect: 147.0),
+        (tags: ["ore", "gem"], skill: "core:mining", level: 45, tool: "pickaxe", tier: 4, xp: 280.0, prospect: 840.0),
+        (tags: ["ore", "metal:gold"], skill: "core:mining", level: 35, tool: "pickaxe", tier: 3, xp: 140.0, prospect: 420.0),
+        (tags: ["ore", "metal:silver"], skill: "core:mining", level: 30, tool: "pickaxe", tier: 3, xp: 99.0, prospect: 297.0),
+        (tags: ["ore", "metal:cobalt"], skill: "core:mining", level: 25, tool: "pickaxe", tier: 3, xp: 70.0, prospect: 210.0),
+        (tags: ["ore", "metal:iron"], skill: "core:mining", level: 15, tool: "pickaxe", tier: 2, xp: 35.0, prospect: 105.0),
+        // Copper and tin want a stone pickaxe like coal; a copper sample still lifts with flint.
+        (tags: ["ore", "metal:tin"], skill: "core:mining", level: 10, tool: "pickaxe", tier: 2, xp: 25.0, prospect: 75.0),
+        (tags: ["ore_sample", "metal:copper"], skill: "core:mining", level: 5, tool: "pickaxe", tier: 1, xp: 17.5, prospect: 52.5),
+        (tags: ["ore", "metal:copper"], skill: "core:mining", level: 5, tool: "pickaxe", tier: 2, xp: 17.5, prospect: 52.5),
+        // Coal wants a stone pickaxe: a flint one only scratches the seam. Its
+        // sample on the ground above lifts with flint, so the seam is found before it is dug.
+        (tags: ["ore_sample", "fuel"], skill: "core:mining", level: 1, tool: "pickaxe", tier: 1, xp: 13.0, prospect: 39.0),
+        (tags: ["ore", "fuel"], skill: "core:mining", level: 1, tool: "pickaxe", tier: 2, xp: 13.0, prospect: 39.0),
+        (tags: ["ore"], skill: "core:mining", level: 1, tool: "pickaxe", tier: 1, xp: 10.0, prospect: 30.0),
         // Bare hands break neither rock nor a tree: stone wants a pickaxe and a log an axe,
         // flint ones at the least (recipes.ron), so the first tools are made, not found. A
         // log set down as a wall still wants the axe that felled it.
