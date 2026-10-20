@@ -65,9 +65,11 @@ pub struct Target {
     fishing_until: f32,
     /// When (seconds of game time) what is cooking comes off the fire, and more may go on.
     cooking_until: f32,
-    /// The right button has been held since it put something on to cook: what is in hand
-    /// (what is cooking, or what came off) is never set down by it until it is let go.
-    cook_held: bool,
+    /// The right button has been held since its press was spent on something else than
+    /// setting a block down (a cook put on or refused, a clamp lit, a seat sat on): what is
+    /// in hand (what is cooking or came off, the campfire that lit the clamp) is never set
+    /// down by it until it is let go.
+    press_spent: bool,
     /// Seconds until the next block may be mined after one breaks, as Minecraft's five
     /// ticks, so sweeping across a meadow does not mow it flat.
     mine_cooldown: f32,
@@ -277,7 +279,7 @@ fn break_and_place(
     target.place_cooldown -= time.delta_secs();
     target.mine_cooldown -= time.delta_secs();
     if !mouse.pressed(MouseButton::Right) {
-        target.cook_held = false;
+        target.press_spent = false;
     }
     let hit = target.hit.filter(|_| ui.cursor_locked && !player.dead);
     // A creature wandering across the block being mined does not stop the mining: only a
@@ -405,6 +407,7 @@ fn break_and_place(
                     Some(Ok(())) if !cooks => {
                         net.propose_from_with(&player, action, action_target, worked(&context, hit.block));
                         target.used_right = true;
+                        target.press_spent = true;
                         // A lock picked opens the chest's slots.
                         player.store_asked |= name == "base:pick_lock";
                         // The clay a coat spends stays in hand until the server turns the
@@ -441,7 +444,7 @@ fn break_and_place(
             match actions.0.get(cook).map(|def| def.validate(&context, action_target)) {
                 // One thing at a time: a click while it cooks neither restarts it nor eats.
                 Some(Ok(())) if time.elapsed_secs() < target.cooking_until => {
-                    target.cook_held = true;
+                    target.press_spent = true;
                     return;
                 }
                 Some(Ok(())) => {
@@ -450,7 +453,7 @@ fn break_and_place(
                     target.used_right = true;
                     target.place_cooldown = 0.4;
                     target.cooking_until = time.elapsed_secs() + seconds + 0.2;
-                    target.cook_held = true;
+                    target.press_spent = true;
                     return;
                 }
                 // Below its level, or with no tool about (an axe for the chopping block): it
@@ -459,7 +462,7 @@ fn break_and_place(
                     if let Some(words) = refusal(&context, &locale, Some(hit.block), need) {
                         toasts.refused(words, time.elapsed_secs());
                     }
-                    target.cook_held = true;
+                    target.press_spent = true;
                     return;
                 }
                 _ => {}
@@ -553,9 +556,10 @@ fn break_and_place(
         }
     }
     let Some(hit) = hit else { return };
-    // Held on through a cook, nothing repeats: neither the log on the chopping block nor the
-    // firewood it gives is laid on it.
-    let cooking = target.cook_held || time.elapsed_secs() < target.cooking_until;
+    // Held on through a cook, or after lighting or using something, nothing repeats: neither
+    // the log on the chopping block nor the firewood it gives is laid on it, nor the campfire
+    // that lit a clamp in its flue.
+    let cooking = target.press_spent || time.elapsed_secs() < target.cooking_until;
     if mouse.pressed(MouseButton::Right) && target.place_cooldown <= 0.0 && !cooking {
         target.place_cooldown = 0.2;
         let action_target = ActionTarget::Block { block: hit.block, face: hit.face };
@@ -798,6 +802,33 @@ mod tests {
             .init_resource::<SkillToasts>()
             .add_systems(Update, break_and_place);
         (app, block, server_side)
+    }
+
+    /// A clamp lit from a campfire in hand, the button held on: the campfire is not set down
+    /// in its flue after.
+    #[test]
+    fn holding_on_after_lighting_a_clamp_lays_nothing() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let (mut app, _, server_side) = app(content.actions.clone());
+        let clamp = content.multiblocks.iter().find(|m| m.smoulder.is_some()).expect("a clamp").clone();
+        let core = IVec3::new(10, 100, 10);
+        for (at, piece) in clamp.example() {
+            app.world_mut().resource_mut::<ClientWorld>().set_block(core + at, piece);
+        }
+        app.world_mut().resource_mut::<Target>().hit = Some(RayHit { block: core, face: voxmar_engine::coords::Face::PosY, distance: 1.0 });
+        let mut player = app.world_mut().resource_mut::<LocalPlayer>();
+        player.inventory.slots[0] = Some(voxmar_engine::inventory::ItemStack::new(content.blocks.expect("base:campfire"), 1));
+        player.selected = 0;
+        player.position = Vec3::new(10.5, 101.0, 8.5);
+        app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(std::time::Duration::from_millis(30)));
+        app.world_mut().resource_mut::<ButtonInput<MouseButton>>().press(MouseButton::Right);
+        app.update();
+        app.world_mut().resource_mut::<ButtonInput<MouseButton>>().clear();
+        for _ in 0..20 {
+            app.update();
+        }
+        let proposed: Vec<ActionId> = std::iter::from_fn(|| server_side.try_recv().ok().flatten()).filter_map(|m| match m { voxmar_protocol::ClientMessage::Propose { action, .. } => Some(action), _ => None }).collect();
+        assert_eq!(proposed, [content.actions.expect("base:light")], "lit, and the campfire kept in hand");
     }
 
     /// Content that leaves `core:mine` out (a partial mod): holding the button does

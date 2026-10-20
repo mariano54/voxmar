@@ -8286,8 +8286,10 @@ fn kindle(world: &mut World, gate: &mut Gate, now: f32) {
                 leave(world, gate, false);
             }
         }
-        // The panel smoulders (the server says so, and smoke rises from it), and the one over
-        // the torch is daubed; then the fire is left to burn.
+        // The panel smoulders (the server says so, and smoke rises from it), the one over the
+        // torch is daubed, and it catches; then the fire is left to burn. It is seen caught
+        // before leaving, since the Home steps after set the clock on by days and the torch
+        // burns out by the world's clock (a torch lasts a day).
         2 => {
             let smouldering = world.resource::<ClientWorld>().smoulders.contains(&panel);
             let amount = world.resource::<crate::render::particles::Particles>().amount;
@@ -8300,7 +8302,7 @@ fn kindle(world: &mut World, gate: &mut Gate, now: f32) {
                 let why = world.resource::<crate::emitters::Emitters>().why_quiet(panel, amount);
                 gate.check("fire: smoulders", Err(format!("the panel caught {waited:.1} server s on without being seen to smoulder (told smouldering: {smouldering}; {puffs} puffs; {why})")));
                 leave(world, gate, false);
-            } else if gate.smoulder_seen && gate.daub_stage == 3 {
+            } else if gate.smoulder_seen && gate.daub_stage == 3 && gate.fire.as_ref().is_some_and(|fire| fire.caught.is_some()) {
                 leave(world, gate, true);
             } else if gate.waited_out(rules.catch_seconds + 4.0) {
                 if !gate.smoulder_seen {
@@ -8362,7 +8364,11 @@ fn blaze(world: &mut World, gate: &mut Gate, now: f32) {
                 gate.advance(now);
             }
             None if gate.server_now - fire.set > rules.catch_seconds + 4.0 => {
-                gate.check("fire: catches", Err(format!("{:.1} server s after a torch was set beside the wattle panel at {panel}, it shows {here:?}, not a blaze", gate.server_now - fire.set)));
+                let torch = {
+                    let client = world.resource::<ClientWorld>();
+                    client.block(fire.torch).map(|b| client.registry.def(b).name.clone()).unwrap_or_default()
+                };
+                gate.check("fire: catches", Err(format!("{:.1} server s after a torch was set beside the wattle panel at {panel}, it shows {here:?}, not a blaze (the torch's cell holds {torch:?})", gate.server_now - fire.set)));
                 leave(world, gate);
             }
             None => {}
