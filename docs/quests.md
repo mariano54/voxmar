@@ -428,6 +428,19 @@ names cooked fish alone:
 
 None of them is in a capstone's `after`, so Many Kinds of Fish still closes the path.
 
+## Crafting in the Farm book (Oct 20)
+
+The Farm book's Crafting path had only its capstone, Master and Journeyman. Four side
+quests (`side: true`) now teach what the bench makes from what the Farm age brings: trophies,
+cloth and dyes. Each pays in bread:
+
+| Quest | After | Teaches | Pays |
+|---|---|---|---|
+| Fang and Stick | The Farm Age | A fang (wolves, lynx, bears) and a stick make a fang dagger (Crafting 10) | Crafting 60, 2 bread |
+| Lanterns of Cloth | A Rug Underfoot | Paper lanterns (Crafting 6): two made and set down at home, each a light | Crafting 60, 2 bread |
+| A Dooryard | Lanterns of Cloth | An awning and bunting made, then the Dooryard felt (an awning and two yard things under open sky) | Crafting 100, 4 bread |
+| Five Colours | A Rug Underfoot | Five dyed cloths (indigo, white, red, green, amber) and the wind flags they make | Crafting 120, 4 bread |
+
 ## Readable to a newcomer (Oct 13)
 
 Every Nomad and Farm quest was read as someone who has never played would: does its text
