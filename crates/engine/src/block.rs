@@ -1332,7 +1332,9 @@ impl BlockRegistry {
         // A window glows by the light through it, and glowing is its drawing's (the client
         // marks the texture layers of a `lit_through` block's faces): a drawing a block that
         // does not glow shares, on a face or a box, would light it too.
-        let textured = |def: &BlockDef, block: &BlockInfo| Face::ALL.into_iter().filter(|&f| def.textures.face(f).is_some()).map(move |f| block.layers[f as usize]);
+        fn textured<'a>(def: &'a BlockDef, block: &'a BlockInfo) -> impl Iterator<Item = u16> + 'a {
+            Face::ALL.into_iter().filter(move |&f| def.textures.face(f).is_some()).map(move |f| block.layers[f as usize])
+        }
         let glowing: FxHashMap<u16, &str> = defs.iter().zip(&info).filter(|(def, _)| def.lit_through).flat_map(|(def, block)| textured(def, block).map(move |layer| (layer, def.name.as_str()))).collect();
         for (i, (def, block)) in defs.iter().zip(&info).enumerate().filter(|(_, (def, _))| !def.lit_through) {
             if let Some(window) = textured(def, block).chain(shape_layers[i].iter().copied()).find_map(|layer| glowing.get(&layer)) {
