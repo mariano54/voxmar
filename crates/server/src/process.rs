@@ -181,11 +181,13 @@ impl Survival {
                 && server.block(seat).is_some_and(|b| server.content.blocks.def(b).has_tag(voxmar_engine::action::SEAT_TAG))
         });
 
+        let anchor = server.at_home(id);
         let player = server.players.get_mut(&id).unwrap();
-        // What their home meets now, to tell on their return what lights burnt out while
-        // they were away cost; not before that is told (`flames::check_home_return`).
+        // What their home meets now, and where it stands, to tell on their return what
+        // lights burnt out while they were away cost; not before that is told
+        // (`flames::check_home_return`).
         if let Some(home) = home.as_ref().filter(|_| !player.home_unchecked) {
-            player.home_steps = effects.home_steps(home);
+            (player.home_steps, player.home_anchor) = (effects.home_steps(home), anchor);
         }
         let creative = player.allow_flight;
         let before = (player.vitals.clone(), player.health);

@@ -62,9 +62,11 @@ pub struct Player {
     /// session, so stepping out of a room and back in does not say it twice.
     pub announced: Vec<EffectId>,
     /// The home steps their home met when last surveyed (`EffectRegistry::home_steps`),
-    /// and whether it is yet to be surveyed since they joined, to tell them what lights
-    /// burnt out while they were away cost.
+    /// where that home stood (its `home_spot`'s cell: a home moved since says nothing of
+    /// what was lost), and whether it is yet to be surveyed since they joined, to tell them
+    /// what lights burnt out while they were away cost.
     pub home_steps: Vec<EffectId>,
+    pub home_anchor: Option<voxmar_engine::glam::IVec3>,
     pub home_unchecked: bool,
     /// Healing and hurting under way, in seconds (`process::Survival`).
     pub heal_clock: f32,
@@ -204,6 +206,7 @@ impl Player {
             timed_effects: Vec::new(),
             announced: Vec::new(),
             home_steps: Vec::new(),
+            home_anchor: None,
             home_unchecked: false,
             modifiers: Modifiers::default(),
             recent_food: Default::default(),
@@ -339,6 +342,7 @@ impl Player {
             casts: self.casts,
             draws: self.draws,
             home_steps: self.home_steps.iter().map(|&id| effects.get(id).name.clone()).collect(),
+            home_anchor: self.home_anchor.map(|at| at.to_array()),
             spilled: Vec::new(),
         }
     }
@@ -595,6 +599,7 @@ impl Server {
                 player.tallies = saved.tallies.into_iter().collect();
                 player.timed_effects = saved.effects.iter().filter_map(|(name, left)| Some((effect_ids.id(name)?, *left))).collect();
                 player.home_steps = saved.home_steps.iter().filter_map(|name| effect_ids.id(name)).collect();
+                player.home_anchor = saved.home_anchor.map(voxmar_engine::glam::IVec3::from_array);
                 player.home_unchecked = !player.home_steps.is_empty();
             }
             // Players who left dead come back to life at home, or else the spawn point.
@@ -612,6 +617,7 @@ impl Server {
                 player.quests_claimed = saved.quests_claimed;
                 player.tallies = saved.tallies.into_iter().collect();
                 player.home_steps = saved.home_steps.iter().filter_map(|name| effect_ids.id(name)).collect();
+                player.home_anchor = saved.home_anchor.map(voxmar_engine::glam::IVec3::from_array);
                 player.home_unchecked = !player.home_steps.is_empty();
             }
             // The coin purse in the pack's last slot, out of the hotbar's way, and the kit

@@ -434,6 +434,16 @@ mod tests {
         again.restore_machines(saved.clone());
         let bin: Vec<ItemStack> = again.factory.get(at).unwrap().1.bin.iter().flatten().copied().collect();
         assert_eq!(bin, [ItemStack { wear: 41, ..ItemStack::new(pick, 1) }, ItemStack::new(pick, 1)], "worn kept through a save");
+        // A worn stack of several (half-burnt torches) keeps its wear too.
+        let torch = blocks.expect("base:torch");
+        let mut torches = saved.clone();
+        torches[0].bin = vec![("base:torch".into(), 5), ("base:torch".into(), 2)];
+        torches[0].bin_wear = vec![(1, 600)];
+        let mut lit = crate::test_server();
+        lit.set_block(at, chest);
+        lit.restore_machines(torches);
+        let bin: Vec<ItemStack> = lit.factory.get(at).unwrap().1.bin.iter().flatten().copied().collect();
+        assert_eq!(bin, [ItemStack::new(torch, 5), ItemStack { wear: 600, ..ItemStack::new(torch, 2) }], "a worn stack of two kept worn");
         saved[0].bin = vec![("base:iron_pickaxe".into(), 3)];
         saved[0].bin_wear.clear();
         let mut old = crate::test_server();

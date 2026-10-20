@@ -227,9 +227,12 @@ impl Server {
             let lost = self.content.effects.falls_short(&tags, before, &after);
             let steps = self.content.effects.home_steps(&after);
             let Some(player) = self.players.get_mut(&id) else { continue };
-            if !player.home_unchecked {
-                player.home_steps = steps;
+            // One back whose return is yet to be checked is told there, of this and what
+            // went before it together, and not twice.
+            if player.home_unchecked {
+                continue;
             }
+            (player.home_steps, player.home_anchor) = (steps, Some(anchor));
             let Some((effect, _, need)) = lost else { continue };
             let words = Words::key("flame.home_short").with("light", Words::Block(self.content.blocks.def(light).name.clone()));
             self.tell_short(id, words, effect, need);
@@ -283,10 +286,12 @@ impl Server {
         let now = self.survey_around(anchor, Some(id));
         let tags = self.light_tags();
         let tags: Vec<&str> = tags.iter().map(String::as_str).collect();
-        let lost = self.content.effects.lost(&player.home_steps, &tags, &now);
+        // Steps noted of a home elsewhere (a new bed since, a hearth gone out so home is the
+        // bed) say nothing of what this one lost.
+        let lost = if player.home_anchor == Some(anchor) { self.content.effects.lost(&player.home_steps, &tags, &now) } else { None };
         let steps = self.content.effects.home_steps(&now);
         let player = self.players.get_mut(&id).unwrap();
-        (player.home_steps, player.home_unchecked) = (steps, false);
+        (player.home_steps, player.home_anchor, player.home_unchecked) = (steps, Some(anchor), false);
         if let Some((effect, _, need)) = lost {
             self.tell_short(id, Words::key("flame.home_short_away"), effect, need);
         }
@@ -682,6 +687,19 @@ mod tests {
         let said = heard(&client);
         assert_eq!(said.iter().filter(|k| *k == "flame.home_short").count(), 1, "told once for both: {said:?}");
         assert!(server.players[&1].home_steps.len() < had.len(), "what the home meets noted after");
+        assert_eq!(server.players[&1].home_anchor, Some(bed), "and where");
+
+        // One back whose return is yet to be checked is told there, not by the burn pass too.
+        server.set_block(TORCH, id(&server, "base:torch"));
+        server.set_block(TORCH + IVec3::Z, id(&server, "base:torch"));
+        let player = server.players.get_mut(&1).unwrap();
+        (player.home_steps, player.home_unchecked) = (had.clone(), true);
+        server.day += TICKS_PER_DAY as f64;
+        server.burn_flames();
+        assert!(!heard(&client).iter().any(|k| k == "flame.home_short"), "told by the burn pass while unchecked");
+        assert_eq!(server.players[&1].home_steps, had, "left for the return check");
+        server.check_home_return(1);
+        assert_eq!(heard(&client), vec!["flame.home_short_away".to_owned()], "told once, on the check");
     }
 
     /// The keys of the lines player 1 was told since last asked.
@@ -710,9 +728,35 @@ mod tests {
         // Away, the lights burnt out; back, with what the home met then.
         server.set_block(TORCH, id(&server, "base:torch_stub"));
         server.set_block(TORCH + IVec3::Z, id(&server, "base:torch_stub"));
+        // What the home met, and where, come back through a save.
         let player = server.players.get_mut(&1).unwrap();
-        (player.bed, player.home_steps, player.home_unchecked) = (Some(bed.as_vec3() + Vec3::new(0.5, 0.0, 0.5)), had, true);
+        (player.home_steps, player.home_anchor) = (had.clone(), Some(bed));
+        let blocks = server.content.blocks.clone();
+        let dir = std::env::temp_dir().join(format!("voxmar-home-steps-{}", std::process::id()));
+        let save = crate::save::WorldSave::new(&dir);
+        save.write_player("ada", &server.players[&1].saved(&server.content.skills, &server.content.effects), &blocks).unwrap();
+        let read = save.read_player("ada", &blocks).unwrap().unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        let names: Vec<String> = had.iter().map(|&e| server.content.effects.get(e).name.clone()).collect();
+        assert_eq!((read.home_steps, read.home_anchor), (names, Some(bed.to_array())));
+
+        // Back with the land round a home far off not yet loaded: nothing said, still to check.
+        let far = Vec3::new(5000.5, FLOOR as f32 + 1.0, 5000.5);
+        let player = server.players.get_mut(&1).unwrap();
+        (player.bed, player.home_steps, player.home_anchor, player.home_unchecked) = (Some(far), had.clone(), Some(far.floor().as_ivec3()), true);
         while client.try_recv().ok().flatten().is_some() {}
+        server.check_home_return(1);
+        assert!(heard(&client).is_empty() && server.players[&1].home_unchecked, "checked before its land loaded");
+
+        // Steps noted of a home elsewhere (a new bed since) say nothing of this one's loss.
+        let player = server.players.get_mut(&1).unwrap();
+        (player.bed, player.home_anchor) = (Some(bed.as_vec3() + Vec3::new(0.5, 0.0, 0.5)), Some(bed + IVec3::new(40, 0, 0)));
+        server.check_home_return(1);
+        assert!(heard(&client).is_empty(), "told of another home's lights");
+        assert_eq!((server.players[&1].home_unchecked, server.players[&1].home_anchor), (false, Some(bed)), "noted afresh here");
+
+        let player = server.players.get_mut(&1).unwrap();
+        (player.home_steps, player.home_anchor, player.home_unchecked) = (had, Some(bed), true);
         server.check_home_return(1);
         assert_eq!(heard(&client), vec!["flame.home_short_away".to_owned()]);
         assert!(!server.players[&1].home_unchecked);

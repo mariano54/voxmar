@@ -411,6 +411,7 @@ fn merge(items: &mut Items, tick: u64) {
                         let Some(o) = items.all.get(&other) else { continue };
                         if other != id
                             && o.stack.item == item.stack.item
+                            && o.stack.wear == item.stack.wear
                             && o.stack.count < max_stack(o.stack.item)
                             && o.owner == item.owner
                             && o.body.position.distance(item.body.position) < MERGE_WITHIN
@@ -467,7 +468,7 @@ impl Items {
             if item.count == 0 || !position.is_finite() {
                 continue;
             }
-            let stack = ItemStack { wear: if item.count == 1 { item.wear } else { 0 }, ..ItemStack::new(block, item.count.min(MAX_STACK)) };
+            let stack = ItemStack { wear: item.wear, ..ItemStack::new(block, item.count.min(MAX_STACK)) };
             let life = item.lifetime.map_or(lifetime(), |seconds| (seconds * TICKS_PER_SECOND as f32) as u32);
             // Tools stacked before they wore lie as one item each.
             for stack in voxmar_engine::inventory::split_stack(stack) {
@@ -557,6 +558,28 @@ mod tests {
         assert_eq!(heap.gone.len(), 2);
     }
 
+    /// A worn stack and a fresh one of the same light lie together and stay two: merged,
+    /// the fresh would take the worn one's burn, or the worn the fresh one's.
+    #[test]
+    fn worn_and_fresh_stacks_lying_together_stay_apart() {
+        let mut items = Items::default();
+        items.all.insert(0, item(2, 0.5, 30));
+        let mut worn = item(1, 0.7, 30);
+        worn.stack.wear = 900;
+        items.all.insert(1, worn);
+        merge(&mut items, MERGE_EVERY);
+        merge(&mut items, MERGE_EVERY * 2);
+        assert_eq!(items.all.len(), 2, "worn and fresh merged");
+        assert_eq!((items.all[&0].stack.count, items.all[&0].stack.wear), (2, 0));
+        assert_eq!((items.all[&1].stack.count, items.all[&1].stack.wear), (1, 900));
+        // Two alike in wear still merge.
+        let mut also = item(3, 0.6, 30);
+        also.stack.wear = 900;
+        items.all.insert(2, also);
+        merge(&mut items, MERGE_EVERY * 3);
+        assert_eq!(items.all.values().filter(|d| d.stack.wear == 900).map(|d| d.stack.count).collect::<Vec<_>>(), [4]);
+    }
+
     #[test]
     fn saved_items_round_trip_by_name() {
         let mut items = Items::default();
@@ -567,6 +590,13 @@ mod tests {
         assert_eq!((only.stack, only.body.position, only.age), (items.all[&0].stack, Vec3::new(2.5, 0.0, 0.5), 200));
         // Items that no longer exist are left behind.
         assert!(Items::restore(items.saved(|_| "gone:thing".into()), |_| None).all.is_empty());
+        // A worn stack of several keeps its wear (a handful of half-burnt torches).
+        let mut worn = Items::default();
+        let mut torches = item(3, 1.5, 10);
+        torches.stack.wear = 700;
+        worn.all.insert(0, torches);
+        let back = Items::restore(worn.saved(|_| "base:dirt".into()), |name| (name == "base:dirt").then_some(BlockId(5)));
+        assert_eq!(back.all.values().map(|d| (d.stack.count, d.stack.wear)).collect::<Vec<_>>(), [(3, 700)]);
     }
 
     #[test]

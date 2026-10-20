@@ -422,9 +422,9 @@ impl Inventory {
     }
 
     /// Crafts what the grid holds into `output` (`count` of it), taking one item from each
-    /// filled cell: once, onto the pointer (which must be empty or hold the same item with
-    /// room), or with `all` as many times as the grid allows, into the inventory while it
-    /// has room. `recipe` names what a grid makes. Returns how many times it crafted.
+    /// filled cell: once, onto the pointer (which must be empty or hold the same item,
+    /// unworn, with room), or with `all` as many times as the grid allows, into the
+    /// inventory while it has room. `recipe` names what a grid makes. Returns how many times it crafted.
     pub fn craft(&mut self, recipe: impl Fn(&[Option<BlockId>; GRID]) -> Option<(BlockId, u8)>, all: bool) -> u32 {
         let mut made = 0;
         while let Some((output, count)) = recipe(&self.grid()) {
@@ -437,7 +437,7 @@ impl Inventory {
             } else {
                 match self.cursor {
                     None => self.cursor = Some(ItemStack::new(output, count)),
-                    Some(held) if held.item == output && held.count as u32 + count as u32 <= max_stack(output) as u32 => {
+                    Some(held) if held.item == output && held.wear == 0 && held.count as u32 + count as u32 <= max_stack(output) as u32 => {
                         self.cursor = Some(ItemStack { count: held.count + count, ..held });
                     }
                     Some(_) => break,
@@ -695,6 +695,16 @@ mod tests {
         assert!(inv.has_room_for(worn));
         assert_eq!(inv.add(DIRT, 3), 0);
         assert_eq!((inv.slots[0], inv.slots[1]), (Some(worn), Some(ItemStack::new(DIRT, 3))));
+        // Crafted one at a time onto the pointer, fresh output never tops up a worn stack held.
+        let mut inv = Inventory::default();
+        inv.craft[0] = Some(ItemStack::new(SAND, 2));
+        inv.cursor = Some(worn);
+        let makes = |grid: &[Option<BlockId>; GRID]| (grid[0] == Some(SAND)).then_some((DIRT, 1));
+        assert_eq!(inv.craft(makes, false), 0, "made onto a worn stack");
+        assert_eq!((inv.cursor, inv.craft[0]), (Some(worn), Some(ItemStack::new(SAND, 2))));
+        inv.cursor = Some(ItemStack::new(DIRT, 1));
+        assert_eq!(inv.craft(makes, false), 1);
+        assert_eq!(inv.cursor, Some(ItemStack::new(DIRT, 2)), "a fresh one held is topped up");
     }
 
     #[test]

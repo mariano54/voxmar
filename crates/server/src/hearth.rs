@@ -156,6 +156,8 @@ impl Server {
             if bed_lost || hearth_lost {
                 player.vitals.home = player.home_block(&self.lit);
                 player.changed(traits::VITALS);
+                // What the old home met is nothing to the new one: noted afresh there.
+                (player.home_steps, player.home_anchor) = (Vec::new(), None);
             }
         }
     }
