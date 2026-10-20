@@ -4764,6 +4764,26 @@ mod fight_tests {
         }
     }
 
+    /// One in lava a block deep keeps out of lava two deep beside it, whose far bank is two
+    /// high: it walks out the shallow way. Before: a wolf or a bear waded on into the deep
+    /// lava and stood at the bank there.
+    #[test]
+    fn one_in_shallow_lava_goes_no_deeper() {
+        let mut server = crate::test_server();
+        let c = pen(&mut server, 9);
+        set(&mut server, "base:stone", (-3..=4).flat_map(|x| (-3..=3).map(move |z| c + IVec3::new(x, -3, z))));
+        set(&mut server, "base:stone", (-3..=0).flat_map(|x| (-3..=3).map(move |z| c + IVec3::new(x, -2, z))));
+        set(&mut server, "base:lava", (-2..=2).flat_map(|x| (-2..=2).map(move |z| c + IVec3::new(x, -1, z))));
+        set(&mut server, "base:lava", (1..=2).flat_map(|x| (-2..=2).map(move |z| c + IVec3::new(x, -2, z))));
+        for name in ["base:wolf", "base:brown_bear", "base:rabbit"] {
+            let species = server.content.creatures.get(server.content.creatures.id(name).expect("a walker"));
+            let movement = species.def.movement;
+            let (lowest, _, end) = walk_from(&server, c.as_vec3() + Vec3::new(-1.5, -1.0, 0.5), species, movement.run.max(movement.walk), false, |_| false);
+            assert!(lowest > c.y as f32 - 1.5, "{name} waded into the deep lava: down to {:.2}", lowest - c.y as f32);
+            assert!(end.y > c.y as f32 - 0.5, "{name} stayed in the lava: at {:.2}", end - c.as_vec3());
+        }
+    }
+
     /// A pit `n` across and three deep from x = 2, its walls and floor stone, the player in
     /// its middle; struck from the rim's side.
     fn pit(s: &mut Server, c: IVec3, n: i32) -> (Vec3, Vec3) {

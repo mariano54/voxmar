@@ -292,6 +292,9 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
     let lava_kind = matches!(water, Water::Land | Water::Amphibious);
     let in_lava = lava_kind && (world.lava(feet) || world.lava(feet - IVec3::Y));
     let burns = lava_kind && !in_lava;
+    // In lava a block deep, it goes no deeper: lava two deep is shut to it, as deep water is.
+    let lava_deep = |c: IVec3| world.lava(c) && world.lava(c - IVec3::Y);
+    let shallow = in_lava && !lava_deep(feet) && !lava_deep(feet + IVec3::Y);
     // Along the way it really goes, sliding along a wall as its box would, a step at a
     // time; ahead of its middle by half its width.
     // Down into a space it would hang in (a trench too short for a long head to come down
@@ -382,6 +385,7 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
                     && !(wary && world.water(then) && world.water(then - IVec3::Y))
                     && !(burns && world.lava(then))
                     && !(in_lava && world.lava(then) && then.y < now)
+                    && !(shallow && lava_deep(then))
                     && !((first_down || first_pit) && held(middle, then, first_down, first_pit))
             }
         }
