@@ -10,6 +10,9 @@ use voxmar_engine::content::{ContentFile, Laid};
 use voxmar_engine::inventory::{HOTBAR_SLOTS, Inventory, ItemStack, SLOTS, max_stack};
 
 const FILE: &str = "survival.ron";
+/// The tag of a wall a draught comes through (a lattice window, an arrow slit): always a
+/// draughty one, and what a draughty home's whistle can listen for.
+pub(crate) const DRAUGHT: &str = "draught";
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct SurvivalRules {
@@ -195,9 +198,24 @@ impl SurvivalRules {
             })
             .map(|def| def.name.clone())
             .collect();
-        match unjudged.is_empty() {
+        if !unjudged.is_empty() {
+            return Err(format!("blocks: each solid `building` or `roof` block that is not furniture ({FILE}'s home_furniture) carries exactly one of `shelter:draughty`, `shelter:sound` or `shelter:fine`, and no block more than one; these do not: {}", unjudged.join(", ")));
+        }
+        // A misspelt shelter tag judges nothing; a draught comes only through a draughty wall.
+        let misjudged: Vec<String> = blocks
+            .ids()
+            .map(|id| blocks.def(id))
+            .filter_map(|def| {
+                let unknown = def.tags.iter().find(|tag| tag.starts_with("shelter:") && !Shelter::ALL.iter().any(|s| s.tag() == tag.as_str()));
+                match unknown {
+                    Some(tag) => Some(format!("{} (`{tag}` is no shelter)", def.name)),
+                    None => (def.has_tag(DRAUGHT) && !def.has_tag(Shelter::Draughty.tag())).then(|| format!("{} (`{DRAUGHT}` but not `shelter:draughty`)", def.name)),
+                }
+            })
+            .collect();
+        match misjudged.is_empty() {
             true => Ok(()),
-            false => Err(format!("blocks: each solid `building` or `roof` block that is not furniture ({FILE}'s home_furniture) carries exactly one of `shelter:draughty`, `shelter:sound` or `shelter:fine`, and no block more than one; these do not: {}", unjudged.join(", "))),
+            false => Err(format!("blocks: a shelter tag is `shelter:draughty`, `shelter:sound` or `shelter:fine`, and a wall a draught comes through (`{DRAUGHT}`) is draughty; these are not: {}", misjudged.join(", "))),
         }
     }
 

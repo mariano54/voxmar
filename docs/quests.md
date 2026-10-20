@@ -18,7 +18,14 @@ against what a player has done, so they complete retroactively. The quest book s
 ## Content
 
 `base/quests.ron` (engine `quest.rs`): name, age, branch, title, why (the reason and the
-reward, shown first), tasks, after, rewards. Goals:
+reward, shown first), tasks, after, rewards. A book of its own can go in a
+`quests_<topic>.ron` beside it (`quests_nomad.ron`, `quests_farm.ron`), like `blocks_` and
+`recipes_`: a package's files are read in name (byte) order, so `quests.ron` comes first and
+the topics follow in byte order (uppercase before lowercase), and the quests are held in that
+order. A quest may come `after` one in any file. A quest name written twice, in one file or
+two, fails the load naming both files, across packages too: a mod cannot replace a quest by
+writing its name.
+Goals:
 
 | Goal | Reads |
 | --- | --- |
@@ -400,8 +407,8 @@ base/recipes_weapons.ron), checked at load:
 
 | Weapon | Age | Level | Max hit | Cooldown | Reach | Ammo | Recipe |
 |---|---|---|---|---|---|---|---|
-| Sling | Nomad | Ranged 1 | 2 | 0.53 s | 12 | Any cobbled stone (`tag:cobbled`) | Twine, hide, twine (Crafting 1) |
-| Short Bow | Nomad (late) | Ranged 3 | 4 | 0.6 s | 20 | Arrows | Three sticks, three twine (Crafting 3) |
+| Sling | Nomad | Ranged 1 | 2 | 0.8 s | 12 | Any cobbled stone (`tag:cobbled`) | Twine, hide, twine (Crafting 1) |
+| Short Bow | Nomad (late) | Ranged 3 | 4 | 1.0 s | 20 | Arrows | Three sticks, three twine (Crafting 3) |
 | Arrow (x4) | Nomad (late) | - | - | - | - | - | Flint or cobblestone, stick, feather (Crafting 3) |
 
 Next to early melee: fists hit 1, a stone sword 3, copper swords 5 and a copper axe 6. The
