@@ -1357,6 +1357,17 @@ pub struct CropInfo {
 }
 
 impl SettlementsDef {
+    /// Every name a building answers to (`Building::answers`): its kind's (`smithy`, `pen`,
+    /// `well`), a house's (`cottage`, `barn`) and the work done in one (`bakery`), for
+    /// content that picks buildings out by name, checked against this.
+    pub fn building_names(&self) -> std::collections::BTreeSet<String> {
+        super::house::Kind::ALL
+            .iter()
+            .map(|kind| kind.name().to_owned())
+            .chain(self.houses.iter().flat_map(|house| std::iter::once(house.name.clone()).chain(house.work.clone())))
+            .collect()
+    }
+
     /// The blocks `crop` grows through, the last ripe: its `stages` in crops.ron, or the
     /// crop template's `<name>_crop_0` to `_2` and `<name>_crop` where it has none given
     /// (or crops.ron is not read).

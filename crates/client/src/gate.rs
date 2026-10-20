@@ -352,6 +352,10 @@ steps! {
     /// A torch held a moment leaves the player Smoky (smoke that clings): its chip shows,
     /// timed; then the hand is emptied.
     Smoke,
+    /// The charge charm in hand, a right click puts it on in the charm slot; the server
+    /// says it is worn and Tusk Stride (a `Wearing` effect) comes on, untimed, its chip
+    /// shown; taken off, the effect is gone.
+    Charm,
     /// A chainmail shirt and a wooden shield in hand, each right click puts one on in its
     /// own worn slot, and with the shield on the guard is the shield's; the inventory
     /// shows both in its worn wells, and their tooltips the armour lines.
@@ -645,6 +649,8 @@ struct Gate {
     /// many times the motif had started before its step in.
     motif_time: u64,
     motif_starts: u32,
+    /// How many times the settlement motif had started before the step into a settlement.
+    settlement_motif_starts: Option<u32>,
     /// The window step's lit pane, kept to judge against it snuffed.
     window_lit: Option<[f64; 3]>,
     /// The door step's ground lit by a campfire, kept to judge against it put out.
@@ -665,9 +671,9 @@ struct Gate {
     /// Raw small game carried, slots and pouch, as the dry step hangs the rack, so its
     /// readout can count what hung.
     rack_rabbits: u32,
-    /// What the dry step carried when it last cleared the raw small game carried, until the
-    /// pack is seen cleared, and the first raw small game seen picked up once it gave its own.
-    dry_clearing: Option<u32>,
+    /// The server's seconds taken in when the dry step last cleared the raw small game
+    /// carried, and the first raw small game seen picked up once it gave its own.
+    dry_clearing: Option<f32>,
     dry_pickup: Option<String>,
     /// The creature the combat-marks step tells its blows at, when (game time) it last told
     /// them, and how many runs it has told.
@@ -941,6 +947,9 @@ struct Gate {
     /// The player's states the server had sent when the wear step clicked.
     worn_states: u32,
     /// The Defence level before the wear step raised it, to put back after.
+    /// The hotbar slot selected before the charm step took the charm in hand, put back
+    /// after it.
+    charm_hand: usize,
     worn_defence: u8,
     overlay_counted: (f32, f32),
     /// The fight sounds asked for, and the bursts, kicks and knocks, before `combat_feel`
@@ -990,6 +999,7 @@ impl Gate {
             way_time: 0,
             motif_time: 0,
             motif_starts: 0,
+            settlement_motif_starts: None,
             window_lit: None,
             fire_lit: None,
             natural_before: Vec::new(),
@@ -1132,6 +1142,7 @@ impl Gate {
             swing_watch: SwingWatch::default(),
             music_fade: None,
             worn_states: 0,
+            charm_hand: 0,
             worn_defence: 1,
             overlay_counted: (0.0, 0.0),
             feel_asked: Default::default(),
@@ -1978,6 +1989,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Narrow => narrow(world, gate, now),
         Step::Climb => climb(world, gate, now),
         Step::Smoke => smoke(world, gate, now),
+        Step::Charm => charm(world, gate, now, in_phase),
         Step::Wear => wear(world, gate, now, in_phase),
         Step::CombatHud => combat_hud(world, gate, now, in_phase),
         Step::CombatFeel => combat_feel(world, gate, now, in_phase),
@@ -6353,7 +6365,7 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
                 let effects = &launch.content.effects;
                 let survey = voxmar_engine::effect::HomeSurvey { counts: effects.home_tags().iter().map(|tag| (tag.clone(), u32::from(tag == "bed" || tag == "light"))).collect(), ..Default::default() };
                 let calm = voxmar_engine::weather::Weather::NONE;
-                let situation = voxmar_engine::effect::Situation { felt: 15.0, warmed: false, outdoors: true, weather: &calm, biome: "", biome_tags: &[], home: Some(&survey), done: &[], held: &[], near: &[], seated: false, night: false };
+                let situation = voxmar_engine::effect::Situation { felt: 15.0, warmed: false, outdoors: true, weather: &calm, biome: "", biome_tags: &[], home: Some(&survey), done: &[], held: &[], near: &[], worn: &[], seated: false, night: false };
                 let tags = client.registry.id("base:sleeping_bag").map(|b| client.registry.def(b).tags.clone()).unwrap_or_default();
                 let wanted = effects.given_by_sleep(&situation, &tags);
                 let shown = |id| player.vitals.effects.iter().find(|a| a.effect == id);
@@ -13097,7 +13109,7 @@ const SMOKY: &str = "base:smoky";
 fn smoke(world: &mut World, gate: &mut Gate, now: f32) {
     let Some(smoky) = world.resource::<Launch>().content.effects.find(SMOKY) else {
         gate.check("smoky chip", Err(format!("no `{SMOKY}` in the content")));
-        gate.next(Step::Wear, now);
+        gate.next(Step::Charm, now);
         return;
     };
     let waited = gate.server_in_phase() > BOSS_WAIT;
@@ -13113,7 +13125,7 @@ fn smoke(world: &mut World, gate: &mut Gate, now: f32) {
                 gate.advance(now);
             } else if waited {
                 gate.check("smoky chip", Err(format!("no {SMOKE_ITEM} came to hand in {BOSS_WAIT} server seconds")));
-                gate.next(Step::Wear, now);
+                gate.next(Step::Charm, now);
             }
         }
         2 => {
@@ -13134,7 +13146,7 @@ fn smoke(world: &mut World, gate: &mut Gate, now: f32) {
         3 => {
             if empty_hand(world) {
                 world.resource::<Net>().command("effect clear");
-                gate.next(Step::Wear, now);
+                gate.next(Step::Charm, now);
             } else {
                 world.resource::<Net>().command(&format!("clear {}", SMOKE_ITEM.trim_start_matches("base:")));
                 gate.advance(now);
@@ -13143,10 +13155,172 @@ fn smoke(world: &mut World, gate: &mut Gate, now: f32) {
         _ => {
             if empty_hand(world) || waited {
                 world.resource::<Net>().command("effect clear");
-                gate.next(Step::Wear, now);
+                gate.next(Step::Charm, now);
             }
         }
     }
+}
+
+/// Where the charm step stands, from the test ground's middle: past the narrow step's wall,
+/// on a floor of its own with the sky cleared over it, so a right click looking up takes
+/// nothing in reach.
+const CHARM_AT: IVec3 = IVec3::new(0, 0, 26);
+
+/// The content's charm: an item worn in the charm slot, and the effect that holds while
+/// something worn carries one of its tags (`Wearing`).
+fn charm_of(content: &voxmar_engine::content::Content) -> Option<(voxmar_engine::block::BlockId, voxmar_engine::effect::EffectId)> {
+    use voxmar_engine::combat::Slot;
+    use voxmar_engine::effect::Condition;
+    content.blocks.ids().filter(|&item| voxmar_engine::inventory::worn_slot(item) == Some(Slot::Charm.index())).find_map(|item| {
+        let def = content.blocks.def(item);
+        let effect = content.effects.ids().find(|&id| matches!(&content.effects.get(id).when, Some(Condition::Wearing(tag)) if def.has_tag(tag)))?;
+        Some((item, effect))
+    })
+}
+
+/// The charm worn (a right click with it in hand, looking up): it goes in the charm slot
+/// by the server's word and its effect holds, untimed. Its tooltip says what it is (shots
+/// `charm-en`, `charm-ja`); a quick move takes it off into the pack, the effect ends, and
+/// the empty well shows the charm's mark again.
+fn charm(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    use voxmar_engine::combat::Slot;
+    use voxmar_engine::inventory::WORN;
+    let well = WORN + Slot::Charm.index();
+    let found = charm_of(&world.resource::<Launch>().content);
+    let Some((item, effect)) = found else {
+        gate.check("charm", Err("no item worn in the charm slot with an effect that holds while it is worn".to_owned()));
+        gate.next(Step::Wear, now);
+        return;
+    };
+    let name = world.resource::<Launch>().content.blocks.def(item).name.clone();
+    let short = name.split_once(':').map_or(name.as_str(), |(_, n)| n).to_owned();
+    let waited = gate.server_in_phase() > BOSS_WAIT && now - gate.phase_since > BOSS_WAIT;
+    let in_well = world.resource::<LocalPlayer>().inventory.get(well);
+    let worn = in_well.is_some_and(|s| s.item == item);
+    let on = world.resource::<LocalPlayer>().vitals.effects.iter().find(|a| a.effect == effect).copied();
+    let carried = world.resource::<LocalPlayer>().inventory.slots.iter().flatten().any(|s| s.item == item);
+    match gate.phase {
+        0 => {
+            let at = gate.feet + CHARM_AT;
+            // Only the charm goes in and out: what the steps before left carried (the
+            // sword the guard step takes up) stays, and the hand goes back as it was.
+            gate.charm_hand = world.resource::<LocalPlayer>().selected;
+            let net = world.resource::<Net>();
+            for line in [
+                "effect clear".to_owned(),
+                format!("clear {short}"),
+                format!("fill {} {} {} {} {} {} stone", at.x - 1, at.y - 1, at.z - 1, at.x + 1, at.y - 1, at.z + 1),
+                format!("fill {} {} {} {} {} {} air", at.x - 1, at.y, at.z - 1, at.x + 1, at.y + 7, at.z + 1),
+                format!("tp {} {} {}", at.x as f32 + 0.5, at.y, at.z as f32 + 0.5),
+                format!("give {short} 1"),
+            ] {
+                net.command(&line);
+            }
+            gate.advance(now);
+        }
+        1 => {
+            // In hand, looking up (nothing in reach takes the click), one right click.
+            if select(world, &name) {
+                look(world, 0.0, 80.0);
+                gate.settled += 1;
+                if gate.settled < 3 {
+                    return;
+                }
+                mouse(world, MouseButton::Right, true);
+                gate.advance(now);
+            } else if waited {
+                gate.check("charm", Err(format!("no {name} came to the hotbar in {BOSS_WAIT} seconds of the server and the client")));
+                end_charm(world, gate, now);
+            }
+        }
+        2 => {
+            mouse(world, MouseButton::Right, false);
+            // Worn by the server's word, and its effect on for as long as it is: no timer.
+            let chip = world.query::<&crate::hud::effects::EffectHover>().iter(world).any(|hover| hover.0 == effect);
+            if worn && chip && on.is_some_and(|a| a.seconds_left.is_none()) {
+                let speed = world.resource::<Launch>().content.effects.modifiers(&world.resource::<LocalPlayer>().vitals.effects).speed;
+                let title = world.resource::<Launch>().content.effects.get(effect).name.clone();
+                gate.check("charm", Ok(format!("{name} worn in the charm slot: {title} on, untimed, moving {speed:.2}x")));
+                world.resource_mut::<UiState>().inventory_open = true;
+                world.insert_resource(crate::hud::inventory::HoverSlot(well));
+                gate.advance(now);
+            } else if waited {
+                gate.check("charm", Err(format!("a right click with {name} in hand: the charm slot holds {in_well:?}, chip {chip}, effect {on:?}")));
+                end_charm(world, gate, now);
+            }
+        }
+        3 => {
+            // Its tooltip, in English and then Japanese: where it goes, and that it works
+            // while worn.
+            if in_phase < 0.5 {
+                return;
+            }
+            if !gate.requested.contains(&"charm-en") {
+                let (locale, launch, player) = (world.resource::<Locale>(), world.resource::<Launch>(), world.resource::<LocalPlayer>());
+                let lines: Vec<String> = crate::hud::inventory::armour_lines(locale, &launch.content, player, item).into_iter().map(|(line, _)| line).collect();
+                let want = [locale.get("item.charm").to_owned(), locale.get("item.charm_wear").to_owned()];
+                gate.check("charm tooltip", if lines == want { Ok(format!("\"{}\"", lines.join(" / "))) } else { Err(format!("the charm's tooltip reads {lines:?}, not {want:?}")) });
+            }
+            if gate.shot(world, "charm-en").is_some() {
+                set_language(world, "ja");
+                gate.advance(now);
+            }
+        }
+        4 => {
+            if in_phase < 0.5 || gate.shot(world, "charm-ja").is_none() {
+                return;
+            }
+            set_language(world, "en");
+            // Taken off as a player does: a quick move, out of the well into the pack.
+            let actions = world.resource::<crate::Actions>().0.clone();
+            world.resource::<Net>().propose(actions.expect("core:quick_move"), voxmar_engine::action::ActionTarget::Slot(well as u8));
+            gate.advance(now);
+        }
+        _ => {
+            let glyph = charm_glyph(world, well);
+            if !worn && carried && on.is_none() && glyph.is_ok() {
+                gate.check("charm off", Ok(format!("a quick move took {name} off into the pack: its effect is gone, and the empty well shows the charm's mark")));
+                end_charm(world, gate, now);
+            } else if waited {
+                let glyph = glyph.err().unwrap_or_else(|| "the mark shows".to_owned());
+                gate.check("charm off", Err(format!("a quick move from the charm slot: it holds {in_well:?}, in the pack {carried}, effect {on:?}; {glyph}")));
+                end_charm(world, gate, now);
+            }
+        }
+    }
+}
+
+/// The empty charm well's mark: drawn, shown, and the charm's own (`ui/slot/charm`).
+fn charm_glyph(world: &mut World, well: usize) -> Result<(), String> {
+    use crate::ui::skin::Piece;
+    let want = Piece::WornCharm.handle();
+    if !world.resource::<Assets<Image>>().contains(&want) {
+        return Err("the charm's mark (ui/slot/charm) is not loaded".to_owned());
+    }
+    let marks: Vec<(Handle<Image>, bool)> =
+        world.query::<(&crate::hud::inventory::WornGlyph, &ImageNode, &InheritedVisibility)>().iter(world).filter(|(glyph, ..)| glyph.0 == well).map(|(_, image, shown)| (image.image.clone(), shown.get())).collect();
+    match marks.as_slice() {
+        [(image, true)] if *image == want => Ok(()),
+        [(image, shown)] => Err(format!("the charm well's mark is {image:?} (shown {shown}), not the charm's")),
+        _ => Err(format!("{} marks drawn in the charm well", marks.len())),
+    }
+}
+
+fn end_charm(world: &mut World, gate: &mut Gate, now: f32) {
+    mouse(world, MouseButton::Right, false);
+    set_language(world, "en");
+    world.remove_resource::<crate::hud::inventory::HoverSlot>();
+    world.resource_mut::<UiState>().inventory_open = false;
+    world.resource_mut::<LocalPlayer>().selected = gate.charm_hand;
+    let charm = charm_of(&world.resource::<Launch>().content).map(|(item, _)| world.resource::<Launch>().content.blocks.def(item).name.clone());
+    let feet = gate.feet;
+    let net = world.resource::<Net>();
+    if let Some(name) = charm {
+        net.command(&format!("clear {}", name.split_once(':').map_or(name.as_str(), |(_, n)| n)));
+    }
+    net.command("effect clear");
+    net.command(&format!("tp {} {} {}", feet.x as f32 + 0.5, feet.y, feet.z as f32 + 0.5));
+    gate.next(Step::Wear, now);
 }
 
 /// What the wear step puts on, and where (`inventory::WORN` on).
@@ -13251,7 +13425,7 @@ fn wear(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     }
 }
 
-/// The inventory's six worn wells, the shirt and the shield drawn in theirs, and their
+/// The inventory's worn wells (`WORN..=LAST`, the charm's among them), the shirt and the shield drawn in theirs, and their
 /// tooltips' armour lines: the set, its weight and Defence level, its armour, and the
 /// shield's guard.
 fn worn_drawn(world: &mut World) -> Result<String, String> {
@@ -13283,7 +13457,7 @@ fn worn_drawn(world: &mut World) -> Result<String, String> {
         return Err(format!("the shield's tooltip says \"{needs_one}\": {shield:?}"));
     }
     let words = |lines: &[(String, Color)]| lines.iter().map(|(line, _)| line.as_str()).collect::<Vec<_>>().join(" / ");
-    Ok(format!("six worn wells, the shirt and shield shown in theirs; tooltips \"{}\" and \"{}\"", words(&shirt), words(&shield)))
+    Ok(format!("{} worn wells, the shirt and shield shown in theirs; tooltips \"{}\" and \"{}\"", wells.len(), words(&shirt), words(&shield)))
 }
 
 /// Takes it all off again, for the steps after.
@@ -15145,10 +15319,13 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
         0 => {
             let net = world.resource::<Net>();
             net.command(&format!("setblock {} {} {} drying_rack", rack.x, rack.y, rack.z));
-            // None of what earlier steps left: the step hangs only what it gives.
-            net.command("clear raw_small_game");
+            // To the rack first; what is carried is cleared once there (below). Cleared here,
+            // anything lying about the rack (a rabbit's loot from an earlier step's kill) is
+            // picked up in the tick that handles the clear and the move, so the pack is never
+            // seen empty and no clear follows (server items.rs,
+            // `a_clear_then_a_move_onto_loot_is_never_seen_empty`).
             net.command(&format!("tp {} {} {}", rack.x as f32 + 0.5, rack.y, rack.z as f32 - 2.5));
-            (gate.rack_rabbits, gate.dry_clearing, gate.dry_pickup) = (0, Some(carried_of(world, "base:raw_small_game")), None);
+            (gate.rack_rabbits, gate.dry_clearing, gate.dry_pickup) = (0, None, None);
             gate.advance(now);
         }
         1 => {
@@ -15158,7 +15335,9 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
             // Given once the player stands by the rack, the pack is seen cleared and no raw
             // small game lies near enough to be drawn in (what the cook step's hearth let
             // fall, say): any that does is let come and cleared again, so what is carried is
-            // what was given.
+            // what was given. Cleared only once there, and again for as long as any is seen
+            // carried in a server tick taken in after the last clear was sent: at most once a
+            // tick, and a clear the server has yet to handle does no harm sent twice.
             if gate.rack_rabbits == 0 {
                 let near = raw_lying_near(world, DRY_NEAR);
                 if there && carried == 0 && near.is_empty() {
@@ -15168,14 +15347,10 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
                     let near = if near.is_empty() { String::new() } else { format!("; within {DRY_NEAR} blocks {}", near.join(", ")) };
                     gate.check("drying rack", Err(format!("the raw small game about the rack never cleared in {DRY_WAIT} server seconds: {carried} carried{near}")));
                     gate.next(Step::Snare, now);
-                } else if carried == 0 {
-                    gate.dry_clearing = None;
-                } else if gate.dry_clearing.is_none_or(|was| carried > was) {
-                    // More came in since the last clear was seen, or since it was sent: clear
-                    // again at once.
-                    info!("gate: Dry: {carried} raw small game carried before the give, cleared again at {:.1}s", gate.server_now);
+                } else if there && carried > 0 && gate.dry_clearing.is_none_or(|at| gate.server_now > at) {
+                    info!("gate: Dry: {carried} raw small game carried before the give, cleared at {:.2}s", gate.server_now);
                     world.resource::<Net>().command("clear raw_small_game");
-                    gate.dry_clearing = Some(carried);
+                    gate.dry_clearing = Some(gate.server_now);
                 }
                 return;
             }
@@ -16095,7 +16270,12 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             };
             gate.settlement = at;
             gate.settlement_reply = reply.clone();
-            world.resource::<Net>().command(&format!("tp {} {} {}", at.x as f32 + 0.5, at.y, at.z as f32 + 0.5));
+            // By day, from outside any settlement as the music last saw: the step in starts
+            // the settlement motif.
+            gate.settlement_motif_starts = crate::music::settlement_motif_heard(world).filter(|heard| heard.at.inside == Some(false)).map(|heard| heard.at.starts);
+            let net = world.resource::<Net>();
+            net.command("time set noon");
+            net.command(&format!("tp {} {} {}", at.x as f32 + 0.5, at.y, at.z as f32 + 0.5));
             if let Some(observer) = gate.observer.as_mut() {
                 observer.connection.send(ClientMessage::Command { line: format!("tp {} {} {}", at.x, at.y + 60, at.z) });
             }
@@ -16141,11 +16321,13 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             // The ambience surveys the place about once a second, so it may not yet have
             // heard the settlement the player was just sent to: waited on with the people.
             let heard = settlement_heard(world, gate.settlement);
-            if (near == 0 || heard.is_err()) && gate.server_in_phase() < SETTLEMENT_PEOPLE {
+            let motif = settlement_motif_started(world, gate.settlement_motif_starts);
+            if (near == 0 || heard.is_err() || motif.is_err()) && gate.server_in_phase() < SETTLEMENT_PEOPLE {
                 return;
             }
             gate.check("settlement people", if people > 0 { Ok(format!("{people} people of the settlement drawn, {near} within a greeting's reach")) } else { Err("no one of the settlement came to the player standing in its square".into()) });
             gate.check("settlement sounds", heard);
+            gate.check("settlement motif: starts", motif);
             // The nearest of them greets the player (`Server::bark`, by its command).
             world.resource_mut::<crate::creature_sounds::Heard>().barks.clear();
             world.resource::<Net>().command("creatures bark greet");
@@ -16248,6 +16430,17 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
     }
 }
 
+/// Whether stepping into the settlement by day started its motif once (`before`: how many
+/// times it had started, seen from outside any settlement before the step).
+fn settlement_motif_started(world: &World, before: Option<u32>) -> Result<String, String> {
+    let Some(heard) = crate::music::settlement_motif_heard(world) else { return Err("no music running to hear it (music::Rehearse)".into()) };
+    let Some(before) = before else { return Err(format!("the music never saw the player outside a settlement before the step in: {:?}", heard.at)) };
+    match &heard.started {
+        Some(track) if heard.at.starts == before + 1 => Ok(format!("stepping into the settlement at noon started {track}")),
+        _ => Err(format!("stepping in started no settlement motif: {} starts before, now {:?}, last started {:?}", before, heard.at, heard.started)),
+    }
+}
+
 /// Whether one of the settlement's people greeted, asking for its own voice's greeting
 /// clips (`creature_sounds.ron`'s `greet`, not a hum it falls back to).
 fn settlement_greeted(world: &World, asked: &[(u32, crate::creature_sounds::Kind, Vec<String>)]) -> Result<String, String> {
@@ -16274,11 +16467,18 @@ fn settlement_greeted(world: &World, asked: &[(u32, crate::creature_sounds::Kind
 /// surveyed), and its work sounds (`ambience.ron`'s one-shots on that axis) would play
 /// here fully at noon, and not at all at midnight or with no settlement near.
 fn settlement_heard(world: &World, at: IVec3) -> Result<String, String> {
-    let Some((axis, sounds)) = crate::ambience::settlement_heard(world) else { return Err("the ambience never started".into()) };
+    let Some((axis, [edge, people], sounds)) = crate::ambience::settlement_heard(world) else { return Err("the ambience never started".into()) };
     let expected = world.resource::<LocalPlayer>().position.xz().distance(at.xz().as_vec2() + 0.5);
     let mut wrong = Vec::new();
     if (axis - expected).abs() > 3.0 {
         wrong.push(format!("the ambience puts the settlement's middle {axis:.0} blocks off; the player stands {expected:.1} from it"));
+    }
+    // Standing in its square, the player is within its bounds, and someone lives there.
+    if edge > 0.0 {
+        wrong.push(format!("the ambience puts the player {edge:.0} blocks outside the settlement's bounds, standing in its square"));
+    }
+    if people < 1.0 {
+        wrong.push("the ambience hears no one living in the settlement".into());
     }
     if sounds.is_empty() {
         wrong.push("no ambience one-shot hangs on the settlement axis".into());
@@ -16290,7 +16490,7 @@ fn settlement_heard(world: &World, at: IVec3) -> Result<String, String> {
     }
     let names: Vec<&str> = sounds.iter().map(|(name, _)| name.as_str()).collect();
     if wrong.is_empty() {
-        Ok(format!("{expected:.1} blocks from its middle (heard as {axis:.1}): {} at noon, quiet at midnight and away", names.join(", ")))
+        Ok(format!("{expected:.1} blocks from its middle (heard as {axis:.1}), within its bounds, {people:.0} living there: {} at noon, quiet at midnight and away", names.join(", ")))
     } else {
         Err(wrong.join("; "))
     }

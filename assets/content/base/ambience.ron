@@ -35,8 +35,10 @@
 // (falling at all), wetness (of the ground), snow, storm (0..1), wind (blocks/s, gusts
 // included), gusts (how gusty, 0..1), hail, sleet, dust (0..1, as heard here), cover,
 // underwater, settlement (blocks to the middle of the nearest settlement, 10000 with none
-// within 192), sheltered (how much a roof overhead muffles the open rain), the groups
-// below, and the roof patters.
+// within 192), settlement_edge (blocks outside the nearest settlement's bounds, the ground
+// its buildings stand on and six blocks round, 0 within, 10000 with none), settlement_people
+// (how many live there: its size), sheltered (how much a roof overhead muffles the open
+// rain), the groups below, and the roof patters.
 (
     groups: [
         // Thatch or wattle smouldering by a flame, about to catch (fire.ron): heard only while
@@ -221,6 +223,21 @@
             name: "fire", sound: Fire, volume: 0.3, fade: 2,
             when: {"fire": (min: 0.6, fade: 0.55)},
         ),
+        // A settlement's people about their day: voices across it, too far to make out,
+        // fuller the more live there (a hamlet of a few murmurs, a village of thirty talks),
+        // within its bounds and fading out over forty blocks past them; by day, above ground,
+        // and fewer out in the rain.
+        (
+            name: "murmur", sound: Murmur, volume: 0.24, fade: 6,
+            when: {"settlement_edge": (max: 0, fade: 40), "settlement_people": (min: 24, fade: 22), "sun": (min: 0.1, fade: 0.15), "depth": (max: 2, fade: 4)},
+            duck: {"rain": 0.5},
+        ),
+        // And at dusk, a few still about, talking low as the lamps come on.
+        (
+            name: "murmur_evening", sound: Murmur, volume: 0.1, fade: 6,
+            when: {"settlement_edge": (max: 0, fade: 30), "settlement_people": (min: 24, fade: 22), "sun": (min: -0.2, max: 0.1, fade: 0.1), "depth": (max: 2, fade: 4)},
+            duck: {"rain": 0.5},
+        ),
         // A waterfall's roar, from the curtain of water pouring down.
         (
             name: "waterfall", recording: ["sounds/waterfall_1.mp3", "sounds/waterfall_2.mp3", "sounds/waterfall_3.mp3"], volume: 0.4, fade: 3,
@@ -387,10 +404,53 @@
             duck: {"rain": 0.8},
         ),
         (
-            name: "well_bucket", sound: Well, volume: 0.28, at: Around(distance: (8, 20), height: (0, 2)), per_minute: 0.8, cooldown: 30,
+            name: "well_bucket", sound: Well, volume: 0.28, at: Building(buildings: ["well"]), per_minute: 0.8, cooldown: 30,
             pitch: (0.94, 1.06), reach: 12,
             when: {"settlement": (max: 24, fade: 56), "sun": (min: 0.1, fade: 0.15), "depth": (max: 2, fade: 4)},
             duck: {"rain": 0.6},
+        ),
+        // From the buildings themselves (`Building`: any of the nearest settlement's within
+        // 48 blocks that answer to a name, a kind, house or work of settlements.ron; at its
+        // door with `door: true`, else from its middle). None of them near, none heard.
+        // The smith at the anvil, by day.
+        (
+            name: "smithy", sound: Hammer, volume: 0.3, at: Building(buildings: ["smithy"]), per_minute: 4, cooldown: 6,
+            pitch: (1.05, 1.25), reach: 14,
+            when: {"settlement_edge": (max: 10, fade: 40), "sun": (min: 0.1, fade: 0.15), "depth": (max: 2, fade: 4)},
+            duck: {"rain": 0.7},
+        ),
+        // Sheep in the pens and the barns, by day and into the evening.
+        (
+            name: "pen_bleat", sound: Bleat, volume: 0.26, at: Building(buildings: ["pen", "barn"]), per_minute: 2.5, cooldown: 8,
+            pitch: (0.9, 1.15), reach: 12,
+            when: {"settlement_edge": (max: 10, fade: 40), "sun": (min: -0.15, fade: 0.1), "depth": (max: 2, fade: 4)},
+            duck: {"rain": 0.8},
+        ),
+        // Evening: people coming home, doors opening and shutting along the lanes, and
+        // supper things knocking in the houses. From dusk until full dark.
+        (
+            name: "doors", sound: Door, volume: 0.28, at: Building(buildings: ["house", "inn", "trader"], door: true), per_minute: 3, cooldown: 6,
+            pitch: (0.92, 1.08), reach: 12,
+            when: {"settlement_edge": (max: 6, fade: 30), "sun": (min: -0.25, max: 0.1, fade: 0.08), "depth": (max: 2, fade: 4)},
+        ),
+        (
+            name: "supper", sound: Clatter, volume: 0.2, at: Building(buildings: ["house", "inn"]), per_minute: 2, cooldown: 10,
+            pitch: (0.95, 1.1), reach: 8,
+            when: {"settlement_edge": (max: 2, fade: 20), "sun": (min: -0.3, max: 0.05, fade: 0.08), "depth": (max: 2, fade: 4)},
+        ),
+        // Night: the place asleep. Now and then a dog somewhere barks, and an owl calls
+        // from the roofs; nothing else.
+        (
+            name: "night_dog", sound: Bark, volume: 0.26, at: Around(distance: (20, 45), height: (0, 3)), per_minute: 0.8, cooldown: 30,
+            pitch: (0.9, 1.1), reach: 16,
+            when: {"settlement_edge": (max: 0, fade: 50), "sun": (max: -0.2, fade: 0.1), "depth": (max: 2, fade: 4)},
+            duck: {"rain": 0.8},
+        ),
+        (
+            name: "night_owl", sound: Owl, volume: 0.3, at: Around(distance: (25, 45), height: (6, 14)), per_minute: 0.4, cooldown: 60,
+            reach: 24,
+            when: {"settlement_edge": (max: 0, fade: 50), "sun": (max: -0.25, fade: 0.1), "depth": (max: 2, fade: 4)},
+            duck: {"rain": 0.8},
         ),
     ],
 )
