@@ -628,6 +628,61 @@ pub(super) mod tests {
         assert!(decision.goal.unwrap().x > 4.0);
     }
 
+    /// A player out of its view (`Seen::in_view`, judged by the server from where it
+    /// looks) is no one to a deer until close (`Senses::close`), or until they hurt it; one
+    /// in view it notices, and keeps in mind a while once it has turned away (`NOTICED`).
+    #[test]
+    fn a_deer_notices_whom_it_sees_or_hears_close_by_and_keeps_them_in_mind() {
+        let deer = species(&format!(
+            "(creatures: [(name: \"deer\", health: 6, {BODY}, senses: (sight: 20.0, close: 3.0), temperament: (fear: 0.9), behaviours: [(do: Wander(radius: 6.0)), (do: Flee(radius: 12.0))])])"
+        ));
+        let unseen = [Seen { in_view: false, ..player(Vec3::new(8.0, 0.0, 0.0)) }];
+        let mut mind = Mind::new(&deer.def.temperament, 1);
+        let _ = think(&deer, &mut mind, &situation(&unseen));
+        assert_ne!(doing(&deer, &mind), "flee", "it ran from a player it never saw");
+        let close = [Seen { in_view: false, ..player(Vec3::new(2.5, 0.0, 0.0)) }];
+        let _ = think(&deer, &mut mind, &situation(&close));
+        assert_eq!(doing(&deer, &mind), "flee", "it never heard a player close behind it");
+        let mut mind = Mind::new(&deer.def.temperament, 1);
+        let _ = think(&deer, &mut mind, &situation(&[player(Vec3::new(8.0, 0.0, 0.0))]));
+        assert_eq!(doing(&deer, &mind), "flee", "it never saw a player before it");
+        // Turned away, it still runs from them.
+        let _ = think(&deer, &mut mind, &situation(&unseen));
+        assert_eq!(doing(&deer, &mind), "flee", "it forgot a player once it turned from them");
+        // Hurt by one it never saw, it knows them.
+        let mut mind = Mind::new(&deer.def.temperament, 1);
+        mind.hurt(&deer, Some(1), 0.5);
+        let _ = think(&deer, &mut mind, &situation(&unseen));
+        assert_ne!(mind.noticed.len(), 0, "it never noticed who hurt it");
+    }
+
+    /// A wolf with a double take (`Senses::react`) stands and looks at a player it has just
+    /// noticed, then hunts them; struck, it fights back at once.
+    #[test]
+    fn a_wolf_takes_a_look_before_it_hunts() {
+        let wolf = species(&format!(
+            "(creatures: [(name: \"wolf\", health: 10, level: 5, {BODY}, senses: (react: 0.6), attack: (damage: (1, 3)), temperament: (aggression: 0.9), behaviours: [(do: Hunt(radius: 16.0))])])"
+        ));
+        let far = [player(Vec3::new(8.0, 0.0, 0.0))];
+        let mut mind = Mind::new(&wolf.def.temperament, 2);
+        let first = think(&wolf, &mut mind, &situation(&far));
+        assert!(first.goal.is_none() && first.face == Some(far[0].position) && first.pose == Pose::Alert, "no look first: {first:?}");
+        let (mut looked, mut chased) = (0.2, None);
+        for _ in 0..10 {
+            let decision = think(&wolf, &mut mind, &situation(&far));
+            if decision.goal.is_some() {
+                chased = Some(looked);
+                break;
+            }
+            looked += 0.2;
+        }
+        assert!(chased.is_some_and(|s| (0.6..=1.0).contains(&s)), "chased after {chased:?} s of looking");
+        let mut mind = Mind::new(&wolf.def.temperament, 2);
+        mind.hurt(&wolf, Some(1), 1.0);
+        let struck = think(&wolf, &mut mind, &situation(&far));
+        assert!(struck.goal.is_some(), "struck, it stood and looked: {struck:?}");
+    }
+
     #[test]
     fn birds_take_wing_from_players_and_hop_or_fly_about() {
         let finch = species(&format!(

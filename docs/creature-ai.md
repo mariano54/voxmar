@@ -116,6 +116,16 @@ curse spread, aura, molt rebirth, dream walk.
 | Vibration | burrowers | running feet; sneaking is silent |
 | Aether | supernatural only | the aether field and aether-bearing items |
 
+Where it looks decides what it notices (`senses.field`, `close`, `react` in its data). It sees a
+player within `field` degrees either way of where it faces, with nothing opaque between
+(`Server::in_view`); a deer's eyes see most of the way round (160), a wolf's to the front (110),
+and 180, the default, sees all round. Out of view it notices a player only within `close`
+blocks (it hears and smells them), when they hold its food within its hearing, or once they
+hurt it; a player it has noticed it keeps in mind for `NOTICED` seconds out of sight, so
+turning away does not drop a chase. Just noticing someone, it takes a double take of `react`
+seconds, facing them, alert, before it runs, hunts or comes to look: the moment a player has to
+back off, or to creep closer behind it. A blow skips the double take.
+
 ## Aggression
 
 - **Temperament, not type.** Hostile is high aggression and low fear; neutral is a
