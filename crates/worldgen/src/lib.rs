@@ -2752,6 +2752,13 @@ mod tests {
                 None => groups >= 25,
             };
             if !enough {
+                // The gate's own seeds must find bank enough for every herb of the bank, or a
+                // change to tarns or weights would leave one unjudged unseen; other seed sets
+                // (HERB_SEEDS) leave it to the census.
+                if bank.is_some() && std::env::var("HERB_SEEDS").is_err() {
+                    wrong.push(format!("{line}: too little bank on the gate's seeds to judge it"));
+                    continue;
+                }
                 println!("{line}: too few to judge, left to the census");
                 continue;
             }
