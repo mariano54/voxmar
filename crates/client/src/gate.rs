@@ -13799,6 +13799,10 @@ const TUSK_SWEEP: u32 = 7;
 const TUSK_BESIDE: f32 = 1.8;
 const TUSK_CLOSE: f32 = 2.0;
 const TUSK_FAR: f32 = 4.0;
+/// Blocks along each way from the pad's middle cell to the corner the charge step stands
+/// at: inside its open floor (five cells each way, the creatures step's pad), a charge's
+/// least (3 blocks) or more from him wherever on it he stands.
+const TUSK_CORNER: f32 = 4.0;
 
 /// Where the spear step stands: `TUSK_BESIDE` blocks from him toward the player, on his
 /// level.
@@ -13909,9 +13913,12 @@ fn tusk(world: &mut World, gate: &mut Gate, now: f32) {
                 mouse(world, MouseButton::Left, false);
                 key(world, KeyCode::KeyW, false);
                 gate.check("tusk provoked", Ok(format!("struck, he fights back (health {} of {most}, tell {}, {} swings)", view.health, view.tell, gate.swings)));
-                // Eight blocks off, past his gore: he charges.
-                let away = me + (me - view.position).with_y(0.0).normalize_or_zero() * 8.0;
-                world.resource::<Net>().command(&format!("tp {} {} {}", away.x, me.y, away.z));
+                // Off past his gore, at the corner of the pad's open floor farthest from him
+                // (`TUSK_CORNER`): he charges. Not out over the pad's rim, a wall two high,
+                // where his run is shut off (`charge_open`) and no charge comes.
+                let corners = [(-1.0, -1.0), (-1.0, 1.0), (1.0, -1.0), (1.0, 1.0)].map(|(x, z)| pad.as_vec3() + Vec3::new(0.5 + x * TUSK_CORNER, 0.0, 0.5 + z * TUSK_CORNER));
+                let away = corners.into_iter().fold(corners[0], |best, c| if c.xz().distance(view.position.xz()) > best.xz().distance(view.position.xz()) { c } else { best });
+                world.resource::<Net>().command(&format!("tp {} {} {}", away.x, away.y, away.z));
                 gate.advance(now);
             } else if gate.unanswered(world.resource::<crate::fight::Fighting>().strikes) {
                 mouse(world, MouseButton::Left, false);
@@ -14248,6 +14255,11 @@ const WOLF: &str = "base:wolf";
 const CLIMB_AT: IVec3 = IVec3::new(0, 0, 36);
 /// Blocks back along the step's top the player stands once the wolf is struck.
 const CLIMB_BACK: f32 = 3.0;
+/// How far in from the middle of the step's edge cell, toward the wolf, the player stands
+/// to strike it: from the middle the empty hand's reach (2.5) met the wolf's box only for a
+/// wolf drawn at 0.93 of its size or more (2.57 blocks along the crosshair at 0.8), so a small one
+/// was never struck. From here it is 2.39 at 0.8, its least.
+const CLIMB_STRIKE_IN: f32 = 0.3;
 /// The climb step's last phase: the wolf killed and the step swept away.
 const CLIMB_DONE: u32 = 5;
 /// What the climb allows past the wolf's thoughts, chase and wind-up: the client's frames.
@@ -14265,6 +14277,10 @@ struct ClimbRun {
     /// The blows each way the server had answered as the phase began.
     struck: u32,
     hurts: u32,
+    /// The blows this side had asked of the server, and its swings at the air, as the
+    /// player began striking: a failure to land one says which side dropped it.
+    strikes: u32,
+    whiffs: u32,
     /// Server seconds the wolf is allowed, from its being let go to its blow, and what they
     /// were made of.
     allowed: f32,
@@ -14311,6 +14327,7 @@ fn climb(world: &mut World, gate: &mut Gate, now: f32) {
     // written to the hundredth, so `/tp` never takes them for a block and centres them.
     let edge = Vec3::new(at.x as f32 + 0.5, at.y as f32 + 1.0, at.z as f32 + 0.5);
     let back = edge + Vec3::Z * CLIMB_BACK;
+    let strike = edge - Vec3::Z * CLIMB_STRIKE_IN;
     let view = {
         let creatures = world.resource::<crate::creatures::Creatures>();
         match gate.climb.wolf {
@@ -14346,7 +14363,7 @@ fn climb(world: &mut World, gate: &mut Gate, now: f32) {
             net.command(&format!("fill {} {} {} {} {} {} air", at.x - 6, at.y, at.z - 6, at.x + 6, at.y + 4, at.z + 6));
             net.command(&format!("fill {} {} {} {} {} {} stone", at.x - 6, at.y - 1, at.z - 6, at.x + 6, at.y - 1, at.z + 6));
             net.command(&format!("fill {} {} {} {} {} {} stone", at.x - 6, at.y, at.z, at.x + 6, at.y, at.z + 6));
-            net.command(&format!("tp {:.2} {:.2} {:.2}", edge.x, edge.y, edge.z));
+            net.command(&format!("tp {:.2} {:.2} {:.2}", strike.x, strike.y, strike.z));
             // No wild creature about the course but the wolf summoned next: any other near
             // could strike the player or stand in the wolf's way.
             net.command("creatures disperse");
@@ -14369,16 +14386,17 @@ fn climb(world: &mut World, gate: &mut Gate, now: f32) {
                 net.command("skill hitpoints 60");
                 net.command("heal");
                 gate.settled = 1;
-                info!("gate: climb: wolf {} landed at {:.2}; the step's edge at {edge:.2}", view.id, view.position);
+                info!("gate: climb: wolf {} (size {:.2}) landed at {:.2}; the step's edge at {edge:.2}", view.id, view.scale, view.position);
             }
             aim_at(world, view.position + Vec3::Y * 0.4);
             let me = world.resource::<LocalPlayer>().position;
             let hand = clear_hand(world);
-            if me.xz().distance(edge.xz()) < 0.3 && hand != Some(false) {
-                gate.climb.struck = world.resource::<crate::fight::Fighting>().struck_count;
+            if me.xz().distance(strike.xz()) < 0.1 && hand != Some(false) {
+                let fighting = world.resource::<crate::fight::Fighting>();
+                (gate.climb.struck, gate.climb.strikes, gate.climb.whiffs) = (fighting.struck_count, fighting.strikes, fighting.whiffs);
                 advance(gate);
             } else if waited(gate, NARROW_WAIT) {
-                fail(world, gate, format!("not ready to strike: the player at {me:.2} (the edge at {edge:.2}), the hand emptied {hand:?}"));
+                fail(world, gate, format!("not ready to strike: the player at {me:.2} (sent to {strike:.2}), the hand emptied {hand:?}"));
             }
         }
         2 => {
@@ -14396,8 +14414,21 @@ fn climb(world: &mut World, gate: &mut Gate, now: f32) {
                 info!("gate: climb: struck the wolf at {:.2}; to {back:.2}", view.position);
                 advance(gate);
             } else if gate.waited_out(NARROW_WAIT) {
+                // Asked of the server and none answered, or never asked (nothing under the
+                // crosshair, the cursor free, the guard up, a click at the air).
                 let distance = world.resource::<LocalPlayer>().eye().distance(view.position);
-                fail(world, gate, format!("no blow at the wolf landed in {} clicks ({distance:.2} blocks off, at {:.2})", gate.taps, view.position));
+                let fighting = world.resource::<crate::fight::Fighting>();
+                let (asked, whiffs, guard) = (fighting.strikes - gate.climb.strikes, fighting.whiffs - gate.climb.whiffs, fighting.guard.is_some());
+                let aimed = world.resource::<crate::interact::Target>().creature;
+                let locked = world.resource::<UiState>().cursor_locked;
+                fail(
+                    world,
+                    gate,
+                    format!(
+                        "no blow at the wolf landed in {} clicks ({distance:.2} blocks off, at {:.2}): {asked} blows asked of the server, {whiffs} swings at the air, aimed at {aimed:?} (the wolf {}), the cursor locked {locked}, the guard up {guard}",
+                        gate.taps, view.position, view.id
+                    ),
+                );
             } else {
                 let swings = gate.swings;
                 gate.swing(world, now);
