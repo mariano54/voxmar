@@ -10,6 +10,8 @@
         "core:mine": (shown: Some(Breaking)),
         // A small puff of the block's own dust round its foot as it settles.
         "core:place": (effect: Some("settle")),
+        // Clay pressed onto a wall or the ground: the same puff as it takes.
+        "base:coat": (effect: Some("settle")),
         // Food bitten: crumbs of it falling from the mouth, a bite at a time.
         "core:eat": (effect: Some("crumbs")),
         // Something made at the grid: a glint over what it made.
