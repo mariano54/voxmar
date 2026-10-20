@@ -958,6 +958,14 @@ fn seed_line(
     Some((words, if ready { SOFT } else { ERROR }))
 }
 
+/// How much faster a tool works than a bare hand, on what it is made for (`speed:X`): none
+/// for one no faster (a rod, which mines nothing).
+pub(crate) fn tool_line(locale: &Locale, content: &voxmar_engine::content::Content, item: voxmar_engine::block::BlockId) -> Option<(String, Color)> {
+    let tool = content.tools.tool(Some(item));
+    let speed = format!("{}", (tool.speed * 10.0).round() / 10.0);
+    (tool.kind.is_some() && tool.speed > 1.0).then(|| (locale.format("item.tool_speed", &[("speed", &speed)]), SOFT))
+}
+
 /// How a weapon fights: its class, style and the level that wields it (red while the
 /// player's is short of it), then its max hit at their level and how often it strikes, and
 /// its reach if it is not the usual.
@@ -1189,6 +1197,7 @@ fn tooltip(
             let book = viewer.book().map(|book| origins_and_uses(&locale, &launch.content, book, item)).unwrap_or_default();
             let lines_after = seed_line(&locale, &launch.content, &player, item)
                 .into_iter()
+                .chain(tool_line(&locale, &launch.content, item))
                 .chain(weapon_lines(&locale, &launch.content, &player, item))
                 .chain(armour_lines(&locale, &launch.content, &player, item))
                 .chain(pouch_lines(&locale, &world.registry, &player, item))
@@ -1255,6 +1264,20 @@ mod tests {
 
     /// Below its level a shield says it neither guards nor gives armour (a body piece only
     /// the armour), and what anyone can wear says nothing of the level it needs.
+    #[test]
+    fn a_tool_says_how_fast_it_works() {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+        let content = voxmar_server::load_content(&assets).unwrap();
+        for code in ["en", "ja"] {
+            let locale = Locale::load(&assets.join("content"), code);
+            let line = |name: &str| tool_line(&locale, &content, content.blocks.id(name).unwrap()).map(|(line, _)| line);
+            assert_eq!(line("base:copper_pickaxe"), Some(locale.format("item.tool_speed", &[("speed", &"7")])), "{code}");
+            assert_eq!(line("base:wooden_axe"), Some(locale.format("item.tool_speed", &[("speed", &"2")])), "{code}");
+            assert_eq!(line("base:oak_log"), None, "{code}: a log is no tool");
+            assert_eq!(line("base:fishing_rod"), None, "{code}: a rod mines nothing, so claims no speed");
+        }
+    }
+
     #[test]
     fn armour_below_its_level_says_what_it_does_not_do() {
         let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");

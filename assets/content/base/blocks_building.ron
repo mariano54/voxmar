@@ -69,9 +69,10 @@
         (template: "timber", name: "oak", all: (tint: Fixed(205, 150, 86), color: (160, 120, 70))),
         (template: "timber", name: "dark_oak", all: (tint: Fixed(130, 88, 58), color: (100, 70, 45))),
         // Cut cobblestone is stone but not `cobbled`: recipes and the sling take that tag as a
-        // whole cobblestone, and six slabs from three blocks must not stand in for six.
-        (template: "cut_stone", name: "cobblestone", tags: ["shelter:sound"], all: (color: (110, 110, 110))),
-        (template: "cut_stone", name: "stone_brick", tags: ["bricks", "shelter:fine"], all: (textures: All("stone_bricks"), color: (120, 120, 120))),
+        // whole cobblestone, and six slabs from three blocks must not stand in for six. It
+        // still sounds like cobblestone (`material`, read only by sounds).
+        (template: "cut_stone", name: "cobblestone", tags: ["shelter:sound"], all: (material: "cobblestone", color: (110, 110, 110))),
+        (template: "cut_stone", name: "stone_brick", tags: ["bricks", "shelter:fine"], all: (material: "stone_brick", textures: All("stone_bricks"), color: (120, 120, 120))),
     ],
     blocks: [
         // The home's ladder (design: a hide lean-to, then wattle and daub, then timber, then

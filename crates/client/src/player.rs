@@ -504,12 +504,19 @@ fn movement(
 /// a ledge, so it never drops the player off an edge. Returns what is left of it.
 fn dash(body: &mut Body, (dir, speed, left): (Vec3, f32, f32), around: &impl Surroundings, tuning: &movement::Tuning, controls: Controls, dt: f32) -> Option<(Vec3, f32, f32)> {
     // Ground ahead: a block's top at the feet or up to a block below them, in the cell ahead
-    // at the feet's height (a slab underfoot is in the feet's own cell) or one of the two under it.
-    let ahead = (body.position + dir * 0.45).floor().as_ivec3();
+    // at the feet's height (a slab underfoot is in the feet's own cell) or one of the two under
+    // it, under the footprint there (a post's top only where the player would be over it).
+    let at = body.position + dir * 0.45;
+    let ahead = at.floor().as_ivec3();
     let feet = body.position.y;
+    let half = dims::WIDTH / 2.0;
     let ground = (0..=2).any(|d| {
         let cell = ahead - IVec3::Y * d;
-        around.boxes(cell).iter().any(|b| (feet - 1.0 - 1e-3..=feet + 1e-3).contains(&(cell.y as f32 + b.max.y)))
+        around.boxes(cell).iter().any(|b| {
+            let (min, max) = (b.min + cell.as_vec3(), b.max + cell.as_vec3());
+            let under = min.x < at.x + half && max.x > at.x - half && min.z < at.z + half && max.z > at.z - half;
+            under && (feet - 1.0 - 1e-3..=feet + 1e-3).contains(&max.y)
+        })
     });
     // The last frame moves only for the time left of it.
     let step = dt.min(left);
@@ -597,6 +604,23 @@ pub(crate) fn follow_camera(
 mod tests {
     use super::*;
 
+    /// The same case as the server's `an_unloaded_cell_stops_a_player_as_a_whole_cube`: a
+    /// cell in a loaded column of air stops nothing; one in the next column, not loaded, and
+    /// one under the world stop the player as a whole cube, as the server judges them.
+    #[test]
+    fn an_unloaded_cell_stops_a_player_as_a_whole_cube() {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+        let content = voxmar_server::load_content(&assets).unwrap();
+        let mut world = ClientWorld::new(content.blocks, 2, crate::render::terrain::Terrain::detached());
+        let loaded = IVec3::new(1, 64, 1);
+        world.insert_column(ColumnPos::of_block(loaded), std::sync::Arc::new(voxmar_engine::world::Column::default()));
+        let around = Around { world: &world };
+        assert!(around.boxes(loaded).is_empty());
+        for unloaded in [loaded + IVec3::X * voxmar_engine::coords::CHUNK_SIZE, IVec3::new(1, -1, 1)] {
+            assert_eq!(around.boxes(unloaded), &voxmar_engine::physics::CUBE, "{unloaded}");
+        }
+    }
+
     /// Flat ground below y 0.
     struct Floor;
 
@@ -683,6 +707,46 @@ mod tests {
             under_way = dash(&mut body, d, &Slabs, &tuning, Controls::default(), 1.0 / 60.0);
         }
         assert!(body.position.x < 2.0 && body.position.y == 0.5, "dashed off the edge to {}", body.position);
+    }
+
+    /// A floor of whole blocks ending at x = 2, and beyond its edge, a block lower, a post
+    /// standing in the far corner of the cell: its top is level with the floor but not under
+    /// a player passing the near side.
+    struct PostBeyond;
+
+    const WHOLE: [Aabb; 1] = [Aabb { min: Vec3::ZERO, max: Vec3::ONE }];
+    const CORNER_POST: [Aabb; 1] = [Aabb { min: Vec3::new(0.0, 0.0, 0.8), max: Vec3::new(0.2, 1.0, 1.0) }];
+
+    impl Surroundings for PostBeyond {
+        fn solid(&self, cell: IVec3) -> bool {
+            !self.boxes(cell).is_empty()
+        }
+
+        fn boxes(&self, cell: IVec3) -> &[Aabb] {
+            match (cell.x, cell.y, cell.z) {
+                (x, -1, 0) if x < 2 => &WHOLE,
+                (2, -1, 0) => &CORNER_POST,
+                _ => &[],
+            }
+        }
+
+        fn water(&self, _: &Aabb) -> (f32, Vec2) {
+            (0.0, Vec2::ZERO)
+        }
+    }
+
+    /// A post's top is ground only where the player is over it: a dash past the near side
+    /// of one stops at the floor's edge rather than running off it.
+    #[test]
+    fn a_dash_stops_at_an_edge_beside_a_post_it_is_not_over() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let tuning = content.movement.on_foot(1.0);
+        let mut body = Body { position: Vec3::new(1.0, 0.0, 0.3), velocity: Vec3::ZERO, on_ground: true, in_water: false, flying: false, fly_speed: 1.0, against_wall: false, sprinting: false, jump_delay: 0.0 };
+        let mut under_way = Some((Vec3::X, 3.0 / 0.25, 0.25));
+        while let Some(d) = under_way {
+            under_way = dash(&mut body, d, &PostBeyond, &tuning, Controls::default(), 1.0 / 60.0);
+        }
+        assert!(body.position.x < 2.0 && body.position.y == 0.0, "dashed off the edge past the post to {}", body.position);
     }
 
     #[test]

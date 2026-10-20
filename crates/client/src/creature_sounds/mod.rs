@@ -32,7 +32,7 @@
 use bevy::audio::{AudioPlayer, AudioSource, GlobalVolume, PlaybackSettings, SpatialListener, SpatialScale, Volume};
 use bevy::prelude::*;
 use rustc_hash::FxHashMap;
-use voxmar_engine::creature::CreatureId;
+use voxmar_engine::creature::{Bark, CreatureId};
 
 use crate::session::Launch;
 use crate::settings::Settings;
@@ -73,10 +73,38 @@ pub enum Kind {
     Attack,
     Hurt,
     Death,
+    /// Barks of a settlement's people (`Server::bark`): a hum of greeting, a cry of alarm, a
+    /// content sigh.
+    Greet,
+    Alarm,
+    Content,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 10] = [Kind::Step, Kind::Idle, Kind::Graze, Kind::Alert, Kind::Rest, Kind::Call, Kind::Ready, Kind::Attack, Kind::Hurt, Kind::Death];
+    pub const ALL: [Kind; 13] = [
+        Kind::Step,
+        Kind::Idle,
+        Kind::Graze,
+        Kind::Alert,
+        Kind::Rest,
+        Kind::Call,
+        Kind::Ready,
+        Kind::Attack,
+        Kind::Hurt,
+        Kind::Death,
+        Kind::Greet,
+        Kind::Alarm,
+        Kind::Content,
+    ];
+
+    /// The sound a bark is heard as.
+    pub fn of_bark(bark: Bark) -> Self {
+        match bark {
+            Bark::Greet => Kind::Greet,
+            Bark::Alarm => Kind::Alarm,
+            Bark::Content => Kind::Content,
+        }
+    }
 
     /// What to play when a voice has nothing for this.
     pub fn fallback(self) -> Option<Kind> {
@@ -86,6 +114,9 @@ impl Kind {
             Kind::Attack => Some(Kind::Alert),
             Kind::Hurt => Some(Kind::Alert),
             Kind::Death => Some(Kind::Hurt),
+            Kind::Greet => Some(Kind::Idle),
+            Kind::Alarm => Some(Kind::Alert),
+            Kind::Content => Some(Kind::Rest),
             Kind::Step | Kind::Idle | Kind::Graze | Kind::Rest => None,
         }
     }
@@ -94,8 +125,9 @@ impl Kind {
     pub fn range(self) -> f32 {
         match self {
             Kind::Step => 14.0,
-            Kind::Graze | Kind::Rest => 10.0,
-            Kind::Idle => 24.0,
+            Kind::Graze | Kind::Rest | Kind::Content => 10.0,
+            Kind::Idle | Kind::Greet => 24.0,
+            Kind::Alarm => 48.0,
             Kind::Alert | Kind::Attack => 32.0,
             Kind::Hurt | Kind::Death | Kind::Ready => 36.0,
             Kind::Call => 56.0,
@@ -106,7 +138,9 @@ impl Kind {
     pub fn gain(self) -> f32 {
         match self {
             Kind::Step => 0.4,
-            Kind::Rest => 0.3,
+            Kind::Rest | Kind::Content => 0.3,
+            Kind::Greet => 0.5,
+            Kind::Alarm => 0.75,
             Kind::Graze => 0.35,
             Kind::Idle => 0.45,
             Kind::Alert | Kind::Ready => 0.6,
@@ -122,7 +156,7 @@ impl Kind {
 
     /// Whether it cuts through a creature's last sound rather than waiting for it.
     fn urgent(self) -> bool {
-        matches!(self, Kind::Hurt | Kind::Death)
+        matches!(self, Kind::Hurt | Kind::Death | Kind::Alarm)
     }
 }
 
@@ -199,10 +233,17 @@ impl Voices {
 }
 
 /// How many sounds of each kind were asked for and how many played, since startup.
+/// How many of the latest barks [`Heard`] keeps: enough for any check, bounded in a long
+/// game with villagers barking all day.
+pub const BARKS_KEPT: usize = 64;
+
 #[derive(Resource, Default, Debug)]
 pub struct Heard {
     pub asked: FxHashMap<Kind, u32>,
     pub played: u32,
+    /// The latest barks asked for (up to [`BARKS_KEPT`]), played or not (the gate is
+    /// silent): which creature, which bark, and the clips its voice gives that bark.
+    pub barks: std::collections::VecDeque<(u32, Kind, Vec<String>)>,
 }
 
 /// For the gate: every species has a voice, and every clip has loaded (and been
@@ -222,12 +263,23 @@ pub fn loaded(world: &World) -> Result<String, String> {
     }
 }
 
-fn load(mut commands: Commands, assets: Res<AssetServer>, launch: Res<Launch>) {
+/// The bank the launch checks loaded (and found every settlement person barking in), handed
+/// on so it is not read twice.
+#[derive(Resource)]
+pub struct Checked(pub Bank);
+
+fn load(mut commands: Commands, assets: Res<AssetServer>, launch: Res<Launch>, checked: Option<ResMut<Checked>>) {
     let content = &launch.content;
-    let bank = Bank::load(&content.files, &content.creatures).unwrap_or_else(|e| {
-        error!("no creature sounds: {e}");
-        Bank::default()
-    });
+    let bank = match checked {
+        Some(mut checked) => {
+            commands.remove_resource::<Checked>();
+            std::mem::take(&mut checked.0)
+        }
+        None => Bank::load(&content.files, &content.creatures).unwrap_or_else(|e| {
+            error!("no creature sounds: {e}");
+            Bank::default()
+        }),
+    };
     let voiced = bank.species.iter().flatten().count();
     let silent: Vec<_> =
         content.creatures.iter().filter(|(id, _)| bank.voice(*id).is_none()).map(|(_, c)| c.def.name.as_str()).collect();
@@ -326,6 +378,13 @@ fn play(
     }
     let Some(mut voices) = voices else { return };
     let Voices { bank, sources, last, counter, .. } = &mut *voices;
+    for sound in asked.iter().filter(|s| matches!(s.kind, Kind::Greet | Kind::Alarm | Kind::Content)) {
+        let clips = bank.voice(sound.species).and_then(|v| v.event(sound.kind)).map(|e| e.clips.iter().map(|&i| bank.clips[i].path.clone()).collect());
+        if heard.barks.len() == BARKS_KEPT {
+            heard.barks.pop_front();
+        }
+        heard.barks.push_back((sound.id, sound.kind, clips.unwrap_or_default()));
+    }
     // A silent run (a capture, VOXMAR_MUTE, the gate) decides nothing and plays nothing.
     if asked.is_empty() || !sfx::sound_on(global) {
         return;
