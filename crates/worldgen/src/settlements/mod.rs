@@ -85,6 +85,14 @@ pub struct Building {
     pub seats: Vec<IVec3>,
 }
 
+impl Building {
+    /// Whether it answers to `name`: its kind's, what it is in the lists (`what`), or the
+    /// work done in it.
+    pub fn answers(&self, name: &str) -> bool {
+        self.kind.name() == name || self.what == name || self.work.as_deref() == Some(name)
+    }
+}
+
 /// Whose a settlement is, as gameplay and tools see it (`cultures.ron`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct CultureInfo {

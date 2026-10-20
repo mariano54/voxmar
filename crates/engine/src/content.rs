@@ -325,8 +325,10 @@ impl Content {
                         fishing.push(file);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
-                    "quests.ron" => {
-                        quests.push(crate::quest::QuestRegistry::read(package, &source)?);
+                    // `quests.ron`, and `quests_<topic>.ron` for a book of its own (the Nomad's,
+                    // the Farm's), read in name order like every file of a package.
+                    topic if topic == "quests.ron" || topic.strip_prefix("quests_").is_some_and(|t| t != ".ron") => {
+                        quests.push(crate::quest::QuestRegistry::read_named(package, &name, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
                     crate::quest_path::QuestPaths::FILE => {
@@ -469,6 +471,10 @@ impl Content {
         }
         let value = crate::value::Value::merge(value, &mut notes);
         value.check()?;
+        // A price or level set for a thing no package has would price nothing.
+        if let Some(name) = value.fixed.keys().chain(value.levels.keys()).find(|name| blocks.id(name).is_none()) {
+            return Err(RegistryError(format!("value.ron: a worth is set for `{name}`, which no package has")));
+        }
         let limits = stack_limits(&blocks, &stacking)?;
         for structure in multiblocks.iter() {
             for &(fuel, count) in &structure.fuels {
@@ -499,7 +505,27 @@ impl Content {
         }
         crate::inventory::set_stack_limits(limits);
         crate::inventory::set_pouches(pouches(&blocks)?);
-        crate::inventory::set_worn_slots(combat.worn_slots());
+        // A charm is worn in the charm slot, and is nothing else that is worn.
+        let mut worn = combat.worn_slots();
+        for id in blocks.ids().filter(|&id| blocks.def(id).has_tag("charm")) {
+            let at = &mut worn[id.0 as usize];
+            if at.is_some() {
+                return Err(RegistryError(format!("blocks: `{}` is a charm and armour or a shield too: it is worn in one slot", blocks.def(id).name)));
+            }
+            *at = Some(crate::combat::Slot::Charm.index() as u8);
+        }
+        // `Wearing` asks of the charm worn: a tag no charm carries (a torch's `fire`, a
+        // helmet's) would be an effect that can never hold, or two at once.
+        let charm = Some(crate::combat::Slot::Charm.index() as u8);
+        let charms: Vec<_> = blocks.ids().filter(|&id| worn[id.0 as usize] == charm).collect();
+        if let Some(tag) = effects.worn_tags().iter().find(|tag| !charms.iter().any(|&id| blocks.def(id).has_tag(tag))) {
+            return Err(RegistryError(format!("effects.ron: an effect asks for a charm tagged `{tag}`, which nothing worn carries")));
+        }
+        // And a charm that no effect asks for would be worn for nothing.
+        if let Some(&id) = charms.iter().find(|&&id| !effects.worn_tags().iter().any(|tag| blocks.def(id).has_tag(tag))) {
+            return Err(RegistryError(format!("blocks: `{}` is a charm, but no effect asks for it worn (effects.ron's `Wearing`)", blocks.def(id).name)));
+        }
+        crate::inventory::set_worn_slots(worn);
         // A store's slots follow the player's own in a slot number of a byte.
         let mut holds = vec![None; blocks.len()];
         for machine in machines.iter().filter(|m| m.is_store()) {

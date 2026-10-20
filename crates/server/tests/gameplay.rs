@@ -2794,7 +2794,8 @@ fn a_furnished_home_heals_faster_and_sleeping_in_it_rests_you_once() {
     client.chat.clear();
     client.pump_until(|c| has(c, "base:snug") && told(c, "Snug:"));
     client.pump_until(|c| quest_status(c, "snug_for_winter").1);
-    // Another night, now in a snug home, rests them better.
+    // A night, now in a snug home, rests them better (the better rests are a night's).
+    client.ok("/time set midnight");
     client.ok("/effect clear");
     client.pump_until(|c| !has(c, "base:rested"));
     client.chat.clear();
@@ -2824,13 +2825,67 @@ fn a_proper_bed_rests_well_and_mends_longer_than_a_bag() {
     client.pump_until(|c| effect(c, "base:rested").is_some() && effect(c, "base:healing_sleep").is_some());
     assert!(effect(&client, "base:healing_sleep").and_then(|a| a.seconds_left).is_some_and(|s| s <= 60));
     assert!(effect(&client, "base:well_rested").is_none(), "a bag on the ground is a plain rest");
-    // The bed, another night: well rested, and two minutes' mend.
+    // The bed, at night: well rested, and two minutes' mend.
+    client.ok("/time set midnight");
     client.ok("/effect clear");
     client.pump_until(|c| effect(c, "base:rested").is_none() && effect(c, "base:healing_sleep").is_none());
     client.chat.clear();
     client.propose("base:sleep", ActionTarget::Block { block: bed, face: Face::PosY });
     client.pump_until(|c| effect(c, "base:well_rested").is_some() && effect(c, "base:healing_sleep").is_some() && told(c, "Well rested"));
     assert!(effect(&client, "base:healing_sleep").and_then(|a| a.seconds_left).is_some_and(|s| s > 60), "a bed mends longer");
+}
+
+/// Nights told apart (docs/home.md "Nights"): a nap by day rests and mends but is no night's
+/// rest, says so, and does not keep a night's better rest away; and after dark, indoors at
+/// home by its fire, is an evening in, gone with the morning.
+#[test]
+fn a_nap_by_day_is_no_nights_rest_and_an_evening_in_is_by_the_fire_after_dark() {
+    let mut client = on_a_test_floor();
+    let feet = client.position.floor().as_ivec3();
+    let has = |c: &Client, name: &str| c.vitals.effects.iter().any(|a| c.content.effects.get(a.effect).name == name);
+    let told = |c: &Client, text: &str| c.chat.iter().any(|(_, t)| t.contains(text));
+    let (bed, fire) = (feet + IVec3::new(2, 0, 0), feet + IVec3::new(-2, 0, 0));
+    client.ok("/time set noon");
+    for line in [
+        format!("/setblock {} {} {} oak_bed", bed.x, bed.y, bed.z),
+        format!("/setblock {} {} {} campfire", fire.x, fire.y, fire.z),
+        format!("/fill {} {} {} {} {} {} stone", feet.x - 2, feet.y + 3, feet.z - 3, feet.x + 6, feet.y + 3, feet.z + 3),
+    ] {
+        client.ok(&line);
+    }
+    client.pump_until(|c| c.world.block(bed) == c.content.blocks.id("base:oak_bed") && c.world.block(fire) == c.content.blocks.id("base:campfire"));
+    // By day: a plain rest and a mend, and word of the better rest a night here gives.
+    client.chat.clear();
+    client.propose("base:sleep", ActionTarget::Block { block: bed, face: Face::PosY });
+    client.pump_until(|c| has(c, "base:rested") && has(c, "base:healing_sleep") && told(c, "A night's sleep here would rest you better: Well rested"));
+    assert!(!has(&client, "base:well_rested"), "a nap is no night's rest");
+    assert!(!has(&client, "base:evening_in"), "home by the fire at noon is no evening");
+    // A second nap rests no more.
+    client.chat.clear();
+    client.propose("base:sleep", ActionTarget::Block { block: bed, face: Face::PosY });
+    client.pump_until(|c| told(c, "rested already"));
+    // After dark: an evening in by the fire (the bed slept in is home). The night's rest
+    // waits while the nap's mend runs, then comes though the nap's Rested is still on.
+    client.ok("/time set midnight");
+    client.chat.clear();
+    client.pump_until(|c| has(c, "base:evening_in") && told(c, "Evening in:"));
+    client.propose("base:sleep", ActionTarget::Block { block: bed, face: Face::PosY });
+    client.pump_until(|c| told(c, "rested already"));
+    assert!(!has(&client, "base:well_rested"), "no rest while the nap's mend runs");
+    client.ok("/effect clear");
+    client.ok("/effect rested 500");
+    client.pump_until(|c| has(c, "base:rested") && !has(c, "base:healing_sleep"));
+    client.chat.clear();
+    client.propose("base:sleep", ActionTarget::Block { block: bed, face: Face::PosY });
+    client.pump_until(|c| has(c, "base:well_rested") && told(c, "Well rested"));
+    assert!(!told(&client, "would rest you better"), "a night's sleep says no better one");
+    // Out from under the roof it is no evening in; the morning ends it too.
+    client.tp(feet.as_vec3() + Vec3::new(8.5, 0.0, 0.5));
+    client.pump_until(|c| !has(c, "base:evening_in"));
+    client.tp(feet.as_vec3() + Vec3::new(0.5, 0.0, 0.5));
+    client.pump_until(|c| has(c, "base:evening_in"));
+    client.ok("/time set day");
+    client.pump_until(|c| !has(c, "base:evening_in"));
 }
 
 /// Rest is no way to heal in a fight (survival.ron): a bed refuses sleep with a creature that
@@ -6103,12 +6158,25 @@ fn chests_keep_what_they_hold_across_restarts_and_an_unreadable_machines_file_is
         assert!(server_seconds(&client, started) < 20, "the crusher never got going: {said}");
         client.after_ticks(4);
     };
+    // Its boiler taken away, it keeps the work but cannot go on with it, so however long
+    // the next join takes (a busy machine generates land slowly, the server ticking on),
+    // nothing is done before it is asked.
+    let boiler_at = format!("{} {} {}", crusher.x + 1, crusher.y, crusher.z);
+    client.ok(&format!("/setblock {boiler_at} air"));
+    machine_says(&mut client, &crusher_at, "no power", 10);
     drop(client);
     let save = std::fs::read_to_string(dir.join("machines.ron")).unwrap();
     assert!(save.contains("base:iron_dust"), "the save keeps the work: {save}");
     let mut client = Client::join_with(config());
     client.pump_until(|c| c.world.block(crusher) == c.content.blocks.id("base:steam_crusher"));
-    // Until its first step it says it is idle; then it goes on from where it was.
+    // Until its first step it says it is idle; then, given its boiler back, it goes on from
+    // where it was.
+    machine_says(&mut client, &crusher_at, "no power", 20);
+    client.ok(&format!("/setblock {boiler_at} boiler"));
+    client.ok("/give coal_ore 1");
+    client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == coal) && c.world.block(crusher + IVec3::X) == c.content.blocks.id("base:boiler"));
+    use_machine(&mut client, crusher + IVec3::X);
+    client.pump_until(|c| c.inventory.slots.iter().all(Option::is_none));
     let said = machine_says(&mut client, &crusher_at, "making", 20);
     assert!(progress(&said).is_some_and(|p| p >= done), "the crusher began again: {said}, was {done}% done");
     // Finished, the one ore made two dust: not two lots of it, nor none. The limit is the
@@ -8870,6 +8938,81 @@ fn finish(mut f: Fresh) {
         let m = f.marks.iter().find(|m| m.name == name).unwrap_or_else(|| panic!("{name} was never reached"));
         assert!(m.at <= budget, "{name} took {:.1} server seconds, over its budget of {budget}", m.at);
     }
+}
+
+/// The charm slot (`combat::Slot::Charm`): a charm goes on only there, never in an armour
+/// slot, and its `Wearing` effect holds while it is worn, untimed: Old Tusk's charge charm
+/// quickens the stride. Held in hand it does nothing; taken off, the effect is gone.
+#[test]
+fn a_charm_goes_in_the_charm_slot_and_works_while_worn() {
+    use voxmar_engine::combat::Slot;
+    use voxmar_engine::inventory::{HOTBAR_SLOTS, WORN};
+    let mut client = Client::join();
+    let charm = client.content.blocks.id("base:charge_charm").unwrap();
+    for line in ["/clear", "/effect clear", "/give charge_charm 1"] {
+        client.ok(line);
+    }
+    client.pump_until(|c| (0..HOTBAR_SLOTS).any(|s| c.inventory.get(s).is_some_and(|s| s.item == charm)));
+    let striding = |c: &Client| c.vitals.effects.iter().find(|a| c.content.effects.get(a.effect).name == "base:tusk_stride").copied();
+    // In hand it is no charm worn.
+    client.pump_ticks(TICKS_PER_SECOND as u64 * 2, |c| striding(c).is_some());
+    assert!(striding(&client).is_none(), "held, not worn");
+    let from = (0..HOTBAR_SLOTS).find(|&s| client.inventory.get(s).is_some_and(|s| s.item == charm)).unwrap();
+    client.propose("core:transfer", ActionTarget::Slots { from: from as u8, to: WORN as u8, count: 1 });
+    client.propose("core:transfer", ActionTarget::Slots { from: from as u8, to: (WORN + Slot::Charm.index()) as u8, count: 1 });
+    client.pump_until(|c| c.inventory.worn[Slot::Charm.index()].is_some_and(|s| s.item == charm) && striding(c).is_some());
+    assert!(client.inventory.worn[0].is_none(), "a charm is not a helmet");
+    assert_eq!(striding(&client).unwrap().seconds_left, None, "it holds while worn, untimed");
+    assert!(client.content.effects.modifiers(&client.vitals.effects).speed > 1.0);
+    client.ok("/clear charge_charm");
+    client.pump_until(|c| c.inventory.worn[Slot::Charm.index()].is_none() && striding(c).is_none());
+}
+
+/// A charm's effect ends the moment it comes off, not at the next once-a-second pass:
+/// taken off into the pack, or left in the grave by a death (worth less than three things
+/// carried that death keeps first), the stride is gone as the inventory says so.
+#[test]
+fn a_charm_taken_off_or_lost_to_death_ends_its_effect_at_once() {
+    use voxmar_engine::combat::Slot;
+    use voxmar_engine::inventory::{HOTBAR_SLOTS, WORN};
+    let mut client = Client::join();
+    client.ok("/gamemode survival");
+    let charm = client.content.blocks.id("base:charge_charm").unwrap();
+    let striding = |c: &Client| c.vitals.effects.iter().any(|a| c.content.effects.get(a.effect).name == "base:tusk_stride");
+    let well = WORN + Slot::Charm.index();
+    let wear = |client: &mut Client| {
+        client.pump_until(|c| (0..HOTBAR_SLOTS).any(|s| c.inventory.get(s).is_some_and(|s| s.item == charm)));
+        let from = (0..HOTBAR_SLOTS).find(|&s| client.inventory.get(s).is_some_and(|s| s.item == charm)).unwrap();
+        client.propose("core:transfer", ActionTarget::Slots { from: from as u8, to: well as u8, count: 1 });
+        client.pump_until(|c| c.inventory.worn[Slot::Charm.index()].is_some() && striding(c));
+    };
+    for line in ["/clear", "/effect clear", "/give charge_charm 1"] {
+        client.ok(line);
+    }
+    wear(&mut client);
+    // Off into the pack: the same tick's word takes the stride away.
+    client.propose("core:quick_move", ActionTarget::Slot(well as u8));
+    client.pump_until(|c| c.inventory.worn[Slot::Charm.index()].is_none());
+    client.pump_ticks(1, |_| false);
+    assert!(!striding(&client), "the stride outlived the charm taken off");
+    // Worn again, then a death: three things worth more are kept, the charm is not.
+    let kept = (0..client.content.blocks.len() as u16)
+        .map(voxmar_engine::block::BlockId)
+        .filter(|&item| voxmar_engine::value::worth(&client.content, item) > voxmar_engine::value::worth(&client.content, charm))
+        .find(|&item| client.content.blocks.def(item).item && voxmar_engine::inventory::worn_slot(item).is_none())
+        .expect("something worth more than the charm");
+    let kept_name = client.content.blocks.def(kept).name.clone();
+    for line in ["/clear".to_owned(), format!("/give {kept_name} 3"), "/give charge_charm 1".to_owned()] {
+        client.ok(&line);
+    }
+    wear(&mut client);
+    client.ok("/kill");
+    client.pump_until(|c| c.health == 0);
+    client.propose("core:respawn", ActionTarget::None);
+    client.pump_until(|c| c.health > 0);
+    client.pump_ticks(1, |_| false);
+    assert!(client.inventory.worn[Slot::Charm.index()].is_none(), "the charm went to the grave");
+    assert!(!striding(&client), "the stride outlived the charm lost to death");
 }
 
 /// A stone sword's 0.6 s cooldown in server ticks.

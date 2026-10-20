@@ -12,7 +12,10 @@
 // patch, and `aim`, design's rate for it per million blocks of each biome naming it (draft
 // 89, tied to rarity: Legendary up to 100, VeryRare 120 to 160, Rare 200 to 300, in patches
 // of 3 to 6); the weight a biome names it with scales the rate to the biome's own ground so
-// the census meets the aim.
+// the census meets the aim. A herb of a lake's bank (the sky lotus, a tarn find) is held to
+// its rate per million columns of bank instead, times the biome's weight: how much of a
+// biome is lake bank differs eightfold from world to world, so its `aim` over the whole
+// biome is only what a world of middling tarns gives.
 (
     // How densely small plants grow (flowers, ground plants, grasses and ferns): a factor
     // on every biome's own, 1 being the biomes' own. Halved so the land reads less crowded:
@@ -266,7 +269,7 @@
         (name: "crystal_moss", block: "crystal_moss", spread: Drifts, habitat: Open, ground: [Soil, Snow], comfort: (temperature: (-30.0, 6.0))),
         (name: "aether_truffle", block: "aether_truffle", spread: Alone, habitat: Shade, comfort: (temperature: (4.0, 22.0), moisture: (0.60, 2.20)), properties: (nutrition: 5.0)),
         (name: "ghostcap", block: "ghostcap", spread: Alone, habitat: Shade, comfort: (temperature: (-6.0, 16.0), moisture: (0.50, 2.50))),
-        (name: "thunderbloom", block: "thunderbloom", named_only: true, tags: ["rare_herb"], patches: (rate: 200.0, size: (3, 6), aim: 120.0), spread: Alone, habitat: Open, comfort: (temperature: (-10.0, 12.0), moisture: (0.30, 2.00))),
+        (name: "thunderbloom", block: "thunderbloom", named_only: true, tags: ["rare_herb"], patches: (rate: 240.0, size: (4, 6), aim: 120.0), spread: Alone, habitat: Open, comfort: (temperature: (-10.0, 12.0), moisture: (0.30, 2.00))),
         (name: "tidekelp", block: "tidekelp", spread: Drifts, habitat: Shore, ground: [Sand], comfort: (temperature: (2.0, 32.0)), properties: (nutrition: 1.0)),
         (name: "wyrmroot", block: "wyrmroot", spread: Alone, habitat: Open, ground: [Sand], comfort: (temperature: (20.0, 50.0), moisture: (0.00, 0.40))),
         (name: "hearthgrain", block: "hearthgrain", spread: Drifts, habitat: Open, comfort: (temperature: (-8.0, 14.0), moisture: (0.20, 1.00)), properties: (nutrition: 2.0)),

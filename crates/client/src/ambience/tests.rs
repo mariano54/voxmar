@@ -40,6 +40,8 @@ struct Scene {
     name: &'static str,
     env: Environment,
     samples: Vec<Vec<IVec3>>,
+    /// Each set of buildings one-shots sound from: one, a dozen blocks off.
+    buildings: Vec<Vec<Vec3>>,
 }
 
 fn scene(ambience: &Ambience, name: &'static str, tags: &[&str], set: &[(&str, f32)]) -> Scene {
@@ -78,7 +80,8 @@ fn scene(ambience: &Ambience, name: &'static str, tags: &[&str], set: &[(&str, f
                 .collect()
         })
         .collect();
-    Scene { name, env, samples }
+    let buildings = vec![vec![Vec3::new(12.0, 0.0, 0.0)]; ambience.buildings.len()];
+    Scene { name, env, samples, buildings }
 }
 
 fn scenes(ambience: &Ambience) -> Vec<Scene> {
@@ -121,7 +124,7 @@ fn run(ambience: &Ambience, scene: &Scene, seconds: f32) -> (Vec<(f32, Cue)>, Ve
     let mut cues = Vec::new();
     let steps = (seconds * 100.0) as usize;
     for step in 0..steps {
-        mixer.update(ambience, &scene.env, &scene.samples, Vec3::ZERO, 0.01, |_, _| 2.0, (synth::BED_VARIANTS, synth::ONE_SHOT_VARIANTS), &mut cues);
+        mixer.update(ambience, &scene.env, &scene.samples, &scene.buildings, Vec3::ZERO, 0.01, |_, _| 2.0, (synth::BED_VARIANTS, synth::ONE_SHOT_VARIANTS), &mut cues);
         timeline.extend(cues.drain(..).map(|c| (step as f32 * 0.01, c)));
     }
     let levels = (0..ambience.beds.len()).map(|b| mixer.level(b)).collect();
@@ -251,7 +254,7 @@ fn ambience_preview() {
         // Skip the warm-up and the beds' fade-in, as if the player had been there a while.
         let mut cues = Vec::new();
         for _ in 0..1000 {
-            mixer.update(&ambience, &scene.env, &scene.samples, Vec3::ZERO, 0.01, |_, _| 2.0, (synth::BED_VARIANTS, synth::ONE_SHOT_VARIANTS), &mut cues);
+            mixer.update(&ambience, &scene.env, &scene.samples, &scene.buildings, Vec3::ZERO, 0.01, |_, _| 2.0, (synth::BED_VARIANTS, synth::ONE_SHOT_VARIANTS), &mut cues);
         }
         cues.clear();
         let mut playing: Vec<(usize, usize, usize)> = (0..ambience.beds.len())
@@ -260,7 +263,7 @@ fn ambience_preview() {
             .collect();
         for step in 0..total / block {
             let at = start + step * block;
-            mixer.update(&ambience, &scene.env, &scene.samples, Vec3::ZERO, 0.01, |s, v| sounds[s][v].0.len() as f32 / RATE as f32, (synth::BED_VARIANTS, synth::ONE_SHOT_VARIANTS), &mut cues);
+            mixer.update(&ambience, &scene.env, &scene.samples, &scene.buildings, Vec3::ZERO, 0.01, |s, v| sounds[s][v].0.len() as f32 / RATE as f32, (synth::BED_VARIANTS, synth::ONE_SHOT_VARIANTS), &mut cues);
             for cue in cues.drain(..) {
                 match cue {
                     Cue::Segment { bed, variant } => playing.push((bed, variant, 0)),
@@ -341,7 +344,7 @@ fn ambience_survey() {
     };
     let report = |name: &str, world: &VoxelWorld, eye: IVec3| {
         let found = super::enclosure::scan(eye, |p| world.block(p), |_| true, &kinds, 1);
-        let place = super::place(&generator, eye);
+        let place = super::place(&generator, eye, &[]);
         let groups: Vec<String> = ambience
             .groups
             .iter()
@@ -392,11 +395,14 @@ fn leaving_a_world_forgets_the_surroundings() {
     use bevy::ecs::system::RunSystemOnce;
     use bevy::prelude::World;
     let mut world = World::new();
-    world.insert_resource(super::Surroundings { flowers: 0.6, depth: 40.0, sky: 0.0, biome: Vec::new() });
+    world.insert_resource(super::Surroundings { flowers: 0.6, depth: 40.0, sky: 0.0, biome: Vec::new(), settlement: Some((3, 0.0)), started: 9, surveyed: 9 });
     world.run_system_once(super::leave).unwrap();
     let left = world.resource::<super::Surroundings>();
     let fresh = super::Surroundings::default();
-    assert_eq!((left.flowers, left.depth, left.sky), (fresh.flowers, fresh.depth, fresh.sky));
+    assert_eq!((left.flowers, left.depth, left.sky, left.settlement, left.surveyed), (fresh.flowers, fresh.depth, fresh.sky, None, 0));
+    // The count of surveys runs on, so one still out from this world is never fresh in the
+    // next.
+    assert_eq!(left.started, 9);
 }
 
 /// Every bed, over all of a segment, and every one-shot, at its loudest from where it
@@ -419,7 +425,8 @@ fn the_ambience_is_heard_within_its_band() {
     for sound in &ambience.sounds {
         let distance = match sound.at {
             Placement::Around { distance, .. } => distance.0,
-            Placement::Block(_) | Placement::Listener => 0.0,
+            // A building may be close by.
+            Placement::Block(_) | Placement::Listener | Placement::Building(_) => 0.0,
         };
         for variant in 0..synth::ONE_SHOT_VARIANTS {
             let (dry, _) = synth::one_shot(sound.synth, variant);
@@ -512,7 +519,10 @@ fn a_home_muffles_the_weather_outside() {
 }
 
 /// The `settlement` axis is how far it is to the nearest settlement's middle, across the
-/// ground, and [`NO_SETTLEMENT`](super::defs::NO_SETTLEMENT) where none is in hearing.
+/// ground, and [`NO_SETTLEMENT`](super::defs::NO_SETTLEMENT) where none is in hearing. Its
+/// square is within its bounds (`settlement_edge` 0) and a walk out past its outermost
+/// building is not; `settlement_people` is how many live there; and a building sound is
+/// heard from the buildings of its name, at their doors when it asks.
 #[test]
 fn the_settlement_axis_is_the_way_to_the_nearest_middle() {
     use bevy::math::Vec3Swizzles;
@@ -524,16 +534,45 @@ fn the_settlement_axis_is_the_way_to_the_nearest_middle() {
     let spawn = generator.spawn_point();
     let found = generator.settlements_near(spawn.xz(), 1500);
     let near = found.iter().min_by_key(|s| (s.centre - spawn).xz().length_squared()).expect("a settlement near spawn");
-    let place = super::place(&generator, near.centre + IVec3::new(3, 2, 4));
+    let sets = [super::defs::BuildingSet { names: vec!["well".into()], door: false }, super::defs::BuildingSet { names: vec!["house".into()], door: true }];
+    let place = super::place(&generator, near.centre + IVec3::new(3, 2, 4), &sets);
     let expected = bevy::math::Vec2::new(3.5, 4.5).length();
     assert!((place.settlement - expected).abs() < 1e-3, "{} blocks off, not {expected}", place.settlement);
+    assert_eq!(place.edge, 0.0, "in its square, within its bounds");
+    assert_eq!((place.people, place.id), (near.people.len() as f32, Some(near.id)));
+    assert!(place.people > 0.0, "someone lives there");
+    let well = near.buildings.iter().find(|b| b.kind.name() == "well").expect("a well");
+    let middle = bevy::math::Vec2::new((well.min.x + well.max.x + 1) as f32 / 2.0, (well.min.y + well.max.y + 1) as f32 / 2.0);
+    assert!(place.buildings[0].iter().any(|p| (p.xz() - middle).length() < 1e-3), "the well's sound from its middle {middle}: {:?}", place.buildings[0]);
+    let doors: Vec<_> = near.buildings.iter().filter(|b| b.answers("house")).filter_map(|b| b.door).filter(|d| (d.xz() - near.centre.xz()).as_vec2().length() < super::BUILDINGS_HEARD - 6.0).collect();
+    assert!(!doors.is_empty(), "houses near the square");
+    for door in doors {
+        assert!(place.buildings[1].iter().any(|p| (*p - (door.as_vec3() + 0.5)).length() < 1e-3), "a house's door at {door} is not heard: {:?}", place.buildings[1]);
+    }
+    // Past its outermost building, east, by twenty blocks and the margin.
+    let east = near.buildings.iter().map(|b| b.max.x).max().unwrap().max(near.centre.x);
+    let out = super::place(&generator, IVec3::new(east + 20 + super::SETTLEMENT_MARGIN, near.centre.y, near.centre.z), &sets);
+    assert!((19.0..=21.0).contains(&out.edge), "twenty blocks past its bounds is {} outside", out.edge);
     let alone = [IVec2::new(1, 0), IVec2::new(0, 1), IVec2::new(-1, 0), IVec2::new(0, -1)]
         .into_iter()
         .map(|way| near.centre.xz() + way * 700)
         .find(|&at| generator.settlements_near(at, super::SETTLEMENTS_HEARD).is_empty())
         .expect("somewhere 700 blocks off with no settlement in hearing");
-    let place = super::place(&generator, IVec3::new(alone.x, near.centre.y, alone.y));
-    assert_eq!(place.settlement, super::defs::NO_SETTLEMENT);
+    let place = super::place(&generator, IVec3::new(alone.x, near.centre.y, alone.y), &sets);
+    assert_eq!((place.settlement, place.edge, place.people), (super::defs::NO_SETTLEMENT, super::defs::NO_SETTLEMENT, 0.0));
+    assert!(place.buildings.iter().all(Vec::is_empty));
+    // Standing at its east edge, by a second settlement whose middle is nearer but whose
+    // bounds the player is outside: the one stood in is the one heard.
+    let at = bevy::math::Vec2::new(east as f32 + 0.5, near.centre.z as f32 + 0.5);
+    let mut other = near.clone();
+    other.id = near.id + 1;
+    other.buildings.clear();
+    other.centre = IVec3::new(east + super::SETTLEMENT_MARGIN + 3, near.centre.y, near.centre.z);
+    let ways = [near, &other].map(|s| s.centre.xz().as_vec2().distance(at));
+    assert!(ways[1] < ways[0], "the other's middle is nearer: {ways:?}");
+    let both = [near.clone(), other];
+    let (chosen, _, (edge, _)) = super::nearest_settlement(&both, at, &sets).unwrap();
+    assert_eq!((chosen.id, edge), (near.id, 0.0), "the settlement stood in, not the nearer middle");
     // Past hearing of every settlement, though the search still gives some from the regions
     // it touches: none, not the nearest of those.
     let heard = super::SETTLEMENTS_HEARD as f32;
@@ -545,6 +584,63 @@ fn the_settlement_axis_is_the_way_to_the_nearest_middle() {
             !found.is_empty() && found.iter().all(|s| s.centre.xz().as_vec2().distance(at.as_vec2() + 0.5) > heard)
         })
         .expect("somewhere 260 blocks off where the search gives only settlements out of hearing");
-    let place = super::place(&generator, IVec3::new(beyond.x, near.centre.y, beyond.y));
+    let place = super::place(&generator, IVec3::new(beyond.x, near.centre.y, beyond.y), &sets);
     assert_eq!(place.settlement, super::defs::NO_SETTLEMENT, "a settlement out of hearing counted");
+}
+
+
+/// A settlement through its day, as the world and the server's clock and weather tell it:
+/// by day its people talk across it, fuller in a village than a hamlet and fewer out in
+/// the rain, with the smith at the anvil and sheep in the pens heard from those buildings;
+/// at dusk the talk drops low, doors open and shut at the houses and supper things knock;
+/// at night it sleeps but for a dog now and then and an owl; and away from it, none of it.
+#[test]
+fn a_settlement_talks_by_day_comes_home_at_dusk_and_sleeps_at_night() {
+    let ambience = base();
+    let bed = |name: &str| ambience.beds.iter().position(|b| b.name == format!("base:{name}")).unwrap_or_else(|| panic!("no bed {name}"));
+    let sound = |name: &str| ambience.sounds.iter().position(|s| s.name == format!("base:{name}")).unwrap_or_else(|| panic!("no sound {name}"));
+    let (murmur, evening) = (bed("murmur"), bed("murmur_evening"));
+    let place = |people: f32, edge: f32, set: &[(&str, f32)]| {
+        let within = [("settlement", 10.0 + edge), ("settlementedge", edge), ("settlementpeople", people)];
+        scene(&ambience, "village", &["plains", "temperate"], &[within.as_slice(), set].concat())
+    };
+    let heard = |scene: &Scene, seconds: f32| {
+        let (timeline, levels) = run(&ambience, scene, seconds);
+        let played = |name: &str| timeline.iter().filter(|(_, c)| matches!(c, Cue::Sound { sound: s, .. } if *s == sound(name))).count();
+        let from = |name: &str| timeline.iter().filter_map(|(_, c)| match c { Cue::Sound { sound: s, at, .. } if *s == sound(name) => Some(*at), _ => None }).collect::<Vec<_>>();
+        let named = ["smithy", "pen_bleat", "doors", "supper", "night_dog", "night_owl"].map(|n| (n, played(n)));
+        (levels, named, from("smithy"))
+    };
+    let count = |named: &[(&str, usize); 6], name: &str| named.iter().find(|(n, _)| *n == name).unwrap().1;
+    // Noon in a village of thirty.
+    let (day, named, smithy_at) = heard(&place(30.0, 0.0, &[("sun", 0.8)]), 180.0);
+    let full = ambience.beds[murmur].volume;
+    assert!(day[murmur] > 0.8 * full && day[evening] < 1e-3, "a village by day talks at {:.3} of {full} (evening {:.3})", day[murmur], day[evening]);
+    assert!(count(&named, "smithy") > 0 && count(&named, "pen_bleat") > 0, "work by day: {named:?}");
+    assert!(smithy_at.iter().all(|at| *at == Some(Vec3::new(12.0, 0.0, 0.0))), "the anvil rings from the smithy: {smithy_at:?}");
+    for quiet in ["doors", "supper", "night_dog", "night_owl"] {
+        assert_eq!(count(&named, quiet), 0, "{quiet} by day: {named:?}");
+    }
+    // A hamlet of five murmurs; the rain sends people in.
+    let (hamlet, ..) = heard(&place(5.0, 0.0, &[("sun", 0.8)]), 30.0);
+    assert!(hamlet[murmur] < 0.4 * day[murmur], "a hamlet talks at {:.3}, a village at {:.3}", hamlet[murmur], day[murmur]);
+    let (wet, ..) = heard(&place(30.0, 0.0, &[("sun", 0.8), ("rain", 1.0), ("raining", 1.0)]), 30.0);
+    assert!(wet[murmur] < 0.75 * day[murmur], "in the rain the village talks at {:.3}, dry {:.3}", wet[murmur], day[murmur]);
+    // Dusk: the talk drops low, doors and supper.
+    let (dusk, named, _) = heard(&place(30.0, 0.0, &[("sun", -0.1)]), 180.0);
+    assert!(dusk[murmur] < 1e-3 && dusk[evening] > 0.5 * ambience.beds[evening].volume, "at dusk the day's talk {:.3}, the evening's {:.3}", dusk[murmur], dusk[evening]);
+    assert!(count(&named, "doors") > 0 && count(&named, "supper") > 0, "doors and supper at dusk: {named:?}");
+    assert_eq!(count(&named, "smithy"), 0, "the anvil at dusk: {named:?}");
+    // Night: asleep, a dog and an owl now and then.
+    let (night, named, _) = heard(&place(30.0, 0.0, &[("sun", -0.8)]), 600.0);
+    assert!(night[murmur] < 1e-3 && night[evening] < 1e-3, "talk at night: {:.3}, {:.3}", night[murmur], night[evening]);
+    assert!(count(&named, "night_dog") > 0 && count(&named, "night_owl") > 0, "a dog and an owl at night: {named:?}");
+    for quiet in ["smithy", "pen_bleat", "doors", "supper"] {
+        assert_eq!(count(&named, quiet), 0, "{quiet} at night: {named:?}");
+    }
+    // A hundred blocks out of it, none of it, day or night.
+    for sun in [0.8, -0.1, -0.8] {
+        let (away, named, _) = heard(&place(30.0, 100.0, &[("sun", sun)]), 180.0);
+        assert!(away[murmur] < 1e-3 && away[evening] < 1e-3 && named.iter().all(|(_, n)| *n == 0), "a hundred blocks off at sun {sun}: {:.3} {:.3} {named:?}", away[murmur], away[evening]);
+    }
 }
