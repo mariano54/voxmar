@@ -1201,16 +1201,16 @@ mod tests {
         assert!(!server.creatures.live[&bear].winding);
     }
 
-    /// The ticks a wolf's blows come down on, standing by a player who never fights back,
+    /// The ticks a `name`'s blows come down on, standing by a player who never fights back,
     /// over 10 game seconds of the server's own ticks; with `slow`, each tick takes 100 ms of
     /// the players' clock, 50 more than it is, as on a server running behind.
-    fn wolf_blows(slow: bool) -> Vec<u64> {
+    fn blows_of(name: &str, slow: bool) -> Vec<u64> {
         use crate::creatures::cornered_tests::{join, pen, put};
         let mut server = crate::test_server();
         let c = pen(&mut server, 9);
         let stand = c.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
         let player = join(&mut server, stand);
-        let wolf = put(&mut server, "base:wolf", stand - Vec3::X * 3.0, Vec3::X);
+        let wolf = put(&mut server, name, stand - Vec3::X * 3.0, Vec3::X);
         server.tick = 1000;
         server.hurt_creature(player, wolf, 0, None, Blow::Plain);
         let (mut blows, mut winding) = (Vec::new(), false);
@@ -1240,17 +1240,24 @@ mod tests {
     /// ahead (every test) landed none.
     #[test]
     fn a_creatures_blows_keep_their_beat_in_game_time_however_long_the_ticks_take() {
-        let quick = wolf_blows(false);
-        let slow = wolf_blows(true);
+        // A badger strikes on its `every` alone; a wolf circles between bites (`circle`),
+        // which comes on top, so its beat is checked only for keeping to game time.
+        let quick = blows_of("base:badger", false);
+        let slow = blows_of("base:badger", true);
         let server = crate::test_server();
-        let wolf = server.content.creatures.find("wolf").map(|s| server.content.creatures.get(s).def.clone()).expect("a wolf");
-        let every = wolf.attack.expect("a wolf bites").every as f64;
+        let badger = server.content.creatures.find("badger").map(|s| server.content.creatures.get(s).def.clone()).expect("a badger");
+        let attack = badger.attack.expect("a badger strikes");
+        assert!(attack.circle.is_none(), "the badger circles now: pick a creature that strikes on its every alone");
+        let every = attack.every as f64;
         let gaps: Vec<f64> = quick.windows(2).map(|w| (w[1] - w[0]) as f64 / TICKS_PER_SECOND as f64).collect();
-        assert!(quick.len() >= 6, "the wolf came down only {} times in 10 game seconds: {quick:?}", quick.len());
+        assert!(quick.len() >= 6, "the badger came down only {} times in 10 game seconds: {quick:?}", quick.len());
         assert_eq!(quick, slow, "a server running behind gave other blows");
         for gap in &gaps {
             assert!((every - 0.05..=every + 0.35).contains(gap), "blows {gap:.2} game s apart, its every {every:.2}: {gaps:?}");
         }
+        let (quick, slow) = (blows_of("base:wolf", false), blows_of("base:wolf", true));
+        assert!(quick.len() >= 3, "the wolf came down only {} times in 10 game seconds: {quick:?}", quick.len());
+        assert_eq!(quick, slow, "a server running behind gave a circling wolf other blows");
     }
 
     /// A guard raised just before a creature's blow lands counts, even when the server
