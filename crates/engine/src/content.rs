@@ -209,8 +209,8 @@ pub struct ContentFile {
 pub const READ_ELSEWHERE: &[&str] = &[
     "action_fx.ron", "ambience.ron", "ambient.ron", "biomes.ron", "cave_biomes.ron", "celebrations.ron", "climate.ron", "combat_fx.ron",
     "combat_hud.ron", "creature_motion.ron", "creature_sounds.ron", "cultures.ron", "decorations.ron", "hoards.ron",
-    "interface.ron", "lairs.ron", "land.ron", "look.ron", "music.ron", "night_light.ron", "ores.ron", "plants.ron",
-    "refusals.ron", "rocks.ron", "settlements.ron", "sounds.ron", "spawn_kit.ron", "surfaces.ron",
+    "interface.ron", "lairs.ron", "land.ron", "look.ron", "menu_bar.ron", "music.ron", "night_light.ron", "ores.ron", "plants.ron",
+    "player_look.ron", "quest_book.ron", "refusals.ron", "rocks.ron", "settlements.ron", "sounds.ron", "spawn_kit.ron", "surfaces.ron",
     "survival.ron", "terrain.ron", "trails.ron", "trees.ron", "wear.ron",
 ];
 
@@ -710,6 +710,17 @@ mod tests {
     /// Skills no content trains: the combat skills train by any fight, and Ranged, Magic
     /// and Alchemy wait for their systems (Combat's slices, brewing).
     const UNTRAINED: [&str; 6] = ["core:attack", "core:defence", "core:hitpoints", "core:ranged", "core:magic", "core:alchemy"];
+
+    /// The game's flues, hood and pot carry `CHIMNEY_PIECE_TAG`, so a renamed tag can't
+    /// quietly leave every chimney smoking from under its roof.
+    #[test]
+    fn the_chimney_pieces_carry_the_chimney_piece_tag() {
+        let content = Content::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).expect("the game's content loads");
+        for name in ["base:chimney_stack", "base:stone_flue", "base:chimney_hood", "base:chimney_pot"] {
+            let id = content.blocks.id(name).unwrap_or_else(|| panic!("no block {name}"));
+            assert!(content.blocks.def(id).has_tag(crate::block::CHIMNEY_PIECE_TAG), "{name} is not a chimney piece");
+        }
+    }
 
     /// Every skill something trains has a way in at level 1: one whose only source asks
     /// for level 5 never leaves level 1 (Construction, with only the altar, did: design

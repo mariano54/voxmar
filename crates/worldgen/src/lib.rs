@@ -1171,6 +1171,42 @@ pub(crate) fn spiral(ring: i32, step: i32) -> (i32, i32) {
     }
 }
 
+/// Every package's content, as a server loads it, loaded once for the run and read by the
+/// tests that only read it.
+#[cfg(test)]
+pub(crate) fn full_content() -> &'static (voxmar_engine::content::Content, WorldContent) {
+    static FULL: std::sync::OnceLock<(voxmar_engine::content::Content, WorldContent)> = std::sync::OnceLock::new();
+    FULL.get_or_init(|| {
+        let content = voxmar_engine::content::Content::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).unwrap();
+        let world = WorldContent::load(&content).unwrap();
+        (content, world)
+    })
+}
+
+/// The world of `seed` on every package's content (`full_content`), one for every test that
+/// only reads what it generates, held for the rest of the run: what a world generates
+/// depends on neither which test asks first nor on what its caches hold, and the next test
+/// on the seed finds its rivers and settlements already planned rather than planning them
+/// again. Kept apart from `Overworld::shared`, whose letting go is tested. Tests that count
+/// what a world plans, or compare a fresh world with another, make their own.
+#[cfg(test)]
+pub(crate) fn shared_full_world(seed: u64) -> Arc<Overworld> {
+    static WORLDS: std::sync::Mutex<Vec<(u64, Arc<std::sync::OnceLock<Arc<Overworld>>>)>> = std::sync::Mutex::new(Vec::new());
+    let slot = {
+        let mut worlds = WORLDS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        match worlds.iter().find(|(s, _)| *s == seed) {
+            Some((_, slot)) => slot.clone(),
+            None => {
+                let slot = Arc::new(std::sync::OnceLock::new());
+                worlds.push((seed, slot.clone()));
+                slot
+            }
+        }
+    };
+    let (content, world) = full_content();
+    slot.get_or_init(|| Arc::new(Overworld::with_content(seed, content.blocks.clone(), world))).clone()
+}
+
 /// All base block files, in the same order as the game loader. Partial registries
 /// omit furnishings and tag members, which can change generation and census results.
 #[cfg(test)]

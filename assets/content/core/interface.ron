@@ -19,8 +19,8 @@
     // zoom, smallest first, in interface pixels, each a multiple of 8 (its 16 texels' half)
     // so the pixel art stays sharp; the wheel or + and - step between them, and the book
     // opens at `book_zoom_at` (counted from 0). It takes `book_width` percent of the window
-    // across, and down all but the keys under it and the HUD at the bottom.
+    // across, and down from under the bar of the screens' keys to the HUD at the bottom.
     book_zooms: [16.0, 24.0, 32.0, 48.0, 64.0],
     book_zoom_at: 1,
-    book_width: 96.0,
+    book_width: 98.0,
 )

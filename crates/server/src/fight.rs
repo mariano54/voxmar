@@ -1159,7 +1159,7 @@ mod tests {
         server.players.insert(player, joined);
         let species = server.content.creatures.id("base:brown_bear").expect("a bear");
         let bear = server.spawn_creature(species, at, 1).expect("room");
-        std::sync::Arc::get_mut(&mut server.content.combat).expect("the test server owns its combat data").feel.creature_tracking = 0.0;
+        std::sync::Arc::make_mut(&mut server.content.combat).feel.creature_tracking = 0.0;
         for direction in [Vec3::X, -Vec3::X, Vec3::Z, -Vec3::Z, Vec3::X + Vec3::Z, Vec3::X - Vec3::Z, -Vec3::X + Vec3::Z, -Vec3::X - Vec3::Z] {
             let direction = direction.normalize();
             let target = at + direction * 4.0;
@@ -1331,7 +1331,7 @@ mod tests {
         fn answered(&mut self, round_trip: f32, allowance: Option<f32>, after: f32, dodge: bool) -> Defended {
             let (player, lands) = (1, 10.0);
             if let Some(allowance) = allowance {
-                std::sync::Arc::get_mut(&mut self.server.content.combat).expect("the test server owns its combat data").feel.lag_allowance = allowance;
+                std::sync::Arc::make_mut(&mut self.server.content.combat).feel.lag_allowance = allowance;
             }
             // As new: no guard up, no dodge under way, the bear where it was, the player well.
             self.server.fights.fighters.clear();

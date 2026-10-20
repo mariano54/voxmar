@@ -170,6 +170,42 @@ struct Survey {
     place: Option<Place>,
 }
 
+/// The surveys out on workers and their answers: whether one is out, and the last begun
+/// before the player left a game (`Surroundings::started` then), whose answers, still on
+/// their way back, are of the world left and are dropped.
+struct Surveys {
+    tx: Sender<Survey>,
+    rx: Receiver<Survey>,
+    out: bool,
+    left: u64,
+}
+
+impl Surveys {
+    fn new() -> Self {
+        let (tx, rx) = unbounded();
+        Self { tx, rx, out: false, left: 0 }
+    }
+
+    /// The answers come back since last asked, of surveys begun in this game, in order.
+    fn answers(&mut self) -> Vec<Survey> {
+        let mut answers = Vec::new();
+        while let Ok(survey) = self.rx.try_recv() {
+            if survey.number > self.left {
+                self.out = false;
+                answers.push(survey);
+            }
+        }
+        answers
+    }
+
+    /// The player left the game, with `started` surveys begun: any still out are of the
+    /// world left, so the next game's first is not kept waiting on them.
+    fn leave(&mut self, started: u64) {
+        self.left = started;
+        self.out = false;
+    }
+}
+
 /// The ambience as the launch checks loaded it, and each block's roof patter they worked
 /// out (see [`Ambience::roof_patters`]), handed on so neither is made twice.
 #[derive(Resource)]
@@ -195,9 +231,10 @@ struct Ambient {
     kinds: Arc<Kinds>,
     content: Content,
     clips: Option<Clips>,
+    /// The clips made, waiting on the recorded beds to load (see [`beds_ready`]).
+    loading: Option<Clips>,
     clips_rx: Receiver<Synthesized>,
-    surveys: (Sender<Survey>, Receiver<Survey>),
-    surveying: bool,
+    surveys: Surveys,
     since_survey: f32,
     /// The generator of the world being played, made on first use.
     generator: Option<(u64, Arc<OnceLock<Option<Arc<Overworld>>>>)>,
@@ -307,28 +344,43 @@ fn start(mut commands: Commands, launch: Res<Launch>, world: Res<ClientWorld>, c
             .collect();
         let _ = tx.send(Synthesized { beds, muffled, sounds });
     });
-    let axes = ambience.axes();
-    commands.insert_resource(Ambient {
-        mixer: Mixer::new(&ambience, 0x616d_6269),
-        roof_patters,
-        roof: RoofLook::default(),
-        ambience: Arc::new(ambience),
-        kinds,
-        content: launch.content.clone(),
-        clips: None,
-        clips_rx,
-        surveys: unbounded(),
-        surveying: false,
-        since_survey: SURVEY_INTERVAL,
-        generator: None,
-        enclosure: Enclosure::default(),
-        place: None,
-        place_survey: 0,
-        smooth: Enclosure::default(),
-        env: Environment::new(axes),
-        cues: Vec::new(),
-        logged: String::new(),
-    });
+    commands.insert_resource(Ambient::new(ambience, roof_patters, kinds, launch.content.clone(), clips_rx));
+}
+
+impl Ambient {
+    /// The ambience before anything is heard, its clips to come from `clips_rx`.
+    fn new(ambience: Ambience, roof_patters: Vec<Option<u8>>, kinds: Arc<Kinds>, content: Content, clips_rx: Receiver<Synthesized>) -> Self {
+        let axes = ambience.axes();
+        Self {
+            mixer: Mixer::new(&ambience, 0x616d_6269),
+            roof_patters,
+            roof: RoofLook::default(),
+            ambience: Arc::new(ambience),
+            kinds,
+            content,
+            clips: None,
+            loading: None,
+            clips_rx,
+            surveys: Surveys::new(),
+            since_survey: SURVEY_INTERVAL,
+            generator: None,
+            enclosure: Enclosure::default(),
+            place: None,
+            place_survey: 0,
+            smooth: Enclosure::default(),
+            env: Environment::new(axes),
+            cues: Vec::new(),
+            logged: String::new(),
+        }
+    }
+
+    /// Hands the clips made to the mixer once every recorded bed has loaded (`loaded`), and
+    /// not before (see [`beds_ready`]).
+    fn take_clips(&mut self, loaded: impl Fn(&Handle<AudioSource>) -> bool) {
+        if self.loading.as_ref().is_some_and(|clips| beds_ready(&clips.beds, loaded)) {
+            self.clips = self.loading.take();
+        }
+    }
 }
 
 /// What the enclosure scan needs of each block.
@@ -361,7 +413,26 @@ fn kinds(ambience: &Ambience, registry: &BlockRegistry, multiblocks: &voxmar_eng
 
 fn receive_clips(ambient: Option<ResMut<Ambient>>, mut sources: ResMut<Assets<AudioSource>>, assets: Res<AssetServer>) {
     let Some(mut ambient) = ambient else { return };
-    let Ok(synthesized) = ambient.clips_rx.try_recv() else { return };
+    if ambient.clips.is_some() {
+        return;
+    }
+    if ambient.loading.is_none() {
+        let Ok(synthesized) = ambient.clips_rx.try_recv() else { return };
+        ambient.loading = Some(made_clips(&ambient, synthesized, &mut sources, &assets));
+    }
+    ambient.take_clips(|clip| sources.contains(clip) || assets.load_state(clip).is_failed());
+}
+
+/// Whether every bed's clips are ready to play (`loaded`: there, or failed to load). A
+/// recorded bed loads from its package as an asset, but its muffled twin is made from the
+/// recording on a worker and is there at once: the beds wait for the recordings, so the
+/// two start together and play in step.
+fn beds_ready<T>(beds: &[Vec<T>], loaded: impl Fn(&T) -> bool) -> bool {
+    beds.iter().flatten().all(loaded)
+}
+
+/// The clips made on the worker, as assets: the recorded beds asked of the asset server.
+fn made_clips(ambient: &Ambient, synthesized: Synthesized, sources: &mut Assets<AudioSource>, assets: &AssetServer) -> Clips {
     let bed_handles: Vec<(Synth, Vec<Handle<AudioSource>>)> = synthesized
         .beds
         .into_iter()
@@ -384,7 +455,7 @@ fn receive_clips(ambient: Option<ResMut<Ambient>>, mut sources: ResMut<Assets<Au
     for (bed, files) in synthesized.muffled {
         muffled[bed] = files.into_iter().map(|bytes| sources.add(AudioSource { bytes: Arc::from(bytes) })).collect();
     }
-    ambient.clips = Some(Clips { beds, muffled, sounds });
+    Clips { beds, muffled, sounds }
 }
 
 /// Scans the surroundings on a worker about once a second, and eases the environment
@@ -397,8 +468,7 @@ fn survey(
     mut surroundings: ResMut<Surroundings>,
 ) {
     let ambient = &mut *ambient;
-    while let Ok(survey) = ambient.surveys.1.try_recv() {
-        ambient.surveying = false;
+    for survey in ambient.surveys.answers() {
         ambient.enclosure = survey.enclosure;
         if survey.place.is_some() {
             ambient.place = survey.place;
@@ -436,7 +506,7 @@ fn survey(
 
     ambient.since_survey += dt;
     // None is taken of where a dead player lay: the next is of where they come back.
-    if !player.joined || player.dead || ambient.surveying || ambient.since_survey < SURVEY_INTERVAL {
+    if !player.joined || player.dead || ambient.surveys.out || ambient.since_survey < SURVEY_INTERVAL {
         return;
     }
     surroundings.started += 1;
@@ -456,11 +526,11 @@ fn survey(
         ambient.generator = Some((player.seed, Arc::new(OnceLock::new())));
     }
     let (seed, generator) = ambient.generator.clone().expect("set above");
-    let (kinds, content, tx, ambience) = (ambient.kinds.clone(), ambient.content.clone(), ambient.surveys.0.clone(), ambient.ambience.clone());
+    let (kinds, content, tx, ambience) = (ambient.kinds.clone(), ambient.content.clone(), ambient.surveys.tx.clone(), ambient.ambience.clone());
     let fires = world.fires.clone();
     let smoulders = world.smoulders.clone();
     let random = mix(time.elapsed().as_nanos() as u64);
-    ambient.surveying = true;
+    ambient.surveys.out = true;
     rayon::spawn(move || {
         let enclosure = enclosure::scan(eye, |p| snapshot.block(p), |p| fires.contains(&p) || smoulders.contains(&p), &kinds, random);
         let generator = generator.get_or_init(|| match WorldContent::load(&content) {
@@ -848,7 +918,8 @@ fn leave(
         commands.entity(entity).despawn();
     }
     // The next world starts from nothing found, not deep under the last one; the count of
-    // surveys runs on, so one still out from this world is never taken for the next's.
+    // surveys runs on, so one still out from this world is never taken for the next's (by
+    // the music, or here: `Surveys::leave`).
     *surroundings = Surroundings { started: surroundings.started, ..default() };
     let Some(mut ambient) = ambient else { return };
     let axes = ambient.ambience.axes();
@@ -858,6 +929,7 @@ fn leave(
     ambient.smooth = Enclosure::default();
     ambient.place = None;
     ambient.place_survey = 0;
+    ambient.surveys.leave(surroundings.started);
     ambient.env = Environment::new(axes);
     ambient.since_survey = SURVEY_INTERVAL;
 }

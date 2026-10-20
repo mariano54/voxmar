@@ -1,12 +1,18 @@
-//! The quest book (L) and the quests pinned on screen. One chapter per age down the left;
-//! each chapter's quests as a web, a quest after the ones it follows, joined by lines:
-//! gold once done, lit while open, dim while what comes first is not done. A quest from
+//! The quest book (L) and the quests pinned on screen. One chapter per age down the left,
+//! each with its first path's icon and a bar of how far through it the player is; each
+//! chapter's quests as a web over a dotted ground, a quest after the ones it follows,
+//! joined by lines: the look's `done` colour once what comes first is done, dim before,
+//! and into a quest that is open a light runs along the line from the quest before it.
+//! Each quest stands in a shape (`quest_book.ron`, `quest_look`) coloured by how it stands,
+//! with a mark on its corner: a tick once done, a gold "!" while its rewards wait, a
+//! padlock while it waits; under the pointer it swells and its name shows. A quest from
 //! another chapter that comes first stands at the web's left, dim, to show the way in. A
 //! web bigger than its well is a canvas: dragged by its empty space (or scrolled either
 //! way), it opens on the quest picked, and its lines are cut at the well's edge. Each path
 //! (`quest_paths.ron`) runs along its own lane, under a header at the well's left with its
 //! name, icon and how many of its quests are done (dim once all are); pressed, the header
-//! brings the canvas to the path's next quest. A
+//! brings the canvas to the path's next quest. The quest picked has its card over the
+//! web's right side, closed with its ×. A
 //! quest's page says first why it is worth doing (the reason and the reward), then what
 //! comes first if anything, its routes (any one finishes it) with each goal's progress,
 //! and its rewards, and pins it while it is open. The quests pinned (`core/quests.ron`'s
@@ -24,8 +30,9 @@ use voxmar_engine::quest_path::QuestPath;
 
 use super::HudImages;
 use super::inventory::InterfaceStyle;
+use super::quest_look::{Look, QuestLook};
 use super::SLOT;
-use super::screens::{GameScreen, ScreenSystems, spawn_hotkeys};
+use super::screens::{GameScreen, ScreenSystems, mark_screen};
 use crate::lang::{Locale, Localized, TightLine};
 use crate::menu::Screen;
 use crate::net::Net;
@@ -35,7 +42,7 @@ use crate::settings::Settings;
 use crate::ui::skin::{PX, Piece};
 use crate::ui::sound::UiSound;
 use crate::ui::widgets::{
-    ACCENT, BODY, ButtonStyle, GOLD, MUTED, SCRIM, SHADOW, SOFT, ScrollList, TEXT, UiFont, button_row, panel, screen, shadowed, space, spawn_button, spawn_heading, spawn_rule, spawn_scroll_more,
+    ACCENT, BODY, ButtonStyle, GOLD, MUTED, SCRIM, SHADOW, SOFT, ScrollList, TEXT, UiFont, button_row, panel, screen, shadowed, space, spawn_button, spawn_scroll_more,
     text,
 };
 
@@ -44,6 +51,7 @@ pub struct QuestsPlugin;
 impl Plugin for QuestsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<QuestView>()
+            .init_resource::<ShapeImages>()
             .init_resource::<TrackerRoom>()
             .init_resource::<Recentre>()
             .init_resource::<ZoomAt>()
@@ -55,7 +63,7 @@ impl Plugin for QuestsPlugin {
                     shown.set_if_neq(Visibility::Hidden);
                 }
             })
-            .add_systems(Update, ((open_start, choose_on_open, show, pick, go_to_path, claim, turn_ways, keep_web_in_range, drag_web, zoom_web, go_to_current, draw, fit_lines.after(crate::ui::widgets::scroll_lists)).chain().after(ScreenSystems), (seed_pins, retire, track, measure_room, squeeze).chain(), hear_quests).run_if(in_state(Screen::InGame)));
+            .add_systems(Update, ((open_start, choose_on_open, show, pick, show_card, go_to_path, claim, turn_ways, keep_web_in_range, drag_web, zoom_web, go_to_current, draw).chain().after(ScreenSystems), (fit_lines.after(crate::ui::widgets::scroll_lists), run_light, swell, breathe, lay_ground).chain().after(draw).run_if(book_shown), (seed_pins, retire, track, measure_room, squeeze).chain(), hear_quests).run_if(in_state(Screen::InGame)));
     }
 }
 
@@ -532,6 +540,12 @@ fn best_task<'a>(quest: &'a QuestDef, state: Option<&QuestState>) -> Vec<(&'a Go
 }
 
 /// The quests a quest comes after, each way it may (`a|b` is either).
+/// How many quests come after `quest`.
+fn followers(content: &Content, quest: &QuestDef) -> usize {
+    content.quests.iter().filter(|q| before(content, q).iter().any(|f| f.name == quest.name)).count()
+}
+
+/// The quests a quest comes after, each way it may (`a|b` is either).
 fn before<'a>(content: &'a Content, quest: &QuestDef) -> Vec<&'a QuestDef> {
     quest.after.iter().flat_map(|a| a.split('|')).filter_map(|name| content.quests.get(name)).collect()
 }
@@ -579,6 +593,43 @@ pub(crate) struct LaneHead {
 }
 #[derive(Component)]
 struct Detail;
+/// The picked quest's card, over the web's right side.
+#[derive(Component)]
+struct QuestCard;
+/// Closes the card, leaving no quest picked.
+#[derive(Component)]
+pub(crate) struct CloseCard;
+/// Where the web stands, its card over its right side: the web is laid out to the whole of
+/// it, so opening the card moves no quest.
+#[derive(Component)]
+struct Stage;
+/// The web's dotted ground, moved with the canvas a dot's step at a time.
+#[derive(Component)]
+struct Ground;
+/// The glow round the quest picked, breathing.
+#[derive(Component)]
+struct Pulse;
+/// A quest drawn on the web swells a little under the pointer.
+#[derive(Component)]
+struct Swell;
+/// The name of the quest under the pointer, over the web.
+#[derive(Component)]
+struct QuestName;
+/// A line into an open quest from a done one, along which a light runs: `length` of the
+/// whole line, and how far along it the part the well shows starts and how long it is.
+#[derive(Component, Default)]
+pub(crate) struct Flow {
+    length: f32,
+    shown: (f32, f32),
+}
+/// The light running along a [`Flow`] line: its soft halo, or its bright core.
+#[derive(Component)]
+struct Spark {
+    core: bool,
+}
+/// Each shape drawn at a size, face, rim and the whole of it, kept for the next draw.
+#[derive(Resource, Default)]
+struct ShapeImages(std::collections::HashMap<(String, u32), (Handle<Image>, Handle<Image>, Handle<Image>)>);
 /// Turns the book to the quest the player is on.
 #[derive(Component)]
 pub(crate) struct CurrentButton;
@@ -596,44 +647,47 @@ struct WayStep {
 }
 
 /// The chapters' column, and the sidebar at the right with the picked quest's page.
-const CHAPTERS: f32 = 80.0 * PX;
+const CHAPTERS: f32 = 96.0 * PX;
 const SIDEBAR: f32 = 180.0 * PX;
-/// The frame around a quest's icon, each side.
+/// The frame around a quest's icon, each side, at the least.
 const RIM: f32 = 2.0 * PX;
+/// How much bigger than its icon a quest's shape is: room for the icon inside a circle or
+/// a hexagon's rim.
+const SHAPE_ROOM: f32 = 1.4;
 /// The quests' least and most step across and down the web, past a cell, at the usual
 /// zoom (and as much bigger or smaller as the zoom); it spreads to fill its well between
 /// them, and a web too big for the well is a canvas dragged about inside it.
 const GAP_LEAST: Vec2 = Vec2::new(12.0 * PX, 6.0 * PX);
 const GAP_MOST: Vec2 = Vec2::new(90.0 * PX, 40.0 * PX);
 /// How far the picked quest's glow reaches past it.
-const GLOW: f32 = 3.0 * PX;
+const GLOW: f32 = 5.0 * PX;
 /// Pinch a trackpad this much for one step of zoom.
 const PINCH_STEP: f32 = 0.15;
 /// The width of a lane's header, at the left of the canvas, which stays as it is dragged:
 /// room for the longest path name (First Steps) on one line, its count under it.
 const HEADER: f32 = 88.0 * PX;
+/// The card's close button, a square.
+const CLOSE: f32 = 11.0 * PX;
 /// A lane's path icon in its header.
 const PATH_ICON: f32 = 14.0 * PX;
 /// The width of the Current Quest button.
 const CURRENT_WIDTH: f32 = 96.0 * PX;
 /// How strongly a line from one path to another shows, unless it ends at the quest picked.
 const ACROSS: f32 = 0.18;
-/// How thick the lines between quests are.
-const LINE: f32 = 2.0 * PX;
 
 fn spawn(mut commands: Commands, font: Res<UiFont>, style: Res<InterfaceStyle>) {
     let font = &font.0;
-    // Most of the window: `book_width` of it across, and down all but a gap at the top and
-    // the keys under it (`screens::clear_of_hud` keeps both clear of the HUD's foot).
-    let (mut root, backdrop) = screen(SCRIM);
-    root.padding.top = Val::Px(space::SECTION);
+    // Almost the whole window, the world dimmed behind it: `book_width` of it across, and
+    // down from under the bar of the screens' keys to the HUD's foot (`screens::clear_of_hud`
+    // keeps it clear of both). The bar names the screen, so the book needs no heading.
+    let (root, backdrop) = screen(SCRIM);
     commands.spawn((QuestScreen, root, backdrop, Visibility::Hidden, GlobalZIndex(1))).with_children(|root| {
         let (mut card, image) = panel(0.0);
         card.width = Val::Percent(style.book_width);
         card.flex_grow = 1.0;
         card.min_height = Val::ZERO;
+        card.padding = UiRect::all(Val::Px(space::INNER));
         root.spawn((card, image)).with_children(|card| {
-            card.spawn(Node { width: Val::Percent(100.0), flex_direction: FlexDirection::Column, ..default() }).with_children(|heading| spawn_heading(heading, font, "screen.quests"));
             // The chapters, the web filling what is left, and the picked quest's page at the
             // right.
             card.spawn(Node { flex_grow: 1.0, min_height: Val::ZERO, column_gap: Val::Px(space::GAP), ..default() }).with_children(|columns| {
@@ -647,34 +701,62 @@ fn spawn(mut commands: Commands, font: Res<UiFont>, style: Res<InterfaceStyle>) 
                     padding: UiRect::all(Val::Px(space::GAP)),
                     ..default()
                 };
-                columns.spawn((Web, bevy::ui::RelativeCursorPosition::default(), ScrollPosition::default(), web, Piece::Well.image()));
-                // A line kept under the page for its "more below" arrow, so the arrow never
-                // sits over its words.
-                let side = Node { width: Val::Px(SIDEBAR), flex_shrink: 0.0, flex_direction: FlexDirection::Column, padding: UiRect::bottom(Val::Px(BODY + space::HAIR)), ..default() };
-                columns.spawn(side).with_children(|side| {
-                    // A pixel of room either side, inside what it clips: a glyph that draws a little
-                    // left of where it is set (住) is not cut off at the page's edge.
-                    let detail = Node { flex_grow: 1.0, min_height: Val::ZERO, flex_direction: FlexDirection::Column, row_gap: Val::Px(space::HAIR), padding: UiRect::horizontal(Val::Px(PX)), overflow: Overflow::scroll_y(), ..default() };
-                    let detail = side.spawn((Detail, ScrollList, detail)).id();
-                    spawn_scroll_more(side, font, detail);
+                // The web fills the rest, over its dotted ground (which `fit_lines` moves with
+                // it); the picked quest's card stands over its right side.
+                let stage = Node { flex_grow: 1.0, flex_basis: Val::ZERO, min_width: Val::ZERO, overflow: Overflow::clip(), ..default() };
+                columns.spawn((Stage, stage, Piece::Well.image())).with_children(|stage| {
+                    let ground = Node { position_type: PositionType::Absolute, left: Val::ZERO, top: Val::ZERO, right: Val::ZERO, bottom: Val::ZERO, ..default() };
+                    stage.spawn((ground, Ground));
+                    // Beside the card while it shows (`show_card`), so no quest stands under it.
+                    let web = Node { position_type: PositionType::Absolute, left: Val::ZERO, top: Val::ZERO, right: Val::ZERO, bottom: Val::ZERO, ..web };
+                    stage.spawn((Web, bevy::ui::RelativeCursorPosition::default(), ScrollPosition::default(), web));
+                    let card = Node {
+                        position_type: PositionType::Absolute,
+                        right: Val::Px(space::HAIR),
+                        top: Val::Px(space::HAIR),
+                        bottom: Val::Px(space::HAIR),
+                        width: Val::Px(SIDEBAR),
+                        flex_direction: FlexDirection::Column,
+                        padding: UiRect::all(Val::Px(space::INNER)),
+                        ..default()
+                    };
+                    stage.spawn((QuestCard, card, Piece::Tooltip.image(), Visibility::Hidden, bevy::ui::FocusPolicy::Block)).with_children(|card| {
+                        // A line kept under the page for its "more below" arrow, so the arrow
+                        // never sits over its words.
+                        let side = Node { flex_grow: 1.0, min_height: Val::ZERO, flex_direction: FlexDirection::Column, padding: UiRect::bottom(Val::Px(BODY + space::HAIR)), ..default() };
+                        card.spawn(side).with_children(|side| {
+                            // A pixel of room either side, inside what it clips: a glyph that draws a
+                            // little left of where it is set (住) is not cut off at the page's edge.
+                            let detail = Node { flex_grow: 1.0, min_height: Val::ZERO, flex_direction: FlexDirection::Column, row_gap: Val::Px(space::HAIR), padding: UiRect::horizontal(Val::Px(PX)), overflow: Overflow::scroll_y(), ..default() };
+                            let detail = side.spawn((Detail, ScrollList, detail)).id();
+                            spawn_scroll_more(side, font, detail);
+                        });
+                    });
                 });
             });
-            spawn_rule(card, space::GAP);
-            card.spawn(Node { align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), ..default() }).with_children(|row| {
+            card.spawn(Node { align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), margin: UiRect::top(Val::Px(space::HAIR)), ..default() }).with_children(|row| {
                 row.spawn((Node { flex_grow: 1.0, flex_basis: Val::ZERO, min_width: Val::ZERO, ..default() }, Localized("quest.hint"), text(font, "", BODY, MUTED)));
                 row.spawn(Node { width: Val::Px(CURRENT_WIDTH), flex_shrink: 0.0, ..default() }).with_children(|holder| {
                     spawn_button(holder, font, "quest.current", ButtonStyle::Secondary, CurrentButton);
                 });
             });
         });
-        spawn_hotkeys(root, GameScreen::Quests);
+        mark_screen(root, GameScreen::Quests);
+        // The name of the quest under the pointer (`swell` places it).
+        let name = Node { position_type: PositionType::Absolute, padding: UiRect::axes(Val::Px(space::INNER), Val::Px(space::HAIR)), ..default() };
+        root.spawn((QuestName, name, Piece::Tooltip.image(), Visibility::Hidden, GlobalZIndex(2), bevy::ui::FocusPolicy::Pass)).with_child((shadowed(font, "", BODY, TEXT), TightLine));
     });
 }
 
 fn show(ui: Res<UiState>, mut root: Query<&mut Visibility, With<QuestScreen>>) {
     if let Ok(mut visibility) = root.single_mut() {
-        visibility.set_if_neq(if ui.quests_open && !ui.recipes_open { Visibility::Inherited } else { Visibility::Hidden });
+        visibility.set_if_neq(if book_shown(ui) { Visibility::Inherited } else { Visibility::Hidden });
     }
+}
+
+/// Whether the book is on screen: what only moves what it shows waits on it.
+fn book_shown(ui: Res<UiState>) -> bool {
+    ui.quests_open && !ui.recipes_open
 }
 
 #[allow(clippy::type_complexity)]
@@ -792,11 +874,12 @@ fn draw(
     launch: Res<Launch>,
     locale: Res<Locale>,
     font: Res<UiFont>,
-    (images, style): (Res<HudImages>, Res<InterfaceStyle>),
+    (images, style, look): (Res<HudImages>, Res<InterfaceStyle>, Res<QuestLook>),
+    (mut shapes, mut assets): (ResMut<ShapeImages>, ResMut<Assets<Image>>),
     settings: Res<Settings>,
     viewer: Res<super::recipes::RecipeViewer>,
     chapters_column: Query<Entity, With<Chapters>>,
-    mut web: Query<(Entity, &ComputedNode, &mut ScrollPosition), With<Web>>,
+    (mut web, stage): (Query<(Entity, &mut ScrollPosition), With<Web>>, Query<&ComputedNode, With<Stage>>),
     detail: Query<Entity, With<Detail>>,
     (mut recentre, mut zoom_at): (ResMut<Recentre>, ResMut<ZoomAt>),
     mut drawn: Local<Option<(QuestView, u32, Vec<String>, bool, IVec2)>>,
@@ -806,8 +889,8 @@ fn draw(
         return;
     }
     // The web's room inside its well, as laid out for this window: drawn again when the
-    // window changes it.
-    let room = web.single().map_or(Vec2::ZERO, |(_, computed, _)| (computed.size() * computed.inverse_scale_factor() - Vec2::splat(2.0 * space::GAP)).max(Vec2::ZERO));
+    // window changes it. The card over its right side leaves the layout as it is.
+    let room = stage.single().map_or(Vec2::ZERO, |computed| (computed.size() * computed.inverse_scale_factor() - Vec2::splat(2.0 * space::GAP)).max(Vec2::ZERO));
     let wanted = (view.clone(), player.quests_rev, settings.pinned_quests.clone(), viewer.book().is_some(), room.as_ivec2());
     if drawn.as_ref() == Some(&wanted) && !locale.is_changed() && !recentre.0 {
         return;
@@ -817,6 +900,7 @@ fn draw(
     // when Current Quest asks.
     let arrived = drawn.as_ref().is_none_or(|(was, .., was_room)| was.chapter != view.chapter || *was_room == IVec2::ZERO) || std::mem::take(&mut recentre.0);
     let zoomed = zoom_at.0.take();
+    let refit = drawn.as_ref().is_none_or(|(was, ..)| was.picked != view.picked);
     *drawn = Some(wanted);
     let content = &launch.content;
     let font = &font.0;
@@ -828,11 +912,11 @@ fn draw(
                 let done = quests.iter().filter(|q| standing(content, &player, q) == Standing::Done).count();
                 let waiting = quests.iter().any(|q| claimable(&player, &q.name));
                 let node = Node {
-                    min_height: Val::Px(14.0 * PX),
+                    min_height: Val::Px(18.0 * PX),
                     flex_shrink: 0.0,
-                    justify_content: JustifyContent::SpaceBetween,
                     align_items: AlignItems::Center,
-                    padding: UiRect::axes(Val::Px(space::INNER), Val::Px(space::HAIR)),
+                    column_gap: Val::Px(space::HAIR),
+                    padding: UiRect::axes(Val::Px(space::HAIR), Val::Px(space::HAIR)),
                     ..default()
                 };
                 let style = ButtonStyle::Secondary;
@@ -841,11 +925,24 @@ fn draw(
                     button.insert(crate::ui::widgets::Selected);
                 }
                 button.with_children(|button| {
-                    let name = locale.get_or(&format!("quest.age.{age}"), &title_from_id(age)).to_owned();
-                    button.spawn((shadowed(font, name, BODY, TEXT), TightLine));
-                    let count = locale.format("quest.chapter.count", &[("done", &done), ("all", &quests.len())]);
-                    // A gold "!" marks a chapter with rewards waiting to be claimed.
-                    button.spawn((text(font, if waiting { format!("! {count}") } else { count }, BODY, if waiting { GOLD } else { MUTED }), TightLine));
+                    // Its first path's icon, its name and how many of its quests are done,
+                    // a bar of how far through it the player is under them.
+                    let icon = content.quest_paths.iter().find(|p| &p.age == age).and_then(|p| images.icons.get(p.icon.0 as usize)).cloned().unwrap_or_default();
+                    button.spawn((Node { width: Val::Px(PATH_ICON), height: Val::Px(PATH_ICON), flex_shrink: 0.0, ..default() }, ImageNode::new(icon)));
+                    button.spawn(Node { flex_grow: 1.0, flex_direction: FlexDirection::Column, row_gap: Val::Px(PX), min_width: Val::ZERO, ..default() }).with_children(|words| {
+                        words.spawn(Node { justify_content: JustifyContent::SpaceBetween, column_gap: Val::Px(space::HAIR), ..default() }).with_children(|row| {
+                            let name = locale.get_or(&format!("quest.age.{age}"), &title_from_id(age)).to_owned();
+                            row.spawn((shadowed(font, name, BODY, TEXT), TightLine));
+                            let count = locale.format("quest.chapter.count", &[("done", &done), ("all", &quests.len())]);
+                            // A gold "!" marks a chapter with rewards waiting to be claimed.
+                            row.spawn((text(font, if waiting { format!("! {count}") } else { count }, BODY, if waiting { GOLD } else { MUTED }), TightLine));
+                        });
+                        let bar = Node { height: Val::Px(2.0 * PX), width: Val::Percent(100.0), ..default() };
+                        words.spawn((bar, BackgroundColor(SHADOW))).with_children(|bar| {
+                            let through = if quests.is_empty() { 0.0 } else { 100.0 * done as f32 / quests.len() as f32 };
+                            bar.spawn((Node { width: Val::Percent(through), height: Val::Percent(100.0), ..default() }, BackgroundColor(look.done.rim.color())));
+                        });
+                    });
                 });
             }
         });
@@ -860,27 +957,46 @@ fn draw(
     let step = Vec2::new(lanes_room.x / columns as f32, lanes_room.y / tallest as f32).clamp(side + GAP_LEAST * zoom, side + GAP_MOST * zoom);
     let place = |i: usize| Vec2::X * HEADER + cells[i] * step + (step - Vec2::splat(side)) / 2.0;
     let centre = |i: usize| place(i) + Vec2::splat(side / 2.0);
-    if let Ok((web, _, mut scroll)) = web.single_mut() {
+    if let Ok((web, mut scroll)) = web.single_mut() {
         let size = Vec2::new(HEADER + columns as f32 * step.x, tallest as f32 * step.y);
         // Centred in the well by its margins; a web too big for the well has none that way,
-        // and is dragged about in it rather than cut off.
-        let margin = ((room - size) / 2.0).max(Vec2::ZERO);
-        // Scrolled so quest `i` stands in the middle of what the well shows beside the headers.
-        let brought = |i: usize| (centre(i) - Vec2::X * HEADER - lanes_room / 2.0).clamp(Vec2::ZERO, (size - room).max(Vec2::ZERO));
+        // and is dragged about in it rather than cut off. Above and below it, half the well
+        // more, so the canvas moves on past its top and bottom lanes: a quest there can
+        // stand in the middle, and the point under the pointer stays put as it zooms.
+        let over = Vec2::Y * room.y / 2.0;
+        let margin = ((room - size) / 2.0).max(Vec2::ZERO) + over;
+        // As far as the canvas reaches, its margins and the room past its foot.
+        let reach = size + over;
+        // What the well shows with a quest picked: all but the strip its card covers.
+        let seen = (room - Vec2::X * (SIDEBAR + 2.0 * space::HAIR)).max(Vec2::ZERO);
+        // Scrolled so quest `i`, picked, stands in the middle of what the well shows between
+        // the headers and its card (the canvas from `scroll - margin`).
+        let brought = |i: usize| (centre(i) + margin - Vec2::X * HEADER - (seen - Vec2::X * HEADER) / 2.0).clamp(Vec2::ZERO, (reach + margin - seen).max(Vec2::ZERO));
         if arrived {
-            scroll.0 = view.picked.as_deref().and_then(|name| quests.iter().position(|q| q.name == name)).map_or(Vec2::ZERO, brought);
+            // On no quest, from the web's top.
+            scroll.0 = view.picked.as_deref().and_then(|name| quests.iter().position(|q| q.name == name)).map_or(over, brought);
         } else if let Some((pointer, point)) = zoomed {
             // The point of the web that was under the pointer stays there: the well shows
             // the canvas from `scroll - margin`.
             let at = Vec2::new(HEADER + point.x * step.x, point.y * step.y);
-            scroll.0 = (at + margin - pointer).clamp(Vec2::ZERO, (size + margin - room).max(Vec2::ZERO));
+            // Held within what the well shows, beside the card while one is open.
+            let shown = if view.picked.is_some() { seen } else { room };
+            scroll.0 = (at + margin - pointer).clamp(Vec2::ZERO, (reach + margin - shown).max(Vec2::ZERO));
+        } else if let Some(i) = view.picked.as_deref().and_then(|name| quests.iter().position(|q| q.name == name))
+            && refit
+        {
+            // A quest newly picked stays in what the well shows beside its card (from
+            // `scroll - margin`), scrolled no further than needed.
+            scroll.0 = kept_in_view(scroll.0, place(i), side, margin, seen, reach);
         }
         commands.entity(web).despawn_children().with_children(|web| {
             if ours == 0 {
                 web.spawn((Localized("quest.empty"), text(font, "", BODY, MUTED)));
                 return;
             }
-            let canvas = Node { width: Val::Px(size.x), height: Val::Px(size.y), flex_shrink: 0.0, margin: UiRect { left: Val::Px(margin.x), top: Val::Px(margin.y), ..default() }, ..default() };
+            // Its room past the foot is its own height (a margin there is no room the well
+            // scrolls to).
+            let canvas = Node { width: Val::Px(reach.x), height: Val::Px(reach.y), flex_shrink: 0.0, margin: UiRect { left: Val::Px(margin.x), top: Val::Px(margin.y), ..default() }, ..default() };
             web.spawn((canvas, Canvas { margin, step })).with_children(|area| {
                 // Every other lane faintly banded, so a path reads along its row.
                 for lane in lanes.iter().skip(1).step_by(2) {
@@ -898,14 +1014,53 @@ fn draw(
                     for first in before(content, quests[i]) {
                         let Some(j) = quests.iter().position(|q| q.name == first.name) else { continue };
                         let done = standing(content, &player, quests[j]) == Standing::Done;
-                        let colour = line_colour(picked_at == Some(i) || picked_at == Some(j), lane_of(i) != lane_of(j), done);
-                        let line = Node { position_type: PositionType::Absolute, display: Display::None, height: Val::Px(LINE), ..default() };
-                        area.spawn((line, UiTransform::default(), WebLine { from: centre(j), to: centre(i) }, BackgroundColor(colour)));
+                        let colour = line_colour(&look, picked_at == Some(i) || picked_at == Some(j), lane_of(i) != lane_of(j), done);
+                        let width = look.lines.width * PX;
+                        let line = Node { position_type: PositionType::Absolute, display: Display::None, height: Val::Px(width), ..default() };
+                        let mut line = area.spawn((line, UiTransform::default(), WebLine { from: centre(j), to: centre(i) }, BackgroundColor(colour)));
+                        // Into a quest that is open, from one done: a light runs along it.
+                        if done && i < ours && standing(content, &player, quests[i]) == Standing::Open {
+                            line.insert(Flow { length: centre(j).distance(centre(i)), ..default() }).with_children(|line| {
+                                for core in [false, true] {
+                                    let spark = Node { position_type: PositionType::Absolute, left: Val::ZERO, right: Val::ZERO, top: Val::ZERO, bottom: Val::ZERO, ..default() };
+                                    line.spawn((Spark { core }, spark, UiTransform::default(), Visibility::Hidden, BackgroundColor(Color::NONE)));
+                                }
+                            });
+                        }
                     }
                 }
+                // Each quest in its shape, its face and rim in the colours of how it stands,
+                // its icon in the middle and a mark on its corner: a tick once done, a gold
+                // "!" while its rewards wait, a padlock while it waits on those before it.
+                // The quest picked glows in the accent round its shape.
                 for (i, quest) in quests.iter().enumerate() {
                     let standing = standing(content, &player, quest);
+                    let ready = claimable(&player, &quest.name);
+                    let tone = match standing {
+                        Standing::Done if ready => Look::Ready,
+                        Standing::Done => Look::Done,
+                        Standing::Open => Look::Open,
+                        Standing::Waiting => Look::Waiting,
+                    };
+                    let tones = look.tones(tone);
+                    let first = before(content, quest).iter().all(|f| f.branch != quest.branch || f.age != quest.age);
+                    let (shape_name, shape) = look.shape_of(quest, first, followers(content, quest));
+                    let texels = texels_of(side);
+                    let (face, rim, whole_shape) = shapes
+                        .0
+                        .entry((shape_name.to_owned(), texels))
+                        .or_insert_with(|| {
+                            let (face, rim) = super::quest_look::draw(shape, texels);
+                            let solid = super::quest_look::solid(&face, &rim);
+                            (assets.add(crate::render::ui_image(&face)), assets.add(crate::render::ui_image(&rim)), assets.add(crate::render::ui_image(&solid)))
+                        })
+                        .clone();
                     let at = place(i);
+                    let picked = view.picked.as_deref() == Some(quest.name.as_str());
+                    if picked {
+                        let glow = Node { position_type: PositionType::Absolute, left: Val::Px(at.x - GLOW), top: Val::Px(at.y - GLOW), width: Val::Px(side + 2.0 * GLOW), height: Val::Px(side + 2.0 * GLOW), ..default() };
+                        area.spawn((glow, Pulse, ImageNode::new(whole_shape).with_color(ACCENT.with_alpha(0.7))));
+                    }
                     let node = Node {
                         position_type: PositionType::Absolute,
                         left: Val::Px(at.x),
@@ -916,44 +1071,24 @@ fn draw(
                         align_items: AlignItems::Center,
                         ..default()
                     };
-                    // Gold when done, lit while open, plain and dim while waiting.
-                    let piece = match standing {
-                        Standing::Done => Piece::Frame,
-                        Standing::Open => Piece::WellFocus,
-                        Standing::Waiting => Piece::Well,
-                    };
-                    let tint = if standing == Standing::Waiting || i >= ours { Color::srgba(1.0, 1.0, 1.0, 0.35) } else { Color::WHITE };
-                    let picked = view.picked.as_deref() == Some(quest.name.as_str());
-                    // A finished quest with rewards to claim glows gold; the quest picked glows
-                    // in the accent, whatever it stands at, under its ring.
-                    if claimable(&player, &quest.name) {
-                        let glow = Node {
-                            position_type: PositionType::Absolute,
-                            left: Val::Px(at.x - GLOW),
-                            top: Val::Px(at.y - GLOW),
-                            width: Val::Px(side + 2.0 * GLOW),
-                            height: Val::Px(side + 2.0 * GLOW),
-                            ..default()
-                        };
-                        area.spawn((glow, BackgroundColor(GOLD.with_alpha(0.55))));
-                    }
-                    if picked {
-                        let glow = Node {
-                            position_type: PositionType::Absolute,
-                            left: Val::Px(at.x - GLOW),
-                            top: Val::Px(at.y - GLOW),
-                            width: Val::Px(side + 2.0 * GLOW),
-                            height: Val::Px(side + 2.0 * GLOW),
-                            ..default()
-                        };
-                        area.spawn((glow, BackgroundColor(ACCENT.with_alpha(0.45))));
-                    }
-                    area.spawn((Button, crate::ui::widgets::HoverLight, QuestNode(quest.name.clone()), node, piece.image())).with_children(|cell| {
+                    let dim = standing == Standing::Waiting || i >= ours;
+                    let faint = if i >= ours { 0.5 } else { 1.0 };
+                    let whole = Node { position_type: PositionType::Absolute, left: Val::ZERO, top: Val::ZERO, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() };
+                    area.spawn((Button, Swell, QuestNode(quest.name.clone()), node, UiTransform::default())).with_children(|cell| {
+                        cell.spawn((whole.clone(), ImageNode::new(face).with_color(tones.face.color().with_alpha(faint))));
+                        cell.spawn((whole, ImageNode::new(rim).with_color(tones.rim.color().with_alpha(faint))));
+                        let tint = if dim { Color::srgba(0.75, 0.75, 0.8, 0.45) } else { Color::WHITE };
                         cell.spawn((Node { width: Val::Px(icon), height: Val::Px(icon), ..default() }, ImageNode::new(quest_icon(content, &images, quest)).with_color(tint)));
-                        // The quest picked, ringed.
-                        if picked {
-                            let ring = Node { position_type: PositionType::Absolute, left: Val::Px(-2.0 * PX), top: Val::Px(-2.0 * PX), width: Val::Px(side + 4.0 * PX), height: Val::Px(side + 4.0 * PX), ..default() };
-                            cell.spawn((ring, Piece::Selection.image()));
+                        let mark = match tone {
+                            Look::Done => Some(Piece::QuestDone),
+                            Look::Ready => Some(Piece::QuestReady),
+                            Look::Waiting if i < ours => Some(Piece::QuestLocked),
+                            _ => None,
+                        };
+                        if let Some(mark) = mark {
+                            let size = mark.size() * zoom.clamp(0.75, 1.5);
+                            let corner = Node { position_type: PositionType::Absolute, right: Val::ZERO, bottom: Val::ZERO, width: Val::Px(size.x), height: Val::Px(size.y), ..default() };
+                            cell.spawn((corner, mark.image()));
                         }
                     });
                 }
@@ -980,7 +1115,7 @@ fn draw(
                     let head_name = head.map(|i| quests[i].name.clone());
                     let at = head.map_or(Vec2::ZERO, brought);
                     let (words, faint) = if finished { (MUTED, 0.45) } else { (TEXT, 1.0) };
-                    area.spawn((Button, crate::ui::widgets::HoverLight, LaneHead { head: head_name, at }, node, BackgroundColor(SCRIM.with_alpha(0.85)))).with_children(|header| {
+                    area.spawn((Button, crate::ui::widgets::HoverLight, LaneHead { head: head_name, at }, node, BackgroundColor(SHADOW.with_alpha(0.45)))).with_children(|header| {
                         header.spawn(Node { align_items: AlignItems::Center, column_gap: Val::Px(space::HAIR), ..default() }).with_children(|top| {
                             let icon = images.icons.get(path.icon.0 as usize).cloned().unwrap_or_default();
                             top.spawn((Node { width: Val::Px(PATH_ICON), height: Val::Px(PATH_ICON), flex_shrink: 0.0, ..default() }, ImageNode::new(icon).with_color(Color::WHITE.with_alpha(faint))));
@@ -1016,6 +1151,9 @@ fn draw(
                     Standing::Waiting => (locale.get("quest.status.waiting").to_owned(), MUTED),
                 };
                 top.spawn((text(font, status.0, BODY, status.1), TightLine));
+                // Closed, the card goes and the quest is no longer picked.
+                let close = Node { width: Val::Px(CLOSE), height: Val::Px(CLOSE), flex_shrink: 0.0, justify_content: JustifyContent::Center, align_items: AlignItems::Center, ..default() };
+                top.spawn((Button, CloseCard, close, Piece::Button.image())).with_child((shadowed(font, "×", BODY, TEXT), TightLine));
             });
             let ready = claimable(&player, &quest.name);
             // Only an open quest is followed on screen.
@@ -1115,10 +1253,19 @@ fn draw(
     }
 }
 
+/// The scroll that keeps a quest at `at` on the canvas, `side` across, wholly in what the
+/// well shows beside the lanes' headers (the canvas from `scroll - margin`, `room` across),
+/// moving `scroll` no further than needed and never past the canvas.
+fn kept_in_view(scroll: Vec2, at: Vec2, side: f32, margin: Vec2, room: Vec2, size: Vec2) -> Vec2 {
+    let (least, most) = (at + Vec2::splat(side) + margin - room, at + margin - Vec2::X * HEADER);
+    scroll.clamp(least.min(most), most.max(least)).clamp(Vec2::ZERO, (size + margin - room).max(Vec2::ZERO))
+}
+
 /// A line's colour on the web: in the accent when it ends at the quest picked; faint when
-/// it runs from one path to another; else gold once what it comes from is done.
-fn line_colour(picked: bool, across: bool, done: bool) -> Color {
-    let colour = if done { GOLD } else { MUTED.with_alpha(0.7) };
+/// it runs from one path to another; else the look's `done` once what it comes from is
+/// done, `ahead` before.
+fn line_colour(look: &QuestLook, picked: bool, across: bool, done: bool) -> Color {
+    let colour = if done { look.lines.done.color() } else { look.lines.ahead.color().with_alpha(0.8) };
     if picked {
         ACCENT
     } else if across {
@@ -1139,7 +1286,20 @@ fn zoom_of(style: &InterfaceStyle, zoom: i8) -> (f32, f32) {
 /// How many pixels across a quest's cell is at zoom `zoom`: its icon at that zoom's size
 /// from the data, in its rim.
 pub(crate) fn cell_side(style: &InterfaceStyle, zoom: i8) -> f32 {
-    zoom_of(style, zoom).0 + 2.0 * RIM
+    // An even count of texels, so the shape has a middle pixel line either way.
+    ((zoom_of(style, zoom).0 * SHAPE_ROOM / (2.0 * PX)).round() * 2.0 * PX).max(zoom_of(style, zoom).0 + 2.0 * RIM)
+}
+
+/// A quest's cell, `side` pixels across, in texels: the size its shape is drawn at.
+fn texels_of(side: f32) -> u32 {
+    (side / PX).round() as u32
+}
+
+/// Every size, in texels, the book draws a quest's shape at, zoomed out to in.
+#[cfg(test)]
+pub(crate) fn shape_texels(style: &InterfaceStyle) -> Vec<u32> {
+    let (out, inn) = zoom_range(style);
+    (out..=inn).map(|zoom| texels_of(cell_side(style, zoom))).collect()
 }
 
 /// The furthest the web zooms out and in from the usual, in steps.
@@ -1250,10 +1410,12 @@ pub(crate) fn clip_line(from: Vec2, to: Vec2, view: Rect) -> Option<(Vec2, Vec2)
 /// a line's thickness so a cut end's corners stay in it too.
 #[allow(clippy::type_complexity)]
 fn fit_lines(
+    look: Res<QuestLook>,
     web: Query<(Ref<ComputedNode>, Ref<ScrollPosition>), With<Web>>,
     canvas: Query<&Canvas>,
-    mut lines: Query<(Ref<WebLine>, &mut Node, &mut UiTransform), Without<LaneHead>>,
-    mut heads: Query<(Ref<LaneHead>, &mut Node), Without<WebLine>>,
+    mut lines: Query<(Ref<WebLine>, &mut Node, &mut UiTransform, Option<&mut Flow>), (Without<LaneHead>, Without<Ground>)>,
+    mut heads: Query<(Ref<LaneHead>, &mut Node), (Without<WebLine>, Without<Ground>)>,
+    mut ground: Query<&mut Node, (With<Ground>, Without<WebLine>, Without<LaneHead>)>,
 ) {
     let Ok((computed, scroll)) = web.single() else { return };
     if !computed.is_changed() && !scroll.is_changed() && !lines.iter().any(|(line, ..)| line.is_added()) && !heads.iter().any(|(head, _)| head.is_added()) {
@@ -1266,7 +1428,17 @@ fn fit_lines(
     let room = (computed.size() * scale - Vec2::splat(2.0 * space::GAP)).max(Vec2::ZERO);
     let max = (computed.content_size() - computed.size()).max(Vec2::ZERO) * scale;
     let corner = scroll.0.clamp(Vec2::ZERO, max).floor() - canvas.margin;
-    let view = Rect::from_corners(corner, corner + room).inflate(-LINE / 2.0);
+    // The ground moves with the canvas, a dot's step at most, so it never runs out.
+    let step = look.grid.spacing as f32 * PX;
+    if let Ok(mut node) = ground.single_mut() {
+        let off = Vec2::new(corner.x.rem_euclid(step), corner.y.rem_euclid(step));
+        let (left, top) = (Val::Px(-off.x), Val::Px(-off.y));
+        if node.left != left || node.top != top {
+            (node.left, node.top, node.right, node.bottom) = (left, top, Val::Px(off.x - step), Val::Px(off.y - step));
+        }
+    }
+    let thick = look.lines.width * PX;
+    let view = Rect::from_corners(corner, corner + room).inflate(-thick / 2.0);
     // The lanes' headers stay at the well's left as the canvas moves under them.
     let left = Val::Px(corner.x.max(0.0));
     for (_, mut node) in &mut heads {
@@ -1274,7 +1446,7 @@ fn fit_lines(
             node.left = left;
         }
     }
-    for (line, mut node, mut turn) in &mut lines {
+    for (line, mut node, mut turn, flow) in &mut lines {
         let Some((from, to)) = clip_line(line.from, line.to, view) else {
             if node.display != Display::None {
                 node.display = Display::None;
@@ -1282,7 +1454,7 @@ fn fit_lines(
             continue;
         };
         let (length, middle) = (from.distance(to), (from + to) / 2.0);
-        let fitted = Node { display: Display::Flex, left: Val::Px(middle.x - length / 2.0), top: Val::Px(middle.y - LINE / 2.0), width: Val::Px(length), ..node.clone() };
+        let fitted = Node { display: Display::Flex, left: Val::Px(middle.x - length / 2.0), top: Val::Px(middle.y - thick / 2.0), width: Val::Px(length), ..node.clone() };
         if *node != fitted {
             *node = fitted;
         }
@@ -1290,11 +1462,140 @@ fn fit_lines(
         if turn.rotation != rotation {
             turn.rotation = rotation;
         }
+        if let Some(mut flow) = flow {
+            flow.shown = (line.from.distance(from), length);
+        }
     }
 }
 
-/// A lane's header pressed brings the canvas to its path's head quest, and picks it.
-fn go_to_path(heads: Query<(&LaneHead, &Interaction), Changed<Interaction>>, mut web: Query<&mut ScrollPosition, With<Web>>, mut view: ResMut<QuestView>) {
+/// The light along each line into an open quest runs from the quest before it, `flow`
+/// lengths of the line a second: a halo `glow` of the line long in the light's colour, its
+/// middle third bright, each as clear as the line it runs on. Plain coloured nodes as long
+/// as the part of the line the well shows, slid and squeezed along it by their transforms,
+/// so the light running asks nothing of the layout.
+fn run_light(time: Res<Time>, look: Res<QuestLook>, lines: Query<(&Flow, &BackgroundColor, &Children)>, mut sparks: Query<(&Spark, &mut UiTransform, &mut Visibility, &mut BackgroundColor), Without<Flow>>) {
+    let lines_look = look.lines;
+    let phase = (time.elapsed_secs() * lines_look.flow).fract();
+    for (flow, base, children) in &lines {
+        let (start, shown) = flow.shown;
+        for &child in children {
+            let Ok((spark, mut turn, mut visible, mut colour)) = sparks.get_mut(child) else { continue };
+            let (from, to) = spark_span(phase, lines_look.glow, flow.length, (start, shown), spark.core);
+            visible.set_if_neq(if shown > 0.0 && to > from { Visibility::Inherited } else { Visibility::Hidden });
+            let wanted = UiTransform { translation: Val2::percent(((from + to) / 2.0 - 0.5) * 100.0, 0.0), scale: Vec2::new((to - from).max(f32::EPSILON), 1.0), ..default() };
+            if *turn != wanted {
+                *turn = wanted;
+            }
+            let lit = lines_look.light.color().with_alpha(base.0.alpha() * if spark.core { 1.0 } else { 0.45 });
+            colour.set_if_neq(BackgroundColor(lit));
+        }
+    }
+}
+
+/// Where a spark lies along the part of its line shown, from nought to one: the band's
+/// middle and half length in the same terms, the band entering before nought and leaving
+/// past one, cut to the part shown.
+fn spark_span(phase: f32, glow: f32, length: f32, (start, shown): (f32, f32), core: bool) -> (f32, f32) {
+    let reach = 1.0 + glow;
+    let middle = ((phase * reach - glow / 2.0) * length - start) / shown.max(f32::EPSILON);
+    let half = glow / 2.0 * length / shown.max(f32::EPSILON) / if core { 3.0 } else { 1.0 };
+    ((middle - half).clamp(0.0, 1.0), (middle + half).clamp(0.0, 1.0))
+}
+
+/// A quest under the pointer swells a little, and its name shows over the web by it.
+#[allow(clippy::type_complexity)]
+fn swell(
+    time: Res<Time>,
+    launch: Res<Launch>,
+    locale: Res<Locale>,
+    mut quests: Query<(&QuestNode, &Interaction, &mut UiTransform, &ComputedNode, &bevy::ui::UiGlobalTransform), With<Swell>>,
+    mut name: Query<(&mut Node, &mut Visibility, &Children, &ComputedNode), With<QuestName>>,
+    mut words: Query<&mut Text>,
+    stage: Query<(&ComputedNode, &bevy::ui::UiGlobalTransform), (With<Stage>, Without<QuestName>, Without<Swell>)>,
+) {
+    let ease = 1.0 - (-time.delta_secs() * 18.0).exp();
+    let mut over = None;
+    for (quest, interaction, mut turn, computed, at) in &mut quests {
+        let hovered = *interaction != Interaction::None;
+        let wanted = if hovered { 1.08 } else { 1.0 };
+        let scale = turn.scale.x + (wanted - turn.scale.x) * ease;
+        let scale = if (scale - wanted).abs() < 0.002 { wanted } else { scale };
+        if turn.scale.x != scale {
+            turn.scale = Vec2::splat(scale);
+        }
+        if hovered {
+            over = Some((quest.0.clone(), at.translation * computed.inverse_scale_factor(), computed.size().y * computed.inverse_scale_factor()));
+        }
+    }
+    let Ok((mut node, mut shown, children, own)) = name.single_mut() else { return };
+    let Some((quest, middle, tall)) = over else {
+        shown.set_if_neq(Visibility::Hidden);
+        return;
+    };
+    let Some(quest) = launch.content.quests.get(&quest) else { return };
+    if let Some(mut text) = children.first().and_then(|&child| words.get_mut(child).ok()) {
+        let title = title(&locale, quest);
+        if text.0 != title {
+            text.0 = title;
+        }
+    }
+    // Over the quest, centred on it; under it at the well's top, and never past its sides.
+    let size = own.size() * own.inverse_scale_factor();
+    let (mut left, mut top) = (middle.x - size.x / 2.0, middle.y - tall / 2.0 - size.y - space::HAIR);
+    if let Ok((well, at)) = stage.single() {
+        let (centre, half) = (at.translation * well.inverse_scale_factor(), well.size() * well.inverse_scale_factor() / 2.0);
+        let (least, most) = (centre - half, centre + half);
+        left = left.min(most.x - size.x).max(least.x);
+        if top < least.y {
+            top = middle.y + tall / 2.0 + space::HAIR;
+        }
+    }
+    let (left, top) = (Val::Px(left), Val::Px(top));
+    if node.left != left || node.top != top {
+        (node.left, node.top) = (left, top);
+    }
+    shown.set_if_neq(Visibility::Inherited);
+}
+
+/// The card shows while a quest is picked, the web beside it, and its close button
+/// unpicks it.
+fn show_card(mut view: ResMut<QuestView>, close: Query<&Interaction, (Changed<Interaction>, With<CloseCard>)>, mut card: Query<&mut Visibility, With<QuestCard>>, mut web: Query<&mut Node, With<Web>>) {
+    if close.iter().any(|i| *i == Interaction::Pressed) {
+        view.picked = None;
+    }
+    if let Ok(mut shown) = card.single_mut() {
+        shown.set_if_neq(if view.picked.is_some() { Visibility::Inherited } else { Visibility::Hidden });
+    }
+    let right = Val::Px(if view.picked.is_some() { SIDEBAR + 2.0 * space::HAIR } else { 0.0 });
+    if let Ok(mut node) = web.single_mut()
+        && node.right != right
+    {
+        node.right = right;
+    }
+}
+
+/// The picked quest's glow breathes, a little under once a second. Its colour is drawn
+/// from every frame's extraction as it stands, so the change goes unmarked: a changed
+/// image is measured again, and the whole canvas with it.
+fn breathe(time: Res<Time>, mut glows: Query<&mut ImageNode, With<Pulse>>) {
+    let alpha = 0.5 + 0.3 * (time.elapsed_secs() * std::f32::consts::TAU * 0.8).sin();
+    for mut glow in &mut glows {
+        glow.bypass_change_detection().color.set_alpha(alpha);
+    }
+}
+
+/// The ground's dot, drawn from the look once and tiled.
+fn lay_ground(mut commands: Commands, look: Res<QuestLook>, mut assets: ResMut<Assets<Image>>, ground: Query<Entity, (With<Ground>, Without<ImageNode>)>) {
+    for ground in &ground {
+        let tile = assets.add(crate::render::ui_image(&super::quest_look::grid_tile(&look.grid)));
+        commands.entity(ground).insert(ImageNode { image: tile, image_mode: NodeImageMode::Tiled { tile_x: true, tile_y: true, stretch_value: PX }, ..default() });
+    }
+}
+
+/// A lane's header pressed brings the canvas to its path's head quest, and picks it. The
+/// pick asks `draw` to centre it (as Current Quest does), where `at` already stands, so a
+/// newly picked quest's least scroll into view does not undo the move.
+fn go_to_path(heads: Query<(&LaneHead, &Interaction), Changed<Interaction>>, mut web: Query<&mut ScrollPosition, With<Web>>, mut view: ResMut<QuestView>, mut recentre: ResMut<Recentre>) {
     for (head, interaction) in &heads {
         if *interaction != Interaction::Pressed {
             continue;
@@ -1302,8 +1603,9 @@ fn go_to_path(heads: Query<(&LaneHead, &Interaction), Changed<Interaction>>, mut
         if let Ok(mut scroll) = web.single_mut() {
             scroll.0 = head.at;
         }
-        if head.head.is_some() && view.picked != head.head {
+        if head.head.is_some() {
             view.picked.clone_from(&head.head);
+            recentre.0 = true;
         }
     }
 }
@@ -1311,12 +1613,16 @@ fn go_to_path(heads: Query<(&LaneHead, &Interaction), Changed<Interaction>>, mut
 /// Holds the web's scroll within what its layout lets it move, as dragging, the wheel and
 /// `fit_lines` reckon it: the canvas centred on a quest by `draw` may ask a little past it
 /// (the well's padding), and a first drag from there would jump.
-fn keep_web_in_range(mut web: Query<(&ComputedNode, &mut ScrollPosition), With<Web>>) {
-    let Ok((computed, mut scroll)) = web.single_mut() else { return };
+fn keep_web_in_range(mut web: Query<(&ComputedNode, &Node, &mut ScrollPosition), With<Web>>, stage: Query<&ComputedNode, (With<Stage>, Without<Web>)>) {
+    let (Ok((computed, node, mut scroll)), Ok(stage)) = (web.single_mut(), stage.single()) else { return };
     if computed.content_size() == Vec2::ZERO {
         return;
     }
-    let max = (computed.content_size() - computed.size()).max(Vec2::ZERO) * computed.inverse_scale_factor();
+    // As wide as the card now leaves it, though the layout may not have narrowed or widened
+    // it yet: the stage, less the card's strip.
+    let right = if let Val::Px(right) = node.right { right } else { 0.0 };
+    let shown = stage.size() * stage.inverse_scale_factor() - Vec2::X * right;
+    let max = (computed.content_size() * computed.inverse_scale_factor() - shown).max(Vec2::ZERO);
     let held = scroll.0.clamp(Vec2::ZERO, max);
     if scroll.0 != held {
         scroll.0 = held;
@@ -1372,7 +1678,7 @@ fn drag_web(
 fn way_card(detail: &mut ChildSpawnerCommands, font: &Handle<Font>, images: &HudImages, content: &Content, locale: &Locale, entry: &voxmar_engine::recipe_book::Entry, (key, shown, of): (String, usize, usize)) {
     let card = Node { align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), padding: UiRect::all(Val::Px(space::HAIR)), flex_shrink: 0.0, align_self: AlignSelf::FlexStart, ..default() };
     detail.spawn((card, Piece::Well.image())).with_children(|card| {
-        super::recipes::way_inputs(card, font, images, content, &entry.method, None, 0);
+        super::recipes::way_inputs(card, font, images, content, &entry.method, None, None);
         card.spawn(shadowed(font, "→", BODY, GOLD));
         let (low, high) = entry.count;
         super::recipes::item_cell(card, font, images, Some(entry.output), (high > 1 && low == high).then(|| high.to_string()));
@@ -1630,7 +1936,7 @@ fn squeeze(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// Two pinned cards of three 20-pixel goals each run 45 pixels past the tracker's foot.
@@ -1895,20 +2201,39 @@ mod tests {
         }
     }
 
-    /// A path's header brings the first quest open along it, else the first not done, else
-    /// its last.
+    #[test]
+    fn a_picked_quest_stays_in_view_beside_its_card() {
+        let (side, margin, size) = (40.0, Vec2::ZERO, Vec2::new(1200.0, 400.0));
+        // The card narrows the well from 900 to 600: a quest at 700 scrolls just into view.
+        let room = Vec2::new(600.0, 400.0);
+        let kept = kept_in_view(Vec2::ZERO, Vec2::new(700.0, 100.0), side, margin, room, size);
+        assert_eq!(kept, Vec2::new(140.0, 0.0));
+        // One already in view moves nothing; one left of it comes back clear of the headers.
+        assert_eq!(kept_in_view(Vec2::new(50.0, 0.0), Vec2::new(300.0, 100.0), side, margin, room, size), Vec2::new(50.0, 0.0));
+        assert_eq!(kept_in_view(Vec2::new(500.0, 0.0), Vec2::new(HEADER + 200.0, 100.0), side, margin, room, size), Vec2::new(200.0, 0.0));
+        // Never past the canvas.
+        assert_eq!(kept_in_view(Vec2::ZERO, Vec2::new(1190.0, 100.0), side, margin, room, size), Vec2::new(600.0, 0.0));
+    }
+
     /// A line between paths is faint unless it ends at the quest picked; a line along a
     /// path is not.
     #[test]
     fn lines_between_paths_are_faint() {
-        assert!(line_colour(false, true, true).alpha() <= ACROSS);
-        assert!(line_colour(false, true, false).alpha() <= ACROSS);
-        assert!(line_colour(false, false, false).alpha() > 2.0 * ACROSS);
-        assert_eq!(line_colour(true, true, false), ACCENT);
+        let look = look();
+        assert!(line_colour(&look, false, true, true).alpha() <= ACROSS);
+        assert!(line_colour(&look, false, true, false).alpha() <= ACROSS);
+        assert!(line_colour(&look, false, false, false).alpha() > 2.0 * ACROSS);
+        assert_eq!(line_colour(&look, true, true, false), ACCENT);
+    }
+
+    /// The web's look as `quest_book.ron` gives it.
+    fn look() -> QuestLook {
+        let source = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content/core").join(super::super::quest_look::FILE)).unwrap();
+        QuestLook::load(&[voxmar_engine::content::ContentFile { package: "core".into(), name: super::super::quest_look::FILE.into(), source }]).expect("loads")
     }
 
     /// The book's zooms as `interface.ron` gives them.
-    fn style() -> InterfaceStyle {
+    pub(crate) fn style() -> InterfaceStyle {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content/core/interface.ron");
         let source = std::fs::read_to_string(path).expect("core interface.ron");
         InterfaceStyle::load(&[voxmar_engine::content::ContentFile { package: "core".into(), name: InterfaceStyle::FILE.into(), source }]).expect("loads")
@@ -1928,6 +2253,8 @@ mod tests {
         assert_eq!(zoom_of(&style, 0).1, 1.0);
     }
 
+    /// A path's header brings the first quest open along it, else the first not done, else
+    /// its last.
     #[test]
     fn a_path_head_is_its_next_quest() {
         use Standing::{Done, Open, Waiting};

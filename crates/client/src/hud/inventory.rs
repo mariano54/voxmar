@@ -153,8 +153,8 @@ pub struct InterfaceStyle {
     pub book_zooms: Vec<f32>,
     /// Which of `book_zooms` the book opens at.
     pub book_zoom_at: usize,
-    /// How much of the window the book takes across, in percent; down, it takes all but the
-    /// keys under it and the HUD at the bottom.
+    /// How much of the window the book takes across, in percent; down, it takes all from
+    /// under the bar of the screens' keys to the HUD at the bottom.
     pub book_width: f32,
 }
 
@@ -394,7 +394,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
             super::makeable::spawn(card, font, HOTBAR_SLOTS);
             spawn_legend(card, font);
         });
-        super::screens::spawn_hotkeys(root, super::screens::GameScreen::Inventory);
+        super::screens::mark_screen(root, super::screens::GameScreen::Inventory);
         // The held stack belongs to the inventory; the tooltip also serves recipe and
         // quest icons, so it must live outside this screen's visibility hierarchy.
         let pointer = Node { position_type: PositionType::Absolute, width: Val::Px(SLOT), height: Val::Px(SLOT), ..default() };
@@ -527,10 +527,12 @@ fn craft(
     let all = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
     let Some(craft) = actions.named("core:craft") else { return };
     let mut inventory = player.inventory.clone();
+    // What it is made of says how it sounds: flint knapped, clay shaped, wood whittled.
+    let with = player.inventory.grid().into_iter().flatten().collect();
     if craft_grid(&mut inventory, &recipes, allowed, near, all) > 0 {
         player.inventory = inventory;
         // Heard as crafting (`sounds.ron`), not as a click.
-        net.propose(craft, ActionTarget::Slot(if all { 0 } else { 1 }));
+        net.propose_with(craft, ActionTarget::Slot(if all { 0 } else { 1 }), with);
     }
 }
 
@@ -980,10 +982,12 @@ pub fn origins_and_uses(locale: &Locale, content: &voxmar_engine::content::Conte
             Method::Craft { .. } => add(locale.get("tooltip.from.craft").to_owned()),
             Method::Cook { .. } => add(locale.get("tooltip.from.cook").to_owned()),
             Method::Product { creature, .. } | Method::Drop { creature, .. } => add(locale.creature(&content.creatures.get(*creature).def)),
+            Method::Process { .. } => add(locale.get("tooltip.from.machine").to_owned()),
+            Method::Work { .. } => add(locale.get("tooltip.from.station").to_owned()),
+            Method::Harvest { .. } => add(locale.get("tooltip.from.harvest").to_owned()),
+            Method::Break { .. } => add(locale.get("tooltip.from.break").to_owned()),
+            Method::Catch { .. } => add(locale.get("tooltip.from.fishing").to_owned()),
         }
-    }
-    if content.crops.iter().any(|(_, crop)| crop.harvest.iter().any(|(got, _)| *got == item)) {
-        add(locale.get("tooltip.from.harvest").to_owned());
     }
     let mut into: Vec<String> = Vec::new();
     for entry in book.using(item) {
@@ -1162,13 +1166,16 @@ fn hover_item(
     window: Query<&Window, With<PrimaryWindow>>,
     catalogue: Res<super::creative::Catalogue>,
     near: Res<NearTags>,
+    (make, plan): (Query<(&super::makeable::MakeCell, &RelativeCursorPosition)>, Res<super::makeable::Drawn>),
 ) {
     // Without a pointer (no window: `--gate`, `--capture`) nothing is under it to change.
     if ui.recipes_open || window.single().ok().and_then(Window::cursor_position).is_none() {
         return;
     }
     let made = || output.iter().any(RelativeCursorPosition::cursor_over).then(|| launch.content.recipes.find_near(&player.inventory.grid(), |tag| near.has(tag)).map(|r| r.output)).flatten();
-    let item = if ui.inventory_open { hovered(&slots).and_then(|slot| player.inventory.get(slot)).map(|stack| stack.item).or_else(made).or(catalogue.hovered) } else { None };
+    // A thing on the Can Make list looks up as the item it makes.
+    let planned = || make.iter().find(|(_, cursor)| cursor.cursor_over()).and_then(|(cell, _)| plan.0.get(cell.0)).map(|makeable| makeable.output);
+    let item = if ui.inventory_open { hovered(&slots).and_then(|slot| player.inventory.get(slot)).map(|stack| stack.item).or_else(made).or_else(planned).or(catalogue.hovered) } else { None };
     if over.0 != item {
         over.0 = item;
     }
@@ -1315,7 +1322,7 @@ mod tests {
         assert_eq!((style.home_hidden_within, style.home_icon.as_deref()), (8.0, Some("base:hearthstone")), "core's distance, base's icon");
         assert_eq!((style.home_shown_beyond, style.home_dusk, style.home_dawn, style.home_fade), (48.0, 16500, 23500, 0.5));
         // Each way home number is checked as it loads.
-        assert_eq!((style.book_zooms.len(), style.book_zoom_at, style.book_width), (5, 1, 96.0));
+        assert_eq!((style.book_zooms.len(), style.book_zoom_at, style.book_width), (5, 1, 98.0));
         // As is each of the quest book's: sharp zooms from small to big, opening at one of
         // them, across most of the window.
         for bad in [

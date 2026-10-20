@@ -3280,9 +3280,7 @@ fn interiors_load_checks_refuse_strangers_and_unclaimed_beds() {
 fn village_flames_never_reach_its_thatch() {
     use super::roofs::{Fire, SIDES, SUFFIXES};
     use voxmar_engine::coords::ColumnPos;
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
-    let content = voxmar_engine::content::Content::load(&dir).unwrap();
-    let world_content = crate::content::WorldContent::load(&content).unwrap();
+    let (content, world_content) = crate::full_content();
     let registry = content.blocks.clone();
     let def = &world_content.settlements;
     let fire = Fire::new(&def.rules.fire, &registry, []);
@@ -3294,7 +3292,7 @@ fn village_flames_never_reach_its_thatch() {
     let before = super::plan::ROOFS_RELAID.load(std::sync::atomic::Ordering::Relaxed);
     let (mut places, mut thatch, mut shingles, mut slopes, mut ridges, mut flames, mut rising) = (0, 0, 0, 0, 0, 0, 0);
     for seed in [42u64, 1] {
-        let world = Overworld::with_content(seed, registry.clone(), &world_content);
+        let world = crate::shared_full_world(seed);
         let spawn = world.spawn_point();
         for slot in world.settlements.near(&world, IVec2::new(spawn.x, spawn.z), 2500) {
             let Some(plan) = slot.0.as_ref() else { continue };
@@ -3439,14 +3437,11 @@ fn trails_never_cross_a_wall() {
 fn jettied_storeys_stand_out_on_their_beams() {
     use super::roofs::{SIDES, SUFFIXES};
     use voxmar_engine::coords::ColumnPos;
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
-    let content = voxmar_engine::content::Content::load(&dir).unwrap();
-    let world_content = crate::content::WorldContent::load(&content).unwrap();
-    let registry = content.blocks.clone();
+    let registry = crate::full_content().0.blocks.clone();
     let solid = |b: BlockId| registry.info(b).solid;
     let (mut places, mut beams, mut wrong) = (0, 0, Vec::new());
     for seed in [42u64, 7] {
-        let world = Overworld::with_content(seed, registry.clone(), &world_content);
+        let world = crate::shared_full_world(seed);
         let spawn = world.spawn_point();
         for slot in world.settlements.near(&world, IVec2::new(spawn.x, spawn.z), 2500) {
             let Some(plan) = slot.0.as_ref() else { continue };
