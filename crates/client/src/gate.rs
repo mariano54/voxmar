@@ -5946,7 +5946,7 @@ fn clamp(world: &mut World, gate: &mut Gate, now: f32) {
         mouse(world, MouseButton::Right, false);
         let net = world.resource::<Net>();
         net.command("weather natural");
-        net.command(&format!("fill {} {} {} {} {} {} air", station_at.x - 3, station_at.y, station_at.z - 1, station_at.x + 3, station_at.y + 3, station_at.z + 9));
+        net.command(&format!("fill {} {} {} {} {} {} air", station_at.x - 3, station_at.y, station_at.z - 3, station_at.x + 3, station_at.y + 3, station_at.z + 9));
         if let Ok((plan, _)) = &plan {
             for item in [plan.log, plan.tool, plan.split, plan.torch] {
                 net.command(&format!("clear {}", name(item)));
@@ -5973,7 +5973,10 @@ fn clamp(world: &mut World, gate: &mut Gate, now: f32) {
             for item in [plan.log, plan.tool, plan.split, plan.torch] {
                 net.command(&format!("clear {}", name(item)));
             }
-            net.command(&format!("fill {} {} {} {} {} {} air", station_at.x - 3, station_at.y, station_at.z - 1, station_at.x + 3, station_at.y + 3, station_at.z + 9));
+            net.command(&format!("fill {} {} {} {} {} {} air", station_at.x - 3, station_at.y, station_at.z - 3, station_at.x + 3, station_at.y + 3, station_at.z + 9));
+            // A floor under it all: the land here may be open below (a cave mouth, a pit), and
+            // the player stands on it from the tp on.
+            net.command(&format!("fill {} {} {} {} {} {} stone", station_at.x - 3, station_at.y - 1, station_at.z - 3, station_at.x + 3, station_at.y - 1, station_at.z + 9));
             net.command(&format!("give {} 1", name(plan.log)));
             net.command(&format!("give {} 1", name(plan.tool)));
             net.command(&format!("setblock {} {} {} {}", station_at.x, station_at.y, station_at.z, name(plan.station)));
