@@ -311,6 +311,11 @@
             name: "flue", sound: Flue, volume: 0.14, fade: 4,
             when: {"fire": (min: 0.6, fade: 0.55), "shelter": (min: 0.6, fade: 0.3), "wind": (min: 10, fade: 6), "sun": (max: 0.05, fade: 0.15)},
         ),
+        // The same moan over a lit kiln's stack, heard from shelter by it.
+        (
+            name: "kiln_flue", sound: Flue, volume: 0.14, fade: 4,
+            when: {"kiln": (min: 0.6, fade: 0.55), "shelter": (min: 0.6, fade: 0.3), "wind": (min: 10, fade: 6), "sun": (max: 0.05, fade: 0.15)},
+        ),
         // Thatch about to catch: a soft, close sizzle, the warning before the flame (with
         // `smoulder_crackle`'s spits). Only while the server says it smoulders.
         (
@@ -518,6 +523,12 @@
             name: "fire_sizzle", sound: Sizzle, volume: 0.24, at: OpenBlock("fire"), per_minute: 6, cooldown: 4,
             pitch: (0.9, 1.15), reach: 6,
             when: {"fire": (min: 0.6, fade: 0.55), "raining": (min: 0.3, fade: 0.2)},
+        ),
+        // Rain into a lit kiln's open top: the same hiss, from the kiln, by its own sky.
+        (
+            name: "kiln_sizzle", sound: Sizzle, volume: 0.24, at: OpenBlock("kiln"), per_minute: 6, cooldown: 4,
+            pitch: (0.8, 1.0), reach: 6,
+            when: {"kiln": (min: 0.6, fade: 0.55), "raining": (min: 0.3, fade: 0.2)},
         ),
         // The soil of a burning clamp settling as the logs char: a few fine grains ticking
         // down.

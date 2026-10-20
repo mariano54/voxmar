@@ -429,6 +429,7 @@ fn kinds(ambience: &Ambience, registry: &BlockRegistry, multiblocks: &voxmar_eng
         walls: ambience.shelter.walls,
         roof: ambience.shelter.roof,
         roof_scan,
+        sky_judged: (0..ambience.groups.len()).map(|g| ambience.sounds.iter().any(|s| s.at == defs::Placement::OpenBlock(g))).collect(),
     }
 }
 

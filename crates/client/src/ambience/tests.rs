@@ -1044,7 +1044,8 @@ fn a_fire_hears_the_weather() {
 
 /// The Farm age's fires: a Crucible Kiln firing roars as a kiln, never as a hearth; an
 /// earth clamp burning hisses low and its soil ticks as it settles. And the village's
-/// smith works the bellows and its bakers turn the quern by day, never at night.
+/// smith works the bellows and its bakers turn the quern by day, never at night. A lit
+/// kiln hisses in the rain by its own sky, and its stack moans on a stormy night.
 #[test]
 fn a_kiln_roars_a_clamp_hisses_and_the_village_grinds() {
     let ambience = base();
@@ -1068,6 +1069,20 @@ fn a_kiln_roars_a_clamp_hisses_and_the_village_grinds() {
     assert!(bellows > 0 && quern > 0, "the village at work: {bellows} bellows, {quern} quern");
     let (_, [_, bellows, quern, _]) = heard(&village(-0.8));
     assert!(bellows == 0 && quern == 0, "the village at night: {bellows} bellows, {quern} quern");
+    // The kiln's top is open: rain hisses into it by its own sky, and a stormy night moans
+    // over its stack as over a hearth's chimney.
+    let by_kiln = |set: &[(&str, f32)], open: bool| {
+        let mut scene = scene(&ambience, "kiln", &["plains"], set);
+        scene.sky.iter_mut().flatten().for_each(|sky| *sky = open);
+        let (timeline, levels) = run(&ambience, &scene, 120.0);
+        (levels[bed("kiln_flue")], timeline.iter().filter(|(_, c)| matches!(c, Cue::Sound { sound: s, .. } if *s == sound("kiln_sizzle"))).count())
+    };
+    let rain = [("kiln", 1.0), ("rain", 1.0), ("raining", 1.0)];
+    assert!(by_kiln(&rain, true).1 > 0, "rain into a lit kiln");
+    assert_eq!(by_kiln(&rain, false).1, 0, "a kiln under a roof");
+    assert_eq!(by_kiln(&[("kiln", 1.0)], true).1, 0, "a dry day");
+    let storm = [&INDOORS[..], &[("kiln", 1.0), ("sun", -0.5), ("wind", 16.0)]].concat();
+    assert!(by_kiln(&storm, false).0 > 0.6 * ambience.beds[bed("kiln_flue")].volume, "a stormy night by the kiln");
 }
 
 /// Every recorded bed's files are there; one a mod mistyped is not, and fails the launch.
