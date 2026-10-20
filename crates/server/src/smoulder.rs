@@ -78,7 +78,8 @@ impl Server {
 
     /// A block changed at `changed`: a smouldering structure it was part of, no longer
     /// standing, has been opened, and what it holds is part-burnt. One partly in land not
-    /// loaded is judged once all of it is there again, never as opened for the land missing.
+    /// loaded is never counted opened for the land missing: [`Server::tend_smoulders`]
+    /// judges it once all of it is there again.
     pub(crate) fn smoulder_changed(&mut self, changed: IVec3) {
         if self.smoulders.is_empty() {
             return;
@@ -102,17 +103,25 @@ impl Server {
     }
 
     /// Looks over each smouldering structure: rain on its open flue is counted as it falls,
-    /// loaded or not (one not loaded is open as it was when last seen), and one whose time
-    /// is up is done once all of it is loaded; until then it waits.
+    /// loaded or not (one not loaded is open as it was when last seen); with all of it
+    /// loaded, one no longer standing was opened (broken while part of it was not loaded),
+    /// and one whose time is up is done. Until then it waits.
     pub(crate) fn tend_smoulders(&mut self) {
         if self.smoulders.is_empty() {
             return;
         }
         let (now, tick, day, wet) = (self.day.floor() as u64, self.tick, self.day, self.survival.douse_rain);
         let cores: Vec<IVec3> = self.smoulders.keys().copied().collect();
-        let mut done = Vec::new();
+        let (mut done, mut opened) = (Vec::new(), Vec::new());
         for core in cores {
             let s = &self.smoulders[&core];
+            if let Some(m) = self.content.multiblocks.get(&s.structure)
+                && m.cells_at(core, s.turn).all(|p| self.world.block(p).is_some())
+                && !m.stands(core, |p| self.world.block(p))
+            {
+                opened.push(core);
+                continue;
+            }
             let cells: Vec<IVec3> = self.content.multiblocks.get(&s.structure).and_then(|m| m.smoulder.as_ref()).map_or_else(Vec::new, |sm| sm.wood.iter().map(|&o| core + turned(o, s.turn)).collect());
             let loaded = self.block(core).is_some() && cells.iter().all(|&p| self.block(p).is_some());
             if self.block(core).is_some() {
@@ -136,6 +145,9 @@ impl Server {
         }
         for core in done {
             self.end_smoulder(core, End::Done);
+        }
+        for core in opened {
+            self.end_smoulder(core, End::Opened);
         }
     }
 
@@ -358,6 +370,27 @@ mod tests {
         server.set_block(CORNER, BlockId::AIR);
         assert_eq!(charred(&server), [("base:charred_wood_heap".to_owned(), 9)]);
         assert!(server.smoulders.is_empty() && server.block(FLUE) == Some(BlockId::AIR));
+    }
+
+    /// A piece broken while its land is not loaded opens it once all of it is loaded again,
+    /// never waiting out its time to char well.
+    #[test]
+    fn a_clamp_broken_while_unloaded_is_opened_once_loaded() {
+        let mut server = fixture("base:torch");
+        sky(&mut server, "clear");
+        build(&mut server);
+        light(&mut server);
+        server.day += burn_ticks(&server) * 3.0 / 8.0;
+        server.tend_smoulders();
+        let mut column = server.world.remove(ColumnPos::new(0, 0)).unwrap();
+        std::sync::Arc::make_mut(&mut column).set_block(CORNER, BlockId::AIR);
+        server.smoulder_changed(CORNER);
+        server.tend_smoulders();
+        assert_eq!(server.smoulders.len(), 1, "not judged with its land unloaded");
+        server.world.insert(ColumnPos::new(0, 0), column);
+        server.tend_smoulders();
+        assert!(server.smoulders.is_empty(), "opened once loaded");
+        assert_eq!(charred(&server), [("base:charred_wood_heap".to_owned(), 9)]);
     }
 
     /// Rain on the open flue for half the burn spoils half the heaps to ash, from the top;

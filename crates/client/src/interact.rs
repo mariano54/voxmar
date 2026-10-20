@@ -377,17 +377,20 @@ fn break_and_place(
                 net.propose_from(&player, open_store, action_target);
                 target.used_right = true;
                 player.store_asked = true;
+                target.press_spent = true;
                 return;
             }
         }
         // A machine takes what it burns or works from the hand, or gives what it made; the
-        // server says how it is doing. Anything else in hand is placed against it.
+        // server says how it is doing. Anything else in hand is placed against it, on a press
+        // of its own: what is left in hand after one it took from is not laid on it.
         if let (Some(hit), Some(use_machine)) = (hit, actions.0.id("base:use_machine")) {
             let context = ClientContext { world: &world, player: &player, content };
             let action_target = ActionTarget::Block { block: hit.block, face: hit.face };
             if actions.0.get(use_machine).is_some_and(|def| def.validate(&context, action_target).is_ok()) {
                 net.propose_from(&player, use_machine, action_target);
                 target.place_cooldown = 0.4;
+                target.press_spent = true;
                 return;
             }
         }
@@ -860,6 +863,28 @@ mod tests {
         }
         let proposed: Vec<ActionId> = std::iter::from_fn(|| server_side.try_recv().ok().flatten()).filter_map(|m| match m { voxmar_protocol::ClientMessage::Propose { action, .. } => Some(action), _ => None }).collect();
         assert_eq!(proposed, [content.actions.expect("base:light")], "lit, and the campfire kept in hand");
+    }
+
+    /// A chest opened with a block in hand, the button held on while its screen comes: the
+    /// block is not laid against it.
+    #[test]
+    fn holding_on_after_opening_a_chest_lays_nothing() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let (mut app, block, server_side) = app(content.actions.clone());
+        app.world_mut().resource_mut::<ClientWorld>().set_block(block, content.blocks.expect("base:chest"));
+        app.world_mut().resource_mut::<Target>().hit = Some(RayHit { block, face: voxmar_engine::coords::Face::PosY, distance: 1.0 });
+        let mut player = app.world_mut().resource_mut::<LocalPlayer>();
+        player.inventory.slots[0] = Some(voxmar_engine::inventory::ItemStack::new(content.blocks.expect("base:cobblestone"), 4));
+        player.selected = 0;
+        app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(std::time::Duration::from_millis(30)));
+        app.world_mut().resource_mut::<ButtonInput<MouseButton>>().press(MouseButton::Right);
+        app.update();
+        app.world_mut().resource_mut::<ButtonInput<MouseButton>>().clear();
+        for _ in 0..20 {
+            app.update();
+        }
+        let proposed: Vec<ActionId> = std::iter::from_fn(|| server_side.try_recv().ok().flatten()).filter_map(|m| match m { voxmar_protocol::ClientMessage::Propose { action, .. } => Some(action), _ => None }).collect();
+        assert_eq!(proposed, [content.actions.expect("base:open_store")], "opened, and nothing laid against it");
     }
 
     /// Content that leaves `core:mine` out (a partial mod): holding the button does

@@ -170,13 +170,16 @@ impl Multiblock {
 
     /// The first turn (quarter turns) it stands at with its core at `core`, if any.
     pub fn turn(&self, core: IVec3, block: impl Fn(IVec3) -> Option<BlockId>) -> Option<u8> {
-        (0..4).find(|&turns| {
-            self.cells.iter().all(|(offset, cell)| match (cell, block(core + turned(*offset, turns))) {
-                (_, None) => false,
-                (Cell::Any, _) => true,
-                (Cell::Air, Some(b)) => b.is_air(),
-                (Cell::OneOf(accepts), Some(b)) => accepts.binary_search(&b).is_ok(),
-            })
+        (0..4).find(|&turns| self.turn_matches(core, turns, &block))
+    }
+
+    /// Whether it stands with its core at `core`, turned `turns` quarter turns.
+    pub fn turn_matches(&self, core: IVec3, turns: u8, block: impl Fn(IVec3) -> Option<BlockId>) -> bool {
+        self.cells.iter().all(|(offset, cell)| match (cell, block(core + turned(*offset, turns))) {
+            (_, None) => false,
+            (Cell::Any, _) => true,
+            (Cell::Air, Some(b)) => b.is_air(),
+            (Cell::OneOf(accepts), Some(b)) => accepts.binary_search(&b).is_ok(),
         })
     }
 }
@@ -339,8 +342,13 @@ impl MultiblockRegistry {
     pub fn smoulder_round(&self, at: IVec3, block: impl Fn(IVec3) -> Option<BlockId>) -> Option<(IVec3, &Multiblock)> {
         self.multiblocks.iter().filter(|m| m.smoulder.is_some()).find_map(|m| {
             let built = m.cells.iter().filter(|(_, cell)| matches!(cell, Cell::OneOf(_)));
-            let cores = built.flat_map(|(offset, _)| (0..4).map(move |turns| at - turned(*offset, turns)));
-            cores.filter(|&core| block(core).is_some_and(|b| m.core.binary_search(&b).is_ok())).find(|&core| m.stands(core, &block)).map(|core| (core, m))
+            // Each core `at` could be a cell of, at the turn that puts it there: standing at
+            // another turn, `at` may lie outside it.
+            let cores = built.flat_map(|(offset, _)| (0..4u8).map(move |turns| (at - turned(*offset, turns), turns)));
+            cores
+                .filter(|&(core, _)| block(core).is_some_and(|b| m.core.binary_search(&b).is_ok()))
+                .find(|&(core, turns)| m.turn_matches(core, turns, &block))
+                .map(|(core, _)| (core, m))
         })
     }
 }

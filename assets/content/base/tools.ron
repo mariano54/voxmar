@@ -20,7 +20,8 @@
 // its uses left a tool creaks and reddens; worn out it breaks with a snap. Mending, at a
 // block tagged `mend_near` unless the tool names its own, gives back `mend` of its uses a
 // piece (more where its recipe takes fewer pieces), and making a new one must never be
-// cheaper than mending (checked at load).
+// cheaper than mending (checked at load). Metal tools and weapons are mended at a grindstone
+// (`mend_near:grindstone`, blocks_tools.ron), everything else at a chopping block.
 (
     wear: (suited: 1, unsuited: 2, hit: 1, till: 1, save_per_level: 0.005, weapon_skill: "core:attack", warn: 0.1, mend: 0.5, mend_near: "chopping_block"),
     kinds: [

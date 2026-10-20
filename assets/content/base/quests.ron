@@ -482,6 +482,22 @@
             rewards: [Xp("engineering", 60.0), Item("coal_ore", 8)],
         ),
         (
+            name: "a_keen_edge", age: "farm", branch: "mining", title: "A Keen Edge",
+            why: "Copper wears down like stone, but it needn't be thrown away. Metal is mended at a grindstone, the wheel you made your first stone heads on: put a worn copper tool and one copper ingot in the grid within reach of it, and the tool comes back half new. Mend a copper tool at a grindstone.",
+            tasks: [[Mended("tag:metal:copper", 1)]],
+            after: ["copper_kit"],
+            side: true,
+            rewards: [Xp("engineering", 200.0)],
+        ),
+        (
+            name: "a_bronze_edge", age: "farm", branch: "mining", title: "A Bronze Edge",
+            why: "Bronze is harder than copper: a bronze tool lasts twice as long and works faster. The patterns are copper's, in bronze ingots, at Engineering 12. Make a bronze pickaxe; when it wears, a bronze ingot mends it at your grindstone.",
+            tasks: [[Craft("bronze_pickaxe", 1)]],
+            after: ["first_bronze", "a_keen_edge"],
+            side: true,
+            rewards: [Xp("engineering", 450.0), Xp("mining", 300.0)],
+        ),
+        (
             name: "snug_for_winter", age: "farm", branch: "home", title: "Snug for Winter",
             why: "With a proper bed (A Proper Bed) and candles (Candlelight), put a roof over the Hearth with the bed and two lights beside it, and the home turns snug: warm under a roof, you heal half as fast again there, and a night's sleep in it rests you better.",
             tasks: [[Built("home_snug", 1)], [Built("home_homely", 1)], [Built("home_cosy", 1)], [Built("home_heart_of_the_home", 1)]],

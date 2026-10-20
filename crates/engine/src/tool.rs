@@ -753,7 +753,8 @@ mod tests {
         assert!(load(&["tool", NEVER_WEARS]).is_ok());
         let no_mend = load(&["tool", "uses:9"]).unwrap_err().0;
         assert!(no_mend.contains("nothing to mend it"), "a tool that wears needs a mend: {no_mend}");
-        assert!(load(&["weapon", "uses:9"]).is_err(), "and so does a weapon");
+        let no_mend = load(&["weapon", "uses:9"]).unwrap_err().0;
+        assert!(no_mend.contains("nothing to mend it"), "and so does a weapon: {no_mend}");
     }
 
     /// A mend puts back what a tool is made of: one whose recipe has no piece of what mends
