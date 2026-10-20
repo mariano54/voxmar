@@ -636,6 +636,8 @@ impl Overworld {
                 levers: p.levers,
                 culture: self.settlements.culture_info(p),
                 people: p.people.clone(),
+                walls: p.walls.clone(),
+                wall_block: p.wall_block,
             })
             .collect()
     }
@@ -791,7 +793,8 @@ impl trails::Land for RiverLand<'_> {
             .near(self.world, centre, radius)
             .iter()
             .filter_map(|slot| slot.0.as_ref())
-            .flat_map(|p| p.buildings.iter().map(|b| (b.min, b.max)))
+            // A walled place's wall too, column by column, so trails come in at its gates.
+            .flat_map(|p| p.buildings.iter().map(|b| (b.min, b.max)).chain(p.walls.iter().map(|w| (w.0, w.0))))
             .filter(|(lo, hi)| lo.cmple(max).all() && hi.cmpge(min).all())
             .collect()
     }
@@ -816,7 +819,7 @@ pub struct SettlementInfo {
     pub id: u64,
     /// In English and in Japanese.
     pub name: (String, String),
-    /// `hamlet` or `village` (the size's name in settlements.ron), and its style and
+    /// `hamlet`, `village` or `town` (the size's name in settlements.ron), and its style and
     /// layout.
     pub size: String,
     pub style: String,
@@ -832,6 +835,10 @@ pub struct SettlementInfo {
     pub culture: CultureInfo,
     /// Who lives there, each with their home and work as indices into `buildings`.
     pub people: Vec<people::Resident>,
+    /// Its wall, if it is walled: each column and how many blocks over the ground its top
+    /// stands, and the block it is built of.
+    pub walls: Vec<(IVec2, i32)>,
+    pub wall_block: Option<voxmar_engine::block::BlockId>,
 }
 
 pub use settlements::CultureInfo;

@@ -1864,6 +1864,7 @@ impl WorldContent {
         let world = Self::from_files(content.files.iter(), &content.blocks)?;
         world.settlements.check_furnishings(&content.blocks)?;
         world.settlements.people.check_against(&content.creatures, &world.settlements.works())?;
+        world.settlements.interiors.check_who(&world.settlements.people.species(), &world.settlements.works())?;
         if let Some(lair) = world.lairs.iter().find(|l| content.creatures.id(&l.boss).is_none()) {
             return Err(ContentError(format!("lairs.ron: lair `{}` is the home of `{}`, which no package has", lair.name, lair.boss)));
         }

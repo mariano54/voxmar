@@ -258,6 +258,9 @@ Right clicking a bed used to only set where you wake. It now also gives a **rest
 `sleeps` rules): Rested (10 minutes) anywhere, Well rested (15) if the bed is in a Snug home,
 Deep rest (20) in a Cosy one (a game day is 20 minutes). Rest gives a little heal, xp,
 mining and speed wherever you go, and a bed always works as a bed (it sets where you wake and your home) but gives no new rest
+(save a bed a village furnished a home with, where its plan put one, while that very bed
+stands there: it is its resident's, and sleeping in it is refused with `bed.someones`, outside
+creative; any other bed works, placed, another player's, or set by command)
 while one lasts, so the buff is a once-a-day habit, not a button to hold. Timed effects count down
 online only.
 
@@ -268,7 +271,8 @@ Sleep (heal x4) for a minute, two in a proper bed, so coming home hurt and sleep
 It is no way to heal in a fight: a bed refuses sleep with a creature that hunts players
 (wild, or kept by another player) within `sleep_threat_reach` blocks (12), or within
 `sleep_after_hurt` seconds (15) of a wound (a blow, a fall, a sting; not the cold or heat
-wearing at one) (`core/survival.ron`). A refused sleep still claims the bed. And it stays slower than eating, since food is the heal (design
+wearing at one) (`core/survival.ron`). A sleep refused for a threat or a wound still claims the bed; a
+village's bed is never claimed. And it stays slower than eating, since food is the heal (design
 draft 63): however many heal buffs and prayers are on, healing by itself is held at
 `heal_most` (1 a second, `survival.ron`), which loading checks is below what the slowest
 food heals a second, a 0.6 s bite at a time; time past a point is never banked to pay out
@@ -519,6 +523,25 @@ hearth two off sets it alight), `a_hearth_lit_under_thatch_smoulders_then_catche
 once, the smoulder told, caught only on time), `a_stone_lined_flue_keeps_a_hearths_fire_from_the_roof`,
 `fires_are_saved_with_the_world`. The gate's Blaze step sets a torch by a wattle panel and
 counts the smoke off it before it catches ("fire: smoulders", "fire: catches", "fire: burns out").
+
+## Daubing in place
+
+A wattle panel already standing is daubed where it stands: clay in hand, right click it, and
+it is a daub block, one clay used. Daub is a sound wall (`shelter:sound`) and does not burn,
+so a wattle home grown up round its hearth is made safe without being pulled down, and a panel
+smouldering by a torch, daubed in time, is saved. It is data on the block (`coat: Some((with:
+"clay", into: "daub"))` in blocks_building.ron, load-checked: both blocks exist, and what it
+becomes is not coated again), and asks the level of the easiest recipe that makes what it
+becomes (Construction 2 for daub), teaching that recipe's experience a piece; below it, it is
+refused with the level it takes. Action `base:coat` (requirement `Coats`, silent: it only says
+the click meant it), server `coat.rs`, test `clay_daubs_a_placed_wattle_panel_in_place`; the
+gate's Blaze step daubs a panel by its torch ("daub: coats").
+
+Earth walls daub the same way. Dirt, coarse dirt, gravel, sand and red sand carry the same
+`coat` (blocks.ron), so a room dug into a bank or walled in earth turns from draughty to sound
+one clay at a time. Clay coats only when aimed at a block's side, a wall's face: clay to the
+top of a dirt floor or a panel is laid there as a block as before (test
+`clay_to_the_side_of_an_earth_wall_daubs_it_and_to_the_top_does_not`).
 
 ## Curing hides
 

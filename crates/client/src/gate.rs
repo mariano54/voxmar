@@ -446,8 +446,9 @@ steps! {
     Tarns,
     /// `/locate settlement` finds a hamlet or village, and the server's world there has
     /// what its plan says: a well on its square, doors open onto a floor, and houses dry;
-    /// its people come, and one greets the player in its own voice; and the ambience hears
-    /// it at work by day, not by night.
+    /// its people come, and one greets the player in its own voice; the ambience hears it
+    /// at work by day, not by night; then `/locate settlement town` finds a town, and the
+    /// wall of the walled town nearest it stands where planned.
     Settlements,
     /// Over a log in the inventory, the uses key shows what it goes into (planks, a
     /// campfire); clicking planks shows their recipe, and Back returns.
@@ -558,6 +559,10 @@ steps! {
     /// Every journal page, in English and Japanese: no text reaches past the element it
     /// sits in. Each page has the time a step has, to be drawn and read.
     FitJournal,
+    /// The screens with keys under them in a window of `SMALL` (the interface at 75%), in
+    /// English and Japanese: no text reaches past the element it sits in, and the keys under
+    /// each screen are clear of it and of the HUD along the bottom.
+    FitSmall,
     /// Leaving the world for the title screen.
     Leave,
     /// The title screen and every menu before a game, in English and Japanese: no text
@@ -759,6 +764,8 @@ struct Gate {
     settlement: IVec3,
     /// What `/locate settlement` answered, English, for the culture it names.
     settlement_reply: String,
+    /// Where `/locate settlement town` sent the observer: the middle of the town's square.
+    town: IVec3,
     /// Where the struck creature was last seen, for walking over its loot.
     quarry: Vec3,
     /// The snail struck, so a fallen mark on another creature cannot end its watch.
@@ -799,6 +806,9 @@ struct Gate {
     readout_seen: bool,
     /// The Blaze step saw its panel smoulder (smoke rising) before it caught.
     smoulder_seen: bool,
+    /// How far the Blaze step's daubing has got: 0 clay on its way, 1 held, 2 held to the
+    /// panel, 3 seen daubed.
+    daub_stage: u8,
     /// The tap the Blaze step last asked to set its torch down on.
     torch_taps: u32,
     /// Whether the creatures step could release its butterfly.
@@ -809,6 +819,10 @@ struct Gate {
     cover_checked: bool,
     /// Texts found not to fit, each once per language: what, and where it was first seen.
     spills: Vec<(String, String)>,
+    /// What the keys under a screen ran into on the views of a text-fit step, each once.
+    keys_blocked: Vec<String>,
+    /// Views of the text-fit tour on which a tool's tooltip showed, whole, on screen.
+    fit_tips: usize,
     /// The text-fit views read only once `FIT_SETTLE` passed, their layout never settled.
     fit_settled: Vec<String>,
     /// Views in a language with line rules where no text had its line breaks checked.
@@ -1032,6 +1046,7 @@ impl Gate {
             tarn: None,
             settlement: IVec3::ZERO,
             settlement_reply: String::new(),
+            town: IVec3::ZERO,
             ore: IVec3::ZERO,
             quarry: Vec3::ZERO,
             quarry_id: None,
@@ -1055,11 +1070,14 @@ impl Gate {
             boss_id: None,
             readout_seen: false,
             smoulder_seen: false,
+            daub_stage: 0,
             torch_taps: 0,
             butterfly: false,
             fall_judged: false,
             cover_checked: false,
             spills: Vec::new(),
+            keys_blocked: Vec::new(),
+            fit_tips: 0,
             fit_settled: Vec::new(),
             unbroken: Vec::new(),
             fit_layout: ((Step::Load, 0), 0, false, 0, false, 0),
@@ -1472,7 +1490,7 @@ fn run(world: &mut World) {
         gate.killed_on_purpose = false;
     }
     // (The text-fit steps put the player through the death screen on purpose.)
-    if screen == Screen::InGame && !matches!(gate.step, Step::Fit | Step::FitJournal | Step::FitMenus | Step::Leave | Step::Done) {
+    if screen == Screen::InGame && !matches!(gate.step, Step::Fit | Step::FitJournal | Step::FitSmall | Step::FitMenus | Step::Leave | Step::Done) {
         watch_health(world, &mut gate);
     }
     let now_at = (Instant::now(), crate::slow_frames::waited_for_cores(), crate::slow_frames::core_times());
@@ -1657,7 +1675,7 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         // Two answers waited on, each up to `WALLS_WAIT` server seconds.
         Step::HomeWalls => STEP_LIMIT + 10.0,
         // A smoulder and its catch, waited on up to fire.ron's catching time and 4 s, then
-        // the burning out, up to its burning time and 4 s.
+        // the burning out, up to its burning time and 4 s (a panel daubed in those waits).
         Step::Blaze => STEP_LIMIT + 10.0,
         // The campfire, its smoke and the chimney's, then a cook at the hearth and the stove.
         Step::Cook => STEP_LIMIT + 30.0,
@@ -1674,7 +1692,7 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         Step::Tame => STEP_LIMIT + TROUGH_WAIT,
         // A fresh area around the settlement to generate: up to `SETTLEMENT_LOAD` of the
         // server's seconds.
-        Step::Settlements => SETTLEMENT_LOAD + SETTLEMENT_PEOPLE + SETTLEMENT_BARK + STEP_LIMIT,
+        Step::Settlements => 2.0 * SETTLEMENT_LOAD + SETTLEMENT_PEOPLE + SETTLEMENT_BARK + STEP_LIMIT,
         // A storm and snow, each waited on, then drying off by a campfire.
         Step::Weather => STEP_LIMIT + 10.0 + ROOF_RAIN,
         _ => STEP_LIMIT,
@@ -1687,7 +1705,7 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
     // view by view: sixty views at a settle each take most of a step's time on their own,
     // and a lagging machine draws each later, not wrongly.
     let (taken, clock) = match gate.step {
-        Step::Fit | Step::FitJournal | Step::FitMenus => (now - gate.phase_since, "s"),
+        Step::Fit | Step::FitJournal | Step::FitSmall | Step::FitMenus => (now - gate.phase_since, "s"),
         Step::Load | Step::Leave => (now - gate.since, "s"),
         _ => (gate.server_in_step().min(now - gate.since), " s by the server's clock and the game's"),
     };
@@ -2007,7 +2025,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Quests => quests(world, gate, now, in_phase),
         Step::Catalogue => catalogue(world, gate, now, in_phase),
         Step::Screenshot => screenshot(world, gate, now, in_phase),
-        Step::Fit | Step::FitJournal => fit(world, gate, now, in_phase),
+        Step::Fit | Step::FitJournal | Step::FitSmall => fit(world, gate, now, in_phase),
         Step::FitMenus => fit(world, gate, now, in_phase),
         Step::Leave => {
             if gate.phase == 0 {
@@ -6557,6 +6575,22 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
                 };
                 let distinct = icons.iter().all(Option::is_some) && icons.iter().enumerate().all(|(i, a)| icons[i + 1..].iter().all(|b| a != b));
                 gate.check("home: icons", if distinct { Ok("the Camp, Rested and Healing Sleep chips each show an icon of their own".into()) } else { Err(format!("the Camp, Rested and Healing Sleep chips share an icon: {icons:?}")) });
+                // And every effect's chip, as the HUD loaded them: none shares another's
+                // picture (the plain buff or debuff, as an effect without its own would).
+                let shared = {
+                    let (images, effects) = (world.resource::<crate::hud::HudImages>(), &world.resource::<Launch>().content.effects);
+                    let mut seen: Vec<(Handle<Image>, &str)> = Vec::new();
+                    let mut shared = Vec::new();
+                    for id in effects.ids() {
+                        let (image, name) = (images.effect(id), effects.get(id).name.as_str());
+                        match seen.iter().find(|(other, _)| *other == image) {
+                            Some((_, other)) => shared.push(format!("{name} and {other}")),
+                            None => seen.push((image, name)),
+                        }
+                    }
+                    (shared, seen.len())
+                };
+                gate.check("effects: icons", if shared.0.is_empty() { Ok(format!("all {} effects' chips show an icon of their own", shared.1)) } else { Err(format!("chips share an icon: {}", shared.0.join(", "))) });
                 // Shown however near and at any hour, for the mark's own checks.
                 let mut style = world.resource_mut::<crate::hud::inventory::InterfaceStyle>();
                 gate.home_style = Some(style.clone());
@@ -6818,37 +6852,90 @@ fn home_walls(world: &mut World, gate: &mut Gate, now: f32) {
 /// torch set beside it: first it smoulders (told by the server, and smoke counted rising
 /// from it), and once the catching time has passed (fire.ron) the panel is a blaze,
 /// and once the burning time has, it is gone. Each answer waited on in the server's seconds,
-/// with frames paced as taps; the torch goes after.
+/// with frames paced as taps. In the same waits, a second panel over the torch, smouldering
+/// too, has clay held to its side at the daub recipe's level: it is daub, and smoulders no
+/// more. The torch goes after.
 fn blaze(world: &mut World, gate: &mut Gate, now: f32) {
     let stand = world.resource::<LocalPlayer>().position.floor().as_ivec3();
     let (panel, torch) = (stand + IVec3::new(0, 0, 5), stand + IVec3::new(1, 0, 5));
+    let daubed = torch + IVec3::Y;
     let waited = gate.server_in_phase();
     let rules = world.resource::<Launch>().content.fire.rules.clone();
     let leave = |world: &mut World, gate: &mut Gate| {
+        if gate.daub_stage < 3 {
+            gate.check("daub: coats", Err(format!("the Blaze step ended with the panel at {daubed} not seen daubed (stage {} of 3)", gate.daub_stage)));
+        }
         let net = world.resource::<Net>();
-        for at in [panel, torch] {
+        for at in [panel, torch, daubed] {
             net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
         }
         gate.next(Step::WayHome, now);
     };
-    let here = {
+    let name_at = |world: &World, at: IVec3| {
         let client = world.resource::<ClientWorld>();
-        client.block(panel).map(|b| client.registry.def(b).name.clone()).unwrap_or_default()
+        client.block(at).map(|b| client.registry.def(b).name.clone()).unwrap_or_default()
     };
+    let here = name_at(world, panel);
     if now - gate.tap_at >= TAP_EVERY {
         gate.tap_at = now;
         gate.taps += 1;
+    }
+    // The daubing, a frame at a time inside the fire's own waits once the torch is down: the
+    // clay to hand once the panel stands and the clay is in the pack, held to the panel's side a tap later, then
+    // seen as daub that no longer smoulders.
+    if gate.phase >= 2 && gate.daub_stage < 3 {
+        let clay = world.resource::<ClientWorld>().registry.id("base:clay");
+        let there = name_at(world, daubed);
+        match gate.daub_stage {
+            0 => {
+                let packed = clay.is_some_and(|clay| world.resource::<LocalPlayer>().inventory.count(clay) > 0);
+                if there == "base:wattle_panel" && packed && let Some(clay) = clay {
+                    hold(world, Holder::Tool(clay));
+                    gate.daub_stage = 1;
+                }
+            }
+            1 => {
+                let in_hand = {
+                    let player = world.resource::<LocalPlayer>();
+                    clay.is_some() && player.inventory.get(player.selected).map(|stack| stack.item) == clay
+                };
+                if in_hand && gate.taps > 0 {
+                    let actions = world.resource::<crate::Actions>().0.clone();
+                    world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("base:coat"), voxmar_engine::action::ActionTarget::Block { block: daubed, face: voxmar_engine::coords::Face::NegZ });
+                    gate.daub_stage = 2;
+                }
+            }
+            _ => {
+                let smouldering = world.resource::<ClientWorld>().smoulders.contains(&daubed);
+                if there == "base:daub" && !smouldering {
+                    gate.check("daub: coats", Ok(format!("clay held to the side of a wattle panel over a torch daubed it {waited:.1} server s into the fire's phase {}, and it no longer smoulders", gate.phase)));
+                    gate.daub_stage = 3;
+                }
+            }
+        }
     }
     match gate.phase {
         // The panel by command; the torch set down by hand, so the fire is the player's own
         // and burns in their own home (a command's fire is no one's: it never takes a home).
         0 => {
+            let level = {
+                let content = &world.resource::<Launch>().content;
+                let daub = content.blocks.id("base:daub");
+                content.recipes.iter().filter(|r| Some(r.output) == daub).map(|r| r.level).min().unwrap_or(1)
+            };
+            let below = skill_level(world, "core:construction").0 < level;
             let net = world.resource::<Net>();
             net.command(&format!("setblock {} {} {} wattle_panel", panel.x, panel.y, panel.z));
             net.command(&format!("setblock {} {} {} air", torch.x, torch.y, torch.z));
+            net.command(&format!("setblock {} {} {} wattle_panel", daubed.x, daubed.y, daubed.z));
+            if below {
+                net.command(&format!("skill construction {level}"));
+            }
             net.command("give torch 1");
+            net.command("give clay 1");
             world.resource_mut::<crate::emitters::Emitters>().watch(panel);
             gate.smoulder_seen = false;
+            gate.daub_stage = 0;
             gate.advance(now);
             gate.torch_taps = 0;
         }
@@ -8119,6 +8206,17 @@ fn lines_inside(world: &mut World, well: Rect) -> Result<String, String> {
 
 /// The quest book's well, in the window's pixels, and the size of a quest's cell on its
 /// web, in the interface's.
+/// How many pixels across the data makes a quest's cell at zoom `zoom`.
+fn zoom_side(world: &World, zoom: i8) -> f32 {
+    crate::hud::quests::cell_side(world.resource::<crate::hud::inventory::InterfaceStyle>(), zoom)
+}
+
+/// Whether the quest book's cells, `cell` pixels across, are the size the data gives zoom
+/// `zoom`.
+fn zoom_sized(world: &World, zoom: i8, cell: f32) -> bool {
+    (cell - zoom_side(world, zoom)).abs() < 0.5
+}
+
 fn web_well(world: &mut World) -> Option<(Rect, f32)> {
     let well = world.query_filtered::<(&ComputedNode, &bevy::ui::UiGlobalTransform), With<crate::hud::quests::Web>>().iter(world).next().map(|(c, at)| Rect::from_center_size(at.translation, c.size()))?;
     let cell = world.query_filtered::<&ComputedNode, With<crate::hud::quests::QuestNode>>().iter(world).next().map(|c| c.size().x * c.inverse_scale_factor())?;
@@ -8593,8 +8691,10 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 }
                 return;
             };
-            // Drawn anew at the new zoom: the canvas follows the frame after.
-            let settled = zoom < 0 && cell < gate.web_cell && in_phase > 0.2;
+            // Drawn anew at the new zoom, its cells the size the data gives that zoom: the
+            // canvas follows the frame after.
+            let sized = zoom_sized(world, zoom, cell);
+            let settled = zoom < 0 && cell < gate.web_cell && sized && in_phase > 0.2;
             if !settled && in_phase < 2.0 {
                 return;
             }
@@ -8604,9 +8704,9 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let off = (middle - gate.web_middle).abs();
             let held = (!bigger.x || off.x < 0.5) && (!bigger.y || off.y < 0.5);
             let result = if settled && held {
-                Ok(format!("a notch of the wheel zoomed the web out to zoom {zoom}: quests {:.0} pixels across (were {:.0}), the middle of the well still at {middle} steps on the web", cell, gate.web_cell))
+                Ok(format!("a notch of the wheel zoomed the web out to zoom {zoom}: quests {:.0} pixels across (were {:.0}), the next size down in the data, the middle of the well still at {middle} steps on the web", cell, gate.web_cell))
             } else {
-                Err(format!("2 s after a notch of the wheel over the web: zoom {zoom}, quests {cell:.0} pixels across (were {:.0}), the middle of the well at {middle} steps on the web (was {})", gate.web_cell, gate.web_middle))
+                Err(format!("2 s after a notch of the wheel over the web: zoom {zoom}, quests {cell:.0} pixels across (were {:.0}; the data gives {:.0}), the middle of the well at {middle} steps on the web (was {})", gate.web_cell, zoom_side(world, zoom), gate.web_middle))
             };
             gate.check("quests: zoom", result);
             gate.check("quests: lines inside zoomed", lines_inside(world, well));
@@ -8614,9 +8714,34 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.advance(now);
             }
         }
+        // + on the keypad, the pointer over the web, zooms it back in a step.
+        24 => {
+            let Some((_, cell)) = web_well(world) else {
+                return quit(world, gate, "quests: zoom keys", "the quest book has no web or no quests".into());
+            };
+            gate.web_cell = cell;
+            key(world, KeyCode::NumpadAdd, true);
+            gate.advance(now);
+        }
+        25 => {
+            key(world, KeyCode::NumpadAdd, false);
+            let zoom = world.resource::<crate::hud::quests::QuestView>().zoom;
+            let cell = web_well(world).map_or(0.0, |(_, cell)| cell);
+            let settled = zoom == 0 && cell > gate.web_cell && zoom_sized(world, zoom, cell) && in_phase > 0.2;
+            if !settled && in_phase < 2.0 {
+                return;
+            }
+            let result = if settled {
+                Ok(format!("+ zoomed the web back in to zoom {zoom}: quests {cell:.0} pixels across (were {:.0}), the next size up in the data", gate.web_cell))
+            } else {
+                Err(format!("2 s after + over the web: zoom {zoom}, quests {cell:.0} pixels across (were {:.0}; the data gives {:.0})", gate.web_cell, zoom_side(world, zoom)))
+            };
+            gate.check("quests: zoom keys", result);
+            gate.advance(now);
+        }
         // Turned to the last chapter and another quest, Current Quest brings the book back
         // to the quest the player is on, picked, its cell inside the well.
-        24 => {
+        26 => {
             let current = {
                 let (launch, player, settings) = (world.resource::<Launch>(), world.resource::<LocalPlayer>(), world.resource::<crate::settings::Settings>());
                 crate::hud::quests::current(&launch.content, player, settings).map(|q| q.name.clone())
@@ -8644,7 +8769,7 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             world.resource_mut::<UiClicks>().next = Some((button, MouseButton::Left));
             gate.advance(now);
         }
-        25 => {
+        27 => {
             let picked = world.resource::<crate::hud::quests::QuestView>().picked.clone();
             let well = web_well(world).map(|(well, _)| well);
             let node = world.query::<(&crate::hud::quests::QuestNode, &bevy::ui::UiGlobalTransform)>().iter(world).find(|(n, _)| Some(&n.0) == gate.web_head.as_ref()).map(|(_, at)| at.translation);
@@ -8670,7 +8795,43 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             } else {
                 gate.check("quests: current", Err(format!("2 s after Current Quest was pressed (the quest on: {:?}): picked {picked:?}, its cell at {node:?} in the well {well:?}", gate.web_head)));
             }
-            world.resource_mut::<crate::hud::quests::QuestView>().zoom = 0;
+            // Shut, left on another chapter and quest, the book opens again on the quest
+            // the player is on.
+            let other = gate.web_head.as_ref().and_then(|head| {
+                let content = &world.resource::<Launch>().content;
+                content.quests.iter().filter(|q| q.name != *head).last().map(|q| q.name.clone())
+            });
+            let chapters = crate::hud::quests::chapters(&world.resource::<Launch>().content).len();
+            let mut view = world.resource_mut::<crate::hud::quests::QuestView>();
+            (view.zoom, view.chapter, view.picked) = (0, chapters.saturating_sub(1), other);
+            world.resource_mut::<UiState>().quests_open = false;
+            gate.advance(now);
+        }
+        28 => {
+            if in_phase < 0.2 {
+                return;
+            }
+            key(world, key_code, true);
+            gate.advance(now);
+        }
+        29 => {
+            key(world, key_code, false);
+            let picked = world.resource::<crate::hud::quests::QuestView>().picked.clone();
+            let well = web_well(world).map(|(well, _)| well);
+            let node = world.query::<(&crate::hud::quests::QuestNode, &bevy::ui::UiGlobalTransform)>().iter(world).find(|(n, _)| Some(&n.0) == gate.web_head.as_ref()).map(|(_, at)| at.translation);
+            let shown = matches!((well, node), (Some(well), Some(node)) if well.contains(node));
+            let open = world.resource::<UiState>().quests_open;
+            if !(open && gate.web_head.is_some() && picked == gate.web_head && shown) && in_phase < 2.0 {
+                return;
+            }
+            gate.check(
+                "quests: opens on current",
+                if open && gate.web_head.is_some() && picked == gate.web_head && shown {
+                    Ok(format!("shut on another chapter and quest, L opened the book again on {picked:?}, the quest the player is on, inside the well"))
+                } else {
+                    Err(format!("2 s after L (the quest on: {:?}): open {open}, picked {picked:?}, its cell at {node:?} in the well {well:?}", gate.web_head))
+                },
+            );
             world.resource_mut::<UiState>().quests_open = false;
             gate.next(Step::Catalogue, now);
         }
@@ -8871,6 +9032,8 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let skills = world.resource::<Launch>().content.skills.len();
     let views: Vec<View> = if gate.step == Step::FitJournal {
         (0..voxmar_engine::journal::Page::ALL.len()).map(View::Journal).collect()
+    } else if gate.step == Step::FitSmall {
+        vec![View::Inventory, View::Character, View::Prayers, View::Journal(0), View::Quests, View::FirstNight, View::Menu(0)]
     } else if gate.step == Step::FitMenus {
         [View::Title, View::Worlds, View::Create, View::Join].into_iter().chain((0..crate::settings::TABS).map(View::Settings)).collect()
     } else {
@@ -8889,22 +9052,39 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         // the pass fails.
         let breaks = world.remove_resource::<crate::ui::fit::LineBreaksChecked>().unwrap_or_default();
         let unbroken = std::mem::take(&mut gate.unbroken);
+        let tips = std::mem::take(&mut gate.fit_tips);
+        let tips = if tips > 0 { format!("; a tool's tooltip whole on screen on {tips}") } else { String::new() };
         let result = if !unbroken.is_empty() {
             Err(format!("no line breaks checked on {} views in a language with line rules: {}", unbroken.len(), unbroken.join("; ")))
         } else if spills.is_empty() {
-            Ok(format!("every text fits on {} views in {}; line breaks checked {}", views.len(), FIT_LANGUAGES.join(" and "), breaks.checked))
+            Ok(format!("every text fits on {} views in {}; line breaks checked {}{tips}", views.len(), FIT_LANGUAGES.join(" and "), breaks.checked))
         } else {
             Err(format!("{} texts do not fit: {}", spills.len(), spills.join("; ")))
         };
-        let journal = gate.step == Step::FitJournal;
+        let (journal, small) = (gate.step == Step::FitJournal, gate.step == Step::FitSmall);
         let settled = std::mem::take(&mut gate.fit_settled);
         if !settled.is_empty() {
             info!("gate: {:?} read {} views only once {FIT_SETTLE}s passed: {}", gate.step, settled.len(), settled.join(", "));
         }
-        gate.check(if menus { "text fits: menus" } else if journal { "text fits: journal" } else { "text fits" }, result);
+        gate.check(if menus { "text fits: menus" } else if journal { "text fits: journal" } else if small { "text fits: 1280x720" } else { "text fits" }, result);
+        if !menus {
+            let blocked = std::mem::take(&mut gate.keys_blocked);
+            let result = if blocked.is_empty() {
+                Ok(format!("the keys under every screen are clear of it and of the HUD on {} views in {}", views.len(), FIT_LANGUAGES.join(" and ")))
+            } else {
+                Err(format!("{} times the keys under a screen run into something: {}", blocked.len(), blocked.join("; ")))
+            };
+            gate.check(if journal { "keys clear: journal" } else if small { "keys clear: 1280x720" } else { "keys clear" }, result);
+        }
         show_view(world, None, now);
         set_language(world, "en");
-        gate.next(if menus { Step::Done } else if journal { Step::Leave } else { Step::FitJournal }, now);
+        // The small window's views, then the gate's own window back.
+        if journal {
+            retarget(world, gate, SMALL);
+        } else if small {
+            retarget(world, gate, SHOT);
+        }
+        gate.next(if menus { Step::Done } else if journal { Step::FitSmall } else if small { Step::Leave } else { Step::FitJournal }, now);
         return;
     };
     let shown = (gate.step, gate.phase);
@@ -8962,7 +9142,183 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     if checked(world).none_since(&before) {
         gate.unbroken.push(format!("{language}, {view:?}"));
     }
+    if let View::Inventory = view {
+        let (off, over) = tip_wrong(world);
+        if off.is_empty() && over.is_empty() {
+            gate.fit_tips += 1;
+        }
+        for wrong in off {
+            let what = format!("{language}: {wrong}");
+            if !gate.spills.iter().any(|(known, _)| *known == what) {
+                gate.spills.push((what, format!("{language}, {view:?}: {wrong}")));
+            }
+        }
+        for wrong in over {
+            let what = format!("{language}, {view:?}: {wrong}");
+            if !gate.keys_blocked.contains(&what) {
+                gate.keys_blocked.push(what);
+            }
+        }
+    }
+    for blocked in keys_blocked(world) {
+        let what = format!("{language}, {view:?}: {blocked}");
+        if !gate.keys_blocked.contains(&what) {
+            gate.keys_blocked.push(what);
+        }
+    }
     gate.advance(now);
+}
+
+/// A window smaller than the gate's own, where the interface steps down to 75% and the HUD
+/// along the bottom takes more of the height.
+const SMALL: UVec2 = UVec2::new(1280, 720);
+
+/// Points the world's camera, and the interface with it, at a new image `size` across, as
+/// the gate's own at the start: laid out for it from the next frame.
+fn retarget(world: &mut World, gate: &mut Gate, size: UVec2) {
+    let mut state = bevy::ecs::system::SystemState::<(Commands, ResMut<Assets<Image>>, Query<Entity, With<Camera3d>>)>::new(world);
+    let Ok((mut commands, mut images, camera)) = state.get_mut(world) else { return };
+    let old = gate.target.clone();
+    gate.target = crate::capture::offscreen(&mut commands, &mut images, &camera, size, 1.0);
+    images.remove(&old);
+    state.apply(world);
+}
+
+/// What the keys under the screen shown run into: a panel of the screen beside them, or
+/// anything drawn along the bottom by the HUD, which stays in sight with a screen open.
+fn keys_blocked(world: &mut World) -> Vec<String> {
+    use crate::hud::screens::HotkeyBar;
+    let rect = |node: &ComputedNode, at: &bevy::ui::UiGlobalTransform| Rect::from_center_size(at.translation, node.size());
+    let meets = |a: Rect, b: Rect| {
+        let both = a.intersect(b);
+        both.width() > 0.5 && both.height() > 0.5
+    };
+    let bars: Vec<(Entity, Rect, Entity)> = world
+        .query_filtered::<(Entity, &ComputedNode, &bevy::ui::UiGlobalTransform, &InheritedVisibility, &ChildOf), With<HotkeyBar>>()
+        .iter(world)
+        .filter(|(_, node, _, shown, _)| shown.get() && node.size().min_element() > 0.0)
+        .map(|(bar, node, at, _, root)| (bar, rect(node, at), root.parent()))
+        .collect();
+    let Some(bottom) = world.query_filtered::<Entity, With<crate::hud::Bottom>>().iter(world).next() else { return Vec::new() };
+    // Everything drawn of the HUD along the bottom: its pictures and words, wherever shown.
+    let mut drawn = world.query::<(Entity, &ComputedNode, &bevy::ui::UiGlobalTransform, &InheritedVisibility, Option<&Text>, Has<ImageNode>)>();
+    let mut hud = Vec::new();
+    for (entity, node, at, shown, text, image) in drawn.iter(world) {
+        let words = text.is_some_and(|t| !t.0.trim().is_empty());
+        if shown.get() && node.size().min_element() > 0.0 && (words || image) {
+            hud.push((entity, rect(node, at), text.map(|t| t.0.clone())));
+        }
+    }
+    let under = |world: &World, mut entity: Entity, ancestor: Entity| loop {
+        if entity == ancestor {
+            return true;
+        }
+        match world.get::<ChildOf>(entity) {
+            Some(parent) => entity = parent.parent(),
+            None => return false,
+        }
+    };
+    let mut found = Vec::new();
+    for (bar, keys, root) in bars {
+        let panels: Vec<Entity> = world.get::<Children>(root).map_or_else(Vec::new, |children| children.iter().filter(|&child| child != bar).collect());
+        for panel in panels {
+            let (Some(node), Some(at)) = (world.get::<ComputedNode>(panel), world.get::<bevy::ui::UiGlobalTransform>(panel)) else { continue };
+            let shown = world.get::<InheritedVisibility>(panel).is_some_and(|v| v.get());
+            if shown && node.size().min_element() > 0.0 && meets(keys, rect(node, at)) {
+                found.push("the keys run into the screen's panel".to_owned());
+            }
+        }
+        for (entity, at, words) in &hud {
+            if under(world, *entity, bottom) && meets(keys, *at) {
+                found.push(match words {
+                    Some(words) => format!("the keys run into {words:?} along the bottom"),
+                    None => "the keys run into a picture along the bottom".to_owned(),
+                });
+            }
+        }
+    }
+    found.sort();
+    found.dedup();
+    found
+}
+
+/// What is wrong with the tooltip [`fit_tool`] shows: not showing or past the screen's edge,
+/// then over the keys under the screen.
+fn tip_wrong(world: &mut World) -> (Vec<String>, Vec<String>) {
+    use crate::hud::screens::HotkeyBar;
+    let rect = |node: &ComputedNode, at: &bevy::ui::UiGlobalTransform| Rect::from_center_size(at.translation, node.size());
+    let tip = world
+        .query_filtered::<(&ComputedNode, &bevy::ui::UiGlobalTransform, &InheritedVisibility, &bevy::ui::ComputedUiRenderTargetInfo), With<crate::hud::inventory::TooltipLines>>()
+        .iter(world)
+        .find(|(node, _, shown, _)| shown.get() && node.size().min_element() > 0.0)
+        .map(|(node, at, _, target)| (rect(node, at), target.physical_size().as_vec2()));
+    let Some((tip, screen)) = tip else { return (vec!["the tool's tooltip did not show".to_owned()], Vec::new()) };
+    let mut off = Vec::new();
+    let past = [("left", -tip.min.x), ("top", -tip.min.y), ("right", tip.max.x - screen.x), ("bottom", tip.max.y - screen.y)];
+    for (side, by) in past {
+        if by > 0.5 {
+            off.push(format!("the tool's tooltip ({:.0}×{:.0}) reaches past the screen by {by:.0} px {side}", tip.width(), tip.height()));
+        }
+    }
+    let over = world
+        .query_filtered::<(&ComputedNode, &bevy::ui::UiGlobalTransform, &InheritedVisibility), With<HotkeyBar>>()
+        .iter(world)
+        .filter(|(node, _, shown)| shown.get() && node.size().min_element() > 0.0)
+        .filter(|(node, at, _)| {
+            let both = tip.intersect(rect(node, at));
+            both.width() > 0.5 && both.height() > 0.5
+        })
+        .map(|_| "the tool's tooltip covers the keys".to_owned())
+        .take(1)
+        .collect();
+    (off, over)
+}
+
+/// The slot [`fit_tool`] lays a tool in: the hotbar's last, at the inventory's right.
+const FIT_TOOL_SLOT: usize = voxmar_engine::inventory::HOTBAR_SLOTS - 1;
+
+/// The slot's own stack while [`fit_tool`] shows a tool there, and the tool's.
+#[derive(Resource)]
+struct KeptSlot(Option<voxmar_engine::inventory::ItemStack>, voxmar_engine::inventory::ItemStack);
+
+/// With `full`, the inventory's last hotbar slot holds the best tool there is (the highest
+/// tier, then the fastest), its tooltip showing; without, the slot's own stack comes back,
+/// unless the server has told the inventory since.
+fn fit_tool(world: &mut World, full: bool) {
+    if !full {
+        if let Some(KeptSlot(kept, shown)) = world.remove_resource::<KeptSlot>() {
+            world.remove_resource::<crate::hud::inventory::HoverSlot>();
+            let mut player = world.resource_mut::<LocalPlayer>();
+            if player.inventory.slots[FIT_TOOL_SLOT] == Some(shown) {
+                player.inventory.slots[FIT_TOOL_SLOT] = kept;
+            }
+        }
+        return;
+    }
+    if world.contains_resource::<KeptSlot>() {
+        return;
+    }
+    let content = &world.resource::<Launch>().content;
+    let best = |block: BlockId| {
+        let tool = content.tools.tool(Some(block));
+        (tool.tier, tool.speed)
+    };
+    let Some(tool) = content
+        .blocks
+        .ids()
+        .filter(|&block| content.tools.tool(Some(block)).kind.is_some())
+        .max_by(|&a, &b| {
+            let ((tier_a, speed_a), (tier_b, speed_b)) = (best(a), best(b));
+            tier_a.cmp(&tier_b).then(speed_a.total_cmp(&speed_b)).then_with(|| content.blocks.def(b).name.cmp(&content.blocks.def(a).name))
+        })
+    else {
+        return;
+    };
+    let shown = voxmar_engine::inventory::ItemStack { item: tool, count: 1 };
+    let mut player = world.resource_mut::<LocalPlayer>();
+    let kept = std::mem::replace(&mut player.inventory.slots[FIT_TOOL_SLOT], Some(shown));
+    world.insert_resource(KeptSlot(kept, shown));
+    world.insert_resource(crate::hud::inventory::HoverSlot(FIT_TOOL_SLOT));
 }
 
 /// The player's own pins while [`fit_pins`] pins others.
@@ -9062,6 +9418,7 @@ fn show_view(world: &mut World, view: Option<View>, now: f32) {
     }
     fit_prayers(world, book);
     fit_pins(world, matches!(view, Some(View::Tracker)));
+    fit_tool(world, matches!(view, Some(View::Inventory)));
     if let Some(View::Quests) = view {
         // A quest still waiting on another, so its page reads so, beside those done and open.
         use crate::hud::quests::{QuestView, Standing, standing};
@@ -10832,7 +11189,7 @@ fn weapon(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
 const SLING: &str = "base:sling";
 const SLING_LEVEL: u8 = 70;
 const SLING_STONES: u32 = 12;
-/// Seconds between shots (past the sling's 0.53 s cooldown), by the game's clock.
+/// Seconds between shots (past the sling's 0.8 s cooldown), by the game's clock.
 const SLING_EVERY: f32 = 1.0;
 
 /// The sling step's run: what stood before it began, its bear, and its shots.
@@ -10857,6 +11214,8 @@ struct SlingRun {
     /// whatever else earlier steps or the land left there), and what each was: taken away
     /// for the shots and put back on every way out.
     cleared: Vec<(IVec3, String)>,
+    /// The least share of pace the player kept while a stone was drawn, as they moved.
+    pace: Option<f32>,
 }
 
 /// One cell set to `block` by name.
@@ -11044,6 +11403,9 @@ fn sling(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 return;
             }
             gate.sling.in_the_way = None;
+            if let Some(pace) = world.resource::<crate::fight::Fighting>().drawing_pace {
+                gate.sling.pace = Some(gate.sling.pace.map_or(pace, |least| least.min(pace)));
+            }
             let run = &gate.sling;
             let xp = skill_level(world, "core:ranged").1;
             let unanswered = run.shot_at.map_or(0.0, |(game, server)| (now - game).min(gate.server_now - server));
@@ -11062,6 +11424,7 @@ fn sling(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             mouse(world, MouseButton::Left, false);
             match next {
                 SlingNext::Hit => {
+                    let pace = run.pace;
                     // Every shot the server answered spent a stone: the hit, and any misses before it.
                     let spent = run.stones.saturating_sub(stones);
                     let distance = world.resource::<LocalPlayer>().eye().distance(view.position + Vec3::Y * 0.6);
@@ -11071,6 +11434,14 @@ fn sling(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                         Err(format!("a stone hit from {distance:.1} blocks, but no cobblestone was spent ({stones} left)"))
                     };
                     gate.check("sling shot", result);
+                    // Drawing slows the player to the class's share of their pace.
+                    let combat = &world.resource::<Launch>().content.combat;
+                    let wanted = world.resource::<Launch>().content.blocks.id(SLING).map(|sling| combat.drawing_speed(&combat.wielded(Some(sling), |_| SLING_LEVEL)));
+                    let result = match (pace, wanted) {
+                        (Some(pace), Some(wanted)) if (pace - wanted).abs() < 1e-4 => Ok(format!("drawing a stone the player kept {pace:.2} of their pace")),
+                        (pace, wanted) => Err(format!("drawing a stone the player kept {pace:?} of their pace, the sling's {wanted:?} wanted")),
+                    };
+                    gate.check("sling draw", result);
                     end_weapon(world, gate, now);
                 }
                 SlingNext::Fail(why) => {
@@ -13120,7 +13491,7 @@ fn tell_blows(world: &mut World, creature: u32) {
         fighting.struck(creature, damage, blow, (i as u8 + 1).min(pips), false, now);
     }
     for (damage, defended) in HURT_SHOWN {
-        fighting.hurt(creature, damage, defended, now);
+        fighting.hurt(creature, damage, defended, now, None);
     }
     // All pips lit: the next blow on the beat would be a flourish.
     fighting.rhythm.set_pips(pips, now);
@@ -13424,7 +13795,7 @@ fn combat_feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let mut fighting = world.resource_mut::<crate::fight::Fighting>();
             fighting.struck(id, FEEL_STRUCK, voxmar_engine::combat::Blow::Flourish, pips, false, at);
             for (damage, defended) in FEEL_HURT {
-                fighting.hurt(id, damage, defended, at);
+                fighting.hurt(id, damage, defended, at, None);
             }
             gate.advance(now);
         }
@@ -15828,6 +16199,11 @@ const SETTLEMENT_LOAD: f32 = 120.0;
 const SETTLEMENT_PEOPLE: f32 = 20.0;
 /// Server seconds for a greeting asked of one of them to reach the client.
 const SETTLEMENT_BARK: f32 = 3.0;
+/// How far from the first settlement the gate looks for a town.
+const TOWN_RADIUS: i32 = 10000;
+/// How far round a town's square its wall is judged: as far as the observer is sent the
+/// world at the gate's least view distance.
+const TOWN_REACH: i32 = 56;
 
 /// `/locate settlement` names the nearest hamlet or village; the player and the observer go
 /// there, and once the server's world around it has loaded, its blocks are judged against
@@ -15848,7 +16224,7 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
         1 => {
             let content = world.resource::<Launch>().content.clone();
             let english = |words| content.english.render(words, &content.blocks);
-            let Some(reply) = gate.observer.as_ref().and_then(|o| o.replies.iter().map(english).find(|r| r.contains("settlement") || r.contains("hamlet or village"))) else {
+            let Some(reply) = gate.observer.as_ref().and_then(|o| o.replies.iter().map(english).find(|r| r.contains("settlement") || r.contains("No hamlet"))) else {
                 if gate.server_in_phase() > 20.0 {
                     gate.check("settlements", Err("no answer to /locate settlement".into()));
                     gate.next(Step::Recipes, now);
@@ -15889,20 +16265,33 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             }
             let result = judge_settlement(world, gate, at);
             gate.check("settlements", result);
+            let homes = judge_homes(world, gate, at);
+            gate.check("settlement homes", homes);
             gate.advance(now);
         }
         // Its people: the server brings a settlement to life when a player is near, and they
         // reach the client and draw. Then the player goes back to the test ground.
         3 => {
             let content = world.resource::<Launch>().content.clone();
-            let people = world.resource::<crate::creatures::Creatures>().views().filter(|v| content.creatures.get(v.species).def.kind == voxmar_engine::creature::Kind::Villager).count();
+            let feet = world.resource::<LocalPlayer>().position;
+            let villagers: Vec<f32> = world
+                .resource::<crate::creatures::Creatures>()
+                .views()
+                .filter(|v| content.creatures.get(v.species).def.kind == voxmar_engine::creature::Kind::Villager)
+                .map(|v| v.position.distance(feet))
+                .collect();
+            let people = villagers.len();
+            // The greeting asked below is of the nearest within the command's reach (less a
+            // little, as the client sees them a moment behind): someone drawn farther off
+            // has to walk in first.
+            let near = villagers.iter().filter(|&&d| d <= voxmar_server::BARK_COMMAND_REACH - 2.0).count();
             // The ambience surveys the place about once a second, so it may not yet have
             // heard the settlement the player was just sent to: waited on with the people.
             let heard = settlement_heard(world, gate.settlement);
-            if (people == 0 || heard.is_err()) && gate.server_in_phase() < SETTLEMENT_PEOPLE {
+            if (near == 0 || heard.is_err()) && gate.server_in_phase() < SETTLEMENT_PEOPLE {
                 return;
             }
-            gate.check("settlement people", if people > 0 { Ok(format!("{people} people of the settlement drawn")) } else { Err("no one of the settlement came to the player standing in its square".into()) });
+            gate.check("settlement people", if people > 0 { Ok(format!("{people} people of the settlement drawn, {near} within a greeting's reach")) } else { Err("no one of the settlement came to the player standing in its square".into()) });
             gate.check("settlement sounds", heard);
             // The nearest of them greets the player (`Server::bark`, by its command).
             world.resource_mut::<crate::creature_sounds::Heard>().barks.clear();
@@ -15919,6 +16308,72 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             gate.check("settlement bark", greeted);
             let feet = gate.feet;
             world.resource::<Net>().command(&format!("tp {} {} {}", feet.x as f32 + 0.5, feet.y, feet.z as f32 + 0.5));
+            // The observer looks for a town from where it is, the player going home.
+            if let Some(observer) = gate.observer.as_mut() {
+                observer.replies.clear();
+                observer.connection.send(ClientMessage::Command { line: format!("locate settlement town {TOWN_RADIUS}") });
+            }
+            gate.advance(now);
+        }
+        // A town: the observer goes over its square.
+        5 => {
+            let content = world.resource::<Launch>().content.clone();
+            let english = |words| content.english.render(words, &content.blocks);
+            let Some(reply) = gate.observer.as_ref().and_then(|o| o.replies.iter().map(english).find(|r| r.contains("town"))) else {
+                if gate.server_in_phase() > 30.0 {
+                    gate.check("town walls", Err(format!("no answer to /locate settlement town {TOWN_RADIUS}")));
+                    gate.phase = 6;
+                    gate.advance(now);
+                }
+                return;
+            };
+            let at = reply.split("/tp ").nth(1).and_then(|rest| {
+                let n: Vec<i32> = rest.split_whitespace().take(3).filter_map(|v| v.parse().ok()).collect();
+                (n.len() == 3).then(|| IVec3::new(n[0], n[1], n[2]))
+            });
+            let Some(at) = at else {
+                gate.check("town walls", Err(format!("/locate settlement town: {reply}")));
+                gate.phase = 6;
+                gate.advance(now);
+                return;
+            };
+            // Not every town is walled (a size's `walls` chance): the walls are judged at
+            // the walled town nearest the one found.
+            let walled = world
+                .resource::<crate::render::lod::WorldGenerator>()
+                .get()
+                .cloned()
+                .and_then(|g| g.settlements_near(at.xz(), TOWN_RADIUS).into_iter().filter(|s| s.size == "town" && s.wall_block.is_some()).min_by_key(|s| (s.centre.xz() - at.xz()).length_squared()));
+            let Some(walled) = walled else {
+                gate.check("town walls", Err(format!("no walled town within {TOWN_RADIUS} of the town /locate found at {at}")));
+                gate.phase = 6;
+                gate.advance(now);
+                return;
+            };
+            let at = walled.centre;
+            gate.town = at;
+            if let Some(observer) = gate.observer.as_mut() {
+                observer.connection.send(ClientMessage::Command { line: format!("tp {} {} {}", at.x, at.y + 60, at.z) });
+            }
+            gate.advance(now);
+        }
+        // Once the server has sent the observer the world round it, its wall is judged.
+        6 => {
+            let at = gate.town;
+            let (low, high) = (ColumnPos::of_block(at - IVec3::splat(TOWN_REACH)).0, ColumnPos::of_block(at + IVec3::splat(TOWN_REACH)).0);
+            let columns: Vec<ColumnPos> = (low.x..=high.x).flat_map(|x| (low.y..=high.y).map(move |z| ColumnPos::new(x, z))).collect();
+            let held = gate.observer.as_ref().map_or(0, |o| columns.iter().filter(|&&c| o.world.contains(c)).count());
+            if held < columns.len() {
+                if gate.server_in_phase() > SETTLEMENT_LOAD {
+                    let n = columns.len();
+                    gate.check("town walls", Err(format!("the world around the town at {at} did not load: the server sent {held} of its {n} columns in {SETTLEMENT_LOAD} server seconds")));
+                    gate.phase = 6;
+                    gate.advance(now);
+                }
+                return;
+            }
+            let result = judge_town(world, gate, at);
+            gate.check("town walls", result);
             gate.advance(now);
         }
         // Back on the test ground.
@@ -16043,6 +16498,111 @@ fn judge_settlement(world: &World, gate: &Gate, at: IVec3) -> Result<String, Str
         Ok(format!("{name}, a {} in {} country at {at}: a well on the square, {doors} doors open onto floors, {houses} buildings dry", plan.size, culture.title.0))
     } else {
         Err(format!("{name}, a {} at {at}: {}", plan.size, problems.join("; ")))
+    }
+}
+
+/// The homes of the settlement whose middle is `at` are furnished for their people: every bed
+/// worldgen plans within reach is a bed in the server's world with room to get to it, and every
+/// seat it plans is a seat (settlements.ron's `interiors`).
+fn judge_homes(world: &World, gate: &Gate, at: IVec3) -> Result<String, String> {
+    let Some(generator) = world.resource::<crate::render::lod::WorldGenerator>().get().cloned() else {
+        return Err("no world generator on the client to read the settlement's plan from".into());
+    };
+    let Some(observer) = gate.observer.as_ref() else { return Err("no observer".into()) };
+    let client = world.resource::<ClientWorld>();
+    let plans = generator.settlements_near(at.xz(), 64);
+    let Some(plan) = plans.iter().find(|s| s.centre.xz() == at.xz()) else {
+        return Err(format!("worldgen plans no settlement with its middle at {at} ({} near)", plans.len()));
+    };
+    let name = |p: IVec3| observer.world.block(p).map_or("unloaded".to_owned(), |b| client.registry.def(b).name.clone());
+    let tagged = |p: IVec3, tag: &str| observer.world.block(p).is_some_and(|b| client.registry.def(b).has_tag(tag));
+    let open = |p: IVec3| observer.world.block(p).is_some_and(|b| !client.registry.def(b).solid);
+    let within = |p: IVec3| (p.xz() - at.xz()).abs().max_element() <= SETTLEMENT_REACH;
+    let (mut homes, mut beds, mut seats, mut problems) = (0, 0, 0, Vec::new());
+    for b in plan.buildings.iter() {
+        let (planned_beds, planned_seats): (Vec<IVec3>, Vec<IVec3>) = (b.beds.iter().copied().filter(|&p| within(p)).collect(), b.seats.iter().copied().filter(|&p| within(p)).collect());
+        if planned_beds.is_empty() && planned_seats.is_empty() {
+            continue;
+        }
+        homes += 1;
+        for p in planned_beds {
+            // Got to from beside: one of its sides is open at the bed's height and above.
+            let reached = [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z].into_iter().any(|d| open(p + d) && open(p + d + IVec3::Y));
+            if !tagged(p, "bed") {
+                problems.push(format!("the {}'s bed at {p} is {}", b.kind.name(), name(p)));
+            } else if !reached {
+                let sides: Vec<String> = [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z].into_iter().map(|d| format!("{} {} over {}", p + d, name(p + d), name(p + d + IVec3::Y))).collect();
+                problems.push(format!("the {}'s bed at {p} is walled in: beside it {}", b.kind.name(), sides.join(", ")));
+            } else {
+                beds += 1;
+            }
+        }
+        for p in planned_seats {
+            if tagged(p, "seat") && open(p + IVec3::Y) {
+                seats += 1;
+            } else {
+                problems.push(format!("the {}'s seat at {p} is {} under {}", b.kind.name(), name(p), name(p + IVec3::Y)));
+            }
+        }
+    }
+    if homes == 0 && problems.is_empty() {
+        problems.push(format!("worldgen plans no bed or seat within {SETTLEMENT_REACH} of the square"));
+    }
+    let settlement = &plan.name.0;
+    if problems.is_empty() {
+        Ok(format!("{settlement}: {homes} homes furnished, {beds} beds and {seats} seats as planned"))
+    } else {
+        Err(format!("{settlement} ({homes} homes, {beds} beds and {seats} seats as planned): {}", problems.join("; ")))
+    }
+}
+
+/// The town whose middle is `at`, as worldgen plans it, against the server's blocks: it is
+/// a town, it is walled, and every column of its wall within `TOWN_REACH` of its square
+/// stands in the server's world, its top as high over its foot as planned.
+fn judge_town(world: &World, gate: &Gate, at: IVec3) -> Result<String, String> {
+    let Some(generator) = world.resource::<crate::render::lod::WorldGenerator>().get().cloned() else {
+        return Err("no world generator on the client to read the town's plan from".into());
+    };
+    let Some(observer) = gate.observer.as_ref() else { return Err("no observer".into()) };
+    let client = world.resource::<ClientWorld>();
+    let plans = generator.settlements_near(at.xz(), 64);
+    let Some(plan) = plans.iter().find(|s| s.centre.xz() == at.xz()) else {
+        return Err(format!("worldgen plans no settlement with its middle at {at} ({} near)", plans.len()));
+    };
+    let name = &plan.name.0;
+    if plan.size != "town" {
+        return Err(format!("/locate settlement town found {name}, a {}", plan.size));
+    }
+    let Some(block) = plan.wall_block else {
+        return Err(format!("{name}, a town at {at}, plans no wall"));
+    };
+    let block_name = &client.registry.def(block).name;
+    let within = |p: IVec2| (p - at.xz()).abs().max_element() <= TOWN_REACH;
+    let (mut judged, mut standing, mut wrong) = (0, 0, Vec::new());
+    for &(column, top) in plan.walls.iter().filter(|w| within(w.0)) {
+        judged += 1;
+        // The wall's highest block in the column, then how far down it runs unbroken.
+        let ys = (at.y - 40..=at.y + 40).rev();
+        let Some(high) = ys.clone().find(|&y| observer.world.block(IVec3::new(column.x, y, column.y)) == Some(block)) else {
+            if wrong.len() < 4 {
+                wrong.push(format!("no {block_name} in the column at {column}"));
+            }
+            continue;
+        };
+        let run = (0..top).take_while(|&k| observer.world.block(IVec3::new(column.x, high - k, column.y)) == Some(block)).count() as i32;
+        if run >= top {
+            standing += 1;
+        } else if wrong.len() < 4 {
+            wrong.push(format!("the column at {column} is {run} of its {top} blocks of {block_name}, up to {high}"));
+        }
+    }
+    if judged < 12 {
+        return Err(format!("{name}: only {judged} columns of its {} of wall within {TOWN_REACH} of its square at {at}", plan.walls.len()));
+    }
+    if standing == judged {
+        Ok(format!("{name}, a town at {at}: {standing} columns of its {block_name} wall within {TOWN_REACH} stand as planned ({} in all)", plan.walls.len()))
+    } else {
+        Err(format!("{name}, a town at {at}: {standing} of {judged} columns of its {block_name} wall stand: {}", wrong.join("; ")))
     }
 }
 
