@@ -968,7 +968,7 @@ fn show(
             let pixel = Image::new(Extent3d { width: 1, height: 1, depth_or_array_layers: 1 }, TextureDimension::D3, vec![255; 4], TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::RENDER_WORLD);
             let body = skins.add(SkinMaterial { base: StandardMaterial { unlit: true, ..default() }, extension: CreatureSkin { skin: images.add(pixel), frame: SkinFrame { origin: Vec4::new(-1.0, -1.0, -1.0, skin::TEXELS), size: Vec4::splat(2.0) }, atmosphere: atmosphere.clone() } });
             let warm_binds = binds.add(SkinnedMeshInverseBindposes::from(vec![Mat4::IDENTITY]));
-            crate::render::warm::warm_skinned(&mut commands, meshes.add(body_mesh(&cube)), body, warm_binds, 1, true, DespawnOnExit(Screen::InGame));
+            crate::render::warm::warm_skinned(&mut commands, meshes.add(body_mesh(&cube)), body, warm_binds, DespawnOnExit(Screen::InGame));
             let heart = |colour: Color| StandardMaterial { base_color: colour, base_color_texture: Some(image.clone()), alpha_mode: AlphaMode::Mask(0.5), unlit: true, ..default() };
             let full = materials.add(heart(Color::srgb(0.95, 0.16, 0.24)));
             let empty = materials.add(heart(Color::srgb(0.3, 0.27, 0.3)));
