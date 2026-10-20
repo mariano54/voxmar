@@ -26,7 +26,7 @@
             why: "Pots hold stews, and the pot is the heart of the kiln you are working toward. Shape six clay pots from fired clay at the crafting table: five fired clay in a cup shape make two (Crafting 2).",
             tasks: [[Craft("clay_pot", 6)]],
             after: ["the_farm_age", "fire_the_clay"],
-            rewards: [Xp("crafting", 305.0), Item("earthen_jug", 1), Item("earthen_plate", 2)],
+            rewards: [Xp("crafting", 305.0), Item("firewood", 4)],
         ),
         (
             name: "a_pot_on_the_fire", age: "farm", branch: "cooking", title: "A Pot on the Fire",
@@ -282,7 +282,7 @@
             why: "Wool makes beds, cloth and sleeping bags. Right-click a kept sheep with shears in hand whenever its wool has grown back, and gather six. Wool grows back in about six minutes: dye the first of it into cloth meanwhile, for a rug once the home is homely, or go after milk (The Milk Pail).",
             tasks: [[Have("wool", 6)]],
             after: ["a_woolly_flock"],
-            rewards: [Xp("farming", 120.0), Xp("crafting", 60.0)],
+            rewards: [Xp("farming", 120.0), Xp("crafting", 60.0), Xp("hunter", 160.0)],
         ),
         (
             name: "ducks_on_the_pond", age: "farm", branch: "husbandry", title: "Ducks on the Pond",
