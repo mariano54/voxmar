@@ -327,10 +327,13 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
     // against what it stands on now: the drop between them, and water there, judged the
     // same on the ground or in the air. A wall along the way is ground to no one.
     let reach = SAFE_DROP + 4;
-    let ground = |from: IVec3| (0..=reach).map(|k| from - IVec3::Y * k).find(|&c| world.water(c) || world.solid(c - IVec3::Y));
+    // A low piece in a cell (a slab, below a body's feet as `Surroundings::solid` goes) is
+    // that cell's floor: on a slab bridge, what is below it is no ground to judge by.
+    let low = |c: IVec3| !world.solid(c) && !world.boxes(c).is_empty();
+    let ground = |from: IVec3| (0..=reach).map(|k| from - IVec3::Y * k).find(|&c| world.water(c) || low(c) || world.solid(c - IVec3::Y));
     // Ahead, a railing's top, or the wall over it, is no landing: what comes down there is
     // off the way, as over a drop too deep.
-    let landing = |from: IVec3| ground(from).filter(|&c| world.water(c) || world.footing(c - IVec3::Y));
+    let landing = |from: IVec3| ground(from).filter(|&c| world.water(c) || low(c) || world.footing(c - IVec3::Y));
     // What it stands on is the highest ground under any part of its box (at an edge, its
     // middle may already be over the drop), whatever it is: one already up on a railing,
     // or on the wall over it, still judges the drop beyond from there.
@@ -503,7 +506,8 @@ pub fn step(body: &mut Body, world: &impl Surroundings, movement: &Movement, wat
         // Keep its height over the land here and just ahead, so it rises over a hill or a
         // tree before it reaches it.
         let ahead = (body.position + facing * LOOK_AHEAD).floor().as_ivec3();
-        let top = |column: IVec3, from: i32| (0..from + 24).map(|d| column + IVec3::Y * (from - d)).find(|&c| world.solid(c) || world.water(c)).map(|c| c.y as f32 + 1.0);
+        // A slab roof is land under it too, though no wall to its feet.
+        let top = |column: IVec3, from: i32| (0..from + 24).map(|d| column + IVec3::Y * (from - d)).find(|&c| world.solid(c) || world.water(c) || !world.boxes(c).is_empty()).map(|c| c.y as f32 + 1.0);
         let reach = movement.fly.ceil() as i32 + 2;
         let ground = top(feet, 0).into_iter().chain(top(ahead, reach)).fold(f32::MIN, f32::max);
         let want = if ground == f32::MIN { body.position.y } else { ground + movement.fly };
@@ -1116,6 +1120,31 @@ mod tests {
         let mut swimming = Body::new(Vec3::new(3.5, -2.0, 0.5), yaw_of(Vec3::X), (0.6, 0.8));
         swimming.in_water = true;
         assert!(open_way(&swimming, &Shelf, &movement, Water::Land, Vec3::X, 3.0, 0.05), "out of its depth, deeper water was a wall");
+        // On a bridge of slabs over a drop, the slab is its floor: its edge is a drop like
+        // any other, not ground level with the land far below.
+        struct SlabBridge;
+        impl Surroundings for SlabBridge {
+            fn solid(&self, cell: IVec3) -> bool {
+                cell.y < -8
+            }
+            fn water(&self, _: IVec3) -> bool {
+                false
+            }
+            fn boxes(&self, cell: IVec3) -> &[Aabb] {
+                const SLAB: [Aabb; 1] = [Aabb { min: Vec3::ZERO, max: Vec3::new(1.0, 0.5, 1.0) }];
+                if self.solid(cell) {
+                    &CUBE
+                } else if cell.y == 0 && (0..4).contains(&cell.x) {
+                    &SLAB
+                } else {
+                    &[]
+                }
+            }
+        }
+        let mut on_slab = Body::new(Vec3::new(3.6, 0.5, 0.5), yaw_of(Vec3::X), (0.6, 0.8));
+        on_slab.on_ground = true;
+        assert!(!open_way(&on_slab, &SlabBridge, &movement, Water::Land, Vec3::X, 3.0, 0.05), "it walked off a slab bridge's end");
+        assert!(open_way(&on_slab, &SlabBridge, &movement, Water::Land, -Vec3::X, 3.0, 0.05), "a slab bridge was no way along it");
         // Steered at the edge, it goes along it; boxed in by cliffs, it stands.
         let cliff = Edge { drop: 8, wet: 0 };
         let (heading, side) = steer(&body, &cliff, &movement, Water::Land, Vec3::X, 0.0, 2.0, 0.05);
