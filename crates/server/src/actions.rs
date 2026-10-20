@@ -782,8 +782,8 @@ mod tests {
         use std::time::{Duration, Instant};
         use voxmar_engine::action::ActionTarget;
         use voxmar_engine::block::BlockId;
-        use voxmar_engine::coords::Face;
-        use voxmar_engine::world::{Column, ColumnPos};
+        use voxmar_engine::coords::{ColumnPos, Face};
+        use voxmar_engine::world::Column;
         let mut server = crate::test_server();
         let (_client, connection) = voxmar_protocol::local_pair();
         let mut player = crate::player::Player::new(1, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
