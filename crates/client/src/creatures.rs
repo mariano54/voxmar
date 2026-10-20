@@ -936,7 +936,7 @@ impl Tended {
 
 /// A sound a creature makes now.
 fn sound(kind: Sound, id: u32, view: &CreatureView, position: Vec3, speed: f32) -> CreatureSound {
-    CreatureSound { kind, id, species: view.species, position, speed, scale: view.scale, young: view.young }
+    CreatureSound { kind, id, species: view.species, position, speed, scale: view.scale, young: view.young, answering: false }
 }
 
 /// Applies what the server sent, then moves and animates every creature, and handles
@@ -1865,7 +1865,7 @@ pub fn aim(
         } else if waiting.done(player.inventory.count(waiting.watched)) {
             *tended = None;
             if let Some(shown) = creatures.shown.get(&waiting.id) {
-                sounds.push(sound(waiting.answer, waiting.id, &shown.view, shown.position, 0.0));
+                sounds.push(CreatureSound { answering: true, ..sound(waiting.answer, waiting.id, &shown.view, shown.position, 0.0) });
             }
         }
     }
