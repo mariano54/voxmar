@@ -405,6 +405,10 @@ pub const MAX_EMISSION_OVER: u8 = 8;
 pub const LIGHT_THROUGH_TAGS: [&str; 5] = ["window", "lattice", "window_frame", "slit", "draught"];
 /// The tag of a railing, refused at load unless it is solid and a block high.
 pub const RAILING_TAG: &str = "railing";
+/// The tag of a chimney piece (a flue, a hood, a pot): stacked straight over a block that
+/// smokes, the client brings its smoke out of the top of the stack, and a piece lines a
+/// hearth's flue against its fire as stone does, so it is refused at load unless solid.
+pub const CHIMNEY_PIECE_TAG: &str = "chimney_piece";
 /// The tag of a landing, refused at load unless it is solid across the whole top of its
 /// cell (level with a stair's top).
 pub const LANDING_TAG: &str = "landing";
@@ -1362,6 +1366,9 @@ impl BlockRegistry {
             if def.has_tag(RAILING_TAG) && !bounds.iter().any(|&(_, max)| max.y >= 1.0) {
                 return Err(RegistryError(format!("`{}` is a railing (`{RAILING_TAG}`) but nobody would be kept back by it: a railing is solid and a block high", def.name)));
             }
+            if def.has_tag(CHIMNEY_PIECE_TAG) && !block.solid {
+                return Err(RegistryError(format!("`{}` is a chimney piece (`{CHIMNEY_PIECE_TAG}`) but not solid: a flue keeps a hearth's fire in", def.name)));
+            }
             if def.has_tag(LANDING_TAG) && !full_top {
                 return Err(RegistryError(format!("`{}` is a landing (`{LANDING_TAG}`) but no floor level with a stair's top: a landing is solid across the whole top of its cell", def.name)));
             }
@@ -1925,6 +1932,9 @@ mod tests {
         let sunk = load(r#"(name: "floor", render: Model, shape: "slab", tags: ["landing"])"#).unwrap_err();
         assert!(sunk.contains("`base:floor` is a landing"), "{sunk}");
         assert!(load(r#"(name: "floor", render: Model, shape: "stairs", tags: ["landing"])"#).is_err());
+        assert_eq!(load(r#"(name: "flue", render: Model, shape: "slab", tags: ["chimney_piece"])"#), Ok(()));
+        let open = load(r#"(name: "flue", render: Model, shape: "slab", solid: false, tags: ["chimney_piece"])"#).unwrap_err();
+        assert!(open.contains("`base:flue` is a chimney piece"), "{open}");
     }
 
     #[test]
