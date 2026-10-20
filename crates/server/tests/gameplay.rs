@@ -2217,6 +2217,53 @@ fn quests_finish_from_what_was_done_and_reward_it() {
     assert!(!client.claimed("base:first_ore"));
 }
 
+/// The Farm age's hand stations each beat the grid at what it already makes: a quern
+/// grinds one wheat to a flour that bakes into bread (a grid loaf takes two), a spindle
+/// spins a wool into three twine, and a loom weaves a wool into a
+/// plain cloth, or with a dye flower held, two cloth of its colour. Each only at its own
+/// station: wheat at the spindle is refused.
+#[test]
+fn the_quern_spindle_and_loom_grind_spin_and_weave() {
+    let mut client = Client::join();
+    let at = client.position.floor().as_ivec3() + IVec3::new(2, 0, 0);
+    let count = |c: &Client, name: &str| {
+        let item = c.content.blocks.expect(name);
+        c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>()
+    };
+    for line in ["/skill cooking 99", "/skill crafting 99", "/fill ~2 ~-1 ~ ~2 ~-1 ~ stone", "/fill ~2 ~ ~ ~2 ~1 ~ air"] {
+        client.ok(line);
+    }
+    // Each go: the station set, the inventory cleared and given what is held (first, so it
+    // is in hand) and what the pack carries, one click, and what comes of it.
+    let work = |client: &mut Client, station: &str, give: &[(&str, u32)], made: (&str, u32), gone: (&str, u32)| {
+        client.clear();
+        client.ok(&format!("/setblock ~2 ~ ~ {station}"));
+        for (item, n) in give {
+            client.ok(&format!("/give {item} {n}"));
+        }
+        let block = client.content.blocks.expect(&format!("base:{station}"));
+        client.pump_until(|c| c.world.block(at) == Some(block) && give.iter().all(|(item, n)| count(c, &format!("base:{item}")) == *n));
+        client.send_position(client.position, false);
+        client.propose("base:cook", ActionTarget::Block { block: at, face: Face::PosY });
+        client.pump_until(|c| count(c, &format!("base:{}", made.0)) == made.1);
+        assert_eq!(count(client, &format!("base:{}", gone.0)), gone.1, "{station}: what one go took");
+    };
+    work(&mut client, "quern_stones", &[("wheat", 2)], ("flour", 1), ("wheat", 1));
+    work(&mut client, "quern_stones", &[("rye", 1)], ("flour", 1), ("rye", 0));
+    work(&mut client, "campfire", &[("flour", 1)], ("bread", 1), ("flour", 0));
+    work(&mut client, "spindle_stand", &[("wool", 1)], ("twine", 3), ("wool", 0));
+    work(&mut client, "loom_frame", &[("wool", 2)], ("white_cloth", 1), ("wool", 1));
+    work(&mut client, "loom_frame", &[("poppy", 1), ("wool", 1)], ("red_cloth", 2), ("wool", 0));
+    // Wheat at the spindle makes nothing: each station works only its own.
+    client.clear();
+    client.ok("/setblock ~2 ~ ~ spindle_stand");
+    client.ok("/give wheat 1");
+    client.pump_until(|c| count(c, "base:wheat") == 1);
+    client.propose("base:cook", ActionTarget::Block { block: at, face: Face::PosY });
+    client.settle();
+    assert_eq!(count(&client, "base:wheat"), 1, "wheat was worked at a spindle");
+}
+
 /// The First Night contract uses real grid and cooking events, and both kinds of
 /// progress survive a restart before completion. Charcoal and food from another station
 /// cannot stand in for a meal at the campfire.
