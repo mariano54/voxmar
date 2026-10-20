@@ -5,6 +5,7 @@
 //! down as they do, and what is in their hand is held in their right fist, drawn as dropped
 //! items are (`render::items`, held still).
 
+use bevy::camera::visibility::NoFrustumCulling;
 use bevy::light::NotShadowCaster;
 use bevy::mesh::skinning::{SkinnedMesh, SkinnedMeshInverseBindposes};
 use bevy::prelude::*;
@@ -270,6 +271,16 @@ fn follow(from: Vec3, to: Vec3, rate: f32, dt: f32) -> (Vec3, f32) {
     (at, (at - from).with_y(0.0).length())
 }
 
+/// Spawns a figure's root at `at`, a joint per part and its skinned body (which casts no
+/// shadow): the root, the joints and the body.
+fn spawn_figure(commands: &mut Commands, body: &SpeciesBody, parts: &[Part], material: Handle<SkinMaterial>, at: Vec3, visibility: Visibility) -> (Entity, Vec<(Entity, Part)>, Entity) {
+    let root = commands.spawn((Transform::from_translation(at), visibility, DespawnOnExit(Screen::InGame))).id();
+    let joints: Vec<(Entity, Part)> = parts.iter().map(|&part| (commands.spawn((Transform::from_translation(part.pivot), ChildOf(root))).id(), part)).collect();
+    let skinned = SkinnedMesh { inverse_bindposes: body.binds.clone(), joints: joints.iter().map(|(e, _)| *e).collect() };
+    let mesh = commands.spawn((Mesh3d(body.mesh.clone()), MeshMaterial3d(material), skinned, Transform::default(), Visibility::default(), NotShadowCaster, ChildOf(root))).id();
+    (root, joints, mesh)
+}
+
 /// A figure's material: unlit, its skin painted through `body`'s volume, `skin` till then.
 fn figure_material(body: &SpeciesBody, skin: Handle<Image>, atmosphere: Buffer) -> SkinMaterial {
     let size = Vec3::from_array(body.dims.map(|n| n as f32)) / skin::TEXELS;
@@ -309,20 +320,20 @@ fn show(
     let blank = figures.blank.get_or_insert_with(|| images.add(crate::creatures::blank_skin())).clone();
     let body = figures.body.get_or_insert_with(|| {
         let body = crate::creatures::species_body(&look.body.model, &parts, meshes, binds);
-        // Its pipeline compiles as the world loads (`render::warm`), drawn as a figure is
-        // (`figure_material`, no shadow), not when another player first comes into view.
+        // A figure drawn as another player's is, joints and all, kept a speck at the eye
+        // from the world's load (`render::warm`): its pipelines compile now, not when
+        // another player first comes into view.
         let material = skins.add(figure_material(&body, blank.clone(), atmosphere.clone()));
-        crate::render::warm::warm_skinned(&mut commands, body.mesh.clone(), material, body.binds.clone(), parts.len(), false, DespawnOnExit(Screen::InGame));
+        let (root, _, mesh) = spawn_figure(&mut commands, &body, &parts, material, Vec3::ZERO, Visibility::Inherited);
+        commands.entity(mesh).insert(NoFrustumCulling);
+        crate::render::warm::at_eye(&mut commands, root);
         body
     });
     let hand = look.hand;
     for view in remote.views() {
         let figure = figures.shown.entry(view.id).or_insert_with(|| {
             let material = skins.add(figure_material(body, blank.clone(), atmosphere.clone()));
-            let root = commands.spawn((Transform::from_translation(view.position), Visibility::Hidden, DespawnOnExit(Screen::InGame))).id();
-            let joints: Vec<(Entity, Part)> = parts.iter().map(|&part| (commands.spawn((Transform::from_translation(part.pivot), ChildOf(root))).id(), part)).collect();
-            let skinned = SkinnedMesh { inverse_bindposes: body.binds.clone(), joints: joints.iter().map(|(e, _)| *e).collect() };
-            commands.spawn((Mesh3d(body.mesh.clone()), MeshMaterial3d(material.clone()), skinned, Transform::default(), Visibility::default(), NotShadowCaster, ChildOf(root)));
+            let (root, joints, _) = spawn_figure(&mut commands, body, &parts, material.clone(), view.position, Visibility::Hidden);
             let seed = name_hash(&view.name) as u32;
             let painting = Some(crate::creatures::paint_skin(look.body_of(&view.name), parts.clone(), body, seed, false));
             Figure { root, joints, material, painting, skin: blank.clone(), position: view.position, yaw: view.yaw, pitch: view.pitch, stride: 0.0, pace: 0.0, arm: 0.0, leg: 0.0, head: 0.0, held_at: None }
