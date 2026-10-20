@@ -34,10 +34,11 @@
         // straw is what the kiln is built of. The same two for four as plain bricks.
         (ingredients: ["fired_clay", "fired_clay", "fired_clay", "fired_clay", "straw"], output: "tempered_kiln_bricks", count: 2, level: 5, xp: 14.0),
         (pattern: [["kiln_bricks", "", "kiln_bricks"], ["kiln_bricks", "clay_pot", "kiln_bricks"], ["kiln_bricks", "kiln_bricks", "kiln_bricks"]], output: "crucible", skill: "core:engineering", level: 10, xp: 40.0),
-        // A sleeping bag three ways: wool and hide, pelts, or feathers and hide.
+        // A sleeping bag three ways: wool and hide, pelts, or feathers and hide, which takes a
+        // raw hide off the first night's hunt as well as a cured one.
         (pattern: [["wool", "wool", "wool"], ["hide", "hide", ""]], output: "sleeping_bag", level: 5, xp: 30.0),
         (pattern: [["tag:fur", "tag:fur"], ["tag:fur", "tag:fur"]], output: "sleeping_bag", level: 5, xp: 30.0),
-        (pattern: [["feather", "feather"], ["hide", "hide"]], output: "sleeping_bag", level: 1, xp: 30.0),
+        (pattern: [["feather", "feather"], ["raw_hide|hide", "raw_hide|hide"]], output: "sleeping_bag", level: 1, xp: 30.0),
         // A herb planter: a box of soil herbs grow back in.
         (pattern: [["{name}_planks", "dirt", "{name}_planks"], ["{name}_planks", "{name}_planks", "{name}_planks"]], output: "herb_planter", skill: "core:construction", level: 3, xp: 10.0),
         // Ore smelted with coal or charcoal, by hand for now (a furnace comes later).
