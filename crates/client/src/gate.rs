@@ -5005,6 +5005,8 @@ fn flint(world: &mut World, gate: &mut Gate, now: f32) {
     let end = |world: &mut World, gate: &mut Gate| {
         mouse(world, MouseButton::Left, false);
         let net = world.resource::<Net>();
+        // Back off the log's cell, where the pickup left them: later steps set blocks there.
+        net.command(&format!("tp {} {} {}", stand.x, stand.y, stand.z));
         net.command(&format!("setblock {} {} {} air", block.x, block.y, block.z));
         for item in [log, tool].into_iter().chain(recipe.cells().into_iter().flatten()) {
             net.command(&format!("clear {}", short(&name(item))));
