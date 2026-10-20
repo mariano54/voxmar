@@ -1235,6 +1235,12 @@ impl Server {
         self.block(pos).is_some_and(|b| self.content.blocks.info(b).solid)
     }
 
+    /// What a cell stops a player with, in blocks from its lower corner (see
+    /// `BlockRegistry::collision`): the boxes the client moves its player against.
+    pub(crate) fn boxes(&self, pos: IVec3) -> &[voxmar_engine::physics::Aabb] {
+        self.block(pos).map_or(&[], |b| self.content.blocks.collision(b))
+    }
+
     /// Changes many blocks at once (a command's), telling each player about those in columns
     /// they have in one message, and waking any fluid they let flow.
     pub(crate) fn set_blocks(&mut self, changes: &[(IVec3, BlockId)]) {
