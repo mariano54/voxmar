@@ -360,6 +360,17 @@ on level ground, and a cast lands two times in five, about 12.5 s a fish. Crops 
 minutes of growth (wheat; carrots 14) day and night, and while they grow the main line,
 husbandry and the home quests are open.
 
+### Level pacing (Oct 14)
+
+The quest-book bot's timeline now shows all thirteen skills the first two ages gate on,
+the combat ones (Attack, Ranged, Defence, Hitpoints) and Magic included. The
+main line alone trains five of them (Mining, Crafting, Engineering, Cooking,
+Construction), and every recipe, tool and crop level on it is met when it is reached. The
+gates that stall are side quests whose chains do not train the skill they ask for: A Woolly
+Flock (Hunter 5), Patient Angler (Fishing 5), Carrot Patch (Farming 5), and the combat
+levels of Hard to Put Down, Bow and Arrow and Seasoned Fighter (the project's
+design/level-pacing.md has the table and the asks).
+
 ## Measured pacing
 
 Run it with `cargo test -p voxmar_server --test gameplay a_fresh_survival -- --ignored --nocapture`
