@@ -78,12 +78,12 @@ fn a_home_shows_the_highest_step_it_has_and_a_rest_to_match() {
         HomeSurvey { counts: effects.home_tags().iter().map(|tag| (tag.clone(), wanted.iter().find(|(t, _)| t == tag).map_or(0, |&(_, n)| n))).collect(), walls }
     };
     let top = |survey: &HomeSurvey, outdoors: bool| {
-        let situation = Situation { felt: 15.0, warmed: false, outdoors, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(survey), done: &[], held: &[], near: &[], seated: false };
+        let situation = Situation { felt: 15.0, warmed: false, outdoors, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(survey), done: &[], held: &[], near: &[], seated: false, night: false };
         // The ladder's own step alone: rooms (below) come on beside it.
         effects.active(&situation, &[]).iter().map(|a| effects.get(a.effect).name.clone()).filter(|name| LADDER.iter().any(|step| *name == format!("base:{step}"))).collect::<Vec<_>>()
     };
     let rest = |survey: &HomeSurvey, outdoors: bool| {
-        let situation = Situation { felt: 15.0, warmed: false, outdoors, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(survey), done: &[], held: &[], near: &[], seated: false };
+        let situation = Situation { felt: 15.0, warmed: false, outdoors, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(survey), done: &[], held: &[], near: &[], seated: false, night: true };
         effects.given_by_sleep(&situation, &bag()).iter().map(|&(id, seconds)| (effects.get(id).name.clone(), seconds)).collect::<Vec<_>>()
     };
     for step in LADDER {
@@ -116,6 +116,9 @@ fn a_home_shows_the_highest_step_it_has_and_a_rest_to_match() {
     assert_eq!(names(rest(&survey_of("cosy"), false)), ["base:healing_sleep", "base:rested", "base:well_rested", "base:deep_rest"]);
     assert_eq!(names(rest(&survey_of("camp"), true)), ["base:healing_sleep", "base:rested"], "a bed under the sky is a plain rest");
     assert_eq!(names(rest(&survey_of("cosy"), true)), ["base:healing_sleep", "base:rested", "base:well_rested"], "under the sky, its seats and lights are only a lit corner");
+    // By day the same cosy home is only a nap: the better rests are a night's.
+    let nap = Situation { felt: 15.0, warmed: false, outdoors: false, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(&survey_of("cosy")), done: &[], held: &[], near: &[], seated: false, night: false };
+    assert_eq!(names(effects.given_by_sleep(&nap, &bag()).iter().map(|&(id, seconds)| (effects.get(id).name.clone(), seconds)).collect()), ["base:healing_sleep", "base:rested"]);
 }
 
 #[test]
@@ -125,18 +128,21 @@ fn a_lit_corner_by_the_bed_rests_well_before_any_roof() {
     let calm = Weather::NONE;
     let survey = |counts: &[(&str, u32)]| HomeSurvey { counts: effects.home_tags().iter().map(|tag| (tag.clone(), counts.iter().find(|(t, _)| t == tag).map_or(0, |&(_, n)| n))).collect(), ..Default::default() };
     let rest = |survey: &HomeSurvey| {
-        let situation = Situation { felt: 15.0, warmed: false, outdoors: true, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(survey), done: &[], held: &[], near: &[], seated: false };
+        let situation = Situation { felt: 15.0, warmed: false, outdoors: true, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(survey), done: &[], held: &[], near: &[], seated: false, night: true };
         effects.given_by_sleep(&situation, &bag()).iter().map(|&(id, seconds)| (effects.get(id).name.clone(), seconds)).collect::<Vec<_>>()
     };
     // A camp out under the sky: a plain rest. A seat and a second light by the bag: a well rested one.
     assert_eq!(rest(&survey(&[("bed", 1), ("light", 1)])), [("base:healing_sleep".to_owned(), 60.0), ("base:rested".to_owned(), 600.0)]);
     let corner = survey(&[("bed", 1), ("seat", 1), ("light", 2)]);
     assert_eq!(rest(&corner), [("base:healing_sleep".to_owned(), 60.0), ("base:rested".to_owned(), 600.0), ("base:well_rested".to_owned(), 900.0)]);
+    let noon = Situation { felt: 15.0, warmed: false, outdoors: true, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(&corner), done: &[], held: &[], near: &[], seated: false, night: false };
+    let nap = effects.given_by_sleep(&noon, &bag()).iter().map(|&(id, seconds)| (effects.get(id).name.clone(), seconds)).collect::<Vec<_>>();
+    assert_eq!(nap, [("base:healing_sleep".to_owned(), 60.0), ("base:rested".to_owned(), 600.0)], "a lit corner by day is a nap: the mend and Rested, not Well rested");
     assert_eq!(rooms_in(&[("bed", 1), ("seat", 1), ("light", 2)], &calm, true), ["base:bedside"]);
     assert_eq!(effects.get(effects.id("base:bedside").unwrap()).modifiers.warmth, 2.0);
     // Snug and a lit corner too: the one rest, once.
     let snug_corner = HomeSurvey { walls: Walls::all(Shelter::Draughty, 60), ..survey(&[("bed", 1), ("seat", 1), ("light", 2), ("hearth", 1)]) };
-    let situation = Situation { felt: 15.0, warmed: false, outdoors: false, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(&snug_corner), done: &[], held: &[], near: &[], seated: false };
+    let situation = Situation { felt: 15.0, warmed: false, outdoors: false, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(&snug_corner), done: &[], held: &[], near: &[], seated: false, night: true };
     let given = effects.given_by_sleep(&situation, &bag());
     assert_eq!(given.iter().filter(|(id, _)| effects.get(*id).name == "base:well_rested").count(), 1, "two ways to one rest give it once");
 }
@@ -178,7 +184,7 @@ fn rooms_in(counts: &[(&str, u32)], weather: &Weather, outdoors: bool) -> Vec<St
     let content = content();
     let effects = &content.effects;
     let survey = HomeSurvey { counts: effects.home_tags().iter().map(|tag| (tag.clone(), counts.iter().find(|(t, _)| t == tag).map_or(0, |&(_, n)| n))).collect(), ..Default::default() };
-    let situation = Situation { felt: 15.0, warmed: false, outdoors, weather, biome: "base:plains", biome_tags: &[], home: Some(&survey), done: &[], held: &[], near: &[], seated: false };
+    let situation = Situation { felt: 15.0, warmed: false, outdoors, weather, biome: "base:plains", biome_tags: &[], home: Some(&survey), done: &[], held: &[], near: &[], seated: false, night: false };
     effects.active(&situation, &[]).iter().map(|a| effects.get(a.effect).name.clone()).filter(|name| !LADDER.iter().any(|step| *name == format!("base:{step}"))).collect()
 }
 
@@ -220,7 +226,7 @@ fn a_workshop_boosts_the_levels_recipes_are_checked_against() {
     let effects = &content.effects;
     let calm = Weather::NONE;
     let survey = HomeSurvey { counts: effects.home_tags().iter().map(|tag| (tag.clone(), 4)).collect(), ..Default::default() };
-    let at_home = Situation { felt: 15.0, warmed: false, outdoors: false, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(&survey), done: &[], held: &[], near: &[], seated: false };
+    let at_home = Situation { felt: 15.0, warmed: false, outdoors: false, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(&survey), done: &[], held: &[], near: &[], seated: false, night: false };
     let active = effects.active(&at_home, &[]);
     assert_eq!((effects.boost(&active, "core:crafting"), effects.boost(&active, "core:engineering")), (2, 1));
     let away = Situation { home: None, ..at_home };
@@ -272,7 +278,7 @@ fn perks(counts: &[(&str, u32)], weather: &Weather, outdoors: bool, done: &[Stri
     let content = content();
     let effects = &content.effects;
     let survey = HomeSurvey { counts: effects.home_tags().iter().map(|tag| (tag.clone(), counts.iter().find(|(t, _)| t == tag).map_or(0, |&(_, n)| n))).collect(), ..Default::default() };
-    let situation = Situation { felt: 15.0, warmed: false, outdoors, weather, biome: "base:plains", biome_tags: &[], home: Some(&survey), done, held: &[], near: &[], seated: false };
+    let situation = Situation { felt: 15.0, warmed: false, outdoors, weather, biome: "base:plains", biome_tags: &[], home: Some(&survey), done, held: &[], near: &[], seated: false, night: false };
     effects.active(&situation, &[]).iter().map(|a| effects.get(a.effect).name.clone()).filter(|name| effects.get(effects.id(name).unwrap()).ladder == "homecraft").collect()
 }
 
@@ -320,10 +326,21 @@ fn home_perks_are_countable_by_quests_and_stay_out_of_the_homes_steps() {
     let calm = Weather::NONE;
     let done = finished(&["make_camp", "heart_of_the_home"]);
     let survey = HomeSurvey { counts: effects.home_tags().iter().map(|tag| (tag.clone(), 0)).collect(), ..Default::default() };
-    let situation = Situation { felt: 15.0, warmed: false, outdoors: false, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(&survey), done: &done, held: &[], near: &[], seated: false };
+    let situation = Situation { felt: 15.0, warmed: false, outdoors: false, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(&survey), done: &done, held: &[], near: &[], seated: false, night: false };
     for chain in effects.home_progress(&situation) {
         for id in chain.reached.into_iter().chain(chain.next.map(|(id, _)| id)) {
             assert_eq!(effects.get(id).ladder, "home", "{} is not a step of the home", effects.get(id).name);
+        }
+    }
+    // Nor an evening in, a time of day and no step to build: at midnight by the fire `/home`
+    // never names it as next, with nothing it could ask for.
+    let evening = effects.id("base:evening_in").unwrap();
+    let night = Situation { night: true, ..situation };
+    assert!(effects.home_progress(&night).iter().all(|chain| chain.reached != Some(evening) && chain.next.as_ref().is_none_or(|(id, _)| *id != evening)));
+    // Every step `/home` names next says what it needs, by day and by night.
+    for at in [&situation, &night] {
+        for (id, lacks) in effects.home_progress(at).into_iter().filter_map(|chain| chain.next) {
+            assert!(!lacks.is_empty(), "/home names {} next with nothing it needs", effects.get(id).name);
         }
     }
 }
@@ -336,7 +353,7 @@ fn the_next_step_is_above_the_highest_reached_not_one_skipped_below() {
     let effects = &content.effects;
     let calm = Weather::NONE;
     let survey = HomeSurvey { counts: effects.home_tags().iter().map(|tag| (tag.clone(), u32::from(tag == "hearth"))).collect(), ..Default::default() };
-    let situation = Situation { felt: 15.0, warmed: false, outdoors: true, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(&survey), done: &[], held: &[], near: &[], seated: false };
+    let situation = Situation { felt: 15.0, warmed: false, outdoors: true, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(&survey), done: &[], held: &[], near: &[], seated: false, night: false };
     let id = |name: &str| effects.id(&format!("base:{name}")).unwrap();
     let ladder = effects.home_progress(&situation).into_iter().find(|chain| chain.reached == Some(id("hearthside"))).expect("the ladder stands at Hearthside");
     assert_eq!(ladder.next.map(|(next, _)| next), Some(id("snug")));
@@ -352,11 +369,24 @@ fn a_proper_bed_rests_well_and_every_sleep_mends_slower_than_food() {
     let calm = Weather::NONE;
     let survey = |counts: &[(&str, u32)]| HomeSurvey { counts: effects.home_tags().iter().map(|tag| (tag.clone(), counts.iter().find(|(t, _)| t == tag).map_or(0, |&(_, n)| n))).collect(), ..Default::default() };
     let camp = survey(&[("bed", 1), ("light", 1)]);
-    let situation = Situation { felt: 15.0, warmed: false, outdoors: true, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(&camp), done: &[], held: &[], near: &[], seated: false };
+    let situation = Situation { felt: 15.0, warmed: false, outdoors: true, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(&camp), done: &[], held: &[], near: &[], seated: false, night: true };
     let bed = content.blocks.def(content.blocks.expect("base:oak_bed")).tags.clone();
     let rest = |tags: &[String]| effects.given_by_sleep(&situation, tags).iter().map(|&(id, seconds)| (effects.get(id).name.clone(), seconds)).collect::<Vec<_>>();
     assert_eq!(rest(&bag()), [("base:healing_sleep".to_owned(), 60.0), ("base:rested".to_owned(), 600.0)], "a bag under the sky");
     assert_eq!(rest(&bed), [("base:healing_sleep".to_owned(), 120.0), ("base:rested".to_owned(), 600.0), ("base:well_rested".to_owned(), 900.0)], "a proper bed under the sky");
+    // By day a proper bed is a nap: Rested and the longer mend, never Well rested.
+    let noon = Situation { night: false, ..situation };
+    let nap = effects.given_by_sleep(&noon, &bed).iter().map(|&(id, seconds)| (effects.get(id).name.clone(), seconds)).collect::<Vec<_>>();
+    assert_eq!(nap, [("base:healing_sleep".to_owned(), 120.0), ("base:rested".to_owned(), 600.0)], "a proper bed by day");
+    // The night's rest after a nap: not while the nap's mend runs, then though its Rested is
+    // still on. And a bed after a bag in one night mends no more.
+    let id = |name: &str| effects.id(&format!("base:{name}")).unwrap();
+    let night = effects.given_by_sleep(&situation, &bed);
+    assert!(effects.rested(&[(id("healing_sleep"), 30.0), (id("rested"), 500.0)], &night), "the nap's mend still runs");
+    assert!(!effects.rested(&[(id("rested"), 400.0)], &night), "the nap's Rested keeps no better rest away");
+    let bagged = effects.given_by_sleep(&situation, &bag());
+    assert!(effects.rested(&bagged, &night), "a bed straight after a bag gives no fresh mend");
+    assert!(effects.rested(&[(id("well_rested"), 400.0)], &night), "rested well already");
     // Every heal buff that can be on at once (the strongest of each chain of replaces, the
     // others hidden by it) and the strongest prayer, together, are held at survival.ron's
     // `heal_most`, which is below what the slowest food heals a second, a bite at a time:
