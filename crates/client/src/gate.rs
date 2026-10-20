@@ -282,8 +282,8 @@ steps! {
     /// Swimming against the pool's bank and holding jump climbs out onto the block on it.
     Swim,
     /// Esc opens and closes the menu, E the inventory.
-    /// The same stone broken with a wooden pickaxe, then a copper one, from the breaks'
-    /// stand: each tooltip says how fast it works, and the copper takes the wooden one's
+    /// The same stone broken with a flint pickaxe, then a copper one, from the breaks'
+    /// stand: each tooltip says how fast it works, and the copper takes the flint one's
     /// time over 3.5, as their speeds (2 and 7) say.
     Tiers,
     Screens,
@@ -2424,7 +2424,7 @@ const TIERS_AT: IVec3 = IVec3::new(-2, 0, -1);
 /// Longest the tiers step waits on one answer, in seconds of the server's clock and the game's.
 const TIERS_WAIT: f32 = 8.0;
 /// The two pickaxes the tiers step compares, slowest first.
-const TIERS: [&str; 2] = ["wooden_pickaxe", "copper_pickaxe"];
+const TIERS: [&str; 2] = ["flint_pickaxe", "copper_pickaxe"];
 
 /// The same stone broken with each pickaxe of `TIERS` in turn: the client works out how
 /// long each takes when it starts (as the server does), and the better one takes the other's
@@ -2451,7 +2451,7 @@ fn tiers(world: &mut World, gate: &mut Gate, now: f32) {
         gate.next(Step::Screens, now);
     };
     let (Some(stone), &[slow, fast]) = (stone, picks.as_slice()) else {
-        gate.check("tiers", Err("no stone, wooden pickaxe or copper pickaxe in the content".into()));
+        gate.check("tiers", Err("no stone, flint pickaxe or copper pickaxe in the content".into()));
         end(world, gate);
         return;
     };
@@ -2518,11 +2518,11 @@ fn tiers(world: &mut World, gate: &mut Gate, now: f32) {
                     let speeds = [slow, fast].map(|p| format!("{}", tools.tool(Some(p)).speed));
                     let told = [0, 1].iter().all(|&i| said[i].as_deref() == Some(locale.format("item.tool_speed", &[("speed", &speeds[i])]).as_str()));
                     let result = if (ratio - wanted).abs() > 0.01 * wanted {
-                        Err(format!("stone took {slow_s:.3} s with the wooden pickaxe and {fast_s:.3} s with the copper, {ratio:.2}x, not {wanted:.2}x"))
+                        Err(format!("stone took {slow_s:.3} s with the flint pickaxe and {fast_s:.3} s with the copper, {ratio:.2}x, not {wanted:.2}x"))
                     } else if !told {
                         Err(format!("the pickaxes' tooltips say {said:?}, not their speeds {speeds:?}"))
                     } else {
-                        Ok(format!("stone broke in {slow_s:.3} s with a wooden pickaxe and {fast_s:.3} s with a copper one, {ratio:.2}x as their speeds say; each tooltip names its speed"))
+                        Ok(format!("stone broke in {slow_s:.3} s with a flint pickaxe and {fast_s:.3} s with a copper one, {ratio:.2}x as their speeds say; each tooltip names its speed"))
                     };
                     gate.check("tiers", result);
                     // The fast pickaxe's tooltip, drawn in the inventory, in each language.

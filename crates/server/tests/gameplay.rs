@@ -3066,7 +3066,7 @@ fn stone_breaks_into_two_loose_stones_and_four_make_two_cobblestone() {
     client.ok("/setblock ~ ~-1 ~ stone");
     client.pump_until(|c| c.world.block(below) == Some(stone));
     client.propose("core:mine", target);
-    client.pump_until(|c| c.world.block(below) == Some(BlockId::AIR) && has(c, loose) >= 2);
+    client.pump_until(|c| c.world.block(below) == Some(BlockId::AIR) && (has(c, loose) >= 2 || has(c, cobble) >= 1));
     client.after_server_ticks(4);
     assert_eq!((has(&client, loose), has(&client, cobble)), (2, 0), "plain stone breaks to two loose stones, no cobblestone");
     client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == loose && s.count == 2));
