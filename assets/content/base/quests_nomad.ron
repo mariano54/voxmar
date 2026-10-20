@@ -17,7 +17,7 @@
             name: "crafting_table", age: "nomad", branch: "start", title: "Crafting Table",
             why: "Four planks in the 2×2 grid of your inventory make a crafting table: a log splits into four planks there. Hold it and right-click the ground to set it down, then right-click the table; its three-by-three grid makes every tool and weapon.",
             tasks: [[Craft("crafting_table", 1)]],
-            after: ["timber"],
+            after: [],
             rewards: [Xp("engineering", 18.0)],
         ),
         (
@@ -53,7 +53,7 @@
             capstone: true,
             why: "A stone tool works twice as fast as a flint one and finds a little more. Carry the whole kit: pickaxe, axe, shovel (one stone head over two sticks), hoe and knife.",
             tasks: [[Have("stone_pickaxe", 1), Have("stone_axe", 1), Have("stone_shovel", 1), Have("stone_hoe", 1), Have("stone_knife", 1)]],
-            after: ["a_sharp_edge", "a_chopping_block", "break_ground", "twine_and_thong"],
+            after: ["a_sharp_edge", "a_chopping_block", "break_ground", "twine_and_thong", "timber"],
             rewards: [Xp("engineering", 30.0), Item("torch", 8)],
         ),
         // The Hearth: the main line, from the first night to the lit Homestead Hearth and the rite.

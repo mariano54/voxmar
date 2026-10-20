@@ -331,6 +331,39 @@ fn waited_on<'a>(quests: &'a [QuestDef], quest: &QuestDef) -> FxHashSet<&'a str>
     seen
 }
 
+/// The first quest, in book order, that no way through the book opens, and the loop of
+/// `after`s that keeps it shut, from it back to the quest the loop closes on: `[a, b, a]` for
+/// a quest `a` after `b` after `a`. None when every quest opens. A quest opens once each of
+/// its `after`s has one of its choices open.
+fn never_open(quests: &[QuestDef]) -> Option<Vec<String>> {
+    let index: FxHashMap<&str, usize> = quests.iter().enumerate().map(|(i, q)| (q.name.as_str(), i)).collect();
+    let mut opens = vec![false; quests.len()];
+    let mut grew = true;
+    while grew {
+        grew = false;
+        for (i, quest) in quests.iter().enumerate() {
+            if !opens[i] && quest.after.iter().all(|after| after.split('|').any(|name| index.get(name).is_some_and(|&j| opens[j]))) {
+                opens[i] = true;
+                grew = true;
+            }
+        }
+    }
+    let first = opens.iter().position(|open| !open)?;
+    // Each shut quest waits on an `after` none of whose choices opens: follow its first
+    // choice until a quest comes round again.
+    let mut path = vec![first];
+    loop {
+        let at = *path.last().unwrap();
+        let shut = quests[at].after.iter().find(|after| !after.split('|').any(|name| index.get(name).is_some_and(|&j| opens[j])))?;
+        let next = index[shut.split('|').next().unwrap_or_default()];
+        if let Some(from) = path.iter().position(|&p| p == next) {
+            path.push(next);
+            return Some(path[from..].iter().map(|&i| quests[i].name.clone()).collect());
+        }
+        path.push(next);
+    }
+}
+
 impl QuestRegistry {
     pub fn read(namespace: &str, source: &str) -> Result<QuestFile, RegistryError> {
         Self::read_named(namespace, "quests.ron", source)
@@ -434,13 +467,18 @@ impl QuestRegistry {
             }
         }
         let quests: Vec<QuestDef> = written.into_iter().map(|(q, _)| q).collect();
+        if let Some(cycle) = never_open(&quests) {
+            return Err(RegistryError(format!("quests {} come after each other, so none of them ever opens", cycle.join(" after "))));
+        }
         // A capstone closes its path: it waits, directly or through what it waits on, on
-        // every quest of its age and branch that is not a side quest or the age's rite.
+        // every quest of its package, age and branch that is not a side quest or the age's
+        // rite. (A mod's quest on the path is the mod's own to close.)
+        let package = |q: &QuestDef| q.name.split_once(':').map_or("", |(p, _)| p).to_owned();
         for capstone in quests.iter().filter(|q| q.capstone) {
             let before = waited_on(&quests, capstone);
             let missing: Vec<&str> = quests
                 .iter()
-                .filter(|q| q.age == capstone.age && q.branch == capstone.branch && q.name != capstone.name && !q.side && q.opens.is_none() && !before.contains(q.name.as_str()))
+                .filter(|q| q.age == capstone.age && q.branch == capstone.branch && package(q) == package(capstone) && q.name != capstone.name && !q.side && q.opens.is_none() && !before.contains(q.name.as_str()))
                 .map(|q| q.name.as_str())
                 .collect();
             if !missing.is_empty() {
@@ -840,7 +878,7 @@ mod tests {
     #[test]
     fn a_save_already_in_the_next_age_is_past_its_rite() {
         let source = r#"(quests: [
-            (name: "a", age: "nomad", branch: "main", title: "", why: "", tasks: [[Visit(9)]]),
+            (name: "a", age: "nomad", branch: "main", title: "", why: "", tasks: [[Visit(9)]], side: true),
             (name: "hearth", age: "nomad", branch: "main", title: "", why: "", tasks: [[Visit(9)]], capstone: true),
             (name: "rite", age: "nomad", branch: "main", title: "", why: "", tasks: [[QuestsDone("nomad", 2), Capstones("nomad", 1)]], after: ["hearth"], opens: "farm"),
             (name: "later", age: "farm", branch: "main", title: "", why: "", tasks: [[Visit(9)]], after: ["rite"]),
@@ -1216,6 +1254,21 @@ mod tests {
         assert_eq!(book(&path("side: true")), None, "a side quest stands outside");
         let chained = [quest("a", ""), quest("b", r#"after: ["a|c"]"#), quest("c", ""), quest("cap", r#"capstone: true, after: ["b"]"#)].concat();
         assert_eq!(book(&chained), None, "either of an either-or is waited on");
+    }
+
+    /// A quest after itself, or a loop of quests after each other, would never open: the
+    /// load refuses it, naming the loop. A choice out of the loop (`a|start`) opens it.
+    #[test]
+    fn quests_after_each_other_are_refused() {
+        let book = |quests: &str| QuestRegistry::new(vec![QuestRegistry::read("t", &format!("(quests: [{quests}])")).unwrap()]);
+        let quest = |name: &str, after: &str| format!(r#"(name: "{name}", age: "nomad", branch: "main", title: "", why: "", tasks: [[Home]], after: [{after}]),"#);
+        let error = book(&quest("a", r#""a""#)).err().expect("a quest after itself");
+        assert_eq!(error.0, "quests t:a after t:a come after each other, so none of them ever opens");
+        let looped = [quest("start", ""), quest("a", r#""start", "b""#), quest("b", r#""c""#), quest("c", r#""a""#), quest("d", r#""c""#)].concat();
+        let error = book(&looped).err().expect("a loop of three");
+        assert_eq!(error.0, "quests t:a after t:b after t:c after t:a come after each other, so none of them ever opens");
+        let escaped = [quest("start", ""), quest("a", r#""start", "b""#), quest("b", r#""c""#), quest("c", r#""a|start""#)].concat();
+        assert!(book(&escaped).is_ok(), "c opens by start, so the loop opens");
     }
 
     #[test]
