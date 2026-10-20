@@ -50,7 +50,8 @@ pub use voxmar_engine::weather::Weather;
 // 52 and 53 are kept for the light ladder and the farm days piece.
 // 54: what another player is doing in a fight (PlayerView::fight): their swing, blows, guard;
 // and Players told as they change (seen, gone), names once, only those near enough.
-// 55: whether a creature's blow spoiled the player's draw (ServerMessage::Hurt::spoiled).
+// 55: whether a creature's blow spoiled the player's draw (ServerMessage::Hurt::spoiled), and
+// players who left named with no name in Players::names, to be forgotten.
 pub const PROTOCOL_VERSION: u32 = 55;
 
 /// A creature's `tell` while it rears into a new phase of its fight.
@@ -176,7 +177,8 @@ pub enum ServerMessage {
     /// `seen` holds only those whose view changed since it was last sent (or who came into
     /// sight), `gone` those who left or went out of sight. `names`: the names of players
     /// out of sight not told before (or renamed), so a creature they keep shows who keeps it
-    /// however far off they are. Sent only when there is any.
+    /// however far off they are; an empty name for one who left the server, to forget. Sent
+    /// only when there is any.
     Players { seen: Vec<PlayerView>, gone: Vec<PlayerId>, names: Vec<(PlayerId, String)> },
     /// The clocks, every second and whenever a command changes them: `tick` counts
     /// simulation ticks since the world began, at `TICKS_PER_SECOND`, and `day` is the

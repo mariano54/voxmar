@@ -260,13 +260,13 @@ pub struct FigureRead {
 }
 
 impl Figures {
-    /// Where another player's body is drawn, once it is (what the eye sees of them, eased
-    /// behind where the server says they are).
     /// The joint its head turns on, for the gate to read its transform.
     pub fn head_joint(&self, id: PlayerId) -> Option<Entity> {
         self.shown.get(&id)?.joints.iter().find(|(_, part)| part.swing == Swing::Head).map(|(joint, _)| *joint)
     }
 
+    /// Where another player's body is drawn, once it is (what the eye sees of them, eased
+    /// behind where the server says they are).
     pub fn drawn_at(&self, id: PlayerId) -> Option<Vec3> {
         self.shown.get(&id).filter(|f| f.painting.is_none()).map(|f| f.position)
     }

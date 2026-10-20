@@ -1276,23 +1276,30 @@ impl Server {
                 if last == Some(view) {
                     continue;
                 }
-                let name = view.name.clone().unwrap_or_default();
-                let named = player.named.get(&view.id) != Some(&name);
+                let name = view.name.as_deref().unwrap_or_default();
+                let named = player.named.get(&view.id).map(String::as_str) != Some(name);
                 if named {
-                    player.named.insert(view.id, name);
+                    player.named.insert(view.id, name.to_owned());
                 }
                 told.push(voxmar_protocol::PlayerView { name: if named { view.name.clone() } else { None }, ..view.clone() });
                 player.told.insert(view.id, view.clone());
             }
             let mut names = Vec::new();
             for view in views.iter().filter(|v| v.id != player.id && !near.iter().any(|n| n.id == v.id)) {
-                let name = view.name.clone().unwrap_or_default();
-                if player.named.get(&view.id) != Some(&name) {
-                    player.named.insert(view.id, name.clone());
-                    names.push((view.id, name));
+                let name = view.name.as_deref().unwrap_or_default();
+                if player.named.get(&view.id).map(String::as_str) != Some(name) {
+                    player.named.insert(view.id, name.to_owned());
+                    names.push((view.id, name.to_owned()));
                 }
             }
-            player.named.retain(|id, _| views.iter().any(|v| v.id == *id));
+            // Those who left the server are named once more, with no name, to be forgotten.
+            player.named.retain(|id, _| {
+                let here = views.iter().any(|v| v.id == *id);
+                if !here {
+                    names.push((*id, String::new()));
+                }
+                here
+            });
             let gone: Vec<PlayerId> = player.told.keys().copied().filter(|id| !near.iter().any(|v| v.id == *id)).collect();
             for id in &gone {
                 player.told.remove(id);

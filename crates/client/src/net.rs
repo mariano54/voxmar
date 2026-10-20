@@ -232,12 +232,18 @@ impl RemotePlayers {
 
     /// What the server told of others: views changed or come into sight (a name, when
     /// missing, is the one told before), players gone or out of sight, and the names of
-    /// those out of sight.
+    /// those out of sight (an empty one: they left, and their name is forgotten).
     pub fn told(&mut self, seen: Vec<PlayerView>, gone: Vec<PlayerId>, names: Vec<(PlayerId, String)>) {
         for id in gone {
             self.players.remove(&id);
         }
-        self.names.extend(names);
+        for (id, name) in names {
+            if name.is_empty() {
+                self.names.remove(&id);
+            } else {
+                self.names.insert(id, name);
+            }
+        }
         for mut view in seen {
             match &view.name {
                 Some(name) => {
@@ -562,6 +568,8 @@ mod tests {
         assert_eq!((players.name(9), players.name(4), players.position(4)), (Some("Ada"), Some("Bob"), None), "names kept out of sight");
         players.told(vec![view(None, 2.0)], vec![], vec![]);
         assert_eq!(players.get(9).and_then(|v| v.name.as_deref()), Some("Ada"), "back in sight, the view takes the name kept");
+        players.told(vec![], vec![], vec![(4, String::new())]);
+        assert_eq!(players.name(4), None, "one who left, named with no name, is forgotten");
     }
 
     /// A stand-in shown with no server behind it (the gate's) stays through what the server

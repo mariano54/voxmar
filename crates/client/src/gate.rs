@@ -1483,9 +1483,15 @@ impl Observer {
                     }
                     ServerMessage::Chat { text, .. } => self.replies.push(text),
                     ServerMessage::Players { seen, gone, names } => {
-                        self.names.extend(names);
+                        // Names stay through going out of sight; one left with no name is forgotten.
+                        for (id, name) in names {
+                            if name.is_empty() {
+                                self.names.remove(&id);
+                            } else {
+                                self.names.insert(id, name);
+                            }
+                        }
                         for id in gone {
-                            self.names.remove(&id);
                             self.others.remove(&id);
                         }
                         for p in seen {
