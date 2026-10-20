@@ -598,12 +598,16 @@ impl Server {
         // a railing's balusters) is one to a blow, but for what is climbed (a ladder, an
         // open hatch): a blow at a player on one passes the rungs or the hatch hung at the
         // back of the cell. Anything else stops it by its shape.
+        // In the player's own cells (a player in a railing's cell, behind its rail), only
+        // the shape: they stand in what is left of the cell.
         let blocks = &self.content.blocks;
         let whole = self.creatures.whole_blocks(blocks);
+        let feet = to.floor().as_ivec3();
+        let own = |c: IVec3| c.x == feet.x && c.z == feet.z && (feet.y..=feet.y + 1).contains(&c.y);
         let clear = |a: Vec3, b: Vec3| {
             let meets = |c: IVec3| {
                 self.block(c).is_some_and(|block| {
-                    let boxes = if whole[block.0 as usize] && !blocks.info(block).climbable { &voxmar_engine::physics::CUBE[..] } else { blocks.collision(block) };
+                    let boxes = if whole[block.0 as usize] && !blocks.info(block).climbable && !own(c) { &voxmar_engine::physics::CUBE[..] } else { blocks.collision(block) };
                     boxes.iter().any(|aabb| segment_meets(a - c.as_vec3(), b - c.as_vec3(), aabb))
                 })
             };
@@ -4429,9 +4433,10 @@ mod fight_tests {
     }
 
     /// A wolf's blow at a player standing on a ladder, or in an open hatch, has its way: the
-    /// rungs and the hatch hang at the back of the cell, the player before them. Before:
-    /// every solid block was a whole cell to a blow, so a ladder shaft was a cell no blow
-    /// reached.
+    /// rungs and the hatch hang at the back of the cell, the player before them; so does
+    /// one at a player in a railing's own cell, over the rail. Before: every solid block was
+    /// a whole cell to a blow, so a ladder shaft was a cell no blow reached; then a railing,
+    /// whole to a blow, hid the player in its cell.
     #[test]
     fn a_blow_reaches_a_player_on_a_ladder_or_in_an_open_hatch() {
         let mut server = crate::test_server();
@@ -4443,6 +4448,10 @@ mod fight_tests {
             set(&mut server, name, [c + IVec3::new(-2, 0, 0), c + IVec3::new(-2, 1, 0)]);
             assert!(server.blow_open(&body, reach, c.as_vec3() + Vec3::new(-1.5, 0.0, 0.5)), "no blow through {name} to the player in it");
         }
+        // A player in a railing's own cell, over its rail.
+        server.world.set_block(c + IVec3::new(-2, 1, 0), BlockId::AIR);
+        set(&mut server, "base:oak_railing", [c + IVec3::new(-2, 0, 0)]);
+        assert!(server.blow_open(&body, reach, c.as_vec3() + Vec3::new(-1.5, 0.0, 0.5)), "no blow to the player in a railing's cell");
         for name in ["base:stone", "base:oak_lattice_window", "base:stone_arrow_slit"] {
             set(&mut server, name, [c + IVec3::new(-2, 0, 0), c + IVec3::new(-2, 1, 0)]);
             assert!(!server.blow_open(&body, reach, c.as_vec3() + Vec3::new(-1.5, 0.0, 1.5)), "a blow went through {name}");
