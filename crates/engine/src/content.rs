@@ -312,7 +312,7 @@ impl Content {
                         fishing.push(file);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
-                    "quests.ron" => {
+                    topic if topic == "quests.ron" || topic.starts_with("quests_") => {
                         quests.push(crate::quest::QuestRegistry::read(package, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
