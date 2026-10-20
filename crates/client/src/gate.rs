@@ -15337,8 +15337,18 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
     }
 }
 
-/// Where the snare step sets its snare, from where the dry step's rack stood.
-const SNARE_FROM_RACK: IVec3 = IVec3::new(3, 0, 0);
+/// How many blocks past the snare's own `shy_reach` from the cook step's campfire (which
+/// stays lit through the dry step) the snare step sets its snare: nearer, the snare is shy
+/// of the fire and nothing is caught or torn.
+const SNARE_PAST_SHY: i32 = 2;
+
+/// Where the snare step sets its snare: along from the cook step's campfire, past the
+/// snare's `shy_reach` (`traps.ron`).
+fn snare_cell(world: &World, gate: &Gate) -> IVec3 {
+    let content = &world.resource::<Launch>().content;
+    let reach = content.blocks.id("base:snare").and_then(|s| content.traps.set(s)).map_or(0.0, |t| t.shy_reach);
+    gate.feet + IVec3::new(0, 0, 14) + IVec3::X * (reach.ceil() as i32 + SNARE_PAST_SHY)
+}
 
 /// Server seconds a rabbit put in the snare is given (the traps look every 4 ticks) before
 /// it is taken to have slipped it, and the most put in: a rabbit is held three times in
@@ -15353,7 +15363,7 @@ fn client_gone(world: &World, at: IVec3) -> bool {
 }
 
 fn snare(world: &mut World, gate: &mut Gate, now: f32) {
-    let snare = gate.feet + IVec3::new(0, 0, 14) + RACK_FROM_FIRE + SNARE_FROM_RACK;
+    let snare = snare_cell(world, gate);
     let waited = gate.server_in_phase() > DRY_WAIT;
     let client = world.resource::<ClientWorld>();
     let is = |name: &str| client.registry.id(name).is_some_and(|b| client.block(snare) == Some(b));

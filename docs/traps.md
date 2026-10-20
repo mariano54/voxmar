@@ -61,4 +61,3 @@ How the snare meets the rest of the world, each a general rule:
 - **Rolls.** A rabbit standing in a snare is rolled for once. Each standing snare has its own number, and its rolls are drawn from that number and its count, so no one can replay a lucky roll: a snare set again in the same place is a new snare with a new number. Only standing snares are kept in the save.
 
 Later: bird nets (Hunter 3) and box traps (Hunter 8) are more entries in `traps.ron`, and bait that draws game to a trap is left for later.
-
