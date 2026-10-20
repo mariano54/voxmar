@@ -363,7 +363,8 @@ mod tests {
     /// as they join.
     #[test]
     fn placed_records_load_renamed_and_without_quests_gone() {
-        let mut content = crate::test_content();
+        // Its own load, not the shared one: the rename changes the blocks in place.
+        let mut content = crate::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).expect("content loads");
         std::sync::Arc::get_mut(&mut content.blocks).expect("its own").rename(vec![("base:old_snare".into(), "base:snare".into())]).unwrap();
         let saved = vec![([1, 2, 3], "Ada".to_owned(), "base:old_snare".to_owned()), ([4, 5, 6], "ada".to_owned(), "base:cobblestone".to_owned()), ([7, 8, 9], "ada".to_owned(), "base:gone".to_owned())];
         let restored = super::restore_placed(&saved, &content.blocks, &content.quests);
