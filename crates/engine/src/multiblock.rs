@@ -157,6 +157,11 @@ impl Multiblock {
         self.cells.iter().map(|(o, _)| o.x.abs().max(o.z.abs())).max().unwrap_or(0)
     }
 
+    /// Where each of its cells lies with its core at `core`, turned `turns` quarter turns.
+    pub fn cells_at(&self, core: IVec3, turns: u8) -> impl Iterator<Item = IVec3> + '_ {
+        self.cells.iter().map(move |(offset, _)| core + turned(*offset, turns))
+    }
+
     /// Whether the structure stands with its core at `core`, turned any way; `block` says
     /// what is where (none for a place not loaded, which never matches).
     pub fn stands(&self, core: IVec3, block: impl Fn(IVec3) -> Option<BlockId>) -> bool {

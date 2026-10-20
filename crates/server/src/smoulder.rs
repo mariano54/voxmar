@@ -77,7 +77,8 @@ impl Server {
     }
 
     /// A block changed at `changed`: a smouldering structure it was part of, no longer
-    /// standing, has been opened, and what it holds is part-burnt.
+    /// standing, has been opened, and what it holds is part-burnt. One partly in land not
+    /// loaded is judged once all of it is there again, never as opened for the land missing.
     pub(crate) fn smoulder_changed(&mut self, changed: IVec3) {
         if self.smoulders.is_empty() {
             return;
@@ -89,7 +90,9 @@ impl Server {
             .iter()
             .filter(|&(&core, s)| {
                 (changed - core).abs().max_element() <= reach
-                    && structures.get(&s.structure).is_some_and(|m| m.includes(core, changed) && !m.stands(core, |p| self.world.block(p)))
+                    && structures.get(&s.structure).is_some_and(|m| {
+                        m.includes(core, changed) && m.cells_at(core, s.turn).all(|p| self.world.block(p).is_some()) && !m.stands(core, |p| self.world.block(p))
+                    })
             })
             .map(|(&core, _)| core)
             .collect();
@@ -328,6 +331,11 @@ mod tests {
         light(&mut server);
         server.day += burn_ticks(&server) * 3.0 / 8.0;
         server.tend_smoulders();
+        // A change told while its land is not loaded opens nothing: missing land is no gap.
+        let column = server.world.remove(ColumnPos::new(0, 0)).unwrap();
+        server.smoulder_changed(CORNER);
+        server.world.insert(ColumnPos::new(0, 0), column);
+        assert_eq!(server.smoulders.len(), 1, "still smouldering with its land unloaded");
         server.set_block(CORNER, BlockId::AIR);
         assert_eq!(charred(&server), [("base:charred_wood_heap".to_owned(), 9)]);
         assert!(server.smoulders.is_empty() && server.block(FLUE) == Some(BlockId::AIR));
