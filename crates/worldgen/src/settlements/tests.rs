@@ -1624,10 +1624,14 @@ fn a_settlement_stands_near_spawn() {
         let spawn = world.spawn_point();
         let at = IVec2::new(spawn.x, spawn.z);
         assert!(!world.settlements.covers(&world, spawn.x, spawn.z), "seed {seed}: spawn at {spawn} is inside a settlement");
-        let nearest = world.settlements_near(at, 2048).iter().map(|s| IVec2::new(s.centre.x, s.centre.z).as_vec2().distance(at.as_vec2())).fold(f32::MAX, f32::min);
-        if nearest <= within {
+        // A settlement stands inside its own square of the grid, so any within reach is in
+        // a square that the box `within` round spawn touches: those alone are planned to
+        // decide, and further ones only to say how far the nearest is when none is.
+        let nearest = |radius: i32| world.settlements_near(at, radius).iter().map(|s| IVec2::new(s.centre.x, s.centre.z).as_vec2().distance(at.as_vec2())).fold(f32::MAX, f32::min);
+        if nearest(within as i32) <= within {
             return (seed, None);
         }
+        let nearest = nearest(2048);
         let sites = world.settlements.spawn_has_sites(&world);
         eprintln!("seed {seed}: none within {within} of spawn at {spawn}; spots in reach: {sites}");
         if sites {
