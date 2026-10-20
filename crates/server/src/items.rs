@@ -476,6 +476,41 @@ impl Items {
 mod tests {
     use super::*;
 
+    /// A clear and a move sent together are handled before the tick, and the tick picks up
+    /// whatever lies where the player now stands: so the one state the player is sent that
+    /// tick already carries what was picked up, and the pack is never seen empty. The gate's
+    /// dry step once cleared, then moved onto a rabbit's loot from an earlier step's kill,
+    /// and waited forever for the empty pack it would clear again on; it now clears only once
+    /// there.
+    #[test]
+    fn a_clear_then_a_move_onto_loot_is_never_seen_empty() {
+        use voxmar_protocol::{ClientMessage, ServerMessage};
+        let mut server = crate::test_server();
+        let (client, connection) = voxmar_protocol::local_pair();
+        let mut player = crate::player::Player::new(1, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
+        (player.joined, player.admin, player.name) = (true, true, "test".into());
+        let raw = server.content.blocks.expect("base:raw_small_game");
+        player.inventory.add(raw, 2);
+        server.players.insert(1, player);
+        let at = server.spawn.floor().as_ivec3();
+        server.load_area(at - IVec3::new(12, 0, 12), at + IVec3::new(12, 0, 12));
+        // The rabbit's loot, lying well out of reach of where the player stands now.
+        let to = server.players[&1].position + Vec3::new(8.0, 0.0, 0.0);
+        server.items.spawn(ItemStack { item: raw, count: 1 }, Loose::new(to + Vec3::new(0.4, 0.0, 0.0), Vec3::ZERO), 0.0);
+        while let Ok(Some(_)) = client.try_recv() {}
+        client.send(ClientMessage::Command { line: "clear raw_small_game".into() });
+        client.send(ClientMessage::Command { line: format!("tp {} {} {}", to.x, to.y, to.z) });
+        server.handle_messages();
+        server.tick();
+        let carried: Vec<u32> = std::iter::from_fn(|| client.try_recv().ok().flatten())
+            .filter_map(|m| match m {
+                ServerMessage::PlayerState { inventory, .. } => Some(inventory.count(raw)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(carried, vec![1], "the states sent after a clear and a move onto loot");
+    }
+
     #[test]
     fn a_crop_nobody_sowed_gives_at_its_unsown_chance_and_tree_fruit_always() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
