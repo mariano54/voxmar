@@ -170,8 +170,8 @@
             (from: (2, 0, 2), to: (14, 2, 14)),
             (from: (2, 8, 2), to: (14, 10, 14)),
             (from: (2, 14, 2), to: (14, 16, 14)),
-            (from: (3, 2, 6), to: (7, 7, 11), textures: All("terracotta")),
-            (from: (9, 2, 5), to: (13, 6, 10), textures: All("terracotta")),
+            (from: (3, 2, 6), to: (7, 7, 11), textures: All("furniture_pot")),
+            (from: (9, 2, 5), to: (13, 6, 10), textures: All("furniture_pot")),
             (from: (5, 10, 5), to: (11, 14, 12), textures: All("furniture_cask")),
         ]),
         // A stair (the step facing north) with panelled doors in its riser.

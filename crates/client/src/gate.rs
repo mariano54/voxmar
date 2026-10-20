@@ -10486,7 +10486,9 @@ fn shapes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     }
 }
 
-/// The building pieces the pieces step sets (blocks_building.ron), in a facing or two.
+/// The building pieces the pieces step sets (blocks_building.ron) and the built-in
+/// furnishings (blocks_furnishings.ron), in a facing or two. A piece that is not solid (a
+/// window seat, sat in as every seat is) passes stopping nothing.
 const PIECES: [&str; 35] = [
     "oak_post", "birch_beam_east", "dark_oak_lattice_window", "thatch_roof", "thatch_ridge", "oak_shingles_south", "birch_shingle_ridge", "cobblestone_stairs_west", "stone_brick_slab",
     "hide_lean_to", "wattle_panel_east", "wooden_shutters", "chimney_stack", "chimney_pot", "oak_jetty_beam_south", "stone_flue", "chimney_hood", "birch_shuttered_window",
@@ -10605,6 +10607,7 @@ fn pieces(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let client = world.resource::<ClientWorld>();
             let boxes = client.block(cell).map(|b| client.registry.collision(b).to_vec()).unwrap_or_default();
             let filled: f32 = boxes.iter().map(|b| (b.max - b.min).element_product()).sum();
+            let solid = client.block(cell).is_some_and(|b| client.registry.info(b).solid);
             let shaped = i < PIECES.len();
             let way = i >= PIECES.len() + WALLS.len();
             let result = if !stood(world, spot(i)) {
@@ -10615,6 +10618,8 @@ fn pieces(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 Err(format!("{name}, a frame round a way through, stops movement with {} boxes filling {:.0}% of its cell", boxes.len(), filled * 100.0))
             } else if way {
                 Ok("under the crosshair, on client and server, stopping nothing: the way through it is open".to_owned())
+            } else if shaped && !solid && boxes.is_empty() {
+                Ok("under the crosshair, on client and server, not solid and stopping nothing, as a seat".to_owned())
             } else if shaped && (boxes.is_empty() || filled >= 0.999) {
                 Err(format!("{name} stops movement with {} boxes filling {:.0}% of its cell: not its shape", boxes.len(), filled * 100.0))
             } else if !shaped && boxes != voxmar_engine::physics::CUBE {
