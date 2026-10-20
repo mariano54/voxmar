@@ -309,6 +309,20 @@ fn heal_most_below_food(content: &Content, heal_most: f32) -> Result<(), String>
 
 /// Loads every content package under `assets/content`, and checks the world
 /// generator's definitions in them, so a broken package fails at startup.
+/// How each block (by id) shelters as a wall of a home's room, as `Server::room_walls`
+/// judges it (survival.ron's furniture looked past), for the client to hear a home's walls
+/// as the server judges them.
+pub fn wall_shelters(content: &Content) -> Vec<Option<voxmar_engine::effect::Shelter>> {
+    let Ok(rules) = rules::SurvivalRules::load(&content.files, &content.blocks, &mut Vec::new()) else { return vec![None; content.blocks.len()] };
+    (0..content.blocks.len())
+        .map(|id| {
+            let id = voxmar_engine::block::BlockId(id as u16);
+            let tags = &content.blocks.def(id).tags;
+            voxmar_engine::effect::Shelter::of_wall(tags, content.blocks.info(id).solid, rules.furniture(tags))
+        })
+        .collect()
+}
+
 pub fn load_content(assets: &Path) -> Result<Content, Box<dyn std::error::Error>> {
     let mut content = Content::load(&assets.join("content"))?;
     if let Some(missing) = NAMED_ACTIONS.iter().find(|name| content.actions.id(name).is_none()) {

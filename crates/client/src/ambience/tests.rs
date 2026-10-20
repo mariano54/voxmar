@@ -139,7 +139,7 @@ fn run(ambience: &Ambience, scene: &Scene, seconds: f32) -> (Vec<(f32, Cue)>, Ve
 fn structures_are_heard_as_fires_only_while_lit() {
     let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
     let ambience = base();
-    let kinds = super::kinds(&ambience, &content.blocks, &content.multiblocks);
+    let kinds = super::kinds(&ambience, &content.blocks, &content.multiblocks, &voxmar_server::wall_shelters(&content));
     let fire = ambience.groups.iter().position(|g| g.name == "fire").unwrap() as u8;
     for (name, lit_only) in [("base:hearthstone", true), ("base:crucible", true), ("base:campfire", false), ("base:pit_kiln", false)] {
         let id = content.blocks.expect(name).0 as usize;
@@ -466,7 +466,7 @@ fn ambience_survey() {
     let content = voxmar_server::load_content(&assets).unwrap();
     let generator = Overworld::with_content(seed, content.blocks.clone(), &WorldContent::load(&content).unwrap());
     let ambience = Ambience::load(&content.files).unwrap();
-    let kinds = super::kinds(&ambience, &content.blocks, &content.multiblocks);
+    let kinds = super::kinds(&ambience, &content.blocks, &content.multiblocks, &voxmar_server::wall_shelters(&content));
     let around = |x: i32, z: i32| {
         let center = ColumnPos::of_block(IVec3::new(x, 0, z));
         let mut world = VoxelWorld::default();
@@ -723,6 +723,153 @@ fn the_settlement_axis_is_the_way_to_the_nearest_middle() {
     assert_eq!(place.settlement, super::defs::NO_SETTLEMENT, "a settlement out of hearing counted");
 }
 
+/// A draughty home whistles on a windy night, louder the more draughty wall is near: in a
+/// room walled with wattle under thatch the draught plays, and walled with bare earth too
+/// (untagged, so draughty as the home judges it); the same room daubed is silent, though it
+/// stands on earth (a floor is no wall); and outside, by the same wattle walls but under
+/// the open sky, it is silent too. The walls are counted by the enclosure scan, as in the
+/// game.
+#[test]
+fn a_draughty_home_whistles_until_daubed() {
+    use voxmar_engine::coords::ColumnPos;
+    use voxmar_engine::world::{Column, VoxelWorld};
+
+    let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+    let content = voxmar_server::load_content(&assets).unwrap();
+    let blocks = &content.blocks;
+    let ambience = Ambience::load(&content.files).unwrap();
+    let kinds = super::kinds(&ambience, blocks, &content.multiblocks, &voxmar_server::wall_shelters(&content));
+    let id = |name: &str| blocks.id(name).unwrap_or_else(|| panic!("{name}"));
+    let group = ambience.groups.iter().position(|g| g.name == "draughty").expect("a draughty group");
+    let draught = ambience.beds.iter().position(|b| b.name == "base:draught").expect("a draught bed");
+    // A room five across inside, walls three high on an earth floor, a thatched roof over it.
+    let room = |wall: &str, roofed: bool| {
+        let mut world = VoxelWorld::default();
+        for dz in -1..=1 {
+            for dx in -1..=1 {
+                world.insert(ColumnPos::of_block(IVec3::ZERO).offset(dx, dz), std::sync::Arc::new(Column::default()));
+            }
+        }
+        for x in -3..=3 {
+            for z in -3..=3 {
+                world.set_block(IVec3::new(x, 9, z), id("base:dirt"));
+                for y in 10..13 {
+                    if x.abs() == 3 || z.abs() == 3 {
+                        world.set_block(IVec3::new(x, y, z), id(wall));
+                    }
+                }
+                if roofed {
+                    world.set_block(IVec3::new(x, 13, z), id("base:thatch_roof"));
+                }
+            }
+        }
+        world
+    };
+    let soft = ambience.roofs.patters.iter().position(|p| p == "roof_soft");
+    let night = [("wind", 12.0), ("sun", -0.6), ("raining", 0.0), ("air", 0.1), ("sky", 0.0)];
+    let heard = |world: &VoxelWorld, eye: IVec3, sheltered: f32| {
+        let found = super::enclosure::scan(eye, |p| world.block(p), |_| true, &kinds, 1);
+        let draughty = ambience.presence(group, found.groups[group]);
+        let place = scene(&ambience, "home", &["forest"], &[night.as_slice(), &[("draughty", draughty), ("sheltered", sheltered)]].concat());
+        (draughty, run(&ambience, &place, 20.0).1[draught])
+    };
+    let under_thatch = ambience.roofs.sheltered(|_| false, soft);
+    let full = ambience.beds[draught].volume;
+    let (walls, wattle) = heard(&room("base:wattle_panel", true), IVec3::new(0, 11, 0), under_thatch);
+    assert!(walls > 0.5 && wattle > 0.5 * full, "in a wattle room the draughty walls count {walls:.2} and the draught plays at {wattle:.3} of {full}");
+    let (walls, earth) = heard(&room("base:dirt", true), IVec3::new(0, 11, 0), under_thatch);
+    assert!(walls > 0.5 && earth > 0.5 * full, "in an earth-walled room the draughty walls count {walls:.2} and the draught plays at {earth:.3}");
+    let (walls, daubed) = heard(&room("base:daub", true), IVec3::new(0, 11, 0), under_thatch);
+    assert!(walls == 0.0 && daubed < 1e-3, "daubed, the walls still count {walls:.2} as draughty and the draught plays at {daubed:.3}");
+    // Outside, a step from the wattle wall, no roof overhead.
+    let (walls, outside) = heard(&room("base:wattle_panel", false), IVec3::new(5, 11, 0), 0.0);
+    assert!(walls > 0.0 && outside < 1e-3, "outside by the wattle (counting {walls:.2}) the draught plays at {outside:.3}");
+    // Fewer draughty walls, a fainter whistle: one wall of wattle, the rest daubed.
+    let mut patched = room("base:daub", true);
+    for x in -3..=3 {
+        for y in 10..13 {
+            patched.set_block(IVec3::new(x, y, -3), id("base:wattle_panel"));
+        }
+    }
+    let (some, fainter) = heard(&patched, IVec3::new(0, 11, 0), under_thatch);
+    assert!(some > 0.0 && fainter > 0.0 && fainter < wattle, "one wattle wall left plays at {fainter:.3}, not under the {wattle:.3} of four");
+}
+
+/// A roof block muffles the rain once: thatch, tagged `shelter:sound` for the home's walls,
+/// is no quieter overhead than its soft patter alone makes it; a roof of no muffling patter
+/// is muffled by its shelter tags instead.
+#[test]
+fn a_thatch_roof_muffles_the_rain_once() {
+    let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+    let content = voxmar_server::load_content(&assets).unwrap();
+    let ambience = Ambience::load(&content.files).unwrap();
+    let roofs = &ambience.roofs;
+    let thatch = content.blocks.def(content.blocks.id("base:thatch_roof").unwrap());
+    assert!(thatch.has_tag("shelter:sound"), "thatch is a sound wall now; this test checks it is not counted twice overhead");
+    let soft = roofs.patters.iter().position(|p| p == "roof_soft").unwrap();
+    let once = 1.0 - (1.0 - roofs.muffle) * (1.0 - roofs.patter_shelter[soft]);
+    let heard = roofs.sheltered(|tag| thatch.has_tag(tag), Some(soft));
+    assert!(heard <= once + 1e-6, "thatch muffles {heard:.3}, more than its patter alone ({once:.3})");
+    assert!((heard - once).abs() < 1e-6, "thatch muffles {heard:.3}, not its patter's {once:.3}");
+    let sound = roofs.shelter.iter().find(|(tag, _)| tag == "shelter:sound").unwrap().1;
+    assert!((roofs.sheltered(|tag| tag == "shelter:sound", None) - (1.0 - (1.0 - roofs.muffle) * (1.0 - sound))).abs() < 1e-6);
+}
+
+/// Fire in the thatch as the server tells it: thatch the server says smoulders hisses, and
+/// the same thatch not smouldering is silent; burning cells crackle, fuller with more of
+/// them near and thinner as they burn out, silent with none. Counted by the enclosure scan
+/// from the blocks and the server's smoulders, as in the game.
+#[test]
+fn thatch_hisses_as_it_smoulders_and_crackles_thinner_as_it_burns_out() {
+    use voxmar_engine::coords::ColumnPos;
+    use voxmar_engine::world::{Column, VoxelWorld};
+
+    let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+    let content = voxmar_server::load_content(&assets).unwrap();
+    let blocks = &content.blocks;
+    let ambience = Ambience::load(&content.files).unwrap();
+    let kinds = super::kinds(&ambience, blocks, &content.multiblocks, &voxmar_server::wall_shelters(&content));
+    let id = |name: &str| blocks.id(name).unwrap_or_else(|| panic!("{name}"));
+    let group = |name: &str| ambience.groups.iter().position(|g| g.name == name).unwrap_or_else(|| panic!("a {name} group"));
+    let bed = |name: &str| ambience.beds.iter().position(|b| b.name == format!("base:{name}")).unwrap_or_else(|| panic!("a {name} bed"));
+    let (smoulder, blaze) = (group("smoulder"), group("blaze"));
+    let burning = content.fire.burning.expect("fire.ron burns");
+    // Open ground, and `cells` of a row three blocks off set to `block`.
+    let world = |block: voxmar_engine::block::BlockId, cells: i32| {
+        let mut world = VoxelWorld::default();
+        for dz in -1..=1 {
+            for dx in -1..=1 {
+                world.insert(ColumnPos::of_block(IVec3::ZERO).offset(dx, dz), std::sync::Arc::new(Column::default()));
+            }
+        }
+        for x in -6..=6 {
+            for z in -6..=6 {
+                world.set_block(IVec3::new(x, 9, z), id("base:dirt"));
+            }
+        }
+        for i in 0..cells {
+            world.set_block(IVec3::new(3, 10, i - 3), block);
+        }
+        world
+    };
+    let night = [("sun", -0.6), ("air", 0.8), ("sky", 0.9), ("wind", 1.0), ("raining", 0.0)];
+    let heard = |world: &VoxelWorld, smoulders: bool, listen: usize| {
+        let found = super::enclosure::scan(IVec3::new(0, 10, 0), |p| world.block(p), |_| smoulders, &kinds, 1);
+        let axes = [("smoulder", ambience.presence(smoulder, found.groups[smoulder])), ("blaze", ambience.presence(blaze, found.groups[blaze]))];
+        let place = scene(&ambience, "yard", &["plains"], &[night.as_slice(), &axes].concat());
+        run(&ambience, &place, 20.0).1[listen]
+    };
+    let (hiss, crackle) = (bed("smoulder_hiss"), bed("blaze_crackle"));
+    let thatch = world(id("base:thatch_roof"), 1);
+    let smouldering = heard(&thatch, true, hiss);
+    assert!(smouldering > 0.5 * ambience.beds[hiss].volume, "smouldering thatch hisses at {smouldering:.3} of {}", ambience.beds[hiss].volume);
+    let still = heard(&thatch, false, hiss);
+    assert!(still < 1e-3, "thatch the server does not say smoulders hisses at {still:.3}");
+    let [six, two, none] = [6, 2, 0].map(|cells| heard(&world(burning, cells), false, crackle));
+    assert!(six > 0.8 * ambience.beds[crackle].volume, "six burning cells near crackle at {six:.3} of {}", ambience.beds[crackle].volume);
+    assert!(two > 0.05 && two < 0.75 * six, "two burning cells left crackle at {two:.3}, against {six:.3} for six: it thins as they burn out");
+    assert!(none < 1e-3, "with every cell burned out the crackle plays at {none:.3}");
+}
 
 /// A settlement through its day, as the world and the server's clock and weather tell it:
 /// by day its people talk across it, fuller in a village than a hamlet and fewer out in
@@ -778,4 +925,37 @@ fn a_settlement_talks_by_day_comes_home_at_dusk_and_sleeps_at_night() {
         let (away, named, _) = heard(&place(30.0, 100.0, &[("sun", sun)]), 180.0);
         assert!(away[murmur] < 1e-3 && away[evening] < 1e-3 && named.iter().all(|(_, n)| *n == 0), "a hundred blocks off at sun {sun}: {:.3} {:.3} {named:?}", away[murmur], away[evening]);
     }
+}
+
+/// A survey still out when the player leaves a game is of the world left: its answer,
+/// coming back after, is dropped, not heard in the next world (a village's murmur where
+/// there is none), and the next game's first survey does not wait on it.
+#[test]
+fn a_survey_of_the_world_left_is_not_heard_in_the_next() {
+    let answer = |number: u64, temperature: f32| super::Survey { number, enclosure: Default::default(), place: Some(super::Place { temperature, ..Default::default() }) };
+    let mut surveys = super::Surveys::new();
+    // Survey 3 goes out in the first world, and the player leaves before it comes back.
+    surveys.out = true;
+    surveys.leave(3);
+    assert!(!surveys.out, "the next game's first survey waits on one of the world left");
+    // In the next world survey 4 goes out; 3's answer comes back first, then 4's.
+    surveys.out = true;
+    surveys.tx.send(answer(3, 0.9)).unwrap();
+    assert!(surveys.answers().is_empty(), "the answer of a survey of the world left is taken");
+    assert!(surveys.out, "an old answer is no answer to the survey out now");
+    surveys.tx.send(answer(4, 0.2)).unwrap();
+    let answers = surveys.answers();
+    assert_eq!(answers.iter().map(|s| (s.number, s.place.as_ref().map(|p| p.temperature))).collect::<Vec<_>>(), [(4, Some(0.2))]);
+    assert!(!surveys.out);
+}
+
+/// The beds wait for every recorded clip to load (or fail) before any plays, so a muffled
+/// twin, made at once from the same recording, never starts ahead of its dry clip.
+#[test]
+fn recorded_beds_and_their_muffled_twins_start_together() {
+    // Bed 0 synthesized (there at once), bed 1 recorded in two clips.
+    let beds = vec![vec![0], vec![1, 2]];
+    assert!(!super::beds_ready(&beds, |&clip| clip != 2), "a recording still loading");
+    assert!(super::beds_ready(&beds, |_| true));
+    assert!(super::beds_ready(&Vec::<Vec<u8>>::new(), |_| false), "no beds, nothing to wait on");
 }

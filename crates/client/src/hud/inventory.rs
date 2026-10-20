@@ -527,10 +527,12 @@ fn craft(
     let all = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
     let Some(craft) = actions.named("core:craft") else { return };
     let mut inventory = player.inventory.clone();
+    // What it is made of says how it sounds: flint knapped, clay shaped, wood whittled.
+    let with = player.inventory.grid().into_iter().flatten().collect();
     if craft_grid(&mut inventory, &recipes, allowed, near, all) > 0 {
         player.inventory = inventory;
         // Heard as crafting (`sounds.ron`), not as a click.
-        net.propose(craft, ActionTarget::Slot(if all { 0 } else { 1 }));
+        net.propose_with(craft, ActionTarget::Slot(if all { 0 } else { 1 }), with);
     }
 }
 
