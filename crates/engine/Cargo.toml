@@ -10,3 +10,7 @@ serde.workspace = true
 ron.workspace = true
 rustc-hash.workspace = true
 tracing.workspace = true
+
+[features]
+# What other crates' tests reach into (changing a species' checked data in place).
+test-support = []

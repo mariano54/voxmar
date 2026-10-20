@@ -22,3 +22,6 @@ libc = "0.2"
 [[bin]]
 name = "voxmar-server"
 path = "src/main.rs"
+
+[dev-dependencies]
+voxmar_engine = { workspace = true, features = ["test-support"] }
