@@ -623,6 +623,17 @@ fn strike(ctx: &Ctx, mind: &mut Mind, target: Option<Seen>, stalks: bool) -> Dec
     // measures it (from its body's edge, at its own size): a boss with a volley strikes
     // from afar, and closes in where none of its moves fits (`moves::Creature::reaches`).
     let d = flat(p.position, ctx.at.position);
+    // Between blows, one that circles backs off past its reach and moves round the target,
+    // facing it, aiming `round` degrees on round from where it stands (each its own way).
+    if mind.circling > 0.0
+        && let Some((reach, circle)) = def.attack.and_then(|a| a.circle.map(|c| (a.reach, c)))
+    {
+        let from = (ctx.at.position - p.position).with_y(0.0).normalize_or(Vec3::X);
+        let side = if mind.seed & 1 == 0 { 1.0 } else { -1.0 };
+        let round = glam::Quat::from_rotation_y(side * circle.round.to_radians()) * from;
+        let off = def.body.size.0 * ctx.at.scale * 0.5 + reach + circle.away;
+        return Decision { goal: Some(p.position + round * off), speed: run(ctx) * circle.pace, face: Some(p.position), ..Default::default() };
+    }
     let reaches = ctx.creature.reaches(ctx.at.phase, ctx.creature.edge(d, ctx.at.scale));
     let close = reaches && (p.position.y - ctx.at.position.y).abs() < def.body.size.1 + 1.5;
     let mut decision = Decision { face: Some(p.position), ..Default::default() };
