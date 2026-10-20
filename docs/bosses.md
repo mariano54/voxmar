@@ -1,8 +1,9 @@
 # Bosses
 
-A boss is a creature with `boss: true` that lives in a lair and nowhere else. The first is
-the Rootmother, late in the Farm age (Oct 14). Everything below is data: a pack can add a
-boss with a creature, a lair and a quest, and replace hers.
+A boss is a creature with `boss: true`. Most live in a lair and nowhere else: the first is
+the Rootmother, late in the Farm age (Oct 14). One roams instead: Old Tusk, the Nomad age's
+great boar, placed by habitat like any animal (no `party_only`, no lair). Everything below
+is data: a pack can add a boss with a creature, a lair and a quest, and replace either.
 
 ## Where they live: lairs
 
@@ -62,6 +63,57 @@ counter, no knockback. What it adds, in `creature.rs` and `creature/moves.rs`:
   (the Rootmother's `forest`) choose among the boss tracks by their tags, wherever she is
   met, never another biome's; untagged boss tracks (none yet) are every boss's fallback.
   `every_boss_has_a_fight_track_of_its_own` checks each boss has one.
+
+## Charges
+
+Any attack may be a charge (`charge: (speed, distance, stun)` on the attack,
+`creature::moves::Charge`). Its wind-up shows as usual; then the creature runs straight
+the way it faced, its aim locked, at `speed` blocks a second for up to `distance` blocks,
+held from thinking until the run ends (`fight::Charging`, `Server::charge_ran`). It does not
+turn and does not look where it goes, so the land answers it, for any charger:
+
+| Rule | Test |
+| --- | --- |
+| It comes down on the first player in its way, judged as any blow (a dodge passes it), and stops there; one who stepped aside it runs past | `a_charge_runs_straight_and_strikes_the_first_player_in_its_way` |
+| A guard with `brace` (combat.ron: the spear's) raised facing it stops it on the point, heavy or not: the bracer's max hit and a counter's share more, sure to land, the player takes nothing, and it stands dazed `stun` seconds | `a_braced_spear_stops_a_charge_on_its_point` |
+| A wall two blocks high (or one it makes no way against) dazes it `stun` seconds; a single step it hops | `a_charge_into_a_wall_dazes_the_charger_and_hops_a_step` |
+| It runs off edges: a fall past survival's `safe_fall` costs it `feel.charge_fall` (a tenth) of its most health a block; a pit two deep holds it | `a_charge_off_a_cliff_hurts_and_a_pit_holds_the_charger` |
+
+A player up a tree or on a ledge more than its height and a half above it is out of its
+reach already (the brain's strike needs the target that close in height).
+
+## Old Tusk
+
+Nomad age. Level 10, health 60, defence 6, weak to stab. Roams Forest, Mixed Forest, Old
+Growth Forest and Sagebrush Steppe by day, alone among the boar herds (rarity Rare, as the
+spawn factors place it). Passive: he grazes and ignores players until struck, then fights to
+the end. His fight plays the forest's boss tracks, but only once he is in a fight (winding
+up, charging or hurt: `Creatures::stirred`), never while he grazes near.
+
+| Move | Phase | Damage | Reach | Wind-up | How to answer |
+| --- | --- | --- | --- | --- | --- |
+| Gore | both | 1-3 stab | 1.2 | 0.55 s, a nod | block |
+| Charge | 1 | 2-5 crush, heavy | from 3 to 12 | 1.0 s, a crouch | step aside or dodge; brace a spear; stand before a tree, a wall, a pit or a cliff |
+| Frenzy | 2 | 2-5 crush, heavy | from 3 to 14 | 0.75 s, a crouch | as the charge, quicker (11 a second, 20 blocks) |
+
+Below half he is maddened for 1.5 s, and his charges come quicker. Each charge dazes him 3 s
+(2.5 in the frenzy) when it meets a braced point or a wall: the moment for free blows.
+
+At the Nomad age's levels (Attack 5 to 10, a flint spear or stone sword at most 3 a blow)
+he takes about thirty blows; a braced spear deals 4 a charge and buys three seconds, and a
+ten-block cliff takes 42 of his 60. A truffle in hand tempts him, to lead him where you
+want him (his `favourite`).
+
+Loot: a great tusk (with a stick, a tusk club: Attack 5, a mace, max hit 5), 3-5 raw pork,
+2-3 hide, 1-2 lard, 2-3 bone, 2-5 gold, and 1 in 9 a flint spear. Hunter XP 60. The
+design's charge charm waits for the charm slot.
+
+The flint spear (Crafting 2: a flint, two sticks) is the Nomad's spear: Attack 1, max hit 3,
+reach 3.8, and it braces.
+
+The gate's Tusk step summons him on the pad: drawn, no fight music while he grazes, struck
+with a flint spear until he fights back, then from eight blocks off he winds up his charge,
+its tell shown, with his fight music on; every exit sweeps him away.
 
 ## The Rootmother
 
