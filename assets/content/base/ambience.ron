@@ -250,10 +250,22 @@
             duck: {"sheltered": 0.4, "rain": 0.3, "shelter": 0.75},
         ),
         // The still air of caves, recorded in a quarry tunnel: a slight room tone with drips
-        // far off.
+        // far off. Wet rock: under a moderate climate or wetter (moisture 0.75 and up), fading
+        // to dry rock's own, below, under dry lands and deserts (0.45 and down).
         (
             name: "cave", recording: ["sounds/cave_1.mp3", "sounds/cave_2.mp3", "sounds/cave_3.mp3"], volume: 0.45, fade: 5,
-            when: {"sky": (max: 0.05, fade: 0.15), "depth": (min: 5, fade: 4), "air": (min: 0.02, fade: 0.05)},
+            when: {"sky": (max: 0.05, fade: 0.15), "depth": (min: 5, fade: 4), "air": (min: 0.02, fade: 0.05), "moisture": (min: 0.75, fade: 0.3)},
+        ),
+        // Dry rock: the low, still air of a cave with no water in it, a faint draught and
+        // nothing dripping.
+        (
+            name: "dry_cave", sound: Cave, volume: 0.4, fade: 5,
+            when: {"sky": (max: 0.05, fade: 0.15), "depth": (min: 5, fade: 4), "air": (min: 0.02, fade: 0.05), "moisture": (max: 0.45, fade: 0.3)},
+        ),
+        // Water seeping into a pool underground, wet climate or dry: a thin trickle, near it.
+        (
+            name: "cave_seep", sound: Stream, volume: 0.14, fade: 4,
+            when: {"sky": (max: 0.05, fade: 0.15), "depth": (min: 5, fade: 4), "water": (min: 0.05, fade: 0.05)},
         ),
         // Lava seething and bubbling, near it.
         (
@@ -397,11 +409,24 @@
             when: {"wind": (min: 9, fade: 6), "wood": (min: 0.35, fade: 0.3)},
             duck: {"shelter": 0.75},
         ),
-        // Drips and distant rumbles underground; the reverb comes from the cave itself.
+        // Drips and distant rumbles underground; the reverb comes from the cave itself. The
+        // drips are wet rock's, and come oftener the deeper and more shut in the cave: a
+        // second, deep tier joins the first where it is deep and echoing.
         (
             name: "drip", sound: Drip, volume: 0.3, at: Block("rock"), per_minute: 4, cooldown: 3,
             pitch: (0.8, 1.25), reach: 10,
-            when: {"sky": (max: 0.05, fade: 0.15), "depth": (min: 6, fade: 6)},
+            when: {"sky": (max: 0.05, fade: 0.15), "depth": (min: 6, fade: 6), "moisture": (min: 0.75, fade: 0.3)},
+        ),
+        (
+            name: "deep_drip", sound: Drip, volume: 0.35, at: Block("rock"), per_minute: 6, cooldown: 2,
+            pitch: (0.7, 1.15), reach: 12,
+            when: {"sky": (max: 0.02, fade: 0.1), "depth": (min: 24, fade: 12), "reverb": (min: 0.5, fade: 0.3), "moisture": (min: 0.75, fade: 0.3)},
+        ),
+        // Dry rock instead: grit now and then, ticking down from the roof.
+        (
+            name: "grit", sound: Grit, volume: 0.25, at: Block("rock"), per_minute: 2, cooldown: 8,
+            pitch: (0.85, 1.2), reach: 10,
+            when: {"sky": (max: 0.05, fade: 0.15), "depth": (min: 6, fade: 6), "moisture": (max: 0.45, fade: 0.3)},
         ),
         (
             name: "rumble", sound: Rumble, volume: 0.35, at: Listener, per_minute: 0.3, cooldown: 120,
@@ -412,7 +437,7 @@
         (
             name: "far_drip", sound: Drip, volume: 0.15, at: Around(distance: (14, 30), height: (-4, 6)), per_minute: 1.5, cooldown: 10,
             pitch: (0.7, 1.0), reach: 10,
-            when: {"sky": (max: 0.05, fade: 0.15), "depth": (min: 5, fade: 4), "reverb": (min: 0.3, fade: 0.3)},
+            when: {"sky": (max: 0.05, fade: 0.15), "depth": (min: 5, fade: 4), "reverb": (min: 0.3, fade: 0.3), "moisture": (min: 0.75, fade: 0.3)},
         ),
         // Lava bursting a bubble now and then.
         (

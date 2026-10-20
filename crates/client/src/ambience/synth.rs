@@ -107,6 +107,8 @@ pub enum Synth {
     Drip,
     /// A deep, distant rumble from the rock.
     Rumble,
+    /// Grit loosed in a dry cave: a few fine stones ticking down the rock, a breath of dust.
+    Grit,
     /// A trunk or branch creaking in the wind.
     Creak,
     /// A bubble of lava bursting: a thick, low blurp and a spatter.
@@ -138,7 +140,7 @@ pub enum Synth {
 
 impl Synth {
     #[cfg(test)]
-    pub const ALL: [Synth; 45] = [
+    pub const ALL: [Synth; 46] = [
         Synth::Wind,
         Synth::Gale,
         Synth::Rustle,
@@ -172,6 +174,7 @@ impl Synth {
         Synth::Gust,
         Synth::Drip,
         Synth::Rumble,
+        Synth::Grit,
         Synth::Creak,
         Synth::LavaPop,
         Synth::Snap,
@@ -258,6 +261,7 @@ pub fn one_shot(synth: Synth, variant: usize) -> (Vec<f32>, [Vec<f32>; 2]) {
         Synth::Gust => gust(&mut noise),
         Synth::Drip => drip(&mut noise),
         Synth::Rumble => rumble(&mut noise),
+        Synth::Grit => grit(&mut noise),
         Synth::Creak => creak(&mut noise),
         Synth::LavaPop => lava_pop(&mut noise),
         Synth::Snap => snap(&mut noise),
@@ -1202,6 +1206,27 @@ fn rumble(noise: &mut Noise) -> Vec<f32> {
             let white = noise.next();
             let swell = if x < rise { (x / rise).powi(2) } else { ((1.0 - x) / (1.0 - rise)).powf(1.5) };
             (b.low(a.low(white)) * 4.0 + grit.band(white) * 0.3) * swell
+        })
+        .collect()
+}
+
+/// Grit loosed in a dry cave: a handful of tiny bright ticks, quickening and thinning as the
+/// stones run down the rock, over a soft hiss of dust that settles after them.
+fn grit(noise: &mut Noise) -> Vec<f32> {
+    let length = seconds(between(noise, 0.6, 1.0));
+    let ticks: Vec<(usize, f32)> = (0..between(noise, 5.0, 9.0) as usize)
+        .map(|_| {
+            let at = between(noise, 0.0, 1.0).powf(1.6) * 0.7;
+            ((at * length as f32) as usize, between(noise, 0.3, 1.0))
+        })
+        .collect();
+    let (mut tick, mut dust) = (Svf::new(4200.0, 3.0), Svf::new(2600.0, 0.8));
+    (0..length)
+        .map(|i| {
+            let x = i as f32 / length as f32;
+            let white = noise.next();
+            let hit: f32 = ticks.iter().filter(|(at, _)| i >= *at && i < at + 90).map(|(at, gain)| gain * (-((i - at) as f32) / 18.0).exp()).sum();
+            tick.band(white * hit) * 1.6 + dust.band(white) * 0.06 * (x * 4.0).min(1.0) * (1.0 - x).powi(2)
         })
         .collect()
 }

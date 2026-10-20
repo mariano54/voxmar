@@ -810,6 +810,19 @@ impl Recordings {
         Ok(())
     }
 
+    /// Whether every way's clips are files under `assets`, so none is silent for a path
+    /// mistyped.
+    pub(crate) fn check_way_files(&self, assets: &std::path::Path) -> Result<(), String> {
+        for (action, sound) in &self.actions {
+            for way in &sound.ways {
+                if let Some(missing) = way.sounds.iter().find(|path| !assets.join(path).is_file()) {
+                    return Err(format!("{RECORDINGS}: `{action}`'s way `{}` sounds `{missing}`, which is not there", way.name));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// The name of the way `action` done with `with` sounds as, if any.
     #[cfg(test)]
     pub(crate) fn way_named(&self, blocks: &BlockRegistry, action: &str, with: &[BlockId]) -> Option<&str> {
@@ -1758,6 +1771,10 @@ mod tests {
         assert_eq!(Recordings::load(&[base]).unwrap().check_ways(blocks), Ok(()));
         let bare = r#"(actions: {"core:craft": (sounds: ["c.ogg"], ways: [(name: "knap", with: ["flint"], sounds: ["k.ogg"])])})"#;
         assert!(Recordings::load(&[file(bare)]).unwrap().check_ways(blocks).is_err());
+        // Every shipped way's clips are there; one a mod mistyped is not, and fails the check.
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+        assert_eq!(recorded.check_way_files(&assets), Ok(()));
+        assert!(fine.check_way_files(&assets).is_err(), "content/mod/k.ogg is not there");
         for wrong in [
             r#"(actions: {"core:craft": (sounds: ["c.ogg"], ways: [(with: ["base:flint"], sounds: ["k.ogg"])])})"#,
             r#"(actions: {"core:craft": (sounds: ["c.ogg"], ways: [(name: "a", with: ["base:flint"], sounds: ["k.ogg"]), (name: "a", with: ["base:clay"], sounds: ["k.ogg"])])})"#,

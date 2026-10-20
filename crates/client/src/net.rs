@@ -100,7 +100,7 @@ impl Net {
     }
 
     /// Proposes `action`, done with `with` (the items in the crafting grid, or the block
-    /// worked and the item in hand), which say how it sounds (`sounds.ron`'s `ways`).
+    /// worked), which say how it sounds (`sounds.ron`'s `ways`).
     pub fn propose_with(&self, action: ActionId, target: ActionTarget, with: Vec<BlockId>) {
         self.connection.send(ClientMessage::Propose { action, target });
         self.proposed.lock().unwrap_or_else(|e| e.into_inner()).push(Proposed { action, with });

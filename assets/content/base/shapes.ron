@@ -556,6 +556,44 @@
             (from: (9.25, 2, 14), to: (10.75, 13, 15.5)),
             (from: (13.25, 2, 14), to: (14.75, 13, 15.5)),
         ]),
+        // A field fence across the middle of its cell, running east to west: half a post at
+        // each end (two fences side by side make one whole post) and two rails between. A
+        // block high, as a railing, so nothing steps over it.
+        "fence": (boxes: [
+            (from: (0, 0, 6.5), to: (2, 16, 9.5)),
+            (from: (14, 0, 6.5), to: (16, 16, 9.5)),
+            (from: (2, 5, 7), to: (14, 7.5, 9)),
+            (from: (2, 11, 7), to: (14, 13.5, 9)),
+        ]),
+        // A fence's corner: a post in the middle with rails out to the west and the north.
+        "fence_corner": (boxes: [
+            (from: (6.5, 0, 6.5), to: (9.5, 16, 9.5)),
+            (from: (0, 0, 6.5), to: (2, 16, 9.5)),
+            (from: (6.5, 0, 0), to: (9.5, 16, 2)),
+            (from: (2, 5, 7), to: (6.5, 7.5, 9)),
+            (from: (2, 11, 7), to: (6.5, 13.5, 9)),
+            (from: (7, 5, 2), to: (9, 7.5, 6.5)),
+            (from: (7, 11, 2), to: (9, 13.5, 6.5)),
+        ]),
+        // A field gate between two half posts: a frame of two rails and three uprights. Open,
+        // it stands swung out to the north, folded against its west post.
+        "fence_gate": (boxes: [
+            (from: (0, 0, 6.5), to: (2, 16, 9.5)),
+            (from: (14, 0, 6.5), to: (16, 16, 9.5)),
+            (from: (2, 4, 7.25), to: (14, 6, 8.75)),
+            (from: (2, 11, 7.25), to: (14, 13, 8.75)),
+            (from: (2, 6, 7.25), to: (3.5, 11, 8.75)),
+            (from: (7.25, 6, 7.25), to: (8.75, 11, 8.75)),
+            (from: (12.5, 6, 7.25), to: (14, 11, 8.75)),
+        ]),
+        "fence_gate_open": (boxes: [
+            (from: (0, 0, 6.5), to: (2, 16, 9.5)),
+            (from: (14, 0, 6.5), to: (16, 16, 9.5)),
+            (from: (2, 4, 0), to: (3.5, 6, 7)),
+            (from: (2, 11, 0), to: (3.5, 13, 7)),
+            (from: (2, 6, 0), to: (3.5, 11, 1.5)),
+            (from: (2, 6, 5.5), to: (3.5, 11, 7)),
+        ]),
         "railing_corner": (boxes: [
             (from: (0, 0, 13.5), to: (16, 2, 16), cull: true),
             (from: (0, 13, 13), to: (16, 16, 16), cull: true),

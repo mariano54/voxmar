@@ -372,6 +372,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Every shelter tag on a block says how it sounds: muffling the rain, or whistling.
     ambience.check_shelter_tags(&content.blocks)?;
     recorded.check_ways(&content.blocks)?;
+    recorded.check_way_files(&assets)?;
     recorded.mix.check().map_err(|e| format!("sounds.ron: {e}"))?;
     fx::ActionFx::load(&content.files)?.check(&content.actions)?;
     if let Some(effect) = textures::Source::bundled(&assets.join("packs")).unpictured(&content.effects).first() {

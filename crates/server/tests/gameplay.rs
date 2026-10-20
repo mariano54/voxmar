@@ -3309,8 +3309,11 @@ fn a_bare_hand_fells_no_tree_and_a_flint_axe_does() {
 // Keeping the locate radius small avoids planning hundreds of squares on the server.
 const VILLAGE_SEED: u64 = 3;
 
+/// The settlement tests' view distance, in columns.
+const SETTLEMENT_VIEW: i32 = 2;
+
 fn settlement_client() -> Client {
-    Client::join_with(ServerConfig { seed: VILLAGE_SEED, view_distance: 2, ..Default::default() })
+    Client::join_with(ServerConfig { seed: VILLAGE_SEED, view_distance: SETTLEMENT_VIEW, ..Default::default() })
 }
 
 /// Goes to the nearby test village within 2000 blocks at `time`, as a creative admin:
@@ -3416,7 +3419,7 @@ fn a_settlement_come_back_to_holds_its_people_once() {
     client.ok("/time freeze");
     // A person comes out only onto land the server holds, so on a busy machine they kept
     // coming as the land came in, past twenty looks: the looks begin once it is all in.
-    client.land_within(2);
+    client.land_within(SETTLEMENT_VIEW);
     // Settled: the same people two looks running. On a loaded machine the server can still
     // be bringing them in after three looks, so it looks until they hold still.
     let mut before = census(&client);

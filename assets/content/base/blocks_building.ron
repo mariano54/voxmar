@@ -63,6 +63,21 @@
             // and a railed balcony is open air.
             (name: "{name}_railing", render: Model, shape: "railing", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 1.0, color: (160, 120, 70), tags: ["timber", "railing", "wood", "building", "fuel"]),
             (name: "{name}_railing_corner", render: Model, shape: "railing_corner", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 1.0, color: (160, 120, 70), tags: ["timber", "railing", "wood", "building", "fuel"]),
+            // A field fence and its gate, to pen a farm's animals: posts and two rails across
+            // the middle of the cell, a block high. A fence is a railing to everyone (`railing`:
+            // a creature takes it as two high and only a boss or a wild fighter on a chase
+            // climbs it; a home's survey looks past it). The gate shut is one too; a right
+            // click swings it open (`swaps`, as a door), and open it stops nobody.
+            (name: "{name}_fence", render: Model, shape: "fence", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 1.0, color: (160, 120, 70), tags: ["timber", "railing", "fence", "wood", "building", "fuel"]),
+            (name: "{name}_fence_corner", render: Model, shape: "fence_corner", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 1.0, color: (160, 120, 70), tags: ["timber", "railing", "fence", "wood", "building", "fuel"]),
+            (
+                name: "{name}_fence_gate", render: Model, shape: "fence_gate", facing: true, sound: Wood, textures: All("furniture_grain"),
+                swaps: "{name}_fence_gate_open", hardness: 1.0, color: (160, 120, 70), tags: ["timber", "railing", "fence", "gate", "wood", "building", "fuel"],
+            ),
+            (
+                name: "{name}_fence_gate_open", render: Model, shape: "fence_gate_open", facing: true, solid: false, sound: Wood, textures: All("furniture_grain"),
+                swaps: "{name}_fence_gate", drops: "{name}_fence_gate", hardness: 1.0, color: (160, 120, 70), tags: ["timber", "fence", "gate", "wood", "building", "fuel"],
+            ),
             // A newel post: a stout post with a cap, at the foot or the turn of a stair.
             (name: "{name}_newel_post", render: Model, shape: "newel_post", sound: Wood, textures: All("furniture_grain"), hardness: 2.0, color: (160, 120, 70), tags: ["timber", "newel", "wood", "building", "fuel", "shelter:sound"]),
             // A landing: boards on two joists, its top level with a stair's, for the turn of a

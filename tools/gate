@@ -189,6 +189,11 @@ fi
 tools/bench --self-check || fail "tools/bench's self-check"
 reach_self_check || fail "the map from files to the crates they reach"
 tools/test-waits --self-check || fail "tools/test-waits' self-check"
+# A minute of scratch repos, so only when this branch changes it (what lands goes live on
+# the Mac within the hour), and only on a Mac, the one place it runs.
+if [[ $(uname -s) == Darwin ]] && ! git diff --quiet "$(git merge-base HEAD "$hygiene_base")" -- tools/tidy; then
+  tools/tidy --self-check || fail "tools/tidy's self-check"
+fi
 [[ $(git rev-parse HEAD) == $(git rev-parse "$hygiene_base") ]] && hygiene_base=origin/main
 tools/test-waits "$(git merge-base HEAD "$hygiene_base")" || fail "a test waits on the wall clock"
 [[ -z $(git status --porcelain --untracked-files=no) ]] && clean=1 || clean=0

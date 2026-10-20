@@ -1469,14 +1469,18 @@ pub(crate) fn test_server() -> Server {
 #[cfg(test)]
 pub(crate) const TEST_DRAW_KEY: u64 = 0x0d1a;
 
-/// The game's own content, as `test_server` loads it.
+/// The game's own content, as `test_server` loads it: loaded once for the run (0.14 s a
+/// load, and some 300 tests ask for it) and handed out as copies, which share its tables.
+/// A test that changes a table of its copy changes its own (`Arc::make_mut`), never the
+/// one the others are handed.
 #[cfg(test)]
 pub(crate) fn test_content() -> Content {
-    load_content(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).expect("content loads")
+    static CONTENT: std::sync::OnceLock<Content> = std::sync::OnceLock::new();
+    CONTENT.get_or_init(|| load_content(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).expect("content loads")).clone()
 }
 
 /// As `test_server`, on `content` already loaded: a test that makes many servers loads it
-/// once (a copy shares its tables, so one changed through `Arc::get_mut` must be its own).
+/// once (a copy shares its tables, so one is changed through `Arc::make_mut`).
 #[cfg(test)]
 pub(crate) fn test_server_on(content: Content) -> Server {
     // One draw key for every test server, as a world's own is random: wandering, grazing

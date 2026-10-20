@@ -28,6 +28,7 @@ and a pixel, `core/movement.ron`) without jumping; a whole block still takes a j
 | Window frame | `<timber>_window_frame` | jambs, a sill and a lintel round an opening, one block high; stops nothing | faces the placer | 2 posts, 2 beams make 2 (3) |
 | Shuttered window | `<timber>_shuttered_window` (`_shut`) | a lattice window with two leaves on its face, standing out open, across it shut | faces the placer; a right click shuts and opens them | a lattice window and shutters make 1 (3) |
 | Railing | `<timber>_railing`, `<timber>_railing_corner` | a handrail and a bottom rail along the back of the cell with balusters between, a block high; the corner turns along the east side too | the rail runs along the side away from the placer | 3 beams, 3 sticks make 3 (3); 2 railings make a corner (3) |
+| Fence, gate | `<timber>_fence`, `<timber>_fence_corner`, `<timber>_fence_gate` | half a post at each end and two rails across the middle of the cell, a block high; the corner turns from the west to the north; the gate a frame of rails and uprights, swung out north against its west post when open | runs across the placer's view | 4 posts, 2 sticks make 6 (2); 2 fences make a corner; 2 fences round a slab make a gate (2) |
 | Newel post | `<timber>_newel_post` | a post five texels square with a cap | | a slab on a post makes 1 (3) |
 | Landing | `<timber>_landing` | boards across the top of the cell on two joists, level with a stair's top | joists run away from the placer | 3 slabs on 2 beams make 3 (3) |
 | Balcony door | `balcony_door` (`_top`, `_open`, `_open_top`) | a plank door whose upper half is a lattice | placed whole, as a door; a right click opens and shuts it | a lattice window on a wooden door makes 1 (4) |
@@ -64,7 +65,11 @@ gallery or a landing keeps anyone from walking off it. A railing stands a block 
 nobody steps onto it, and to a creature it stands two high, as a fence does, so nothing
 hops over it: no animal walks on its top or on air over it, even from a step beside it.
 A boss, or a fighter after a player, climbs it as the block-high step it is, so a ring of
-railings is no pen to fight from. It walls no room: a home's survey looks past it (survival.ron's
+railings is no pen to fight from. A field fence and its gate are railings too (tagged
+`railing`), so a ring of fences pens a farm's animals; a right click swings the gate open
+(`swaps`, as a door), and open it stops nobody, so a mouflon led by wheat follows you out
+through it (`a_fenced_pen_holds_a_led_mouflon_until_its_gate_opens`; the gate's Pieces step
+judges a fence, a corner and a gate). It walls no room: a home's survey looks past it (survival.ron's
 `home_furniture` names `railing`), so a gallery round a hall leaves the hall as walled as it
 was. A shut balcony door is a sound lower half and a draughty lattice over it; open, it is
 a way through, as an empty frame is. At load a block tagged `railing` must be solid and a
@@ -76,8 +81,8 @@ Chimney pieces (`chimney_piece`: the stone and brick flues, the hood, the pot) c
 hearth's smoke up through a roof: stacked straight over the hearth's chimney (or over any
 block that smokes), its smoke comes out of the top of the stack while flames, embers and
 sparks stay at the fire, so a chimney carried up past the eaves smokes from its pot and not
-under the roof (client `emitters.rs` `flue_top`; a stack taller than eight smokes from its
-eighth piece; tests `only_smoke_goes_up_a_flue` and
+under the roof (client `emitters.rs` `flue_top`; a stack of any height smokes from its top
+piece; tests `only_smoke_goes_up_a_flue` and
 `a_flue_over_a_chimney_carries_its_smoke_up_to_the_pot`; the gate's Cook step builds its
 hearth's chimney with a brick flue and a pot and counts the pot's puffs, "chimney smoke").
 The stone flue comes at Construction 2, before brick, so a thatched house can have one, and
