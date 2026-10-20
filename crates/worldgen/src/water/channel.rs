@@ -755,7 +755,7 @@ mod tests {
         set_points(&mut edge, curves[2]);
         assert_eq!(edge.nearest(Vec2::ZERO), (2.0, 0.125, Vec2::new(4.0, 0.0)));
 
-        let registry = Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../../assets/content/base/blocks.ron")).unwrap());
+        let registry = Arc::new(crate::test_registry());
         let mut actual_edges = 0;
         for (seed, at) in [(7, IVec2::new(-1776, 752)), (14, IVec2::new(656, -304))] {
             let world = crate::Overworld::new(seed, registry.clone());

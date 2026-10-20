@@ -120,6 +120,8 @@ pub struct Fixed {
     pub sacks: Palette,
     pub crates: Palette,
     pub cloth: Palette,
+    /// What stands in homes; none where content gives no interiors.
+    pub interiors: Option<super::interior::Interiors>,
     pub dirt: BlockId,
     /// The chance of a stone lowest course, and old walls' share of weathered blocks.
     pub plinth: f32,
@@ -180,6 +182,19 @@ impl Spec {
             let p = frame.at(x, 0, z);
             IVec2::new(p.x, p.z)
         }).collect()
+    }
+
+    /// The room columns of the storeys above the ground, which no wing reaches.
+    pub fn upper_room(&self, frame: &Frame) -> Vec<IVec2> {
+        let foot = Foot { x0: 0, z0: 0, w: self.w, d: self.d, form: self.form };
+        (0..self.d)
+            .flat_map(|z| (0..self.w).map(move |x| (x, z)))
+            .filter(|&(x, z)| foot.room(x, z))
+            .map(|(x, z)| {
+                let p = frame.at(x, 0, z);
+                IVec2::new(p.x, p.z)
+            })
+            .collect()
     }
 
     /// The building's own box, everything it puts down included: overhangs, porch,
@@ -814,7 +829,8 @@ fn house(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Ca
             pen.set(x, lift + 1, z, fixed.torch);
             lit = true;
         }
-    } else if d >= 5 && w >= 4 {
+    } else if d >= 5 && w >= 4 && !(spec.kind == Kind::House && fixed.interiors.is_some()) {
+        // A home with interiors is furnished once its people are known (`interior`).
         let (tx, tz) = if rng.chance(0.5) { (w - 2, d - 2) } else { (w - 2, 1) };
         let (tx, tz) = if tx == door && tz == 1 { (1, d - 2) } else { (tx, tz) };
         let (tx, tz) = free(tx, tz);
@@ -1084,6 +1100,13 @@ pub fn make_room_for_stairs(spec: &mut Spec) {
 /// Steps of a stair under the hole in the floor above: a player jumps a block with three
 /// blocks of air overhead, so every step within three of the floor above opens to it.
 const STAIRWELL: usize = 3;
+
+/// The stairs `house` draws for `spec`, as `stairs` gives them.
+pub(super) fn flights(spec: &Spec) -> Vec<Option<Vec<(i32, i32)>>> {
+    let foot = Foot { x0: 0, z0: 0, w: spec.w, d: spec.d, form: spec.form };
+    let chimney = spec.chimney().filter(|&((x, z), _)| foot.room(x, z));
+    stairs(spec, spec.door.clamp(1, spec.w - 2), chimney.map(|c| c.0))
+}
 
 pub(super) fn stairs(spec: &Spec, door: i32, hearth: Option<(i32, i32)>) -> Vec<Option<Vec<(i32, i32)>>> {
     let (w, d) = (spec.w, spec.d);

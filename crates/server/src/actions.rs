@@ -29,7 +29,7 @@ use voxmar_engine::action::{ActionContext, ActionDef, ActionId, ActionTarget, Ef
 use voxmar_engine::block::{BlockId, BlockInfo, BlockRegistry};
 use voxmar_engine::crop::CropRegistry;
 use voxmar_engine::skill::SkillId;
-use voxmar_engine::glam::{IVec3, Vec3};
+use voxmar_engine::glam::{IVec2, IVec3, Vec3};
 use voxmar_engine::traits;
 use voxmar_engine::lang::Words;
 use voxmar_protocol::{ChatKind, PlayerId, ServerMessage, TICKS_PER_SECOND};
@@ -359,10 +359,7 @@ impl Server {
                     if let Some(upper) = self.content.blocks.upper(placed) {
                         self.set_block(cell + IVec3::Y, upper);
                     }
-                    // Marked as the player's: an ore teaches nothing broken again, and a
-                    // furnishing gives itself back (where the world placed one, it does not).
-                    // (By the block placed: a held item may place as another, as a torch does.)
-                    if self.content.tools.rule(item).is_some_and(|rule| rule.xp > 0.0) || self.content.blocks.def(placed).has_tag("furnishing") {
+                    if self.marks_placed(item, placed) {
                         self.placed.insert(cell);
                     }
                     self.placed_plant(item, cell);
@@ -476,9 +473,18 @@ impl Server {
 
     /// `agent` sleeps at the bed at `bed`: it is where they wake after dying (their hearth
     /// first, once they have one), and they wake rested, as well as the home around the
-    /// bed allows (effects.ron's `sleeps`). A bed always works, as a bed; the rest is held back
+    /// bed allows (effects.ron's `sleeps`). A bed a village home was furnished with is its
+    /// resident's and turns them away, but in creative. A bed always works, as a bed; the rest is held back
     /// while one is still on them, so the buff cannot be had again until it wears off.
     fn sleep(&mut self, agent: PlayerId, bed: IVec3) {
+        // A bed a village furnished a home with (its settlement's plan says so, and no player
+        // has set one down there since) is its resident's; any other works, however it came
+        // to be (placed, /setblock, an older save). In creative nothing stops them.
+        let creative = self.players.get(&agent).is_some_and(|p| p.allow_flight);
+        if !creative && !self.placed.contains(&bed) && self.planned_bed(bed) {
+            self.refuse(agent, Words::key("bed.someones"));
+            return;
+        }
         let player = self.players.get_mut(&agent).unwrap();
         player.bed = Some(bed.as_vec3() + Vec3::new(0.5, 1.0, 0.5));
         let key = if player.home.is_some() { "bed.set_home" } else { "bed.set" };
@@ -513,6 +519,16 @@ impl Server {
             let words = Words::key("bed.rested").with("name", Words::Own(key.clone(), def.title.clone())).with("what", Words::Own(format!("{key}.description"), def.description.clone()));
             player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: words });
         }
+    }
+
+    /// Whether a settlement's plan furnished one of its homes with a bed at `bed`, and that
+    /// very bed still stands there: one set down in its place (a bag, another bed, by hand
+    /// or by command) is not the village's.
+    fn planned_bed(&self, bed: IVec3) -> bool {
+        let Some(now) = self.block(bed) else { return false };
+        self.content.blocks.def(now).has_tag("bed")
+            && self.overworld.settlements_near(IVec2::new(bed.x, bed.z), 64).iter().any(|s| s.buildings.iter().any(|b| b.beds.contains(&bed)))
+            && voxmar_worldgen::Generator::generate(&*self.overworld, voxmar_engine::coords::ColumnPos::of_block(bed)).block(bed) == now
     }
 
     /// Why `agent` cannot lie down now, if they cannot: a creature that hunts players (but
@@ -576,6 +592,14 @@ impl Server {
             let name = self.content.blocks.def(output).name.clone();
             self.tally(agent, "crafted", &name, made * count as u32);
         }
+    }
+
+    /// Whether a cell a player set `item` down in, as `placed`, is marked as theirs: an ore
+    /// teaches nothing broken again, leaves give no stick (`instead`) again, and a furnishing
+    /// gives itself back (where the world placed one, it does not). (By the block placed: a
+    /// held item may place as another, as a torch does.)
+    pub(crate) fn marks_placed(&self, item: BlockId, placed: BlockId) -> bool {
+        self.content.tools.rule(item).is_some_and(|rule| rule.xp > 0.0 || rule.instead.is_some()) || self.content.blocks.def(placed).has_tag("furnishing")
     }
 
     /// What breaking the block at `pos` teaches (`tools.ron`), and sometimes an extra drop:
@@ -723,5 +747,30 @@ mod tests {
         assert!((1..64).contains(&flint), "flint {flint} times in 64 breaks of gravel");
         assert!((1..64).contains(&first.3), "a bonus drop {} times in 64 breaks with finds", first.3);
         assert_eq!(broken(1_377), first, "the same breaks later gave otherwise");
+    }
+
+    /// Leaves a player set down are marked as theirs, so breaking them gives no stick: forty
+    /// times placed and broken, never one, where a tree's leaves give one in five.
+    #[test]
+    fn placed_leaves_give_no_sticks() {
+        let mut server = crate::test_server();
+        let (_client, connection) = voxmar_protocol::local_pair();
+        let mut player = crate::player::Player::new(1, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
+        player.joined = true;
+        server.players.insert(1, player);
+        let leaves = server.content.blocks.expect("base:oak_leaves");
+        assert!(server.content.tools.rule(leaves).and_then(|r| r.instead).is_some(), "a tree's leaves give sticks");
+        let pos = server.spawn.floor().as_ivec3() + IVec3::new(2, 0, 0);
+        let sticks = (0..40)
+            .filter(|_| {
+                server.set_block(pos, leaves);
+                if server.marks_placed(leaves, leaves) {
+                    server.placed.insert(pos);
+                }
+                server.reward_break(1, pos)
+            })
+            .count();
+        assert_eq!(sticks, 0, "placed leaves gave a stick");
+        assert!(!server.placed.contains(&pos), "the mark goes with the break");
     }
 }
