@@ -165,10 +165,17 @@ fn keep_world(seed: u64, content: &Content) {
 }
 
 /// The game's content, loaded and checked once for the whole run: every server a test
-/// starts gets the same, as a player's game gives each world it opens.
+/// starts gets the same, as a player's game gives each world it opens. The item tables a
+/// load sets are the process's own: when a test has loaded a mod's since, they are loaded
+/// again, so no test plays on another's stack limits, pouches, worn slots or store holds.
 fn content() -> Content {
-    static LOADED: std::sync::OnceLock<Content> = std::sync::OnceLock::new();
-    LOADED.get_or_init(|| load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).expect("content loads")).clone()
+    static LOADED: std::sync::Mutex<Option<(Content, u64)>> = std::sync::Mutex::new(None);
+    let mut loaded = LOADED.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if loaded.as_ref().is_none_or(|(_, set)| *set != voxmar_engine::inventory::tables_set()) {
+        let content = load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).expect("content loads");
+        *loaded = Some((content, voxmar_engine::inventory::tables_set()));
+    }
+    loaded.as_ref().unwrap().0.clone()
 }
 
 /// Opens and registers a local connection only once its Hello is ready.
