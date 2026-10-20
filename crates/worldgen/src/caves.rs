@@ -291,20 +291,23 @@ impl Caves {
         let noodle_regions = grid(&self.noodle_regions);
         let labyrinth_regions = grid(&self.labyrinth_regions);
         let low = FLOOR;
+        // Carvers stop at the ground, so their lattices stop at the highest ground (water
+        // and the sea can stand above it).
+        let ground = geology.samples().iter().map(|g| g.height).max().unwrap_or(0).min(top);
         let lattice = |n: &FastNoiseLite, high: i32, step_y: i32, scale_y: f32| Lattice::noise(n, origin, low, high.max(low), step_y, scale_y);
         let tunnels = [
-            lattice(&self.tunnels[0], top, 8, TUNNEL_SCALE_Y),
-            lattice(&self.tunnels[1], top, 8, TUNNEL_SCALE_Y),
-            lattice(&self.tunnels[2], top.min(DEEP_TUNNELS), 8, TUNNEL_SCALE_Y),
+            lattice(&self.tunnels[0], ground, 8, TUNNEL_SCALE_Y),
+            lattice(&self.tunnels[1], ground, 8, TUNNEL_SCALE_Y),
+            lattice(&self.tunnels[2], ground.min(DEEP_TUNNELS), 8, TUNNEL_SCALE_Y),
         ];
         let cavernous = caverns.max() > self.cavern_cut || giants.max() > self.giant_cut;
-        let cheese = cavernous.then(|| lattice(&self.cheese, top, 8, 1.7));
-        let giant = (giants.max() > self.giant_cut).then(|| lattice(&self.giant, top, 8, 1.5));
+        let cheese = cavernous.then(|| lattice(&self.cheese, ground, 8, 1.7));
+        let giant = (giants.max() > self.giant_cut).then(|| lattice(&self.giant, ground, 8, 1.5));
         let noodles = (noodle_regions.max() > self.noodle_cut)
-            .then(|| [0, 1].map(|i| lattice(&self.noodles[i], top, 4, 1.0)));
+            .then(|| [0, 1].map(|i| lattice(&self.noodles[i], ground, 4, 1.0)));
         let labyrinth = (labyrinth_regions.max() > self.labyrinth_cut).then(|| {
             [0, 1].map(|i| {
-                Lattice::new(origin, low, top.max(low), 4, |p| {
+                Lattice::new(origin, low, ground.max(low), 4, |p| {
                     let (x, y, z) = self.labyrinth_warp.domain_warp_3d(p.x as f32, p.y as f32, p.z as f32);
                     if i == 0 {
                         self.labyrinth[0].get_noise_3d(x, y * LABYRINTH_SCALE_Y, z)
@@ -897,32 +900,35 @@ impl CaveColumn<'_> {
             .max()
             .unwrap_or(0);
         let clearance = Caves::clearance(&geo).max(beside).max(tunnel);
+        // Every carver leaves the `clearance` blocks under the surface whole: a river or lake
+        // keeps its bed, ravines and sinkholes included. Nothing above reads the lattices.
+        let top = height - clearance;
 
         let p = &mut *self.profiles;
         for (lattice, profile) in self.tunnels.iter().zip(&mut p.tunnels) {
-            lattice.profile(x, z, profile);
+            lattice.profile_to(x, z, top, profile);
         }
         if let Some(cheese) = &self.cheese
             && cavern + giant > 0.0
         {
-            cheese.profile(x, z, &mut p.cheese);
+            cheese.profile_to(x, z, top, &mut p.cheese);
         }
         if let Some(lattice) = &self.giant
             && giant > 0.0
         {
-            lattice.profile(x, z, &mut p.giant);
+            lattice.profile_to(x, z, top, &mut p.giant);
         }
         if let Some(lattices) = &self.noodles
             && noodle > 0.0
         {
-            lattices[0].profile(x, z, &mut p.noodles[0]);
-            lattices[1].profile(x, z, &mut p.noodles[1]);
+            lattices[0].profile_to(x, z, top, &mut p.noodles[0]);
+            lattices[1].profile_to(x, z, top, &mut p.noodles[1]);
         }
         if let Some(lattices) = &self.labyrinth
             && labyrinth > 0.0
         {
-            lattices[0].profile(x, z, &mut p.labyrinth[0]);
-            lattices[1].profile(x, z, &mut p.labyrinth[1]);
+            lattices[0].profile_to(x, z, top, &mut p.labyrinth[0]);
+            lattices[1].profile_to(x, z, top, &mut p.labyrinth[1]);
         }
         let column = Vec2::new(wx as f32 + 0.5, wz as f32 + 0.5);
         let ravines: Vec<RavineSpan> = self
@@ -952,9 +958,6 @@ impl CaveColumn<'_> {
         let noodle_radius = 1.25 * noodle.sqrt() * GRADIENT * NOODLE_FREQUENCY;
         let maze_gradient = GRADIENT * LABYRINTH_FREQUENCY;
 
-        // Every carver leaves the `clearance` blocks under the surface whole: a river or lake
-        // keeps its bed, ravines and sinkholes included.
-        let top = height - clearance;
         // Tunnels, at every height at once.
         if top >= FLOOR {
             let n = (top - FLOOR + 1) as usize;
