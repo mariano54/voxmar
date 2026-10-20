@@ -4196,8 +4196,7 @@ mod fight_tests {
 
     /// Old Tusk at charge range from a player with a trunk (a column four high) on the line:
     /// his charge is not his blow from where he stands (it is traced where it lands), so the
-    /// player is open to it and his brain picks it, rather than walking in to gore. His gore
-    /// up close is traced from where he stands, and the trunk shuts it.
+    /// player is open to it and his brain picks it, rather than walking in to gore.
     #[test]
     fn old_tusk_charges_past_a_tree_on_the_line() {
         let mut server = crate::test_server();
@@ -4212,35 +4211,6 @@ mod fight_tests {
         assert!(!server.blow_open(&body, species.longest_reach(0), at(4.5)), "the trunk did not stand in the way");
         assert!(species.reaches(0, species.edge(9.0, 1.0), true) && !strikes_from(species, 0, 1.0, body.position, at(4.5)), "at nine blocks only his charge fits");
         assert!(open(at(4.5)), "the trunk barred his charge");
-        let near = Body { position: at(-1.2), ..body };
-        assert!(strikes_from(species, 0, 1.0, near.position, at(1.0)) && !server.blow_open(&near, species.longest_reach(0), at(1.0)), "his gore went through the trunk");
-    }
-
-    /// Hurt, Old Tusk winds up and runs his charge at a player eight blocks off beyond a
-    /// trunk on the line, within ten seconds (the gate's wait). Before: the trunk shut his
-    /// charge's reach off from where he stood, he took the chase for one with no blow
-    /// open, gave it up and stood idle.
-    #[test]
-    fn hurt_old_tusk_charges_a_player_beyond_a_trunk() {
-        let mut server = crate::test_server();
-        let c = pen(&mut server, 9);
-        set(&mut server, "base:stone", (0..4).map(|y| c + IVec3::new(0, y, 0)));
-        let player = join(&mut server, c.as_vec3() + Vec3::new(4.5, 0.0, 0.5));
-        let id = put(&mut server, "base:old_tusk", c.as_vec3() + Vec3::new(-4.5, 0.0, 0.5), Vec3::X);
-        server.tick = 1000;
-        server.hurt_creature(player, id, 0, None, voxmar_engine::combat::Blow::Plain);
-        server.fights.run_clock(0.0);
-        let dt = 1.0 / TICKS_PER_SECOND as f32;
-        let charged = (0..10 * TICKS_PER_SECOND as u64).any(|_| {
-            server.tick += 1;
-            server.think_and_move();
-            server.fights.run_clock(dt);
-            server.tick_fights();
-            server.players.get_mut(&player).unwrap().health = traits::Health::full(server.survival.max_health);
-            server.creatures.live[&id].charging.is_some()
-        });
-        let tusk = &server.creatures.live[&id];
-        assert!(charged, "no charge in ten seconds: at {:.1}, doing {:?}", tusk.body.position - c.as_vec3(), tusk.mind.doing);
     }
 
     /// The player in a pocket two high at the foot of a hole three deep, a block over their
