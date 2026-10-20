@@ -452,7 +452,9 @@ steps! {
     /// what its plan says: a well on its square, doors open onto a floor, and houses dry;
     /// its people come, and one greets the player in its own voice; the ambience hears it
     /// at work by day, not by night; then `/locate settlement town` finds a town, and the
-    /// wall of the walled town nearest it stands where planned.
+    /// wall of the walled town nearest it stands where planned, its shaped roofs as planned
+    /// with none of its flames in reach of its thatch, and its jettied houses stand out on
+    /// their beams.
     Settlements,
     /// Over a log in the inventory, the uses key shows what it goes into (planks, a
     /// campfire); clicking planks shows their recipe, and Back returns.
@@ -766,7 +768,8 @@ struct Gate {
     settlement: IVec3,
     /// What `/locate settlement` answered, English, for the culture it names.
     settlement_reply: String,
-    /// Where `/locate settlement town` sent the observer: the middle of the town's square.
+    /// The walled town nearest the one `/locate settlement town` found, where the observer
+    /// judges walls, roofs and jetties: the middle of its square.
     town: IVec3,
     /// Where the struck creature was last seen, for walking over its loot.
     quarry: Vec3,
@@ -1851,6 +1854,11 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
             }
             // A click a cell: press, release the next frame, and on to the next cell.
             let cells = [0, 1, -1].map(|dx| feet + IVec3::new(dx, -1, 2));
+            // The first block set down settles in a puff of its own dust (`action_fx.ron`),
+            // kept for the record while it shows.
+            if !gate.placed.is_empty() && gate.shot(world, "place-dust").is_none() {
+                return;
+            }
             let Some(&cell) = cells.get(gate.placed.len()) else {
                 aim(world, cells[0]);
                 gate.next(Step::PlaceSettle, now);
@@ -1883,6 +1891,19 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
             let (count, wanted) = (held_count(world), gate.count_before.saturating_sub(3));
             let result = if count == wanted { Ok(format!("the hand holds {count}")) } else { Err(format!("the hand holds {count}, not {wanted}")) };
             gate.check("place: inventory", result);
+            // Each block set down settled in a puff of its own dust: the particles counted as
+            // the effect spawned them, the same at any frame rate.
+            let amount = world.resource::<crate::render::particles::Particles>().amount;
+            let dust = world.resource::<crate::fx::FxSeen>().0.get("settle").copied().unwrap_or(0);
+            // As many as `action_fx.ron`'s `settle` gives a block at full particles.
+            let per = crate::fx::ActionFx::load(&world.resource::<crate::session::Launch>().content.files).ok().and_then(|fx| fx.effects.get("settle").map(|e| e.count)).unwrap_or(0);
+            let owed = (cells.len() as f32 * per as f32 * amount.min(1.0) * 0.5) as u32;
+            let result = if dust >= owed.max(1) || amount <= 0.0 {
+                Ok(format!("{dust} motes of dust settled round {} blocks (at a particle amount of {amount:.2})", cells.len()))
+            } else {
+                Err(format!("only {dust} motes of dust round {} blocks, under {owed} (particle amount {amount:.2})", cells.len()))
+            };
+            gate.check("place: dust", result);
             aim(world, feet + IVec3::new(0, -1, -2));
             gate.next(Step::Dig, now);
         }
@@ -6592,10 +6613,10 @@ const WALLS_WAIT: f32 = 8.0;
 
 /// Walls make the home. About the camp the Home step left (the bag home, a torch beside it),
 /// a hearthstone and a second torch, and a plank roof over the room: open to the outside it
-/// is Hearthside, and `/home` names the walls it lacks; walled in with planks (sound) it
-/// turns Snug. Then, set to midnight (`/time`, no waiting for dark), indoors by the hearth
-/// it is an evening in, and noon again after. All of it goes again after, the camp left for
-/// the way home.
+/// is Hearthside, and `/home` names the walls it lacks; walled in with planks (sound), two
+/// of them hide windows, it turns Snug and is a bright room. Then, set to midnight (`/time`,
+/// no waiting for dark), indoors by the hearth it is an evening in, and noon again after.
+/// All of it goes again after, the camp left for the way home.
 fn home_walls(world: &mut World, gate: &mut Gate, now: f32) {
     let waited = gate.server_in_phase();
     let Some(bag) = world.resource::<LocalPlayer>().vitals.home else {
@@ -6607,6 +6628,7 @@ fn home_walls(world: &mut World, gate: &mut Gate, now: f32) {
     // beyond, the roof over the walls.
     let (low, high) = (bag + IVec3::new(-5, 0, -3), bag + IVec3::new(3, 3, 3));
     let (hearth, light) = (bag + IVec3::new(0, 0, 2), bag + IVec3::new(-3, 0, -2));
+    let panes = [IVec3::new(bag.x - 1, bag.y + 1, low.z), IVec3::new(bag.x + 1, bag.y + 1, low.z)];
     let walls = |net: &Net, block: &str| {
         for (a, b) in [
             (low, IVec3::new(low.x, high.y, high.z)),
@@ -6657,21 +6679,29 @@ fn home_walls(world: &mut World, gate: &mut Gate, now: f32) {
             let asked = lines.iter().any(|l| l.contains(&wanted));
             let (hearthside, snug) = (has(world, "base:hearthside"), has(world, "base:snug"));
             if asked && hearthside && !snug {
-                walls(world.resource::<Net>(), "oak_planks");
+                let net = world.resource::<Net>();
+                walls(net, "oak_planks");
+                // Two hide windows in the north wall: a bright room.
+                for pane in panes {
+                    net.command(&format!("setblock {} {} {} hide_window", pane.x, pane.y, pane.z));
+                }
                 gate.advance(now);
             } else if gate.waited_out(WALLS_WAIT) {
                 gate.check("home: walls", Err(format!("{waited:.1} server s on, roofed but open to the outside: Hearthside {hearthside}, Snug {snug} (want Hearthside alone), /home asked for \"{wanted}\" walls {asked}; lines since: {lines:?}")));
                 leave(world, gate);
             }
         }
-        // Walled in with planks: Snug.
+        // Walled in with planks, two of them hide windows: Snug, and a bright room.
         2 => {
-            if has(world, "base:snug") {
+            let (snug, bright) = (has(world, "base:snug"), has(world, "base:bright_room"));
+            if snug && bright {
                 gate.check("home: walls", Ok("roofed but open, the camp with its hearth stayed Hearthside and /home asked for walls; walled in with planks it turned Snug".into()));
+                gate.check("home: bright room", Ok("two hide windows in the planked walls under the roof showed the Bright room chip".into()));
                 world.resource::<Net>().command("time set midnight");
                 gate.advance(now);
             } else if gate.waited_out(WALLS_WAIT) {
-                gate.check("home: walls", Err(format!("{waited:.1} server s after walling the room in with planks ({low} to {high}), no Snug: Hearthside {}", has(world, "base:hearthside"))));
+                gate.check("home: walls", if snug { Ok("roofed but open, the camp with its hearth stayed Hearthside and /home asked for walls; walled in with planks it turned Snug".into()) } else { Err(format!("{waited:.1} server s after walling the room in with planks ({low} to {high}), no Snug: Hearthside {}", has(world, "base:hearthside"))) });
+                gate.check("home: bright room", Err(format!("{waited:.1} server s after two hide windows at {panes:?} in the walled room: Bright room chip {bright}")));
                 leave(world, gate);
             }
         }
@@ -13083,9 +13113,11 @@ const WOLF: &str = "base:wolf";
 const CLIMB_AT: IVec3 = IVec3::new(0, 0, 36);
 /// Blocks back along the step's top the player stands once the wolf is struck.
 const CLIMB_BACK: f32 = 3.0;
-/// What the climb allows past the wolf's run over the way and its wind-up: a beat to turn
-/// and come up the step, which takes it a hop.
-const CLIMB_SPARE: f32 = 1.0;
+/// What the climb allows past the wolf's recovery, thoughts, run over the way and wind-up:
+/// the client's frames. Without a client the wolf strikes within those alone
+/// (`creatures::way_tests`, `a_wolf_bitten_from_a_step_comes_up_and_strikes_within_the_climb_allowance`
+/// in the server).
+const CLIMB_SPARE: f32 = 0.5;
 
 /// Where the climb step stands.
 #[derive(Default)]
@@ -13096,6 +13128,12 @@ struct ClimbRun {
     /// The blows each way the server had answered as the phase began.
     struck: u32,
     hurts: u32,
+    /// The wolf's blows at the player before the timing began: the count taken of them; the
+    /// latest, at the server seconds taken in by the frame before it was seen (it came
+    /// after them); and the server seconds of the last frame.
+    told: u32,
+    bitten: Option<f32>,
+    taken_before: f32,
     /// Server seconds the wolf is allowed, from the player standing back to its blow, and
     /// what they were made of.
     allowed: f32,
@@ -13110,8 +13148,10 @@ struct ClimbRun {
 /// A wolf on level ground below a step a block high: struck from the step's edge, then,
 /// with the player three blocks back along the top, it comes up the step and strikes.
 /// What is judged derives from the setup: its blow lands with its feet up on the step,
-/// within the server seconds its own run takes over the way from where it was to its
-/// reach of the player, plus its wind-up and `CLIMB_SPARE`. Before the fix to heads meeting
+/// within the server seconds of what is left of its recovery from a blow it struck at the
+/// edge, a thought to start the chase and one to strike in reach (`NEAR_THINK_LONGEST`
+/// each), its own run over the way from where it was to its reach of the player, its
+/// wind-up and `CLIMB_SPARE`. Before the fix to heads meeting
 /// steps (`motion::step`) a wolf coming straight at a step met it with its head first and
 /// was turned along it.
 fn climb(world: &mut World, gate: &mut Gate, now: f32) {
@@ -13145,12 +13185,29 @@ fn climb(world: &mut World, gate: &mut Gate, now: f32) {
         gate.climb.frames_at = gate.frames;
         gate.advance(now);
     };
+    // A blow the wolf strikes at the edge holds it its recovery, and it may come on to the
+    // end: so the latest before the timing begins, at the earliest it could have been.
+    if gate.phase > 0 && gate.climb.allowed == 0.0 {
+        let fighting = world.resource::<crate::fight::Fighting>();
+        let new = fighting.hurt_count.saturating_sub(gate.climb.told) as usize;
+        if fighting.hurt.iter().rev().take(new).any(|h| Some(h.0) == gate.climb.wolf) {
+            gate.climb.bitten = Some(gate.climb.taken_before);
+        }
+        gate.climb.told = fighting.hurt_count;
+    }
+    gate.climb.taken_before = gate.server_now;
     match gate.phase {
         0 => {
             // In creative while it is built: level ground, the step across it a block high
             // from the edge on, the wild creatures about it sent away, and the wolf summoned
             // below it, two blocks out.
-            gate.climb = ClimbRun { before: world.resource::<crate::creatures::Creatures>().views().filter(|v| v.species == species).map(|v| v.id).collect(), highest: f32::MIN, ..default() };
+            gate.climb = ClimbRun {
+                before: world.resource::<crate::creatures::Creatures>().views().filter(|v| v.species == species).map(|v| v.id).collect(),
+                told: world.resource::<crate::fight::Fighting>().hurt_count,
+                highest: f32::MIN,
+                taken_before: gate.server_now,
+                ..default()
+            };
             let net = world.resource::<Net>();
             net.command("gamemode creative");
             net.command(&format!("fill {} {} {} {} {} {} air", at.x - 6, at.y, at.z - 6, at.x + 6, at.y + 4, at.z + 6));
@@ -13230,18 +13287,24 @@ fn climb(world: &mut World, gate: &mut Gate, now: f32) {
                     }
                     return;
                 }
-                // Its way: from its body's front to its reach of the player, at its run, and
-                // its wind-up before the blow lands.
+                // What is left of its recovery from its last blow at the edge, a thought to
+                // set off and one to strike once in reach; its way, from its body's front to
+                // its reach of the player, at its run; and its wind-up before the blow lands.
                 let content = &world.resource::<Launch>().content;
                 let def = &content.creatures.get(species).def;
                 let run = def.movement.run.max(0.1);
                 let attack = def.attack;
                 let reach = attack.map_or(1.0, |a| a.reach);
                 let windup = attack.and_then(|a| a.windup).unwrap_or(content.combat.feel.creature_windup);
+                let recovery = attack.and_then(|a| a.recovery).unwrap_or(content.combat.feel.creature_recovery).max(0.0);
+                let held = gate.climb.bitten.map_or(0.0, |at| (at + recovery - gate.server_now).clamp(0.0, recovery));
+                let thoughts = 2.0 * voxmar_server::NEAR_THINK_LONGEST as f32 / voxmar_protocol::TICKS_PER_SECOND as f32;
                 let half = def.body.size.0 * view.scale / 2.0;
                 let way = (view.position.xz().distance(me.xz()) - half - reach).max(0.0);
-                gate.climb.allowed = way / run + windup + CLIMB_SPARE;
-                gate.climb.allowance = format!("{way:.2} blocks at its run of {run:.2} a second, a wind-up of {windup:.2} s and {CLIMB_SPARE:.1} s to spare");
+                gate.climb.allowed = held + thoughts + way / run + windup + CLIMB_SPARE;
+                gate.climb.allowance = format!(
+                    "{held:.2} s left of its {recovery:.2} s recovery, {thoughts:.2} s for two thoughts, {way:.2} blocks at its run of {run:.2} a second, a wind-up of {windup:.2} s and {CLIMB_SPARE:.1} s to spare"
+                );
                 gate.climb.from = view.position;
                 to_phase(gate, 3, now);
                 gate.climb.frames_at = gate.frames;
@@ -16539,6 +16602,8 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             let Some(reply) = gate.observer.as_ref().and_then(|o| o.replies.iter().map(english).find(|r| r.contains("town"))) else {
                 if gate.server_in_phase() > 30.0 {
                     gate.check("town walls", Err(format!("no answer to /locate settlement town {TOWN_RADIUS}")));
+                    gate.check("settlement roofs", Err("no town to judge the roofs of".into()));
+                    gate.check("settlement jetties", Err("no town to judge the jetties of".into()));
                     gate.phase = 6;
                     gate.advance(now);
                 }
@@ -16550,6 +16615,8 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             });
             let Some(at) = at else {
                 gate.check("town walls", Err(format!("/locate settlement town: {reply}")));
+                gate.check("settlement roofs", Err("no town to judge the roofs of".into()));
+                gate.check("settlement jetties", Err("no town to judge the jetties of".into()));
                 gate.phase = 6;
                 gate.advance(now);
                 return;
@@ -16563,6 +16630,8 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 .and_then(|g| g.settlements_near(at.xz(), TOWN_RADIUS).into_iter().filter(|s| s.size == "town" && s.wall_block.is_some()).min_by_key(|s| (s.centre.xz() - at.xz()).length_squared()));
             let Some(walled) = walled else {
                 gate.check("town walls", Err(format!("no walled town within {TOWN_RADIUS} of the town /locate found at {at}")));
+                gate.check("settlement roofs", Err("no town to judge the roofs of".into()));
+                gate.check("settlement jetties", Err("no town to judge the jetties of".into()));
                 gate.phase = 6;
                 gate.advance(now);
                 return;
@@ -16584,6 +16653,8 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 if gate.server_in_phase() > SETTLEMENT_LOAD {
                     let n = columns.len();
                     gate.check("town walls", Err(format!("the world around the town at {at} did not load: the server sent {held} of its {n} columns in {SETTLEMENT_LOAD} server seconds")));
+                    gate.check("settlement roofs", Err("no town to judge the roofs of".into()));
+                    gate.check("settlement jetties", Err("no town to judge the jetties of".into()));
                     gate.phase = 6;
                     gate.advance(now);
                 }
@@ -16591,6 +16662,10 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             }
             let result = judge_town(world, gate, at);
             gate.check("town walls", result);
+            let roofs = judge_roofs(world, gate, at);
+            gate.check("settlement roofs", roofs);
+            let jetties = judge_jetties(world, gate, at);
+            gate.check("settlement jetties", jetties);
             gate.advance(now);
         }
         // Back on the test ground.
@@ -16839,6 +16914,88 @@ fn judge_town(world: &World, gate: &Gate, at: IVec3) -> Result<String, String> {
     } else {
         Err(format!("{name}, a town at {at}: {standing} of {judged} columns of its {block_name} wall stand: {}", wrong.join("; ")))
     }
+}
+
+/// The town's jettied houses as the server built them: every jetty beam its plan lays
+/// within `TOWN_REACH` of its square stands there in the facing planned, the wall below
+/// behind it and the overhanging floor over it.
+fn judge_jetties(world: &World, gate: &Gate, at: IVec3) -> Result<String, String> {
+    let Some(generator) = world.resource::<crate::render::lod::WorldGenerator>().get().cloned() else {
+        return Err("no world generator on the client to read the town's plan from".into());
+    };
+    let Some(observer) = gate.observer.as_ref() else { return Err("no observer".into()) };
+    let client = world.resource::<ClientWorld>();
+    let name = generator.settlements_near(at.xz(), 64).into_iter().find(|s| s.centre.xz() == at.xz()).map_or_else(|| format!("the town at {at}"), |s| s.name.0);
+    let within = |p: IVec3| (p.xz() - at.xz()).abs().max_element() <= TOWN_REACH;
+    let planned: Vec<(IVec3, BlockId)> = generator.settlement_planned(at.xz(), &|b| client.registry.def(b).has_tag("jetty")).into_iter().filter(|r| within(r.0)).collect();
+    if planned.len() < 4 {
+        return Err(format!("{name}: only {} jetty beams planned within {TOWN_REACH} of its square at {at}", planned.len()));
+    }
+    let block = |b: Option<BlockId>| b.map_or("unloaded".to_owned(), |b| client.registry.def(b).name.clone());
+    let solid = |p: IVec3| observer.world.block(p).is_some_and(|b| client.registry.def(b).solid);
+    let mut wrong = Vec::new();
+    for &(p, b) in &planned {
+        let name = &client.registry.def(b).name;
+        let out = match ["_east", "_south", "_west"].iter().position(|s| name.ends_with(s)) {
+            Some(0) => IVec3::X,
+            Some(1) => IVec3::Z,
+            Some(_) => IVec3::NEG_X,
+            None => IVec3::NEG_Z,
+        };
+        if observer.world.block(p) != Some(b) {
+            wrong.push(format!("{} at {p} is {}", block(Some(b)), block(observer.world.block(p))));
+        } else if !(solid(p - out) && solid(p + IVec3::Y)) {
+            wrong.push(format!("the {} at {p} has no wall behind it or no floor over it", block(Some(b))));
+        }
+    }
+    if !wrong.is_empty() {
+        return Err(format!("{name}: {} of its {} jetty beams within {TOWN_REACH} are wrong: {}", wrong.len(), planned.len(), wrong.into_iter().take(4).collect::<Vec<_>>().join("; ")));
+    }
+    Ok(format!("{name}: {} jetty beams within {TOWN_REACH} stand as planned, each under its overhanging floor", planned.len()))
+}
+
+/// The town's shaped roofs as the server built them: every roof piece its plan lays within
+/// `TOWN_REACH` of its square stands there, in the facing planned, and no flame of the town
+/// reaches its thatch (or anything else that catches) as fire catches in a home.
+fn judge_roofs(world: &World, gate: &Gate, at: IVec3) -> Result<String, String> {
+    let Some(generator) = world.resource::<crate::render::lod::WorldGenerator>().get().cloned() else {
+        return Err("no world generator on the client to read the town's plan from".into());
+    };
+    let Some(observer) = gate.observer.as_ref() else { return Err("no observer".into()) };
+    let client = world.resource::<ClientWorld>();
+    let name = generator.settlements_near(at.xz(), 64).into_iter().find(|s| s.centre.xz() == at.xz()).map_or_else(|| format!("the town at {at}"), |s| s.name.0);
+    let within = |p: IVec3| (p.xz() - at.xz()).abs().max_element() <= TOWN_REACH;
+    let planned: Vec<(IVec3, BlockId)> = generator.settlement_roofs(at.xz()).into_iter().filter(|r| within(r.0)).collect();
+    if planned.len() < 20 {
+        return Err(format!("{name}: only {} shaped roof pieces planned within {TOWN_REACH} of its square at {at}", planned.len()));
+    }
+    let block = |b: Option<BlockId>| b.map_or("unloaded".to_owned(), |b| client.registry.def(b).name.clone());
+    let wrong: Vec<String> = planned
+        .iter()
+        .filter(|&&(p, b)| observer.world.block(p) != Some(b))
+        .map(|&(p, b)| format!("{} at {p} is {}", block(Some(b)), block(observer.world.block(p))))
+        .collect();
+    if !wrong.is_empty() {
+        return Err(format!("{name}: {} of its {} roof pieces within {TOWN_REACH} are not as planned: {}", wrong.len(), planned.len(), wrong.into_iter().take(4).collect::<Vec<_>>().join("; ")));
+    }
+    let mut blocks: FxHashMap<IVec3, BlockId> = FxHashMap::default();
+    for z in at.z - TOWN_REACH..=at.z + TOWN_REACH {
+        for x in at.x - TOWN_REACH..=at.x + TOWN_REACH {
+            for y in at.y - 24..=at.y + 40 {
+                let p = IVec3::new(x, y, z);
+                if let Some(b) = observer.world.block(p).filter(|b| !b.is_air()) {
+                    blocks.insert(p, b);
+                }
+            }
+        }
+    }
+    let flames = blocks.values().filter(|&&b| client.registry.def(b).has_tag("fire")).count();
+    let thatch = planned.iter().filter(|r| client.registry.def(r.1).has_tag("thatch")).count();
+    let reached = generator.flames_reaching(&blocks);
+    if !reached.is_empty() {
+        return Err(format!("{name}: {} flames reach what catches: {}", reached.len(), reached.iter().take(4).map(|&(f, c)| format!("{} at {f} -> {} at {c}", block(Some(blocks[&f])), block(Some(blocks[&c])))).collect::<Vec<_>>().join("; ")));
+    }
+    Ok(format!("{name}: {} roof pieces within {TOWN_REACH} stand as planned ({thatch} thatch); none of its {flames} flames there reaches what catches", planned.len()))
 }
 
 fn gorge(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
