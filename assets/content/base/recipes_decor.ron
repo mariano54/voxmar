@@ -32,6 +32,13 @@
         (ingredients: ["{name}_bench", "{name}_planks", "{name}_planks", "wool"], output: "{name}_window_seat", skill: "core:construction", level: 5, xp: 5.0),
         (ingredients: ["{name}_slab", "stick"], output: "{name}_sill", count: 2, skill: "core:construction", level: 3, xp: 2.0),
         (ingredients: ["{name}_shelf", "clay_pot", "clay_pot"], output: "{name}_pantry_shelf", skill: "core:construction", level: 5, xp: 4.0),
+        // The hearth corner: a bench given a back and arms, logs stacked between two stakes, a plank with pegs.
+        (ingredients: ["{name}_bench", "{name}_planks", "{name}_planks", "{name}_planks"], output: "{name}_settle", skill: "core:construction", level: 4, xp: 4.0),
+        (ingredients: ["{name}_log", "{name}_log", "{name}_log", "stick", "stick"], output: "{name}_woodpile", skill: "core:construction", level: 1, xp: 1.0),
+        (ingredients: ["{name}_planks", "stick", "stick", "stick"], output: "{name}_peg_rail", count: 2, skill: "core:construction", level: 2, xp: 2.0),
+        // The bedchamber: a box of planks lined with wool, a table with two clay pots set on it.
+        (ingredients: ["{name}_planks", "{name}_planks", "{name}_planks", "{name}_planks", "wool"], output: "{name}_blanket_chest", skill: "core:construction", level: 3, xp: 3.0),
+        (ingredients: ["{name}_table", "clay_pot", "clay_pot"], output: "{name}_washstand", skill: "core:construction", level: 4, xp: 3.0),
         (ingredients: ["{name}_cupboard", "{name}_planks", "{name}_planks", "{name}_planks"], output: "{name}_wardrobe", skill: "core:construction", level: 10, xp: 6.0),
 
         // A cloth is a wool and a flower that dyes it, until the loom (one line a dye: each

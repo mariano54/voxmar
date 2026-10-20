@@ -53,7 +53,7 @@
         ),
         (
             name: "kiln_plans", age: "farm", branch: "fuel", title: "Plans for the Kiln",
-            why: "With fuel coming, plan the kiln it is for: open the recipe viewer and look up the crucible, seven kiln bricks round a clay pot, then look up kiln bricks to see what they take.",
+            why: "With fuel in hand, charcoal or coal, plan the kiln it burns in: open the recipe viewer and look up the crucible, seven kiln bricks round a clay pot, then look up kiln bricks to see what they take.",
             tasks: [[LookUp("crucible"), LookUp("kiln_bricks")]],
             after: ["charcoal"],
             rewards: [Xp("engineering", 30.0)],
@@ -160,8 +160,9 @@
             tasks: [[Craft("kiln_bricks", 19)]],
             after: ["first_bricks", "a_kiln_load"],
             // Its Engineering pays for The Crucible's level 10 until Hammer and Anvil (the kiln-age
-            // PR) does: drop it when that lands, so it is never paid twice.
-            rewards: [Xp("crafting", 300.0), Xp("engineering", 650.0)],
+            // PR) does: drop it when that lands, so it is never paid twice. 750 makes the level on
+            // The Crucible's own chain (about 1,180 of the 1,154 xp, with the crafts it forces).
+            rewards: [Xp("crafting", 300.0), Xp("engineering", 750.0)],
         ),
         (
             name: "the_kiln_ring", age: "farm", branch: "main", title: "The Kiln Ring",

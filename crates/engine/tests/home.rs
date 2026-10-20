@@ -163,6 +163,68 @@ fn herbs_drying_at_home_make_a_nook_for_the_garden_and_the_brew() {
     assert_eq!(content.blocks.def(herbs).drops.as_deref(), Some("core:air"));
 }
 
+/// Every tag a home is surveyed for has its words in every language, so `/home`'s "lacks"
+/// line names it in the player's own words, not the tag's English.
+#[test]
+fn every_home_tag_is_named_in_every_language() {
+    let content = content();
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content/base/lang");
+    for code in ["en", "ja"] {
+        let lang: std::collections::HashMap<String, String> = ron::from_str(&std::fs::read_to_string(dir.join(format!("{code}.ron"))).unwrap()).unwrap();
+        let missing: Vec<_> = content.effects.home_tags().iter().map(|tag| format!("home.tag.{tag}")).filter(|key| !lang.contains_key(key)).collect();
+        assert!(missing.is_empty(), "{code}: {missing:?}");
+    }
+}
+
+/// The hearth corner: the homestead hearth under the roof with a settle at it and a woodpile
+/// is a hearth corner; any of the three missing, or out under the sky, it is not. Every wood makes
+/// the settle and the woodpile, and the settle is sat in as any seat.
+#[test]
+fn a_settle_and_a_woodpile_by_the_hearth_make_a_hearth_corner() {
+    let content = content();
+    let effects = &content.effects;
+    let corner = [("hearth", 1), ("settle", 1), ("woodpile", 1)];
+    assert_eq!(rooms(&corner), ["base:hearth_corner"]);
+    for missing in 0..corner.len() {
+        let short: Vec<_> = corner.iter().enumerate().filter(|&(i, _)| i != missing).map(|(_, &c)| c).collect();
+        assert!(!rooms(&short).contains(&"base:hearth_corner".to_owned()), "no {}, no hearth corner", corner[missing].0);
+    }
+    assert!(rooms(&[("hearth", 1), ("seat", 1), ("woodpile", 1)]).is_empty(), "a stool is no settle");
+    assert!(rooms_in(&corner, &Weather::NONE, true).is_empty(), "no roof, no hearth corner");
+    let corner_room = effects.get(effects.id("base:hearth_corner").unwrap());
+    assert_eq!((corner_room.modifiers.warmth, corner_room.modifiers.heal), (1.0, 1.05));
+    for wood in ["birch", "oak", "dark_oak"] {
+        let settle = content.blocks.def(content.blocks.expect(&format!("base:{wood}_settle")));
+        assert!(settle.has_tag("seat") && settle.has_tag("settle") && !settle.solid, "{wood} settle");
+        let pile = content.blocks.expect(&format!("base:{wood}_woodpile"));
+        assert!(content.blocks.def(pile).has_tag("woodpile") && content.recipes.iter().any(|r| r.output == pile), "{wood} woodpile");
+    }
+}
+
+/// The bedchamber: under a roof, the bed with a blanket chest, a washstand and a rug; any
+/// of them missing, or out under the sky, it is not one. Every wood makes both pieces, and
+/// the chest is storage.
+#[test]
+fn a_blanket_chest_and_a_washstand_by_the_bed_make_a_bedchamber() {
+    let content = content();
+    let effects = &content.effects;
+    let room = [("bed", 1), ("blanket_chest", 1), ("washstand", 1), ("rug", 1)];
+    assert_eq!(rooms(&room), ["base:bedchamber"]);
+    for missing in 0..room.len() {
+        let short: Vec<_> = room.iter().enumerate().filter(|&(i, _)| i != missing).map(|(_, &c)| c).collect();
+        assert!(!rooms(&short).contains(&"base:bedchamber".to_owned()), "no {}, no bedchamber", room[missing].0);
+    }
+    assert!(rooms_in(&room, &Weather::NONE, true).is_empty(), "no roof, no bedchamber");
+    let chamber = effects.get(effects.id("base:bedchamber").unwrap());
+    assert_eq!((chamber.modifiers.warmth, chamber.modifiers.heal), (1.0, 1.1));
+    for wood in ["birch", "oak", "dark_oak"] {
+        let chest = content.blocks.expect(&format!("base:{wood}_blanket_chest"));
+        assert!(content.blocks.def(chest).has_tag("storage") && content.recipes.iter().any(|r| r.output == chest), "{wood} blanket chest");
+        let stand = content.blocks.expect(&format!("base:{wood}_washstand"));
+        assert!(content.blocks.def(stand).has_tag("washstand") && content.recipes.iter().any(|r| r.output == stand), "{wood} washstand");
+    }
+}
+
 /// Windows count at home: two in its walls under a roof make a bright room; one does not,
 /// nor two out under the sky. Every window the content has is one (`window`).
 #[test]
