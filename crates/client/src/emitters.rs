@@ -63,8 +63,11 @@ impl Plugin for EmittersPlugin {
 /// A block near the camera giving off particles, and what it needs to light and bound them.
 #[derive(Clone, Copy, Debug)]
 struct Emitter {
+    /// Where its particles come out: the block's cell, or the top of the flue over it.
     pos: IVec3,
     block: BlockId,
+    /// The emitting block's own cell.
+    from: IVec3,
     /// Sky light just above it.
     sky: u8,
     /// Open air above it, in blocks, up to `HEADROOM`.
@@ -75,6 +78,14 @@ struct Emitter {
     /// Which of its emissions it gives off now, a bit each (the first eight): those seen
     /// from this far, and with what they need below them.
     giving: u8,
+}
+
+impl Emitter {
+    /// Whether its block still stands where it was found (not broken or put out since the
+    /// last search), judged at the block, not at the top of a flue over it.
+    fn standing(&self, world: &ClientWorld) -> bool {
+        world.block(self.from) == Some(self.block)
+    }
 }
 
 #[derive(Resource, Default)]
@@ -166,7 +177,7 @@ impl Emitters {
                 - 1;
             let giving = giving(world, &self.cores, pos, block, distance, headroom);
             if giving != 0 {
-                self.near.push(Emitter { pos: top, block, sky: sky_light(world, above), headroom: headroom as f32 + 0.5, share, giving });
+                self.near.push(Emitter { pos: top, block, from: pos, sky: sky_light(world, above), headroom: headroom as f32 + 0.5, share, giving });
             }
         }
     }
@@ -234,8 +245,7 @@ fn emit(
     let amount = particles.amount;
     for i in 0..emitters.near.len() {
         let emitter = emitters.near[i];
-        // Gone since the last search: broken, or put out.
-        if world.block(emitter.pos) != Some(emitter.block) {
+        if !emitter.standing(&world) {
             continue;
         }
         let def = world.registry.def(emitter.block);
@@ -275,7 +285,7 @@ fn emit(
             .find(|&dy| world.block(pos + IVec3::Y * dy).is_none_or(|b| world.registry.info(b).solid))
             .unwrap_or(HEADROOM + 1)
             - 1;
-        let emitter = Emitter { pos, block, sky: sky_light(&world, pos + IVec3::Y), headroom: headroom as f32 + 0.5, share, giving: u8::MAX };
+        let emitter = Emitter { pos, block, from: pos, sky: sky_light(&world, pos + IVec3::Y), headroom: headroom as f32 + 0.5, share, giving: u8::MAX };
         for emission in smoke {
             let owed = emission.rate.max(0.0) * dt * amount * share + emitters.roll();
             for _ in 0..owed as u32 {
@@ -507,9 +517,11 @@ mod tests {
         emitters.emits = (0..world.registry.len()).map(|id| world.registry.def(BlockId(id as u16)).particles.iter().map(reach).max().unwrap_or(0)).collect();
         emitters.far = emitters.emits.iter().copied().max().unwrap_or(0);
         emitters.cores = cores(&world.registry, &content.multiblocks);
+        // Where each found emitter's particles come out, once it is seen to stand (as the
+        // frame's emitting asks).
         let found = |emitters: &mut Emitters, world: &ClientWorld| {
             emitters.search(world, IVec3::new(40, 102, 4));
-            emitters.near.iter().map(|e| e.pos).collect::<Vec<_>>()
+            emitters.near.iter().filter(|e| e.standing(world)).map(|e| e.pos).collect::<Vec<_>>()
         };
         assert!(found(&mut emitters, &world).is_empty(), "a cold hearth's flue smokes");
         world.fires.insert(hearth);
@@ -524,7 +536,7 @@ mod tests {
     #[test]
     fn smoke_fades_under_a_ceiling() {
         let mut dice = Emitters::default();
-        let emitter = Emitter { pos: IVec3::new(3, 60, -2), block: BlockId(1), sky: 15, headroom: 1.5, share: 1.0, giving: 1 };
+        let emitter = Emitter { pos: IVec3::new(3, 60, -2), block: BlockId(1), from: IVec3::new(3, 60, -2), sky: 15, headroom: 1.5, share: 1.0, giving: 1 };
         for _ in 0..50 {
             let smoke = particle(&emission(ParticleStyle::Smoke), &emitter, 13, Vec3::ZERO, &mut dice);
             // It rises at most about its speed times its life.
@@ -536,7 +548,7 @@ mod tests {
     #[test]
     fn particles_start_where_the_emission_says() {
         let mut dice = Emitters::default();
-        let emitter = Emitter { pos: IVec3::new(10, 70, 10), block: BlockId(1), sky: 0, headroom: 9.0, share: 1.0, giving: 1 };
+        let emitter = Emitter { pos: IVec3::new(10, 70, 10), block: BlockId(1), from: IVec3::new(10, 70, 10), sky: 0, headroom: 9.0, share: 1.0, giving: 1 };
         let spark = Emission { style: ParticleStyle::Spark, at: [0.5, 0.25, 0.5], spread: 0.2, color: Some([1, 2, 3]), ..default() };
         for _ in 0..50 {
             let p = particle(&spark, &emitter, 13, Vec3::ZERO, &mut dice);
@@ -550,7 +562,7 @@ mod tests {
     #[test]
     fn taller_flames_rise_further() {
         let mut dice = Emitters::default();
-        let emitter = Emitter { pos: IVec3::ZERO, block: BlockId(1), sky: 0, headroom: 9.0, share: 1.0, giving: 1 };
+        let emitter = Emitter { pos: IVec3::ZERO, block: BlockId(1), from: IVec3::ZERO, sky: 0, headroom: 9.0, share: 1.0, giving: 1 };
         let reach = |emission: &Emission, dice: &mut Emitters| {
             (0..200).map(|_| particle(emission, &emitter, 13, Vec3::ZERO, dice)).map(|p| p.velocity.y * p.life).sum::<f32>() / 200.0
         };
