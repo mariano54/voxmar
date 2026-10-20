@@ -470,6 +470,10 @@ steps! {
     /// with none of its flames in reach of its thatch, its jettied houses stand out on
     /// their beams, and its row houses stand wall to wall under one roof.
     Settlements,
+    /// The home with a byre nearest the walled town (in the nearest place that has one)
+    /// stands as planned: earth floor, a trough, hay, one doorway through the wall across
+    /// and a back door, the family's beds in the room before it.
+    Byres,
     /// Over a log in the inventory, the uses key shows what it goes into (planks, a
     /// campfire); clicking planks shows their recipe, and Back returns.
     Recipes,
@@ -1821,6 +1825,8 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         // A fresh area around the settlement to generate: up to `SETTLEMENT_LOAD` of the
         // server's seconds.
         Step::Settlements => 2.0 * SETTLEMENT_LOAD + SETTLEMENT_PEOPLE + SETTLEMENT_BARK + STEP_LIMIT,
+        // The look for a byre, a fresh area round it to generate, and the observer home.
+        Step::Byres => BYRE_SEARCH + SETTLEMENT_LOAD + 20.0 + STEP_LIMIT,
         // A storm and snow, each waited on, then drying off by a campfire.
         Step::Weather => STEP_LIMIT + 10.0 + ROOF_RAIN,
         _ => STEP_LIMIT,
@@ -2150,6 +2156,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Gorge => gorge(world, gate, now, in_phase),
         Step::Tarns => tarns(world, gate, now, in_phase),
         Step::Settlements => settlements(world, gate, now, in_phase),
+        Step::Byres => byres(world, gate, now, in_phase),
         Step::Ore => ore(world, gate, now, in_phase),
         Step::Recipes => recipes(world, gate, now, in_phase),
         Step::Chop => chop(world, gate, now),
@@ -18281,65 +18288,6 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             gate.check("settlement jetties", jetties);
             let rows = judge_rows(world, gate, at);
             gate.check("settlement rows", rows);
-            // Then a home with a byre: in the place with one nearest the town, looked for on
-            // a thread of its own.
-            let generator = world.resource::<crate::render::lod::WorldGenerator>().get().cloned();
-            gate.byre_search = Some(std::thread::spawn(move || {
-                let place = generator?.nearest_settlement(at.xz(), BYRE_RADIUS, |s| s.buildings.iter().any(|b| !b.byre.is_empty()))?;
-                let middle = place.centre.xz();
-                place.buildings.into_iter().filter(|b| !b.byre.is_empty()).min_by_key(|b| ((b.min + b.max) / 2 - middle).abs().max_element())
-            }));
-            gate.advance(now);
-        }
-        // The observer goes over the byre's house once it is found.
-        7 => {
-            let Some(search) = gate.byre_search.take_if(|search| search.is_finished()) else {
-                if gate.byre_search.is_none() {
-                    gate.check("settlement byres", Err("no town to look for a byre from".into()));
-                    gate.phase = 8;
-                    gate.advance(now);
-                }
-                return;
-            };
-            match search.join() {
-                Ok(Some(b)) => {
-                    if let Some(observer) = gate.observer.as_mut() {
-                        let middle = (b.min + b.max) / 2;
-                        observer.connection.send(ClientMessage::Command { line: format!("tp {} {} {}", middle.x, b.floor + 60, middle.y) });
-                    }
-                    gate.byre = Some(b);
-                    gate.advance(now);
-                }
-                found => {
-                    let why = match found {
-                        Ok(_) => format!("no home with a byre within {BYRE_RADIUS} of the walled town at {}", gate.town),
-                        Err(panic) => format!("the look for a byre panicked: {}", panic.downcast_ref::<&str>().map(|s| s.to_string()).or_else(|| panic.downcast_ref::<String>().cloned()).unwrap_or_else(|| "no message".into())),
-                    };
-                    gate.check("settlement byres", Err(why));
-                    gate.phase = 8;
-                    gate.advance(now);
-                }
-            }
-        }
-        // Once the observer has the byre's house round it, the byre is judged.
-        8 => {
-            let Some(b) = gate.byre.clone() else {
-                gate.check("settlement byres", Err("no home with a byre to judge".into()));
-                gate.advance(now);
-                return;
-            };
-            let (low, high) = (ColumnPos::of_block(IVec3::new(b.min.x - 2, 0, b.min.y - 2)).0, ColumnPos::of_block(IVec3::new(b.max.x + 2, 0, b.max.y + 2)).0);
-            let columns: Vec<ColumnPos> = (low.x..=high.x).flat_map(|x| (low.y..=high.y).map(move |z| ColumnPos::new(x, z))).collect();
-            let held = gate.observer.as_ref().map_or(0, |o| columns.iter().filter(|&&c| o.world.contains(c)).count());
-            if held < columns.len() {
-                if gate.server_in_phase() > SETTLEMENT_LOAD {
-                    gate.check("settlement byres", Err(format!("the world around the byre at {} did not load: the server sent {held} of its {} columns in {SETTLEMENT_LOAD} server seconds", b.min, columns.len())));
-                    gate.advance(now);
-                }
-                return;
-            }
-            let byre = judge_byre(world, gate, &b);
-            gate.check("settlement byres", byre);
             gate.advance(now);
         }
         // Back on the test ground, both peers: the steps after read the observer's world
@@ -18363,6 +18311,101 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 }
                 if !observer_home {
                     gate.check("settlements: back", Err("the observer never came back over the test ground".into()));
+                }
+                gate.observer_home = None;
+                gate.next(Step::Byres, now);
+            }
+        }
+    }
+}
+
+/// Server seconds the look for a byre may take, on a thread of its own.
+const BYRE_SEARCH: f32 = 30.0;
+
+/// The home with a byre nearest the walled town the Settlements step judged (or, with no
+/// town, the settlement it went to), in the nearest place that has one: the observer goes
+/// over it, and once the server has sent the world round it, its byre is judged as
+/// worldgen planned it (`judge_byre`). Then the observer goes back over the test ground.
+fn byres(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
+    match gate.phase {
+        // The look, on a thread of its own: planning the places about takes a while.
+        0 => {
+            let from = if gate.town != IVec3::ZERO { gate.town } else { gate.settlement };
+            gate.observer_home = gate.observer.as_ref().and_then(|o| o.position);
+            let generator = world.resource::<crate::render::lod::WorldGenerator>().get().cloned();
+            gate.byre_search = Some(std::thread::spawn(move || {
+                let place = generator?.nearest_settlement(from.xz(), BYRE_RADIUS, |s| s.buildings.iter().any(|b| !b.byre.is_empty()))?;
+                let middle = place.centre.xz();
+                place.buildings.into_iter().filter(|b| !b.byre.is_empty()).min_by_key(|b| ((b.min + b.max) / 2 - middle).abs().max_element())
+            }));
+            gate.byre = None;
+            gate.advance(now);
+        }
+        // The observer goes over the byre's house once it is found.
+        1 => {
+            let Some(search) = gate.byre_search.take_if(|search| search.is_finished()) else {
+                if gate.server_in_phase() > BYRE_SEARCH {
+                    gate.check("settlement byres", Err(format!("the look for a byre within {BYRE_RADIUS} took over {BYRE_SEARCH} server seconds")));
+                    gate.phase = 2;
+                    gate.advance(now);
+                }
+                return;
+            };
+            match search.join() {
+                Ok(Some(b)) => {
+                    if let Some(observer) = gate.observer.as_mut() {
+                        let middle = (b.min + b.max) / 2;
+                        observer.connection.send(ClientMessage::Command { line: format!("tp {} {} {}", middle.x, b.floor + 60, middle.y) });
+                    }
+                    gate.byre = Some(b);
+                    gate.advance(now);
+                }
+                found => {
+                    let why = match found {
+                        Ok(_) => format!("no home with a byre within {BYRE_RADIUS} of the walled town at {}", gate.town),
+                        Err(panic) => format!("the look for a byre panicked: {}", panic.downcast_ref::<&str>().map(|s| s.to_string()).or_else(|| panic.downcast_ref::<String>().cloned()).unwrap_or_else(|| "no message".into())),
+                    };
+                    gate.check("settlement byres", Err(why));
+                    gate.phase = 2;
+                    gate.advance(now);
+                }
+            }
+        }
+        // Once the observer has the byre's house round it, the byre is judged.
+        2 => {
+            let Some(b) = gate.byre.clone() else {
+                gate.advance(now);
+                return;
+            };
+            let (low, high) = (ColumnPos::of_block(IVec3::new(b.min.x - 2, 0, b.min.y - 2)).0, ColumnPos::of_block(IVec3::new(b.max.x + 2, 0, b.max.y + 2)).0);
+            let columns: Vec<ColumnPos> = (low.x..=high.x).flat_map(|x| (low.y..=high.y).map(move |z| ColumnPos::new(x, z))).collect();
+            let held = gate.observer.as_ref().map_or(0, |o| columns.iter().filter(|&&c| o.world.contains(c)).count());
+            if held < columns.len() {
+                if gate.server_in_phase() > SETTLEMENT_LOAD {
+                    gate.check("settlement byres", Err(format!("the world around the byre at {} did not load: the server sent {held} of its {} columns in {SETTLEMENT_LOAD} server seconds", b.min, columns.len())));
+                    gate.advance(now);
+                }
+                return;
+            }
+            let byre = judge_byre(world, gate, &b);
+            gate.check("settlement byres", byre);
+            gate.advance(now);
+        }
+        // The observer back over the test ground, where the steps after read its world.
+        3 => {
+            if let (Some(at), Some(observer)) = (gate.observer_home, gate.observer.as_mut()) {
+                observer.connection.send(ClientMessage::Command { line: format!("tp {} {} {}", at.x, at.y, at.z) });
+            }
+            gate.advance(now);
+        }
+        _ => {
+            let back = match (gate.observer_home, gate.observer.as_ref()) {
+                (Some(at), Some(observer)) => observer.position.is_some_and(|p| p.distance(at) < 3.0),
+                _ => true,
+            };
+            if back || gate.server_in_phase() > 20.0 {
+                if !back {
+                    gate.check("settlement byres: back", Err("the observer never came back over the test ground".into()));
                 }
                 gate.observer_home = None;
                 gate.next(Step::Recipes, now);
@@ -18782,6 +18825,29 @@ fn judge_roofs(world: &World, gate: &Gate, at: IVec3) -> Result<String, String> 
     let flames: Vec<IVec3> = planned_flames.into_iter().map(|r| r.0).collect();
     let mut blocks: FxHashMap<IVec3, BlockId> = FxHashMap::default();
     let reach = generator.settlement_fire_reach() + 1;
+    // No flame the plan never set within a fire's reach of its roofs: a look about each
+    // roof piece, each cell once.
+    let planned_at: rustc_hash::FxHashSet<IVec3> = flames.iter().copied().collect();
+    let mut looked: rustc_hash::FxHashSet<IVec3> = rustc_hash::FxHashSet::default();
+    let mut unplanned: Vec<String> = Vec::new();
+    for &(r, _) in &planned {
+        for z in -reach..=reach {
+            for y in -reach..=reach {
+                for x in -reach..=reach {
+                    let p = r + IVec3::new(x, y, z);
+                    if looked.insert(p)
+                        && !planned_at.contains(&p)
+                        && let Some(b) = observer.world.block(p).filter(|&b| generator.settlement_flame(b))
+                    {
+                        unplanned.push(format!("{} at {p}", block(Some(b))));
+                    }
+                }
+            }
+        }
+    }
+    if !unplanned.is_empty() {
+        return Err(format!("{name}: {} flames the plan never set stand within {reach} of its roofs: {}", unplanned.len(), unplanned.into_iter().take(4).collect::<Vec<_>>().join("; ")));
+    }
     for &f in &flames {
         for z in -reach..=reach {
             for y in -reach..=reach {

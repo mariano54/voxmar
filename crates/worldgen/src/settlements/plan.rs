@@ -2942,6 +2942,10 @@ fn grow_row(town: &mut Town, ground: &mut Ground, lots: &mut Vec<Lot>, occupied:
     let mut base = spec.clone();
     // As tall as its place's size asks (a town's terraces are of town houses).
     base.storeys = base.storeys.max(row.storeys_at(town.size) as i32);
+    // A byre is only for a home of one storey: the stair of a taller one stands at the back.
+    if base.storeys > 1 {
+        base.byre = 0;
+    }
     base.extras.retain(|e| !matches!(e, Extra::Porch | Extra::OutsideStair | Extra::Woodpile | Extra::RainBarrel));
     base.shed = 0;
     let runs_on = matches!(base.roof, Roof::Gable | Roof::Gambrel | Roof::Flat) || (base.roof == Roof::Saltbox && base.ridge_x);

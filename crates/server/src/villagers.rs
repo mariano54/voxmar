@@ -345,26 +345,55 @@ impl Server {
                 continue;
             }
             self.villagers.towns.get_mut(&id).expect("listed").alive = true;
-            // Only nearby residents live, closest first, with an independent town cap.
-            let t = &self.villagers.towns[&id];
-            let mut nearby: Vec<(usize, f32)> = (0..t.people.len()).filter_map(|i| {
-                let at = match t.people[i].creature.and_then(|c| self.creatures.live.get(&c)) {
-                    Some(c) => c.body.position,
-                    None => self.spot_for(id, i, mix(t.info.people[i].seed, self.villagers.generation(id, i)))?.0.as_vec3(),
-                };
-                let distance = players.iter().map(|p| p.with_y(0.0).distance(at.with_y(0.0))).fold(f32::MAX, f32::min);
-                (distance <= live.nearby).then_some((i, distance))
-            }).collect();
-            nearby.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
-            nearby.truncate(live.per_settlement);
+            let nearby = self.nearby(id, &players, live);
             for i in 0..self.villagers.towns[&id].people.len() {
-                if nearby.iter().any(|&(j, _)| j == i) {
+                if nearby.contains(&i) {
                     self.bring_out(id, i);
                 } else {
                     self.release_person(id, i);
                 }
             }
         }
+    }
+
+    /// Who of settlement `id`'s people live, near `players`: only nearby residents, closest
+    /// first, with an independent town cap.
+    fn nearby(&self, id: u64, players: &[Vec3], live: &LiveDef) -> Vec<usize> {
+        let t = &self.villagers.towns[&id];
+        let mut nearby: Vec<(usize, f32)> = (0..t.people.len()).filter_map(|i| {
+            let at = match t.people[i].creature.and_then(|c| self.creatures.live.get(&c)) {
+                Some(c) => c.body.position,
+                None => self.spot_for(id, i, mix(t.info.people[i].seed, self.villagers.generation(id, i)))?.0.as_vec3(),
+            };
+            let distance = players.iter().map(|p| p.with_y(0.0).distance(at.with_y(0.0))).fold(f32::MAX, f32::min);
+            (distance <= live.nearby).then_some((i, distance))
+        }).collect();
+        nearby.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
+        nearby.truncate(live.per_settlement);
+        nearby.into_iter().map(|(i, _)| i).collect()
+    }
+
+    /// Of the people of every living settlement near players, how many are out and how
+    /// many are due out: those who live and are not dead, where the land under them is held
+    /// (`/creatures people`, for a test to wait on rather than guess).
+    pub(crate) fn people_out(&self) -> (usize, usize) {
+        let live = self.live();
+        let players: Vec<Vec3> = self.players.values().filter(|p| p.joined).map(|p| p.position).collect();
+        let today = days(self.day);
+        let (mut out, mut due) = (0, 0);
+        for (&id, town) in self.villagers.towns.iter().filter(|(_, t)| t.alive) {
+            for i in self.nearby(id, &players, &live) {
+                if self.villagers.dead.get(&(id, i)).is_some_and(|d| d.away_until > today) {
+                    continue;
+                }
+                if town.people[i].creature.is_some() {
+                    (out, due) = (out + 1, due + 1);
+                } else if self.spot_for(id, i, mix(town.info.people[i].seed, self.villagers.generation(id, i))).is_some_and(|(spot, _)| self.world.contains(ColumnPos::of_block(spot))) {
+                    due += 1;
+                }
+            }
+        }
+        (out, due)
     }
 
     /// A disappearance without `creature_dies` releases a resident, never starts the

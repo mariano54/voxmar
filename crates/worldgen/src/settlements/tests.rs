@@ -1427,8 +1427,10 @@ fn every_settlement_is_joined_to_the_trails() {
 fn no_snow_falls_indoors() {
     use super::house::Kind;
     let registry = base_registry();
-    // Snow, not the snowdrop flowers that grow in the dooryard.
+    // Snow round it, not the snowdrop flowers that grow in the dooryard; in its rooms,
+    // neither.
     let snowy = |b: BlockId| registry.def(b).name.contains("snow") && !registry.def(b).has_tag("flower");
+    let snow_or_flower = |b: BlockId| registry.def(b).name.contains("snow") || registry.def(b).has_tag("flower");
     let boxy = ["cottage", "long_house", "town_house", "farm_house", "hall", "tower_house", "wing_house"];
     let (mut failures, mut looked) = (Vec::new(), 0);
     'seeds: for seed in [1u64, 42, 7, 3, 11] {
@@ -1452,9 +1454,20 @@ fn no_snow_falls_indoors() {
                     for z in b.min.y + 1..b.max.y {
                         for x in b.min.x + 1..b.max.x {
                             for y in b.floor + 1..=b.floor + 2 {
-                                if snowy(area.block(IVec3::new(x, y, z))) {
+                                let block = area.block(IVec3::new(x, y, z));
+                                if snowy(block) {
                                     failures.push(format!("seed {seed} {}: snow in the {} at {x} {y} {z}", plan.name.0, b.what));
                                 }
+                            }
+                        }
+                    }
+                    // Nor flowers in its rooms or its byre (its box may hold a porch or the
+                    // yard by a wing).
+                    for c in b.room.iter().chain(&b.byre) {
+                        for y in b.floor + 1..=b.floor + 2 {
+                            let block = area.block(IVec3::new(c.x, y, c.y));
+                            if snow_or_flower(block) {
+                                failures.push(format!("seed {seed} {}: {} in the {}'s room at {} {y} {}", plan.name.0, registry.def(block).name, b.what, c.x, c.y));
                             }
                         }
                     }
@@ -3701,7 +3714,7 @@ fn byres_stand_behind_their_homes() {
     let registry = crate::full_content().0.blocks.clone();
     let solid = |b: BlockId| registry.info(b).solid;
     let (mut places, mut byres, mut wrong) = (0, 0, Vec::new());
-    for seed in [42u64, 7, 3] {
+    for seed in [42u64, 7, 3, 1, 11] {
         let world = crate::shared_full_world(seed);
         let spawn = world.spawn_point();
         for slot in world.settlements.near(&world, IVec2::new(spawn.x, spawn.z), 2500) {
@@ -3749,6 +3762,10 @@ fn byres_stand_behind_their_homes() {
                 }
                 if b.beds.is_empty() {
                     fail("no bed in front of its byre".into());
+                }
+                // A home of one storey: a row house raised to two keeps no byre under it.
+                if b.beds.iter().any(|bed| bed.y > b.floor + 1) {
+                    fail("a bed upstairs, over its byre".into());
                 }
             }
         }

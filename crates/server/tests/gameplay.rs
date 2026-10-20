@@ -3765,21 +3765,26 @@ fn a_dead_villager_stays_dead_across_a_restart_until_a_newcomer_comes() {
     // Where they lie: a block to one side may be a wall.
     client.ok(&format!("/tp {} {} {}", bed.x, bed.y, bed.z));
     // Everyone of their kind in sight, once all have come out: a person comes out only onto
-    // land the server holds, and as its search allows, so the looks begin once the land is
-    // all in and go on until the same people are there two looks running.
+    // land the server holds, and as its search allows, so the look waits until the server
+    // says everyone due out near the player is (`/creatures people`), and a moment more for
+    // word of them to come.
     let kind = |c: &Client| -> std::collections::BTreeSet<u32> { villagers(c).into_iter().filter(|v| species_name(c, v) == name).map(|v| v.seed).collect() };
     let settle = |client: &mut Client| -> std::collections::BTreeSet<u32> {
         client.land_within(SETTLEMENT_VIEW);
-        let mut before = kind(client);
-        for _ in 0..20 {
-            client.pump_ticks(3 * TICKS_PER_SECOND as u64, |_| false);
-            let now = kind(client);
-            if now == before {
-                return now;
+        let mut said = String::new();
+        for _ in 0..60 {
+            said = client.ok("/creatures people");
+            let n: Vec<usize> = said.split_whitespace().filter_map(|w| w.parse().ok()).collect();
+            if let [out, due] = n[..]
+                && out == due
+                && due > 0
+            {
+                client.pump_ticks(TICKS_PER_SECOND as u64, |_| false);
+                return kind(client);
             }
-            before = now;
+            client.pump_ticks(TICKS_PER_SECOND as u64 / 2, |_| false);
         }
-        panic!("the {name}s in sight never held still: {before:?}");
+        panic!("the settlement's people never all came out: {said}");
     };
     let housemates = settle(&mut client);
     assert!(housemates.contains(&victim.seed), "the {name} asleep was not among those in sight");
@@ -3795,7 +3800,13 @@ fn a_dead_villager_stays_dead_across_a_restart_until_a_newcomer_comes() {
     let mut client = Client::join_with(config());
     // From the same spot, settled the same way: a {name} never seen before is a newcomer.
     client.ok(&format!("/tp {} {} {}", bed.x, bed.y, bed.z));
-    let after = settle(&mut client);
+    settle(&mut client);
+    // Everyone seen before but the dead one back, before anyone is judged a stranger: a
+    // look at no one would find no stranger.
+    let back: std::collections::BTreeSet<u32> = housemates.iter().copied().filter(|&s| s != victim.seed).collect();
+    client.pump_ticks(20 * TICKS_PER_SECOND as u64, |c| back.is_subset(&kind(c)));
+    let after = kind(&client);
+    assert!(back.is_subset(&after), "not everyone came back after the restart: {after:?} of {back:?}");
     assert!(gone(&client), "the {name} came back with a restart");
     let strangers: Vec<u32> = after.iter().copied().filter(|s| !housemates.contains(s)).collect();
     assert!(strangers.is_empty(), "a newcomer came the same night: {strangers:?} beside {housemates:?}");
