@@ -1859,7 +1859,7 @@ pub(crate) const BASE_FILES: [(&str, &str); 19] = [
 
 /// Every string in a RON source, comments left out, each with what holds it: the field
 /// it is the value of, else the field or enum variant (`Tag(...)`) whose brackets it is in.
-fn ron_strings(source: &str) -> Vec<(String, String)> {
+fn ron_strings(source: &str) -> Vec<(String, String, String)> {
     let mut strings = Vec::new();
     let mut chars = source.chars().peekable();
     // The identifier just read, the field a `:` named, and the holder of each open bracket.
@@ -1909,12 +1909,20 @@ fn ron_strings(source: &str) -> Vec<(String, String)> {
                     }
                 }
                 let holder = field.clone().or_else(|| held.last().cloned()).unwrap_or_default();
-                strings.push((holder, word));
+                // What holds the holder: the list a `Tag(..)` stands in.
+                let within = if field.is_some() { held.last() } else { held.iter().rev().nth(1) }.cloned().unwrap_or_default();
+                strings.push((holder, within, word));
             }
             _ => {}
         }
     }
     strings
+}
+
+/// Whether a list of `Tag(..)` and `Name(..)` picks definitions (plants, trees, ground
+/// decorations, particles) rather than blocks.
+fn picks_definitions(list: &str) -> bool {
+    ["plants", "trees", "decorations", "particles", "density_keeps", "wonders"].contains(&list)
 }
 
 impl WorldContent {
@@ -1967,14 +1975,22 @@ impl WorldContent {
         let lays = |name: &str| name != "ambient.ron" && BASE_FILES.iter().any(|(base, _)| *base == name);
         let mut found = Vec::new();
         for file in files.filter(|file| lays(&file.name)) {
-            for (holder, word) in ron_strings(&file.source) {
+            for (holder, within, word) in ron_strings(&file.source) {
                 // A list of tags names land and biomes, not blocks; `Tag("flower", 1.0)`
                 // picks blocks by their tag.
                 if holder == "tags" {
                     continue;
                 }
                 if holder == "Tag" {
-                    found.extend(registry.tagged(&word));
+                    // Under a list that picks definitions (plants, trees, ground decorations,
+                    // particles) a tag picks those, whose blocks their own files name, and a
+                    // snow blanket's tag only matches what it covers; elsewhere (a palette,
+                    // a settlement's flowers) it picks blocks, a settlement's flowers and
+                    // bushes only small plants among them.
+                    if !picks_definitions(&within) && within != "blanket" {
+                        let small = ["flowers", "bushes"].contains(&within.as_str());
+                        found.extend(registry.tagged(&word).filter(|&b| !small || registry.def(b).render == voxmar_engine::block::RenderKind::Plant));
+                    }
                 } else if let Some(tag) = word.strip_prefix("tag:") {
                     found.extend(registry.tagged(tag));
                 } else if let Some(id) = registry.id(&word).or_else(|| registry.id(&format!("{}:{word}", file.package))) {
@@ -3356,12 +3372,15 @@ mod tests {
     fn strings_know_what_holds_them() {
         let source = r#"// "not this"
             (name: "flint_scatter", tags: ["forest", "open"], plants: [Tag("flower", 1.0), Name("fern", 2.0)], top: Block("grass"))"#;
-        let got: Vec<(String, String)> = ron_strings(source);
-        let held = |word: &str| got.iter().find(|(_, w)| w == word).map(|(h, _)| h.as_str());
+        let got: Vec<(String, String, String)> = ron_strings(source);
+        let held = |word: &str| got.iter().find(|(.., w)| w == word).map(|(h, ..)| h.as_str());
         assert_eq!(got.len(), 6, "{got:?}");
         assert_eq!(held("flint_scatter"), Some("name"));
         assert_eq!((held("forest"), held("open")), (Some("tags"), Some("tags")));
         assert_eq!((held("flower"), held("fern"), held("grass")), (Some("Tag"), Some("Name"), Some("Block")));
+        let within = |word: &str| got.iter().find(|(.., w)| w == word).map(|(_, within, _)| within.as_str());
+        assert_eq!((within("flower"), within("fern")), (Some("plants"), Some("plants")));
+        assert!(picks_definitions("plants") && !picks_definitions("flowers"));
     }
 
     fn registry() -> BlockRegistry {
