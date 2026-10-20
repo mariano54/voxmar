@@ -747,24 +747,30 @@ mod tests {
             assert!(start.elapsed() < std::time::Duration::from_secs(20), "the land as it came was never meshed");
             app.update();
         }
-        // A block set and taken away again every frame for two seconds, frames coming
-        // faster than a column meshes.
+        // Another block broken every frame, frames coming faster than a column meshes, so
+        // every mesh shown is a change. A column's edit job runs until it is shown: the next
+        // one never takes its place while it is still on its way.
         let chunk = centre.chunk(60 / CHUNK_SIZE);
         let shown = |app: &App| app.world().resource::<ClientWorld>().chunks.get(&chunk).map(|c| c.hashes);
         let (mut last, mut changes, mut frames) = (shown(&app), 0, 0);
+        let mut job = None;
         let start = std::time::Instant::now();
-        while start.elapsed() < std::time::Duration::from_secs(2) {
+        while changes < 3 {
+            assert!(start.elapsed() < std::time::Duration::from_secs(20), "the edited chunk changed on screen {changes} times in {frames} frames of edits");
+            let cell = frames % (CHUNK_SIZE * CHUNK_SIZE);
+            let block = if frames / (CHUNK_SIZE * CHUNK_SIZE) % 2 == 0 { BlockId::AIR } else { stone };
             frames += 1;
-            let block = if frames % 2 == 0 { stone } else { BlockId::AIR };
-            app.world_mut().resource_mut::<ClientWorld>().set_block(IVec3::new(5, 60, 5), block);
+            app.world_mut().resource_mut::<ClientWorld>().set_block(IVec3::new(cell % CHUNK_SIZE, 60, cell / CHUNK_SIZE), block);
             app.update();
             let now = shown(&app);
             changes += usize::from(now != last);
             last = now;
-            let world = app.world().resource::<ClientWorld>();
-            assert!(world.in_flight.len() <= 9, "{} columns in flight after {frames} frames of edits", world.in_flight.len());
+            let newest = app.world().resource::<ClientWorld>().in_flight.get(&centre).copied();
+            if let (Some(was), Some(newest)) = (job, newest) {
+                assert_eq!(was, newest, "an edit's job was replaced before it was shown, after {frames} frames of edits");
+            }
+            job = newest;
         }
-        assert!(changes >= 3, "the edited chunk changed on screen {changes} times in {frames} frames of edits");
         let start = std::time::Instant::now();
         while app.world().resource::<ClientWorld>().meshing(centre) {
             assert!(start.elapsed() < std::time::Duration::from_secs(20), "the column never settled after the edits stopped");
