@@ -940,6 +940,9 @@ struct Gate {
     /// The player's states the server had sent when the wear step clicked.
     worn_states: u32,
     /// The Defence level before the wear step raised it, to put back after.
+    /// The hotbar slot selected before the charm step took the charm in hand, put back
+    /// after it.
+    charm_hand: usize,
     worn_defence: u8,
     overlay_counted: (f32, f32),
     /// The fight sounds asked for, and the bursts, kicks and knocks, before `combat_feel`
@@ -1130,6 +1133,7 @@ impl Gate {
             swing_watch: SwingWatch::default(),
             music_fade: None,
             worn_states: 0,
+            charm_hand: 0,
             worn_defence: 1,
             overlay_counted: (0.0, 0.0),
             feel_asked: Default::default(),
@@ -13150,10 +13154,13 @@ fn charm(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     match gate.phase {
         0 => {
             let at = gate.feet + CHARM_AT;
+            // Only the charm goes in and out: what the steps before left carried (the
+            // sword the guard step takes up) stays, and the hand goes back as it was.
+            gate.charm_hand = world.resource::<LocalPlayer>().selected;
             let net = world.resource::<Net>();
             for line in [
                 "effect clear".to_owned(),
-                "clear".to_owned(),
+                format!("clear {short}"),
                 format!("fill {} {} {} {} {} {} stone", at.x - 1, at.y - 1, at.z - 1, at.x + 1, at.y - 1, at.z + 1),
                 format!("fill {} {} {} {} {} {} air", at.x - 1, at.y, at.z - 1, at.x + 1, at.y + 7, at.z + 1),
                 format!("tp {} {} {}", at.x as f32 + 0.5, at.y, at.z as f32 + 0.5),
@@ -13256,9 +13263,13 @@ fn end_charm(world: &mut World, gate: &mut Gate, now: f32) {
     set_language(world, "en");
     world.remove_resource::<crate::hud::inventory::HoverSlot>();
     world.resource_mut::<UiState>().inventory_open = false;
+    world.resource_mut::<LocalPlayer>().selected = gate.charm_hand;
+    let charm = charm_of(&world.resource::<Launch>().content).map(|(item, _)| world.resource::<Launch>().content.blocks.def(item).name.clone());
     let feet = gate.feet;
     let net = world.resource::<Net>();
-    net.command("clear");
+    if let Some(name) = charm {
+        net.command(&format!("clear {}", name.split_once(':').map_or(name.as_str(), |(_, n)| n)));
+    }
     net.command("effect clear");
     net.command(&format!("tp {} {} {}", feet.x as f32 + 0.5, feet.y, feet.z as f32 + 0.5));
     gate.next(Step::Wear, now);

@@ -305,8 +305,8 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
                 margin: UiRect::top(Val::Px(top)),
                 ..default()
             };
-            let spawn_slot = |grid: &mut ChildSpawnerCommands, slot: usize| {
-                let node = Node { width: Val::Px(SLOT), height: Val::Px(SLOT), ..default() };
+            let spawn_placed = |grid: &mut ChildSpawnerCommands, slot: usize, grid_row: GridPlacement, grid_column: GridPlacement| {
+                let node = Node { width: Val::Px(SLOT), height: Val::Px(SLOT), grid_row, grid_column, ..default() };
                 grid.spawn((Button, Silent, InventorySlot(slot), RelativeCursorPosition::default(), node, Piece::Well.image())).with_children(|cell| {
                     // A worn well shows faintly what it takes, under the piece worn in it.
                     if let Some(glyph) = worn_glyph(slot) {
@@ -317,6 +317,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
                     slot_contents(cell, font, slot)
                 });
             };
+            let spawn_slot = |grid: &mut ChildSpawnerCommands, slot: usize| spawn_placed(grid, slot, GridPlacement::auto(), GridPlacement::auto());
             // An open store's slots and its name, in place of the crafting grid (`fit_store`).
             let store = Node {
                 flex_direction: FlexDirection::Column,
@@ -333,16 +334,24 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
             // The crafting grid and what it makes, above the pack.
             let crafting = Node { align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), margin: UiRect::bottom(Val::Px(space::GAP)), ..default() };
             card.spawn(crafting).with_children(|row| {
-                // What is worn: head and body, legs and hands, feet and shield, and a charm.
+                // What is worn: head and body, legs and hands, feet and shield in pairs, and a
+                // charm beside them at the middle row, so the wells stand no taller than a
+                // crafting table's grid and the screen keeps its height.
                 let worn = Node {
                     display: Display::Grid,
-                    grid_template_columns: RepeatedGridTrack::px(2, SLOT),
+                    grid_template_columns: RepeatedGridTrack::px(3, SLOT),
                     row_gap: Val::Px(PX),
                     column_gap: Val::Px(PX),
                     margin: UiRect::right(Val::Px(space::SECTION)),
                     ..default()
                 };
-                row.spawn(worn).with_children(|grid| (WORN..=LAST).for_each(|slot| spawn_slot(grid, slot)));
+                row.spawn(worn).with_children(|grid| {
+                    for slot in WORN..=LAST {
+                        let at = slot - WORN;
+                        let (row, column) = if slot == LAST { (2, 3) } else { (at as i16 / 2 + 1, at as i16 % 2 + 1) };
+                        spawn_placed(grid, slot, GridPlacement::start(row), GridPlacement::start(column));
+                    }
+                });
                 // The grid, its arrow, what it makes and its words: an open store's slots
                 // take their place (`fit_store`), while what is worn stays.
                 let craft = Node { align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), ..default() };
