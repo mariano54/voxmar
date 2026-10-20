@@ -1749,19 +1749,24 @@ mod tests {
             assert!(way("base:light", &[core]).is_some(), "{core}");
         }
         let file = |source: &str| ContentFile { package: "mod".into(), name: RECORDINGS.into(), source: source.into() };
-        let fine = r#"(actions: {"core:craft": (sounds: ["c.ogg"], ways: [(name: "knap", with: ["flint", "tag:log"], sounds: ["k.ogg"], volume: 1.5)])})"#;
+        let fine = r#"(actions: {"core:craft": (sounds: ["c.ogg"], ways: [(name: "knap", with: ["base:flint", "tag:log"], sounds: ["k.ogg"], volume: 1.5)])})"#;
         let fine = Recordings::load(&[file(fine)]).unwrap();
         assert_eq!(fine.actions["core:craft"].ways[0].sounds, ["content/mod/k.ogg"]);
         assert_eq!(fine.check_ways(blocks), Ok(()));
+        // A bare name is the package's own: the base package's flint, but no flint of a mod's.
+        let base = ContentFile { package: "base".into(), name: RECORDINGS.into(), source: r#"(actions: {"core:craft": (sounds: ["c.ogg"], ways: [(name: "knap", with: ["flint"], sounds: ["k.ogg"])])})"#.into() };
+        assert_eq!(Recordings::load(&[base]).unwrap().check_ways(blocks), Ok(()));
+        let bare = r#"(actions: {"core:craft": (sounds: ["c.ogg"], ways: [(name: "knap", with: ["flint"], sounds: ["k.ogg"])])})"#;
+        assert!(Recordings::load(&[file(bare)]).unwrap().check_ways(blocks).is_err());
         for wrong in [
-            r#"(actions: {"core:craft": (sounds: ["c.ogg"], ways: [(with: ["flint"], sounds: ["k.ogg"])])})"#,
-            r#"(actions: {"core:craft": (sounds: ["c.ogg"], ways: [(name: "a", with: ["flint"], sounds: ["k.ogg"]), (name: "a", with: ["clay"], sounds: ["k.ogg"])])})"#,
+            r#"(actions: {"core:craft": (sounds: ["c.ogg"], ways: [(with: ["base:flint"], sounds: ["k.ogg"])])})"#,
+            r#"(actions: {"core:craft": (sounds: ["c.ogg"], ways: [(name: "a", with: ["base:flint"], sounds: ["k.ogg"]), (name: "a", with: ["base:clay"], sounds: ["k.ogg"])])})"#,
             r#"(actions: {"core:craft": (sounds: ["c.ogg"], ways: [(name: "a", sounds: ["k.ogg"])])})"#,
-            r#"(actions: {"core:craft": (sounds: ["c.ogg"], ways: [(name: "a", with: ["flimt"], sounds: ["k.ogg"])])})"#,
+            r#"(actions: {"core:craft": (sounds: ["c.ogg"], ways: [(name: "a", with: ["base:flimt"], sounds: ["k.ogg"])])})"#,
             r#"(actions: {"core:craft": (sounds: ["c.ogg"], ways: [(name: "a", with: ["tag:nothing_has_this"], sounds: ["k.ogg"])])})"#,
-            r#"(actions: {"core:craft": (sounds: ["c.ogg"], ways: [(name: "a", with: ["flint"])])})"#,
-            r#"(actions: {"core:craft": (sounds: ["c.ogg"], ways: [(name: "a", with: ["flint"], sounds: ["k.ogg"], volume: 0.0)])})"#,
-            r#"(actions: {"core:craft": (silent: true, ways: [(name: "a", with: ["flint"], sounds: ["k.ogg"])])})"#,
+            r#"(actions: {"core:craft": (sounds: ["c.ogg"], ways: [(name: "a", with: ["base:flint"])])})"#,
+            r#"(actions: {"core:craft": (sounds: ["c.ogg"], ways: [(name: "a", with: ["base:flint"], sounds: ["k.ogg"], volume: 0.0)])})"#,
+            r#"(actions: {"core:craft": (silent: true, ways: [(name: "a", with: ["base:flint"], sounds: ["k.ogg"])])})"#,
         ] {
             assert!(Recordings::load(&[file(wrong)]).unwrap().check_ways(blocks).is_err(), "{wrong}");
         }
