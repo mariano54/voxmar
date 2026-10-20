@@ -60,6 +60,9 @@
 (
     templates: {
         // A wood: bark, the stripped log, bark on every side, planks, leaves and a sapling.
+        // No leaves drop a sapling yet, so each wood family, a mod's too, tags its own sapling
+        // creative_only in its members unless the world lays it: the recipe book refuses an
+        // item no way gives.
         "wood": [
             (name: "{name}_log", sound: Wood, textures: Column(end: "{name}_log_top", side: "{name}_log"), hardness: 2.0, color: (109, 85, 50), tags: ["log", "wood", "fuel", "natural", "tree", "shelter:sound"]),
             (
@@ -448,17 +451,17 @@
         (template: "terracotta", name: "light_gray", tags: ["natural"], all: (color: (135, 107, 98))),
         // Woods.
         (template: "wood", name: "oak", tags: ["broadleaf", "temperate"], members: {"oak_sapling": (tags: ["creative_only"])}),
-        (template: "wood", name: "birch", tags: ["broadleaf", "temperate", "cold"], all: (color: (216, 215, 210)), members: {"birch_sapling": (tags: ["creative_only"]), "birch_leaves": (color: (100, 140, 60)), "stripped_birch_log": (tags: ["creative_only"])}),
-        (template: "wood", name: "spruce", tags: ["conifer", "evergreen", "cold"], all: (color: (58, 37, 16)), members: {"spruce_sapling": (tags: ["creative_only"]), "spruce_leaves": (color: (40, 80, 50)), "stripped_spruce_log": (tags: ["creative_only"])}),
-        (template: "wood", name: "jungle", tags: ["broadleaf", "tropical", "hot"], all: (color: (85, 67, 25)), members: {"jungle_sapling": (tags: ["creative_only"]), "jungle_leaves": (color: (48, 140, 30)), "stripped_jungle_log": (tags: ["creative_only"])}),
-        (template: "wood", name: "acacia", tags: ["broadleaf", "savanna", "hot", "dry"], all: (color: (103, 96, 86)), members: {"acacia_sapling": (tags: ["creative_only"]), "acacia_leaves": (color: (90, 120, 40)), "stripped_acacia_log": (tags: ["creative_only"])}),
-        (template: "wood", name: "dark_oak", tags: ["broadleaf", "temperate", "shade"], all: (color: (60, 46, 26)), members: {"dark_oak_sapling": (tags: ["creative_only"]), "dark_oak_leaves": (color: (50, 100, 30)), "stripped_dark_oak_log": (tags: ["creative_only"])}),
+        (template: "wood", name: "birch", tags: ["broadleaf", "temperate", "cold"], all: (color: (216, 215, 210)), members: {"birch_sapling": (tags: ["creative_only"]), "birch_leaves": (color: (100, 140, 60))}),
+        (template: "wood", name: "spruce", tags: ["conifer", "evergreen", "cold"], all: (color: (58, 37, 16)), members: {"spruce_sapling": (tags: ["creative_only"]), "spruce_leaves": (color: (40, 80, 50))}),
+        (template: "wood", name: "jungle", tags: ["broadleaf", "tropical", "hot"], all: (color: (85, 67, 25)), members: {"jungle_sapling": (tags: ["creative_only"]), "jungle_leaves": (color: (48, 140, 30))}),
+        (template: "wood", name: "acacia", tags: ["broadleaf", "savanna", "hot", "dry"], all: (color: (103, 96, 86)), members: {"acacia_sapling": (tags: ["creative_only"]), "acacia_leaves": (color: (90, 120, 40))}),
+        (template: "wood", name: "dark_oak", tags: ["broadleaf", "temperate", "shade"], all: (color: (60, 46, 26)), members: {"dark_oak_sapling": (tags: ["creative_only"]), "dark_oak_leaves": (color: (50, 100, 30))}),
         (
             template: "wood", name: "cherry", tags: ["broadleaf", "temperate", "flower"],
             all: (color: (54, 33, 44)),
-            members: {"cherry_leaves": (tint: Some(None), color: (229, 172, 205), tags: ["dye:pink"]), "stripped_cherry_log": (tags: ["creative_only"])},
+            members: {"cherry_leaves": (tint: Some(None), color: (229, 172, 205), tags: ["dye:pink"])},
         ),
-        (template: "wood", name: "mangrove", tags: ["broadleaf", "tropical", "wetland"], all: (color: (102, 48, 42)), members: {"mangrove_sapling": (tags: ["creative_only"]), "mangrove_leaves": (color: (60, 130, 40)), "stripped_mangrove_log": (tags: ["creative_only"])}),
+        (template: "wood", name: "mangrove", tags: ["broadleaf", "tropical", "wetland"], all: (color: (102, 48, 42)), members: {"mangrove_sapling": (tags: ["creative_only"]), "mangrove_leaves": (color: (60, 130, 40))}),
         // The classic wild flowers.
         (template: "flower", name: "dandelion", tags: ["flower", "meadow", "temperate", "edible", "flavour:bitter", "dye:yellow", "alchemy:healing"], all: (model: Bush, textures: All("dandelion_blooms"), color: (240, 210, 40))),
         (template: "flower", name: "poppy", tags: ["flower", "meadow", "temperate", "dye:red", "alchemy:sleep"], all: (model: Bush, textures: All("poppy_blooms"), color: (200, 30, 30))),
@@ -494,15 +497,15 @@
         (
             template: "wood", name: "maple", tags: ["broadleaf", "temperate", "cold", "autumn"],
             all: (color: (110, 80, 60)),
-            members: {"maple_sapling": (tags: ["creative_only"]), "maple_leaves": (tint: Some(None), color: (210, 80, 30), tags: ["dye:orange"]), "maple_log": (tags: ["flavour:sweet"]), "stripped_maple_log": (tags: ["creative_only"])},
+            members: {"maple_sapling": (tags: ["creative_only"]), "maple_leaves": (tint: Some(None), color: (210, 80, 30), tags: ["dye:orange"]), "maple_log": (tags: ["flavour:sweet"])},
         ),
-        (template: "wood", name: "redwood", tags: ["conifer", "evergreen", "temperate", "wet"], all: (color: (130, 60, 40)), members: {"redwood_sapling": (tags: ["creative_only"]), "stripped_redwood_log": (tags: ["creative_only"])}),
+        (template: "wood", name: "redwood", tags: ["conifer", "evergreen", "temperate", "wet"], all: (color: (130, 60, 40)), members: {"redwood_sapling": (tags: ["creative_only"])}),
         // Scots pine: flaking orange bark, pale resinous wood and blue-green needles.
-        (template: "wood", name: "pine", tags: ["conifer", "evergreen", "cold", "dry"], all: (color: (160, 92, 48)), members: {"pine_sapling": (tags: ["creative_only"]), "pine_leaves": (color: (44, 82, 72)), "pine_log": (tags: ["flavour:resin"]), "stripped_pine_log": (tags: ["creative_only"])}),
-        (template: "wood", name: "cypress", tags: ["conifer", "evergreen", "wetland", "warm"], all: (color: (110, 95, 80)), members: {"cypress_sapling": (tags: ["creative_only"]), "stripped_cypress_log": (tags: ["creative_only"])}),
-        (template: "wood", name: "willow", tags: ["broadleaf", "wetland", "riverbank", "temperate"], all: (color: (150, 130, 90)), members: {"willow_sapling": (tags: ["creative_only"]), "willow_log": (tags: ["alchemy:healing"]), "stripped_willow_log": (tags: ["creative_only"])}),
-        (template: "wood", name: "baobab", tags: ["broadleaf", "savanna", "hot", "dry"], all: (color: (140, 120, 110)), members: {"baobab_sapling": (tags: ["creative_only"]), "baobab_leaves": (tags: ["edible"]), "stripped_baobab_log": (tags: ["creative_only"])}),
-        (template: "wood", name: "palm", tags: ["palm", "tropical", "shore", "hot"], all: (color: (150, 120, 80)), members: {"palm_sapling": (tags: ["creative_only"]), "stripped_palm_log": (tags: ["creative_only"])}),
+        (template: "wood", name: "pine", tags: ["conifer", "evergreen", "cold", "dry"], all: (color: (160, 92, 48)), members: {"pine_sapling": (tags: ["creative_only"]), "pine_leaves": (color: (44, 82, 72)), "pine_log": (tags: ["flavour:resin"])}),
+        (template: "wood", name: "cypress", tags: ["conifer", "evergreen", "wetland", "warm"], all: (color: (110, 95, 80)), members: {"cypress_sapling": (tags: ["creative_only"])}),
+        (template: "wood", name: "willow", tags: ["broadleaf", "wetland", "riverbank", "temperate"], all: (color: (150, 130, 90)), members: {"willow_sapling": (tags: ["creative_only"]), "willow_log": (tags: ["alchemy:healing"])}),
+        (template: "wood", name: "baobab", tags: ["broadleaf", "savanna", "hot", "dry"], all: (color: (140, 120, 110)), members: {"baobab_sapling": (tags: ["creative_only"]), "baobab_leaves": (tags: ["edible"])}),
+        (template: "wood", name: "palm", tags: ["palm", "tropical", "shore", "hot"], all: (color: (150, 120, 80)), members: {"palm_sapling": (tags: ["creative_only"])}),
         (
             template: "wood", name: "silverwood", tags: ["broadleaf", "cold", "wonder"], all: (color: (190, 196, 210), rarity: Rare),
             members: {

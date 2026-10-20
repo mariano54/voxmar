@@ -9022,8 +9022,64 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.advance(now);
             }
         }
-        // + on the keypad, the pointer over the web, zooms it back in a step.
+        // Brought to the web's top left corner, its first quest's cell in the middle of the
+        // well, a notch of the wheel away from the player zooms the web back in about it: the
+        // canvas has room past every edge, so that point stays put there too.
         24 => {
+            let Some((middle, _)) = web_middle(world) else {
+                return quit(world, gate, "quests: zoom at an edge", "the quest book has no web".into());
+            };
+            let corner = Vec2::splat(0.5);
+            let step = {
+                let mut canvases = world.query::<&crate::hud::quests::Canvas>();
+                canvases.iter(world).next().map_or(Vec2::ZERO, |canvas| (canvas.grid(Vec2::ONE) - canvas.grid(Vec2::ZERO)).recip())
+            };
+            if middle.distance(corner) > 0.05 {
+                if in_phase > 2.0 {
+                    return quit(world, gate, "quests: zoom at an edge", format!("2 s after the web was scrolled to its top left corner, the middle of the well is at {middle} steps on the web, not {corner}"));
+                }
+                let mut scrolls = world.query_filtered::<&mut bevy::ui::ScrollPosition, With<crate::hud::quests::Web>>();
+                if let Some(mut scroll) = scrolls.iter_mut(world).next() {
+                    let to = (scroll.0 + (corner - middle) * step).max(Vec2::ZERO);
+                    if scroll.0 != to {
+                        scroll.0 = to;
+                    }
+                }
+                return;
+            }
+            let Some((_, cell)) = web_well(world) else { return };
+            gate.web_cell = cell;
+            gate.web_middle = middle;
+            let Some(web) = world.query_filtered::<Entity, With<crate::hud::quests::Web>>().iter(world).next() else { return };
+            world.resource_mut::<UiClicks>().hover = Some(web);
+            world.write_message(bevy::input::mouse::MouseWheel { unit: bevy::input::mouse::MouseScrollUnit::Line, x: 0.0, y: 1.0, window: Entity::PLACEHOLDER, phase: bevy::input::touch::TouchPhase::Moved });
+            gate.advance(now);
+        }
+        25 => {
+            let zoom = world.resource::<crate::hud::quests::QuestView>().zoom;
+            let (Some((well, cell)), Some((middle, bigger))) = (web_well(world), web_middle(world)) else {
+                if in_phase > 2.0 {
+                    quit(world, gate, "quests: zoom at an edge", "the quest book's web went after a notch of the wheel".into());
+                }
+                return;
+            };
+            let settled = zoom == 0 && cell > gate.web_cell && zoom_sized(world, zoom, cell) && in_phase > 0.2;
+            if !settled && in_phase < 2.0 {
+                return;
+            }
+            let off = (middle - gate.web_middle).abs();
+            let held = (!bigger.x || off.x < 0.5) && (!bigger.y || off.y < 0.5);
+            let result = if settled && held {
+                Ok(format!("at the web's top left corner, a notch of the wheel zoomed it back in to zoom {zoom}: quests {cell:.0} pixels across (were {:.0}), the middle of the well still at {middle} steps on the web", gate.web_cell))
+            } else {
+                Err(format!("2 s after a notch of the wheel at the web's top left corner: zoom {zoom}, quests {cell:.0} pixels across (were {:.0}; the data gives {:.0}), the middle of the well at {middle} steps on the web (was {})", gate.web_cell, zoom_side(world, zoom), gate.web_middle))
+            };
+            gate.check("quests: zoom at an edge", result);
+            gate.check("quests: lines inside at an edge", lines_inside(world, well));
+            gate.advance(now);
+        }
+        // + on the keypad, the pointer over the web, zooms it back in a step.
+        26 => {
             let Some((_, cell)) = web_well(world) else {
                 return quit(world, gate, "quests: zoom keys", "the quest book has no web or no quests".into());
             };
@@ -9031,16 +9087,16 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             key(world, KeyCode::NumpadAdd, true);
             gate.advance(now);
         }
-        25 => {
+        27 => {
             key(world, KeyCode::NumpadAdd, false);
             let zoom = world.resource::<crate::hud::quests::QuestView>().zoom;
             let cell = web_well(world).map_or(0.0, |(_, cell)| cell);
-            let settled = zoom == 0 && cell > gate.web_cell && zoom_sized(world, zoom, cell) && in_phase > 0.2;
+            let settled = zoom == 1 && cell > gate.web_cell && zoom_sized(world, zoom, cell) && in_phase > 0.2;
             if !settled && in_phase < 2.0 {
                 return;
             }
             let result = if settled {
-                Ok(format!("+ zoomed the web back in to zoom {zoom}: quests {cell:.0} pixels across (were {:.0}), the next size up in the data", gate.web_cell))
+                Ok(format!("+ zoomed the web in to zoom {zoom}: quests {cell:.0} pixels across (were {:.0}), the next size up in the data", gate.web_cell))
             } else {
                 Err(format!("2 s after + over the web: zoom {zoom}, quests {cell:.0} pixels across (were {:.0}; the data gives {:.0})", gate.web_cell, zoom_side(world, zoom)))
             };
@@ -9049,7 +9105,7 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         }
         // Turned to the last chapter and another quest, Current Quest brings the book back
         // to the quest the player is on, picked, its cell inside the well.
-        26 => {
+        28 => {
             let current = {
                 let (launch, player, settings) = (world.resource::<Launch>(), world.resource::<LocalPlayer>(), world.resource::<crate::settings::Settings>());
                 crate::hud::quests::current(&launch.content, player, settings).map(|q| q.name.clone())
@@ -9077,7 +9133,7 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             world.resource_mut::<UiClicks>().next = Some((button, MouseButton::Left));
             gate.advance(now);
         }
-        27 => {
+        29 => {
             let picked = world.resource::<crate::hud::quests::QuestView>().picked.clone();
             let well = web_well(world).map(|(well, _)| well);
             let node = world.query::<(&crate::hud::quests::QuestNode, &bevy::ui::UiGlobalTransform)>().iter(world).find(|(n, _)| Some(&n.0) == gate.web_head.as_ref()).map(|(_, at)| at.translation);
@@ -9115,14 +9171,14 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             world.resource_mut::<UiState>().quests_open = false;
             gate.advance(now);
         }
-        28 => {
+        30 => {
             if in_phase < 0.2 {
                 return;
             }
             key(world, key_code, true);
             gate.advance(now);
         }
-        29 => {
+        31 => {
             key(world, key_code, false);
             let picked = world.resource::<crate::hud::quests::QuestView>().picked.clone();
             let well = web_well(world).map(|(well, _)| well);

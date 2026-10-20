@@ -528,7 +528,7 @@ mod tests {
         // wild plant merged away, as itself). And none is breaking a block to get that
         // block back without a tool to take it whole (a well facing east gives no well).
         let breaks_as = |b: BlockId| listed_as(&content.blocks, b);
-        assert_ne!(breaks_as(id("base:well_east")), id("base:well_east"), "a well's facing reads as the well");
+        assert_eq!(breaks_as(id("base:well_east")), id("base:well"), "a well's facing reads as the well");
         for entry in book.entries() {
             if let Method::Break { block, tool: None, .. } = entry.method {
                 assert_ne!(breaks_as(block), entry.output, "breaking {} gives itself", content.blocks.def(block).name);

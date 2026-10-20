@@ -1892,7 +1892,8 @@ fn ron_strings(source: &str) -> Vec<(String, String, String)> {
             ',' => field = None,
             '(' | '[' | '{' => {
                 let named = field.take();
-                let holder = if c == '(' && just_read { last_ident.clone() } else { named.or_else(|| held.last().cloned()).unwrap_or_default() };
+                // `Some(..)` holds what it wraps as its field or brackets would.
+                let holder = if c == '(' && just_read && last_ident != "Some" { last_ident.clone() } else { named.or_else(|| held.last().cloned()).unwrap_or_default() };
                 held.push(holder);
             }
             ')' | ']' | '}' => {
@@ -1973,12 +1974,20 @@ impl WorldContent {
     /// (seeds a wild crop is named by) are left out.
     pub fn placed<'a>(files: impl Iterator<Item = &'a ContentFile>, registry: &BlockRegistry) -> Vec<voxmar_engine::block::BlockId> {
         let lays = |name: &str| name != "ambient.ron" && BASE_FILES.iter().any(|(base, _)| *base == name);
+        let files: Vec<&ContentFile> = files.filter(|file| lays(&file.name)).collect();
+        // A settlement style's names with `{wood}` and `{trim}` in them stand for each of
+        // its woods; any style's, as the names are read without their style.
+        let woods: Vec<String> = Self::from_files(files.iter().copied(), registry)
+            .map(|world| world.settlements.styles.iter().flat_map(|style| style.woods.iter().map(|(wood, _)| wood.clone())).collect())
+            .unwrap_or_default();
         let mut found = Vec::new();
-        for file in files.filter(|file| lays(&file.name)) {
+        for file in files {
             for (holder, within, word) in ron_strings(&file.source) {
                 // A list of tags names land and biomes, not blocks; `Tag("flower", 1.0)`
                 // picks blocks by their tag.
-                if holder == "tags" {
+                // Nor do a crop's stages, which grow from what is sown (a fruit tree's ripe
+                // leaves its file names).
+                if holder == "tags" || (file.name == "crops.ron" && holder == "stages") {
                     continue;
                 }
                 if holder == "Tag" {
@@ -1989,10 +1998,15 @@ impl WorldContent {
                     // bushes only small plants among them.
                     if !picks_definitions(&within) && within != "blanket" {
                         let small = ["flowers", "bushes"].contains(&within.as_str());
-                        found.extend(registry.tagged(&word).filter(|&b| !small || registry.def(b).render == voxmar_engine::block::RenderKind::Plant));
+                        found.extend(registry.tagged(&word).filter(|&b| !small || crate::settlements::small_plant(registry, b)));
                     }
                 } else if let Some(tag) = word.strip_prefix("tag:") {
                     found.extend(registry.tagged(tag));
+                } else if word.contains('{') {
+                    for (wood, trim) in woods.iter().flat_map(|wood| woods.iter().map(move |trim| (wood, trim))) {
+                        let name = crate::settlements::def::fill(&word, wood, trim);
+                        found.extend(registry.id(&name).or_else(|| registry.id(&format!("{}:{name}", file.package))));
+                    }
                 } else if let Some(id) = registry.id(&word).or_else(|| registry.id(&format!("{}:{word}", file.package))) {
                     found.push(id);
                 }
@@ -3366,20 +3380,22 @@ fn temperature_axis() -> Axis {
 mod tests {
     use super::*;
 
-    /// Strings are read with what holds them: a field, or an enum variant's brackets, and
-    /// comments are skipped.
+    /// Strings are read with what holds them: a field, or an enum variant's brackets (`Some`
+    /// is seen through), and comments are skipped.
     #[test]
     fn strings_know_what_holds_them() {
         let source = r#"// "not this"
-            (name: "flint_scatter", tags: ["forest", "open"], plants: [Tag("flower", 1.0), Name("fern", 2.0)], top: Block("grass"))"#;
+            (name: "flint_scatter", tags: ["forest", "open"], plants: [Tag("flower", 1.0), Name("fern", 2.0)], top: Block("grass"), decorations: Some([Tag("rock", 1.0)]))"#;
         let got: Vec<(String, String, String)> = ron_strings(source);
         let held = |word: &str| got.iter().find(|(.., w)| w == word).map(|(h, ..)| h.as_str());
-        assert_eq!(got.len(), 6, "{got:?}");
+        assert_eq!(got.len(), 7, "{got:?}");
         assert_eq!(held("flint_scatter"), Some("name"));
         assert_eq!((held("forest"), held("open")), (Some("tags"), Some("tags")));
         assert_eq!((held("flower"), held("fern"), held("grass")), (Some("Tag"), Some("Name"), Some("Block")));
         let within = |word: &str| got.iter().find(|(.., w)| w == word).map(|(_, within, _)| within.as_str());
         assert_eq!((within("flower"), within("fern")), (Some("plants"), Some("plants")));
+        // `Some(..)` is no holder of its own: what it wraps is held as without it.
+        assert_eq!((held("rock"), within("rock")), (Some("Tag"), Some("decorations")));
         assert!(picks_definitions("plants") && !picks_definitions("flowers"));
     }
 

@@ -1714,6 +1714,14 @@ mod tests {
         let named = |ids: Vec<voxmar_engine::block::BlockId>| ids.into_iter().map(|id| content.blocks.def(id).name.clone()).collect::<Vec<_>>();
         let (dead, stale) = recipe_book(&content).unsourced(&content.blocks);
         assert_eq!((named(dead), named(stale)), (Vec::new(), Vec::new()), "the game's own items each have a way, and no creative_only tag is stale");
+        // Found where a village builds with it, named with its style's wood ("stripped_{wood}_log"),
+        // and foraged from a ripe crop the world grows wild.
+        let book = recipe_book(&content);
+        let id = |name: &str| content.blocks.id(name).unwrap();
+        let spruce = book.making(id("base:stripped_spruce_log"));
+        assert!(spruce.iter().any(|e| matches!(e.method, voxmar_engine::recipe_book::Method::Found { .. })), "{spruce:?}");
+        let tomato = book.making(id("base:tomato_seeds"));
+        assert!(tomato.iter().any(|e| matches!(e.method, voxmar_engine::recipe_book::Method::Harvest { forage: true, from, .. } if from == id("base:tomato_crop"))), "{tomato:?}");
         let dir = std::env::temp_dir().join(format!("voxmar-no-way-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let mods = dir.join("content");
