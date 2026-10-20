@@ -68,10 +68,15 @@ pub enum Piece {
     WornHands,
     WornFeet,
     WornShield,
+    /// The quest book's marks on a quest: done, with rewards waiting, and waiting on
+    /// those before it.
+    QuestDone,
+    QuestReady,
+    QuestLocked,
 }
 
 impl Piece {
-    const ALL: [Piece; 32] = [
+    const ALL: [Piece; 35] = [
         Piece::Panel,
         Piece::Button,
         Piece::ButtonHover,
@@ -104,6 +109,9 @@ impl Piece {
         Piece::WornHands,
         Piece::WornFeet,
         Piece::WornShield,
+        Piece::QuestDone,
+        Piece::QuestReady,
+        Piece::QuestLocked,
     ];
 
     /// The texture's name in the packs, and its size and slicing inset in texels (none
@@ -142,6 +150,9 @@ impl Piece {
             Piece::WornHands => ("ui/slot/gloves", (16, 16), None),
             Piece::WornFeet => ("ui/slot/boots", (16, 16), None),
             Piece::WornShield => ("ui/slot/shield", (16, 16), None),
+            Piece::QuestDone => ("ui/quest/done", (9, 9), None),
+            Piece::QuestReady => ("ui/quest/ready", (9, 9), None),
+            Piece::QuestLocked => ("ui/quest/locked", (9, 9), None),
         }
     }
 

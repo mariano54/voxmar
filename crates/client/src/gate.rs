@@ -8521,8 +8521,8 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 return;
             };
             // The book as it stands with a reward waiting: the web filling most of the
-            // window, the picked quest's page in the sidebar at the right with its Claim
-            // button and its rewards.
+            // window, the picked quest's card over its right side with its Claim button and
+            // its rewards.
             if in_phase < 0.5 || gate.shot(world, "quests-claim").is_none() {
                 return;
             }
