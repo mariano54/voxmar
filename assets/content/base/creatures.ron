@@ -49,6 +49,11 @@
         output: (0.5, 0.7), breed: 0.5, fed: (1.0, 2.0), space_radius: 5.0, company: 14.0,
         climate: (0.75, 0.25), wet: 0.05, roof_within: 3.0, snow_hardy: -10.0,
     ),
+    // A hop up a step rises a block and a half at most, however great the leaper's own
+    // jump: a snow leopard (its jump 11, over two blocks) springing on from a block before a
+    // gap would otherwise come down on a fence two high beyond it. Anything that jumps at
+    // all still gets up a block.
+    climbing: (step_rise: 1.45),
     creatures: [
         // --- Small and common: where everyone starts -------------------------------------
         (
@@ -83,7 +88,7 @@
             breeding: (level: 1, litter: (1, 3), growth: 8.0, xp: 12.0),
             loot: [
                 (item: "raw_small_game"),
-                (item: "hide", chance: 0.8, tools: [(tag: "knife", chance: 1.25)]),
+                (item: "raw_hide", chance: 0.8, tools: [(tag: "knife", chance: 1.25)]),
                 (item: "rabbit_foot", chance: 0.0078, rarity: Rare),
             ],
         ),
@@ -237,7 +242,7 @@
             xp: (kill: 15.0, skill: "hunter"),
             loot: [
                 (item: "raw_venison", count: (1, 2)),
-                (item: "hide", tools: [(tag: "knife", chance: 1.0, extra: 1)]),
+                (item: "raw_hide", tools: [(tag: "knife", chance: 1.0, extra: 1)]),
                 (item: "antler", chance: 0.25, rarity: Uncommon),
             ],
         ),
@@ -276,22 +281,31 @@
             breeding: (level: 15, growth: 12.0, xp: 35.0),
             needs: (space: 12),
             products: [(item: "milk", every: 5.0, tool: "pail", xp: 8.0)],
-            loot: [(item: "raw_beef", count: (1, 3)), (item: "hide"), (item: "bone", count: (0, 2))],
+            loot: [(item: "raw_beef", count: (1, 3)), (item: "raw_hide"), (item: "bone", count: (0, 2))],
         ),
         // --- Forest folk and hunters ---------------------------------------------------------
         (
-            // Passive (Mariano, 2026-10-06): common in a few biomes, never attacks first,
-            // flees when struck, a little slower than a sprint, so a chase closes. Old Tusk,
-            // the boss, is the one that charges.
-            name: "wild_boar", level: 4, health: 10,
-            defence: 4,
+            // Never attacks first (Mariano, 2026-10-06): common in a few biomes, a little
+            // slower than a sprint, so a chase closes. Struck while it is hale it turns and
+            // gores back, a short readable jab of the tusks (block it); under 40% of its
+            // health it drops the fight and runs (`flees_below`), so a first fight answers
+            // and ends in a short chase. Its piglets only run. Old Tusk, the boss, is the one
+            // that charges. Being a fighter it lets one come near, watching, and edges off
+            // only from one close on it (`Flee` radius 4). Its hide and the gristle over its
+            // shoulders turn many blows and shots (defence 9), but a spear's point goes in
+            // under them (weak to Stab: the boar spear), so a boar that charges the shooter
+            // is no quicker game for a bow than for a spear (engine/tests/nomad_hunting.rs;
+            // combat lane, Oct 20).
+            name: "wild_boar", level: 4, health: 10, flees_below: 0.4, weak: Some(Stab),
+            attack: (windup: 0.55, recovery: 0.6, damage: (1, 2), reach: 0.9, every: 1.6, lunge: 1.0, style: Stab),
+            defence: 9,
             body: (
                 size: (0.8, 0.85),
                 model: Quadruped(body: (0.6, 0.55, 0.92), head: (0.38, 0.38, 0.42), legs: 0.3, ears: (0.1, 0.12), ear_lean: 30.0, horns: (0.05, 0.12), horn_shape: Tusks, snout: (0.22, 0.16, 0.16), hump: 0.2, tail: (0.05, 0.05, 0.22), tail_droop: 60.0),
                 colours: [(82, 62, 46), (112, 90, 70), (226, 214, 190)],
                 skin: (fur: 0.18, belly: 0.2, feet: (36, 28, 24), markings: [Dorsal(colour: (46, 34, 28), width: 0.16), Muzzle(colour: (120, 96, 84))]),
             ),
-            movement: (style: Lumberer, walk: 1.3, run: 5.4, turn: 220.0, jump: 7.5),
+            movement: (style: Lumberer, walk: 1.3, run: 5.1, turn: 220.0, jump: 7.5),
             habitat: (
                 biomes: [("tag:forest", 1.0), ("tag:broadleaf", 1.0), ("tag:scrubland", 0.7), ("tag:conifer", 0.5), ("tag:grassland", 0.35)],
                 comfort: (temperature: (-12.0, 32.0), moisture: (0.3, 2.4)),
@@ -301,7 +315,7 @@
             leash: 28.0,
             diet: (eats: ["brown_mushroom", "red_mushroom", "short_grass"], favourite: ["apple", "carrot"]),
             behaviours: [
-                (do: Wander(radius: 12.0)), (do: LookAround), (do: Graze), (do: Flee(radius: 8.0), weight: 1.2),
+                (do: Wander(radius: 12.0)), (do: LookAround), (do: Graze), (do: Flee(radius: 4.0), weight: 1.2), (do: Defend, weight: 1.2),
                 (do: Curious(distance: 7.0), weight: 0.6), (do: StandToLook), (do: Herd(spacing: 3.0)), (do: Tempted(radius: 10.0)),
             ],
             xp: (kill: 12.0, skill: "hunter"),
@@ -309,7 +323,7 @@
             breeding: (level: 6, litter: (1, 3), growth: 10.0, xp: 18.0),
             loot: [
                 (item: "raw_pork", count: (1, 3)),
-                (item: "hide", chance: 0.7, tools: [(tag: "knife", chance: 1.4)]),
+                (item: "raw_hide", chance: 0.7, tools: [(tag: "knife", chance: 1.4)]),
                 (item: "lard", chance: 0.6),
                 (item: "fang", chance: 0.1, rarity: Uncommon),
             ],
@@ -570,7 +584,7 @@
             xp: (kill: 8.0, skill: "hunter"),
             taming: (level: 3, xp: 14.0),
             breeding: (level: 3, litter: (1, 4), growth: 9.0, xp: 16.0),
-            loot: [(item: "raw_pork", count: (1, 2)), (item: "hide", chance: 0.8, tools: [(tag: "knife", chance: 1.25)])],
+            loot: [(item: "raw_pork", count: (1, 2)), (item: "raw_hide", chance: 0.8, tools: [(tag: "knife", chance: 1.25)])],
         ),
         (
             name: "tortoise", level: 2, health: 10, defence: 12, weak: Some(Crush),
@@ -645,7 +659,7 @@
             taming: (level: 8, xp: 20.0),
             breeding: (level: 8, growth: 10.0, xp: 22.0),
             products: [(item: "milk", every: 5.0, tool: "pail", xp: 6.0)],
-            loot: [(item: "raw_mutton", count: (1, 2)), (item: "hide", chance: 0.7), (item: "horn", chance: 0.3, rarity: Uncommon)],
+            loot: [(item: "raw_mutton", count: (1, 2)), (item: "raw_hide", chance: 0.7), (item: "horn", chance: 0.3, rarity: Uncommon)],
         ),
         (
             name: "arctic_fox", title: "Arctic fox", level: 3, health: 5, rarity: Uncommon, weak: Some(Crush),
@@ -802,7 +816,7 @@
             leash: 20.0,
             diet: (eats: ["short_grass", "clover", "dandelion"], favourite: ["carrot", "wild_carrot"]),
             xp: (kill: 6.0, skill: "hunter"),
-            loot: [(item: "raw_small_game", count: (1, 2)), (item: "hide", chance: 0.8, tools: [(tag: "knife", chance: 1.25)])],
+            loot: [(item: "raw_small_game", count: (1, 2)), (item: "raw_hide", chance: 0.8, tools: [(tag: "knife", chance: 1.25)])],
         ),
         (
             name: "pheasant", level: 1, health: 3,
@@ -952,7 +966,7 @@
             taming: (level: 10, xp: 24.0),
             breeding: (level: 10, growth: 12.0, xp: 26.0),
             products: [(item: "milk", every: 6.0, tool: "pail", xp: 6.0)],
-            loot: [(item: "raw_venison", count: (1, 2)), (item: "hide", tools: [(tag: "knife", chance: 1.0, extra: 1)]), (item: "antler", chance: 0.3, rarity: Uncommon)],
+            loot: [(item: "raw_venison", count: (1, 2)), (item: "raw_hide", tools: [(tag: "knife", chance: 1.0, extra: 1)]), (item: "antler", chance: 0.3, rarity: Uncommon)],
         ),
         (
             name: "bison", title: "Bison", level: 10, health: 18, rarity: Uncommon, weak: Some(Stab),
@@ -977,7 +991,7 @@
             diet: (eats: ["short_grass", "clover"], favourite: ["wheat"]),
             behaviours: [(do: Wander(radius: 24.0)), (do: Graze, weight: 1.5), (do: Herd(spacing: 3.0)), (do: Defend, weight: 1.2), (do: LookAround), (do: Tempted(radius: 6.0))],
             xp: (kill: 34.0, skill: "hunter"),
-            loot: [(item: "raw_beef", count: (2, 3)), (item: "hide", count: (1, 2), tools: [(tag: "knife", chance: 1.0, extra: 1)]), (item: "horn", chance: 0.3, rarity: Uncommon)],
+            loot: [(item: "raw_beef", count: (2, 3)), (item: "raw_hide", count: (1, 2), tools: [(tag: "knife", chance: 1.0, extra: 1)]), (item: "horn", chance: 0.3, rarity: Uncommon)],
         ),
         (
             name: "wild_horse", title: "Wild horse", level: 5, health: 12,
@@ -1011,7 +1025,7 @@
             xp: (kill: 16.0, skill: "hunter"),
             taming: (level: 12, per_feed: (0.1, 0.25), xp: 30.0),
             breeding: (level: 12, growth: 14.0, xp: 30.0),
-            loot: [(item: "hide", count: (1, 2), tools: [(tag: "knife", chance: 1.0, extra: 1)]), (item: "horsehair", count: (1, 2))],
+            loot: [(item: "raw_hide", count: (1, 2), tools: [(tag: "knife", chance: 1.0, extra: 1)]), (item: "horsehair", count: (1, 2))],
         ),
         (
             name: "crocodile", level: 18, health: 26, rarity: Uncommon, weak: Some(Crush),
@@ -1036,7 +1050,7 @@
             leash: 24.0,
             diet: (favourite: ["raw_beef", "raw_pork", "raw_venison"]),
             xp: (kill: 60.0, skill: "hunter"),
-            loot: [(item: "scute", count: (2, 4)), (item: "hide", count: (1, 2)), (item: "fang", chance: 0.4, rarity: Uncommon)],
+            loot: [(item: "scute", count: (2, 4)), (item: "raw_hide", count: (1, 2)), (item: "fang", chance: 0.4, rarity: Uncommon)],
         ),
         // --- Supernatural -------------------------------------------------------------------
         (
@@ -1109,7 +1123,7 @@
             leash: 40.0,
             diet: (eats: ["short_grass", "clover"], favourite: ["wheat"]),
             xp: (kill: 9.0, skill: "hunter"),
-            loot: [(item: "raw_venison"), (item: "hide", chance: 0.8, tools: [(tag: "knife", chance: 1.25)]), (item: "horn", chance: 0.2, rarity: Uncommon)],
+            loot: [(item: "raw_venison"), (item: "raw_hide", chance: 0.8, tools: [(tag: "knife", chance: 1.25)]), (item: "horn", chance: 0.2, rarity: Uncommon)],
         ),
         (
             name: "camel", title: "Camel", level: 6, health: 14,
@@ -1134,7 +1148,7 @@
             taming: (level: 10, xp: 26.0),
             breeding: (level: 10, growth: 14.0, xp: 28.0),
             products: [(item: "milk", every: 6.0, tool: "pail", xp: 6.0)],
-            loot: [(item: "raw_beef", count: (1, 2)), (item: "hide", count: (1, 2), tools: [(tag: "knife", chance: 1.0, extra: 1)])],
+            loot: [(item: "raw_beef", count: (1, 2)), (item: "raw_hide", count: (1, 2), tools: [(tag: "knife", chance: 1.0, extra: 1)])],
         ),
         (
             name: "fennec_fox", title: "Fennec fox", level: 2, health: 4,
