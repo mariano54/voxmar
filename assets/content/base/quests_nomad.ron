@@ -31,7 +31,7 @@
             name: "a_chopping_block", age: "nomad", branch: "start", title: "A Chopping Block",
             why: "Splitting logs in the grid wastes wood. A chopping block is a flint over a log (Crafting 2): dig gravel, by hand or with a shovel, and about one in eight gives a flint; it lies on stony slopes, game trails and dry stream beds. Set the block down and split logs within reach of it: each gives six planks there, two more than the grid's four. Split two logs by it.",
             tasks: [[Placed("chopping_block", 1), CraftNear("tag:planks", "chopping_block", 12)]],
-            after: ["an_axe_to_it", "a_bed_of_your_own"],
+            after: ["an_axe_to_it", "a_bed_of_your_own", "timber"],
             rewards: [Xp("crafting", 40.0), Item("oak_log", 4)],
         ),
         (
@@ -105,7 +105,7 @@
             tasks: [[QuestsDone("nomad", 20), Capstones("nomad", 3)]],
             after: ["homestead_hearth"],
             opens: "farm",
-            rewards: [Xp("crafting", 120.0), Item("clay", 12)],
+            rewards: [Xp("crafting", 120.0)],
         ),
         // Home: the camp about the hearth, room by room.
         (

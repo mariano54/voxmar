@@ -311,7 +311,7 @@ Each new feature has a quest that teaches it, in two parts the book counts one b
 
 | Quest | Age, path, after | Parts |
 |---|---|---|
-| A Chopping Block | Nomad, start; An Axe to It and A Bed of Your Own (Crafting 2 by then) | one set down; twelve planks split by it |
+| A Chopping Block | Nomad, start; An Axe to It, A Bed of Your Own (Crafting 2 by then) and Timber | one set down; twelve planks split by it |
 | Set a Snare | Nomad, hunter; Twine and Thong | one set down; a catch taken from a trap |
 | Old Tusk | Nomad, hunter; Hide and Seek and Raise Your Guard | a flint spear made; Old Tusk killed |
 | Light in the Window | Farm, home; A Homely Home | two hide windows made; two set down |
@@ -408,6 +408,38 @@ Saves (pre-release, accepted): a quest's finished state is kept by name, but que
 tasks changed count from what a save already tallied: Brick by Brick now counts bricks
 crafted rather than held, The Crucible and A Pit Kiln also want theirs set down, and A
 Kiln Yard is gone. A save part way along may have a step to do again.
+
+## Fishing in the Farm book (Oct 20)
+
+Fishing was the Farm book's thinnest path (Patient Angler and Many Kinds of Fish). Five
+side quests (`side: true`) now run along it. Each one teaches where or how a fish bites,
+or what a catch is for, and each pays in bread: no reward hands over an item that a home
+quest's lesson teaches (a rug or a cushion would meet A Rug Underfoot, A Cosy Home or Heart
+of the Home before the player made one). `Ate("tag:fish")` counts raw fish too, as no tag
+names cooked fish alone:
+
+| Quest | After | Teaches | Pays |
+|---|---|---|---|
+| Salt and Sardines | Patient Angler | Sardines bite only in the sea: four caught and cooked | Fishing 80, 2 bread |
+| Still Water Perch | Patient Angler | Perch bite in fresh water from Fishing 10: three caught | Cooking 60, 2 bread |
+| Cold Water Trout | Still Water Perch | The water's climate matters: two trout from cold fresh water (Fishing 15), cooked | Fishing 120, 4 bread |
+| Three Waters | Salt and Sardines, Still Water Perch | A fourth kind past minnow, sardine and perch: a trout or a cod | Fishing 150, 4 bread |
+| Fish on the Table | Salt and Sardines | A lit hearth, eight fish cooked and six eaten | Cooking 120, 4 bread |
+
+None of them is in a capstone's `after`, so Many Kinds of Fish still closes the path.
+
+## Crafting in the Farm book (Oct 20)
+
+The Farm book's Crafting path had only its capstone, Master and Journeyman. Four side
+quests (`side: true`) now teach what the bench makes from what the Farm age brings: trophies,
+cloth and dyes. Each pays in bread:
+
+| Quest | After | Teaches | Pays |
+|---|---|---|---|
+| Fang and Stick | The Farm Age | A fang (wolves, lynx, bears) and a stick make a fang dagger (Crafting 10) | Crafting 60, 2 bread |
+| Lanterns of Cloth | A Rug Underfoot | Paper lanterns (Crafting 6): two made and set down at home, each a light | Crafting 60, 2 bread |
+| A Dooryard | Lanterns of Cloth | An awning and bunting made, then the Dooryard felt (an awning and two yard things under open sky) | Crafting 100, 4 bread |
+| Five Colours | A Rug Underfoot | Five dyed cloths (indigo, white, red, green, amber) and the wind flags they make | Crafting 120, 4 bread |
 
 ## Readable to a newcomer (Oct 13)
 

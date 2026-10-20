@@ -588,8 +588,18 @@ impl Content {
             })
             .collect();
         cooking.check_stations(&blocks, &parties_cook)?;
+        // What picking a block gives besides its drops: a ripe crop's harvest, a wild plant's
+        // forage (the quest load check counts a Pick goal as teaching them).
+        let harvests: Vec<(crate::block::BlockId, crate::block::BlockId)> = crops
+            .iter()
+            .flat_map(|(_, crop)| {
+                let ripe = crop.harvest.iter().map(|(item, _)| (crop.ripe(), *item));
+                let wild = crop.def.wild.iter().filter_map(|name| blocks.item_named(name)).flat_map(|wild| crop.forage.iter().map(move |(item, _)| (wild, *item)));
+                ripe.chain(wild).collect::<Vec<_>>()
+            })
+            .collect();
         let mut quests = crate::quest::QuestRegistry::new(quests)?;
-        quests.resolve(&crate::quest::Named { blocks: &blocks, skills: &skills, creatures: &creatures, fishing: &fishing, multiblocks: &multiblocks, steps: &effects.steps(), events: &wandering.iter().map(|(_, e)| e.def.name.clone()).collect::<Vec<_>>(), prayers: &prayers.all().map(|(_, p)| p.name.clone()).collect::<Vec<_>>(), effects: &effects.ids().map(|id| effects.get(id).name.clone()).collect::<Vec<_>>(), near: &recipes.iter().filter_map(|r| r.near.clone()).collect::<Vec<_>>(), stores: &machines.iter().filter(|m| m.is_store()).map(|m| blocks.def(m.block).name.clone()).collect::<Vec<_>>(), trapped: &traps.traps.iter().flat_map(|t| &t.catches).map(|&c| creatures.get(c).def.name.clone()).collect::<Vec<_>>() })?;
+        quests.resolve(&crate::quest::Named { blocks: &blocks, skills: &skills, creatures: &creatures, fishing: &fishing, multiblocks: &multiblocks, steps: &effects.steps(), events: &wandering.iter().map(|(_, e)| e.def.name.clone()).collect::<Vec<_>>(), prayers: &prayers.all().map(|(_, p)| p.name.clone()).collect::<Vec<_>>(), effects: &effects.ids().map(|id| effects.get(id).name.clone()).collect::<Vec<_>>(), near: &recipes.iter().filter_map(|r| r.near.clone()).collect::<Vec<_>>(), stores: &machines.iter().filter(|m| m.is_store()).map(|m| blocks.def(m.block).name.clone()).collect::<Vec<_>>(), trapped: &traps.traps.iter().flat_map(|t| &t.catches).map(|&c| creatures.get(c).def.name.clone()).collect::<Vec<_>>(), harvests: &harvests })?;
         // A recipe of a later age needs that age's rite, or it could never be made.
         if let Some(recipe) = recipes.iter().find(|r| r.age.as_ref().is_some_and(|age| quests.rite(age).is_none())) {
             let age = recipe.age.as_deref().unwrap_or_default();

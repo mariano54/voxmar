@@ -267,6 +267,9 @@ pub struct Overworld {
     /// searches from the same lattice (a test's many biomes from the same places) work
     /// each out once.
     fields: water::cache::Cache<(IVec2, IVec2), Arc<[Point]>>,
+    /// `spawn_search` without and with trails and settlements, each worked out once: a
+    /// shared generator gives every server on its world the spawn found by the first.
+    spawns: [std::sync::OnceLock<IVec3>; 2],
     seed: u64,
 }
 
@@ -336,6 +339,7 @@ impl Overworld {
             blend: geology::noise(stream, 40, 1.0 / 12.0, FractalType::FBm, 2),
             tint: geology::noise(stream, 41, 1.0 / 45.0, FractalType::FBm, 2),
             fields: water::cache::Cache::new(FIELD_BUDGET),
+            spawns: Default::default(),
             seed: stream,
         }
     }
@@ -348,17 +352,28 @@ impl Overworld {
     /// another holds open (each gameplay test starts its own on one seed) finds the land
     /// round its spawn already planned rather than keeping its first player waiting.
     pub fn shared(seed: u64, content: &voxmar_engine::content::Content, world: &WorldContent) -> Arc<Self> {
+        let Ok(world) = Self::share(seed, content, || Ok::<_, std::convert::Infallible>(Self::with_content(seed, content.blocks.clone(), world)));
+        world
+    }
+
+    /// As `shared`, reading the world content from `content` only when no generator for
+    /// it is held: a server started beside another on its world reads none.
+    pub fn shared_loading(seed: u64, content: &voxmar_engine::content::Content) -> Result<Arc<Self>, ContentError> {
+        Self::share(seed, content, || Ok(Self::with_content(seed, content.blocks.clone(), &WorldContent::load(content)?)))
+    }
+
+    fn share<E>(seed: u64, content: &voxmar_engine::content::Content, make: impl FnOnce() -> Result<Self, E>) -> Result<Arc<Self>, E> {
         type Held = ((u64, u64), std::sync::Weak<Overworld>);
         static SHARED: std::sync::Mutex<Vec<Held>> = std::sync::Mutex::new(Vec::new());
         let key = (seed, content.fingerprint());
         let mut shared = SHARED.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         shared.retain(|(_, held)| held.strong_count() > 0);
         if let Some(found) = shared.iter().find(|(k, _)| *k == key).and_then(|(_, held)| held.upgrade()) {
-            return found;
+            return Ok(found);
         }
-        let made = Arc::new(Self::with_content(seed, content.blocks.clone(), world));
+        let made = Arc::new(make()?);
         shared.push((key, Arc::downgrade(&made)));
-        made
+        Ok(made)
     }
 
     /// The biomes of this world.
@@ -1155,6 +1170,10 @@ impl Overworld {
     /// Walks outwards on a spiral until it finds open, temperate grassland on dry land;
     /// `built`: also off trails and outside settlements, which plan by the search without.
     fn spawn_search(&self, built: bool) -> IVec3 {
+        *self.spawns[built as usize].get_or_init(|| self.search_spawn(built))
+    }
+
+    fn search_spawn(&self, built: bool) -> IVec3 {
         for ring in 0..256 {
             for step in 0..(ring * 8).max(1) {
                 let (x, z) = spiral(ring, step);

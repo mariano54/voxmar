@@ -40,7 +40,7 @@
             capstone: true,
             why: "At Cooking 14 the pot takes three raw meat, roots or vegetables at once and simmers them into a stew, the best food a pot makes. Carrots, raw small game or raw mutton all go in; cooked food and grain do not. Load it as before, take the stew three minutes later, and keep two.",
             tasks: [[Level("cooking", 14), Have("stew", 2)]],
-            after: ["a_pot_on_the_fire", "roots_in_the_embers"],
+            after: ["a_pot_on_the_fire", "roots_in_the_embers", "seed_mix", "a_proper_breakfast"],
             rewards: [Xp("cooking", 300.0), Item("honey", 2)],
         ),
         // Fuel: logs to char or coal from a seam, two ways to the Crucible Kiln's charge.
@@ -180,7 +180,7 @@
         ),
         (
             name: "first_harvest", age: "farm", branch: "farming", title: "First Harvest",
-            why: "Till grass or dirt with a hoe (right-click), sow wheat seeds (wild wheat gives them) on the farmland (right-click), keeping it within four blocks of water (beside a river, pond or lake), and wait: wheat ripens in about twelve minutes. Break the ripe plants to harvest; a stone hoe reaps the ripe crops around the one you cut. Harvest four. Keep the four wheat you harvest in your pack. While it grows, there is plenty to do: fish (Patient Angler), tame hens (Hens in a Row) or make seats and a table for the hearth (A Table for Two).",
+            why: "Till grass or dirt with a hoe (right-click), sow wheat seeds (wild wheat gives them) on the farmland (right-click), keeping it within four blocks of water (beside a river, pond or lake), and wait: wheat ripens in about twelve minutes. Break the ripe plants to harvest; a stone hoe reaps the ripe crops around the one you cut. Harvest four. Keep the four wheat you harvest in your pack. While it grows, there is plenty to do: explore (Far Horizons), tame hens (Hens in a Row) or make seats and a table for the hearth (A Table for Two).",
             tasks: [[Pick("wheat_crop", 4), Have("wheat", 4)]],
             after: ["the_farm_age"],
             rewards: [Xp("farming", 100.0), Item("wheat_seeds", 6)],
@@ -258,14 +258,13 @@
         ),
         (
             name: "fresh_eggs", age: "farm", branch: "husbandry", title: "Fresh Eggs",
-            why: "A kept hen lays on the ground near her, and a hen that is fed, watered and sheltered lays more. Fry your first egg on a campfire to taste the reward, then collect five more and keep them. A hen lays about every five minutes: meanwhile go after a mouflon (A Woolly Flock) or tame more animals about the house (A Full House).",
+            why: "A kept hen lays on the ground near her, and a hen that is fed, watered and sheltered lays more. Fry your first egg on a campfire to taste the reward, then collect five more and keep them. A hen lays about every five minutes: meanwhile hunt big game (Bigger Game) or tame more animals about the house (A Full House).",
             tasks: [[Have("egg", 5), Cook("fried_egg", 1)]],
             after: ["hens_in_a_row"],
             rewards: [Xp("farming", 100.0)],
         ),
         (
             name: "a_proper_breakfast", age: "farm", branch: "cooking", title: "A Proper Breakfast",
-            side: true,
             why: "A fried egg is the quickest cooking there is: hold an egg and right-click a campfire. Fry three.",
             tasks: [[Cook("fried_egg", 3)]],
             after: ["a_full_house"],
@@ -275,7 +274,7 @@
             name: "a_woolly_flock", age: "farm", branch: "husbandry", title: "A Woolly Flock",
             why: "Mouflon, the wild sheep, need Hunter 5 to tame (taming, hunting and Bigger Game teach it); look on mountains and heath. Hold wheat, its favourite, approach calmly and right-click. A kept sheep grows its wool back: shear it with your shears. Have your shears made before you go.",
             tasks: [[Tame("mouflon", 1), Craft("shears", 1)]],
-            after: ["fresh_eggs"],
+            after: ["fresh_eggs", "bigger_game"],
             rewards: [Xp("hunter", 200.0), Xp("farming", 100.0)],
         ),
         (
@@ -305,7 +304,7 @@
             capstone: true,
             why: "Six animals under your care is a real farm. Keep each fed, watered, roofed against rain and given room; condition decides what they give. You can keep up to 64 animals.",
             tasks: [[Tame("any", 6)]],
-            after: ["the_milk_pail", "a_trough_for_the_pen"],
+            after: ["the_milk_pail", "a_trough_for_the_pen", "a_full_house"],
             rewards: [Xp("farming", 200.0), Item("feed_trough", 1), Item("seed_mix", 4)],
         ),
         (
@@ -317,7 +316,7 @@
         ),
         (
             name: "full_hide_wraps", age: "farm", branch: "combat", title: "Full Hide Wraps",
-            why: "A whole set guards head, body and legs. At the crafting table a hood takes five hides, a tunic eight and trousers seven.",
+            why: "A whole set guards head, body and legs. At the crafting table a hood takes five hides, a tunic eight and trousers seven. Rabbits, deer and boar drop raw hide; hung a while on a drying rack (four sticks and three twine), it turns to hide.",
             tasks: [[Craft("hide_hood", 1), Craft("hide_tunic", 1), Craft("hide_trousers", 1)]],
             after: ["bigger_game"],
             rewards: [Xp("crafting", 150.0), Xp("defence", 150.0)],
@@ -332,7 +331,7 @@
         (
             name: "bow_and_arrow", age: "farm", branch: "combat", title: "Bow and Arrow",
             side: true,
-            why: "A short bow reaches twenty blocks and hits twice as hard as a sling. At the crafting table, three sticks bent down one side and three twine down the other make it (Crafting 3). An arrow is a flint or a cobblestone over a stick over a feather, four at a time (Crafting 3): flint comes one gravel in eight, and feathers from junglefowl. The bow needs Ranged 3 to shoot (below it, it strikes as a fist), so keep slinging stones until then. Make the bow and eight arrows, and reach Ranged 5.",
+            why: "A short bow reaches twenty blocks and hits twice as hard as a sling. At the crafting table, three sticks bent down one side and three twine down the other make it (Crafting 3). An arrow is a flint or a cobblestone over a stick over a feather, four at a time (Crafting 3): flint comes one gravel in eight, and feathers from junglefowl. The bow needs Ranged 3 to shoot (below it, it strikes as a fist), so keep slinging stones until then: a sling is a hide between two twine in a row at the crafting table. Make the bow and eight arrows, and reach Ranged 5.",
             tasks: [[Craft("short_bow", 1), Craft("arrow", 8), Level("ranged", 5)]],
             after: ["full_hide_wraps"],
             rewards: [Xp("ranged", 120.0), Xp("crafting", 60.0)],
@@ -391,9 +390,9 @@
         ),
         (
             name: "patient_angler", age: "farm", branch: "fishing", title: "Patient Angler",
-            why: "Every catch trains Fishing, and the bigger fish bite only at higher levels. Fish until you reach Fishing 5, when sardines start biting in the sea.",
+            why: "Every catch trains Fishing, and the bigger fish bite only at higher levels, in the seas and lakes your travels found (Far Horizons). A rod is three sticks on a diagonal at the crafting table, with two twine hanging from its tip. Fish until you reach Fishing 5, when sardines start biting in the sea.",
             tasks: [[Level("fishing", 5)]],
-            after: ["the_farm_age"],
+            after: ["far_horizons"],
             rewards: [Xp("cooking", 100.0)],
         ),
         (
@@ -403,6 +402,47 @@
             tasks: [[Catch("Kinds", 2), Cook("tag:fish", 6)]],
             after: ["patient_angler"],
             rewards: [Xp("fishing", 150.0), Item("drying_rack", 1)],
+        ),
+        // Side quests along the water: each teaches where or how a fish bites, or what it is for.
+        (
+            name: "salt_and_sardines", age: "farm", branch: "fishing", title: "Salt and Sardines",
+            why: "Sardines bite only in salt water: cast into the sea, not a river or a lake. Take your rod to the coast, land four sardines and roast them at a fire: a sardine heals as well as a minnow.",
+            tasks: [[Catch("raw_sardine", 4), Cook("cooked_sardine", 4)]],
+            after: ["patient_angler"],
+            side: true,
+            rewards: [Xp("fishing", 80.0), Item("bread", 2)],
+        ),
+        (
+            name: "still_water_perch", age: "farm", branch: "fishing", title: "Still Water Perch",
+            why: "Perch keep to fresh water, rivers, lakes and ponds, and bite from Fishing 10. Reach Fishing 10 and land three. The fishers send bread home with you for your trouble.",
+            tasks: [[Level("fishing", 10), Catch("raw_perch", 3)]],
+            after: ["patient_angler"],
+            side: true,
+            rewards: [Xp("cooking", 60.0), Item("bread", 2)],
+        ),
+        (
+            name: "cold_water_trout", age: "farm", branch: "fishing", title: "Cold Water Trout",
+            why: "Where you fish matters as much as how well. Trout bite from Fishing 15, and only in cold fresh water: mountain streams, conifer lakes, cool and frozen rivers. Go up into the cold, land two and cook them.",
+            tasks: [[Catch("raw_trout", 2), Cook("cooked_trout", 2)]],
+            after: ["still_water_perch"],
+            side: true,
+            rewards: [Xp("fishing", 120.0), Item("bread", 4)],
+        ),
+        (
+            name: "three_waters", age: "farm", branch: "fishing", title: "Three Waters",
+            why: "Minnows bite anywhere, sardines in the sea, perch in lakes and rivers. Those three you know by now; land a fourth kind, a trout (Fishing 15, cold fresh water) or a cod (Fishing 20, the cold sea), and you know what bites where, and what is worth the walk.",
+            tasks: [[Catch("Kinds", 4)]],
+            after: ["salt_and_sardines", "still_water_perch"],
+            side: true,
+            rewards: [Xp("fishing", 150.0), Item("bread", 4)],
+        ),
+        (
+            name: "fish_on_the_table", age: "farm", branch: "fishing", title: "Fish on the Table",
+            why: "A home by the water eats well. With your hearth lit, cook eight fish of any kind and eat six of them: cooked fish heal well, and a meal of your own catch tastes of the place you live.",
+            tasks: [[Home, Cook("tag:fish", 8), Ate("tag:fish", 6)]],
+            after: ["salt_and_sardines"],
+            side: true,
+            rewards: [Xp("cooking", 120.0), Item("bread", 4)],
         ),
         (
             name: "far_horizons", age: "farm", branch: "explore", title: "Far Horizons",
@@ -414,7 +454,7 @@
         (
             name: "what_sleeps_below", age: "farm", branch: "explore", title: "What Sleeps Below",
             side: true,
-            why: "Farm chests lie further from where you began, on wilder land, and deeper: on cave floors ten blocks and more under the ground. A bone lockpick still opens one, as a pick of the age before always does. Four in ten wake one or two cave crawlers as the lock gives. A crawler has twice a bat's health: come with a copper weapon and food. Open two Farm chests in all and bring down a cave crawler.",
+            why: "Farm chests lie further from where you began, on wilder land, and deeper: on cave floors ten blocks and more under the ground. A bone lockpick still opens one, as a pick of the age before always does: a bone on a twine grip at the crafting table (Crafting 5). Four in ten wake one or two cave crawlers as the lock gives. A crawler has twice a bat's health: come with a copper weapon and food. Open two Farm chests in all and bring down a cave crawler.",
             tasks: [[Opened("farm_treasure_chest", 2), Kill("cave_crawler", 1)]],
             after: ["far_horizons"],
             rewards: [Xp("mining", 270.0), Xp("attack", 80.0)],
@@ -463,7 +503,7 @@
         ),
         (
             name: "candlelight", age: "farm", branch: "home", title: "Candlelight",
-            why: "With shelves and cupboards up (Shelves and Cupboards), light them: twine and two hides make two candles (Crafting 3), a softer light than a torch for a table or shelf.",
+            why: "With shelves and cupboards up (Shelves and Cupboards), light them: twine and two hides make two candles (Crafting 3; raw hide hung a while on a drying rack turns to hide), a softer light than a torch for a table or shelf.",
             tasks: [[Craft("candle", 2)]],
             after: ["shelves_and_cupboards"],
             rewards: [Xp("crafting", 60.0)],
@@ -602,7 +642,6 @@
         ),
         (
             name: "a_full_house", age: "farm", branch: "husbandry", title: "A Full House",
-            side: true,
             why: "Keep four animals about the house: you heal a fifth faster and learn a little more at home. Junglefowl, mallards and mouflon tamed near home all count.",
             tasks: [[Built("home_full_house", 1)]],
             after: ["fresh_eggs"],
@@ -675,7 +714,7 @@
             side: true,
             why: "Wild bees nest in hollows at the foot of broadleaf, fruit and blossom trees in a Flower Meadow, a Cherry Grove or Lavender Fields: listen for the hum and look for bees about the roots. Coil a skep from seven wheat and three twine (Crafting 6), light a campfire within four blocks of the nest so the smoke calms them (or hold a torch a moment: its smoke clings to you for half a minute), then hold the skep up to it and right-click (Farming 12): the bees move in, and you carry home a skep of bees. Without smoke they only sting.",
             tasks: [[Level("farming", 12), Craft("skep", 1), Have("bee_skep", 1)]],
-            after: ["herb_garden"],
+            after: ["herb_garden", "food_enough"],
             rewards: [Xp("farming", 300.0), Xp("crafting", 60.0)],
         ),
         (
@@ -809,6 +848,39 @@
             tasks: [[Met("henwife", 1), Built("home_company", 1)], [Met("henwife", 1), Built("home_full_house", 1)]],
             after: ["the_last_sheaf"],
             rewards: [Xp("farming", 100.0), Item("seed_mix", 4)],
+        ),
+        // Side quests at the bench: each teaches a thing made of what the Farm age brings (trophies, cloth, dyes).
+        (
+            name: "fang_and_stick", age: "farm", branch: "crafting", title: "Fang and Stick",
+            why: "A trophy can be a tool. Wolves, lynx and bears drop a fang now and then; lash one to a stick and it is a fang dagger (Crafting 10), quick in the hand. Make one.",
+            tasks: [[Craft("fang_dagger", 1)]],
+            after: ["the_farm_age"],
+            side: true,
+            rewards: [Xp("crafting", 60.0), Item("bread", 2)],
+        ),
+        (
+            name: "lanterns_of_cloth", age: "farm", branch: "crafting", title: "Lanterns of Cloth",
+            why: "A cloth over a torch, hung from a stick, is a paper lantern (Crafting 6): a soft light in any colour you dyed. Make two and set them down at home; each one counts as a light.",
+            tasks: [[Craft("tag:lantern", 2), Placed("tag:lantern", 2)]],
+            after: ["a_rug_underfoot"],
+            side: true,
+            rewards: [Xp("crafting", 60.0), Item("bread", 2)],
+        ),
+        (
+            name: "a_dooryard", age: "farm", branch: "crafting", title: "A Dooryard",
+            why: "A home is more than its walls. Three cloths over three sticks make awnings (Crafting 8); hang one over your door. Twine over two cloths makes bunting (Crafting 7). Set two things out under the open sky about the door, bunting, a bench or a hay bale, and stand in your yard: there you heal a little faster.",
+            tasks: [[Craft("tag:awning", 1), Craft("tag:bunting", 2), Felt("dooryard")]],
+            after: ["lanterns_of_cloth"],
+            side: true,
+            rewards: [Xp("crafting", 100.0), Item("bread", 4)],
+        ),
+        (
+            name: "five_colours", age: "farm", branch: "crafting", title: "Five Colours",
+            why: "Every flower dyes a cloth its own colour: look a cloth up in the recipe book to see which. Wind flags take five, indigo, white, red, green and amber, tied on one twine (Crafting 9). Dye all five and make the flags.",
+            tasks: [[Craft("indigo_cloth", 1), Craft("white_cloth", 1), Craft("red_cloth", 1), Craft("green_cloth", 1), Craft("amber_cloth", 1), Craft("wind_flags", 1)]],
+            after: ["a_rug_underfoot"],
+            side: true,
+            rewards: [Xp("crafting", 120.0), Item("bread", 4)],
         ),
         (
             name: "master_and_journeyman", age: "farm", branch: "crafting", title: "Master and Journeyman",
