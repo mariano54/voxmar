@@ -41,8 +41,10 @@ pub enum Method {
     /// in `skill`.
     Work { station: BlockId, input: BlockId, takes: u8, skill: crate::skill::SkillId, level: u8 },
     /// Harvested from a ripe crop (its ripe block), or foraged from a wild one, `chance`
-    /// of the time; it is planted from `level` in `skill`.
-    Harvest { crop: BlockId, forage: bool, chance: f32, skill: crate::skill::SkillId, level: u8 },
+    /// of the time; it is planted from `level` in `skill`. `from` is what the card shows
+    /// going in: the seed that plants it (or the crop, if players don't plant it), or the
+    /// wild plant foraged.
+    Harvest { crop: BlockId, from: BlockId, forage: bool, chance: f32, skill: crate::skill::SkillId, level: u8 },
     /// Got by breaking `block`, with `tool` (the least that does) if it needs one, from
     /// `level` in `skill`; `chance` of the time when it comes instead of the block's own
     /// drop, else always.
@@ -174,18 +176,25 @@ impl RecipeBook {
                 book.add(blocks, Entry { method, output: work.output, count: (work.gives, work.gives) }, uses);
             }
         }
-        // Crops: what a ripe one gives, and a wild one foraged; the seed goes into both.
+        // Crops: what a ripe one gives, the seed going into it, and what each of its wild
+        // plants gives foraged, the plant going into that.
         for (_, crop) in content.crops.iter() {
             let ripe = crop.ripe();
-            for (forage, list) in [(false, &crop.harvest), (true, &crop.forage)] {
+            let sown = crop.seed.unwrap_or(ripe);
+            let wild: Vec<BlockId> = crop.def.wild.iter().filter_map(|name| blocks.id(name)).map(|plant| blocks.item_of(plant)).collect();
+            let ways = [(false, sown)].into_iter().map(|(forage, from)| (forage, from, &crop.harvest)).chain(wild.into_iter().map(|plant| (true, plant, &crop.forage)));
+            for (forage, from, list) in ways {
                 for (item, loot) in list {
-                    let method = Method::Harvest { crop: ripe, forage, chance: loot.chance, skill: crop.skill, level: crop.def.level };
-                    book.add(blocks, Entry { method, output: *item, count: loot.count }, crop.seed.into_iter().collect());
+                    let method = Method::Harvest { crop: ripe, from, forage, chance: loot.chance, skill: crop.skill, level: crop.def.level };
+                    let uses = if forage { vec![from] } else { crop.seed.into_iter().collect() };
+                    book.add(blocks, Entry { method, output: *item, count: loot.count }, uses);
                 }
             }
         }
         // Breaking a block: what it gives when that is not the block itself, or when it
-        // takes a tier of tool; and what comes instead of it now and then.
+        // takes a tier of tool; and what comes instead of it now and then. A block's looks,
+        // facings and other placed forms read as the block, so each way is listed once.
+        let mut broken = std::collections::HashSet::new();
         for block in blocks.ids() {
             let info = blocks.info(block);
             let rule = content.tools.rule(block);
@@ -195,12 +204,17 @@ impl RecipeBook {
             // A wild plant whose item merged into another gives that item: a way to it, which
             // nothing uses (the plant is never held).
             let merged = blocks.merged_away(block);
-            if !info.drops.is_air() && info.drop_count > 0 && (blocks.item_of(info.drops) != block || tiered) {
+            // A wild plant merged away reads as itself: each such plant is its own way.
+            let breaks_as = if merged { block } else { blocks.item_of(block) };
+            let mut once = |output: BlockId, chance: f32, count: u8| broken.insert((breaks_as, output, tool, skill, level, chance.to_bits(), count));
+            if !info.drops.is_air() && info.drop_count > 0 && (blocks.item_of(info.drops) != block || tiered) && once(blocks.item_of(info.drops), 1.0, info.drop_count) {
                 let method = Method::Break { block, tool, skill, level, chance: 1.0 };
                 let uses = if merged { Vec::new() } else { vec![block] };
                 book.add(blocks, Entry { method, output: blocks.item_of(info.drops), count: (info.drop_count, info.drop_count) }, uses);
             }
-            if let Some((item, chance)) = rule.and_then(|rule| rule.instead) {
+            if let Some((item, chance)) = rule.and_then(|rule| rule.instead)
+                && once(blocks.item_of(item), chance, 1)
+            {
                 let method = Method::Break { block, tool, skill, level, chance };
                 book.add(blocks, Entry { method, output: blocks.item_of(item), count: (1, 1) }, vec![block]);
             }
@@ -459,6 +473,22 @@ mod tests {
         // A crop's harvest, its seed going into it.
         let wheat = ways("base:wheat");
         assert!(wheat.iter().any(|m| matches!(m, Method::Harvest { forage: false, .. })), "{wheat:?}");
+        // Foraging: a carrot from a wild carrot, which is what goes in, not the carrot.
+        let carrot = ways("base:carrot");
+        assert!(carrot.iter().any(|m| matches!(m, Method::Harvest { forage: true, from, .. } if *from == id("base:wild_carrot"))), "{carrot:?}");
+        assert!(book.using(id("base:wild_carrot")).iter().any(|e| e.output == id("base:carrot")));
+        // No way is listed twice: a block's looks and facings break as the block does (a
+        // wild plant merged away, as itself).
+        let breaks_as = |b: BlockId| if content.blocks.merged_away(b) { b } else { content.blocks.item_of(b) };
+        for item in content.blocks.ids() {
+            let made = book.making(item);
+            for (i, entry) in made.iter().enumerate() {
+                if let Method::Break { block, tool, chance, .. } = &entry.method {
+                    let same = |other: &Entry| matches!(&other.method, Method::Break { block: b, tool: t, chance: c, .. } if breaks_as(*b) == breaks_as(*block) && t == tool && c == chance);
+                    assert!(!made[..i].iter().any(|other| same(other)), "{} lists breaking {} twice", content.blocks.def(item).name, content.blocks.def(*block).name);
+                }
+            }
+        }
         // Breaking: stone gives cobblestone always, with a tool; gravel gives flint an eighth
         // of the time, instead of itself.
         assert!(ways("base:cobblestone").iter().any(|m| matches!(m, Method::Break { block, chance, .. } if *block == id("base:stone") && *chance == 1.0)));

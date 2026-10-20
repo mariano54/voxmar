@@ -599,11 +599,9 @@ pub(super) fn way_inputs(card: &mut ChildSpawnerCommands, font: &Handle<Font>, i
             card.spawn(text(font, "+", BODY, MUTED));
             item_cell(card, font, images, Some(*station), None);
         }
-        Method::Harvest { crop, .. } => {
-            // What plants it, if players plant it; else the crop itself.
-            let crops = &content.crops;
-            let seed = crops.iter().find(|(_, c)| c.ripe() == *crop).and_then(|(_, c)| c.seed);
-            item_cell(card, font, images, Some(seed.unwrap_or(*crop)), None);
+        // What plants it (or the crop itself, if players don't), or the wild plant foraged.
+        Method::Harvest { from, .. } => {
+            item_cell(card, font, images, Some(*from), None);
         }
         Method::Break { block, tool, .. } => {
             item_cell(card, font, images, Some(content.blocks.item_of(*block)), None);
@@ -668,7 +666,7 @@ pub(crate) fn describe(locale: &Locale, launch: &Launch, method: &Method) -> Vec
             lines
         }
         Method::Work { station, skill, level: at, .. } => [(locale.format("recipes.work", &[("station", &block(*station))]), MUTED)].into_iter().chain(level(Some(*skill), *at)).collect(),
-        Method::Harvest { crop, forage, chance: odds, skill, level: at } => {
+        Method::Harvest { crop, forage, chance: odds, skill, level: at, .. } => {
             let crop = block(content.blocks.item_of(*crop));
             [(locale.format(if *forage { "recipes.forage" } else { "recipes.harvest" }, &[("crop", &crop)]), MUTED)].into_iter().chain(chance(*odds)).chain(level(Some(*skill), *at)).collect()
         }
