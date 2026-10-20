@@ -4814,8 +4814,10 @@ fn a_sling_shoots_a_stone_a_clear_line_away_and_trains_ranged() {
     let wall = [0.0, 1.0, 2.0].map(|y| Vec3::new(x, at.y + y, at.z).floor().as_ivec3());
     client.pump_until(|c| wall.iter().all(|&p| c.world.block(p) == floor));
     // Two shots, the second on the sling's beat (its cooldown, from the content): both are
-    // at the air, so off the beat, and earn no pip.
+    // at the air, so off the beat, and earn no pip. The first waits out the cooldown of the
+    // shot that hit, by the server's ticks: a click before it is ready is no shot.
     let beat = client.content.combat.timing(&client.content.combat.wielded(Some(sling), |_| 10)).cooldown;
+    client.after_ticks((beat * TICKS_PER_SECOND as f32).ceil() as u64);
     let (blows, left, pips) = (client.blows, carried_of(&client, stone), client.pips.last().copied().unwrap_or(0));
     let start = Instant::now();
     for k in 0..2u32 {
