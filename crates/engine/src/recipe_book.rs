@@ -354,10 +354,11 @@ impl RecipeBook {
     }
 
     /// Adds what the world lays (`placed`, from its generator's data) that breaking gives
-    /// back as itself: found, not made. Items that are never placed (seeds) are left out.
+    /// back as itself: found, not made. Items that are never placed (seeds) are left out,
+    /// and so are furnishings: one the world placed (a village's bed) gives nothing broken.
     pub fn found(&mut self, content: &Content, placed: impl IntoIterator<Item = BlockId>) {
         let blocks = &content.blocks;
-        let mut placed: Vec<BlockId> = placed.into_iter().collect();
+        let mut placed: Vec<BlockId> = placed.into_iter().filter(|&b| !blocks.def(b).has_tag("furnishing")).collect();
         placed.sort();
         placed.dedup();
         self.laid.extend(placed.iter().map(|&b| listed_as(blocks, b)));

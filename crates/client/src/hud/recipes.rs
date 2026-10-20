@@ -205,7 +205,8 @@ fn look_up(
     mut commands: Commands,
 ) {
     if viewer.book.is_none() {
-        viewer.book = Some(Arc::new(voxmar_server::recipe_book(&launch.content)));
+        // Its world data parsed as the content loaded (`load_content` refuses it otherwise).
+        viewer.book = Some(Arc::new(voxmar_server::recipe_book(&launch.content).expect("the world data of loaded content parses")));
     }
     if let Some(StartLookup(name, uses)) = start.as_deref() {
         commands.remove_resource::<StartLookup>();

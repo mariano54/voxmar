@@ -1972,16 +1972,16 @@ impl WorldContent {
     /// (`RecipeBook::found`). Names count wherever they stand, so this may hold a block the
     /// world never lays after all, never leave one out; items that are never placed
     /// (seeds a wild crop is named by) are left out.
-    pub fn placed<'a>(files: impl Iterator<Item = &'a ContentFile>, registry: &BlockRegistry) -> Vec<voxmar_engine::block::BlockId> {
-        let lays = |name: &str| name != "ambient.ron" && BASE_FILES.iter().any(|(base, _)| *base == name);
-        let files: Vec<&ContentFile> = files.filter(|file| lays(&file.name)).collect();
+    pub fn placed<'a>(files: impl Iterator<Item = &'a ContentFile>, registry: &BlockRegistry) -> Result<Vec<voxmar_engine::block::BlockId>, ContentError> {
+        let files: Vec<&ContentFile> = files.collect();
         // A settlement style's names with `{wood}` and `{trim}` in them stand for each of
         // its woods; any style's, as the names are read without their style.
-        let woods: Vec<String> = Self::from_files(files.iter().copied(), registry)
-            .map(|world| world.settlements.styles.iter().flat_map(|style| style.woods.iter().map(|(wood, _)| wood.clone())).collect())
-            .unwrap_or_default();
+        let mut woods: Vec<String> = Self::from_files(files.iter().copied(), registry)?.settlements.styles.iter().flat_map(|style| style.woods.iter().map(|(wood, _)| wood.clone())).collect();
+        woods.sort();
+        woods.dedup();
+        let lays = |name: &str| name != "ambient.ron" && BASE_FILES.iter().any(|(base, _)| *base == name);
         let mut found = Vec::new();
-        for file in files {
+        for file in files.into_iter().filter(|file| lays(&file.name)) {
             for (holder, within, word) in ron_strings(&file.source) {
                 // A list of tags names land and biomes, not blocks; `Tag("flower", 1.0)`
                 // picks blocks by their tag.
@@ -2002,7 +2002,7 @@ impl WorldContent {
                     }
                 } else if let Some(tag) = word.strip_prefix("tag:") {
                     found.extend(registry.tagged(tag));
-                } else if word.contains('{') {
+                } else if word.contains("{wood}") || word.contains("{trim}") {
                     for (wood, trim) in woods.iter().flat_map(|wood| woods.iter().map(move |trim| (wood, trim))) {
                         let name = crate::settlements::def::fill(&word, wood, trim);
                         found.extend(registry.id(&name).or_else(|| registry.id(&format!("{}:{name}", file.package))));
@@ -2015,7 +2015,7 @@ impl WorldContent {
         found.retain(|&id| !registry.def(id).item);
         found.sort();
         found.dedup();
-        found
+        Ok(found)
     }
 
     /// The base package's definitions alone.

@@ -67,7 +67,7 @@ use voxmar_engine::fluid::Fluids;
 use voxmar_engine::glam::{IVec3, Vec3};
 use voxmar_engine::world::{Column, VoxelWorld};
 use voxmar_protocol::{KEEPALIVE, PlayerId, ServerConnection, ServerMessage, TICKS_PER_SECOND};
-use voxmar_worldgen::{Generator, Overworld, WorldContent};
+use voxmar_worldgen::{ContentError, Generator, Overworld, WorldContent};
 
 use crate::actions::Executor;
 use crate::player::Player;
@@ -345,17 +345,17 @@ pub fn load_content(assets: &Path) -> Result<Content, Box<dyn std::error::Error>
 
 /// The recipe book: every way the content gives to get each item, what the world lays
 /// among them (found, broken loose).
-pub fn recipe_book(content: &Content) -> voxmar_engine::recipe_book::RecipeBook {
+pub fn recipe_book(content: &Content) -> Result<voxmar_engine::recipe_book::RecipeBook, ContentError> {
     let mut book = voxmar_engine::recipe_book::RecipeBook::new(content);
-    book.found(content, WorldContent::placed(content.files.iter(), &content.blocks));
-    book
+    book.found(content, WorldContent::placed(content.files.iter(), &content.blocks)?);
+    Ok(book)
 }
 
 /// Every item a player could hold has a way to get it in the recipe book, or is tagged
 /// `creative_only`: a package that adds an item nothing gives fails here, naming it and the
 /// package, rather than shipping a dead entry. A tag on an item that has a way is noted.
 fn sources_known(content: &Content) -> Result<(), String> {
-    let (dead, stale) = recipe_book(content).unsourced(&content.blocks);
+    let (dead, stale) = recipe_book(content).map_err(|e| e.to_string())?.unsourced(&content.blocks);
     let named = |ids: &[voxmar_engine::block::BlockId]| {
         ids.iter()
             .map(|&id| {
@@ -1712,14 +1712,17 @@ mod tests {
         let assets = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
         let content = load_content(&assets).unwrap();
         let named = |ids: Vec<voxmar_engine::block::BlockId>| ids.into_iter().map(|id| content.blocks.def(id).name.clone()).collect::<Vec<_>>();
-        let (dead, stale) = recipe_book(&content).unsourced(&content.blocks);
+        let (dead, stale) = recipe_book(&content).unwrap().unsourced(&content.blocks);
         assert_eq!((named(dead), named(stale)), (Vec::new(), Vec::new()), "the game's own items each have a way, and no creative_only tag is stale");
         // Found where a village builds with it, named with its style's wood ("stripped_{wood}_log"),
         // and foraged from a ripe crop the world grows wild.
-        let book = recipe_book(&content);
+        let book = recipe_book(&content).unwrap();
         let id = |name: &str| content.blocks.id(name).unwrap();
         let spruce = book.making(id("base:stripped_spruce_log"));
         assert!(spruce.iter().any(|e| matches!(e.method, voxmar_engine::recipe_book::Method::Found { .. })), "{spruce:?}");
+        // A village's bed is no find: broken where the world placed it, it gives nothing.
+        let bed = book.making(id("base:oak_bed"));
+        assert!(!bed.iter().any(|e| matches!(e.method, voxmar_engine::recipe_book::Method::Found { .. })), "{bed:?}");
         let tomato = book.making(id("base:tomato_seeds"));
         assert!(tomato.iter().any(|e| matches!(e.method, voxmar_engine::recipe_book::Method::Harvest { forage: true, from, .. } if from == id("base:tomato_crop"))), "{tomato:?}");
         let dir = std::env::temp_dir().join(format!("voxmar-no-way-{}", std::process::id()));
@@ -1738,7 +1741,7 @@ mod tests {
         std::fs::write(mods.join("moonmod/recipes.ron"), r#"(recipes: [(ingredients: ["base:cobblestone", "base:flint"], output: "moon_rock")])"#).unwrap();
         let content = load_content(&dir).unwrap();
         let rock = content.blocks.expect("moonmod:moon_rock");
-        assert!(recipe_book(&content).making(rock).iter().any(|e| matches!(e.method, voxmar_engine::recipe_book::Method::Craft { .. })));
+        assert!(recipe_book(&content).unwrap().making(rock).iter().any(|e| matches!(e.method, voxmar_engine::recipe_book::Method::Craft { .. })));
         // So does the tag, without one.
         std::fs::remove_file(mods.join("moonmod/recipes.ron")).unwrap();
         std::fs::write(mods.join("moonmod/blocks.ron"), block(r#", tags: ["creative_only"]"#)).unwrap();
