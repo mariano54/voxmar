@@ -1345,6 +1345,21 @@ impl BlockRegistry {
                 )));
             }
         }
+        // A window glows by the light through it, and glowing is its drawing's (the client
+        // marks the texture layers of a `lit_through` block's faces): a drawing a block that
+        // does not glow shares, on a face or a box, would light it too.
+        fn textured<'a>(def: &'a BlockDef, block: &'a BlockInfo) -> impl Iterator<Item = u16> + 'a {
+            Face::ALL.into_iter().filter(move |&f| def.textures.face(f).is_some()).map(move |f| block.layers[f as usize])
+        }
+        let glowing: FxHashMap<u16, &str> = defs.iter().zip(&info).filter(|(def, _)| def.lit_through).flat_map(|(def, block)| textured(def, block).map(move |layer| (layer, def.name.as_str()))).collect();
+        for (i, (def, block)) in defs.iter().zip(&info).enumerate().filter(|(_, (def, _))| !def.lit_through) {
+            if let Some(window) = textured(def, block).chain(shape_layers[i].iter().copied()).find_map(|layer| glowing.get(&layer)) {
+                return Err(RegistryError(format!(
+                    "`{}` is drawn as window `{window}` is, which glows by the light through it (`lit_through`), so it would glow too: give the window a drawing of its own",
+                    def.name
+                )));
+            }
+        }
         // A railing keeps anyone from walking off what it edges: solid, and a block high so
         // nobody steps onto it. A landing is a floor level with a stair's top: a box across
         // the whole top of its cell.
@@ -1889,6 +1904,26 @@ mod tests {
         assert!(dim.contains("`light_filter` is 2 at most, not 14"), "{dim}");
         assert!(load(r#"(name: "glow", lit_through: true)"#).unwrap_err().contains("(`lit_through`)"));
         assert!(load(r#"(name: "gap", render: Model, shape: "slab", light_filter: 3, tags: ["draught"])"#).is_err());
+    }
+
+    /// A window's drawing glows by the light through it, so a block drawn the same, on a
+    /// face or as a box of its shape, is refused, whatever window and other block are; a
+    /// window drawn its own way, or two windows sharing one, load.
+    #[test]
+    fn a_window_drawn_as_a_block_that_does_not_glow_is_refused() {
+        let load = |blocks: &str| {
+            let defs = BlockRegistry::parse("base", &format!("(blocks: [{blocks}])")).unwrap();
+            BlockRegistry::with_shapes(defs, &shapes()).map(|_| ()).map_err(|e| e.0)
+        };
+        let window = r#"(name: "lattice", render: Model, shape: "slab", textures: All("grain"), tags: ["window"], lit_through: true)"#;
+        let shared = load(&format!(r#"{window}, (name: "post", render: Model, shape: "stairs", textures: All("grain"))"#)).unwrap_err();
+        assert!(shared.contains("`base:post` is drawn as window `base:lattice` is"), "{shared}");
+        let sided = load(&format!(r#"{window}, (name: "beam", textures: Sides(top: "oak", bottom: "oak", side: "grain"))"#)).unwrap_err();
+        assert!(sided.contains("`base:beam`"), "{sided}");
+        assert_eq!(load(&format!(r#"{window}, (name: "post", render: Model, shape: "stairs", textures: All("timber"))"#)), Ok(()));
+        assert_eq!(load(&format!(r#"{window}, (name: "pane", render: Cutout, textures: All("grain"), tags: ["window"], lit_through: true)"#)), Ok(()));
+        // Faces with no drawing of their own are no sharing (they all count as the first).
+        assert_eq!(load(&format!(r#"(name: "stone"), {window}"#)), Ok(()));
     }
 
     /// A railing that is not solid or not a block high, a landing with no floor across the
