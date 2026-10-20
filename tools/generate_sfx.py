@@ -5,7 +5,7 @@ an animal, emptying a pouch, loading a machine, picking a lock, praying at an al
 spreading fertiliser, throwing an item down, a snare springing shut, and a tool nearly
 worn out and breaking; and the building
 materials' steps, placings and breakings (timber, thatch, shingle, cobblestone, stone
-brick) under materials/.
+brick, wattle, daub, hide, terracotta) under materials/.
 
 Our own work, built from noise, resonators and decaying modes (no samples). Run once
 offline; the clips are written to assets/content/base/sounds/ as Ogg Vorbis and listed in
@@ -542,6 +542,143 @@ def brick_break(rng):
     return out
 
 
+def withies(rng, seconds, level=1.0):
+    """Woven sticks shifting against each other: dry little creaks and ticks of wood."""
+    out = np.zeros(int(seconds * RATE))
+    for _ in range(int(rng.uniform(5, 9))):
+        place(out, rng.uniform(0, seconds * 0.8), knock(rng, rng.uniform(500, 900)), rng.uniform(0.1, 0.3))
+    place(out, 0.0, rustle(rng, seconds * 0.9, rng.uniform(1600, 2200)), 0.5)
+    return out * level
+
+
+def wattle_step(rng):
+    """A foot against woven wattle: a springy knock and the withies ticking."""
+    out = np.zeros(int(0.25 * RATE))
+    place(out, 0.0, knock(rng, rng.uniform(260, 340)), 0.8)
+    place(out, 0.01, withies(rng, 0.14), 0.6)
+    return out
+
+
+def wattle_place(rng):
+    """A wattle panel set up: a knock of its stakes and a shiver through the weave."""
+    out = np.zeros(int(0.45 * RATE))
+    place(out, 0.0, knock(rng, rng.uniform(180, 230)))
+    place(out, 0.0, thud(rng, 0.1, 0.05, 0.03), 0.6)
+    place(out, 0.03, withies(rng, 0.3), 0.7)
+    return out
+
+
+def wattle_break(rng):
+    """Wattle pulled apart: withies snapping and rasping out of the weave."""
+    out = np.zeros(int(0.65 * RATE))
+    place(out, 0.0, crackles(rng, 0.2, 140, 1.0))
+    place(out, 0.02, withies(rng, 0.5, 1.2))
+    place(out, 0.3, knock(rng, rng.uniform(200, 260)), 0.5)
+    return out
+
+
+def mud(rng, seconds, centre):
+    """Damp clay: a soft, low, slightly wet pat."""
+    n = int(seconds * RATE)
+    body = lowpass(rng.standard_normal(n), 0.05) * envelope(n, 0.003, seconds * 0.25) * 6
+    return body + 0.25 * bandpass(rng.standard_normal(n) * envelope(n, 0.001, 0.012), centre, 1.2)
+
+
+def daub_step(rng):
+    """A foot on daub: a dull, soft pat with a little grit."""
+    out = np.zeros(int(0.2 * RATE))
+    place(out, 0.0, mud(rng, 0.1, rng.uniform(900, 1300)))
+    place(out, 0.0, trickle(rng, 0.06, 2200, 160), 0.3)
+    return out
+
+
+def daub_place(rng):
+    """Daub pressed on: a heavy, soft slap of clay and a smoothing smear."""
+    out = np.zeros(int(0.45 * RATE))
+    place(out, 0.0, mud(rng, 0.16, rng.uniform(700, 1000)), 1.0)
+    place(out, 0.06, scrape(rng, 0.18, rng.uniform(900, 1300)), 0.35)
+    return out
+
+
+def daub_break(rng):
+    """Dried daub knocked out: it cracks, crumbles and falls in clods and dust."""
+    out = np.zeros(int(0.65 * RATE))
+    place(out, 0.0, crackles(rng, 0.05, 250, 0.6))
+    place(out, 0.0, mud(rng, 0.14, 800))
+    place(out, 0.04, clatter(rng, 0.45, 4, lambda r: mud(r, 0.08, r.uniform(800, 1400))), 0.7)
+    place(out, 0.08, trickle(rng, 0.45, 1900, 180), 0.5)
+    return out
+
+
+def drum(rng, freq, level=1.0):
+    """Hide stretched on poles struck: a low, dull, quickly damped boom."""
+    n = int(0.25 * RATE)
+    skin = modes(freq, 0.25, [(1.0, 1.0, 0.05), (1.59, 0.5, 0.03), (2.14, 0.3, 0.02)], attack=0.002)[:n]
+    return (skin + 0.2 * bandpass(rng.standard_normal(n) * envelope(n, 0.001, 0.01), 1200, 1.0)) * level
+
+
+def hide_step(rng):
+    """A foot against hide: a soft, leathery flap and a dull thump of the skin."""
+    out = np.zeros(int(0.22 * RATE))
+    place(out, 0.0, drum(rng, rng.uniform(90, 130)), 0.7)
+    place(out, 0.0, rustle(rng, 0.1, rng.uniform(900, 1300)), 0.6)
+    return out
+
+
+def hide_place(rng):
+    """A hide stretched and pegged: a slap and the skin booming low as it tautens."""
+    out = np.zeros(int(0.45 * RATE))
+    place(out, 0.0, rustle(rng, 0.12, rng.uniform(1100, 1500)), 0.7)
+    place(out, 0.06, drum(rng, rng.uniform(80, 110)))
+    place(out, 0.06, knock(rng, rng.uniform(200, 260)), 0.35)
+    return out
+
+
+def hide_break(rng):
+    """A hide pulled down: lashings giving, leather flapping and a pole knocking."""
+    out = np.zeros(int(0.65 * RATE))
+    place(out, 0.0, crackles(rng, 0.06, 200, 0.6))
+    place(out, 0.02, rustle(rng, 0.35, rng.uniform(900, 1300), 1.1))
+    place(out, 0.15, drum(rng, rng.uniform(70, 100)), 0.6)
+    place(out, 0.35, knock(rng, rng.uniform(160, 210)), 0.6)
+    return out
+
+
+def pot(rng):
+    """Fired clay struck: a hollow, ringing earthenware knock."""
+    n = int(0.25 * RATE)
+    freq = rng.uniform(420, 620)
+    body = modes(freq, 0.25, [(1.0, 1.0, 0.035), (2.2, 0.5, 0.02), (3.9, 0.25, 0.01)], attack=0.0004)[:n]
+    tap = bandpass(rng.standard_normal(n) * envelope(n, 0.0002, 0.004), 3500, 1.0)
+    return body + 0.4 * tap
+
+
+def terracotta_step(rng):
+    """A foot on fired clay: a hollow clink."""
+    out = np.zeros(int(0.2 * RATE))
+    place(out, 0.0, pot(rng))
+    place(out, 0.0, thud(rng, 0.05, 0.06, 0.012), 0.3)
+    return out
+
+
+def terracotta_place(rng):
+    """A clay pot set down: a hollow knock with weight and a scrape of grit."""
+    out = np.zeros(int(0.4 * RATE))
+    place(out, 0.0, pot(rng))
+    place(out, 0.0, thud(rng, 0.1, 0.04, 0.03), 0.8)
+    place(out, 0.04, scrape(rng, 0.08, rng.uniform(2000, 2600)), 0.3)
+    return out
+
+
+def terracotta_break(rng):
+    """Fired clay broken: a crack, then sherds tinkling down."""
+    out = np.zeros(int(0.6 * RATE))
+    place(out, 0.0, pot(rng), 1.1)
+    place(out, 0.0, crackles(rng, 0.04, 400, 0.9))
+    place(out, 0.05, clatter(rng, 0.5, 6, tile), 0.6)
+    return out
+
+
 def finish(mono, rng, width=0.15):
     """The clip made stereo (a hair of width from a short delay), faded, and brought to
     its loudness."""
@@ -596,6 +733,18 @@ SOUNDS = {
     "materials/brick_step": (brick_step, 4),
     "materials/brick_place": (brick_place, 3),
     "materials/brick_break": (brick_break, 3),
+    "materials/wattle_step": (wattle_step, 4),
+    "materials/wattle_place": (wattle_place, 3),
+    "materials/wattle_break": (wattle_break, 3),
+    "materials/daub_step": (daub_step, 4),
+    "materials/daub_place": (daub_place, 3),
+    "materials/daub_break": (daub_break, 3),
+    "materials/hide_step": (hide_step, 4),
+    "materials/hide_place": (hide_place, 3),
+    "materials/hide_break": (hide_break, 3),
+    "materials/terracotta_step": (terracotta_step, 4),
+    "materials/terracotta_place": (terracotta_place, 3),
+    "materials/terracotta_break": (terracotta_break, 3),
 }
 
 
