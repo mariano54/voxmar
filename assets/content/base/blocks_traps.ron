@@ -4,6 +4,6 @@
 (
     blocks: [
         (name: "snare", render: Plant, solid: false, sound: Wood, textures: All("snare"), drops: "snare", hardness: 0.2, color: (150, 120, 80), tags: ["trap"]),
-        (name: "snare_sprung", render: Plant, solid: false, sound: Wood, textures: All("snare_sprung"), drops: "snare", hardness: 0.2, color: (160, 110, 80), tags: ["trap"]),
+        (name: "snare_sprung", render: Plant, solid: false, sound: Wood, textures: All("snare_sprung"), drops: "snare", hardness: 0.2, color: (160, 110, 80), tags: ["creative_only", "trap"]),
     ],
 )

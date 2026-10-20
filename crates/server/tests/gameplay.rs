@@ -454,7 +454,7 @@ impl Client {
                     self.connection.send(ClientMessage::Pong { id });
                 }
             }
-            ServerMessage::Hurt { creature, damage, defended } => {
+            ServerMessage::Hurt { creature, damage, defended, .. } => {
                 self.hurt.push((damage, defended));
                 self.hurt_by.push((creature, damage));
                 self.hurt_at.push(Instant::now());
@@ -3456,8 +3456,17 @@ fn a_stone_hoe_reaps_the_ripe_crops_about_one() {
         client.ok(&format!("/fill {} {} {} {} {} {} farmland", centre.x - 1, centre.y - 1, centre.z - 1, centre.x + 1, centre.y - 1, centre.z + 1));
         client.ok(&format!("/fill {} {} {} {} {} {} wheat_crop", centre.x - 1, centre.y, centre.z - 1, centre.x + 1, centre.y, centre.z + 1));
         client.pump_until(|c| cells.iter().all(|&cell| c.world.block(cell) == Some(ripe)));
-        client.propose("core:mine", ActionTarget::Block { block: centre, face: Face::PosY });
-        client.pump_until(|c| c.world.block(centre) == Some(BlockId::AIR));
+        // Cut again until it lands, by the server's clock: on a loaded machine the first
+        // cut was once never answered (the Input choosing the tool racing the /give). A cut
+        // at the air a landed one left does nothing.
+        for _ in 0..10 {
+            client.propose("core:mine", ActionTarget::Block { block: centre, face: Face::PosY });
+            client.pump_ticks(2 * TICKS_PER_SECOND as u64, |c| c.world.block(centre) == Some(BlockId::AIR));
+            if client.world.block(centre) == Some(BlockId::AIR) {
+                break;
+            }
+        }
+        assert_eq!(client.world.block(centre), Some(BlockId::AIR), "ten cuts with a {hoe} never took the middle wheat");
         // The rest go in the same tick as the one cut.
         client.after_server_ticks(2);
         let gone = cells.iter().filter(|&&cell| client.world.block(cell) == Some(BlockId::AIR)).count();
