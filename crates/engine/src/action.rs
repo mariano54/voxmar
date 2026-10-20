@@ -92,6 +92,9 @@ pub enum Requirement {
     Cookable,
     /// The actor's Cooking level is at least what the held item's recipe there needs.
     CookingLevel,
+    /// The actor carries the tool the held item's recipe there asks for, if any (a hammer
+    /// to crush ore on an anvil, an axe to split a log on a chopping block).
+    CookingTool,
     /// The actor holds something it can eat.
     HoldingFood,
     /// The actor has health to heal.
@@ -151,7 +154,7 @@ pub enum Requirement {
 
 impl Requirement {
     /// Every requirement, in [`Requirement::index`] order (`refusal` says why each failed).
-    pub const ALL: [Requirement; 39] = [Requirement::Alive, Requirement::Dead, Requirement::InReach, Requirement::Breakable, Requirement::HoldingBlock, Requirement::Replaceable, Requirement::Unobstructed, Requirement::Supported, Requirement::HoldingSeed, Requirement::Plantable, Requirement::SkillLevel, Requirement::Ripe, Requirement::CreatureInReach, Requirement::CreatureInTouch, Requirement::CreatureAccepts, Requirement::CreatureIsMine, Requirement::Cookable, Requirement::CookingLevel, Requirement::HoldingFood, Requirement::Hurt, Requirement::ToolGood, Requirement::BlockLevel, Requirement::CropLevel, Requirement::Tillable, Requirement::CraftingTable, Requirement::Bed, Requirement::MultiblockCore, Requirement::Machine, Requirement::Altar, Requirement::Fishable, Requirement::Locked, Requirement::Bees, Requirement::Station, Requirement::Fertilisable, Requirement::Store, Requirement::Swaps, Requirement::SprungTrap, Requirement::Seat, Requirement::Coats];
+    pub const ALL: [Requirement; 40] = [Requirement::Alive, Requirement::Dead, Requirement::InReach, Requirement::Breakable, Requirement::HoldingBlock, Requirement::Replaceable, Requirement::Unobstructed, Requirement::Supported, Requirement::HoldingSeed, Requirement::Plantable, Requirement::SkillLevel, Requirement::Ripe, Requirement::CreatureInReach, Requirement::CreatureInTouch, Requirement::CreatureAccepts, Requirement::CreatureIsMine, Requirement::Cookable, Requirement::CookingLevel, Requirement::HoldingFood, Requirement::Hurt, Requirement::ToolGood, Requirement::BlockLevel, Requirement::CropLevel, Requirement::Tillable, Requirement::CraftingTable, Requirement::Bed, Requirement::MultiblockCore, Requirement::Machine, Requirement::Altar, Requirement::Fishable, Requirement::Locked, Requirement::Bees, Requirement::Station, Requirement::Fertilisable, Requirement::Store, Requirement::Swaps, Requirement::SprungTrap, Requirement::Seat, Requirement::Coats, Requirement::CookingTool];
 
     /// Where it stands in [`Requirement::ALL`]. A new requirement must be added to both:
     /// this match does not compile without it.
@@ -196,6 +199,7 @@ impl Requirement {
             Requirement::SprungTrap => 36,
             Requirement::Seat => 37,
             Requirement::Coats => 38,
+            Requirement::CookingTool => 39,
         }
     }
 
@@ -262,6 +266,10 @@ pub enum Effect {
     LayRecipe,
     /// Till the target soil into farmland.
     Till,
+    /// Wear what the actor holds by a use on the target (`tool::Wear`): a block broken,
+    /// more if the tool is not made for it, or soil tilled. Skill saves a use now and then;
+    /// worn out, it breaks to nothing (or a head a pack names).
+    WearHeld,
     /// Coat the target in place with what is held (see `Requirement::Coats`).
     Coat,
     /// Turn the target into what it swaps for, its upper or lower half with it: open or
@@ -393,6 +401,11 @@ pub trait ActionContext {
     fn actor_eye(&self) -> Vec3;
     fn actor_alive(&self) -> bool;
     fn actor_held(&self) -> Option<BlockId>;
+    /// Everything the actor carries in its slots, the hand's among them (a tool a recipe
+    /// asks for, `Requirement::CookingTool`).
+    fn actor_carried(&self) -> Vec<BlockId> {
+        Vec::new()
+    }
     /// What the actor's pouches carry (see [`crate::inventory::Inventory::pouched`]).
     fn actor_pouched(&self) -> Vec<BlockId> {
         Vec::new()
@@ -638,6 +651,12 @@ impl ActionDef {
                     (_, None) => true,
                 }
             }
+            Requirement::CookingTool => {
+                let (block, _) = block_target()?;
+                let station = ctx.block(block).map(|b| ctx.blocks().def(b).tags.as_slice()).unwrap_or(&[]);
+                let recipe = ctx.actor_held().zip(ctx.cooking()).and_then(|(item, cooking)| cooking.for_item(item, station));
+                recipe.is_none_or(|recipe| recipe.has_tool(ctx.blocks(), ctx.actor_carried()))
+            }
             Requirement::ToolGood => {
                 let (block, _) = block_target()?;
                 match (ctx.block(block), ctx.tools()) {
@@ -740,7 +759,7 @@ impl ActionDef {
                 match ctx.actor_held() {
                     None => true,
                     Some(item) => {
-                        let fuel = machine.burns() && machines.burn_seconds(item).is_some();
+                        let fuel = machine.burns() && machines.burns_in(machine, item).is_some();
                         let input = machine.is_processor() && machines.takes(machine, item);
                         // A bin takes anything but machines: a chute in hand is laid against it.
                         let bin = machine.bin_takes(item) && !ctx.blocks().def(item).has_tag(&machines.rules.machine_tag);

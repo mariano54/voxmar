@@ -62,6 +62,18 @@ pub fn set_stack_limits(limits: Vec<u8>) {
 pub fn max_stack(item: BlockId) -> u8 {
     LIMITS.read().unwrap_or_else(|e| e.into_inner()).get(item.0 as usize).copied().unwrap_or(MAX_STACK)
 }
+
+/// `stack` in stacks no bigger than its item stacks to, keeping its wear.
+pub fn split_stack(stack: ItemStack) -> impl Iterator<Item = ItemStack> {
+    let most = max_stack(stack.item).max(1);
+    let mut left = stack.count;
+    std::iter::from_fn(move || {
+        let count = left.min(most);
+        left -= count;
+        (count > 0).then_some(ItemStack { count, ..stack })
+    })
+}
+
 /// The slot number of the stack held on the pointer while the inventory screen is open.
 pub const CURSOR: usize = SLOTS;
 /// The crafting grid's first slot; its nine are `CRAFT..CRAFT + 9`, row by row.
@@ -123,6 +135,18 @@ fn holds(slot: usize, item: BlockId) -> u8 {
 pub struct ItemStack {
     pub item: BlockId,
     pub count: u8,
+    /// Uses worn off it, for an item that wears out (a tool's `uses:N`, see
+    /// `tool::ToolRegistry::uses`): 0 when new, and for everything that does not wear.
+    /// Only a stack of one is ever worn, and worn stacks never merge.
+    #[serde(default)]
+    pub wear: u16,
+}
+
+impl ItemStack {
+    /// `count` of `item`, new.
+    pub const fn new(item: BlockId, count: u8) -> Self {
+        Self { item, count, wear: 0 }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -179,10 +203,72 @@ impl Inventory {
                 break;
             }
             let moved = count.min(max_stack(item));
-            *slot = Some(ItemStack { item, count: moved });
+            *slot = Some(ItemStack::new(item, moved));
             count -= moved;
         }
         count
+    }
+
+    /// Breaks up stacks bigger than their item stacks to (an older save's stack of tools,
+    /// from before tools wore), the rest going into empty slots one stack at a time.
+    /// Returns what found no room.
+    pub fn split_overfull(&mut self) -> Vec<ItemStack> {
+        let mut extra = Vec::new();
+        for stack in self.slots.iter_mut().flatten() {
+            let most = max_stack(stack.item);
+            if stack.count > most {
+                extra.extend(split_stack(ItemStack { count: stack.count - most, ..*stack }));
+                stack.count = most;
+            }
+        }
+        let mut extra = extra.into_iter();
+        for slot in self.slots.iter_mut().filter(|s| s.is_none()) {
+            let Some(stack) = extra.next() else { break };
+            *slot = Some(stack);
+        }
+        extra.collect()
+    }
+
+    /// Adds a stack as [`Inventory::add`] does, keeping its wear: a worn one takes an empty
+    /// slot of its own. Returns how many did not fit.
+    pub fn add_stack(&mut self, stack: ItemStack) -> u8 {
+        if stack.wear == 0 {
+            return self.add(stack.item, stack.count);
+        }
+        match self.slots.iter_mut().find(|s| s.is_none()) {
+            Some(slot) => {
+                *slot = Some(stack);
+                0
+            }
+            None => stack.count,
+        }
+    }
+
+    /// Mends the tool in the crafting grid into `mended` (`tool::ToolRegistry::mended`
+    /// said what the grid makes), taking one item from each filled cell: onto the empty
+    /// pointer, or with `all` into the inventory. Returns whether it did.
+    pub fn mend(&mut self, mended: ItemStack, all: bool) -> bool {
+        if all {
+            if !self.slots.iter().any(Option::is_none) {
+                return false;
+            }
+        } else if self.cursor.is_some() {
+            return false;
+        }
+        for cell in &mut self.craft {
+            if let Some(stack) = cell {
+                stack.count -= 1;
+                if stack.count == 0 {
+                    *cell = None;
+                }
+            }
+        }
+        if all {
+            self.add_stack(mended);
+        } else {
+            self.cursor = Some(mended);
+        }
+        true
     }
 
     /// Puts up to `count` of `item` into the pouches, returning how many went in.
@@ -258,7 +344,7 @@ impl Inventory {
                 break;
             }
             let moved = left.min(max_stack(item));
-            *slot = Some(ItemStack { item, count: moved });
+            *slot = Some(ItemStack::new(item, moved));
             left -= moved;
         }
         count - left
@@ -282,7 +368,7 @@ impl Inventory {
             return 1;
         }
         if self.slots.get(slot).is_some_and(|s| s.is_none()) {
-            self.slots[slot] = Some(ItemStack { item, count: 1 });
+            self.slots[slot] = Some(ItemStack::new(item, 1));
             return 0;
         }
         self.add(item, 1)
@@ -349,7 +435,7 @@ impl Inventory {
                 self.add(output, count);
             } else {
                 match self.cursor {
-                    None => self.cursor = Some(ItemStack { item: output, count }),
+                    None => self.cursor = Some(ItemStack::new(output, count)),
                     Some(held) if held.item == output && held.count as u32 + count as u32 <= max_stack(output) as u32 => {
                         self.cursor = Some(ItemStack { count: held.count + count, ..held });
                     }
@@ -394,7 +480,7 @@ impl Inventory {
                 self.set(to, Some(ItemStack { count: moved, ..source }));
                 self.set(from, Some(ItemStack { count: source.count - moved, ..source }));
             }
-            Some(target) if target.item == source.item => {
+            Some(target) if target.item == source.item && target.wear == source.wear => {
                 let moved = count.min(source.count).min(holds(to, source.item).saturating_sub(target.count));
                 if moved == 0 {
                     return false;
@@ -423,13 +509,13 @@ impl Inventory {
         // An open store's stacks go into the pack, and the pack's into the store.
         if let Some(stack) = self.get(slot).filter(|_| self.store.is_some() && (slot < SLOTS || slot >= STORE)) {
             if slot >= STORE {
-                let left = self.add(stack.item, stack.count);
+                let left = self.add_stack(stack);
                 self.set(slot, Some(ItemStack { count: left, ..stack }));
                 return left != stack.count;
             }
             let Some(store) = self.store.as_mut().filter(|store| store_takes(store.block, stack.item)) else { return false };
             let mut left = stack.count;
-            for target in store.slots.iter_mut().flatten().filter(|t| t.item == stack.item) {
+            for target in store.slots.iter_mut().flatten().filter(|t| t.item == stack.item && t.wear == stack.wear) {
                 let moved = left.min(max_stack(stack.item).saturating_sub(target.count));
                 target.count += moved;
                 left -= moved;
@@ -453,7 +539,7 @@ impl Inventory {
         if (CRAFT..=LAST).contains(&slot) {
             // Out of the crafting grid or off, into the inventory.
             let Some(stack) = self.get(slot) else { return false };
-            let left = self.add(stack.item, stack.count);
+            let left = self.add_stack(stack);
             self.set(slot, Some(ItemStack { count: left, ..stack }));
             return left != stack.count;
         }
@@ -464,7 +550,7 @@ impl Inventory {
         let others = if slot < HOTBAR_SLOTS { HOTBAR_SLOTS..SLOTS } else { 0..HOTBAR_SLOTS };
         let before = stack.count;
         for to in others.clone() {
-            if let Some(target) = self.slots[to].as_mut().filter(|t| t.item == stack.item) {
+            if let Some(target) = self.slots[to].as_mut().filter(|t| t.item == stack.item && t.wear == stack.wear) {
                 let moved = stack.count.min(max_stack(stack.item).saturating_sub(target.count));
                 target.count += moved;
                 stack.count -= moved;
@@ -489,7 +575,7 @@ impl Inventory {
         let mut moved = false;
         for slot in std::iter::once(CURSOR).chain(CRAFT..WORN) {
             let Some(stack) = self.get(slot) else { continue };
-            let left = self.add(stack.item, stack.count);
+            let left = self.add_stack(stack);
             self.set(slot, Some(ItemStack { count: left, ..stack }));
             moved |= left != stack.count;
         }
@@ -602,8 +688,8 @@ mod tests {
     fn add_stacks_then_spills() {
         let mut inv = Inventory::default();
         assert_eq!(inv.add(BlockId(1), 100), 0);
-        assert_eq!(inv.get(0), Some(ItemStack { item: BlockId(1), count: 64 }));
-        assert_eq!(inv.get(1), Some(ItemStack { item: BlockId(1), count: 36 }));
+        assert_eq!(inv.get(0), Some(ItemStack::new(BlockId(1), 64)));
+        assert_eq!(inv.get(1), Some(ItemStack::new(BlockId(1), 36)));
         assert_eq!(inv.take_one(1), Some(BlockId(1)));
         assert_eq!(inv.get(1).unwrap().count, 35);
         assert!(!inv.move_items(1, 0, 35), "a full stack takes no more");
@@ -615,7 +701,7 @@ mod tests {
     const SAND: BlockId = BlockId(2);
 
     fn stack(item: BlockId, count: u8) -> Option<ItemStack> {
-        Some(ItemStack { item, count })
+        Some(ItemStack::new(item, count))
     }
 
     #[test]
@@ -745,6 +831,27 @@ mod tests {
         assert_eq!(inv.get(WORN), None);
         inv.worn[0] = stack(HELM, 1);
         assert_eq!(inv.clear(|i| i == HELM), 4);
+    }
+
+    /// Worn tools never merge: two of one tool worn differently swap places, one dropped
+    /// into the pack takes a slot of its own, and mending puts the mended tool on the
+    /// pointer, taking one from each cell.
+    #[test]
+    fn worn_stacks_keep_apart() {
+        let worn = |wear: u16| Some(ItemStack { wear, ..ItemStack::new(SAND, 1) });
+        let mut inv = Inventory::default();
+        inv.slots[0] = worn(5);
+        inv.slots[1] = worn(9);
+        assert!(inv.move_items(0, 1, 1), "swapped");
+        assert_eq!((inv.slots[0], inv.slots[1]), (worn(9), worn(5)));
+        inv.cursor = worn(3);
+        assert!(inv.stow_cursor());
+        assert_eq!(inv.slots[2], worn(3), "stowed as worn as it was");
+        inv.craft[0] = worn(40);
+        inv.craft[1] = stack(DIRT, 2);
+        assert!(inv.mend(ItemStack { wear: 10, ..ItemStack::new(SAND, 1) }, false));
+        assert_eq!((inv.cursor, inv.craft[0], inv.craft[1]), (worn(10), None, stack(DIRT, 1)));
+        assert!(!inv.mend(ItemStack::new(SAND, 1), false), "the pointer is taken");
     }
 
     /// An open store's slots follow the player's: clicks move stacks in and out, shift

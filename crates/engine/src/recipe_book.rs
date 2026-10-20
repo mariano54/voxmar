@@ -22,9 +22,10 @@ pub enum Method {
     /// near, if any; the level in `skill` it takes, if any.
     Craft { variants: Vec<[Option<BlockId>; GRID]>, shapeless: bool, first: usize, near: Option<String>, skill: Option<crate::skill::SkillId>, level: u8 },
     /// Cooked (or fired, or smelted) at a station (blocks with the station's tag), from
-    /// `level` in `skill`: `uses` of the held `input` and the other items `with` it; what
-    /// is left when it burns, if anything.
-    Cook { input: BlockId, uses: u8, with: Vec<(BlockId, u8)>, station: String, skill: Option<crate::skill::SkillId>, level: u8, burnt: Option<BlockId> },
+    /// `level` in `skill`: `uses` of the held `input` and the other items `with` it (any one
+    /// of each list will do), with a `tool` carried, by tag, if it asks; what is left when it
+    /// burns, if anything.
+    Cook { input: BlockId, uses: u8, with: Vec<(Vec<BlockId>, u8)>, station: String, tool: Option<String>, skill: Option<crate::skill::SkillId>, level: u8, burnt: Option<BlockId> },
     /// Taken from a kept creature with a tool (items with the tool's tag), or left by it
     /// without one (eggs).
     Product { creature: CreatureId, tool: Option<String> },
@@ -101,9 +102,11 @@ impl RecipeBook {
             let station = recipe.def.station.clone();
             let stations: Vec<BlockId> = content.blocks.tagged(&station).collect();
             let input = blocks.item_of(input);
-            let with: Vec<(BlockId, u8)> = recipe.with.iter().map(|&(item, n)| (blocks.item_of(item), n)).collect();
-            let uses = [input].into_iter().chain(with.iter().map(|&(item, _)| item)).chain(stations).collect();
-            let method = Method::Cook { input, uses: recipe.def.uses, with, station, skill: recipe.skill, level: recipe.def.level, burnt: recipe.burnt };
+            let with: Vec<(Vec<BlockId>, u8)> = recipe.with.iter().map(|(items, n)| (items.iter().map(|&item| blocks.item_of(item)).collect(), *n)).collect();
+            // A tool it asks for carried (a hammer at an anvil) is among what it uses too.
+            let tools: Vec<BlockId> = recipe.def.tool.as_deref().map(|tag| content.blocks.tagged(tag).collect()).unwrap_or_default();
+            let uses = [input].into_iter().chain(with.iter().flat_map(|(items, _)| items.iter().copied())).chain(stations).chain(tools).collect();
+            let method = Method::Cook { input, uses: recipe.def.uses, with, station, tool: recipe.def.tool.clone(), skill: recipe.skill, level: recipe.def.level, burnt: recipe.burnt };
             book.add(blocks, Entry { method, output: recipe.output, count: (recipe.def.count, recipe.def.count) }, uses);
         }
         // Machines: each recipe's outputs and byproducts, worked by every machine that
@@ -269,6 +272,10 @@ mod tests {
         assert!(log_uses.contains(&id("base:oak_planks")) && log_uses.contains(&id("base:campfire")), "{log_uses:?}");
         // The campfire is used as a station; cooked food is made there.
         assert!(book.using(id("base:campfire")).iter().any(|e| matches!(e.method, Method::Cook { .. })));
+        // A hammer is used at an anvil, and the way names it; crushed tin goes into bronze.
+        let hammer = book.using(id("base:stone_hammer"));
+        assert!(hammer.iter().any(|e| e.output == id("base:crushed_copper") && matches!(&e.method, Method::Cook { tool: Some(tool), .. } if tool == "hammer")), "{hammer:?}");
+        assert!(book.using(id("base:crushed_tin")).iter().filter(|e| e.output == id("base:bronze_ingot")).count() >= 2, "held, and carried with copper");
         // Shears are used on a creature for its product.
         assert!(book.using(id("base:shears")).iter().any(|e| matches!(&e.method, Method::Product { tool: Some(tool), .. } if tool == "shears")));
     }

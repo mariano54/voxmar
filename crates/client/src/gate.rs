@@ -435,7 +435,6 @@ steps! {
     HomeMotif,
     /// A drying rack stood by the campfire, raw rabbit in hand: a right click hangs it, the
     /// rack the server sends back is the hung one, and chat says where it stands makes it quicker.
-    /// Then an earth clamp in its place, clay in hand: a right click sets it smouldering.
     Dry,
     /// A snare set by the trail with a rabbit summoned into it springs (the server's word:
     /// the sprung block); a right click takes the catch, raw rabbit to hand, and the snare
@@ -471,10 +470,23 @@ steps! {
     /// is within reach, so a log in the grid shows six planks, not four, and crafted, the
     /// server gives six.
     Chop,
+    /// A log held to a chopping block with an axe carried splits into two firewood; a clamp
+    /// built of firewood under earth, kindling on top, lit from a torch glows at its flue
+    /// (shot `clamp-lit`), and some game hours on its firewood is charcoal.
+    Clamp,
     /// Bare hands are refused a standing log, the refusal naming the least axe; that axe
     /// made in the hand's grid from its recipe (flint and sticks in the base game) fells it,
     /// and the log comes to hand.
     Flint,
+    /// A stone anvil where the chopping block stood: copper ore held and clicked on it with
+    /// no hammer about says a hammer is needed; with one in the pack it crushes the ore,
+    /// and the hammer stays.
+    Anvil,
+    /// A tool nearly worn out reddens in the hotbar and creaks as a block breaks; worn out,
+    /// the next block breaks it with chips flying, leaving only a head it names; a worn one
+    /// laid in the grid with what mends it, by the block it is mended at, shows itself mended
+    /// and crafted comes back its mend's share the better, as the server mends it.
+    ToolWear,
     /// A survival player's inventory search finds the stone pickaxe by "pick"; its recipe
     /// opened in the viewer finishes the "Look It Up" quest; the quest book's page for the
     /// pickaxe shows its recipe inline, an item clicked there opens the viewer, and Back
@@ -684,6 +696,8 @@ struct Gate {
     fire_since: Option<f32>,
     /// What the dry step's pot water replaced, put back after.
     pot_ground: Option<String>,
+    /// What the tool wear step wears, breaks and mends.
+    tool_wear: Option<WearPlan>,
     /// Raw small game carried, slots and pouch, as the dry step hangs the rack, so its
     /// readout can count what hung.
     rack_rabbits: u32,
@@ -1040,6 +1054,7 @@ impl Gate {
             chimney_since: None,
             fire_since: None,
             pot_ground: None,
+            tool_wear: None,
             rack_rabbits: 0,
             dry_clearing: None,
             dry_pickup: None,
@@ -1714,6 +1729,8 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         // A door placed, opened and shut, a lit window and a campfire at midnight, each
         // waited on.
         Step::Door => STEP_LIMIT + 25.0,
+        // Two blocks mined with a tool, and a mend crafted, each waited on.
+        Step::ToolWear => STEP_LIMIT + 15.0,
         // A party walks in, is talked to, traded with and sent away, each in server seconds.
         Step::Party => 60.0,
         // The effects are judged once a second by the server, and a rest is a sleep away.
@@ -1733,7 +1750,7 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         // The barrel opened, then a server pass for the egg and a second for the chat; then
         // a rug and a stool set down, broken by hand and picked up.
         Step::Nest => 60.0,
-        // A rack hung and read, a clamp lit, then a pot set simmering, each answer waited on.
+        // A rack hung and read, then a pot set simmering, each answer waited on.
         Step::Dry => 6.0 * DRY_WAIT + STEP_LIMIT,
         // The refusal waited on, then a well set down by the plot.
         Step::Refusal => UNANSWERED + 4.0 * REFUSAL_WAIT + STEP_LIMIT,
@@ -2073,7 +2090,10 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Ore => ore(world, gate, now, in_phase),
         Step::Recipes => recipes(world, gate, now, in_phase),
         Step::Chop => chop(world, gate, now),
+        Step::Clamp => clamp(world, gate, now),
         Step::Flint => flint(world, gate, now),
+        Step::Anvil => anvil(world, gate, now),
+        Step::ToolWear => tool_wear(world, gate, now),
         Step::LookUp => look_up(world, gate, now, in_phase),
         Step::Refusal => refusal(world, gate, now, in_phase),
         Step::Merged => merged(world, gate, now, in_phase),
@@ -5088,7 +5108,7 @@ fn chop(world: &mut World, gate: &mut Gate, now: f32) {
         net.command(&format!("setblock {} {} {} air", block.x, block.y, block.z));
         net.command("clear oak_log");
         net.command("clear oak_planks");
-        gate.next(Step::Flint, now);
+        gate.next(Step::Clamp, now);
     };
     match gate.phase {
         0 => {
@@ -5164,6 +5184,562 @@ fn chop(world: &mut World, gate: &mut Gate, now: f32) {
     }
 }
 
+/// The anvil step's ore, and the station tag it is crushed at.
+const ANVIL_ORE: &str = "base:copper_ore";
+const ANVIL_TAG: &str = "anvil";
+
+/// Copper ore crushed on a stone anvil, as cooking.ron says: held and clicked on the anvil
+/// with no hammer about, the words under the crosshair say the tool it needs; with a hammer
+/// in the pack the click gives what the recipe makes, and the hammer stays.
+fn anvil(world: &mut World, gate: &mut Gate, now: f32) {
+    let block = gate.feet + IVec3::new(0, 0, 14) + CHOP_FROM_FIRE;
+    let waited = gate.server_in_phase() > CHOP_WAIT;
+    let outwaited = waited && now - gate.phase_since > CHOP_WAIT;
+    let content = world.resource::<Launch>().content.clone();
+    let ore = content.blocks.id(ANVIL_ORE);
+    let recipe = ore.and_then(|ore| content.cooking.for_item(ore, &[ANVIL_TAG.to_owned()]));
+    let anvil_block = content.blocks.tagged(ANVIL_TAG).next();
+    let tool = recipe.and_then(|r| r.def.tool.as_deref()).and_then(|tag| content.blocks.tagged(tag).next());
+    let carried = |world: &World, item: Option<BlockId>| world.resource::<LocalPlayer>().inventory.slots.iter().flatten().filter(|s| Some(s.item) == item).map(|s| s.count as u32).sum::<u32>();
+    let end = |world: &mut World, gate: &mut Gate| {
+        mouse(world, MouseButton::Right, false);
+        let net = world.resource::<Net>();
+        net.command(&format!("setblock {} {} {} air", block.x, block.y, block.z));
+        net.command("clear");
+        gate.next(Step::ToolWear, now);
+    };
+    let (Some(recipe), Some(anvil_block), Some(tool)) = (recipe, anvil_block, tool) else {
+        gate.check("anvil", Err(format!("no {ANVIL_ORE} crushed at a block tagged `{ANVIL_TAG}` with a tool something carries")));
+        end(world, gate);
+        return;
+    };
+    let (made, count, level) = (recipe.output, recipe.def.count as u32, recipe.def.level);
+    let (anvil_name, ore_name, tool_name) = (content.blocks.def(anvil_block).name.clone(), content.blocks.def(ore.unwrap()).name.clone(), content.blocks.def(tool).name.clone());
+    let skill = recipe.skill.map(|s| content.skills.get(s).name.clone());
+    let short = |name: &str| name.split_once(':').map_or(name, |(_, n)| n).to_owned();
+    let wanted = {
+        let locale = world.resource::<Locale>();
+        content.refusals.says(voxmar_engine::action::Requirement::CookingTool).map(|key| locale.format(key, &[("tool", &locale.block(content.blocks.def(tool)))]))
+    };
+    match gate.phase {
+        0 => {
+            let net = world.resource::<Net>();
+            net.command("clear");
+            if let Some(skill) = &skill {
+                net.command(&format!("skill {} {level}", short(skill)));
+            }
+            net.command(&format!("give {} 2", short(&ore_name)));
+            net.command(&format!("setblock {} {} {} {}", block.x, block.y, block.z, short(&anvil_name)));
+            net.command(&format!("tp {} {} {}", block.x as f32 + 0.5, block.y, block.z as f32 - 2.5));
+            gate.advance(now);
+        }
+        // Ore in hand, no hammer: one click, and the words say what it needs.
+        1 | 3 => {
+            aim_at(world, block.as_vec3() + Vec3::new(0.5, 0.75, 0.5));
+            let stood = world.resource::<ClientWorld>().block(block) == Some(anvil_block);
+            let ready = stood && drawn(world, block) && carried(world, ore) == 2 && (carried(world, Some(tool)) == 1) == (gate.phase == 3) && select(world, &ore_name);
+            if ready {
+                mouse(world, MouseButton::Right, true);
+                gate.advance(now);
+            } else if outwaited {
+                gate.check("anvil", Err(format!("the {anvil_name} ({stood}), two {ore_name} in hand or the {tool_name} (phase {}) never came in {CHOP_WAIT} seconds; screens {:?}", gate.phase, covering_screens(world))));
+                end(world, gate);
+            }
+        }
+        2 => {
+            mouse(world, MouseButton::Right, false);
+            let toasts = world.resource::<crate::hud::skills::SkillToasts>();
+            let said = wanted.as_ref().is_some_and(|w| toasts.shows_refusal(w));
+            if said && carried(world, made.into()) == 0 && carried(world, ore) == 2 {
+                world.resource::<Net>().command(&format!("give {} 1", short(&tool_name)));
+                gate.advance(now);
+            } else if outwaited {
+                let showing: Vec<String> = toasts.refusals().map(str::to_owned).collect();
+                gate.check("anvil", Err(format!("{ore_name} clicked on the {anvil_name} with no {tool_name} showed {showing:?}, not {wanted:?}; it made {} and left {} ore; the crosshair was on {}", carried(world, made.into()), carried(world, ore), crosshair_on(world))));
+                end(world, gate);
+            }
+        }
+        4 => {
+            mouse(world, MouseButton::Right, false);
+            let (crushed, left, kept) = (carried(world, made.into()), carried(world, ore), carried(world, Some(tool)));
+            let worn = world.resource::<LocalPlayer>().inventory.slots.iter().flatten().find(|s| s.item == tool).map_or(0, |s| s.wear);
+            if crushed >= count && left == 1 && kept == 1 && worn >= 1 {
+                if crushed != count {
+                    gate.check("anvil", Err(format!("one {ore_name} crushed into {crushed}, not the recipe's {count}")));
+                    end(world, gate);
+                    return;
+                }
+                gate.check("anvil", Ok(format!("{ore_name} on the {anvil_name}: with no {tool_name}, \"{}\"; with one, {crushed} {} and the {tool_name} kept, {worn} use worn", wanted.unwrap_or_default(), content.blocks.def(made).name)));
+                // What it made, looked up: the way shows the tool it takes.
+                world.resource_mut::<crate::hud::recipes::RecipeViewer>().open(made, false);
+                let mut ui = world.resource_mut::<UiState>();
+                (ui.menu_open, ui.character_open, ui.console_open, ui.quests_open, ui.inventory_open, ui.recipes_open) = (false, false, false, false, true, true);
+                gate.advance(now);
+            } else if waited {
+                gate.check("anvil", Err(format!("{ore_name} clicked on the {anvil_name} with a {tool_name} about made {crushed} {}, left {left} ore and {kept} {tool_name} worn {worn}, in {CHOP_WAIT} server seconds", content.blocks.def(made).name)));
+                end(world, gate);
+            }
+        }
+        // The viewer draws the tool beside the station, as cooking.ron's `tool` says.
+        _ => {
+            let drawn = world.query::<(&crate::hud::recipes::ViewerItem, &InheritedVisibility)>().iter(world).any(|(item, shown)| shown.get() && item.0 == tool);
+            if drawn || outwaited {
+                let result = if drawn { Ok(format!("the {} recipe shows the {tool_name} it takes", content.blocks.def(made).name)) } else { Err(format!("the {} recipe never drew the {tool_name}", content.blocks.def(made).name)) };
+                gate.check("anvil: viewer", result);
+                world.resource_mut::<crate::hud::recipes::RecipeViewer>().trail.clear();
+                let mut ui = world.resource_mut::<UiState>();
+                (ui.inventory_open, ui.recipes_open) = (false, false);
+                end(world, gate);
+            }
+        }
+    }
+}
+
+/// What the tool wear step uses, all picked from the content by what it is: the tool that
+/// wears soonest with a mend a new player may do, a block it is made for that breaks
+/// quickly and needs no level, the block it is mended at, what mends it, and the head it
+/// leaves broken, if it names one.
+#[derive(Clone, Copy, Debug)]
+struct WearPlan {
+    tool: BlockId,
+    block: BlockId,
+    station: BlockId,
+    mend: BlockId,
+    head: Option<BlockId>,
+    uses: u16,
+    /// Uses left at which it warns.
+    warn_at: u16,
+    /// The hotbar slot it is held in.
+    slot: usize,
+    /// The tool warnings and breaks heard before the step.
+    worn: crate::breaking::ToolsWorn,
+}
+
+impl WearPlan {
+    fn of(content: &voxmar_engine::content::Content) -> Result<(BlockId, BlockId, BlockId, BlockId, Option<BlockId>), String> {
+        let (blocks, tools) = (&content.blocks, &content.tools);
+        let mut wearing: Vec<BlockId> = blocks
+            .ids()
+            .filter(|&id| tools.uses(id) > 0 && tools.tool(Some(id)).kind.is_some() && !tools.mends(id).is_empty() && tools.mend_skill(id).is_none_or(|(_, level)| level <= 1))
+            .collect();
+        wearing.sort_by_key(|&id| (tools.uses(id), id.0));
+        for tool in wearing {
+            let quick = blocks
+                .ids()
+                .filter(|&b| {
+                    let info = blocks.info(b);
+                    info.render == voxmar_engine::block::RenderKind::Opaque && info.solid && info.occludes && info.placeable && info.emission == 0
+                        && info.fluid.is_none() && info.shape.is_none() && info.hardness > 0.0 && info.hardness <= 3.0 && blocks.item_of(b) == b
+                        && tools.suits(&tools.tool(Some(tool)), b) && tools.good_enough(Some(tool), b) && tools.rule(b).is_none_or(|r| r.level <= 1)
+                })
+                .min_by(|&a, &b| blocks.info(a).hardness.total_cmp(&blocks.info(b).hardness).then(a.0.cmp(&b.0)));
+            let station = blocks.ids().find(|&b| blocks.def(b).has_tag(tools.mend_near(tool)) && blocks.info(b).placeable);
+            if let (Some(block), Some(station)) = (quick, station) {
+                return Ok((tool, block, station, tools.mends(tool)[0], tools.head(tool)));
+            }
+        }
+        Err("no tool in the content wears and mends at level 1, with a quick block it is made for and a block to mend it at".into())
+    }
+}
+
+/// Server seconds the tool wear step waits on each answer.
+const WEAR_WAIT: f32 = 10.0;
+
+/// A tool worn nearly out, breaking a block it is made for: it warns (a creak, its icon red
+/// and its wear bar short), then worn to its last use it breaks at the next block (a snap and
+/// chips), leaving only a head it names; then another, worn, mended by the block it is mended
+/// at (shots `tool-worn`, `tool-mend`).
+fn tool_wear(world: &mut World, gate: &mut Gate, now: f32) {
+    use crate::hud::{SlotIcon, SlotWear};
+    let block_at = gate.feet + IVec3::new(0, 0, 14) + CHOP_FROM_FIRE;
+    let station_at = block_at + IVec3::X;
+    let stand = Vec3::new(block_at.x as f32 + 0.5, block_at.y as f32, block_at.z as f32 - 2.5);
+    let waited = gate.server_in_phase() > WEAR_WAIT;
+    let content = world.resource::<Launch>().content.clone();
+    let name = |id: BlockId| content.blocks.def(id).name.clone();
+    let end = |world: &mut World, gate: &mut Gate| {
+        mouse(world, MouseButton::Left, false);
+        world.resource_mut::<UiState>().inventory_open = false;
+        let net = world.resource::<Net>();
+        for at in [block_at, station_at] {
+            net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
+        }
+        if let Some(plan) = gate.tool_wear.take() {
+            for item in [Some(plan.tool), plan.head, Some(plan.mend)].into_iter().flatten() {
+                net.command(&format!("clear {}", content.blocks.def(item).name));
+            }
+        }
+        gate.next(Step::LookUp, now);
+    };
+    let fail = |world: &mut World, gate: &mut Gate, check: &str, why: String| {
+        let why = format!("{why} (crosshair on {}; screens {:?})", crosshair_on(world), covering_screens(world));
+        gate.check(check, Err(why));
+        end(world, gate);
+    };
+    // What the plan's slot holds, as the server last said.
+    let held = |world: &World, plan: &WearPlan| world.resource::<LocalPlayer>().inventory.get(plan.slot);
+    match gate.phase {
+        0 => {
+            let (tool, block, station, mend, head) = match WearPlan::of(&content) {
+                Ok(found) => found,
+                Err(why) => return fail(world, gate, "tool wear", why),
+            };
+            // An empty hotbar slot in hand, which the tool given next lands in.
+            let player = world.resource::<LocalPlayer>();
+            let Some(slot) = (0..voxmar_engine::inventory::HOTBAR_SLOTS).find(|&s| player.inventory.get(s).is_none()) else {
+                return fail(world, gate, "tool wear", "no empty hotbar slot to hold the tool in".into());
+            };
+            world.resource_mut::<LocalPlayer>().selected = slot;
+            let (uses, warn_at) = (content.tools.uses(tool), (content.tools.uses(tool) as f32 * content.tools.wear().warn).ceil() as u16);
+            let worn = *world.resource::<crate::breaking::ToolsWorn>();
+            gate.tool_wear = Some(WearPlan { tool, block, station, mend, head, uses, warn_at, slot, worn });
+            let net = world.resource::<Net>();
+            net.command("gamemode survival");
+            for item in [Some(tool), head, Some(mend)].into_iter().flatten() {
+                net.command(&format!("clear {}", name(item)));
+            }
+            net.command(&format!("tp {} {} {}", stand.x, stand.y, stand.z));
+            gate.advance(now);
+        }
+        1 => {
+            // A frame later, the slot in hand sent: the tool given lands in it, worn to one
+            // use more than where it warns.
+            let Some(plan) = gate.tool_wear else { return };
+            let net = world.resource::<Net>();
+            net.command(&format!("give {} 1", name(plan.tool)));
+            net.command(&format!("setblock {} {} {} {}", block_at.x, block_at.y, block_at.z, name(plan.block)));
+            net.command(&format!("setblock {} {} {} air", station_at.x, station_at.y, station_at.z));
+            gate.advance(now);
+        }
+        2 => {
+            let Some(plan) = gate.tool_wear else { return };
+            if held(world, &plan).is_some_and(|s| s.item == plan.tool && s.wear == 0) {
+                world.resource::<Net>().command(&format!("wear {}", plan.warn_at + 1));
+                gate.advance(now);
+            } else if waited {
+                let got = held(world, &plan).map(|s| (name(s.item), s.wear));
+                fail(world, gate, "tool wear", format!("a new {} never reached hotbar slot {} ({got:?} there) in {WEAR_WAIT} server seconds", name(plan.tool), plan.slot));
+            }
+        }
+        3 => {
+            let Some(plan) = gate.tool_wear else { return };
+            let client = world.resource::<ClientWorld>();
+            let placed = client.block(block_at) == Some(plan.block);
+            let worn = held(world, &plan).is_some_and(|s| s.item == plan.tool && s.wear == plan.uses - plan.warn_at - 1);
+            if placed && worn && drawn(world, block_at) {
+                aim(world, block_at);
+                mouse(world, MouseButton::Left, true);
+                gate.advance(now);
+            } else if waited {
+                let got = held(world, &plan).map(|s| (name(s.item), s.wear));
+                fail(world, gate, "tool wear", format!("the {} to break ({placed}) or the tool worn to {} uses left (slot {} holds {got:?}) never came in {WEAR_WAIT} server seconds", name(plan.block), plan.warn_at + 1, plan.slot));
+            }
+        }
+        4 => {
+            // One block broken: a use worn, down to where it warns.
+            let Some(plan) = gate.tool_wear else { return };
+            let broken = world.resource::<ClientWorld>().block(block_at).is_some_and(|b| b.is_air());
+            let wear = held(world, &plan).filter(|s| s.item == plan.tool).map(|s| s.wear);
+            let heard = world.resource::<crate::breaking::ToolsWorn>().warned > plan.worn.warned;
+            if broken && wear == Some(plan.uses - plan.warn_at) && heard {
+                mouse(world, MouseButton::Left, false);
+                gate.advance(now);
+            } else if waited {
+                fail(world, gate, "tool wear: warns", format!("mining the {}: broken {broken}, wear {wear:?} (wanted {}), the server's warning heard {heard}, in {WEAR_WAIT} server seconds", name(plan.block), plan.uses - plan.warn_at));
+            }
+        }
+        5 => {
+            // A frame after the state came: the hotbar shows it nearly worn out.
+            let Some(plan) = gate.tool_wear else { return };
+            let left = plan.warn_at as f32 / plan.uses as f32 * 100.0;
+            let mut bars = world.query::<(&SlotWear, &InheritedVisibility, &Children)>();
+            let shown: Vec<(bool, Entity)> = bars.iter(world).filter(|(s, ..)| s.0 == plan.slot).map(|(_, v, c)| (v.get(), c[0])).collect();
+            let widths: Vec<(bool, Val)> = shown.iter().map(|&(visible, fill)| (visible, world.get::<Node>(fill).map_or(Val::Auto, |n| n.width))).collect();
+            let mut icons = world.query::<(&SlotIcon, &ImageNode, &InheritedVisibility)>();
+            let tints: Vec<Color> = icons.iter(world).filter(|(s, _, v)| s.0 == plan.slot && v.get()).map(|(_, image, _)| image.color).collect();
+            let bar_right = widths.iter().any(|&(visible, width)| visible && matches!(width, Val::Percent(p) if (p - left).abs() < 0.5));
+            let red = !tints.is_empty() && tints.iter().all(|&c| c != Color::WHITE);
+            if bar_right && red {
+                if gate.shot(world, "tool-worn").is_none() {
+                    return;
+                }
+                gate.check("tool wear: warns", Ok(format!("a {} worn to {} of {} uses creaked as it broke a {}; its icon reddened and its wear bar shows {left:.0}%", name(plan.tool), plan.warn_at, plan.uses, name(plan.block))));
+                world.resource::<Net>().command("wear 1");
+                world.resource::<Net>().command(&format!("setblock {} {} {} {}", block_at.x, block_at.y, block_at.z, name(plan.block)));
+                gate.advance(now);
+            } else {
+                fail(world, gate, "tool wear: warns", format!("hotbar slot {}: wear bars (shown, width) {widths:?}, wanted one shown at {left:.1}%; icon tints {tints:?}, wanted reddened", plan.slot));
+            }
+        }
+        6 => {
+            let Some(plan) = gate.tool_wear else { return };
+            let placed = world.resource::<ClientWorld>().block(block_at) == Some(plan.block);
+            let last = held(world, &plan).is_some_and(|s| s.item == plan.tool && s.wear == plan.uses - 1);
+            if placed && last && drawn(world, block_at) {
+                aim(world, block_at);
+                mouse(world, MouseButton::Left, true);
+                gate.advance(now);
+            } else if waited {
+                let got = held(world, &plan).map(|s| (name(s.item), s.wear));
+                fail(world, gate, "tool wear: breaks", format!("the {} again ({placed}) or the tool down to its last use (slot {} holds {got:?}) never came in {WEAR_WAIT} server seconds", name(plan.block), plan.slot));
+            }
+        }
+        7 => {
+            // Worn out on that block: it broke, nothing left in hand but a head it names, the
+            // snap heard and chips thrown.
+            let Some(plan) = gate.tool_wear else { return };
+            let broken = world.resource::<ClientWorld>().block(block_at).is_some_and(|b| b.is_air());
+            let in_hand = held(world, &plan).map(|s| (s.item, s.count));
+            let worn = *world.resource::<crate::breaking::ToolsWorn>();
+            let heard = worn.broke > plan.worn.broke;
+            let chips = worn.chips > 0 || world.resource::<crate::render::particles::Particles>().amount <= 0.0;
+            let left = plan.head.map_or_else(|| "nothing".to_owned(), |head| format!("a {}", name(head)));
+            if broken && in_hand == plan.head.map(|head| (head, 1)) && heard && chips {
+                mouse(world, MouseButton::Left, false);
+                gate.check("tool wear: breaks", Ok(format!("worn to its last use, the {} broke on a {}: a snap heard, {} chips thrown, and {left} left in hand", name(plan.tool), name(plan.block), worn.chips)));
+                // Another, worn to a quarter, to mend by its station.
+                let net = world.resource::<Net>();
+                if let Some(head) = plan.head {
+                    net.command(&format!("clear {}", name(head)));
+                }
+                net.command(&format!("give {} 1", name(plan.tool)));
+                net.command(&format!("give {} 1", name(plan.mend)));
+                net.command(&format!("setblock {} {} {} {}", station_at.x, station_at.y, station_at.z, name(plan.station)));
+                gate.advance(now);
+            } else if waited {
+                let got = in_hand.map(|(item, count)| (name(item), count));
+                fail(world, gate, "tool wear: breaks", format!("mining the {} with its last use: broken {broken}, slot {} holds {got:?} (wanted {left}), the break heard {heard}, chips {}, in {WEAR_WAIT} server seconds", name(plan.block), plan.slot, worn.chips));
+            }
+        }
+        8 => {
+            let Some(plan) = gate.tool_wear else { return };
+            if held(world, &plan).is_some_and(|s| s.item == plan.tool && s.wear == 0) {
+                world.resource::<Net>().command(&format!("wear {}", plan.uses / 4));
+                gate.advance(now);
+            } else if waited {
+                let got = held(world, &plan).map(|s| (name(s.item), s.wear));
+                fail(world, gate, "tool wear: mends", format!("a new {} never reached hotbar slot {} ({got:?} there) in {WEAR_WAIT} server seconds", name(plan.tool), plan.slot));
+            }
+        }
+        9 => {
+            // Worn to a quarter, it goes in the grid with what mends it, the inventory open
+            // by the station.
+            let Some(plan) = gate.tool_wear else { return };
+            let worn = held(world, &plan).is_some_and(|s| s.item == plan.tool && s.wear == plan.uses - plan.uses / 4);
+            let station = world.resource::<ClientWorld>().block(station_at) == Some(plan.station);
+            let mend_slot = world.resource::<LocalPlayer>().inventory.slots.iter().position(|s| s.is_some_and(|s| s.item == plan.mend));
+            if let (true, true, Some(mend_slot)) = (worn, station, mend_slot) {
+                aim(world, station_at);
+                world.resource_mut::<UiState>().inventory_open = true;
+                let actions = world.resource::<crate::Actions>().0.clone();
+                let net = world.resource::<Net>();
+                for (from, to) in [(plan.slot, voxmar_engine::inventory::CRAFT), (mend_slot, voxmar_engine::inventory::CRAFT + 1)] {
+                    let target = voxmar_engine::action::ActionTarget::Slots { from: from as u8, to: to as u8, count: 1 };
+                    net.propose(actions.expect("core:transfer"), target);
+                }
+                gate.advance(now);
+            } else if waited {
+                fail(world, gate, "tool wear: mends", format!("the tool worn to a quarter ({worn}), the {} placed ({station}) or a {} carried ({mend_slot:?}) never came in {WEAR_WAIT} server seconds", name(plan.station), name(plan.mend)));
+            }
+        }
+        10 => {
+            // The grid shows the tool mended, by the station within reach; crafted, so.
+            let Some(plan) = gate.tool_wear else { return };
+            let grid = world.resource::<LocalPlayer>().inventory.craft;
+            let laid = grid.iter().flatten().count() == 2;
+            let near = world.resource::<crate::hud::inventory::NearTags>();
+            let shows = content.tools.mended(&grid, |tag| near.has(tag));
+            let back = ((plan.uses as f32 * content.tools.mend_share(plan.tool)).round() as u16).max(1);
+            let after = (plan.uses - plan.uses / 4).saturating_sub(back);
+            if laid && shows.is_some_and(|m| m.item == plan.tool && m.wear == after) {
+                if gate.shot(world, "tool-mend").is_none() {
+                    return;
+                }
+                let actions = world.resource::<crate::Actions>().0.clone();
+                world.resource::<Net>().propose(actions.expect("core:craft"), voxmar_engine::action::ActionTarget::Slot(0));
+                gate.advance(now);
+            } else if waited {
+                let grid: Vec<(String, u16)> = grid.iter().flatten().map(|s| (name(s.item), s.wear)).collect();
+                fail(world, gate, "tool wear: mends", format!("the grid holds {grid:?} by a {} (near tags {:?}) and shows {shows:?} mended, wanted the {} at wear {after}, in {WEAR_WAIT} server seconds", name(plan.station), near.0, name(plan.tool)));
+            }
+        }
+        _ => {
+            let Some(plan) = gate.tool_wear else { return };
+            let back = ((plan.uses as f32 * content.tools.mend_share(plan.tool)).round() as u16).max(1);
+            let after = (plan.uses - plan.uses / 4).saturating_sub(back);
+            let inventory = &world.resource::<LocalPlayer>().inventory;
+            let mended = inventory.slots.iter().flatten().find(|s| s.item == plan.tool).map(|s| s.wear);
+            let empty = inventory.craft.iter().all(Option::is_none);
+            if mended == Some(after) && empty {
+                let left = plan.uses - after;
+                gate.check("tool wear: mends", Ok(format!("a {} at {} of {} uses and a {} in the grid by a {} showed it mended, and crafted came back at {left}", name(plan.tool), plan.uses / 4, plan.uses, name(plan.mend), name(plan.station))));
+                end(world, gate);
+            } else if waited {
+                fail(world, gate, "tool wear: mends", format!("crafted, the {} came back at wear {mended:?} (wanted {after}), grid emptied {empty}, in {WEAR_WAIT} server seconds", name(plan.tool)));
+            }
+        }
+    }
+}
+
+/// Server seconds the clamp step waits on each answer.
+const CLAMP_WAIT: f32 = 10.0;
+
+/// What the clamp step splits and chars, picked from the content by what each is: a
+/// structure that smoulders and what lights it, a log a station recipe splits with a tool
+/// carried, the station, the tool and what it makes.
+#[derive(Clone, Copy, Debug)]
+struct ClampPlan {
+    log: BlockId,
+    station: BlockId,
+    tool: BlockId,
+    split: BlockId,
+    torch: BlockId,
+}
+
+impl ClampPlan {
+    fn of(content: &voxmar_engine::content::Content) -> Result<(Self, voxmar_engine::multiblock::Multiblock), String> {
+        let blocks = &content.blocks;
+        let clamp = content.multiblocks.iter().find(|m| m.smoulder.is_some()).ok_or("nothing in the content smoulders")?;
+        let lit_by = clamp.lit_by.clone().unwrap_or_default();
+        let torch = blocks.tagged(&lit_by).find(|&b| blocks.item_of(b) == b && blocks.info(b).placeable).ok_or("nothing set down lights the clamp")?;
+        let wood = clamp.smoulder.as_ref().map(|s| s.wood[0]).expect("found by it");
+        let split = clamp.example().into_iter().find(|&(at, _)| at == wood).map(|(_, b)| b).ok_or("the clamp's wood is not built of a block")?;
+        for station in blocks.ids().filter(|&b| blocks.info(b).placeable) {
+            let tags = &blocks.def(station).tags;
+            for log in blocks.tagged("log") {
+                let Some(recipe) = content.cooking.for_item(log, tags) else { continue };
+                let Some(tool) = recipe.def.tool.as_deref().and_then(|tag| blocks.tagged(tag).next()) else { continue };
+                if recipe.output == split {
+                    return Ok((Self { log, station, tool, split, torch }, clamp.clone()));
+                }
+            }
+        }
+        Err(format!("no log is split into {} at a station with a tool carried", blocks.def(split).name))
+    }
+}
+
+/// A log split on a chopping block with an axe about the player gives two firewood; a
+/// clamp built where it stands, lit from a torch in hand, glows at its flue; a game day's
+/// share later (`/time add`), its firewood is charcoal.
+fn clamp(world: &mut World, gate: &mut Gate, now: f32) {
+    let station_at = gate.feet + IVec3::new(0, 0, 14) + CHOP_FROM_FIRE + IVec3::new(12, 0, 0);
+    let core = station_at + IVec3::new(0, 1, 6);
+    let waited = gate.server_in_phase() > CLAMP_WAIT;
+    let content = world.resource::<Launch>().content.clone();
+    let name = |id: BlockId| content.blocks.def(id).name.clone();
+    let carried = |world: &World, item: BlockId| world.resource::<LocalPlayer>().inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
+    let block = |world: &World, at: IVec3| world.resource::<ClientWorld>().block(at);
+    let plan = ClampPlan::of(&content);
+    let end = |world: &mut World, gate: &mut Gate| {
+        mouse(world, MouseButton::Right, false);
+        let net = world.resource::<Net>();
+        net.command("weather natural");
+        net.command(&format!("fill {} {} {} {} {} {} air", station_at.x - 3, station_at.y, station_at.z - 1, station_at.x + 3, station_at.y + 3, station_at.z + 9));
+        if let Ok((plan, _)) = &plan {
+            for item in [plan.log, plan.tool, plan.split, plan.torch] {
+                net.command(&format!("clear {}", name(item)));
+            }
+        }
+        gate.next(Step::Flint, now);
+    };
+    let fail = |world: &mut World, gate: &mut Gate, check: &str, why: String| {
+        gate.check(check, Err(why));
+        end(world, gate);
+    };
+    let (plan, structure) = match &plan {
+        Ok(found) => found.clone(),
+        Err(why) => return fail(world, gate, "clamp: split", why.clone()),
+    };
+    let smoulder = structure.smoulder.clone().expect("found by it");
+    let in_hotbar = |world: &World, item: BlockId| world.resource::<LocalPlayer>().inventory.slots[..voxmar_engine::inventory::HOTBAR_SLOTS].iter().position(|s| s.is_some_and(|s| s.item == item));
+    match gate.phase {
+        0 => {
+            let net = world.resource::<Net>();
+            net.command("gamemode survival");
+            // Clear skies held over it: rain on its flue would spoil the burn.
+            net.command("weather clear 1 600");
+            for item in [plan.log, plan.tool, plan.split, plan.torch] {
+                net.command(&format!("clear {}", name(item)));
+            }
+            net.command(&format!("fill {} {} {} {} {} {} air", station_at.x - 3, station_at.y, station_at.z - 1, station_at.x + 3, station_at.y + 3, station_at.z + 9));
+            net.command(&format!("give {} 1", name(plan.log)));
+            net.command(&format!("give {} 1", name(plan.tool)));
+            net.command(&format!("setblock {} {} {} {}", station_at.x, station_at.y, station_at.z, name(plan.station)));
+            net.command(&format!("tp {} {} {}", station_at.x as f32 + 0.5, station_at.y, station_at.z as f32 - 2.0));
+            gate.advance(now);
+        }
+        // The log in hand and the axe about: held to the block, it splits.
+        1 => {
+            let stood = block(world, station_at) == Some(plan.station);
+            let log = in_hotbar(world, plan.log);
+            if let (true, Some(slot), 1) = (stood, log, carried(world, plan.tool)) {
+                world.resource_mut::<LocalPlayer>().selected = slot;
+                aim_at(world, station_at.as_vec3() + Vec3::new(0.5, 0.9, 0.5));
+                mouse(world, MouseButton::Right, true);
+                gate.advance(now);
+            } else if waited {
+                fail(world, gate, "clamp: split", format!("the {} ({stood}), a {} in the hotbar ({log:?}) or a {} carried never came in {CLAMP_WAIT} server seconds", name(plan.station), name(plan.log), name(plan.tool)));
+            }
+        }
+        2 => {
+            aim_at(world, station_at.as_vec3() + Vec3::new(0.5, 0.9, 0.5));
+            let (split, log, tool) = (carried(world, plan.split), carried(world, plan.log), carried(world, plan.tool));
+            if split == 2 && log == 0 {
+                mouse(world, MouseButton::Right, false);
+                gate.check("clamp: split", Ok(format!("a {} held to a {} with a {} carried split into two {}, the {} kept ({tool})", name(plan.log), name(plan.station), name(plan.tool), name(plan.split), name(plan.tool))));
+                // The clamp, built as the content draws it, round its core; a torch to light it.
+                let net = world.resource::<Net>();
+                for (at, piece) in structure.example() {
+                    let at = core + at;
+                    net.command(&format!("setblock {} {} {} {}", at.x, at.y, at.z, name(piece)));
+                }
+                net.command(&format!("give {} 1", name(plan.torch)));
+                gate.advance(now);
+            } else if waited {
+                fail(world, gate, "clamp: split", format!("holding a {} to the {} left {split} {} and {log} {} carried after {CLAMP_WAIT} server seconds (wanted 2 and 0)", name(plan.log), name(plan.station), name(plan.split), name(plan.log)));
+            }
+        }
+        // Built and a torch in hand: right clicked at its flue.
+        3 => {
+            let built = structure.stands(core, |at| block(world, at));
+            let torch = in_hotbar(world, plan.torch);
+            if let (true, Some(slot)) = (built, torch) {
+                world.resource_mut::<LocalPlayer>().selected = slot;
+                aim_at(world, core.as_vec3() + Vec3::new(0.5, 0.3, 0.5));
+                mouse(world, MouseButton::Right, true);
+                gate.advance(now);
+            } else if waited {
+                fail(world, gate, "clamp: lit", format!("the {} built ({built}) or a {} in the hotbar ({torch:?}) never came in {CLAMP_WAIT} server seconds", structure.title, name(plan.torch)));
+            }
+        }
+        4 => {
+            aim_at(world, core.as_vec3() + Vec3::new(0.5, 0.3, 0.5));
+            let lit = block(world, core) == Some(smoulder.burning);
+            if lit && drawn(world, core) {
+                mouse(world, MouseButton::Right, false);
+                if gate.shot(world, "clamp-lit").is_none() {
+                    return;
+                }
+                gate.check("clamp: lit", Ok(format!("lit from a {} in hand, the {}'s flue is a {}", name(plan.torch), structure.title, name(smoulder.burning))));
+                world.resource::<Net>().command(&format!("time add {}h", smoulder.hours.ceil()));
+                gate.advance(now);
+            } else if waited {
+                fail(world, gate, "clamp: lit", format!("right clicking the flue with a {} left {:?} there after {CLAMP_WAIT} server seconds", name(plan.torch), block(world, core).map(|b| name(b))));
+            }
+        }
+        _ => {
+            let cells: Vec<Option<BlockId>> = smoulder.wood.iter().map(|&o| block(world, core + o)).collect();
+            if cells.iter().all(|&b| b == Some(smoulder.done)) {
+                gate.check("clamp: chars", Ok(format!("{} game hours on, all {} {} were {}", smoulder.hours, cells.len(), name(plan.split), name(smoulder.done))));
+                end(world, gate);
+            } else if waited {
+                let found: Vec<Option<String>> = cells.iter().map(|b| b.map(|b| name(b))).collect();
+                fail(world, gate, "clamp: chars", format!("{} game hours on the clamp's wood was {found:?}, not all {} ({CLAMP_WAIT} server seconds)", smoulder.hours, name(smoulder.done)));
+            }
+        }
+    }
+}
+
 /// Longest a flint stage may wait for the server.
 const FLINT_WAIT: f32 = 10.0;
 
@@ -5190,7 +5766,7 @@ fn flint(world: &mut World, gate: &mut Gate, now: f32) {
     let content = world.resource::<Launch>().content.clone();
     let Some((log, tool, recipe)) = felled_by(&content) else {
         gate.check("flint", Err("no log in the loaded tools.ron asks for a tool at level 1 that the hand's grid can make".into()));
-        gate.next(Step::LookUp, now);
+        gate.next(Step::Anvil, now);
         return;
     };
     let name = |b: BlockId| content.blocks.def(b).name.clone();
@@ -5205,7 +5781,7 @@ fn flint(world: &mut World, gate: &mut Gate, now: f32) {
         for item in [log, tool].into_iter().chain(recipe.cells().into_iter().flatten()) {
             net.command(&format!("clear {}", short(&name(item))));
         }
-        gate.next(Step::LookUp, now);
+        gate.next(Step::Anvil, now);
     };
     match gate.phase {
         // An empty hand by a standing log: whatever the earlier steps left of the log, the
@@ -7655,7 +8231,7 @@ fn makeable(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 let short = |item: BlockId| content.blocks.def(item).name.split_once(':').map_or(String::new(), |(_, n)| n.to_owned());
                 net.command(&format!("clear {}", short(*input)));
                 net.command(&format!("give {} {uses}", short(*input)));
-                for (item, _) in with {
+                for item in with.iter().flat_map(|(items, _)| items) {
                     net.command(&format!("clear {}", short(*item)));
                 }
             }
@@ -7671,7 +8247,7 @@ fn makeable(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let ready = drawn.iter().find(|m| m.output == planks).is_some_and(|m| m.reach == Reach::Ready);
             let alloy_held = alloy.as_ref().is_none_or(|(input, uses, with, _)| {
                 let inventory = &world.resource::<LocalPlayer>().inventory;
-                inventory.count(*input) == *uses as u32 && with.iter().all(|&(item, _)| inventory.count(item) == 0)
+                inventory.count(*input) == *uses as u32 && with.iter().flat_map(|(items, _)| items).all(|&item| inventory.count(item) == 0)
             });
             let cell = cell_of(world, planks);
             match cell {
@@ -7681,7 +8257,7 @@ fn makeable(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     gate.check("make: list", if order { Ok(format!("a log in the pack shows planks ready; {first_not} of {} ready, all first", drawn.len())) } else { Err(format!("a ready one comes after one not ready: {:?}", drawn.iter().map(|m| m.reach.rank()).collect::<Vec<_>>())) });
                     // The alloy's input in hand, what goes with it not: short of exactly that.
                     if let Some((input, uses, with, output)) = &alloy {
-                        let wanted = Reach::Short(with.iter().map(|&(item, n)| (item, n as u32)).collect());
+                        let wanted = Reach::Short(with.iter().filter_map(|(items, n)| Some((*items.first()?, *n as u32))).collect());
                         let reach = drawn.iter().find(|m| m.output == *output).map(|m| m.reach.clone());
                         let name = |item: BlockId| content.blocks.def(item).name.clone();
                         gate.check("make: cooked with", if reach.as_ref() == Some(&wanted) { Ok(format!("{uses} {} in the pack show {} short of what goes with it, {wanted:?}", name(*input), name(*output))) } else { Err(format!("{uses} {} in the pack show {} as {reach:?}, not {wanted:?}", name(*input), name(*output))) });
@@ -9589,7 +10165,7 @@ fn fit_tool(world: &mut World, full: bool) {
     else {
         return;
     };
-    let shown = voxmar_engine::inventory::ItemStack { item: tool, count: 1 };
+    let shown = voxmar_engine::inventory::ItemStack::new(tool, 1);
     let mut player = world.resource_mut::<LocalPlayer>();
     let kept = std::mem::replace(&mut player.inventory.slots[FIT_TOOL_SLOT], Some(shown));
     world.insert_resource(KeptSlot(kept, shown));
@@ -15978,9 +16554,7 @@ fn dry_extra(world: &World, gate: &Gate, carried: u32) -> String {
 /// (`base:use_station`), so the server sends the hung rack back, and once the renderer has
 /// that too (shot `rack`) the meat must show in the middle of the shot; looked at, the
 /// plate under its name says what hangs and what it makes (shot `rack_readout`). Then the
-/// rack goes, letting the rabbit fall as a broken rack does, and an earth clamp loaded with
-/// clay in its place smoulders (shot `clamp`, once drawn) until it goes too. Then a cooking
-/// pot against the
+/// rack goes, letting the rabbit fall as a broken rack does, and a cooking pot against the
 /// fire, water near, is set simmering with wheat (shot `pot`).
 fn dry(world: &mut World, gate: &mut Gate, now: f32) {
     let rack = gate.feet + IVec3::new(0, 0, 14) + RACK_FROM_FIRE;
@@ -16120,50 +16694,12 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
             } else {
                 gate.check("station readout", Err(format!("looked at for {DRY_WAIT} server and game seconds, the hung rack reads {tags:?}, not {holds:?} and a line making {makes:?}")));
             }
-            // The rack goes, and an earth clamp stands in its place with clay to load it.
-            let net = world.resource::<Net>();
-            net.command(&format!("setblock {} {} {} air", rack.x, rack.y, rack.z));
-            net.command(&format!("setblock {} {} {} earth_clamp", rack.x, rack.y, rack.z));
-            net.command("give clay 16");
+            // The rack goes.
+            world.resource::<Net>().command(&format!("setblock {} {} {} air", rack.x, rack.y, rack.z));
             gate.advance(now);
         }
-        5 => {
-            let client = world.resource::<ClientWorld>();
-            let stood = client.registry.id("base:earth_clamp").is_some_and(|c| client.block(rack) == Some(c));
-            if stood && select(world, "base:clay") {
-                gate.advance(now);
-            } else if waited {
-                gate.check("earth clamp", Err(format!("the clamp ({stood}) or clay in hand never came in {DRY_WAIT} server seconds")));
-                world.resource::<Net>().command(&format!("setblock {} {} {} air", rack.x, rack.y, rack.z));
-                to_phase(gate, 8, now);
-            }
-        }
-        6 => {
-            aim_at(world, rack.as_vec3() + Vec3::new(0.5, 0.5, 0.5));
-            let client = world.resource::<ClientWorld>();
-            let lit = client.registry.id("base:earth_clamp_lit").is_some_and(|c| client.block(rack) == Some(c));
-            if lit {
-                mouse(world, MouseButton::Right, false);
-                gate.advance(now);
-            } else if waited {
-                mouse(world, MouseButton::Right, false);
-                gate.check("earth clamp", Err(format!("right clicks with clay in hand never lit the clamp in {DRY_WAIT} server seconds")));
-                world.resource::<Net>().command(&format!("setblock {} {} {} air", rack.x, rack.y, rack.z));
-                to_phase(gate, 8, now);
-            } else {
-                mouse(world, MouseButton::Right, ((now - gate.since) * 2.0).fract() < 0.2);
-            }
-        }
-        7 => {
-            aim_at(world, rack.as_vec3() + Vec3::new(0.5, 0.5, 0.5));
-            if (drawn(world, rack) || waited) && gate.shot(world, "clamp").is_some() {
-                gate.check("earth clamp", Ok("clay loaded into an earth clamp: the server sent back the smouldering clamp".into()));
-                world.resource::<Net>().command(&format!("setblock {} {} {} air", rack.x, rack.y, rack.z));
-                gate.advance(now);
-            }
-        }
         // A cooking pot beside the campfire, water sunk in the ground near it, wheat in hand.
-        8 => {
+        5 => {
             let pot = rack + POT_FROM_RACK;
             let water = pot + POT_WATER;
             let ground = {
@@ -16180,7 +16716,7 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
             gate.advance(now);
         }
         // Right clicks put the wheat on to simmer: the server sends back the simmering pot.
-        9 => {
+        6 => {
             let pot = rack + POT_FROM_RACK;
             aim_at(world, pot.as_vec3() + Vec3::new(0.5, 0.5, 0.5));
             let (stood, simmering) = {
@@ -16204,7 +16740,7 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
                 mouse(world, MouseButton::Right, ((now - gate.since) * 2.0).fract() < 0.2);
             }
         }
-        10 => {
+        7 => {
             let pot = rack + POT_FROM_RACK;
             let water = pot + POT_WATER;
             let ground = gate.pot_ground.take().unwrap_or_else(|| "stone".to_owned());

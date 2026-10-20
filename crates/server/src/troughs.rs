@@ -117,7 +117,7 @@ mod tests {
         }
         for &(name, count) in items {
             let item = server.content.blocks.expect(name);
-            assert_eq!(server.factory.put(trough, ItemStack { item, count }, &machines), None);
+            assert_eq!(server.factory.put(trough, ItemStack::new(item, count), &machines), None);
         }
         (server, id, trough)
     }
@@ -191,7 +191,7 @@ mod tests {
         }
         let carrot = server.content.blocks.expect("base:carrot");
         let machines = server.content.machines.clone();
-        assert_eq!(server.factory.put(trough, ItemStack { item: carrot, count: 3 }, &machines), None);
+        assert_eq!(server.factory.put(trough, ItemStack::new(carrot, 3), &machines), None);
         for _ in 0..TICKS_PER_DAY / 4 {
             server.tick_creatures();
             server.tick += 1;

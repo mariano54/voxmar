@@ -7,7 +7,7 @@
             name: "mine",
             duration: TargetHardness,
             requires: [Alive, InReach, Breakable, BlockLevel, CropLevel, ToolGood],
-            effects: [DropLoot, ClearTarget],
+            effects: [DropLoot, WearHeld, ClearTarget],
         ),
         (
             name: "place",

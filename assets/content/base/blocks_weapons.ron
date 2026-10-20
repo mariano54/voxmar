@@ -2,20 +2,22 @@
 // tools too, in blocks_tools.ron.
 (
     families: [
-        (template: "drop", name: "bone_club", tags: ["weapon", "stack:1", "bone", "mace"], all: (color: (225, 215, 190))),
+        (template: "drop", name: "bone_club", tags: ["weapon", "stack:1", "uses:80", "mend:bone", "bone", "mace"], all: (color: (225, 215, 190))),
         // A flint point on a long haft: the Nomad's spear, which braces against a charge.
-        (template: "drop", name: "flint_spear", tags: ["weapon", "stack:1", "spear"], all: (color: (70, 70, 76))),
-        // Old Tusk's great tusk on a haft (combat.ron): Attack 5, a mace's daze.
-        (template: "drop", name: "tusk_club", tags: ["weapon", "stack:1", "bone", "mace"], all: (color: (236, 226, 200))),
-        (template: "drop", name: "stone_sword", tags: ["weapon", "stack:1", "sword"], all: (color: (120, 120, 125))),
+        (template: "drop", name: "flint_spear", tags: ["weapon", "stack:1", "uses:100", "mend:flint", "spear"], all: (color: (70, 70, 76))),
+        // Old Tusk's great tusk on a haft (combat.ron): Attack 5, a mace's daze. A trophy is
+        // kept by care, not by killing the boss again: mended with twine, one of its two
+        // bindings, for half its uses.
+        (template: "drop", name: "tusk_club", tags: ["weapon", "stack:1", "uses:300", "mend:twine", "bone", "mace"], all: (color: (236, 226, 200))),
+        (template: "drop", name: "stone_sword", tags: ["weapon", "stack:1", "uses:150", "mend:cobblestone", "sword"], all: (color: (120, 120, 125))),
         // Ranged: a sling shoots cobbled stone, a short bow arrows (combat.ron).
-        (template: "drop", name: "sling", tags: ["weapon", "stack:1", "sling"], all: (color: (150, 110, 75))),
-        (template: "drop", name: "short_bow", tags: ["weapon", "stack:1", "bow"], all: (color: (160, 120, 70))),
+        (template: "drop", name: "sling", tags: ["weapon", "stack:1", "uses:200", "mend:twine", "sling"], all: (color: (150, 110, 75))),
+        (template: "drop", name: "short_bow", tags: ["weapon", "stack:1", "uses:250", "mend:twine", "bow"], all: (color: (160, 120, 70))),
         (template: "drop", name: "arrow", tags: ["ammo", "arrow"], all: (color: (175, 150, 110))),
-        (template: "drop", name: "copper_sword", tags: ["weapon", "stack:1", "sword", "metal:copper"], all: (color: (190, 110, 70))),
-        (template: "drop", name: "fang_dagger", tags: ["weapon", "stack:1", "dagger"], all: (color: (235, 228, 205))),
-        (template: "drop", name: "bronze_sword", tags: ["weapon", "stack:1", "sword", "metal:bronze"], all: (color: (200, 140, 70))),
-        (template: "drop", name: "bronze_spear", tags: ["weapon", "stack:1", "spear", "metal:bronze"], all: (color: (200, 140, 70))),
-        (template: "drop", name: "iron_sword", tags: ["weapon", "stack:1", "sword", "metal:iron"], all: (color: (200, 205, 215))),
+        (template: "drop", name: "copper_sword", tags: ["weapon", "stack:1", "uses:250", "mend:copper_ingot", "sword", "metal:copper"], all: (color: (190, 110, 70))),
+        (template: "drop", name: "fang_dagger", tags: ["weapon", "stack:1", "uses:200", "mend:fang", "dagger"], all: (color: (235, 228, 205))),
+        (template: "drop", name: "bronze_sword", tags: ["weapon", "stack:1", "uses:500", "mend:bronze_ingot", "sword", "metal:bronze"], all: (color: (200, 140, 70))),
+        (template: "drop", name: "bronze_spear", tags: ["weapon", "stack:1", "uses:500", "mend:bronze_ingot", "spear", "metal:bronze"], all: (color: (200, 140, 70))),
+        (template: "drop", name: "iron_sword", tags: ["weapon", "stack:1", "uses:600", "mend:iron_ingot", "sword", "metal:iron"], all: (color: (200, 205, 215))),
     ],
 )

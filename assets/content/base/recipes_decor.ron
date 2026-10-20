@@ -76,8 +76,6 @@
         (pattern: [["twine", "twine"], ["stick", "stick"]], output: "snare", skill: "core:hunter", level: 1, xp: 4.0),
         // A compost heap (stations.ron): boards round three sides and the bottom.
         (pattern: [["tag:planks", "", "tag:planks"], ["tag:planks", "", "tag:planks"], ["tag:planks", "tag:planks", "tag:planks"]], output: "compost_heap", skill: "core:construction", level: 5, xp: 12.0),
-        // An earth clamp (stations.ron): dirt heaped over a log.
-        (pattern: [["dirt", "dirt", "dirt"], ["dirt", "tag:log", "dirt"], ["dirt", "dirt", "dirt"]], output: "earth_clamp", skill: "core:construction", level: 3, xp: 10.0),
         // A cooking pot: fired clay about a clay pot (Nomad, Crafting 3).
         (pattern: [["fired_clay", "", "fired_clay"], ["fired_clay", "clay_pot", "fired_clay"], ["fired_clay", "fired_clay", "fired_clay"]], output: "cooking_pot", skill: "core:crafting", level: 3, xp: 14.0),
         // A well: a ring of cobbles about a pail, under a beam (Farm, Construction 8).

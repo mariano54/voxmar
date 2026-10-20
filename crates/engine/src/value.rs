@@ -208,12 +208,15 @@ pub fn worth_in(content: &crate::content::Content, item: BlockId, known: &mut Ha
     coins
 }
 
-/// Whether `item` is a raw material: worth no set price, and nothing makes, wears or wields it.
+/// Whether `item` is a raw material: worth no set price, and nothing makes (at the grid, a
+/// station or a smoulder: a clamp's charcoal is fired as a campfire's was), wears or wields it.
 fn raw(content: &crate::content::Content, item: BlockId) -> bool {
     !content.value.fixed.contains_key(&content.blocks.def(item).name)
         && content.combat.wear_level(item).is_none()
         && content.combat.weapon(item).is_none()
         && !content.recipes.iter().any(|r| r.output == item)
+        && !content.cooking.iter().any(|(_, r)| r.output == item)
+        && !content.multiblocks.iter().any(|m| m.smoulder.as_ref().is_some_and(|s| content.blocks.info(s.done).drops == item))
 }
 
 /// The level of `item` for its worth: what `levels` sets, else the most of what wears or
@@ -276,6 +279,11 @@ mod tests {
         // The wiki's P51 (draft 73): raw materials count 0.5 each inside a made thing.
         let pinned = ["hearthstone", "iron_ingot", "iron_sword", "iron_pickaxe", "chainmail_shirt", "bread"].map(of);
         assert_eq!(pinned, [5, 5, 15, 24, 50, 2], "hearthstone, ingot, sword, pickaxe, chainmail shirt, bread");
+        // What is fired or smelted is worth its station's level, not a raw material's half:
+        // the 1.25 premium counts at each step (adopted at the piece 6 review). Four fired
+        // clay make two kiln bricks (Farm pacing), so a brick is half what it was.
+        let fired = ["crucible", "bloomery", "bronze_ingot", "kiln_bricks"].map(of);
+        assert_eq!(fired, [51, 46, 4, 5], "crucible, bloomery, bronze ingot, kiln bricks");
         // A cured hide took ten minutes on a rack: worth more than the raw one (value.ron).
         assert_eq!([of("raw_hide"), of("hide")], [2, 3], "raw hide, cured hide");
         // A fish is worth the Fishing level that lands it, and the dish cooked of it its

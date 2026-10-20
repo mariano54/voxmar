@@ -150,10 +150,12 @@ impl Server {
                 p.changed(traits::INVENTORY);
                 if left > 0 {
                     let body = dropped::thrown(p.eye(), p.look());
-                    self.items.spawn(ItemStack { item, count: left }, body, dropped::PICKUP_DELAY);
+                    self.items.spawn(ItemStack::new(item, left), body, dropped::PICKUP_DELAY);
                 }
             }
             self.grant(player, farming, xp);
+            // Shearing wears the shears as a block they are made for does.
+            self.wear_held(player, self.content.tools.wear().suited);
             return;
         }
         // A wild one past its would-be keeper's cap is not taken in: taming waits for room,
@@ -390,7 +392,7 @@ impl Server {
             let count = yielded(low + ((a * (high - low + 1) as f32) as u8).min(high - low), yield_, c);
             // Laid in its keeper's home, it goes into the stores there that take it, nearest
             // first; what finds no room falls as ever.
-            let mut left = Some(ItemStack { item, count });
+            let mut left = Some(ItemStack::new(item, count));
             if let Some(keeper) = keeper
                 && let Some(anchor) = self.home_holding(keeper, position)
             {
@@ -1192,7 +1194,7 @@ mod tests {
         assert!(!told(&client).contains(&"home.nested".to_owned()), "told twice");
         // The barrel full: it falls.
         let stone = server.content.blocks.expect("base:cobblestone");
-        server.factory.state_mut(barrel).unwrap().bin.iter_mut().for_each(|slot| *slot = Some(ItemStack { item: stone, count: 64 }));
+        server.factory.state_mut(barrel).unwrap().bin.iter_mut().for_each(|slot| *slot = Some(ItemStack::new(stone, 64)));
         due(&mut server);
         pass(&mut server);
         assert_eq!(on_ground(&server), 2, "laid into a full store");

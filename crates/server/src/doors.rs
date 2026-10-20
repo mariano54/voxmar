@@ -37,7 +37,7 @@ fn fixture() -> Server {
     let mut player = crate::player::Player::new(1, connection, at, 2, server.tick, server.survival.max_health, &server.config.limits);
     player.joined = true;
     let door = id(&server, "base:wooden_door");
-    player.inventory.slots[0] = Some(ItemStack { item: door, count: 1 });
+    player.inventory.slots[0] = Some(ItemStack::new(door, 1));
     player.selected = 0;
     server.players.insert(1, player);
     server

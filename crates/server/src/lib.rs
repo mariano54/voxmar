@@ -37,6 +37,7 @@ mod prayers;
 mod process;
 mod rules;
 mod laying;
+mod smoulder;
 mod stations;
 mod traps;
 mod stores;
@@ -47,6 +48,7 @@ mod spawn_kit;
 mod villagers;
 mod wandering;
 mod weather;
+mod tool_wear;
 mod wear;
 
 use std::collections::VecDeque;
@@ -655,6 +657,8 @@ pub(crate) struct Server {
     /// Lit multiblocks, by core cell: a kiln burning its fuel charge, a hearth (which needs
     /// none) until it breaks.
     lit: FxHashMap<IVec3, hearth::Lit>,
+    /// Structures smouldering, by core cell: a charcoal clamp charring (smoulder.rs).
+    smoulders: FxHashMap<IVec3, smoulder::Smouldering>,
     /// Whose each home hearth is (a player's key, or no one's for one lit before fires were
     /// kept by owner), by core cell: set when it is first lit, kept while its fire is out or
     /// a piece of it is broken, forgotten only when its owner breaks its hearthstone or lights
@@ -815,6 +819,7 @@ impl Server {
         let lit = meta.lit.iter().filter(|fire| fire.until > tick && content.multiblocks.get(&fire.structure).is_some())
             .map(|fire| (IVec3::from_array(fire.position), fire.clone())).collect::<FxHashMap<_, _>>();
         let hearth_owners = hearth::HearthOwner::restore(&meta.hearth_owners, &lit, |name| content.multiblocks.get(name).is_some_and(|m| m.home));
+        let smoulders = smoulder::restore(&meta.smoulders, |name| content.multiblocks.get(name).is_some_and(|m| m.smoulder.is_some()));
         let survival = Arc::new(rules::SurvivalRules::load(&content.files, &content.blocks, &mut Vec::new()).expect("checked by load_content"));
         let mut server = Self {
             config,
@@ -832,6 +837,7 @@ impl Server {
             farm,
             factory: voxmar_engine::factory::Factory::default(),
             lit,
+            smoulders,
             hearth_owners,
             fires_sent: Vec::new(),
             placed,
@@ -1083,6 +1089,7 @@ impl Server {
             age: 0.0,
             owner: None,
             lifetime: None,
+            wear: stack.wear,
         }));
         saved
     }
@@ -1222,6 +1229,7 @@ impl Server {
         meta.catches = self.catches.saved(|species| self.content.creatures.get(species).def.name.clone());
         meta.lit = self.lit.values().filter(|fire| fire.until > self.tick).cloned().collect();
         meta.lit.sort_by_key(|fire| fire.position);
+        meta.smoulders = self.saved_smoulders();
         meta.hearth_owners = hearth::HearthOwner::saved(&self.hearth_owners);
         meta.day = Some(self.day as u64);
         meta.day_speed = self.day_speed;
@@ -1369,6 +1377,7 @@ impl Server {
                 self.station_changed(pos, old, block);
                 self.trap_changed(pos, block);
                 self.fire_changed(pos);
+                self.smoulder_changed(pos);
                 self.home_changed(pos, block);
                 self.blaze_changed(pos, block);
             }
@@ -1408,6 +1417,7 @@ impl Server {
             self.station_changed(pos, old, block);
             self.trap_changed(pos, block);
             self.fire_changed(pos);
+            self.smoulder_changed(pos);
             self.home_changed(pos, block);
             self.blaze_changed(pos, block);
             for player in self.players.values().filter(|p| p.joined && p.sent.contains(&column)) {
@@ -1653,7 +1663,7 @@ mod tests {
         let mut server = Server::new(config, meta, Some(save), save::WorldState::default(), content.clone(), incoming, console);
         let slime = content.blocks.expect("base:lumen_slime");
         let at = Vec3::new(3.5, 70.0, -2.5);
-        server.creatures.falling_loot.push((server.tick + 100, voxmar_engine::inventory::ItemStack { item: slime, count: 2 }, voxmar_engine::dropped::Loose::new(at, Vec3::Y)));
+        server.creatures.falling_loot.push((server.tick + 100, voxmar_engine::inventory::ItemStack::new(slime, 2), voxmar_engine::dropped::Loose::new(at, Vec3::Y)));
         server.save();
         let saved = WorldSave::new(&dir).read_items().unwrap();
         assert_eq!(saved.len(), 1, "{saved:?}");

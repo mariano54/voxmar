@@ -50,6 +50,8 @@ pub enum Run {
     Fill,
     /// Gives the player blocks.
     Give,
+    /// Sets how many uses the tool in the player's hand has left.
+    Wear,
     /// Empties the player's inventory, or takes an item out of it.
     Clear,
     /// Gives the player a timed effect, or clears them.

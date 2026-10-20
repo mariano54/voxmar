@@ -424,8 +424,7 @@ to the rest of the home, so the barrel is a larder from the first night:
   never reaches into a pouch. This is data per station, `from_stores` (true unless said
   otherwise). The drying rack and the cooking pot take from the stores. The compost heap
   does not, because grain and seed kept in a barrel are for eating and sowing, and a heap
-  that ate them would punish keeping a larder. Nor does the earth clamp: logs and clay in
-  the stores are for building, and one log in hand would draw the woodshed in. The chat line says how many came from the stores
+  that ate them would punish keeping a larder. The chat line says how many came from the stores
   (`station.loaded_from_stores`, en and ja). Cooking at a fire (cooking.ron) and machines
   are left out. A fire cooks the one item in hand and a machine takes items into its own
   slots, so there is no load to top up.

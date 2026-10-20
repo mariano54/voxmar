@@ -108,6 +108,10 @@ struct HudRoot;
 pub struct SlotIcon(pub usize);
 #[derive(Component)]
 pub struct SlotCount(pub usize);
+/// How much is left of a worn tool in a slot: a bar along the slot's foot, shown once it
+/// has worn at all, green going to red, and red when it is nearly worn out.
+#[derive(Component)]
+pub struct SlotWear(pub usize);
 #[derive(Component)]
 struct HotbarSelection;
 /// What sits along the bottom edge: the hotbar, health and effects.
@@ -146,6 +150,12 @@ fn absolute(left: f32, top: f32, width: f32, height: f32) -> Node {
 pub fn slot_contents(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, slot: usize) {
     let inset = (SLOT - 16.0 * PX) / 2.0;
     parent.spawn((absolute(inset, inset, 16.0 * PX, 16.0 * PX), ImageNode::default(), Visibility::Hidden, SlotIcon(slot)));
+    // The wear bar: a dark track two pixels high across the icon's foot, filled as much as
+    // is left.
+    let track = (absolute(inset + PX, inset + 14.0 * PX, 14.0 * PX, 2.0 * PX), BackgroundColor(OUTLINE), Visibility::Hidden, SlotWear(slot));
+    parent.spawn(track).with_children(|track| {
+        track.spawn((Node { width: Val::Percent(100.0), height: Val::Px(PX), ..default() }, BackgroundColor(WEAR_FULL)));
+    });
     let corner = Node { position_type: PositionType::Absolute, right: Val::Px(COUNT_INSET), bottom: Val::Px(COUNT_INSET), ..default() };
     spawn_count(parent, font, corner, SlotCount(slot));
 }
@@ -166,6 +176,10 @@ pub fn spawn_count(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, corne
 
 /// The dark ring round a stack count (and a hitsplat's words, `combat`).
 pub(crate) const OUTLINE: Color = Color::srgb(0.0, 0.0, 0.02);
+/// A wear bar's fill when the tool is new, and the tint of a nearly worn out tool's icon.
+const WEAR_FULL: Color = Color::srgb(0.35, 0.85, 0.3);
+const WEAR_LOW: Color = Color::srgb(0.9, 0.25, 0.2);
+const WORN_TINT: Color = Color::srgb(1.0, 0.55, 0.5);
 
 /// One of the copies ringing the count it names.
 #[derive(Component)]
@@ -276,6 +290,7 @@ fn update_slots(
     mut counts: Query<(&SlotCount, &mut Text)>,
     mut selection: Query<&mut Node, With<HotbarSelection>>,
     mut drawn: Local<Option<(Inventory, usize)>>,
+    (launch, mut bars, mut fills): (Res<crate::session::Launch>, Query<(&SlotWear, &Children, &mut Visibility), Without<SlotIcon>>, Query<(&mut Node, &mut BackgroundColor), Without<HotbarSelection>>),
 ) {
     // Only touch the UI when the inventory or selection actually changed.
     let state = (shown.0.clone(), player.selected);
@@ -290,11 +305,34 @@ fn update_slots(
                 if image.image != *icon {
                     image.image = icon.clone();
                 }
+                // Nearly worn out, its icon reddens.
+                let tint = if inventory::worn_low(&launch.content.tools, stack.item, stack.wear) { WORN_TINT } else { Color::WHITE };
+                if image.color != tint {
+                    image.color = tint;
+                }
                 visibility.set_if_neq(Visibility::Inherited);
             }
             None => {
                 visibility.set_if_neq(Visibility::Hidden);
             }
+        }
+    }
+    let tools = &launch.content.tools;
+    for (slot, children, mut visibility) in &mut bars {
+        let worn = shown.0.get(slot.0).filter(|s| s.wear > 0 && tools.uses(s.item) > 0);
+        let Some(stack) = worn else {
+            visibility.set_if_neq(Visibility::Hidden);
+            continue;
+        };
+        visibility.set_if_neq(Visibility::Inherited);
+        let uses = tools.uses(stack.item);
+        let left = uses.saturating_sub(stack.wear) as f32 / uses as f32;
+        let color = if inventory::worn_low(tools, stack.item, stack.wear) { WEAR_LOW } else { WEAR_LOW.mix(&WEAR_FULL, left) };
+        if let Some(&fill) = children.first()
+            && let Ok((mut node, mut background)) = fills.get_mut(fill)
+        {
+            node.width = Val::Percent(left * 100.0);
+            background.0 = color;
         }
     }
     for (slot, mut text) in &mut counts {
@@ -580,7 +618,7 @@ mod tests {
         let torch = content.blocks.id("base:torch").unwrap();
         let registry = content.blocks.clone();
         let mut player = LocalPlayer::default();
-        player.inventory.slots[0] = Some(ItemStack { item: planks, count: 1 });
+        player.inventory.slots[0] = Some(ItemStack::new(planks, 1));
         let mut app = App::new();
         app.add_plugins(bevy::app::TaskPoolPlugin::default())
             .init_resource::<Assets<Mesh>>()
@@ -617,7 +655,7 @@ mod tests {
         app.update();
         assert!(!visible(&app), "a language change cannot revive an expired label");
         app.world_mut().entity_mut(parent).insert(Visibility::Hidden);
-        app.world_mut().resource_mut::<LocalPlayer>().inventory.slots[0] = Some(ItemStack { item: torch, count: 1 });
+        app.world_mut().resource_mut::<LocalPlayer>().inventory.slots[0] = Some(ItemStack::new(torch, 1));
         app.update();
         assert_eq!(*app.world().get::<Visibility>(label).unwrap(), Visibility::Inherited);
         assert_eq!(app.world().get::<TextColor>(label).unwrap().0.alpha(), 1.0);

@@ -47,7 +47,9 @@ pub use voxmar_engine::weather::Weather;
 // on.
 // 50: kept for the light ladder, landing ahead of this one.
 // 51: how another player looks up or down and what is in their hand (PlayerView::pitch, held).
-pub const PROTOCOL_VERSION: u32 = 51;
+// 53 (placeholder; the ladder may take 52, the lander renumbers): tools wear
+// (ItemStack::wear) and ServerMessage::ToolWore.
+pub const PROTOCOL_VERSION: u32 = 53;
 
 /// A creature's `tell` while it rears into a new phase of its fight.
 pub const REARING: u8 = u8::MAX;
@@ -225,6 +227,9 @@ pub enum ServerMessage {
     /// kiln), sent on joining and whenever one is lit, breaks or burns out: they crackle
     /// and their chimneys smoke, an unlit one is cold and quiet.
     Fires { lit: Vec<IVec3> },
+    /// What the player holds wore down past its warning (`tool::Wear::warn`), or with
+    /// `broke` wore out and broke: the hand hears it, and a break shows a puff of chips.
+    ToolWore { item: BlockId, broke: bool },
     /// A creature the player sees made a short, wordless sound: one of a settlement's people
     /// greeting, raising the alarm or sighing, content (`Server::bark`).
     Bark { creature: u32, bark: voxmar_engine::creature::Bark },

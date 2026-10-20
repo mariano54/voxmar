@@ -530,7 +530,7 @@ mod tests {
 
     #[test]
     fn the_nearest_thing_is_named() {
-        let item = ItemStack { item: BlockId(3), count: 4 };
+        let item = ItemStack::new(BlockId(3), 4);
         assert_eq!(nearest([]), None);
         assert_eq!(nearest([(4.0, Subject::Block(BlockId(1)))]), Some(Subject::Block(BlockId(1))));
         // A dropped item before the ground it lies on, a creature beyond reach before nothing.
