@@ -553,8 +553,18 @@ impl Content {
         let stations = crate::station::Stations::new(stations, &blocks, &skills)?;
         let traps = crate::trap::Traps::new(traps, &blocks, &creatures, &skills)?;
         let wandering = crate::wander::WanderRegistry::new(wandering, wander_rules.value, &creatures, &blocks, &skills, &effects, &cooking, &weather)?;
+        // What picking a block gives besides its drops: a ripe crop's harvest, a wild plant's
+        // forage (the quest load check counts a Pick goal as teaching them).
+        let harvests: Vec<(crate::block::BlockId, crate::block::BlockId)> = crops
+            .iter()
+            .flat_map(|(_, crop)| {
+                let ripe = crop.harvest.iter().map(|(item, _)| (crop.ripe(), *item));
+                let wild = crop.def.wild.iter().filter_map(|name| blocks.item_named(name)).flat_map(|wild| crop.forage.iter().map(move |(item, _)| (wild, *item)));
+                ripe.chain(wild).collect::<Vec<_>>()
+            })
+            .collect();
         let mut quests = crate::quest::QuestRegistry::new(quests)?;
-        quests.resolve(&crate::quest::Named { blocks: &blocks, skills: &skills, creatures: &creatures, fishing: &fishing, multiblocks: &multiblocks, steps: &effects.steps(), events: &wandering.iter().map(|(_, e)| e.def.name.clone()).collect::<Vec<_>>(), prayers: &prayers.all().map(|(_, p)| p.name.clone()).collect::<Vec<_>>(), effects: &effects.ids().map(|id| effects.get(id).name.clone()).collect::<Vec<_>>() })?;
+        quests.resolve(&crate::quest::Named { blocks: &blocks, skills: &skills, creatures: &creatures, fishing: &fishing, multiblocks: &multiblocks, steps: &effects.steps(), events: &wandering.iter().map(|(_, e)| e.def.name.clone()).collect::<Vec<_>>(), prayers: &prayers.all().map(|(_, p)| p.name.clone()).collect::<Vec<_>>(), effects: &effects.ids().map(|id| effects.get(id).name.clone()).collect::<Vec<_>>(), harvests: &harvests })?;
         let quest_paths = crate::quest_path::QuestPaths::new(quest_paths, &quests, &blocks)?;
         // An effect that waits on a quest nobody can finish would never come on.
         if let Some(quest) = effects.quests().iter().find(|quest| quests.get(quest).is_none()) {

@@ -417,7 +417,7 @@ impl QuestRegistry {
     /// quest that never finishes or a reward that never comes. Journal pages are checked as
     /// the file is read.
     pub fn resolve(&mut self, named: &Named) -> Result<(), RegistryError> {
-        let Named { blocks, skills, creatures, fishing, multiblocks, steps, events, prayers, effects } = *named;
+        let Named { blocks, skills, creatures, fishing, multiblocks, steps, events, prayers, effects, harvests } = *named;
         let block_ids: Vec<BlockId> = blocks.ids().collect();
         let fish_ids: Vec<BlockId> = fishing.iter().map(|c| c.item).collect();
         let names = |ids: &[BlockId]| ids.iter().map(|&id| blocks.def(id).name.as_str()).collect::<Vec<_>>();
@@ -513,7 +513,7 @@ impl QuestRegistry {
                 }
             }
         }
-        self.rewards_skip_no_lesson(blocks)
+        self.rewards_skip_no_lesson(blocks, harvests)
     }
 
     /// A reward is a gift, never the lesson: refuses rewards that alone hold another quest's
@@ -525,7 +525,7 @@ impl QuestRegistry {
     /// mine, make or catch the item (or a block that drops it), which still teaches it. An age is earlier than another when a
     /// quest of the other comes after one of it. A package answers for its own book: a mod's
     /// quest asking for sticks is not refused for a base reward of them.
-    fn rewards_skip_no_lesson(&self, blocks: &BlockRegistry) -> Result<(), RegistryError> {
+    fn rewards_skip_no_lesson(&self, blocks: &BlockRegistry, harvests: &[(BlockId, BlockId)]) -> Result<(), RegistryError> {
         let firsts: FxHashMap<&str, rustc_hash::FxHashSet<&str>> = self.quests.iter().map(|q| (q.name.as_str(), self.done_before(q))).collect();
         let mut earlier: rustc_hash::FxHashSet<(&str, &str)> = rustc_hash::FxHashSet::default();
         for quest in &self.quests {
@@ -544,7 +544,8 @@ impl QuestRegistry {
             None => want == item,
         };
         // The goals that have the player pick, mine, make or catch the item, which teach it as
-        // a stack in hand does not; a block picked or mined teaches what it drops too.
+        // a stack in hand does not; a block picked or mined teaches what it drops too, and one
+        // picked what its harvest gives (a ripe crop's grain, a wild plant's forage).
         fn teaches(goal: &Goal) -> Option<&str> {
             match goal {
                 Goal::Pick(w, _) | Goal::Mine(w, _) | Goal::Craft(w, _) | Goal::Cook(w, _) | Goal::CookAt(w, _, _) | Goal::Catch(w, _) => Some(w),
@@ -552,10 +553,12 @@ impl QuestRegistry {
             }
         }
         let dropped = |goal: &Goal, want: &str, item: &str| {
+            let picked = matches!(goal, Goal::Pick(..));
+            let gives = |b: BlockId, item: BlockId| blocks.info(b).drops == item || (picked && harvests.contains(&(b, item)));
             matches!(goal, Goal::Pick(..) | Goal::Mine(..))
                 && blocks.item_named(item).is_some_and(|item| match want.strip_prefix("tag:") {
-                    Some(tag) => blocks.tagged(tag).any(|b| blocks.info(b).drops == item),
-                    None => blocks.item_named(want).is_some_and(|b| blocks.info(b).drops == item),
+                    Some(tag) => blocks.tagged(tag).any(|b| gives(b, item)),
+                    None => blocks.item_named(want).is_some_and(|b| gives(b, item)),
                 })
         };
         for giver in &self.quests {
@@ -685,6 +688,9 @@ pub struct Named<'a> {
     pub prayers: &'a [String],
     /// The effects' full names, which `Felt` names.
     pub effects: &'a [String],
+    /// What picking a block gives besides its drops, as (block, item): a ripe crop's harvest
+    /// and a wild plant's forage, which a `Pick` goal teaches.
+    pub harvests: &'a [(BlockId, BlockId)],
 }
 
 /// The one of `names` a quest in package `namespace` means by `name`: a full name as
@@ -986,7 +992,7 @@ mod tests {
         let multiblocks = MultiblockRegistry::new(vec![MultiblockRegistry::read("base", kiln).unwrap()], &blocks).unwrap();
         let source = format!("(quests: [{quest}])");
         let mut quests = QuestRegistry::new(vec![QuestRegistry::read(namespace, &source).unwrap()])?;
-        quests.resolve(&Named { blocks: &blocks, skills: &skills, creatures: &creatures, fishing: &fishing, multiblocks: &multiblocks, steps: &[], events: &["base:pedlar".to_owned()], prayers: &["base:bark_skin".to_owned()], effects: &["base:smoky".to_owned()] })?;
+        quests.resolve(&Named { blocks: &blocks, skills: &skills, creatures: &creatures, fishing: &fishing, multiblocks: &multiblocks, steps: &[], events: &["base:pedlar".to_owned()], prayers: &["base:bark_skin".to_owned()], effects: &["base:smoky".to_owned()], harvests: &[] })?;
         Ok(quests)
     }
 
@@ -1019,7 +1025,7 @@ mod tests {
         assert!(resolved("base", &format!("{picked}, {}", quest("gift", "nomad", "", "Home", r#"Item("poppy", 4)"#))).is_ok(), "a task that asks to pick the item still teaches it");
         let patch = quest("patch", "nomad", "", r#"Pick("carrot_crop", 4), Have("carrot", 4)"#, r#"Xp("mining", 1.0)"#);
         let garden = quest("garden", "nomad", "", "Home", r#"Item("carrot", 4)"#);
-        let with_drop = |drops: Option<&str>| {
+        let with_drop = |drops: Option<&str>, harvested: bool| {
             let mut defs: Vec<crate::block::BlockDef> = ["base:carrot", "base:carrot_crop"].iter().map(|name| crate::block::BlockDef { name: name.to_string(), ..Default::default() }).collect();
             defs[1].drops = drops.map(str::to_owned);
             let blocks = BlockRegistry::new(defs).unwrap();
@@ -1035,10 +1041,12 @@ mod tests {
                     *name = format!("base:{name}");
                 }
             }
-            book.rewards_skip_no_lesson(&blocks)
+            let harvests = [(blocks.expect("base:carrot_crop"), blocks.expect("base:carrot"))];
+            book.rewards_skip_no_lesson(&blocks, if harvested { &harvests } else { &[] })
         };
-        assert!(with_drop(Some("base:carrot")).is_ok(), "picking the crop that drops the carrots teaches them");
-        assert!(with_drop(None).is_err(), "a crop that drops itself teaches no carrots");
+        assert!(with_drop(Some("base:carrot"), false).is_ok(), "picking the crop that drops the carrots teaches them");
+        assert!(with_drop(None, true).is_ok(), "picking the crop whose harvest gives the carrots teaches them");
+        assert!(with_drop(None, false).is_err(), "a crop that drops and harvests itself teaches no carrots");
         let looked = quest("looked", "nomad", "", r#"LookUp("poppy"), Have("poppy", 4)"#, r#"Xp("mining", 1.0)"#);
         assert!(resolved("base", &format!("{looked}, {}", quest("gift", "nomad", "", "Home", r#"Item("poppy", 4)"#))).is_err(), "looking the item up teaches no stack");
         // A later age read first: the book's file order is no age order.
@@ -1052,7 +1060,7 @@ mod tests {
         assert!(resolved("base", &format!("{farm}, {hearth}, {back}")).unwrap_err().0.contains("each have a quest that comes after one of the other's"), "two ages after each other have no order");
         let gift = quest("gift", "nomad", "", "Home", r#"Item("base:torch", 8)"#);
         let quests = QuestRegistry::new(vec![QuestRegistry::read("base", &format!("(quests: [{stack}])")).unwrap(), QuestRegistry::read("sky", &format!("(quests: [{gift}])")).unwrap()]).unwrap();
-        assert!(quests.rewards_skip_no_lesson(&BlockRegistry::new(vec![crate::block::BlockDef { name: "base:torch".into(), ..Default::default() }]).unwrap()).is_ok(), "another package's book is its own");
+        assert!(quests.rewards_skip_no_lesson(&BlockRegistry::new(vec![crate::block::BlockDef { name: "base:torch".into(), ..Default::default() }]).unwrap(), &[]).is_ok(), "another package's book is its own");
     }
 
     #[test]
