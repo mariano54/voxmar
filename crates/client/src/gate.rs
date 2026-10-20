@@ -446,8 +446,9 @@ steps! {
     Tarns,
     /// `/locate settlement` finds a hamlet or village, and the server's world there has
     /// what its plan says: a well on its square, doors open onto a floor, and houses dry;
-    /// its people come, and one greets the player in its own voice; and the ambience hears
-    /// it at work by day, not by night.
+    /// its people come, and one greets the player in its own voice; the ambience hears it
+    /// at work by day, not by night; then `/locate settlement town` finds a town, and the
+    /// wall of the walled town nearest it stands where planned.
     Settlements,
     /// Over a log in the inventory, the uses key shows what it goes into (planks, a
     /// campfire); clicking planks shows their recipe, and Back returns.
@@ -747,6 +748,8 @@ struct Gate {
     settlement: IVec3,
     /// What `/locate settlement` answered, English, for the culture it names.
     settlement_reply: String,
+    /// Where `/locate settlement town` sent the observer: the middle of the town's square.
+    town: IVec3,
     /// Where the struck creature was last seen, for walking over its loot.
     quarry: Vec3,
     /// The snail struck, so a fallen mark on another creature cannot end its watch.
@@ -1023,6 +1026,7 @@ impl Gate {
             tarn: None,
             settlement: IVec3::ZERO,
             settlement_reply: String::new(),
+            town: IVec3::ZERO,
             ore: IVec3::ZERO,
             quarry: Vec3::ZERO,
             quarry_id: None,
@@ -1666,7 +1670,7 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         Step::Tame => STEP_LIMIT + TROUGH_WAIT,
         // A fresh area around the settlement to generate: up to `SETTLEMENT_LOAD` of the
         // server's seconds.
-        Step::Settlements => SETTLEMENT_LOAD + SETTLEMENT_PEOPLE + SETTLEMENT_BARK + STEP_LIMIT,
+        Step::Settlements => 2.0 * SETTLEMENT_LOAD + SETTLEMENT_PEOPLE + SETTLEMENT_BARK + STEP_LIMIT,
         // A storm and snow, each waited on, then drying off by a campfire.
         Step::Weather => STEP_LIMIT + 10.0 + ROOF_RAIN,
         _ => STEP_LIMIT,
@@ -10530,7 +10534,7 @@ fn weapon(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
 const SLING: &str = "base:sling";
 const SLING_LEVEL: u8 = 70;
 const SLING_STONES: u32 = 12;
-/// Seconds between shots (past the sling's 0.53 s cooldown), by the game's clock.
+/// Seconds between shots (past the sling's 0.8 s cooldown), by the game's clock.
 const SLING_EVERY: f32 = 1.0;
 
 /// The sling step's run: what stood before it began, its bear, and its shots.
@@ -10555,6 +10559,8 @@ struct SlingRun {
     /// whatever else earlier steps or the land left there), and what each was: taken away
     /// for the shots and put back on every way out.
     cleared: Vec<(IVec3, String)>,
+    /// The least share of pace the player kept while a stone was drawn, as they moved.
+    pace: Option<f32>,
 }
 
 /// One cell set to `block` by name.
@@ -10742,6 +10748,9 @@ fn sling(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 return;
             }
             gate.sling.in_the_way = None;
+            if let Some(pace) = world.resource::<crate::fight::Fighting>().drawing_pace {
+                gate.sling.pace = Some(gate.sling.pace.map_or(pace, |least| least.min(pace)));
+            }
             let run = &gate.sling;
             let xp = skill_level(world, "core:ranged").1;
             let unanswered = run.shot_at.map_or(0.0, |(game, server)| (now - game).min(gate.server_now - server));
@@ -10760,6 +10769,7 @@ fn sling(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             mouse(world, MouseButton::Left, false);
             match next {
                 SlingNext::Hit => {
+                    let pace = run.pace;
                     // Every shot the server answered spent a stone: the hit, and any misses before it.
                     let spent = run.stones.saturating_sub(stones);
                     let distance = world.resource::<LocalPlayer>().eye().distance(view.position + Vec3::Y * 0.6);
@@ -10769,6 +10779,14 @@ fn sling(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                         Err(format!("a stone hit from {distance:.1} blocks, but no cobblestone was spent ({stones} left)"))
                     };
                     gate.check("sling shot", result);
+                    // Drawing slows the player to the class's share of their pace.
+                    let combat = &world.resource::<Launch>().content.combat;
+                    let wanted = world.resource::<Launch>().content.blocks.id(SLING).map(|sling| combat.drawing_speed(&combat.wielded(Some(sling), |_| SLING_LEVEL)));
+                    let result = match (pace, wanted) {
+                        (Some(pace), Some(wanted)) if (pace - wanted).abs() < 1e-4 => Ok(format!("drawing a stone the player kept {pace:.2} of their pace")),
+                        (pace, wanted) => Err(format!("drawing a stone the player kept {pace:?} of their pace, the sling's {wanted:?} wanted")),
+                    };
+                    gate.check("sling draw", result);
                     end_weapon(world, gate, now);
                 }
                 SlingNext::Fail(why) => {
@@ -12818,7 +12836,7 @@ fn tell_blows(world: &mut World, creature: u32) {
         fighting.struck(creature, damage, blow, (i as u8 + 1).min(pips), false, now);
     }
     for (damage, defended) in HURT_SHOWN {
-        fighting.hurt(creature, damage, defended, now);
+        fighting.hurt(creature, damage, defended, now, None);
     }
     // All pips lit: the next blow on the beat would be a flourish.
     fighting.rhythm.set_pips(pips, now);
@@ -13122,7 +13140,7 @@ fn combat_feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let mut fighting = world.resource_mut::<crate::fight::Fighting>();
             fighting.struck(id, FEEL_STRUCK, voxmar_engine::combat::Blow::Flourish, pips, false, at);
             for (damage, defended) in FEEL_HURT {
-                fighting.hurt(id, damage, defended, at);
+                fighting.hurt(id, damage, defended, at, None);
             }
             gate.advance(now);
         }
@@ -15526,6 +15544,11 @@ const SETTLEMENT_LOAD: f32 = 120.0;
 const SETTLEMENT_PEOPLE: f32 = 20.0;
 /// Server seconds for a greeting asked of one of them to reach the client.
 const SETTLEMENT_BARK: f32 = 3.0;
+/// How far from the first settlement the gate looks for a town.
+const TOWN_RADIUS: i32 = 10000;
+/// How far round a town's square its wall is judged: as far as the observer is sent the
+/// world at the gate's least view distance.
+const TOWN_REACH: i32 = 56;
 
 /// `/locate settlement` names the nearest hamlet or village; the player and the observer go
 /// there, and once the server's world around it has loaded, its blocks are judged against
@@ -15546,7 +15569,7 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
         1 => {
             let content = world.resource::<Launch>().content.clone();
             let english = |words| content.english.render(words, &content.blocks);
-            let Some(reply) = gate.observer.as_ref().and_then(|o| o.replies.iter().map(english).find(|r| r.contains("settlement") || r.contains("hamlet or village"))) else {
+            let Some(reply) = gate.observer.as_ref().and_then(|o| o.replies.iter().map(english).find(|r| r.contains("settlement") || r.contains("No hamlet"))) else {
                 if gate.server_in_phase() > 20.0 {
                     gate.check("settlements", Err("no answer to /locate settlement".into()));
                     gate.next(Step::Recipes, now);
@@ -15587,6 +15610,8 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             }
             let result = judge_settlement(world, gate, at);
             gate.check("settlements", result);
+            let homes = judge_homes(world, gate, at);
+            gate.check("settlement homes", homes);
             gate.advance(now);
         }
         // Its people: the server brings a settlement to life when a player is near, and they
@@ -15628,6 +15653,72 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             gate.check("settlement bark", greeted);
             let feet = gate.feet;
             world.resource::<Net>().command(&format!("tp {} {} {}", feet.x as f32 + 0.5, feet.y, feet.z as f32 + 0.5));
+            // The observer looks for a town from where it is, the player going home.
+            if let Some(observer) = gate.observer.as_mut() {
+                observer.replies.clear();
+                observer.connection.send(ClientMessage::Command { line: format!("locate settlement town {TOWN_RADIUS}") });
+            }
+            gate.advance(now);
+        }
+        // A town: the observer goes over its square.
+        5 => {
+            let content = world.resource::<Launch>().content.clone();
+            let english = |words| content.english.render(words, &content.blocks);
+            let Some(reply) = gate.observer.as_ref().and_then(|o| o.replies.iter().map(english).find(|r| r.contains("town"))) else {
+                if gate.server_in_phase() > 30.0 {
+                    gate.check("town walls", Err(format!("no answer to /locate settlement town {TOWN_RADIUS}")));
+                    gate.phase = 6;
+                    gate.advance(now);
+                }
+                return;
+            };
+            let at = reply.split("/tp ").nth(1).and_then(|rest| {
+                let n: Vec<i32> = rest.split_whitespace().take(3).filter_map(|v| v.parse().ok()).collect();
+                (n.len() == 3).then(|| IVec3::new(n[0], n[1], n[2]))
+            });
+            let Some(at) = at else {
+                gate.check("town walls", Err(format!("/locate settlement town: {reply}")));
+                gate.phase = 6;
+                gate.advance(now);
+                return;
+            };
+            // Not every town is walled (a size's `walls` chance): the walls are judged at
+            // the walled town nearest the one found.
+            let walled = world
+                .resource::<crate::render::lod::WorldGenerator>()
+                .get()
+                .cloned()
+                .and_then(|g| g.settlements_near(at.xz(), TOWN_RADIUS).into_iter().filter(|s| s.size == "town" && s.wall_block.is_some()).min_by_key(|s| (s.centre.xz() - at.xz()).length_squared()));
+            let Some(walled) = walled else {
+                gate.check("town walls", Err(format!("no walled town within {TOWN_RADIUS} of the town /locate found at {at}")));
+                gate.phase = 6;
+                gate.advance(now);
+                return;
+            };
+            let at = walled.centre;
+            gate.town = at;
+            if let Some(observer) = gate.observer.as_mut() {
+                observer.connection.send(ClientMessage::Command { line: format!("tp {} {} {}", at.x, at.y + 60, at.z) });
+            }
+            gate.advance(now);
+        }
+        // Once the server has sent the observer the world round it, its wall is judged.
+        6 => {
+            let at = gate.town;
+            let (low, high) = (ColumnPos::of_block(at - IVec3::splat(TOWN_REACH)).0, ColumnPos::of_block(at + IVec3::splat(TOWN_REACH)).0);
+            let columns: Vec<ColumnPos> = (low.x..=high.x).flat_map(|x| (low.y..=high.y).map(move |z| ColumnPos::new(x, z))).collect();
+            let held = gate.observer.as_ref().map_or(0, |o| columns.iter().filter(|&&c| o.world.contains(c)).count());
+            if held < columns.len() {
+                if gate.server_in_phase() > SETTLEMENT_LOAD {
+                    let n = columns.len();
+                    gate.check("town walls", Err(format!("the world around the town at {at} did not load: the server sent {held} of its {n} columns in {SETTLEMENT_LOAD} server seconds")));
+                    gate.phase = 6;
+                    gate.advance(now);
+                }
+                return;
+            }
+            let result = judge_town(world, gate, at);
+            gate.check("town walls", result);
             gate.advance(now);
         }
         // Back on the test ground.
@@ -15752,6 +15843,111 @@ fn judge_settlement(world: &World, gate: &Gate, at: IVec3) -> Result<String, Str
         Ok(format!("{name}, a {} in {} country at {at}: a well on the square, {doors} doors open onto floors, {houses} buildings dry", plan.size, culture.title.0))
     } else {
         Err(format!("{name}, a {} at {at}: {}", plan.size, problems.join("; ")))
+    }
+}
+
+/// The homes of the settlement whose middle is `at` are furnished for their people: every bed
+/// worldgen plans within reach is a bed in the server's world with room to get to it, and every
+/// seat it plans is a seat (settlements.ron's `interiors`).
+fn judge_homes(world: &World, gate: &Gate, at: IVec3) -> Result<String, String> {
+    let Some(generator) = world.resource::<crate::render::lod::WorldGenerator>().get().cloned() else {
+        return Err("no world generator on the client to read the settlement's plan from".into());
+    };
+    let Some(observer) = gate.observer.as_ref() else { return Err("no observer".into()) };
+    let client = world.resource::<ClientWorld>();
+    let plans = generator.settlements_near(at.xz(), 64);
+    let Some(plan) = plans.iter().find(|s| s.centre.xz() == at.xz()) else {
+        return Err(format!("worldgen plans no settlement with its middle at {at} ({} near)", plans.len()));
+    };
+    let name = |p: IVec3| observer.world.block(p).map_or("unloaded".to_owned(), |b| client.registry.def(b).name.clone());
+    let tagged = |p: IVec3, tag: &str| observer.world.block(p).is_some_and(|b| client.registry.def(b).has_tag(tag));
+    let open = |p: IVec3| observer.world.block(p).is_some_and(|b| !client.registry.def(b).solid);
+    let within = |p: IVec3| (p.xz() - at.xz()).abs().max_element() <= SETTLEMENT_REACH;
+    let (mut homes, mut beds, mut seats, mut problems) = (0, 0, 0, Vec::new());
+    for b in plan.buildings.iter() {
+        let (planned_beds, planned_seats): (Vec<IVec3>, Vec<IVec3>) = (b.beds.iter().copied().filter(|&p| within(p)).collect(), b.seats.iter().copied().filter(|&p| within(p)).collect());
+        if planned_beds.is_empty() && planned_seats.is_empty() {
+            continue;
+        }
+        homes += 1;
+        for p in planned_beds {
+            // Got to from beside: one of its sides is open at the bed's height and above.
+            let reached = [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z].into_iter().any(|d| open(p + d) && open(p + d + IVec3::Y));
+            if !tagged(p, "bed") {
+                problems.push(format!("the {}'s bed at {p} is {}", b.kind.name(), name(p)));
+            } else if !reached {
+                let sides: Vec<String> = [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z].into_iter().map(|d| format!("{} {} over {}", p + d, name(p + d), name(p + d + IVec3::Y))).collect();
+                problems.push(format!("the {}'s bed at {p} is walled in: beside it {}", b.kind.name(), sides.join(", ")));
+            } else {
+                beds += 1;
+            }
+        }
+        for p in planned_seats {
+            if tagged(p, "seat") && open(p + IVec3::Y) {
+                seats += 1;
+            } else {
+                problems.push(format!("the {}'s seat at {p} is {} under {}", b.kind.name(), name(p), name(p + IVec3::Y)));
+            }
+        }
+    }
+    if homes == 0 && problems.is_empty() {
+        problems.push(format!("worldgen plans no bed or seat within {SETTLEMENT_REACH} of the square"));
+    }
+    let settlement = &plan.name.0;
+    if problems.is_empty() {
+        Ok(format!("{settlement}: {homes} homes furnished, {beds} beds and {seats} seats as planned"))
+    } else {
+        Err(format!("{settlement} ({homes} homes, {beds} beds and {seats} seats as planned): {}", problems.join("; ")))
+    }
+}
+
+/// The town whose middle is `at`, as worldgen plans it, against the server's blocks: it is
+/// a town, it is walled, and every column of its wall within `TOWN_REACH` of its square
+/// stands in the server's world, its top as high over its foot as planned.
+fn judge_town(world: &World, gate: &Gate, at: IVec3) -> Result<String, String> {
+    let Some(generator) = world.resource::<crate::render::lod::WorldGenerator>().get().cloned() else {
+        return Err("no world generator on the client to read the town's plan from".into());
+    };
+    let Some(observer) = gate.observer.as_ref() else { return Err("no observer".into()) };
+    let client = world.resource::<ClientWorld>();
+    let plans = generator.settlements_near(at.xz(), 64);
+    let Some(plan) = plans.iter().find(|s| s.centre.xz() == at.xz()) else {
+        return Err(format!("worldgen plans no settlement with its middle at {at} ({} near)", plans.len()));
+    };
+    let name = &plan.name.0;
+    if plan.size != "town" {
+        return Err(format!("/locate settlement town found {name}, a {}", plan.size));
+    }
+    let Some(block) = plan.wall_block else {
+        return Err(format!("{name}, a town at {at}, plans no wall"));
+    };
+    let block_name = &client.registry.def(block).name;
+    let within = |p: IVec2| (p - at.xz()).abs().max_element() <= TOWN_REACH;
+    let (mut judged, mut standing, mut wrong) = (0, 0, Vec::new());
+    for &(column, top) in plan.walls.iter().filter(|w| within(w.0)) {
+        judged += 1;
+        // The wall's highest block in the column, then how far down it runs unbroken.
+        let ys = (at.y - 40..=at.y + 40).rev();
+        let Some(high) = ys.clone().find(|&y| observer.world.block(IVec3::new(column.x, y, column.y)) == Some(block)) else {
+            if wrong.len() < 4 {
+                wrong.push(format!("no {block_name} in the column at {column}"));
+            }
+            continue;
+        };
+        let run = (0..top).take_while(|&k| observer.world.block(IVec3::new(column.x, high - k, column.y)) == Some(block)).count() as i32;
+        if run >= top {
+            standing += 1;
+        } else if wrong.len() < 4 {
+            wrong.push(format!("the column at {column} is {run} of its {top} blocks of {block_name}, up to {high}"));
+        }
+    }
+    if judged < 12 {
+        return Err(format!("{name}: only {judged} columns of its {} of wall within {TOWN_REACH} of its square at {at}", plan.walls.len()));
+    }
+    if standing == judged {
+        Ok(format!("{name}, a town at {at}: {standing} columns of its {block_name} wall within {TOWN_REACH} stand as planned ({} in all)", plan.walls.len()))
+    } else {
+        Err(format!("{name}, a town at {at}: {standing} of {judged} columns of its {block_name} wall stand: {}", wrong.join("; ")))
     }
 }
 
