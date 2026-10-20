@@ -1862,6 +1862,11 @@ pub fn aim(
         net.propose_from(&player, attack, ActionTarget::Creature(id));
         fighting.strikes += 1;
     }
+    // A left click at one out of reach swings at the air (`Fighting::whiff`): the hand and
+    // a whoosh say the click was heard, and nothing is struck.
+    if target.creature.is_some() && !in_reach && ui.cursor_locked && !player.dead && mouse.just_pressed(MouseButton::Left) {
+        fighting.whiff(time.elapsed_secs_f64(), &combat.timing(&weapon));
+    }
 }
 
 /// A wind-up begun: the coil starts (its end is the blow), and it is told by sound and,
