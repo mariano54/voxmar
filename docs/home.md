@@ -551,8 +551,11 @@ left (`ash`, here air) and the smoke a smouldering block gives off (non-empty), 
 away, and two worlds burn alike), `a_flame_taken_away_or_put_out_burns_nothing` (and a lit
 hearth two off sets it alight), `a_hearth_lit_under_thatch_smoulders_then_catches` (the hint
 once, the smoulder told, caught only on time), `a_stone_lined_flue_keeps_a_hearths_fire_from_the_roof`,
-`fires_are_saved_with_the_world`. The gate's Blaze step sets a torch by a wattle panel and
-counts the smoke off it before it catches ("fire: smoulders", "fire: catches", "fire: burns out").
+`fires_are_saved_with_the_world`. The gate's Kindle step sets a torch by a wattle panel,
+twenty blocks off the home's steps, and counts the smoke off it ("fire: smoulders"); the fire
+burns on through the home's steps, each frame noting when the panel shows a blaze and when it
+is gone, and the Blaze step, before the catalogue, judges those by fire.ron's times ("fire:
+catches", "fire: burns out"), so its 18 s of waiting run under other steps.
 
 ## Daubing in place
 
@@ -565,7 +568,7 @@ becomes is not coated again), and asks the level of the easiest recipe that make
 becomes (Construction 2 for daub), teaching that recipe's experience a piece; below it, it is
 refused with the level it takes. Action `base:coat` (requirement `Coats`, silent: it only says
 the click meant it), server `coat.rs`, test `clay_daubs_a_placed_wattle_panel_in_place`; the
-gate's Blaze step daubs a panel by its torch ("daub: coats").
+gate's Kindle step daubs a panel by its torch ("daub: coats").
 
 Earth walls daub the same way. Dirt, coarse dirt, gravel, sand and red sand carry the same
 `coat` (blocks.ron), so a room dug into a bank or walled in earth turns from draughty to sound

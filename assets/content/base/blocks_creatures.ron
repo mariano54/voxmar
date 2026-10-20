@@ -21,10 +21,12 @@
         (template: "drop", name: "raw_venison", tags: ["meat", "raw", "edible", "flavour:savoury", "game"], all: (color: (150, 40, 40))),
         (template: "drop", name: "raw_bear", tags: ["meat", "raw", "edible", "flavour:savoury", "game", "fat"], all: (color: (130, 40, 40), rarity: Uncommon)),
         (template: "drop", name: "raw_crab", tags: ["meat", "raw", "edible", "flavour:savoury", "seafood"], all: (color: (220, 120, 80))),
-        // The Rootmother's heart of root (lairs.ron): eaten raw it heals and leaves the
-        // Heartwood buff; it stacks, being a root and not a meal.
         // Old Tusk's great tusk (creatures_bosses.ron): one a kill, the head of a tusk club.
         (template: "drop", name: "great_tusk", tags: ["trophy", "bone"], all: (color: (236, 226, 200), rarity: Uncommon)),
+        // Old Tusk's rare keepsake: worn in the charm slot, it quickens your stride (effects.ron's `tusk_stride`).
+        (template: "drop", name: "charge_charm", tags: ["trophy", "charm", "charge_charm"], all: (color: (224, 206, 168), rarity: VeryRare)),
+        // The Rootmother's heart of root (lairs.ron): eaten raw it heals and leaves the
+        // Heartwood buff; it stacks, being a root and not a meal.
         (template: "drop", name: "heartroot", tags: ["root", "edible", "effect:heartwood:600", "flavour:bitter", "alchemy:healing", "alchemy:hearty"], all: (color: (150, 60, 50), rarity: Uncommon)),
         // Skins and fur.
         // Every warm pelt is fur (P27, 2026-10-07: fewer items, many ways to get each).
@@ -49,7 +51,7 @@
         (template: "drop", name: "bone", tags: ["bone", "fertiliser"], all: (color: (230, 225, 205))),
         (template: "drop", name: "fang", tags: ["tooth", "sharp", "trophy"], all: (color: (240, 236, 220), rarity: Uncommon)),
         (template: "drop", name: "antler", tags: ["antler", "bone", "trophy"], all: (color: (205, 185, 150), rarity: Uncommon)),
-        (template: "drop", name: "rabbit_foot", tags: ["trophy", "charm", "alchemy:luck"], all: (color: (200, 175, 140), rarity: Rare)),
+        (template: "drop", name: "rabbit_foot", tags: ["trophy", "alchemy:luck"], all: (color: (200, 175, 140), rarity: Rare)),
         (template: "drop", name: "lard", tags: ["fat", "cooking", "fuel"], all: (color: (245, 240, 225))),
         // From monsters.
         (template: "drop", name: "silk", tags: ["fibre", "silk", "string"], all: (color: (230, 230, 240))),
