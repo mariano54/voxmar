@@ -21,6 +21,9 @@ struct Client {
     id: PlayerId,
     name: String,
     phase: &'static str,
+    /// Whether the server's pings are answered, as a running game does; a minimized one
+    /// sends nothing from the game itself, only its network thread's keepalives.
+    pongs: bool,
     /// Dropped items in sight, and the ones we picked up.
     items: std::collections::HashMap<u32, ItemView>,
     collected: Vec<u32>,
@@ -235,6 +238,7 @@ impl Client {
             id: 0,
             name: name.to_owned(),
             phase: "welcome",
+            pongs: true,
             items: Default::default(),
             collected: Vec::new(),
             skills: Default::default(),
@@ -446,7 +450,9 @@ impl Client {
                 self.pips.push(pips);
             }
             ServerMessage::Ping { id } => {
-                self.connection.send(ClientMessage::Pong { id });
+                if self.pongs {
+                    self.connection.send(ClientMessage::Pong { id });
+                }
             }
             ServerMessage::Hurt { creature, damage, defended } => {
                 self.hurt.push((damage, defended));
@@ -572,6 +578,18 @@ impl Client {
         self.pump_until(|c| c.server_tick > told);
         let from = self.server_tick;
         self.pump_until(|c| c.server_tick >= from + ticks);
+    }
+
+    /// Waits until at least `ticks` server ticks have passed from now, and little longer:
+    /// it asks the server's clock (`/time add 0` tells it at once and moves nothing) rather
+    /// than waiting on its once-a-second tell, which made a one-second wait one to two.
+    #[track_caller]
+    fn after_ticks_asked(&mut self, ticks: u64) {
+        self.ok("/time add 0");
+        let from = self.server_tick;
+        while self.server_tick < from + ticks {
+            self.ok("/time add 0");
+        }
     }
 
     /// Waits until `count` holds still across 20 server ticks after everything sent was
@@ -4330,15 +4348,20 @@ fn preparing_tcp_content_does_not_spend_the_hello_deadline() {
 #[test]
 fn a_player_who_sends_nothing_but_keepalives_is_kept() {
     real_time("silence and floods are timed on the clock (idle timeouts, chat per second)");
-    let host = Client::join();
+    // Let go after ten seconds silent, two keepalives' worth, rather than fifteen.
+    let idle = 2 * voxmar_protocol::KEEPALIVE;
+    let host = Client::join_with(ServerConfig { view_distance: 2, idle_timeout: idle, ..Default::default() });
     let addr = tcp::listen("127.0.0.1:0", host._server.as_ref().unwrap().connections()).unwrap();
     let mut guest = Client::greet(|| tcp::connect(addr).unwrap(), "guest", None);
-    // Twenty seconds of the server's clock with no input, as from a minimized game: only
-    // the connection's keepalives. (Being let go would end the pump with a panic.)
+    // A keepalive's worth past the idle timeout of the server's clock with no input, as
+    // from a minimized game: only the connection's keepalives. (Being let go would end the
+    // pump with a panic.)
     let ticks = |c: &Client| c._server.as_ref().unwrap().ticks();
-    let until = ticks(&host) + 20 * TICKS_PER_SECOND as u64;
+    let until = ticks(&host) + (idle + voxmar_protocol::KEEPALIVE).as_secs() * TICKS_PER_SECOND as u64;
     guest.phase = "keepalive wait";
+    guest.pongs = false;
     guest.pump_until(|_| ticks(&host) >= until);
+    guest.pongs = true;
     assert!(guest.ok("/seed").contains(char::is_numeric), "the guest was let go");
     drop(host);
 }
@@ -4838,7 +4861,7 @@ fn a_sling_shoots_a_stone_a_clear_line_away_and_trains_ranged() {
     client.chat.clear();
     client.propose("core:attack", ActionTarget::Creature(id));
     client.pump_until(|c| c.chat.iter().any(|(_, line)| line.contains("Nothing to shoot")));
-    client.wait_server(1);
+    client.after_ticks_asked(TICKS_PER_SECOND as u64);
     assert_eq!(client.blows, 0, "a sling with no stone still swung");
     // With stones: each shot takes one, hit or miss, and a hit trains Ranged.
     client.ok("/give cobblestone 16");
@@ -4859,7 +4882,7 @@ fn a_sling_shoots_a_stone_a_clear_line_away_and_trains_ranged() {
     // A wall between is a miss, and the stone is still spent.
     let x = at.x + 4.0;
     client.ok(&format!("/fill {} {} {} {} {} {} stone", x.floor(), at.y.floor(), at.z.floor() - 3.0, x.floor(), at.y.floor() + 4.0, at.z.floor() + 3.0));
-    client.wait_server(1);
+    client.after_ticks_asked(TICKS_PER_SECOND as u64);
     // Two shots, the second on the sling's beat (0.53 s): both are at the air, so off the
     // beat, and earn no pip.
     let (blows, left, pips) = (client.blows, carried_of(&client, stone), client.pips.last().copied().unwrap_or(0));
@@ -4873,6 +4896,8 @@ fn a_sling_shoots_a_stone_a_clear_line_away_and_trains_ranged() {
     assert_eq!(kinds, [voxmar_engine::combat::Blow::Plain; 2], "shots into a wall counted as {kinds:?}");
     assert!(client.pips.last().copied().unwrap_or(0) <= pips, "shots into a wall earned a pip: {:?}", client.pips);
     client.pump_until(|c| carried_of(c, stone) == left - 2);
+    // The wall down again: with a clear line, only the stone gone makes the next shot miss.
+    client.ok(&format!("/fill {} {} {} {} {} {} air", x.floor(), at.y.floor(), at.z.floor() - 3.0, x.floor(), at.y.floor() + 4.0, at.z.floor() + 3.0));
     // The last stone gone while a shot winds up: still answered, as a miss at the air, and
     // the player told why.
     let slots: Vec<(usize, u8)> = (0..voxmar_engine::inventory::SLOTS).filter_map(|s| client.inventory.get(s).filter(|k| k.item == stone).map(|k| (s, k.count))).collect();
@@ -4884,7 +4909,7 @@ fn a_sling_shoots_a_stone_a_clear_line_away_and_trains_ranged() {
         client.propose("core:drop", ActionTarget::Stack { slot: last as u8, count: count - 1 });
     }
     client.pump_until(|c| carried_of(c, stone) == 1);
-    client.wait_server(1);
+    client.after_ticks_asked(TICKS_PER_SECOND as u64);
     client.chat.clear();
     let blows = client.blows;
     client.propose("core:attack", ActionTarget::Creature(id));
@@ -5225,6 +5250,10 @@ fn backing_off_at_a_walk_does_not_escape_a_creatures_blow() {
         let mut outcomes = Vec::new();
         let mut askew = 0;
         while outcomes.len() < 2 {
+            // A blow taken lets the creature recover a while before it is provoked again.
+            if !outcomes.is_empty() {
+                client.wait_server(1);
+            }
             let before = provoke_until_it_winds_up(&mut client, id, slot, name);
             // Only a wind-up begun facing us: one begun facing away (a creature struck from
             // behind or the side) turns at its turn rate, and walks at a third of its pace
@@ -5259,7 +5288,6 @@ fn backing_off_at_a_walk_does_not_escape_a_creatures_blow() {
             }
             let struck = blow_from(&client.hurt_by, id, before).expect("the selected creature struck");
             outcomes.push(client.hurt[struck].1);
-            client.wait_server(1);
         }
         assert!(outcomes.iter().all(|&o| matches!(o, Defended::Hit | Defended::Missed)), "backing off a {name} at a walk came to {outcomes:?}");
     }
