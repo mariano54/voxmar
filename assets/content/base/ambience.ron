@@ -560,9 +560,10 @@
             duck: {"rain": 0.8},
         ),
         // The shrine's bell at dawn and again at dusk, heard across the whole place and a
-        // way beyond it.
+        // way beyond it. Dawn and dusk last a minute or so: rung soon in it, and only once,
+        // as it waits out the rest (`cooldown`).
         (
-            name: "shrine_bell", sound: Bell, volume: 0.28, at: Building(buildings: ["shrine"]), per_minute: 0.6, cooldown: 90,
+            name: "shrine_bell", sound: Bell, volume: 0.28, at: Building(buildings: ["shrine"]), per_minute: 8, cooldown: 240,
             pitch: (0.97, 1.03), reach: 48,
             when: {"settlement_edge": (max: 24, fade: 60), "sun": (min: -0.15, max: 0.15, fade: 0.05), "depth": (max: 2, fade: 4)},
         ),

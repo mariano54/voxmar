@@ -122,9 +122,26 @@ struct Clips {
     sounds: Vec<Arc<Vec<OneShotClip>>>,
 }
 
+/// A one-shot's variant, kept as 16-bit samples: half the memory of floats, and as fine
+/// as the WAV it is played from.
 struct OneShotClip {
-    dry: Vec<f32>,
-    wet: [Vec<f32>; 2],
+    dry: Vec<i16>,
+    wet: [Vec<i16>; 2],
+}
+
+impl OneShotClip {
+    fn new((dry, wet): (Vec<f32>, [Vec<f32>; 2])) -> Self {
+        let pcm = |samples: Vec<f32>| samples.into_iter().map(mixer::Sample::from_f32).collect();
+        let [left, right] = wet;
+        Self { dry: pcm(dry), wet: [pcm(left), pcm(right)] }
+    }
+}
+
+/// A one-shot placed and encoded off the main thread, ready to play.
+struct Placed {
+    wav: Vec<u8>,
+    playback: PlaybackSettings,
+    at: Option<Vec3>,
 }
 
 /// What the synthesis thread hands back: bed segments as WAV files, and one-shots.
@@ -248,6 +265,8 @@ struct Ambient {
     env: Environment,
     mixer: Mixer,
     cues: Vec<Cue>,
+    /// One-shots being placed and encoded on a worker, and those done (see [`Placed`]).
+    placed: (Sender<Placed>, Receiver<Placed>),
     /// The audible beds, as last logged.
     logged: String,
 }
@@ -315,7 +334,7 @@ fn start(mut commands: Commands, launch: Res<Launch>, world: Res<ClientWorld>, c
             .par_iter()
             .filter(|s| !s.is_bed())
             .map(|&s| {
-                let variants = (0..synth::ONE_SHOT_VARIANTS).map(|v| synth::one_shot(s, v)).map(|(dry, wet)| OneShotClip { dry, wet }).collect();
+                let variants = (0..synth::ONE_SHOT_VARIANTS).map(|v| OneShotClip::new(synth::one_shot(s, v))).collect();
                 (s, Arc::new(variants))
             })
             .collect();
@@ -370,6 +389,7 @@ impl Ambient {
             smooth: Enclosure::default(),
             env: Environment::new(axes),
             cues: Vec::new(),
+            placed: unbounded(),
             logged: String::new(),
         }
     }
@@ -804,6 +824,13 @@ fn play(
     let master = AMBIENCE_GAIN * sfx::MASTER * settings.sound_volume as f32 / 100.0 * settings.ambience_volume as f32 / 100.0
         * global.volume.to_linear();
     let ears = camera.translation();
+    for Placed { wav, playback, at } in ambient.placed.1.try_iter() {
+        let source = sources.add(AudioSource { bytes: Arc::from(wav) });
+        // One-shots are voices of the ambience, capped with the rest of it (`mix`);
+        // beds are the mixer's own, crossfading, never cut off.
+        let voice = at.map_or(Voice::of(Category::Ambience), |at| Voice::at(Category::Ambience, at));
+        commands.spawn((AudioPlayer(source), playback, voice));
+    }
     let mut cues = std::mem::take(&mut ambient.cues);
     let length = |sound: usize, variant: usize| clips.sounds[sound].get(variant).map_or(1.0, |c| c.dry.len() as f32 / sfx::RATE as f32);
     let variants = (synth::BED_VARIANTS, synth::ONE_SHOT_VARIANTS);
@@ -832,17 +859,22 @@ fn play(
                 }
             }
             Cue::Sound { sound, variant, at, volume, speed, muffle } => {
-                let Some(clip) = clips.sounds[sound].get(variant) else { continue };
-                let reverb = ambient.env.get(Fixed::Reverb);
-                let mut placed = mixer::place(&clip.dry, &clip.wet, at, ears, camera.right().into(), camera.forward().into(), reverb);
-                mixer::muffle(&mut placed, muffle, ambient.ambience.shelter.muffle);
-                let [left, right] = placed;
-                let source = sources.add(AudioSource { bytes: Arc::from(sfx::wav_stereo(&left, &right)) });
+                if clips.sounds[sound].get(variant).is_none() {
+                    continue;
+                }
+                // Placing a clip in stereo and encoding it takes about a millisecond for the
+                // long ones: done on a worker, never on the frame, and played when it is back.
+                let (variants, tx) = (clips.sounds[sound].clone(), ambient.placed.0.clone());
+                let (reverb, cutoff) = (ambient.env.get(Fixed::Reverb), ambient.ambience.shelter.muffle);
+                let (right, forward) = (camera.right().into(), camera.forward().into());
                 let playback = PlaybackSettings { speed, ..PlaybackSettings::DESPAWN.with_volume(Volume::Linear(volume * master)) };
-                // One-shots are voices of the ambience, capped with the rest of it (`mix`);
-                // beds are the mixer's own, crossfading, never cut off.
-                let voice = at.map_or(Voice::of(Category::Ambience), |at| Voice::at(Category::Ambience, at));
-                commands.spawn((AudioPlayer(source), playback, voice));
+                rayon::spawn(move || {
+                    let clip = &variants[variant];
+                    let mut placed = mixer::place(&clip.dry, &clip.wet, at, ears, right, forward, reverb);
+                    mixer::muffle(&mut placed, muffle, cutoff);
+                    let [left, right] = placed;
+                    let _ = tx.send(Placed { wav: sfx::wav_stereo(&left, &right), playback, at });
+                });
             }
         }
     }
@@ -922,6 +954,8 @@ fn leave(
     // the music, or here: `Surveys::leave`).
     *surroundings = Surroundings { started: surroundings.started, ..default() };
     let Some(mut ambient) = ambient else { return };
+    // One-shots placed for the world left are not played in the next.
+    ambient.placed.1.try_iter().for_each(drop);
     let axes = ambient.ambience.axes();
     ambient.mixer = Mixer::new(&ambient.ambience, 0x616d_6269);
     ambient.roof = RoofLook::default();

@@ -960,6 +960,14 @@ fn a_home_settles_at_night_and_its_eaves_drip_after_rain() {
     assert_eq!(played("eaves_drip", &[("roof", 1.0), ("wetness", 0.9), ("raining", 1.0)]), 0, "while it rains");
     assert_eq!(played("eaves_drip", &[("roof", 1.0), ("wetness", 0.0)]), 0, "the ground dry");
     assert_eq!(played("eaves_drip", &[("wetness", 0.9)]), 0, "out in the open");
+    // Indoors, the drips are outside the walls: heard softer.
+    let loudness = |set: &[(&str, f32)]| {
+        let (timeline, _) = run(&ambience, &scene(&ambience, "home", &["grassland", "temperate", "open"], set), 300.0);
+        let volumes: Vec<f32> = timeline.iter().filter_map(|(_, c)| match c { Cue::Sound { sound: s, volume, .. } if *s == sound("eaves_drip") => Some(*volume), _ => None }).collect();
+        volumes.iter().sum::<f32>() / volumes.len() as f32
+    };
+    let (porch, indoors) = (loudness(&after_rain), loudness(&[&after_rain[..], &[("shelter", 1.0)]].concat()));
+    assert!(indoors < 0.7 * porch, "eaves heard indoors at {indoors:.3}, from the porch at {porch:.3}");
 }
 
 /// A village at work by day: the anvil ringing at the smithy, the mill wheel turning, logs
@@ -984,6 +992,8 @@ fn a_village_works_by_day_and_rings_its_bell_at_dusk() {
     assert!(day[..4].iter().all(|(_, n)| *n > 0) && day[4].1 == 0, "by day: {day:?}");
     let dusk = heard(-0.1, 900.0);
     assert!(dusk[4].1 > 0 && dusk[..4].iter().all(|(_, n)| *n == 0), "at dusk: {dusk:?}");
+    // Once in each dawn or dusk, which lasts about as long as this.
+    assert_eq!(heard(-0.1, 75.0)[4].1, 1, "the bell in one dusk");
     let night = heard(-0.8, 600.0);
     assert!(night.iter().all(|(_, n)| *n == 0), "at night: {night:?}");
     let settles = |fire: f32| {
@@ -1023,10 +1033,6 @@ fn hives_and_boards_are_heard_by_their_groups() {
     }
 }
 
-/// Caves by their rock and their depth: wet rock (under a moist climate) has its dripping
-/// air and drips, oftener deep and shut in, where a second tier joins the first; dry rock
-/// (under a desert) has still air and grit ticking down instead, nothing dripping; water
-/// seeping into a pool is heard in either.
 /// Bees drone by their hive on a warm day, and keep in at night, in the cold and while it
 /// rains.
 #[test]
@@ -1043,6 +1049,10 @@ fn bees_hum_by_their_hive_on_a_warm_day() {
     }
 }
 
+/// Caves by their rock and their depth: wet rock (under a moist climate) has its dripping
+/// air and drips, oftener deep and shut in, where a second tier joins the first; dry rock
+/// (under a desert) has still air and grit ticking down instead, nothing dripping; water
+/// seeping into a pool is heard in either.
 #[test]
 fn caves_drip_by_their_rock_and_depth() {
     let ambience = base();
