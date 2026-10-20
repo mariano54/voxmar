@@ -360,6 +360,19 @@ on level ground, and a cast lands two times in five, about 12.5 s a fish. Crops 
 minutes of growth (wheat; carrots 14) day and night, and while they grow the main line,
 husbandry and the home quests are open.
 
+### One charcoal route (Oct 20)
+
+Charcoal comes only from the charcoal clamp now: the earth clamp is retired (its blocks load
+as oak logs) and the campfire no longer chars logs. The quest-book bot builds the clamp as
+Charcoal says: eight logs, a flint dug from the gravel bank for the chopping block, ten
+firewood split on it (nine laid), kindling, twenty-four dirt for the walls and roof, lit
+from a torch. While it smoulders its eight game hours (400 s) the bot fires clay at the pit
+kiln, then digs the heaps out for 36 charcoal, enough for the Crucible Kiln's 32. One run:
+Fire the Clay 193 s, The Potter 204, Charcoal 862 (658 s for the quest, 444 of it waiting
+on the smoulder, which a player spends on other work), Red Metal 871, Crucible Kiln lit
+877. The smoulder is a wait, not a grind: the bot has nothing else to do while it burns, and
+a player has the farm and home quests open.
+
 ## Measured pacing
 
 Run it with `cargo test -p voxmar_server --test gameplay a_fresh_survival -- --ignored --nocapture`

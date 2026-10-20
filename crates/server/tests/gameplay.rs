@@ -1831,19 +1831,19 @@ fn the_count_of_goes_cooked_survives_leaving_and_joining_again() {
     let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
     let cook = |client: &mut Client, times: u32| {
         let fire = client.position.floor().as_ivec3() + IVec3::new(3, 0, 0);
-        let charcoal = |c: &Client| {
-            let item = c.content.blocks.expect("base:charcoal");
+        let baked = |c: &Client| {
+            let item = c.content.blocks.expect("base:baked_potato");
             c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>()
         };
         client.clear();
-        for line in ["/setblock ~3 ~ ~ campfire", &format!("/give oak_log {times}"), "/skill cooking 99"] {
+        for line in ["/setblock ~3 ~ ~ campfire", &format!("/give potato {times}"), "/skill cooking 99"] {
             client.ok(line);
         }
         client.pump_until(|c| c.world.block(fire) == c.content.blocks.id("base:campfire") && c.inventory.get(0).is_some_and(|s| s.count as u32 == times));
         client.send_position(client.position, false);
         for go in 1..=times {
             client.propose("base:cook", ActionTarget::Block { block: fire, face: Face::PosY });
-            client.pump_until(|c| charcoal(c) == go);
+            client.pump_until(|c| baked(c) == go);
         }
     };
     let saved = || voxmar_server::save::WorldSave::new(&dir).read_player("test", &content().blocks).unwrap().expect("the player was saved").draws.cooks;
@@ -7576,7 +7576,7 @@ impl Fresh {
                 let turn = |degrees: f32| Vec3::new(want.x * degrees.to_radians().cos() - want.z * degrees.to_radians().sin(), 0.0, want.x * degrees.to_radians().sin() + want.z * degrees.to_radians().cos());
                 let heading = [0.0, 45.0, -45.0, 90.0, -90.0, 135.0, -135.0].into_iter().map(turn).find(|&h| clear(me, h));
                 let Some(heading) = heading.filter(|_| steps < best.1 + 60) else {
-                    assert!(me.hop_near(goal, stop), "no way round to {goal:?} from {:?}, and no room near it", me.at);
+                    assert!(me.hop_near(goal, stop), "no way round to {goal:?} from {:?} ({:?} and {:?} from the plot's corner), and no room near it", me.at, goal - me.origin.as_vec3(), me.at - me.origin.as_vec3());
                     best = (f32::MAX, steps);
                     continue;
                 };
@@ -8586,9 +8586,7 @@ impl Fresh {
         // A low bank of dirt, twenty-four blocks, for the charcoal clamp's walls and roof: the
         // only dirt above the ground, so the bot finds it by looking (`Fresh::raised_dirt`).
         self.c.fill(o, v(21, 0, -11), v(28, 0, -9), "dirt");
-        // Gravel two high past the ponds' north end, dug for a flint (the chopping block's).
-        self.c.fill(o, v(21, 0, 12), v(30, 1, 13), "gravel");
-        let probes = [(v(27, -1, 11), "base:water"), (v(15, 3, -9), "base:oak_log"), (v(19, 0, 11), "base:copper_ore"), (v(28, 0, -9), "base:dirt"), (v(30, 1, 13), "base:gravel")];
+        let probes = [(v(27, -1, 11), "base:water"), (v(15, 3, -9), "base:oak_log"), (v(19, 0, 11), "base:copper_ore"), (v(28, 0, -9), "base:dirt")];
         self.c.pump_until(|c| probes.iter().all(|&(at, name)| c.world.block(o + at) == c.content.blocks.id(name)));
     }
 
@@ -8645,26 +8643,6 @@ impl Fresh {
         self.c.tp(back);
         self.at = back;
     }
-
-    /// Digs `gravel` with the shovel, highest and nearest first, until a flint is carried:
-    /// one break in eight gives flint instead (`gravel_sometimes_breaks_to_flint_instead`).
-    fn dig_for_flint(&mut self, mut gravel: Vec<IVec3>) {
-        let flint = self.c.content.blocks.expect("base:flint");
-        self.hold("base:stone_shovel");
-        while self.have("base:flint") == 0 {
-            if self.c.items.values().any(|i| i.stack.item == flint) {
-                self.collect("base:flint", 1);
-                break;
-            }
-            gravel.retain(|&t| solid(&self.c, t));
-            let at = self.at;
-            let target = gravel.iter().copied().min_by_key(|t| (-t.y, (across(Self::middle(*t), at) * 10.0) as i32)).expect("the gravel ran out with no flint in it");
-            if across(Self::middle(target), self.at) > 2.3 {
-                self.walk_toward(Self::middle(target), 1.3);
-            }
-            self.mine(target);
-        }
-    }
 }
 
 /// A new player's first two ages, played from nothing by what the quest book says: each
@@ -8712,11 +8690,12 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
 
     // Charcoal, from a clamp as the quest says. Eight logs from the trunks: one for the
     // chopping block, five split on it into ten firewood (nine laid), one for sticks, one
-    // spare. The chopping block is a flint over a log (Crafting 2), the flint dug from the
-    // gravel past the ponds.
+    // spare. The chopping block is a flint over a log (Crafting 2), the flint dug from what
+    // the first days left of the gravel bank.
     let trunks: Vec<IVec3> = [-7, -9].into_iter().flat_map(|z| [1, 3, 5, 7, 11, 13, 15].into_iter().flat_map(move |x| (0..4).map(move |y| o + IVec3::new(x, y, z)))).collect();
     f.gather("base:stone_axe", trunks, log, 8);
-    f.dig_for_flint((21..=30).flat_map(|x| (12..=13).flat_map(move |z| (0..=1).map(move |y| o + IVec3::new(x, y, z)))).collect());
+    let gravel = (10..=24).flat_map(|x| (0..=2).flat_map(move |y| [14, 17].map(move |z| o + IVec3::new(x, y, z)))).collect();
+    f.gather_chance("base:stone_shovel", gravel, "base:flint", f.have("base:flint") + 1);
     f.craft(&[(0, "base:flint", 1), (3, log, 1)], "base:chopping_block", 1);
     let block = f.rel(30, 0, -4);
     f.walk_toward(Fresh::middle(block - IVec3::X), 0.3);
