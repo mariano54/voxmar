@@ -1857,11 +1857,23 @@ pub(crate) const BASE_FILES: [(&str, &str); 19] = [
     ("weather.ron", include_str!("../../../assets/content/base/weather.ron")),
 ];
 
-/// Every string in a RON source, comments left out.
-fn ron_strings(source: &str) -> Vec<String> {
+/// Every string in a RON source, comments left out, each with what holds it: the field
+/// it is the value of, else the field or enum variant (`Tag(...)`) whose brackets it is in.
+fn ron_strings(source: &str) -> Vec<(String, String)> {
     let mut strings = Vec::new();
     let mut chars = source.chars().peekable();
+    // The identifier just read, the field a `:` named, and the holder of each open bracket.
+    let (mut ident, mut field, mut held) = (String::new(), None::<String>, Vec::<String>::new());
+    let mut last_ident = String::new();
     while let Some(c) = chars.next() {
+        if c.is_alphanumeric() || c == '_' {
+            ident.push(c);
+            continue;
+        }
+        let just_read = !ident.is_empty();
+        if just_read {
+            last_ident = std::mem::take(&mut ident);
+        }
         match c {
             '/' if chars.peek() == Some(&'/') => {
                 chars.by_ref().find(|&c| c == '\n');
@@ -1876,6 +1888,17 @@ fn ron_strings(source: &str) -> Vec<String> {
                     last = c;
                 }
             }
+            ':' => field = Some(last_ident.clone()),
+            ',' => field = None,
+            '(' | '[' | '{' => {
+                let named = field.take();
+                let holder = if c == '(' && just_read { last_ident.clone() } else { named.or_else(|| held.last().cloned()).unwrap_or_default() };
+                held.push(holder);
+            }
+            ')' | ']' | '}' => {
+                held.pop();
+                field = None;
+            }
             '"' => {
                 let mut word = String::new();
                 while let Some(c) = chars.next() {
@@ -1885,7 +1908,8 @@ fn ron_strings(source: &str) -> Vec<String> {
                         c => word.push(c),
                     }
                 }
-                strings.push(word);
+                let holder = field.clone().or_else(|| held.last().cloned()).unwrap_or_default();
+                strings.push((holder, word));
             }
             _ => {}
         }
@@ -1943,8 +1967,15 @@ impl WorldContent {
         let lays = |name: &str| name != "ambient.ron" && BASE_FILES.iter().any(|(base, _)| *base == name);
         let mut found = Vec::new();
         for file in files.filter(|file| lays(&file.name)) {
-            for word in ron_strings(&file.source) {
-                if let Some(tag) = word.strip_prefix("tag:") {
+            for (holder, word) in ron_strings(&file.source) {
+                // A list of tags names land and biomes, not blocks; `Tag("flower", 1.0)`
+                // picks blocks by their tag.
+                if holder == "tags" {
+                    continue;
+                }
+                if holder == "Tag" {
+                    found.extend(registry.tagged(&word));
+                } else if let Some(tag) = word.strip_prefix("tag:") {
                     found.extend(registry.tagged(tag));
                 } else if let Some(id) = registry.id(&word).or_else(|| registry.id(&format!("{}:{word}", file.package))) {
                     found.push(id);
@@ -3318,6 +3349,20 @@ fn temperature_axis() -> Axis {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Strings are read with what holds them: a field, or an enum variant's brackets, and
+    /// comments are skipped.
+    #[test]
+    fn strings_know_what_holds_them() {
+        let source = r#"// "not this"
+            (name: "flint_scatter", tags: ["forest", "open"], plants: [Tag("flower", 1.0), Name("fern", 2.0)], top: Block("grass"))"#;
+        let got: Vec<(String, String)> = ron_strings(source);
+        let held = |word: &str| got.iter().find(|(_, w)| w == word).map(|(h, _)| h.as_str());
+        assert_eq!(got.len(), 6, "{got:?}");
+        assert_eq!(held("flint_scatter"), Some("name"));
+        assert_eq!((held("forest"), held("open")), (Some("tags"), Some("tags")));
+        assert_eq!((held("flower"), held("fern"), held("grass")), (Some("Tag"), Some("Name"), Some("Block")));
+    }
 
     fn registry() -> BlockRegistry {
         crate::test_registry()

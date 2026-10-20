@@ -106,6 +106,28 @@ pub struct RecipeBook {
     entries: Vec<Entry>,
     makes: FxHashMap<BlockId, Vec<usize>>,
     uses: FxHashMap<BlockId, Vec<usize>>,
+    /// What the world lays, as each is held ([`listed_as`]).
+    laid: std::collections::HashSet<BlockId>,
+}
+
+/// The block `id` is held as: itself, or for one of its placed forms (another look, a
+/// facing, upside down, against a wall) the block that form is of. A plant merged into
+/// another item stays itself, as it is its own way to that item.
+pub fn listed_as(blocks: &crate::block::BlockRegistry, id: BlockId) -> BlockId {
+    let mut at = id;
+    for _ in 0..4 {
+        if !blocks.placement_form(at) {
+            return at;
+        }
+        let def = blocks.def(at);
+        let named = def.form_of().map(str::to_owned).or_else(|| def.variant_of.clone()).and_then(|name| blocks.id(&name));
+        let dropped = Some(blocks.info(at).drops).filter(|&d| !d.is_air() && d != at);
+        match named.or(dropped) {
+            Some(base) => at = base,
+            None => return at,
+        }
+    }
+    at
 }
 
 impl RecipeBook {
@@ -194,7 +216,9 @@ impl RecipeBook {
         // Breaking a block: what it gives when that is not the block itself, or when it
         // takes a tier of tool; and what comes instead of it now and then. A block's looks,
         // facings and other placed forms read as the block, so each way is listed once.
-        let mut broken = std::collections::HashSet::new();
+        // Each way breaking gives, by what is broken as which tool, and the entry it is: a
+        // form that gives more (a pair of plants) widens the count of the way already there.
+        let mut broken: FxHashMap<_, usize> = FxHashMap::default();
         for block in blocks.ids() {
             let info = blocks.info(block);
             let rule = content.tools.rule(block);
@@ -204,16 +228,27 @@ impl RecipeBook {
             // A wild plant whose item merged into another gives that item: a way to it, which
             // nothing uses (the plant is never held).
             let merged = blocks.merged_away(block);
-            // A wild plant merged away reads as itself: each such plant is its own way.
-            let breaks_as = if merged { block } else { blocks.item_of(block) };
-            let mut once = |output: BlockId, chance: f32, count: u8| broken.insert((breaks_as, output, tool, skill, level, chance.to_bits(), count));
-            if !info.drops.is_air() && info.drop_count > 0 && (blocks.item_of(info.drops) != block || tiered) && once(blocks.item_of(info.drops), 1.0, info.drop_count) {
+            // A placed form reads as its block (a well facing east breaks as the well, so
+            // gives no way to it); a wild plant merged away reads as itself.
+            let breaks_as = listed_as(blocks, block);
+            let mut once = |book: &mut RecipeBook, output: BlockId, chance: f32, count: u8| match broken.get(&(breaks_as, output, tool, skill, level, chance.to_bits())) {
+                Some(&at) => {
+                    let had = &mut book.entries[at].count;
+                    *had = (had.0.min(count), had.1.max(count));
+                    false
+                }
+                None => {
+                    broken.insert((breaks_as, output, tool, skill, level, chance.to_bits()), book.entries.len());
+                    true
+                }
+            };
+            if !info.drops.is_air() && info.drop_count > 0 && (blocks.item_of(info.drops) != breaks_as || tiered) && once(&mut book, blocks.item_of(info.drops), 1.0, info.drop_count) {
                 let method = Method::Break { block, tool, skill, level, chance: 1.0 };
                 let uses = if merged { Vec::new() } else { vec![block] };
                 book.add(blocks, Entry { method, output: blocks.item_of(info.drops), count: (info.drop_count, info.drop_count) }, uses);
             }
             if let Some((item, chance)) = rule.and_then(|rule| rule.instead)
-                && once(blocks.item_of(item), chance, 1)
+                && once(&mut book, blocks.item_of(item), chance, 1)
             {
                 let method = Method::Break { block, tool, skill, level, chance };
                 book.add(blocks, Entry { method, output: blocks.item_of(item), count: (1, 1) }, vec![block]);
@@ -325,6 +360,14 @@ impl RecipeBook {
         let mut placed: Vec<BlockId> = placed.into_iter().collect();
         placed.sort();
         placed.dedup();
+        self.laid.extend(placed.iter().map(|&b| listed_as(blocks, b)));
+        // A crop the world lays ripe (a wild cabbage) is foraged as it stands.
+        for (_, crop) in content.crops.iter().filter(|(_, crop)| placed.contains(&crop.ripe())) {
+            for (item, loot) in &crop.forage {
+                let method = Method::Harvest { crop: crop.ripe(), from: crop.ripe(), forage: true, chance: loot.chance, skill: crop.skill, level: crop.def.level };
+                self.add(blocks, Entry { method, output: *item, count: loot.count }, vec![crop.ripe()]);
+            }
+        }
         for block in placed {
             let info = blocks.info(block);
             let broken_whole = !blocks.def(block).item && info.drop_count > 0 && blocks.item_of(info.drops) == block && blocks.def(block).hardness >= 0.0;
@@ -341,12 +384,16 @@ impl RecipeBook {
     }
 
     /// Every item a player could hold that the book has no way to get and that is not
-    /// tagged [`CREATIVE_ONLY`]: a dead entry, which content refuses to load with. And the
+    /// tagged [`CREATIVE_ONLY`]: a dead entry, which content refuses to load with. Breaking
+    /// the item's own block counts only where the world lays it. And the
     /// items so tagged that the book does have a way to, whose mark is stale.
     pub fn unsourced(&self, blocks: &crate::block::BlockRegistry) -> (Vec<BlockId>, Vec<BlockId>) {
         let (mut dead, mut stale) = (Vec::new(), Vec::new());
         for id in blocks.ids().filter(|&id| blocks.holdable(id)) {
-            match (self.making(id).is_empty(), blocks.def(id).has_tag(CREATIVE_ONLY)) {
+            // Breaking an item's own block to get it is no way in, unless the world lays it.
+            let circular = |e: &&Entry| matches!(e.method, Method::Break { block, .. } if listed_as(blocks, block) == e.output && !self.laid.contains(&e.output));
+            let ways = self.making(id).into_iter().filter(|e| !circular(e)).count();
+            match (ways == 0, blocks.def(id).has_tag(CREATIVE_ONLY)) {
                 (true, false) => dead.push(id),
                 (false, true) => stale.push(id),
                 _ => {}
@@ -478,8 +525,15 @@ mod tests {
         assert!(carrot.iter().any(|m| matches!(m, Method::Harvest { forage: true, from, .. } if *from == id("base:wild_carrot"))), "{carrot:?}");
         assert!(book.using(id("base:wild_carrot")).iter().any(|e| e.output == id("base:carrot")));
         // No way is listed twice: a block's looks and facings break as the block does (a
-        // wild plant merged away, as itself).
-        let breaks_as = |b: BlockId| if content.blocks.merged_away(b) { b } else { content.blocks.item_of(b) };
+        // wild plant merged away, as itself). And none is breaking a block to get that
+        // block back without a tool to take it whole (a well facing east gives no well).
+        let breaks_as = |b: BlockId| listed_as(&content.blocks, b);
+        assert_ne!(breaks_as(id("base:well_east")), id("base:well_east"), "a well's facing reads as the well");
+        for entry in book.entries() {
+            if let Method::Break { block, tool: None, .. } = entry.method {
+                assert_ne!(breaks_as(block), entry.output, "breaking {} gives itself", content.blocks.def(block).name);
+            }
+        }
         for item in content.blocks.ids() {
             let made = book.making(item);
             for (i, entry) in made.iter().enumerate() {
