@@ -886,14 +886,17 @@ impl EffectRegistry {
         tags.into_iter()
     }
 
-    /// Whether a sleep giving `given` (`given_by_sleep`) gives nothing new to a player with
-    /// `active`: its best rest (`best_rest`), or one that hides it, is on them already. A
-    /// nap's Rested does not keep them from a night's better rest; a second nap rests no more.
+    /// Whether a sleep giving `given` (`given_by_sleep`) is held back from a player with
+    /// `active`: its best rest (`best_rest`), or one that hides it, is on them already, or
+    /// something else it gives (Healing Sleep's mend) is still running. A nap's Rested, which
+    /// the better rest hides, does not keep them from a night's better rest once its mend is
+    /// over; a second nap rests no more, and no bed after bed mends again in one night.
     pub fn rested(&self, active: &[(EffectId, f32)], given: &[(EffectId, f32)]) -> bool {
         let Some(best) = self.best_rest(given) else {
             return self.sleeps.iter().any(|(effect, ..)| active.iter().any(|(a, _)| a == effect));
         };
-        active.iter().any(|&(a, _)| a == best || self.hides(a, best))
+        let running = |&(a, _): &(EffectId, f32)| a == best || self.hides(a, best) || (given.iter().any(|&(g, _)| g == a) && !self.hides(best, a));
+        active.iter().any(running)
     }
 
     /// The best rest among `given`: the one none of the others hides (the one a bed says).

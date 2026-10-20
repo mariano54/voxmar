@@ -2802,11 +2802,18 @@ fn a_nap_by_day_is_no_nights_rest_and_an_evening_in_is_by_the_fire_after_dark() 
     client.chat.clear();
     client.propose("base:sleep", ActionTarget::Block { block: bed, face: Face::PosY });
     client.pump_until(|c| told(c, "rested already"));
-    // After dark: an evening in by the fire (the bed slept in is home), and the night's
-    // rest, which the nap's still running Rested does not keep away.
+    // After dark: an evening in by the fire (the bed slept in is home). The night's rest
+    // waits while the nap's mend runs, then comes though the nap's Rested is still on.
     client.ok("/time set midnight");
     client.chat.clear();
     client.pump_until(|c| has(c, "base:evening_in") && told(c, "Evening in:"));
+    client.propose("base:sleep", ActionTarget::Block { block: bed, face: Face::PosY });
+    client.pump_until(|c| told(c, "rested already"));
+    assert!(!has(&client, "base:well_rested"), "no rest while the nap's mend runs");
+    client.ok("/effect clear");
+    client.ok("/effect rested 500");
+    client.pump_until(|c| has(c, "base:rested") && !has(c, "base:healing_sleep"));
+    client.chat.clear();
     client.propose("base:sleep", ActionTarget::Block { block: bed, face: Face::PosY });
     client.pump_until(|c| has(c, "base:well_rested") && told(c, "Well rested"));
     assert!(!told(&client, "would rest you better"), "a night's sleep says no better one");

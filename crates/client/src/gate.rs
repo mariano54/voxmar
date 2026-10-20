@@ -792,6 +792,10 @@ struct Gate {
     daub_stage: u8,
     /// The tap the Blaze step last asked to set its torch down on.
     torch_taps: u32,
+    /// Whether the chat has said "Evening in:" at any point in the run: the server tells an
+    /// effect once a session, and an earlier step (the motifs, at midnight under a roof by
+    /// the Cook step's hearth) can be the one it comes on in.
+    evening_told: bool,
     /// Whether the creatures step could release its butterfly.
     butterfly: bool,
     /// Whether the struck creature's fall was judged.
@@ -1048,6 +1052,7 @@ impl Gate {
             smoulder_seen: false,
             daub_stage: 0,
             torch_taps: 0,
+            evening_told: false,
             butterfly: false,
             fall_judged: false,
             cover_checked: false,
@@ -1696,6 +1701,9 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
 
 fn step(world: &mut World, gate: &mut Gate, now: f32) {
     music_fades(world, gate, now);
+    if !gate.evening_told {
+        gate.evening_told = world.resource::<crate::hud::console::Console>().all().any(|l| l.contains("Evening in:"));
+    }
     let since = now - gate.since;
     let in_phase = now - gate.phase_since;
     let feet = gate.feet;
@@ -6458,16 +6466,16 @@ fn home_walls(world: &mut World, gate: &mut Gate, now: f32) {
                 leave(world, gate);
             }
         }
-        // At midnight, indoors at home by the hearth: an evening in, its chip and its line.
+        // At midnight, indoors at home by the hearth: an evening in, its chip, and its line
+        // (told once a session, so seen at any point in the run).
         _ => {
-            let evening = has(world, "base:evening_in");
-            let told = world.resource::<crate::hud::console::Console>().since(gate.phase_since).any(|l| l.contains("Evening in:"));
+            let (evening, told) = (has(world, "base:evening_in"), gate.evening_told);
             if evening && told {
-                gate.check("home: evening in", Ok("set to midnight, indoors at home by the hearth showed the Evening in chip and the chat named it".into()));
+                gate.check("home: evening in", Ok("set to midnight, indoors at home by the hearth showed the Evening in chip, and the chat has named it".into()));
                 world.resource::<Net>().command("time set noon");
                 leave(world, gate);
             } else if gate.waited_out(WALLS_WAIT) {
-                gate.check("home: evening in", Err(format!("{waited:.1} server s after /time set midnight in the walled room by the hearth: Evening in chip {evening}, line {told}")));
+                gate.check("home: evening in", Err(format!("{waited:.1} server s after /time set midnight in the walled room by the hearth: Evening in chip {evening}, line told this run {told}")));
                 world.resource::<Net>().command("time set noon");
                 leave(world, gate);
             }

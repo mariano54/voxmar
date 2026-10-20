@@ -148,15 +148,18 @@
             replaces: [], modifiers: (heal: 1.1, warmth: 1.0)),
         // An evening in: after dark (`Night`), indoors at home within a few blocks of a
         // fire to sit by (`campfire`: a campfire, the hearth, the stove; a torch is no
-        // fireside). The day's work done, the home is where to be.
-        (name: "evening_in", kind: Buff, title: "Evening in", description: "In by your own fire after dark: you heal a fifth faster here, and are 2° warmer.", announce: true,
-            when: Some(All([Night, AtHome, Indoors, Near("campfire", 4)])),
+        // fireside), and that fire the home's own (`HomeHas`), not a neighbour's through a wall. The day's work done, the home is where to be. A time of day, not a step
+        // to build toward: `ladder: "night"` keeps it out of `/home`'s steps.
+        (name: "evening_in", kind: Buff, title: "Evening in", description: "In by your own fire after dark: you heal a fifth faster here, and are 2° warmer.", announce: true, ladder: "night",
+            when: Some(All([Night, AtHome, Indoors, HomeHas("campfire", 1), Near("campfire", 4)])),
             replaces: [], modifiers: (heal: 1.2, warmth: 2.0)),
         (name: "kitchen_garden", kind: Buff, title: "Kitchen garden", description: "Greens growing by the door: meals heal a tenth more here.", announce: true,
             when: Some(All([AtHome, HomeHas("crop", 4)])),
             replaces: [], modifiers: (meal_heal: 1.1)),
         // Sleeping at a bed (the sleeps rules below): the better the home around the bed, the
-        // better the rest, which lasts a while wherever you go, and keeps you from sleeping again.
+        // better the rest, which lasts a while wherever you go; the better rests are a night's
+        // (the sleeps' `night`). While a rest, or a better one, is on, or a sleep's mend still
+        // runs, a bed gives no more; a nap's Rested does not keep a night's better rest away.
         // A sleep mends too, for a minute (two in a proper bed): four times the healing of
         // being awake, still slower than eating, since food is the heal (design draft 63).
         (name: "healing_sleep", kind: Buff, title: "Healing Sleep", description: "You slept: your wounds close quickly for a little while.",

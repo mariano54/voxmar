@@ -136,7 +136,8 @@ fn a_lit_corner_by_the_bed_rests_well_before_any_roof() {
     let corner = survey(&[("bed", 1), ("seat", 1), ("light", 2)]);
     assert_eq!(rest(&corner), [("base:healing_sleep".to_owned(), 60.0), ("base:rested".to_owned(), 600.0), ("base:well_rested".to_owned(), 900.0)]);
     let noon = Situation { felt: 15.0, warmed: false, outdoors: true, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(&corner), done: &[], held: &[], near: &[], seated: false, night: false };
-    assert_eq!(effects.given_by_sleep(&noon, &bag()).len(), 2, "a lit corner by day is a nap: the mend and Rested, not Well rested");
+    let nap = effects.given_by_sleep(&noon, &bag()).iter().map(|&(id, seconds)| (effects.get(id).name.clone(), seconds)).collect::<Vec<_>>();
+    assert_eq!(nap, [("base:healing_sleep".to_owned(), 60.0), ("base:rested".to_owned(), 600.0)], "a lit corner by day is a nap: the mend and Rested, not Well rested");
     assert_eq!(rooms_in(&[("bed", 1), ("seat", 1), ("light", 2)], &calm, true), ["base:bedside"]);
     assert_eq!(effects.get(effects.id("base:bedside").unwrap()).modifiers.warmth, 2.0);
     // Snug and a lit corner too: the one rest, once.
@@ -315,6 +316,17 @@ fn home_perks_are_countable_by_quests_and_stay_out_of_the_homes_steps() {
             assert_eq!(effects.get(id).ladder, "home", "{} is not a step of the home", effects.get(id).name);
         }
     }
+    // Nor an evening in, a time of day and no step to build: at midnight by the fire `/home`
+    // never names it as next, with nothing it could ask for.
+    let evening = effects.id("base:evening_in").unwrap();
+    let night = Situation { night: true, ..situation };
+    assert!(effects.home_progress(&night).iter().all(|chain| chain.reached != Some(evening) && chain.next.as_ref().is_none_or(|(id, _)| *id != evening)));
+    // Every step `/home` names next says what it needs, by day and by night.
+    for at in [&situation, &night] {
+        for (id, lacks) in effects.home_progress(at).into_iter().filter_map(|chain| chain.next) {
+            assert!(!lacks.is_empty(), "/home names {} next with nothing it needs", effects.get(id).name);
+        }
+    }
 }
 
 #[test]
@@ -350,6 +362,15 @@ fn a_proper_bed_rests_well_and_every_sleep_mends_slower_than_food() {
     let noon = Situation { night: false, ..situation };
     let nap = effects.given_by_sleep(&noon, &bed).iter().map(|&(id, seconds)| (effects.get(id).name.clone(), seconds)).collect::<Vec<_>>();
     assert_eq!(nap, [("base:healing_sleep".to_owned(), 120.0), ("base:rested".to_owned(), 600.0)], "a proper bed by day");
+    // The night's rest after a nap: not while the nap's mend runs, then though its Rested is
+    // still on. And a bed after a bag in one night mends no more.
+    let id = |name: &str| effects.id(&format!("base:{name}")).unwrap();
+    let night = effects.given_by_sleep(&situation, &bed);
+    assert!(effects.rested(&[(id("healing_sleep"), 30.0), (id("rested"), 500.0)], &night), "the nap's mend still runs");
+    assert!(!effects.rested(&[(id("rested"), 400.0)], &night), "the nap's Rested keeps no better rest away");
+    let bagged = effects.given_by_sleep(&situation, &bag());
+    assert!(effects.rested(&bagged, &night), "a bed straight after a bag gives no fresh mend");
+    assert!(effects.rested(&[(id("well_rested"), 400.0)], &night), "rested well already");
     // Every heal buff that can be on at once (the strongest of each chain of replaces, the
     // others hidden by it) and the strongest prayer, together, are held at survival.ron's
     // `heal_most`, which is below what the slowest food heals a second, a bite at a time:
