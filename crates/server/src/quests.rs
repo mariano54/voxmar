@@ -46,7 +46,7 @@ impl Server {
     fn update_quests(&mut self, id: PlayerId) {
         let (finished, states) = self.quest_check(id);
         for name in &finished {
-            self.finish_quest(id, name);
+            self.finish_quest(id, name, &finished);
         }
         self.send_quests(id, states);
     }
@@ -91,8 +91,10 @@ impl Server {
     }
 
     /// Marks a quest done for `agent`. What it pays waits to be claimed (`claim_quest`), and
-    /// the chat line says so; a quest that pays nothing is claimed at once.
-    fn finish_quest(&mut self, agent: PlayerId, name: &str) {
+    /// the chat line says so, and a second names what finishing it opened (none of `batch`,
+    /// the quests finishing with it, which say so themselves); a quest that pays nothing is
+    /// claimed at once.
+    fn finish_quest(&mut self, agent: PlayerId, name: &str, batch: &[String]) {
         let Some(quest) = self.content.quests.get(name).cloned() else { return };
         let Some(player) = self.players.get_mut(&agent) else { return };
         player.quests_done.push(name.to_owned());
@@ -102,13 +104,16 @@ impl Server {
         let title = Words::Own(voxmar_engine::lang::def_key("quest", &quest.name), quest.title.clone());
         let key = if quest.pays() { "quest.ready" } else { "quest.done" };
         player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: Words::key(key).with("quest", title) });
-        // And what it opened, so the next step is named as this one ends.
+        // And what it opened, so the next step is named as this one ends: open now, and
+        // not before it was done (one coming after it or another quest already done).
         let done = |n: &str| player.quests_done.iter().any(|d| d == n);
+        let without = |n: &str| n != name && done(n);
         let opened: Vec<Words> = self
             .content
             .quests
             .iter()
-            .filter(|q| !done(&q.name) && q.after.iter().flat_map(|a| a.split('|')).any(|a| a == name) && self.content.quests.open(q, &done))
+            .filter(|q| !done(&q.name) && !batch.contains(&q.name) && q.after.iter().flat_map(|a| a.split('|')).any(|a| a == name))
+            .filter(|q| self.content.quests.open(q, &done) && !self.content.quests.open(q, &without))
             .map(|q| Words::Own(voxmar_engine::lang::def_key("quest", &q.name), q.title.clone()))
             .collect();
         if !opened.is_empty() {
@@ -214,33 +219,48 @@ mod tests {
         server.players[&1].quests_done.iter().any(|q| q == quest)
     }
 
-    /// Finishing a quest names what it opened, after the line saying it is done; one still
-    /// waiting on another quest is left out.
+    /// Finishing a quest names what it opened, after the line saying it is done; not one
+    /// still waiting on another quest, one open already (after either of two, the other
+    /// done), or one finishing with it, which says so itself.
     #[test]
     fn a_finished_quest_names_what_it_opened() {
         let mut server = fixture();
+        let quest = |name: &str, after: &str| format!(r#"(name: "{name}", age: "nomad", branch: "main", title: "{name}", why: "", tasks: [[Home]], after: [{after}])"#);
+        let source = format!(
+            "(quests: [{}, {}, {}, {}, {}])",
+            quest("a", ""),
+            quest("x", ""),
+            quest("next", r#""a""#),
+            quest("waiting", r#""a", "x""#),
+            quest("either", r#""x|a""#)
+        );
+        let file = voxmar_engine::quest::QuestRegistry::read("t", &source).unwrap();
+        server.content.quests = std::sync::Arc::new(voxmar_engine::quest::QuestRegistry::new(vec![file]).unwrap());
         let (client, connection) = voxmar_protocol::local_pair();
         server.players.get_mut(&1).unwrap().connection = connection;
-        let quests = &server.content.quests;
-        let (first, next) = quests
-            .iter()
-            .filter(|q| q.after.is_empty())
-            .find_map(|first| Some((first.name.clone(), quests.iter().find(|q| q.after == [first.name.clone()])?.name.clone())))
-            .expect("a quest only another opens");
-        let waiting = quests.iter().find(|q| q.after.len() > 1 && q.after.contains(&first)).map(|q| q.name.clone());
-        server.finish_quest(1, &first);
-        let mut lines = Vec::new();
-        while let Ok(Some(message)) = client.try_recv() {
-            if let ServerMessage::Chat { text, .. } = message {
-                lines.push(text);
+        // What the chat names as opened when `name` finishes with `batch`, `done` done before.
+        let mut opened_by = |done: &[&str], name: &str, batch: &[&str]| -> Vec<String> {
+            server.players.get_mut(&1).unwrap().quests_done = done.iter().map(|n| format!("t:{n}")).collect();
+            let batch: Vec<String> = batch.iter().map(|n| format!("t:{n}")).collect();
+            server.finish_quest(1, &format!("t:{name}"), &batch);
+            let mut lines = Vec::new();
+            while let Ok(Some(message)) = client.try_recv() {
+                if let ServerMessage::Chat { text, .. } = message {
+                    lines.push(text);
+                }
             }
-        }
-        let own = |name: &str| Words::Own(voxmar_engine::lang::def_key("quest", name), server.content.quests.get(name).unwrap().title.clone());
-        let Some(Words::Key(key, args)) = lines.get(1) else { panic!("{lines:?}") };
-        let Some((_, Words::List(opened))) = args.iter().find(|(name, _)| name == "list") else { panic!("{args:?}") };
-        assert_eq!(key, "quest.opens");
-        assert!(opened.contains(&own(&next)), "{opened:?}");
-        assert!(waiting.is_none_or(|w| !opened.contains(&own(&w))), "{opened:?}");
+            match lines.get(1) {
+                Some(Words::Key(key, args)) if key == "quest.opens" => match args.iter().find(|(arg, _)| arg == "list") {
+                    Some((_, Words::List(opened))) => opened.iter().map(|w| if let Words::Own(_, title) = w { title.clone() } else { panic!("{w:?}") }).collect(),
+                    _ => panic!("{args:?}"),
+                },
+                None => Vec::new(),
+                _ => panic!("{lines:?}"),
+            }
+        };
+        assert_eq!(opened_by(&[], "a", &["a"]), ["next", "either"], "not one waiting on x");
+        assert_eq!(opened_by(&["x"], "a", &["a"]), ["next", "waiting"], "either was open with x done");
+        assert_eq!(opened_by(&[], "a", &["a", "next"]), ["either"], "next says it is done itself");
     }
 
     #[test]

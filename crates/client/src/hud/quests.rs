@@ -1840,8 +1840,14 @@ fn track(
                 if done {
                     let key = if claimable(&player, name) { "quest.tracker.ready" } else { "quest.tracker.done" };
                     card.spawn((shadowed(font, locale.get(key).to_owned(), BODY, GOLD), TrackerLine));
-                    // What finishing it opened, before the tracker moves on to it.
-                    let opened: Vec<String> = leads_to(content, quest).into_iter().filter(|q| standing(content, &player, q) == Standing::Open).map(|q| title(&locale, q)).collect();
+                    // What finishing it opened, before the tracker moves on to it: open now, and
+                    // not before it was done.
+                    let without = |n: &str| n != name.as_str() && self::state(&player, n).is_some_and(|s| s.done);
+                    let opened: Vec<String> = leads_to(content, quest)
+                        .into_iter()
+                        .filter(|q| standing(content, &player, q) == Standing::Open && !content.quests.open(q, &without))
+                        .map(|q| title(&locale, q))
+                        .collect();
                     if !opened.is_empty() {
                         let line = locale.format("quest.tracker.opens", &[("list", &opened.join(locale.get("language.comma")))]);
                         card.spawn(shadowed(font, line, BODY, TEXT));
