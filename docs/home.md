@@ -116,6 +116,7 @@ announced in chat with a **Next:** line, and the better one hides the other:
 | Larder | + roof, 4 storage, a stove or cauldron, a table | meals also heal x1.2 (`meal_heal`) and last x1.5 |
 | Bedside | a bed, a seat, 2 lights (no roof needed) | 2° warmer, and a night's sleep there is Well rested |
 | Herb nook | 2 hanging herbs or hung drying racks (`drying`), 1 storage | farming and alchemy count 1 level higher, a meal's good lasts x1.1 |
+| Bright room | a roof, 2 windows (`window`: hide window, glass) | heal x1.05, learn x1.05 |
 
 Bedside is a Nomad's first comfort: a stool (Construction 1) and two candles (Crafting 3)
 beside the sleeping bag. Before any roof or hearth it is the warmer night and the better rest
@@ -621,7 +622,11 @@ hearth behind it lights the ground outside, and is `lit_through` (a block field,
 window can say it): its bright texels glow by the block light reaching its face, which came
 through it, as a lantern's glow by its own light (client `render/mod.rs` `layer_table`, the
 glow byte's `THROUGH` bit; `voxel.wgsl`). It shows at any hour, as a lantern's glow does, and
-stands out after dark. A dark room's window stays dark; a wall keeps the light in
+stands out after dark. Two windows in a home's walls under its roof make it a **Bright
+room** (Rooms above; home audit 2, item 10: windows used to count for nothing), whatever pane
+a package tags `window` (`two_windows_at_home_make_a_bright_room`, the server's
+`windows_at_home_make_a_bright_room`, the gate's walls step: "home: bright room"). A dark
+room's window stays dark; a wall keeps the light in
 (`a_window_lets_a_lit_rooms_light_out`, engine tests/windows.rs). The gate's Door step then
 sets a hide window in a candle-lit stone nook at midnight and judges the shot: the pane warm
 and bright against the night ("window: glows", shot `window-night`).
