@@ -1374,7 +1374,10 @@ fn well(noise: &mut Noise) -> Vec<f32> {
     out
 }
 
-/// Bees about their hive: a few dozen wings, each a buzz near 230 Hz (a wingbeat and its
+/// How many samples the hum's slow changes hold for (about 1.3 ms).
+const CONTROL: usize = 64;
+
+/// Bees about their hive: a score of wings, each a buzz near 230 Hz (a wingbeat and its
 /// overtones) wandering in pitch as the bee turns, and in loudness as it comes and goes, so
 /// the drone breathes; now and then one passes close, louder and bending down as it goes
 /// by. Kept under two kilohertz, as wings are heard through the air.
@@ -1386,17 +1389,26 @@ fn hum(noise: &mut Noise, len: usize) -> Vec<f32> {
         let (turn, near) = (Drift::new(noise, turning), Drift::new(noise, nearing));
         let mut phase = TAU * noise.unit();
         let (from, count) = (seconds(start.max(0.0)), seconds(length));
+        let (mut step, mut gain) = (0.0, 0.0);
         for j in 0..count.min(len.saturating_sub(from)) {
-            let (t, k) = ((from + j) as f32 / SR, j as f32 / count as f32);
-            // A bee going by bends down past the listener, its loudness swelling and gone.
-            let (bend, swell) = if passing { (1.04 - 0.08 * k, (PI * k).sin().powi(2)) } else { (1.0, 0.3 + 0.7 * near.unit(t)) };
-            phase += TAU * pitch * bend * (0.97 + 0.06 * turn.unit(t)) / SR;
-            let wing = phase.sin() + 0.5 * (2.0 * phase).sin() + 0.25 * (3.0 * phase).sin() + 0.12 * (4.0 * phase).sin();
-            out[from + j] += level * swell * wing;
+            // The turn and the coming and going are slow: worked out every few
+            // milliseconds, not every sample.
+            if j % CONTROL == 0 {
+                let (t, k) = ((from + j) as f32 / SR, j as f32 / count as f32);
+                // A bee going by bends down past the listener, its loudness swelling and gone.
+                let (bend, swell) = if passing { (1.04 - 0.08 * k, (PI * k).sin().powi(2)) } else { (1.0, 0.3 + 0.7 * near.unit(t)) };
+                (step, gain) = (TAU * pitch * bend * (0.97 + 0.06 * turn.unit(t)) / SR, level * swell);
+            }
+            phase = (phase + step) % TAU;
+            // The wingbeat and three overtones from one sine and cosine.
+            let (sin, cos) = phase.sin_cos();
+            let (sin2, cos2) = (2.0 * sin * cos, 1.0 - 2.0 * sin * sin);
+            let wing = sin + 0.5 * sin2 + 0.25 * sin * (3.0 - 4.0 * sin * sin) + 0.12 * 2.0 * sin2 * cos2;
+            out[from + j] += gain * wing;
         }
     };
-    for _ in 0..28 {
-        let (pitch, level) = (between(noise, 200.0, 260.0), between(noise, 0.02, 0.06));
+    for _ in 0..20 {
+        let (pitch, level) = (between(noise, 200.0, 260.0), between(noise, 0.025, 0.07));
         bee(&mut out, noise, 0.0, total, pitch, level, false);
     }
     let mut t = between(noise, 0.5, 3.0);

@@ -940,10 +940,6 @@ fn a_settlement_talks_by_day_comes_home_at_dusk_and_sleeps_at_night() {
     }
 }
 
-/// Caves by their rock and their depth: wet rock (under a moist climate) has its dripping
-/// air and drips, oftener deep and shut in, where a second tier joins the first; dry rock
-/// (under a desert) has still air and grit ticking down instead, nothing dripping; water
-/// seeping into a pool is heard in either.
 /// A timber home creaks as it settles at night, indoors only; after the rain the eaves drip
 /// under a roof until the ground dries, never while it still rains.
 #[test]
@@ -966,7 +962,42 @@ fn a_home_settles_at_night_and_its_eaves_drip_after_rain() {
     assert_eq!(played("eaves_drip", &[("wetness", 0.9)]), 0, "out in the open");
 }
 
-/// Bees drone by their hive on a warm day, and keep in at night, in the cold and the rain.
+/// Every recorded bed's files are there; one a mod mistyped is not, and fails the launch.
+#[test]
+fn recorded_beds_are_there() {
+    let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+    assert_eq!(base().check_recordings(&assets), Ok(()));
+    let source = r#"(beds: [(name: "hum", recording: ["h_1.ogg", "h_2.ogg", "h_3.ogg"], volume: 0.2)])"#;
+    let mistyped = Ambience::load(&[ContentFile { package: "mod".into(), name: FILE.into(), source: source.into() }]).unwrap();
+    assert!(mistyped.check_recordings(&assets).is_err());
+}
+
+/// Bees' blocks, a skep with its swarm or full of honey and a wild nest, are the hive the
+/// drone is heard by; an empty skep is not. Boards of every wood are a home's timber.
+#[test]
+fn hives_and_boards_are_heard_by_their_groups() {
+    let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+    let content = voxmar_server::load_content(&assets).unwrap();
+    let ambience = Ambience::load(&content.files).unwrap();
+    let groups = ambience.block_groups(&content.blocks);
+    let group = |name: &str| groups[content.blocks.id(name).unwrap_or_else(|| panic!("{name}")).0 as usize].map(|g| ambience.groups[g as usize].name.as_str());
+    for block in ["base:bee_skep", "base:honey_skep", "base:bee_nest"] {
+        assert_eq!(group(block), Some("hive"), "{block}");
+    }
+    assert_ne!(group("base:skep"), Some("hive"), "an empty skep");
+    let planks: Vec<_> = content.blocks.ids().filter(|&id| content.blocks.def(id).has_tag("planks")).collect();
+    assert!(planks.len() > 3);
+    for id in planks {
+        assert_eq!(groups[id.0 as usize].map(|g| ambience.groups[g as usize].name.as_str()), Some("timber"), "{}", content.blocks.def(id).name);
+    }
+}
+
+/// Caves by their rock and their depth: wet rock (under a moist climate) has its dripping
+/// air and drips, oftener deep and shut in, where a second tier joins the first; dry rock
+/// (under a desert) has still air and grit ticking down instead, nothing dripping; water
+/// seeping into a pool is heard in either.
+/// Bees drone by their hive on a warm day, and keep in at night, in the cold and while it
+/// rains.
 #[test]
 fn bees_hum_by_their_hive_on_a_warm_day() {
     let ambience = base();
@@ -975,7 +1006,7 @@ fn bees_hum_by_their_hive_on_a_warm_day() {
     let by_the_hive = [("grass", 0.6), ("hive", 1.0), ("temperature", 18.0)];
     assert!(level(&by_the_hive) > 0.8 * ambience.beds[bees].volume, "by a skep on a warm day");
     assert!(level(&[("grass", 0.6), ("temperature", 18.0)]) < 1e-3, "no hive near");
-    for (weather, value) in [("sun", -0.5), ("temperature", 3.0), ("rain", 1.0)] {
+    for (weather, value) in [("sun", -0.5), ("temperature", 3.0), ("raining", 1.0)] {
         let set: Vec<_> = by_the_hive.iter().copied().filter(|(axis, _)| *axis != weather).chain([(weather, value)]).collect();
         assert!(level(&set) < 0.2 * ambience.beds[bees].volume, "{weather} {value}: the bees keep in");
     }
