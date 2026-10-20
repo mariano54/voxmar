@@ -72,6 +72,9 @@ pub struct Kinds {
     pub group: Vec<Option<u8>>,
     /// A structure's core whose group counts it only while its fire burns.
     pub lit_only: Vec<bool>,
+    /// Each block's wall group, if any (a home's walls by their shelter), counted besides
+    /// its `group`, and never as the floor under a cell.
+    pub wall_group: Vec<Option<u8>>,
     pub groups: usize,
     /// Blocks out from the eye a wall may be and still count, and above it a roof may be for
     /// rain to be heard on it.
@@ -134,11 +137,7 @@ pub fn scan(eye: IVec3, block: impl Fn(IVec3) -> Option<BlockId>, burning: impl 
     // Weighted reservoir per group: the samples with the largest keys u^(1 / weight).
     let mut keys: Vec<Vec<f32>> = vec![Vec::new(); kinds.groups];
     let mut random = seed;
-    let mut meet = |found: &mut Enclosure, p: IVec3, b: BlockId, d: i32| {
-        let Some(group) = kinds.group[b.0 as usize] else { return };
-        if kinds.lit_only[b.0 as usize] && !burning(p) {
-            return;
-        }
+    let mut count = |found: &mut Enclosure, p: IVec3, group: u8, d: i32| {
         let (group, w) = (group as usize, weight(d));
         found.groups[group] += w;
         random = mix(random);
@@ -152,6 +151,13 @@ pub fn scan(eye: IVec3, block: impl Fn(IVec3) -> Option<BlockId>, burning: impl 
         {
             samples[i] = p;
             keys[i] = key;
+        }
+    };
+    let mut meet = |found: &mut Enclosure, p: IVec3, b: BlockId, d: i32, floor: bool| {
+        let wall = kinds.wall_group[b.0 as usize].filter(|_| !floor);
+        let own = kinds.group[b.0 as usize].filter(|_| !kinds.lit_only[b.0 as usize] || burning(p));
+        for group in [own, wall].into_iter().flatten() {
+            count(found, p, group, d);
         }
     };
 
@@ -172,7 +178,7 @@ pub fn scan(eye: IVec3, block: impl Fn(IVec3) -> Option<BlockId>, burning: impl 
             }
         }
         if let Some(b) = block(p).filter(|b| !b.is_air()) {
-            meet(&mut found, p, b, d);
+            meet(&mut found, p, b, d, false);
         }
         for step in [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z, IVec3::Y, IVec3::NEG_Y] {
             let n = p + step;
@@ -183,7 +189,7 @@ pub fn scan(eye: IVec3, block: impl Fn(IVec3) -> Option<BlockId>, burning: impl 
             let b = block(n);
             if !is_open(b) {
                 if let Some(b) = b {
-                    meet(&mut found, n, b, d + 1);
+                    meet(&mut found, n, b, d + 1, step == IVec3::NEG_Y);
                 }
                 continue;
             }
@@ -247,6 +253,7 @@ mod tests {
             // Groups: 0 rock, 1 leaves, 2 water, 3 grass.
             group: vec![None, Some(0), Some(1), Some(2), Some(3)],
             lit_only: vec![false; 5],
+            wall_group: vec![None; 5],
             groups: 4,
             walls: 6,
             roof: 8,
