@@ -37,6 +37,9 @@ pub(crate) struct SurvivalRules {
     pub home_reach: i32,
     pub home_up: i32,
     pub home_down: i32,
+    /// Tags of what stands in a room rather than walls it in (a chest, a barrel, a table, a
+    /// station): the survey of a home's walls looks past such a block to the wall behind it, so furnishing a room never makes it draughty.
+    pub home_furniture: Vec<String>,
     /// The most the home's meal effects together (effects.ron's `meal_heal`, `meal_time`,
     /// which multiply) make of a meal's heal and of how long its good lasts.
     pub meal_most: f32,
@@ -70,6 +73,7 @@ struct SurvivalFile {
     home_reach: Option<i32>,
     home_up: Option<i32>,
     home_down: Option<i32>,
+    home_furniture: Option<Vec<String>>,
     meal_most: Option<f32>,
     sleep_threat_reach: Option<f32>,
     sleep_after_hurt: Option<f32>,
@@ -89,7 +93,7 @@ impl SurvivalRules {
             macro_rules! later_wins {
                 ($($field:ident),*) => { $(if next.$field.is_some() { merged.$field = next.$field; set.push(stringify!($field)); })* };
             }
-            later_wins!(max_health, starter_kit, pack_end, kits_per_address, kit_window, safe_fall, burn, burn_every, void_below, heat_emission, heat, heat_reach, water_chill, roof_scan, home_reach, home_up, home_down, meal_most, sleep_threat_reach, sleep_after_hurt, heal_most);
+            later_wins!(max_health, starter_kit, pack_end, kits_per_address, kit_window, safe_fall, burn, burn_every, void_below, heat_emission, heat, heat_reach, water_chill, roof_scan, home_reach, home_up, home_down, home_furniture, meal_most, sleep_threat_reach, sleep_after_hurt, heal_most);
             laid.set(&file.package, FILE, "survival rules", set, notes);
         }
         macro_rules! set {
@@ -129,6 +133,7 @@ impl SurvivalRules {
             home_reach: set!(home_reach),
             home_up: set!(home_up),
             home_down: set!(home_down),
+            home_furniture: set!(home_furniture),
             meal_most: set!(meal_most),
             sleep_threat_reach: set!(sleep_threat_reach),
             sleep_after_hurt: set!(sleep_after_hurt),
@@ -147,6 +152,7 @@ impl SurvivalRules {
             ((1..=256).contains(&rules.roof_scan), "roof_scan must be 1 to 256 blocks"),
             ((1..=16).contains(&rules.home_reach), "home_reach must be 1 to 16 blocks"),
             ((0..=16).contains(&rules.home_up) && (0..=16).contains(&rules.home_down), "home_up and home_down must be 0 to 16 blocks"),
+            (!rules.home_furniture.iter().any(|tag| tag.starts_with("shelter:")), "home_furniture names a shelter tag: a wall's, not furniture's"),
             (rules.meal_most.is_finite() && (1.0..=10.0).contains(&rules.meal_most), "meal_most must be 1 to 10"),
             (rules.sleep_threat_reach.is_finite() && (0.0..=64.0).contains(&rules.sleep_threat_reach), "sleep_threat_reach must be 0 to 64 blocks"),
             (rules.sleep_after_hurt.is_finite() && (0.0..=600.0).contains(&rules.sleep_after_hurt), "sleep_after_hurt must be 0 to 600 seconds"),
@@ -157,6 +163,35 @@ impl SurvivalRules {
         match checks.into_iter().find(|(ok, _)| !ok) {
             Some((_, problem)) => Err(format!("{FILE}: {problem}")),
             None => Ok(rules),
+        }
+    }
+
+    /// Whether a block of `tags` is furniture to a home's walls: one of `home_furniture`'s
+    /// tags and no shelter tag. A shelter tag always wins: cloth hung for a wall, a hay bale
+    /// or a stone column walls a room whatever else it is.
+    pub(crate) fn furniture(&self, tags: &[String]) -> bool {
+        tags.iter().any(|tag| self.home_furniture.contains(tag)) && !tags.iter().any(|tag| tag.starts_with("shelter:"))
+    }
+
+    /// Every block that walls a room says how well it shelters it (`HomeWalls`), once: each
+    /// solid block tagged `building` or `roof`, full or shaped (roofs, slabs, stairs), but
+    /// furniture (`home_furniture`), which the survey looks past. No block says it twice.
+    pub(crate) fn check_shelters(&self, blocks: &BlockRegistry) -> Result<(), String> {
+        use voxmar_engine::effect::Shelter;
+        let unjudged: Vec<String> = blocks
+            .ids()
+            .map(|id| blocks.def(id))
+            .filter(|def| {
+                let shelters = Shelter::ALL.iter().filter(|s| def.has_tag(s.tag())).count();
+                let furniture = self.furniture(&def.tags);
+                let walls = def.solid && (def.has_tag("building") || def.has_tag("roof")) && !furniture;
+                shelters > 1 || (shelters == 0 && walls)
+            })
+            .map(|def| def.name.clone())
+            .collect();
+        match unjudged.is_empty() {
+            true => Ok(()),
+            false => Err(format!("blocks: each solid `building` or `roof` block that is not furniture ({FILE}'s home_furniture) carries exactly one of `shelter:draughty`, `shelter:sound` or `shelter:fine`, and no block more than one; these do not: {}", unjudged.join(", "))),
         }
     }
 
