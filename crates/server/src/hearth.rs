@@ -75,7 +75,7 @@ impl Server {
         };
         self.tally(agent, "built", &structure.name, 1);
         if structure.smoulder.is_some() {
-            return self.smoulder(agent, core, structure);
+            return self.light_smoulder(agent, core, structure);
         }
         // What catches by it as it is lit is the lighter's fire, whoever's home it is: lit by a
         // stranger, it never catches their thatch in its owner's home.
