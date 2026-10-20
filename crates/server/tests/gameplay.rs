@@ -6103,12 +6103,25 @@ fn chests_keep_what_they_hold_across_restarts_and_an_unreadable_machines_file_is
         assert!(server_seconds(&client, started) < 20, "the crusher never got going: {said}");
         client.after_ticks(4);
     };
+    // Its boiler taken away, it keeps the work but cannot go on with it, so however long
+    // the next join takes (a busy machine generates land slowly, the server ticking on),
+    // nothing is done before it is asked.
+    let boiler_at = format!("{} {} {}", crusher.x + 1, crusher.y, crusher.z);
+    client.ok(&format!("/setblock {boiler_at} air"));
+    machine_says(&mut client, &crusher_at, "no power", 10);
     drop(client);
     let save = std::fs::read_to_string(dir.join("machines.ron")).unwrap();
     assert!(save.contains("base:iron_dust"), "the save keeps the work: {save}");
     let mut client = Client::join_with(config());
     client.pump_until(|c| c.world.block(crusher) == c.content.blocks.id("base:steam_crusher"));
-    // Until its first step it says it is idle; then it goes on from where it was.
+    // Until its first step it says it is idle; then, given its boiler back, it goes on from
+    // where it was.
+    machine_says(&mut client, &crusher_at, "no power", 20);
+    client.ok(&format!("/setblock {boiler_at} boiler"));
+    client.ok("/give coal_ore 1");
+    client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == coal) && c.world.block(crusher + IVec3::X) == c.content.blocks.id("base:boiler"));
+    use_machine(&mut client, crusher + IVec3::X);
+    client.pump_until(|c| c.inventory.slots.iter().all(Option::is_none));
     let said = machine_says(&mut client, &crusher_at, "making", 20);
     assert!(progress(&said).is_some_and(|p| p >= done), "the crusher began again: {said}, was {done}% done");
     // Finished, the one ore made two dust: not two lots of it, nor none. The limit is the
