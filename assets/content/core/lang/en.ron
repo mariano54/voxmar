@@ -1435,6 +1435,7 @@
     "home.step_last": "{step} reached: nothing more to add.",
     "home.step_first": "Next, {next}: it needs {needs}.",
     "home.lack.roof": "a roof overhead",
+    "home.lack.sky": "you out under the open sky",
     "home.lack.away": "you to be at home",
     "home.lack.tag": "{tag} {have}/{need}",
     "home.lack.either": "one of {options}",

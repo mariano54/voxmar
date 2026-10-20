@@ -116,7 +116,8 @@ announced in chat with a **Next:** line, and the better one hides the other:
 | Larder | + roof, 4 storage, a stove or cauldron, a table | meals also heal x1.2 (`meal_heal`) and last x1.5 |
 | Bedside | a bed, a seat, 2 lights (no roof needed) | 2° warmer, and a night's sleep there is Well rested |
 | Herb nook | 2 hanging herbs or hung drying racks (`drying`), 1 storage | farming and alchemy count 1 level higher, a meal's good lasts x1.1 |
-| Dooryard | out under the sky, an awning and 3 yard pieces in all (`yard`: a bench, bunting, a hay bale, the awning) | heal x1.05 |
+| Bright room | a roof, 2 windows (`window`: hide window, glass) | heal x1.05, learn x1.05 |
+| Dooryard | out under the sky, an awning and 2 yard pieces in the open (`yard`: a bench, bunting, a hay bale) | heal x1.05 |
 
 Bedside is a Nomad's first comfort: a stool (Construction 1) and two candles (Crafting 3)
 beside the sleeping bag. Before any roof or hearth it is the warmer night and the better rest
@@ -128,8 +129,11 @@ is felt, sowing the kitchen garden at the door (a crop a level early) and harves
 its alchemy level at the bench.
 The dooryard is the Farm age's too, the home's outside (home audit 2, item 10: outdoor decor
 used to count for nothing): an awning at the door and two more things set out under the sky
-about it. Only blocks still standing count, so a bale taken away or broken takes its part
-with it, and it holds only out in the yard, never under the roof
+about it. A yard piece counts only where it stands under the open sky (effects.ron
+`outdoors`, a tag list load-checked against what `HomeHas` asks), so a bench or bales kept
+indoors are no yard; only blocks still standing count, so a bale taken away or broken takes
+its part with it; and it holds only out in the yard, never under the roof, which `/home`
+names ("you out under the open sky", `Lack::Sky`)
 (`an_awning_and_yard_pieces_out_of_doors_make_a_dooryard`, the server's
 `an_awning_a_bench_and_a_bale_make_a_dooryard`, the gate's walls step: "home: dooryard").
 
@@ -626,7 +630,11 @@ hearth behind it lights the ground outside, and is `lit_through` (a block field,
 window can say it): its bright texels glow by the block light reaching its face, which came
 through it, as a lantern's glow by its own light (client `render/mod.rs` `layer_table`, the
 glow byte's `THROUGH` bit; `voxel.wgsl`). It shows at any hour, as a lantern's glow does, and
-stands out after dark. A dark room's window stays dark; a wall keeps the light in
+stands out after dark. Two windows in a home's walls under its roof make it a **Bright
+room** (Rooms above; home audit 2, item 10: windows used to count for nothing), whatever pane
+a package tags `window` (`two_windows_at_home_make_a_bright_room`, the server's
+`windows_at_home_make_a_bright_room`, the gate's walls step: "home: bright room"). A dark
+room's window stays dark; a wall keeps the light in
 (`a_window_lets_a_lit_rooms_light_out`, engine tests/windows.rs). The gate's Door step then
 sets a hide window in a candle-lit stone nook at midnight and judges the shot: the pane warm
 and bright against the night ("window: glows", shot `window-night`).

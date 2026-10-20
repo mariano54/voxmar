@@ -1397,6 +1397,7 @@ fn home_needs(lacks: &[voxmar_engine::effect::Lack]) -> Words {
             .iter()
             .map(|lack| match lack {
                 Lack::Roof => Words::key("home.lack.roof"),
+                Lack::Sky => Words::key("home.lack.sky"),
                 Lack::Away => Words::key("home.lack.away"),
                 Lack::Tag { tag, have, need } => Words::key("home.lack.tag").with("tag", Words::Own(format!("home.tag.{tag}"), tag.replace('_', " "))).with("have", Words::text(have)).with("need", Words::text(need)),
                 Lack::Walls { shelter, have, need } => Words::key("home.lack.walls").with("shelter", Words::key(&format!("home.shelter.{}", shelter.name()))).with("have", Words::text(have)).with("need", Words::text(need)),
