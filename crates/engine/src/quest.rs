@@ -313,8 +313,14 @@ impl QuestDef {
 
 impl QuestRegistry {
     pub fn read(namespace: &str, source: &str) -> Result<QuestFile, RegistryError> {
+        Self::read_named(namespace, "quests.ron", source)
+    }
+
+    /// One of a package's quest files, `quests.ron` or a `quests_<topic>.ron`, named in its
+    /// errors.
+    pub fn read_named(namespace: &str, file: &str, source: &str) -> Result<QuestFile, RegistryError> {
         let options = ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME);
-        let mut file: QuestFile = options.from_str(source).map_err(|e| RegistryError(format!("{namespace}/quests.ron: {e}")))?;
+        let mut file: QuestFile = options.from_str(source).map_err(|e| RegistryError(format!("{namespace}/{file}: {e}")))?;
         let qualify = |name: &mut String| {
             if !name.contains(':') {
                 *name = format!("{namespace}:{name}");
@@ -351,6 +357,12 @@ impl QuestRegistry {
             return Err(RegistryError(format!("quests.ron: the tracker needs a pin or more, a stay of 0 s or more and a backing from 0 to 1, not {tracker:?}")));
         }
         let quests: Vec<QuestDef> = files.into_iter().flat_map(|f| f.quests).collect();
+        // One book or several files, a quest is written once: a second of a name, in the
+        // same file or another, is refused rather than shown twice.
+        let mut names = std::collections::HashSet::new();
+        if let Some(quest) = quests.iter().find(|q| !names.insert(q.name.as_str())) {
+            return Err(RegistryError(format!("quest {} is written twice (in one quest file or two)", quest.name)));
+        }
         for quest in &quests {
             if quest.tasks.is_empty() {
                 return Err(RegistryError(format!("quest {} has no task", quest.name)));
@@ -846,6 +858,28 @@ mod tests {
         assert_eq!(ok.start_pins(), ["t:a".to_owned()]);
         assert!(load(&format!("(quests: [{quest}], tracker: (start_pins: [\"missing\"]))")).is_err());
         assert!(load(&format!("(quests: [{quest}], tracker: (pins: 1, start_pins: [\"a\", \"a\"]))")).is_err());
+    }
+
+    /// A book may be split over `quests.ron` and `quests_<topic>.ron` files: a quest in a
+    /// later file may follow one in an earlier, the book reads in file order, and a quest
+    /// written in two files is refused rather than shown twice.
+    #[test]
+    fn quests_split_over_files_join_in_order_and_are_written_once() {
+        let first = r#"(quests: [(name: "a", age: "nomad", branch: "main", title: "A", why: "", tasks: [[Home]])])"#;
+        let topic = r#"(quests: [(name: "b", age: "nomad", branch: "main", title: "B", why: "", tasks: [[Home]], after: ["a"])])"#;
+        let read = |file: &str, source: &str| QuestRegistry::read_named("t", file, source).unwrap();
+        let book = QuestRegistry::new(vec![read("quests.ron", first), read("quests_nomad.ron", topic)]).unwrap();
+        assert_eq!(book.iter().map(|q| q.name.as_str()).collect::<Vec<_>>(), ["t:a", "t:b"]);
+        assert_eq!(book.get("t:b").unwrap().after, ["t:a"]);
+
+        let again = r#"(quests: [(name: "a", age: "farm", branch: "main", title: "A Again", why: "", tasks: [[Home]])])"#;
+        let twice = QuestRegistry::new(vec![read("quests.ron", first), read("quests_farm.ron", again)]).err().expect("a quest written in two files is refused");
+        assert!(twice.0.contains("t:a is written twice"), "{}", twice.0);
+        let one_file = format!("(quests: [{0}, {0}])", r#"(name: "a", age: "nomad", branch: "main", title: "A", why: "", tasks: [[Home]])"#);
+        assert!(QuestRegistry::new(vec![read("quests.ron", &one_file)]).is_err(), "and so is one written twice in one file");
+
+        let broken = QuestRegistry::read_named("t", "quests_farm.ron", "(quests: [").err().expect("a broken file is refused");
+        assert!(broken.0.starts_with("t/quests_farm.ron:"), "the error names its file: {}", broken.0);
     }
 
     const QUESTS: &str = r#"(quests: [

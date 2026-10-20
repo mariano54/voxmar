@@ -320,8 +320,10 @@ impl Content {
                         fishing.push(file);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
-                    "quests.ron" => {
-                        quests.push(crate::quest::QuestRegistry::read(package, &source)?);
+                    // `quests.ron`, and `quests_<topic>.ron` for a book of its own (the Nomad's,
+                    // the Farm's), read in name order like every file of a package.
+                    topic if topic == "quests.ron" || topic.starts_with("quests_") && topic.ends_with(".ron") => {
+                        quests.push(crate::quest::QuestRegistry::read_named(package, &name, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
                     crate::quest_path::QuestPaths::FILE => {
