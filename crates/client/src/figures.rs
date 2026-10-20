@@ -299,6 +299,9 @@ impl Plugin for FiguresPlugin {
                 for (_, figure) in figures.shown.drain() {
                     forget(&figure, &mut skins, &mut images);
                 }
+                // The warm figure went with the world: the next world builds the body, and
+                // with it a warm figure of its own.
+                figures.body = None;
             });
     }
 }
