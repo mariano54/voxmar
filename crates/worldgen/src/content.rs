@@ -1971,12 +1971,11 @@ impl WorldContent {
     /// name or by `tag:`: what the world may lay, for the recipe book's "found in the world"
     /// (`RecipeBook::found`). Names count wherever they stand, so this may hold a block the
     /// world never lays after all, never leave one out; items that are never placed
-    /// (seeds a wild crop is named by) are left out.
-    pub fn placed<'a>(files: impl Iterator<Item = &'a ContentFile>, registry: &BlockRegistry) -> Result<Vec<voxmar_engine::block::BlockId>, ContentError> {
-        let files: Vec<&ContentFile> = files.collect();
+    /// (seeds a wild crop is named by) are left out. `self` is what `files` load as.
+    pub fn placed<'a>(&self, files: impl Iterator<Item = &'a ContentFile>, registry: &BlockRegistry) -> Vec<voxmar_engine::block::BlockId> {
         // A settlement style's names with `{wood}` and `{trim}` in them stand for each of
         // its woods; any style's, as the names are read without their style.
-        let mut woods: Vec<String> = Self::from_files(files.iter().copied(), registry)?.settlements.styles.iter().flat_map(|style| style.woods.iter().map(|(wood, _)| wood.clone())).collect();
+        let mut woods: Vec<String> = self.settlements.styles.iter().flat_map(|style| style.woods.iter().map(|(wood, _)| wood.clone())).collect();
         woods.sort();
         woods.dedup();
         let lays = |name: &str| name != "ambient.ron" && BASE_FILES.iter().any(|(base, _)| *base == name);
@@ -2015,7 +2014,7 @@ impl WorldContent {
         found.retain(|&id| !registry.def(id).item);
         found.sort();
         found.dedup();
-        Ok(found)
+        found
     }
 
     /// The base package's definitions alone.
