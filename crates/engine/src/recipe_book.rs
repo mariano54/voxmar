@@ -317,9 +317,9 @@ mod tests {
         // A crop's harvest, its seed going into it.
         let wheat = ways("base:wheat");
         assert!(wheat.iter().any(|m| matches!(m, Method::Harvest { forage: false, .. })), "{wheat:?}");
-        // Breaking: stone gives cobblestone always, with a tool; gravel gives flint an eighth
-        // of the time, instead of itself.
-        assert!(ways("base:cobblestone").iter().any(|m| matches!(m, Method::Break { block, chance, .. } if *block == id("base:stone") && *chance == 1.0)));
+        // Breaking: stone gives its loose stones always, with a tool; gravel gives flint an
+        // eighth of the time, instead of itself.
+        assert!(ways("base:loose_stone").iter().any(|m| matches!(m, Method::Break { block, chance, .. } if *block == id("base:stone") && *chance == 1.0)));
         assert!(ways("base:flint").iter().any(|m| matches!(m, Method::Break { block, chance, .. } if *block == id("base:gravel") && *chance == 0.125)));
         assert!(book.using(id("base:gravel")).iter().any(|e| e.output == id("base:flint")));
         // Every catch is caught on a line, at its level.
