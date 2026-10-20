@@ -490,7 +490,7 @@
         (
             name: "a_rug_underfoot", age: "farm", branch: "home", title: "A Rug Underfoot",
             why: "A homely home (A Homely Home) wants a rug, and wool from your flock (Wool Gathering) makes one. A cloth is a wool and a flower of the colour you want, side by side in the grid (Crafting 2): white from a daisy, yellow from a dandelion, red from a poppy. Daisies grow on plains, dandelions in flower meadows, poppies on the steppe. Make two. Two cloths side by side make three rugs (Crafting 3). Lay them on the floor; curtains, cushions and banners are made from cloth too.",
-            tasks: [[Craft("tag:cloth", 2), Craft("tag:rug", 1)]],
+            tasks: [[Craft("tag:cloth", 2), Craft("tag:rug", 1)], [Cook("tag:cloth", 2), Craft("tag:rug", 1)]],
             after: ["a_homely_home", "wool_gathering"],
             rewards: [Xp("crafting", 180.0)],
         ),
@@ -554,7 +554,7 @@
         ),
         (
             name: "workshop_and_stove", age: "farm", branch: "rooms", title: "A Stove and a Quern",
-            why: "A home that works for you. A stove is a campfire under a row of three cobblestones with one more on each side of it, five in all (Construction 5). For the workshop, make one of these: quern stones are four cobblestones in a square under a stick (Crafting 5); a spindle stand is an oak plank, two sticks and a twine in a square (Crafting 6); a loom frame is oak planks, sticks and a twine (Crafting 8). All at the crafting table.",
+            why: "A home that works for you. A stove is a campfire under a row of three cobblestones with one more on each side of it, five in all (Construction 5). For the workshop, make one of these: quern stones are four stones in a square under a stick (Crafting 5); a spindle stand is an oak plank, a stick, a fired clay and a twine in a square (Crafting 6); a loom frame is oak planks, sticks, a twine and a fired clay (Crafting 8). All at the crafting table.",
             tasks: [[Craft("cottage_stove", 1), Craft("tag:workshop", 1)]],
             after: ["snug_for_winter"],
             rewards: [Xp("construction", 80.0), Xp("crafting", 80.0)],
@@ -877,7 +877,7 @@
         (
             name: "five_colours", age: "farm", branch: "crafting", title: "Five Colours",
             why: "Every flower dyes a cloth its own colour: look a cloth up in the recipe book to see which. Wind flags take five, indigo, white, red, green and amber, tied on one twine (Crafting 9). Dye all five and make the flags.",
-            tasks: [[Craft("indigo_cloth", 1), Craft("white_cloth", 1), Craft("red_cloth", 1), Craft("green_cloth", 1), Craft("amber_cloth", 1), Craft("wind_flags", 1)]],
+            tasks: [[Craft("indigo_cloth", 1), Craft("white_cloth", 1), Craft("red_cloth", 1), Craft("green_cloth", 1), Craft("amber_cloth", 1), Craft("wind_flags", 1)], [Cook("indigo_cloth", 1), Cook("white_cloth", 1), Cook("red_cloth", 1), Cook("green_cloth", 1), Cook("amber_cloth", 1), Craft("wind_flags", 1)]],
             after: ["a_rug_underfoot"],
             side: true,
             rewards: [Xp("crafting", 120.0), Item("bread", 4)],
