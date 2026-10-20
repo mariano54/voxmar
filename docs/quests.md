@@ -155,7 +155,7 @@ so that what the game already does is something the book points to:
   wandering kind with what the player does next anyway, so meeting them is a side step,
   never a wait. Nomad: Coal by Road (the coal carters or the benighted miners, and sixteen
   torches; pays four coal). Farm: Fired Whole (the clay diggers fire your clay, and
-  twenty-four fired in all; pays twelve clay), The Last Sheaf (the harvest home procession,
+  twenty-four fired in all; pays six gold coins), The Last Sheaf (the harvest home procession,
   and twelve wheat brought in; pays eight wheat seed) and Mice in the Stores (follow the
   piper to the end of his tune, and a pantry or larder at home; pays four seed mix).
 - **Wanderers that come back** (the Nomad thread's hooks, Oct 13): quests that ask for a
@@ -311,7 +311,7 @@ Each new feature has a quest that teaches it, in two parts the book counts one b
 
 | Quest | Age, path, after | Parts |
 |---|---|---|
-| A Chopping Block | Nomad, start; An Axe to It and A Bed of Your Own (Crafting 2 by then) | one set down; twelve planks split by it |
+| A Chopping Block | Nomad, start; An Axe to It, A Bed of Your Own (Crafting 2 by then) and Timber | one set down; twelve planks split by it |
 | Set a Snare | Nomad, hunter; Twine and Thong | one set down; a catch taken from a trap |
 | Old Tusk | Nomad, hunter; Hide and Seek and Raise Your Guard | a flint spear made; Old Tusk killed |
 | Light in the Window | Farm, home; A Homely Home | two hide windows made; two set down |
@@ -392,8 +392,9 @@ Copper is smelted only in the lit kiln: Red Metal, the copper kit and the ore ru
 it (Hammer and Anvil, from the kiln-age PR, goes before The Crucible when it lands). Crucible
 Kiln waits on all three of its parts: the crucible, the ring of bricks and the charge. The
 Bronze Age rite is unchanged (30 Farm quests, 4 Farm capstones). Rewards that handed out
-what the route asks for (kiln bricks, charcoal) are gone, so the bricks and the charge are
-earned; Brick by Brick pays the Engineering The Crucible asks for until Hammer and Anvil
+what the route asks for (charcoal, clay) are gone, so the charge and the clay are earned; A
+Kiln Load's four kiln bricks stay, by an explicit call, and the rest of the bricks are
+shaped (Brick by Brick counts only those); Brick by Brick pays the Engineering The Crucible asks for until Hammer and Anvil
 does.
 
 Every Farm path's capstone comes after all of its path's quests, directly or through what
