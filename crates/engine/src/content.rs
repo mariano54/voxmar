@@ -310,8 +310,9 @@ impl Content {
             let mut names: Vec<String> = std::fs::read_dir(&path)
                 .map_err(|e| read_error(&path, e))?
                 .flatten()
-                // Files only: a folder named `x.ron` is no definition file.
-                .filter(|entry| entry.file_type().is_ok_and(|kind| !kind.is_dir()))
+                // No folders, through links too: a folder named `x.ron` is no definition file
+                // (a dangling link still fails the load, read below).
+                .filter(|entry| !entry.path().is_dir())
                 .filter_map(|entry| entry.file_name().into_string().ok())
                 .filter(|name| name.ends_with(".ron"))
                 .collect();
@@ -485,8 +486,15 @@ impl Content {
             let name = stem(file.rsplit('/').next().unwrap_or_default());
             let near = if name.chars().count() <= 5 { 1 } else { 2 };
             let meant = read.iter().map(|known| (letters_apart(&name, &stem(known)), known)).filter(|&(apart, _)| apart <= near).min();
+            // A topic family the game reads (`creature_motion`, `creature_sounds`) names its
+            // members when the topic itself is far from all of them (`creature_horses`).
+            let family: Vec<&str> = match name.split_once('_') {
+                Some((head, _)) => read.iter().filter(|known| known.split_once('_').is_some_and(|(h, _)| h == head)).map(String::as_str).collect(),
+                None => Vec::new(),
+            };
             let note = match meant {
                 Some((_, known)) => format!("{file} is read by nothing (meant {known}?)"),
+                None if !family.is_empty() => format!("{file} is read by nothing: of its family the game reads only {}", family.join(", ")),
                 None => format!("{file} is read by nothing: no part of the game reads a file of that name"),
             };
             tracing::warn!("{note}");

@@ -419,6 +419,7 @@
     "bed.rested": "You sleep soundly: {name}. {what}",
     "bed.night_rest": "A night's sleep here would rest you better: {name}.",
     "bed.not_tired": "You are rested already, so there is no new rest, but this is your bed.",
+    "prospect.vein": "A vein of {item} lies below. You read the ground better for finding it.",
     "bed.threatened": "You cannot sleep with something hunting you so near.",
     "bed.just_hurt": "You cannot sleep with your wounds so fresh: catch your breath first.",
     "effect.gained": "{name}: {what}",

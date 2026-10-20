@@ -406,6 +406,7 @@
     "bed.rested": "ぐっすり眠った：{name}。{what}",
     "bed.night_rest": "ここで夜に眠れば、もっとよく休める：{name}。",
     "bed.not_tired": "もう休めているので新たな休息はないが、ここが寝床になった。",
+    "prospect.vein": "この下に{item}の鉱脈がある。見つけたことで、大地を読む目が育った。",
     "bed.threatened": "何かに狙われているそばでは眠れない。",
     "bed.just_hurt": "傷がまだ新しくて眠れない。まず息を整えよう。",
     "effect.gained": "{name}：{what}",
