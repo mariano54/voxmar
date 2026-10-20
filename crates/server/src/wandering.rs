@@ -320,6 +320,12 @@ impl Wandering {
         self.by_creature.contains_key(&id)
     }
 
+    /// Creature `id` is kept here, as if one of its own (a test's).
+    #[cfg(test)]
+    pub(crate) fn keep_for_test(&mut self, id: u32) {
+        self.by_creature.insert(id, (0, 0));
+    }
+
     /// The errand creature `id`'s event hands it now, if it is in one.
     pub(crate) fn errand(&self, id: u32) -> Option<Errand> {
         let &(instance, member) = self.by_creature.get(&id)?;

@@ -60,8 +60,8 @@ drawn (bow 0.4, sling 0.7). Both the server and the client spoil the draw, the c
 the hit it is told of. The slowing is the client's own, as the guard's is (gate check `sling draw`).
 A draw's last moments cannot be spoiled across a slow connection: the server lands a swing
 as its wind-up ends, and a creature's blow is judged up to the player's round trip later
-(`lag_allowance`), so at a 200 ms round trip about the last tenth of a second of a draw has
-already loosed. For about one round trip the client and server can also disagree on a
+(`lag_allowance`, at most 0.2 s), and a tick at most after that, so the last round trip of a
+draw, never more than 0.2 s and a tick, has already loosed. For about one round trip the client and server can also disagree on a
 spoil, the client going by the `Hurt` it is told of; telling it on `Hurt` itself needs a
 protocol change, left for after the Nomad hunting pass.
 

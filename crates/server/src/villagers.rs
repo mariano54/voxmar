@@ -124,6 +124,12 @@ impl Villagers {
         self.by_creature.contains_key(&id)
     }
 
+    /// Creature `id` is kept here, as if one of its own (a test's).
+    #[cfg(test)]
+    pub(crate) fn keep_for_test(&mut self, id: u32) {
+        self.by_creature.insert(id, (0, 0));
+    }
+
     /// Where creature `id`'s routine sends it now, if it is someone's; a guard after
     /// someone goes straight at them within `handoff` blocks.
     pub(crate) fn errand(&self, id: u32, handoff: f32) -> Option<Errand> {

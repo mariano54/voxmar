@@ -806,6 +806,12 @@ struct Gate {
     tap_at: f32,
     tapped: bool,
     taps: u32,
+    /// Rabbits the snare step has put in its snare, and when the last went in (server
+    /// seconds): one may slip it, and another goes in.
+    snare_tries: u32,
+    /// Sticks lying by the snare before a deer was put in to tear it.
+    snare_sticks: u32,
+    snare_at: f32,
     /// The sling step's run (`sling`).
     sling: SlingRun,
     /// The Rootmothers seen before the Boss step summoned its own, and the one it summoned:
@@ -1089,6 +1095,9 @@ impl Gate {
             tap_at: f32::MIN,
             tapped: false,
             taps: 0,
+            snare_tries: 0,
+            snare_sticks: 0,
+            snare_at: 0.0,
             sling: SlingRun::default(),
             boss_before: Vec::new(),
             boss_id: None,
@@ -15992,11 +16001,42 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
     }
 }
 
-/// Where the snare step sets its snare, from where the dry step's rack stood.
-const SNARE_FROM_RACK: IVec3 = IVec3::new(3, 0, 0);
+/// How many blocks past the snare's own `shy_reach` from the cook step's campfire (which
+/// stays lit through the dry step) the snare step sets its snare: nearer, the snare is shy
+/// of the fire and nothing is caught or torn.
+const SNARE_PAST_SHY: i32 = 2;
+
+/// Where the snare step sets its snare: along from the cook step's campfire, past the
+/// snare's `shy_reach` (`traps.ron`). That is past the creatures pad's wall, on whatever
+/// the world has there (a hole, a hill), so the step lays its own ground first
+/// (`snare_ground`).
+fn snare_cell(world: &World, gate: &Gate) -> IVec3 {
+    let content = &world.resource::<Launch>().content;
+    let reach = content.blocks.id("base:snare").and_then(|s| content.traps.set(s)).map_or(0.0, |t| t.shy_reach);
+    gate.feet + IVec3::new(0, 0, 14) + IVec3::X * (reach.ceil() as i32 + SNARE_PAST_SHY)
+}
+
+/// The snare step's own ground, as two corners: stone under the snare and the spot the
+/// player watches it from (two and a half blocks short of it), and three high of air over
+/// both, room for a deer.
+fn snare_ground(snare: IVec3) -> [(IVec3, IVec3, &'static str); 2] {
+    [(snare + IVec3::new(-1, -1, -3), snare + IVec3::new(1, -1, 1), "stone"), (snare + IVec3::new(-1, 0, -3), snare + IVec3::new(1, 2, 1), "air")]
+}
+
+/// Server seconds a rabbit put in the snare is given (the traps look every 4 ticks) before
+/// it is taken to have slipped it, and the most put in: a rabbit is held three times in
+/// five, so eight all slipping is a broken snare, not bad luck (the gate's draw key is
+/// fixed, so the same ones slip every run).
+const SNARE_SLIPPED: f32 = 0.6;
+const SNARE_TRIES: u32 = 8;
+
+/// Whether the client has no block, or air, at `at`.
+fn client_gone(world: &World, at: IVec3) -> bool {
+    world.resource::<ClientWorld>().block(at).is_none_or(|b| b.is_air())
+}
 
 fn snare(world: &mut World, gate: &mut Gate, now: f32) {
-    let snare = gate.feet + IVec3::new(0, 0, 14) + RACK_FROM_FIRE + SNARE_FROM_RACK;
+    let snare = snare_cell(world, gate);
     let waited = gate.server_in_phase() > DRY_WAIT;
     let client = world.resource::<ClientWorld>();
     let is = |name: &str| client.registry.id(name).is_some_and(|b| client.block(snare) == Some(b));
@@ -16006,12 +16046,18 @@ fn snare(world: &mut World, gate: &mut Gate, now: f32) {
     let end = |world: &mut World, gate: &mut Gate| {
         gate.tap(world, false, now);
         world.resource::<Net>().command(&format!("setblock {} {} {} air", snare.x, snare.y, snare.z));
+        // The rabbits that slipped it, and the deer put in to tear it, go with it.
+        world.resource::<Net>().command("creatures kill rabbit");
+        world.resource::<Net>().command("creatures kill red_deer");
         gate.next(Step::Tame, now);
     };
     match gate.phase {
         0 => {
             let net = world.resource::<Net>();
             net.command("clear raw_small_game");
+            for (a, b, block) in snare_ground(snare) {
+                net.command(&format!("fill {} {} {} {} {} {} {block}", a.x, a.y, a.z, b.x, b.y, b.z));
+            }
             net.command(&format!("setblock {} {} {} snare", snare.x, snare.y, snare.z));
             net.command(&format!("tp {} {} {}", snare.x as f32 + 0.5, snare.y, snare.z as f32 - 2.5));
             gate.advance(now);
@@ -16025,6 +16071,7 @@ fn snare(world: &mut World, gate: &mut Gate, now: f32) {
                 // next look: a rabbit let loose arriving just after one could run out first
                 // and never come back, by whichever tick a loaded server took the summon on.
                 world.resource::<Net>().command(&format!("summon rabbit 1 {} {} {} held", snare.x + 2, snare.y, snare.z));
+                (gate.snare_tries, gate.snare_at) = (1, gate.server_now);
                 gate.advance(now);
             } else if waited {
                 gate.check("snare", Err(format!("the snare never stood in {DRY_WAIT} server seconds")));
@@ -16034,19 +16081,31 @@ fn snare(world: &mut World, gate: &mut Gate, now: f32) {
         2 => {
             aim_at(world, snare.as_vec3() + Vec3::new(0.5, 0.3, 0.5));
             if sprung && drawn(world, snare) && gate.shot(world, "snare_sprung").is_some() {
-                gate.check("snare", Ok("a rabbit summoned into a set snare was caught: the server sprang it".to_owned()));
+                let tries = gate.snare_tries;
+                gate.check("snare", Ok(format!("a rabbit summoned into a set snare was caught: the server sprang it ({tries} rabbits put in, the rest slipped it)")));
                 gate.advance(now);
+            } else if set && gate.server_now - gate.snare_at > SNARE_SLIPPED && gate.snare_tries < SNARE_TRIES {
+                // Still set past a few of the traps' looks: that rabbit slipped it; another.
+                world.resource::<Net>().command(&format!("summon rabbit 1 {} {} {} held", snare.x + 2, snare.y, snare.z));
+                (gate.snare_tries, gate.snare_at) = (gate.snare_tries + 1, gate.server_now);
             } else if waited {
-                gate.check("snare", Err(format!("a rabbit in the snare never sprang it in {DRY_WAIT} server seconds")));
+                gate.check("snare", Err(format!("{} rabbits in the snare never sprang it in {DRY_WAIT} server seconds", gate.snare_tries)));
                 end(world, gate);
             }
         }
-        _ => {
+        3 => {
             // Right clicks on the sprung snare, until the server answers one.
             aim_at(world, snare.as_vec3() + Vec3::new(0.5, 0.3, 0.5));
-            if set && carried > 0 {
-                gate.check("snare taken", Ok(format!("a right click took {carried} raw small game from the snare, set again ({} clicks)", gate.taps)));
-                end(world, gate);
+            // Taken, it is set again, or worn out and gone (`wear`, a stick left).
+            let gone = client_gone(world, snare);
+            if (set || gone) && carried > 0 {
+                let after = if set { "set again" } else { "worn out and gone" };
+                gate.check("snare taken", Ok(format!("a right click took {carried} raw small game from the snare, {after} ({} clicks)", gate.taps)));
+                gate.tap(world, false, now);
+                // A fresh snare, for a deer to tear.
+                world.resource::<Net>().command(&format!("setblock {} {} {} snare", snare.x, snare.y, snare.z));
+                gate.snare_sticks = sticks_by(world, snare);
+                gate.advance(now);
             } else if gate.waited_out(DRY_WAIT) {
                 gate.check("snare taken", Err(format!("{} right clicks on the sprung snare: set again {set}, raw small game carried {carried}", gate.taps)));
                 end(world, gate);
@@ -16054,7 +16113,41 @@ fn snare(world: &mut World, gate: &mut Gate, now: f32) {
                 gate.tap(world, true, now);
             }
         }
+        4 => {
+            // Set again, by the server's word: a deer is put in it, held there.
+            if set {
+                world.resource::<Net>().command(&format!("summon red_deer 1 {} {} {} held", snare.x + 2, snare.y, snare.z));
+                (gate.snare_tries, gate.snare_at) = (1, gate.server_now);
+                gate.advance(now);
+            } else if waited {
+                gate.check("snare torn", Err(format!("the fresh snare never stood in {DRY_WAIT} server seconds")));
+                end(world, gate);
+            }
+        }
+        _ => {
+            // Torn: gone on the client, and a stick it left lying by it.
+            let sticks = sticks_by(world, snare);
+            if client_gone(world, snare) && sticks > gate.snare_sticks {
+                let tries = gate.snare_tries;
+                gate.check("snare torn", Ok(format!("a deer put in a set snare tore it: gone, a stick left by it ({tries} deer put in)")));
+                end(world, gate);
+            } else if set && gate.server_now - gate.snare_at > SNARE_SLIPPED && gate.snare_tries < SNARE_TRIES {
+                // Still set past a few of the traps' looks: that deer did not tear it; another.
+                world.resource::<Net>().command(&format!("summon red_deer 1 {} {} {} held", snare.x + 2, snare.y, snare.z));
+                (gate.snare_tries, gate.snare_at) = (gate.snare_tries + 1, gate.server_now);
+            } else if waited {
+                gate.check("snare torn", Err(format!("{} deer in the snare: gone {}, sticks by it {sticks} (were {})", gate.snare_tries, client_gone(world, snare), gate.snare_sticks)));
+                end(world, gate);
+            }
+        }
     }
+}
+
+/// Sticks lying within two blocks of `at`, as the client has them.
+fn sticks_by(world: &World, at: IVec3) -> u32 {
+    let Some(stick) = world.resource::<ClientWorld>().registry.id("base:stick") else { return 0 };
+    let middle = at.as_vec3() + Vec3::splat(0.5);
+    world.resource::<crate::drops::Drops>().lying().filter(|(_, stack, pos)| stack.item == stick && pos.distance(middle) < 2.0).map(|(_, stack, _)| stack.count as u32).sum()
 }
 
 /// Where the dry step looks on its rack: the middle of the strips hung from its twine.
