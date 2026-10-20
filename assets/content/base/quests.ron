@@ -496,9 +496,11 @@
         ),
         (
             name: "brick_by_brick", age: "farm", branch: "main", title: "Brick by Brick",
-            why: "The Crucible Kiln is built of kiln bricks: twelve for its ring and corner pillars, and seven for the crucible at its heart. Four fired clay make two bricks in the crafting grid (Crafting 5), so nineteen bricks are forty fired clay. Keep the kilns and clamps of your yard going while you dig the next load, and shape nineteen in all, counting your first.",
+            why: "The Crucible Kiln is built of kiln bricks: twelve for its ring and corner pillars, and seven for the crucible at its heart. Four fired clay make two bricks in the crafting grid (Crafting 5), so nineteen bricks are forty fired clay. Keep the pit kiln and the clamp going while you dig the next load, and shape nineteen in all, counting your first.",
             tasks: [[Craft("kiln_bricks", 19)]],
             after: ["first_bricks", "a_kiln_load"],
+            // Its Engineering pays for The Crucible's level 10 until Hammer and Anvil (the kiln-age
+            // PR) does: drop it when that lands, so it is never paid twice.
             rewards: [Xp("crafting", 300.0), Xp("engineering", 650.0)],
         ),
         (
@@ -510,9 +512,9 @@
         ),
         (
             name: "the_crucible", age: "farm", branch: "main", title: "The Crucible",
-            why: "The heart of the kiln: seven kiln bricks round a clay pot, shaped at the crafting table (Engineering 10). Engineering grows with every tool, ingot and torch you make, and the copper quests pay it well. Make it and set it down in the empty middle of your kiln's ring of bricks.",
+            why: "The heart of the kiln: seven kiln bricks round a clay pot, shaped at the crafting table (Engineering 10). Engineering grows with every tool, ingot and torch you make, and Charcoal and Brick by Brick pay it well. Make it and set it down in the empty middle of your kiln's ring of bricks.",
             tasks: [[Craft("crucible", 1), Placed("crucible", 1)]],
-            after: ["brick_by_brick"],
+            after: ["brick_by_brick", "charcoal"],
             rewards: [Xp("engineering", 300.0)],
         ),
         (
@@ -542,7 +544,7 @@
             why: "A stone hoe reaps every ripe crop in the three by three around the one you cut, and an iron hoe the five by five, so a wide field comes in at a few strokes. Sow a field nine across with your well in it, let it ripen, and bring in sixty-four wheat plants; keep thirty-two wheat of the harvest for bread, twine and feed.",
             tasks: [[Pick("wheat_crop", 64), Have("wheat", 32)]],
             after: ["a_well_by_the_field", "food_enough", "seed_mix", "a_compost_heap"],
-            rewards: [Xp("farming", 300.0), Item("bread", 6), Item("copper_hoe", 1)],
+            rewards: [Xp("farming", 300.0), Item("bread", 6), Item("seed_mix", 8)],
         ),
         (
             name: "carrot_patch", age: "farm", branch: "farming", title: "Carrot Patch",
@@ -574,7 +576,6 @@
         ),
         (
             name: "roots_in_the_embers", age: "farm", branch: "cooking", title: "Roots in the Embers",
-            side: true,
             why: "A roast carrot heals better than a raw one, and roots are easy food to grow. Roast four carrots on a campfire (Cooking 2).",
             tasks: [[Cook("roast_carrot", 4)]],
             after: ["carrot_patch"],
@@ -815,7 +816,7 @@
         ),
         (
             name: "copper_kit", age: "farm", branch: "mining", title: "Copper Kit",
-            why: "Copper works seven times as fast as a bare hand, a step above stone, and finds more; a tool's tooltip says how fast it works. Make an axe (three ingots), a shovel (one) and a knife (one), and have a copper hoe: A Full Granary gives one, or make it from two. Each ingot is smelted from copper ore in the crucible of your lit kiln.",
+            why: "Copper works seven times as fast as a bare hand, a step above stone, and finds more; a tool's tooltip says how fast it works. Make an axe (three ingots), a shovel (one) and a knife (one), and a copper hoe (two). Each ingot is smelted from copper ore in the crucible of your lit kiln.",
             tasks: [[Craft("copper_axe", 1), Craft("copper_shovel", 1), Have("copper_hoe", 1), Craft("copper_knife", 1)]],
             after: ["red_metal"],
             rewards: [Xp("engineering", 60.0), Item("coal_ore", 8)],
@@ -1220,10 +1221,10 @@
         (
             name: "first_metal", age: "farm", branch: "mining", title: "First Metal",
             side: true,
-            why: "Before you have a Crucible Kiln, a smith and a helper may camp in the woods with a bloomery. Hand them two copper ore and they smelt it to ingots for you; a beginner at Engineering learns to work the bellows. Deal with them, and mine four copper ore of your own.",
+            why: "A smith and a helper may camp in the woods with a bloomery; a beginner at Engineering learns to work the bellows there, and hands them two copper ore to see them smelt it. Deal with them, and mine four copper ore of your own for your kiln's crucible.",
             tasks: [[Met("bloomery_smelters", 1), Mine("copper_ore", 4)]],
-            after: ["charcoal"],
-            rewards: [Xp("engineering", 120.0), Item("fired_clay", 4)],
+            after: ["crucible_kiln"],
+            rewards: [Xp("engineering", 120.0), Item("bread", 2)],
         ),
         (
             name: "a_hen_of_your_own", age: "farm", branch: "husbandry", title: "A Hen of Your Own",
@@ -1239,7 +1240,7 @@
             why: "A child may tag along behind you for a while, watching you work. Once you are good at something (Farming, Mining or Crafting 15), they ask to learn it and pay a coin for the lesson. Days later they pass again as a journeyman, with a gift for their old teacher. Teach them, then meet the journeyman.",
             tasks: [[Met("apprentice", 1), Met("journeyman", 1)]],
             after: ["fired_whole"],
-            rewards: [Xp("crafting", 150.0), Xp("mining", 100.0), Item("copper_ingot", 4)],
+            rewards: [Xp("crafting", 150.0), Xp("mining", 100.0), Item("torch", 8)],
         ),
         (
             name: "the_market_road", age: "nomad", branch: "explore", title: "The Market Road",
