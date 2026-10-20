@@ -74,6 +74,8 @@
         (name: "blaze", tags: ["blaze"], range: (0, 40)),
         (name: "leaves", tags: ["leaves"], range: (20, 300)),
         (name: "wood", tags: ["log"], range: (5, 60)),
+        // Boards: a timber floor, walls and roof (`planks`), as a home is built of them.
+        (name: "timber", tags: ["planks"], range: (20, 200)),
         // A fire to sit by: a campfire, a hearth, a kiln. Before rock, as a hearthstone or a
         // kiln is stone to the step. One within five blocks is a fire fully heard; by ten
         // blocks it has faded to a murmur, and past fifteen it is gone. `lit`: a hearth or a
@@ -85,6 +87,8 @@
         (name: "pot", tags: ["simmering"], range: (2, 10)),
         (name: "falls", materials: [Water], falling: true, range: (6, 90)),
         (name: "water", materials: [Water], range: (20, 300)),
+        // Bees at a skep or a wild nest (`bees`): one close by is heard fully.
+        (name: "hive", tags: ["bees"], range: (1, 6)),
         // Not heard: the air's pollen keeps near flowers (client/src/weather/atmosphere.rs).
         // Before grass, as a block counts for the first group that selects it.
         (name: "flowers", tags: ["flower"], range: (4, 60)),
@@ -272,6 +276,13 @@
             name: "lava", recording: ["sounds/lava_1.mp3", "sounds/lava_2.mp3", "sounds/lava_3.mp3"], volume: 0.42, fade: 2,
             when: {"lava": (min: 0.35, fade: 0.3)},
         ),
+        // Bees about their hive by day: a warm drone by a skep or a wild nest, quiet at
+        // night and in the cold, when they keep in, and while it rains.
+        (
+            name: "bees", sound: Hum, volume: 0.16, fade: 3,
+            when: {"hive": (min: 0.3, fade: 0.3), "sun": (min: 0.05, fade: 0.1), "temperature": (min: 10, fade: 4)},
+            duck: {"raining": 0.9},
+        ),
         // A fire burning close by: a warm low roar and the crackle of the wood, so home
         // sounds lived in. Quiet: it sits under the music.
         (
@@ -409,6 +420,21 @@
             when: {"wind": (min: 9, fade: 6), "wood": (min: 0.35, fade: 0.3)},
             duck: {"shelter": 0.75},
         ),
+        // A timber home settling at night as it cools: now and then a board ticks or a
+        // rafter groans, low and slow, heard only indoors.
+        (
+            name: "rafters", sound: Creak, volume: 0.16, at: Block("timber"), per_minute: 0.8, cooldown: 25,
+            pitch: (0.55, 0.8), reach: 8,
+            when: {"shelter": (min: 0.6, fade: 0.3), "timber": (min: 0.35, fade: 0.3), "sun": (max: 0.0, fade: 0.15)},
+        ),
+        // After the rain, under a roof: the last of it running off the eaves, a drop now
+        // and then on the sill or the step, thinning as the ground dries.
+        (
+            name: "eaves_drip", sound: Drip, volume: 0.22, at: Around(distance: (2, 5), height: (0, 3)), per_minute: 9, cooldown: 1.5,
+            pitch: (1.1, 1.5), reach: 6,
+            when: {"wetness": (min: 0.4, fade: 0.3), "raining": (max: 0.05, fade: 0.1), "roof": (min: 0.5, fade: 0.3)},
+            duck: {"shelter": 0.5},
+        ),
         // Drips and distant rumbles underground; the reverb comes from the cave itself. The
         // drips are wet rock's, and come oftener the deeper and more shut in the cave: a
         // second, deep tier joins the first where it is deep and echoing.
@@ -464,6 +490,13 @@
             pitch: (0.85, 1.2), reach: 5,
             when: {"fire": (min: 0.25, fade: 0.2)},
         ),
+        // A log settling in a fire now and then: a soft fall, sparks and a hiss, so a hearth
+        // sat by for a while is never one loop.
+        (
+            name: "hearth_settle", sound: Settle, volume: 0.28, at: Block("fire"), per_minute: 1.2, cooldown: 20,
+            pitch: (0.9, 1.1), reach: 6,
+            when: {"fire": (min: 0.6, fade: 0.55)},
+        ),
         // A pot on the fire bubbling away while it cooks.
         (
             name: "simmer", sound: Simmer, volume: 0.3, at: Block("pot"), per_minute: 14, cooldown: 1.5,
@@ -506,6 +539,39 @@
             pitch: (1.05, 1.25), reach: 14,
             when: {"settlement_edge": (max: 10, fade: 40), "sun": (min: 0.1, fade: 0.15), "depth": (max: 2, fade: 4)},
             duck: {"rain": 0.7},
+        ),
+        // And the iron ringing under the hammer, heard further than the blows.
+        (
+            name: "anvil", sound: Anvil, volume: 0.24, at: Building(buildings: ["smithy"]), per_minute: 2.5, cooldown: 8,
+            pitch: (0.95, 1.08), reach: 18,
+            when: {"settlement_edge": (max: 10, fade: 40), "sun": (min: 0.1, fade: 0.15), "depth": (max: 2, fade: 4)},
+            duck: {"rain": 0.7},
+        ),
+        // The mill wheel turning in its race all day, and the woodyard splitting logs.
+        (
+            name: "mill_wheel", sound: Mill, volume: 0.26, at: Building(buildings: ["mill"]), per_minute: 10, cooldown: 3.5,
+            pitch: (0.95, 1.05), reach: 14,
+            when: {"settlement_edge": (max: 10, fade: 40), "sun": (min: 0.1, fade: 0.15), "depth": (max: 2, fade: 4)},
+        ),
+        (
+            name: "chopping", sound: Chop, volume: 0.28, at: Building(buildings: ["woodyard"]), per_minute: 2, cooldown: 12,
+            pitch: (0.92, 1.08), reach: 16,
+            when: {"settlement_edge": (max: 10, fade: 40), "sun": (min: 0.1, fade: 0.15), "depth": (max: 2, fade: 4)},
+            duck: {"rain": 0.8},
+        ),
+        // The shrine's bell at dawn and again at dusk, heard across the whole place and a
+        // way beyond it.
+        (
+            name: "shrine_bell", sound: Bell, volume: 0.28, at: Building(buildings: ["shrine"]), per_minute: 0.6, cooldown: 90,
+            pitch: (0.97, 1.03), reach: 48,
+            when: {"settlement_edge": (max: 24, fade: 60), "sun": (min: -0.15, max: 0.15, fade: 0.05), "depth": (max: 2, fade: 4)},
+        ),
+        // Pigs rooting in the pens, by day.
+        (
+            name: "pen_grunt", sound: Grunt, volume: 0.24, at: Building(buildings: ["pen", "barn"]), per_minute: 1.5, cooldown: 14,
+            pitch: (0.9, 1.15), reach: 10,
+            when: {"settlement_edge": (max: 10, fade: 40), "sun": (min: 0.1, fade: 0.15), "depth": (max: 2, fade: 4)},
+            duck: {"rain": 0.6},
         ),
         // Sheep in the pens and the barns, by day and into the evening.
         (

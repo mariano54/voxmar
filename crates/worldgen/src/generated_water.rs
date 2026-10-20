@@ -8,27 +8,19 @@ use std::sync::Arc;
 use rayon::prelude::*;
 
 use voxmar_engine::block::BlockRegistry;
-use voxmar_engine::content::Content;
 use voxmar_engine::coords::{ColumnPos, WORLD_HEIGHT};
 use voxmar_engine::fluid::{Fluids, unsettled};
 use voxmar_engine::glam::{IVec2, IVec3};
 use voxmar_engine::world::{Column, VoxelWorld};
 
-use crate::{Generator, Overworld, WaterSight, WorldContent};
+use crate::{Generator, Overworld, WaterSight};
 
 /// Columns along a side of each generated area; the middle ones have all their neighbours.
 const SIDE: i32 = 5;
 
-/// Every package's content, as a server loads it.
-fn load_content() -> Content {
-    Content::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).unwrap()
-}
-
 #[test]
 fn generated_water_does_not_move() {
-    let content = load_content();
-    let world_content = WorldContent::load(&content).unwrap();
-    let registry = content.blocks.clone();
+    let registry = crate::full_content().0.blocks.clone();
     let (mut fluid_cells, mut curtain, mut pinned) = (0, 0, 0);
     // Around every place water makes near spawn on a few seeds (waterfalls, highland
     // lakes, confluences, river mouths, and tunnels, islands and hot springs where there
@@ -40,7 +32,7 @@ fn generated_water_does_not_move() {
     // Around the places of one seed, each on its own core: the kinds of water found and
     // the counts of each place.
     let seed_areas = |(seed, near_spawn, also): (u64, bool, Option<IVec2>)| {
-        let generator = Overworld::with_content(seed, registry.clone(), &world_content);
+        let generator = crate::shared_full_world(seed);
         let mut places: Vec<IVec2> = also.into_iter().collect();
         let mut found = Vec::new();
         if near_spawn {
@@ -84,12 +76,10 @@ fn generated_water_does_not_move() {
 /// nearest the origin, on a few seeds, found afresh.
 #[test]
 fn tarns_do_not_move() {
-    let content = load_content();
-    let world_content = WorldContent::load(&content).unwrap();
-    let registry = content.blocks.clone();
+    let registry = crate::full_content().0.blocks.clone();
     // Each seed on its own core.
     let tarns: usize = [1u64, 2, 3, 4].par_iter().map(|&seed| {
-        let generator = Overworld::with_content(seed, registry.clone(), &world_content);
+        let generator = crate::shared_full_world(seed);
         let floor = generator.rivers.tarn_floor().expect("the base content has tarns");
         let Some(meadow) = generator.locate_biome("alpine_meadow", IVec2::ZERO, 60000) else { return 0 };
         let region = meadow.div_euclid(IVec2::splat(crate::water::REGION));
@@ -202,8 +192,7 @@ fn generate(generator: &Overworld, first: ColumnPos) -> VoxelWorld {
 /// spill sideways).
 #[test]
 fn water_still_settles_at_the_next_version() {
-    let content = load_content();
-    let world_content = WorldContent::load(&content).unwrap();
+    let (content, world_content) = crate::full_content();
     let registry = content.blocks.clone();
     // Each seed on its own core, and each place of it.
     let fluid_cells: usize = [5u64, 7, 19].par_iter().map(|&seed| {
@@ -230,8 +219,7 @@ fn water_still_settles_at_the_next_version() {
 #[ignore]
 fn probe_water() {
     let env = |name: &str, default: i64| std::env::var(name).ok().and_then(|s| s.parse().ok()).unwrap_or(default);
-    let content = load_content();
-    let world_content = WorldContent::load(&content).unwrap();
+    let (content, world_content) = crate::full_content();
     let registry = content.blocks.clone();
     let generator = Overworld::with_content_at(env("SEED", 5) as u64, registry.clone(), &world_content, env("VERSION", 24) as u32);
     let place = IVec2::new(env("X", 851) as i32, env("Z", 1030) as i32);

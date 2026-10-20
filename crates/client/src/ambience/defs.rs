@@ -856,6 +856,19 @@ impl Ambience {
             .collect()
     }
 
+    /// Whether every recorded bed's files are there under `assets`, so a mistyped path
+    /// fails at launch rather than leaving the bed silent.
+    pub fn check_recordings(&self, assets: &std::path::Path) -> Result<(), String> {
+        for bed in &self.beds {
+            if let BedSound::Recorded(paths) = &bed.sound
+                && let Some(missing) = paths.iter().find(|path| !assets.join(path).is_file())
+            {
+                return Err(format!("{FILE}: bed `{}` is recorded in `{missing}`, which is not there", bed.name));
+            }
+        }
+        Ok(())
+    }
+
     /// Whether every building a one-shot sounds from is one settlements have (`known`:
     /// `SettlementsDef::building_names`), so a mistyped name is not a sound never heard.
     pub fn check_buildings(&self, known: &std::collections::BTreeSet<String>) -> Result<(), String> {
