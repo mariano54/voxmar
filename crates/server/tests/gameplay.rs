@@ -9493,8 +9493,10 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     f.craft(&[(0, fired, 2), (1, fired, 2), (3, fired, 2), (4, fired, 2)], bricks, 4);
     f.wait(5.0, "the server counting the bricks and the fired clay kept", |c| quest_status(c, "first_bricks").0);
     f.mark("first_bricks");
-    // Brick by Brick: nineteen kiln bricks shaped in all.
-    let crafts = 19u32.saturating_sub(f.have(bricks)).div_ceil(2);
+    // Brick by Brick: nineteen kiln bricks shaped in all, as the book counts them: A Kiln
+    // Load's four were given, not shaped.
+    let shaped = f.c.quests.iter().find(|q| q.name == "base:brick_by_brick").and_then(|q| q.tasks.first()?.first().map(|&(have, _)| have)).unwrap_or(0);
+    let crafts = 19u32.saturating_sub(shaped).div_ceil(2);
     f.fire_clay(&site, crafts * 4);
     let k = crafts as u8;
     f.craft(&[(0, fired, k), (1, fired, k), (3, fired, k), (4, fired, k)], bricks, crafts * 2);
