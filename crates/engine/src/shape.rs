@@ -46,8 +46,9 @@ crate::content::settable! {
 }
 
 /// The most quads all shapes may have together, whatever the limits say: a quad's number in
-/// the renderer's table takes 12 bits of a vertex (mesh.rs `emit_model`).
-pub const MAX_SHAPE_QUADS: usize = 1 << 12;
+/// the renderer's table takes 14 bits of a vertex (mesh.rs `emit_model`). Each facing of a
+/// shape is its own quads, so a piece of six boxes in four facings takes 144.
+pub const MAX_SHAPE_QUADS: usize = 1 << 14;
 
 /// A package's `shapes.ron`.
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -374,7 +375,7 @@ mod tests {
         let refused = Shapes::gather(vec![("base".into(), file(slab)), ("addon".into(), file(r#"(shapes: {"base:slab": (boxes: [(to: (16, 4, 16))])})"#))], LIMITS);
         assert!(refused.unwrap_err().0.contains("addon/shapes.ron: shape `base:slab` is already defined by base"));
         let too_many = ShapeLimits { quads: MAX_SHAPE_QUADS + 1, ..LIMITS };
-        assert!(Shapes::gather(vec![("base".into(), file(slab))], too_many).unwrap_err().0.contains("at most 4096"));
+        assert!(Shapes::gather(vec![("base".into(), file(slab))], too_many).unwrap_err().0.contains("at most 16384"));
         let set = file(r#"(limits: (quads: 64))"#).limits.unwrap();
         assert_eq!(crate::content::Settable::with(LIMITS, &set), (ShapeLimits { boxes: 8, quads: 64 }, vec!["quads"]));
     }
