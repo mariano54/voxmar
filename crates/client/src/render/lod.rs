@@ -420,11 +420,15 @@ fn request_tiles(mut lod: ResMut<Lod>, world: Res<WorldGenerator>, camera: Query
             break;
         }
         let key = lod.wanted[i];
-        if lod.tiles.contains(&key) || !lod.pending.insert(key) {
+        if lod.tiles.contains(&key) || lod.pending.contains(&key) {
             continue;
         }
+        // Streaming on fewer workers than there are, once playing (workers.rs).
+        let Some(slot) = voxmar_engine::jobs::start(voxmar_engine::jobs::Kind::DistantLand) else { break };
+        lod.pending.insert(key);
         let (generator, palette, tx) = (generator.clone(), lod.palette.clone(), lod.results_tx.clone());
         rayon::spawn(move || {
+            let _slot = slot;
             let _ = tx.send(Some(build_tile(&generator, &palette, key)));
         });
     }
