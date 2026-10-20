@@ -45,6 +45,8 @@ pub struct Content {
     pub effects: Arc<EffectRegistry>,
     /// What tools do to breaking blocks, and what breaking them takes and teaches.
     pub tools: Arc<ToolRegistry>,
+    /// Placed lights that burn out and are lit again (`flame`).
+    pub flames: Arc<crate::flame::Flames>,
     /// Weapons, their classes and styles (`combat`).
     pub combat: Arc<crate::combat::CombatRegistry>,
     /// The prayer book (`prayer`): Magic's prayers, their points, and what altars take.
@@ -452,6 +454,7 @@ impl Content {
         // Every kept animal needs water, met by a block tagged `drink` near its home.
         crate::creature::condition::check_drink(&blocks, !creatures.is_empty())?;
         let tools = ToolRegistry::new(tools, &blocks, &skills)?;
+        let flames = crate::flame::Flames::new(&blocks)?;
         let combat = crate::combat::CombatRegistry::new(combat, &blocks, &skills)?;
         let prayers = crate::prayer::PrayerRegistry::new(prayers, &blocks, &skills)?;
         let fishing = FishingRegistry::new(fishing, fishing_rules.value, &blocks, &skills)?;
@@ -542,6 +545,7 @@ impl Content {
             recipes: Arc::new(recipes),
             effects: Arc::new(effects),
             tools: Arc::new(tools),
+            flames: Arc::new(flames),
             combat: Arc::new(combat),
             prayers: Arc::new(prayers),
             fishing: Arc::new(fishing),

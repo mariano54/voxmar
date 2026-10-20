@@ -103,6 +103,9 @@ pub struct WorldMeta {
     /// Picked wild plants waiting to grow back, and plants herb planters grew back.
     #[serde(default)]
     pub regrowing: Vec<SavedRegrowing>,
+    /// Lights set down and burning, and the world's day tick each goes out (`flames`).
+    #[serde(default)]
+    pub flames: Vec<SavedFlame>,
     #[serde(default)]
     pub planter_grown: Vec<[i32; 3]>,
     /// Blocks waiting to catch fire or to burn out (`blaze`). Older worlds have none.
@@ -187,6 +190,15 @@ pub fn pop_key(draw_key: u64) -> u64 {
     mix(draw_key, 0x0909_d50f) ^ mix(draw_key ^ 0x5bd1_e995, 0x2545_f491).rotate_left(29)
 }
 
+/// How a burning light set down is saved: where, what by name, and the world's day tick
+/// it goes out.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SavedFlame {
+    pub pos: [i32; 3],
+    pub block: String,
+    pub out: u64,
+}
+
 /// The key the world's casts draw by (`WorldMeta::next_cast`), made from its draw key as
 /// `pop_key` is, with passes of its own: a cast's seed becomes a creature's, whose looks
 /// every client sees (part of the seed itself), so the draw key must not be searched for
@@ -265,6 +277,7 @@ impl WorldMeta {
             day_speed: 1.0,
             placed: Vec::new(),
             regrowing: Vec::new(),
+            flames: Vec::new(),
             planter_grown: Vec::new(),
             blazes: Vec::new(),
             hives: Vec::new(),

@@ -48,6 +48,7 @@
         "Bees": (say: "refusal.bees"),
         "Station": (say: "refusal.station"),
         "Swaps": (say: "refusal.doorway"),
+        "Relights": (say: "refusal.needs_flame"),
     },
     sent: [
         // Sowing where a crop cannot grow (crop.rs `Unsuited`).

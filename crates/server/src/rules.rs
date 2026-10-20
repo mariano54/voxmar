@@ -32,6 +32,9 @@ pub(crate) struct SurvivalRules {
     pub heat_reach: i32,
     pub water_chill: f32,
     pub roof_scan: i32,
+    /// Rain at least this heavy (precipitation 0..1) puts out a light that `rain_douses`
+    /// with open sky over it (a torch).
+    pub douse_rain: f32,
     /// A home reaches this many blocks out on each side, this many up and this many down:
     /// the box its furnishings are counted in and a player must stand in to feel it.
     pub home_reach: i32,
@@ -70,6 +73,7 @@ struct SurvivalFile {
     heat_reach: Option<i32>,
     water_chill: Option<f32>,
     roof_scan: Option<i32>,
+    douse_rain: Option<f32>,
     home_reach: Option<i32>,
     home_up: Option<i32>,
     home_down: Option<i32>,
@@ -93,7 +97,7 @@ impl SurvivalRules {
             macro_rules! later_wins {
                 ($($field:ident),*) => { $(if next.$field.is_some() { merged.$field = next.$field; set.push(stringify!($field)); })* };
             }
-            later_wins!(max_health, starter_kit, pack_end, kits_per_address, kit_window, safe_fall, burn, burn_every, void_below, heat_emission, heat, heat_reach, water_chill, roof_scan, home_reach, home_up, home_down, home_furniture, meal_most, sleep_threat_reach, sleep_after_hurt, heal_most);
+            later_wins!(max_health, starter_kit, pack_end, kits_per_address, kit_window, safe_fall, burn, burn_every, void_below, heat_emission, heat, heat_reach, water_chill, roof_scan, douse_rain, home_reach, home_up, home_down, home_furniture, meal_most, sleep_threat_reach, sleep_after_hurt, heal_most);
             laid.set(&file.package, FILE, "survival rules", set, notes);
         }
         macro_rules! set {
@@ -130,6 +134,7 @@ impl SurvivalRules {
             heat_reach: set!(heat_reach),
             water_chill: set!(water_chill),
             roof_scan: set!(roof_scan),
+            douse_rain: set!(douse_rain),
             home_reach: set!(home_reach),
             home_up: set!(home_up),
             home_down: set!(home_down),
@@ -150,6 +155,7 @@ impl SurvivalRules {
             ((0..=16).contains(&rules.heat_reach), "heat_reach must be 0 to 16 blocks"),
             (rules.water_chill.is_finite(), "water_chill must be a number"),
             ((1..=256).contains(&rules.roof_scan), "roof_scan must be 1 to 256 blocks"),
+            (rules.douse_rain.is_finite() && rules.douse_rain > 0.0 && rules.douse_rain <= 1.0, "douse_rain must be above 0, up to 1"),
             ((1..=16).contains(&rules.home_reach), "home_reach must be 1 to 16 blocks"),
             ((0..=16).contains(&rules.home_up) && (0..=16).contains(&rules.home_down), "home_up and home_down must be 0 to 16 blocks"),
             (!rules.home_furniture.iter().any(|tag| tag.starts_with("shelter:")), "home_furniture names a shelter tag: a wall's, not furniture's"),

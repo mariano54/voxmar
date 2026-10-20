@@ -448,6 +448,8 @@
     "block.base.campfire": "たきび",
     "block.base.torch": "たいまつ",
     "block.base.wall_torch": "かべのたいまつ",
+    "block.base.torch_stub": "もえつきたたいまつ",
+    "block.base.wall_torch_stub": "もえつきたかべのたいまつ",
     "block.base.cooked_small_game": "やいたしょうどうぶつのにく",
     "block.base.cooked_crab": "やきガニ",
     "block.base.cooked_duck": "やいたかもにく",

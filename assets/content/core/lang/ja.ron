@@ -650,6 +650,7 @@
     "refusal.bees": "それでは蜂から何も取れない",
     "refusal.station": "それはここでは扱えない",
     "refusal.doorway": "戸口に誰かがいる",
+    "refusal.needs_flame": "火をつけるには火が要る：火のついた棒か松明",
     "effect.core.by_the_fire": "焚き火のそば",
     "effect.core.by_the_fire.description": "近くの火や松明で温まっている。",
     "effect.core.chilly": "肌寒い",

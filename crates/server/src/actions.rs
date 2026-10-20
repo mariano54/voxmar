@@ -162,6 +162,10 @@ impl ActionContext for Context<'_> {
         Some(&self.server.content.tools)
     }
 
+    fn flames(&self) -> Option<&voxmar_engine::flame::Flames> {
+        Some(&self.server.content.flames)
+    }
+
     fn machines(&self) -> Option<&voxmar_engine::machine::MachineRegistry> {
         Some(&self.server.content.machines)
     }
@@ -426,6 +430,7 @@ impl Server {
                 (Effect::Craft, ActionTarget::Slot(times)) => self.craft(agent, times == 0),
                 (Effect::LayRecipe, ActionTarget::Recipe { first, ways, count }) => self.lay_recipe(agent, first as usize, ways as usize, count),
                 (Effect::Fish, ActionTarget::Block { block, .. }) => self.fish(agent, block),
+                (Effect::Relight, ActionTarget::Block { block, .. }) => self.relight(agent, block),
                 (Effect::Swap, ActionTarget::Block { block, .. }) => {
                     // Opened or shut here first: the clients follow what the server holds.
                     let changes = voxmar_engine::action::swapping(&Context { server: self, agent }, block);
