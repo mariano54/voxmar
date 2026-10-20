@@ -572,14 +572,7 @@ impl Module for Hunt {
         if def.warn.is_some() {
             return None;
         }
-        let radius = self.radius * (0.6 + 0.4 * ctx.lively) * (0.7 + 0.6 * ctx.mind.hunger) * (0.7 + 0.6 * personality.aggression);
-        // RuneScape's rules leave be a player who has settled long in one place, or one of
-        // more than twice the creature's level; a boss always fights.
-        let prey = ctx.at.players.iter().find(|p| {
-            !p.creative && !p.friend && ctx.distance(p.position) < radius.min(ctx.sight)
-                && (def.boss || (!p.tolerated && p.combat_level as u16 <= def.level as u16 * 2 + 1))
-        })?;
-        Want::at(2.5 * personality.aggression, *prey)
+        Want::at(2.5 * personality.aggression, *hunted(ctx, self.radius, 0.0)?)
     }
 
     fn act(&self, ctx: &Ctx, mind: &mut Mind, target: Option<Seen>, _: bool) -> Decision {
@@ -587,15 +580,24 @@ impl Module for Hunt {
     }
 }
 
-/// Warns a player who comes near before it attacks them (`creature::Warn`): it stands
-/// and faces them in its warning stance; if they stay its `seconds`, or come within its
-/// `near` blocks, it is provoked and goes for them as if struck (`Mind::provoked`), its
-/// hunt or defence taking over. One who backs off out of its `radius` first is let be.
-/// It leaves be those its hunt would (a player of more than twice its level, one settled
-/// long in one place), and warns no one while frightened, kept, sent on an errand, or
-/// having given up a chase.
+/// Warns a player before it attacks them (`creature::Warn`): it stands and faces them in
+/// its warning stance; if they stay its `seconds` (warning any it would, one after
+/// another, on one clock), or come within its `near` blocks, it is provoked and goes for
+/// them as if struck (`Mind::provoked`), its hunt or defence taking over that very
+/// decision (`think`). One who backs off `WARN_EXIT` blocks past where it began to warn,
+/// or out of its sight, is let be once it has not warned for `WARN_LAPSE` seconds.
+///
+/// A warning never changes whom a hunter goes for: it warns those its hunt would go for
+/// (`hunted`), as far off. One that only defends itself warns those who come within its
+/// `radius` in plain sight (`Seen::in_sight`). Neither warns a player holding the food that
+/// tempts it unless it hunts (a hunter's chase outranked the food before), nor warns while
+/// frightened, kept, on an errand or having given up a chase.
 #[derive(Debug)]
 struct Warn;
+
+/// Blocks past its radius a player must go to end a warning, so one at the edge does not
+/// set it flickering on and off.
+pub const WARN_EXIT: f32 = 1.5;
 
 impl Module for Warn {
     fn name(&self) -> &'static str {
@@ -615,26 +617,50 @@ impl Module for Warn {
         if ctx.attacker().is_some() && ctx.mind.anger > 0.0 {
             return None;
         }
-        let radius = warn.radius * (0.6 + 0.4 * ctx.lively);
-        let p = ctx.at.players.iter().find(|p| {
-            !p.creative && !p.friend && !p.tolerated && ctx.distance(p.position) < radius.min(ctx.sight) && p.combat_level as u16 <= def.level as u16 * 2 + 1
-        })?;
+        let slack = if ctx.mind.warning.is_some() { WARN_EXIT } else { 0.0 };
+        let hunt = ctx.creature.behaviours.iter().find_map(|b| match b.behaviour {
+            Behaviour::Hunt { radius } => Some(radius),
+            _ => None,
+        });
+        let p = match (hunt, warn.radius) {
+            (Some(radius), _) => hunted(ctx, radius, slack).filter(|p| p.in_sight)?,
+            (None, Some(radius)) => {
+                let radius = radius * (0.6 + 0.4 * ctx.lively) + slack;
+                ctx.at.players.iter().find(|p| {
+                    !p.creative && !p.friend && !p.tolerated && !p.tempting && p.in_sight
+                        && ctx.distance(p.position) < radius.min(ctx.sight + slack)
+                        && p.combat_level as u16 <= def.level as u16 * 2 + 1
+                })?
+            }
+            (None, None) => return None,
+        };
         Want::at(2.0, *p)
     }
 
     fn act(&self, ctx: &Ctx, mind: &mut Mind, target: Option<Seen>, _: bool) -> Decision {
         let (Some(p), Some(warn)) = (target, ctx.creature.def.warn) else { return Decision::default() };
-        let seconds = match mind.warning {
-            Some((id, seconds)) if id == p.id => seconds + ctx.at.dt,
-            _ => 0.0,
-        };
+        let seconds = mind.warning.map_or(0.0, |w| w.seconds + ctx.at.dt);
         if seconds >= warn.seconds || ctx.distance(p.position) <= warn.near {
+            // `think` decides afresh, its hunt or defence taking it up.
             mind.provoked(p.id);
-            return strike(ctx, mind, Some(p), false);
+            return Decision::default();
         }
-        mind.warning = Some((p.id, seconds));
+        mind.warning = Some(super::Warning { seconds, lapse: 0.0 });
         Decision { face: Some(p.position), pose: Pose::Warning, ..Default::default() }
     }
+}
+
+/// The player a hunter of `radius` (its `Hunt`) goes for now, unprovoked, reckoned `slack`
+/// blocks further: the nearest in reach of its hunt by its liveliness, hunger and
+/// aggression, and in its sight. RuneScape's rules leave be a player who has settled long
+/// in one place, or one of more than twice the creature's level; a boss always fights.
+fn hunted<'a>(ctx: &'a Ctx, radius: f32, slack: f32) -> Option<&'a Seen> {
+    let def = &ctx.creature.def;
+    let radius = radius * (0.6 + 0.4 * ctx.lively) * (0.7 + 0.6 * ctx.mind.hunger) * (0.7 + 0.6 * ctx.mind.personality.aggression) + slack;
+    ctx.at.players.iter().find(|p| {
+        !p.creative && !p.friend && ctx.distance(p.position) < radius.min(ctx.sight + slack)
+            && (def.boss || (!p.tolerated && p.combat_level as u16 <= def.level as u16 * 2 + 1))
+    })
 }
 
 /// Fights back when hurt (neutral creatures): the boar that charges, the goose that bites.

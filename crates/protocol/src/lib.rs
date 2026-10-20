@@ -51,7 +51,7 @@ pub use voxmar_engine::weather::Weather;
 // 54: what another player is doing in a fight (PlayerView::fight): their swing, blows, guard;
 // and Players told as they change (seen, gone), names once (players who left named once more
 // with no name, to be forgotten), only those near enough.
-// 55 is kept for the light ladder.
+// 55 is unused.
 // 56: whether a creature's blow spoiled the player's draw (ServerMessage::Hurt::spoiled).
 // 57 is kept for the light ladder.
 // 58: a creature warning a player off before it attacks (Pose::Warning).

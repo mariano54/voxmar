@@ -195,17 +195,18 @@ impl Circle {
     }
 }
 
-/// How a creature warns a player before it attacks (docs/creature-ai.md, "Warnings"): one
-/// who comes within `radius` blocks it stands and faces in its warning stance (`stance`,
-/// drawn as a tell is, with its `warn` sound), for `seconds`; then, or at once if they come
-/// within `near`, it goes for them as if struck. A player who backs off out of `radius`
-/// first is let be. A hunter warns in place of going straight for its prey; one that
-/// only defends itself (a badger, a bear) warns those who come too close to it, then
-/// defends its ground.
+/// How a creature warns a player before it attacks (docs/creature-ai.md, "Warnings"): it
+/// stands and faces them in its warning stance (`stance`, drawn as a tell is, with its
+/// `warn` sound) for `seconds`; then, or at once if they come within `near` blocks, it
+/// goes for them as if struck. A player who backs off first is let be. A hunter warns
+/// those its hunt would go for, as far off (and so has no `radius`): the warning only
+/// tells its chase before it comes. One that only defends itself (a badger, a bear) warns
+/// those who come within `radius` blocks of it, then defends its ground.
 #[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Warn {
-    pub radius: f32,
+    #[serde(default)]
+    pub radius: Option<f32>,
     pub near: f32,
     pub seconds: f32,
     #[serde(default)]
@@ -214,10 +215,17 @@ pub struct Warn {
 
 impl Warn {
     /// Far enough to be seen and backed away from, near enough to be about this creature;
-    /// long enough to be read, short enough that it is no free stare.
-    pub fn check(&self) -> Result<(), String> {
+    /// long enough to be read, short enough that it is no free stare. `hunts`: whether the
+    /// creature hunts, warning at its hunt's radius rather than its own.
+    pub fn check(&self, hunts: bool) -> Result<(), String> {
+        match (hunts, self.radius) {
+            (true, Some(_)) => return Err("a hunter warns as far off as it hunts: its `warn` has no `radius`".into()),
+            (false, None) => return Err("one that does not hunt needs a `radius` to warn within".into()),
+            _ => {}
+        }
+        let radius = self.radius.unwrap_or(16.0);
         let stance = [self.stance.nod, self.stance.crouch, self.stance.rear];
-        if !(2.0..=16.0).contains(&self.radius) || !(0.5..=self.radius - 1.0).contains(&self.near) || !(0.5..=4.0).contains(&self.seconds) || stance.iter().any(|v| !(0.0..=1.0).contains(v)) {
+        if !(2.0..=16.0).contains(&radius) || !(0.5..=radius - 1.0).contains(&self.near) || !(0.5..=4.0).contains(&self.seconds) || stance.iter().any(|v| !(0.0..=1.0).contains(v)) {
             return Err(format!(
                 "`warn` needs radius 2 to 16 blocks, near 0.5 to a block inside it, seconds 0.5 to 4 and its stance 0 to 1, not {self:?}"
             ));
@@ -1030,7 +1038,11 @@ impl CreatureRegistry {
                 if def.attack.is_none() {
                     return Err(error("warns (`warn`) but has no `attack` to follow it with".into()));
                 }
-                warn.check().map_err(error)?;
+                if def.boss {
+                    return Err(error("is a boss, and a boss warns no one (`warn`): it fights".into()));
+                }
+                let behaviours = if def.behaviours.is_empty() { generated(&def) } else { def.behaviours.clone() };
+                warn.check(behaviours.iter().any(|b| matches!(b.behaviour, Behaviour::Hunt { .. }))).map_err(error)?;
             }
             def.death.check().map_err(error)?;
             if def.flees_below.is_some_and(|f| !(0.0..=1.0).contains(&f)) {
