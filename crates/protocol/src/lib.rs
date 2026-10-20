@@ -49,8 +49,11 @@ pub use voxmar_engine::weather::Weather;
 // 51: how another player looks up or down and what is in their hand (PlayerView::pitch, held).
 // 52 and 53 are kept for the light ladder and the farm days piece.
 // 54: what another player is doing in a fight (PlayerView::fight): their swing, blows, guard;
-// and Players told as they change (seen, gone), names once, only those near enough.
-// 55 to 57 are kept for the light ladder and a creature's blow spoiling a draw.
+// and Players told as they change (seen, gone), names once (players who left named once more
+// with no name, to be forgotten), only those near enough.
+// 55 is kept for the light ladder.
+// 56: whether a creature's blow spoiled the player's draw (ServerMessage::Hurt::spoiled).
+// 57 is kept for the light ladder.
 // 58: a creature warning a player off before it attacks (Pose::Warning).
 pub const PROTOCOL_VERSION: u32 = 58;
 
@@ -220,8 +223,9 @@ pub enum ServerMessage {
     Struck { creature: u32, damage: u16, killed: bool, blow: voxmar_engine::combat::Blow, pips: u8 },
     /// A creature's blow at the player came down: for `damage`, or turned aside as
     /// `defended` says. Every blow that comes down is answered; a wind-up a daze cuts short
-    /// comes to nothing and is not.
-    Hurt { creature: u32, damage: u16, defended: voxmar_engine::combat::Defended },
+    /// comes to nothing and is not. `spoiled`: the blow spoiled the player's shot being
+    /// drawn, so the client lets its draw go only when the server did.
+    Hurt { creature: u32, damage: u16, defended: voxmar_engine::combat::Defended, spoiled: bool },
     /// Asks for a `ClientMessage::Pong` straight back: the round trip it takes is how late
     /// the player sees what happens and answers it (fights judge guards and dodges by it).
     Ping { id: u32 },
