@@ -277,6 +277,8 @@ pub struct Creatures {
     pub(crate) release_asked: FxHashMap<PlayerId, (u32, u64)>,
     /// Which blocks are water a creature swims in or drinks, by id, worked out once.
     water: std::sync::OnceLock<Vec<bool>>,
+    /// Which blocks are railings (`RAILING_TAG`), by id, worked out once.
+    railings: std::sync::OnceLock<Vec<bool>>,
 }
 
 /// Every live creature by where it stood when a pass began, in square cells `CELL` blocks
@@ -339,6 +341,12 @@ impl Creatures {
         self.water.get_or_init(|| blocks.ids().map(|b| blocks.info(b).fluid.is_some() && blocks.def(b).name.contains("water")).collect())
     }
 
+    /// Which blocks are railings, by id: to a creature a railing stands two high, as a
+    /// fence does, so nothing hops onto it and over the edge it guards.
+    fn railing_blocks(&self, blocks: &voxmar_engine::block::BlockRegistry) -> &[bool] {
+        self.railings.get_or_init(|| blocks.ids().map(|b| blocks.def(b).has_tag(voxmar_engine::block::RAILING_TAG)).collect())
+    }
+
     /// Takes a creature out of the world without a death (`/creatures remove`).
     pub(crate) fn take_away(&mut self, id: u32) {
         if self.live.remove(&id).is_some() {
@@ -364,11 +372,33 @@ impl Creatures {
 struct Ground<'a> {
     server: &'a Server,
     last: std::cell::Cell<Option<(ColumnPos, &'a voxmar_engine::world::Column)>>,
+    /// Whether a railing is the block-high step it is (`Ground::climbing`), not a wall two
+    /// high.
+    climbs_railings: bool,
 }
 
 impl<'a> Ground<'a> {
     fn of(server: &'a Server) -> Self {
-        Self { server, last: std::cell::Cell::new(None) }
+        Self { server, last: std::cell::Cell::new(None), climbs_railings: false }
+    }
+
+    /// The world as a creature that climbs a railing feels it: a boss, or a fighter after a
+    /// player, gets over a railing as a player does, so a ring of railings is no pen it
+    /// presses on while a spear outreaches it. Grazers, wanderers and kept animals keep to
+    /// `Ground::of`, where a railing stands two high.
+    fn climbing(server: &'a Server, climbs: bool) -> Self {
+        Self { climbs_railings: climbs, ..Self::of(server) }
+    }
+
+    /// Whether the block in `cell` is a railing.
+    fn railing(&self, cell: IVec3) -> bool {
+        self.block(cell).is_some_and(|b| self.server.creatures.railing_blocks(&self.server.content.blocks)[b.0 as usize])
+    }
+
+    /// Whether the block in `cell` is solid (an unloaded column is).
+    fn solid_block(&self, cell: IVec3) -> bool {
+        let blocks = &self.server.content.blocks;
+        self.block(cell).is_none_or(|b| blocks.info(b).solid)
     }
 
     /// As `Server::block`: none in an unloaded column or under the world.
@@ -395,8 +425,15 @@ impl<'a> Ground<'a> {
 
 impl motion::Surroundings for Ground<'_> {
     fn solid(&self, cell: IVec3) -> bool {
-        // Unloaded columns are walls, so nothing walks off the edge of the world.
-        self.block(cell).is_none_or(|b| self.server.content.blocks.info(b).solid)
+        // Unloaded columns are walls, so nothing walks off the edge of the world. Over a
+        // railing is a wall too, to all but a climber: it stands two high to a creature.
+        self.solid_block(cell) || !self.climbs_railings && self.railing(cell - IVec3::Y)
+    }
+
+    fn footing(&self, cell: IVec3) -> bool {
+        // The wall over a railing is no floor, and nor, to all but a climber, is a
+        // railing's top: nothing walks on air along it or hops over it from beside it.
+        self.solid_block(cell) && (self.climbs_railings || !self.railing(cell))
     }
 
     fn water(&self, cell: IVec3) -> bool {
@@ -761,6 +798,9 @@ impl Server {
         // Where that is not enough (its straight way was shut), it looks for a short way
         // round (`path::find`) and follows it: the door in the wall, the gap in the fence.
         let (movement, water) = (&species.def.movement, species.def.habitat.water);
+        // A boss, or a wild fighter on a chase, climbs a railing (`Ground::climbing`); a
+        // kept animal, even defending itself, stays in its railed pen.
+        let climbs = species.def.boss || creature.owner.is_none() && creature.mind.doing.is_some_and(|i| matches!(species.modules[i].0.name(), "hunt" | "defend"));
         // The way it follows after this tick, and the goal cell and tick of a fresh search.
         let (mut way, mut searched) = (Vec::new(), None);
         // What it wanted before steering: a creature boxed in steers to a standstill but still
@@ -780,7 +820,7 @@ impl Server {
                 let span = path::Walker::span_of(body.size.0);
                 let walker = path::Walker { height: body.size.1.ceil() as i32, climbs: movement.jump > 0.0, wary: water == Water::Land, span };
                 if (going_round || !cells.is_empty()) && stale && self.tick >= creature.way_at + TICKS_PER_SECOND as u64 {
-                    let found = path::find(&Ground::of(self), &walker, walker.corner(body.position + Vec3::Y * 0.01), walker.corner(goal));
+                    let found = path::find(&Ground::climbing(self, climbs), &walker, walker.corner(body.position + Vec3::Y * 0.01), walker.corner(goal));
                     #[cfg(test)]
                     tick_cost_tests::SEARCHES.with(|n| n.set((n.get().0 + 1, n.get().1 + found.is_none() as u64)));
                     searched = Some((found.is_some().then_some(to), self.tick));
@@ -792,7 +832,7 @@ impl Server {
                 // Whether its box goes straight to the middle of `cell`, a cell at its level,
                 // meeting nothing: through a doorway barely wider than it, only once lined up
                 // with it.
-                let ground = Ground::of(self);
+                let ground = Ground::climbing(self, climbs);
                 let straight = |cell: &IVec3| goes_straight(body.aabb(), (walker.middle(*cell) - body.position).with_y(0.0), |p| motion::Surroundings::solid(&ground, p));
                 while let Some(cell) = cells.first() {
                     // Level with it: a cell a block up is not reached until it has climbed.
@@ -818,13 +858,13 @@ impl Server {
                     cells.remove(0);
                 }
                 let wish = cells.first().map_or(drive.wish, |cell| (walker.middle(*cell) - body.position).with_y(0.0).normalize_or_zero());
-                let (heading, side) = motion::steer(&body, &Ground::of(self), movement, water, wish, creature.detour, drive.speed, dt);
+                let (heading, side) = motion::steer(&body, &Ground::climbing(self, climbs), movement, water, wish, creature.detour, drive.speed, dt);
                 way = cells;
                 (Drive { wish: heading, ..drive }, side)
             }
             _ => (drive, 0.0),
         };
-        motion::step(&mut body, &Ground::of(self), movement, water, drive, dt);
+        motion::step(&mut body, &Ground::climbing(self, climbs), movement, water, drive, dt);
         let creature = self.creatures.live.get_mut(&id).expect("still there");
         // What a search found holds for a second, bobbing at the surface or not; out on dry
         // ground it is done with.
@@ -927,7 +967,8 @@ impl Server {
             let height = self.content.creatures.get(species_id).def.body.size;
             let landing = (0..6).map(|dy| (to + Vec3::Y * 3.0 - Vec3::Y * dy as f32).floor()).find(|cell| {
                 let feet = cell.as_ivec3();
-                self.is_solid(feet - IVec3::Y) && !Aabb::standing(cell.as_ivec3().as_vec3() + Vec3::new(0.5, 0.0, 0.5), height.0, height.1).intersects(|p| self.is_solid(p))
+                // On footing: never on a railing's narrow top.
+                self.is_solid(feet - IVec3::Y) && !Ground::of(self).railing(feet - IVec3::Y) && !Aabb::standing(cell.as_ivec3().as_vec3() + Vec3::new(0.5, 0.0, 0.5), height.0, height.1).intersects(|p| self.is_solid(p))
             });
             if let Some(cell) = landing {
                 let creature = self.creatures.live.get_mut(&id).expect("listed");
@@ -1632,11 +1673,12 @@ impl Server {
         self.content.creatures.limits().kept_each.saturating_sub(self.kept_by(keeper)).min(self.room_left())
     }
 
-    /// The cell nearest height `y` in a column where a body can stand: solid beneath, two
-    /// free cells (or water) above.
+    /// The cell nearest height `y` in a column where a body can stand: solid beneath (not a
+    /// railing's narrow top), two free cells (or water) above.
     pub(crate) fn standing_spot(&self, x: i32, z: i32, y: i32) -> Option<IVec3> {
         let free = |cell: IVec3| self.block(cell).is_some_and(|b| !self.content.blocks.info(b).solid);
-        let stands = |cell: IVec3| self.is_solid(cell - IVec3::Y) && free(cell) && free(cell + IVec3::Y);
+        // On footing: never on a railing's narrow top.
+        let stands = |cell: IVec3| self.is_solid(cell - IVec3::Y) && !Ground::of(self).railing(cell - IVec3::Y) && free(cell) && free(cell + IVec3::Y);
         (0..24).flat_map(|d| [y + d, y - d - 1]).map(|cy| IVec3::new(x, cy, z)).find(|&cell| stands(cell))
     }
 
@@ -3789,6 +3831,10 @@ pub(crate) mod tick_cost_tests {
             self.1.set(self.1.get() + 1);
             self.0.water(c)
         }
+        fn footing(&self, c: IVec3) -> bool {
+            self.1.set(self.1.get() + 1);
+            self.0.footing(c)
+        }
     }
 
     /// Block lookups and time per path search on the server's own ground, in a pen with a
@@ -4539,6 +4585,152 @@ mod fight_tests {
             }
         }
         assert!(tried > 0);
+    }
+
+    /// A balcony four blocks up, railed along its east edge: no creature that walks,
+    /// walking or running at the railing, goes over it or off the balcony, nor stands on air
+    /// over it, driven straight at it or steering as a brain does: with the railing alone;
+    /// with a block-high row of stone, or of stairs, just inside it; or railed on its south
+    /// edge too, driven into the corner. Steering from up on the railing, or on the wall
+    /// over it, it never walks off the balcony's edge either. (A boss climbs a railing:
+    /// `a_fighter_or_a_boss_gets_into_a_ring_of_railings`.) Before: the cell
+    /// over a railing, a wall to a creature, was a floor too, so anything on a block beside
+    /// the railing hopped onto that cell and walked on air a block over the railing's top
+    /// (111 of 159 species and pace runs got over); and one already up there found no ground
+    /// under it to judge a drop by, so took every way for open and walked off the balcony.
+    #[test]
+    fn a_railing_keeps_creatures_on_a_balcony() {
+        for scene in ["railing", "stone step", "stair", "corner", "on the railing", "over the railing"] {
+            railed_balcony(scene);
+        }
+    }
+
+    fn railed_balcony(scene: &str) {
+        let mut server = crate::test_server();
+        let c = pen(&mut server, 9);
+        // The balcony: stone four high from the pen's west wall to x 2, the railing on its
+        // edge; beyond it the pen's floor, four down. Its ends are walled up, so steering
+        // along the railing it goes nowhere else. Railed into a corner, it ends at z 2.
+        let corner = scene == "corner";
+        let far = if corner { 2 } else { 8 };
+        for x in -8..=2 {
+            wall(&mut server, (-8..=far).map(|z| c + IVec3::new(x, 0, z)), 4);
+        }
+        set(&mut server, "base:oak_railing_west", (-8..if corner { far } else { far + 1 }).map(|z| c + IVec3::new(2, 4, z)));
+        wall(&mut server, (-8..=3).flat_map(|x| [c + IVec3::new(x, 0, -9), c + IVec3::new(x, 0, 9)]), 8);
+        let wish = if corner {
+            set(&mut server, "base:oak_railing_south", (-8..2).map(|x| c + IVec3::new(x, 4, 2)));
+            set(&mut server, "base:oak_railing_corner", [c + IVec3::new(2, 4, 2)]);
+            Vec3::new(1.0, 0.0, 1.0).normalize()
+        } else {
+            Vec3::X
+        };
+        match scene {
+            "stone step" => set(&mut server, "base:stone", (-8..=8).map(|z| c + IVec3::new(1, 4, z))),
+            "stair" => set(&mut server, "base:oak_stairs_east", (-8..=8).map(|z| c + IVec3::new(1, 4, z))),
+            _ => {}
+        }
+        let ground = Ground::of(&server);
+        let dt = 1.0 / TICKS_PER_SECOND as f32;
+        let mut tried = 0;
+        for (_, species) in server.content.creatures.iter() {
+            let movement = species.def.movement;
+            let size = species.def.body.size;
+            if movement.jump <= 0.0 || species.def.movement.style == voxmar_engine::creature::Style::Flier || size.1 > 3.0 {
+                continue;
+            }
+            for (pace, speed) in [("walk", movement.walk), ("run", movement.run)] {
+                for steers in [false, true] {
+                    // Up on the railing's top, or on the wall over it, it starts where a
+                    // chase or a fall from above could leave it: steering, it still judges
+                    // the drop beyond from there.
+                    let from = match scene {
+                        "corner" => Vec3::new(-1.5, 4.0, -1.5),
+                        "on the railing" => Vec3::new(2.5, 5.0, 0.5),
+                        "over the railing" => Vec3::new(2.5, 6.0, 0.5),
+                        _ => Vec3::new(-1.5, 4.0, 0.5),
+                    };
+                    let on_railing = from.x > 2.0;
+                    if on_railing && !steers {
+                        continue;
+                    }
+                    let mut body = Body::new(c.as_vec3() + from, motion::yaw_of(wish), size);
+                    (body.reach, body.head, body.on_ground) = (species.reach, species.head, true);
+                    let mut side = 0.0;
+                    for _ in 0..(4 * TICKS_PER_SECOND) {
+                        let heading = if steers {
+                            let (heading, taken) = motion::steer(&body, &ground, &movement, Water::Land, wish, side, speed, dt);
+                            side = taken;
+                            heading
+                        } else {
+                            wish
+                        };
+                        motion::step(&mut body, &ground, &movement, Water::Land, Drive { wish: heading, speed, face: None }, dt);
+                        let at = body.position - c.as_vec3();
+                        let how = if steers { "steering" } else { "driven" };
+                        assert!(at.y >= 3.99 && at.x < if on_railing { 3.5 } else { 3.0 } && !(corner && at.z >= 3.0), "{} ({pace}, {how}, {scene}) got over the railing or off the balcony: at {at:.2}", species.def.name);
+                        // On the step it stands at 5; on air over the railing, at 6.
+                        assert!(on_railing || at.y < 5.9, "{} ({pace}, {how}, {scene}) stood on air over the railing: at {at:.2}", species.def.name);
+                    }
+                    tried += 1;
+                }
+            }
+        }
+        assert!(tried > 0);
+    }
+
+    /// A player in a ring of railings, five across, is no player out of reach: a fighter
+    /// they strike, and Old Tusk, climb the railing as the block-high step it is and strike
+    /// within 6 s. Before: a railing stood two high to every creature, so neither got in in
+    /// 10 s, and a boss, which never balks, pressed on the ring while a spear outreached it.
+    #[test]
+    fn a_fighter_or_a_boss_gets_into_a_ring_of_railings() {
+        let scene: Scene = |s, c| {
+            let ring = (-2..=2).flat_map(|i| [IVec3::new(i, 0, -2), IVec3::new(i, 0, 2), IVec3::new(-2, 0, i), IVec3::new(2, 0, i)]);
+            set(s, "base:oak_railing", ring.map(|cell| c + IVec3::new(3, 0, 0) + cell).collect::<Vec<_>>());
+            (c.as_vec3() + Vec3::new(3.5, 0.0, 0.5), c.as_vec3() + Vec3::new(-4.5, 0.0, 0.5))
+        };
+        for name in ["base:wolf", "base:old_tusk"] {
+            let fight = fight(name, scene, 8.0);
+            assert!(fight.first.is_some_and(|t| t <= 6.0), "{name} at a ring of railings: {fight:?}");
+        }
+    }
+
+    /// A ring of railings, five across, keeps in what it pens: a mouflon led by wheat
+    /// toward a player outside it, a red deer that player struck, and a kept boar they
+    /// struck (which turns to defend itself) all stay inside, on its floor, through 10 s of
+    /// the server's own ticks. Only a boss or a wild fighter on a chase climbs a railing.
+    #[test]
+    fn a_ring_of_railings_pens_the_led_the_struck_and_the_kept() {
+        let mut server = crate::test_server();
+        let c = pen(&mut server, 9);
+        let middle = c + IVec3::new(3, 0, 0);
+        let ring = (-2..=2).flat_map(|i| [IVec3::new(i, 0, -2), IVec3::new(i, 0, 2), IVec3::new(-2, 0, i), IVec3::new(2, 0, i)]);
+        set(&mut server, "base:oak_railing", ring.map(|cell| middle + cell).collect::<Vec<_>>());
+        let player = join(&mut server, c.as_vec3() + Vec3::new(-2.5, 0.0, 0.5));
+        let wheat = server.content.blocks.expect("base:wheat");
+        let held = server.players.get_mut(&player).unwrap();
+        held.inventory.add(wheat, 1);
+        held.selected = (0..36).find(|&slot| held.inventory.get(slot).is_some_and(|s| s.item == wheat)).expect("the wheat is held");
+        let at = |dx: f32, dz: f32| middle.as_vec3() + Vec3::new(0.5 + dx, 0.0, 0.5 + dz);
+        let sheep = put(&mut server, "base:mouflon", at(0.0, 0.0), -Vec3::X);
+        let deer = put(&mut server, "base:red_deer", at(1.0, 1.0), -Vec3::X);
+        let boar = put(&mut server, "base:wild_boar", at(-1.0, -1.0), -Vec3::X);
+        server.creatures.live.get_mut(&boar).unwrap().owner = Some("Bob".into());
+        server.tick = 1000;
+        for id in [deer, boar] {
+            server.hurt_creature(player, id, 0, None, voxmar_engine::combat::Blow::Plain);
+        }
+        for t in 0..10 * TICKS_PER_SECOND as u64 {
+            server.tick += 1;
+            server.think_and_move();
+            server.players.get_mut(&player).unwrap().health = traits::Health::full(server.survival.max_health);
+            for (id, what) in [(sheep, "the mouflon after wheat"), (deer, "the struck deer"), (boar, "the struck kept boar")] {
+                let off = server.creatures.live[&id].body.position - middle.as_vec3();
+                let inside = (-1.0..2.0).contains(&off.x) && (-1.0..2.0).contains(&off.z) && off.y < 0.9;
+                assert!(inside, "{what} got out of the ring of railings {t} ticks on: at {off:.2} from its middle cell");
+            }
+        }
     }
 
     /// Prints the table (`cargo test -p voxmar_server --lib fight_table -- --ignored --nocapture`).
