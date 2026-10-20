@@ -359,6 +359,28 @@ The Farm quests that followed Homestead Hearth follow The Farm Age.
 - `/quest <name>` (admin) marks a quest done, its rewards left to claim. The kiln bot uses
   it for The Farm Age until piece 12 has it earn the rite.
 
+## The Farm book (Oct 20)
+
+The Farm quests live in their own file, `base/quests_farm.ron` (the loader reads
+`quests.ron` and any `quests_*.ron`, so a mod can add a book the same way), and the
+road to the lit Crucible Kiln is laid out like a long modpack's book: several paths that
+each make one part of the kiln, meeting at the end, with a way round at each fork. Each
+step is something done in the world (gathered, fired, stored, set down), not only crafted.
+
+| Path | Quests to the kiln | Ways round |
+|---|---|---|
+| Main | A Pit Kiln, A Kiln Yard (two pit kilns and an earth clamp set down), First Bricks, Brick by Brick, The Kiln Ring (twelve bricks set down), The Crucible, Crucible Kiln | |
+| Fuel (new) | Fuel to Hand, Charcoal, A Full Charge (capstone) | logs carried or coal mined; charcoal burnt or coal mined; the charge in charcoal or coal |
+| Pottery | Clay in Store (new), A Kiln Load, Fired Whole (capstone) | A Kiln Load after the kiln yard or the clay store |
+| Mining | Red Metal (moved here from main), then on to An Ore Run (capstone) | |
+
+Crucible Kiln waits on all three of its parts: the crucible, the ring of bricks and the
+charge. The Bronze Age rite is unchanged (30 Farm quests, 4 Farm capstones); A Full Charge is
+a new capstone on the way, and Fired Whole one step off it. Rewards
+that handed out what the route now asks for (kiln bricks, charcoal) are gone, so the bricks
+and the charge are earned. The kiln bot (`a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln`)
+walks the whole route, one quest at a time.
+
 ## Readable to a newcomer (Oct 13)
 
 Every Nomad and Farm quest was read as someone who has never played would: does its text

@@ -7984,10 +7984,16 @@ const QUEST_BOOK_ORDER: &[&str] = &[
     "a_pit_kiln",
     "fire_the_clay",
     "the_potter",
+    "fuel_to_hand",
     "charcoal",
     "red_metal",
+    "a_kiln_yard",
+    "a_kiln_load",
+    "first_bricks",
     "brick_by_brick",
     "the_crucible",
+    "the_kiln_ring",
+    "the_kiln_charge",
     "crucible_kiln",
 ];
 
@@ -8164,11 +8170,13 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     f.craft(&[(0, fired, 3), (2, fired, 3), (3, fired, 3), (4, fired, 3), (5, fired, 3)], "base:clay_pot", 6);
     f.mark("the_potter");
 
-    // Charcoal: logs held and burnt down at the campfire, sixteen. The trunks give the
-    // charcoal for the copper ingots and what the kiln's charge lacks after The Crucible's
-    // sixteen (three more), and a log for sticks: twenty-four is a few to spare.
+    // Fuel to Hand: forty logs carried at once, past its thirty-two, for the charcoal of the
+    // copper ingots and the kiln's whole charge, and a log for sticks.
     let trunks: Vec<IVec3> = [-7, -9].into_iter().flat_map(|z| [1, 3, 5, 7, 11, 13, 15].into_iter().flat_map(move |x| (0..4).map(move |y| o + IVec3::new(x, y, z)))).collect();
-    f.gather("base:stone_axe", trunks, log, 24);
+    f.gather("base:stone_axe", trunks, log, 40);
+    f.wait(5.0, "the server counting the logs carried", |c| quest_status(c, "fuel_to_hand").0);
+    f.mark("fuel_to_hand");
+    // Charcoal: sixteen logs burnt down.
     // The earth clamp from Fire the Clay, taken of its clay and loaded with sixteen logs. It
     // chars them while clay is fired by hand toward A Kiln Load; Charcoal is done when it
     // is taken.
@@ -8200,14 +8208,33 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     f.craft(&[(0, ingot, 1), (1, ingot, 1), (2, ingot, 1), (4, stick, 1), (7, stick, 1)], "base:copper_pickaxe", 1);
     f.mark("red_metal");
 
-    // Brick by Brick: nineteen kiln bricks in hand, four fired clay each in the grid
-    // (Crafting 5). A Kiln Load falls on the way, done at forty clay fired in all, and pays
-    // the first four.
+    // A Kiln Yard: a second pit kiln (a campfire walled in with four cobblestone) set down
+    // beside the first, with the clamp by them.
+    let cobble = "base:cobblestone";
+    if f.have(cobble) < 6 {
+        let stone: Vec<IVec3> = (9..=17).flat_map(|x| (-3..=2).map(move |z| o + IVec3::new(x, 0, z))).filter(|&p| f.c.world.block(p) == f.c.content.blocks.id("base:stone")).collect();
+        f.gather("base:stone_pickaxe", stone, cobble, 6);
+    }
+    f.craft(&[(0, log, 1), (1, log, 1), (3, cobble, 1), (4, cobble, 1)], "base:campfire", 1);
+    f.at_table(site.table);
+    f.craft(&[(0, cobble, 1), (2, cobble, 1), (3, cobble, 1), (4, "base:campfire", 1), (5, cobble, 1)], "base:pit_kiln", 1);
+    f.walk_toward(Fresh::middle(f.rel(4, 0, 3)), 0.3);
+    f.place("base:pit_kiln", f.rel(2, -1, 3));
+    f.mark("a_kiln_yard");
+
+    // A Kiln Load: forty clay fired in all.
     while !quest_status(&f.c, "a_kiln_load").0 {
         let more = f.have(fired) + 1;
         f.fire_clay(&site, more);
     }
     f.mark("a_kiln_load");
+    // First Bricks: four kiln bricks, four fired clay each in the grid (Crafting 5), with
+    // sixteen more fired clay kept for the next four.
+    f.fire_clay(&site, 32);
+    f.craft(&[(0, fired, 4), (1, fired, 4), (3, fired, 4), (4, fired, 4)], bricks, 4);
+    f.wait(5.0, "the server counting the bricks and the fired clay kept", |c| quest_status(c, "first_bricks").0);
+    f.mark("first_bricks");
+    // Brick by Brick: nineteen kiln bricks shaped in all.
     let short = 19u32.saturating_sub(f.have(bricks));
     f.fire_clay(&site, short * 4);
     let k = short as u8;
@@ -8219,9 +8246,13 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     f.craft(&[(0, bricks, 1), (2, bricks, 1), (3, bricks, 1), (4, "base:clay_pot", 1), (5, bricks, 1), (6, bricks, 1), (7, bricks, 1), (8, bricks, 1)], "base:crucible", 1);
     f.mark("the_crucible");
 
-    // The Crucible Kiln: the crucible set down, ringed with eight kiln bricks, one more on
-    // each corner of the ring; thirty-two charcoal held and the crucible right-clicked.
+    // A Full Charge: thirty-two charcoal held at once.
     f.burn_charcoal(&site, 32);
+    f.wait(5.0, "the server counting the charge carried", |c| quest_status(c, "the_kiln_charge").0);
+    f.mark("the_kiln_charge");
+    // The Kiln Ring, then the crucible set down in its middle, and the kiln lit: eight kiln
+    // bricks round the crucible's cell, one more on each corner of the ring; the crucible
+    // right-clicked with the charge in hand.
     let centre = f.rel(13, 0, 9);
     f.walk_toward(Fresh::middle(f.rel(13, 0, 6)), 0.05);
     let core = f.place("base:crucible", centre - IVec3::Y);
@@ -8231,6 +8262,7 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     for (dx, dz) in [(-1, -1), (1, -1), (-1, 1), (1, 1)] {
         f.place(bricks, centre + IVec3::new(dx, 0, dz));
     }
+    f.mark("the_kiln_ring");
     f.hold(charcoal);
     f.propose("base:light", ActionTarget::Block { block: core, face: Face::PosY });
     f.mark("crucible_kiln");
@@ -8282,6 +8314,11 @@ const FRESH_QUESTS: &[(&str, &str)] = &[
     ("fire_the_clay", "fire_the_clay"),
     ("the_potter", "the_potter"),
     ("a_kiln_load", "a_kiln_load"),
+    ("fuel_to_hand", "fuel_to_hand"),
+    ("a_kiln_yard", "a_kiln_yard"),
+    ("first_bricks", "first_bricks"),
+    ("the_kiln_ring", "the_kiln_ring"),
+    ("the_kiln_charge", "the_kiln_charge"),
     ("charcoal", "charcoal"),
     ("red_metal", "red_metal"),
     ("brick_by_brick", "brick_by_brick"),
