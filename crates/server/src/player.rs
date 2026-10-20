@@ -77,6 +77,9 @@ pub struct Player {
     /// Whether their home hearth needs no lighting again from an older save
     /// (`hearth::kindle_home`): new players' and those already seen to.
     pub kindled: bool,
+    /// Whether they have been told this session why something of theirs smoulders
+    /// (`blaze_hint`).
+    pub told_fire: bool,
     pub buried: bool,
     /// Everything the player has discovered (`journal`).
     pub journal: voxmar_engine::journal::Journal,
@@ -204,6 +207,7 @@ impl Player {
             home: None,
             bed: None,
             kindled: true,
+            told_fire: false,
             buried: false,
             journal: Default::default(),
             quests_done: Vec::new(),
@@ -244,7 +248,7 @@ impl Player {
     }
 
     pub fn view(&self) -> PlayerView {
-        PlayerView { id: self.id, name: self.name.clone(), position: self.position, yaw: self.yaw }
+        PlayerView { id: self.id, name: self.name.clone(), position: self.position, yaw: self.yaw, pitch: self.pitch, held: self.held() }
     }
 
     pub fn aabb(&self) -> Aabb {
@@ -340,6 +344,8 @@ impl Server {
     /// completes first: the player saw it done before sending this.
     pub(crate) fn handle_message(&mut self, id: PlayerId, message: ClientMessage, at: Instant) {
         self.arrival = at;
+        // A fire this sets off is theirs.
+        self.fire_origin = self.players.get(&id).map(|p| crate::player_key(&p.name));
         if let Some(player) = self.players.get_mut(&id) {
             player.last_heard = player.last_heard.max(at);
         }
@@ -356,6 +362,9 @@ impl Server {
             ClientMessage::Settings { view_distance, fly_speed } => self.settings(id, view_distance, fly_speed),
             ClientMessage::Command { line } => {
                 if self.may_speak(id, true) {
+                    // What a command changes is no one's doing: its fires are no one's, and it
+                    // forgets no one's home hearth.
+                    self.fire_origin = None;
                     self.command(id, &line);
                 }
             }
@@ -372,6 +381,9 @@ impl Server {
             ClientMessage::ClaimQuest { name } => self.claim_quest(id, &name),
             ClientMessage::LookAtStation { block } => self.look_at_station(id, block),
         }
+        // What they did that set something smouldering, they are told why.
+        self.blaze_hint(id);
+        self.fire_origin = None;
     }
 
     /// A player looked an item up in the recipe viewer: counted once for quests, if the item
@@ -449,7 +461,7 @@ impl Server {
         }
     }
 
-    fn hello(&mut self, id: PlayerId, name: String, protocol: u32, content: u64, admin_token: Option<String>) {
+    pub(crate) fn hello(&mut self, id: PlayerId, name: String, protocol: u32, content: u64, admin_token: Option<String>) {
         let fingerprint = self.content.fingerprint();
         let blocks = self.content.blocks.clone();
         let (seed, allow_flight) = (self.meta.seed, self.config.allow_flight);
@@ -631,6 +643,8 @@ impl Server {
         self.kindle_home(id);
         self.recount_placed(id);
         self.players[&id].connection.send(ServerMessage::Fires { lit: self.fires() });
+        // What smoulders now: the others were told as it began, and are told only of changes.
+        self.players[&id].connection.send(ServerMessage::Smoulders { at: self.smouldering() });
         if let Some(file) = set_aside {
             let text = Words::key("save.player_set_aside").with("file", Words::text(file));
             self.players[&id].connection.send(ServerMessage::Chat { kind: ChatKind::Error, text });
@@ -925,6 +939,10 @@ impl Server {
     /// one axis at a time). A player the world has closed in on (a block placed on them)
     /// is judged by where they end up only, so they can always step out.
     fn clear_between(&self, from: Vec3, to: Vec3) -> bool {
+        // Standing still goes into nothing, even in a wall or in land not loaded yet.
+        if from == to {
+            return true;
+        }
         if self.inside(from) {
             return !self.inside(to);
         }
@@ -1107,6 +1125,50 @@ mod tests {
     use crate::items::{Items, owner_of};
     use crate::save::WorldSave;
 
+    /// The same case as the client's `an_unloaded_cell_stops_a_player_as_a_whole_cube`: a
+    /// cell in a loaded column of air stops nothing; one in the next column, not loaded, and
+    /// one under the world stop a player as a whole cube, so the server's move checks agree
+    /// with the client's prediction at the edge of the loaded world. Before: the server took
+    /// them for empty, so a player the client held at the edge could walk or fall on there.
+    #[test]
+    fn an_unloaded_cell_stops_a_player_as_a_whole_cube() {
+        use voxmar_engine::glam::IVec3;
+        let mut server = crate::test_server();
+        // Far from spawn, where nothing is loaded.
+        let base = IVec3::new(1 << 16, 0, 1 << 16);
+        let loaded = base + IVec3::new(1, 64, 1);
+        server.world.insert(ColumnPos::of_block(loaded), std::sync::Arc::new(voxmar_engine::world::Column::default()));
+        assert!(!server.world.contains(ColumnPos::of_block(loaded + IVec3::X * voxmar_engine::coords::CHUNK_SIZE)), "the fixture means the next column unloaded");
+        assert!(server.boxes(loaded).is_empty());
+        for unloaded in [loaded + IVec3::X * voxmar_engine::coords::CHUNK_SIZE, IVec3::new(loaded.x, -1, loaded.z)] {
+            assert_eq!(server.boxes(unloaded), &voxmar_engine::physics::CUBE, "{unloaded}");
+        }
+        // A player at the edge, stepping over it, would be in a wall there.
+        let size = voxmar_engine::coords::CHUNK_SIZE;
+        let edge = Vec3::new((loaded.x - loaded.x.rem_euclid(size) + size) as f32 - 0.1, loaded.y as f32, loaded.z as f32 + 0.5);
+        assert!(server.inside(edge + Vec3::X * 0.5) && !server.inside(edge - Vec3::X * 0.5));
+    }
+
+    /// A player standing still where their own column is not loaded yet (at login, after a
+    /// long teleport) is in a whole cube there; standing still is no move into anything.
+    /// Before: each input was refused and sent a teleport back to where they stood.
+    #[test]
+    fn a_player_standing_still_in_land_not_loaded_is_not_teleported() {
+        let mut server = crate::test_server();
+        let _connection = join(&mut server, 1, "Ada");
+        let far = Vec3::new((1 << 16) as f32 + 0.5, 70.0, (1 << 16) as f32 + 0.5);
+        assert!(!server.world.contains(ColumnPos::of_block(far.floor().as_ivec3())), "the fixture means their column unloaded");
+        let player = server.players.get_mut(&1).unwrap();
+        (player.position, player.accepted) = (far, far);
+        let before = player.teleports;
+        for _ in 0..20 {
+            let teleport = server.players[&1].teleports;
+            server.input(1, PlayerInput { position: far, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false, teleport });
+        }
+        assert_eq!(server.players[&1].teleports, before, "standing still was refused");
+        assert_eq!(server.players[&1].position, far);
+    }
+
     fn join(server: &mut Server, id: PlayerId, name: &str) -> ClientConnection {
         let (connection, server_side) = local_pair();
         let player = Player::new(id, server_side, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
@@ -1129,6 +1191,42 @@ mod tests {
     }
 
     /// Drive the server directly: no tick race can hide an identity change or a cap bypass.
+    /// The last of the other players a client was told of, emptying what came before.
+    fn told_of_others(client: &ClientConnection) -> Option<Vec<PlayerView>> {
+        std::iter::from_fn(|| client.try_recv().ok().flatten())
+            .filter_map(|message| match message {
+                ServerMessage::Players { players } => Some(players),
+                _ => None,
+            })
+            .last()
+    }
+
+    /// Others see what a player holds and how they look up or down (at most as far as the
+    /// server lets them: 1.6 radians); the last one left is told the others are gone, once.
+    #[test]
+    fn others_are_told_what_a_player_holds_and_where_they_look_and_when_they_go() {
+        let mut server = crate::test_server();
+        let ada = join(&mut server, 1, "Ada");
+        let bo = join(&mut server, 2, "Bob");
+        let sword = server.content.blocks.id("base:iron_sword").expect("a sword");
+        let p = server.players.get_mut(&2).unwrap();
+        p.inventory.add(sword, 1);
+        let slot = (0..voxmar_engine::inventory::SLOTS).find(|&s| p.inventory.get(s).is_some_and(|stack| stack.item == sword)).expect("the sword in a slot");
+        let input = PlayerInput { position: p.position, yaw: 0.3, pitch: 3.0, selected_slot: slot as u8, flying: false, teleport: p.teleports };
+        bo.send(ClientMessage::Input(input));
+        server.handle_messages();
+        server.broadcast_players();
+        let told = told_of_others(&ada).expect("Ada was told of Bob");
+        let bob = told.iter().find(|v| v.id == 2).expect("Bob among the others");
+        assert_eq!((bob.held, bob.pitch), (Some(sword), 1.6), "what Bob holds and how far up he looks");
+        assert!(told.iter().all(|v| v.id != 1), "Ada was told of herself");
+        server.leave(2);
+        server.broadcast_players();
+        assert_eq!(told_of_others(&ada).map(|t| t.len()), Some(0), "Ada was not told Bob had gone");
+        server.broadcast_players();
+        assert!(told_of_others(&ada).is_none(), "alone, Ada was told of nobody again and again");
+    }
+
     #[test]
     fn the_saved_name_keeps_identity_herd_caps_births_and_death_drops() {
         check_saved_ownership(false);
@@ -1222,6 +1320,23 @@ mod tests {
         drop(returning);
         drop(server);
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A player joining while thatch smoulders is told where at once, though the others
+    /// were told as it began and nothing has changed since.
+    #[test]
+    fn a_player_joining_is_told_what_smoulders() {
+        use voxmar_engine::glam::IVec3;
+        let mut server = crate::test_server();
+        let at = voxmar_engine::coords::ColumnPos::of_block(server.spawn.floor().as_ivec3()).origin() + IVec3::new(8, server.spawn.y as i32 + 10, 8);
+        server.set_block(at - IVec3::Y, server.content.blocks.expect("base:stone"));
+        server.set_block(at + IVec3::X - IVec3::Y, server.content.blocks.expect("base:stone"));
+        server.set_block(at, server.content.blocks.expect("base:wattle_panel"));
+        server.set_block(at + IVec3::X, server.content.blocks.expect("base:torch"));
+        server.send_smoulders();
+        let client = join(&mut server, 2, "Late");
+        let told: Vec<Vec<IVec3>> = std::iter::from_fn(|| client.try_recv().ok().flatten()).filter_map(|m| match m { ServerMessage::Smoulders { at } => Some(at), _ => None }).collect();
+        assert_eq!(told, [vec![at]]);
     }
 
     /// A player let down lands on a post's top only where they are over it: beside it, in

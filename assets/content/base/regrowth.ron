@@ -1,10 +1,11 @@
 // Wild plants come back where they were picked (engine/src/regrowth.rs): flowers, herbs,
-// fungi and berry bushes the world grew, as long as the block they grew from stays. Break
-// or replace that ground and the spot is gone. Minutes are world time, by rarity.
+// fungi and berry bushes the world grew, and loose flint and stones lying on it, as long as
+// the block they grew from stays. Break or replace that ground and the spot is gone.
+// Minutes are world time, by rarity.
 // A plant a player placed does not come back, except in a herb planter, for a player
 // whose Farming level reaches `planter_level`; picking it there teaches `planter_xp`.
 (
-    tags: ["flower", "herb", "fungus", "berry", "forage", "garden"],
+    tags: ["flower", "herb", "fungus", "berry", "forage", "garden", "loose"],
     minutes: (common: 20.0, uncommon: 60.0, rare: 720.0, very_rare: 2880.0, legendary: 5760.0),
     planter: "herb_planter",
     planter_level: (common: 1.0, uncommon: 15.0, rare: 40.0, very_rare: 60.0, legendary: 80.0),

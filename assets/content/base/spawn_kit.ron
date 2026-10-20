@@ -1,0 +1,13 @@
+// What lies by every world's spawn (server/src/spawn_kit.rs): laid once per world, new or
+// saved before it, on natural ground no player placed, `near` blocks from the spawn (the rest
+// of its column if the ground there is too little). Enough for a flint axe and a flint
+// pickaxe (four flint, three sticks) however poor the land: bare hands break neither stone
+// nor a living tree. Wild, not placed: the flint regrows (regrowth.ron's "loose").
+(
+    near: (2.0, 6.0),
+    pieces: [
+        (block: "loose_flint", count: (4, 6)),
+        // A snag: a dead trunk breaks by hand to a stick a block (tools.ron).
+        (block: "dead_log", count: (1, 1), height: 3),
+    ],
+)

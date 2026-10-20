@@ -125,7 +125,7 @@
         (
             name: "locate",
             usage: "biome NAME [RADIUS] | gorge [RADIUS] | settlement [{sizes}] [RADIUS] | ore [NAME] [RADIUS]",
-            help: "Finds the nearest place of a biome, of a river running deep in a gorge, or of a hamlet or village (of one size, if you say), within 4000 blocks unless you say (up to 10000), or the nearest sample of ore on the ground over a vein (of an ore such as iron, if you name one), within 1000.",
+            help: "Finds the nearest place of a biome, of a river running deep in a gorge, or of a hamlet, village or town (of one size, if you say), within 4000 blocks unless you say (up to 10000), or the nearest sample of ore on the ground over a vein (of an ore such as iron, if you name one), within 1000.",
             permission: Admin,
             run: Locate,
         ),
@@ -143,8 +143,8 @@
         ),
         (
             name: "creatures",
-            usage: "[tame | ready | hasten | hold | kill | remove] [creature] | populate | disperse",
-            help: "Lists the creatures within 64 blocks of you: how many of each, and what the nearest is doing. Admins may tame those within 8 blocks, ready the kept ones there to breed, hasten them (products due and young grown at once), hold them still for a minute, kill them, or take away the ones they keep; only of one species, if they name it. Populate tries natural spawning nearby and holds arrivals for a minute; disperse removes nearby wild creatures.",
+            usage: "[tame | ready | hasten | hold | release | kill | remove] [creature] | populate | disperse",
+            help: "Lists the creatures within 64 blocks of you: how many of each, and what the nearest is doing. Admins may tame those within 8 blocks, ready the kept ones there to breed, hasten them (products due and young grown at once), hold them still for a minute or let a hold go (release), kill them, or take away the ones they keep; only of one species, if they name it. Populate tries natural spawning nearby and holds arrivals for a minute; disperse removes nearby wild creatures.",
             run: Creatures,
         ),
         (

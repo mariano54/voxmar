@@ -383,6 +383,10 @@ pub struct SiteDef {
     pub reach: i32,
     pub firm: i32,
     pub tries: usize,
+    /// How many of its next best spots a square lays out in turn where its best cannot be
+    /// laid out (no level ground for the well, too few homes fit), before it is left
+    /// empty: its climate roll is still made once, on its best.
+    pub others: usize,
     /// Where water is needed, the closer look for creeks goes through `look` times
     /// `tries` of the best spots, sampling every `creek` blocks.
     pub look: usize,
@@ -415,6 +419,7 @@ impl Default for SiteDef {
             reach: 48,
             firm: 24,
             tries: 6,
+            others: 0,
             look: 6,
             creek: 4,
             score: ScoreDef::default(),
@@ -701,6 +706,71 @@ impl Default for DressingDef {
     }
 }
 
+/// How a walled place's wall stands (a size's `walls` says which are walled).
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields, default)]
+pub struct WallsDef {
+    /// How far out from its buildings the wall runs round them.
+    pub margin: i32,
+    /// How high a palisade of logs stands, and a wall of stone.
+    pub height: (u32, u32),
+    /// The wealth past which it is stone, not a palisade.
+    pub stone: f32,
+    /// A tower at each corner and every this many blocks along it, this much higher
+    /// than the wall.
+    pub towers: (u32, u32),
+}
+
+impl Default for WallsDef {
+    fn default() -> Self {
+        Self { margin: 4, height: (3, 4), stone: 0.5, towers: (24, 2) }
+    }
+}
+
+/// A roof laid in shaped pieces: its slope and its ridge cap, each a block that faces (its
+/// bare name's eave, and a ridge's run, to the north; `_east`, `_south`, `_west` the others).
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct RoofPiecesDef {
+    pub slope: String,
+    pub ridge: String,
+    #[serde(default = "one_f")]
+    pub weight: f32,
+}
+
+fn one_f() -> f32 {
+    1.0
+}
+
+/// Jettied houses: the storeys over the ground stand a block out over the street, on a
+/// row of `beam`s (a block that faces four ways, its overhang the way it faces; `{wood}`
+/// the house's wood), on `chance` of the houses that can be (two storeys or more over
+/// four walls), more where the place is crowded.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct JettyDef {
+    pub beam: String,
+    pub chance: f32,
+}
+
+/// What a village's own flames must not reach: none of its blocks that catch (`catch`, by
+/// tag) stands within `reach` steps of one of its flames (`flames`, by tag), stepping only
+/// through open cells, as fire catches in a home; a roof of them there is laid in `instead`.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields, default)]
+pub struct FireDef {
+    pub flames: Vec<String>,
+    pub catch: Vec<String>,
+    pub reach: i32,
+    pub instead: Option<RoofPiecesDef>,
+}
+
+impl Default for FireDef {
+    fn default() -> Self {
+        Self { flames: vec!["fire".into()], catch: vec!["thatch".into(), "wattle".into()], reach: 4, instead: None }
+    }
+}
+
 /// The numbers planning reads besides the site's.
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields, default)]
@@ -725,6 +795,8 @@ pub struct RulesDef {
     pub specials: BTreeMap<String, SpecialSize>,
     pub houses: BuildingDef,
     pub dressing: DressingDef,
+    pub walls: WallsDef,
+    pub fire: FireDef,
 }
 
 impl Default for RulesDef {
@@ -740,6 +812,8 @@ impl Default for RulesDef {
             specials: BTreeMap::new(),
             houses: BuildingDef::default(),
             dressing: DressingDef::default(),
+            walls: WallsDef::default(),
+            fire: FireDef::default(),
         }
     }
 }
@@ -843,6 +917,12 @@ struct SizeFile {
     /// Its lamps and props along lanes stand this much further apart.
     #[serde(default = "first_spacing")]
     lamps: f32,
+    /// The chance it is walled (`rules.walls`), leaning.
+    #[serde(default)]
+    walls: (f32, BTreeMap<String, f32>),
+    /// The size it is laid out as where it does not fit its ground, one of fewer houses.
+    #[serde(default)]
+    smaller: Option<String>,
 }
 
 fn lane_half() -> f32 {
@@ -1030,6 +1110,12 @@ struct StyleFile {
     /// Its logs, `{wood}` its wood (`{wood}_log` when left out).
     #[serde(default)]
     log: Option<String>,
+    #[serde(default)]
+    roof_pieces: Vec<RoofPiecesDef>,
+    #[serde(default)]
+    pieced: f32,
+    #[serde(default)]
+    jetty: Option<JettyDef>,
 }
 
 /// A package's `rules`: each section it names replaces the earlier one whole, each
@@ -1047,6 +1133,8 @@ struct RulesFile {
     specials: BTreeMap<String, SpecialSize>,
     houses: Option<BuildingDef>,
     dressing: Option<DressingDef>,
+    walls: Option<WallsDef>,
+    fire: Option<FireDef>,
 }
 
 #[derive(Deserialize)]
@@ -1079,6 +1167,8 @@ struct SettlementFile {
     centrepieces: Vec<CentreFile>,
     #[serde(default)]
     people: super::people::PeopleFile,
+    #[serde(default)]
+    interiors: super::interior::InteriorsFile,
 }
 
 // ---------------------------------------------------------------------------------------
@@ -1103,6 +1193,10 @@ pub struct SizeDef {
     pub paving: (f32, f32),
     pub well: (u32, u32),
     pub lamps: f32,
+    /// The chance it is walled, and how it leans.
+    pub walls: (f32, Lean),
+    /// The size it is laid out as where it does not fit, by name.
+    pub smaller: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1230,6 +1324,11 @@ pub struct StyleDef {
     pub chimney: Material,
     /// Its logs' block, `{wood}` its wood.
     pub log: String,
+    /// Roofs laid in shaped pieces, by weight (`{wood}` its wood), and the chance a house's
+    /// roof is (only a steep gable over four walls can be).
+    pub roof_pieces: Vec<RoofPiecesDef>,
+    pub pieced: f32,
+    pub jetty: Option<JettyDef>,
 }
 
 /// Every package's `settlements.ron` together.
@@ -1255,6 +1354,8 @@ pub struct SettlementsDef {
     pub roofs: Vec<RoofDef>,
     pub centrepieces: Vec<CentreDef>,
     pub people: super::people::PeopleDef,
+    /// What stands in homes (`interiors`).
+    pub interiors: super::interior::InteriorsDef,
     /// Every crop by its full name (from `crops.ron`), so settlements grow only everyday
     /// crops a newcomer may harvest, and never ripe.
     pub crops: BTreeMap<String, CropInfo>,
@@ -1270,6 +1371,17 @@ pub struct CropInfo {
 }
 
 impl SettlementsDef {
+    /// Every name a building answers to (`Building::answers`): its kind's (`smithy`, `pen`,
+    /// `well`), a house's (`cottage`, `barn`) and the work done in one (`bakery`), for
+    /// content that picks buildings out by name, checked against this.
+    pub fn building_names(&self) -> std::collections::BTreeSet<String> {
+        super::house::Kind::ALL
+            .iter()
+            .map(|kind| kind.name().to_owned())
+            .chain(self.houses.iter().flat_map(|house| std::iter::once(house.name.clone()).chain(house.work.clone())))
+            .collect()
+    }
+
     /// The blocks `crop` grows through, the last ripe: its `stages` in crops.ron, or the
     /// crop template's `<name>_crop_0` to `_2` and `<name>_crop` where it has none given
     /// (or crops.ron is not read).
@@ -1336,6 +1448,13 @@ impl SettlementsDef {
             if let Some(dressing) = rules.dressing {
                 mine.dressing = dressing;
             }
+            if let Some(walls) = rules.walls {
+                mine.walls = walls;
+            }
+            if let Some(mut fire) = rules.fire {
+                fire.instead = fire.instead.map(|p| RoofPiecesDef { slope: qualify(package, &p.slope), ridge: qualify(package, &p.ridge), weight: p.weight });
+                mine.fire = fire;
+            }
             mine.specials.extend(rules.specials);
         }
         // Each furnishing a later package names replaces the earlier one; lists replace
@@ -1385,6 +1504,7 @@ impl SettlementsDef {
             }
         }
         self.furnishings = furnishings;
+        self.interiors.extend(at, package, file.interiors)?;
         self.avoid.extend(file.avoid);
         self.kana.extend(file.kana);
         for s in file.sizes {
@@ -1406,6 +1526,8 @@ impl SettlementsDef {
                 paving: s.paving,
                 well: s.well,
                 lamps: s.lamps,
+                walls: (s.walls.0, Lean::parse(at, &s.walls.1)?),
+                smaller: s.smaller,
             });
         }
         for l in file.layouts {
@@ -1491,6 +1613,9 @@ impl SettlementsDef {
                 stilts: s.stilts,
                 roofs: s.roofs,
                 window_chance: s.window_chance,
+                roof_pieces: s.roof_pieces.into_iter().map(|p| RoofPiecesDef { slope: qualify(package, &p.slope), ridge: qualify(package, &p.ridge), weight: p.weight }).collect(),
+                pieced: s.pieced,
+                jetty: s.jetty.map(|j| JettyDef { beam: qualify(package, &j.beam), chance: j.chance }),
             });
         }
         self.people.extend(at, package, file.people)?;
@@ -1532,7 +1657,7 @@ impl SettlementsDef {
         }
         let site = &self.site;
         let within = |(a, b): (f32, f32), (lo, hi): (f32, f32)| a <= b && a >= lo && b <= hi;
-        if !within(site.mild, site.temperature) || !(0.0..=1.0).contains(&site.taper) || !(0.0..=1.0).contains(&site.levels.1) || site.step < 4 || site.firm > site.reach || site.reach < site.step || site.tries == 0 || site.bank < 0 || site.water < 0 {
+        if !within(site.mild, site.temperature) || !(0.0..=1.0).contains(&site.taper) || !(0.0..=1.0).contains(&site.levels.1) || site.step < 4 || site.firm > site.reach || site.reach < site.step || site.tries == 0 || site.others >= site.tries || site.bank < 0 || site.water < 0 {
             return fail(format!("the site needs mild temperatures within its temperatures, a taper and a chance above its levels in [0, 1], a step of 4 or more, a firm ground no wider than its reach, and tries: {site:?}"));
         }
         let rules = &self.rules;
@@ -1614,6 +1739,20 @@ impl SettlementsDef {
         let every = rules.dressing.every;
         if !(every.0 > 0.0 && every.1 >= 0.0 && every.1.is_finite()) || self.sizes.iter().any(|s| every.0 * s.lamps < 1.0) {
             return fail(format!("rules: dressing needs `every` above nothing then nothing or more, and every size's lamps that far apart times its `lamps` a block or more: {every:?}"));
+        }
+        let walls = &rules.walls;
+        if !(1..=12).contains(&walls.margin) || walls.height.0 < 2 || walls.height.1 < 2 || walls.height.0.max(walls.height.1) > 8 || walls.towers.0 < 6 || walls.towers.1 > 6 || !walls.stone.is_finite() {
+            return fail(format!("rules: walls need a margin of 1 to 12 blocks, heights of 2 to 8, towers 6 or more blocks apart and at most 6 higher: {walls:?}"));
+        }
+        for s in &self.sizes {
+            let Some(name) = &s.smaller else { continue };
+            match self.sizes.iter().find(|t| t.name == *name) {
+                Some(t) if t.houses.1 < s.houses.1 => {}
+                _ => return fail(format!("size `{}` is laid out as `{name}` where it does not fit, which is no size of fewer houses", s.name)),
+            }
+        }
+        if let Some(s) = self.sizes.iter().find(|s| !(0.0..=1.0).contains(&s.walls.0)) {
+            return fail(format!("size `{}`: its walls' chance {} is not 0 to 1", s.name, s.walls.0));
         }
         if site.temperature.0 > site.temperature.1 || site.height.0 > site.height.1 || site.relief < 0 || site.caves < 0 || site.glade.0 < 0 || site.glade.0 >= site.glade.1 || site.glade.1 > 48 || !(0..=8).contains(&site.eaves) {
             return fail(format!("the site needs ranges low to high, a glade of at most 48 blocks, its treeless ring the smaller, and eaves of 0 to 8: {site:?}"));
@@ -1704,6 +1843,18 @@ impl SettlementsDef {
                 return fail(format!("style `{}`'s window `{window}` is no block", style.name));
             }
         }
+        for style in &self.styles {
+            if style.jetty.as_ref().is_some_and(|j| !(0.0..=1.0).contains(&j.chance)) {
+                return fail(format!("style `{}`: a jetty's `chance` is a share (0 to 1)", style.name));
+            }
+            if !(0.0..=1.0).contains(&style.pieced) || style.roof_pieces.iter().any(|p| !(p.weight >= 0.0)) {
+                return fail(format!("style `{}`: `pieced` is a share (0 to 1) and each roof piece's weight at least 0", style.name));
+            }
+        }
+        // As a home's fire goes (fire.ron), a flame reaches 1 to 4 blocks.
+        if !(1..=4).contains(&self.rules.fire.reach) {
+            return fail(format!("rules.fire: a flame reaches 1 to 4 blocks, not {}", self.rules.fire.reach));
+        }
         // Fields and orchards hold only everyday crops: no rarer than uncommon, no higher
         // than the largest size's crop level, one in every style a hamlet may grow, and
         // fruit trees in blossom or unripe, never ripe.
@@ -1748,6 +1899,56 @@ impl SettlementsDef {
     /// read with blocks.ron alone (tools and tests), where other block files' are missing.
     pub fn check_furnishings(&self, registry: &BlockRegistry) -> Result<(), ContentError> {
         let fail = |what: String| Err(ContentError(format!("settlements.ron: {what}")));
+        // Roof pieces: a slope (tagged `roof`) and a ridge (`ridge`), every facing a block
+        // for each of the style's woods; the fire's `instead` the same, and none that catches.
+        let pieces = |what: &str, p: &RoofPiecesDef, wood: &str, trim: &str| -> Result<(), ContentError> {
+            for (name, tag) in [(&p.slope, "roof"), (&p.ridge, "ridge")] {
+                let name = fill(name, wood, trim);
+                for suffix in super::roofs::SUFFIXES {
+                    let Some(id) = registry.id(&format!("{name}{suffix}")) else {
+                        return fail(format!("{what} roof piece `{name}{suffix}` is no block (a roof piece faces four ways)"));
+                    };
+                    if !registry.def(id).has_tag(tag) {
+                        return fail(format!("{what} roof piece `{name}{suffix}` is not tagged `{tag}`"));
+                    }
+                    if what == "rules.fire's" && self.rules.fire.catch.iter().any(|t| registry.def(id).has_tag(t)) {
+                        return fail(format!("rules.fire's `instead` piece `{name}{suffix}` catches fire itself"));
+                    }
+                }
+            }
+            Ok(())
+        };
+        for style in &self.styles {
+            for p in &style.roof_pieces {
+                for (wood, _) in &style.woods {
+                    for (trim, _) in &style.woods {
+                        pieces(&format!("style `{}`'s", style.name), p, wood, trim)?;
+                    }
+                }
+            }
+        }
+        if let Some(p) = &self.rules.fire.instead {
+            pieces("rules.fire's", p, "", "")?;
+        }
+        // A jetty beam faces four ways in every wood of its style, tagged `jetty` and with
+        // a shelter tag of its own (it is part of a home's walls).
+        for style in &self.styles {
+            let Some(jetty) = &style.jetty else { continue };
+            for (wood, _) in &style.woods {
+                for (trim, _) in &style.woods {
+                    let name = fill(&jetty.beam, wood, trim);
+                    for suffix in super::roofs::SUFFIXES {
+                        let Some(id) = registry.id(&format!("{name}{suffix}")) else {
+                            return fail(format!("style `{}`'s jetty beam `{name}{suffix}` is no block (a jetty beam faces four ways)", style.name));
+                        };
+                        let def = registry.def(id);
+                        if !def.has_tag("jetty") || !def.tags.iter().any(|t| t.starts_with("shelter:")) {
+                            return fail(format!("style `{}`'s jetty beam `{name}{suffix}` is not tagged `jetty` with a `shelter:` tag", style.name));
+                        }
+                    }
+                }
+            }
+        }
         for style in &self.styles {
             for (crop, _) in &style.crops {
                 for stage in self.stages(crop) {
@@ -1856,6 +2057,7 @@ impl SettlementsDef {
                 return fail(format!("house `{}` needs people fewest to most", h.name));
             }
         }
+        self.interiors.check(registry)?;
         self.people.check(&self.sizes.iter().map(|s| s.name.clone()).collect::<Vec<_>>())
     }
 }
@@ -1917,6 +2119,32 @@ impl Resolved {
                 let log = fill(&style.log, wood, wood);
                 if let Some(id) = registry.id(&log) {
                     map.insert(log, id);
+                }
+            }
+            for name in &style.jetty.iter().map(|j| j.beam.clone()).collect::<Vec<_>>() {
+                for (wood, _) in &style.woods {
+                    for (trim, _) in &style.woods {
+                        for suffix in super::roofs::SUFFIXES {
+                            let name = format!("{}{suffix}", fill(name, wood, trim));
+                            if let Some(id) = registry.id(&name) {
+                                map.insert(name, id);
+                            }
+                        }
+                    }
+                }
+            }
+            for piece in &style.roof_pieces {
+                for (wood, _) in &style.woods {
+                    for (trim, _) in &style.woods {
+                        for name in [&piece.slope, &piece.ridge] {
+                            for suffix in super::roofs::SUFFIXES {
+                                let name = format!("{}{suffix}", fill(name, wood, trim));
+                                if let Some(id) = registry.id(&name) {
+                                    map.insert(name, id);
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

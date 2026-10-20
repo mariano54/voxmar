@@ -26,13 +26,13 @@
         ),
         (
             name: "first_night", age: "nomad", branch: "main", title: "First Night",
-            why: "Make a campfire: put two logs or Wood blocks above two Cobblestones in the 2×2 crafting grid. No stripped wood is needed; cobblestone comes from stone, a few blocks under the dirt or bare on hillsides, and bare hands can break it slowly. Place the fire, select raw small game or an egg in your hotbar, and right-click the fire. Rabbits and junglefowl roam open grassland; both give small game, and a junglefowl sometimes an egg. Fists are slow at the hunt too: swing an axe instead; a stone one hits three times as hard as a fist (a stone sword, two cobblestone over a stick, does as well). Wait two seconds; the cooked food goes into your inventory. If it burns, try again. Cooked food heals more than raw food.",
+            why: "Make a campfire: put two logs or Wood blocks above two Cobblestones in the 2×2 crafting grid. No stripped wood is needed. Stone lies a few blocks under the dirt or bare on hillsides; a flint pickaxe breaks it into two loose stones, and four loose stones knock together into two cobblestone in the grid. Place the fire, select raw small game or an egg in your hotbar, and right-click the fire. Rabbits and junglefowl roam open grassland; both give small game, and a junglefowl sometimes an egg. Fists are slow at the hunt too: swing an axe instead; a stone one hits three times as hard as a fist (a stone sword, two cobblestone over a stick, does as well). Wait two seconds; the cooked food goes into your inventory. If it burns, try again. Cooked food heals more than raw food.",
             tasks: [[Craft("campfire", 1), CookAt("tag:edible", "campfire", 1)]],
             rewards: [Xp("cooking", 93.0), Item("torch", 4)],
         ),
         (
             name: "stone_in_hand", age: "nomad", branch: "main", title: "Stone in Hand",
-            why: "Bare hands are slow. At the crafting table, three planks over two sticks make a wooden pickaxe: dig a few blocks under the dirt, or into a bare hillside, and break stone for cobblestone. Three cobblestone over two sticks make a stone pickaxe, and a stone axe is shaped like the wooden one. Stone tools mine twice as fast and reach coal for torches.",
+            why: "Soft stone will not take an edge. Find hard rock (granite, diorite, andesite or basalt near the surface, deepslate deep down) and break it with your flint pickaxe. Sand beside cobblestone over two sticks makes a grindstone in the 2×2 grid: set it down, and beside it one hard rock in the grid becomes a stone head. At the crafting table, three heads over two sticks make a stone pickaxe, and three heads with two sticks a stone axe (the recipe viewer shows the shape). Stone tools mine twice as fast and reach coal for torches.",
             tasks: [[Craft("stone_pickaxe", 1), Craft("stone_axe", 1)]],
             after: ["crafting_table"],
             rewards: [Xp("engineering", 51.0), Xp("mining", 31.0)],
@@ -113,7 +113,7 @@
         ),
         (
             name: "torchlight", age: "nomad", branch: "main", title: "Torchlight",
-            why: "Light keeps monsters off and lets you work at night. A coal (or a charcoal) over a stick makes four torches; coal shows as black flecks in the rock, and a black-flecked stone lying on the ground marks a seam below it. Any pickaxe breaks it, even a wooden one. Make eight. A night is a third of the day and cannot be slept away: spend it underground by torchlight digging coal, or at home cooking (Meat on the Fire) and crafting.",
+            why: "Light keeps monsters off and lets you work at night. A coal (or a charcoal) over a stick makes four torches; coal shows as black flecks in the rock, and a black-flecked stone lying on the ground marks a seam below it. Any pickaxe breaks it, even a flint one. Make eight. A night is a third of the day and cannot be slept away: spend it underground by torchlight digging coal, or at home cooking (Meat on the Fire) and crafting.",
             tasks: [[Craft("torch", 8)]],
             after: ["a_bed_of_your_own"],
             rewards: [Xp("engineering", 21.0)],
@@ -126,8 +126,8 @@
         ),
         (
             name: "an_axe_to_it", age: "nomad", branch: "start", title: "An Axe to It",
-            why: "Punching trees is slow. At the crafting table, three planks and two sticks make a wooden axe (the recipe viewer shows the shape): a log takes half the time it takes a fist, and a stone axe halves that again. Make one and chop eight logs; the campfire, planks and sticks ahead all want them.",
-            tasks: [[Craft("wooden_axe", 1), Have("tag:log", 8)]],
+            why: "A spare axe: two flint over a stick in the 2×2 grid make another flint axe, so one lost to a fall or a fight never leaves you unable to fell a tree. Make it and chop eight logs; the campfire, planks and sticks ahead all want them. A stone axe, hafted from heads ground at a grindstone, chops twice as fast.",
+            tasks: [[Craft("flint_axe", 2), Have("tag:log", 8)]],
             after: ["crafting_table"],
             rewards: [Xp("engineering", 20.0), Item("stick", 4)],
         ),
@@ -148,13 +148,13 @@
         ),
         (
             name: "timber", age: "nomad", branch: "start", title: "Timber",
-            why: "You start with nothing, and every tool starts as wood. Punch a tree trunk (hold the left mouse button on it: bare hands are slow, but they work) and gather four logs; woods have the most trees, and plains have a few in groves. Four are enough to start: a log splits into four planks at the crafting grid; four planks make a crafting table, and with sticks (two planks make four) the table makes a wooden pickaxe and a wooden axe. Chop the rest with the axe, in half the time a fist takes.",
+            why: "You start with nothing, and bare hands cannot fell a tree. Flint lies loose on the ground near where you wake, and a dead grey snag breaks by hand to a stick a block. Leaves give sticks too (one break in five), and gravel gives flint (one in eight). In the 2×2 grid, two flint over a stick make a flint axe, and two flint over two sticks a flint pickaxe. Fell four logs with the axe; woods have the most trees, and plains have a few in groves. A log splits into four planks; four planks make a crafting table, and two planks four sticks.",
             tasks: [[Have("tag:log", 4)]],
             rewards: [Xp("engineering", 30.0)],
         ),
         (
             name: "a_pile_of_stone", age: "nomad", branch: "mining", title: "A Pile of Stone",
-            why: "Stone is the next step up from wood. It lies a few blocks under the dirt almost everywhere, and bare on cliffs, hillsides and mountains. Break twenty stone with your pickaxe: it drops cobblestone, which makes stone tools, a campfire and, later, your hearth.",
+            why: "Stone comes after flint. It lies a few blocks under the dirt almost everywhere, and bare on cliffs, hillsides and mountains. Break twenty stone with your pickaxe: each breaks into two loose stones, and four loose stones in the 2×2 grid make two cobblestone, which makes a grindstone, a campfire and, later, your hearth. Other rock, hard or soft, breaks straight to its own cobbles.",
             tasks: [[Mine("tag:stone", 20)]],
             after: ["stone_in_hand"],
             rewards: [Xp("mining", 30.0)],
@@ -189,8 +189,8 @@
         ),
         (
             name: "hide_and_seek", age: "nomad", branch: "hunter", title: "Hide and Seek",
-            why: "Hide makes armour, pouches and bedding. Rabbits on grassland drop it, and so do deer and boar in the woods; a knife in your hand makes it drop more often. Gather four hides, and keep two bones as well: field mice in the grass drop them, and a bone makes a club, a needle, a handle.",
-            tasks: [[Have("hide", 4), Have("bone", 2)]],
+            why: "Hide makes armour, pouches and bedding once it has hung a minute on a drying rack. Rabbits on grassland drop raw hide, and so do deer and boar in the woods; a knife in your hand makes it drop more often. Gather four raw hides, and keep two bones as well: field mice in the grass drop them, and a bone makes a club, a needle, a handle.",
+            tasks: [[Have("raw_hide", 4), Have("bone", 2)]],
             after: ["small_game", "a_sharp_edge"],
             rewards: [Xp("hunter", 60.0), Xp("crafting", 30.0)],
         ),
@@ -239,8 +239,8 @@
         ),
         (
             name: "break_ground", age: "nomad", branch: "farming", title: "Break Ground",
-            why: "A hoe tills grass or dirt into farmland, where seeds can be sown. Make a hoe at the crafting table: two cobblestone over two sticks. Right-click soil with it to till.",
-            tasks: [[Craft("stone_hoe", 1)], [Craft("wooden_hoe", 1)], [Craft("copper_hoe", 1)]],
+            why: "A hoe tills grass or dirt into farmland, where seeds can be sown. A hoe needs a stone edge: two stone heads, ground from hard rock at a grindstone, over two sticks at the crafting table. Right-click soil with it to till.",
+            tasks: [[Craft("stone_hoe", 1)], [Craft("copper_hoe", 1)]],
             after: ["daily_bread", "crafting_table"],
             rewards: [Xp("engineering", 40.0), Item("wheat_seeds", 4)],
         ),
@@ -318,15 +318,15 @@
         ),
         (
             name: "a_sharp_edge", age: "nomad", branch: "crafting", title: "A Sharp Edge",
-            why: "A knife is the hunter's tool: it makes a kill drop hide more often, cuts plants cleanly, and cuts twine from tall grass. A stone knife is a cobblestone over a stick; it fits the inventory grid.",
-            tasks: [[Craft("stone_knife", 1)], [Craft("wooden_knife", 1)]],
+            why: "A knife is the hunter's tool: it makes a kill drop hide more often, cuts plants cleanly, and cuts twine from tall grass. A flint knife is a flint over a stick, a stone knife a stone head over a stick; both fit the inventory grid.",
+            tasks: [[Craft("stone_knife", 1)], [Craft("flint_knife", 1)]],
             after: ["stone_in_hand"],
             rewards: [Xp("engineering", 30.0)],
         ),
         (
             name: "full_stone_kit", age: "nomad", branch: "crafting", title: "A Full Stone Kit",
+            why: "A stone tool works twice as fast as a flint one and finds a little more. Carry the whole kit: pickaxe, axe, shovel (one stone head over two sticks), hoe and knife.",
             capstone: true,
-            why: "A stone tool works twice as fast as a wooden one and finds a little more. Carry the whole kit: pickaxe, axe, shovel (one cobblestone over two sticks), hoe and knife.",
             tasks: [[Have("stone_pickaxe", 1), Have("stone_axe", 1), Have("stone_shovel", 1), Have("stone_hoe", 1), Have("stone_knife", 1)]],
             after: ["a_sharp_edge", "break_ground"],
             rewards: [Xp("engineering", 30.0), Item("torch", 8)],
@@ -380,30 +380,53 @@
             capstone: true,
             why: "At Cooking 14 the pot takes three raw meat, roots or vegetables at once and simmers them into a stew, the best food a pot makes. Carrots, raw small game or raw mutton all go in; cooked food and grain do not. Load it as before, take the stew three minutes later, and keep two.",
             tasks: [[Level("cooking", 14), Have("stew", 2)]],
-            after: ["a_pot_on_the_fire"],
+            after: ["a_pot_on_the_fire", "roots_in_the_embers"],
             rewards: [Xp("cooking", 300.0), Item("honey", 2)],
+        ),
+        // Fuel: logs to char or coal from a seam, two ways to the Crucible Kiln's charge.
+        (
+            name: "fuel_to_hand", age: "farm", branch: "fuel", title: "Fuel to Hand",
+            why: "Every fire of this age eats fuel: the kilns, the clamps, the copper and at last the Crucible Kiln's charge. Take either way. Fell trees and carry thirty-two logs, to char later; or dig to a coal seam (a small black-flecked stone lying on the ground marks one below) and mine twelve coal ore. Both ways go on to Charcoal.",
+            tasks: [[Have("tag:log", 32)], [Mine("coal_ore", 12)]],
+            after: ["the_farm_age"],
+            rewards: [Xp("mining", 60.0), Xp("engineering", 40.0)],
+        ),
+        (
+            name: "kiln_plans", age: "farm", branch: "fuel", title: "Plans for the Kiln",
+            why: "With fuel coming, plan the kiln it is for: open the recipe viewer and look up the crucible, seven kiln bricks round a clay pot, then look up kiln bricks to see what they take.",
+            tasks: [[LookUp("crucible"), LookUp("kiln_bricks")]],
+            after: ["charcoal"],
+            rewards: [Xp("engineering", 30.0)],
         ),
         // Fuel before metal, and the Engineering and Mining that copper asks for (design
         // drafts 100 and 102: the nomad path alone left both short of 5).
         (
-            name: "charcoal", age: "farm", branch: "main", title: "Charcoal",
+            name: "charcoal", age: "farm", branch: "fuel", title: "Charcoal",
             why: "Fuel before metal: coal or charcoal smelts copper and makes torches. Burn logs down at a campfire (hold a log and right-click the fire), or mine coal ore from a seam: a small black-flecked stone on the ground marks one below. Char sixteen logs, or mine twenty-four coal ore. An earth clamp chars sixteen logs at a time with nobody by it (An Earth Clamp).",
             tasks: [[Cook("charcoal", 16)], [Mine("coal_ore", 24)]],
-            after: ["the_potter"],
+            after: ["fuel_to_hand", "a_pit_kiln"],
             rewards: [Xp("engineering", 325.0), Xp("mining", 300.0)],
         ),
         (
+            name: "the_kiln_charge", age: "farm", branch: "fuel", title: "A Full Charge",
+            capstone: true,
+            why: "The Crucible Kiln burns a whole charge when it is lit: thirty-two charcoal, or twenty-four coal ore. Keep a clamp charring logs while you fire clay, or bring coal up from the seam, and hold a full charge in your pack.",
+            tasks: [[Have("charcoal", 32)], [Have("coal_ore", 24)]],
+            after: ["charcoal", "first_bricks", "kiln_plans"],
+            rewards: [Xp("engineering", 200.0)],
+        ),
+        (
             name: "red_metal", age: "farm", branch: "main", title: "Red Metal",
-            why: "Copper tools are faster and find more, and copper is three parts of bronze. A small copper-coloured stone on the ground marks a copper vein below it; breaking copper ore takes Mining 5, which the Charcoal quest's reward brings once claimed in the book. A copper ore over a coal or charcoal in the grid makes a copper ingot (Engineering 5); three ingots over two sticks at the table make the pickaxe.",
+            why: "Copper tools are faster and find more, and copper is three parts of bronze. A small copper-coloured stone on the ground marks a copper vein below it; breaking copper ore takes Mining 5, which the Charcoal quest's reward brings once claimed in the book. Hold copper ore and right-click the crucible of your lit kiln: it melts into ingots (Engineering 5). Three ingots over two sticks at the table make the pickaxe.",
             tasks: [[Mine("copper_ore", 9), Craft("copper_pickaxe", 1)]],
-            after: ["charcoal"],
+            after: ["charcoal", "crucible_kiln"],
             rewards: [Xp("mining", 650.0), Xp("engineering", 750.0)],
         ),
         (
             name: "crucible_kiln", age: "farm", branch: "main", title: "Crucible Kiln",
-            why: "Bronze needs heat a campfire can't reach. Three steps: make the crucible (The Crucible); set it down, ring it with eight kiln bricks and stand one more brick on each corner of the ring, then right-click the crucible to check it stands (it names the fuel it wants); then hold thirty-two charcoal or twenty-four coal and right-click it again. Lighting the kiln starts the Bronze age.",
-            tasks: [[Craft("crucible", 1), Built("crucible_kiln", 1), Lit("crucible_kiln", 1)]],
-            after: ["the_potter", "red_metal", "the_crucible"],
+            why: "Bronze needs heat a campfire can't reach. With the crucible in the middle of its ring and a brick on each corner, right-click the crucible to check the kiln stands (it names the fuel it wants); then hold the full charge, thirty-two charcoal or twenty-four coal ore, and right-click it again. Lighting the kiln opens the way to the Bronze age.",
+            tasks: [[Built("crucible_kiln", 1), Lit("crucible_kiln", 1)]],
+            after: ["the_crucible", "the_kiln_ring", "the_kiln_charge"],
             rewards: [Xp("engineering", 905.0)],
         ),
         (
@@ -411,7 +434,7 @@
             capstone: true,
             why: "Hold three copper ingots, with a tin ore in your pack, and right-click the crucible of your lit kiln: they melt into four bronze ingots, the metal of the next age (Engineering 12). Smelt four.",
             tasks: [[Cook("bronze_ingot", 4)]],
-            after: ["crucible_kiln"],
+            after: ["crucible_kiln", "red_metal"],
             rewards: [Xp("engineering", 400.0), Item("bronze_ingot", 4)],
         ),
         (
@@ -420,26 +443,33 @@
             tasks: [[QuestsDone("farm", 30), Capstones("farm", 4)]],
             after: ["crucible_kiln"],
             opens: "bronze",
-            rewards: [Xp("engineering", 300.0), Item("charcoal", 16)],
+            rewards: [Xp("engineering", 300.0), Item("copper_ingot", 6)],
         ),
         (
             name: "clay_banks", age: "farm", branch: "pottery", title: "Clay Banks",
-            why: "Pots, vials and kiln bricks are all clay. It lies in patches on the bottom of ponds, lakes and rivers: wade in and dig it with a shovel (one cobblestone over two sticks). Carry out twenty-four.",
+            why: "Pots, vials and kiln bricks are all clay. It lies in patches on the bottom of ponds, lakes and rivers: wade in and dig it with a shovel (one stone head over two sticks). Carry out twenty-four.",
             tasks: [[Have("clay", 24)]],
             after: ["the_farm_age"],
             rewards: [Xp("crafting", 60.0)],
         ),
         (
+            name: "a_clay_store", age: "farm", branch: "main", title: "Clay in Store",
+            why: "Digging clay a trip at a time keeps the kilns waiting. Keep a store by the pit kiln: put thirty-two clay into a chest, a barrel or a crate and leave it there. Clay keeps for ever, and the next load is a step away.",
+            tasks: [[Stocked("clay", "chest", 32)], [Stocked("clay", "barrel", 32)], [Stocked("clay", "crate", 32)]],
+            after: ["clay_banks", "fire_the_clay"],
+            rewards: [Xp("crafting", 80.0), Item("fired_clay", 4)],
+        ),
+        (
             name: "a_kiln_load", age: "farm", branch: "pottery", title: "A Kiln Load",
-            why: "Brick by Brick takes a lot of fired clay, so keep the pit kiln busy. Fire forty clay in all, counting what you have fired before, and the potters' trick is yours: four kiln bricks to start the kiln with. Between loads, turn spare fired clay into crockery (Earthenware), fire cobblestone into stone for an altar (A Place to Pray), or hand clay to potters on the road (Fired Whole).",
+            why: "Brick by Brick takes forty fired clay, and the crucible a pot, so keep the pit kiln busy. Fire forty clay in all, counting what you have fired before, and a dozen clay comes back for the next load. Between loads, turn spare fired clay into crockery (Earthenware), fire cobblestone into stone for an altar (A Place to Pray), or hand clay to potters on the road.",
             tasks: [[Cook("fired_clay", 40)]],
             after: ["the_potter"],
-            rewards: [Xp("crafting", 120.0), Item("kiln_bricks", 4)],
+            rewards: [Xp("crafting", 120.0), Item("clay", 12)],
         ),
         (
             name: "a_pit_kiln", age: "farm", branch: "main", title: "A Pit Kiln",
-            why: "Clay needs more heat than an open fire gives. A pit kiln is a campfire walled in with cobblestone: at the crafting table, put the campfire in the middle of the bottom row with a cobblestone on each side of it and one above each of those, four in all, as the recipe shows. Set it down, then hold clay and right-click it.",
-            tasks: [[Craft("pit_kiln", 1)]],
+            why: "Clay needs more heat than an open fire gives. A pit kiln is a campfire walled in with cobblestone: at the crafting table, put the campfire in the middle of the bottom row with a cobblestone on each side of it and one above each of those, four in all, as the recipe shows. Set it down where the clay is near, then hold clay and right-click it.",
+            tasks: [[Craft("pit_kiln", 1), Placed("pit_kiln", 1)]],
             after: ["the_farm_age"],
             rewards: [Xp("construction", 80.0)],
         ),
@@ -458,18 +488,34 @@
             rewards: [Xp("crafting", 100.0)],
         ),
         (
+            name: "first_bricks", age: "farm", branch: "main", title: "First Bricks",
+            why: "Kiln bricks are fired clay pressed hard: four fired clay in the crafting grid make two (Crafting 5). Shape four, and keep sixteen more fired clay in your pack for the next eight. The kiln and its crucible want nineteen bricks in all.",
+            tasks: [[Craft("kiln_bricks", 4), Have("fired_clay", 16)]],
+            after: ["the_potter", "a_clay_store"],
+            rewards: [Xp("crafting", 150.0)],
+        ),
+        (
             name: "brick_by_brick", age: "farm", branch: "main", title: "Brick by Brick",
-            why: "The Crucible Kiln is built of kiln bricks: nineteen for the kiln and its crucible. Four fired clay make two bricks at the crafting grid (Crafting 5). Have nineteen in hand: A Kiln Load pays the first four, and the rest is still a lot of clay, so keep firing. An earth clamp fires sixteen at a time while you dig the next (An Earth Clamp).",
-            tasks: [[Have("kiln_bricks", 19)]],
-            after: ["the_potter"],
-            rewards: [Xp("crafting", 300.0)],
+            why: "The Crucible Kiln is built of kiln bricks: twelve for its ring and corner pillars, and seven for the crucible at its heart. Four fired clay make two bricks in the crafting grid (Crafting 5), so nineteen bricks are forty fired clay. Keep the pit kiln and the clamp going while you dig the next load, and shape nineteen in all, counting your first.",
+            tasks: [[Craft("kiln_bricks", 19)]],
+            after: ["first_bricks", "a_kiln_load"],
+            // Its Engineering pays for The Crucible's level 10 until Hammer and Anvil (the kiln-age
+            // PR) does: drop it when that lands, so it is never paid twice.
+            rewards: [Xp("crafting", 300.0), Xp("engineering", 650.0)],
+        ),
+        (
+            name: "the_kiln_ring", age: "farm", branch: "main", title: "The Kiln Ring",
+            why: "Choose the kiln's ground, flat and clear, near your pit kiln. Lay eight kiln bricks in a ring round an empty middle, where the crucible will sit, and stand one more on each corner of the ring: twelve bricks set down.",
+            tasks: [[Placed("kiln_bricks", 12)]],
+            after: ["brick_by_brick"],
+            rewards: [Xp("construction", 150.0)],
         ),
         (
             name: "the_crucible", age: "farm", branch: "main", title: "The Crucible",
-            why: "The heart of the kiln: seven kiln bricks round a clay pot, shaped at the crafting table (Engineering 10). Engineering grows with every tool, ingot and torch you make, and the copper quests pay it well. Make it, then build the kiln round it; its reward is sixteen charcoal, half the kiln's charge.",
-            tasks: [[Craft("crucible", 1)]],
-            after: ["brick_by_brick", "red_metal"],
-            rewards: [Xp("engineering", 300.0), Item("charcoal", 16)],
+            why: "The heart of the kiln: seven kiln bricks round a clay pot, shaped at the crafting table (Engineering 10). Engineering grows with every tool, ingot and torch you make, and Charcoal and Brick by Brick pay it well. Make it and set it down in the empty middle of your kiln's ring of bricks.",
+            tasks: [[Craft("crucible", 1), Placed("crucible", 1)]],
+            after: ["brick_by_brick", "charcoal"],
+            rewards: [Xp("engineering", 300.0)],
         ),
         (
             name: "first_harvest", age: "farm", branch: "farming", title: "First Harvest",
@@ -497,8 +543,8 @@
             capstone: true,
             why: "A stone hoe reaps every ripe crop in the three by three around the one you cut, and an iron hoe the five by five, so a wide field comes in at a few strokes. Sow a field nine across with your well in it, let it ripen, and bring in sixty-four wheat plants; keep thirty-two wheat of the harvest for bread, twine and feed.",
             tasks: [[Pick("wheat_crop", 64), Have("wheat", 32)]],
-            after: ["a_well_by_the_field"],
-            rewards: [Xp("farming", 300.0), Item("bread", 6), Item("copper_hoe", 1)],
+            after: ["a_well_by_the_field", "food_enough", "seed_mix", "a_compost_heap"],
+            rewards: [Xp("farming", 300.0), Item("bread", 6), Item("seed_mix", 8)],
         ),
         (
             name: "carrot_patch", age: "farm", branch: "farming", title: "Carrot Patch",
@@ -558,6 +604,7 @@
         ),
         (
             name: "a_proper_breakfast", age: "farm", branch: "cooking", title: "A Proper Breakfast",
+            side: true,
             why: "A fried egg is the quickest cooking there is: hold an egg and right-click a campfire. Fry three.",
             tasks: [[Cook("fried_egg", 3)]],
             after: ["a_full_house"],
@@ -579,6 +626,7 @@
         ),
         (
             name: "ducks_on_the_pond", age: "farm", branch: "husbandry", title: "Ducks on the Pond",
+            side: true,
             why: "Mallards need Hunter 3, lay eggs, and do not mind rain. They keep to rivers and wetlands. Hold wheat seeds or wheat, their favourite, approach one by the water without sprinting or hitting, and right-click it.",
             tasks: [[Tame("mallard", 1)]],
             after: ["a_proper_breakfast"],
@@ -586,7 +634,7 @@
         ),
         (
             name: "the_milk_pail", age: "farm", branch: "husbandry", title: "The Milk Pail",
-            why: "A tamed mountain goat (Hunter 8), reindeer (10) or aurochs (12) gives milk to a pail, right-clicked. Goats live on mountains and take wheat or an apple; reindeer live on tundra and in taiga and take a mushroom; aurochs graze the plains and take wheat. Hold the food, approach calmly and right-click to tame one. Milk heals half as fast again for a while. Collect two. Make the pail first: two planks crossed. An animal gives milk about every five minutes; between pails, tame more toward a real farm (A Full Pen).",
+            why: "A tamed mountain goat (Hunter 8), reindeer (10) or aurochs (12) gives milk to a pail, right-clicked. Goats live on mountains and take wheat or an apple; reindeer live on tundra and in taiga and take a mushroom; aurochs graze the plains and take wheat. Hold the food, approach calmly and right-click to tame one. Milk heals half as fast again for a while. Collect two. Make the pail first: two planks crossed. An animal gives milk about every five minutes; between pails, tame more toward a real farm.",
             tasks: [[Craft("pail", 1), Have("milk", 2)]],
             after: ["wool_gathering"],
             rewards: [Xp("farming", 250.0)],
@@ -596,7 +644,7 @@
             capstone: true,
             why: "Six animals under your care is a real farm. Keep each fed, watered, roofed against rain and given room; condition decides what they give. You can keep up to 64 animals.",
             tasks: [[Tame("any", 6)]],
-            after: ["the_milk_pail"],
+            after: ["the_milk_pail", "a_trough_for_the_pen"],
             rewards: [Xp("farming", 200.0), Item("feed_trough", 1), Item("seed_mix", 4)],
         ),
         (
@@ -622,6 +670,7 @@
         ),
         (
             name: "bow_and_arrow", age: "farm", branch: "combat", title: "Bow and Arrow",
+            side: true,
             why: "A short bow reaches twenty blocks and hits twice as hard as a sling. At the crafting table, three sticks bent down one side and three twine down the other make it (Crafting 3). An arrow is a flint or a cobblestone over a stick over a feather, four at a time (Crafting 3): flint comes one gravel in eight, and feathers from junglefowl. The bow needs Ranged 3 to shoot (below it, it strikes as a fist), so keep slinging stones until then. Make the bow and eight arrows, and reach Ranged 5.",
             tasks: [[Craft("short_bow", 1), Craft("arrow", 8), Level("ranged", 5)]],
             after: ["full_hide_wraps"],
@@ -629,6 +678,7 @@
         ),
         (
             name: "every_arrow_counts", age: "farm", branch: "combat", title: "Every Arrow Counts",
+            side: true,
             why: "An arrow that hits is left lying where the creature stood half the time; one that misses, or hits for nothing, is gone. Pick them up as you go and a quiver lasts. Make sixteen arrows in all and reach Ranged 8.",
             tasks: [[Craft("arrow", 16), Level("ranged", 8)]],
             after: ["bow_and_arrow"],
@@ -636,6 +686,7 @@
         ),
         (
             name: "copper_mail", age: "farm", branch: "combat", title: "Copper Mail",
+            side: true,
             why: "A copper helmet takes five ingots and a chestplate eight, at the crafting table (Engineering 5). They turn aside far more than hide does, and every ingot is ore you carried out of the hills.",
             tasks: [[Craft("copper_helmet", 1), Craft("copper_chestplate", 1)]],
             after: ["copper_arms"],
@@ -701,6 +752,7 @@
         ),
         (
             name: "what_sleeps_below", age: "farm", branch: "explore", title: "What Sleeps Below",
+            side: true,
             why: "Farm chests lie further from where you began, on wilder land, and deeper: on cave floors ten blocks and more under the ground. A bone lockpick still opens one, as a pick of the age before always does. Four in ten wake one or two cave crawlers as the lock gives. A crawler has twice a bat's health: come with a copper weapon and food. Open two Farm chests in all and bring down a cave crawler.",
             tasks: [[Opened("farm_treasure_chest", 2), Kill("cave_crawler", 1)]],
             after: ["far_horizons"],
@@ -764,7 +816,7 @@
         ),
         (
             name: "copper_kit", age: "farm", branch: "mining", title: "Copper Kit",
-            why: "Copper works seven times as fast as a bare hand, a step above stone, and finds more; a tool's tooltip says how fast it works. Make an axe (three ingots), a shovel (one) and a knife (one), and have a copper hoe: A Full Granary gives one, or make it from two. Each ingot is a copper ore over a coal or charcoal in the grid.",
+            why: "Copper works seven times as fast as a bare hand, a step above stone, and finds more; a tool's tooltip says how fast it works. Make an axe (three ingots), a shovel (one) and a knife (one), and a copper hoe (two). Each ingot is smelted from copper ore in the crucible of your lit kiln.",
             tasks: [[Craft("copper_axe", 1), Craft("copper_shovel", 1), Have("copper_hoe", 1), Craft("copper_knife", 1)]],
             after: ["red_metal"],
             rewards: [Xp("engineering", 60.0), Item("coal_ore", 8)],
@@ -838,7 +890,7 @@
             capstone: true,
             why: "Bronze needs a good store of ore. With a copper kit you dig fast: bring up twenty-four copper, nine tin and twelve coal ore, and the crucible will not wait on you. Copper lies below sea level with tin in the lower part of the same vein, coal in seams near sea level; small copper and coal stones lying on the ground mark the veins below.",
             tasks: [[Mine("copper_ore", 24), Mine("tin_ore", 9), Mine("coal_ore", 12)]],
-            after: ["rock_collector"],
+            after: ["rock_collector", "crucible_kiln"],
             rewards: [Xp("mining", 400.0), Item("coal_ore", 16)],
         ),
         (
@@ -938,6 +990,7 @@
         ),
         (
             name: "a_full_house", age: "farm", branch: "husbandry", title: "A Full House",
+            side: true,
             why: "Keep four animals about the house: you heal a fifth faster and learn a little more at home. Junglefowl, mallards and mouflon tamed near home all count.",
             tasks: [[Built("home_full_house", 1)]],
             after: ["fresh_eggs"],
@@ -952,6 +1005,7 @@
         ),
         (
             name: "farmers_on_the_road", age: "farm", branch: "farming", title: "Farmers on the Road",
+            side: true,
             why: "Farming folk pass by those with a home. A harvest family trades each crop for the next you can sow, a goose girl gives feathers for four wheat seeds, a cowherd fills a pail held out, and a shepherd teaches a beginner who offers food. Deal with one of them.",
             tasks: [[Met("harvest_family", 1)], [Met("goose_girl", 1)], [Met("cowherd", 1)], [Met("water_carriers", 1)], [Met("shepherd_and_flock", 1)]],
             after: ["a_compost_heap"],
@@ -994,7 +1048,7 @@
         ),
         (
             name: "a_lit_corner", age: "nomad", branch: "home", title: "A Lit Corner",
-            why: "A seat and two lights beside your bed make a corner worth coming home to: 2° warmer there, and sleeping in it you wake well rested, roof or no roof. A stool is two planks and two sticks (Construction 1); candles are twine over two hides (Crafting 3).",
+            why: "A seat and two lights beside your bed make a corner worth coming home to: 2° warmer there, and a night's sleep in it wakes you well rested, roof or no roof. A stool is two planks and two sticks (Construction 1); candles are twine over two hides (Crafting 3).",
             tasks: [[Built("home_bedside", 1)]],
             after: ["make_camp"],
             rewards: [Xp("construction", 40.0), Xp("crafting", 20.0)],
@@ -1034,6 +1088,7 @@
         // second names quests to do by it meanwhile.
         (
             name: "humming_in_the_meadow", age: "farm", branch: "farming", title: "Humming in the Meadow",
+            side: true,
             why: "Wild bees nest in hollows at the foot of broadleaf, fruit and blossom trees in a Flower Meadow, a Cherry Grove or Lavender Fields: listen for the hum and look for bees about the roots. Coil a skep from seven wheat and three twine (Crafting 6), light a campfire within four blocks of the nest so the smoke calms them (or hold a torch a moment: its smoke clings to you for half a minute), then hold the skep up to it and right-click (Farming 12): the bees move in, and you carry home a skep of bees. Without smoke they only sting.",
             tasks: [[Level("farming", 12), Craft("skep", 1), Have("bee_skep", 1)]],
             after: ["herb_garden"],
@@ -1041,6 +1096,7 @@
         ),
         (
             name: "smoke_that_clings", age: "farm", branch: "farming", title: "Smoke That Clings",
+            side: true,
             why: "Smoke clings. Hold a torch a moment, or stand within two blocks of a fire, and you are Smoky for thirty seconds after: bees take you for a fire and stay calm. Smoky, you can take a swarm with no campfire by the nest, take honey from a full skep unstung, and shoot by a nest without stirring it. Get Smoky and carry four honey.",
             tasks: [[Felt("smoky"), Have("honey", 4)]],
             after: ["sweet_relief"],
@@ -1048,6 +1104,7 @@
         ),
         (
             name: "a_bee_garden", age: "farm", branch: "rooms", title: "A Bee Garden",
+            side: true,
             why: "Set your skep of bees down at home with three flowers near: a bee garden, where you heal a tenth faster and crops within eight blocks of the hive grow a quarter faster. The bees forage by day in dry weather, quicker with more flowers about (a honeydew lily counts for four), and a full skep drips honey. A fire right beside it drives them off; one within four blocks smokes them calm. Right-click a full skep for two or three honey, and half the time a cake of beeswax. While it fills, sow a Kitchen Garden by the hive or plant a Herb Garden.",
             tasks: [[Built("home_bee_garden", 1), Have("honey", 3)]],
             after: ["humming_in_the_meadow"],
@@ -1055,6 +1112,7 @@
         ),
         (
             name: "sweet_relief", age: "farm", branch: "cooking", title: "Sweet Relief",
+            side: true,
             why: "Honey heals 2, as fruit does, and unlike cooked food it stacks, so a pouch of it goes a long way. The same food heals a little less each time you eat it in a row, and a minute of other things brings it back: eat honey between other meals. Eat three honey and keep three more.",
             tasks: [[Ate("honey", 3), Have("honey", 3)]],
             after: ["a_bee_garden"],
@@ -1062,6 +1120,7 @@
         ),
         (
             name: "the_beekeeper_calls", age: "farm", branch: "callers", title: "The Beekeeper Calls",
+            side: true,
             why: "A home with bees draws the beekeeper by day, to look over your skeps and walk your garden with you; three honey buys a spare skep for a second hive. Beeswax makes the best light a Farm home has before coal: a wick of twine over a cake of wax gives three candles. Meet the beekeeper and make three candles, or, with no visit yet, keep two cakes of wax and make six.",
             tasks: [[Met("beekeeper", 1), Craft("candle", 3)], [Have("beeswax", 2), Craft("candle", 6)]],
             after: ["smoke_that_clings"],
@@ -1100,8 +1159,8 @@
             capstone: true,
             why: "A potter and an apprentice dig clay at river banks and wet ground near folk's homes. Hand them clay and it comes back fired in their kiln, none cracked, one kept, up to eight; a beginner who shows a fired piece learns to throw a pot. Have clay fired by them, and fire twenty-four clay in all. The reward is a dozen clay for the next kiln load.",
             tasks: [[Met("clay_diggers", 1), Cook("fired_clay", 24)]],
-            after: ["a_kiln_load"],
-            rewards: [Xp("crafting", 150.0), Item("clay", 12), Item("kiln_bricks", 4)],
+            after: ["a_kiln_load", "clay_banks", "earthenware", "an_earth_clamp"],
+            rewards: [Xp("crafting", 150.0), Item("clay", 12)],
         ),
         (
             name: "coal_by_road", age: "nomad", branch: "explore", title: "Coal by Road",
@@ -1113,6 +1172,7 @@
         ),
         (
             name: "the_last_sheaf", age: "farm", branch: "farming", title: "The Last Sheaf",
+            side: true,
             why: "At harvest, villagers carry the last sheaf round the fields near folk's homes, singing. Put three of your wheat on their dolly while crops grow within 32 blocks, and the crops about them grow on a stage; a beginner learns the sowing song. Meet them, and bring in twelve wheat. The reward is seed for a bigger field.",
             tasks: [[Met("harvest_home", 1), Pick("wheat_crop", 12)]],
             after: ["farmers_on_the_road"],
@@ -1160,13 +1220,15 @@
         ),
         (
             name: "first_metal", age: "farm", branch: "mining", title: "First Metal",
-            why: "Before you have a Crucible Kiln, a smith and a helper may camp in the woods with a bloomery. Hand them two copper ore and they smelt it to ingots for you; a beginner at Engineering learns to work the bellows. Deal with them, and mine four copper ore of your own.",
+            side: true,
+            why: "A smith and a helper may camp in the woods with a bloomery; a beginner at Engineering learns to work the bellows there, and hands them two copper ore to see them smelt it. Deal with them, and mine four copper ore of your own for your kiln's crucible.",
             tasks: [[Met("bloomery_smelters", 1), Mine("copper_ore", 4)]],
-            after: ["charcoal"],
-            rewards: [Xp("engineering", 120.0), Item("charcoal", 4)],
+            after: ["crucible_kiln"],
+            rewards: [Xp("engineering", 120.0), Item("bread", 2)],
         ),
         (
             name: "a_hen_of_your_own", age: "farm", branch: "husbandry", title: "A Hen of Your Own",
+            side: true,
             why: "A henwife drifts over the grassland with her hens. Once you have a home and Farming 3, six wheat seeds buy a hen she hands to you; four feathers buy two eggs. Keep the hen near your home, as company there.",
             tasks: [[Met("henwife", 1), Built("home_company", 1)], [Met("henwife", 1), Built("home_full_house", 1)]],
             after: ["the_last_sheaf"],
@@ -1178,7 +1240,7 @@
             why: "A child may tag along behind you for a while, watching you work. Once you are good at something (Farming, Mining or Crafting 15), they ask to learn it and pay a coin for the lesson. Days later they pass again as a journeyman, with a gift for their old teacher. Teach them, then meet the journeyman.",
             tasks: [[Met("apprentice", 1), Met("journeyman", 1)]],
             after: ["fired_whole"],
-            rewards: [Xp("crafting", 150.0), Xp("mining", 100.0), Item("copper_ingot", 4)],
+            rewards: [Xp("crafting", 150.0), Xp("mining", 100.0), Item("torch", 8)],
         ),
         (
             name: "the_market_road", age: "nomad", branch: "explore", title: "The Market Road",

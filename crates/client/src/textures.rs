@@ -346,6 +346,26 @@ impl Source {
         Self { packs }
     }
 
+    /// The packs every player has whatever they choose: the default pack and the mods' art
+    /// (a pack without a `pack.ron`), never a look picked or the Minecraft jar.
+    pub fn bundled(root: &std::path::Path) -> Self {
+        let mut bundled: Vec<PathBuf> = std::fs::read_dir(root)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.is_dir() && !path.join(Manifest::FILE).exists())
+            .collect();
+        bundled.sort_by_key(|path| (path.file_name() != Some("default".as_ref()), path.clone()));
+        Self { packs: bundled.iter().filter_map(|path| Pack::open(path).ok()).collect() }
+    }
+
+    /// The effects no bundled pack draws an icon for (`ui/effect/<icon>`), by name: the
+    /// launch refuses them, so every effect's chip says which it is at a glance.
+    pub fn unpictured(&mut self, effects: &voxmar_engine::effect::EffectRegistry) -> Vec<String> {
+        effects.ids().map(|id| effects.get(id)).filter(|def| self.read(&format!("ui/effect/{}", def.icon)).is_none()).map(|def| format!("{} (ui/effect/{})", def.name, def.icon)).collect()
+    }
+
     /// Reads `<path>.png` from the first pack that has it.
     pub fn read(&mut self, path: &str) -> Option<Rgba> {
         self.packs.iter_mut().find_map(|pack| pack.read(path))
@@ -726,22 +746,30 @@ mod tests {
         assert!(refused.is_empty(), "{}", refused.join("\n"));
     }
 
-    /// The home's steps and its rest each have an icon of their own in the default pack, ten
-    /// texels across, so the HUD's chips tell Camp from Cosy (the plain buff icon did not).
+    /// Every effect has an icon of its own in the default pack, ten texels across, none
+    /// like another's, so the HUD's chips tell Camp from Cosy and Larder from Pantry (the
+    /// plain buff icon did not); and the launch's check finds none missing.
     #[test]
-    fn the_homes_steps_and_rest_have_their_own_icons() {
+    fn every_effect_has_an_icon_of_its_own() {
         let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets").canonicalize().expect("assets");
         let content = voxmar_server::load_content(&assets).expect("content");
+        let effects = &content.effects;
+        assert_eq!(Source::bundled(&assets.join("packs")).unpictured(effects), Vec::<String>::new());
         let mut pack = Pack::open(&assets.join("packs").join("default")).expect("default pack");
-        let mut drawn = Vec::new();
-        for name in ["camp", "hearthside", "snug", "homely", "cosy", "heart_of_the_home", "rested", "well_rested", "deep_rest", "healing_sleep"] {
-            let id = content.effects.id(&format!("base:{name}")).unwrap_or_else(|| panic!("no effect {name}"));
-            let icon = &content.effects.get(id).icon;
-            let image = pack.read(&format!("ui/effect/{icon}")).unwrap_or_else(|| panic!("{name} has no icon of its own"));
-            assert_eq!((image.width, image.height), (10, 10), "{name}");
-            assert!(!drawn.contains(&image.pixels), "{name} looks like another step");
-            drawn.push(image.pixels);
+        let mut drawn: Vec<(String, Vec<u8>)> = Vec::new();
+        for def in effects.ids().map(|id| effects.get(id)) {
+            let image = pack.read(&format!("ui/effect/{}", def.icon)).unwrap_or_else(|| panic!("{} has no icon of its own", def.name));
+            assert_eq!((image.width, image.height), (10, 10), "{}", def.name);
+            if let Some((other, _)) = drawn.iter().find(|(_, pixels)| *pixels == image.pixels) {
+                panic!("{} looks like {other}", def.name);
+            }
+            drawn.push((def.name.clone(), image.pixels));
         }
+        // An effect whose icon no pack draws is named.
+        let mut file = voxmar_engine::effect::EffectRegistry::read("test", r#"(effects: [(name: "unseen", kind: Buff, title: "Unseen", description: "")])"#).expect("reads");
+        file.effects[0].icon = "nothing_draws_this".into();
+        let unseen = voxmar_engine::effect::EffectRegistry::new(vec![file]).expect("loads");
+        assert_eq!(Source::bundled(&assets.join("packs")).unpictured(&unseen), ["test:unseen (ui/effect/nothing_draws_this)"]);
     }
 
     /// A block's fixed tint multiplies its texels' colours by the colour (white leaves them,

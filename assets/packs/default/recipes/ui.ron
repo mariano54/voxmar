@@ -105,6 +105,7 @@
         "ui/slot/gloves": (size: (16, 16), layers: [Grid(legend: {'d': "#9aa0a8", 'l': "#e8ecf0", 'b': "#c4cad2"}, rows: ["................", "................", "....d.d.d.......", "...dldldld......", "...dldldldd.....", "...dllllldld....", "...dllllllld....", "...dllllllld.d..", "...dllllllldld..", "...dllllllllld..", "...dlllllllld...", "....dlllllld....", "....dbbbbbbd....", "....dddddddd....", "................", "................"])]),
         "ui/slot/boots": (size: (16, 16), layers: [Grid(legend: {'d': "#9aa0a8", 'l': "#e8ecf0", 'b': "#c4cad2"}, rows: ["................", "................", "....dddd........", "....dlld........", "....dlld........", "....dlld........", "....dlld........", "....dllld.......", "....dlllldd.....", "....dlllllldd...", "....dllllllllld.", "....dllllllllld.", "....dbbbbbbbbbd.", "....ddddddddddd.", "................", "................"])]),
         "ui/slot/shield": (size: (16, 16), layers: [Grid(legend: {'d': "#9aa0a8", 'l': "#e8ecf0", 'b': "#c4cad2"}, rows: ["................", "...dddddddddd...", "..dllllllllllld.", "..dlllllbllllld.", "..dlllllbllllld.", "..dllbbbbbbblld.", "..dlllllbllllld.", "..dlllllbllllld.", "...dllllbllllld.", "...dllllblllld..", "....dlllblllld..", ".....dllblld....", "......dllld.....", ".......ddd......", "................", "................"])]),
+        "ui/slot/charm": (size: (16, 16), layers: [Grid(legend: {'d': "#9aa0a8", 'l': "#e8ecf0", 'b': "#c4cad2"}, rows: ["................", "....dddddddd....", "...d........d...", "..d..........d..", "..d..........d..", "...d........d...", "....d......d....", ".....dd..dd.....", ".......dd.......", "......dlld......", ".....dlbbld.....", ".....dlbbld.....", "......dlld......", ".......dd.......", "................", "................"])]),
         // A recess: item slots, text fields, slider tracks. Shadowed along the top and left,
         // lit along the bottom and right. Sliced at 2.
         "ui/well": (size: (6, 6), palettes: {"well": "ui_pit"}, layers: [
@@ -255,6 +256,47 @@
                 "..koook..",
                 "...kok...",
                 "....k....",
+            ]),
+        ]),
+        // The quest book's marks on a quest's corner: a tick once it is done, a gold "!"
+        // while its rewards wait, a padlock while it waits on those before it. Drawn whole.
+        "ui/quest/done": (size: (9, 9), layers: [
+            Grid(legend: {'g': "#76d678", 'G': "#c8f5b4"}, rows: [
+                "......kkk",
+                ".....kGgk",
+                "kkk.kGgk.",
+                "kGgkkGgk.",
+                ".kGgGgk..",
+                "..kGgk...",
+                "...kk....",
+                ".........",
+                ".........",
+            ]),
+        ]),
+        "ui/quest/ready": (size: (9, 9), palettes: {"frame": "ui_gold"}, layers: [
+            Grid(rows: [
+                "..kkkkk..",
+                ".kWGGGGk.",
+                "kWGGkGGgk",
+                "kGGGkGGgk",
+                "kGGGkGGgk",
+                "kGGGGGGgk",
+                "kGGGkGGgk",
+                ".kgGGGgk.",
+                "..kkkkk..",
+            ]),
+        ]),
+        "ui/quest/locked": (size: (9, 9), layers: [
+            Grid(legend: {'m': "#8a90a8", 'M': "#b8bdd0", 'd': "#4c5068"}, rows: [
+                "..kkkkk..",
+                ".kMkkkdk.",
+                ".kMk.kdk.",
+                "kkkkkkkkk",
+                "kMMMMMMmk",
+                "kMmmkmmdk",
+                "kMmmkmmdk",
+                "kmddddddk",
+                "kkkkkkkkk",
             ]),
         ]),
         // Skill icons, by skill name (`ui/skill/<name>`; `unknown` for one without its own).

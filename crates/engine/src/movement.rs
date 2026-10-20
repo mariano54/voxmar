@@ -640,6 +640,160 @@ mod tests {
         }
     }
 
+    /// The game's own blocks set about the origin, by the boxes they stop movement with;
+    /// stone under y 0 unless `floor` says how deep the ground lies at a cell's x and z.
+    struct Built<'a> {
+        blocks: &'a crate::block::BlockRegistry,
+        cells: rustc_hash::FxHashMap<IVec3, crate::block::BlockId>,
+        floor: fn(IVec3) -> i32,
+    }
+
+    impl Surroundings for Built<'_> {
+        fn solid(&self, cell: IVec3) -> bool {
+            !self.boxes(cell).is_empty()
+        }
+
+        fn boxes(&self, cell: IVec3) -> &[Aabb] {
+            match self.cells.get(&cell) {
+                Some(&id) => self.blocks.collision(id),
+                None if cell.y < (self.floor)(cell) => &CUBE,
+                None => &[],
+            }
+        }
+
+        fn water(&self, _: &Aabb) -> (f32, Vec2) {
+            (0.0, Vec2::ZERO)
+        }
+    }
+
+    fn content() -> crate::content::Content {
+        crate::content::Content::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).expect("the game's content loads")
+    }
+
+    fn walking(wish: Vec3, sprint: bool) -> Controls {
+        Controls { wish: wish.normalize(), forward: true, sprint, jump: false, descend: false }
+    }
+
+    /// Every stair in the game, wood or stone, in a flight of three up to a landing walled at
+    /// its far end: walked
+    /// south without jumping, the player climbs it step by step onto the landing, level
+    /// with the top stair, and walked back north comes down it to the ground, never inside
+    /// a block, at a slow and a fast frame rate.
+    #[test]
+    fn every_stair_is_walked_up_to_a_landing_and_down_again() {
+        let content = content();
+        let blocks = &content.blocks;
+        let (stone, landing) = (blocks.expect("base:stone"), blocks.expect("base:oak_landing"));
+        let stairs: Vec<_> = blocks.tagged("stairs").filter(|&id| !["_east", "_south", "_west", "_top"].iter().any(|s| blocks.def(id).name.ends_with(s))).collect();
+        assert!(stairs.len() >= 5, "the woods' stairs and the stone ones: {}", stairs.len());
+        for stair in stairs {
+            let name = &blocks.def(stair).name;
+            let mut cells = rustc_hash::FxHashMap::default();
+            for step in 0..3 {
+                cells.insert(IVec3::new(0, step, 2 + step), stair);
+                for y in 0..step {
+                    cells.insert(IVec3::new(0, y, 2 + step), stone);
+                }
+            }
+            for z in 5..=6 {
+                cells.insert(IVec3::new(0, 2, z), landing);
+                cells.insert(IVec3::new(0, 1, z), stone);
+                cells.insert(IVec3::new(0, 0, z), stone);
+            }
+            // A wall at the landing's far end, so the walk up stops on it.
+            for y in 0..5 {
+                cells.insert(IVec3::new(0, y, 7), stone);
+            }
+            let flight = Built { blocks, cells, floor: |_| 0 };
+            for fps in [30.0, 144.0] {
+                let (up, inside) = run(&flight, at(0.5, 0.0, 0.5), walking(Vec3::Z, false), 4.0, fps);
+                assert!(!inside, "{name}: went into a block going up at {fps} fps: {up:?}");
+                assert!(up.on_ground && (up.position.y - 3.0).abs() < 1e-4 && up.position.z > 5.0, "{name}: did not climb onto the landing at {fps} fps: {up:?}");
+                let (down, inside) = run(&flight, Body { velocity: Vec3::ZERO, ..up }, walking(Vec3::NEG_Z, false), 4.0, fps);
+                assert!(!inside, "{name}: went into a block going down at {fps} fps: {down:?}");
+                assert!(down.on_ground && down.position.y.abs() < 1e-4 && down.position.z < 1.5, "{name}: did not come down to the ground at {fps} fps: {down:?}");
+            }
+        }
+    }
+
+    /// Every roof corner, hip and valley, thatch and shingles, walked up course by course
+    /// from where its eaves meet without jumping, along the diagonal (a hip's ridge, a
+    /// valley's gutter), to its top a block up, never inside it.
+    #[test]
+    fn every_roof_corner_is_walked_up_course_by_course() {
+        let content = content();
+        let blocks = &content.blocks;
+        let stone = blocks.expect("base:stone");
+        let corners: Vec<_> = blocks.tagged("roof_corner").filter(|&id| !["_east", "_south", "_west"].iter().any(|s| blocks.def(id).name.ends_with(s))).collect();
+        assert!(corners.len() >= 8, "a hip and a valley in thatch and three woods: {}", corners.len());
+        for corner in corners {
+            let name = &blocks.def(corner).name;
+            let mut cells = rustc_hash::FxHashMap::default();
+            cells.insert(IVec3::new(0, 0, 0), corner);
+            // A wall behind its top course, so the walk stops on it.
+            for (x, z) in [(1, 0), (0, 1), (1, 1)] {
+                for y in 0..3 {
+                    cells.insert(IVec3::new(x, y, z), stone);
+                }
+            }
+            let roof = Built { blocks, cells, floor: |_| 0 };
+            for fps in [30.0, 144.0] {
+                let (body, inside) = run(&roof, Body { on_ground: true, ..at(-0.6, 0.0, -0.6) }, walking(Vec3::new(1.0, 0.0, 1.0), false), 3.0, fps);
+                assert!(!inside, "{name}: went into it at {fps} fps: {body:?}");
+                assert!(body.on_ground && (body.position.y - 1.0).abs() < 1e-4, "{name}: did not climb to its top at {fps} fps: {body:?}");
+            }
+        }
+    }
+
+    /// A balcony four blocks over the ground, railed along its east and south edges with a
+    /// corner where they meet: walked or sprinted at the railing, straight or across the
+    /// corner, the player stops at it, on the balcony, never inside it and never over.
+    #[test]
+    fn a_railing_keeps_a_walker_on_the_balcony() {
+        let content = content();
+        let blocks = &content.blocks;
+        let mut cells = rustc_hash::FxHashMap::default();
+        for i in -3..3 {
+            cells.insert(IVec3::new(3, 0, i), blocks.expect("base:oak_railing_west"));
+            cells.insert(IVec3::new(i, 0, 3), blocks.expect("base:oak_railing"));
+        }
+        cells.insert(IVec3::new(3, 0, 3), blocks.expect("base:oak_railing_corner"));
+        // The balcony's floor reaches x and z 3; beyond them the ground is four down.
+        let balcony = Built { blocks, cells, floor: |c| if c.x <= 3 && c.z <= 3 { 0 } else { -4 } };
+        for wish in [Vec3::X, Vec3::Z, Vec3::new(1.0, 0.0, 1.0)] {
+            for sprint in [false, true] {
+                for fps in [30.0, 144.0] {
+                    let (body, inside) = run(&balcony, Body { on_ground: true, ..at(0.5, 0.0, 0.5) }, walking(wish, sprint), 3.0, fps);
+                    let kept = body.position.x < 4.0 && body.position.z < 4.0 && body.position.y.abs() < 1e-4 && body.on_ground;
+                    assert!(!inside && kept, "walking {wish} (sprint {sprint}) at {fps} fps went past the railing: {body:?}");
+                }
+            }
+        }
+    }
+
+    /// A row of field fences, of fence corners or of shut gates across a field stops a
+    /// walker at it, walked or sprinted, never inside and never over; a row of open gates
+    /// lets it through.
+    #[test]
+    fn a_fence_or_a_shut_gate_stops_a_walker_and_an_open_gate_lets_it_through() {
+        let content = content();
+        let blocks = &content.blocks;
+        for (name, passes) in [("base:oak_fence_east", false), ("base:oak_fence_corner", false), ("base:oak_fence_gate_east", false), ("base:oak_fence_gate_open_east", true)] {
+            let mut cells = rustc_hash::FxHashMap::default();
+            for z in -3..=3 {
+                cells.insert(IVec3::new(3, 0, z), blocks.expect(name));
+            }
+            let field = Built { blocks, cells, floor: |_| 0 };
+            for sprint in [false, true] {
+                for fps in [30.0, 144.0] {
+                    let (body, inside) = run(&field, Body { on_ground: true, ..at(0.5, 0.0, 0.5) }, walking(Vec3::X, sprint), 3.0, fps);
+                    let past = body.position.x > 4.0;
+                    assert!(!inside && past == passes, "walking east (sprint {sprint}) at {fps} fps into a row of {name}: past it {past}, inside it {inside}: {body:?}");
+                }
+            }
+        }
+    }
+
     /// A whole block is no step: walking into it without jumping stops at it, as does a slab
     /// under a ceiling too low to stand under on it.
     #[test]

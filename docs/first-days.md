@@ -3,9 +3,10 @@
 Oct 13, 2026. The first two ages are **Nomad** (age 1, ends when the Homestead Hearth is lit)
 and **Farm** (age 2, ends when the Crucible Kiln is lit and Bronze opens). Mariano's ask:
 at least thirty quests an age, an idea of the loop in the first few days, and a check that
-a new player can tell what to do from the quest text, the recipes and play. Nomad has 35
-quests and Farm 44 (`assets/content/base/quests.ron`; `crates/engine/tests/early_quests.rs`
-keeps the floor at 30 and checks every name they use exists).
+a new player can tell what to do from the quest text, the recipes and play. Nomad had 35
+quests and Farm 44 then (Oct 20: 64 and 105; `assets/content/base/quests.ron`;
+`crates/engine/tests/early_quests.rs` keeps the floor at 30 and checks every name they use
+exists).
 
 What exists is what is written here; designed-but-unbuilt things (prayers, altars, the quern,
 locked age chests, a sling) have no quest.
@@ -13,13 +14,14 @@ locked age chests, a sling) have no quest.
 ## The loop, day by day
 
 A new player starts with nothing but the coin purse (`starter_kit` is empty in
-`core/survival.ron`; a mod can list a kit there). The first quests teach the way in: punch
-trees (Timber is pinned first), make planks in the grid, a crafting table, sticks, then a
-wooden pickaxe and axe at the table, then stone. Recipes are never locked by quests; a quest only opens its
+`core/survival.ron`; a mod can list a kit there). The first quests teach the way in: gather
+flint and sticks by hand, make a flint axe and pickaxe in the grid, fell trees (Timber is
+pinned first), make planks, a crafting table, sticks, then stone tools from heads ground
+at a grindstone. Recipes are never locked by quests; a quest only opens its
 own page, and finishing is retroactive (it counts what you already did).
 
-**Day 1, daylight: tools and a fire.** Four logs by hand (Timber), a crafting table, a
-wooden axe for the rest of the wood (An Axe to It), cobblestone (A Pile of Stone), then
+**Day 1, daylight: tools and a fire.** Flint tools by hand, four logs (Timber), a crafting
+table, a spare flint axe for the rest of the wood (An Axe to It), cobblestone (A Pile of Stone), then
 stone pickaxe and axe (Stone in Hand). Hunt a rabbit or hen, make a
 campfire (two logs over two cobblestone in the 2x2 grid) and cook it (First Night). Wild wheat
 and herbs on the way (A Handful of Grain, Wild Harvest). The quest book is the guide: Look It
@@ -203,11 +205,11 @@ is what counts. Medians of three runs on 2026-10-13, with the range:
 |---|---|---|---|
 | Look It Up | 2 | 2 | The recipe viewer. |
 | Timber, Crafting Table | 41 | 40 to 42 | Sixteen logs punched by hand (35 s). |
-| Stone in Hand | 53 | 53 to 57 | Nine cobblestone with the wooden pickaxe. |
+| Stone in Hand | 53 | 53 to 57 | Nine cobblestone: stone broken with the flint pickaxe into two loose stones each, four loose stones to two cobblestone in the 2×2 grid. |
 | First Night | 73 | 66 to 73 | Hunting in the lane, two seconds a cooking. |
 | A Bed of Your Own, Torchlight | 85 | 77 to 90 | Two feathers and two hides; two coal. |
-| Homestead Hearth lit | 118 | 106 to 119 | 28 cobblestone and 4 clay (A Pile of Stone and Dig In fall on the way; Make Camp with the hearth). |
-| A Pit Kiln | 122 | 113 to 127 | Seven cobblestone, a campfire. |
+| Homestead Hearth lit | 118 | 106 to 119 | 28 cobblestone (loose stones from stone, four to two in the 2×2 grid) and 4 clay (A Pile of Stone and Dig In fall on the way; Make Camp with the hearth). |
+| A Pit Kiln | 122 | 113 to 127 | Seven cobblestone (from loose stones, four to two), a campfire. |
 | Fire the Clay | 175 | 171 to 180 | 28 clay dug (Clay Banks on the way), twelve fired with cracks at Crafting 1 to 3. |
 | The Potter | 183 | 179 to 194 | Three more fired, three crafts. |
 | Charcoal | 260 | 258 to 268 | 52 logs chopped for all the charcoal ahead (33 s), sixteen burnt (35 s). |
@@ -395,6 +397,43 @@ on level ground, and a cast lands two times in five, about 12.5 s a fish. Crops 
 minutes of growth (wheat; carrots 14) day and night, and while they grow the main line,
 husbandry and the home quests are open.
 
+### Pacing: new things per three minutes (Oct 20)
+
+The quest-book bot also counts what is new to the player as it goes (`Pacing` in
+gameplay.rs): an item first in the pack, a place (a biome stood in, a cave, ruin or village
+entered, from the journal), a creature first met (the journal's animals, monsters and
+bosses), and a station first worked at (a block tagged `station`, a home station from
+`stations.ron`, or a multiblock's core). It prints them for each three minutes of the run,
+the longest wait with nothing new, and the longest stretch of one action over and over (the
+same action on the same block, creature or held item, until the player does anything else).
+It fails if a whole three minutes brings fewer than five new things (`PACING_NEW`) or one
+action goes on for more than a minute (`PACING_STRETCH`).
+
+32 runs on main 3930bb29 (server seconds):
+
+| Measure | Range | Median | What it was |
+|---|---|---|---|
+| New things, first three minutes | 27 to 43 | 36 | Tools, the first foods, the fire, the first two creatures and two biomes. |
+| New things, the rest | 9 to 19 | 15.5 | The bed, clay, the Hearth, the pit kiln and clamp; at least 14 when the window is a whole three minutes. |
+| Longest wait with nothing new | 49 to 170 | 88 | Firing clay toward A Kiln Load while the clamp chars (Charcoal), 80 to 106 s in 31 runs; once the hunt for A Bed of Your Own's hides (170 s, 109 of it hunting). |
+| Longest single-action stretch | 29 to 40 | 31 | Firing clay at the pit kiln, 13 to 17 in a row (Fire the Clay). |
+| The lit Crucible Kiln | 314 to 401 | 356 | |
+
+The target is 20 to 30 server minutes from a new world to the Farm age's end. The bot is
+a floor: it knows the way, its plot stands in for terrain, and it has no menus or
+reading, so 5 to 7 minutes for the bot is in line with a player several times slower.
+What the report shows, and is left for the books' owners:
+
+- **The Charcoal stretch.** From The Potter to the clamp's sixteen charcoal, about 85 s
+  bring nothing new: the bot fires clay by hand while the clamp works. That is the next
+  place for a new thing (a side quest or a station that opens there).
+- **The hunt's tail.** The bed's two hides take 26 to 171 s; the slow runs are the chase,
+  not the drop (rabbit and junglefowl hides drop 0.8). A Tempting Bite (bait) is the
+  answer the book already gives; a real player is slower still.
+- Nothing past the first window is a place or a creature: the plot is one or two biomes
+  and a lane of two kinds. In a real world the walks add both, so the second and third
+  windows are a floor too.
+
 ## Measured pacing
 
 Run it with `cargo test -p voxmar_server --test gameplay a_fresh_survival -- --ignored --nocapture`
@@ -422,10 +461,10 @@ nothing, bare hands on the first trees. "Range" is the fastest and slowest run o
 |---|---|---|---|---|---|
 | 8 logs (Timber) | 14.8 s | 14.8 s | 35.2 s | 35.2 | Punching 16 logs by hand (33 s; the axe made it 13), 2 s of walking between trunks. |
 | Crafting table | 14.8 s | 14.8 s | 35.2 s | 35.2 | Four logs to sixteen planks, the table, sticks and a wooden pickaxe: crafting takes no server time. |
-| Stone pickaxe and axe (Stone in Hand) | 23.9 s | 23.9 s | 44.3 s | 44.3 to 44.8 | 9 cobble with the wooden pickaxe (about 7 s of mining), then crafting. |
+| Stone pickaxe and axe (Stone in Hand) | 23.9 s | 23.9 s | 44.3 s | 44.3 to 44.8 | 9 cobble from loose stones, stone broken with the flint pickaxe and four loose stones to two cobble in the 2×2 grid (about 7 s of mining), then crafting. |
 | Campfire and a cooked meal (First Night) | 66 s | 53.5 s | 76.2 s | 74 to 81 | Walking to and chasing animals, killing rabbits and junglefowl, 2 s per cook. |
 | Torches and sleeping bag (A Bed of Your Own) | 89 s | 56.8 s | 84.7 s | 82 to 106 | Two feathers and two hides, crafted in the hand grid. Torches add 4 to 10 s (2 coal). |
-| Hearth materials (28 cobble, 4 clay) | 113 s | 83.2 s | 110.1 s | 110 to 134 | About 15 s of mining cobble, clay from the pond bank with a stone shovel, 6 to 8 s of walking. |
+| Hearth materials (28 cobble, 4 clay) | 113 s | 83.2 s | 110.1 s | 110 to 134 | About 15 s of mining stone into loose stones (two each, four to two cobble), clay from the pond bank with a stone shovel, 6 to 8 s of walking. |
 | Homestead Hearth built and lit | 117 s | 86.2 s | 113.6 s | 113 to 138 | 3 s: ring of 8 cobble, hearthstone, 2 chimneys, light. Home is set ("your home"). |
 | Pit kiln built | 124 s | 92.4 s | 119.7 s | 120 to 144 | 6 s: 7 more cobble, a campfire, the kiln recipe. |
 | 12 fired clay (Fire the Clay) | 176 s | 145.8 s | 168.5 s | 164 to 197 | 28 clay to dig (7 s), then 31 to 40 s of cooking: about a fifth of the attempts crack, and a cracked clay comes back as clay. |

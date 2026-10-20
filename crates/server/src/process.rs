@@ -159,7 +159,7 @@ impl Survival {
         let wet = server.block(feet).and_then(|b| server.content.blocks.fluid(b)).is_some();
         let outdoors = server.open_sky(feet + voxmar_engine::glam::IVec3::Y * 2);
         let at = voxmar_engine::glam::Vec2::new(player.position.x, player.position.z);
-        let (tick, day) = (server.tick, server.day);
+        let (tick, day, night) = (server.tick, server.day, server.night());
         let weather = server.weather.local(&mut server.temperature, at, tick, day).weather;
         let cold_air = air - if wet { server.survival.water_chill } else { 0.0 };
         let warmed = heat > 0.5 && cold_air < vitals::CHILLY;
@@ -170,6 +170,13 @@ impl Survival {
         let held: Vec<String> = player.held().map_or_else(Vec::new, |item| {
             let def = server.content.blocks.def(item);
             effects.held_tags().iter().filter(|tag| def.has_tag(tag)).cloned().collect()
+        });
+        // And of the charm worn (`Wearing`): only the charm slot's, so one charm's effect
+        // at a time, whatever else a pack tags.
+        let charm = player.inventory.worn[voxmar_engine::combat::Slot::Charm.index()];
+        let worn: Vec<String> = charm.map_or_else(Vec::new, |s| {
+            let def = server.content.blocks.def(s.item);
+            effects.worn_tags().iter().filter(|tag| def.has_tag(tag)).cloned().collect()
         });
         let near: Vec<(String, i32)> = effects.near_asks().iter().filter(|(tag, reach)| server.tagged_within(feet, tag, *reach)).cloned().collect();
         let max_level = hitpoints.map(|skill| server.content.skills.level(server.players[&id].skills.xp(skill)));
@@ -198,7 +205,7 @@ impl Survival {
         // Warmth from what was eaten and the weather counts before the bands of warmth
         // are judged: soaked through, a mild day feels chilly.
         let biome = server.overworld.biome_at(feet.x, feet.z);
-        let mut situation = Situation { felt: cold_air + heat, warmed, outdoors, weather: &weather, biome: &biome.name, biome_tags: &biome.tags, home: home.as_ref(), done: &player.quests_done, held: &held, near: &near, seated: seated.is_some() };
+        let mut situation = Situation { felt: cold_air + heat, warmed, outdoors, weather: &weather, biome: &biome.name, biome_tags: &biome.tags, home: home.as_ref(), done: &player.quests_done, held: &held, near: &near, worn: &worn, seated: seated.is_some(), night };
         // What clings (smoke) is topped up while it holds, and lasts after.
         effects.linger(&situation, &mut player.timed_effects);
         let first = effects.active(&situation, &player.timed_effects);
@@ -334,21 +341,25 @@ impl Server {
         let (up, down) = (rules.home_up, rules.home_down);
         let wanted = self.content.effects.home_tags();
         let mut counts: Vec<(String, u32)> = wanted.iter().map(|tag| (tag.clone(), 0)).collect();
+        let walls = if self.content.effects.home_walls() { self.room_walls(anchor) } else { Default::default() };
         if wanted.is_empty() {
-            return HomeSurvey { counts };
+            return HomeSurvey { counts, walls };
         }
         let blocks = &self.content.blocks;
         let reach = rules.home_reach;
+        // Tags counted only under the open sky (`outdoors`: things set out in the yard).
+        let outdoor: Vec<bool> = counts.iter().map(|(tag, _)| self.content.effects.outdoor(tag)).collect();
         for dy in -down..=up {
             for dz in -reach..=reach {
                 for dx in -reach..=reach {
-                    let Some(block) = self.block(anchor + IVec3::new(dx, dy, dz)) else { continue };
+                    let at = anchor + IVec3::new(dx, dy, dz);
+                    let Some(block) = self.block(at) else { continue };
                     let tags = &blocks.def(block).tags;
                     if tags.is_empty() {
                         continue;
                     }
-                    for (tag, n) in &mut counts {
-                        if tags.contains(tag) {
+                    for ((tag, n), &outdoor) in counts.iter_mut().zip(&outdoor) {
+                        if tags.contains(tag) && (!outdoor || self.open_sky(at + IVec3::Y)) {
                             *n += 1;
                         }
                     }
@@ -364,7 +375,71 @@ impl Server {
                 }
             }
         }
-        HomeSurvey { counts }
+        HomeSurvey { counts, walls }
+    }
+
+    /// The walls and roof about the room a home at `anchor` stands in: from the cell at
+    /// `anchor` (or the first open cell over it: a hearth's hearthstone) out over every open
+    /// cell within the home's reach, each face met on the way
+    /// (sideways or up) is a face of the room, of the shelter its block's tag says (a solid
+    /// block with none is draughty), or an opening where the way leads out of the reach or
+    /// into the unloaded. A wall is a solid block or any with a shelter tag (a closed door, a
+    /// window); a door left open lets the scan out, and furniture (survival.ron's
+    /// `home_furniture`, with no shelter tag: a shelter tag always wins) is looked past to the
+    /// wall behind it, though never stepped down into: a hearthstone set in its ring is floor. Bounded by the home box, so a home in
+    /// the open costs no more than the box.
+    pub(crate) fn room_walls(&self, anchor: IVec3) -> voxmar_engine::effect::Walls {
+        use voxmar_engine::effect::{Shelter, Walls};
+        let (rules, blocks) = (&self.survival, &self.content.blocks);
+        let (reach, up, down) = (rules.home_reach, rules.home_up, rules.home_down);
+        let inside = |p: IVec3| {
+            let d = p - anchor;
+            d.x.abs() <= reach && d.z.abs() <= reach && d.y <= up && d.y >= -down
+        };
+        // What stands at a cell: open (`None`), or a wall of a shelter. Furniture is looked
+        // past, as open, whatever it is made of.
+        // Furniture is a furniture tag with no shelter tag: a shelter tag always wins.
+        let furniture = |tags: &[String]| rules.furniture(tags);
+        let furnished = |p: IVec3| self.block(p).is_some_and(|b| furniture(&blocks.def(b).tags));
+        let wall = |p: IVec3| -> Option<Option<Shelter>> {
+            let block = self.block(p)?;
+            let tags = &blocks.def(block).tags;
+            Shelter::of_wall(tags, blocks.info(block).solid, furniture(tags)).map(Some)
+        };
+        // A solid block or furniture is never stepped down into: under the room it is floor,
+        // a hearthstone, a barrel or a well set in it as much as the stone round them.
+        let solid = |p: IVec3| self.block(p).is_some_and(|b| blocks.info(b).solid);
+        let mut walls = Walls::default();
+        // A hearth's home is its hearthstone, solid: the room is the first open cell over it.
+        let Some(anchor) = (0..=up).map(|dy| anchor + IVec3::Y * dy).take_while(|&p| self.block(p).is_some()).find(|&p| wall(p).is_none() && !solid(p)) else {
+            return walls;
+        };
+        let mut seen = rustc_hash::FxHashSet::default();
+        let mut queue = vec![anchor];
+        seen.insert(anchor);
+        while let Some(cell) = queue.pop() {
+            for side in [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z, IVec3::Y, IVec3::NEG_Y] {
+                let next = cell + side;
+                let face = side != IVec3::NEG_Y;
+                if !inside(next) || self.block(next).is_none() {
+                    if face {
+                        walls.add(None);
+                    }
+                    continue;
+                }
+                match wall(next) {
+                    Some(shelter) if face => walls.add(shelter),
+                    Some(_) => {}
+                    None if !face && (solid(next) || furnished(next)) => {}
+                    None => {
+                        if seen.insert(next) {
+                            queue.push(next);
+                        }
+                    }
+                }
+            }
+        }
+        walls
     }
 
     /// Whether nothing solid hangs over `at` (within `survival.roof_scan` blocks): out in
@@ -433,6 +508,309 @@ impl Server {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A home's room is judged by its walls and roof: a closed plank room is sound all about,
+    /// a brick in it is a fine face, a hole or an open door lets the outside in, and a closed
+    /// door is a wall.
+    #[test]
+    fn a_room_is_judged_by_its_walls_and_roof() {
+        use voxmar_engine::{block::BlockId, effect::Shelter};
+        let mut server = crate::test_server();
+        let at = voxmar_engine::coords::ColumnPos::of_block(server.spawn.floor().as_ivec3()).origin() + IVec3::new(8, server.spawn.y as i32 + 10, 8);
+        let block = |server: &Server, name: &str| server.content.blocks.expect(name);
+        let (stone, planks) = (block(&server, "base:stone"), block(&server, "base:oak_planks"));
+        // A floor, plank walls three high about a five by five room, and a plank roof.
+        for x in -3..=3 {
+            for z in -3..=3 {
+                server.set_block(at + IVec3::new(x, 0, z), stone);
+                server.set_block(at + IVec3::new(x, 4, z), planks);
+                for y in 1..=3 {
+                    let edge = x.abs() == 3 || z.abs() == 3;
+                    server.set_block(at + IVec3::new(x, y, z), if edge { planks } else { BlockId::AIR });
+                }
+            }
+        }
+        let home = at + IVec3::Y;
+        let walls = server.room_walls(home);
+        assert_eq!(walls.faces, 5 * 3 * 4 + 5 * 5, "the walls and the roof, the floor not counted");
+        assert_eq!((walls.share(Shelter::Draughty), walls.share(Shelter::Sound), walls.share(Shelter::Fine)), (1.0, 1.0, 0.0), "planks are sound");
+        let brick = at + IVec3::new(3, 2, 0);
+        server.set_block(brick, block(&server, "base:stone_bricks"));
+        assert_eq!(server.room_walls(home).at_least, [85, 85, 1], "a brick is a fine face, and sound too");
+        // A hole lets the scan out to the home's reach: open faces, not walled in.
+        let hole = at + IVec3::new(-3, 1, 0);
+        server.set_block(hole, BlockId::AIR);
+        let open = server.room_walls(home);
+        assert!(open.share(Shelter::Draughty) < 0.9, "a hole is an opening: {open:?}");
+        server.set_block(hole, block(&server, "base:wooden_door"));
+        assert_eq!(server.room_walls(home).at_least, [85, 85, 1], "a closed door is a sound wall");
+        server.set_block(hole, block(&server, "base:wooden_door_open"));
+        assert!(server.room_walls(home).share(Shelter::Draughty) < 0.9, "an open one lets the outside in");
+        server.set_block(hole, block(&server, "base:hide_window"));
+        assert_eq!(server.room_walls(home).at_least, [85, 84, 1], "a hide window is draughty");
+        // Furniture against the wall and in the room is looked past: the room is as it was.
+        server.set_block(hole, planks);
+        let before = server.room_walls(home);
+        for (dx, name) in [(-2, "base:barrel"), (-1, "base:chest"), (2, "base:crafting_table")] {
+            server.set_block(at + IVec3::new(dx, 1, 2), block(&server, name));
+        }
+        assert_eq!(server.room_walls(home), before, "furniture made the room draughtier");
+        // A solid block where home stands (a hearthstone): the room is the open cell over it.
+        assert_eq!(server.room_walls(at), server.room_walls(home));
+    }
+
+    /// A window walls a room in: a lattice window, a shuttered one left open or an arrow
+    /// slit in a plank room leaves it as closed as it was (Snug asks nine tenths walled),
+    /// though a draughty face, one short of sound all round; shut, the shutters are a sound
+    /// wall again. An empty window frame is an opening: the room is open there.
+    #[test]
+    fn a_window_keeps_a_room_walled_and_an_empty_frame_opens_it() {
+        use voxmar_engine::{block::BlockId, effect::Shelter};
+        let mut server = crate::test_server();
+        let at = voxmar_engine::coords::ColumnPos::of_block(server.spawn.floor().as_ivec3()).origin() + IVec3::new(8, server.spawn.y as i32 + 10, 8);
+        let block = |server: &Server, name: &str| server.content.blocks.expect(name);
+        let (stone, planks) = (block(&server, "base:stone"), block(&server, "base:oak_planks"));
+        for x in -3..=3 {
+            for z in -3..=3 {
+                server.set_block(at + IVec3::new(x, 0, z), stone);
+                server.set_block(at + IVec3::new(x, 4, z), planks);
+                for y in 1..=3 {
+                    let edge = x.abs() == 3 || z.abs() == 3;
+                    server.set_block(at + IVec3::new(x, y, z), if edge { planks } else { BlockId::AIR });
+                }
+            }
+        }
+        let home = at + IVec3::Y;
+        assert_eq!(server.room_walls(home).at_least, [85, 85, 0], "a closed plank room");
+        let window = at + IVec3::new(3, 2, 0);
+        for name in ["base:oak_lattice_window", "base:birch_shuttered_window", "base:stone_arrow_slit"] {
+            server.set_block(window, block(&server, name));
+            let walls = server.room_walls(home);
+            assert_eq!(walls.at_least, [85, 84, 0], "{name} in the wall");
+            assert_eq!(walls.share(Shelter::Draughty), 1.0, "{name} let the room out");
+            let def = server.content.blocks.def(block(&server, name));
+            assert!(def.has_tag(crate::rules::DRAUGHT), "{name} carries no draught for the whistle");
+        }
+        let shuttered = block(&server, "base:birch_shuttered_window");
+        let shut = server.content.blocks.swapped(shuttered).expect("the shutters shut");
+        server.set_block(window, shut);
+        assert_eq!(server.room_walls(home).at_least, [85, 85, 0], "shut shutters are a sound wall");
+        assert_eq!(server.content.blocks.swapped(shut), Some(shuttered), "and open again");
+        server.set_block(window, block(&server, "base:oak_window_frame"));
+        let open = server.room_walls(home);
+        assert!(open.share(Shelter::Draughty) < 0.9, "an empty frame walled the room: {open:?}");
+    }
+
+    /// A balcony door shut in a plank room's wall walls it in: its lower half a sound face,
+    /// its lattice a draughty one. Opened, it is a way out as an empty frame is, and a
+    /// railing across the doorway walls nothing.
+    #[test]
+    fn a_balcony_door_walls_a_room_shut_and_opens_it_open() {
+        use voxmar_engine::{block::BlockId, effect::Shelter};
+        let mut server = crate::test_server();
+        let at = voxmar_engine::coords::ColumnPos::of_block(server.spawn.floor().as_ivec3()).origin() + IVec3::new(8, server.spawn.y as i32 + 10, 8);
+        let block = |server: &Server, name: &str| server.content.blocks.expect(name);
+        let (stone, planks) = (block(&server, "base:stone"), block(&server, "base:oak_planks"));
+        for x in -3..=3 {
+            for z in -3..=3 {
+                server.set_block(at + IVec3::new(x, 0, z), stone);
+                server.set_block(at + IVec3::new(x, 4, z), planks);
+                for y in 1..=3 {
+                    let edge = x.abs() == 3 || z.abs() == 3;
+                    server.set_block(at + IVec3::new(x, y, z), if edge { planks } else { BlockId::AIR });
+                }
+            }
+        }
+        let home = at + IVec3::Y;
+        let door = at + IVec3::new(3, 1, 0);
+        server.set_block(door, block(&server, "base:balcony_door"));
+        server.set_block(door + IVec3::Y, block(&server, "base:balcony_door_top"));
+        assert_eq!(server.room_walls(home).at_least, [85, 84, 0], "a shut balcony door: a sound half and a draughty lattice");
+        server.set_block(door, block(&server, "base:balcony_door_open"));
+        server.set_block(door + IVec3::Y, block(&server, "base:balcony_door_open_top"));
+        let open = server.room_walls(home);
+        assert!(open.share(Shelter::Draughty) < 0.9, "an open balcony door walled the room: {open:?}");
+        // A railing across the doorway walls nothing: the survey looks past it, out.
+        server.set_block(door, block(&server, "base:oak_railing"));
+        server.set_block(door + IVec3::Y, planks);
+        let railed = server.room_walls(home);
+        assert!(railed.share(Shelter::Draughty) < 0.9, "a railing walled the room: {railed:?}");
+    }
+
+    /// A five by five room roofed as a hip: shingles round its edge facing out, a hip at
+    /// each corner, and planks over the middle. Every face is sound, nothing lets the sky
+    /// in, and a valley set in place of a hip leaves it sound too.
+    #[test]
+    fn a_hipped_roof_of_corners_shelters_a_room() {
+        use voxmar_engine::{block::BlockId, effect::Shelter};
+        let mut server = crate::test_server();
+        let at = voxmar_engine::coords::ColumnPos::of_block(server.spawn.floor().as_ivec3()).origin() + IVec3::new(8, server.spawn.y as i32 + 10, 8);
+        let block = |server: &Server, name: &str| server.content.blocks.expect(name);
+        let (stone, planks) = (block(&server, "base:stone"), block(&server, "base:oak_planks"));
+        for x in -3..=3 {
+            for z in -3..=3 {
+                server.set_block(at + IVec3::new(x, 0, z), stone);
+                for y in 1..=3 {
+                    let edge = x.abs() == 3 || z.abs() == 3;
+                    server.set_block(at + IVec3::new(x, y, z), if edge { planks } else { BlockId::AIR });
+                }
+                // Planks over the walls, and the roof's edge over the room's outer cells,
+                // eaves out (north, east, south, west), so the room sees every corner.
+                let name = match (x, z) {
+                    _ if x.abs() == 3 || z.abs() == 3 => "base:oak_planks",
+                    (-2, -2) => "base:oak_shingles_corner",
+                    (2, -2) => "base:oak_shingles_corner_east",
+                    (2, 2) => "base:oak_shingles_corner_south",
+                    (-2, 2) => "base:oak_shingles_corner_west",
+                    (_, -2) => "base:oak_shingles",
+                    (2, _) => "base:oak_shingles_east",
+                    (_, 2) => "base:oak_shingles_south",
+                    (-2, _) => "base:oak_shingles_west",
+                    _ => "base:oak_planks",
+                };
+                server.set_block(at + IVec3::new(x, 4, z), block(&server, name));
+            }
+        }
+        let home = at + IVec3::Y;
+        let walls = server.room_walls(home);
+        assert_eq!(walls.share(Shelter::Sound), 1.0, "a hipped roof let the weather in: {walls:?}");
+        for (x, z) in [(-2, -2), (2, -2), (2, 2), (-2, 2), (0, -2), (2, 0), (0, 0)] {
+            assert!(!server.open_sky(at + IVec3::new(x, 1, z)), "the sky shows through at {x} {z}");
+        }
+        server.set_block(at + IVec3::new(-2, 4, -2), block(&server, "base:oak_shingles_inner_corner"));
+        assert_eq!(server.room_walls(home).share(Shelter::Sound), 1.0, "a valley let the weather in");
+        assert!(!server.open_sky(at + IVec3::new(-2, 1, -2)), "the sky shows through the valley");
+    }
+
+    /// The home ladder's own furniture in a five by five stone-brick room under a plank roof
+    /// leaves it as walled as it was empty: sound enough for Cosy and fine enough for Heart
+    /// of the Home. Thatch and shingles roof it as soundly as planks.
+    #[test]
+    fn a_furnished_room_under_any_roof_is_as_walled_as_it_was_empty() {
+        use voxmar_engine::{block::BlockId, effect::Shelter};
+        let mut server = crate::test_server();
+        let at = voxmar_engine::coords::ColumnPos::of_block(server.spawn.floor().as_ivec3()).origin() + IVec3::new(8, server.spawn.y as i32 + 10, 8);
+        let block = |server: &Server, name: &str| server.content.blocks.expect(name);
+        let (stone, bricks) = (block(&server, "base:stone"), block(&server, "base:stone_bricks"));
+        let build = |server: &mut Server, roof: BlockId| {
+            for x in -3..=3 {
+                for z in -3..=3 {
+                    server.set_block(at + IVec3::new(x, 0, z), stone);
+                    server.set_block(at + IVec3::new(x, 4, z), roof);
+                    for y in 1..=3 {
+                        let edge = x.abs() == 3 || z.abs() == 3;
+                        server.set_block(at + IVec3::new(x, y, z), if edge { bricks } else { BlockId::AIR });
+                    }
+                }
+            }
+        };
+        let home = at + IVec3::Y;
+        let planks = block(&server, "base:oak_planks");
+        build(&mut server, planks);
+        let empty = server.room_walls(home);
+        let furniture = ["base:oak_table", "base:oak_bed", "base:barrel", "base:chest", "base:oak_bookshelf", "base:cottage_stove", "base:loom_frame", "base:oak_shelf", "base:oak_chair", "base:crafting_table"];
+        for (i, name) in furniture.iter().enumerate() {
+            let (x, z) = ((i % 5) as i32 - 2, if i < 5 { 2 } else { -2 });
+            server.set_block(at + IVec3::new(x, 1, z), block(&server, name));
+        }
+        let furnished = server.room_walls(home);
+        assert_eq!(furnished, empty, "furniture changed the room's walls");
+        assert!(furnished.share(Shelter::Sound) >= 0.9 && furnished.share(Shelter::Fine) >= 0.5, "not walled for Cosy and Heart: {furnished:?}");
+        for roof in ["base:thatch_roof", "base:thatch_ridge", "base:oak_shingles", "base:oak_shingle_ridge", "base:oak_slab"] {
+            let roof_block = block(&server, roof);
+            build(&mut server, roof_block);
+            let walls = server.room_walls(home);
+            assert!(walls.share(Shelter::Sound) >= 0.9, "a {roof} ceiling is not sound: {walls:?}");
+        }
+    }
+
+    /// A hearthstone set in its floor ring is floor, not wall: the room about it judged from
+    /// the hearthstone and from the cell over it is the room of a plain stone floor. Cloth
+    /// hung for walls and hay bales stacked wall a room in (draughty), though both are
+    /// furnishings: a cloth room is closed, not open to the sky.
+    #[test]
+    fn a_hearth_in_its_floor_and_cloth_walls_wall_the_room_as_they_should() {
+        use voxmar_engine::{block::BlockId, effect::Shelter};
+        let mut server = crate::test_server();
+        let at = voxmar_engine::coords::ColumnPos::of_block(server.spawn.floor().as_ivec3()).origin() + IVec3::new(8, server.spawn.y as i32 + 10, 8);
+        let block = |server: &Server, name: &str| server.content.blocks.expect(name);
+        let (stone, cobble, planks) = (block(&server, "base:stone"), block(&server, "base:cobblestone"), block(&server, "base:oak_planks"));
+        let build = |server: &mut Server, wall: BlockId| {
+            for x in -3..=3 {
+                for z in -3..=3 {
+                    server.set_block(at + IVec3::new(x, 0, z), stone);
+                    server.set_block(at + IVec3::new(x, 4, z), planks);
+                    for y in 1..=3 {
+                        let edge = x.abs() == 3 || z.abs() == 3;
+                        server.set_block(at + IVec3::new(x, y, z), if edge { wall } else { BlockId::AIR });
+                    }
+                }
+            }
+        };
+        let bricks = block(&server, "base:stone_bricks");
+        build(&mut server, bricks);
+        let plain = server.room_walls(at + IVec3::Y);
+        for x in -1..=1 {
+            for z in -1..=1 {
+                server.set_block(at + IVec3::new(x, 0, z), cobble);
+            }
+        }
+        server.set_block(at, block(&server, "base:hearthstone"));
+        assert_eq!(server.room_walls(at), plain, "the hearth's floor ring counted as walls");
+        assert_eq!(server.room_walls(at + IVec3::Y), plain);
+        // A barrel and a well set into the floor (over open air: the floor is one block
+        // thick) are floor too: the scan does not step down through them and out.
+        for (dx, name) in [(-2, "base:barrel"), (2, "base:well")] {
+            server.set_block(at + IVec3::new(dx, 0, 2), block(&server, name));
+        }
+        assert_eq!(server.room_walls(at + IVec3::Y), plain, "furniture in the floor let the scan under the room");
+        // Cloth hung and hay bales stacked are walls (their shelter tag wins over their
+        // furnishing ones), and so is a stone column mid-wall in a plank room.
+        for wall in ["base:white_cloth", "base:hay_bale"] {
+            let wall_block = block(&server, wall);
+            build(&mut server, wall_block);
+            let walls = server.room_walls(at + IVec3::Y);
+            assert!(walls.share(Shelter::Draughty) >= 0.99, "a {wall} room is open: {walls:?}");
+        }
+        build(&mut server, planks);
+        for y in 1..=3 {
+            server.set_block(at + IVec3::new(3, y, 0), block(&server, "base:stone_column"));
+        }
+        let walls = server.room_walls(at + IVec3::Y);
+        assert!(walls.share(Shelter::Draughty) >= 0.99, "a column mid-wall is a hole: {walls:?}");
+        // A crafting table (a station: furniture, no shelter tag) set in a gap in the wall
+        // plugs nothing: the room is open there.
+        server.set_block(at + IVec3::new(3, 1, 1), block(&server, "base:crafting_table"));
+        let gapped = server.room_walls(at + IVec3::Y);
+        assert!(gapped.share(Shelter::Draughty) < walls.share(Shelter::Draughty), "a station plugged a wall: {gapped:?}");
+    }
+
+    /// The load check on shelter tags: a solid `building` block with no shelter tag, or one
+    /// with two, is refused by name; furniture (a furniture tag, no shelter tag) is let
+    /// through, as is every shelter-tagged block.
+    #[test]
+    fn the_shelter_check_refuses_an_unjudged_wall_and_lets_furniture_through() {
+        let server = crate::test_server();
+        let rules = server.survival.clone();
+        let parse = |source: &str| voxmar_engine::block::BlockRegistry::from_ron("test", source).unwrap();
+        let ok = parse(r#"(blocks: [
+            (name: "wall", textures: All("stone"), tags: ["building", "shelter:sound"]),
+            (name: "chest", textures: All("stone"), tags: ["storage", "building"]),
+            (name: "cloth", textures: All("stone"), tags: ["decor", "building", "shelter:draughty"]),
+            (name: "dirt", textures: All("stone"), tags: ["natural"]),
+        ])"#);
+        assert_eq!(rules.check_shelters(&ok), Ok(()));
+        let unjudged = parse(r#"(blocks: [(name: "wall", textures: All("stone"), tags: ["building"])])"#);
+        let why = rules.check_shelters(&unjudged).unwrap_err();
+        assert!(why.contains("test:wall"), "{why}");
+        let twice = parse(r#"(blocks: [(name: "wall", textures: All("stone"), tags: ["roof", "shelter:sound", "shelter:fine"])])"#);
+        assert!(rules.check_shelters(&twice).unwrap_err().contains("test:wall"));
+        // A misspelt shelter tag, and a draught through anything but a draughty wall.
+        let misspelt = parse(r#"(blocks: [(name: "rail", textures: All("stone"), solid: false, tags: ["building", "shelter:snug"])])"#);
+        assert!(rules.check_shelters(&misspelt).unwrap_err().contains("test:rail (`shelter:snug` is no shelter)"));
+        let sound = parse(r#"(blocks: [(name: "slit", textures: All("stone"), render: Cutout, tags: ["building", "shelter:sound", "draught"])])"#);
+        assert!(rules.check_shelters(&sound).unwrap_err().contains("test:slit (`draught` but not `shelter:draughty`)"));
+    }
 
     /// Time past a point of healing is not banked: however long the clock ran (buffs and a
     /// prayer stacked, then ended), a pass leaves at most one point's worth waiting.

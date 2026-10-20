@@ -30,6 +30,32 @@ them must average `site.fertility` (0.3; 0.15 in cold and desert biomes, `site.p
 These are design's numbers (wiki, settlements, draft 60). With them about one square in
 seven holds a settlement, four hamlets to every village.
 
+**Towns.** A third size, `town` (wiki: 20 to 60 buildings with walls, a temple and shops),
+is drawn where the place is wealthy, trading, orderly and crowded: 16 to 30 homes, 5 to 8
+working buildings, a temple (a chapel grown tall and long, `temple`), three to five market
+stalls round a wider square, broad paved streets,
+and 3 to 6 guards. It is rare: about one settlement in fifteen. Where a town's ground will
+not take that many houses it is laid out as its `smaller` size (a village) with the same
+draws, so a good site is never lost to a town that does not fit.
+
+**Walls.** A size's `walls` is the chance it is walled and how that leans (towns 0.85,
+more where martial and orderly; villages 0.12, mostly martial ones; hamlets never), drawn
+from a stream of its own so an unwalled place is laid out as it would be anyway. The wall
+(`rules.walls`, `settlements/walls.rs`) runs `margin` (4) blocks out round the convex ring
+of the square and its buildings, leaving out the fields, pens, orchards, woodyards and
+shrines out at the ends of the lanes. It is a palisade of the place's logs (3 high) where
+it is poor, and of its foundation stone (4 high, a merlon on every other block) past
+`stone` (0.5) wealth. A gate is left wherever a lane passes, with a post either side and a
+lintel over it with three blocks clear where the wall is high enough; a tower three
+blocks square stands at each corner and every `towers.0` (24) blocks along it, `towers.1`
+(2) higher. The wall stands on the ground of each column, leaves out any column in water
+or against a building, and no tree or prop stands in or against it. Each lane leading out
+runs on to 17 blocks past the wall (straight on, else turned up to 90°, never over a lot);
+one that cannot no longer leads out, while another does. Trails treat the wall as built,
+and no trail's sight stands on or beside anything built, so a trail comes in at a gate and
+never over the wall. Plans report each
+column and its height (`walls`, `wall_block`) for maps and the gate.
+
 A new player finds one within `rules.spawn_settlement_within` (1024) blocks of where they
 spawn: where no square near is settled within that reach anyway, the nearest square in
 reach that can hold one always does, its climate ruling no spot out and its next best
@@ -263,6 +289,36 @@ and unbounded mutation counts before a world can be created.
   old, saltboxes where it grew rather than was planned, gambrels in green, roomy places,
   sheds where it is poor. Round houses take cones and courtyard houses hips whatever
   was rolled, unless flat; A-frames are steep gables.
+- **Shaped roofs.** A style's `roof_pieces` (a `slope` and its `ridge`, each a block that
+  faces four ways, by weight) lay a share (`pieced`) of its steep gables over four walls
+  or a shop front in pieces: each column's top a slope whose low edge faces the eave
+  below it, a ridge cap along the peak where the span is odd. Thatch in stone-cottage,
+  stilt, mudbrick and timber-frame places, shingles in log cabins, blossom houses and
+  maple lodges (dark oak, the woods there making none), birch shingles or thatch in
+  birch cottages; the rest stay whole blocks. Loading fails on a piece missing a facing
+  in any of its style's woods, a slope not tagged `roof` or a ridge not tagged `ridge`.
+- **Fire** (`rules.fire`, `settlements/roofs.rs`). No village stands ready to burn: once
+  a place is drawn, each of its flames (tag `fire`: torches, campfires, braziers) walks
+  out a face at a time through open cells, `reach` (4, fire.ron's most) steps, as fire
+  catches in a home (docs/home.md). A street lamp or fire on the ground that reaches
+  something that catches (`thatch`, `wattle`) goes, post and all; a thatch roof a
+  building's own flame reaches is laid whole in `instead` (dark oak shingles), each piece
+  turned as it was; a flame that still reaches is put out. In the base worlds about one
+  street lamp in seventy goes and one thatch roof in ten turns to shingles. The gate's
+  "settlement roofs" checks the town's pieces stand as planned and none of its flames
+  reaches its thatch.
+- **Jetties** (`jetty`: a `beam` and a `chance`). A two-storey box house with no porch,
+  awning, balcony or dormer may carry its upper storeys one block out over the street,
+  as old town houses do: the front wall above the ground floor steps forward, the floor
+  runs out over it, and a row of jetty beams (tagged `jetty` and `shelter:`, so the house
+  stays a home) holds the overhang up under its front edge. The roof covers the deeper
+  top. The chance grows with crowding, so jetties gather in town streets: timber frame
+  most (0.6), mudbrick towns (a cumba, on timber brought in), birch cottages, maple
+  lodges and stone cottages a little. Loading fails on
+  a beam missing a facing in any of its style's woods, or without its `jetty` and
+  `shelter:` tags. The gate's "settlement jetties" checks, at the walled town it
+  already visits for walls and roofs, that each beam stands with the house behind and
+  above it.
 - `extras`: chimney, porch, lean-to shed, flower boxes, garden, hedge, lamp, woodpile,
   moss, wing, dormer, balcony, outside stair, shutters, awning, sign board, rain barrel,
   weathervane, dovecote and herbs drying under the eaves, each by its own chance; a
@@ -381,6 +437,28 @@ unripe in P50b so a village is not a free food source. Settlement witnesses and 
 roles remain follow-ups. Single-valued people data and same-named routines follow the
 package layering rule, with load notes naming each replaced field and its earlier setter.
 
+## Homes inside
+
+A home is furnished for the people drawn to live in it (`settlements/interior.rs`,
+`interiors` in settlements.ron), so a look through the door tells you who they are: a bed
+for each, upstairs first, its head to a wall and away from the door; a table with a seat
+facing it for each of them and a guest; cupboards, shelves and crockery against the walls,
+more of them where the place is wealthy and the home roomy; and a corner of what they do
+for a living (sacks and baskets for a farmer, nets and barrels for a fisher, a loom for a
+weaver, books for an elder or a priest, a quern for a miller). Cloth and crockery take one
+dye and one glaze per home, drawn leaning on the levers and the culture's axes like any
+list, so a rich martial hold hangs banners and a festive one paper lanterns and cushions.
+Pieces never stand in the doorway or at the foot of a stair, and none cuts a part of a
+floor off from the door: the floor is walked from the door (and from each stairwell
+upstairs) before every solid piece is set. A home with a lit hearth needs no stove; one
+without may get one. Only plain homes are furnished: inns, temples and workshops keep their
+own insides.
+
+Every piece is a furnishing (P58a), so breaking it in a village gives nothing, and a bed in
+someone's home will not take as yours: sleeping in a bed where the plan put one is refused
+(`bed.someones`). Any other bed works, one you place in its stead included. Each building reports where its beds and seats stand
+(`Building::beds`, `seats`), for villagers to sleep and sit at their own.
+
 ## What else knows about them
 
 - Trails join settlements' gates (the ends of their main lanes) to each other and to
@@ -398,6 +476,18 @@ package layering rule, with load notes naming each replaced field and its earlie
 - `Overworld::settlements_near` lists them with their buildings (each with what it is
   in the lists and the work done in it), doors and gates, for gameplay (villagers,
   shops) and maps; `/locate settlement` finds the nearest.
+- They are heard (ambience.ron, the client's ambience). The ambience measures the nearest
+  one from the same plan: how far its middle is (`settlement`), how far outside its bounds
+  the player is (`settlement_edge`: the ground its buildings and square stand on and six
+  blocks round, 0 within), and how many live there (`settlement_people`). By day its
+  people's talk (`murmur`, fuller the more live there, fewer out in the rain) and its work
+  (hammering, sawing, hens, the well bucket at the well, the smith at the smithy, sheep at
+  the pens and barns); at dusk low talk, doors at the houses and supper things; at night a
+  dog now and then and an owl. A one-shot names the buildings it comes from by kind, house
+  or work (`at: Building(buildings: [...], door: true)`), checked against settlements.ron as
+  the game starts. The first time each day a player steps within a settlement's bounds, the
+  settlement motif plays (music.ron's `settlement` category, on the home motif's clock, and
+  never over a motif playing).
 
 ## Looking at them without the game
 

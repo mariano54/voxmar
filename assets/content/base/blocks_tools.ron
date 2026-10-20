@@ -21,7 +21,7 @@
         ),
         (
             name: "chimney", sound: Stone, textures: Sides(top: "chimney_top", bottom: "cobblestone", side: "chimney_side"),
-            hardness: 2.0, color: (130, 100, 90), tags: ["chimney", "building"],
+            hardness: 2.0, color: (130, 100, 90), tags: ["chimney", "building", "shelter:fine"],
             particles: [(style: Smoke, rate: 3.0, at: (0.5, 1.0, 0.5), spread: 0.2, size: 1.8, height: Some(7.0), range: Some(96.0), over: Some(("hearth", 3)), color: Some((150, 146, 140)))],
         ),
         // The Farm age's fire (multiblocks.ron): a pit kiln fires clay into pots, vials and
@@ -33,7 +33,7 @@
         ),
         (
             name: "kiln_bricks", sound: Stone, textures: All("kiln_bricks"),
-            hardness: 2.0, color: (160, 90, 60), tags: ["kiln_bricks", "bricks", "building"],
+            hardness: 2.0, color: (160, 90, 60), tags: ["kiln_bricks", "bricks", "building", "shelter:fine"],
         ),
         (
             name: "crucible", sound: Stone, textures: Sides(top: "crucible_top", bottom: "kiln_bricks", side: "crucible_side"),
@@ -65,15 +65,26 @@
             name: "farmland", sound: Soil, textures: Sides(top: "farmland", bottom: "dirt", side: "dirt"),
             hardness: 0.6, drops: "dirt", color: (100, 70, 45), tags: ["soil", "fertile", "tilled"],
         ),
+        // Flint lying loose on the ground (decorations.ron's `loose_flint`), picked
+        // up by hand: with gravel's, the flint of a new player's first tools.
+        (name: "loose_flint", render: Plant, model: Rock, solid: false, sound: Stone, textures: All("loose_flint"), hardness: 0.0, drops: "flint", color: (60, 60, 66), tags: ["loose", "natural"]),
     ],
     families: [
-        // Wooden: tier 1.
-        (template: "drop", name: "wooden_pickaxe", tags: ["pickaxe", "tool", "tier:1", "speed:2"], all: (color: (150, 110, 70))),
-        (template: "drop", name: "wooden_axe", tags: ["axe", "tool", "tier:1", "speed:2"], all: (color: (150, 110, 70))),
-        (template: "drop", name: "wooden_shovel", tags: ["shovel", "tool", "tier:1", "speed:2"], all: (color: (150, 110, 70))),
-        (template: "drop", name: "wooden_hoe", tags: ["hoe", "tool", "tier:1", "speed:2"], all: (color: (150, 110, 70), action: Some("base:till"))),
-        (template: "drop", name: "wooden_knife", tags: ["knife", "tool", "tier:1", "speed:2"], all: (color: (150, 110, 70))),
+        // Flint: tier 1 as wood is, but made from bare hands: flint (gravel gives it one time in
+        // eight) hafted on sticks (leaves give them), in the hand's grid. Stone and trees need
+        // a pickaxe and an axe (tools.ron), so these come first; the cheapest of tier 1, they
+        // are the tools a refusal names (`Content::least_tool`).
+        (template: "drop", name: "flint_pickaxe", tags: ["pickaxe", "tool", "tier:1", "speed:2"], all: (color: (70, 72, 80))),
+        (template: "drop", name: "flint_axe", tags: ["axe", "tool", "tier:1", "speed:2"], all: (color: (70, 72, 80))),
+        // A flint knife (a flake on a stick) and a digging stick: the hunter's and the
+        // digger's first tools, hand-made as the axe is. There are no wooden tools: a plank's
+        // edge cuts nothing (older saves' come back as `renamed` says).
+        (template: "drop", name: "flint_knife", tags: ["knife", "tool", "tier:1", "speed:2"], all: (color: (70, 72, 80))),
+        (template: "drop", name: "digging_stick", tags: ["shovel", "tool", "tier:1", "speed:2"], all: (color: (150, 110, 70))),
         // Stone: tier 2.
+        // A stone head: toolstone ground to an edge at a grindstone (recipes.ron), what every
+        // stone tool is hafted from.
+        (template: "drop", name: "stone_head", tags: ["tool_head"], all: (color: (120, 120, 125))),
         (template: "drop", name: "stone_pickaxe", tags: ["pickaxe", "tool", "tier:2", "speed:4", "yield:0.05"], all: (color: (120, 120, 125))),
         (template: "drop", name: "stone_axe", tags: ["axe", "tool", "tier:2", "speed:4", "yield:0.05"], all: (color: (120, 120, 125))),
         (template: "drop", name: "stone_shovel", tags: ["shovel", "tool", "tier:2", "speed:4", "yield:0.05"], all: (color: (120, 120, 125))),
@@ -125,5 +136,13 @@
     // back as the bronze it would have smelted into (Oct 14).
     renamed: {
         "bronze_blend": "bronze_ingot",
+        // The wooden tools, gone (Oct 15): each comes back as the tool that does its work
+        // now. Flint for the pickaxe, axe and knife; the digging stick for the shovel; and,
+        // as no hoe is made below stone, the stone hoe.
+        "wooden_pickaxe": "flint_pickaxe",
+        "wooden_axe": "flint_axe",
+        "wooden_knife": "flint_knife",
+        "wooden_shovel": "digging_stick",
+        "wooden_hoe": "stone_hoe",
     },
 )

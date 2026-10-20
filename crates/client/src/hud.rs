@@ -15,6 +15,7 @@ pub mod journal;
 pub mod levels;
 pub mod makeable;
 pub mod prayers;
+pub mod quest_look;
 pub mod quests;
 pub mod screens;
 pub mod recipes;
@@ -112,7 +113,7 @@ pub struct SlotCount(pub usize);
 struct HotbarSelection;
 /// What sits along the bottom edge: the hotbar, health and effects.
 #[derive(Component)]
-struct Bottom;
+pub(crate) struct Bottom;
 /// The health bar's meter (a blow that hurts flashes it, `combat`).
 #[derive(Component)]
 pub struct HealthMeter;

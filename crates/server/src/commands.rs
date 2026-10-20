@@ -538,7 +538,7 @@ impl Server {
             self.load_area(cell, cell);
             let Some(spot) = self.standing_spot(cell.x, cell.z, cell.y) else { continue };
             // Each one's looks and mind by the world's count of rolls, never the tick.
-            let [a, b] = self.meta.next_roll(crate::save::ROLL_SUMMON);
+            let [a, b] = self.meta.next_cast(crate::save::ROLL_SUMMON);
             let salt = u64::from(a.to_bits()) << 32 | u64::from(b.to_bits());
             if let Some(id) = self.spawn_creature(species, spot.as_vec3() + Vec3::new(0.5, 0.0, 0.5), salt) {
                 if held && let Some(creature) = self.creatures.live.get_mut(&id) {
@@ -578,6 +578,12 @@ impl Server {
                 self.creatures.take_away(id);
             }
             return Ok(Words::key("command.creatures.dispersed").with("count", Words::text(wild.len())));
+        }
+        // One of a settlement's people near makes a bark: `/creatures bark greet`.
+        if what == "bark" {
+            let (name, made) = species.and_then(|name| Some((name, self.bark_command(at, name)?))).ok_or_else(|| Words::key("command.creatures.bark_what"))?;
+            let reach = Words::text(crate::barks::BARK_COMMAND_REACH as u32);
+            return Ok(Words::key(if made > 0 { "command.creatures.barked" } else { "command.creatures.no_one_to_bark" }).with("bark", name).with("reach", reach));
         }
         let only = match species {
             Some(species) => Some(self.content.creatures.find(species).ok_or_else(|| Words::key("command.summon.unknown").with("name", species))?),
@@ -638,6 +644,9 @@ impl Server {
                     }
                     creature.body.velocity = voxmar_engine::glam::Vec3::ZERO;
                 }
+                // Let go of a hold now (`hold`, `/summon ... held`): the gate's Climb step lets
+                // its wolf go at the foot of the step.
+                "release" => creature.held_until = tick,
                 "hasten" => {
                     creature.products_due.iter_mut().for_each(|due| *due = tick);
                     if creature.grows_up.is_some() {
@@ -732,7 +741,7 @@ impl Server {
         let anchor = home.floor().as_ivec3();
         let survey = self.survey_around(anchor, Some(Self::me(id)?));
         let calm = voxmar_engine::weather::Weather::NONE;
-        let situation = voxmar_engine::effect::Situation { felt: 0.0, warmed: false, outdoors: self.open_sky(anchor + IVec3::Y * 2), weather: &calm, biome: "", biome_tags: &[], home: Some(&survey), done: &player.quests_done, held: &[], near: &[], seated: false };
+        let situation = voxmar_engine::effect::Situation { felt: 0.0, warmed: false, outdoors: self.open_sky(anchor + IVec3::Y * 2), weather: &calm, biome: "", biome_tags: &[], home: Some(&survey), done: &player.quests_done, held: &[], near: &[], worn: &[], seated: false, night: self.night() };
         let effects = &self.content.effects;
         let name = |effect| {
             let def = effects.get(effect);
@@ -842,13 +851,9 @@ impl Server {
         }
         let position = self.position_of(id);
         let from = IVec2::new(position.x.floor() as i32, position.z.floor() as i32);
-        let nearest = self
-            .overworld
-            .settlements_near(from, radius)
-            .into_iter()
-            .map(|s| (IVec2::new(s.centre.x, s.centre.z) - from, s))
-            .filter(|(offset, s)| offset.as_vec2().length() <= radius as f32 && size.is_none_or(|size| *size == s.size))
-            .min_by_key(|(offset, _)| offset.length_squared());
+        // Nearest first, planning only the squares nearer than the answer: every square
+        // within a radius of thousands planned at once held the server's tick for seconds.
+        let nearest = self.overworld.nearest_settlement(from, radius, |s| size.is_none_or(|size| *size == s.size)).map(|s| (IVec2::new(s.centre.x, s.centre.z) - from, s));
         match nearest {
             Some((offset, s)) => Ok(Words::key("command.locate.settlement")
                 .with("name", Words::Name(vec![("en".into(), s.name.0.clone()), ("ja".into(), s.name.1.clone())]))
@@ -895,6 +900,9 @@ impl Server {
             return Err(Words::key("command.error.outside_world").with("y", Words::text(at.y)).with("top", Words::text(WORLD_HEIGHT - 1)));
         }
         self.load_area(at, at);
+        if self.would_trap_a_player(at, block) {
+            return Err(Words::key("command.error.player_in_the_way").with("place", format!("{} {} {}", at.x, at.y, at.z)));
+        }
         self.set_blocks(&[(at, block)]);
         let block = Words::Block(self.content.blocks.def(block).name.clone());
         Ok(Words::key("command.setblock").with("block", block).with("place", format!("{} {} {}", at.x, at.y, at.z)))
@@ -911,19 +919,26 @@ impl Server {
         }
         self.load_area(min, max);
         let mut changes = Vec::new();
+        // A solid block never goes where a player stands (as no hand could place it there).
+        let mut left = 0;
         for y in min.y..=max.y {
             for z in min.z..=max.z {
                 for x in min.x..=max.x {
                     let at = IVec3::new(x, y, z);
                     if self.block(at).is_some_and(|b| b != block) {
-                        changes.push((at, block));
+                        if self.would_trap_a_player(at, block) {
+                            left += 1;
+                        } else {
+                            changes.push((at, block));
+                        }
                     }
                 }
             }
         }
         self.set_blocks(&changes);
         let block = Words::Block(self.content.blocks.def(block).name.clone());
-        Ok(Words::key("command.fill").with("count", Words::text(changes.len())).with("block", block))
+        let filled = Words::key("command.fill").with("count", Words::text(changes.len())).with("block", block);
+        if left > 0 { Ok(Words::key("command.fill.around_players").with("filled", filled).with("left", Words::text(left))) } else { Ok(filled) }
     }
 
     fn give(&mut self, source: Source, args: &[String]) -> Reply {
@@ -1305,6 +1320,61 @@ mod tests {
         assert!(direction_from("up").is_none());
     }
 
+    /// A solid block never goes where a player stands, by `/fill` or `/setblock` (no hand
+    /// could place it there); the rest of the box fills, and air still clears round them.
+    #[test]
+    fn admin_fills_never_shut_a_player_in() {
+        let mut server = crate::test_server();
+        let (client, connection) = voxmar_protocol::local_pair();
+        let id = 1;
+        let mut player = crate::player::Player::new(id, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
+        (player.joined, player.admin, player.name) = (true, true, "test".into());
+        server.players.insert(id, player);
+        let at = server.spawn.floor().as_ivec3();
+        server.load_area(at - IVec3::new(8, 0, 8), at + IVec3::new(8, 0, 8));
+        let told = || {
+            let mut keys = Vec::new();
+            while let Ok(Some(message)) = client.try_recv() {
+                // A refused command says why inside its usage line.
+                if let voxmar_protocol::ServerMessage::Chat { text: Words::Key(key, args), .. } = message {
+                    let why = args.into_iter().find_map(|(name, why)| match why {
+                        Words::Key(why, _) if name == "why" => Some(why),
+                        _ => None,
+                    });
+                    keys.push(why.unwrap_or(key));
+                }
+            }
+            keys
+        };
+        // Off a cell's middle, the body takes up four columns.
+        server.players.get_mut(&id).unwrap().position = at.as_vec3() + Vec3::new(0.1, 0.0, 0.1);
+        let body = server.players[&id].aabb();
+        let stone = server.content.blocks.id("base:stone").unwrap();
+        server.command(id, "fill ~-2 ~ ~-2 ~2 ~2 ~2 air");
+        told();
+        server.command(id, "fill ~-2 ~ ~-2 ~2 ~2 ~2 stone");
+        assert_eq!(told(), ["command.fill.around_players"]);
+        let mut walled = 0;
+        for y in at.y..=at.y + 2 {
+            for z in at.z - 2..=at.z + 2 {
+                for x in at.x - 2..=at.x + 2 {
+                    let cell = IVec3::new(x, y, z);
+                    let inside = body.intersects(|c| c == cell);
+                    assert_eq!(server.block(cell) == Some(stone), !inside, "{cell}: stone {}, in the player {inside}", server.block(cell) == Some(stone));
+                    walled += !inside as usize;
+                }
+            }
+        }
+        assert!(walled > 0 && walled < 75, "{walled} of 75 cells filled round the player");
+        server.command(id, "setblock ~ ~1 ~ stone");
+        assert_eq!(told(), ["command.error.player_in_the_way"]);
+        assert!(!server.is_solid(at + IVec3::Y));
+        // Air goes anywhere.
+        server.command(id, "fill ~-2 ~ ~-2 ~2 ~2 ~2 air");
+        assert_eq!(told(), ["command.fill"]);
+        assert!(server.block(at + IVec3::new(2, 0, 2)).is_some_and(|b| b.is_air()));
+    }
+
     #[test]
     fn coordinates() {
         assert_eq!(axis("~", 10.25, true), Ok(10.25));
@@ -1344,8 +1414,10 @@ fn home_needs(lacks: &[voxmar_engine::effect::Lack]) -> Words {
             .iter()
             .map(|lack| match lack {
                 Lack::Roof => Words::key("home.lack.roof"),
+                Lack::Sky => Words::key("home.lack.sky"),
                 Lack::Away => Words::key("home.lack.away"),
                 Lack::Tag { tag, have, need } => Words::key("home.lack.tag").with("tag", Words::Own(format!("home.tag.{tag}"), tag.replace('_', " "))).with("have", Words::text(have)).with("need", Words::text(need)),
+                Lack::Walls { shelter, have, need } => Words::key("home.lack.walls").with("shelter", Words::key(&format!("home.shelter.{}", shelter.name()))).with("have", Words::text(have)).with("need", Words::text(need)),
                 Lack::OneOf(options) => Words::key("home.lack.either").with("options", Words::List(options.iter().map(|o| home_needs(o)).collect())),
             })
             .collect(),

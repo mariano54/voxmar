@@ -18,7 +18,16 @@ against what a player has done, so they complete retroactively. The quest book s
 ## Content
 
 `base/quests.ron` (engine `quest.rs`): name, age, branch, title, why (the reason and the
-reward, shown first), tasks, after, rewards. Goals:
+reward, shown first), tasks, after, rewards. A book of its own can go in a
+`quests_<topic>.ron` beside it (`quests_nomad.ron`, `quests_farm.ron`), like `blocks_` and
+`recipes_`: a package's files are read in name (byte) order, so `quests.ron` comes first and
+the topics follow in byte order (uppercase before lowercase), and the quests are held in that
+order. A quest may come `after` one in any file. A quest name written twice, in one file or
+two, fails the load naming both files, across packages too: a mod cannot replace a quest by
+writing its name. A file no part of the game reads (a misspelt `quest.ron`) still loads, and
+the load notes it with the likeliest name meant (`zz_mod/quest.ron is read by nothing (meant
+quests.ron?)`); the names other crates read are `content::READ_ELSEWHERE`.
+Goals:
 
 | Goal | Reads |
 | --- | --- |
@@ -57,7 +66,7 @@ Quests done, quests claimed and the tallies are saved with the player.
 ## Claiming
 
 Finishing a quest pays nothing by itself. A done quest with rewards waits in the quest
-book: it glows gold on the web, its chapter shows a gold "!", the chat says so, and its
+book: its shape on the web is gold with a "!" in its corner, its chapter shows a gold "!", the chat says so, and its
 page has a Claim button (`ClientMessage::ClaimQuest`) beside the rewards, which list the
 experience and the items. The server then gives the items and the experience once. A quest
 that pays nothing is claimed as it finishes. If the pack cannot hold every item, nothing
@@ -188,9 +197,9 @@ so that what the game already does is something the book points to:
 ## Quick upgrades
 
 Oct 13 (docs/first-days.md, "Quick upgrades on common resources"): Timber asks for four logs
-by hand, the planks for the table, sticks and both wooden tools, and An Axe to It (after
-Crafting Table) asks for the wooden axe and eight logs chopped with it, so the first tool
-upgrade comes in the first minute. First Night tells the player the stone axe hits three
+with a flint axe, the planks for the table and sticks, and An Axe to It (after Crafting
+Table) asks for a spare flint axe and eight logs chopped with it (Oct 15: there are no
+wooden tools). First Night tells the player the stone axe hits three
 times as hard as a fist.
 
 ## Structure (Oct 13)
@@ -359,6 +368,40 @@ The Farm quests that followed Homestead Hearth follow The Farm Age.
 - `/quest <name>` (admin) marks a quest done, its rewards left to claim. The kiln bot uses
   it for The Farm Age until piece 12 has it earn the rite.
 
+## The Farm book (Oct 20)
+
+The Farm quests stay in `base/quests.ron`'s Farm block, and the road to the lit Crucible
+Kiln is laid out like a long modpack's book: several paths that each make one part of the
+kiln, meeting at the end, with a way round at each fork. Each step is something done in the world (gathered, fired, stored, set down), not
+only crafted.
+
+| Path | Quests to the kiln | Ways round |
+|---|---|---|
+| Main | A Pit Kiln (made and set down), Fire the Clay, The Potter, Clay in Store (thirty-two clay put by in a chest, a barrel or a crate), First Bricks, Brick by Brick, The Kiln Ring (twelve bricks set down), The Crucible (made and set down), Crucible Kiln; then Red Metal, smelted in the lit kiln, and First Bronze | the store a chest, a barrel or a crate |
+| Fuel (new) | Fuel to Hand, Charcoal, Plans for the Kiln (the crucible and kiln bricks looked up), A Full Charge (capstone) | logs carried or coal mined; charcoal burnt or coal mined; the charge in charcoal or coal |
+| Pottery | A Kiln Load, then Fired Whole (capstone) after Clay Banks, Earthenware and An Earth Clamp | |
+| Mining | Copper Kit, A Silvery Ore, Rock Collector and An Ore Run (capstone), all after the lit kiln | |
+
+Copper is smelted only in the lit kiln: Red Metal, the copper kit and the ore run come after
+it (Hammer and Anvil, from the kiln-age PR, goes before The Crucible when it lands). Crucible
+Kiln waits on all three of its parts: the crucible, the ring of bricks and the charge. The
+Bronze Age rite is unchanged (30 Farm quests, 4 Farm capstones). Rewards that handed out
+what the route asks for (kiln bricks, charcoal) are gone, so the bricks and the charge are
+earned; Brick by Brick pays the Engineering The Crucible asks for until Hammer and Anvil
+does.
+
+Every Farm path's capstone comes after all of its path's quests, directly or through what
+comes before them, but those marked `side: true` (met on the road, the bees and meadow,
+the bow, ducks and such) and the age's rite; `content.rs`
+`a_farm_capstone_comes_after_all_of_its_path` checks it. The kiln bot
+(`a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln`) walks the whole route,
+one quest at a time, and lights the kiln about 330 server seconds in.
+
+Saves (pre-release, accepted): a quest's finished state is kept by name, but quests whose
+tasks changed count from what a save already tallied: Brick by Brick now counts bricks
+crafted rather than held, The Crucible and A Pit Kiln also want theirs set down, and A
+Kiln Yard is gone. A save part way along may have a step to do again.
+
 ## Readable to a newcomer (Oct 13)
 
 Every Nomad and Farm quest was read as someone who has never played would: does its text
@@ -411,7 +454,7 @@ levels open (core's `skills.ron` guide), and its first tool or station upgrade.
 | Hitpoints | **Hard to Put Down** (Nomad, new) | Twice your level in health; 12 is 24 | None: it grows with blows landed |
 | Magic | A Place to Pray (Farm) | Bark Skin at 1, Ember Arm 4, Mending 10 | The stone altar |
 | Alchemy | **Herb Lore** (Nomad, new) | A taste only: herb lore from three kinds of wanderer | None yet |
-| Ranged | **A Stone's Throw** (Nomad, new), then **Bow and Arrow** (Farm, new) | Sling at 1, short bow 5 | Sling to short bow |
+| Ranged | **A Stone's Throw** (Nomad, new), then **Bow and Arrow** (Farm, new) | Sling at 1, short bow 3 | Sling to short bow |
 
 Two new side quests fill the skills that had nothing before:
 - **Hard to Put Down** (Nomad, combat, after Hide Wraps) asks for Defence 3 and Hitpoints 12. Both
@@ -465,9 +508,9 @@ base/recipes_weapons.ron), checked at load:
 
 | Weapon | Age | Level | Max hit | Cooldown | Reach | Ammo | Recipe |
 |---|---|---|---|---|---|---|---|
-| Sling | Nomad | Ranged 1 | 2 | 0.53 s | 12 | Any cobbled stone (`tag:cobbled`) | Twine, hide, twine (Crafting 1) |
-| Short Bow | Farm | Ranged 5 | 4 | 0.6 s | 20 | Arrows | Three sticks, three twine (Crafting 5) |
-| Arrow (x4) | Farm | - | - | - | - | - | Flint or cobblestone, stick, feather (Crafting 5) |
+| Sling | Nomad | Ranged 1 | 2 | 0.8 s | 12 | Any cobbled stone (`tag:cobbled`) | Twine, hide, twine (Crafting 1) |
+| Short Bow | Nomad (late) | Ranged 3 | 4 | 1.0 s | 20 | Arrows | Three sticks, three twine (Crafting 3) |
+| Arrow (x4) | Nomad (late) | - | - | - | - | - | Flint or cobblestone, stick, feather (Crafting 3) |
 
 Next to early melee: fists hit 1, a stone sword 3, copper swords 5 and a copper axe 6. The
 sling (2) is a step above fists that keeps you out of reach; the bow (4) sits just under

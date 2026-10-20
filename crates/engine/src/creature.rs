@@ -57,6 +57,31 @@ pub enum Kind {
     Villager,
 }
 
+/// A short, wordless sound one of a settlement's people makes as they react to something
+/// (`Server::bark`), heard as their voice's sound of that name (`creature_sounds.ron`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Bark {
+    /// A hum of greeting, to a player they meet.
+    Greet,
+    /// A sharp cry of alarm: a threat, a fire, someone struck.
+    Alarm,
+    /// A content sigh: a meal, rest at home, a job done.
+    Content,
+}
+
+impl Bark {
+    pub const ALL: [Bark; 3] = [Bark::Greet, Bark::Alarm, Bark::Content];
+
+    /// Its name, as commands and logs write it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Bark::Greet => "greet",
+            Bark::Alarm => "alarm",
+            Bark::Content => "content",
+        }
+    }
+}
+
 /// Where a species can be.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
 pub enum Water {
@@ -316,11 +341,15 @@ pub struct Movement {
     /// How high a flier keeps over the ground (or the treetops) in flight, in blocks; only
     /// for `Flier`s.
     pub fly: f32,
+    /// The highest a hop up a step rises, in blocks: the world's `climbing.step_rise`
+    /// (`Climbing`), set on every species at load, not by a species.
+    #[serde(skip)]
+    pub step_rise: f32,
 }
 
 impl Default for Movement {
     fn default() -> Self {
-        Self { style: Style::Walker, walk: 1.6, run: 4.5, turn: 270.0, jump: 7.5, fly: 0.0 }
+        Self { style: Style::Walker, walk: 1.6, run: 4.5, turn: 270.0, jump: 7.5, fly: 0.0, step_rise: Climbing::default().step_rise }
     }
 }
 
@@ -513,6 +542,13 @@ pub struct CreatureDef {
     /// How it falls when it dies.
     #[serde(default)]
     pub death: Death,
+    /// The share of its health below which one that fights back runs instead (0 to 1); unset,
+    /// a braver one holds longer (`Creature::holds`).
+    #[serde(default)]
+    pub flees_below: Option<f32>,
+    /// Whether its young fight back as its grown do; unset, they run (a piglet).
+    #[serde(default)]
+    pub young_fight: bool,
 }
 
 /// How a creature falls when it dies, as the client draws it: it tips over onto its side
@@ -584,6 +620,8 @@ struct CreatureFile {
     defence: Option<SetDefenceTraining>,
     #[serde(default)]
     condition: Option<condition::SetConditionRules>,
+    #[serde(default)]
+    climbing: Option<SetClimbing>,
 }
 
 /// One package's `creatures.ron`: its species, and what it sets of the world's rules.
@@ -593,16 +631,19 @@ pub struct CreaturePackage {
     pub limits: Option<SetLimits>,
     pub defence: Option<SetDefenceTraining>,
     pub condition: Option<condition::SetConditionRules>,
+    pub climbing: Option<SetClimbing>,
 }
 
 /// What packages set for every creature in the world: how many there are, how their
-/// blows train Defence, and how kept animals' condition is reckoned. Each is single-valued data a later package replaces field by field
+/// blows train Defence, how kept animals' condition is reckoned, and how high a hop up a
+/// step goes. Each is single-valued data a later package replaces field by field
 /// ([`crate::content::Settable`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Rules {
     pub limits: Limits,
     pub defence: DefenceTraining,
     pub condition: condition::ConditionRules,
+    pub climbing: Climbing,
 }
 
 /// How many creatures the world holds. A package's `creatures.ron` may set any of them
@@ -722,6 +763,39 @@ impl Default for DefenceTraining {
     }
 }
 
+/// How high anything hops up a step (`motion::hop_speed`): a great leaper's own jump is
+/// held to a rise of `step_rise` blocks, and anything that jumps at all gets up a block. A
+/// rise of a block and a half keeps a snow leopard (its jump 11, over two blocks) springing
+/// on from a block before a gap off a fence two high beyond it. A package's
+/// `creatures.ron` may set it (`climbing`); a later package's replaces an earlier one's.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Climbing {
+    /// The highest a hop up a step rises, in blocks: above the 1.1 that gets up a block,
+    /// and under 2, so no hop clears a fence two high.
+    pub step_rise: f32,
+}
+
+impl Default for Climbing {
+    fn default() -> Self {
+        Self { step_rise: 1.45 }
+    }
+}
+
+crate::content::settable! {
+    /// What one package sets of climbing.
+    SetClimbing for Climbing { step_rise: f32 }
+}
+
+impl Climbing {
+    /// Whether a hop at this rise gets up a block and clears no fence two high.
+    pub fn check(&self) -> Result<(), RegistryError> {
+        if !(self.step_rise.is_finite() && (1.1..2.0).contains(&self.step_rise)) {
+            return Err(RegistryError(format!("climbing: `step_rise` ({}) must be from 1.1 (a block and a little) to under 2 (a fence two high)", self.step_rise)));
+        }
+        Ok(())
+    }
+}
+
 crate::content::settable! {
     /// What one package sets of Defence training.
     SetDefenceTraining for DefenceTraining { fought_within: f32, least_level: f32 }
@@ -777,6 +851,24 @@ impl Creature {
     pub fn fights(&self) -> bool {
         self.def.attack.is_some() && self.behaviours.iter().any(|b| matches!(b.behaviour, Behaviour::Defend | Behaviour::Hunt { .. }))
     }
+
+    /// Whether one of its kind, `young` or grown, fights back at all: its young only if
+    /// `young_fight`.
+    pub fn fights_as(&self, young: bool) -> bool {
+        self.fights() && (!young || self.def.young_fight)
+    }
+
+    /// Whether one that fights back, `young` or grown, at `health` (0 to 1) of its own and
+    /// of `bravery`, holds its ground rather than runs: a boss always; else above
+    /// `flees_below`, or unset, above 0.5 less 0.35 x its bravery.
+    pub fn holds(&self, young: bool, health: f32, bravery: f32) -> bool {
+        self.fights_as(young) && (self.def.boss || health > self.def.flees_below.unwrap_or(0.5 - 0.35 * bravery))
+    }
+
+    /// Whether it ever runs from a fight (a `Flee` behaviour).
+    pub fn flees(&self) -> bool {
+        self.behaviours.iter().any(|b| matches!(b.behaviour, Behaviour::Flee { .. }))
+    }
 }
 
 /// Every species.
@@ -798,7 +890,7 @@ impl CreatureRegistry {
                 *name = format!("{namespace}:{name}");
             }
         };
-        let (limits, defence, condition) = (file.limits, file.defence, file.condition);
+        let (limits, defence, condition, climbing) = (file.limits, file.defence, file.condition, file.climbing);
         let defs = file
             .creatures
             .into_iter()
@@ -825,7 +917,7 @@ impl CreatureRegistry {
                 def
             })
             .collect();
-        Ok(CreaturePackage { defs, limits, defence, condition })
+        Ok(CreaturePackage { defs, limits, defence, condition, climbing })
     }
 
     /// Resolves species against the blocks (items) and skills.
@@ -833,9 +925,11 @@ impl CreatureRegistry {
         rules.limits.check()?;
         rules.defence.check()?;
         rules.condition.check()?;
+        rules.climbing.check()?;
         let mut registry = Self { rules, ..Self::default() };
         for mut def in defs {
             def.body.size = (def.body.size.0 * def.body.scale, def.body.size.1 * def.body.scale);
+            def.movement.step_rise = rules.climbing.step_rise;
             let error = |message: String| RegistryError(format!("creature `{}`: {message}", def.name));
             if def.body.skin.eye.is_some_and(|r| !r.is_finite() || r <= 0.0) {
                 return Err(error("skin.eye must be a finite positive radius".into()));
@@ -845,6 +939,9 @@ impl CreatureRegistry {
             }
             moves::check(&def).map_err(error)?;
             def.death.check().map_err(error)?;
+            if def.flees_below.is_some_and(|f| !(0.0..=1.0).contains(&f)) {
+                return Err(error(format!("`flees_below` is a share of its health, 0 to 1, not {:?}", def.flees_below)));
+            }
             if !def.boss && !def.music.is_empty() {
                 return Err(error("has fight `music` but is no boss".into()));
             }
@@ -1198,6 +1295,22 @@ mod tests {
         ] {
             let blocks = BlockRegistry::new(vec![]).unwrap();
             assert!(CreatureRegistry::new(Vec::new(), Rules { limits: bad, ..Default::default() }, &blocks, &SkillRegistry::default()).is_err(), "{bad:?} loaded");
+        }
+    }
+
+    #[test]
+    fn climbing_loads_from_the_file_and_is_checked() {
+        let source = RABBIT.replacen("(creatures:", "(climbing: (step_rise: 1.3), creatures:", 1);
+        let set = CreatureRegistry::read("base", &source).unwrap().climbing.expect("set");
+        assert_eq!(CreatureRegistry::read("base", RABBIT).unwrap().climbing, None);
+        let (rules, changed) = Climbing::default().with(&set);
+        assert_eq!((rules.step_rise, changed), (1.3, vec!["step_rise"]));
+        assert_eq!(Movement::default().step_rise, Climbing::default().step_rise);
+        // Under a block and a little, nothing gets up a block; two or more, a hop clears a
+        // fence two high.
+        let blocks = BlockRegistry::new(vec![]).unwrap();
+        for step_rise in [1.0, 2.0, 2.5, f32::NAN] {
+            assert!(CreatureRegistry::new(Vec::new(), Rules { climbing: Climbing { step_rise }, ..Default::default() }, &blocks, &SkillRegistry::default()).is_err(), "{step_rise} loaded");
         }
     }
 

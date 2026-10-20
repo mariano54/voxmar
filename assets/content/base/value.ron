@@ -19,7 +19,12 @@
     // A raw material (nothing makes, wears or wields it) counts this many coins times its
     // rarity's factor inside a made thing (P51, draft 73); its own price is the curve's.
     raw: 0.5,
-    // Worth a set number of coins whatever their level.
-    fixed: {"base:gold_coin": 1},
+    // Worth a set number of coins whatever their level. A cured hide took ten minutes on a
+    // rack, so it is worth more than the raw one off the beast (the curve's 2).
+    fixed: {"base:gold_coin": 1, "base:hide": 3},
+    // Priced on the curve at a set level, where nothing wears, wields or makes them at one:
+    // Old Tusk's charm at his level (creatures_bosses.ron), so death keeps it before
+    // everyday gear.
+    levels: {"base:charge_charm": 10},
     death: (kept: 3, warded: 4, most: 4, grave: 1800.0, warded_grave: 3600.0),
 )

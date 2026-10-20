@@ -10,6 +10,9 @@ use voxmar_engine::content::{ContentFile, Laid};
 use voxmar_engine::inventory::{HOTBAR_SLOTS, Inventory, ItemStack, SLOTS, max_stack};
 
 const FILE: &str = "survival.ron";
+/// The tag of a wall a draught comes through (a lattice window, an arrow slit): always a
+/// draughty one, and what a draughty home's whistle can listen for.
+pub(crate) const DRAUGHT: &str = "draught";
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct SurvivalRules {
@@ -37,6 +40,9 @@ pub(crate) struct SurvivalRules {
     pub home_reach: i32,
     pub home_up: i32,
     pub home_down: i32,
+    /// Tags of what stands in a room rather than walls it in (a chest, a barrel, a table, a
+    /// station): the survey of a home's walls looks past such a block to the wall behind it, so furnishing a room never makes it draughty.
+    pub home_furniture: Vec<String>,
     /// The most the home's meal effects together (effects.ron's `meal_heal`, `meal_time`,
     /// which multiply) make of a meal's heal and of how long its good lasts.
     pub meal_most: f32,
@@ -70,6 +76,7 @@ struct SurvivalFile {
     home_reach: Option<i32>,
     home_up: Option<i32>,
     home_down: Option<i32>,
+    home_furniture: Option<Vec<String>>,
     meal_most: Option<f32>,
     sleep_threat_reach: Option<f32>,
     sleep_after_hurt: Option<f32>,
@@ -89,7 +96,7 @@ impl SurvivalRules {
             macro_rules! later_wins {
                 ($($field:ident),*) => { $(if next.$field.is_some() { merged.$field = next.$field; set.push(stringify!($field)); })* };
             }
-            later_wins!(max_health, starter_kit, pack_end, kits_per_address, kit_window, safe_fall, burn, burn_every, void_below, heat_emission, heat, heat_reach, water_chill, roof_scan, home_reach, home_up, home_down, meal_most, sleep_threat_reach, sleep_after_hurt, heal_most);
+            later_wins!(max_health, starter_kit, pack_end, kits_per_address, kit_window, safe_fall, burn, burn_every, void_below, heat_emission, heat, heat_reach, water_chill, roof_scan, home_reach, home_up, home_down, home_furniture, meal_most, sleep_threat_reach, sleep_after_hurt, heal_most);
             laid.set(&file.package, FILE, "survival rules", set, notes);
         }
         macro_rules! set {
@@ -129,6 +136,7 @@ impl SurvivalRules {
             home_reach: set!(home_reach),
             home_up: set!(home_up),
             home_down: set!(home_down),
+            home_furniture: set!(home_furniture),
             meal_most: set!(meal_most),
             sleep_threat_reach: set!(sleep_threat_reach),
             sleep_after_hurt: set!(sleep_after_hurt),
@@ -147,6 +155,7 @@ impl SurvivalRules {
             ((1..=256).contains(&rules.roof_scan), "roof_scan must be 1 to 256 blocks"),
             ((1..=16).contains(&rules.home_reach), "home_reach must be 1 to 16 blocks"),
             ((0..=16).contains(&rules.home_up) && (0..=16).contains(&rules.home_down), "home_up and home_down must be 0 to 16 blocks"),
+            (!rules.home_furniture.iter().any(|tag| tag.starts_with("shelter:")), "home_furniture names a shelter tag: a wall's, not furniture's"),
             (rules.meal_most.is_finite() && (1.0..=10.0).contains(&rules.meal_most), "meal_most must be 1 to 10"),
             (rules.sleep_threat_reach.is_finite() && (0.0..=64.0).contains(&rules.sleep_threat_reach), "sleep_threat_reach must be 0 to 64 blocks"),
             (rules.sleep_after_hurt.is_finite() && (0.0..=600.0).contains(&rules.sleep_after_hurt), "sleep_after_hurt must be 0 to 600 seconds"),
@@ -157,6 +166,50 @@ impl SurvivalRules {
         match checks.into_iter().find(|(ok, _)| !ok) {
             Some((_, problem)) => Err(format!("{FILE}: {problem}")),
             None => Ok(rules),
+        }
+    }
+
+    /// Whether a block of `tags` is furniture to a home's walls: one of `home_furniture`'s
+    /// tags and no shelter tag. A shelter tag always wins: cloth hung for a wall, a hay bale
+    /// or a stone column walls a room whatever else it is.
+    pub(crate) fn furniture(&self, tags: &[String]) -> bool {
+        tags.iter().any(|tag| self.home_furniture.contains(tag)) && !tags.iter().any(|tag| tag.starts_with("shelter:"))
+    }
+
+    /// Every block that walls a room says how well it shelters it (`HomeWalls`), once: each
+    /// solid block tagged `building` or `roof`, full or shaped (roofs, slabs, stairs), but
+    /// furniture (`home_furniture`), which the survey looks past. No block says it twice.
+    pub(crate) fn check_shelters(&self, blocks: &BlockRegistry) -> Result<(), String> {
+        use voxmar_engine::effect::Shelter;
+        let unjudged: Vec<String> = blocks
+            .ids()
+            .map(|id| blocks.def(id))
+            .filter(|def| {
+                let shelters = Shelter::ALL.iter().filter(|s| def.has_tag(s.tag())).count();
+                let furniture = self.furniture(&def.tags);
+                let walls = def.solid && (def.has_tag("building") || def.has_tag("roof")) && !furniture;
+                shelters > 1 || (shelters == 0 && walls)
+            })
+            .map(|def| def.name.clone())
+            .collect();
+        if !unjudged.is_empty() {
+            return Err(format!("blocks: each solid `building` or `roof` block that is not furniture ({FILE}'s home_furniture) carries exactly one of `shelter:draughty`, `shelter:sound` or `shelter:fine`, and no block more than one; these do not: {}", unjudged.join(", ")));
+        }
+        // A misspelt shelter tag judges nothing; a draught comes only through a draughty wall.
+        let misjudged: Vec<String> = blocks
+            .ids()
+            .map(|id| blocks.def(id))
+            .filter_map(|def| {
+                let unknown = def.tags.iter().find(|tag| tag.starts_with("shelter:") && !Shelter::ALL.iter().any(|s| s.tag() == tag.as_str()));
+                match unknown {
+                    Some(tag) => Some(format!("{} (`{tag}` is no shelter)", def.name)),
+                    None => (def.has_tag(DRAUGHT) && !def.has_tag(Shelter::Draughty.tag())).then(|| format!("{} (`{DRAUGHT}` but not `shelter:draughty`)", def.name)),
+                }
+            })
+            .collect();
+        match misjudged.is_empty() {
+            true => Ok(()),
+            false => Err(format!("blocks: a shelter tag is `shelter:draughty`, `shelter:sound` or `shelter:fine`, and a wall a draught comes through (`{DRAUGHT}`) is draughty; these are not: {}", misjudged.join(", "))),
         }
     }
 
@@ -219,13 +272,13 @@ mod tests {
         let inventory = rules.new_inventory(true).unwrap();
         assert_eq!(inventory.slots.iter().flatten().collect::<Vec<_>>(), [&ItemStack { item: id("base:coin_purse"), count: 1 }], "nothing but the purse");
         assert_eq!(inventory.slots[SLOTS - 1].map(|s| s.item), Some(id("base:coin_purse")), "the purse is in the last slot");
-        let kit = file("mod", r#"(starter_kit: [("base:wooden_pickaxe", 1), ("base:wooden_axe", 1), ("base:bread", 4), ("base:torch", 8), ("base:oak_planks", 16)])"#);
+        let kit = file("mod", r#"(starter_kit: [("base:flint_pickaxe", 1), ("base:flint_axe", 1), ("base:bread", 4), ("base:torch", 8), ("base:oak_planks", 16)])"#);
         let rules = SurvivalRules::load(&[file("core", SHIPPED), kit], &blocks, &mut Vec::new()).unwrap();
         let inventory = rules.new_inventory(true).unwrap();
         let carried = |item| inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
         assert_eq!([carried(id("base:bread")), carried(id("base:torch")), carried(id("base:oak_planks"))], [4, 8, 16]);
         assert_eq!(inventory.slots[SLOTS - 1], Some(ItemStack { item: id("base:coin_purse"), count: 1 }), "the purse is in the last slot");
-        assert_eq!(inventory.slots[..2].iter().flatten().map(|s| s.item).collect::<Vec<_>>(), [id("base:wooden_pickaxe"), id("base:wooden_axe")], "the tools come first, in the hotbar");
+        assert_eq!(inventory.slots[..2].iter().flatten().map(|s| s.item).collect::<Vec<_>>(), [id("base:flint_pickaxe"), id("base:flint_axe")], "the tools come first, in the hotbar");
         assert_eq!(inventory.slots.iter().flatten().count(), 9, "a slot for each tool and loaf, the torches, the planks and the purse");
         assert_eq!(rules.new_inventory(false).unwrap().slots.iter().flatten().count(), 1, "no kit: the purse alone");
     }

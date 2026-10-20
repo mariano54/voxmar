@@ -20,8 +20,11 @@
 // What it is
 //   stone, soil, sand, gravel, clay, terracotta, snow, ice, ore, metal:<name>, gem
 //   log, stripped, wood, planks, leaves, sapling, fuel
+//   tree (part of a tree or giant mushroom as it grows: trunk, bark, roots, leaves, cap;
+//   a new player never wakes on one)
 //   plant, flower, herb, grass, fern, reed, bush, fungus, groundcover
 //   natural, cobbled, polished, bricks, building, light (gives light), glass
+//   rubble (loose stones broken from rock, knocked together into cobbles)
 //   mossy, ruined (weathered building blocks), volcanic, dripstone, stalagmite,
 //   stalactite, hanging (grows down from a ceiling)
 // Rock: igneous, sedimentary, metamorphic; where it shows: cliff (bare rock faces), cave
@@ -56,25 +59,25 @@
     templates: {
         // A wood: bark, the stripped log, bark on every side, planks, leaves and a sapling.
         "wood": [
-            (name: "{name}_log", sound: Wood, textures: Column(end: "{name}_log_top", side: "{name}_log"), hardness: 2.0, color: (109, 85, 50), tags: ["log", "wood", "fuel", "natural"]),
+            (name: "{name}_log", sound: Wood, textures: Column(end: "{name}_log_top", side: "{name}_log"), hardness: 2.0, color: (109, 85, 50), tags: ["log", "wood", "fuel", "natural", "tree", "shelter:sound"]),
             (
                 name: "stripped_{name}_log", sound: Wood,
                 textures: Column(end: "stripped_{name}_log_top", side: "stripped_{name}_log"),
-                hardness: 2.0, color: (176, 140, 90), tags: ["log", "stripped", "wood", "fuel"],
+                hardness: 2.0, color: (176, 140, 90), tags: ["log", "stripped", "wood", "fuel", "shelter:sound"],
             ),
-            (name: "{name}_wood", sound: Wood, textures: All("{name}_log"), hardness: 2.0, color: (109, 85, 50), tags: ["wood", "fuel", "building"]),
-            (name: "{name}_planks", sound: Wood, textures: All("{name}_planks"), hardness: 2.0, color: (162, 130, 78), tags: ["planks", "wood", "fuel", "building"]),
+            (name: "{name}_wood", sound: Wood, textures: All("{name}_log"), hardness: 2.0, color: (109, 85, 50), tags: ["wood", "fuel", "building", "tree", "shelter:sound"]),
+            (name: "{name}_planks", sound: Wood, textures: All("{name}_planks"), hardness: 2.0, color: (162, 130, 78), tags: ["planks", "wood", "fuel", "building", "shelter:sound"]),
             (
                 name: "{name}_slab", render: Model, shape: "slab", flips: true, sound: Wood, textures: All("{name}_planks"),
-                hardness: 2.0, color: (162, 130, 78), tags: ["slab", "wood", "fuel", "building"],
+                hardness: 2.0, color: (162, 130, 78), tags: ["slab", "wood", "fuel", "building", "shelter:sound"],
             ),
             (
                 name: "{name}_stairs", render: Model, shape: "stairs", facing: true, flips: true, sound: Wood, textures: All("{name}_planks"),
-                hardness: 2.0, color: (162, 130, 78), tags: ["stairs", "wood", "fuel", "building"],
+                hardness: 2.0, color: (162, 130, 78), tags: ["stairs", "wood", "fuel", "building", "shelter:sound"],
             ),
             (
                 name: "{name}_leaves", sound: Leaves, textures: All("{name}_leaves"), render: Leaves, tint: Foliage,
-                light_filter: 1, hardness: 0.3, color: (60, 120, 40), tags: ["leaves", "natural"],
+                light_filter: 1, hardness: 0.3, color: (60, 120, 40), tags: ["leaves", "natural", "tree"],
             ),
             (
                 name: "{name}_sapling", render: Plant, solid: false, sound: Grass, textures: All("{name}_sapling"),
@@ -84,12 +87,12 @@
         // A rock: as it lies, broken into cobbles (what mining it gives), polished, and
         // cut into bricks.
         "stone": [
-            (name: "{name}", texture_variety: (turn: true, mirror: true), textures: All("{name}"), hardness: 1.5, drops: "cobbled_{name}", color: (125, 125, 125), tags: ["stone", "natural"]),
-            (name: "cobbled_{name}", textures: All("cobbled_{name}"), hardness: 2.0, color: (110, 110, 110), tags: ["stone", "cobbled", "building"]),
-            (name: "polished_{name}", textures: All("polished_{name}"), hardness: 1.5, color: (135, 135, 135), tags: ["stone", "polished", "building"]),
-            (name: "{name}_bricks", textures: All("{name}_bricks"), hardness: 1.5, color: (120, 120, 120), tags: ["stone", "bricks", "building"]),
-            (name: "mossy_cobbled_{name}", textures: All("mossy_cobbled_{name}"), hardness: 2.0, drops: "cobbled_{name}", color: (100, 118, 90), tags: ["stone", "cobbled", "building", "mossy", "wet"]),
-            (name: "cracked_{name}_bricks", textures: All("cracked_{name}_bricks"), hardness: 1.5, color: (115, 115, 115), tags: ["stone", "bricks", "building", "ruined"]),
+            (name: "{name}", texture_variety: (turn: true, mirror: true), textures: All("{name}"), hardness: 1.5, drops: "cobbled_{name}", color: (125, 125, 125), tags: ["stone", "natural", "shelter:sound"]),
+            (name: "cobbled_{name}", textures: All("cobbled_{name}"), hardness: 2.0, color: (110, 110, 110), tags: ["stone", "cobbled", "building", "shelter:sound"]),
+            (name: "polished_{name}", textures: All("polished_{name}"), hardness: 1.5, color: (135, 135, 135), tags: ["stone", "polished", "building", "shelter:fine"]),
+            (name: "{name}_bricks", textures: All("{name}_bricks"), hardness: 1.5, color: (120, 120, 120), tags: ["stone", "bricks", "building", "shelter:fine"]),
+            (name: "mossy_cobbled_{name}", textures: All("mossy_cobbled_{name}"), hardness: 2.0, drops: "cobbled_{name}", color: (100, 118, 90), tags: ["stone", "cobbled", "building", "mossy", "wet", "shelter:sound"]),
+            (name: "cracked_{name}_bricks", textures: All("cracked_{name}_bricks"), hardness: 1.5, color: (115, 115, 115), tags: ["stone", "bricks", "building", "ruined", "shelter:sound"]),
         ],
         // A flower or herb, with two more looks: a pair of blooms and a clump of three,
         // which give that many when picked.
@@ -128,36 +131,40 @@
         // tint, shading and wind), its fruit drawn over the leaves untinted; picking a ripe
         // one takes it back to bare to fruit again (crops.ron).
         "fruit_leaves": [
-            (name: "{name}_leaves_0", render: Leaves, tint: Foliage, sound: Leaves, textures: All("{name}_leaves_0"), light_filter: 1, hardness: 0.3, drops: "core:air", color: (60, 120, 40), tags: ["leaves", "natural", "fruit_leaves"]),
-            (name: "{name}_leaves_1", render: Leaves, tint: Foliage, sound: Leaves, textures: All("{name}_leaves_1"), light_filter: 1, hardness: 0.3, drops: "core:air", color: (60, 120, 40), tags: ["leaves", "natural", "fruit_leaves"]),
-            (name: "{name}_leaves_2", render: Leaves, tint: Foliage, sound: Leaves, textures: All("{name}_leaves_2"), light_filter: 1, hardness: 0.3, drops: "core:air", color: (60, 120, 40), tags: ["leaves", "natural", "fruit_leaves"]),
-            (name: "{name}_leaves", render: Leaves, tint: Foliage, sound: Leaves, textures: All("{name}_leaves"), light_filter: 1, hardness: 0.3, drops: "core:air", color: (60, 120, 40), tags: ["leaves", "natural", "fruit_leaves", "ripe"]),
+            (name: "{name}_leaves_0", render: Leaves, tint: Foliage, sound: Leaves, textures: All("{name}_leaves_0"), light_filter: 1, hardness: 0.3, drops: "core:air", color: (60, 120, 40), tags: ["leaves", "natural", "fruit_leaves", "tree"]),
+            (name: "{name}_leaves_1", render: Leaves, tint: Foliage, sound: Leaves, textures: All("{name}_leaves_1"), light_filter: 1, hardness: 0.3, drops: "core:air", color: (60, 120, 40), tags: ["leaves", "natural", "fruit_leaves", "tree"]),
+            (name: "{name}_leaves_2", render: Leaves, tint: Foliage, sound: Leaves, textures: All("{name}_leaves_2"), light_filter: 1, hardness: 0.3, drops: "core:air", color: (60, 120, 40), tags: ["leaves", "natural", "fruit_leaves", "tree"]),
+            (name: "{name}_leaves", render: Leaves, tint: Foliage, sound: Leaves, textures: All("{name}_leaves"), light_filter: 1, hardness: 0.3, drops: "core:air", color: (60, 120, 40), tags: ["leaves", "natural", "fruit_leaves", "ripe", "tree"]),
             (name: "{name}", render: Plant, solid: false, item: true, textures: All("{name}"), hardness: 0.0, color: (200, 60, 40), tags: ["produce", "fruit", "edible"]),
         ],
         // Fired clay in one colour.
         "terracotta": [
-            (name: "{name}_terracotta", texture_variety: (turn: true, mirror: true), textures: All("{name}_terracotta"), hardness: 1.25, tags: ["terracotta", "clay", "building", "colour:{name}"]),
+            (name: "{name}_terracotta", texture_variety: (turn: true, mirror: true), textures: All("{name}_terracotta"), hardness: 1.25, tags: ["terracotta", "clay", "building", "colour:{name}", "shelter:fine"]),
         ],
     },
     blocks: [
         // Rock
         (name: "bedrock", texture_variety: (turn: true, mirror: true), textures: All("bedrock"), hardness: -1.0, color: (60, 60, 60), tags: ["deep"]),
-        (name: "stone", texture_variety: (turn: true, mirror: true), textures: All("stone"), hardness: 1.5, drops: "cobblestone", color: (125, 125, 125), family: "stone", tags: ["stone", "natural", "igneous", "cliff", "cave"]),
+        (name: "stone", texture_variety: (turn: true, mirror: true), textures: All("stone"), hardness: 1.5, drops: "loose_stone", drop_count: 2, color: (125, 125, 125), family: "stone", tags: ["stone", "natural", "igneous", "cliff", "cave", "shelter:sound"]),
         // A lair's room (lairs.ron): living root that no tool cuts, and the floor boss music
         // knows the room by (music.ron's `boss.rooms`).
         (name: "hollow_root", sound: Wood, textures: All("hollow_root"), hardness: -1.0, color: (78, 58, 42), tags: ["root", "lair"]),
         (name: "hollow_floor", sound: Soil, textures: All("hollow_floor"), hardness: -1.0, color: (66, 50, 38), tags: ["lair"]),
-        (name: "cobblestone", textures: All("cobblestone"), hardness: 2.0, color: (110, 110, 110), family: "stone", tags: ["stone", "cobbled", "building"]),
-        (name: "mossy_cobblestone", textures: All("mossy_cobblestone"), hardness: 2.0, color: (100, 118, 90), family: "stone", tags: ["stone", "cobbled", "building", "natural", "mossy", "wet"]),
-        (name: "polished_stone", textures: All("polished_stone"), hardness: 1.5, color: (135, 135, 135), family: "stone", tags: ["stone", "polished", "building"]),
-        (name: "stone_bricks", textures: All("stone_bricks"), hardness: 1.5, color: (120, 120, 120), family: "stone", tags: ["stone", "bricks", "building"]),
-        (name: "mossy_stone_bricks", textures: All("mossy_stone_bricks"), hardness: 1.5, color: (105, 118, 95), family: "stone", tags: ["stone", "bricks", "building", "mossy", "wet"]),
-        (name: "cracked_stone_bricks", textures: All("cracked_stone_bricks"), hardness: 1.5, color: (115, 115, 115), family: "stone", tags: ["stone", "bricks", "building", "ruined"]),
+        (name: "cobblestone", textures: All("cobblestone"), hardness: 2.0, color: (110, 110, 110), family: "stone", tags: ["stone", "cobbled", "building", "shelter:sound"]),
+        // Loose stones: what plain stone breaks into, two a block, knocked four at a time into
+        // two cobblestone in the hand's grid (recipes.ron). Hard rock breaks to its own cobbles,
+        // which the grindstone wants whole.
+        (name: "loose_stone", render: Plant, solid: false, item: true, sound: Stone, textures: All("loose_stone"), hardness: 0.0, color: (125, 125, 125), tags: ["rubble"]),
+        (name: "mossy_cobblestone", textures: All("mossy_cobblestone"), hardness: 2.0, color: (100, 118, 90), family: "stone", tags: ["stone", "cobbled", "building", "mossy", "wet", "shelter:sound"]),
+        (name: "polished_stone", textures: All("polished_stone"), hardness: 1.5, color: (135, 135, 135), family: "stone", tags: ["stone", "polished", "building", "shelter:fine"]),
+        (name: "stone_bricks", textures: All("stone_bricks"), hardness: 1.5, color: (120, 120, 120), family: "stone", tags: ["stone", "bricks", "building", "shelter:fine"]),
+        (name: "mossy_stone_bricks", textures: All("mossy_stone_bricks"), hardness: 1.5, color: (105, 118, 95), family: "stone", tags: ["stone", "bricks", "building", "mossy", "wet", "shelter:sound"]),
+        (name: "cracked_stone_bricks", textures: All("cracked_stone_bricks"), hardness: 1.5, color: (115, 115, 115), family: "stone", tags: ["stone", "bricks", "building", "ruined", "shelter:sound"]),
         // Volcanic glass, where lava meets water.
-        (name: "obsidian", texture_variety: (turn: true, mirror: true), sound: Glass, textures: All("obsidian"), hardness: 25.0, color: (24, 18, 36), tags: ["stone", "igneous", "natural", "building", "volcanic", "deep"]),
+        (name: "obsidian", texture_variety: (turn: true, mirror: true), sound: Glass, textures: All("obsidian"), hardness: 25.0, color: (24, 18, 36), tags: ["stone", "igneous", "natural", "building", "volcanic", "deep", "shelter:fine"]),
         // Soil
-        (name: "dirt", texture_variety: (turn: true, mirror: true), sound: Soil, textures: All("dirt"), hardness: 0.5, color: (134, 96, 67), tags: ["soil", "fertile", "natural"]),
-        (name: "coarse_dirt", texture_variety: (turn: true, mirror: true), sound: Soil, textures: All("coarse_dirt"), hardness: 0.5, color: (119, 85, 59), tags: ["soil", "dry", "natural", "surface"]),
+        (name: "dirt", texture_variety: (turn: true, mirror: true), sound: Soil, textures: All("dirt"), hardness: 0.5, color: (134, 96, 67), tags: ["soil", "fertile", "natural"], coat: Some((with: "clay", into: "daub"))),
+        (name: "coarse_dirt", texture_variety: (turn: true, mirror: true), sound: Soil, textures: All("coarse_dirt"), hardness: 0.5, color: (119, 85, 59), tags: ["soil", "dry", "natural", "surface"], coat: Some((with: "clay", into: "daub"))),
         (name: "rooted_dirt", texture_variety: (turn: true, mirror: true), sound: Soil, textures: All("rooted_dirt"), hardness: 0.5, color: (144, 104, 77), tags: ["soil", "natural"]),
         (name: "mud", texture_variety: (turn: true, mirror: true), sound: Mud, textures: All("mud"), hardness: 0.5, color: (60, 57, 61), tags: ["soil", "wet", "natural", "surface"]),
         (name: "moss_block", texture_variety: (turn: true, mirror: true), sound: Moss, textures: All("moss_block"), hardness: 0.1, color: (89, 110, 45), tags: ["soil", "wet", "groundcover", "natural", "surface"]),
@@ -193,7 +200,10 @@
         ),
         (name: "packed_earth", texture_variety: (turn: true, mirror: true), sound: Soil, textures: All("packed_earth"), hardness: 0.6, drops: "dirt", color: (150, 116, 80), tags: ["soil", "worn", "path", "surface"]),
         (name: "clay", texture_variety: (turn: true, mirror: true), sound: Soil, textures: All("clay"), hardness: 0.6, color: (160, 166, 179), tags: ["clay", "wet", "natural"]),
-        (name: "gravel", texture_variety: (turn: true, mirror: true), sound: Gravel, textures: All("gravel"), hardness: 0.6, color: (136, 126, 126), tags: ["gravel", "natural", "surface"]),
+        // Daub: clay worked over wattle or earth, a sound wall that does not burn. Clay held to
+        // the side of a wattle panel (blocks_building.ron) or an earth wall coats it in place.
+        (name: "daub", sound: Soil, textures: All("daub"), hardness: 1.0, color: (205, 185, 150), tags: ["daub", "wall", "building", "shelter:sound"]),
+        (name: "gravel", texture_variety: (turn: true, mirror: true), sound: Gravel, textures: All("gravel"), hardness: 0.6, color: (136, 126, 126), tags: ["gravel", "natural", "surface"], coat: Some((with: "clay", into: "daub"))),
         (name: "loam", texture_variety: (turn: true, mirror: true), sound: Soil, textures: All("loam"), hardness: 0.5, color: (94, 71, 54), tags: ["soil", "fertile", "natural", "surface"]),
         (name: "peat", texture_variety: (turn: true, mirror: true), sound: Mud, textures: All("peat"), hardness: 0.5, color: (55, 42, 33), tags: ["soil", "wet", "acidic", "fuel", "natural", "surface", "wetland"]),
         (name: "red_earth", texture_variety: (turn: true, mirror: true), sound: Soil, textures: All("red_earth"), hardness: 0.5, color: (157, 74, 47), tags: ["soil", "dry", "natural", "surface", "tropical", "savanna"]),
@@ -213,16 +223,16 @@
         // instead (tools.ron), and no region's timber turns up where its trees do not grow.
         (
             name: "dead_log", sound: Wood, textures: All("dead_log"),
-            hardness: 1.6, drops: "core:air", color: (128, 124, 116), tags: ["log", "natural", "snag"],
+            hardness: 1.6, drops: "core:air", color: (128, 124, 116), tags: ["log", "natural", "snag", "tree"],
         ),
         (name: "powder_snow", texture_variety: (turn: true, mirror: true), sound: Snow, textures: All("powder_snow"), hardness: 0.25, color: (248, 253, 253), tags: ["snow", "cold", "natural", "surface"]),
         (name: "ice", sound: Glass, textures: All("ice"), render: Translucent, light_filter: 2, hardness: 0.5, color: (150, 190, 250), tags: ["ice", "cold", "natural"]),
         (name: "packed_ice", texture_variety: (turn: true, mirror: true), sound: Glass, textures: All("packed_ice"), hardness: 0.5, color: (141, 180, 250), tags: ["ice", "cold", "natural"]),
         (name: "blue_ice", texture_variety: (turn: true, mirror: true), sound: Glass, textures: All("blue_ice"), hardness: 2.8, color: (116, 167, 253), tags: ["ice", "cold", "natural"]),
         // Sand
-        (name: "sand", texture_variety: (turn: true, mirror: true), sound: Sand, textures: All("sand"), hardness: 0.5, color: (219, 207, 163), tags: ["sand", "natural", "surface"]),
-        (name: "red_sand", texture_variety: (turn: true, mirror: true), sound: Sand, textures: All("red_sand"), hardness: 0.5, color: (190, 102, 33), tags: ["sand", "natural", "surface"]),
-        (name: "terracotta", texture_variety: (turn: true, mirror: true), textures: All("terracotta"), hardness: 1.25, color: (152, 94, 67), tags: ["terracotta", "clay", "natural", "building", "colour:brown"]),
+        (name: "sand", texture_variety: (turn: true, mirror: true), sound: Sand, textures: All("sand"), hardness: 0.5, color: (219, 207, 163), tags: ["sand", "natural", "surface"], coat: Some((with: "clay", into: "daub"))),
+        (name: "red_sand", texture_variety: (turn: true, mirror: true), sound: Sand, textures: All("red_sand"), hardness: 0.5, color: (190, 102, 33), tags: ["sand", "natural", "surface"], coat: Some((with: "clay", into: "daub"))),
+        (name: "terracotta", texture_variety: (turn: true, mirror: true), textures: All("terracotta"), hardness: 1.25, color: (152, 94, 67), tags: ["terracotta", "clay", "natural", "building", "colour:brown", "shelter:fine"]),
         // Fluids. Each also makes its flowing and falling states (`water_flow_1` ..
         // `water_flow_7`, `water_falling`), and water the river states that carry a current
         // (see engine/src/fluid.rs). `tick`: ticks per step of a flow; `drop`: eighths of
@@ -269,38 +279,38 @@
             light_filter: 1,
             hardness: 0.7,
             color: (74, 59, 38),
-            tags: ["wood", "natural", "wetland"],
+            tags: ["wood", "natural", "wetland", "tree"],
         ),
         // Caves: dripstone, glowing growth, crystals, magma, the deep dark's gloomvein,
         // giant mushroom blocks and roots hanging from the roof.
-        (name: "dripstone_block", texture_variety: (turn: false, mirror: true), textures: All("dripstone_block"), hardness: 1.5, color: (130, 104, 88), tags: ["stone", "sedimentary", "natural", "cave", "dripstone"]),
+        (name: "dripstone_block", texture_variety: (turn: false, mirror: true), textures: All("dripstone_block"), hardness: 1.5, color: (130, 104, 88), tags: ["stone", "sedimentary", "natural", "cave", "dripstone", "shelter:sound"]),
         (name: "pointed_dripstone", render: Plant, solid: false, textures: All("pointed_dripstone_up_tip"), hardness: 0.5, drops: "dripstone_block", color: (150, 120, 100), tags: ["cave", "dripstone", "natural", "stalagmite"]),
         (name: "hanging_dripstone", render: Plant, solid: false, support: Above, textures: All("pointed_dripstone_down_tip"), hardness: 0.5, drops: "dripstone_block", color: (150, 120, 100), tags: ["cave", "dripstone", "natural", "stalactite", "hanging"]),
         (name: "glow_berries", render: Plant, solid: false, support: Above, sound: Leaves, textures: All("cave_vines_lit"), light: 8, hardness: 0.0, color: (90, 120, 40), rarity: Uncommon, tags: ["plant", "cave", "hanging", "berry", "edible", "flavour:sweet", "glowing", "alchemy:night_sight"]),
         (name: "glow_lichen", render: Plant, solid: false, sound: Grass, textures: All("glow_lichen"), light: 7, hardness: 0.0, drops: "core:air", color: (110, 160, 140), tags: ["plant", "cave", "groundcover", "glowing", "alchemy:luminous"]),
         (name: "moss_carpet", render: Plant, solid: false, sound: Moss, textures: All("moss_carpet"), hardness: 0.0, color: (89, 110, 45), tags: ["plant", "groundcover", "cave", "forest_floor", "shade", "wet"]),
         (name: "hanging_roots", render: Plant, solid: false, support: Above, sound: Grass, textures: All("hanging_roots"), hardness: 0.0, color: (160, 120, 90), tags: ["plant", "cave", "hanging", "root", "fibre"]),
-        (name: "crystal_block", texture_variety: (turn: true, mirror: true), sound: Glass, textures: All("crystal_block"), light: 1, hardness: 1.5, color: (150, 130, 200), rarity: Uncommon, tags: ["gem", "natural", "cave", "glowing", "building", "alchemy:clarity"]),
+        (name: "crystal_block", texture_variety: (turn: true, mirror: true), sound: Glass, textures: All("crystal_block"), light: 1, hardness: 1.5, color: (150, 130, 200), rarity: Uncommon, tags: ["gem", "natural", "cave", "glowing", "building", "alchemy:clarity", "shelter:fine"]),
         (name: "crystal_cluster", render: Plant, solid: false, sound: Glass, textures: All("crystal_cluster"), light: 4, hardness: 1.0, color: (170, 150, 220), rarity: Uncommon, tags: ["gem", "cave", "glowing", "alchemy:clarity", "alchemy:aether"]),
-        (name: "magma_block", texture_variety: (turn: true, mirror: true), textures: All("magma"), light: 3, hardness: 0.5, color: (140, 50, 20), tags: ["stone", "igneous", "natural", "cave", "deep", "hot", "volcanic", "glowing"]),
+        (name: "magma_block", texture_variety: (turn: true, mirror: true), textures: All("magma"), light: 3, hardness: 0.5, color: (140, 50, 20), tags: ["stone", "igneous", "natural", "cave", "deep", "hot", "volcanic", "glowing", "shelter:sound"]),
         (name: "gloomvein", texture_variety: (turn: true, mirror: true), sound: Soil, textures: All("gloomvein"), light: 1, hardness: 0.6, color: (20, 40, 46), rarity: Rare, tags: ["natural", "cave", "deep", "wonder", "glowing", "alchemy:night_sight", "alchemy:aether"]),
-        (name: "brown_mushroom_block", texture_variety: (turn: true, mirror: true), sound: Wood, textures: All("brown_mushroom_block"), hardness: 0.2, drops: "mushroom", color: (150, 110, 80), tags: ["fungus", "natural", "cave", "forest_floor"]),
-        (name: "red_mushroom_block", texture_variety: (turn: true, mirror: true), sound: Wood, textures: All("red_mushroom_block"), hardness: 0.2, drops: "red_mushroom", color: (200, 40, 40), tags: ["fungus", "natural", "cave", "forest_floor"]),
-        (name: "mushroom_stem", texture_variety: (turn: false, mirror: true), sound: Wood, textures: All("mushroom_stem"), hardness: 0.2, color: (205, 198, 182), tags: ["fungus", "natural", "cave", "forest_floor"]),
+        (name: "brown_mushroom_block", texture_variety: (turn: true, mirror: true), sound: Wood, textures: All("brown_mushroom_block"), hardness: 0.2, drops: "mushroom", color: (150, 110, 80), tags: ["fungus", "natural", "cave", "forest_floor", "tree"]),
+        (name: "red_mushroom_block", texture_variety: (turn: true, mirror: true), sound: Wood, textures: All("red_mushroom_block"), hardness: 0.2, drops: "red_mushroom", color: (200, 40, 40), tags: ["fungus", "natural", "cave", "forest_floor", "tree"]),
+        (name: "mushroom_stem", texture_variety: (turn: false, mirror: true), sound: Wood, textures: All("mushroom_stem"), hardness: 0.2, color: (205, 198, 182), tags: ["fungus", "natural", "cave", "forest_floor", "tree"]),
         // Leaves turned for autumn, for groves that biomes want in colour.
-        (name: "golden_birch_leaves", sound: Leaves, textures: All("golden_birch_leaves"), render: Leaves, light_filter: 1, hardness: 0.3, color: (220, 180, 40), family: "birch", tags: ["leaves", "natural", "broadleaf", "autumn", "dye:yellow"]),
+        (name: "golden_birch_leaves", sound: Leaves, textures: All("golden_birch_leaves"), render: Leaves, light_filter: 1, hardness: 0.3, color: (220, 180, 40), family: "birch", tags: ["leaves", "natural", "broadleaf", "autumn", "dye:yellow", "tree"]),
         // Leaves of their own, on borrowed wood: an olive's grey-green, untinted, and a
         // larch's soft needles, a fresher green than a spruce's.
-        (name: "olive_leaves", sound: Leaves, textures: All("olive_leaves"), render: Leaves, light_filter: 1, hardness: 0.3, color: (150, 160, 120), family: "acacia", tags: ["leaves", "natural", "broadleaf", "evergreen", "dry"]),
-        (name: "larch_leaves", sound: Leaves, textures: All("larch_leaves"), render: Leaves, light_filter: 1, hardness: 0.3, color: (100, 140, 60), family: "spruce", tags: ["leaves", "natural", "conifer", "cold"]),
-        (name: "russet_oak_leaves", sound: Leaves, textures: All("russet_oak_leaves"), render: Leaves, light_filter: 1, hardness: 0.3, color: (170, 90, 40), family: "oak", tags: ["leaves", "natural", "broadleaf", "autumn", "dye:orange"]),
-        (name: "amber_maple_leaves", sound: Leaves, textures: All("amber_maple_leaves"), render: Leaves, light_filter: 1, hardness: 0.3, color: (230, 150, 40), family: "maple", tags: ["leaves", "natural", "broadleaf", "autumn", "dye:orange"]),
-        (name: "azalea_leaves", sound: Leaves, textures: All("azalea_leaves"), render: Leaves, light_filter: 1, hardness: 0.3, color: (90, 115, 45), tags: ["leaves", "natural", "broadleaf"]),
-        (name: "flowering_azalea_leaves", sound: Leaves, textures: All("flowering_azalea_leaves"), render: Leaves, light_filter: 1, hardness: 0.3, color: (110, 110, 70), tags: ["leaves", "natural", "broadleaf", "flower"]),
+        (name: "olive_leaves", sound: Leaves, textures: All("olive_leaves"), render: Leaves, light_filter: 1, hardness: 0.3, color: (150, 160, 120), family: "acacia", tags: ["leaves", "natural", "broadleaf", "evergreen", "dry", "tree"]),
+        (name: "larch_leaves", sound: Leaves, textures: All("larch_leaves"), render: Leaves, light_filter: 1, hardness: 0.3, color: (100, 140, 60), family: "spruce", tags: ["leaves", "natural", "conifer", "cold", "tree"]),
+        (name: "russet_oak_leaves", sound: Leaves, textures: All("russet_oak_leaves"), render: Leaves, light_filter: 1, hardness: 0.3, color: (170, 90, 40), family: "oak", tags: ["leaves", "natural", "broadleaf", "autumn", "dye:orange", "tree"]),
+        (name: "amber_maple_leaves", sound: Leaves, textures: All("amber_maple_leaves"), render: Leaves, light_filter: 1, hardness: 0.3, color: (230, 150, 40), family: "maple", tags: ["leaves", "natural", "broadleaf", "autumn", "dye:orange", "tree"]),
+        (name: "azalea_leaves", sound: Leaves, textures: All("azalea_leaves"), render: Leaves, light_filter: 1, hardness: 0.3, color: (90, 115, 45), tags: ["leaves", "natural", "broadleaf", "tree"]),
+        (name: "flowering_azalea_leaves", sound: Leaves, textures: All("flowering_azalea_leaves"), render: Leaves, light_filter: 1, hardness: 0.3, color: (110, 110, 70), tags: ["leaves", "natural", "broadleaf", "flower", "tree"]),
         // Glowcaps: giant glowing mushrooms of fungal caves and forests.
-        (name: "glowcap_stem", sound: Wood, textures: Column(end: "glowcap_stem_top", side: "glowcap_stem"), hardness: 1.5, color: (210, 205, 190), rarity: Rare, family: "glowcap", tags: ["fungus", "wood", "natural", "wonder", "cave"]),
-        (name: "glowcap_cap", sound: Wood, textures: All("glowcap_cap"), light: 12, hardness: 0.8, color: (60, 220, 210), rarity: Rare, family: "glowcap", tags: ["fungus", "natural", "wonder", "glowing", "light", "alchemy:luminous"]),
-        (name: "glowcap_planks", sound: Wood, textures: All("glowcap_planks"), hardness: 1.5, color: (200, 195, 175), family: "glowcap", tags: ["planks", "building", "wonder"]),
+        (name: "glowcap_stem", sound: Wood, textures: Column(end: "glowcap_stem_top", side: "glowcap_stem"), hardness: 1.5, color: (210, 205, 190), rarity: Rare, family: "glowcap", tags: ["fungus", "wood", "natural", "wonder", "cave", "tree"]),
+        (name: "glowcap_cap", sound: Wood, textures: All("glowcap_cap"), light: 12, hardness: 0.8, color: (60, 220, 210), rarity: Rare, family: "glowcap", tags: ["fungus", "natural", "wonder", "glowing", "light", "alchemy:luminous", "tree"]),
+        (name: "glowcap_planks", sound: Wood, textures: All("glowcap_planks"), hardness: 1.5, color: (200, 195, 175), family: "glowcap", tags: ["planks", "building", "wonder", "shelter:sound"]),
         (name: "cactus", sound: Wood, textures: Sides(top: "cactus_top", bottom: "cactus_bottom", side: "cactus_side"), hardness: 0.4, color: (80, 130, 40), tags: ["plant", "desert", "hot", "dry", "natural", "thorny"]),
         // Plants
         (name: "short_grass", render: Plant, solid: false, sound: Grass, textures: All("fine_grass"), tint: Grass, hardness: 0.0, drops: "core:air", color: (150, 150, 150), tags: ["plant", "grass", "meadow"]),
@@ -325,38 +335,38 @@
         (name: "brown_mushroom", render: Plant, solid: false, sound: Grass, textures: Sides(top: "brown_mushroom_cap", bottom: "brown_mushroom_gills", side: "brown_mushroom_stem"), icon: "brown_mushroom", model: Cap, hardness: 0.0, drops: "mushroom", color: (150, 110, 80), tags: ["merged", "plant", "fungus", "edible", "forest_floor", "shade", "cave", "flavour:savoury"]),
         (name: "red_mushroom", render: Plant, solid: false, sound: Grass, textures: Sides(top: "red_mushroom_cap", bottom: "red_mushroom_gills", side: "red_mushroom_stem"), icon: "red_mushroom", model: Cap, hardness: 0.0, color: (200, 40, 40), tags: ["plant", "fungus", "forest_floor", "shade", "alchemy:poison", "dye:red"]),
         // Ores
-        (name: "coal_ore", texture_variety: (turn: true, mirror: true), textures: All("coal_ore"), host: "stone", hardness: 3.0, color: (90, 90, 90), tags: ["ore", "fuel", "coal", "natural"]),
-        (name: "iron_ore", texture_variety: (turn: true, mirror: true), textures: All("iron_ore"), host: "stone", hardness: 3.0, color: (160, 140, 120), tags: ["ore", "metal:iron", "natural"]),
-        (name: "copper_ore", texture_variety: (turn: true, mirror: true), textures: All("copper_ore"), host: "stone", hardness: 3.0, color: (150, 110, 80), tags: ["ore", "metal:copper", "natural"]),
-        (name: "gold_ore", texture_variety: (turn: true, mirror: true), textures: All("gold_ore"), host: "stone", hardness: 3.0, color: (200, 180, 80), rarity: Uncommon, tags: ["ore", "metal:gold", "natural"]),
-        (name: "diamond_ore", texture_variety: (turn: true, mirror: true), textures: All("diamond_ore"), host: "stone", hardness: 3.0, color: (100, 200, 200), rarity: Rare, tags: ["ore", "gem", "natural", "deep"]),
+        (name: "coal_ore", texture_variety: (turn: true, mirror: true), textures: All("coal_ore"), host: "stone", hardness: 3.0, color: (90, 90, 90), tags: ["ore", "fuel", "coal", "natural", "shelter:sound"]),
+        (name: "iron_ore", texture_variety: (turn: true, mirror: true), textures: All("iron_ore"), host: "stone", hardness: 3.0, color: (160, 140, 120), tags: ["ore", "metal:iron", "natural", "shelter:sound"]),
+        (name: "copper_ore", texture_variety: (turn: true, mirror: true), textures: All("copper_ore"), host: "stone", hardness: 3.0, color: (150, 110, 80), tags: ["ore", "metal:copper", "natural", "shelter:sound"]),
+        (name: "gold_ore", texture_variety: (turn: true, mirror: true), textures: All("gold_ore"), host: "stone", hardness: 3.0, color: (200, 180, 80), rarity: Uncommon, tags: ["ore", "metal:gold", "natural", "shelter:sound"]),
+        (name: "diamond_ore", texture_variety: (turn: true, mirror: true), textures: All("diamond_ore"), host: "stone", hardness: 3.0, color: (100, 200, 200), rarity: Rare, tags: ["ore", "gem", "natural", "deep", "shelter:sound"]),
         // The same ores where their veins run through deepslate (resources.rs), drawn over it.
-        (name: "deepslate_coal_ore", texture_variety: (turn: true, mirror: true), textures: All("deepslate_coal_ore"), host: "deepslate", hardness: 4.5, drops: "coal_ore", color: (90, 90, 90), tags: ["ore", "fuel", "natural", "deep"]),
-        (name: "deepslate_iron_ore", texture_variety: (turn: true, mirror: true), textures: All("deepslate_iron_ore"), host: "deepslate", hardness: 4.5, drops: "iron_ore", color: (160, 140, 120), tags: ["ore", "metal:iron", "natural", "deep"]),
-        (name: "deepslate_copper_ore", texture_variety: (turn: true, mirror: true), textures: All("deepslate_copper_ore"), host: "deepslate", hardness: 4.5, drops: "copper_ore", color: (150, 110, 80), tags: ["ore", "metal:copper", "natural", "deep"]),
-        (name: "deepslate_gold_ore", texture_variety: (turn: true, mirror: true), textures: All("deepslate_gold_ore"), host: "deepslate", hardness: 4.5, drops: "gold_ore", color: (200, 180, 80), rarity: Uncommon, tags: ["ore", "metal:gold", "natural", "deep"]),
-        (name: "deepslate_diamond_ore", texture_variety: (turn: true, mirror: true), textures: All("deepslate_diamond_ore"), host: "deepslate", hardness: 4.5, drops: "diamond_ore", color: (100, 200, 200), rarity: Rare, tags: ["ore", "gem", "natural", "deep"]),
-        (name: "cobalt_ore", texture_variety: (turn: true, mirror: true), textures: All("cobalt_ore"), host: "stone", hardness: 3.0, color: (60, 90, 200), rarity: Uncommon, tags: ["ore", "metal:cobalt", "natural", "deep"]),
-        (name: "tin_ore", texture_variety: (turn: true, mirror: true), textures: All("tin_ore"), host: "stone", hardness: 3.0, color: (170, 180, 185), tags: ["ore", "metal:tin", "natural"]),
-        (name: "silver_ore", texture_variety: (turn: true, mirror: true), textures: All("silver_ore"), host: "stone", hardness: 3.0, color: (200, 205, 215), rarity: Uncommon, tags: ["ore", "metal:silver", "natural"]),
-        (name: "aetherite_ore", texture_variety: (turn: true, mirror: true), textures: All("aetherite_ore"), host: "deepslate", light: 4, hardness: 4.0, color: (150, 90, 240), rarity: VeryRare, tags: ["ore", "gem", "natural", "deep", "wonder", "glowing", "alchemy:aether"]),
+        (name: "deepslate_coal_ore", texture_variety: (turn: true, mirror: true), textures: All("deepslate_coal_ore"), host: "deepslate", hardness: 4.5, drops: "coal_ore", color: (90, 90, 90), tags: ["ore", "fuel", "natural", "deep", "shelter:sound"]),
+        (name: "deepslate_iron_ore", texture_variety: (turn: true, mirror: true), textures: All("deepslate_iron_ore"), host: "deepslate", hardness: 4.5, drops: "iron_ore", color: (160, 140, 120), tags: ["ore", "metal:iron", "natural", "deep", "shelter:sound"]),
+        (name: "deepslate_copper_ore", texture_variety: (turn: true, mirror: true), textures: All("deepslate_copper_ore"), host: "deepslate", hardness: 4.5, drops: "copper_ore", color: (150, 110, 80), tags: ["ore", "metal:copper", "natural", "deep", "shelter:sound"]),
+        (name: "deepslate_gold_ore", texture_variety: (turn: true, mirror: true), textures: All("deepslate_gold_ore"), host: "deepslate", hardness: 4.5, drops: "gold_ore", color: (200, 180, 80), rarity: Uncommon, tags: ["ore", "metal:gold", "natural", "deep", "shelter:sound"]),
+        (name: "deepslate_diamond_ore", texture_variety: (turn: true, mirror: true), textures: All("deepslate_diamond_ore"), host: "deepslate", hardness: 4.5, drops: "diamond_ore", color: (100, 200, 200), rarity: Rare, tags: ["ore", "gem", "natural", "deep", "shelter:sound"]),
+        (name: "cobalt_ore", texture_variety: (turn: true, mirror: true), textures: All("cobalt_ore"), host: "stone", hardness: 3.0, color: (60, 90, 200), rarity: Uncommon, tags: ["ore", "metal:cobalt", "natural", "deep", "shelter:sound"]),
+        (name: "tin_ore", texture_variety: (turn: true, mirror: true), textures: All("tin_ore"), host: "stone", hardness: 3.0, color: (170, 180, 185), tags: ["ore", "metal:tin", "natural", "shelter:sound"]),
+        (name: "silver_ore", texture_variety: (turn: true, mirror: true), textures: All("silver_ore"), host: "stone", hardness: 3.0, color: (200, 205, 215), rarity: Uncommon, tags: ["ore", "metal:silver", "natural", "shelter:sound"]),
+        (name: "aetherite_ore", texture_variety: (turn: true, mirror: true), textures: All("aetherite_ore"), host: "deepslate", light: 4, hardness: 4.0, color: (150, 90, 240), rarity: VeryRare, tags: ["ore", "gem", "natural", "deep", "wonder", "glowing", "alchemy:aether", "shelter:sound"]),
         // Ores of the later ages (ores.ron): zinc and lead for brass and solder, lodestone for magnets,
         // graphite for electrodes, bauxite for aluminium, and gems for sockets.
-        (name: "zinc_ore", texture_variety: (turn: true, mirror: true), textures: All("zinc_ore"), host: "stone", hardness: 3.0, color: (150, 110, 60), rarity: Uncommon, tags: ["ore", "metal:zinc", "natural"]),
-        (name: "lead_ore", texture_variety: (turn: true, mirror: true), textures: All("lead_ore"), host: "stone", hardness: 3.0, color: (110, 118, 135), tags: ["ore", "metal:lead", "natural"]),
-        (name: "lodestone", texture_variety: (turn: true, mirror: true), textures: All("lodestone"), host: "stone", hardness: 3.0, color: (55, 58, 68), rarity: Uncommon, tags: ["ore", "magnetic", "natural"]),
-        (name: "graphite_ore", texture_variety: (turn: true, mirror: true), textures: All("graphite_ore"), host: "stone", hardness: 3.0, color: (70, 72, 80), rarity: Uncommon, tags: ["ore", "graphite", "natural"]),
-        (name: "bauxite", texture_variety: (turn: true, mirror: true), textures: All("bauxite"), host: "stone", hardness: 3.0, color: (170, 90, 50), rarity: Uncommon, tags: ["ore", "metal:aluminium", "natural"]),
-        (name: "ruby_ore", texture_variety: (turn: true, mirror: true), textures: All("ruby_ore"), host: "stone", hardness: 3.0, color: (200, 40, 60), rarity: Rare, tags: ["ore", "gem", "gem:ruby", "natural"]),
-        (name: "sapphire_ore", texture_variety: (turn: true, mirror: true), textures: All("sapphire_ore"), host: "stone", hardness: 3.0, color: (50, 90, 210), rarity: Rare, tags: ["ore", "gem", "gem:sapphire", "natural"]),
-        (name: "emerald_ore", texture_variety: (turn: true, mirror: true), textures: All("emerald_ore"), host: "stone", hardness: 3.0, color: (40, 170, 100), rarity: Rare, tags: ["ore", "gem", "gem:emerald", "natural"]),
-        (name: "deepslate_zinc_ore", texture_variety: (turn: true, mirror: true), textures: All("deepslate_zinc_ore"), host: "deepslate", hardness: 4.5, drops: "zinc_ore", color: (150, 110, 60), rarity: Uncommon, tags: ["ore", "metal:zinc", "natural", "deep"]),
-        (name: "deepslate_lead_ore", texture_variety: (turn: true, mirror: true), textures: All("deepslate_lead_ore"), host: "deepslate", hardness: 4.5, drops: "lead_ore", color: (110, 118, 135), tags: ["ore", "metal:lead", "natural", "deep"]),
-        (name: "deepslate_lodestone", texture_variety: (turn: true, mirror: true), textures: All("deepslate_lodestone"), host: "deepslate", hardness: 4.5, drops: "lodestone", color: (55, 58, 68), rarity: Uncommon, tags: ["ore", "magnetic", "natural", "deep"]),
-        (name: "deepslate_graphite_ore", texture_variety: (turn: true, mirror: true), textures: All("deepslate_graphite_ore"), host: "deepslate", hardness: 4.5, drops: "graphite_ore", color: (70, 72, 80), rarity: Uncommon, tags: ["ore", "graphite", "natural", "deep"]),
-        (name: "deepslate_ruby_ore", texture_variety: (turn: true, mirror: true), textures: All("deepslate_ruby_ore"), host: "deepslate", hardness: 4.5, drops: "ruby_ore", color: (200, 40, 60), rarity: Rare, tags: ["ore", "gem", "gem:ruby", "natural", "deep"]),
-        (name: "deepslate_sapphire_ore", texture_variety: (turn: true, mirror: true), textures: All("deepslate_sapphire_ore"), host: "deepslate", hardness: 4.5, drops: "sapphire_ore", color: (50, 90, 210), rarity: Rare, tags: ["ore", "gem", "gem:sapphire", "natural", "deep"]),
-        (name: "deepslate_emerald_ore", texture_variety: (turn: true, mirror: true), textures: All("deepslate_emerald_ore"), host: "deepslate", hardness: 4.5, drops: "emerald_ore", color: (40, 170, 100), rarity: Rare, tags: ["ore", "gem", "gem:emerald", "natural", "deep"]),
+        (name: "zinc_ore", texture_variety: (turn: true, mirror: true), textures: All("zinc_ore"), host: "stone", hardness: 3.0, color: (150, 110, 60), rarity: Uncommon, tags: ["ore", "metal:zinc", "natural", "shelter:sound"]),
+        (name: "lead_ore", texture_variety: (turn: true, mirror: true), textures: All("lead_ore"), host: "stone", hardness: 3.0, color: (110, 118, 135), tags: ["ore", "metal:lead", "natural", "shelter:sound"]),
+        (name: "lodestone", texture_variety: (turn: true, mirror: true), textures: All("lodestone"), host: "stone", hardness: 3.0, color: (55, 58, 68), rarity: Uncommon, tags: ["ore", "magnetic", "natural", "shelter:sound"]),
+        (name: "graphite_ore", texture_variety: (turn: true, mirror: true), textures: All("graphite_ore"), host: "stone", hardness: 3.0, color: (70, 72, 80), rarity: Uncommon, tags: ["ore", "graphite", "natural", "shelter:sound"]),
+        (name: "bauxite", texture_variety: (turn: true, mirror: true), textures: All("bauxite"), host: "stone", hardness: 3.0, color: (170, 90, 50), rarity: Uncommon, tags: ["ore", "metal:aluminium", "natural", "shelter:sound"]),
+        (name: "ruby_ore", texture_variety: (turn: true, mirror: true), textures: All("ruby_ore"), host: "stone", hardness: 3.0, color: (200, 40, 60), rarity: Rare, tags: ["ore", "gem", "gem:ruby", "natural", "shelter:sound"]),
+        (name: "sapphire_ore", texture_variety: (turn: true, mirror: true), textures: All("sapphire_ore"), host: "stone", hardness: 3.0, color: (50, 90, 210), rarity: Rare, tags: ["ore", "gem", "gem:sapphire", "natural", "shelter:sound"]),
+        (name: "emerald_ore", texture_variety: (turn: true, mirror: true), textures: All("emerald_ore"), host: "stone", hardness: 3.0, color: (40, 170, 100), rarity: Rare, tags: ["ore", "gem", "gem:emerald", "natural", "shelter:sound"]),
+        (name: "deepslate_zinc_ore", texture_variety: (turn: true, mirror: true), textures: All("deepslate_zinc_ore"), host: "deepslate", hardness: 4.5, drops: "zinc_ore", color: (150, 110, 60), rarity: Uncommon, tags: ["ore", "metal:zinc", "natural", "deep", "shelter:sound"]),
+        (name: "deepslate_lead_ore", texture_variety: (turn: true, mirror: true), textures: All("deepslate_lead_ore"), host: "deepslate", hardness: 4.5, drops: "lead_ore", color: (110, 118, 135), tags: ["ore", "metal:lead", "natural", "deep", "shelter:sound"]),
+        (name: "deepslate_lodestone", texture_variety: (turn: true, mirror: true), textures: All("deepslate_lodestone"), host: "deepslate", hardness: 4.5, drops: "lodestone", color: (55, 58, 68), rarity: Uncommon, tags: ["ore", "magnetic", "natural", "deep", "shelter:sound"]),
+        (name: "deepslate_graphite_ore", texture_variety: (turn: true, mirror: true), textures: All("deepslate_graphite_ore"), host: "deepslate", hardness: 4.5, drops: "graphite_ore", color: (70, 72, 80), rarity: Uncommon, tags: ["ore", "graphite", "natural", "deep", "shelter:sound"]),
+        (name: "deepslate_ruby_ore", texture_variety: (turn: true, mirror: true), textures: All("deepslate_ruby_ore"), host: "deepslate", hardness: 4.5, drops: "ruby_ore", color: (200, 40, 60), rarity: Rare, tags: ["ore", "gem", "gem:ruby", "natural", "deep", "shelter:sound"]),
+        (name: "deepslate_sapphire_ore", texture_variety: (turn: true, mirror: true), textures: All("deepslate_sapphire_ore"), host: "deepslate", hardness: 4.5, drops: "sapphire_ore", color: (50, 90, 210), rarity: Rare, tags: ["ore", "gem", "gem:sapphire", "natural", "deep", "shelter:sound"]),
+        (name: "deepslate_emerald_ore", texture_variety: (turn: true, mirror: true), textures: All("deepslate_emerald_ore"), host: "deepslate", hardness: 4.5, drops: "emerald_ore", color: (40, 170, 100), rarity: Rare, tags: ["ore", "gem", "gem:emerald", "natural", "deep", "shelter:sound"]),
         // Samples of ore on the ground over a vein (ores.ron): small rocks with ore in them that
         // point down to it, and give a piece of its ore. They carry their ore's tags, so taking
         // one asks the same Mining level and pickaxe as its ore and teaches the same (tools.ron).
@@ -378,15 +388,15 @@
         (name: "emerald_ore_sample", render: Plant, model: Rock, solid: false, sound: Stone, textures: All("emerald_ore"), host: "stone", hardness: 0.5, drops: "emerald_ore", color: (40, 170, 100), tags: ["ore_sample", "ore", "gem", "gem:emerald", "natural"]),
         // Building
         // Windows glow by the light of a lit room behind them (`lit_through`).
-        (name: "glass", sound: Glass, textures: All("glass"), render: Cutout, hardness: 0.3, color: (200, 230, 240), tags: ["glass", "window", "building"], lit_through: true),
+        (name: "glass", sound: Glass, textures: All("glass"), render: Cutout, hardness: 0.3, color: (200, 230, 240), tags: ["glass", "window", "building", "shelter:fine"], lit_through: true),
         // Settlements' windows: old panes that break to nothing, so a village is no free
         // glass while glass has no recipe (settlements.ron `window`).
-        (name: "old_glass", sound: Glass, textures: All("old_glass"), render: Cutout, hardness: 0.3, drops: "core:air", color: (200, 230, 240), tags: ["window", "building"], lit_through: true),
+        (name: "old_glass", sound: Glass, textures: All("old_glass"), render: Cutout, hardness: 0.3, drops: "core:air", color: (200, 230, 240), tags: ["window", "building", "shelter:draughty"], lit_through: true),
         // A window before glass (Farm, Construction 3): oiled hide in a frame of sticks. Light
         // passes it as it does glass, and a lit room behind it shows warm through it at night.
-        (name: "hide_window", sound: Wood, textures: All("hide_window"), render: Cutout, hardness: 0.4, color: (200, 150, 90), tags: ["window", "building"], lit_through: true),
-        (name: "glowstone", sound: Glass, textures: All("glowstone"), light: 15, hardness: 0.3, color: (250, 210, 120), tags: ["light", "building"]),
-        (name: "sea_lantern", sound: Glass, textures: All("sea_lantern"), light: 15, hardness: 0.3, color: (200, 225, 220), tags: ["light", "building"]),
+        (name: "hide_window", sound: Wood, textures: All("hide_window"), render: Cutout, hardness: 0.4, color: (200, 150, 90), tags: ["window", "building", "shelter:draughty"], lit_through: true),
+        (name: "glowstone", sound: Glass, textures: All("glowstone"), light: 15, hardness: 0.3, color: (250, 210, 120), tags: ["light", "building", "shelter:fine"]),
+        (name: "sea_lantern", sound: Glass, textures: All("sea_lantern"), light: 15, hardness: 0.3, color: (200, 225, 220), tags: ["light", "building", "shelter:fine"]),
         // Food made in the crafting grid (recipes.ron).
         (name: "bread", render: Plant, solid: false, item: true, textures: All("bread"), hardness: 0.0, color: (200, 140, 70), tags: ["edible", "heal:4", "baked", "flavour:savoury"]),
         // Locked treasure chests, one an age (treasure.ron, blocks_treasure.ron's lockpicks):
@@ -414,11 +424,14 @@
         ),
     ],
     families: [
-        // Rocks. Deepslate and the sandstones show their layers on top.
-        (template: "stone", name: "deepslate", tags: ["metamorphic", "deep", "cave"], members: {"deepslate": (textures: Column(end: "deepslate_top", side: "deepslate"), hardness: 3.0, color: (75, 75, 82))}),
-        (template: "stone", name: "granite", tags: ["igneous", "cliff", "cave"], all: (color: (150, 105, 90))),
-        (template: "stone", name: "diorite", tags: ["igneous", "cliff", "cave"], all: (color: (190, 190, 190))),
-        (template: "stone", name: "andesite", tags: ["igneous", "cliff", "cave"], all: (color: (135, 135, 135))),
+        // Rocks. Deepslate and the sandstones show their layers on top. Toolstone is hard,
+        // fine-grained rock that grinds to a tool's edge at a grindstone (recipes.ron): granite,
+        // diorite, andesite and basalt where a province bares them (rocks.ron), and deepslate
+        // under every province, for a player whose country has none to mine down to.
+        (template: "stone", name: "deepslate", tags: ["metamorphic", "deep", "cave", "toolstone"], members: {"deepslate": (textures: Column(end: "deepslate_top", side: "deepslate"), hardness: 3.0, color: (75, 75, 82))}),
+        (template: "stone", name: "granite", tags: ["igneous", "cliff", "cave", "toolstone"], all: (color: (150, 105, 90))),
+        (template: "stone", name: "diorite", tags: ["igneous", "cliff", "cave", "toolstone"], all: (color: (190, 190, 190))),
+        (template: "stone", name: "andesite", tags: ["igneous", "cliff", "cave", "toolstone"], all: (color: (135, 135, 135))),
         (template: "stone", name: "tuff", tags: ["igneous", "cave", "deep"], all: (color: (108, 109, 102))),
         (template: "stone", name: "calcite", tags: ["sedimentary", "cave"], all: (color: (223, 224, 220), hardness: 0.75)),
         (
@@ -468,7 +481,7 @@
         (template: "stone", name: "marble", tags: ["metamorphic", "cliff", "cave"], all: (color: (226, 224, 218))),
         (template: "stone", name: "limestone", tags: ["sedimentary", "cliff", "cave"], all: (color: (200, 190, 160))),
         (template: "stone", name: "slate", tags: ["metamorphic", "cliff", "cave"], all: (color: (70, 78, 88))),
-        (template: "stone", name: "basalt", tags: ["igneous", "cliff", "cave", "deep"], all: (color: (60, 60, 66), hardness: 2.0)),
+        (template: "stone", name: "basalt", tags: ["igneous", "cliff", "cave", "deep", "toolstone"], all: (color: (60, 60, 66), hardness: 2.0)),
         (template: "stone", name: "chalk", tags: ["sedimentary", "cliff"], all: (color: (236, 234, 226), hardness: 0.8)),
         (template: "stone", name: "travertine", tags: ["sedimentary", "cliff", "cave"], all: (color: (206, 192, 160))),
         // More fired clay colours, for mesa bands and painted caves.

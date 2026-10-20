@@ -1,0 +1,28 @@
+// Fire in the thatch (engine/src/fire.rs, docs/home.md "Fire in the thatch"): a block with a
+// `catches` tag that a flame stands within `reach` of for `catch_seconds` catches fire. It
+// becomes `burning`, a flame itself, so the fire runs on through what catches beside it, and
+// after `burn_seconds` it is gone (`ash`). A flame is a block with a `flames` tag (torches,
+// campfires, braziers, burning thatch) or a lit hearth, which reaches `hearth_reach`. No
+// chance in it: a torch against a thatch roof always sets it alight, and taking the torch
+// away in time, or breaking what burns, puts it out. Only blocks a player sets (or a command
+// does) are watched, so a village as the world made it does not go up on its own.
+(
+    catches: ["thatch", "wattle"],
+    flames: ["fire"],
+    reach: 1,
+    hearth_reach: 2,
+    // Long enough to see the smoke, hear the crackle and break a panel or a roof piece
+    // bare handed, or take the torch away.
+    catch_seconds: 8.0,
+    burn_seconds: 10.0,
+    burning: "blaze",
+    ash: "core:air",
+    // Grey smoke curling up off it, thick enough to see by day, and the odd ember.
+    // A block in a player's home box catches only from a fire that player started: another
+    // player's torch beside your wattle wall fizzles (docs/home.md "Fire in the thatch").
+    homes_catch_only_from_owner: true,
+    smoke: [
+        (style: Smoke, rate: 14.0, at: (0.5, 0.6, 0.5), spread: 0.4, size: 1.6, height: Some(1.6), color: Some((120, 116, 110))),
+        (style: Ember, rate: 3.0, at: (0.5, 0.5, 0.5), spread: 0.4, size: 1.0, height: Some(0.8)),
+    ],
+)

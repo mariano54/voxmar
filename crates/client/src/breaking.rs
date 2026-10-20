@@ -81,16 +81,16 @@ fn amount(settings: Res<Settings>, pack: Res<ActivePack>, mut particles: ResMut<
 
 /// Cheap random numbers; effects need no determinism.
 #[derive(Default)]
-struct Dice(u64);
+pub(crate) struct Dice(u64);
 
 impl Dice {
-    fn roll(&mut self) -> f32 {
+    pub(crate) fn roll(&mut self) -> f32 {
         self.0 = crate::sfx::mix(self.0.wrapping_add(1));
         (self.0 >> 40) as f32 / (1u64 << 24) as f32
     }
 
     /// -1..1 on each axis.
-    fn spread(&mut self) -> Vec3 {
+    pub(crate) fn spread(&mut self) -> Vec3 {
         Vec3::new(self.roll(), self.roll(), self.roll()) * 2.0 - 1.0
     }
 }
@@ -230,7 +230,7 @@ fn bursts(
 /// A falling piece of `block`'s texture on `face`, with its floor found below where it
 /// will land.
 #[allow(clippy::too_many_arguments)]
-fn piece(
+pub(crate) fn piece(
     world: &ClientWorld,
     pieces: &TexturePieces,
     dice: &mut Dice,
@@ -281,10 +281,16 @@ fn piece(
 /// The height a particle thrown from `position` lands on: the ground below where it comes
 /// down, or below where it starts if that is a wall it would fly into.
 fn landing_floor(world: &ClientWorld, position: Vec3, velocity: Vec3) -> f32 {
+    landing_floor_with(world, position, velocity, GRAVITY, DRAG)
+}
+
+/// [`landing_floor`] for a particle falling with its own `gravity` and `drag`.
+pub(crate) fn landing_floor_with(world: &ClientWorld, position: Vec3, velocity: Vec3, gravity: f32, drag: f32) -> f32 {
     let below_start = ground_below(world, position);
     let drop = (position.y - below_start).max(0.0);
-    let land = (velocity.y + (velocity.y * velocity.y + 2.0 * GRAVITY * drop).sqrt()) / GRAVITY;
-    let travel = velocity.xz() * (1.0 - (-DRAG * land).exp()) / DRAG;
+    let gravity = gravity.max(0.01);
+    let land = (velocity.y + (velocity.y * velocity.y + 2.0 * gravity * drop).sqrt()) / gravity;
+    let travel = if drag > 0.0 { velocity.xz() * (1.0 - (-drag * land).exp()) / drag } else { velocity.xz() * land };
     let landing = position + Vec3::new(travel.x, 0.0, travel.y);
     if landing.xz().floor() == position.xz().floor() {
         return below_start;

@@ -308,13 +308,24 @@ impl Mind {
     /// hurt, angers. Remembered for a while (Minecraft keeps revenge 15 s; a grudge here
     /// lasts longer, and bravery decides fight or flight).
     pub fn hurt(&mut self, creature: &Creature, by: Option<u32>, health: f32) {
-        // A boss never runs: it fights to the end.
+        self.hurt_young(creature, by, health, false);
+    }
+
+    /// As [`Mind::hurt`], for one still `young`: the young of a kind that fights back (a
+    /// piglet) run all the same, unless its kind's `young_fight`.
+    pub fn hurt_young(&mut self, creature: &Creature, by: Option<u32>, health: f32, young: bool) {
+        // A boss never runs: it fights to the end (`Creature::holds`).
         // Nor does one that has just found no way to its attacker: it takes itself off.
-        let fights = creature.fights() && (creature.def.boss || (!self.recalls(Memory::NoWay) && health > 0.5 - 0.35 * self.personality.bravery));
+        let fights = creature.holds(young, health, self.personality.bravery) && (creature.def.boss || !self.recalls(Memory::NoWay));
         if fights {
             self.anger = 1.0;
         } else {
             self.fear = 1.0;
+            // One that runs from a fight drops it, or the anger of the blows before would
+            // hold it at bay until it died; one that never runs fights on, cornered.
+            if creature.flees() {
+                self.anger = 0.0;
+            }
         }
         if let Some(id) = by {
             self.remember(Memory::HurtBy(id), HURT_REMEMBERED);

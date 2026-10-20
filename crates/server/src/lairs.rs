@@ -95,6 +95,7 @@ impl Server {
             let floor = heart.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
             let seed = voxmar_engine::creature::mix(self.meta.seed, (heart.x as u64) << 32 ^ heart.z as u32 as u64);
             if let Some(id) = self.place_creature(species, floor, seed, 0.0) {
+                self.start_rolls(id);
                 self.lairs.bosses.insert(heart, id);
             }
         }

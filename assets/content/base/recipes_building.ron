@@ -25,6 +25,12 @@
         // Shingles split from slabs, two rows of them; a ridge caps two slabs with a third.
         (pattern: [["{name}_slab", "{name}_slab", "{name}_slab"], ["{name}_slab", "{name}_slab", "{name}_slab"]], output: "{name}_shingles", count: 4, skill: "core:construction", level: 5, xp: 4.0),
         (pattern: [["", "{name}_slab", ""], ["{name}_slab", "", "{name}_slab"]], output: "{name}_shingle_ridge", count: 2, skill: "core:construction", level: 5, xp: 3.0),
+        // Roof corners, two of a roof's pieces side by side for a hip, one over the other
+        // for a valley.
+        (pattern: [["{name}_shingles", "{name}_shingles"]], output: "{name}_shingles_corner", count: 2, skill: "core:construction", level: 5, xp: 1.0),
+        (pattern: [["{name}_shingles"], ["{name}_shingles"]], output: "{name}_shingles_inner_corner", count: 2, skill: "core:construction", level: 5, xp: 1.0),
+        (pattern: [["thatch_roof", "thatch_roof"]], output: "thatch_corner", count: 2, skill: "core:construction", level: 1, xp: 1.0),
+        (pattern: [["thatch_roof"], ["thatch_roof"]], output: "thatch_inner_corner", count: 2, skill: "core:construction", level: 1, xp: 1.0),
         // The home's ladder, from what has been worked first (sticks, twine, cured hide,
         // fired clay, bricks, beams), never straight from the ground.
         (pattern: [["hide", "hide", "hide"], ["stick", "", "stick"]], output: "hide_lean_to", count: 2, skill: "core:construction", level: 1, xp: 3.0),
@@ -35,6 +41,31 @@
         (pattern: [["{name}_beam", "daub"], ["daub", "{name}_beam"]], output: "half_timber", count: 4, skill: "core:construction", level: 4, xp: 4.0),
         (pattern: [["{name}_planks", "stick", "{name}_planks"], ["{name}_planks", "stick", "{name}_planks"]], output: "wooden_shutters", count: 2, skill: "core:construction", level: 2, xp: 3.0),
         (pattern: [["stone_bricks", "", "stone_bricks"], ["stone_bricks", "", "stone_bricks"]], output: "chimney_stack", count: 2, skill: "core:construction", level: 6, xp: 4.0),
+        // A town's house: jetties carry an upper floor out over the street on beams and posts;
+        // a doorway without a door has a frame of the same timber.
+        (pattern: [["{name}_beam", "{name}_beam"], ["", "{name}_post"]], output: "{name}_jetty_beam", count: 2, skill: "core:construction", level: 4, xp: 4.0),
+        (pattern: [["{name}_post", "{name}_beam", "{name}_post"]], output: "{name}_door_frame", skill: "core:construction", level: 3, xp: 3.0),
+        // A window frame: a beam for the lintel and one for the sill between two posts; a
+        // lattice window with a pair of shutters hung on it.
+        (pattern: [["{name}_post", "{name}_beam", "{name}_post"], ["", "{name}_beam", ""]], output: "{name}_window_frame", count: 2, skill: "core:construction", level: 3, xp: 3.0),
+        (pattern: [["{name}_lattice_window", "wooden_shutters"]], output: "{name}_shuttered_window", skill: "core:construction", level: 3, xp: 2.0),
+        // Chimneys: cobbles in clay before brick, and a hood of brick to gather smoke.
+        (pattern: [["cobblestone", "clay", "cobblestone"], ["cobblestone", "", "cobblestone"]], output: "stone_flue", count: 2, skill: "core:construction", level: 2, xp: 3.0),
+        (pattern: [["stone_bricks", "stone_bricks", "stone_bricks"], ["stone_bricks", "", "stone_bricks"]], output: "chimney_hood", skill: "core:construction", level: 6, xp: 4.0),
+        // Stairs and upper floors: railings of beams over sticks, a corner from two runs,
+        // a newel capped with a slab, a landing of slabs on beams, and a balcony door from
+        // a door and a lattice window.
+        (pattern: [["{name}_beam", "{name}_beam", "{name}_beam"], ["stick", "stick", "stick"]], output: "{name}_railing", count: 3, skill: "core:construction", level: 3, xp: 3.0),
+        (pattern: [["{name}_railing", "{name}_railing"]], output: "{name}_railing_corner", skill: "core:construction", level: 3, xp: 1.0),
+        // Field fences of posts and sticks, a corner from two runs, a gate from a run and a slab.
+        (pattern: [["{name}_post", "stick", "{name}_post"], ["{name}_post", "stick", "{name}_post"]], output: "{name}_fence", count: 6, skill: "core:construction", level: 2, xp: 3.0),
+        (pattern: [["{name}_fence", "{name}_fence"]], output: "{name}_fence_corner", skill: "core:construction", level: 2, xp: 1.0),
+        (pattern: [["{name}_fence", "{name}_slab", "{name}_fence"]], output: "{name}_fence_gate", skill: "core:construction", level: 2, xp: 2.0),
+        (pattern: [["{name}_slab"], ["{name}_post"]], output: "{name}_newel_post", skill: "core:construction", level: 3, xp: 2.0),
+        (pattern: [["{name}_slab", "{name}_slab", "{name}_slab"], ["{name}_beam", "", "{name}_beam"]], output: "{name}_landing", count: 3, skill: "core:construction", level: 3, xp: 3.0),
+        (pattern: [["{name}_lattice_window"], ["wooden_door"]], output: "balcony_door", skill: "core:construction", level: 4, xp: 3.0),
+        // An arrow slit: two stone bricks either side of a gap and a slab over it.
+        (pattern: [["", "stone_brick_slab", ""], ["stone_bricks", "", "stone_bricks"]], output: "stone_arrow_slit", count: 2, skill: "core:construction", level: 6, xp: 4.0),
         (pattern: [["fired_clay", "", "fired_clay"], ["fired_clay", "", "fired_clay"]], output: "chimney_pot", count: 2, skill: "core:construction", level: 3, xp: 3.0),
     ],
 )

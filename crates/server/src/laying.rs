@@ -321,7 +321,7 @@ mod tests {
             .making(item)
             .iter()
             .find_map(|entry| match &entry.method {
-                voxmar_engine::recipe_book::Method::Craft { variants, first, .. } => Some((*first as u16, variants.len() as u8)),
+                voxmar_engine::recipe_book::Method::Craft { first, ways, .. } => Some((*first as u16, *ways as u8)),
                 _ => None,
             })
             .expect("a crafting way");

@@ -42,6 +42,10 @@ pub struct VoiceDef {
     pub attack: Option<EventDef>,
     pub hurt: Option<EventDef>,
     pub death: Option<EventDef>,
+    /// Barks, for a settlement's people: greeting, alarm and contentment.
+    pub greet: Option<EventDef>,
+    pub alarm: Option<EventDef>,
+    pub content: Option<EventDef>,
 }
 
 impl VoiceDef {
@@ -57,6 +61,9 @@ impl VoiceDef {
             Kind::Attack => self.attack.as_ref(),
             Kind::Hurt => self.hurt.as_ref(),
             Kind::Death => self.death.as_ref(),
+            Kind::Greet => self.greet.as_ref(),
+            Kind::Alarm => self.alarm.as_ref(),
+            Kind::Content => self.content.as_ref(),
         }
     }
 }
@@ -224,8 +231,29 @@ impl Bank {
         Ok(bank)
     }
 
+    /// Whether every clip a voice plays is there under `assets`, so a mistyped path fails
+    /// at launch rather than leaving the animal silent.
+    pub fn check_files(&self, assets: &std::path::Path) -> Result<(), String> {
+        match self.clips.iter().find(|key| !assets.join(&key.path).is_file()) {
+            Some(missing) => Err(format!("{FILE}: `{}` is not there", missing.path)),
+            None => Ok(()),
+        }
+    }
+
     pub fn voice(&self, species: CreatureId) -> Option<&Voice> {
         self.species.get(species.0 as usize).and_then(Option::as_ref)
+    }
+
+    /// Settlements' people (kind `Villager`) whose voice lacks clips of its own for a bark:
+    /// each would be heard as some other sound, a hum for an alarm. The launch fails on any.
+    pub fn unbarked(&self, creatures: &CreatureRegistry) -> Vec<String> {
+        let barks = [Kind::Greet, Kind::Alarm, Kind::Content];
+        creatures
+            .iter()
+            .filter(|(_, c)| c.def.kind == voxmar_engine::creature::Kind::Villager)
+            .filter(|(id, _)| self.voice(*id).is_none_or(|voice| barks.iter().any(|&k| voice.events[k as usize].is_none())))
+            .map(|(_, c)| c.def.name.clone())
+            .collect()
     }
 }
 
@@ -314,6 +342,10 @@ mod tests {
         let rabbit = bank.voice(creatures.find("rabbit").unwrap()).unwrap();
         let clip = &bank.clips[rabbit.event(Kind::Idle).unwrap().clips[0]];
         assert_eq!(clip, &ClipKey { path: "content/zmod/b.ogg".into(), aether: 10 });
+        // Every shipped voice's clips are there; the mod's b.ogg is not, and fails the launch.
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+        assert_eq!(Bank::load(&content.files, creatures).unwrap().check_files(&assets), Ok(()));
+        assert!(bank.check_files(&assets).is_err());
     }
 
     #[test]

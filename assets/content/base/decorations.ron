@@ -221,5 +221,17 @@
             spacing: 48.0,
             follows: [(Forest, 0.15, 0.5)],
         ),
+        // Last, so it takes its chance after every other decoration's (`choose` gives earlier
+        // entries theirs first) and moves none of them.
+        (
+            // Flint nodules weathered out of the ground, lying loose in the grass and on the
+            // forest floor, on beach and desert sand, under snow and on bare rock and gravel:
+            // a bare hand picks them up, and two make a flint tool's head. The spawn kit
+            // (spawn_kit.ron) makes sure of some by every spawn.
+            name: "loose_flint", tags: ["open", "forest", "grassland", "scrubland", "savanna", "steppe", "tundra", "heath", "highland", "mountain", "rocky", "wetland", "jungle", "desert", "mesa"],
+            shape: Scatter(count: (1, 3), spread: 3.0, block: "loose_flint"),
+            ground: [Soil, Snow, Sand, Bare],
+            spacing: 12.0,
+        ),
     ],
 )

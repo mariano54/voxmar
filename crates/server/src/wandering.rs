@@ -127,6 +127,9 @@ struct Instance {
     id: u64,
     event: usize,
     seed: u64,
+    /// Rolls of the party's own drawn so far (how long it holds, pauses, waits), so each is
+    /// numbered by them, never by the tick it falls on.
+    rolls: std::cell::Cell<u64>,
     born: u64,
     members: Vec<Member>,
     plan: Plan,
@@ -187,6 +190,7 @@ impl Instance {
             id,
             event,
             seed,
+            rolls: Default::default(),
             born,
             members,
             plan,
@@ -217,6 +221,24 @@ impl Instance {
             shown: Default::default(),
         }
     }
+
+    /// The party's next roll of a kind (`salt`), counted.
+    fn next_roll(&self, salt: u64) -> u64 {
+        next_party_roll(self.seed, &self.rolls, salt)
+    }
+
+    /// The party's next roll of a kind, as a share of one.
+    fn roll(&self, salt: u64) -> f32 {
+        unit_from(self.next_roll(salt))
+    }
+}
+
+/// A party's next roll of a kind (`salt`) by its seed and count of rolls (`Instance::rolls`),
+/// counted: for where the party is borrowed in part.
+fn next_party_roll(seed: u64, rolls: &std::cell::Cell<u64>, salt: u64) -> u64 {
+    let n = rolls.get();
+    rolls.set(n + 1);
+    mix(mix(seed, n), salt)
 }
 
 struct Member {
@@ -250,7 +272,7 @@ enum Plan {
     /// A ring of stops, each paused at, a number of laps.
     Patrol { anchor: Vec3, next: usize, stops: u8, laps_left: u8, wait_until: Option<u64>, turn: f32 },
     /// To a spot, a stay there, then away.
-    Camp { spot: Vec3, since: u64, stay_until: Option<u64>, arrive_by: u64, away: f32 },
+    Camp { spot: Vec3, stay_until: Option<u64>, arrive_by: u64, away: f32 },
     /// Keeping to a player, until a tick.
     Shadow { until: u64 },
     /// Turned on a player: the party fights on by its own nature while they stay near.
@@ -323,6 +345,10 @@ pub struct SavedCompanion {
     pub position: [f32; 3],
     pub yaw: f32,
     pub health: u16,
+    /// Its own count of rolls (`Live::rolls`), so it thinks on rather than again; none in
+    /// older saves.
+    #[serde(default)]
+    pub rolls: u64,
 }
 
 impl Server {
@@ -333,7 +359,7 @@ impl Server {
             .live
             .values()
             .filter(|c| c.companion)
-            .map(|c| SavedCompanion { species: self.content.creatures.get(c.species).def.name.clone(), seed: c.seed, position: c.body.position.to_array(), yaw: c.body.yaw, health: c.health })
+            .map(|c| SavedCompanion { species: self.content.creatures.get(c.species).def.name.clone(), seed: c.seed, position: c.body.position.to_array(), yaw: c.body.yaw, health: c.health, rolls: c.rolls })
             .collect();
         // The same file for the same world, whatever order the creatures are kept in.
         saved.sort_by_key(|s| s.seed);
@@ -354,6 +380,7 @@ impl Server {
             let creature = self.creatures.live.get_mut(&id).expect("just made");
             creature.body.yaw = s.yaw;
             creature.health = s.health.min(creature.health).max(1);
+            creature.rolls = s.rolls;
             (creature.companion, creature.wanderer) = (true, true);
         }
     }
@@ -438,7 +465,8 @@ impl Server {
             return;
         }
         let rules = *self.content.wandering.rules();
-        let seed = mix(mix(self.meta.seed, self.tick), salt ^ 0x3a9d);
+        // By the world's count of rolls, never the tick it is tried on.
+        let seed = mix(self.meta.roll_seed(crate::save::ROLL_PARTY), salt ^ 0x3a9d);
         if unit_from(mix(seed, 1)) >= rules.chance {
             return;
         }
@@ -484,7 +512,7 @@ impl Server {
         if ready.is_empty() {
             return;
         }
-        let seed = mix(mix(self.meta.seed, self.tick), salt ^ 0x5f0d);
+        let seed = mix(self.meta.roll_seed(crate::save::ROLL_FOLLOWER), salt ^ 0x5f0d);
         if unit_from(mix(seed, 1)) >= rules.chance {
             return;
         }
@@ -707,7 +735,7 @@ impl Server {
             let Some(anchor) = anchor else { return false };
             let survey = survey.get_or_init(|| self.survey_around(anchor, Some(player)));
             let calm = voxmar_engine::weather::Weather::NONE;
-            let situation = voxmar_engine::effect::Situation { felt: 0.0, warmed: false, outdoors: self.open_sky(anchor + IVec3::Y * 2), weather: &calm, biome: "", biome_tags: &[], home: Some(survey), done: &p.quests_done, held: &[], near: &[], seated: false };
+            let situation = voxmar_engine::effect::Situation { felt: 0.0, warmed: false, outdoors: self.open_sky(anchor + IVec3::Y * 2), weather: &calm, biome: "", biome_tags: &[], home: Some(survey), done: &p.quests_done, held: &[], near: &[], worn: &[], seated: false, night: self.night() };
             self.content.effects.get(step).when.as_ref().is_some_and(|when| when.holds(&situation))
         };
         let mut choices: Vec<(usize, f32)> = Vec::new();
@@ -876,7 +904,7 @@ impl Server {
                 let spot = at + Vec3::new(towards.x, 0.0, towards.y) * ahead;
                 let arrive_by = self.tick + ticks(ahead / 1.2 + 60.0);
                 let _ = stay;
-                Plan::Camp { spot, since: self.tick, stay_until: None, arrive_by, away }
+                Plan::Camp { spot, stay_until: None, arrive_by, away }
             }
             Script::Shadow { seconds, .. } => Plan::Shadow { until: self.tick + ticks(seconds) },
             Script::Chase { pass, length, pace, .. } => {
@@ -976,7 +1004,7 @@ impl Server {
                     creature.mind.forgive();
                 }
             }
-            let seconds = hold.0 + unit_from(mix(inst.seed, self.tick ^ 0x3c0)) * (hold.1 - hold.0);
+            let seconds = hold.0 + inst.roll(0x3c0) * (hold.1 - hold.0);
             let lead = positions.first().copied().unwrap_or(Vec3::ZERO);
             let nearest = players.iter().map(|&(_, p)| p).min_by(|a, b| a.distance(lead).total_cmp(&b.distance(lead)));
             let away = self.march_away(lead, nearest, Vec2::X, 0.9, leaves(event.def.script));
@@ -1175,7 +1203,7 @@ impl Server {
         self.wandering.next += 1;
         // What was said to whom goes with it: a line its party has used up (the meal that
         // befriended it) is not offered again by the one who left.
-        let mut alone = Instance::new(id, inst.event, mix(inst.seed, 0xde7a ^ self.tick), self.tick, vec![member], Plan::Shadow { until: 0 });
+        let mut alone = Instance::new(id, inst.event, inst.next_roll(0xde7a), self.tick, vec![member], Plan::Shadow { until: 0 });
         (alone.told, alone.spent) = (inst.told.clone(), inst.spent.clone());
         Some(alone)
     }
@@ -1347,16 +1375,24 @@ impl Server {
         self.wandering.active.insert(id, inst);
     }
 
-    /// Angers (or, if they cannot fight, frightens) every member of a party at `player`.
+    /// Angers (or, if they cannot fight, are young or are badly hurt, frightens) every
+    /// member of a party at `player`.
     fn stir(&mut self, inst: &Instance, player: PlayerId, fight: bool) {
         for member in &inst.members {
             let Some(creature) = self.creatures.live.get_mut(&member.creature) else { continue };
-            let fights = fight && self.content.creatures.get(creature.species).fights();
+            let species = self.content.creatures.get(creature.species);
+            // One badly hurt that would run from a fight runs rather than be angered again.
+            let health = f32::from(creature.health) / f32::from(species.def.health.max(1));
+            let fights = fight && species.holds(creature.grows_up.is_some(), health, creature.mind.personality.bravery);
             if fights {
                 creature.mind.anger = 1.0;
                 creature.mind.remember(Memory::HurtBy(player), GRUDGE);
             } else {
                 creature.mind.fear = 1.0;
+                // Scattering, it drops any fight it had (a pet boar goes with its party).
+                if species.flees() {
+                    creature.mind.anger = 0.0;
+                }
                 creature.mind.remember(Memory::ScaredBy(player), GRUDGE);
             }
         }
@@ -1499,7 +1535,7 @@ impl Server {
                 inst.halt = (0, self.tick + ticks(halt.cooldown));
                 inst.aim = None;
             } else if self.tick >= inst.halt.1 && close.is_some() {
-                let seconds = halt.seconds.0 + unit_from(mix(inst.seed, self.tick)) * (halt.seconds.1 - halt.seconds.0);
+                let seconds = halt.seconds.0 + inst.roll(0x4a17) * (halt.seconds.1 - halt.seconds.0);
                 inst.halt.0 = self.tick + ticks(seconds);
                 halted = true;
             }
@@ -1591,17 +1627,17 @@ impl Server {
                         }
                     }
                     None if flat(lead, stop) < THERE => {
-                        *wait_until = Some(self.tick + ticks(pause.0 + unit_from(mix(inst.seed, *next as u64 * 7 + inst.born)) * (pause.1 - pause.0)));
+                        *wait_until = Some(self.tick + ticks(pause.0 + unit_from(next_party_roll(inst.seed, &inst.rolls, 0x9a05)) * (pause.1 - pause.0)));
                         last = true;
                     }
                     None => goal = Some(stop),
                 }
             }
-            (Plan::Camp { spot, since, stay_until, arrive_by, away }, Script::Camp { stay, .. }) => {
+            (Plan::Camp { spot, stay_until, arrive_by, away, .. }, Script::Camp { stay, .. }) => {
                 heading = (xz(*spot) - xz(lead)).try_normalize().unwrap_or(heading);
                 match *stay_until {
                     None if flat(lead, *spot) < THERE * 1.5 || self.tick >= *arrive_by => {
-                        *stay_until = Some(self.tick + ticks(stay.0 + unit_from(mix(inst.seed, *since)) * (stay.1 - stay.0)));
+                        *stay_until = Some(self.tick + ticks(stay.0 + unit_from(next_party_roll(inst.seed, &inst.rolls, 0x57a7)) * (stay.1 - stay.0)));
                         last = true;
                     }
                     None => goal = Some(*spot),
@@ -1684,7 +1720,7 @@ impl Server {
                     Script::Drift { pause, leg, .. } => (pause, false, leg, 0.0),
                     _ => ((4.0, 8.0), false, (6.0, 12.0), 8.0),
                 };
-                let roll = |salt: u64| unit_from(mix(inst.seed, self.tick ^ salt << 32));
+                let roll = |salt: u64| unit_from(next_party_roll(inst.seed, &inst.rolls, salt << 32));
                 heading = *h;
                 pace = 0.7;
                 if self.tick >= *until {
@@ -1723,7 +1759,7 @@ impl Server {
                     // No quarry left to run down, or no one left to run it down.
                     resume = Some(Plan::March { heading: *h, goal: *g, pace: *p });
                 } else if chasers.iter().any(|c| flat(*c, lead) <= CATCH) {
-                    caught = Some(hold.0 + unit_from(mix(inst.seed, self.tick ^ 0xca7)) * (hold.1 - hold.0));
+                    caught = Some(hold.0 + inst.roll(0xca7) * (hold.1 - hold.0));
                 } else if flat(lead, *g) < THERE * 2.0 {
                     inst.done = true;
                     last = true;
@@ -1787,7 +1823,7 @@ impl Server {
                             (None, Some(_)) if mood.wary => {
                                 wary_since.get_or_insert(self.tick);
                             }
-                            (None, Some(player)) => *sprung = Some((self.tick + ticks(delay.0 + unit_from(mix(inst.seed, self.tick ^ 0x5b7)) * (delay.1 - delay.0)), player)),
+                            (None, Some(player)) => *sprung = Some((self.tick + ticks(delay.0 + unit_from(next_party_roll(inst.seed, &inst.rolls, 0x5b7)) * (delay.1 - delay.0)), player)),
                             (None, None) => *wary_since = None,
                             (Some((at, player)), _) if self.tick >= at => spring = Some(player),
                             _ => {}
@@ -2096,11 +2132,11 @@ impl Server {
             {
                 let member = &mut inst.members[i];
                 if self.tick >= member.mill_until {
-                    let a = unit_from(mix(inst.seed, self.tick ^ (i as u64) << 20)) * std::f32::consts::TAU;
-                    let r = unit_from(mix(inst.seed, self.tick ^ (i as u64) << 24)) * mill;
+                    let a = unit_from(next_party_roll(inst.seed, &inst.rolls, (i as u64) << 20)) * std::f32::consts::TAU;
+                    let r = unit_from(next_party_roll(inst.seed, &inst.rolls, (i as u64) << 24)) * mill;
                     let at = *spot + Vec3::new(a.cos(), 0.0, a.sin()) * r;
                     member.mill_at = at;
-                    member.mill_until = self.tick + ticks(6.0 + 10.0 * unit_from(mix(inst.seed, self.tick ^ (i as u64) << 28)));
+                    member.mill_until = self.tick + ticks(6.0 + 10.0 * unit_from(next_party_roll(inst.seed, &inst.rolls, (i as u64) << 28)));
                 }
                 let there = flat(me, inst.members[i].mill_at) < 1.0;
                 errands[i] = Some(errand(inst.members[i].mill_at, there, if night && there { Pose::Resting } else { Pose::Idle }, Some(*spot), 1.0));
@@ -2170,7 +2206,7 @@ impl Server {
                         Some(w) => {
                             let there = flat(me, w.stand) < 1.0;
                             if there && w.until.is_none() {
-                                let roll = unit_from(mix(inst.seed, self.tick ^ (i as u64) << 40));
+                                let roll = unit_from(next_party_roll(inst.seed, &inst.rolls, (i as u64) << 40));
                                 let (least, most) = match carry {
                                     Some(c) if w.carrying => c.set,
                                     _ => work,
@@ -2490,8 +2526,7 @@ impl Server {
         };
         // Seen or not: the admin asked for it. Cast by the world's count of rolls, never the
         // tick.
-        let [a, b] = self.meta.next_roll(crate::save::ROLL_WANDER);
-        let seed = mix(self.meta.seed, u64::from(a.to_bits()) << 32 | u64::from(b.to_bits()));
+        let seed = self.meta.roll_seed(crate::save::ROLL_WANDER);
         if self.begin_event_at(player, event, spot, seed, true).is_none() {
             tracing::info!("wandering: no cast of {name} could be brought to {spot}");
             return Err(Words::key("command.wander.no_room"));
@@ -3059,10 +3094,12 @@ mod tests {
         let home = Vec3::new(150.5, 200.0, 128.5);
         let mut server = fixture();
         let captive = settled_prisoner(&mut server, home);
-        server.creatures.live.get_mut(&captive).unwrap().health = 3;
+        let creature = server.creatures.live.get_mut(&captive).unwrap();
+        (creature.health, creature.rolls) = (3, 600);
         let (species, at) = (server.creatures.live[&captive].species, server.creatures.live[&captive].body.position);
         let saved = server.saved_companions();
         assert_eq!(saved.len(), 1);
+        assert_eq!(saved[0].rolls, 600);
         // Through the file, into a world that has just opened.
         let dir = std::env::temp_dir().join(format!("voxmar-companions-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -3077,10 +3114,17 @@ mod tests {
         let (id, back) = reopened.creatures.live.iter().find(|(_, c)| c.companion).expect("the prisoner is back");
         assert_eq!(back.species, species);
         assert_eq!(back.health, 3, "as wounded as it was");
+        assert_eq!(back.rolls, 600, "it thinks on from where it was, not over again");
         assert!(flat(back.body.position, at) < 0.01, "where it stood");
         assert!(!reopened.wandering.manages(*id));
         assert_eq!(reopened.saved_companions(), saved, "and is saved again the same");
         std::fs::remove_dir_all(&dir).unwrap();
+        // A file from before rolls were counted reads, and starts its count at none.
+        let text = ron::ser::to_string(&saved).unwrap();
+        let older = text.replace(",rolls:600", "");
+        assert_ne!(older, text, "the field is in the text: {text}");
+        let read: Vec<SavedCompanion> = ron::from_str(&older).unwrap();
+        assert_eq!(read[0].rolls, 0);
     }
 
     #[test]
@@ -3116,7 +3160,7 @@ mod tests {
     fn companions_waiting_for_their_species_keep_their_places() {
         let mut server = fixture();
         let most = server.content.wandering.rules().companions_most;
-        let gone = |n: u64| SavedCompanion { species: "lostmod:ghost".into(), seed: n, position: [128.5, 200.0, 140.5], yaw: 0.0, health: 5 };
+        let gone = |n: u64| SavedCompanion { species: "lostmod:ghost".into(), seed: n, position: [128.5, 200.0, 140.5], yaw: 0.0, health: 5, rolls: 0 };
         server.restore_companions((0..most as u64).map(gone).collect());
         assert_eq!(server.wandering.waiting.len(), most);
         let led = settled_prisoner(&mut server, Vec3::new(150.5, 200.0, 128.5));
@@ -3263,14 +3307,14 @@ mod tests {
         give_held(&mut server, "base:bone", 1);
         assert!(server.meet(1, captive));
         assert!(server.wandering.active[&id].members.iter().any(|m| m.creature == captive), "still bound");
-        give_held(&mut server, "base:wooden_knife", 1);
+        give_held(&mut server, "base:flint_knife", 1);
         assert!(server.meet(1, captive));
         assert!(server.wandering.active[&id].members.iter().all(|m| m.creature != captive), "free");
         assert_eq!(server.wandering.active[&id].provoked, Some(1), "and the jailers saw");
         assert!(matches!(server.wandering.active[&id].plan, Plan::Avenge { .. }));
         run(&mut server, 10);
         assert!(server.creatures.live[&jailer].mind.anger > 0.0);
-        assert_eq!(count_of(&server, "base:wooden_knife"), 1, "the knife is kept");
+        assert_eq!(count_of(&server, "base:flint_knife"), 1, "the knife is kept");
     }
 
     #[test]
@@ -6157,15 +6201,10 @@ mod tests {
         assert!(server.wandering.active.contains_key(&ahead));
     }
 
-    /// A party that comes after another (`needs.after`) joins it through the gap that keeps
-    /// other parties off, `follow_after` seconds on at the earliest, and only once for each.
-    #[test]
-    fn a_party_that_comes_after_another_joins_it_through_the_gap_once() {
-        let mut server = fixture();
-        broad_day(&mut server);
-        // Floor about land the rival comes to, and the player on it.
-        let land = land_for(&server, event(&server, "rival_pedlar"), Vec3::new(128.0, 200.0, 128.0), |at| {
-            let rival = server.content.wandering.get(event(&server, "rival_pedlar"));
+    /// Floor about land a rival pedlar comes to, and player 1 on it; where it is.
+    fn rival_ground(server: &mut Server) -> IVec3 {
+        let land = land_for(server, event(server, "rival_pedlar"), Vec3::new(128.0, 200.0, 128.0), |at| {
+            let rival = server.content.wandering.get(event(server, "rival_pedlar"));
             (0..16).all(|i| {
                 let (a, r) = (i as f32 * 0.4, 50.0 + i as f32 * 3.0);
                 let biome = server.overworld.biomes().get(server.overworld.site((at.x + a.cos() * r) as i32, (at.z + a.sin() * r) as i32).biome);
@@ -6186,6 +6225,62 @@ mod tests {
             }
         }
         server.players.get_mut(&1).unwrap().position = Vec3::new(land.x as f32 + 0.5, 200.0, land.z as f32 + 0.5);
+        land
+    }
+
+    /// Whether a party comes after another, and which, is drawn by the world's count of
+    /// rolls, never the tick it is tried on.
+    #[test]
+    fn a_follower_draws_by_the_worlds_count_not_the_tick() {
+        let joined = |from: u64| {
+            let mut server = fixture();
+            server.meta.draw_key = 0x0d1a;
+            broad_day(&mut server);
+            let land = rival_ground(&mut server);
+            server.tick = from;
+            start(&mut server, "pedlar_and_hound", (land.x, land.z - 60));
+            server.tick += ticks(server.content.wandering.rules().follow_after);
+            let before: Vec<u64> = server.wandering.active.keys().copied().collect();
+            let found = (0..400).find_map(|salt| {
+                server.try_follower(1, salt);
+                server.tick += 7;
+                server.wandering.active.values().find(|i| !before.contains(&i.id)).map(|i| (salt, i.event, i.seed))
+            });
+            (found, server.meta.rolls)
+        };
+        let first = joined(3_000);
+        assert!(first.0.is_some(), "no rival came: {first:?}");
+        assert_eq!(joined(3_000 + 40_977), first, "the same tries later drew otherwise");
+    }
+
+    /// How long a party camps is drawn by its own count of rolls, never the tick: the same
+    /// party set out later stays alike.
+    #[test]
+    fn a_partys_stay_draws_by_its_own_count_not_the_tick() {
+        let stays = |from: u64| {
+            let mut server = fixture();
+            server.tick = from;
+            let id = start(&mut server, "puppeteers", (110, 128));
+            assert!(run_until(&mut server, id, 60, |inst| matches!(inst.plan, Plan::Camp { stay_until: Some(_), .. })), "the party settles");
+            let inst = &server.wandering.active[&id];
+            let Plan::Camp { stay_until: Some(until), .. } = inst.plan else { unreachable!() };
+            (until - server.tick, inst.rolls.get())
+        };
+        // A whole number of every creature's beats on (see the creatures' own test), so
+        // the party walks alike.
+        let beats: u64 = (4..7).chain(20..23).product();
+        let first = stays(2_000);
+        assert!(first.1 > 0, "its stay drew nothing: {first:?}");
+        assert_eq!(stays(2_000 + 7 * beats), first, "the same party set out later stayed otherwise");
+    }
+
+    /// A party that comes after another (`needs.after`) joins it through the gap that keeps
+    /// other parties off, `follow_after` seconds on at the earliest, and only once for each.
+    #[test]
+    fn a_party_that_comes_after_another_joins_it_through_the_gap_once() {
+        let mut server = fixture();
+        broad_day(&mut server);
+        let land = rival_ground(&mut server);
         let pedlar = start(&mut server, "pedlar_and_hound", (land.x, land.z - 60));
         assert!(!server.wandering_welcome(1), "the gap after the pedlar keeps others off");
         let follow = |server: &mut Server| {
@@ -6237,13 +6332,20 @@ mod tests {
             place(&mut server, name, home + IVec3::new(i as i32 + 1, 0, 0));
         }
         assert!(!comes_at(&server, "fireside_guests", spot), "a bare camp draws no callers");
-        // Seats, a table, stores, more light and a roof over it all: homely.
+        // Seats, a table, stores, more light, and sound plank walls and roof over it all
+        // on a floor: homely.
         for (i, name) in ["base:oak_stool", "base:oak_stool", "base:oak_table", "base:crate", "base:crate", "base:candle", "base:candle"].iter().enumerate() {
             place(&mut server, name, home + IVec3::new(i as i32 - 3, 0, 2));
         }
         for x in -6..=6 {
             for z in -6..=6 {
-                place(&mut server, "base:stone", home + IVec3::new(x, 4, z));
+                place(&mut server, "base:stone", home + IVec3::new(x, -1, z));
+                place(&mut server, "base:oak_planks", home + IVec3::new(x, 4, z));
+                if x.abs() == 6 || z.abs() == 6 {
+                    for y in 0..4 {
+                        place(&mut server, "base:oak_planks", home + IVec3::new(x, y, z));
+                    }
+                }
             }
         }
         assert!(comes_at(&server, "fireside_guests", spot), "a homely home has callers");
@@ -6266,7 +6368,7 @@ mod tests {
         player.position = Vec3::new(128.5, 200.0, 140.5);
         let spot = IVec3::new(128, 200, 150);
         assert!(!comes_at(&server, "neighbours", spot), "a cold hearth is no home to call on");
-        server.lit.insert(core, crate::hearth::Lit { position: core.to_array(), structure: "base:hearth".into(), until: u64::MAX });
+        server.lit.insert(core, crate::hearth::Lit { position: core.to_array(), structure: "base:hearth".into(), until: u64::MAX, owner: None });
         assert!(comes_at(&server, "neighbours", spot), "a burning one is");
         server.lit.clear();
         server.players.get_mut(&1).unwrap().bed = Some(Vec3::new(130.5, 200.0, 130.5));

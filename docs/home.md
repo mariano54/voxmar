@@ -39,10 +39,10 @@ the gate's Home step, "home: icons", shot `home-chips`).
 | --- | --- | --- | --- |
 | Camp | Nomad | a bed (sleeping bag) slept in, 1 light | heal x1.2 |
 | Hearthside | Nomad end | the lit hearth | heal x1.33, warmth +4 |
-| Snug | Nomad end / Farm start | roof, hearth, bed, 2 lights | heal x1.5, warmth +6 |
-| Homely | Farm | + 2 seats, 1 table, 2 storage, 3 lights | + xp x1.05 |
-| Cosy | Farm | + 2 rugs, 2 curtains, 1 cushion, 3 crockery, 4 lights | heal x1.75, xp x1.1 |
-| Heart of the Home | Farm end | + books, cooking, workshop, banner | heal x2, xp x1.125 |
+| Snug | Nomad end / Farm start | roof, walled in (9 in 10 faces draughty or better), hearth, bed, 2 lights | heal x1.5, warmth +6 |
+| Homely | Farm | + 6 in 10 faces sound, 2 seats, 1 table, 2 storage, 3 lights | warmth +8, xp x1.05 |
+| Cosy | Farm | + 9 in 10 faces sound, 2 rugs, 2 curtains, 1 cushion, 3 crockery, 4 lights | heal x1.75, warmth +9, xp x1.1 |
+| Heart of the Home | Farm end | + half the faces fine, books, cooking, workshop, banner | heal x2, warmth +10, xp x1.125 |
 
 Seats are stools, chairs, benches and cushions; tables include desks and counters; storage is
 whatever a home keeps things in or on: chests, cupboards and wardrobes, shelves (pot shelves
@@ -53,6 +53,55 @@ of a chest and a barrel by a campfire, "home: storage"); cooking is the cottage 
 workshop is the loom frame, spindle stand and quern. All are craftable in the first two ages
 (Construction 1 to 8, Crafting 2 to 8), so each step is a few minutes of gathering and
 crafting, not a grind.
+
+## Walls (how well a home is built)
+
+Each step from Snug up wants better walls about the room the home stands in, and is warmer
+for them: a hide lean-to walled in all about is Snug, a log or plank house Homely, the same
+with hardly a draughty board Cosy, and a house half of dressed stone, brick or glass the Heart
+of the Home.
+
+A building block says how well it shelters with a tag: `shelter:draughty` (the hide lean-to,
+wattle panels, hide windows, cloth, awnings), `shelter:sound` (logs, planks, cobble, cracked
+and mossy bricks, daub, half-timber, shut doors and shutters) or `shelter:fine` (stone and
+other bricks, polished stone, terracotta, glass, chimney pieces). A better one counts for every
+worse. An open door or shutter carries none: it shelters nothing. Roofs are judged as walls:
+thatch and shingles are both sound (the trade between them is fire, not draught: thatch is
+cheap and cosy but catches, shingles do not), as are timber posts and beams and plank and
+cobble slabs and stairs; a lattice window is draughty. Natural rock and the ores in it are
+sound, so a home cut into a hillside can be Cosy after the mining it took; earth, gravel, sand
+and any other solid block with no tag count as draughty, until daub coats them. Every solid
+block tagged `building` or `roof`, full or shaped, that is not furniture carries exactly one
+shelter tag, and no block more than one, checked when content loads (server `rules.rs`
+`check_shelters`), so a new one cannot slip in unjudged.
+
+How it is judged (`Server::room_walls`, beside the home survey): from where home stands, a
+scan goes out over the open cells within the home's reach (survival.ron's `home_reach`,
+`home_up`, `home_down`), starting from the first open cell over a hearthstone. Every face it meets sideways or overhead is a face of the room: a
+wall, or the roof. A wall is any solid block or any with a shelter tag, so a shut door or a
+window closes the room, and an open door lets the scan out. Furniture is not a wall: a block
+with a tag in survival.ron's `home_furniture` (machine, station, furnishing, storage, decor,
+multiblock_core, farm, waters) is looked past to the wall behind it, so a chest or a table
+by the wall leaves the room as it was, and a barrel in a doorway is no door. Furniture is a
+furniture tag and no shelter tag: a shelter tag always wins, so cloth hung for a wall, a hay
+bale and a stone column (`shelter:draughty`, `draughty`, `sound`) wall a room, while machines,
+stations, the chest, the hearthstone, the altar and the planter carry no shelter tag and are
+looked past, so a small station never plugs a gap in a wall. The scan never steps down into a
+solid block or furniture: under the room is floor, so a hearthstone, a barrel or a well set in
+it is floor like the stone round it. A face leading out of the reach
+(or into an unloaded column) is an opening, of no shelter, and counts against the room; the
+floor is not counted. `HomeWalls(Sound, 0.6)` holds when 6 in 10 faces are sound or better
+(effect.rs, `Condition::HomeWalls`, `Walls::share`; load-checked: the share is above 0 and at
+most 1). The scan runs only when an effect asks after walls (`EffectRegistry::home_walls`) and
+is bounded by the home box, so a home out in the open costs no more than the box. `/home`
+names what is short: "sound or better walls and roof all about 52%/60%".
+
+Tests: `a_room_is_judged_by_its_walls_and_roof` (planks sound, a brick fine, a hole or an open
+door an opening, a shut door a wall, a hide window draughty),
+`a_home_shows_the_highest_step_it_has_and_a_rest_to_match` (each step walled for the one below
+is the one below, and each step up is warmer), and the ladder's climb test (each step asks
+walls at least as good as the one below). The gate's Home step walls a camp in and checks it
+("home: walls").
 
 ## Rooms (side branches)
 
@@ -65,8 +114,11 @@ announced in chat with a **Next:** line, and the better one hides the other:
 | Workshop | + roof, 2 lights, a loom, spindle stand or quern, 2 storage | crafting and construction +2, engineering +1 |
 | Pantry | 2 storage, a hearth or any heat block | the good effects of a meal last x1.25 (`meal_time`) |
 | Larder | + roof, 4 storage, a stove or cauldron, a table | meals also heal x1.2 (`meal_heal`) and last x1.5 |
-| Bedside | a bed, a seat, 2 lights (no roof needed) | 2° warmer, and sleeping there is a Well rested sleep |
+| Bedside | a bed, a seat, 2 lights (no roof needed) | 2° warmer, and a night's sleep there is Well rested |
 | Herb nook | 2 hanging herbs or hung drying racks (`drying`), 1 storage | farming and alchemy count 1 level higher, a meal's good lasts x1.1 |
+| Bright room | a roof, 2 windows (`window`: hide window, glass, lattice window, open shuttered window) | heal x1.05, learn x1.05 |
+| Soft furnishings | a roof, a rug and a drape (`drape`: a wall hanging or a curtain) | 1° warmer |
+| Dooryard | out under the sky, an awning and 2 yard pieces in the open (`yard`: a bench, bunting, a hay bale) | heal x1.05 |
 
 Bedside is a Nomad's first comfort: a stool (Construction 1) and two candles (Crafting 3)
 beside the sleeping bag. Before any roof or hearth it is the warmer night and the better rest
@@ -76,6 +128,20 @@ The herb nook is the Farm age's: two herbs tied with twine hang to dry (Crafting
 bunches); two bunches and a jar, basket or crate make it. Its farming level counts where it
 is felt, sowing the kitchen garden at the door (a crop a level early) and harvesting it, and
 its alchemy level at the bench.
+Soft furnishings keep the draught off: a rug underfoot and cloth hung on a wall or at a window
+(`drape`: a wall hanging, two cloths over two sticks, Crafting 4, any dye, or a curtain) under the home's roof, 1°
+warmer; two rugs are not enough
+(`a_rug_and_a_hanging_under_a_roof_are_soft_furnishings`, the server's
+`a_rug_and_a_hanging_make_soft_furnishings`, the gate's walls step: "home: soft furnishings").
+The dooryard is the Farm age's too, the home's outside (home audit 2, item 10: outdoor decor
+used to count for nothing): an awning at the door and two more things set out under the sky
+about it. A yard piece counts only where it stands under the open sky (effects.ron
+`outdoors`, a tag list load-checked against what `HomeHas` asks), so a bench or bales kept
+indoors are no yard; only blocks still standing count, so a bale taken away or broken takes
+its part with it; and it holds only out in the yard, never under the roof, which `/home`
+names ("you out under the open sky", `Lack::Sky`)
+(`an_awning_and_yard_pieces_out_of_doors_make_a_dooryard`, the server's
+`an_awning_a_bench_and_a_bale_make_a_dooryard`, the gate's walls step: "home: dooryard").
 
 `boosts` are the effect vocabulary's own (they stop at +6 and recipes marked firm ignore
 them); `meal_heal` and `meal_time` are two new modifiers, applied as the meal is eaten from
@@ -209,6 +275,9 @@ Right clicking a bed used to only set where you wake. It now also gives a **rest
 `sleeps` rules): Rested (10 minutes) anywhere, Well rested (15) if the bed is in a Snug home,
 Deep rest (20) in a Cosy one (a game day is 20 minutes). Rest gives a little heal, xp,
 mining and speed wherever you go, and a bed always works as a bed (it sets where you wake and your home) but gives no new rest
+(save a bed a village furnished a home with, where its plan put one, while that very bed
+stands there: it is its resident's, and sleeping in it is refused with `bed.someones`, outside
+creative; any other bed works, placed, another player's, or set by command)
 while one lasts, so the buff is a once-a-day habit, not a button to hold. Timed effects count down
 online only.
 
@@ -219,7 +288,8 @@ Sleep (heal x4) for a minute, two in a proper bed, so coming home hurt and sleep
 It is no way to heal in a fight: a bed refuses sleep with a creature that hunts players
 (wild, or kept by another player) within `sleep_threat_reach` blocks (12), or within
 `sleep_after_hurt` seconds (15) of a wound (a blow, a fall, a sting; not the cold or heat
-wearing at one) (`core/survival.ron`). A refused sleep still claims the bed. And it stays slower than eating, since food is the heal (design
+wearing at one) (`core/survival.ron`). A sleep refused for a threat or a wound still claims the bed; a
+village's bed is never claimed. And it stays slower than eating, since food is the heal (design
 draft 63): however many heal buffs and prayers are on, healing by itself is held at
 `heal_most` (1 a second, `survival.ron`), which loading checks is below what the slowest
 food heals a second, a 0.6 s bite at a time; time past a point is never banked to pay out
@@ -230,6 +300,35 @@ Tests: the engine's `a_proper_bed_rests_well_and_every_sleep_mends_slower_than_f
 `no_sleep_with_a_hunter_near_or_wounds_fresh`; the gate's Home step clicks the bag with a
 shambler near and expects the refusal, then waits on every chip the engine says the bag
 gives there.
+
+## Nights
+
+Nights are told apart (home audit 2, item 6). An effect can ask for `Night`: from sunset to
+sunrise (`calendar::night`, by the same day the sky draws), the last third of the day, 16000
+up to 24000 ticks after sunrise: `/time set sunset` is night, `/time set sunrise` day.
+
+- **The better rests are a night's.** A sleep rule marked `night: true` gives its rest only
+  after dark: Well rested (a proper bed, a snug home, a lit corner) and Deep rest (a cosy
+  home). A nap by day still gives Rested and its mend, and says what a night's sleep there
+  would give ("A night's sleep here would rest you better: Well rested").
+- **A nap does not keep a night's rest away.** A bed holds its rest back while that rest, or a
+  better one, is on the player, or while the last sleep's mend (Healing Sleep) still runs
+  (`EffectRegistry::rested`): a second nap rests no more, and a bed after a bag in one night
+  mends no more, but once the nap's mend is over, sleeping that night gives the better rest
+  though the nap's Rested is still on.
+- **An evening in.** After dark, indoors at home within four blocks of a fire to sit by
+  (`campfire`: a campfire, the hearth, the stove; a torch is no fireside), the home's own
+  fire (`HomeHas("campfire", 1)`, not a neighbour's through a wall): Evening in, heal
+  x1.2 and 2° warmer, announced. Morning ends it. A time of day, not a step to build toward:
+  it is on its own ladder (`night`), so `/home` never names it as the next room.
+
+Tests: the engine's `a_night_sleep_rule_holds_only_after_dark` and
+`sleep_gives_the_rest_the_home_allows_once` (a nap does not keep a better
+rest away), the calendar's night; the server's
+`a_nap_by_day_is_no_nights_rest_and_an_evening_in_is_by_the_fire_after_dark`. The gate's walls
+step sets midnight in the walled room by the hearth and waits on the Evening in chip, with its
+line seen at any point in the run, since the server tells an effect once a session and the
+motifs step can be where it first came on ("home: evening in"), then sets noon.
 
 ## Drying off
 
@@ -396,6 +495,120 @@ for quests (First Night). Test `the_hearth_and_the_stove_cook_as_a_campfire_does
 Cook step rings its hearthstone with stone and cooks small game at it ("hearth: cooks"), then at a
 stove ("stove: cooks").
 
+## Fire in the thatch
+
+Thatch and wattle burn. A torch, a campfire or a brazier one step from a thatch roof or a
+wattle panel (out a face), standing there eight seconds, sets it alight; a lit hearth or kiln
+does the same within two steps. A step goes only through open cells, never through a solid
+block, so reach is the shortest way round: stone between a flame and the thatch shields it,
+and a roof's opening over a hearth lined in stone keeps its fire from the roof (the nearest
+thatch is then two blocks off as the crow flies but three round the stone). What catches
+becomes a **blaze**, a flame itself, so the fire runs on through the thatch and wattle beside
+it, and ten seconds later it is gone, nothing left. Take the torch away before it catches and
+nothing happens; break a blaze (it breaks at a touch) and it is out. Eight seconds is time
+enough to see the smoke, step over and break the thatch or panel by bare hand (about a
+second: hardness 0.8 or 1).
+
+The wait is shown. While a block waits to catch it **smoulders**: grey smoke curls off it
+with the odd ember (`smoke` in fire.ron, the client's emitters) and it hisses and crackles
+(ambience.ron's `smoulder` group, `smouldering: true`, its `smoulder_hiss` bed and
+`smoulder_crackle` sound). As it catches, a soft whoomph comes from it (sounds.ron's `fire`
+`catch`, played on the server's block change to the blaze; a fire that can burn without one
+does not start). Burning, it crackles crisply (the `blaze` group, `blaze_crackle` bed and
+`blaze_pop` sound), as loud as there are burning cells near, so the crackle thins as the fire
+burns out and stops with the last of it. All of it follows the server's word, never a timer
+of the client's. The server tells
+every player which blocks smoulder when that changes (`ServerMessage::Smoulders`, protocol 48),
+since only it knows what changed (a village's thatch by its own torches does not smoulder).
+The first time in a session a player's own change sets something smouldering (a torch set, a
+hearth lit, thatch laid by a flame), they are told why in one line, with the ways round it
+(`fire.smoulders`: "Thatch and wattle by a flame smoulder, then catch: move the flame or break
+them in time. Daub the wattle, build in stone, or light with candles."). A candle lights a home
+(its `light` tag counts toward snug's two lights and up) with no flame in it, and is made by
+hand at Crafting 3 from twine and hide, in the Nomad age. A player joining is told at once what
+smoulders, so its smoke shows from their first frame.
+
+An older world's home hearth, relit for its player as they join (`kindle_home`), sets nothing
+smouldering: they changed nothing, and a roof should not go up under someone who just logged
+in. Instead they are told once of the nearest thatch or wattle its fire would reach, and how
+many steps off (`fire.near_hearth`). Their next lighting by hand does set it smouldering.
+
+**Homes catch only from their owner** (fire.ron `homes_catch_only_from_owner`, on unless a pack
+turns it off). Every fire remembers whose it is: the player whose change started it (a torch set,
+a hearth lit, thatch laid by a flame), carried on as it spreads and saved with it. A block in a
+player's home box (`home_reach` across, `home_up` up and `home_down` down from the cell their
+home is at: over a home hearth lit by them, or where an online player's home is; the same box
+they feel at home in) only smoulders or catches from that player's fire. Where two homes overlap
+it is kept from both owners' fires, so lighting a hearth next door, or making your home at
+someone else's hearth, never lets your fire into their home. A home hearth lit before fires were
+kept by owner belongs to no one and keeps out every fire, so it stays protected while its player
+is away and no one can take it over by touching it. A home hearth stays whose it was first lit by
+while its fire is out, while a piece of it is broken and whoever relights it, until its owner
+breaks its hearthstone or lights a home hearth elsewhere; its box keeps out others' fire all that
+while. Breaking and mending a stranger's hearth, its hearthstone too, never opens their home to
+your fire nor makes the hearth yours. (A world saved before this kept no owner for a cold home
+hearth: it comes back as no one's.) A hearth no one owns is never forgotten, so its spot keeps out
+every fire for good; that is the safe way round. Only the owner's own hand breaking the hearthstone
+forgets a hearth, not a fire of theirs spreading over it. Lit by someone else, a hearth's fire is
+the lighter's as it catches what is near, so relighting a stranger's hearth never sets their home
+alight. Another player's torch beside your wattle wall fizzles, and a neighbour's burning shed
+stops at your home's edge; your own careless torch still burns your own roof. A fire a command
+or the world started belongs to no one, so it never takes a home either.
+
+There is no chance in it: the same fire burns the same way every time (catching before burning
+out, in order of place). Only block changes are watched (a player's, a command's, a flood's in
+the one pass over a tick's flow, the fire's own), never a column as the world made it, so a
+village stands by its own torches until someone sets a flame to it. Nothing is hurt by a
+blaze; it only takes blocks. What waits to catch or burn out is timed in ticks of game time,
+looked at once a second, and saved with the world (`blazes` in the save); a pass of no time
+changes nothing.
+
+For mod authors, it is all data: `fire.ron` names the tags that catch (`thatch`, `wattle`) and
+those that are flames (`fire`), the reaches (`reach` 1 to 4, `hearth_reach` 0 to 4, for every
+lit hearth or kiln), the seconds, the burning block (`blaze`, which must be a flame), what is
+left (`ash`, here air) and the smoke a smouldering block gives off (non-empty), load-checked
+(a block cannot both catch and be a flame; what burns and what is left cannot catch). Code:
+`crates/engine/src/fire.rs`, `crates/server/src/blaze.rs`. Tests:
+`a_torch_sets_wattle_alight_and_the_fire_runs_on` (the fire runs on to the next panel, burns
+away, and two worlds burn alike), `a_flame_taken_away_or_put_out_burns_nothing` (and a lit
+hearth two off sets it alight), `a_hearth_lit_under_thatch_smoulders_then_catches` (the hint
+once, the smoulder told, caught only on time), `a_stone_lined_flue_keeps_a_hearths_fire_from_the_roof`,
+`fires_are_saved_with_the_world`. The gate's Kindle step sets a torch by a wattle panel,
+twenty blocks off the home's steps, and counts the smoke off it ("fire: smoulders"); the fire
+burns on through the home's steps, each frame noting when the panel shows a blaze and when it
+is gone, and the Blaze step, before the catalogue, judges those by fire.ron's times ("fire:
+catches", "fire: burns out"), so its 18 s of waiting run under other steps.
+
+## Daubing in place
+
+A wattle panel already standing is daubed where it stands: clay in hand, right click it, and
+it is a daub block, one clay used. Daub is a sound wall (`shelter:sound`) and does not burn,
+so a wattle home grown up round its hearth is made safe without being pulled down, and a panel
+smouldering by a torch, daubed in time, is saved. It is data on the block (`coat: Some((with:
+"clay", into: "daub"))` in blocks_building.ron, load-checked: both blocks exist, and what it
+becomes is not coated again), and asks the level of the easiest recipe that makes what it
+becomes (Construction 2 for daub), teaching that recipe's experience a piece; below it, it is
+refused with the level it takes. Action `base:coat` (requirement `Coats`, silent: it only says
+the click meant it), server `coat.rs`, test `clay_daubs_a_placed_wattle_panel_in_place`; the
+gate's Kindle step daubs a panel by its torch ("daub: coats").
+
+Earth walls daub the same way. Dirt, coarse dirt, gravel, sand and red sand carry the same
+`coat` (blocks.ron), so a room dug into a bank or walled in earth turns from draughty to sound
+one clay at a time. Clay coats only when aimed at a block's side, a wall's face: clay to the
+top of a dirt floor or a panel is laid there as a block as before (test
+`clay_to_the_side_of_an_earth_wall_daubs_it_and_to_the_top_does_not`).
+
+## Curing hides
+
+A beast's hide comes off **raw**. The drying rack is the one place it dries (stations.ron,
+the only work that makes hide): hung there (up to eight), it cures to hide in a
+minute, half that with a fire near, and taking it down pays Crafting (stations.ron; test
+`a_raw_hide_hung_on_a_rack_is_hide_a_minute_later`). Everything made of hide (pouches, hide
+armour, the hide lean-to, the wool bag) takes the cured hide; only the first night's bed of
+feathers and hide takes a raw one too, so the first bag does not wait on the rack. A wandering
+party's goods are already cured. Hide and Seek (Nomad) asks for four raw hides, and Hide
+Wraps after it for the rack's cured hide.
+
 ## Smoke over home
 
 The Homestead Hearth's chimney smokes from its top while the hearth below it is lit, a
@@ -407,9 +620,11 @@ particles keep) and `over: Some(("hearth", 3))` (given off only with a `hearth` 
 stove pipe or a forge's flue can do the same. The client searches farther only for chunks
 whose palette holds such a block, and counts nearness as a share of each emission's range,
 so a far chimney takes its place among the nearest torches
-(`a_chimney_smokes_over_a_hearth_from_afar`). The gate's Cook step builds a hearth beside
-its campfire, checks its chimney gives nothing off cold, lights it and counts the puffs
-("chimney smoke").
+(`a_chimney_smokes_over_a_hearth_from_afar`). Chimney pieces (`chimney_piece`) stacked
+straight over the chimney carry its smoke up and out of their top, so a chimney carried up
+through a roof smokes from its pot (docs/building.md). The gate's Cook step builds a hearth
+beside its campfire, its chimney carried up a brick flue to a pot, checks nothing smokes
+cold, lights it and counts the pot's puffs ("chimney smoke").
 
 A cold hearth is quiet. Lighting a hearth keeps its fire until a piece of it is taken away
 (server/src/hearth.rs; a kiln's burns for its fuel charge), and the server tells every
@@ -424,13 +639,25 @@ again when its player joins.
 A home shows its lit rooms at night: a window glows warm by the light of the room behind it.
 Before glass there is the Hide Window (Farm, Construction 3: a hide in a frame of eight sticks,
 two windows), oiled hide in a stick frame. Every block tagged `window` (the hide window, glass,
-settlements' old glass) passes block light as air does (a `Cutout` cube), so a candle or the
-hearth behind it lights the ground outside, and is `lit_through` (a block field, any mod's
-window can say it): its bright texels glow by the block light reaching its face, which came
+settlements' old glass, and the lattice window and open shuttered window, which are shapes,
+not cubes) passes block light as air does (a `Cutout` cube, or light through a lattice's
+squares), so a candle or the hearth behind it lights the ground outside, and is
+`lit_through` (a block field, any mod's window can say it): its bright texels glow by the
+block light reaching its face, which came
 through it, as a lantern's glow by its own light (client `render/mod.rs` `layer_table`, the
 glow byte's `THROUGH` bit; `voxel.wgsl`). It shows at any hour, as a lantern's glow does, and
-stands out after dark. A dark room's window stays dark; a wall keeps the light in
-(`a_window_lets_a_lit_rooms_light_out`, engine tests/windows.rs). The gate's Door step then
+stands out after dark. Two windows in a home's walls under its roof make it a **Bright
+room** (Rooms above; home audit 2, item 10: windows used to count for nothing), whatever pane
+a package tags `window` (`two_windows_at_home_make_a_bright_room`, the server's
+`windows_at_home_make_a_bright_room`, the gate's walls step: "home: bright room"). A dark
+room's window stays dark; a wall keeps the light in
+(`a_window_lets_a_lit_rooms_light_out`, engine tests/windows.rs). A curtain hung inside a
+window draws across and back with a right click (`swaps`, as a door; drawn back it is
+`{name}_curtain_open` and gives the curtain): drawn across, it keeps most of the room's
+light in (`light_filter: 8`), so a lit home's window glows low at night, and drawn back
+the light goes through as air (`a_drawn_curtain_keeps_the_light_in`; the gate's walls step
+hangs one inside a pane and draws it back: "home: curtain"). Either way it is a curtain for
+the ladder's steps and a drape (`drape`, which Soft furnishings asks beside a rug). The gate's Door step then
 sets a hide window in a candle-lit stone nook at midnight and judges the shot: the pane warm
 and bright against the night ("window: glows", shot `window-night`).
 
@@ -490,5 +717,5 @@ for a supper or a talk with fireside guests.
 
 - Real storage (extra pack slots or a home chest) as a tier perk: needs the inventory and
   protocol to take a slot count.
-- Passing the night by sleeping, and a visible Rested icon (effects use the plain buff icon).
+- Passing the night by sleeping (sleep stays a rest, not a skip).
 - Sleeping, and the ladder, for villagers' houses.
