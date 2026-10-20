@@ -21,6 +21,9 @@ struct Client {
     id: PlayerId,
     name: String,
     phase: &'static str,
+    /// Whether the server's pings are answered, as a running game does; a minimized one
+    /// sends nothing from the game itself, only its network thread's keepalives.
+    pongs: bool,
     /// Dropped items in sight, and the ones we picked up.
     items: std::collections::HashMap<u32, ItemView>,
     collected: Vec<u32>,
@@ -235,6 +238,7 @@ impl Client {
             id: 0,
             name: name.to_owned(),
             phase: "welcome",
+            pongs: true,
             items: Default::default(),
             collected: Vec::new(),
             skills: Default::default(),
@@ -446,7 +450,9 @@ impl Client {
                 self.pips.push(pips);
             }
             ServerMessage::Ping { id } => {
-                self.connection.send(ClientMessage::Pong { id });
+                if self.pongs {
+                    self.connection.send(ClientMessage::Pong { id });
+                }
             }
             ServerMessage::Hurt { creature, damage, defended } => {
                 self.hurt.push((damage, defended));
@@ -4296,15 +4302,20 @@ fn preparing_tcp_content_does_not_spend_the_hello_deadline() {
 #[test]
 fn a_player_who_sends_nothing_but_keepalives_is_kept() {
     real_time("silence and floods are timed on the clock (idle timeouts, chat per second)");
-    let host = Client::join();
+    // Let go after ten seconds silent, two keepalives' worth, rather than fifteen.
+    let idle = 2 * voxmar_protocol::KEEPALIVE;
+    let host = Client::join_with(ServerConfig { view_distance: 2, idle_timeout: idle, ..Default::default() });
     let addr = tcp::listen("127.0.0.1:0", host._server.as_ref().unwrap().connections()).unwrap();
     let mut guest = Client::greet(|| tcp::connect(addr).unwrap(), "guest", None);
-    // Twenty seconds of the server's clock with no input, as from a minimized game: only
-    // the connection's keepalives. (Being let go would end the pump with a panic.)
+    // A keepalive's worth past the idle timeout of the server's clock with no input, as
+    // from a minimized game: only the connection's keepalives. (Being let go would end the
+    // pump with a panic.)
     let ticks = |c: &Client| c._server.as_ref().unwrap().ticks();
-    let until = ticks(&host) + 20 * TICKS_PER_SECOND as u64;
+    let until = ticks(&host) + (idle + voxmar_protocol::KEEPALIVE).as_secs() * TICKS_PER_SECOND as u64;
     guest.phase = "keepalive wait";
+    guest.pongs = false;
     guest.pump_until(|_| ticks(&host) >= until);
+    guest.pongs = true;
     assert!(guest.ok("/seed").contains(char::is_numeric), "the guest was let go");
     drop(host);
 }
@@ -4776,10 +4787,16 @@ fn a_sling_shoots_a_stone_a_clear_line_away_and_trains_ranged() {
     let (sling, stone) = (client.content.blocks.expect("base:sling"), client.content.blocks.expect("base:cobblestone"));
     let ranged = client.content.skills.id("core:ranged").expect("a ranged skill");
     let bear = client.content.creatures.find("brown_bear").expect("a brown bear in the content");
-    // Creative, so the bear's blows pass us by, on a wide flat floor.
+    // Creative, so the bear's blows pass us by, on a wide flat floor: the land round loaded
+    // first (a busy server streams it late), then the floor seen laid, by the server's word.
     client.ok("/gamemode creative");
+    let feet = client.position.floor().as_ivec3();
+    let corners = [(-12, -12), (-12, 12), (12, -12), (12, 12), (0, 0)].map(|(x, z)| feet + IVec3::new(x, -1, z));
+    client.pump_until(|c| corners.iter().all(|&p| c.world.block(p).is_some()));
     client.ok("/fill ~-12 ~-1 ~-12 ~12 ~-1 ~12 stone");
     client.ok("/fill ~-12 ~ ~-12 ~12 ~4 ~12 air");
+    let floor = client.content.blocks.id("base:stone");
+    client.pump_until(|c| corners.iter().all(|&p| c.world.block(p) == floor && c.world.block(p + IVec3::Y).is_some_and(|b| b.is_air())));
     client.ok("/clear");
     client.ok("/skill ranged 10");
     client.ok("/give sling 1");
@@ -4825,13 +4842,17 @@ fn a_sling_shoots_a_stone_a_clear_line_away_and_trains_ranged() {
     // A wall between is a miss, and the stone is still spent.
     let x = at.x + 4.0;
     client.ok(&format!("/fill {} {} {} {} {} {} stone", x.floor(), at.y.floor(), at.z.floor() - 3.0, x.floor(), at.y.floor() + 4.0, at.z.floor() + 3.0));
-    client.after_ticks_asked(TICKS_PER_SECOND as u64);
-    // Two shots, the second on the sling's beat (0.53 s): both are at the air, so off the
-    // beat, and earn no pip.
+    let wall = [0.0, 1.0, 2.0].map(|y| Vec3::new(x, at.y + y, at.z).floor().as_ivec3());
+    client.pump_until(|c| wall.iter().all(|&p| c.world.block(p) == floor));
+    // Two shots, the second on the sling's beat (its cooldown, from the content): both are
+    // at the air, so off the beat, and earn no pip. The first waits out the cooldown of the
+    // shot that hit, by the server's ticks: a click before it is ready is no shot.
+    let beat = client.content.combat.timing(&client.content.combat.wielded(Some(sling), |_| 10)).cooldown;
+    client.after_ticks_asked((beat * TICKS_PER_SECOND as f32).ceil() as u64);
     let (blows, left, pips) = (client.blows, carried_of(&client, stone), client.pips.last().copied().unwrap_or(0));
     let start = Instant::now();
     for k in 0..2u32 {
-        client.propose_at("core:attack", ActionTarget::Creature(id), start + Duration::from_secs_f32(0.53 * k as f32 - if k == 0 { 0.0 } else { 0.06 }));
+        client.propose_at("core:attack", ActionTarget::Creature(id), start + Duration::from_secs_f32(beat * k as f32 - if k == 0 { 0.0 } else { 0.06 }));
         client.pump_until(|c| c.blows == blows + k + 1);
         assert_eq!(client.damage.last(), Some(&0), "a shot through a wall hit");
     }
@@ -4891,19 +4912,23 @@ fn an_arrow_that_hits_may_be_left_by_the_target_to_pick_up_again() {
     let yaw = yaw_toward(client.position, at);
     client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw, pitch: 0.0, selected_slot: slot as u8, flying: true }));
     client.settle();
-    // Shot until an arrow lies by the bear: a hit leaves one half the time, so a forty-health
-    // bear dies only after a dozen or more hits, by which one has all but surely been left.
-    let lying = |c: &Client| c.items.values().any(|v| v.stack.item == arrow && v.position.distance(at) < 3.0);
+    // Shot until a hit leaves an arrow by the bear: a hit leaves one half the time, so a
+    // forty-health bear dies only after a dozen or more hits, by which one has all but surely
+    // been left. A miss in reach may land by it too (`recover_miss`), so only an arrow that
+    // came with a hit counts.
+    let lying = |c: &Client| c.items.values().filter(|v| v.stack.item == arrow && v.position.distance(at) < 3.0).map(|v| v.stack.count as u32).sum::<u32>();
     let mut shots = 0;
-    while !lying(&client) {
-        assert!(client.creatures.contains_key(&id) && shots < 48, "no arrow left by the bear after {shots} shots: {:?}", client.damage);
+    loop {
+        assert!(client.creatures.contains_key(&id) && shots < 48, "no arrow left by the bear by a hit after {shots} shots: {:?}", client.damage);
+        let before = lying(&client);
         client.propose("core:attack", ActionTarget::Creature(id));
         shots += 1;
         client.pump_until(|c| c.blows == shots || !c.creatures.contains_key(&id));
         client.wait_server(1);
+        if client.damage.last().is_some_and(|&d| d > 0) && lying(&client) > before {
+            break;
+        }
     }
-    let hits = client.damage.iter().filter(|&&d| d > 0).count();
-    assert!(hits >= 1, "an arrow lay by the bear with no hit: {:?}", client.damage);
 }
 
 /// A shot that lands by a wild bees' nest stirs the bees, and they sting the shooter; with a
@@ -5193,6 +5218,10 @@ fn backing_off_at_a_walk_does_not_escape_a_creatures_blow() {
         let mut outcomes = Vec::new();
         let mut askew = 0;
         while outcomes.len() < 2 {
+            // A blow taken lets the creature recover a while before it is provoked again.
+            if !outcomes.is_empty() {
+                client.wait_server(1);
+            }
             let before = provoke_until_it_winds_up(&mut client, id, slot, name);
             // Only a wind-up begun facing us: one begun facing away (a creature struck from
             // behind or the side) turns at its turn rate, and walks at a third of its pace
@@ -5227,7 +5256,6 @@ fn backing_off_at_a_walk_does_not_escape_a_creatures_blow() {
             }
             let struck = blow_from(&client.hurt_by, id, before).expect("the selected creature struck");
             outcomes.push(client.hurt[struck].1);
-            client.wait_server(1);
         }
         assert!(outcomes.iter().all(|&o| matches!(o, Defended::Hit | Defended::Missed)), "backing off a {name} at a walk came to {outcomes:?}");
     }

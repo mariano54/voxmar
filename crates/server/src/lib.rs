@@ -7,6 +7,7 @@ mod barks;
 mod commands;
 mod condition;
 /// The weather in words, for the debug overlay as for `/weather`.
+pub use barks::BARK_COMMAND_REACH;
 pub use commands::{weather_name, weather_numbers};
 mod cooking;
 mod creatures;
@@ -23,6 +24,7 @@ mod lairs;
 mod machines;
 mod quests;
 mod blaze;
+mod coat;
 mod regrow;
 mod farm;
 mod husbandry;
