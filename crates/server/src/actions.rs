@@ -21,7 +21,9 @@
 //! made or undone, never left standing on one side only.
 //!
 //! A player has at most one timed action going. A new timed proposal replaces it, and an
-//! instant one (placing, throwing, an inventory move) runs alongside it.
+//! instant one (placing, throwing, an inventory move) runs alongside it. One shown done
+//! early still runs to its time, so the next one's time starts only when it is due: a
+//! client that shows breaks done early never mines several blocks side by side.
 
 use std::time::{Duration, Instant};
 
@@ -243,9 +245,11 @@ impl Server {
             if def.effects.contains(&Effect::EatHeld) {
                 self.bite_started(agent);
             }
-            let due = at + Duration::from_secs_f32(seconds);
+            // After any shown done early that is not yet due: one at a time.
+            let started = self.executor.timed.iter().filter(|t| t.agent == agent).map(|t| t.due).fold(at, Instant::max);
+            let due = started + Duration::from_secs_f32(seconds);
             let tool = self.tool_in_hand(agent);
-            self.executor.timed.push(Timed { agent, action, target, started: at, due, finished: false, held: None, tool });
+            self.executor.timed.push(Timed { agent, action, target, started, due, finished: false, held: None, tool });
         }
     }
 
@@ -989,6 +993,36 @@ mod finished_tests {
         let slots = &server.players[&1].inventory.slots;
         assert_eq!((slots[0], slots[1]), (Some(ItemStack::new(stew, 1)), Some(ItemStack::new(stone, 1))), "a bite swapped for stone ate something");
         assert_eq!(server.players[&1].health.current, 1, "a bite swapped for stone healed");
+    }
+
+    /// Breaks shown done early run one after another: the next one's time starts when the
+    /// one before is due, so five stones shown done at three tenths of their time each take
+    /// as long as five broken honestly.
+    #[test]
+    fn breaks_shown_done_early_never_run_side_by_side() {
+        let mut server = fixture();
+        let mine = server.content.actions.expect("core:mine");
+        let start = Instant::now();
+        let mut at = start;
+        let mut dues = Vec::new();
+        for x in 0..5 {
+            let target = ActionTarget::Block { block: IVec3::new(5 + x, FLOOR, 10), face: Face::PosY };
+            server.propose(1, mine, target, at);
+            let timed = server.executor.timed.iter().find(|t| t.target == target).expect("a timed break");
+            let (started, due) = (timed.started, timed.due);
+            dues.push(due);
+            at += (due - started).mul_f32(0.3);
+            server.finished_action(1, target, at);
+        }
+        let each = dues[0] - start;
+        for (i, due) in dues.iter().enumerate() {
+            assert_eq!(*due - start, each * (i as u32 + 1), "break {i} is due after the one before");
+        }
+        server.complete_actions(dues[1]);
+        let broken = (0..5).filter(|x| server.block(IVec3::new(5 + x, FLOOR, 10)) == Some(voxmar_engine::block::BlockId::AIR)).count();
+        assert_eq!(broken, 2, "by the second's time, two are broken");
+        server.complete_actions(dues[4]);
+        assert!((0..5).all(|x| server.block(IVec3::new(5 + x, FLOOR, 10)) == Some(voxmar_engine::block::BlockId::AIR)), "all five in their time");
     }
 
     /// A break shown done early wears the pickaxe in hand then, not the shovel switched to
