@@ -7,7 +7,7 @@ use voxmar_protocol::{
     ClientConnection, ClientMessage, PlayerId, PlayerInput, PlayerView, ServerMessage, TICKS_PER_SECOND,
 };
 use voxmar_engine::action::{ActionId, ActionTarget};
-use voxmar_engine::block::RenderKind;
+use voxmar_engine::block::{BlockId, RenderKind};
 use voxmar_server::ServerHandle;
 
 use crate::lang::Locale;
@@ -38,6 +38,13 @@ impl Plugin for NetPlugin {
     }
 }
 
+/// An action the player proposed, and what it was done with, to be heard by.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Proposed {
+    pub action: ActionId,
+    pub with: Vec<BlockId>,
+}
+
 #[derive(Resource)]
 pub struct Net {
     // Declared first so it closes before the server stops.
@@ -47,7 +54,7 @@ pub struct Net {
     server: Option<ServerHandle>,
     input_timer: f32,
     /// Actions proposed since `sfx` last took them, to be heard as they are done.
-    proposed: std::sync::Mutex<Vec<ActionId>>,
+    proposed: std::sync::Mutex<Vec<Proposed>>,
     /// Actions proposed since `fx` last took them, with what they aim at, to be seen.
     shown: std::sync::Mutex<Vec<(ActionId, ActionTarget)>>,
     /// The integrated server's ticks as `receive` began: every message of those ticks had
@@ -89,14 +96,20 @@ impl Net {
     }
 
     pub fn propose(&self, action: ActionId, target: ActionTarget) {
+        self.propose_with(action, target, Vec::new());
+    }
+
+    /// Proposes `action`, done with `with` (the items in the crafting grid, or the block
+    /// worked and the item in hand), which say how it sounds (`sounds.ron`'s `ways`).
+    pub fn propose_with(&self, action: ActionId, target: ActionTarget, with: Vec<BlockId>) {
         self.connection.send(ClientMessage::Propose { action, target });
-        self.proposed.lock().unwrap_or_else(|e| e.into_inner()).push(action);
+        self.proposed.lock().unwrap_or_else(|e| e.into_inner()).push(Proposed { action, with });
         self.shown.lock().unwrap_or_else(|e| e.into_inner()).push((action, target));
     }
 
     /// The actions proposed since the last call: the client proposes only what it has
     /// checked the server will allow, so each is heard as it is done (`sfx::play_actions`).
-    pub fn take_proposed(&self) -> Vec<ActionId> {
+    pub fn take_proposed(&self) -> Vec<Proposed> {
         std::mem::take(&mut *self.proposed.lock().unwrap_or_else(|e| e.into_inner()))
     }
 
@@ -111,8 +124,13 @@ impl Net {
     /// and the server judges reach and aim from the last it heard, which while sprinting or
     /// flying could be well behind.
     pub fn propose_from(&self, player: &LocalPlayer, action: ActionId, target: ActionTarget) {
+        self.propose_from_with(player, action, target, Vec::new());
+    }
+
+    /// [`Net::propose_from`], done with `with` (see [`Net::propose_with`]).
+    pub fn propose_from_with(&self, player: &LocalPlayer, action: ActionId, target: ActionTarget, with: Vec<BlockId>) {
         self.connection.send(ClientMessage::Input(input(player)));
-        self.propose(action, target);
+        self.propose_with(action, target, with);
     }
 
     pub fn cancel(&self) {
