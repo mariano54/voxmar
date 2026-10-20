@@ -441,6 +441,19 @@ cloth and dyes. Each pays in bread:
 | A Dooryard | Lanterns of Cloth | An awning and bunting made, then the Dooryard felt (an awning and two yard things under open sky) | Crafting 100, 4 bread |
 | Five Colours | A Rug Underfoot | Five dyed cloths (indigo, white, red, green, amber) and the wind flags they make | Crafting 120, 4 bread |
 
+||||||| parent of 742c220c (Nomad start: four side quests about camp)
+## About camp in the Nomad book (Oct 20)
+
+Four side quests (`side: true`) join the Nomad book's first path, each teaching a first tool
+or a way to shape what is built, and each paying bread:
+
+| Quest | After | Teaches | Pays |
+|---|---|---|---|
+| Flint First | Crafting Table | The flint pickaxe and the digging stick, the tools before stone | Engineering 20, 1 bread |
+| A Coin Purse | Twine and Thong | A hide and two twine hold a thousand coins in one slot | Crafting 20, 1 bread |
+| Steps and Slabs | A Chopping Block | Slabs and stairs made, two of each set down | Construction 30, 1 bread |
+| A Fence and a Gate | Steps and Slabs | Posts, fences and a gate: a fence is two high to creatures; the gate swings open | Construction 40, 2 bread |
+
 ## Readable to a newcomer (Oct 13)
 
 Every Nomad and Farm quest was read as someone who has never played would: does its text
