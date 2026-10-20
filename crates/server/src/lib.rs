@@ -658,12 +658,14 @@ pub(crate) struct Server {
     /// The smouldering blocks players were last told of.
     smoulders_sent: Vec<IVec3>,
     /// Whose doing a fire that starts now is (a player's key, `player_key`): the player whose
-    /// message is being handled, a hearth's owner as it is lit, a burning block's own fire as
-    /// it spreads; none for a flood or a command. Homes catch only from their owner (fire.ron).
+    /// message is being handled or whose action commits, whoever lights a hearth as it is lit
+    /// (`hearth_blaze`), a burning block's own fire as it spreads; none for a flood or a
+    /// command. Homes catch only from their owner (fire.ron).
     fire_origin: Option<String>,
-    /// The player whose own message is changing blocks now (their key), and no one while a
-    /// fire spreads, a flood runs or a command works: only their own breaking of their home
-    /// hearth's hearthstone forgets whose it is (`home_changed`).
+    /// The player whose own action is committing now (their key, set by `commit` however late
+    /// it falls due), and no one while a fire spreads, a flood runs or a command works: only
+    /// their own breaking of their home hearth's hearthstone forgets whose it is
+    /// (`home_changed`).
     changed_by: Option<String>,
     planter_grown: FxHashSet<IVec3>,
     /// Kept hives with bees, and how far each is toward its honey (`apiary`).
