@@ -441,10 +441,10 @@ impl<'a> Ground<'a> {
         !self.climbs_railings && self.railing(cell - IVec3::Y)
     }
 
-    /// Whether the block in `cell` is solid (an unloaded column is).
-    fn solid_block(&self, cell: IVec3) -> bool {
-        let blocks = &self.server.content.blocks;
-        self.block(cell).is_none_or(|b| blocks.info(b).solid)
+    /// Whether the block in `cell` stands in a body's way (`Creatures::in_way_blocks`; an
+    /// unloaded column does).
+    fn in_way(&self, cell: IVec3) -> bool {
+        self.block(cell).is_none_or(|b| self.server.creatures.in_way_blocks(&self.server.content.blocks)[b.0 as usize])
     }
 
     /// As `Server::block`: none in an unloaded column or under the world.
@@ -473,7 +473,7 @@ impl motion::Surroundings for Ground<'_> {
     fn solid(&self, cell: IVec3) -> bool {
         // Unloaded columns are walls, so nothing walks off the edge of the world. Over a
         // railing is a wall too, to all but a climber: it stands two high to a creature.
-        self.block(cell).is_none_or(|b| self.server.creatures.in_way_blocks(&self.server.content.blocks)[b.0 as usize]) || self.over_railing(cell)
+        self.in_way(cell) || self.over_railing(cell)
     }
 
     fn boxes(&self, cell: IVec3) -> &[voxmar_engine::physics::Aabb] {
@@ -490,7 +490,9 @@ impl motion::Surroundings for Ground<'_> {
     fn footing(&self, cell: IVec3) -> bool {
         // The wall over a railing is no floor, and nor, to all but a climber, is a
         // railing's top: nothing walks on air along it or hops over it from beside it.
-        self.solid_block(cell) && (self.climbs_railings || !self.railing(cell))
+        // Nor a slab or a sill: what stands on it stands in its cell (`Surroundings::boxes`),
+        // not the cell over it.
+        self.in_way(cell) && (self.climbs_railings || !self.railing(cell))
     }
 
     fn water(&self, cell: IVec3) -> bool {
@@ -4151,6 +4153,23 @@ pub(crate) mod tick_cost_tests {
         }
     }
 
+    /// On a slab floor a walker stands in the slab's own cell, on the slab, and not in the
+    /// cell over it. Before: the ground took a slab for a whole block's top (its `footing`
+    /// judged by `solid`), and a way could run a block over a slab floor, where a body
+    /// following it hunted a square in the air.
+    #[test]
+    fn a_way_over_a_slab_floor_runs_on_the_slabs() {
+        let wolf = path::Walker { height: 1, climbs: true, step: voxmar_engine::creature::STEP, wary: true, span: 1, drop: motion::SAFE_DROP };
+        let mut server = crate::test_server();
+        let c = pen(&mut server, 9);
+        super::fight_tests::set(&mut server, "base:oak_slab", (-6..=6).flat_map(|x| (-6..=6).map(move |z| c + IVec3::new(x, 0, z))));
+        let ground = Ground::of(&server);
+        assert!(wolf.stands(&ground, c), "no standing on the slab");
+        assert!(!wolf.stands(&ground, c + IVec3::Y), "standing in the air over the slab");
+        let way = path::find(&ground, &wolf, c + IVec3::new(-5, 0, 0), c + IVec3::new(5, 0, 0)).expect("a way across the slabs");
+        assert!(way.iter().all(|cell| cell.y == c.y), "the way left the slabs: {way:?}");
+    }
+
     /// Block lookups and time per path search on the server's own ground, in a pen with a
     /// wall across it: no doorway (a search that finds nothing), one a block across (none
     /// for a body two across) and one two across; for a body a block across and one two.
@@ -4341,7 +4360,7 @@ mod fight_tests {
     }
 
     /// Stone (or `block`) on each of `cells`, by name.
-    fn set(s: &mut Server, block: &str, cells: impl IntoIterator<Item = IVec3>) {
+    pub(super) fn set(s: &mut Server, block: &str, cells: impl IntoIterator<Item = IVec3>) {
         let id = s.content.blocks.expect(block);
         for cell in cells {
             s.world.set_block(cell, id);
