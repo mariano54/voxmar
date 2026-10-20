@@ -32,7 +32,7 @@ mod lattice;
 mod levels;
 mod noise;
 mod parallel;
-pub use parallel::set_helper_limit;
+pub use parallel::{mark_urgent, set_helper_limit};
 #[cfg(test)]
 mod perf;
 mod rarity;
@@ -335,7 +335,7 @@ impl Overworld {
             shape_surfaces,
             blend: geology::noise(stream, 40, 1.0 / 12.0, FractalType::FBm, 2),
             tint: geology::noise(stream, 41, 1.0 / 45.0, FractalType::FBm, 2),
-            fields: water::cache::Cache::new(FIELD_BUDGET),
+            fields: water::cache::Cache::copying(FIELD_BUDGET),
             seed: stream,
         }
     }

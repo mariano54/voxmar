@@ -11,7 +11,7 @@
 # A binary given as off:PATH runs with VOXMAR_THREAD_PRIORITY=off (the thread classes from
 # before the frame threads had one, see crates/client/src/priority.rs), to time one build
 # both ways; as wN:PATH, with N streaming workers (VOXMAR_WORKERS) instead of the default
-# (the cores less two, at most six). Both may be given, as off:w8:PATH.
+# (the cores less two while the world loads, at most six of them once it has). Both may be given, as off:w8:PATH.
 #
 #   spawn   standing at the spawn of seed 1, looking over the land, once it has loaded
 #   town    over Ashhurst, the village of seed 1 nearest its spawn (21 houses, 14

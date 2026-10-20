@@ -354,7 +354,7 @@ fn dispatch_jobs(
     camera: Query<&GlobalTransform, With<Camera3d>>,
     mut last_center: Local<Option<ColumnPos>>,
 ) {
-    let max_in_flight = rayon::current_num_threads() * 2;
+    let max_in_flight = crate::workers::active() * 2;
     let center = camera
         .single()
         .map(|t| ColumnPos::of_block(t.translation().floor().as_ivec3()))
@@ -704,7 +704,7 @@ mod tests {
         let far = ColumnPos::new(20, 0);
         world.details.insert(far, 1);
         world.set_far_detail([2, 4]);
-        let max = rayon::current_num_threads() * 2;
+        let max = crate::workers::active() * 2;
         world.in_flight.extend((0..max).map(|x| (ColumnPos::new(x as i32, 0), 0)));
         world.stats.pending_columns = 42;
         let mut app = App::new();
@@ -757,7 +757,7 @@ mod tests {
         settle(&mut app, "the land as it came");
         let mut world = app.world_mut().resource_mut::<ClientWorld>();
         // Every shared worker taken, and among their jobs one for the camera's column.
-        let max = rayon::current_num_threads() * 2;
+        let max = crate::workers::active() * 2;
         world.in_flight.extend((0..max).map(|x| (ColumnPos::new(100 + x as i32, 0), 0)));
         world.jobs += 1;
         let before = world.jobs;
@@ -794,7 +794,7 @@ mod tests {
                 }
             }
         }
-        let max = rayon::current_num_threads() * 2;
+        let max = crate::workers::active() * 2;
         world.in_flight.extend((0..max).map(|x| (ColumnPos::new(100 + x as i32, 0), 0)));
         let centre = ColumnPos::new(0, 0);
         world.set_block(IVec3::new(5, 60, 5), BlockId::AIR);

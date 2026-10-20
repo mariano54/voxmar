@@ -65,6 +65,7 @@ mod slow_frames;
 mod textures;
 mod ui;
 mod weather;
+mod workers;
 mod world;
 
 use std::sync::Arc;
@@ -321,19 +322,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // (priority.rs). Cores, not hardware threads: on a machine with two threads a core (the
     // Linux box's 16-core EPYC), workers on every thread slowed every frame system about
     // threefold while the world streamed in, whatever their priority, and took flightfast's
-    // p99 frame from 11 to 25 ms. And no more than `WORKERS`: on the 18-core Mac, busy with
-    // other work as it usually is, a 40 s flight's p99 frame was 24 ms with 16 workers (and
-    // with 12), 10-15 ms with 8 and 6 ms with 4, at the same frame median. `VOXMAR_WORKERS=n`
-    // sets their number instead, for timing how many a busy machine's frames can take and
-    // whether streaming keeps up (tools/perf/play_frames, its `ahead:` lines).
-    const WORKERS: usize = 6;
+    // p99 frame from 11 to 25 ms. Once the world has loaded, fewer of them take work
+    // (workers.rs). `VOXMAR_WORKERS=n` sets their number instead, loading and playing alike,
+    // for timing how many a busy machine's frames can take and whether streaming keeps up
+    // (tools/perf/play_frames, its `ahead:` lines).
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
-    let mut workers = physical_cores().unwrap_or(threads).min(threads).saturating_sub(2).clamp(2, WORKERS);
+    let mut workers = physical_cores().unwrap_or(threads).min(threads).saturating_sub(2).max(2);
+    let mut playing = workers.min(workers::PLAYING);
     if let Ok(given) = std::env::var("VOXMAR_WORKERS")
         && !given.is_empty()
     {
         match given.parse::<usize>() {
-            Ok(n) if (1..=threads).contains(&n) => workers = n,
+            Ok(n) if (1..=threads).contains(&n) => (workers, playing) = (n, n),
             // Before logging starts, so on stderr, where tools/perf/play_frames shows it beside
             // the numbers, which are then the default's.
             _ => eprintln!("VOXMAR_WORKERS={given} is not from 1 to {threads}; {workers} workers"),
@@ -500,6 +500,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ))
     .add_plugins((lang::LangPlugin, mix::MixPlugin));
     app.add_plugins(priority::PriorityPlugin);
+    app.add_plugins(workers::WorkersPlugin { all: workers, playing });
     app.add_plugins((creatures::CreaturesPlugin, creature_sounds::CreatureSoundsPlugin, butterflies::ButterfliesPlugin));
     app.add_plugins((emitters::EmittersPlugin, fx::FxPlugin));
     app.add_plugins(held::HeldPlugin);
