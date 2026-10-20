@@ -192,6 +192,9 @@ pub enum Condition {
     Sheltered(Box<Condition>),
     /// The item in the player's hand carries this tag (`Holding("fire")`: a torch).
     Holding(String),
+    /// Something the player wears carries this tag (`Wearing("charge_charm")`: the charm
+    /// in the charm slot, `inventory::WORN`).
+    Wearing(String),
     /// A block carrying this tag lies within this many blocks of the player's feet, every
     /// way (`Near("fire", 4)`: a campfire close by). The reach is 1 to 8.
     Near(String, i32),
@@ -272,14 +275,15 @@ impl Condition {
         }
     }
 
-    /// The tags and reaches `Near` asks about, and the tags `Holding` asks of the item in
-    /// hand, anywhere in this condition.
-    fn asks<'a>(&'a self, near: &mut Vec<(&'a str, i32)>, held: &mut Vec<&'a str>) {
+    /// The tags and reaches `Near` asks about, the tags `Holding` asks of what the player
+    /// has in hand, and those `Wearing` asks of what they wear, anywhere in this condition.
+    fn asks<'a>(&'a self, near: &mut Vec<(&'a str, i32)>, held: &mut Vec<&'a str>, worn: &mut Vec<&'a str>) {
         match self {
             Condition::Near(tag, reach) => near.push((tag, *reach)),
             Condition::Holding(tag) => held.push(tag),
-            Condition::All(list) | Condition::Any(list) => list.iter().for_each(|c| c.asks(near, held)),
-            Condition::Not(c) | Condition::Sheltered(c) => c.asks(near, held),
+            Condition::Wearing(tag) => worn.push(tag),
+            Condition::All(list) | Condition::Any(list) => list.iter().for_each(|c| c.asks(near, held, worn)),
+            Condition::Not(c) | Condition::Sheltered(c) => c.asks(near, held, worn),
             _ => {}
         }
     }
@@ -364,6 +368,8 @@ pub struct Situation<'a> {
     pub held: &'a [String],
     /// Which of the `Near` asks (`EffectRegistry::near_asks`) hold where the player stands.
     pub near: &'a [(String, i32)],
+    /// The tags of what the player wears (of those `EffectRegistry::worn_tags` asks after).
+    pub worn: &'a [String],
     /// The player sits on a seat.
     pub seated: bool,
     /// The sun is down (`Condition::Night`).
@@ -488,6 +494,7 @@ impl Condition {
             Condition::Sheltered(c) => !s.outdoors && c.holds(&Situation { outdoors: true, ..*s }),
             Condition::Done(quest) => s.done.iter().any(|d| d == quest),
             Condition::Holding(tag) => s.held.contains(tag),
+            Condition::Wearing(tag) => s.worn.contains(tag),
             Condition::Near(tag, reach) => s.near.iter().any(|(t, r)| t == tag && r == reach),
             Condition::All(all) => all.iter().all(|c| c.holds(s)),
             Condition::Any(any) => any.iter().any(|c| c.holds(s)),
@@ -564,6 +571,7 @@ pub struct EffectRegistry {
     /// the item in hand.
     near_asks: Vec<(String, i32)>,
     held_tags: Vec<String>,
+    worn_tags: Vec<String>,
 }
 
 impl EffectRegistry {
@@ -681,7 +689,7 @@ impl EffectRegistry {
                 quests.push(quest.to_owned());
             }
         }
-        let (mut near, mut held) = (Vec::new(), Vec::new());
+        let (mut near, mut held, mut worn) = (Vec::new(), Vec::new(), Vec::new());
         for def in &defs {
             if !(def.lingers.is_finite() && def.lingers >= 0.0) || (def.lingers > 0.0 && def.when.is_none()) {
                 return Err(RegistryError(format!("effect `{}` lingers {} seconds: it takes 0 or more, and a `when` to linger after", def.name, def.lingers)));
@@ -690,7 +698,7 @@ impl EffectRegistry {
                 return Err(RegistryError(format!("effect `{}` has `ends` but does not linger: only what lingers can end early", def.name)));
             }
             for when in def.when.iter().chain(&def.ends) {
-                when.asks(&mut near, &mut held);
+                when.asks(&mut near, &mut held, &mut worn);
             }
         }
         if let Some((tag, reach)) = near.iter().find(|(_, reach)| !(1..=8).contains(reach)) {
@@ -702,13 +710,17 @@ impl EffectRegistry {
                 near_asks.push((tag.to_owned(), reach));
             }
         }
-        let mut held_tags: Vec<String> = Vec::new();
-        for tag in held {
-            if !held_tags.iter().any(|t| t == tag) {
-                held_tags.push(tag.to_owned());
+        let once = |tags: Vec<&str>| {
+            let mut once: Vec<String> = Vec::new();
+            for tag in tags {
+                if !once.iter().any(|t| t == tag) {
+                    once.push(tag.to_owned());
+                }
             }
-        }
-        Ok(Self { defs, by_name, replaces, foods, sleeps, home_tags, home_walls, quests, near_asks, held_tags })
+            once
+        };
+        let (held_tags, worn_tags) = (once(held), once(worn));
+        Ok(Self { defs, by_name, replaces, foods, sleeps, home_tags, home_walls, quests, near_asks, held_tags, worn_tags })
     }
 
     pub fn get(&self, id: EffectId) -> &EffectDef {
@@ -863,6 +875,11 @@ impl EffectRegistry {
     /// The tags effects ask of the item in hand with `Holding`.
     pub fn held_tags(&self) -> &[String] {
         &self.held_tags
+    }
+
+    /// The tags effects ask of what is worn with `Wearing`.
+    pub fn worn_tags(&self) -> &[String] {
+        &self.worn_tags
     }
 
     pub fn home_tags(&self) -> &[String] {
@@ -1034,7 +1051,7 @@ mod tests {
     }
 
     fn situation(weather: &Weather, warmed: bool, felt: f32, outdoors: bool) -> Situation<'_> {
-        Situation { felt, warmed, outdoors, weather, biome: "base:plains", biome_tags: &[], home: None, done: &[], held: &[], near: &[], seated: false, night: false }
+        Situation { felt, warmed, outdoors, weather, biome: "base:plains", biome_tags: &[], home: None, done: &[], held: &[], near: &[], worn: &[], seated: false, night: false }
     }
 
     #[test]
@@ -1084,6 +1101,26 @@ mod tests {
             let source = format!(r#"(effects: [(name: "smoky", kind: Buff, title: "Smoky", description: "", {bad})])"#);
             assert!(EffectRegistry::new(vec![EffectRegistry::read("core", &source).unwrap()]).is_err(), "{bad}");
         }
+    }
+
+    /// What is worn: `Wearing` holds off the situation's worn tags, and only them: the same
+    /// charm in hand is no charm worn.
+    #[test]
+    fn a_charm_works_while_worn_not_while_held() {
+        let source = r#"(effects: [
+            (name: "stride", kind: Buff, title: "Stride", description: "", when: Some(Wearing("charge_charm")), modifiers: (speed: 1.05)),
+        ])"#;
+        let effects = EffectRegistry::new(vec![EffectRegistry::read("core", source).unwrap()]).unwrap();
+        assert_eq!(effects.worn_tags(), ["charge_charm"]);
+        assert!(effects.held_tags().is_empty(), "wearing asks nothing of the hand");
+        let calm = Weather::NONE;
+        let charm = ["charge_charm".to_owned()];
+        let wearing = Situation { worn: &charm, ..situation(&calm, false, 15.0, true) };
+        let holding = Situation { held: &charm, ..situation(&calm, false, 15.0, true) };
+        let active = effects.active(&wearing, &[]);
+        assert_eq!(active.len(), 1);
+        assert_eq!(effects.modifiers(&active).speed, 1.05);
+        assert!(effects.active(&holding, &[]).is_empty(), "held, not worn");
     }
 
     /// Rain soaks you, and you stay wet under a roof until you dry off by a fire (`ends`),

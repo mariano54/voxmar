@@ -27,6 +27,7 @@ use std::time::{Duration, Instant};
 
 use voxmar_engine::action::{ActionContext, ActionDef, ActionId, ActionTarget, Effect, placed_block, placement_cell, supported_by};
 use voxmar_engine::block::{BlockId, BlockInfo, BlockRegistry};
+use voxmar_engine::combat::Slot;
 use voxmar_engine::crop::CropRegistry;
 use voxmar_engine::skill::SkillId;
 use voxmar_engine::glam::{IVec2, IVec3, Vec3};
@@ -82,6 +83,14 @@ pub struct Executor {
 }
 
 impl Server {
+    /// A move put on or took off a charm (`was` the one worn before): its effect is judged
+    /// at once, not at the next once-a-second pass.
+    fn charm_changed(&mut self, agent: PlayerId, was: Option<BlockId>) {
+        if self.players.get(&agent).is_some_and(|p| p.inventory.worn[Slot::Charm.index()].map(|s| s.item) != was) {
+            crate::process::Survival::refresh(self, agent);
+        }
+    }
+
     /// Whether `player` is part way through a timed action that eats (a bite of food). A bite
     /// the client has shown done early still runs to its time, so it still counts.
     pub(crate) fn eating(&self, player: PlayerId) -> bool {
@@ -409,17 +418,21 @@ impl Server {
                     // An open store's slots as it holds them now, and what moved written back.
                     self.pull_store(agent);
                     let player = self.players.get_mut(&agent).unwrap();
+                    let charm = player.inventory.worn[Slot::Charm.index()].map(|s| s.item);
                     if player.inventory.move_items(from as usize, to as usize, count) {
                         player.changed(traits::INVENTORY);
                         self.push_store(agent);
+                        self.charm_changed(agent, charm);
                     }
                 }
                 (Effect::QuickMove, ActionTarget::Slot(slot)) => {
                     self.pull_store(agent);
                     let player = self.players.get_mut(&agent).unwrap();
+                    let charm = player.inventory.worn[Slot::Charm.index()].map(|s| s.item);
                     if player.inventory.quick_move(slot as usize) {
                         player.changed(traits::INVENTORY);
                         self.push_store(agent);
+                        self.charm_changed(agent, charm);
                     }
                 }
                 (Effect::StowCursor, _) => {
@@ -445,6 +458,9 @@ impl Server {
                     player.changed(traits::HEALTH);
                     player.changed(traits::VITALS);
                     player.teleport(spawn);
+                    // Alive again: effects judged afresh, so none of the last life's (a
+                    // charm left in the grave) outlasts it.
+                    crate::process::Survival::refresh(self, agent);
                 }
                 (Effect::Craft, ActionTarget::Slot(times)) => self.craft(agent, times == 0),
                 (Effect::LayRecipe, ActionTarget::Recipe { first, ways, count }) => self.lay_recipe(agent, first as usize, ways as usize, count),
@@ -542,7 +558,7 @@ impl Server {
         let feet = self.players[&agent].position.floor().as_ivec3();
         let outdoors = self.open_sky(feet + IVec3::Y * 2);
         let calm = voxmar_engine::weather::Weather::NONE;
-        let situation = voxmar_engine::effect::Situation { felt: 0.0, warmed: false, outdoors, weather: &calm, biome: "", biome_tags: &[], home: home.as_ref(), done: &self.players[&agent].quests_done, held: &[], near: &[], seated: false, night: self.night() };
+        let situation = voxmar_engine::effect::Situation { felt: 0.0, warmed: false, outdoors, weather: &calm, biome: "", biome_tags: &[], home: home.as_ref(), done: &self.players[&agent].quests_done, held: &[], near: &[], worn: &[], seated: false, night: self.night() };
         // A proper bed rests better than a bag on the ground (effects.ron's `bed` tags).
         let bed_tags = self.block(bed).map(|b| self.content.blocks.def(b).tags.clone()).unwrap_or_default();
         let given = effects.given_by_sleep(&situation, &bed_tags);
