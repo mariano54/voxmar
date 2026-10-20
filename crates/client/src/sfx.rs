@@ -696,7 +696,9 @@ impl Recordings {
             replace(&mut all.pickup, def.pickup);
             for (name, sound) in def.actions {
                 let brings = sound.brings.into_iter().map(|b| Brought { sounds: path(b.sounds).collect(), ..b }).collect();
-                let ways = sound.ways.into_iter().map(|way| WaySound { sounds: path(way.sounds).collect(), ..way }).collect();
+                // A bare name is the package's own item, as in its other files.
+                let named = |with: Vec<String>| with.into_iter().map(|name| if name.contains(':') { name } else { format!("{}:{name}", file.package) }).collect();
+                let ways = sound.ways.into_iter().map(|way| WaySound { with: named(way.with), sounds: path(way.sounds).collect(), ..way }).collect();
                 all.actions.insert(name, ActionSound { sounds: path(sound.sounds).collect(), brings, ways, ..sound });
             }
             for (name, sound) in def.interface {
