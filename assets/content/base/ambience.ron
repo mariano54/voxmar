@@ -289,6 +289,12 @@
             name: "fire", sound: Fire, volume: 0.3, fade: 2,
             when: {"fire": (min: 0.6, fade: 0.55)},
         ),
+        // By the hearth on a stormy night: the wind moaning low over the chimney, louder
+        // in the gusts.
+        (
+            name: "flue", sound: Flue, volume: 0.14, fade: 4,
+            when: {"fire": (min: 0.6, fade: 0.55), "shelter": (min: 0.6, fade: 0.3), "wind": (min: 10, fade: 6), "sun": (max: 0.05, fade: 0.15)},
+        ),
         // Thatch about to catch: a soft, close sizzle, the warning before the flame (with
         // `smoulder_crackle`'s spits). Only while the server says it smoulders.
         (
@@ -489,6 +495,12 @@
             name: "fire_snap", sound: Snap, volume: 0.3, at: Block("fire"), per_minute: 6, cooldown: 3,
             pitch: (0.85, 1.2), reach: 5,
             when: {"fire": (min: 0.25, fade: 0.2)},
+        ),
+        // Rain falling into a fire out in the open: drops hissing on the embers.
+        (
+            name: "fire_sizzle", sound: Sizzle, volume: 0.24, at: Block("fire"), per_minute: 6, cooldown: 4,
+            pitch: (0.9, 1.15), reach: 6,
+            when: {"fire": (min: 0.6, fade: 0.55), "raining": (min: 0.3, fade: 0.2), "roof": (max: 0.4, fade: 0.3)},
         ),
         // A log settling in a fire now and then: a soft fall, sparks and a hiss, so a hearth
         // sat by for a while is never one loop.

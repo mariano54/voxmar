@@ -154,11 +154,16 @@ pub enum Synth {
     Settle,
     /// A pig rooting in its pen: a few low grunts, now and then a snort.
     Grunt,
+    /// Wind over the chimney on a stormy night: a low hollow moan in the flue, rising and
+    /// falling with the gusts.
+    Flue,
+    /// Rain falling into a fire: drops hissing on the embers, a spit now and then.
+    Sizzle,
 }
 
 impl Synth {
     #[cfg(test)]
-    pub const ALL: [Synth; 53] = [
+    pub const ALL: [Synth; 55] = [
         Synth::Wind,
         Synth::Gale,
         Synth::Rustle,
@@ -212,6 +217,8 @@ impl Synth {
         Synth::Chop,
         Synth::Settle,
         Synth::Grunt,
+        Synth::Flue,
+        Synth::Sizzle,
     ];
 
     /// Whether it makes a continuous bed rather than one-shots.
@@ -240,6 +247,7 @@ impl Synth {
                 | Synth::Blaze
                 | Synth::Murmur
                 | Synth::Hum
+                | Synth::Flue
         )
     }
 
@@ -306,6 +314,7 @@ pub fn one_shot(synth: Synth, variant: usize) -> (Vec<f32>, [Vec<f32>; 2]) {
         Synth::Chop => chop(&mut noise),
         Synth::Settle => settle(&mut noise),
         Synth::Grunt => grunt(&mut noise),
+        Synth::Sizzle => sizzle(&mut noise),
         bed => panic!("{bed:?} makes a bed, not one-shots"),
     };
     let scale = loudness(&dry, 0.14, 0.8);
@@ -330,6 +339,7 @@ fn render_bed(synth: Synth, noise: &mut Noise, len: usize) -> Vec<f32> {
         Synth::Sandstorm => sandstorm(noise, len),
         Synth::Lava => lava(noise, len),
         Synth::Hum => hum(noise, len),
+        Synth::Flue => flue(noise, len),
         Synth::Waterfall => waterfall(noise, len),
         Synth::Fire => fire(noise, len),
         Synth::ThatchPatter => thatch_patter(noise, len),
@@ -563,6 +573,58 @@ fn draught(noise: &mut Noise, len: usize) -> Vec<f32> {
             (whistle * g + hiss.band(noise.next()) * 0.06 * (0.3 + g)) * (0.15 + 0.85 * g)
         })
         .collect()
+}
+
+/// Wind over the chimney: the flue a pipe a few blocks long, so the gusts sound its low
+/// notes (two resonances near 90 and 180 Hz, wandering a little as the wind does) as a
+/// hollow moan that swells and dies away, over a soft rush of air at the top.
+fn flue(noise: &mut Noise, len: usize) -> Vec<f32> {
+    let gust = Drift::new(noise, 0.07);
+    let wander = Drift::new(noise, 0.11);
+    let (low, high) = (between(noise, 80.0, 100.0), between(noise, 170.0, 200.0));
+    let (mut a, mut b) = (Svf::new(low, 18.0), Svf::new(high, 14.0));
+    let mut rush = Svf::new(700.0, 0.6);
+    let mut out = Vec::with_capacity(len);
+    let mut g = 0.0;
+    for i in 0..len {
+        if i % 64 == 0 {
+            let t = i as f32 / SR;
+            let w = wander.at(t);
+            g = gust.unit(t).powi(2);
+            a.tune(low * (1.0 + 0.06 * w + 0.08 * g));
+            b.tune(high * (1.0 + 0.05 * w + 0.08 * g));
+        }
+        let white = noise.next();
+        out.push((a.band(white) + 0.6 * b.band(white)) * (0.1 + 0.9 * g) + rush.band(noise.next()) * 0.05 * (0.2 + g));
+    }
+    out
+}
+
+/// Rain falling into a fire: a run of short, bright hisses as drops find the embers, each
+/// a breath of high noise dying in a few tens of milliseconds, and now and then a spit.
+fn sizzle(noise: &mut Noise) -> Vec<f32> {
+    let mut out = vec![0.0f32; seconds(1.4)];
+    let mut hiss = Svf::new(between(noise, 3500.0, 5000.0), 1.0);
+    let mut t = between(noise, 0.01, 0.05);
+    let mut drops = Vec::new();
+    while t < 1.1 {
+        drops.push((seconds(t), seconds(between(noise, 0.03, 0.12)), between(noise, 0.3, 1.0)));
+        t += between(noise, 0.04, 0.2);
+    }
+    let mut envelope = vec![0.0f32; out.len()];
+    for (start, length, gain) in drops {
+        for (j, e) in envelope.iter_mut().skip(start).take(length).enumerate() {
+            *e += gain * (-(j as f32) / length as f32 * 4.0).exp();
+        }
+    }
+    for (sample, e) in out.iter_mut().zip(&envelope) {
+        *sample = 0.5 * e * hiss.band(noise.next());
+    }
+    if noise.unit() < 0.5 {
+        let at = between(noise, 0.2, 0.9);
+        crack(&mut out, noise, at, (0.001, 0.003), (2500.0, 4500.0), 0.4);
+    }
+    out
 }
 
 /// Thatch smouldering: a high, soft sizzle of band noise that swells and eases as the heat

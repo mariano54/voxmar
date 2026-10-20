@@ -1003,6 +1003,29 @@ fn a_village_works_by_day_and_rings_its_bell_at_dusk() {
     assert!(settles(1.0) > 0 && settles(0.0) == 0, "a log settles in a fire sat by");
 }
 
+/// By the hearth on a stormy night the wind moans over the chimney, only indoors and only
+/// in a strong wind; rain falling into a fire in the open hisses on the embers, never one
+/// under a roof.
+#[test]
+fn a_fire_hears_the_weather() {
+    let ambience = base();
+    let flue = ambience.beds.iter().position(|b| b.name == "base:flue").unwrap();
+    let sizzle = ambience.sounds.iter().position(|s| s.name == "base:fire_sizzle").unwrap();
+    let heard = |set: &[(&str, f32)]| {
+        let (timeline, levels) = run(&ambience, &scene(&ambience, "hearth", &["plains"], set), 120.0);
+        (levels[flue], timeline.iter().filter(|(_, c)| matches!(c, Cue::Sound { sound: s, .. } if *s == sizzle)).count())
+    };
+    let hearth = [&INDOORS[..], &[("fire", 1.0), ("sun", -0.5)]].concat();
+    let full = ambience.beds[flue].volume;
+    assert!(heard(&[&hearth[..], &[("wind", 16.0)]].concat()).0 > 0.6 * full, "a stormy night by the hearth");
+    assert!(heard(&[&hearth[..], &[("wind", 2.0)]].concat()).0 < 1e-3, "a still night");
+    assert!(heard(&[("fire", 1.0), ("sun", -0.5), ("wind", 16.0)]).0 < 1e-3, "a campfire out in the gale");
+    let campfire = [("fire", 1.0), ("rain", 1.0), ("raining", 1.0)];
+    assert!(heard(&campfire).1 > 0, "rain into a campfire");
+    assert_eq!(heard(&[&campfire[..], &[("roof", 1.0)]].concat()).1, 0, "a fire under a roof");
+    assert_eq!(heard(&[("fire", 1.0)]).1, 0, "a dry night");
+}
+
 /// Every recorded bed's files are there; one a mod mistyped is not, and fails the launch.
 #[test]
 fn recorded_beds_are_there() {
