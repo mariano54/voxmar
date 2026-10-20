@@ -1,9 +1,9 @@
 //! How many of the streaming workers (the global rayon pool, see `main`) stream: all of them
-//! while a world loads, before the player is in it and frames matter, and at most `PLAYING`
-//! once its land has come in. On the 18-core Mac, busy with other work as it usually is, a
-//! 40 s flight's p99 frame was 24 ms with 16 workers (and with 12), 10-15 ms with 8 and 6 ms
-//! with 4, at the same frame median; but the gate's world took 49 s to load with 16, and
-//! loading is what more workers are for.
+//! while a world loads, before the player is in it and frames matter, and at most
+//! `streaming.ron`'s `playing` once its land has come in. On the 18-core Mac a 40 s flight's
+//! p99 frame was 19-21 ms with 16 workers, 8.5-15 ms with 8 and 4.5-5.4 ms with 4, its 1% low
+//! 143-197 fps with 4 against 39-56 with the cores less two; but the gate's world took 49 s
+//! to load with 16, and loading is what more workers are for.
 //!
 //! The pool keeps its size; what is capped is how many streaming jobs (generating, meshing,
 //! distant land) run at once (`voxmar_engine::jobs`), and the helper threads generation's
@@ -16,14 +16,43 @@
 //! many a busy machine's frames can take, tools/perf/play_frames).
 
 use bevy::prelude::*;
+use serde::Deserialize;
+use voxmar_engine::content::ContentFile;
 use voxmar_engine::coords::ColumnPos;
 
 use crate::menu::Screen;
 use crate::player::LocalPlayer;
 use crate::world::ClientWorld;
 
-/// Most streaming jobs at once while playing.
-pub const PLAYING: usize = 6;
+pub const FILE: &str = "streaming.ron";
+
+/// How the game streams the land in while playing (`streaming.ron`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Streaming {
+    /// Most streaming jobs at once once the world has loaded (no more than the workers).
+    pub playing: usize,
+}
+
+/// The fewest and most streaming jobs `playing` may give: one of each kind
+/// (`voxmar_engine::jobs::LEAST`), and more than any machine has cores to spare.
+const PLAYING_RANGE: std::ops::RangeInclusive<usize> = voxmar_engine::jobs::LEAST..=64;
+
+impl Streaming {
+    /// Reads every package's file in order, the last one giving it, and refuses one that is
+    /// missing or out of bounds.
+    pub fn load(files: &[ContentFile]) -> Result<Self, String> {
+        let mut streaming = None;
+        for file in files.iter().filter(|f| f.name == FILE) {
+            streaming = Some(ron::from_str::<Streaming>(&file.source).map_err(|e| format!("{}/{FILE}: {e}", file.package))?);
+        }
+        let streaming = streaming.ok_or(format!("no package gives {FILE}"))?;
+        if !PLAYING_RANGE.contains(&streaming.playing) {
+            return Err(format!("{FILE}: playing {} must be from {} to {}", streaming.playing, PLAYING_RANGE.start(), PLAYING_RANGE.end()));
+        }
+        Ok(streaming)
+    }
+}
 
 /// Columns on each side of the player's that must have come while capped.
 const NEAR: i32 = 2;
@@ -162,6 +191,21 @@ fn uncap(cap: &mut Cap) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn given(package: &str, source: &str) -> ContentFile {
+        ContentFile { package: package.into(), name: FILE.into(), source: source.into() }
+    }
+
+    #[test]
+    fn the_base_package_streams_on_four_and_a_later_one_may_change_it() {
+        let base = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/content/base/", "streaming.ron")).unwrap();
+        assert_eq!(Streaming::load(&[given("base", &base)]), Ok(Streaming { playing: 4 }));
+        assert_eq!(Streaming::load(&[given("base", &base), given("busy", "(playing: 3)")]).map(|s| s.playing), Ok(3));
+        assert!(Streaming::load(&[]).unwrap_err().contains("no package"));
+        assert!(Streaming::load(&[given("base", "(playing: 2)")]).unwrap_err().contains("from 3 to 64"));
+        assert!(Streaming::load(&[given("base", "(playing: 65)")]).is_err());
+        assert!(Streaming::load(&[given("base", "(playing: 4, workers: 9)")]).is_err(), "an unknown field");
+    }
 
     fn seen(columns: usize, near: bool, built: bool) -> Seen<impl FnOnce() -> bool> {
         Seen { joined: true, columns, caught_up: true, distant: true, near, built: move || built }
