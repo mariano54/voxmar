@@ -887,6 +887,13 @@ mod tests {
         }
         let (body, _) = run(&alone, Body { on_ground: true, ..at(0.5, 0.0, 0.5) }, Controls { jump: true, ..Controls::default() }, 0.5, 60.0);
         assert!(body.position.y > 1.0 && body.velocity.y == tuning.climb_speed, "holding jump did not climb a ladder: {body:?}");
+        // Thrown up into a ladder faster than it is climbed (a jump from beside it), or
+        // falling into one faster than it is slid down, the body goes at `climb_speed`.
+        for thrown in [tuning.jump_velocity, -20.0] {
+            let mut body = Body { velocity: Vec3::Y * thrown, ..at(0.5, 1.0, 0.5) };
+            advance(&mut body, &alone, &tuning, Controls::default(), 1.0 / 120.0);
+            assert!(body.velocity.y.abs() <= tuning.climb_speed, "into a ladder at {thrown}: {body:?}");
+        }
     }
 
     /// A whole block is no step: walking into it without jumping stops at it, as does a slab
