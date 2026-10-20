@@ -189,10 +189,7 @@ pub(super) fn fly(
         heard.shots += 1;
         let (mesh, material) = made
             .entry(loose.class.clone())
-            .or_insert_with(|| {
-                let mesh = meshes.add(Cuboid::new(shot.width, shot.width, shot.length));
-                (mesh, materials.add(StandardMaterial { base_color: shot.colour.color(), unlit: true, ..default() }))
-            })
+            .or_insert_with(|| missile(&mut meshes, &mut materials, shot.width, shot.length, shot.colour.color()))
             .clone();
         let length = loose.from.distance(loose.to);
         commands.spawn((
@@ -317,6 +314,12 @@ fn pass(flight: &mut Shot, here: Vec3) {
 /// Drops every shot drawn or flying on leaving the game.
 pub(super) fn reset(mut shots: ResMut<Shots>) {
     *shots = Shots::default();
+}
+
+/// A shot's missile: a box `width` across and `length` long, unlit in `colour` (warmed as
+/// the world loads in `fight_fx::warm_markers`).
+pub(super) fn missile(meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>, width: f32, length: f32, colour: Color) -> (Handle<Mesh>, Handle<StandardMaterial>) {
+    (meshes.add(Cuboid::new(width, width, length)), materials.add(StandardMaterial { base_color: colour, unlit: true, ..default() }))
 }
 
 #[cfg(test)]
