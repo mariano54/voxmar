@@ -551,10 +551,14 @@ fn best_task<'a>(quest: &'a QuestDef, state: Option<&QuestState>) -> Vec<(&'a Go
     quest.tasks.get(best).map_or_else(Vec::new, |goals| goals.iter().enumerate().map(|(g, goal)| (goal, progress(best, g))).collect())
 }
 
-/// The quests a quest comes after, each way it may (`a|b` is either).
 /// How many quests come after `quest`.
 fn followers(content: &Content, quest: &QuestDef) -> usize {
-    content.quests.iter().filter(|q| before(content, q).iter().any(|f| f.name == quest.name)).count()
+    leads_to(content, quest).len()
+}
+
+/// The quests that come after `quest`, in the book's order.
+fn leads_to<'a>(content: &'a Content, quest: &QuestDef) -> Vec<&'a QuestDef> {
+    content.quests.iter().filter(|q| before(content, q).iter().any(|f| f.name == quest.name)).collect()
 }
 
 /// The quests a quest comes after, each way it may (`a|b` is either).
@@ -580,6 +584,8 @@ pub(crate) struct Canvas {
     margin: Vec2,
     /// The step between quests across and down, as zoomed.
     step: Vec2,
+    /// How far it reaches past its margins: the web and the room past it.
+    reach: Vec2,
 }
 
 impl Canvas {
@@ -1012,10 +1018,10 @@ fn draw(
     if let Ok((web, mut scroll)) = web.single_mut() {
         let size = Vec2::new(HEADER + columns as f32 * step.x, tallest as f32 * step.y);
         // Centred in the well by its margins; a web too big for the well has none that way,
-        // and is dragged about in it rather than cut off. Above and below it, half the well
-        // more, so the canvas moves on past its top and bottom lanes: a quest there can
-        // stand in the middle, and the point under the pointer stays put as it zooms.
-        let over = Vec2::Y * room.y / 2.0;
+        // and is dragged about in it rather than cut off. All round it, half the well more,
+        // so the canvas moves on past its edges: a quest there can stand in the middle, and
+        // the point under the pointer stays put as it zooms, wherever the pointer is.
+        let over = room / 2.0;
         let margin = ((room - size) / 2.0).max(Vec2::ZERO) + over;
         // As far as the canvas reaches, its margins and the room past its foot.
         let reach = size + over;
@@ -1025,7 +1031,7 @@ fn draw(
         // the headers and its card (the canvas from `scroll - margin`).
         let brought = |i: usize| (centre(i) + margin - Vec2::X * HEADER - (seen - Vec2::X * HEADER) / 2.0).clamp(Vec2::ZERO, (reach + margin - seen).max(Vec2::ZERO));
         if arrived {
-            // On no quest, from the web's top.
+            // On no quest, from the web's corner.
             scroll.0 = view.picked.as_deref().and_then(|name| quests.iter().position(|q| q.name == name)).map_or(over, brought);
         } else if let Some((pointer, point)) = zoomed {
             // The point of the web that was under the pointer stays there: the well shows
@@ -1049,7 +1055,7 @@ fn draw(
             // Its room past the foot is its own height (a margin there is no room the well
             // scrolls to).
             let canvas = Node { width: Val::Px(reach.x), height: Val::Px(reach.y), flex_shrink: 0.0, margin: UiRect { left: Val::Px(margin.x), top: Val::Px(margin.y), ..default() }, ..default() };
-            web.spawn((canvas, Canvas { margin, step })).with_children(|area| {
+            web.spawn((canvas, Canvas { margin, step, reach })).with_children(|area| {
                 // Every other lane faintly banded, so a path reads along its row.
                 for lane in lanes.iter().skip(1).step_by(2) {
                     let band = Node { position_type: PositionType::Absolute, left: Val::ZERO, top: Val::Px(lane.top as f32 * step.y), width: Val::Px(size.x), height: Val::Px(lane.rows as f32 * step.y), ..default() };
@@ -1263,6 +1269,13 @@ fn draw(
                 let line = locale.format("quest.after", &[("list", &names.join(locale.get("language.comma")))]);
                 let color = if standing == Standing::Waiting { TEXT } else { MUTED };
                 detail.spawn((Node { flex_shrink: 0.0, ..default() }, text(font, line, BODY, color)));
+            }
+            // And what it leads to, so the way on is never a guess.
+            let next = leads_to(content, quest);
+            if !next.is_empty() {
+                let names: Vec<String> = next.iter().map(|q| title(&locale, q)).collect();
+                let line = locale.format("quest.leads", &[("list", &names.join(locale.get("language.comma")))]);
+                detail.spawn((Node { flex_shrink: 0.0, ..default() }, text(font, line, BODY, MUTED)));
             }
             // What it asks: its goals, or its routes when there are several.
             let asks = if quest.tasks.len() > 1 { "quest.routes" } else { "quest.goals" };
@@ -1488,7 +1501,9 @@ fn fit_lines(
     // will hold it.
     let scale = computed.inverse_scale_factor();
     let room = (computed.size() * scale - Vec2::splat(2.0 * space::GAP)).max(Vec2::ZERO);
-    let max = (computed.content_size() - computed.size()).max(Vec2::ZERO) * scale;
+    // How far the well scrolls, from the canvas as drawn rather than as last laid out: on
+    // the frame it is drawn anew (zoomed), the layout still holds the canvas before.
+    let max = (canvas.margin + canvas.reach + Vec2::splat(2.0 * space::GAP) - computed.size() * scale).max(Vec2::ZERO);
     let corner = scroll.0.clamp(Vec2::ZERO, max).floor() - canvas.margin;
     // The ground moves with the canvas, a dot's step at most, so it never runs out.
     let step = look.grid.spacing as f32 * PX;
@@ -1923,6 +1938,18 @@ fn track(
                 if done {
                     let key = if claimable(&player, name) { "quest.tracker.ready" } else { "quest.tracker.done" };
                     card.spawn((shadowed(font, locale.get(key).to_owned(), BODY, GOLD), TrackerLine));
+                    // What finishing it opened, before the tracker moves on to it: open now, and
+                    // not before it was done.
+                    let without = |n: &str| n != name.as_str() && self::state(&player, n).is_some_and(|s| s.done);
+                    let opened: Vec<String> = leads_to(content, quest)
+                        .into_iter()
+                        .filter(|q| standing(content, &player, q) == Standing::Open && !content.quests.open(q, &without))
+                        .map(|q| title(&locale, q))
+                        .collect();
+                    if !opened.is_empty() {
+                        let line = locale.format("quest.tracker.opens", &[("list", &opened.join(locale.get("language.comma")))]);
+                        card.spawn(shadowed(font, line, BODY, TEXT));
+                    }
                     return;
                 }
                 for (goal, progress) in best_task(quest, state) {

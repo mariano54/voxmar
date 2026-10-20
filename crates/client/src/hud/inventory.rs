@@ -994,6 +994,12 @@ pub fn origins_and_uses(locale: &Locale, content: &voxmar_engine::content::Conte
             Method::Harvest { .. } => add(locale.get("tooltip.from.harvest").to_owned()),
             Method::Break { .. } => add(locale.get("tooltip.from.break").to_owned()),
             Method::Catch { .. } => add(locale.get("tooltip.from.fishing").to_owned()),
+            Method::Trap { .. } => add(locale.get("tooltip.from.trap").to_owned()),
+            Method::Bees { .. } => add(locale.get("tooltip.from.bees").to_owned()),
+            Method::Chest { .. } => add(locale.get("tooltip.from.chest").to_owned()),
+            Method::Trade { .. } => add(locale.get("tooltip.from.trade").to_owned()),
+            Method::Reward { .. } => add(locale.get("tooltip.from.quest").to_owned()),
+            Method::Found { .. } => add(locale.get("tooltip.from.found").to_owned()),
         }
     }
     let mut into: Vec<String> = Vec::new();
