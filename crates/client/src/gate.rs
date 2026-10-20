@@ -644,6 +644,8 @@ struct Gate {
     /// many times the motif had started before its step in.
     motif_time: u64,
     motif_starts: u32,
+    /// How many times the settlement motif had started before the step into a settlement.
+    settlement_motif_starts: Option<u32>,
     /// The window step's lit pane, kept to judge against it snuffed.
     window_lit: Option<[f64; 3]>,
     /// The door step's ground lit by a campfire, kept to judge against it put out.
@@ -803,6 +805,10 @@ struct Gate {
     daub_stage: u8,
     /// The tap the Blaze step last asked to set its torch down on.
     torch_taps: u32,
+    /// Whether the chat has said "Evening in:" at any point in the run: the server tells an
+    /// effect once a session, and an earlier step (the motifs, at midnight under a roof by
+    /// the Cook step's hearth) can be the one it comes on in.
+    evening_told: bool,
     /// Whether the creatures step could release its butterfly.
     butterfly: bool,
     /// Whether the struck creature's fall was judged.
@@ -985,6 +991,7 @@ impl Gate {
             way_time: 0,
             motif_time: 0,
             motif_starts: 0,
+            settlement_motif_starts: None,
             window_lit: None,
             fire_lit: None,
             natural_before: Vec::new(),
@@ -1064,6 +1071,7 @@ impl Gate {
             smoulder_seen: false,
             daub_stage: 0,
             torch_taps: 0,
+            evening_told: false,
             butterfly: false,
             fall_judged: false,
             cover_checked: false,
@@ -1714,6 +1722,9 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
 
 fn step(world: &mut World, gate: &mut Gate, now: f32) {
     music_fades(world, gate, now);
+    if !gate.evening_told {
+        gate.evening_told = world.resource::<crate::hud::console::Console>().all().any(|l| l.contains("Evening in:"));
+    }
     let since = now - gate.since;
     let in_phase = now - gate.phase_since;
     let feet = gate.feet;
@@ -6362,7 +6373,7 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
                 let effects = &launch.content.effects;
                 let survey = voxmar_engine::effect::HomeSurvey { counts: effects.home_tags().iter().map(|tag| (tag.clone(), u32::from(tag == "bed" || tag == "light"))).collect(), ..Default::default() };
                 let calm = voxmar_engine::weather::Weather::NONE;
-                let situation = voxmar_engine::effect::Situation { felt: 15.0, warmed: false, outdoors: true, weather: &calm, biome: "", biome_tags: &[], home: Some(&survey), done: &[], held: &[], near: &[], seated: false };
+                let situation = voxmar_engine::effect::Situation { felt: 15.0, warmed: false, outdoors: true, weather: &calm, biome: "", biome_tags: &[], home: Some(&survey), done: &[], held: &[], near: &[], seated: false, night: false };
                 let tags = client.registry.id("base:sleeping_bag").map(|b| client.registry.def(b).tags.clone()).unwrap_or_default();
                 let wanted = effects.given_by_sleep(&situation, &tags);
                 let shown = |id| player.vitals.effects.iter().find(|a| a.effect == id);
@@ -6578,7 +6589,9 @@ const WALLS_WAIT: f32 = 8.0;
 /// Walls make the home. About the camp the Home step left (the bag home, a torch beside it),
 /// a hearthstone and a second torch, and a plank roof over the room: open to the outside it
 /// is Hearthside, and `/home` names the walls it lacks; walled in with planks (sound) it
-/// turns Snug. All of it goes again after, the camp left for the way home.
+/// turns Snug. Then, set to midnight (`/time`, no waiting for dark), indoors by the hearth
+/// it is an evening in, and noon again after. All of it goes again after, the camp left for
+/// the way home.
 fn home_walls(world: &mut World, gate: &mut Gate, now: f32) {
     let waited = gate.server_in_phase();
     let Some(bag) = world.resource::<LocalPlayer>().vitals.home else {
@@ -6648,12 +6661,27 @@ fn home_walls(world: &mut World, gate: &mut Gate, now: f32) {
             }
         }
         // Walled in with planks: Snug.
-        _ => {
+        2 => {
             if has(world, "base:snug") {
                 gate.check("home: walls", Ok("roofed but open, the camp with its hearth stayed Hearthside and /home asked for walls; walled in with planks it turned Snug".into()));
-                leave(world, gate);
+                world.resource::<Net>().command("time set midnight");
+                gate.advance(now);
             } else if gate.waited_out(WALLS_WAIT) {
                 gate.check("home: walls", Err(format!("{waited:.1} server s after walling the room in with planks ({low} to {high}), no Snug: Hearthside {}", has(world, "base:hearthside"))));
+                leave(world, gate);
+            }
+        }
+        // At midnight, indoors at home by the hearth: an evening in, its chip, and its line
+        // (told once a session, so seen at any point in the run).
+        _ => {
+            let (evening, told) = (has(world, "base:evening_in"), gate.evening_told);
+            if evening && told {
+                gate.check("home: evening in", Ok("set to midnight, indoors at home by the hearth showed the Evening in chip, and the chat has named it".into()));
+                world.resource::<Net>().command("time set noon");
+                leave(world, gate);
+            } else if gate.waited_out(WALLS_WAIT) {
+                gate.check("home: evening in", Err(format!("{waited:.1} server s after /time set midnight in the walled room by the hearth: Evening in chip {evening}, line told this run {told}")));
+                world.resource::<Net>().command("time set noon");
                 leave(world, gate);
             }
         }
@@ -16087,7 +16115,12 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             };
             gate.settlement = at;
             gate.settlement_reply = reply.clone();
-            world.resource::<Net>().command(&format!("tp {} {} {}", at.x as f32 + 0.5, at.y, at.z as f32 + 0.5));
+            // By day, from outside any settlement as the music last saw: the step in starts
+            // the settlement motif.
+            gate.settlement_motif_starts = crate::music::settlement_motif_heard(world).filter(|heard| heard.at.inside == Some(false)).map(|heard| heard.at.starts);
+            let net = world.resource::<Net>();
+            net.command("time set noon");
+            net.command(&format!("tp {} {} {}", at.x as f32 + 0.5, at.y, at.z as f32 + 0.5));
             if let Some(observer) = gate.observer.as_mut() {
                 observer.connection.send(ClientMessage::Command { line: format!("tp {} {} {}", at.x, at.y + 60, at.z) });
             }
@@ -16133,11 +16166,13 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             // The ambience surveys the place about once a second, so it may not yet have
             // heard the settlement the player was just sent to: waited on with the people.
             let heard = settlement_heard(world, gate.settlement);
-            if (near == 0 || heard.is_err()) && gate.server_in_phase() < SETTLEMENT_PEOPLE {
+            let motif = settlement_motif_started(world, gate.settlement_motif_starts);
+            if (near == 0 || heard.is_err() || motif.is_err()) && gate.server_in_phase() < SETTLEMENT_PEOPLE {
                 return;
             }
             gate.check("settlement people", if people > 0 { Ok(format!("{people} people of the settlement drawn, {near} within a greeting's reach")) } else { Err("no one of the settlement came to the player standing in its square".into()) });
             gate.check("settlement sounds", heard);
+            gate.check("settlement motif: starts", motif);
             // The nearest of them greets the player (`Server::bark`, by its command).
             world.resource_mut::<crate::creature_sounds::Heard>().barks.clear();
             world.resource::<Net>().command("creatures bark greet");
@@ -16234,6 +16269,17 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
     }
 }
 
+/// Whether stepping into the settlement by day started its motif once (`before`: how many
+/// times it had started, seen from outside any settlement before the step).
+fn settlement_motif_started(world: &World, before: Option<u32>) -> Result<String, String> {
+    let Some(heard) = crate::music::settlement_motif_heard(world) else { return Err("no music running to hear it (music::Rehearse)".into()) };
+    let Some(before) = before else { return Err(format!("the music never saw the player outside a settlement before the step in: {:?}", heard.at)) };
+    match &heard.started {
+        Some(track) if heard.at.starts == before + 1 => Ok(format!("stepping into the settlement at noon started {track}")),
+        _ => Err(format!("stepping in started no settlement motif: {} starts before, now {:?}, last started {:?}", before, heard.at, heard.started)),
+    }
+}
+
 /// Whether one of the settlement's people greeted, asking for its own voice's greeting
 /// clips (`creature_sounds.ron`'s `greet`, not a hum it falls back to).
 fn settlement_greeted(world: &World, asked: &[(u32, crate::creature_sounds::Kind, Vec<String>)]) -> Result<String, String> {
@@ -16260,11 +16306,18 @@ fn settlement_greeted(world: &World, asked: &[(u32, crate::creature_sounds::Kind
 /// surveyed), and its work sounds (`ambience.ron`'s one-shots on that axis) would play
 /// here fully at noon, and not at all at midnight or with no settlement near.
 fn settlement_heard(world: &World, at: IVec3) -> Result<String, String> {
-    let Some((axis, sounds)) = crate::ambience::settlement_heard(world) else { return Err("the ambience never started".into()) };
+    let Some((axis, [edge, people], sounds)) = crate::ambience::settlement_heard(world) else { return Err("the ambience never started".into()) };
     let expected = world.resource::<LocalPlayer>().position.xz().distance(at.xz().as_vec2() + 0.5);
     let mut wrong = Vec::new();
     if (axis - expected).abs() > 3.0 {
         wrong.push(format!("the ambience puts the settlement's middle {axis:.0} blocks off; the player stands {expected:.1} from it"));
+    }
+    // Standing in its square, the player is within its bounds, and someone lives there.
+    if edge > 0.0 {
+        wrong.push(format!("the ambience puts the player {edge:.0} blocks outside the settlement's bounds, standing in its square"));
+    }
+    if people < 1.0 {
+        wrong.push("the ambience hears no one living in the settlement".into());
     }
     if sounds.is_empty() {
         wrong.push("no ambience one-shot hangs on the settlement axis".into());
@@ -16276,7 +16329,7 @@ fn settlement_heard(world: &World, at: IVec3) -> Result<String, String> {
     }
     let names: Vec<&str> = sounds.iter().map(|(name, _)| name.as_str()).collect();
     if wrong.is_empty() {
-        Ok(format!("{expected:.1} blocks from its middle (heard as {axis:.1}): {} at noon, quiet at midnight and away", names.join(", ")))
+        Ok(format!("{expected:.1} blocks from its middle (heard as {axis:.1}), within its bounds, {people:.0} living there: {} at noon, quiet at midnight and away", names.join(", ")))
     } else {
         Err(wrong.join("; "))
     }

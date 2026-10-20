@@ -109,6 +109,7 @@ impl Mixer {
         ambience: &Ambience,
         env: &Environment,
         samples: &[Vec<IVec3>],
+        buildings: &[Vec<Vec3>],
         listener: Vec3,
         dt: f32,
         length: impl Fn(usize, usize) -> f32,
@@ -161,6 +162,10 @@ impl Mixer {
                     Some(listener + Vec3::new(angle.cos() * d, h, angle.sin() * d))
                 }
                 Placement::Listener => None,
+                Placement::Building(set) => {
+                    let Some(places) = buildings.get(set).filter(|p| !p.is_empty()) else { continue };
+                    Some(places[self.pick(places.len(), None)])
+                }
             };
             let distance = at.map_or(0.0, |at| at.distance(listener));
             let volume = sound.volume * (0.6 + 0.4 * weight) * self.ducking(ambience, env, &sound.duck) * sound.reach / (sound.reach + distance);
@@ -252,7 +257,7 @@ mod tests {
     fn run(mixer: &mut Mixer, ambience: &Ambience, env: &Environment, samples: &[Vec<IVec3>], seconds: f32) -> Vec<Cue> {
         let mut cues = Vec::new();
         for _ in 0..(seconds * 60.0) as usize {
-            mixer.update(ambience, env, samples, Vec3::ZERO, 1.0 / 60.0, |_, _| 1.0, (3, 5), &mut cues);
+            mixer.update(ambience, env, samples, &[], Vec3::ZERO, 1.0 / 60.0, |_, _| 1.0, (3, 5), &mut cues);
         }
         cues
     }
