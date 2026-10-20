@@ -220,7 +220,7 @@
     "effect.base.waterside": ("Waterside", "水辺"),
     "effect.base.waterside.description": ("By the sea, a river or a marsh: casts land a fifth more often.", "海や川や沼のそば。釣り糸が5分の1ほどよくかかる。"),
     "multiblock.base.crucible_kiln": ("Crucible Kiln", "るつぼ窯"),
-    "multiblock.base.crucible_kiln.hint": ("The kiln needs kiln bricks all round the crucible and a pillar of kiln bricks on each corner.", "窯には、るつぼを囲む窯レンガと、四隅に窯レンガの柱が必要です。"),
+    "multiblock.base.crucible_kiln.hint": ("The kiln needs tempered kiln bricks all round the crucible and a pillar of them on each corner. Tempered bricks take straw from a grain harvest.", "窯には、るつぼを囲むわら入り窯レンガと、四隅にその柱が必要です。わら入りのレンガには、穀物を収穫したときのわらが要ります。"),
     "multiblock.base.homestead_hearth": ("Homestead Hearth", "開拓の炉"),
     "multiblock.base.homestead_hearth.hint": ("The hearth needs a ring of stone around the hearthstone and a chimney two blocks tall at one corner.", "炉には、炉石を囲む石の輪と、角に2ブロックの高さの煙突が必要です。"),
     "quest.base.a_bed_of_your_own": ("A Bed of Your Own", "自分の寝床"),
