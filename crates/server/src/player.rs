@@ -1246,8 +1246,11 @@ mod tests {
         assert!(seen.iter().all(|v| v.id != 1), "Ada was told of herself");
         server.leave(2);
         server.broadcast_players();
-        let told = told_of_others(&ada);
-        assert!(told.len() == 1 && told[0].0.is_empty() && told[0].1 == [2], "Ada was not told once that Bob had gone: {told:?}");
+        let told = told_of_others_and_names(&ada);
+        assert!(
+            told.len() == 1 && told[0].0.is_empty() && told[0].1 == [2] && told[0].2 == [(2, String::new())],
+            "Ada was not told once that Bob had gone, his name to forget: {told:?}"
+        );
         server.broadcast_players();
         assert!(told_of_others(&ada).is_empty(), "alone, Ada was told of nobody again and again");
     }

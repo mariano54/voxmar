@@ -1292,7 +1292,14 @@ impl Server {
                     names.push((view.id, name));
                 }
             }
-            player.named.retain(|id, _| views.iter().any(|v| v.id == *id));
+            // Those who left the server are named once more, with no name, to be forgotten.
+            player.named.retain(|id, _| {
+                let here = views.iter().any(|v| v.id == *id);
+                if !here {
+                    names.push((*id, String::new()));
+                }
+                here
+            });
             let gone: Vec<PlayerId> = player.told.keys().copied().filter(|id| !near.iter().any(|v| v.id == *id)).collect();
             for id in &gone {
                 player.told.remove(id);

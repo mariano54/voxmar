@@ -175,7 +175,8 @@ pub enum ServerMessage {
     /// `seen` holds only those whose view changed since it was last sent (or who came into
     /// sight), `gone` those who left or went out of sight. `names`: the names of players
     /// out of sight not told before (or renamed), so a creature they keep shows who keeps it
-    /// however far off they are. Sent only when there is any.
+    /// however far off they are; an empty name for one who left the server, to forget. Sent
+    /// only when there is any.
     Players { seen: Vec<PlayerView>, gone: Vec<PlayerId>, names: Vec<(PlayerId, String)> },
     /// The clocks, every second and whenever a command changes them: `tick` counts
     /// simulation ticks since the world began, at `TICKS_PER_SECOND`, and `day` is the

@@ -1483,9 +1483,15 @@ impl Observer {
                     }
                     ServerMessage::Chat { text, .. } => self.replies.push(text),
                     ServerMessage::Players { seen, gone, names } => {
-                        self.names.extend(names);
+                        // Names stay through going out of sight; one left with no name is forgotten.
+                        for (id, name) in names {
+                            if name.is_empty() {
+                                self.names.remove(&id);
+                            } else {
+                                self.names.insert(id, name);
+                            }
+                        }
                         for id in gone {
-                            self.names.remove(&id);
                             self.others.remove(&id);
                         }
                         for p in seen {
@@ -7550,6 +7556,11 @@ fn step_up(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 net.command(&format!("setblock {} {} {} {}", cell.x, cell.y, cell.z, registry.def(block).name));
             }
             net.command(&format!("tp {} {} {}", stand.x as f32 + 0.5, stand.y, stand.z as f32 + 0.5));
+            // The observer, left at the town the settlement steps judged, is brought above the
+            // course: the server tells it only of players within `players_seen`.
+            if let Some(observer) = gate.observer.as_mut() {
+                observer.connection.send(ClientMessage::Command { line: format!("tp {} {} {}", stand.x as f32 + 0.5, stand.y + 40, stand.z as f32 + 0.5) });
+            }
             gate.step_up_fault = None;
             gate.advance(now);
         }
