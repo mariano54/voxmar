@@ -944,6 +944,28 @@ fn a_settlement_talks_by_day_comes_home_at_dusk_and_sleeps_at_night() {
 /// air and drips, oftener deep and shut in, where a second tier joins the first; dry rock
 /// (under a desert) has still air and grit ticking down instead, nothing dripping; water
 /// seeping into a pool is heard in either.
+/// A timber home creaks as it settles at night, indoors only; after the rain the eaves drip
+/// under a roof until the ground dries, never while it still rains.
+#[test]
+fn a_home_settles_at_night_and_its_eaves_drip_after_rain() {
+    let ambience = base();
+    let sound = |name: &str| ambience.sounds.iter().position(|s| s.name == format!("base:{name}")).unwrap();
+    let played = |name: &str, set: &[(&str, f32)]| {
+        let (timeline, _) = run(&ambience, &scene(&ambience, "home", &["grassland", "temperate", "open"], set), 300.0);
+        timeline.iter().filter(|(_, c)| matches!(c, Cue::Sound { sound: s, .. } if *s == sound(name))).count()
+    };
+    let home = [&INDOORS[..], &[("timber", 1.0), ("rain", 0.0)]].concat();
+    let at_night = [&home[..], &[("sun", -0.5)]].concat();
+    assert!(played("rafters", &at_night) > 0, "a timber home at night");
+    assert_eq!(played("rafters", &home), 0, "by day");
+    assert_eq!(played("rafters", &[("timber", 1.0), ("sun", -0.5)]), 0, "outdoors by a timber wall");
+    let after_rain = [("roof", 1.0), ("wetness", 0.9), ("raining", 0.0)];
+    assert!(played("eaves_drip", &after_rain) > 0, "under a roof after the rain");
+    assert_eq!(played("eaves_drip", &[("roof", 1.0), ("wetness", 0.9), ("raining", 1.0)]), 0, "while it rains");
+    assert_eq!(played("eaves_drip", &[("roof", 1.0), ("wetness", 0.0)]), 0, "the ground dry");
+    assert_eq!(played("eaves_drip", &[("wetness", 0.9)]), 0, "out in the open");
+}
+
 /// Bees drone by their hive on a warm day, and keep in at night, in the cold and the rain.
 #[test]
 fn bees_hum_by_their_hive_on_a_warm_day() {
