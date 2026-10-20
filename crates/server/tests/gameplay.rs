@@ -581,15 +581,31 @@ impl Client {
     }
 
     /// Waits until at least `ticks` server ticks have passed from now, and little longer:
-    /// it asks the server's clock (`/time add 0` tells it at once and moves nothing) rather
-    /// than waiting on its once-a-second tell, which made a one-second wait one to two.
+    /// it asks the server's clock (`ask_tick`) rather than waiting on its once-a-second
+    /// tell, which made a one-second wait one to two. For an admin, who may ask.
     #[track_caller]
     fn after_ticks_asked(&mut self, ticks: u64) {
-        self.ok("/time add 0");
-        let from = self.server_tick;
-        while self.server_tick < from + ticks {
-            self.ok("/time add 0");
-        }
+        let from = self.ask_tick();
+        while self.ask_tick() < from + ticks {}
+    }
+
+    /// As [`Client::wait_server`], by the asked clock ([`Client::after_ticks_asked`]).
+    #[track_caller]
+    fn wait_server_asked(&mut self, seconds: u64) {
+        self.after_ticks_asked(seconds * TICKS_PER_SECOND as u64);
+    }
+
+    /// The server's tick now: `/time add 0` tells it at once and moves nothing. Its answer
+    /// is taken out of the chat, and whatever else was said there kept.
+    #[track_caller]
+    fn ask_tick(&mut self) -> u64 {
+        let before = self.chat.len();
+        self.connection.send(ClientMessage::Command { line: "/time add 0".into() });
+        let answer = |c: &Client| c.chat[before..].iter().position(|(kind, text)| *kind == ChatKind::Info && text.starts_with("Day ") && text.contains("(tick "));
+        self.pump_until(|c| answer(c).is_some());
+        let at = before + answer(self).expect("answered");
+        self.chat.remove(at);
+        self.server_tick
     }
 
     /// Waits until `count` holds still across 20 server ticks after everything sent was
@@ -1663,14 +1679,14 @@ fn ores_ask_for_a_mining_level_and_a_pickaxe_and_teach_mining() {
     hold(&client, 0);
     mine(&client);
     client.settle();
-    client.after_ticks(with_pickaxe + 20);
+    client.after_ticks_asked(with_pickaxe + 20);
     assert_eq!(client.world.block(ore), Some(iron), "iron ore broke at Mining 1");
     // At Mining 15 with a bare hand: refused too.
     client.ok("/skill mining 15");
     hold(&client, 1);
     mine(&client);
     client.settle();
-    client.after_ticks(by_hand + 20);
+    client.after_ticks_asked(by_hand + 20);
     assert_eq!(client.world.block(ore), Some(iron), "iron ore broke without a pickaxe");
     // At Mining 15 with the stone pickaxe: broken, quicker than by hand (by the server's
     // clock, told once a second), teaching Mining (35).
@@ -1969,7 +1985,7 @@ fn prayers_drain_ward_off_blows_and_fill_at_an_altar() {
     client.ok("/skill magic 45");
     client.pump_until(|c| c.prayers.as_ref().is_some_and(|p| p.1 == 55));
     client.connection.send(ClientMessage::Pray { prayer: ward, on: true });
-    client.wait_server(1);
+    client.wait_server_asked(1);
     assert!(client.prayers.as_ref().unwrap().2.is_empty(), "Ward Melee is Magic 46");
     // Points are 10 and one a Magic level, full for a new player.
     client.ok("/skill magic 46");
@@ -2007,7 +2023,7 @@ fn prayers_drain_ward_off_blows_and_fill_at_an_altar() {
     let bone_slot = (0..voxmar_engine::inventory::HOTBAR_SLOTS).find(|&s| client.inventory.get(s).is_some_and(|s| s.item == bone)).expect("the bone in the hotbar");
     let yaw = yaw_toward(client.position, altar.as_vec3() + 0.5);
     client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw, pitch: 0.3, selected_slot: bone_slot as u8, flying: false }));
-    client.wait_server(1);
+    client.wait_server_asked(1);
     let earned = client.earned.len();
     client.propose("base:pray", ActionTarget::Block { block: altar, face: Face::NegZ });
     client.pump_until(|c| c.prayers.as_ref().is_some_and(|p| p.0 == p.1) && c.earned.len() > earned);
@@ -3553,10 +3569,59 @@ fn leaving_dead_leaves_their_things_behind_too() {
 }
 
 /// The spawn kit's loose flint the client sees within twelve blocks of where it stands.
+/// The loose flint within the kit's reach of the spawn (six blocks), where the land alone
+/// seldom has four.
 fn kit_flint(c: &Client) -> Vec<IVec3> {
-    let flint = c.content.blocks.id("base:loose_flint");
+    kit_pieces(c, 6, "base:loose_flint")
+}
+
+/// The cells of `piece` within `reach` blocks across of the player's feet.
+fn kit_pieces(c: &Client, reach: i32, piece: &str) -> Vec<IVec3> {
+    let piece = c.content.blocks.id(piece);
     let feet = c.position.floor().as_ivec3();
-    (-12..=12).flat_map(|dx| (-12..=12).flat_map(move |dz| (-32..=8).map(move |dy| feet + IVec3::new(dx, dy, dz)))).filter(|&p| c.world.block(p) == flint).collect()
+    (-reach..=reach).flat_map(|dx| (-reach..=reach).flat_map(move |dz| (-32..=8).map(move |dy| feet + IVec3::new(dx, dy, dz)))).filter(|&p| c.world.block(p) == piece).collect()
+}
+
+/// An older save whose player built over the spawn (set down by command, so nothing marks it
+/// placed: a dirt floor, a plank roof four up on the east, and a hall's roof eighteen up on the
+/// west, above where the kit looks for ground) gets its kit outside the build, never in it.
+#[test]
+fn the_spawn_kit_keeps_out_of_a_players_build() {
+    let dir = world_dir("spawn-kit-build");
+    let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
+    let joined = || {
+        let mut c = Client::join_with(config());
+        let feet = c.position.floor().as_ivec3();
+        c.pump_until(|c| (-1..=1).all(|dx| (-1..=1).all(|dz| c.world.block(feet + IVec3::new(dx * 12, 0, dz * 12)).is_some())));
+        c
+    };
+    let mut client = joined();
+    // Cleared of the kit a new world gets, then built over: everything within eight across.
+    for piece in ["base:loose_flint", "base:dead_log"] {
+        for p in kit_pieces(&client, 12, piece) {
+            client.ok(&format!("/setblock {} {} {} air", p.x, p.y, p.z));
+        }
+    }
+    let feet = client.position.floor().as_ivec3();
+    let (lo, hi) = (feet - IVec3::new(8, 0, 8), feet + IVec3::new(8, 0, 8));
+    client.ok(&format!("/fill {} {} {} {} {} {} oak_planks", feet.x, feet.y + 4, lo.z, hi.x, feet.y + 4, hi.z));
+    client.ok(&format!("/fill {} {} {} {} {} {} oak_planks", lo.x, feet.y + 18, lo.z, feet.x - 1, feet.y + 18, hi.z));
+    client.ok(&format!("/fill {} {} {} {} {} {} dirt", lo.x - 1, feet.y - 1, lo.z - 1, hi.x + 1, feet.y - 1, hi.z + 1));
+    let planks = client.content.blocks.id("base:oak_planks");
+    client.pump_until(|c| c.world.block(hi + IVec3::Y * 4) == planks && c.world.block(lo + IVec3::Y * 18) == planks && kit_pieces(c, 12, "base:loose_flint").is_empty());
+    drop(client);
+    let file = dir.join("world.ron");
+    let text = std::fs::read_to_string(&file).unwrap();
+    std::fs::write(&file, text.lines().filter(|line| !line.contains("spawn_kit")).collect::<Vec<_>>().join("\n")).unwrap();
+    let client = joined();
+    let inside = |p: &IVec3| (lo.x..=hi.x).contains(&p.x) && (lo.z..=hi.z).contains(&p.z) && p.y < feet.y + if p.x < feet.x { 18 } else { 4 };
+    for piece in ["base:loose_flint", "base:dead_log"] {
+        let under: Vec<IVec3> = kit_pieces(&client, 8, piece).into_iter().filter(inside).collect();
+        assert!(under.is_empty(), "{piece} laid inside the build: {under:?}");
+    }
+    assert!(!kit_pieces(&client, 12, "base:loose_flint").is_empty(), "the kit went nowhere");
+    drop(client);
+    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]
@@ -3831,7 +3896,7 @@ fn a_shaft_lined_with_shaped_blocks_is_no_ground_to_dodge_or_break_a_fall_on() {
     let top = corner + Vec3::Y * 5.0;
     client.tp(top);
     // Past the dodge's grace since the floor.
-    client.wait_server(1);
+    client.wait_server_asked(1);
     assert!(!dodge_taken(&mut client), "a dodge in mid-air beside columns and barrels was taken");
     client.teleported = None;
     for y in (0..5).rev() {
@@ -4300,7 +4365,7 @@ fn a_name_already_playing_is_turned_away_unless_it_comes_back_from_a_silent_game
     std::io::Write::write_all(&mut frozen, &[&(frame.len() as u32).to_le_bytes()[..], &frame].concat()).unwrap();
     let ticks = |c: &Client| c._server.as_ref().unwrap().ticks();
     while host.command("/op guest").iter().any(|(kind, _)| *kind == ChatKind::Error) {
-        host.after_ticks(1);
+        host.after_ticks_asked(1);
     }
     // Silent past `rejoin_silence` by the server's clock, the guest comes back from there.
     let silence = Limits::default().rejoin_silence;
@@ -4349,7 +4414,7 @@ fn joining_again_takes_what_the_silent_session_held_not_an_older_file() {
     let mut frozen = frozen_game(addr, "guest", &host.content);
     // An admin made the guest one, so its commands count (it is theirs for the session).
     while host.command("/op guest").iter().any(|(kind, _)| *kind == ChatKind::Error) {
-        host.after_ticks(1);
+        host.after_ticks_asked(1);
     }
     for line in ["/skill mining 7", "/give iron_ore 5"] {
         frozen_says(&mut frozen, ClientMessage::Command { line: line.into() });
@@ -4928,11 +4993,11 @@ fn a_swing_is_dropped_when_its_weapon_leaves_the_hand() {
     // 0.1 s): no blow lands, neither the sword's nor a fist's.
     client.propose("core:attack", ActionTarget::Creature(id));
     face(&mut client, id, other, true);
-    client.wait_server(2);
+    client.wait_server_asked(2);
     assert_eq!(client.blows, 0, "the dropped swing still landed, for {:?}", client.damage);
     // Swung and kept in hand, it lands.
     face(&mut client, id, slot, true);
-    client.wait_server(1);
+    client.wait_server_asked(1);
     client.propose("core:attack", ActionTarget::Creature(id));
     client.pump_until(|c| c.blows == 1);
 }
@@ -4985,7 +5050,7 @@ fn a_sling_shoots_a_stone_a_clear_line_away_and_trains_ranged() {
     client.chat.clear();
     client.propose("core:attack", ActionTarget::Creature(id));
     client.pump_until(|c| c.chat.iter().any(|(_, line)| line.contains("Nothing to shoot")));
-    client.after_ticks_asked(TICKS_PER_SECOND as u64);
+    client.wait_server_asked(1);
     assert_eq!(client.blows, 0, "a sling with no stone still swung");
     // With stones: each shot takes one, hit or miss, and a hit trains Ranged.
     client.ok("/give cobblestone 16");
@@ -4995,7 +5060,7 @@ fn a_sling_shoots_a_stone_a_clear_line_away_and_trains_ranged() {
     while client.damage.iter().all(|&d| d == 0) {
         assert!(shots < 16, "sixteen sling shots from eight blocks never hit: {:?}", client.damage);
         if shots > 0 {
-            client.wait_server(1);
+            client.wait_server_asked(1);
         }
         client.propose("core:attack", ActionTarget::Creature(id));
         shots += 1;
@@ -5037,7 +5102,7 @@ fn a_sling_shoots_a_stone_a_clear_line_away_and_trains_ranged() {
         client.propose("core:drop", ActionTarget::Stack { slot: last as u8, count: count - 1 });
     }
     client.pump_until(|c| carried_of(c, stone) == 1);
-    client.after_ticks_asked(TICKS_PER_SECOND as u64);
+    client.wait_server_asked(1);
     client.chat.clear();
     let blows = client.blows;
     client.propose("core:attack", ActionTarget::Creature(id));
@@ -5088,7 +5153,7 @@ fn an_arrow_that_hits_may_be_left_by_the_target_to_pick_up_again() {
         client.propose("core:attack", ActionTarget::Creature(id));
         shots += 1;
         client.pump_until(|c| c.blows == shots || !c.creatures.contains_key(&id));
-        client.wait_server(1);
+        client.wait_server_asked(1);
         if client.damage.last().is_some_and(|&d| d > 0) && lying(&client) > before {
             break;
         }
@@ -5124,19 +5189,19 @@ fn a_shot_by_a_bees_nest_stirs_the_bees_unless_smoke_calms_them() {
     client.ok(&format!("/tp {} {} {}", at.x + 10.0, at.y, at.z));
     let yaw = yaw_toward(client.position, at);
     client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw, pitch: 0.0, selected_slot: slot as u8, flying: false }));
-    client.wait_server(1);
+    client.wait_server_asked(1);
     let stung = |c: &Client| c.chat.iter().any(|(_, line)| line.starts_with("Stung!"));
     client.chat.clear();
     client.propose("core:attack", ActionTarget::Creature(id));
     client.pump_until(|c| c.blows == 1);
-    client.wait_server(1);
+    client.wait_server_asked(1);
     assert!(stung(&client), "a shot by the nest stirs its bees: {:?}", client.chat);
     // A campfire beside the nest: the next shot leaves them calm.
     client.ok(&format!("/setblock {} {} {} campfire", nest.x + 1, nest.y, nest.z));
     client.chat.clear();
     client.propose("core:attack", ActionTarget::Creature(id));
     client.pump_until(|c| c.blows == 2);
-    client.wait_server(1);
+    client.wait_server_asked(1);
     assert!(!stung(&client), "smoked bees stay calm: {:?}", client.chat);
     // A smoked nest on the bear's other side, met first in the search, and the first nest's
     // campfire moved off: the unsmoked nest's bees are stirred though the smoked one's stay calm.
@@ -5147,14 +5212,14 @@ fn a_shot_by_a_bees_nest_stirs_the_bees_unless_smoke_calms_them() {
     client.chat.clear();
     client.propose("core:attack", ActionTarget::Creature(id));
     client.pump_until(|c| c.blows == 3);
-    client.wait_server(1);
+    client.wait_server_asked(1);
     assert!(stung(&client), "an unsmoked nest beside a smoked one stirs: {:?}", client.chat);
     // Smoke clinging to the shooter (effects.ron's `smoky`) calms every nest the shot is near.
     client.ok("/effect smoky 60");
     client.chat.clear();
     client.propose("core:attack", ActionTarget::Creature(id));
     client.pump_until(|c| c.blows == 4);
-    client.wait_server(1);
+    client.wait_server_asked(1);
     assert!(!stung(&client), "a smoky shooter stirs no bees: {:?}", client.chat);
 }
 
@@ -5178,13 +5243,13 @@ fn a_dodge_needs_the_ground_and_one_refused_puts_the_player_back() {
     client.ok("/tp ~ ~6 ~");
     client.pump_until(|c| c.teleported.is_some());
     // Six blocks up and told nothing else, the server has us in the air past the grace.
-    client.wait_server(1);
+    client.wait_server_asked(1);
     client.teleported = None;
     client.propose("core:dodge", ActionTarget::None);
     client.pump_until(|c| c.teleported.is_some());
     // Landing, told just before the dodge (between the server's ticks), counts as ground.
     client.ok("/tp ~ ~-5 ~");
-    client.wait_server(1);
+    client.wait_server_asked(1);
     client.teleported = None;
     let landed = client.position - Vec3::Y;
     client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: landed, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
@@ -5192,7 +5257,7 @@ fn a_dodge_needs_the_ground_and_one_refused_puts_the_player_back() {
     assert!(dodge_taken(&mut client), "a dodge as the player landed was refused");
     // On the ground it is taken.
     client.ok("/tp ~ ~ ~");
-    client.wait_server(2);
+    client.wait_server_asked(2);
     assert!(dodge_taken(&mut client), "a dodge on the ground was refused");
 }
 
@@ -5243,7 +5308,7 @@ fn a_perfect_block_staggers_a_bear_and_a_dodge_lets_its_blow_pass() {
             if outcome == want {
                 return struck;
             }
-            client.wait_server(1);
+            client.wait_server_asked(1);
             if sent_late > STEP {
                 late.push(sent_late);
                 assert!(late.len() < LATE_ANSWERS as usize, "{} answers went more than {STEP} s past their moment ({late:.2?} s late), so none could say when the bear's blow is met; the rest came to {outcomes:?}", late.len());
@@ -5384,7 +5449,7 @@ fn backing_off_at_a_walk_does_not_escape_a_creatures_blow() {
         while outcomes.len() < 2 {
             // A blow taken lets the creature recover a while before it is provoked again.
             if !outcomes.is_empty() {
-                client.wait_server(1);
+                client.wait_server_asked(1);
             }
             let before = provoke_until_it_winds_up(&mut client, id, slot, name);
             // Only a wind-up begun facing us: one begun facing away (a creature struck from
@@ -5399,7 +5464,7 @@ fn backing_off_at_a_walk_does_not_escape_a_creatures_blow() {
                 askew += 1;
                 assert!(askew <= 6, "the {name} wound up facing away {askew} times");
                 wait_for_blow(&mut client, id, before);
-                client.wait_server(1);
+                client.wait_server_asked(1);
                 continue;
             }
             // Straight back from it, facing it, until the blow lands: a walk's worth each
@@ -5528,7 +5593,7 @@ fn a_dodge_waits_longer_in_heavier_armour() {
     let shirt = client.content.blocks.id("base:chainmail_shirt").unwrap();
     client.ok("/give chainmail_shirt 1");
     client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == shirt));
-    client.wait_server(1);
+    client.wait_server_asked(1);
     // Two pairs of dodges, the pairs 1.0 s apart by the clock the server judges dodges by
     // (`propose_at`: exactly, however busy the machine). Of each pair the second is refused
     // by the first's cooldown, and puts us back. Unarmoured (light, 1.0 s less the 0.1 a
@@ -6569,10 +6634,18 @@ fn a_treadwheel_stops_once_its_animal_goes_two_days_unfed_and_turns_again_when_i
     }
     let start = client.position.floor().as_ivec3();
     let wheel = format!("{} {} {}", start.x + 3, start.y, start.z);
+    // The kept one, by its keeper: a wild aurochs can come by (the land's own, by the draw),
+    // and turns down food held out to it, so feeding whichever aurochs was in view hung the
+    // test. One stands well off, held, so feeding the wrong one cannot pass by luck.
+    client.ok("/summon aurochs 1 ~-12 ~ ~-12 held");
+    let me = client.id;
+    let mine = |c: &Client| c.creatures.iter().find(|(_, v)| v.species == aurochs && v.owner == Some(me)).map(|(&id, _)| id);
+    client.pump_until(|c| mine(c).is_some() && c.creatures.values().filter(|v| v.species == aurochs).count() >= 2);
+    let kept = mine(&client).expect("seen");
     let turns = |client: &mut Client| !client.ok(&format!("/machine {wheel}")).contains("needs a kept animal");
     let started = client.server_tick;
     while !turns(&mut client) {
-        assert!(server_seconds(&client, started) < 10, "the tamed aurochs never walked the wheel");
+        assert!(server_seconds(&client, started) < 10, "the tamed aurochs never walked the wheel: {:?} {:?}", client.ok(&format!("/machine {wheel}")), client.creatures.iter().filter(|(_, v)| v.species == aurochs).map(|(id, v)| (*id, v.position)).collect::<Vec<_>>());
         client.after_ticks(6);
     }
     // Three days on, unfed, it will not walk.
@@ -6582,16 +6655,15 @@ fn a_treadwheel_stops_once_its_animal_goes_two_days_unfed_and_turns_again_when_i
     // Fed its wheat, it walks again.
     client.ok("/give wheat 1");
     let wheat = client.content.blocks.expect("base:wheat");
-    client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == wheat) && c.creatures.values().any(|v| v.species == aurochs));
-    let (&id, view) = client.creatures.iter().find(|(_, v)| v.species == aurochs).unwrap();
-    let at = view.position;
+    client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == wheat) && c.creatures.contains_key(&kept));
+    let at = client.creatures[&kept].position;
     client.ok(&format!("/tp {} {} {}", at.x + 0.8, at.y, at.z));
     client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
-    client.propose("base:tend", ActionTarget::Creature(id));
+    client.propose("base:tend", ActionTarget::Creature(kept));
     client.pump_until(|c| c.inventory.get(0).is_none());
     let started = client.server_tick;
     while !turns(&mut client) {
-        assert!(server_seconds(&client, started) < 10, "fed, the aurochs still does not walk the wheel");
+        assert!(server_seconds(&client, started) < 10, "fed, the aurochs still does not walk the wheel: {:?} {:?}", client.ok(&format!("/machine {wheel}")), client.creatures.iter().filter(|(_, v)| v.species == aurochs).map(|(id, v)| (*id, v.position)).collect::<Vec<_>>());
         client.after_ticks(6);
     }
 }
