@@ -125,6 +125,8 @@
         (template: "drop", name: "bronze_ingot", tags: ["ingot", "metal:bronze"], all: (color: (200, 140, 70))),
         (template: "drop", name: "charcoal", tags: ["charcoal", "coal", "fuel"], all: (color: (40, 36, 34))),
         (template: "drop", name: "twine", tags: ["twine", "fibre"], all: (color: (210, 190, 140))),
+        // Flour, ground at a quern from wheat or rye, bakes at a fire into bread.
+        (template: "drop", name: "flour", tags: ["flour"], all: (color: (236, 228, 206))),
         (template: "drop", name: "copper_ingot", tags: ["ingot", "metal:copper"], all: (color: (190, 110, 70))),
         (template: "drop", name: "iron_ingot", tags: ["ingot", "metal:iron"], all: (color: (200, 205, 215))),
         // For taming and breeding: a treat no wild animal you can tame refuses, and taken

@@ -1049,16 +1049,20 @@ pub(super) fn name_owner(reading: &str, span: i32) -> usize {
 pub(super) fn check_name_ownership(def: &SettlementsDef) -> Result<(), crate::content::ContentError> {
     if def.rules.names_apart == 0 { return Ok(()); }
     let span = name_span(def);
-    let mut english = std::collections::BTreeMap::new();
-    let mut japanese = std::collections::BTreeMap::new();
-    let mut alias = |name: (String, String), owner| -> Result<(), crate::content::ContentError> {
-        if english.insert(name.0.clone(), owner).is_some_and(|old| old != owner)
-            || japanese.insert(name.1.clone(), owner).is_some_and(|old| old != owner)
-        {
-            return Err(crate::content::ContentError(format!("cultures.ron: name {:?} has aliases with different owners", name)));
+    let mut english = FxHashMap::<String, usize>::default();
+    let mut japanese = FxHashMap::<String, usize>::default();
+    // Some tens of thousands of names: each is copied only when first seen.
+    let clash = |owners: &mut FxHashMap<String, usize>, name: &str, owner| match owners.get(name) {
+        Some(&old) => old != owner,
+        None => { owners.insert(name.to_owned(), owner); false }
+    };
+    let mut alias = |name: &str, reading: &str, owner| -> Result<(), crate::content::ContentError> {
+        if clash(&mut english, name, owner) || clash(&mut japanese, reading, owner) {
+            return Err(crate::content::ContentError(format!("cultures.ron: name {:?} has aliases with different owners", (name, reading))));
         }
         Ok(())
     };
+    let (mut prefixed, mut prefixed_reading) = (String::new(), String::new());
     for family in &def.cultures.families {
         let names = &family.names;
         let mut colours = vec![false; (span * span) as usize];
@@ -1070,13 +1074,17 @@ pub(super) fn check_name_ownership(def: &SettlementsDef) -> Result<(), crate::co
             for ((name, reading), normal) in full.chain(small) {
                 let owner = name_owner(&reading, span);
                 if normal { colours[owner] = true; }
-                alias((name.clone(), reading.clone()), owner)?;
+                alias(&name, &reading, owner)?;
                 if names.prefix_chance > 0.0 {
                     let joiner = if names.script == Script::Kanji { "" } else { "・" };
                     // Floating-point subtraction in pick() may fall through to
                     // the last entry even at zero weight. Validate every variant.
                     for prefix in &names.prefixes {
-                        alias((format!("{} {name}", prefix.0), format!("{}{joiner}{reading}", prefix.1)), owner)?;
+                        prefixed.clear();
+                        prefixed_reading.clear();
+                        for part in [&prefix.0, " ", &name] { prefixed.push_str(part); }
+                        for part in [&prefix.1, joiner, &reading] { prefixed_reading.push_str(part); }
+                        alias(&prefixed, &prefixed_reading, owner)?;
                     }
                 }
             }
