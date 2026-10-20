@@ -883,7 +883,9 @@ pub struct CreatureRegistry {
 }
 
 impl CreatureRegistry {
-    /// A species' data to change in place, by a tool or a test (what a package would set).
+    /// A species' data to change in place, for tests only (`test-support`): what a package
+    /// would set, past the load checks.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn get_mut(&mut self, id: CreatureId) -> &mut Creature {
         &mut self.creatures[id.0 as usize]
     }
