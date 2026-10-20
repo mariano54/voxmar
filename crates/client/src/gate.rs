@@ -654,8 +654,8 @@ struct Gate {
     /// Where a stage last walked the player to pick something up (`walk_to_lying`), so the
     /// step is asked once.
     walked_to: Option<Vec3>,
-    /// Where the observer floated before a step moved it over its own ground (`reap`), to
-    /// be put back when the step ends.
+    /// Where the observer floated before a step moved it (`reap`, `step_up`, `ore` and
+    /// `gorge`), to be put back when the step ends (by `tarns` for the ore and gorge).
     observer_home: Option<Vec3>,
     /// Frames in this stage that what a shot is about has been on screen: it shows a frame
     /// or two after the change.
@@ -8083,6 +8083,7 @@ fn step_up(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         net.command(&clear);
         let feet = gate.feet;
         net.command(&format!("tp {} {} {}", feet.x as f32 + 0.5, feet.y, feet.z as f32 + 0.5));
+        observer_back(gate);
         gate.next(Step::Makeable, now);
     };
     let (position, on_ground, flying, velocity, teleports) = {
@@ -8131,11 +8132,9 @@ fn step_up(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 net.command(&format!("setblock {} {} {} {}", cell.x, cell.y, cell.z, registry.def(block).name));
             }
             net.command(&format!("tp {} {} {}", stand.x as f32 + 0.5, stand.y, stand.z as f32 + 0.5));
-            // The observer, left at the town the settlement steps judged, is brought above the
-            // course: the server tells it only of players within `players_seen`.
-            if let Some(observer) = gate.observer.as_mut() {
-                observer.connection.send(ClientMessage::Command { line: format!("tp {} {} {}", stand.x as f32 + 0.5, stand.y + 40, stand.z as f32 + 0.5) });
-            }
+            // The observer is brought above the course, and put back as the step ends: the
+            // server tells it only of players within `players_seen`.
+            observer_to(gate, format!("tp {} {} {}", stand.x as f32 + 0.5, stand.y + 40, stand.z as f32 + 0.5));
             gate.step_up_fault = None;
             gate.advance(now);
         }
@@ -18563,9 +18562,7 @@ fn gorge(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let net = world.resource::<Net>();
             net.command("time set noon");
             net.command(&format!("tp {} {} {}", at.x as f32 + 0.5, at.y, at.z as f32 + 0.5));
-            if let Some(observer) = gate.observer.as_mut() {
-                observer.connection.send(ClientMessage::Command { line: format!("tp {} {} {}", at.x, at.y + 40, at.z) });
-            }
+            observer_to(gate, format!("tp {} {} {}", at.x, at.y + 40, at.z));
             gate.advance(now);
         }
         2 => {
@@ -18652,6 +18649,25 @@ struct TarnVisit {
 
 /// `/tp` centres integer-looking horizontal coordinates on a block. Retain the saved
 /// f32's full decimal precision and spell integral positions with a fractional part.
+/// Sends the observer away with the `tp` in `line`, keeping where it floated before for
+/// `observer_back` (the first such move's start, while no step has put it back yet: the ore
+/// and gorge steps move it twice before the tarns step returns it).
+fn observer_to(gate: &mut Gate, line: String) {
+    if let Some(observer) = gate.observer.as_mut() {
+        if gate.observer_home.is_none() {
+            gate.observer_home = observer.position;
+        }
+        observer.connection.send(ClientMessage::Command { line });
+    }
+}
+
+/// Puts the observer back where it floated before `observer_to` moved it.
+fn observer_back(gate: &mut Gate) {
+    if let (Some(home), Some(observer)) = (gate.observer_home.take(), gate.observer.as_mut()) {
+        observer.connection.send(ClientMessage::Command { line: return_teleport(home) });
+    }
+}
+
 fn return_teleport(at: Vec3) -> String {
     let horizontal = |value: f32| {
         let word = value.to_string();
@@ -18662,8 +18678,9 @@ fn return_teleport(at: Vec3) -> String {
 
 /// Visits a real pool filled by the tarn rule. Both peers must receive at least twenty
 /// matching source-water surface columns, then the loaded pool is captured from above.
-/// The generator chooses the place; no hand-built pool can satisfy this step. Both peers
-/// return to the gorge before the next lookup, including after a failed pool load.
+/// The generator chooses the place; no hand-built pool can satisfy this step. Before the next
+/// lookup, including after a failed pool load, the player returns to where it stood (the
+/// gorge) and the observer to where it floated before the ore and gorge steps moved it.
 fn tarns(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     match gate.phase {
         0 => {
@@ -18678,10 +18695,12 @@ fn tarns(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             });
             let Some(at) = at else {
                 gate.check("tarns", Err("no visible generated tarn in the sampled alpine highlands".into()));
+                observer_back(gate);
                 gate.next(Step::Settlements, now);
                 return;
             };
-            let Some(observer) = gate.observer.as_ref().and_then(|o| o.position) else {
+            // Its way back: where the steps before took it from, else where it is.
+            let Some(observer) = gate.observer_home.take().or_else(|| gate.observer.as_ref().and_then(|o| o.position)) else {
                 gate.check("tarns", Err("no observer position to return to after the visit".into()));
                 gate.next(Step::Settlements, now);
                 return;
@@ -18830,9 +18849,7 @@ fn ore(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.ore = at;
             let net = world.resource::<Net>();
             net.command(&format!("tp {} {} {}", at.x as f32 + 0.5, at.y, at.z as f32 + 0.5));
-            if let Some(observer) = gate.observer.as_mut() {
-                observer.connection.send(ClientMessage::Command { line: format!("tp {} {} {}", at.x, at.y + 40, at.z) });
-            }
+            observer_to(gate, format!("tp {} {} {}", at.x, at.y + 40, at.z));
             gate.advance(now);
         }
         2 => {

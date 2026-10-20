@@ -40,7 +40,7 @@
             capstone: true,
             why: "At Cooking 14 the pot takes three raw meat, roots or vegetables at once and simmers them into a stew, the best food a pot makes. Carrots, raw small game or raw mutton all go in; cooked food and grain do not. Load it as before, take the stew three minutes later, and keep two.",
             tasks: [[Level("cooking", 14), Have("stew", 2)]],
-            after: ["a_pot_on_the_fire", "roots_in_the_embers"],
+            after: ["a_pot_on_the_fire", "roots_in_the_embers", "seed_mix", "a_proper_breakfast"],
             rewards: [Xp("cooking", 300.0), Item("honey", 2)],
         ),
         // Fuel: logs to char or coal from a seam, two ways to the Crucible Kiln's charge.
@@ -179,7 +179,7 @@
         ),
         (
             name: "first_harvest", age: "farm", branch: "farming", title: "First Harvest",
-            why: "Till grass or dirt with a hoe (right-click), sow wheat seeds (wild wheat gives them) on the farmland (right-click), keeping it within four blocks of water (beside a river, pond or lake), and wait: wheat ripens in about twelve minutes. Break the ripe plants to harvest; a stone hoe reaps the ripe crops around the one you cut. Harvest four. Keep the four wheat you harvest in your pack. While it grows, there is plenty to do: fish (Patient Angler), tame hens (Hens in a Row) or make seats and a table for the hearth (A Table for Two).",
+            why: "Till grass or dirt with a hoe (right-click), sow wheat seeds (wild wheat gives them) on the farmland (right-click), keeping it within four blocks of water (beside a river, pond or lake), and wait: wheat ripens in about twelve minutes. Break the ripe plants to harvest; a stone hoe reaps the ripe crops around the one you cut. Harvest four. Keep the four wheat you harvest in your pack. While it grows, there is plenty to do: explore (Far Horizons), tame hens (Hens in a Row) or make seats and a table for the hearth (A Table for Two).",
             tasks: [[Pick("wheat_crop", 4), Have("wheat", 4)]],
             after: ["the_farm_age"],
             rewards: [Xp("farming", 100.0), Item("wheat_seeds", 6)],
@@ -257,7 +257,7 @@
         ),
         (
             name: "fresh_eggs", age: "farm", branch: "husbandry", title: "Fresh Eggs",
-            why: "A kept hen lays on the ground near her, and a hen that is fed, watered and sheltered lays more. Fry your first egg on a campfire to taste the reward, then collect five more and keep them. A hen lays about every five minutes: meanwhile go after a mouflon (A Woolly Flock) or tame more animals about the house (A Full House).",
+            why: "A kept hen lays on the ground near her, and a hen that is fed, watered and sheltered lays more. Fry your first egg on a campfire to taste the reward, then collect five more and keep them. A hen lays about every five minutes: meanwhile hunt big game (Bigger Game) or tame more animals about the house (A Full House).",
             tasks: [[Have("egg", 5), Cook("fried_egg", 1)]],
             after: ["hens_in_a_row"],
             rewards: [Xp("farming", 100.0)],
@@ -274,7 +274,7 @@
             name: "a_woolly_flock", age: "farm", branch: "husbandry", title: "A Woolly Flock",
             why: "Mouflon, the wild sheep, need Hunter 5 to tame (taming, hunting and Bigger Game teach it); look on mountains and heath. Hold wheat, its favourite, approach calmly and right-click. A kept sheep grows its wool back: shear it with your shears. Have your shears made before you go.",
             tasks: [[Tame("mouflon", 1), Craft("shears", 1)]],
-            after: ["fresh_eggs"],
+            after: ["fresh_eggs", "bigger_game"],
             rewards: [Xp("hunter", 200.0), Xp("farming", 100.0)],
         ),
         (
@@ -316,7 +316,7 @@
         ),
         (
             name: "full_hide_wraps", age: "farm", branch: "combat", title: "Full Hide Wraps",
-            why: "A whole set guards head, body and legs. At the crafting table a hood takes five hides, a tunic eight and trousers seven.",
+            why: "A whole set guards head, body and legs. At the crafting table a hood takes five hides, a tunic eight and trousers seven. Rabbits, deer and boar drop raw hide; hung a while on a drying rack (four sticks and three twine), it turns to hide.",
             tasks: [[Craft("hide_hood", 1), Craft("hide_tunic", 1), Craft("hide_trousers", 1)]],
             after: ["bigger_game"],
             rewards: [Xp("crafting", 150.0), Xp("defence", 150.0)],
@@ -390,9 +390,9 @@
         ),
         (
             name: "patient_angler", age: "farm", branch: "fishing", title: "Patient Angler",
-            why: "Every catch trains Fishing, and the bigger fish bite only at higher levels. Fish until you reach Fishing 5, when sardines start biting in the sea.",
+            why: "Every catch trains Fishing, and the bigger fish bite only at higher levels, in the seas and lakes your travels found (Far Horizons). A rod is three sticks on a diagonal at the crafting table, with two twine hanging from its tip. Fish until you reach Fishing 5, when sardines start biting in the sea.",
             tasks: [[Level("fishing", 5)]],
-            after: ["the_farm_age"],
+            after: ["far_horizons"],
             rewards: [Xp("cooking", 100.0)],
         ),
         (
@@ -413,7 +413,7 @@
         (
             name: "what_sleeps_below", age: "farm", branch: "explore", title: "What Sleeps Below",
             side: true,
-            why: "Farm chests lie further from where you began, on wilder land, and deeper: on cave floors ten blocks and more under the ground. A bone lockpick still opens one, as a pick of the age before always does. Four in ten wake one or two cave crawlers as the lock gives. A crawler has twice a bat's health: come with a copper weapon and food. Open two Farm chests in all and bring down a cave crawler.",
+            why: "Farm chests lie further from where you began, on wilder land, and deeper: on cave floors ten blocks and more under the ground. A bone lockpick still opens one, as a pick of the age before always does: a bone on a twine grip at the crafting table (Crafting 5). Four in ten wake one or two cave crawlers as the lock gives. A crawler has twice a bat's health: come with a copper weapon and food. Open two Farm chests in all and bring down a cave crawler.",
             tasks: [[Opened("farm_treasure_chest", 2), Kill("cave_crawler", 1)]],
             after: ["far_horizons"],
             rewards: [Xp("mining", 270.0), Xp("attack", 80.0)],
@@ -462,7 +462,7 @@
         ),
         (
             name: "candlelight", age: "farm", branch: "home", title: "Candlelight",
-            why: "With shelves and cupboards up (Shelves and Cupboards), light them: twine and two hides make two candles (Crafting 3), a softer light than a torch for a table or shelf.",
+            why: "With shelves and cupboards up (Shelves and Cupboards), light them: twine and two hides make two candles (Crafting 3; raw hide hung a while on a drying rack turns to hide), a softer light than a torch for a table or shelf.",
             tasks: [[Craft("candle", 2)]],
             after: ["shelves_and_cupboards"],
             rewards: [Xp("crafting", 60.0)],
@@ -658,7 +658,7 @@
             side: true,
             why: "Wild bees nest in hollows at the foot of broadleaf, fruit and blossom trees in a Flower Meadow, a Cherry Grove or Lavender Fields: listen for the hum and look for bees about the roots. Coil a skep from seven wheat and three twine (Crafting 6), light a campfire within four blocks of the nest so the smoke calms them (or hold a torch a moment: its smoke clings to you for half a minute), then hold the skep up to it and right-click (Farming 12): the bees move in, and you carry home a skep of bees. Without smoke they only sting.",
             tasks: [[Level("farming", 12), Craft("skep", 1), Have("bee_skep", 1)]],
-            after: ["herb_garden"],
+            after: ["herb_garden", "food_enough"],
             rewards: [Xp("farming", 300.0), Xp("crafting", 60.0)],
         ),
         (
