@@ -148,7 +148,8 @@ impl MultiblockRegistry {
             let mut key: FxHashMap<char, Cell> = FxHashMap::default();
             for (&c, name) in &def.key {
                 let mut accepts: Vec<BlockId> = match name.strip_prefix("tag:") {
-                    Some(tag) => (0..blocks.len() as u16).map(BlockId).filter(|&id| blocks.def(id).has_tag(tag)).collect(),
+                    // A ring of stone is of whole blocks: no cut stone stands in for one.
+                    Some(tag) => blocks.answers_whole(tag),
                     None => name.split('|').map(|n| blocks.id(n).ok_or_else(|| bad(format!("no block `{n}`")))).collect::<Result<_, _>>()?,
                 };
                 if accepts.is_empty() {
