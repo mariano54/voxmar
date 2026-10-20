@@ -8,19 +8,21 @@
 // `sound` is what loading it sounds like (`Water`: stirred in), else its working block's
 // placing; taking what it made pops like a pickup. Loaded inside the loader's own home, a
 // station tops the load up with more of what is in hand, from the pack and then the home's
-// stores (nearest the hearth or bed first), unless `from_stores: false` or the loader
-// sneaks (docs/home.md, "Crafting from home's stores").
+// stores (nearest the hearth or bed first), unless `from_stores: false` (docs/home.md,
+// "Crafting from home's stores").
 //
 // `fertilisers`: an item held to a growing crop grows the crops within `reach` a stage.
 (
     stations: [
         // A drying rack (Nomad): raw meat or fish hung in the open air dries to jerky, which
-        // stacks where cooked food does not. A fire near smokes it, twice as fast.
+        // stacks where cooked food does not; a raw hide off a beast cures to hide in ten minutes.
+        // A fire near smokes it, twice as fast.
         (
             empty: "drying_rack", working: "drying_rack_hung", ready: "drying_rack_dry", holds: 8,
             works: [
                 (input: "tag:raw+meat", output: "jerky", minutes: 10.0, skill: "core:cooking", xp: 6.0),
                 (input: "tag:raw+fish", output: "jerky", minutes: 10.0, skill: "core:cooking", xp: 6.0),
+                (input: "raw_hide", output: "hide", minutes: 10.0, skill: "core:crafting", xp: 2.0),
             ],
             needs: [OpenSky],
             faster: [(Near("fire", 3), 2.0)],
