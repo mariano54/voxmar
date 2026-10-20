@@ -3938,9 +3938,10 @@ fn gaps_between_shapes_smaller_than_the_player_are_no_way_through() {
     client.send_position(start + Vec3::X, false);
     client.send_position(on, false);
     assert!(client.all_accepted(), "a jump onto a headstone was put back to {:?}", client.teleported);
-    // ...but not under a slab in the upper half of the cell above the next, 1.75 over its top.
-    client.fill(at, IVec3::new(2, 2, 0), IVec3::new(2, 2, 0), "oak_slab_top");
+    // ...but not under a slab in the upper half of the cell above the next, 1.75 over its top
+    // (set once they are off it: no fill shuts a player in).
     client.tp(start + Vec3::X);
+    client.fill(at, IVec3::new(2, 2, 0), IVec3::new(2, 2, 0), "oak_slab_top");
     client.send_position(on, false);
     client.pump_until(|c| c.teleported.is_some());
     assert_eq!(client.teleported.take(), Some(start + Vec3::X), "stood on a headstone with 1.75 blocks of headroom");
