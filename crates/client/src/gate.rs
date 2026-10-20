@@ -871,6 +871,8 @@ struct Gate {
     food_moved: bool,
     /// Where the kiln step found the player, to put them back.
     kiln_from: Vec3,
+    /// Server seconds from loading the Kiln step's pit kiln to seeing it fired.
+    kiln_fired: f32,
     /// The Cook step's hearth or stove has raw rabbit selected and is being clicked.
     cook_started: bool,
     /// The campfire the weather step dries the player by, while it stands, and what the
@@ -1133,6 +1135,7 @@ impl Gate {
             font: None,
             food_moved: false,
             kiln_from: Vec3::ZERO,
+            kiln_fired: 0.0,
             cook_started: false,
             dry_fire: None,
             rain_roof: None,
@@ -15816,14 +15819,30 @@ fn kiln(world: &mut World, gate: &mut Gate, now: f32) {
                 mouse(world, MouseButton::Right, ((now - gate.since) * 2.0).fract() < 0.2);
             }
         }
-        _ => {
+        3 => {
             aim_at(world, at.as_vec3() + Vec3::new(0.5, 0.6, 0.5));
             if shows(world, "base:pit_kiln_fired") && drawn(world, at) && gate.shot(world, "pit_kiln").is_some() {
-                gate.check("pit kiln", Ok(format!("clay loaded into the pit kiln: the server sent back the firing kiln, then the fired one {:.1} server seconds on", gate.server_in_phase())));
-                end_kiln(world, gate, now);
+                gate.kiln_fired = gate.server_in_phase();
+                gate.advance(now);
             } else if gate.server_in_phase() > 15.0 {
                 gate.check("pit kiln", Err(format!("the loaded pit kiln at {at} never showed fired in 15 server seconds")));
                 end_kiln(world, gate, now);
+            }
+        }
+        // Taken as a player takes it: a right click on the fired kiln, which empties it.
+        _ => {
+            aim_at(world, at.as_vec3() + Vec3::new(0.5, 0.6, 0.5));
+            let fired = carried_of(world, "base:fired_clay");
+            if shows(world, "base:pit_kiln") && fired == 12 {
+                mouse(world, MouseButton::Right, false);
+                gate.check("pit kiln", Ok(format!("clay loaded into the pit kiln: the server sent back the firing kiln, then the fired one {:.1} server seconds on; a right click took the 12 fired clay", gate.kiln_fired)));
+                end_kiln(world, gate, now);
+            } else if gate.server_in_phase() > 10.0 {
+                mouse(world, MouseButton::Right, false);
+                gate.check("pit kiln", Err(format!("right clicks on the fired pit kiln at {at} left {fired} fired clay in hand, not 12, in 10 server seconds")));
+                end_kiln(world, gate, now);
+            } else {
+                mouse(world, MouseButton::Right, ((now - gate.since) * 2.0).fract() < 0.2);
             }
         }
     }
