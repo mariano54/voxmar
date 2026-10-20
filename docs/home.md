@@ -488,9 +488,20 @@ turns it off). Every fire remembers whose it is: the player whose change started
 a hearth lit, thatch laid by a flame), carried on as it spreads and saved with it. A block in a
 player's home box (`home_reach` across, `home_up` up and `home_down` down from the cell their
 home is at: over a home hearth lit by them, or where an online player's home is; the same box
-they feel at home in) only smoulders or catches from that player's fire, or from any owner's
-where two homes overlap. A home hearth lit before fires were kept by owner is its player's
-again as they join or touch it, so it stays protected while they are away. Another player's torch beside your wattle wall fizzles, and a neighbour's burning shed
+they feel at home in) only smoulders or catches from that player's fire. Where two homes overlap
+it is kept from both owners' fires, so lighting a hearth next door, or making your home at
+someone else's hearth, never lets your fire into their home. A home hearth lit before fires were
+kept by owner belongs to no one and keeps out every fire, so it stays protected while its player
+is away and no one can take it over by touching it. A home hearth stays whose it was first lit by
+while its fire is out, while a piece of it is broken and whoever relights it, until its owner
+breaks its hearthstone or lights a home hearth elsewhere; its box keeps out others' fire all that
+while. Breaking and mending a stranger's hearth, its hearthstone too, never opens their home to
+your fire nor makes the hearth yours. (A world saved before this kept no owner for a cold home
+hearth: it comes back as no one's.) A hearth no one owns is never forgotten, so its spot keeps out
+every fire for good; that is the safe way round. Only the owner's own hand breaking the hearthstone
+forgets a hearth, not a fire of theirs spreading over it. Lit by someone else, a hearth's fire is
+the lighter's as it catches what is near, so relighting a stranger's hearth never sets their home
+alight. Another player's torch beside your wattle wall fizzles, and a neighbour's burning shed
 stops at your home's edge; your own careless torch still burns your own roof. A fire a command
 or the world started belongs to no one, so it never takes a home either.
 

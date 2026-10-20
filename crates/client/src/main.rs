@@ -352,6 +352,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let recorded = sfx::Recordings::load(&content.files)?;
     recorded.check(&content.actions)?;
     recorded.covers(&content.actions)?;
+    let creature_bank = creature_sounds::Bank::load(&content.files, &content.creatures)?;
+    let unbarked = creature_bank.unbarked(&content.creatures);
+    if !unbarked.is_empty() {
+        return Err(format!("{}: settlement people with no greet, alarm or content of their own: {}", creature_sounds::defs::FILE, unbarked.join(", ")).into());
+    }
     recorded.check_materials(&content.blocks)?;
     recorded.check_fire(&content.fire)?;
     // Every roof's rain patters or is silent (ambience.ron's `roofs`), by its building
@@ -507,6 +512,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Screen::Title
     };
     app.insert_resource(FirstScreen(first)).insert_resource(launch).insert_resource(interface).insert_resource(combat_marks).insert_resource(fight_look).insert_resource(creature_motion).insert_resource(look).insert_resource(celebrations).insert_resource(night_light);
+    app.insert_resource(creature_sounds::Checked(creature_bank));
     app.insert_resource(ambience::Checked(ambience, roof_patters));
     if options.loading {
         app.insert_resource(menu::HoldCover);
