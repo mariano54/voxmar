@@ -793,6 +793,19 @@ fn a_draughty_home_whistles_until_daubed() {
     }
     let (some, fainter) = heard(&patched, IVec3::new(0, 11, 0), under_thatch);
     assert!(some > 0.0 && fainter > 0.0 && fainter < wattle, "one wattle wall left plays at {fainter:.3}, not under the {wattle:.3} of four");
+    // Windows whistle too: a daubed room with a wall of open-shuttered lattice windows plays
+    // the draught, and the same windows shuttered are quiet.
+    let windowed = |window: &str| {
+        let mut room = room("base:daub", true);
+        for x in -2..=2 {
+            room.set_block(IVec3::new(x, 11, -3), id(window));
+        }
+        room
+    };
+    let (gaps, open) = heard(&windowed("base:oak_shuttered_window"), IVec3::new(0, 11, 0), under_thatch);
+    assert!(gaps > 0.0 && open > 0.0, "open shutters (counting {gaps:.2}) play the draught at {open:.3}");
+    let (gaps, shut) = heard(&windowed("base:oak_shuttered_window_shut"), IVec3::new(0, 11, 0), under_thatch);
+    assert!(gaps == 0.0 && shut < 1e-3, "shuttered, the windows count {gaps:.2} and the draught plays at {shut:.3}");
 }
 
 /// A roof block muffles the rain once: thatch, tagged `shelter:sound` for the home's walls,
