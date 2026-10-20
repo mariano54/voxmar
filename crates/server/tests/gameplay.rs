@@ -2794,7 +2794,8 @@ fn a_furnished_home_heals_faster_and_sleeping_in_it_rests_you_once() {
     client.chat.clear();
     client.pump_until(|c| has(c, "base:snug") && told(c, "Snug:"));
     client.pump_until(|c| quest_status(c, "snug_for_winter").1);
-    // Another night, now in a snug home, rests them better.
+    // A night, now in a snug home, rests them better (the better rests are a night's).
+    client.ok("/time set midnight");
     client.ok("/effect clear");
     client.pump_until(|c| !has(c, "base:rested"));
     client.chat.clear();
@@ -2824,13 +2825,67 @@ fn a_proper_bed_rests_well_and_mends_longer_than_a_bag() {
     client.pump_until(|c| effect(c, "base:rested").is_some() && effect(c, "base:healing_sleep").is_some());
     assert!(effect(&client, "base:healing_sleep").and_then(|a| a.seconds_left).is_some_and(|s| s <= 60));
     assert!(effect(&client, "base:well_rested").is_none(), "a bag on the ground is a plain rest");
-    // The bed, another night: well rested, and two minutes' mend.
+    // The bed, at night: well rested, and two minutes' mend.
+    client.ok("/time set midnight");
     client.ok("/effect clear");
     client.pump_until(|c| effect(c, "base:rested").is_none() && effect(c, "base:healing_sleep").is_none());
     client.chat.clear();
     client.propose("base:sleep", ActionTarget::Block { block: bed, face: Face::PosY });
     client.pump_until(|c| effect(c, "base:well_rested").is_some() && effect(c, "base:healing_sleep").is_some() && told(c, "Well rested"));
     assert!(effect(&client, "base:healing_sleep").and_then(|a| a.seconds_left).is_some_and(|s| s > 60), "a bed mends longer");
+}
+
+/// Nights told apart (docs/home.md "Nights"): a nap by day rests and mends but is no night's
+/// rest, says so, and does not keep a night's better rest away; and after dark, indoors at
+/// home by its fire, is an evening in, gone with the morning.
+#[test]
+fn a_nap_by_day_is_no_nights_rest_and_an_evening_in_is_by_the_fire_after_dark() {
+    let mut client = on_a_test_floor();
+    let feet = client.position.floor().as_ivec3();
+    let has = |c: &Client, name: &str| c.vitals.effects.iter().any(|a| c.content.effects.get(a.effect).name == name);
+    let told = |c: &Client, text: &str| c.chat.iter().any(|(_, t)| t.contains(text));
+    let (bed, fire) = (feet + IVec3::new(2, 0, 0), feet + IVec3::new(-2, 0, 0));
+    client.ok("/time set noon");
+    for line in [
+        format!("/setblock {} {} {} oak_bed", bed.x, bed.y, bed.z),
+        format!("/setblock {} {} {} campfire", fire.x, fire.y, fire.z),
+        format!("/fill {} {} {} {} {} {} stone", feet.x - 2, feet.y + 3, feet.z - 3, feet.x + 6, feet.y + 3, feet.z + 3),
+    ] {
+        client.ok(&line);
+    }
+    client.pump_until(|c| c.world.block(bed) == c.content.blocks.id("base:oak_bed") && c.world.block(fire) == c.content.blocks.id("base:campfire"));
+    // By day: a plain rest and a mend, and word of the better rest a night here gives.
+    client.chat.clear();
+    client.propose("base:sleep", ActionTarget::Block { block: bed, face: Face::PosY });
+    client.pump_until(|c| has(c, "base:rested") && has(c, "base:healing_sleep") && told(c, "A night's sleep here would rest you better: Well rested"));
+    assert!(!has(&client, "base:well_rested"), "a nap is no night's rest");
+    assert!(!has(&client, "base:evening_in"), "home by the fire at noon is no evening");
+    // A second nap rests no more.
+    client.chat.clear();
+    client.propose("base:sleep", ActionTarget::Block { block: bed, face: Face::PosY });
+    client.pump_until(|c| told(c, "rested already"));
+    // After dark: an evening in by the fire (the bed slept in is home). The night's rest
+    // waits while the nap's mend runs, then comes though the nap's Rested is still on.
+    client.ok("/time set midnight");
+    client.chat.clear();
+    client.pump_until(|c| has(c, "base:evening_in") && told(c, "Evening in:"));
+    client.propose("base:sleep", ActionTarget::Block { block: bed, face: Face::PosY });
+    client.pump_until(|c| told(c, "rested already"));
+    assert!(!has(&client, "base:well_rested"), "no rest while the nap's mend runs");
+    client.ok("/effect clear");
+    client.ok("/effect rested 500");
+    client.pump_until(|c| has(c, "base:rested") && !has(c, "base:healing_sleep"));
+    client.chat.clear();
+    client.propose("base:sleep", ActionTarget::Block { block: bed, face: Face::PosY });
+    client.pump_until(|c| has(c, "base:well_rested") && told(c, "Well rested"));
+    assert!(!told(&client, "would rest you better"), "a night's sleep says no better one");
+    // Out from under the roof it is no evening in; the morning ends it too.
+    client.tp(feet.as_vec3() + Vec3::new(8.5, 0.0, 0.5));
+    client.pump_until(|c| !has(c, "base:evening_in"));
+    client.tp(feet.as_vec3() + Vec3::new(0.5, 0.0, 0.5));
+    client.pump_until(|c| has(c, "base:evening_in"));
+    client.ok("/time set day");
+    client.pump_until(|c| !has(c, "base:evening_in"));
 }
 
 /// Rest is no way to heal in a fight (survival.ron): a bed refuses sleep with a creature that
@@ -3082,7 +3137,9 @@ fn crushed_dust_smelts_in_the_crucible_kiln_like_its_ore() {
 #[test]
 fn gravel_sometimes_breaks_to_flint_instead() {
     real_time("combat is judged on the clock: blows by when they arrived, wind-ups and rhythm in seconds, not in ticks");
-    let mut client = Client::join();
+    // Draws by a pinned key: on a new world's random one, sixty breaks at one in eight gave
+    // no flint about once in 3,300 runs (one key in 4,000 tried), and a loaded run once did.
+    let mut client = Client::join_with(ServerConfig { view_distance: 2, draw_key: Some(GRAVEL_DRAWS), ..Default::default() });
     let below = client.position.floor().as_ivec3() - IVec3::Y;
     for line in ["/clear", "/give iron_shovel 1"] {
         client.ok(line);
@@ -3092,22 +3149,27 @@ fn gravel_sometimes_breaks_to_flint_instead() {
     client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == shovel));
     client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
     // One break in eight gives flint: in sixty, all but certainly some.
+    let seen = |c: &Client, item: BlockId| c.items.values().filter(|i| i.stack.item == item).map(|i| i.stack.count as u32).sum::<u32>() + c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
     let mut flints = 0;
     for _ in 0..60 {
         client.ok("/setblock ~ ~-1 ~ gravel");
         client.pump_until(|c| c.world.block(below) == Some(gravel));
+        let before = seen(&client, gravel) + seen(&client, flint);
         client.propose("core:mine", ActionTarget::Block { block: below, face: Face::PosY });
         client.pump_until(|c| c.world.block(below) == Some(BlockId::AIR));
-        // The drop comes just after the block goes; setting the gravel again at once could
-        // bury it unseen.
-        client.after_server_ticks(2);
-        flints = client.items.values().filter(|i| i.stack.item == flint).count() + client.inventory.slots.iter().flatten().filter(|s| s.item == flint).count();
+        // The break's drop, its gravel or flint instead, seen loose or in the pack before
+        // the gravel is set again where it fell.
+        client.pump_until(|c| seen(c, gravel) + seen(c, flint) > before);
+        flints = seen(&client, flint);
         if flints > 0 {
             break;
         }
     }
     assert!(flints > 0, "sixty gravel broke without a flint");
 }
+
+/// The draw key `gravel_sometimes_breaks_to_flint_instead` pins.
+const GRAVEL_DRAWS: u64 = 0x9a5e;
 
 /// A standing log refuses a bare hand: the client's break it claims finished is undone, the
 /// log put back. Held, a flint axe fells it, and the log comes to hand.
@@ -6103,12 +6165,25 @@ fn chests_keep_what_they_hold_across_restarts_and_an_unreadable_machines_file_is
         assert!(server_seconds(&client, started) < 20, "the crusher never got going: {said}");
         client.after_ticks(4);
     };
+    // Its boiler taken away, it keeps the work but cannot go on with it, so however long
+    // the next join takes (a busy machine generates land slowly, the server ticking on),
+    // nothing is done before it is asked.
+    let boiler_at = format!("{} {} {}", crusher.x + 1, crusher.y, crusher.z);
+    client.ok(&format!("/setblock {boiler_at} air"));
+    machine_says(&mut client, &crusher_at, "no power", 10);
     drop(client);
     let save = std::fs::read_to_string(dir.join("machines.ron")).unwrap();
     assert!(save.contains("base:iron_dust"), "the save keeps the work: {save}");
     let mut client = Client::join_with(config());
     client.pump_until(|c| c.world.block(crusher) == c.content.blocks.id("base:steam_crusher"));
-    // Until its first step it says it is idle; then it goes on from where it was.
+    // Until its first step it says it is idle; then, given its boiler back, it goes on from
+    // where it was.
+    machine_says(&mut client, &crusher_at, "no power", 20);
+    client.ok(&format!("/setblock {boiler_at} boiler"));
+    client.ok("/give coal_ore 1");
+    client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == coal) && c.world.block(crusher + IVec3::X) == c.content.blocks.id("base:boiler"));
+    use_machine(&mut client, crusher + IVec3::X);
+    client.pump_until(|c| c.inventory.slots.iter().all(Option::is_none));
     let said = machine_says(&mut client, &crusher_at, "making", 20);
     assert!(progress(&said).is_some_and(|p| p >= done), "the crusher began again: {said}, was {done}% done");
     // Finished, the one ore made two dust: not two lots of it, nor none. The limit is the
@@ -7368,6 +7443,93 @@ struct Fresh {
     /// The creatures the bot swung at: each holds a grudge (`Memory::HurtBy`), a miss as
     /// much as a hit, though a miss leaves it whole.
     swung: Vec<u32>,
+    /// What the pacing check counts (`Pacing`), kept as the player goes.
+    pacing: std::cell::RefCell<Pacing>,
+}
+
+/// A kind of new thing the pacing check counts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+enum Novelty {
+    /// An item first in the pack.
+    Item,
+    /// A biome stood in, or a cave, ruin or village entered (the journal's pages).
+    Place,
+    /// A creature first met (the journal's animals, monsters and bosses).
+    Creature,
+    /// A station first worked at: a block tagged `station`, a home station (`stations.ron`)
+    /// or a multiblock's core.
+    Station,
+}
+
+/// The pacing check (docs/first-days.md, "Pacing"): each new thing the player meets, by
+/// kind and server second, and the stretches spent doing one action over and over.
+#[derive(Default)]
+struct Pacing {
+    /// Each new thing: the server second it came, its kind and its name.
+    new: Vec<(f32, Novelty, String)>,
+    seen: std::collections::HashSet<(Novelty, String)>,
+    /// The action going on over and over: what it is (the action and the block or item it
+    /// is on), the second it began, and how many times so far.
+    stretch: Option<(String, f32, u32)>,
+    /// The longest such stretch so far: what, its seconds, and how many times.
+    longest: (String, f32, u32),
+}
+
+impl Pacing {
+    fn met(&mut self, at: f32, kind: Novelty, name: &str) {
+        if self.seen.insert((kind, name.to_owned())) {
+            self.new.push((at, kind, name.to_owned()));
+        }
+    }
+
+    /// The player proposes `what` at `at`: the same as the stretch going on adds to it,
+    /// anything else ends it.
+    fn act(&mut self, at: f32, what: String) {
+        match &mut self.stretch {
+            Some((doing, _, times)) if *doing == what => *times += 1,
+            _ => {
+                self.end(at);
+                self.stretch = Some((what, at, 1));
+            }
+        }
+    }
+
+    /// The stretch going on ends at `at`.
+    fn end(&mut self, at: f32) {
+        if let Some((what, from, times)) = self.stretch.take()
+            && at - from > self.longest.1
+        {
+            self.longest = (what, at - from, times);
+        }
+    }
+
+    /// The new things in each window of `window` server seconds from the start up to `to`,
+    /// by kind.
+    fn windows(&self, window: f32, to: f32) -> Vec<std::collections::BTreeMap<Novelty, Vec<&str>>> {
+        let count = (to / window).ceil().max(1.0) as usize;
+        let mut out = vec![std::collections::BTreeMap::new(); count];
+        for (at, kind, name) in &self.new {
+            let i = ((at / window) as usize).min(count - 1);
+            out[i].entry(*kind).or_insert_with(Vec::new).push(name.as_str());
+        }
+        out
+    }
+
+    /// The longest wait with nothing new, from the start to `to`: its seconds, the second it
+    /// began, and the new thing that ended it (none, if the run did).
+    fn longest_gap(&self, to: f32) -> (f32, f32, Option<&str>) {
+        let mut times: Vec<(f32, Option<&str>)> = self.new.iter().map(|(at, _, name)| (*at, Some(name.as_str()))).collect();
+        times.push((to, None));
+        let mut from = 0.0;
+        let mut longest = (0.0, 0.0, None);
+        for (at, name) in times {
+            if at - from > longest.0 {
+                longest = (at - from, from, name);
+            }
+            from = from.max(at);
+        }
+        longest
+    }
 }
 
 /// How many of `item` the pack and its pouches carry.
@@ -7407,6 +7569,7 @@ impl Fresh {
     /// claims its rewards, as a player does (the experience they pay is what later steps'
     /// levels come from).
     fn mark(&mut self, name: &'static str) {
+        self.look_round();
         let (at, acts) = (self.secs(), self.acts.map(|t| t as f32 / TICKS_PER_SECOND as f32));
         let c = &self.c;
         let levels = PACED_SKILLS.iter().map(|&skill| (skill, c.content.skills.id(&format!("core:{skill}")).map_or(0, |id| c.content.skills.level(c.skills.xp(id))))).collect();
@@ -7469,11 +7632,31 @@ impl Fresh {
         done(&self.c)
     }
 
-    /// Lets one server tick pass.
+    /// Lets one server tick pass, and counts what is new in the pack and the journal.
     fn tick(&mut self) {
         let t = self.c.ticks();
         self.c.pump_until(|c| c.ticks() > t);
         self.steps += 1;
+        self.look_round();
+    }
+
+    /// Counts what is new since the last look: items in the pack, places and creatures in
+    /// the journal.
+    fn look_round(&self) {
+        use voxmar_engine::journal::Page;
+        let (c, at) = (&self.c, self.secs());
+        let mut pacing = self.pacing.borrow_mut();
+        for stack in c.inventory.slots.iter().flatten() {
+            pacing.met(at, Novelty::Item, &c.content.blocks.def(stack.item).name);
+        }
+        for entry in c.journal.entries() {
+            let kind = match entry.page {
+                Page::Biomes | Page::Places => Novelty::Place,
+                Page::Animals | Page::Monsters | Page::Bosses => Novelty::Creature,
+                _ => continue,
+            };
+            pacing.met(at, kind, &entry.name);
+        }
     }
 
     /// The game's clock: the moment the server's tick stands for, at its pace. The player's
@@ -7485,6 +7668,30 @@ impl Fresh {
     }
 
     fn propose(&self, action: &str, target: ActionTarget) {
+        let c = &self.c;
+        let name = |b: BlockId| c.content.blocks.def(b).name.clone();
+        let on = match target {
+            ActionTarget::Block { block, .. } => c.world.block(block),
+            _ => None,
+        };
+        // What it is done with or to, for telling one action over and over from another:
+        // the block or creature it is on, or what is in hand (the food cooked, the stack
+        // crafted).
+        let creature = match target {
+            ActionTarget::Creature(id) => c.creatures.get(&id).map(|v| c.content.creatures.get(v.species).def.name.clone()),
+            _ => None,
+        };
+        let with = creature.unwrap_or_else(|| on.or_else(|| c.inventory.get(self.held as usize).map(|s| s.item)).map_or_else(String::new, name));
+        let mut pacing = self.pacing.borrow_mut();
+        pacing.act(self.secs(), format!("{action} {with}"));
+        if let Some(block) = on.filter(|_| !matches!(action, "core:mine" | "core:place")) {
+            let def = c.content.blocks.def(block);
+            let station = c.content.stations.of(block).map(|(s, _)| s.empty);
+            if let Some(kind) = station.or_else(|| (def.has_tag("station") || def.has_tag("multiblock_core")).then_some(block)) {
+                pacing.met(self.secs(), Novelty::Station, &name(kind));
+            }
+        }
+        drop(pacing);
         self.c.propose_at(action, target, self.now());
     }
 
@@ -8083,7 +8290,7 @@ impl Fresh {
         c.pump_until(|c| probes.iter().all(|&(at, name)| c.world.block(origin + at) == c.content.blocks.id(name)) && c.world.block(origin + v(-9, 1, 0)) == Some(BlockId::AIR));
         let (at, t0) = (c.position, c.ticks());
         let epoch = (t0, Instant::now());
-        let mut plot = Self { c, origin, at, held: 0, t0, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch, steps: 0, swung: Vec::new() };
+        let mut plot = Self { c, origin, at, held: 0, t0, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch, steps: 0, swung: Vec::new(), pacing: Default::default() };
         // Ten animals in the lane: three rabbits and seven junglefowl.
         for (i, z) in (-10..=-1).enumerate() {
             plot.stock(if i % 3 == 1 { "rabbit" } else { "junglefowl" }, z);
@@ -8104,7 +8311,7 @@ fn the_bot_closes_on_a_drop_from_where_the_server_put_it() {
     let c = on_a_test_floor();
     let (feet, ticks) = (c.position, c.ticks());
     let origin = feet.floor().as_ivec3();
-    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0, swung: Vec::new() };
+    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0, swung: Vec::new(), pacing: Default::default() };
     // A cobblestone four blocks off, beyond the pull.
     let cell = origin + IVec3::X * 4;
     f.c.ok(&format!("/drop cobblestone 1 {} {} {}", cell.x, cell.y, cell.z));
@@ -8127,7 +8334,7 @@ fn the_bot_collects_while_the_server_ticks_far_ahead_of_it() {
     let c = on_a_test_floor();
     let (feet, ticks) = (c.position, c.ticks());
     let origin = feet.floor().as_ivec3();
-    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0, swung: Vec::new() };
+    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0, swung: Vec::new(), pacing: Default::default() };
     for i in 1..=6 {
         let cell = origin + IVec3::X * (4 * i);
         f.c.ok(&format!("/drop cobblestone 1 {} {} {}", cell.x, cell.y, cell.z));
@@ -8145,7 +8352,7 @@ fn a_server_in_lockstep_ticks_once_for_each_tick_its_bot_lets_pass() {
     let c = on_a_test_floor();
     let (feet, ticks) = (c.position, c.ticks());
     let origin = feet.floor().as_ivec3();
-    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0, swung: Vec::new() };
+    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0, swung: Vec::new(), pacing: Default::default() };
     for _ in 0..200 {
         let t = f.c.ticks();
         f.send();
@@ -8163,7 +8370,7 @@ fn the_bot_steps_down_into_a_pit_for_a_drop_and_back_out() {
     let c = on_a_test_floor();
     let (feet, ticks) = (c.position, c.ticks());
     let origin = feet.floor().as_ivec3();
-    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0, swung: Vec::new() };
+    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0, swung: Vec::new(), pacing: Default::default() };
     // Ground under the floor, then a pit four blocks off, one wide and three deep, a
     // cobblestone at its bottom.
     f.c.fill(origin, IVec3::new(2, -5, -2), IVec3::new(6, -2, 2), "stone");
@@ -8190,7 +8397,7 @@ fn the_bot_takes_a_drop_under_a_cut_trunk_from_beside_it() {
     let c = on_a_test_floor();
     let (feet, ticks) = (c.position, c.ticks());
     let origin = feet.floor().as_ivec3();
-    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0, swung: Vec::new() };
+    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0, swung: Vec::new(), pacing: Default::default() };
     // A log hanging a block over the ground four blocks off, a cobblestone in the gap under it.
     let gap = origin + IVec3::X * 4;
     f.c.ok(&format!("/setblock {} {} {} oak_log", gap.x, gap.y + 1, gap.z));
@@ -8210,7 +8417,7 @@ fn the_bot_hops_to_a_spot_it_just_fits_in_a_one_wide_nook() {
     let c = on_a_test_floor();
     let (feet, ticks) = (c.position, c.ticks());
     let origin = feet.floor().as_ivec3();
-    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0, swung: Vec::new() };
+    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0, swung: Vec::new(), pacing: Default::default() };
     // Walls either side of a row of cells four to five blocks off, shut at its far end.
     f.c.fill(origin, IVec3::new(3, 0, -1), IVec3::new(6, 1, -1), "stone");
     f.c.fill(origin, IVec3::new(3, 0, 1), IVec3::new(6, 1, 1), "stone");
@@ -8232,7 +8439,7 @@ fn the_bot_leaves_a_drop_no_one_can_reach_and_digs_another() {
     let c = on_a_test_floor();
     let (feet, ticks) = (c.position, c.ticks());
     let origin = feet.floor().as_ivec3();
-    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0, swung: Vec::new() };
+    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0, swung: Vec::new(), pacing: Default::default() };
     // Ground under the floor, and in it a one-high slot two blocks down, three blocks off,
     // a cobblestone in it.
     f.c.fill(origin, IVec3::new(1, -5, -2), IVec3::new(5, -2, 2), "stone");
@@ -8266,7 +8473,7 @@ fn the_bot_places_from_the_slot_it_holds_after_a_correction() {
     let c = on_a_test_floor();
     let (feet, ticks) = (c.position, c.ticks());
     let origin = feet.floor().as_ivec3();
-    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0, swung: Vec::new() };
+    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0, swung: Vec::new(), pacing: Default::default() };
     f.c.ok("/give stone_pickaxe 1");
     f.c.ok("/give cobblestone 1");
     f.c.pump_until(|c| holding(c, "base:stone_pickaxe") == 1 && holding(c, "base:cobblestone") == 1);
@@ -8789,7 +8996,59 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     let missed: Vec<&str> = QUEST_BOOK_ORDER.iter().copied().filter(|q| !quest_status(&f.c, q).0).collect();
     assert!(missed.is_empty(), "quests of the line not done: {missed:?}");
     eprintln!("{}", timeline(&f));
+    f.look_round();
+    let end = f.secs();
+    f.pacing.borrow_mut().end(end);
+    let pacing = f.pacing.borrow();
+    let report = pacing_report(&pacing, end);
+    eprintln!("{report}");
     eprintln!("a new player to the lit Crucible Kiln in {:.1} s of wall time", wall.elapsed().as_secs_f32());
+    // Something new comes every three minutes of the line, several things, and no one
+    // action is done over and over for long (docs/first-days.md, "Pacing").
+    for (i, window) in pacing.windows(PACING_WINDOW, end).iter().enumerate() {
+        let full = (i as f32 + 1.0) * PACING_WINDOW <= end;
+        let new = window.values().map(Vec::len).sum::<usize>();
+        assert!(!full || new >= PACING_NEW, "only {new} new things in three minutes from {} s:\n{report}", i as f32 * PACING_WINDOW);
+    }
+    assert!(pacing.longest.1 <= PACING_STRETCH, "one action over and over for too long:\n{report}");
+}
+
+/// The pacing check's window: new things are counted in each three minutes of the run.
+const PACING_WINDOW: f32 = 180.0;
+
+/// The fewest new things each whole window must bring (14 to 43 in 32 runs, Oct 20).
+const PACING_NEW: usize = 5;
+
+/// The longest the player may do one action over and over, in server seconds (firing
+/// clay at the pit kiln, 29 to 40 s in 32 runs, Oct 20).
+const PACING_STRETCH: f32 = 60.0;
+
+/// The pacing check's report: what was new in each window of the run, by kind, and the
+/// longest stretch of one action over and over.
+fn pacing_report(pacing: &Pacing, end: f32) -> String {
+    let mut out = String::from("pacing: new things per three minutes (item, place, creature, station)\n");
+    for (i, window) in pacing.windows(PACING_WINDOW, end).iter().enumerate() {
+        let from = i as f32 * PACING_WINDOW;
+        let count = |kind| window.get(&kind).map_or(0, Vec::len);
+        let all: Vec<String> = window.iter().map(|(kind, names)| format!("{kind:?}: {}", names.join(", "))).collect();
+        out += &format!(
+            "  {:>5.0} to {:>5.0} s: {:>3} new ({} items, {} places, {} creatures, {} stations)  {}\n",
+            from,
+            (from + PACING_WINDOW).min(end),
+            window.values().map(Vec::len).sum::<usize>(),
+            count(Novelty::Item),
+            count(Novelty::Place),
+            count(Novelty::Creature),
+            count(Novelty::Station),
+            all.join("; ")
+        );
+    }
+    let (gap, from, ended) = pacing.longest_gap(end);
+    out += &format!("  longest wait with nothing new: {gap:.1} s from {from:.1} s, ended by {}\n", ended.unwrap_or("the end of the run"));
+    let (what, secs, times) = &pacing.longest;
+    out += &format!("  longest single-action stretch: {what}, {times} times over {secs:.1} s\n");
+    out += &format!("  the end of the line at {:.1} server min: a floor, since the bot knows the way (a new player's target is 20 to 30)", end / 60.0);
+    out
 }
 
 /// Each milestone's server seconds, the phase before it and what that went on, and the
@@ -8870,6 +9129,81 @@ fn finish(mut f: Fresh) {
         let m = f.marks.iter().find(|m| m.name == name).unwrap_or_else(|| panic!("{name} was never reached"));
         assert!(m.at <= budget, "{name} took {:.1} server seconds, over its budget of {budget}", m.at);
     }
+}
+
+/// The charm slot (`combat::Slot::Charm`): a charm goes on only there, never in an armour
+/// slot, and its `Wearing` effect holds while it is worn, untimed: Old Tusk's charge charm
+/// quickens the stride. Held in hand it does nothing; taken off, the effect is gone.
+#[test]
+fn a_charm_goes_in_the_charm_slot_and_works_while_worn() {
+    use voxmar_engine::combat::Slot;
+    use voxmar_engine::inventory::{HOTBAR_SLOTS, WORN};
+    let mut client = Client::join();
+    let charm = client.content.blocks.id("base:charge_charm").unwrap();
+    for line in ["/clear", "/effect clear", "/give charge_charm 1"] {
+        client.ok(line);
+    }
+    client.pump_until(|c| (0..HOTBAR_SLOTS).any(|s| c.inventory.get(s).is_some_and(|s| s.item == charm)));
+    let striding = |c: &Client| c.vitals.effects.iter().find(|a| c.content.effects.get(a.effect).name == "base:tusk_stride").copied();
+    // In hand it is no charm worn.
+    client.pump_ticks(TICKS_PER_SECOND as u64 * 2, |c| striding(c).is_some());
+    assert!(striding(&client).is_none(), "held, not worn");
+    let from = (0..HOTBAR_SLOTS).find(|&s| client.inventory.get(s).is_some_and(|s| s.item == charm)).unwrap();
+    client.propose("core:transfer", ActionTarget::Slots { from: from as u8, to: WORN as u8, count: 1 });
+    client.propose("core:transfer", ActionTarget::Slots { from: from as u8, to: (WORN + Slot::Charm.index()) as u8, count: 1 });
+    client.pump_until(|c| c.inventory.worn[Slot::Charm.index()].is_some_and(|s| s.item == charm) && striding(c).is_some());
+    assert!(client.inventory.worn[0].is_none(), "a charm is not a helmet");
+    assert_eq!(striding(&client).unwrap().seconds_left, None, "it holds while worn, untimed");
+    assert!(client.content.effects.modifiers(&client.vitals.effects).speed > 1.0);
+    client.ok("/clear charge_charm");
+    client.pump_until(|c| c.inventory.worn[Slot::Charm.index()].is_none() && striding(c).is_none());
+}
+
+/// A charm's effect ends the moment it comes off, not at the next once-a-second pass:
+/// taken off into the pack, or left in the grave by a death (worth less than three things
+/// carried that death keeps first), the stride is gone as the inventory says so.
+#[test]
+fn a_charm_taken_off_or_lost_to_death_ends_its_effect_at_once() {
+    use voxmar_engine::combat::Slot;
+    use voxmar_engine::inventory::{HOTBAR_SLOTS, WORN};
+    let mut client = Client::join();
+    client.ok("/gamemode survival");
+    let charm = client.content.blocks.id("base:charge_charm").unwrap();
+    let striding = |c: &Client| c.vitals.effects.iter().any(|a| c.content.effects.get(a.effect).name == "base:tusk_stride");
+    let well = WORN + Slot::Charm.index();
+    let wear = |client: &mut Client| {
+        client.pump_until(|c| (0..HOTBAR_SLOTS).any(|s| c.inventory.get(s).is_some_and(|s| s.item == charm)));
+        let from = (0..HOTBAR_SLOTS).find(|&s| client.inventory.get(s).is_some_and(|s| s.item == charm)).unwrap();
+        client.propose("core:transfer", ActionTarget::Slots { from: from as u8, to: well as u8, count: 1 });
+        client.pump_until(|c| c.inventory.worn[Slot::Charm.index()].is_some() && striding(c));
+    };
+    for line in ["/clear", "/effect clear", "/give charge_charm 1"] {
+        client.ok(line);
+    }
+    wear(&mut client);
+    // Off into the pack: the same tick's word takes the stride away.
+    client.propose("core:quick_move", ActionTarget::Slot(well as u8));
+    client.pump_until(|c| c.inventory.worn[Slot::Charm.index()].is_none());
+    client.pump_ticks(1, |_| false);
+    assert!(!striding(&client), "the stride outlived the charm taken off");
+    // Worn again, then a death: three things worth more are kept, the charm is not.
+    let kept = (0..client.content.blocks.len() as u16)
+        .map(voxmar_engine::block::BlockId)
+        .filter(|&item| voxmar_engine::value::worth(&client.content, item) > voxmar_engine::value::worth(&client.content, charm))
+        .find(|&item| client.content.blocks.def(item).item && voxmar_engine::inventory::worn_slot(item).is_none())
+        .expect("something worth more than the charm");
+    let kept_name = client.content.blocks.def(kept).name.clone();
+    for line in ["/clear".to_owned(), format!("/give {kept_name} 3"), "/give charge_charm 1".to_owned()] {
+        client.ok(&line);
+    }
+    wear(&mut client);
+    client.ok("/kill");
+    client.pump_until(|c| c.health == 0);
+    client.propose("core:respawn", ActionTarget::None);
+    client.pump_until(|c| c.health > 0);
+    client.pump_ticks(1, |_| false);
+    assert!(client.inventory.worn[Slot::Charm.index()].is_none(), "the charm went to the grave");
+    assert!(!striding(&client), "the stride outlived the charm lost to death");
 }
 
 /// A stone sword's 0.6 s cooldown in server ticks.

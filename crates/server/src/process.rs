@@ -159,7 +159,7 @@ impl Survival {
         let wet = server.block(feet).and_then(|b| server.content.blocks.fluid(b)).is_some();
         let outdoors = server.open_sky(feet + voxmar_engine::glam::IVec3::Y * 2);
         let at = voxmar_engine::glam::Vec2::new(player.position.x, player.position.z);
-        let (tick, day) = (server.tick, server.day);
+        let (tick, day, night) = (server.tick, server.day, server.night());
         let weather = server.weather.local(&mut server.temperature, at, tick, day).weather;
         let cold_air = air - if wet { server.survival.water_chill } else { 0.0 };
         let warmed = heat > 0.5 && cold_air < vitals::CHILLY;
@@ -170,6 +170,13 @@ impl Survival {
         let held: Vec<String> = player.held().map_or_else(Vec::new, |item| {
             let def = server.content.blocks.def(item);
             effects.held_tags().iter().filter(|tag| def.has_tag(tag)).cloned().collect()
+        });
+        // And of the charm worn (`Wearing`): only the charm slot's, so one charm's effect
+        // at a time, whatever else a pack tags.
+        let charm = player.inventory.worn[voxmar_engine::combat::Slot::Charm.index()];
+        let worn: Vec<String> = charm.map_or_else(Vec::new, |s| {
+            let def = server.content.blocks.def(s.item);
+            effects.worn_tags().iter().filter(|tag| def.has_tag(tag)).cloned().collect()
         });
         let near: Vec<(String, i32)> = effects.near_asks().iter().filter(|(tag, reach)| server.tagged_within(feet, tag, *reach)).cloned().collect();
         let max_level = hitpoints.map(|skill| server.content.skills.level(server.players[&id].skills.xp(skill)));
@@ -198,7 +205,7 @@ impl Survival {
         // Warmth from what was eaten and the weather counts before the bands of warmth
         // are judged: soaked through, a mild day feels chilly.
         let biome = server.overworld.biome_at(feet.x, feet.z);
-        let mut situation = Situation { felt: cold_air + heat, warmed, outdoors, weather: &weather, biome: &biome.name, biome_tags: &biome.tags, home: home.as_ref(), done: &player.quests_done, held: &held, near: &near, seated: seated.is_some() };
+        let mut situation = Situation { felt: cold_air + heat, warmed, outdoors, weather: &weather, biome: &biome.name, biome_tags: &biome.tags, home: home.as_ref(), done: &player.quests_done, held: &held, near: &near, worn: &worn, seated: seated.is_some(), night };
         // What clings (smoke) is topped up while it holds, and lasts after.
         effects.linger(&situation, &mut player.timed_effects);
         let first = effects.active(&situation, &player.timed_effects);
@@ -589,6 +596,42 @@ mod tests {
         server.set_block(window, block(&server, "base:oak_window_frame"));
         let open = server.room_walls(home);
         assert!(open.share(Shelter::Draughty) < 0.9, "an empty frame walled the room: {open:?}");
+    }
+
+    /// A balcony door shut in a plank room's wall walls it in: its lower half a sound face,
+    /// its lattice a draughty one. Opened, it is a way out as an empty frame is, and a
+    /// railing across the doorway walls nothing.
+    #[test]
+    fn a_balcony_door_walls_a_room_shut_and_opens_it_open() {
+        use voxmar_engine::{block::BlockId, effect::Shelter};
+        let mut server = crate::test_server();
+        let at = voxmar_engine::coords::ColumnPos::of_block(server.spawn.floor().as_ivec3()).origin() + IVec3::new(8, server.spawn.y as i32 + 10, 8);
+        let block = |server: &Server, name: &str| server.content.blocks.expect(name);
+        let (stone, planks) = (block(&server, "base:stone"), block(&server, "base:oak_planks"));
+        for x in -3..=3 {
+            for z in -3..=3 {
+                server.set_block(at + IVec3::new(x, 0, z), stone);
+                server.set_block(at + IVec3::new(x, 4, z), planks);
+                for y in 1..=3 {
+                    let edge = x.abs() == 3 || z.abs() == 3;
+                    server.set_block(at + IVec3::new(x, y, z), if edge { planks } else { BlockId::AIR });
+                }
+            }
+        }
+        let home = at + IVec3::Y;
+        let door = at + IVec3::new(3, 1, 0);
+        server.set_block(door, block(&server, "base:balcony_door"));
+        server.set_block(door + IVec3::Y, block(&server, "base:balcony_door_top"));
+        assert_eq!(server.room_walls(home).at_least, [85, 84, 0], "a shut balcony door: a sound half and a draughty lattice");
+        server.set_block(door, block(&server, "base:balcony_door_open"));
+        server.set_block(door + IVec3::Y, block(&server, "base:balcony_door_open_top"));
+        let open = server.room_walls(home);
+        assert!(open.share(Shelter::Draughty) < 0.9, "an open balcony door walled the room: {open:?}");
+        // A railing across the doorway walls nothing: the survey looks past it, out.
+        server.set_block(door, block(&server, "base:oak_railing"));
+        server.set_block(door + IVec3::Y, planks);
+        let railed = server.room_walls(home);
+        assert!(railed.share(Shelter::Draughty) < 0.9, "a railing walled the room: {railed:?}");
     }
 
     /// The home ladder's own furniture in a five by five stone-brick room under a plank roof
