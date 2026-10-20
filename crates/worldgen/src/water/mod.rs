@@ -361,10 +361,11 @@ impl Rivers {
                 roof: f32::MAX,
                 islands: noise(seed, 0x16, 1.0 / 36.0, FractalType::FBm, 2),
             },
-            coarse: Cache::new(16 * MB),
-            fine: Cache::new(64 * MB),
-            trunk_channels: Cache::new(32 * MB),
-            stream_channels: Cache::new(96 * MB),
+            // Pure functions of their keys, which the server's tick may read: copying.
+            coarse: Cache::copying(16 * MB),
+            fine: Cache::copying(64 * MB),
+            trunk_channels: Cache::copying(32 * MB),
+            stream_channels: Cache::copying(96 * MB),
             creek,
             trunk: creek * 6.0,
             id: IDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
@@ -1974,6 +1975,44 @@ mod tests {
                 .filter(|&i| basin.next(region * drainage.tier.side + IVec2::new(i % drainage.tier.side, i / drainage.tier.side)) == drainage::END)
                 .count();
             println!("{name}: flow p50 {:.2} p90 {:.2} p99 {:.2} max {:.2}; ends {ends}; lakes {kinds:?}", pct(0.5), pct(0.9), pct(0.99), pct(1.0));
+        }
+    }
+
+    /// The server's tick never waits on a region a background worker is building: a worker
+    /// holds its first make of a region's stream channels open, once a cached value and once
+    /// a value inside one (a basin's totals, an exit's), with everything above it being made;
+    /// the tick, asking for the same channels, makes its own, which, done first, is kept.
+    #[test]
+    fn an_urgent_thread_never_waits_on_a_region_being_built() {
+        use std::sync::mpsc::channel;
+        use std::time::Duration;
+        let world = crate::Overworld::new(1, Arc::new(crate::test_registry()));
+        let world = &world;
+        for (i, kind) in [cache::Hold::Cached, cache::Hold::Inner].into_iter().enumerate() {
+            // Regions of their own, so each worker has something left to make.
+            let region = IVec2::new(4 * i as i32 - 2, 3);
+            let (held_tx, held) = channel();
+            let (release_tx, release) = channel();
+            let (done_tx, done) = channel();
+            std::thread::scope(|scope| {
+                let worker = scope.spawn(move || {
+                    cache::hold_on(kind, held_tx, release);
+                    world.rivers.channels(world.stages(), Level::Stream, region)
+                });
+                held.recv_timeout(Duration::from_secs(120)).expect("the worker made something");
+                let urgent = scope.spawn(move || {
+                    crate::parallel::mark_urgent();
+                    let channels = world.rivers.channels(world.stages(), Level::Stream, region);
+                    let _ = done_tx.send(());
+                    channels
+                });
+                // Well within the held make's wait (cache::hold), so a wait on it fails here.
+                let answered = done.recv_timeout(Duration::from_secs(60)).is_ok();
+                let _ = release_tx.send(());
+                let (own, shared) = (urgent.join().unwrap(), worker.join().unwrap());
+                assert!(answered, "hold {i}: the urgent thread waited on the worker");
+                assert!(Arc::ptr_eq(&own, &shared), "hold {i}: the urgent thread's own, done first, is the worker's too");
+            });
         }
     }
 }

@@ -431,7 +431,8 @@ impl Settlements {
             spawn: std::sync::OnceLock::new(),
             promised: std::sync::OnceLock::new(),
             id: IDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-            cells: Cache::new(MB),
+            // Pure functions of their cells, which the server's tick may read: copying.
+            cells: Cache::copying(MB),
             #[cfg(test)]
             planned: std::sync::atomic::AtomicUsize::new(0),
         }
