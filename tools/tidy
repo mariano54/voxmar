@@ -1,0 +1,252 @@
+#!/bin/bash
+# tidy: frees the disk that finished and idle worktrees hold. See docs/quality.md.
+#
+#   tools/tidy              removes what is safe to remove, logging every delete
+#   tools/tidy --dry-run    says what it would remove, and removes nothing
+#   tools/tidy --install    runs it every hour on this Mac (a launchd agent), from the
+#                           main checkout, so it is always the version on main
+#   tools/tidy --uninstall  stops that
+#
+# Every worktree keeps its own target dir on purpose (cargo trusts the first tree's
+# fingerprints, so a shared one silently reuses another tree's binaries), and a built one
+# holds 30 GB or more: on 2026-10-20 the worktrees held over 900 GB. Most of it is build
+# output nobody will use again: trees whose work has landed, profiles nobody builds any
+# more, and rustc's incremental caches for crate versions that have since changed (15 of
+# the landing tree's 25 GB of incremental cache had not been touched for a day).
+#
+# For each worktree of this repo, in this order:
+# 1. The worktree goes (its branch stays) when it is clean, nothing modified, untracked or
+#    ignored-but-precious (saves, worlds, .env), it has been idle for VOXMAR_TIDY_LANDED_HOURS
+#    (6) and its commit is on origin/main; or idle for VOXMAR_TIDY_PUSHED_DAYS (7) and its
+#    commit is on any other branch on origin. Unpushed work never goes.
+# 2. Its target dir goes when nothing has been built in it for VOXMAR_TIDY_TARGET_DAYS (2).
+# 3. Otherwise each profile dir (target/debug, target/release, ...) goes when nothing has
+#    been built with it for that long, and each incremental crate cache when it has not
+#    been touched for VOXMAR_TIDY_INCREMENTAL_DAYS (1). Rebuilding one costs a single
+#    non-incremental compile of that crate.
+#
+# It never touches the checkout of main (only its build output), locked worktrees
+# (`git worktree lock` keeps one for good), the trees named in VOXMAR_TIDY_KEEP (play,
+# which Mariano plays from, and landing, the landing thread's train tree; their build
+# output is still tidied), or any worktree a running process works in or names in its
+# arguments: a build, a gate, a game, a shell. While PLAYING or a fresh QUIET is up it does
+# nothing, so its disk traffic never reaches his game or a timing run.
+# Every removal goes to ~/Projects/voxmar-wt/tidy.log with its size.
+
+set -uo pipefail
+
+landed_hours=${VOXMAR_TIDY_LANDED_HOURS:-6}
+pushed_days=${VOXMAR_TIDY_PUSHED_DAYS:-7}
+target_days=${VOXMAR_TIDY_TARGET_DAYS:-2}
+incremental_days=${VOXMAR_TIDY_INCREMENTAL_DAYS:-1}
+keep=" ${VOXMAR_TIDY_KEEP:-play landing} "
+log=${VOXMAR_TIDY_LOG:-~/Projects/voxmar-wt/tidy.log}
+quiet_flag=${VOXMAR_QUIET_FLAG:-~/Projects/voxmar-wt/QUIET}
+play_flag=${VOXMAR_PLAY_FLAG:-~/Projects/voxmar-wt/PLAYING}
+label=com.voxmar.tidy
+plist=~/Library/LaunchAgents/$label.plist
+
+repo=$(git -C "$(dirname "$0")" rev-parse --path-format=absolute --git-common-dir) || exit 2
+main_checkout=$(dirname "$repo")
+
+case ${1:-} in
+  --install)
+    mkdir -p "$(dirname "$plist")" "$(dirname "$log")"
+    # Runs the copy on main, so landing a change to it is all an update takes; the test
+    # keeps the agent quiet until it has landed there.
+    cat >"$plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$label</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string><string>-c</string>
+    <string>[ -x '$main_checkout/tools/tidy' ] &amp;&amp; exec '$main_checkout/tools/tidy'</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict><key>PATH</key><string>/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin</string></dict>
+  <key>StartInterval</key><integer>3600</integer>
+  <key>ProcessType</key><string>Background</string>
+  <key>LowPriorityIO</key><true/>
+  <key>Nice</key><integer>10</integer>
+  <key>StandardOutPath</key><string>$log</string>
+  <key>StandardErrorPath</key><string>$log</string>
+</dict>
+</plist>
+EOF
+    launchctl bootout "gui/$(id -u)/$label" 2>/dev/null
+    launchctl bootstrap "gui/$(id -u)" "$plist" && echo "tidy: runs every hour; log in $log"
+    exit ;;
+  --uninstall)
+    launchctl bootout "gui/$(id -u)/$label" 2>/dev/null
+    rm -f "$plist"
+    echo "tidy: no longer runs on its own"
+    exit ;;
+  --dry-run) dry=1 ;;
+  '') dry=0 ;;
+  *) echo "usage: tools/tidy [--dry-run | --install | --uninstall]" >&2; exit 2 ;;
+esac
+
+say() { echo "tidy: $(date '+%F %T') $*"; }
+
+# Stays out of Mariano's game and of timing runs entirely; the next hour tries again.
+if [[ -e $play_flag ]] || [[ -n $(find "$quiet_flag" -mmin -20 2>/dev/null) ]]; then
+  ((dry)) || exit 0
+  say "PLAYING or QUIET is up: a real run would do nothing now"
+fi
+
+# One run at a time.
+lock=/tmp/voxmar-tidy.lock
+if ((!dry)); then
+  if command -v shlock >/dev/null; then
+    shlock -f "$lock" -p $$ || exit 0
+  else
+    (set -o noclobber; echo $$ >"$lock") 2>/dev/null || exit 0
+  fi
+  trap 'rm -f "$lock"' EXIT
+fi
+
+git -C "$main_checkout" fetch -q origin 2>/dev/null || say "could not fetch origin; using what is known"
+git -C "$main_checkout" worktree prune
+
+# What running processes work in or name: their working directories and arguments.
+busy=$( { lsof -a -d cwd -Fn 2>/dev/null | sed -n 's/^n//p'; ps -A -o args=; } )
+
+# Whether a running process works in $1 or names it or a path under it (voxmar-wt/ui is
+# not in use because voxmar-wt/ui-next is).
+in_use() {
+  awk -v p="$1" '{
+    while ((i = index($0, p))) {
+      c = substr($0, i + length(p), 1)
+      if (c == "" || c == "/" || c == " ") { found = 1; exit }
+      $0 = substr($0, i + 1)
+    }
+  } END { exit !found }' <<<"$busy"
+}
+
+# Whether anything under $1, to a depth of $2, changed in the last $3 minutes.
+touched() { [[ -n $(find "$1" -mindepth 1 -maxdepth "$2" -mmin "-$3" -print -quit 2>/dev/null) ]]; }
+
+# Removes the directory $1, logging why ($2) and its size.
+remove_dir() {
+  local size
+  size=$(du -sh "$1" 2>/dev/null | cut -f1)
+  if ((dry)); then say "would remove $1 ($size): $2"; return; fi
+  rm -rf "$1" && say "removed $1 ($size): $2" || say "FAILED to remove $1: $2"
+}
+
+# The worktrees under $1 (bench baselines live in target/bench/base), deepest first.
+nested() {
+  git -C "$main_checkout" worktree list --porcelain |
+    awk -v root="$1/" 'index(substr($0, 10), root) == 1 && /^worktree / { print substr($0, 10) }' |
+    awk '{ print length, $0 }' | sort -rn | cut -d' ' -f2-
+}
+
+# Removes the worktree $1 (not its branch) because of $2. Nested worktrees go first, and
+# git refuses one with anything modified or untracked; that refusal is logged, not forced.
+remove_worktree() {
+  local wt=$1 why=$2 inner size
+  for inner in $(nested "$wt"); do remove_worktree "$inner" "inside $wt, which goes"; done
+  size=$(du -sh "$wt" 2>/dev/null | cut -f1)
+  if ((dry)); then say "would remove worktree $wt ($size): $why"; return; fi
+  if out=$(git -C "$main_checkout" worktree remove "$wt" 2>&1); then
+    say "removed worktree $wt ($size): $why"
+  else
+    say "kept worktree $wt, git refused: $out"
+  fi
+}
+
+# Whether nothing in the worktree $1 is worth keeping beyond its commit: nothing modified
+# or untracked, and nothing ignored but build output and caches.
+clean() {
+  [[ -z $(git -C "$1" status --porcelain 2>/dev/null) ]] || return 1
+  ! git -C "$1" status --porcelain --ignored 2>/dev/null | grep '^!!' |
+    grep -vqE '^!! (target/|.*\.DS_Store$|.*__pycache__/$|.*\.pyc$)'
+}
+
+# Minutes since the worktree $1 was last used: committed to, checked out, or built in. (Not
+# the index: `git status`, here too, rewrites it.)
+idle_minutes() {
+  local wt=$1 gitdir newest
+  gitdir=$(git -C "$wt" rev-parse --path-format=absolute --git-dir 2>/dev/null)
+  newest=$(stat -f %m "$gitdir/HEAD" "$gitdir/logs/HEAD" 2>/dev/null | sort -n | tail -1)
+  for p in "$wt"/target/*/; do
+    [[ -d $p.fingerprint ]] || continue
+    t=$(find "$p" -mindepth 1 -maxdepth 2 -print0 2>/dev/null | xargs -0 stat -f %m 2>/dev/null | sort -n | tail -1)
+    [[ -n $t ]] && ((t > newest)) && newest=$t
+  done
+  echo $((($(date +%s) - ${newest:-0}) / 60))
+}
+
+# The build output of the worktree $1: the whole target dir, or the profiles and
+# incremental caches nobody builds with any more.
+tidy_target() {
+  local wt=$1 target=$1/target p crate
+  [[ -d $target ]] || return
+  if ! touched "$target" 3 $((target_days * 1440)); then
+    for inner in $(nested "$target"); do
+      in_use "$inner" && { say "kept $target: $inner is in use"; return; }
+      clean "$inner" || { say "kept $target: $inner has changes"; return; }
+    done
+    for inner in $(nested "$target"); do remove_worktree "$inner" "bench baseline in an idle target dir"; done
+    remove_dir "$target" "nothing built in it for $target_days days"
+    return
+  fi
+  for p in "$target"/*/; do
+    p=${p%/}
+    [[ -d $p/.fingerprint ]] || continue
+    if ! touched "$p" 2 $((target_days * 1440)); then
+      remove_dir "$p" "nothing built with this profile for $target_days days"
+      continue
+    fi
+    for crate in "$p"/incremental/*/; do
+      crate=${crate%/}
+      [[ -d $crate ]] || continue
+      [[ -n $(find "$crate" -maxdepth 1 -mmin "-$((incremental_days * 1440))" -print -quit 2>/dev/null) ]] && continue
+      remove_dir "$crate" "incremental cache untouched for $incremental_days day(s)"
+    done
+  done
+}
+
+git -C "$main_checkout" worktree list --porcelain | awk '
+  /^worktree / { path = substr($0, 10); branch = ""; locked = 0; bare = 0 }
+  /^branch / { branch = substr($0, 8) }
+  /^locked/ { locked = 1 }
+  /^bare/ { bare = 1 }
+  /^$/ { if (!bare) print locked "\t" branch "\t" path }
+  END { if (path != "" && !bare) print locked "\t" branch "\t" path }' | sort -u -t$'\t' -k3 |
+while IFS=$'\t' read -r locked branch wt; do
+  [[ -d $wt ]] || continue
+  # Bench baselines inside a target dir go with that target dir.
+  [[ $wt == */target/* ]] && continue
+  if in_use "$wt"; then
+    ((dry)) && say "skipping $wt: in use"
+    continue
+  fi
+
+  name=$(basename "$wt")
+  protected=0
+  [[ $wt == "$main_checkout" || $branch == refs/heads/main || $locked == 1 || $keep == *" $name "* ]] && protected=1
+
+  if ((!protected)) && clean "$wt"; then
+    head=$(git -C "$wt" rev-parse HEAD)
+    idle=$(idle_minutes "$wt")
+    if git -C "$wt" merge-base --is-ancestor "$head" origin/main 2>/dev/null; then
+      if ((idle >= landed_hours * 60)); then
+        remove_worktree "$wt" "landed on origin/main, idle $((idle / 60)) h"
+        continue
+      fi
+    elif [[ -n $(git -C "$wt" branch -r --contains "$head" 2>/dev/null) ]]; then
+      if ((idle >= pushed_days * 1440)); then
+        remove_worktree "$wt" "pushed to origin, idle $((idle / 1440)) days"
+        continue
+      fi
+    fi
+  fi
+  tidy_target "$wt"
+done
+
+git -C "$main_checkout" worktree prune
+((dry)) || say "done; $(df -h "$main_checkout" | awk 'NR == 2 { print $4 }') free"
