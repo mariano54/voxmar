@@ -1154,11 +1154,13 @@ fn emit_model(out: &mut MeshBuffers, registry: &BlockRegistry, cells: &[Cell], p
     let Some(first) = registry.shape_first_quad(cell.block) else { return };
     let Some(shape) = registry.shape(cell.block) else { return };
     let layers = registry.shape_layers(cell.block);
-    let dark = registry.info(cell.block).attenuation >= 15;
+    // A block that dims light (a roof holds none, a drawn curtain little) lights its faces
+    // inside the cell by the side they face, not by the dim light it holds.
+    let dims = registry.info(cell.block).attenuation > 1;
     let at = IVec3::new((padded % P) as i32, (padded / (P * P)) as i32, (padded / P % P) as i32);
     for (q, quad) in shape.quads.iter().enumerate() {
         let mut light = cell.light;
-        if let Some(face) = quad.boundary.or(if dark { Some(quad.face) } else { None }) {
+        if let Some(face) = quad.boundary.or(if dims { Some(quad.face) } else { None }) {
             let n = at + face.normal();
             let beyond = &cells[pidx(n.x as usize, n.y as usize, n.z as usize)];
             if quad.boundary.is_some() && quad.cull && beyond.occludes {
@@ -1449,6 +1451,46 @@ mod tests {
         let inner_top = drawn.iter().find(|(p, q, _)| *p == centre && q.face == Face::PosY && q.boundary.is_none()).expect("the lower course's top is drawn");
         assert_eq!(inner_top.2, region.light(centre + IVec3::Y), "the inner top takes the light above it");
         assert_eq!(inner_top.2 >> 4, 15);
+    }
+
+    /// A cloth that dims light (a drawn curtain, `light_filter` 8) holds little of it, but
+    /// its face inside the cell takes the light of the open side it faces, so it is not drawn
+    /// dark in a lit room.
+    #[test]
+    fn a_dimming_cloths_inner_face_takes_the_light_it_faces() {
+        let file = crate::shape::ShapeFile::read("test", r#"(shapes: {"cloth": (boxes: [(to: (2, 16, 16))])})"#).unwrap();
+        let shapes = crate::shape::Shapes::gather(vec![("test".into(), file)], crate::shape::ShapeLimits { boxes: 2, quads: 64 }).unwrap();
+        let block = |name: &str, render| BlockDef { name: format!("test:{name}"), render, textures: Textures::All(name.into()), ..Default::default() };
+        let reg = BlockRegistry::with_shapes(
+            vec![block("stone", RenderKind::Opaque), BlockDef { shape: Some("test:cloth".into()), light_filter: 8, solid: false, ..block("cloth", RenderKind::Model) }],
+            &shapes,
+        )
+        .unwrap();
+        let (stone, cloth) = (reg.expect("test:stone"), reg.expect("test:cloth"));
+        let mut column = Column::default();
+        for z in 0..32 {
+            for x in 0..32 {
+                column.set_block(IVec3::new(x, 0, z), stone);
+            }
+        }
+        let at = IVec3::new(10, 1, 10);
+        column.set_block(at, cloth);
+        let column = Arc::new(column);
+        let region = LitRegion::compute(&reg, &std::array::from_fn(|_| column.clone()));
+        let beside = region.light(at + IVec3::X);
+        assert!(region.light(at) >> 4 < beside >> 4, "the cloth holds {:#x}, beside it {beside:#x}", region.light(at));
+        let mesh = mesh_chunk(&reg, &region, &column, 0, 1);
+        let shape = reg.shape(cloth).unwrap();
+        let first = reg.shape_first_quad(cloth).unwrap();
+        let inner = mesh
+            .cutout
+            .vertices
+            .chunks(4)
+            .filter(|quad| is_shape_quad(quad[0][0]))
+            .map(|quad| (&shape.quads[((quad[0][1] >> 12) & 0xFFF) as usize - first], (quad[0][1] >> 24) as u8))
+            .find(|(q, _)| q.face == Face::PosX && q.boundary.is_none())
+            .expect("the cloth's inner face is drawn");
+        assert_eq!(inner.1, beside, "the inner face takes the light beside it");
     }
 
     #[test]
