@@ -179,7 +179,8 @@ Raw logs are poor fuel. The way up:
    charred wood. Server: `smoulder.rs`, saved in the world's `smoulders`.
 3. **Charcoal heat** gates the Crucible Kiln, and so the Farm age's end.
 
-It is the one route to charcoal (balance call, Oct 20): the earth clamp station, which
+It is the one way to make charcoal (balance call, Oct 20): the earth clamp station, which
 charred sixteen logs a minute, and the campfire's log-to-charcoal recipe are gone, so the
-effort of processing stays in one station. Charcoal asks for a clamp lit and sixteen
+effort of processing stays in one station. The charcoal burners' camp still trades twelve
+logs for two charcoal, once a player. Charcoal asks for a clamp lit and sixteen
 charcoal (or twenty-four coal mined); A Second Clamp, for two lit.

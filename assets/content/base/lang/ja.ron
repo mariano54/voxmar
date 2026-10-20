@@ -1108,7 +1108,7 @@
     "multiblock.base.crucible_kiln": "るつぼ窯",
     "multiblock.base.crucible_kiln.hint": "窯には、るつぼを囲む窯レンガと、四隅に窯レンガの柱が必要です。",
     "multiblock.base.charcoal_clamp": "炭窯",
-    "multiblock.base.charcoal_clamp.hint": "炭窯は、薪を地面に3×3で9本並べ、まわりを土で囲んで上も土でふさぎ、屋根の真ん中に焚きつけを置いて煙道にしたもの。松明で焚きつけに火をつける。",
+    "multiblock.base.charcoal_clamp.hint": "炭窯は、薪を地面に3×3で9本並べ、まわりを土で囲んで上も土でふさぎ、屋根の真ん中の土を焚きつけに置きかえて煙道にしたもの。松明か焚き火で焚きつけに火をつける。",
     "quest.base.look_it_up": "調べてみよう",
     "quest.base.look_it_up.why": "作り方を忘れた？持ち物画面を開き、検索欄に名前の一部を入力して、アイテムをクリックすると作り方が見られる。右クリックなら使い道が分かる。石のツルハシを調べてみよう。",
     "quest.path.nomad.start": "はじめの一歩",
