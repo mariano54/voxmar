@@ -44,6 +44,7 @@ impl Plugin for RecipesPlugin {
             .add_systems(OnExit(Screen::InGame), |mut viewer: ResMut<RecipeViewer>, mut ui: ResMut<UiState>| {
                 viewer.trail.clear();
                 viewer.reported.clear();
+                (viewer.drawn, viewer.quests_drawn) = (None, None);
                 ui.recipes_open = false;
             });
     }
@@ -75,6 +76,9 @@ pub struct RecipeViewer {
     book: Option<Arc<RecipeBook>>,
     /// What was drawn last, to draw again only on a change.
     drawn: Option<(Lookup, String, u32, bool, Vec<String>)>,
+    /// The item and language the quests row was drawn for: it is drawn again only when
+    /// they change, never as a family's recipes cycle, so its links hold still to click.
+    quests_drawn: Option<(BlockId, String)>,
     /// Items reported in this game, bounded by the content registry, cleared on leaving.
     reported: HashSet<BlockId>,
 }
@@ -97,6 +101,15 @@ impl RecipeViewer {
     pub fn found(&self) -> Vec<&Entry> {
         let (Some(book), Some(lookup)) = (&self.book, self.trail.last()) else { return Vec::new() };
         if lookup.uses { book.using(lookup.item) } else { book.making(lookup.item) }
+    }
+
+    /// Whether the quests row needs drawing for `item` in `language`, noting that it is.
+    fn quests_stale(&mut self, item: BlockId, language: &str) -> bool {
+        if self.quests_drawn.as_ref().is_some_and(|(drawn, code)| *drawn == item && code == language) {
+            return false;
+        }
+        self.quests_drawn = Some((item, language.to_owned()));
+        true
     }
 
     fn pages(&self) -> usize {
@@ -322,6 +335,19 @@ mod tests {
         viewer.reported.clear();
         assert_eq!(viewer.unreported_item(), Some(BlockId(1)), "a new game needs its own report");
     }
+
+    /// The quests row is drawn once for an item and language: a family's recipes cycling
+    /// (another draw of the same lookup) leaves its links in place to be clicked.
+    #[test]
+    fn the_quests_row_is_drawn_again_only_for_another_item_or_language() {
+        let mut viewer = RecipeViewer::default();
+        assert!(viewer.quests_stale(BlockId(1), "en"));
+        assert!(!viewer.quests_stale(BlockId(1), "en"), "a cycling redraw keeps the links");
+        assert!(viewer.quests_stale(BlockId(1), "ja"));
+        assert!(viewer.quests_stale(BlockId(2), "ja"));
+        viewer.quests_drawn = None;
+        assert!(viewer.quests_stale(BlockId(2), "ja"), "reopened after closing, it is drawn");
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -344,7 +370,7 @@ fn draw(
         visibility.set_if_neq(if ui.recipes_open { Visibility::Inherited } else { Visibility::Hidden });
     }
     let Some(lookup) = viewer.trail.last().copied() else {
-        viewer.drawn = None;
+        (viewer.drawn, viewer.quests_drawn) = (None, None);
         return;
     };
     // Families of recipes show each of their variants in turn, a second each.
@@ -372,6 +398,7 @@ fn draw(
         return;
     }
     viewer.drawn = Some(key);
+    let quests_stale = viewer.quests_stale(lookup.item, locale.code());
     let name = |item: BlockId| locale.block(content.blocks.def(item));
     let found = viewer.found();
     let pages = found.len().div_ceil(PER_PAGE).max(1);
@@ -383,7 +410,9 @@ fn draw(
     }
     let font = &font.0;
     // The quests that ask for it, whichever way it is looked up.
-    if let Ok(row) = quests_row.single() {
+    if let Ok(row) = quests_row.single()
+        && quests_stale
+    {
         let asking = voxmar_engine::quest::asking(&content.quests, &content.blocks, lookup.item);
         commands.entity(row).despawn_children().with_children(|row| {
             if asking.is_empty() {
