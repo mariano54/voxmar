@@ -136,11 +136,13 @@ pub enum Synth {
     Bleat,
     /// Supper things: a pot lid and a ladle knocking, a bowl set down.
     Clatter,
+    /// Bees about their hive: a warm drone of many wings, one or two passing close.
+    Hum,
 }
 
 impl Synth {
     #[cfg(test)]
-    pub const ALL: [Synth; 46] = [
+    pub const ALL: [Synth; 47] = [
         Synth::Wind,
         Synth::Gale,
         Synth::Rustle,
@@ -187,6 +189,7 @@ impl Synth {
         Synth::Bark,
         Synth::Bleat,
         Synth::Clatter,
+        Synth::Hum,
     ];
 
     /// Whether it makes a continuous bed rather than one-shots.
@@ -214,6 +217,7 @@ impl Synth {
                 | Synth::Smoulder
                 | Synth::Blaze
                 | Synth::Murmur
+                | Synth::Hum
         )
     }
 
@@ -297,6 +301,7 @@ fn render_bed(synth: Synth, noise: &mut Noise, len: usize) -> Vec<f32> {
         Synth::Sleet => sleet(noise, len),
         Synth::Sandstorm => sandstorm(noise, len),
         Synth::Lava => lava(noise, len),
+        Synth::Hum => hum(noise, len),
         Synth::Waterfall => waterfall(noise, len),
         Synth::Fire => fire(noise, len),
         Synth::ThatchPatter => thatch_patter(noise, len),
@@ -1366,6 +1371,42 @@ fn well(noise: &mut Noise) -> Vec<f32> {
     let knock = t + between(noise, 0.5, 0.65);
     ring(&mut out, knock, between(noise, 200.0, 260.0), &[(1.0, 1.0, 0.04), (2.4, 0.5, 0.02), (5.1, 0.2, 0.008)], 0.9);
     crack(&mut out, noise, knock, (0.002, 0.004), (1500.0, 2500.0), 0.6);
+    out
+}
+
+/// Bees about their hive: a few dozen wings, each a buzz near 230 Hz (a wingbeat and its
+/// overtones) wandering in pitch as the bee turns, and in loudness as it comes and goes, so
+/// the drone breathes; now and then one passes close, louder and bending down as it goes
+/// by. Kept under two kilohertz, as wings are heard through the air.
+fn hum(noise: &mut Noise, len: usize) -> Vec<f32> {
+    let mut out = vec![0.0f32; len];
+    let total = len as f32 / SR;
+    let bee = |out: &mut [f32], noise: &mut Noise, start: f32, length: f32, pitch: f32, level: f32, passing: bool| {
+        let (turning, nearing) = (between(noise, 0.4, 1.2), between(noise, 0.1, 0.4));
+        let (turn, near) = (Drift::new(noise, turning), Drift::new(noise, nearing));
+        let mut phase = TAU * noise.unit();
+        let (from, count) = (seconds(start.max(0.0)), seconds(length));
+        for j in 0..count.min(len.saturating_sub(from)) {
+            let (t, k) = ((from + j) as f32 / SR, j as f32 / count as f32);
+            // A bee going by bends down past the listener, its loudness swelling and gone.
+            let (bend, swell) = if passing { (1.04 - 0.08 * k, (PI * k).sin().powi(2)) } else { (1.0, 0.3 + 0.7 * near.unit(t)) };
+            phase += TAU * pitch * bend * (0.97 + 0.06 * turn.unit(t)) / SR;
+            let wing = phase.sin() + 0.5 * (2.0 * phase).sin() + 0.25 * (3.0 * phase).sin() + 0.12 * (4.0 * phase).sin();
+            out[from + j] += level * swell * wing;
+        }
+    };
+    for _ in 0..28 {
+        let (pitch, level) = (between(noise, 200.0, 260.0), between(noise, 0.02, 0.06));
+        bee(&mut out, noise, 0.0, total, pitch, level, false);
+    }
+    let mut t = between(noise, 0.5, 3.0);
+    while t < total {
+        let (length, pitch, level) = (between(noise, 0.8, 1.6), between(noise, 210.0, 250.0), between(noise, 0.15, 0.25));
+        bee(&mut out, noise, t, length, pitch, level, true);
+        t += length + gap(noise, 0.25);
+    }
+    let mut air = Svf::new(1800.0, 0.7);
+    out.iter_mut().for_each(|s| *s = air.low(*s));
     out
 }
 
