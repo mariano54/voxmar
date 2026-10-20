@@ -119,6 +119,10 @@ pub enum Requirement {
     /// The target is coated in place by what the actor holds (`coat` on its block), aimed
     /// at one of its sides: clay on a wattle panel or an earth wall.
     Coats,
+    /// What the target is coated into, if solid, would shut nobody in: no player and no
+    /// creature stands in its cell (a thin wattle panel turned a whole daub block), as
+    /// placing a block and shutting a door refuse.
+    CoatClear,
     /// The target is the core of a multiblock (tagged `multiblock_core`): a hearthstone,
     /// a crucible; for a machine's core, the actor holds no block to place against it.
     MultiblockCore,
@@ -157,7 +161,7 @@ pub enum Requirement {
 
 impl Requirement {
     /// Every requirement, in [`Requirement::index`] order (`refusal` says why each failed).
-    pub const ALL: [Requirement; 41] = [Requirement::Alive, Requirement::Dead, Requirement::InReach, Requirement::Breakable, Requirement::HoldingBlock, Requirement::Replaceable, Requirement::Unobstructed, Requirement::Supported, Requirement::HoldingSeed, Requirement::Plantable, Requirement::SkillLevel, Requirement::Ripe, Requirement::CreatureInReach, Requirement::CreatureInTouch, Requirement::CreatureAccepts, Requirement::CreatureIsMine, Requirement::Cookable, Requirement::CookingLevel, Requirement::HoldingFood, Requirement::Hurt, Requirement::ToolGood, Requirement::BlockLevel, Requirement::CropLevel, Requirement::Tillable, Requirement::CraftingTable, Requirement::Bed, Requirement::MultiblockCore, Requirement::Machine, Requirement::Altar, Requirement::Fishable, Requirement::Locked, Requirement::Bees, Requirement::Station, Requirement::Fertilisable, Requirement::Store, Requirement::Swaps, Requirement::SprungTrap, Requirement::Seat, Requirement::Coats, Requirement::CookingTool, Requirement::Relights];
+    pub const ALL: [Requirement; 42] = [Requirement::Alive, Requirement::Dead, Requirement::InReach, Requirement::Breakable, Requirement::HoldingBlock, Requirement::Replaceable, Requirement::Unobstructed, Requirement::Supported, Requirement::HoldingSeed, Requirement::Plantable, Requirement::SkillLevel, Requirement::Ripe, Requirement::CreatureInReach, Requirement::CreatureInTouch, Requirement::CreatureAccepts, Requirement::CreatureIsMine, Requirement::Cookable, Requirement::CookingLevel, Requirement::HoldingFood, Requirement::Hurt, Requirement::ToolGood, Requirement::BlockLevel, Requirement::CropLevel, Requirement::Tillable, Requirement::CraftingTable, Requirement::Bed, Requirement::MultiblockCore, Requirement::Machine, Requirement::Altar, Requirement::Fishable, Requirement::Locked, Requirement::Bees, Requirement::Station, Requirement::Fertilisable, Requirement::Store, Requirement::Swaps, Requirement::SprungTrap, Requirement::Seat, Requirement::Coats, Requirement::CookingTool, Requirement::CoatClear, Requirement::Relights];
 
     /// Where it stands in [`Requirement::ALL`]. A new requirement must be added to both:
     /// this match does not compile without it.
@@ -203,7 +207,8 @@ impl Requirement {
             Requirement::Seat => 37,
             Requirement::Coats => 38,
             Requirement::CookingTool => 39,
-            Requirement::Relights => 40,
+            Requirement::CoatClear => 40,
+            Requirement::Relights => 41,
         }
     }
 
@@ -723,6 +728,11 @@ impl ActionDef {
                 let side = !matches!(face, Face::PosY | Face::NegY);
                 let coating = ctx.block(block).and_then(|b| ctx.blocks().coating(b));
                 side && coating.is_some_and(|(with, _)| ctx.actor_held() == Some(with))
+            }
+            Requirement::CoatClear => {
+                let (block, _) = block_target()?;
+                let into = ctx.block(block).and_then(|b| ctx.blocks().coating(b)).map(|(_, into)| into);
+                into.is_none_or(|into| !ctx.info(into).solid || !(ctx.occupied(block) || ctx.creature_in(block)))
             }
             Requirement::Seat => {
                 let (block, _) = block_target()?;

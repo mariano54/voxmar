@@ -27,7 +27,7 @@
 
 use std::time::{Duration, Instant};
 
-use voxmar_engine::action::{ActionContext, ActionDef, ActionId, ActionTarget, Effect, placed_block, placement_cell, supported_by};
+use voxmar_engine::action::{ActionContext, ActionDef, ActionId, ActionTarget, Effect, Rejection, Requirement, placed_block, placement_cell, supported_by};
 use voxmar_engine::block::{BlockId, BlockInfo, BlockRegistry};
 use voxmar_engine::combat::Slot;
 use voxmar_engine::crop::CropRegistry;
@@ -174,7 +174,7 @@ impl ActionContext for Context<'_> {
     }
 
     fn creature_in(&self, cell: IVec3) -> bool {
-        self.server.creatures.live.values().any(|c| c.health > 0 && c.body.aabb().intersects(|at| at == cell))
+        self.server.creature_in(cell)
     }
 
     fn cooking(&self) -> Option<&voxmar_engine::cooking::CookingRegistry> {
@@ -241,6 +241,7 @@ impl Server {
         let context = Context { server: self, agent, held: None };
         if let Err(why) = def.validate(&context, target) {
             tracing::debug!("player {agent}: {} refused at {target:?}: {why:?}", def.name);
+            self.unforeseen(agent, why);
             self.reject(agent, target);
         } else if !timed {
             let tool = self.tool_in_hand(agent);
@@ -305,10 +306,20 @@ impl Server {
         }
         let Some(def) = self.action_def(timed.action) else { return };
         let held = timed.held;
-        if def.validate(&Context { server: self, agent, held }, target).is_ok() {
-            self.commit(agent, &def, target, held, timed.tool);
-        } else {
-            self.reject(agent, target);
+        match def.validate(&Context { server: self, agent, held }, target) {
+            Ok(()) => self.commit(agent, &def, target, held, timed.tool),
+            Err(why) => {
+                self.unforeseen(agent, why);
+                self.reject(agent, target);
+            }
+        }
+    }
+
+    /// Tells the player why, for a refusal their client could not foresee: it sees no other
+    /// player's or creature's body, so it lets clay to a panel someone leans on through.
+    fn unforeseen(&self, agent: PlayerId, why: Rejection) {
+        if why == Rejection::Unmet(Requirement::CoatClear) {
+            self.refuse(agent, Words::key("refusal.someone_there"));
         }
     }
 

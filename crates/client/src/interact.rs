@@ -397,7 +397,7 @@ fn break_and_place(
                 let cooks = actions.0.id("base:cook").and_then(|cook| actions.0.get(cook)).is_some_and(|def| def.validate(&context, action_target).is_ok());
                 match actions.0.get(action).map(|def| def.validate(&context, action_target)) {
                     Some(Ok(())) if !cooks => {
-                        net.propose_from(&player, action, action_target);
+                        net.propose_from_with(&player, action, action_target, worked(&context, hit.block));
                         target.used_right = true;
                         // A lock picked opens the chest's slots.
                         player.store_asked |= name == "base:pick_lock";
@@ -437,7 +437,7 @@ fn break_and_place(
                 Some(Ok(())) if time.elapsed_secs() < target.cooking_until => return,
                 Some(Ok(())) => {
                     let seconds = actions.0.get(cook).map_or(0.0, |def| def.seconds(&context, action_target));
-                    net.propose_from(&player, cook, action_target);
+                    net.propose_from_with(&player, cook, action_target, worked(&context, hit.block));
                     target.used_right = true;
                     target.place_cooldown = 0.4;
                     target.cooking_until = time.elapsed_secs() + seconds + 0.2;
@@ -647,6 +647,12 @@ fn water_block(world: &ClientWorld, pos: IVec3) -> BlockId {
     world.block(pos).unwrap_or(BlockId::AIR)
 }
 
+/// What an action at `block` is done with, to be heard by (`sounds.ron`'s `ways`): the block
+/// worked (a hearthstone lit, a drying rack loaded, a pit kiln fed), then what is in hand.
+fn worked(context: &ClientContext, block: IVec3) -> Vec<BlockId> {
+    context.world.block(block).into_iter().chain(context.actor_held()).collect()
+}
+
 /// What to tell a player whose click was refused because `need` failed, at `block` if it
 /// aimed at one: the words `refusals.ron` gives it, with the skill and level it asks for or
 /// the least tool that would do; none for a requirement that is silent there.
@@ -657,6 +663,8 @@ fn meant(context: &ClientContext, block: IVec3, need: Requirement) -> bool {
     let Some(at) = context.world.block(block) else { return false };
     match need {
         Requirement::Swaps => !voxmar_engine::action::swapping(context, block).is_empty(),
+        // Clay held to a panel someone leans on: plainly meant as a coat.
+        Requirement::CoatClear => context.blocks().coating(at).is_some_and(|(with, _)| context.actor_held() == Some(with)),
         Requirement::Relights => context.content.flames.relit(&context.content.blocks, at).is_some(),
         Requirement::Bees => context.bees().is_some_and(|bees| bees.takes.iter().any(|take| take.block == at)),
         Requirement::Station => context.stations().is_some_and(|stations| stations.of(at).is_some()),
