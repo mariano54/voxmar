@@ -388,7 +388,13 @@ pub(crate) fn receive(
                 creatures.struck(creature, damage, blow, killed, time.elapsed_secs());
                 fighting.struck(creature, damage, blow, pips, killed, time.elapsed_secs_f64());
             }
-            ServerMessage::Hurt { creature, damage, defended } => fighting.hurt(creature, damage, defended, time.elapsed_secs_f64()),
+            ServerMessage::Hurt { creature, damage, defended } => {
+                let combat = &launch.content.combat;
+                let held = player.inventory.get(player.selected).map(|s| s.item);
+                let weapon = combat.wielded(held, |skill| launch.content.skills.level(player.skills.xp(skill)));
+                let spoil = combat.spoiled_by_hits(&weapon).then(|| (combat.timing(&weapon), combat.feel));
+                fighting.hurt(creature, damage, defended, time.elapsed_secs_f64(), spoil)
+            }
             ServerMessage::Ping { id } => {
                 net.pong(id);
                 fighting.pings += 1;
