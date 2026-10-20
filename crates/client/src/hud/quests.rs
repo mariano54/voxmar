@@ -1004,14 +1004,16 @@ fn draw(
             }
             for quest in open {
                 let waiting = claimable(&player, &quest.name);
-                let node = Node { flex_shrink: 0.0, padding: UiRect::axes(Val::Px(space::HAIR), Val::Px(PX)), ..default() };
+                let node = Node { flex_shrink: 0.0, padding: UiRect::axes(Val::Px(space::INNER), Val::Px(space::HAIR)), ..default() };
                 let style = ButtonStyle::Secondary;
                 let mut row = column.spawn((Button, style, node, style.pieces()[0].image(), OpenQuest(quest.name.clone())));
                 if view.picked.as_deref() == Some(quest.name.as_str()) {
                     row.insert(crate::ui::widgets::Selected);
                 }
                 let words = if waiting { format!("! {}", title(&locale, quest)) } else { title(&locale, quest) };
-                row.with_child((text(font, words, BODY, if waiting { GOLD } else { TEXT }), TightLine));
+                // At its own line's height, not `TightLine`'s: the row is only as tall as its
+                // words, and a tight line's ink reaches past it.
+                row.with_child(text(font, words, BODY, if waiting { GOLD } else { TEXT }));
             }
         });
     }
@@ -1862,26 +1864,32 @@ fn item_ways(content: &Content, book: &RecipeBook, goal: &Goal, item: BlockId) -
 }
 
 /// One way of getting an item, small, under the goal that asks for it: what goes in, an
-/// arrow, what comes out, and, where there are several ways, arrows to turn to the next
-/// with "1/3" between them; under it, the recipe viewer's words for how it is done.
+/// arrow, what comes out, and, where there are several ways, under them arrows to turn to
+/// the next with "1/3" between them (on a line of their own, so a recipe of many inputs
+/// still fits the column); under it, the recipe viewer's words for how it is done.
 fn way_card(detail: &mut ChildSpawnerCommands, font: &Handle<Font>, images: &HudImages, launch: &Launch, locale: &Locale, entry: &Entry, (key, shown, of): (String, usize, usize)) {
     let content = &launch.content;
-    let card = Node { align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), padding: UiRect::all(Val::Px(space::HAIR)), flex_shrink: 0.0, align_self: AlignSelf::FlexStart, ..default() };
+    let card = Node { flex_direction: FlexDirection::Column, align_items: AlignItems::Center, row_gap: Val::Px(space::HAIR), padding: UiRect::all(Val::Px(space::HAIR)), flex_shrink: 0.0, align_self: AlignSelf::FlexStart, ..default() };
+    let line = || Node { align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), ..default() };
     detail.spawn((card, Piece::Well.image())).with_children(|card| {
-        super::recipes::way_inputs(card, font, images, content, &entry.method, None, None);
-        card.spawn(shadowed(font, "→", BODY, GOLD));
-        let (low, high) = entry.count;
-        super::recipes::item_cell(card, font, images, Some(entry.output), (high > 1 && low == high).then(|| high.to_string()));
+        card.spawn(line()).with_children(|card| {
+            super::recipes::way_inputs(card, font, images, content, &entry.method, None, None);
+            card.spawn(shadowed(font, "→", BODY, GOLD));
+            let (low, high) = entry.count;
+            super::recipes::item_cell(card, font, images, Some(entry.output), (high > 1 && low == high).then(|| high.to_string()));
+        });
         if of > 1 {
-            let arrow = |card: &mut ChildSpawnerCommands, label: &str, step: i32| {
-                let node = Node { width: Val::Px(SLOT), height: Val::Px(SLOT), justify_content: JustifyContent::Center, align_items: AlignItems::Center, flex_shrink: 0.0, ..default() };
-                card.spawn((Button, crate::ui::widgets::HoverLight, WayStep { key: key.clone(), step, of }, node, Piece::Well.image())).with_children(|b| {
-                    b.spawn((shadowed(font, label.to_owned(), BODY, TEXT), TightLine));
-                });
-            };
-            arrow(card, "◂", -1);
-            card.spawn((text(font, locale.format("recipes.page", &[("page", &(shown + 1)), ("pages", &of)]), BODY, SOFT), TightLine));
-            arrow(card, "▸", 1);
+            card.spawn(line()).with_children(|card| {
+                let arrow = |card: &mut ChildSpawnerCommands, label: &str, step: i32| {
+                    let node = Node { width: Val::Px(SLOT), height: Val::Px(SLOT), justify_content: JustifyContent::Center, align_items: AlignItems::Center, flex_shrink: 0.0, ..default() };
+                    card.spawn((Button, crate::ui::widgets::HoverLight, WayStep { key: key.clone(), step, of }, node, Piece::Well.image())).with_children(|b| {
+                        b.spawn((shadowed(font, label.to_owned(), BODY, TEXT), TightLine));
+                    });
+                };
+                arrow(card, "◂", -1);
+                card.spawn((text(font, locale.format("recipes.page", &[("page", &(shown + 1)), ("pages", &of)]), BODY, SOFT), TightLine));
+                arrow(card, "▸", 1);
+            });
         }
     });
     for (words, color) in super::recipes::describe(locale, launch, &entry.method) {
