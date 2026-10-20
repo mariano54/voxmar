@@ -7894,7 +7894,17 @@ fn nest(world: &mut World, gate: &mut Gate, now: f32) {
                 gate.advance(now);
             } else if waited > 15.0 {
                 let open = world.resource::<LocalPlayer>().inventory.store.is_some();
-                gate.check("home: nest", Err(format!("{waited:.1} server s after the hen's egg was made due: {laid} eggs in the barrel (open {open}), told {told}")));
+                // Where else an egg went: laid on the ground, or into the pack.
+                let egg = world.resource::<ClientWorld>().registry.id("base:egg");
+                let lying: Vec<String> = world
+                    .resource::<crate::drops::Drops>()
+                    .lying()
+                    .filter(|(_, stack, _)| Some(stack.item) == egg)
+                    .map(|(_, stack, at)| format!("{} lie at ({:.1}, {:.1}, {:.1})", stack.count, at.x, at.y, at.z))
+                    .collect();
+                let carried = holding(world, "base:egg").0;
+                let lying = if lying.is_empty() { "no egg lies about".to_owned() } else { lying.join(", ") };
+                gate.check("home: nest", Err(format!("{waited:.1} server s after the hen's egg was made due: {laid} eggs in the barrel (open {open}), told {told}; {lying}, {carried} carried; the home at {bag}, the barrel at {barrel}")));
                 gate.check("home: storage", if pantry { Ok("a chest and a barrel by a campfire made a Pantry".into()) } else { Err(format!("{waited:.1} server s on, a chest and a barrel by a campfire at home made no Pantry: the chest did not count as storage")) });
                 leave(world, gate);
             }
