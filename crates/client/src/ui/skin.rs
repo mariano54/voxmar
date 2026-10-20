@@ -68,10 +68,11 @@ pub enum Piece {
     WornHands,
     WornFeet,
     WornShield,
+    WornCharm,
 }
 
 impl Piece {
-    const ALL: [Piece; 32] = [
+    const ALL: [Piece; 33] = [
         Piece::Panel,
         Piece::Button,
         Piece::ButtonHover,
@@ -104,6 +105,7 @@ impl Piece {
         Piece::WornHands,
         Piece::WornFeet,
         Piece::WornShield,
+        Piece::WornCharm,
     ];
 
     /// The texture's name in the packs, and its size and slicing inset in texels (none
@@ -142,6 +144,7 @@ impl Piece {
             Piece::WornHands => ("ui/slot/gloves", (16, 16), None),
             Piece::WornFeet => ("ui/slot/boots", (16, 16), None),
             Piece::WornShield => ("ui/slot/shield", (16, 16), None),
+            Piece::WornCharm => ("ui/slot/charm", (16, 16), None),
         }
     }
 
