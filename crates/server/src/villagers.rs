@@ -1023,9 +1023,9 @@ mod tests {
     }
 
     /// The spot a person sets out for is drawn by the day, the slot and the leg, never the
-    /// tick they set out on; and each try in a row that found none draws the next otherwise.
+    /// tick they set out on.
     #[test]
-    fn a_persons_spot_draws_by_the_day_not_the_tick_and_a_miss_draws_anew() {
+    fn a_persons_spot_draws_by_the_day_not_the_tick() {
         let set_out = |tick: u64| {
             let mut server = fixture("base:farmer", 1);
             server.bring_out(1, 0);
@@ -1038,12 +1038,55 @@ mod tests {
         let first = set_out(5_000);
         assert!(first.as_ref().is_some_and(|t| !t.4.is_empty()), "no trip set out on: {first:?}");
         assert_eq!(set_out(5_000 + 7_919), first, "the same day's trip set out later went elsewhere");
-        let picks: std::collections::BTreeSet<u64> = (0..8).map(|misses| spot_pick(100, 3, 1, 0, misses)).collect();
-        assert_eq!(picks.len(), 8, "a miss drew the same pick again");
+    }
+
+    /// Each try in a row that finds no spot counts a miss, and draws the next pick by it;
+    /// a try that finds one counts the misses back to none.
+    #[test]
+    fn a_person_who_finds_no_spot_counts_misses_and_picks_anew() {
+        let floor = |server: &mut Server, block: BlockId| {
+            for x in 0..32 {
+                for z in 0..32 {
+                    server.set_block(IVec3::new(x, 199, z), block);
+                }
+            }
+        };
+        let mut server = fixture("base:farmer", 1);
+        server.bring_out(1, 0);
+        let id = server.villagers.towns[&1].people[0].creature.expect("out");
+        server.tick = 5_000;
+        let live = server.live();
+        // No ground to stand on anywhere: every try misses, and counts it.
+        floor(&mut server, BlockId::AIR);
+        server.villagers.towns.get_mut(&1).unwrap().people[0].trip = None;
+        let mut misses = Vec::new();
+        for _ in 0..3 {
+            misses.push(server.villagers.towns[&1].people[0].misses);
+            server.follow_day(id, 1, 0, &live);
+            assert!(server.villagers.towns[&1].people[0].trip.is_none(), "set out with nowhere to stand");
+        }
+        assert_eq!(misses, [0, 1, 2]);
+        assert_eq!(server.villagers.towns[&1].people[0].misses, 3);
+        let stone = server.content.blocks.expect("base:stone");
+        floor(&mut server, stone);
+        server.follow_day(id, 1, 0, &live);
+        let after = server.villagers.towns[&1].people[0].trip.as_ref().and_then(|t| t.path.last().copied());
+        assert!(after.is_some(), "found nowhere with ground again");
+        assert_eq!(server.villagers.towns[&1].people[0].misses, 0, "a find did not count the misses back");
+        // The same try with no misses before it picks otherwise.
+        let mut fresh = fixture("base:farmer", 1);
+        fresh.bring_out(1, 0);
+        let id = fresh.villagers.towns[&1].people[0].creature.expect("out");
+        fresh.tick = 5_000;
+        fresh.villagers.towns.get_mut(&1).unwrap().people[0].trip = None;
+        fresh.follow_day(id, 1, 0, &live);
+        let unmissed = fresh.villagers.towns[&1].people[0].trip.as_ref().and_then(|t| t.path.last().copied());
+        assert!(unmissed.is_some());
+        assert_ne!(after, unmissed, "three misses picked as none did");
     }
 
     /// A resident is the same individual on each visit, but thinks afresh: each coming out
-    /// starts its count of rolls at the world's next roll, not at none again.
+    /// starts its count of rolls at the world's next cast, not at none again.
     #[test]
     fn a_resident_out_again_is_the_same_but_thinks_afresh() {
         let mut server = fixture("base:farmer", 1);

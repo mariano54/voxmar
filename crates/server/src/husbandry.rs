@@ -375,7 +375,7 @@ impl Server {
             for (index, product) in species.def.products.iter().enumerate() {
                 if product.tool.is_none() && tick >= creature.products_due[index] {
                     // By its own count of rolls, never the tick it is laid on.
-                    let roll = voxmar_engine::creature::mix(voxmar_engine::creature::mix(creature.seed, creature.rolls), crate::creatures::PRODUCT);
+                    let roll = crate::creatures::own_roll(creature.seed, creature.rolls, crate::creatures::PRODUCT);
                     creature.rolls += 1;
                     creature.products_due[index] = tick + product_ticks(product.every / often, roll, index);
                     let keeper = creature.owner_id.filter(|_| product.nests);

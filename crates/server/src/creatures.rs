@@ -50,6 +50,13 @@ const NEAR_THINK: u64 = 4;
 /// What tells a creature's own rolls apart (`Live::rolls`): a thought's, a product's timing.
 pub(crate) const THOUGHT: u64 = 0x7409;
 pub(crate) const PRODUCT: u64 = 0x9d0c;
+
+/// The roll a creature of `seed` draws at its own count `rolls` for a kind (`THOUGHT`,
+/// `PRODUCT`): the kind's salt nested round the count, so no count's draw of one kind is
+/// another count's draw of the other.
+pub(crate) fn own_roll(seed: u64, rolls: u64, kind: u64) -> u64 {
+    mix(mix(seed, rolls), kind)
+}
 pub(crate) const FAR_THINK: u64 = 20;
 const NEAR: f32 = 64.0;
 /// Wild creatures further than this from every player go.
@@ -542,7 +549,7 @@ impl Server {
                     errand: self.villagers.errand(id, handoff).or_else(|| self.wandering.errand(id)),
                     dt: every as f32 * dt,
                     // By its own count of thoughts, never the tick it thinks on.
-                    seed: mix(mix(creature.seed, creature.rolls), THOUGHT),
+                    seed: own_roll(creature.seed, creature.rolls, THOUGHT),
                 };
                 let wet = Ground::of(self).water_at(position.floor().as_ivec3());
                 let creature = self.creatures.live.get_mut(&id).expect("listed");
@@ -1233,7 +1240,7 @@ impl Server {
     /// (`ROLL_START`): one with a fixed seed (a lair's boss, a settlement's resident), woken
     /// again as the same individual, draws its thoughts afresh rather than over again.
     pub(crate) fn start_rolls(&mut self, id: u32) {
-        let [a, b] = self.meta.next_roll(crate::save::ROLL_START);
+        let [a, b] = self.meta.next_cast(crate::save::ROLL_START);
         if let Some(creature) = self.creatures.live.get_mut(&id) {
             creature.rolls = u64::from(a.to_bits()) << 32 | u64::from(b.to_bits());
         }
@@ -3056,10 +3063,6 @@ mod herd_tests {
         (short, sharp, widest)
     }
 
-    /// Before: a herd's will to keep together was drawn afresh each tick, its companion was
-    /// whichever the list of those about put first, two near each other went round to each
-    /// other's far side, and strolls took them well off: 288 sharp turns for mouflon, 256
-    /// for red deer, 394 for junglefowl.
     /// What a creature thinks is drawn by its own count of thoughts, never the tick it
     /// thinks on: the same herd let be from a tick far on wanders alike.
     #[test]
@@ -3083,6 +3086,43 @@ mod herd_tests {
         assert_eq!(wandered(1_000 + 7 * beats), first, "the same herd from later thought otherwise");
     }
 
+    /// The start of a fixed-seed creature's own count is seen in how it moves, so it is
+    /// cast by the cast key on the world's count, never drawn by the draw key.
+    #[test]
+    fn a_creatures_count_starts_from_the_cast_key() {
+        use crate::save::{ROLL_START, cast_key, numbered_draws};
+        let mut server = crate::test_server();
+        let c = pen(&mut server, 14);
+        let id = put(&mut server, "base:mouflon", c.as_vec3(), Vec3::X);
+        server.meta.draw_key = 0x0d1a;
+        server.meta.rolls = 41;
+        let bits = |[a, b]: [f32; 2]| u64::from(a.to_bits()) << 32 | u64::from(b.to_bits());
+        server.start_rolls(id);
+        assert_eq!(server.creatures.live[&id].rolls, bits(numbered_draws(cast_key(0x0d1a), ROLL_START, 41)));
+        assert_ne!(server.creatures.live[&id].rolls, bits(numbered_draws(0x0d1a, ROLL_START, 41)), "the count started from the draw key");
+        assert_eq!(server.meta.rolls, 42);
+    }
+
+    /// A creature's thoughts and products draw by its count with salts of their own nested
+    /// round it, so no count's thought is another count's product, or the same seed's.
+    #[test]
+    fn thoughts_and_products_never_draw_alike_at_any_count() {
+        let thought = |seed: u64, n: u64| own_roll(seed, n, THOUGHT);
+        let product = |seed: u64, n: u64| own_roll(seed, n, PRODUCT);
+        for seed in [0, 1, 0x5eed, u64::MAX] {
+            for n in [0, 1, 7, 600, 1 << 40] {
+                assert_ne!(thought(seed, n), product(seed, n ^ THOUGHT ^ PRODUCT), "seed {seed:x} count {n}: a thought is a product");
+                assert_ne!(thought(seed, n), product(seed, n), "seed {seed:x} count {n}");
+                assert_ne!(thought(seed, n), thought(seed, n + 1), "seed {seed:x} count {n}: two counts think alike");
+                assert_ne!(thought(seed, n), seed, "seed {seed:x} count {n}");
+            }
+        }
+    }
+
+    /// Before: a herd's will to keep together was drawn afresh each tick, its companion was
+    /// whichever the list of those about put first, two near each other went round to each
+    /// other's far side, and strolls took them well off: 288 sharp turns for mouflon, 256
+    /// for red deer, 394 for junglefowl.
     #[test]
     fn a_herd_at_rest_keeps_together_without_turning_to_and_fro() {
         for (name, most) in [("base:mouflon", 110), ("base:red_deer", 110), ("base:junglefowl", 220)] {

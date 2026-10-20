@@ -1651,4 +1651,22 @@ mod tests {
         assert_ne!(meta.next_roll(ROLL_PRODUCT), rolled, "the next roll drew the same");
         assert_eq!(meta.rolls, 2);
     }
+
+    /// What every client sees cast (a creature's seed, the start of its own count) is drawn
+    /// by the cast key, made one way from the draw key, on the world's count of rolls.
+    #[test]
+    fn casts_draw_by_the_cast_key_never_the_draw_key() {
+        let mut meta = WorldMeta::new("w", 9, GameMode::Survival);
+        meta.draw_key = 0x0d1a;
+        assert_ne!(cast_key(meta.draw_key), meta.draw_key);
+        assert_ne!(cast_key(meta.draw_key), pop_key(meta.draw_key), "casts and pops share a key");
+        assert_ne!(cast_key(1), cast_key(2), "two keys cast alike");
+        let cast = meta.next_cast(ROLL_START);
+        assert_eq!(cast, numbered_draws(cast_key(0x0d1a), ROLL_START, 0), "a cast is not drawn from the cast key");
+        assert_ne!(cast, numbered_draws(0x0d1a, ROLL_START, 0), "a cast was drawn from the draw key itself");
+        let [a, b] = numbered_draws(cast_key(0x0d1a), ROLL_SPAWN, 1);
+        let seed = voxmar_engine::creature::mix(9, u64::from(a.to_bits()) << 32 | u64::from(b.to_bits()));
+        assert_eq!(meta.roll_seed(ROLL_SPAWN), seed, "a spawn's seed is not cast by the cast key");
+        assert_eq!(meta.rolls, 2);
+    }
 }
