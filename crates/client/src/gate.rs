@@ -420,6 +420,9 @@ steps! {
     /// Raw rabbit used on a campfire comes back cooked (or burnt) into the inventory, and
     /// smoke and embers rise from the fire.
     Cook,
+    /// A pit kiln in the creatures pad, clay in hand: a right click loads it, the server
+    /// sends back the firing kiln, and twelve seconds on the fired one.
+    Kiln,
     /// The home motif (`music.ron`'s `home`): the Cook step's Homestead Hearth, lit and so
     /// home, roofed over; at midnight the player steps from the open under the roof and a
     /// `Home` track starts (rehearsed silently, `music::Rehearse`); out and in again that
@@ -850,6 +853,8 @@ struct Gate {
     font: Option<crate::ui::skin::InterfaceFont>,
     /// Whether the taming food was moved into the hotbar, which earlier steps may have filled.
     food_moved: bool,
+    /// Where the kiln step found the player, to put them back.
+    kiln_from: Vec3,
     /// The Cook step's hearth or stove has raw rabbit selected and is being clicked.
     cook_started: bool,
     /// The campfire the weather step dries the player by, while it stands, and what the
@@ -1106,6 +1111,7 @@ impl Gate {
             fit_layout: ((Step::Load, 0), 0, false, 0, false, 0),
             font: None,
             food_moved: false,
+            kiln_from: Vec3::ZERO,
             cook_started: false,
             dry_fire: None,
             rain_roof: None,
@@ -1704,6 +1710,7 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         Step::Kindle | Step::Blaze => STEP_LIMIT + 10.0,
         // The campfire, its smoke and the chimney's, then a cook at the hearth and the stove.
         Step::Cook => STEP_LIMIT + 30.0,
+        Step::Kiln => STEP_LIMIT,
         // The roof and the night, then three steps in or out, each waited on.
         Step::HomeMotif => STEP_LIMIT + 3.0 * QUEST_WAIT,
         // The barrel opened, then a server pass for the egg and a second for the chat; then
@@ -2037,6 +2044,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::FirstFights => first_fights(world, gate),
         Step::ShotCancel => shot_cancel(world, gate),
         Step::Cook => cook(world, gate, now, in_phase),
+        Step::Kiln => kiln(world, gate, now),
         Step::HomeMotif => home_motif(world, gate, now, in_phase),
         Step::Dry => dry(world, gate, now),
         Step::Snare => snare(world, gate, now),
@@ -15328,11 +15336,86 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         10 => {
             chimney_watch(world, gate, now, chimney[1]);
             if gate.chimney_since.is_none() {
-                gate.next(Step::HomeMotif, now);
+                gate.next(Step::Kiln, now);
             }
         }
         _ => {}
     }
+}
+
+/// Where the kiln step sets its pit kiln, from the test ground's middle: inside the creatures
+/// pad (stone underfoot, air above), north-west of the Cook step's fire, stove and chimney,
+/// clear of them all; and where it stands, south of the kiln.
+const KILN_AT: IVec3 = IVec3::new(-4, 0, 18);
+const KILN_STAND: Vec3 = Vec3::new(-3.5, 0.0, 16.0);
+
+/// A pit kiln set down and clay in hand: a right click loads it (stations.ron), the block
+/// the server sends back is the firing kiln, and twelve server seconds on the fired one.
+/// The player is put back where the Cook step left them, for the home motif's walk.
+fn kiln(world: &mut World, gate: &mut Gate, now: f32) {
+    let at = gate.feet + KILN_AT;
+    let shows = |world: &World, name: &str| {
+        let client = world.resource::<ClientWorld>();
+        client.registry.id(name).is_some_and(|b| client.block(at) == Some(b))
+    };
+    match gate.phase {
+        0 => {
+            gate.kiln_from = world.resource::<LocalPlayer>().position;
+            let stand = gate.feet.as_vec3() + KILN_STAND;
+            let net = world.resource::<Net>();
+            for line in [
+                format!("setblock {} {} {} pit_kiln", at.x, at.y, at.z),
+                "clear clay".to_owned(),
+                "clear fired_clay".to_owned(),
+                "give clay 12".to_owned(),
+                format!("tp {} {} {}", stand.x, stand.y, stand.z),
+            ] {
+                net.command(&line);
+            }
+            gate.advance(now);
+        }
+        1 => {
+            if shows(world, "base:pit_kiln") && select(world, "base:clay") {
+                gate.advance(now);
+            } else if gate.server_in_phase() > 10.0 {
+                gate.check("pit kiln", Err("the pit kiln or clay in hand never came in 10 server seconds".into()));
+                end_kiln(world, gate, now);
+            }
+        }
+        2 => {
+            aim_at(world, at.as_vec3() + Vec3::new(0.5, 0.6, 0.5));
+            if shows(world, "base:pit_kiln_firing") {
+                mouse(world, MouseButton::Right, false);
+                gate.advance(now);
+            } else if gate.server_in_phase() > 10.0 {
+                mouse(world, MouseButton::Right, false);
+                gate.check("pit kiln", Err(format!("right clicks on the pit kiln at {at} with clay in hand never loaded it in 10 server seconds")));
+                end_kiln(world, gate, now);
+            } else {
+                mouse(world, MouseButton::Right, ((now - gate.since) * 2.0).fract() < 0.2);
+            }
+        }
+        _ => {
+            aim_at(world, at.as_vec3() + Vec3::new(0.5, 0.6, 0.5));
+            if shows(world, "base:pit_kiln_fired") && drawn(world, at) && gate.shot(world, "pit_kiln").is_some() {
+                gate.check("pit kiln", Ok(format!("clay loaded into the pit kiln: the server sent back the firing kiln, then the fired one {:.1} server seconds on", gate.server_in_phase())));
+                end_kiln(world, gate, now);
+            } else if gate.server_in_phase() > 15.0 {
+                gate.check("pit kiln", Err(format!("the loaded pit kiln at {at} never showed fired in 15 server seconds")));
+                end_kiln(world, gate, now);
+            }
+        }
+    }
+}
+
+fn end_kiln(world: &mut World, gate: &mut Gate, now: f32) {
+    let (at, back) = (gate.feet + KILN_AT, gate.kiln_from);
+    let net = world.resource::<Net>();
+    net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
+    net.command("clear clay");
+    net.command("clear fired_clay");
+    net.command(&format!("tp {} {} {}", back.x, back.y, back.z));
+    gate.next(Step::HomeMotif, now);
 }
 
 /// The Cook step's hearth, its stove and chimney, from where that step stood.

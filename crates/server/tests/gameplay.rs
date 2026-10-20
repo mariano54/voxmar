@@ -2243,7 +2243,12 @@ fn first_night_needs_a_crafted_campfire_and_food_cooked_on_it() {
     client.clear();
     for line in ["/setblock ~3 ~ ~ pit_kiln", "/give clay 1", "/skill crafting 99"] { client.ok(line); }
     client.pump_until(|c| c.world.block(fire) == c.content.blocks.id("base:pit_kiln") && count(c, "base:clay") == 1);
-    client.propose("base:cook", ActionTarget::Block { block: fire, face: Face::PosY });
+    // Loaded, left to fire and taken (stations.ron): it counts as cooked, but not as a meal.
+    client.propose("base:use_station", ActionTarget::Block { block: fire, face: Face::PosY });
+    client.pump_until(|c| c.world.block(fire) == c.content.blocks.id("base:pit_kiln_firing"));
+    client.after_server_ticks(12 * TICKS_PER_SECOND as u64 + 2);
+    client.pump_until(|c| c.world.block(fire) == c.content.blocks.id("base:pit_kiln_fired"));
+    client.propose("base:use_station", ActionTarget::Block { block: fire, face: Face::PosY });
     client.pump_until(|c| count(c, "base:fired_clay") == 1);
     client.wait_server(2);
     assert_eq!(client.quests.iter().find(|q| q.name == "base:first_night").unwrap().tasks, vec![vec![(0, 1), (0, 1)]], "fired clay supplied cooked-food progress");
@@ -8712,7 +8717,7 @@ fn the_first_days(f: &mut Fresh) -> Site {
     f.mark("hearth_lit");
 
     // The Farm age's first fire: a campfire and five cobblestones make a pit kiln, set down;
-    // clay from the pond fired in it (a fair share cracks at Crafting 1) until twelve fired
+    // clay from the pond loaded into it twelve at a time and left to fire until twelve fired
     // clay are in hand.
     f.gather("base:stone_pickaxe", stone, cobble, 7u32.max(f.have(cobble)));
     f.craft(&[(0, log, 1), (1, log, 1), (3, cobble, 1), (4, cobble, 1)], "base:campfire", 1);
@@ -8724,8 +8729,8 @@ fn the_first_days(f: &mut Fresh) -> Site {
     f.place("base:pit_kiln", kiln - up);
     // An Earth Clamp, which Fire the Clay names: eight dirt dug from a bank of it on the farm
     // plot round a log at the table (Construction 3), set down by the kiln and loaded with
-    // sixteen clay. It fires them, none cracked, while clay is fired by hand toward the
-    // twelve; what it gives goes to The Potter.
+    // sixteen clay. It fires them while the kiln's loads go toward the twelve; what it gives
+    // goes to The Potter.
     let ground = f.raised_dirt();
     assert!(ground.len() >= 8, "the plot's dirt bank: {} blocks left of 8", ground.len());
     f.gather("base:stone_shovel", ground, "base:dirt", 8);
@@ -8737,17 +8742,10 @@ fn the_first_days(f: &mut Fresh) -> Site {
     f.mark("earth_clamp");
     f.gather_from("base:stone_shovel", &banks, bed.clone(), clay, 28);
     f.tend_clamp(clamp, Some(clay));
-    f.walk_toward(Fresh::middle(kiln), 3.0);
-    let fired = "base:fired_clay";
-    while f.have(fired) < 12 {
-        if f.have(clay) == 0 {
-            f.gather_from("base:stone_shovel", &banks, bed.clone(), clay, 12);
-            f.walk_toward(Fresh::middle(kiln), 3.0);
-        }
-        f.cook(kiln, clay, fired);
-    }
+    let site = Site { table, fire, kiln, bed, banks, clamp: Some(clamp) };
+    f.fire_clay(&Site { clamp: None, ..site.clone() }, 12);
     f.mark("fire_the_clay");
-    Site { table, fire, kiln, bed, banks, clamp: Some(clamp) }
+    site
 }
 
 /// The quests a new player follows from nothing to the lit Crucible Kiln, in the order the
@@ -8804,8 +8802,9 @@ impl Fresh {
         self.wait(5.0, &format!("claiming {quest}"), |c| c.quests.iter().any(|q| q.name == name && q.claimed));
     }
 
-    /// Fires clay at the pit kiln until `need` fired clay are in hand, digging more from the
-    /// ponds whenever the clay runs out.
+    /// Fires clay in the pit kiln until `need` fired clay are in hand: loads it (up to twelve)
+    /// when empty, takes what it fired when it shows fired, and while it fires digs the clay
+    /// for the next load from the ponds, or waits by it when no more is wanted.
     fn fire_clay(&mut self, site: &Site, need: u32) {
         let (clay, fired) = ("base:clay", "base:fired_clay");
         while self.have(fired) < need {
@@ -8824,14 +8823,32 @@ impl Fresh {
                     break;
                 }
             }
-            if self.have(clay) == 0 {
-                let more = (need - self.have(fired)).min(32);
-                self.gather_from("base:stone_shovel", &site.banks, site.bed.clone(), clay, more);
+            let kiln = |c: &Client| c.world.block(site.kiln).map(|b| c.content.blocks.def(b).name.clone()).unwrap_or_default();
+            let here = kiln(&self.c);
+            // What the kiln holds now is fired clay on the way, so only the rest is dug for, a
+            // full load at a time.
+            let coming = if here == "base:pit_kiln" { 0 } else { 12 };
+            let wanted = need.saturating_sub(self.have(fired) + coming).min(12);
+            if self.have(clay) < wanted {
+                self.gather_from("base:stone_shovel", &site.banks, site.bed.clone(), clay, wanted);
             }
             if across(self.at, Self::middle(site.kiln)) > 3.5 {
                 self.walk_toward(Self::middle(site.kiln), 3.0);
             }
-            self.cook(site.kiln, clay, fired);
+            let use_kiln = ActionTarget::Block { block: site.kiln, face: Face::PosY };
+            match kiln(&self.c).as_str() {
+                "base:pit_kiln_firing" => self.wait(20.0, "the pit kiln firing its load", |c| kiln(c) == "base:pit_kiln_fired"),
+                "base:pit_kiln_fired" => {
+                    let before = self.have(fired);
+                    self.propose("base:use_station", use_kiln);
+                    self.wait(5.0, "taking the pit kiln's fired clay", |c| kiln(c) == "base:pit_kiln" && holding(c, fired) > before);
+                }
+                _ => {
+                    self.hold(clay);
+                    self.propose("base:use_station", use_kiln);
+                    self.wait(5.0, "loading the pit kiln with clay", |c| kiln(c) == "base:pit_kiln_firing");
+                }
+            }
         }
     }
 
@@ -8950,12 +8967,12 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     let trunks: Vec<IVec3> = [-7, -9].into_iter().flat_map(|z| [1, 3, 5, 7, 11, 13, 15].into_iter().flat_map(move |x| (0..4).map(move |y| o + IVec3::new(x, y, z)))).collect();
     f.gather("base:stone_axe", trunks, log, 24);
     // The earth clamp from Fire the Clay, taken of its clay and loaded with sixteen logs. It
-    // chars them while clay is fired by hand toward A Kiln Load; Charcoal is done when it
+    // chars them while the pit kiln fires loads toward A Kiln Load; Charcoal is done when it
     // is taken.
     let clamp = site.clamp.expect("the clamp set down for Fire the Clay");
     f.tend_clamp(clamp, Some(log));
     while f.have(charcoal) < 16 {
-        let more = f.have(fired) + 1;
+        let more = f.have(fired) + 12;
         f.fire_clay(&Site { clamp: None, ..site.clone() }, more);
         f.tend_clamp(clamp, Some(log));
         // The charcoal must come from taking it (which counts it cooked), not from a clamp

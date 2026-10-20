@@ -50,6 +50,19 @@
             // takes only what is in hand.
             from_stores: false,
         ),
+        // A pit kiln (Farm): up to twelve clay, or cobblestone, loaded into the fire and left to
+        // fire while the player digs, tends the clamp or the field; fired twelve seconds on,
+        // taken in one go. Quicker than the clamp, a smaller load, and nothing cracks.
+        (
+            empty: "pit_kiln", working: "pit_kiln_firing", ready: "pit_kiln_fired", holds: 12,
+            works: [
+                (input: "clay", output: "fired_clay", minutes: 0.2, skill: "core:crafting", xp: 6.0, counts: Some("cooked")),
+                (input: "cobblestone", output: "stone", minutes: 0.2, skill: "core:construction", xp: 1.0, counts: Some("cooked")),
+            ],
+            // Clay and cobblestone in the stores are for building: the kiln takes only what is
+            // in hand.
+            from_stores: false,
+        ),
         // An earth clamp (Farm): clay or logs heaped under dirt over a smouldering log, left
         // to fire or char by themselves, slower than a kiln or campfire by hand but with
         // nothing cracked and nobody standing by. Quests count what comes out as cooked.

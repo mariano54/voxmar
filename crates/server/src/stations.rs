@@ -452,6 +452,40 @@ mod tests {
         assert_eq!(server.stations.get(AT), None);
     }
 
+    /// The pit kiln: clay in hand loads it (up to twelve) and it fires with nobody by it,
+    /// twelve seconds; taken, all twelve are fired clay (none cracks), pay Crafting and
+    /// count as cooked. Cobblestone fires to stone the same way, and a held log loads nothing.
+    #[test]
+    fn clay_left_in_a_pit_kiln_is_fired_twelve_seconds_later() {
+        let mut server = fixture(1);
+        server.set_block(AT, block(&server, "base:pit_kiln"));
+        hold(&mut server, "base:clay", 16);
+        server.use_station(1, AT);
+        assert_eq!(at(&server, AT), "base:pit_kiln_firing");
+        assert_eq!(carried(&server, "base:clay"), 4, "twelve go in, four stay in hand");
+        server.tick += MINUTE / 5 - 1;
+        server.show_done_stations();
+        assert_eq!(at(&server, AT), "base:pit_kiln_firing", "not yet");
+        server.tick += 1;
+        server.show_done_stations();
+        assert_eq!(at(&server, AT), "base:pit_kiln_fired");
+        let crafting = xp(&server, "core:crafting");
+        server.use_station(1, AT);
+        assert_eq!(carried(&server, "base:fired_clay"), 12, "none cracked");
+        assert_eq!(at(&server, AT), "base:pit_kiln");
+        assert_eq!(xp(&server, "core:crafting") - crafting, 720, "taking pays Crafting, 6 a clay (in tenths)");
+        assert_eq!(server.players[&1].tallies.get("cooked:base:fired_clay"), Some(&12), "Fire the Clay counts it cooked");
+        hold(&mut server, "base:cobblestone", 3);
+        server.use_station(1, AT);
+        server.tick += MINUTE / 5;
+        server.show_done_stations();
+        server.use_station(1, AT);
+        assert_eq!(carried(&server, "base:stone"), 3);
+        hold(&mut server, "base:oak_log", 1);
+        server.use_station(1, AT);
+        assert_eq!((at(&server, AT).as_str(), carried(&server, "base:oak_log")), ("base:pit_kiln", 1), "a log is no kiln load");
+    }
+
     /// A raw hide off a beast cures on the rack in ten minutes, and taking it pays Crafting.
     #[test]
     fn a_raw_hide_hung_on_a_rack_is_hide_ten_minutes_later() {

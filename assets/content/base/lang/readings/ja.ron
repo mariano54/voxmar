@@ -592,6 +592,8 @@
     "quest.base.crucible_kiln": "るつぼがま",
     "quest.base.first_bronze": "はじめてのせいどう",
     "block.base.pit_kiln": "のがま",
+    "block.base.pit_kiln_firing": "やいているのがま",
+    "block.base.pit_kiln_fired": "やきあがったのがま",
     "block.base.kiln_bricks": "かまレンガ",
     "block.base.sleeping_bag": "ねぶくろ",
     "block.base.clay_pot": "つちのつぼ",
