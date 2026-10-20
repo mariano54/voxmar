@@ -173,7 +173,7 @@ Raw logs are poor fuel. The way up:
    splits. The axe's wear is data only (the tool-wear hook adds it).
 2. **The charcoal clamp** (multiblocks.ron `charcoal_clamp`): nine firewood three by three under
    soil (earth or turf), kindling in place of the roof's middle earth for its flue. Lit with a
-   torch or campfire in hand (`lit_by: "firelighter"`), it smoulders for game hours (`smoulder.hours`), then the firewood is
+   torch, firebrand or campfire in hand (`lit_by: "firelighter"`), it smoulders for game hours (`smoulder.hours`), then the firewood is
    charcoal heaps. Rain on its open flue (a bad seal) spoils to ash heaps the share of its
    wood it rained for, from the top down (rain as survival.ron's `douse_rain`). Opened early (a cell broken) it gives part-burnt
    charred wood. Server: `smoulder.rs`, saved in the world's `smoulders`.

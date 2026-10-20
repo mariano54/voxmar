@@ -42,7 +42,7 @@ enum End {
 
 impl Server {
     /// `agent` lights `structure`, standing round `core`, with what is in hand: anything
-    /// tagged its `lit_by` (`firelighter`: a torch or a campfire), used up never. Lit, its core burns, and it chars for its hours.
+    /// tagged its `lit_by` (`firelighter`: a torch, a firebrand or a campfire), used up never. Lit, its core burns, and it chars for its hours.
     pub(crate) fn light_smoulder(&mut self, agent: PlayerId, core: IVec3, structure: &Multiblock) {
         let Some(smoulder) = &structure.smoulder else { return };
         let title = Words::Own(def_key("multiblock", &structure.name), structure.title.clone());

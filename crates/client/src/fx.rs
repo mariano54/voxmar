@@ -373,9 +373,9 @@ fn burst_particles(burst: &Burst, world: &ClientWorld, blocks: &voxmar_engine::b
         } else {
             particle.motion = Motion::Ballistic;
             particle.gravity = effect.gravity;
-            if !matches!(effect.look, Seen::Block) {
-                particle.floor = crate::breaking::landing_floor_with(world, position, velocity, effect.gravity, effect.drag) + size * 0.35;
-            }
+            // Where it comes to rest by its own fall: a Block look's piece came with the floor
+            // a breaking chip's fall would reach, under other gravity and drag.
+            particle.floor = crate::breaking::landing_floor_with(world, position, velocity, effect.gravity, effect.drag) + size * 0.35;
         }
         out.push(particle);
     }
@@ -522,6 +522,25 @@ mod tests {
         assert!(!steam.is_empty() && steam.iter().all(|p| p.motion == Motion::Rise && p.blend == ParticleBlend::Veil && p.velocity.y > 0.0));
         // A Block look over air shows nothing.
         assert!(burst_particles(&burst("settle", None), &world, &content.blocks, None, 1.0, &mut dice).is_empty());
+        // Over a block, its pieces come to rest where their own fall takes them, not where a
+        // breaking chip's would: the floor a step below the burst on open ground beside it.
+        let mut world = world;
+        world.insert_column(voxmar_engine::coords::ColumnPos::of_block(IVec3::ZERO), std::sync::Arc::new(voxmar_engine::world::Column::default()));
+        let stone = content.blocks.expect("base:stone");
+        for x in 0..16 {
+            for z in 0..16 {
+                world.set_block(IVec3::new(x, 60, z), stone);
+            }
+        }
+        world.set_block(IVec3::new(0, 69, 0), stone);
+        let solid = crate::render::particles::TexturePieces::new(&[crate::textures::Rgba { width: 16, height: 16, pixels: vec![255; 1024] }], &[]);
+        let effect = &fx.effects["settle"];
+        let settle = burst_particles(&burst("settle", None), &world, &content.blocks, Some(&solid), 1.0, &mut dice);
+        assert!(!settle.is_empty());
+        for p in &settle {
+            let own = crate::breaking::landing_floor_with(&world, p.position, p.velocity, effect.gravity, effect.drag) + p.size * 0.35;
+            assert_eq!((p.gravity, p.drag, p.floor), (effect.gravity, effect.drag, own), "a settle piece falls and lands by the effect's own numbers");
+        }
     }
 
     /// Writes `target/fx_contact_sheet.png`: every effect from the side, its particles where

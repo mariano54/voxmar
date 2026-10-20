@@ -1128,7 +1128,7 @@
     "multiblock.base.crucible_kiln": "Crucible Kiln",
     "multiblock.base.crucible_kiln.hint": "The kiln needs kiln bricks all round the crucible and a pillar of kiln bricks on each corner.",
     "multiblock.base.charcoal_clamp": "Charcoal Clamp",
-    "multiblock.base.charcoal_clamp.hint": "A clamp is nine firewood laid three by three on the ground, walled round and roofed over with earth, with kindling in place of the roof's middle earth for a flue. Light the kindling from a torch or campfire.",
+    "multiblock.base.charcoal_clamp.hint": "A clamp is nine firewood laid three by three on the ground, walled round and roofed over with earth, with kindling in place of the roof's middle earth for a flue. Light the kindling from a torch, a firebrand or a campfire.",
     "quest.base.look_it_up": "Look It Up",
     "quest.base.look_it_up.why": "Forgotten a recipe? Open the inventory, type part of a name in its search box, and click the item to see how it is made; a right-click shows what it goes into. Look up the stone pickaxe.",
     "quest.path.nomad.start": "First Steps",
