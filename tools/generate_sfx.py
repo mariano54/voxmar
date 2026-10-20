@@ -12,7 +12,8 @@ terracotta) under materials/;
 and the work of the first two ages under work/: flint knapped,
 a hide scraped, clay shaped, pottery, stone dressed, cord twisted, wood whittled, the
 home stations loaded, a kiln fed, ore smelted, a hearth or kiln kindled, a sheep shorn,
-a cow milked, bees smoked and honey taken.
+a cow milked, bees smoked and honey taken, grain ground at a quern, wool spun on a
+spindle and woven at a loom, and the flour, twine and cloth they give.
 
 Our own work, built from noise, resonators and decaying modes (no samples). Run once
 offline; the clips are written to assets/content/base/sounds/ as Ogg Vorbis and listed in
@@ -1115,6 +1116,81 @@ def seat_wood(rng):
     return out
 
 
+def grind(rng):
+    """A quern turned: the upper stone rumbling round on the lower, a turn and more of gritty,
+    low grinding, and grain crunching between them."""
+    seconds = 1.4
+    n = int(seconds * RATE)
+    t = np.arange(n) / RATE
+    turns = rng.uniform(1.0, 1.25)
+    sweep = 0.55 + 0.45 * np.abs(np.sin(np.pi * turns * t))
+    rumble = lowpass(rng.standard_normal(n), 0.02) * 5 * sweep
+    grit = bandpass(rng.standard_normal(n) * (rng.random(n) < 0.08), 2600, 1.2) * sweep
+    out = rumble + 0.6 * grit + 0.5 * bandpass(rng.standard_normal(n), 420 + 120 * sweep, 3.0) * sweep
+    out += crackles(rng, seconds, 22, 0.5)
+    return out * np.minimum(t / 0.08, 1.0) * np.minimum((seconds - t) / 0.2, 1.0)
+
+
+def spin(rng):
+    """A spindle spun: a flick of the fingers, the whorl whirring as it turns and slows,
+    and the wool drawing out with a soft rasp."""
+    seconds = 1.4
+    n = int(seconds * RATE)
+    t = np.arange(n) / RATE
+    speed = 9.0 * np.exp(-t / rng.uniform(1.4, 1.8)) + 2.0
+    phase = np.cumsum(speed / RATE)
+    hum = np.sin(2 * np.pi * phase * 28) * (0.5 + 0.5 * np.sin(2 * np.pi * phase))
+    whirr = bandpass(rng.standard_normal(n), 900, 2.0) * (0.6 + 0.4 * np.sin(2 * np.pi * phase)) * (speed / 11)
+    out = 0.35 * hum * (speed / 11) + whirr
+    place(out, 0.0, knock(rng, rng.uniform(600, 700)), 0.4)
+    place(out, 0.3, rustle(rng, 1.0, 2600), 0.35)
+    return out * np.minimum(t / 0.01, 1.0) * np.minimum((seconds - t) / 0.25, 1.0)
+
+
+def weave(rng):
+    """A loom worked: the shuttle swishing through the shed and the beater clacking the
+    weft home, twice, the frame knocking under it."""
+    out = np.zeros(int(1.4 * RATE))
+    for pick in range(2):
+        at = pick * rng.uniform(0.6, 0.66)
+        m = int(0.32 * RATE)
+        s = np.arange(m) / m
+        swish = bandpass(rng.standard_normal(m) * np.sin(np.pi * s) ** 2, 1800 + 1400 * s, 1.5)
+        place(out, at, swish, 0.5)
+        place(out, at + 0.4, knock(rng, rng.uniform(260, 320)), 0.9)
+        place(out, at + 0.41, knock(rng, rng.uniform(130, 160)), 0.6)
+        place(out, at + 0.5, creak(rng, 0.2, 50, 100, 500), 0.25)
+    return out
+
+
+def flour(rng):
+    """Flour gathered up off the quern: a soft, dusty sift and a pat of the hand."""
+    out = np.zeros(int(0.5 * RATE))
+    place(out, 0.0, trickle(rng, 0.35, 3800, 160), 0.5)
+    place(out, 0.3, thud(rng, 0.1, 0.05, 0.02), 0.5)
+    return out
+
+
+def twine_wound(rng):
+    """Spun twine wound off the spindle: a dry, quick winding creak and a snap of the
+    thread."""
+    out = np.zeros(int(0.45 * RATE))
+    place(out, 0.0, creak(rng, 0.25, 110, 220, 1100), 0.5)
+    n = int(0.03 * RATE)
+    place(out, 0.27, bandpass(rng.standard_normal(n) * envelope(n, 0.0002, 0.006), 3200, 1.5), 0.8)
+    return out
+
+
+def cloth_off(rng):
+    """Cloth taken off the loom: a soft fold of fabric shaken out and laid down."""
+    out = np.zeros(int(0.55 * RATE))
+    m = int(0.18 * RATE)
+    s = np.arange(m) / m
+    place(out, 0.0, bandpass(rng.standard_normal(m) * np.sin(np.pi * s), 1400, 1.0), 0.6)
+    place(out, 0.2, rustle(rng, 0.3, 1600), 0.6)
+    return out
+
+
 def finish(mono, rng, width=0.15):
     """The clip made stereo (a hair of width from a short delay), faded, and brought to
     its loudness."""
@@ -1215,6 +1291,12 @@ SOUNDS = {
     "store_basket": (store_basket, 2),
     "bed_frame": (bed_frame, 2),
     "seat_wood": (seat_wood, 2),
+    "work/grind": (grind, 2),
+    "work/spin": (spin, 2),
+    "work/weave": (weave, 2),
+    "work/flour": (flour, 2),
+    "work/twine": (twine_wound, 2),
+    "work/cloth": (cloth_off, 2),
 }
 
 

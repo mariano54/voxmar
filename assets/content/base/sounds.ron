@@ -210,6 +210,11 @@
             brings: [
                 (tags: ["burnt"], sounds: ["sounds/burnt_1.ogg", "sounds/burnt_2.ogg"], volume: 0.8),
                 (tags: ["cooked"], sounds: ["sounds/cooked_1.ogg", "sounds/cooked_2.ogg"], volume: 0.7),
+                // What the Farm age's hand stations give, as it comes off them: flour gathered
+                // up in a dusty sift, twine wound off with a snap, cloth folded off the loom.
+                (tags: ["flour"], sounds: ["sounds/work/flour_1.ogg", "sounds/work/flour_2.ogg"], volume: 0.9),
+                (tags: ["twine"], sounds: ["sounds/work/twine_1.ogg", "sounds/work/twine_2.ogg"], volume: 1.2),
+                (tags: ["cloth"], sounds: ["sounds/work/cloth_1.ogg", "sounds/work/cloth_2.ogg"], volume: 0.6),
             ],
             ways: [
                 // Clay or cobble set into a pit kiln: a knock into the embers and a breath of
@@ -217,6 +222,12 @@
                 (name: "fire_in_kiln", with: ["tag:pit_kiln"], sounds: ["sounds/work/kiln_load_1.ogg", "sounds/work/kiln_load_2.ogg"], volume: 0.9),
                 // Ore tipped into the hot crucible: a rattle on clay and a deep hiss.
                 (name: "smelt", with: ["tag:crucible"], sounds: ["sounds/work/smelt_1.ogg", "sounds/work/smelt_2.ogg"], volume: 0.9),
+                // The Farm age's hand stations, through their work: a quern's
+                // stone rumbling round on grain, a spindle whirring, a loom's shuttle swishing
+                // and its beater clacking the weft home.
+                (name: "grind", with: ["tag:quern"], sounds: ["sounds/work/grind_1.ogg", "sounds/work/grind_2.ogg"], volume: 0.8),
+                (name: "spin", with: ["tag:spindle"], sounds: ["sounds/work/spin_1.ogg", "sounds/work/spin_2.ogg"], volume: 0.7),
+                (name: "weave", with: ["tag:loom"], sounds: ["sounds/work/weave_1.ogg", "sounds/work/weave_2.ogg"], volume: 0.8),
             ],
         ),
         // Lying down: rustles of cloth and straw (a sleeping bag on the ground).

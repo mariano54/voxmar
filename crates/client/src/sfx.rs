@@ -1905,6 +1905,16 @@ mod tests {
         assert_eq!(way("base:cook", &["pit_kiln", "clay"]), Some("fire_in_kiln".into()));
         assert_eq!(way("base:cook", &["crucible", "copper_ore"]), Some("smelt".into()));
         assert_eq!(way("base:cook", &["campfire", "raw_beef"]), None);
+        // The Farm age's hand stations are heard at their work, never as food on a fire,
+        // and what each gives as it comes off them.
+        assert_eq!(way("base:cook", &["quern_stones", "wheat"]), Some("grind".into()));
+        assert_eq!(way("base:cook", &["spindle_stand", "wool"]), Some("spin".into()));
+        assert_eq!(way("base:cook", &["loom_frame", "wool"]), Some("weave".into()));
+        assert_eq!(way("base:cook", &["old_quern_stones", "wheat"]), None, "a village's quern works nothing");
+        let gives = |item: &str| recorded.actions["base:cook"].brings.iter().find(|b| b.tags.iter().all(|t| blocks.def(id(item)).has_tag(t))).map(|b| b.tags.join("+"));
+        for (item, heard) in [("flour", "flour"), ("twine", "twine"), ("red_cloth", "cloth"), ("cooked_beef", "cooked"), ("burnt_food", "burnt")] {
+            assert_eq!(gives(item).as_deref(), Some(heard), "{item}");
+        }
         // An animal tended with shears or a pail is silent on the click, and heard by the
         // wool or milk the server gives; fed, as ever. A swarm is heard by the skep of bees
         // it brings, a full skep's honey as the server cuts it (`Done`), never on the click.
@@ -2185,10 +2195,11 @@ mod tests {
             assert!(recorded.actions.contains_key(name), "no sound for {name}");
         }
         assert!(!recorded.pickup.is_empty(), "no pickup pop");
-        // What fishing and cooking bring is heard as it lands: a catch, food done or burnt.
+        // What fishing and cooking bring is heard as it lands: a catch, food done or burnt,
+        // and the flour, twine and cloth of the Farm age's hand stations.
         let brings = |name: &str| recorded.actions[name].brings.iter().map(|b| b.tags.join("+")).collect::<Vec<_>>();
         assert_eq!(brings("base:fish"), ["fish+raw"]);
-        assert_eq!(brings("base:cook"), ["burnt", "cooked"]);
+        assert_eq!(brings("base:cook"), ["burnt", "cooked", "flour", "twine", "cloth"]);
         // Every tag a result is told by is one some item has.
         for brought in recorded.actions.values().flat_map(|sound| &sound.brings) {
             for tag in &brought.tags {
