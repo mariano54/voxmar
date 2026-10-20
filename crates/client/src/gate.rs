@@ -270,6 +270,8 @@ steps! {
     /// F3 opens the debug overlay, and PostUpdate (UI layout among it) takes no longer with
     /// it open than closed.
     Overlay,
+    /// A shaped recipe of the hand's grid laid mirrored left to right makes what it makes.
+    Mirror,
     /// Sticks and a crafting table from planks; the table placed and right clicked opens a
     /// three-by-three grid, where cobblestone and sticks make a stone pickaxe. An iron ore
     /// refuses the hand and a low Mining level, and breaks for the pickaxe at level 15,
@@ -404,7 +406,9 @@ steps! {
     /// at a deer this side alone is loosed from the hand, and the swing is cancelled (as
     /// raising the guard does) while it flies. It sails on past the deer and is gone where
     /// it lands without a puff or a sound. Each frame a fixed step (`Shots::step`). Shot
-    /// with the arrow past the deer.
+    /// with the arrow past the deer. Then the deer, brought under the crosshair past the
+    /// reach of what is held (within touch), is clicked: the hand swings at the air with a
+    /// whoosh (`Fighting::whiff`) and no blow is asked of the server.
     ShotCancel,
     /// Raw rabbit used on a campfire comes back cooked (or burnt) into the inventory, and
     /// smoke and embers rise from the fire.
@@ -904,6 +908,9 @@ struct Gate {
     markers_before: u32,
     /// Before the RangedFeel step's shot: shots loosed, trail specks and arrivals.
     shots_before: (u32, u32, u32),
+    /// Before the ShotCancel step's click out of reach: swings at the air and swings sent;
+    /// whether the hand has swung since.
+    whiff_from: (u32, u32, bool),
 }
 
 impl Gate {
@@ -1077,6 +1084,7 @@ impl Gate {
             puppet: (Vec3::ZERO, 0, false),
             markers_before: 0,
             shots_before: (0, 0, 0),
+            whiff_from: (0, 0, false),
         }
     }
 
@@ -1858,6 +1866,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
             }
         }
         Step::Breaks => breaks(world, gate, now, in_phase),
+        Step::Mirror => mirror(world, gate, now),
         Step::Workshop => workshop(world, gate, now, in_phase),
         Step::HvAge => hv_age(world, gate, now),
         Step::Swim => swim(world, gate, now, in_phase),
@@ -2779,6 +2788,81 @@ fn skill_level(world: &World, name: &str) -> (u8, u32) {
 }
 
 /// Crafting, a crafting table, tool tiers and Mining levels, and tilling: see `Step::Workshop`.
+/// The shaped recipe the mirror step makes: of the hand's grid, made anywhere at level 1, of
+/// single items, and unlike its mirror image; the fewest cells, then the output's name. Its output
+/// and its cells laid mirrored, by grid cell.
+fn mirror_recipe(world: &World) -> Option<(String, Vec<(usize, String)>)> {
+    use voxmar_engine::craft::SIDE;
+    let content = &world.resource::<Launch>().content;
+    let name = |id: voxmar_engine::block::BlockId| content.blocks.def(id).name.clone();
+    content
+        .recipes
+        .iter()
+        .filter(|r| !r.shapeless() && !r.needs_table() && r.near.is_none() && r.level <= 1)
+        .filter_map(|r| {
+            let width = r.size().1;
+            let cells = r.cells();
+            let alternatives = r.alternatives();
+            // Empty cells first: a padding column past `width` has no mirror image.
+            let laid: Vec<(usize, String)> = cells.iter().enumerate().filter_map(|(i, item)| item.map(|item| (i / SIDE * SIDE + width - 1 - i % SIDE, name(item)))).collect();
+            let single = alternatives.iter().flatten().all(|a| a.len() == 1);
+            let unlike = (0..cells.len()).any(|i| i % SIDE < width && cells[i] != cells[i / SIDE * SIDE + width - 1 - i % SIDE]);
+            (single && unlike).then(|| (laid.len(), name(r.output), laid))
+        })
+        .min()
+        .map(|(_, output, laid)| (output, laid))
+}
+
+/// A shaped recipe of the hand's grid, laid mirrored, makes what it makes as written.
+fn mirror(world: &mut World, gate: &mut Gate, now: f32) {
+    let Some((output, laid)) = mirror_recipe(world) else {
+        gate.check("mirror", Err("no shaped recipe of the hand's grid differs from its mirror image".into()));
+        gate.next(Step::Workshop, now);
+        return;
+    };
+    match gate.phase {
+        // Screens closed, and what the recipe takes given.
+        0 => {
+            let mut ui = world.resource_mut::<UiState>();
+            (ui.menu_open, ui.inventory_open, ui.character_open, ui.console_open) = (false, false, false, false);
+            mouse(world, MouseButton::Left, false);
+            let net = world.resource::<Net>();
+            for (_, item) in &laid {
+                net.command(&format!("give {item} 1"));
+            }
+            gate.advance(now);
+        }
+        1 => {
+            let mut needed: Vec<(&str, u32)> = Vec::new();
+            for (_, item) in &laid {
+                match needed.iter_mut().find(|(n, _)| *n == item) {
+                    Some((_, count)) => *count += 1,
+                    None => needed.push((item, 1)),
+                }
+            }
+            if needed.iter().all(|&(item, count)| holding(world, item).0 >= count) {
+                gate.count_before = holding(world, &output).0;
+                let cells: Vec<(usize, &str)> = laid.iter().map(|(cell, item)| (*cell, item.as_str())).collect();
+                lay_and_craft(world, &cells);
+                gate.advance(now);
+            } else if gate.server_in_phase() > WORKSHOP_WAIT {
+                gate.check("mirror", Err(format!("what {output} takes never came: {needed:?}")));
+                gate.next(Step::Workshop, now);
+            }
+        }
+        _ => {
+            let made = holding(world, &output).0.saturating_sub(gate.count_before);
+            if made > 0 {
+                gate.check("mirror", Ok(format!("{output}'s recipe laid mirrored ({laid:?}) made {made}")));
+                gate.next(Step::Workshop, now);
+            } else if gate.server_in_phase() > WORKSHOP_WAIT {
+                gate.check("mirror", Err(format!("{output}'s recipe laid mirrored ({laid:?}) made none")));
+                gate.next(Step::Workshop, now);
+            }
+        }
+    }
+}
+
 fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let feet = gate.feet;
     let (table, ore, till) = (feet + TABLE_AT, feet + ORE_AT, feet + TILL_AT);
@@ -4100,7 +4184,7 @@ fn overlay(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if !shown {
                 if in_phase > SCREEN_WAIT {
                     gate.check("overlay", Err("F3 did not open the debug overlay".into()));
-                    gate.next(Step::Workshop, now);
+                    gate.next(Step::Mirror, now);
                 }
                 return;
             }
@@ -4126,7 +4210,7 @@ fn overlay(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if shown {
                 if in_phase > SCREEN_WAIT {
                     gate.check("overlay", Err("F3 did not close the debug overlay".into()));
-                    gate.next(Step::Workshop, now);
+                    gate.next(Step::Mirror, now);
                 }
                 return;
             }
@@ -4148,7 +4232,7 @@ fn overlay(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             );
             let result = if gate.overlay_changes > 0 && rate <= most { Ok(detail) } else { Err(detail) };
             gate.check("overlay: no layout every frame", result);
-            gate.next(Step::Workshop, now);
+            gate.next(Step::Mirror, now);
         }
         _ => {}
     }
@@ -13373,8 +13457,23 @@ fn shot_cancel(world: &mut World, gate: &mut Gate) {
         gate.next(Step::Cook, now);
         return;
     };
-    let (health, height) = (launch.content.creatures.get(species).def.health, launch.content.creatures.get(species).def.body.size.1);
-    let at = gate.feet.as_vec3() + Vec3::new(-1.5, 0.0, 6.0);
+    let (health, (width, height)) = (launch.content.creatures.get(species).def.health, launch.content.creatures.get(species).def.body.size);
+    // Out of reach for the click: straight ahead, its near face as far from the eye as
+    // halfway between the reach of what is held and the reach of a touch (aimed at, not
+    // struck).
+    let (reach, touch) = {
+        let (launch, player) = (world.resource::<Launch>(), world.resource::<LocalPlayer>());
+        let held = player.inventory.get(player.selected).map(|s| s.item);
+        let combat = &launch.content.combat;
+        (combat.wielded(held, |skill| launch.content.skills.level(player.skills.xp(skill))).reach, combat.feel.touch)
+    };
+    let at = if gate.phase >= WHIFF_PHASE {
+        let drop = world.resource::<LocalPlayer>().eye().y - (gate.feet.y as f32 + height * 0.5);
+        let near = ((reach + touch) * 0.5).powi(2) - drop * drop;
+        gate.feet.as_vec3() + Vec3::new(0.5, 0.0, 0.5 + near.max(0.0).sqrt() + width * 0.5)
+    } else {
+        gate.feet.as_vec3() + Vec3::new(-1.5, 0.0, 6.0)
+    };
     aim_at(world, at + Vec3::Y * height * 0.5);
     let counts = |world: &World| {
         let heard = world.resource::<Heard>();
@@ -13392,30 +13491,30 @@ fn shot_cancel(world: &mut World, gate: &mut Gate) {
         world.resource_mut::<Shots>().step = None;
         gate.next(Step::Cook, now);
     };
+    let deer = |position: Vec3| voxmar_protocol::CreatureView {
+        id: SPARED,
+        species,
+        position,
+        velocity: Vec3::ZERO,
+        yaw: 0.0,
+        pose: voxmar_engine::creature::brain::Pose::Idle,
+        tell: 0,
+        health,
+        scale: 1.0,
+        seed: 6,
+        kept: false,
+        owner: None,
+        young: false,
+        ready: false,
+        trust: 0,
+        genes: [0; voxmar_engine::genes::MOST],
+    };
     let frames = gate.puppet.1;
     match gate.phase {
         // The deer stands in view, each frame of the shot a fixed step.
         0 => {
-            let view = voxmar_protocol::CreatureView {
-                id: SPARED,
-                species,
-                position: at,
-                velocity: Vec3::ZERO,
-                yaw: 0.0,
-                pose: voxmar_engine::creature::brain::Pose::Idle,
-                tell: 0,
-                health,
-                scale: 1.0,
-                seed: 6,
-                kept: false,
-                owner: None,
-                young: false,
-                ready: false,
-                trust: 0,
-                genes: [0; voxmar_engine::genes::MOST],
-            };
             let mut creatures = world.resource_mut::<Creatures>();
-            creatures.receive(vec![view], vec![]);
+            creatures.receive(vec![deer(at)], vec![]);
             (creatures.watch, creatures.watch_step) = (Some(SPARED), Some(PUPPET_STEP));
             world.resource_mut::<Shots>().step = Some(PUPPET_STEP);
             gate.advance(now);
@@ -13482,11 +13581,100 @@ fn shot_cancel(world: &mut World, gate: &mut Gate) {
                 Ok(format!("the arrow of the swing cancelled {SPARED_AT} frames into its flight sailed past and was gone {frames} frames later without a puff or a sound"))
             };
             gate.check("shot cancel", result);
+            if reach >= touch {
+                gate.check("whiff", Ok(format!("what is held reaches {reach:.2}, as far as a touch ({touch:.2}): nothing aimed at is out of reach")));
+                done(world, gate, now);
+                return;
+            }
+            gate.puppet.1 = 0;
+            gate.advance(now);
+        }
+        // Brought out of reach under the crosshair (`at`, from this phase on); once aimed at
+        // out of reach and ready to swing (the meter full, no swing under way, a cooldown
+        // since the last whiff: `Fighting::can_whiff`), the left button pressed. Waited for
+        // on the server's clock, not frames.
+        WHIFF_PHASE => {
+            let (eye, look) = {
+                let player = world.resource::<LocalPlayer>();
+                (player.eye(), player.look_direction().normalize_or_zero())
+            };
+            if frames == 0 {
+                world.resource_mut::<Creatures>().receive(vec![deer(at)], vec![]);
+                gate.puppet.1 = 1;
+                return;
+            }
+            let aimed = world.resource::<crate::interact::Target>().creature;
+            let creatures = world.resource::<Creatures>();
+            let off = creatures.aabb(world.resource::<Launch>(), SPARED).and_then(|b| crate::creatures::ray_box(eye, look, &b));
+            let set = off.filter(|&d| aimed == Some(SPARED) && d > reach && d <= touch);
+            let timing = {
+                let (launch, player) = (world.resource::<Launch>(), world.resource::<LocalPlayer>());
+                let held = player.inventory.get(player.selected).map(|s| s.item);
+                let combat = &launch.content.combat;
+                combat.timing(&combat.wielded(held, |skill| launch.content.skills.level(player.skills.xp(skill))))
+            };
+            let ready = world.resource::<crate::fight::Fighting>().can_whiff(world.resource::<Time>().elapsed_secs_f64(), &timing);
+            if !(set.is_some() && ready) {
+                if gate.server_in_phase() <= WHIFF_READY_WAIT {
+                    return;
+                }
+                gate.check(
+                    "whiff",
+                    Err(format!(
+                        "in {WHIFF_READY_WAIT} s of the server's clock the deer was not set up out of reach under the crosshair with the hand ready to swing: aimed at {aimed:?}, {off:?} blocks off, reach {reach:.2}, touch {touch:.2}; ready {ready}"
+                    )),
+                );
+                done(world, gate, now);
+                return;
+            }
+            let off = set.expect("set");
+            let fighting = world.resource::<crate::fight::Fighting>();
+            gate.whiff_from = (fighting.whiffs, fighting.strikes, false);
+            gate.feel_asked = world.resource::<Heard>().asked.clone();
+            gate.puppet.0 = Vec3::new(off, 0.0, 0.0);
+            mouse(world, MouseButton::Left, true);
+            gate.puppet.1 = 0;
+            gate.advance(now);
+        }
+        // Let go; then the hand swings at the air and the whoosh is asked for, with no blow
+        // sent: waited for on the server's clock.
+        _ => {
+            if frames == 0 {
+                mouse(world, MouseButton::Left, false);
+            }
+            gate.puppet.1 = frames + 1;
+            gate.whiff_from.2 |= world.resource::<crate::held::Motion>().swing().is_some();
+            let fighting = world.resource::<crate::fight::Fighting>();
+            let (whiffs, sent) = (fighting.whiffs - gate.whiff_from.0, fighting.strikes - gate.whiff_from.1);
+            let swung = gate.whiff_from.2;
+            let asked = |name: &str, from: &std::collections::BTreeMap<String, u32>| from.get(name).copied().unwrap_or(0);
+            let whooshed = asked("whiff", &world.resource::<Heard>().asked) > asked("whiff", &gate.feel_asked);
+            if !(whiffs > 0 && swung && whooshed) && gate.server_in_phase() <= WHIFF_WAIT {
+                return;
+            }
+            let off = gate.puppet.0.x;
+            let result = if sent > 0 {
+                Err(format!("a click at the deer {off:.2} blocks off, past the {reach:.2} reach, sent {sent} swings to the server"))
+            } else if whiffs != 1 || !swung || !whooshed {
+                Err(format!(
+                    "a click at the deer {off:.2} blocks off, past the {reach:.2} reach, with the hand ready, in {WHIFF_WAIT} s of the server's clock: {whiffs} swings at the air (1 wanted), the hand swung {swung}, the whoosh asked for {whooshed}"
+                ))
+            } else {
+                Ok(format!("a click at the deer {off:.2} blocks off, past the {reach:.2} reach: the hand swung at the air with a whoosh {frames} frames on, nothing sent"))
+            };
+            gate.check("whiff", result);
             done(world, gate, now);
         }
-        _ => {}
     }
 }
+
+/// The ShotCancel step's phase that clicks at the deer out of reach.
+const WHIFF_PHASE: u32 = 6;
+/// Seconds of the server's clock for the deer to be brought under the crosshair out of
+/// reach and the hand to be ready to swing (the meter refilled after the shots before).
+const WHIFF_READY_WAIT: f32 = 4.0;
+/// Seconds of the server's clock for the hand and the whoosh to answer the click.
+const WHIFF_WAIT: f32 = 1.0;
 
 /// A campfire on the pad, raw rabbit in hand: a right click on the fire cooks one, which
 /// comes back two seconds later as cooked rabbit or, at a low Cooking level, sometimes
