@@ -97,6 +97,9 @@ pub struct PriorityPlugin;
 
 impl Plugin for PriorityPlugin {
     fn build(&self, app: &mut App) {
+        if !enabled() {
+            return;
+        }
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else { return };
         render_app.add_systems(Render, |_: &mut World, mut raised: Local<bool>| {
             if !*raised {

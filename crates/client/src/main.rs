@@ -324,11 +324,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // p99 frame from 11 to 25 ms. `VOXMAR_WORKERS=n` sets their number instead, for timing how
     // many a busy machine's frames can take (tools/perf/play_frames).
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
-    let workers = std::env::var("VOXMAR_WORKERS")
-        .ok()
-        .and_then(|n| n.parse::<usize>().ok())
-        .filter(|&n| n >= 1)
-        .unwrap_or_else(|| physical_cores().unwrap_or(threads).min(threads).saturating_sub(2).max(2));
+    let mut workers = physical_cores().unwrap_or(threads).min(threads).saturating_sub(2).max(2);
+    if let Ok(given) = std::env::var("VOXMAR_WORKERS")
+        && !given.is_empty()
+    {
+        match given.parse::<usize>() {
+            Ok(n) if (1..=threads).contains(&n) => workers = n,
+            // Before logging starts, so on stderr, where tools/perf/play_frames shows it beside
+            // the numbers, which are then the default's.
+            _ => eprintln!("VOXMAR_WORKERS={given} is not from 1 to {threads}; {workers} workers"),
+        }
+    }
     rayon::ThreadPoolBuilder::new()
         .num_threads(workers)
         .thread_name(|i| format!("worker-{i}"))

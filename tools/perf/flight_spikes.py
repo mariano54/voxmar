@@ -46,49 +46,62 @@ if start.startswith('flight:'):
 else:
     start = float(start)
 name_re = re.compile(r'"name":"((?:[^"\\]|\\.)*)"')
-stacks = {}
-frames = []          # start ts of each frame
-spans = []           # (begin, dur, tid, name)
 SKIP = ('schedule: ', 'main app', 'update: ', 'multithreaded executor', 'sub app', 'par_for_each', 'system_commands', 'check_conditions', 'RenderContextState')
-with open(path, 'r', buffering=1 << 24) as f:
-    for line in f:
-        p = line.find('"ph":"')
-        if p < 0:
-            continue
-        ph = line[p + 6]
-        if ph not in 'BE':
-            continue
-        t = line.find('"tid":', p)
-        c = line.find(',', t)
-        tid = int(line[t + 6:c])
-        s = line.find('"ts":', c)
-        e = line.find('}', s)
-        ts = float(line[s + 5:e])
-        st = stacks.setdefault(tid, [])
-        if ph == 'B':
-            m = name_re.search(line)
-            name = m.group(1) if m else '?'
-            st.append((ts, name))
-            if tid == 0 and name == 'update: ' and ts >= start:
-                frames.append(ts)
-        else:
-            if not st:
+
+
+def spans_of(path):
+    """Every span that ends in the trace, as (begin, end, tid, name), streamed: a trace runs
+    to gigabytes, so nothing but the open spans' stacks is kept."""
+    stacks = {}
+    with open(path, 'r', buffering=1 << 24) as f:
+        for line in f:
+            p = line.find('"ph":"')
+            if p < 0:
                 continue
-            b, name = st.pop()
-            if b >= start and not name.startswith(SKIP):
-                spans.append((b, ts - b, tid, name))
+            ph = line[p + 6]
+            if ph not in 'BE':
+                continue
+            t = line.find('"tid":', p)
+            c = line.find(',', t)
+            tid = int(line[t + 6:c])
+            s = line.find('"ts":', c)
+            e = line.find('}', s)
+            ts = float(line[s + 5:e])
+            st = stacks.setdefault(tid, [])
+            if ph == 'B':
+                m = name_re.search(line)
+                st.append((ts, m.group(1) if m else '?'))
+            elif st:
+                b, name = st.pop()
+                yield b, ts, tid, name
+
+
+# Two passes over the file: the frames (main-thread update to update), then the longest
+# spans begun in the slowest of them.
+frames = sorted(b for b, _, tid, name in spans_of(path) if tid == 0 and name == 'update: ' and b >= start)
 d = [b - a for a, b in zip(frames, frames[1:])]
+if not d:
+    sys.exit('no frames after the start in the trace')
 med = statistics.median(d)
 print(f'{len(d)} frames, median {med/1000:.2f} ms, p99 {sorted(d)[int(len(d)*0.99)]/1000:.2f}, max {max(d)/1000:.2f}')
-spans.sort()
-import bisect
-starts = [s[0] for s in spans]
-worst = sorted(range(len(d)), key=lambda i: -d[i])[:12]
-for i in sorted(worst):
-    a, b = frames[i], frames[i + 1]
-    lo, hi = bisect.bisect_left(starts, a), bisect.bisect_left(starts, b)
-    top = sorted(spans[lo:hi], key=lambda s: -s[1])[:7]
+import bisect, heapq
+worst = sorted(sorted(range(len(d)), key=lambda i: -d[i])[:12])
+windows = [frames[i] for i in worst]
+tops = {i: [] for i in worst}
+for b, end, tid, name in spans_of(path):
+    if b < start or name.startswith(SKIP):
+        continue
+    k = bisect.bisect_right(windows, b) - 1
+    if k < 0:
+        continue
+    i = worst[k]
+    if b >= frames[i + 1]:
+        continue
+    heapq.heappush(tops[i], (end - b, tid, name))
+    if len(tops[i]) > 7:
+        heapq.heappop(tops[i])
+for i in worst:
+    a = frames[i]
     print(f'\nframe {i} at {(a-start)/1e6:.2f}s: {d[i]/1000:.1f} ms')
-    for s in top:
-        print(f'  {s[1]/1000:7.2f} ms tid {s[2]:3d} {s[3][:150]}')
-# Which span names are most often the longest in slow frames.
+    for dur, tid, name in sorted(tops[i], reverse=True):
+        print(f'  {dur/1000:7.2f} ms tid {tid:3d} {name[:150]}')

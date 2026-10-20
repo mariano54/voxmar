@@ -20,9 +20,10 @@
 #
 # SCENES picks scenes (e.g. SCENES=flight) and FLIGHT the flight's seconds (default 40). A
 # binary built with tracing (CARGO_TARGET_DIR=target/trace cargo build --release -p
-# voxmar_client --features chrome) writes a Chrome trace, 0.3-0.6 GB a second: each run's is
-# read by tools/perf/flight_spikes.py (the slowest frames and what ran in them) and deleted,
-# so keep such runs short, e.g. SCENES=flight FLIGHT=15 REPEATS=1.
+# voxmar_client --features chrome) writes a Chrome trace, 0.3-0.6 GB a second, to this run's
+# temporary directory: each is read by the build's tools/perf/flight_spikes.py (the slowest
+# frames and what ran in them) and deleted. Traced builds are run only in short flights
+# (SCENES=flight, FLIGHT up to 20) with 50 GB free, e.g. SCENES=flight FLIGHT=15 REPEATS=1.
 #
 # Holds ~/Projects/voxmar-wt/QUIET while it times, which pauses memcap's builds and holds
 # new heavy commands (waiting while another timing run holds it), and stops whenever his
@@ -37,7 +38,6 @@ repeats=${REPEATS:-2}
 scenes=${SCENES:-spawn town flight}
 flight=${FLIGHT:-40}
 [[ $flight =~ ^[0-9]+$ ]] || { echo "play_frames: FLIGHT is whole seconds" >&2; exit 2; }
-spikes=$(cd "$(dirname "$0")" && pwd)/flight_spikes.py
 settings=${VOXMAR_SETTINGS:-$HOME/Library/Application Support/voxmar/settings.ron}
 quiet=~/Projects/voxmar-wt/QUIET
 play=~/Projects/voxmar-wt/PLAYING
@@ -56,6 +56,33 @@ if playing; then
   echo "play_frames: Mariano is playing (his game is open or PLAYING is up); nothing is timed" >&2
   exit 1
 fi
+for scene in $scenes; do
+  case $scene in spawn | town | flight) ;; *) echo "play_frames: no scene called $scene" >&2; exit 2 ;; esac
+done
+
+# A binary as given: binary, priority (on or off) and workers (empty for the default).
+parse() {
+  binary=$1 priority=on workers=
+  while :; do
+    case $binary in
+      off:*) priority=off binary=${binary#off:} ;;
+      w*:*)
+        workers=${binary%%:*} workers=${workers#w} binary=${binary#*:}
+        [[ $workers =~ ^[1-9][0-9]*$ ]] || { echo "play_frames: no worker count in $1" >&2; exit 2; }
+        ;;
+      *) break ;;
+    esac
+  done
+}
+# A build with tracing, which names the variable its trace's path is given by.
+traced() { LC_ALL=C grep -qa TRACE_CHROME "$1"; }
+for given in "$@"; do
+  parse "$given"
+  if [[ -x $binary ]] && traced "$binary" && { [[ $scenes != flight ]] || ((flight > 20)); }; then
+    echo "play_frames: $binary writes a trace (0.3-0.6 GB a second): only SCENES=flight with FLIGHT up to 20" >&2
+    exit 2
+  fi
+done
 
 out=
 held=0
@@ -103,17 +130,9 @@ scene_args() {
 
 echo "play_frames: load $(sysctl -n vm.loadavg 2>/dev/null || cat /proc/loadavg), $repeats runs a scene"
 for scene in $scenes; do
-  case $scene in spawn | town | flight) ;; *) echo "play_frames: no scene called $scene" >&2; exit 2 ;; esac
   for ((round = 1; round <= repeats; round++)); do
     for given in "$@"; do
-      binary=$given priority=on workers=
-      while :; do
-        case $binary in
-          off:*) priority=off binary=${binary#off:} ;;
-          w[0-9]*:*) workers=${binary%%:*} workers=${workers#w} binary=${binary#*:} ;;
-          *) break ;;
-        esac
-      done
+      parse "$given"
       if playing; then
         echo "play_frames: Mariano started playing; stopped, and the numbers so far are suspect" >&2
         exit 1
@@ -131,17 +150,25 @@ for scene in $scenes; do
       # runs (target/release/voxmar or target/trace/release/voxmar).
       root=$(dirname "$binary")
       while [[ $root != / && ! -d $root/assets ]]; do root=$(dirname "$root"); done
-      touch "$out/started"
-      log=$(cd "$root" && VOXMAR_MUTE=1 VOXMAR_TIMING=1 VOXMAR_FOREGROUND=1 VOXMAR_CONFIG=$config VOXMAR_THREAD_PRIORITY=$priority VOXMAR_WORKERS=$workers \
+      [[ -d $root/assets ]] || { echo "$scene: no assets/ above $binary"; continue; }
+      trace=$out/trace.json
+      if traced "$binary"; then
+        free=$(df -Pk "$out" | awk 'NR == 2 { print int($4 / 1048576) }')
+        ((free >= 50)) || { echo "play_frames: ${free} GB free where traces go; a traced run wants 50" >&2; exit 1; }
+      fi
+      log=$(cd "$root" && VOXMAR_MUTE=1 VOXMAR_TIMING=1 VOXMAR_FOREGROUND=1 VOXMAR_CONFIG=$config VOXMAR_THREAD_PRIORITY=$priority VOXMAR_WORKERS=$workers TRACE_CHROME=$trace \
         "$binary" --capture "$out/$scene.png" --size 2268x1473 "${args[@]}" 2>&1 </dev/null | sed 's/\x1b\[[0-9;]*m//g')
       stats=$(grep -oE '(steady|flight): [0-9]+ frames.*' <<<"$log" | tail -1)
       gpu=$(grep -m1 -oE 'AdapterInfo \{ name: "[^"]*"' <<<"$log" | sed 's/.*name: //')
+      # A worker count the game turned down (more than it has threads): its default ran.
+      grep -m1 '^VOXMAR_WORKERS=' <<<"$log"
       echo "$scene round $round, $binary$([[ $priority == off ]] && echo ' (priorities off)')${workers:+ ($workers workers)}: ${stats:-no frame statistics (see a run by hand)} [gpu $gpu, load $(sysctl -n vm.loadavg 2>/dev/null | awk '{ print $2 }')]"
-      # A traced build's trace of this run: read, then deleted (they run to gigabytes).
-      while IFS= read -r trace; do
-        [[ $scene == flight ]] && python3 "$spikes" "$trace" "flight:$flight"
-        rm -f "$trace"
-      done < <(find "$root" -maxdepth 1 -type f -name 'trace-*.json' -newer "$out/started")
+      # A traced build's trace of this run: read, then deleted (they run to gigabytes; the
+      # temporary directory goes on exit, interrupted or not, with any left).
+      if [[ -s $trace ]]; then
+        python3 -I "$root/tools/perf/flight_spikes.py" "$trace" "flight:$flight"
+      fi
+      rm -f "$trace"
     done
   done
 done
