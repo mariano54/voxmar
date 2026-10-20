@@ -21,13 +21,62 @@ and a pixel, `core/movement.ron`) without jumping; a whole block still takes a j
 | Half-timber | `half_timber` | a whole block: daub in a braced timber frame | | 2 beams, 2 daub make 4 (4) |
 | Shutters | `wooden_shutters` (`_open`) | two plank leaves across the middle; open, folded back to the jambs and stopping nothing | face the placer; a right click opens and shuts them | 4 planks, 2 sticks make 2 (2) |
 | Chimney | `chimney_stack`, `chimney_pot` | a brick flue 3/4 of a block across; a clay pot with a rim | | 4 stone bricks make 2 (6); 4 fired clay round a flue make 2 (3) |
+| Stone flue, hood | `stone_flue`, `chimney_hood` | a cobble flue as the brick one; a brick skirt round a hearth narrowing to a flue | | 4 cobblestone and clay make 2 (2); 5 stone bricks make 1 (6) |
+| Jetty beam | `<timber>_jetty_beam` | a joist along the top of the cell, out past the wall, a brace stepping down to the wall | overhang towards the placer | 2 beams, a post make 2 (4) |
+| Door frame | `<timber>_door_frame` (`_top`) | jambs either side and a lintel, two blocks high; stops nothing | placed whole, as a door; faces the placer | 2 posts, a beam make 1 (3) |
+| Window frame | `<timber>_window_frame` | jambs, a sill and a lintel round an opening, one block high; stops nothing | faces the placer | 2 posts, 2 beams make 2 (3) |
+| Shuttered window | `<timber>_shuttered_window` (`_shut`) | a lattice window with two leaves on its face, standing out open, across it shut | faces the placer; a right click shuts and opens them | a lattice window and shutters make 1 (3) |
+| Railing | `<timber>_railing`, `<timber>_railing_corner` | a handrail and a bottom rail along the back of the cell with balusters between, a block high; the corner turns along the east side too | the rail runs along the side away from the placer | 3 beams, 3 sticks make 3 (3); 2 railings make a corner (3) |
+| Newel post | `<timber>_newel_post` | a post five texels square with a cap | | a slab on a post makes 1 (3) |
+| Landing | `<timber>_landing` | boards across the top of the cell on two joists, level with a stair's top | joists run away from the placer | 3 slabs on 2 beams make 3 (3) |
+| Balcony door | `balcony_door` (`_top`, `_open`, `_open_top`) | a plank door whose upper half is a lattice | placed whole, as a door; a right click opens and shuts it | a lattice window on a wooden door makes 1 (4) |
+| Arrow slit | `stone_arrow_slit` | dressed stone with an upright slit three texels wide through it | the slit runs away from the placer | 2 stone bricks, a brick slab make 2 (5) |
 
 The home's ladder runs from a hide lean-to through wattle and daub and timber to stone and
 brick. Every piece on it carries a shelter tag for how well it keeps the weather out of a
 room: `shelter:draughty` (hide, wattle), `shelter:sound` (daub, half-timber, shutters, the
-wooden door) or `shelter:fine` (the chimney pieces); the home's wall scan reads them. Their
+wooden door, roofs) or `shelter:fine` (brick); the home's wall scan reads them. Their
 recipes start from worked materials (sticks, twine, hide, fired clay, bricks, beams), never
-from blocks straight out of the ground; daub also takes clay, smoothed onto a wattle panel.
+from blocks straight out of the ground; daub also takes clay, smoothed onto a wattle panel,
+and the stone flue cobbles laid in clay.
+
+Timber posts, beams and jetty beams are sound, lattices draughty; thatch and shingles are
+both sound (the trade between them is fire); the stone flue and the hood are sound. A door
+or window frame is an opening, not a wall, and carries no grade, as an open door or shutter
+does not: a room with an empty frame is open there.
+
+A window walls a room in but lets the weather through: a lattice window, a shuttered one
+left open and an arrow slit are draughty, and carry `draught`, the tag of a wall a draught
+comes through (which a draughty home's whistle can listen for). `draught` means an open
+gap: an oiled-hide window or old glass is a draughty wall with no gap in it, so it
+carries no `draught`. A room with them is as
+closed as without, and as Snug, but each is a face short of sound: enough of them cost a
+room Cosy, which asks nine tenths sound. Shut, the shutters are a sound wall and keep the
+light out. Every window lets light in: a block tagged `window`, `lattice`, `window_frame`,
+`slit` or `draught`, or lit through, is refused at load if it is a whole cube or dims light
+by more than 2 (`light_filter`); a misspelt `shelter:` tag, or `draught` on anything but a
+draughty wall, is refused too.
+
+Stairs and upper floors: the woods' and the cut stones' stairs climb in half-block steps
+without a jump to a landing level with the top stair, and a railing along a balcony, a
+gallery or a landing keeps anyone from walking off it. A railing stands a block high, so
+nobody steps onto it, and to a creature it stands two high, as a fence does, so nothing
+hops over it: no animal walks on its top or on air over it, even from a step beside it.
+A boss, or a fighter after a player, climbs it as the block-high step it is, so a ring of
+railings is no pen to fight from. It walls no room: a home's survey looks past it (survival.ron's
+`home_furniture` names `railing`), so a gallery round a hall leaves the hall as walled as it
+was. A shut balcony door is a sound lower half and a draughty lattice over it; open, it is
+a way through, as an empty frame is. At load a block tagged `railing` must be solid and a
+block high, and one tagged `landing` solid across the whole top of its cell.
+The home's load check (`Rules::check_shelters`) holds every solid building or roof block
+but furniture to exactly one grade.
+
+Chimney pieces (`chimney_piece`: the stone and brick flues, the hood, the pot) carry a
+hearth's smoke up through a roof: the stone flue comes at Construction 2, before brick, so a
+thatched house can have one, and the home's fire rule keeps a chimney's roof from catching.
+A jetty beam sticks out of the wall under an upper floor that overhangs the street; a door
+frame finishes a doorway with no door, and stops nothing, so villagers and animals walk
+through it as through any open way.
 
 Cut stone keeps its stone's tags (a cobblestone slab is `stone`) but never stands in for a
 whole block: a recipe's or a multiblock's `tag:` cell that whole blocks answer takes no piece

@@ -114,7 +114,7 @@ announced in chat with a **Next:** line, and the better one hides the other:
 | Workshop | + roof, 2 lights, a loom, spindle stand or quern, 2 storage | crafting and construction +2, engineering +1 |
 | Pantry | 2 storage, a hearth or any heat block | the good effects of a meal last x1.25 (`meal_time`) |
 | Larder | + roof, 4 storage, a stove or cauldron, a table | meals also heal x1.2 (`meal_heal`) and last x1.5 |
-| Bedside | a bed, a seat, 2 lights (no roof needed) | 2° warmer, and sleeping there is a Well rested sleep |
+| Bedside | a bed, a seat, 2 lights (no roof needed) | 2° warmer, and a night's sleep there is Well rested |
 | Herb nook | 2 hanging herbs or hung drying racks (`drying`), 1 storage | farming and alchemy count 1 level higher, a meal's good lasts x1.1 |
 
 Bedside is a Nomad's first comfort: a stool (Construction 1) and two candles (Crafting 3)
@@ -258,6 +258,9 @@ Right clicking a bed used to only set where you wake. It now also gives a **rest
 `sleeps` rules): Rested (10 minutes) anywhere, Well rested (15) if the bed is in a Snug home,
 Deep rest (20) in a Cosy one (a game day is 20 minutes). Rest gives a little heal, xp,
 mining and speed wherever you go, and a bed always works as a bed (it sets where you wake and your home) but gives no new rest
+(save a bed a village furnished a home with, where its plan put one, while that very bed
+stands there: it is its resident's, and sleeping in it is refused with `bed.someones`, outside
+creative; any other bed works, placed, another player's, or set by command)
 while one lasts, so the buff is a once-a-day habit, not a button to hold. Timed effects count down
 online only.
 
@@ -268,7 +271,8 @@ Sleep (heal x4) for a minute, two in a proper bed, so coming home hurt and sleep
 It is no way to heal in a fight: a bed refuses sleep with a creature that hunts players
 (wild, or kept by another player) within `sleep_threat_reach` blocks (12), or within
 `sleep_after_hurt` seconds (15) of a wound (a blow, a fall, a sting; not the cold or heat
-wearing at one) (`core/survival.ron`). A refused sleep still claims the bed. And it stays slower than eating, since food is the heal (design
+wearing at one) (`core/survival.ron`). A sleep refused for a threat or a wound still claims the bed; a
+village's bed is never claimed. And it stays slower than eating, since food is the heal (design
 draft 63): however many heal buffs and prayers are on, healing by itself is held at
 `heal_most` (1 a second, `survival.ron`), which loading checks is below what the slowest
 food heals a second, a 0.6 s bite at a time; time past a point is never banked to pay out
@@ -279,6 +283,35 @@ Tests: the engine's `a_proper_bed_rests_well_and_every_sleep_mends_slower_than_f
 `no_sleep_with_a_hunter_near_or_wounds_fresh`; the gate's Home step clicks the bag with a
 shambler near and expects the refusal, then waits on every chip the engine says the bag
 gives there.
+
+## Nights
+
+Nights are told apart (home audit 2, item 6). An effect can ask for `Night`: from sunset to
+sunrise (`calendar::night`, by the same day the sky draws), the last third of the day, 16000
+up to 24000 ticks after sunrise: `/time set sunset` is night, `/time set sunrise` day.
+
+- **The better rests are a night's.** A sleep rule marked `night: true` gives its rest only
+  after dark: Well rested (a proper bed, a snug home, a lit corner) and Deep rest (a cosy
+  home). A nap by day still gives Rested and its mend, and says what a night's sleep there
+  would give ("A night's sleep here would rest you better: Well rested").
+- **A nap does not keep a night's rest away.** A bed holds its rest back while that rest, or a
+  better one, is on the player, or while the last sleep's mend (Healing Sleep) still runs
+  (`EffectRegistry::rested`): a second nap rests no more, and a bed after a bag in one night
+  mends no more, but once the nap's mend is over, sleeping that night gives the better rest
+  though the nap's Rested is still on.
+- **An evening in.** After dark, indoors at home within four blocks of a fire to sit by
+  (`campfire`: a campfire, the hearth, the stove; a torch is no fireside), the home's own
+  fire (`HomeHas("campfire", 1)`, not a neighbour's through a wall): Evening in, heal
+  x1.2 and 2° warmer, announced. Morning ends it. A time of day, not a step to build toward:
+  it is on its own ladder (`night`), so `/home` never names it as the next room.
+
+Tests: the engine's `a_night_sleep_rule_holds_only_after_dark` and
+`sleep_gives_the_rest_the_home_allows_once` (a nap does not keep a better
+rest away), the calendar's night; the server's
+`a_nap_by_day_is_no_nights_rest_and_an_evening_in_is_by_the_fire_after_dark`. The gate's walls
+step sets midnight in the walled room by the hearth and waits on the Evening in chip, with its
+line seen at any point in the run, since the server tells an effect once a session and the
+motifs step can be where it first came on ("home: evening in"), then sets noon.
 
 ## Drying off
 
@@ -523,8 +556,11 @@ left (`ash`, here air) and the smoke a smouldering block gives off (non-empty), 
 away, and two worlds burn alike), `a_flame_taken_away_or_put_out_burns_nothing` (and a lit
 hearth two off sets it alight), `a_hearth_lit_under_thatch_smoulders_then_catches` (the hint
 once, the smoulder told, caught only on time), `a_stone_lined_flue_keeps_a_hearths_fire_from_the_roof`,
-`fires_are_saved_with_the_world`. The gate's Blaze step sets a torch by a wattle panel and
-counts the smoke off it before it catches ("fire: smoulders", "fire: catches", "fire: burns out").
+`fires_are_saved_with_the_world`. The gate's Kindle step sets a torch by a wattle panel,
+twenty blocks off the home's steps, and counts the smoke off it ("fire: smoulders"); the fire
+burns on through the home's steps, each frame noting when the panel shows a blaze and when it
+is gone, and the Blaze step, before the catalogue, judges those by fire.ron's times ("fire:
+catches", "fire: burns out"), so its 18 s of waiting run under other steps.
 
 ## Daubing in place
 
@@ -537,7 +573,7 @@ becomes is not coated again), and asks the level of the easiest recipe that make
 becomes (Construction 2 for daub), teaching that recipe's experience a piece; below it, it is
 refused with the level it takes. Action `base:coat` (requirement `Coats`, silent: it only says
 the click meant it), server `coat.rs`, test `clay_daubs_a_placed_wattle_panel_in_place`; the
-gate's Blaze step daubs a panel by its torch ("daub: coats").
+gate's Kindle step daubs a panel by its torch ("daub: coats").
 
 Earth walls daub the same way. Dirt, coarse dirt, gravel, sand and red sand carry the same
 `coat` (blocks.ron), so a room dug into a bank or walled in earth turns from draughty to sound
@@ -650,5 +686,5 @@ for a supper or a talk with fireside guests.
 
 - Real storage (extra pack slots or a home chest) as a tier perk: needs the inventory and
   protocol to take a slot count.
-- Passing the night by sleeping, and a visible Rested icon (effects use the plain buff icon).
+- Passing the night by sleeping (sleep stays a rest, not a skip).
 - Sleeping, and the ladder, for villagers' houses.

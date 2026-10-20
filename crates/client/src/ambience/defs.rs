@@ -87,18 +87,28 @@ pub enum Fixed {
     Cover,
     /// 1 with the head under water.
     Underwater,
+    /// How indoors the player is, 0..1: a roof overhead and walls around, a door open or
+    /// not. Outdoor layers duck by it, and one-shots that do are muffled as much.
+    Shelter,
+    /// A roof close overhead that the sky falls on, 0..1, walls or not: rain drums on it.
+    Roof,
     /// How far the middle of the nearest settlement (its square or green) is, across the
     /// ground, in blocks; [`NO_SETTLEMENT`] with none near.
     Settlement,
     /// How much a roof overhead muffles the open rain, 0 (none overhead) to 1 (`roofs`).
     Sheltered,
+    /// How far outside the nearest settlement's bounds (the ground its buildings stand
+    /// on, with a margin) the player is, in blocks: 0 within; [`NO_SETTLEMENT`] with none.
+    SettlementEdge,
+    /// How many people live in the nearest settlement (0 with none): its size.
+    SettlementPeople,
 }
 
 /// The `settlement` axis with no settlement near.
 pub const NO_SETTLEMENT: f32 = 10_000.0;
 
 impl Fixed {
-    pub const ALL: [Fixed; 29] = [
+    pub const ALL: [Fixed; 33] = [
         Fixed::Air,
         Fixed::Sky,
         Fixed::Canopy,
@@ -126,8 +136,12 @@ impl Fixed {
         Fixed::Dust,
         Fixed::Cover,
         Fixed::Underwater,
+        Fixed::Shelter,
+        Fixed::Roof,
         Fixed::Settlement,
         Fixed::Sheltered,
+        Fixed::SettlementEdge,
+        Fixed::SettlementPeople,
     ];
 
     fn name(self) -> &'static str {
@@ -159,8 +173,12 @@ impl Fixed {
             Fixed::Dust => "dust",
             Fixed::Cover => "cover",
             Fixed::Underwater => "underwater",
+            Fixed::Shelter => "shelter",
+            Fixed::Roof => "roof",
             Fixed::Settlement => "settlement",
             Fixed::Sheltered => "sheltered",
+            Fixed::SettlementEdge => "settlement_edge",
+            Fixed::SettlementPeople => "settlement_people",
         }
     }
 }
@@ -183,6 +201,7 @@ impl Environment {
     pub fn new(axes: usize) -> Self {
         let mut values = vec![0.0; Fixed::ALL.len() + axes];
         values[Fixed::Settlement as usize] = NO_SETTLEMENT;
+        values[Fixed::SettlementEdge as usize] = NO_SETTLEMENT;
         Self { values, home: 1.0, ..Self::default() }
     }
 
@@ -311,6 +330,13 @@ pub struct Bed {
     pub fade: f32,
 }
 
+impl Bed {
+    /// An outdoor layer, heard muffled from indoors: one that ducks by `shelter`.
+    pub fn outdoor(&self) -> bool {
+        self.duck.iter().any(|(by, _)| *by == DuckBy::Axis(Fixed::Shelter as usize))
+    }
+}
+
 /// Where a one-shot sounds from.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Placement {
@@ -320,6 +346,19 @@ pub enum Placement {
     Around { distance: (f32, f32), height: (f32, f32) },
     /// At the player, from no direction.
     Listener,
+    /// At one of the nearest settlement's buildings near (`BUILDINGS_HEARD`) that answer to
+    /// a name of the set (`Ambience::buildings`): its door, or its middle. None near, none
+    /// heard.
+    Building(usize),
+}
+
+/// Buildings a one-shot sounds from (`Building` in ambience.ron): those answering to any
+/// of `names` (a kind, a house, a work: `voxmar_worldgen::SettlementBuilding::answers`),
+/// heard at the `door` or else from the middle.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BuildingSet {
+    pub names: Vec<String>,
+    pub door: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -338,6 +377,30 @@ pub struct OneShot {
     pub when: Conditions,
     pub duck: Vec<(DuckBy, f32)>,
 }
+
+/// How being indoors is told and heard (a file's `shelter`; a later package's replaces it).
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Shelter {
+    /// Blocks out from the eye a wall may be and still count.
+    pub walls: i32,
+    /// Blocks above the eye a roof may be for rain to be heard drumming on it.
+    pub roof: i32,
+    /// Hz an outdoor one-shot is muffled down to when fully indoors: a one-shot is outdoor
+    /// when it ducks by `shelter`, and muffled as far as it ducks.
+    pub muffle: f32,
+    /// How loud thunder is fully indoors, against out in the open.
+    pub thunder: f32,
+}
+
+impl Default for Shelter {
+    fn default() -> Self {
+        Self { walls: 6, roof: 8, muffle: OPEN_AIR_HZ, thunder: 1.0 }
+    }
+}
+
+/// A cutoff that leaves a sound as it is.
+pub const OPEN_AIR_HZ: f32 = 20_000.0;
 
 /// What rain sounds like on a roof (`roofs`).
 #[derive(Clone, Debug, Default)]
@@ -378,6 +441,7 @@ impl Roofs {
 /// Every package's ambience.
 #[derive(Clone, Debug, Default)]
 pub struct Ambience {
+    pub shelter: Shelter,
     pub groups: Vec<Group>,
     /// Which blocks each group counts: tags and materials, matched against the registry,
     /// and whether only falling fluid of them (a waterfall's curtain).
@@ -388,11 +452,15 @@ pub struct Ambience {
     /// Each draughty shelter tag and the beds its walls whistle with (`draughts`), each
     /// bed playing on a group that counts that tag.
     pub draughts: Vec<(String, Vec<usize>)>,
+    /// The sets of buildings one-shots sound from, each once.
+    pub buildings: Vec<BuildingSet>,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct FileDef {
+    #[serde(default)]
+    shelter: Option<Shelter>,
     #[serde(default)]
     groups: Vec<GroupDef>,
     #[serde(default)]
@@ -480,6 +548,11 @@ enum PlacementDef {
     Block(String),
     Around { distance: (f32, f32), height: (f32, f32) },
     Listener,
+    Building {
+        buildings: Vec<String>,
+        #[serde(default)]
+        door: bool,
+    },
 }
 
 #[derive(Deserialize)]
@@ -525,6 +598,15 @@ impl Ambience {
             parsed.push((file.package.as_str(), def));
         }
         let mut ambience = Ambience::default();
+        for (package, def) in &parsed {
+            if let Some(shelter) = def.shelter {
+                let sane = shelter.walls >= 1 && shelter.roof >= 1 && (20.0..=OPEN_AIR_HZ).contains(&shelter.muffle) && (0.0..=1.0).contains(&shelter.thunder);
+                if !sane {
+                    return Err(format!("{package}/{FILE}: shelter wants walls and roof of a block or more, muffle 20..20000 Hz, thunder 0..1"));
+                }
+                ambience.shelter = shelter;
+            }
+        }
         // Groups first, so every file's conditions may name any group.
         for (package, def) in &mut parsed {
             for group in def.groups.drain(..) {
@@ -607,6 +689,16 @@ impl Ambience {
                     ),
                     PlacementDef::Around { distance, height } => Placement::Around { distance, height },
                     PlacementDef::Listener => Placement::Listener,
+                    PlacementDef::Building { buildings, door } => {
+                        if buildings.is_empty() {
+                            return Err(format!("{}: sounds from no building", context(&sound.name)));
+                        }
+                        let set = BuildingSet { names: buildings, door };
+                        Placement::Building(ambience.buildings.iter().position(|s| *s == set).unwrap_or_else(|| {
+                            ambience.buildings.push(set);
+                            ambience.buildings.len() - 1
+                        }))
+                    }
                 };
                 let when =
                     ambience.conditions(sound.when, sound.biome, sound.not_biome).map_err(|e| format!("{}: {e}", context(&sound.name)))?;
@@ -764,6 +856,18 @@ impl Ambience {
             .collect()
     }
 
+    /// Whether every building a one-shot sounds from is one settlements have (`known`:
+    /// `SettlementsDef::building_names`), so a mistyped name is not a sound never heard.
+    pub fn check_buildings(&self, known: &std::collections::BTreeSet<String>) -> Result<(), String> {
+        for sound in &self.sounds {
+            let Placement::Building(set) = sound.at else { continue };
+            if let Some(name) = self.buildings[set].names.iter().find(|name| !known.contains(*name)) {
+                return Err(format!("{FILE}: {} sounds from building {name}, which no settlement has", sound.name));
+            }
+        }
+        Ok(())
+    }
+
     /// The environment for a group's weighted count from the scan: 0..1.
     pub fn presence(&self, group: usize, count: f32) -> f32 {
         let (low, high) = self.groups[group].range;
@@ -839,6 +943,38 @@ mod tests {
         assert!(error(r#"(beds: [(name: "x", sound: Warbler, volume: 1)])"#).contains("not a bed"));
         assert!(error(r#"(sounds: [(name: "x", sound: Owl, volume: 1, at: Block("trees"), per_minute: 1)])"#).contains("no group trees"));
         assert!(error(r#"(beds: [(name: "x", sound: Wind, volume: 1, duck: {"thunder": 1})])"#).contains("thunder"));
+        assert!(error(r#"(shelter: (muffle: 5))"#).contains("shelter"));
+        assert!(error(r#"(shelter: (walls: 0))"#).contains("shelter"));
+        assert!(error(r#"(shelter: (thunder: 1.5))"#).contains("shelter"));
+    }
+
+    /// A one-shot can sound from a settlement's buildings by name, at their doors or from
+    /// their middles; sets asked for twice are one, a set of no names is a mistake, and the
+    /// names must be buildings settlements have.
+    #[test]
+    fn building_sounds_resolve_and_are_checked() {
+        let ambience = Ambience::load(&file(
+            r#"(sounds: [
+                (name: "anvil", sound: Hammer, volume: 0.3, at: Building(buildings: ["smithy"]), per_minute: 2, cooldown: 3),
+                (name: "door", sound: Door, volume: 0.3, at: Building(buildings: ["house"], door: true), per_minute: 2, cooldown: 3),
+                (name: "again", sound: Hammer, volume: 0.3, at: Building(buildings: ["smithy"]), per_minute: 2, cooldown: 3),
+            ])"#,
+        ))
+        .unwrap();
+        assert_eq!(ambience.buildings, [BuildingSet { names: vec!["smithy".into()], door: false }, BuildingSet { names: vec!["house".into()], door: true }]);
+        assert_eq!(ambience.sounds.iter().map(|s| s.at).collect::<Vec<_>>(), [Placement::Building(0), Placement::Building(1), Placement::Building(0)]);
+        let known: std::collections::BTreeSet<String> = ["smithy", "house"].map(String::from).into();
+        assert_eq!(ambience.check_buildings(&known), Ok(()));
+        let unknown = ambience.check_buildings(&["house".to_owned()].into());
+        assert!(unknown.as_ref().is_err_and(|e| e.contains("smithy")), "{unknown:?}");
+        let none = Ambience::load(&file(r#"(sounds: [(name: "x", sound: Hammer, volume: 0.3, at: Building(buildings: []), per_minute: 2, cooldown: 3)])"#));
+        assert!(none.as_ref().is_err_and(|e| e.contains("no building")), "{:?}", none.map(|_| ()));
+        // The shipped sounds name buildings the shipped settlements have.
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let world = voxmar_worldgen::WorldContent::load(&content).unwrap();
+        let shipped = Ambience::load(&content.files).unwrap();
+        assert!(!shipped.buildings.is_empty());
+        assert_eq!(shipped.check_buildings(&world.settlements.building_names()), Ok(()));
     }
 
     /// Roof patters are axes beds play on; a later package's entries replace an earlier

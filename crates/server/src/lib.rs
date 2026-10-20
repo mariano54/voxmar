@@ -42,6 +42,7 @@ mod stores;
 mod treasure;
 mod troughs;
 pub mod save;
+mod spawn_kit;
 mod villagers;
 mod wandering;
 mod weather;
@@ -328,6 +329,7 @@ pub fn load_content(assets: &Path) -> Result<Content, Box<dyn std::error::Error>
     }
     WorldContent::load(&content)?;
     wear::WearRules::load(&content.files, &content.blocks, 0)?;
+    spawn_kit::SpawnKit::load(&content.files, &content.blocks)?;
     let mut notes = Vec::new();
     let survival = rules::SurvivalRules::load(&content.files, &content.blocks, &mut notes)?;
     heal_most_below_food(&content, survival.heal_most)?;
@@ -870,10 +872,48 @@ impl Server {
             spawn,
         };
         server.show_grown_crops(spawn_column);
+        server.lay_spawn_kit();
         server.restore_creatures(state.creatures);
         server.restore_companions(state.companions);
         server.restore_machines(state.machines);
         server
+    }
+
+    /// Lays the spawn kit by the spawn, once per world (`WorldMeta::spawn_kit`): its column is
+    /// loaded by now. Not marked placed, so it is wild.
+    fn lay_spawn_kit(&mut self) {
+        if self.meta.spawn_kit {
+            return;
+        }
+        let kit = spawn_kit::SpawnKit::load(&self.content.files, &self.content.blocks).expect("checked by load_content");
+        // A spawn by a column's edge has the kit's ground in its neighbours too.
+        let today = wear::day(self.day);
+        for pos in kit.columns(self.spawn) {
+            if self.world.contains(pos) {
+                continue;
+            }
+            let loaded = load_column(self.save.as_ref(), &*self.generator, &self.content.blocks, &self.wear_rules, today, pos);
+            self.insert_column(pos, loaded);
+        }
+        // An older save's columns are as players left them: a cell that differs from the
+        // land made fresh was touched, even where `placed` does not know it (dug ground,
+        // dirt set down).
+        let mut fresh = VoxelWorld::default();
+        for pos in kit.columns(self.spawn) {
+            if self.save.as_ref().is_some_and(|save| save.has_column(pos)) {
+                fresh.insert(pos, Arc::new(self.generator.generate(pos)));
+            }
+        }
+        let touched = |p: IVec3| self.placed.contains(&p) || fresh.contains(ColumnPos::of_block(p)) && fresh.block(p) != self.world.block(p);
+        let laid = kit.plan(&self.world, &self.content.blocks, self.spawn, self.meta.seed, touched);
+        for (name, laid, least) in kit.short(&self.content.blocks, &laid) {
+            let older = if self.meta.generator_version != Overworld::VERSION { " (the save is from an older world generator, so its land rarely matches what is generated now)" } else { "" };
+            tracing::warn!("the spawn kit laid {laid} {name} by the spawn, short of its {least}: no more untouched ground in reach{older}");
+        }
+        for (at, block) in laid {
+            self.set_block(at, block);
+        }
+        self.meta.spawn_kit = true;
     }
 
     /// Runs fixed-rate ticks until `stop` is set, then saves. Between ticks, messages are

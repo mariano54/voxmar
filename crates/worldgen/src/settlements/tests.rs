@@ -232,6 +232,9 @@ fn settlement_preview() {
                 info.dropped.join(", "),
                 info.borrowed.join(", ")
             );
+            if let Some(block) = p.wall_block {
+                println!("    walled: {} columns of {}", p.walls.len(), registry.def(block).name);
+            }
             let named = names.as_ref().is_some_and(|n| n.iter().any(|n| p.name.0.contains(n.as_str()) || p.style == *n || info.family == *n));
             if !(named || names.is_none() && i < count) {
                 continue;
@@ -750,15 +753,20 @@ fn house_catalogue() {
 
 
 /// `cargo test --profile iter -p voxmar_worldgen settlement_census -- --ignored --nocapture`
-/// counts the settlements over 24 by 24 squares of three worlds: how many squares hold
-/// one, hamlets to villages, and the layouts and styles drawn.
+/// counts the settlements over 24 by 24 squares of four worlds (`SEEDS`): how many squares
+/// hold one, by size, how many to a square kilometre, how far from spawn the nearest of
+/// each size is, and the layouts and styles drawn.
 #[test]
 #[ignore]
 fn settlement_census() {
-    for seed in [1u64, 42, 7] {
+    let seeds: Vec<u64> = std::env::var("SEEDS").ok().map_or(vec![1, 42, 7, 0x5eed], |s| s.split(',').filter_map(|s| s.parse().ok()).collect());
+    let mut nearest: std::collections::BTreeMap<String, Vec<f32>> = Default::default();
+    let (mut all_squares, mut all_settled) = (0u32, 0u32);
+    for seed in seeds {
         let world = base_world(seed);
         let spacing = world.settlements.def.grid.spacing;
-        let (mut squares, mut hamlets, mut villages) = (0, 0, 0);
+        let mut squares = 0;
+        let mut sizes: std::collections::BTreeMap<String, u32> = Default::default();
         let mut layouts: std::collections::BTreeMap<String, u32> = Default::default();
         let mut buildings: std::collections::BTreeMap<String, u32> = Default::default();
         let start = std::time::Instant::now();
@@ -767,7 +775,7 @@ fn settlement_census() {
                 squares += 1;
                 let slot = world.settlements.slot(&world, IVec2::new(cx, cz));
                 let Some(plan) = &slot.0 else { continue };
-                if plan.size == "hamlet" { hamlets += 1 } else { villages += 1 }
+                *sizes.entry(plan.size.clone()).or_default() += 1;
                 *layouts.entry(plan.layout.clone()).or_default() += 1;
                 for b in &plan.buildings {
                     *buildings.entry(b.what.clone()).or_default() += 1;
@@ -778,9 +786,26 @@ fn settlement_census() {
         println!("  given up (no spot, unfit spots, climate, no lanes, no well, missing a must, few homes, no field or pen, unfit land, poor soil): {given_up:?}");
         let fails: Vec<u32> = super::plan::PLACE_FAILS.iter().map(|c| c.swap(0, std::sync::atomic::Ordering::Relaxed)).collect();
         println!("  lots missed (no house fits, out of bounds, too close, on a lane, unfit ground, too steep, off the lane's height): {fails:?}");
-        println!("seed {seed}: {} of {squares} squares settled ({hamlets} hamlets, {villages} villages) in {:?}, {spacing}", hamlets + villages, start.elapsed());
+        let settled: u32 = sizes.values().sum();
+        let km2 = squares as f32 * (spacing as f32 / 1000.0).powi(2);
+        println!("seed {seed}: {settled} of {squares} squares settled {sizes:?}, {:.3} a square km, in {:?}, {spacing}", settled as f32 / km2, start.elapsed());
+        let spawn = world.spawn_point();
+        let from = IVec2::new(spawn.x, spawn.z);
+        let near = world.settlements.near(&world, from, 6000);
+        for size in ["any", "hamlet", "village", "town"] {
+            let d = near.iter().filter_map(|s| s.0.as_ref()).filter(|p| size == "any" || p.size == size).map(|p| (p.centre - from).as_vec2().length()).fold(f32::MAX, f32::min);
+            println!("  nearest {size} to spawn: {}", if d == f32::MAX { "none within 6000".to_owned() } else { format!("{d:.0}") });
+            nearest.entry(size.to_owned()).or_default().push(d);
+        }
+        all_squares += squares;
+        all_settled += settled;
         println!("  layouts {layouts:?}");
         println!("  buildings {buildings:?}");
+    }
+    println!("all: {all_settled} of {all_squares} squares settled");
+    for (size, mut d) in nearest {
+        d.sort_by(f32::total_cmp);
+        println!("nearest {size} to spawn: median {:.0}, each {d:.0?}", d[d.len() / 2]);
     }
 }
 
@@ -921,7 +946,7 @@ fn plans_keep_to_their_squares_and_rules() {
 /// building shows here, to be looked at in shots and the hash then renewed.
 #[test]
 fn settlements_are_unchanged() {
-    const EXPECTED: u64 = 5509520930946309829;
+    const EXPECTED: u64 = 13394484238960257129;
     let world = shared_world(1);
     let mut text = String::new();
     for cz in -3..3 {
@@ -2850,7 +2875,7 @@ fn site_water_search_stops_after_the_used_prefix() {
                 fixed: world.settlements.fixed.as_ref().unwrap(), seed: world.settlements.seed,
                 spawn, promised: &[], cells: &world.settlements.cells };
             let found = super::plan::site(&ctx, IVec2::ZERO, spawn);
-            let used = if spawn.is_some() { 8 } else { 1 };
+            let used = if spawn.is_some() { 8 } else { def.site.others + 1 };
             assert_eq!(found.len(), if wet && usable { used } else { 0 }, "spawn {spawn:?}, wet {wet}, usable {usable}");
             assert!(found.iter().all(|s| s.1), "every selected site has fresh water");
             let expected = if !wet { tries * def.site.look } else if usable { used } else { tries };
@@ -2974,7 +2999,7 @@ fn culture_planning_budget() {
         if !found.iter().any(|s| s.0.as_ref().is_some_and(|p| p.size == "village")) {
             found = world.settlements.near(&world, centre, 4096);
         }
-        for size in ["hamlet", "village"] {
+        for size in ["hamlet", "village", "town"] {
             let Some(slot) = found.iter().find(|s| s.0.as_ref().is_some_and(|p| p.size == size)) else { continue };
             let plan = slot.0.as_ref().unwrap();
             let cell = world.settlements.cell_of(plan.centre.x, plan.centre.y);
@@ -2990,7 +3015,7 @@ fn culture_planning_budget() {
                 eprintln!("  plan total {ms:.3} ms CPU; river-region creation {:.3} ms elapsed", stages.get(crate::stage::Stage::RiverRegions).as_secs_f64() * 1000.0);
             }
             assert_eq!(again.culture, plan.culture);
-            let budget = match plan.size.as_str() { "hamlet" => 3.0, "village" => 6.0, other => panic!("unbudgeted size {other}") };
+            let budget = match plan.size.as_str() { "hamlet" => 3.0, "village" => 6.0, "town" => 14.0, other => panic!("unbudgeted size {other}") };
             if ms > budget * 2.0 {
                 failures.push(format!("seed {seed} {} at {}: {ms:.2} ms CPU, budget {budget} ms", plan.size, plan.centre));
             }
@@ -3013,4 +3038,264 @@ fn culture_planning_budget() {
     assert!(count >= 20, "only {count} plans");
     println!("culture budget: {count} plans over 20 seeds, peak {peak} bytes including culture");
     assert!(failures.is_empty(), "planning budgets failed:\n{}", failures.join("\n"));
+}
+
+/// Towns are rare and big, and most are walled: a ring round their square and buildings
+/// that cuts no building, leaves a gate wherever a lane passes, and stands a tower at least
+/// every `towers` blocks; a village is now and then walled, a hamlet never.
+#[test]
+fn towns_are_big_rare_and_walled_round_their_heart() {
+    use super::house::Kind;
+    let (mut sizes, mut walled) = (std::collections::BTreeMap::<String, usize>::new(), std::collections::BTreeMap::<String, usize>::new());
+    let mut towns = Vec::new();
+    for seed in [1u64, 42, 7] {
+        let world = shared_world(seed);
+        let rules = &world.settlements.def.rules.walls;
+        for cz in -5..5 {
+            for cx in -5..5 {
+                let slot = world.settlements.slot(&world, IVec2::new(cx, cz));
+                let Some(p) = &slot.0 else { continue };
+                *sizes.entry(p.size.clone()).or_default() += 1;
+                if p.walls.is_empty() {
+                    continue;
+                }
+                *walled.entry(p.size.clone()).or_default() += 1;
+                assert!(p.wall_block.is_some(), "seed {seed}, {}: a wall of nothing", p.name.0);
+                for &(at, top) in &p.walls {
+                    assert!((2..=12).contains(&top), "seed {seed}, {}: the wall at {at} stands {top} high", p.name.0);
+                    for b in &p.buildings {
+                        let inside = at.cmpge(b.min - 1).all() && at.cmple(b.max + 1).all();
+                        assert!(!inside, "seed {seed}, {}: the wall at {at} runs into the {} at {}..{}", p.name.0, b.what, b.min, b.max);
+                    }
+                    // The wall leaves every lane a way through: none of it stands on a lane.
+                    for (lane, half) in p.lanes.iter().zip(&p.lane_halves) {
+                        let near = lane.windows(2).flat_map(|w| (0..=16).map(move |k| w[0].lerp(w[1], k as f32 / 16.0))).map(|q| q.distance(at.as_vec2())).fold(f32::MAX, f32::min);
+                        assert!(near > *half, "seed {seed}, {}: the wall at {at} stands {near:.1} from a lane {half} wide each side", p.name.0);
+                    }
+                }
+                // Towers stand along it: the tallest columns, never too far apart round it.
+                let tall = p.walls.iter().map(|w| w.1).max().unwrap();
+                let towers = p.walls.iter().filter(|w| w.1 == tall).count();
+                assert!(towers >= 4, "seed {seed}, {}: {towers} tower corners along {} blocks of wall", p.name.0, p.walls.len());
+                if p.size == "town" {
+                    let homes = p.buildings.iter().filter(|b| b.kind == Kind::House && b.work.is_none()).count();
+                    towns.push((seed, p.name.0.clone(), homes, p.walls.len(), rules.towers.0));
+                }
+            }
+        }
+    }
+    eprintln!("sizes {sizes:?}, walled {walled:?}, towns {towns:?}");
+    // The ring closes round every lot it would have run against (a field, a pen, a shrine).
+    assert_eq!(super::plan::WALL_ON_LOTS.load(std::sync::atomic::Ordering::Relaxed), 0, "a wall left open against a lot");
+    let all: usize = sizes.values().sum();
+    let town_count = sizes.get("town").copied().unwrap_or(0);
+    assert!(town_count >= 2 && town_count * 100 <= all * 15, "{town_count} towns in {all} settlements");
+    assert!(walled.get("hamlet").is_none(), "a hamlet walled");
+    assert!(walled.get("town").copied().unwrap_or(0) * 2 >= town_count, "few towns walled: {walled:?} of {town_count}");
+    assert!(towns.iter().all(|t| t.2 >= 14), "a small town: {towns:?}");
+}
+
+/// Homes are furnished for who lives in them (`interiors`): beds for their residents,
+/// tagged `bed` where the plan says they stand, a table with seats round it, and every bed
+/// and seat on the ground floor reached on foot from the door, which nothing stands in
+/// front of. `--nocapture` prints a few floor plans.
+#[test]
+fn homes_are_furnished_for_their_people() {
+    use super::canvas::Put;
+    use rustc_hash::FxHashMap;
+    let registry = base_registry();
+    let content = crate::content::WorldContent::base(&registry).unwrap();
+    let solid = |b: Option<&BlockId>| b.is_some_and(|&b| registry.info(b).solid);
+    let tagged = |b: Option<&BlockId>, tag: &str| b.is_some_and(|&b| registry.def(b).has_tag(tag));
+    let (mut homes, mut wanted, mut beds, mut tables, mut seats, mut tops, mut surfaces, mut stairs, mut bare) = (0, 0, 0, 0, 0, 0, 0, 0, Vec::new());
+    let mut shown = 0;
+    for seed in [42u64, 1, 7] {
+        let world = Overworld::with_content(seed, registry.clone(), &content);
+        let spawn = world.spawn_point();
+        for slot in world.settlements.near(&world, IVec2::new(spawn.x, spawn.z), 2500) {
+            let Some(plan) = slot.0.as_ref() else { continue };
+            let mut at: FxHashMap<IVec3, BlockId> = FxHashMap::default();
+            for v in plan.voxels.values().flatten().filter(|v| !v.ground) {
+                match v.put {
+                    Put::Set(b) | Put::Soft(b) | Put::Down(b) => at.insert(v.pos, b),
+                    Put::Clear => at.insert(v.pos, BlockId::AIR),
+                };
+            }
+            for (i, b) in plan.buildings.iter().enumerate() {
+                if b.kind != super::house::Kind::House || b.work.is_some() || b.room.is_empty() {
+                    continue;
+                }
+                homes += 1;
+                let residents = plan.people.iter().filter(|r| r.home == i).count();
+                wanted += residents.min(4);
+                beds += b.beds.len();
+                seats += b.seats.len();
+                if residents > 0 && b.beds.is_empty() {
+                    bare.push(format!("{} {} at {:?}, {} people", plan.name.0, b.what, b.min, residents));
+                }
+                for bed in &b.beds {
+                    assert!(tagged(at.get(bed), "bed"), "{}'s {} has no bed at {bed}", plan.name.0, b.what);
+                }
+                let y = b.floor;
+                let room: rustc_hash::FxHashSet<IVec2> = b.room.iter().copied().collect();
+                let walk = |p: IVec2| room.contains(&p) && solid(at.get(&IVec3::new(p.x, y, p.y))) && !solid(at.get(&IVec3::new(p.x, y + 1, p.y))) && !solid(at.get(&IVec3::new(p.x, y + 2, p.y)));
+                // A table on any storey.
+                if (b.min.x..=b.max.x).any(|x| (b.min.y..=b.max.y).any(|z| (y + 1..y + 16).any(|up| tagged(at.get(&IVec3::new(x, up, z)), "table")))) {
+                    tables += 1;
+                }
+                // Things set on the tables and cupboards: on a solid piece of furniture, not
+                // cloth.
+                for x in b.min.x..=b.max.x {
+                    for z in b.min.y..=b.max.y {
+                        for up in y + 1..y + 16 {
+                            let below = at.get(&IVec3::new(x, up, z));
+                            if !(tagged(below, "furniture") && solid(below)) {
+                                continue;
+                            }
+                            surfaces += 1;
+                            let above = at.get(&IVec3::new(x, up + 1, z));
+                            if above.is_some_and(|b| !b.is_air()) && !tagged(above, "cloth") && !tagged(above, "furniture") {
+                                tops += 1;
+                            }
+                        }
+                    }
+                }
+                // On foot from just inside the door.
+                let step = b.facing.step();
+                let door = b.door.expect("a home's door");
+                let inside = IVec2::new(door.x, door.z) - step * 3;
+                assert!(walk(inside), "{}'s {} at {:?}: the way in at {inside} is blocked", plan.name.0, b.what, b.min);
+                let mut seen = rustc_hash::FxHashSet::default();
+                seen.insert(inside);
+                let mut queue = vec![inside];
+                while let Some(p) = queue.pop() {
+                    for s in [IVec2::X, IVec2::NEG_X, IVec2::Y, IVec2::NEG_Y] {
+                        if walk(p + s) && seen.insert(p + s) {
+                            queue.push(p + s);
+                        }
+                    }
+                }
+                let mut fail = None;
+                // The stair up, if any: its lowest step (a block up from the floor, the next
+                // step beside it a block higher) has a walked-to column beside it.
+                let plain = |p: IVec3| solid(at.get(&p)) && !tagged(at.get(&p), "furniture") && !tagged(at.get(&p), "furnishing");
+                let sides = [IVec2::X, IVec2::NEG_X, IVec2::Y, IVec2::NEG_Y];
+                let lowest: Vec<IVec2> = room.iter().copied().filter(|p| {
+                    plain(IVec3::new(p.x, y + 1, p.y)) && !solid(at.get(&IVec3::new(p.x, y + 2, p.y)))
+                        && sides.iter().any(|s| plain(IVec3::new(p.x + s.x, y + 2, p.y + s.y)) && !solid(at.get(&IVec3::new(p.x + s.x, y + 3, p.y + s.y))))
+                }).collect();
+                stairs += usize::from(!lowest.is_empty());
+                if !lowest.is_empty() && !lowest.iter().any(|p| sides.iter().any(|s| seen.contains(&(*p + *s)))) {
+                    fail = Some(format!("{}'s {} at {:?}: the stair's foot at {lowest:?} can't be walked to", plan.name.0, b.what, b.min));
+                }
+                for bed in b.beds.iter().filter(|p| p.y == y + 1) {
+                    let p = IVec2::new(bed.x, bed.z);
+                    if ![IVec2::X, IVec2::NEG_X, IVec2::Y, IVec2::NEG_Y].iter().any(|s| seen.contains(&(p + *s))) {
+                        fail = Some(format!("{}'s {} at {:?}: the bed at {bed} can't be walked to", plan.name.0, b.what, b.min));
+                    }
+                }
+                for seat in b.seats.iter() {
+                    if !seen.contains(&IVec2::new(seat.x, seat.z)) {
+                        fail = Some(format!("{}'s {} at {:?}: the seat at {seat} can't be walked to", plan.name.0, b.what, b.min));
+                    }
+                }
+                // A few floor plans of the ground floor, north up (and any that fails).
+                if fail.is_some() || (shown < 6 && residents >= 2) {
+                    shown += 1;
+                    let (lo, hi) = (b.min, b.max);
+                    println!("{} ({}), {} for {residents}: {:?}", plan.name.0, plan.culture.family, b.what, plan.people.iter().filter(|r| r.home == i).map(|r| r.species.as_str()).collect::<Vec<_>>());
+                    for z in lo.y..=hi.y {
+                        let row: String = (lo.x..=hi.x)
+                            .map(|x| {
+                                let p = IVec2::new(x, z);
+                                let b1 = at.get(&IVec3::new(x, y + 1, z));
+                                let name = b1.map(|&b| registry.def(b).name.clone()).unwrap_or_default();
+                                if p == inside {
+                                    'D'
+                                } else if tagged(b1, "bed") {
+                                    'B'
+                                } else if tagged(b1, "table") {
+                                    'T'
+                                } else if tagged(b1, "seat") {
+                                    'c'
+                                } else if tagged(b1, "rug") {
+                                    'r'
+                                } else if tagged(b1, "storage") || tagged(b1, "shelf") {
+                                    'S'
+                                } else if name.contains("campfire") || name.contains("torch") || tagged(b1, "light") {
+                                    '*'
+                                } else if room.contains(&p) && walk(p) {
+                                    '.'
+                                } else if room.contains(&p) {
+                                    'x'
+                                } else if solid(b1) {
+                                    '#'
+                                } else {
+                                    ' '
+                                }
+                            })
+                            .collect();
+                        println!("    {row}");
+                    }
+                }
+                if let Some(fail) = fail {
+                    panic!("{fail}");
+                }
+            }
+        }
+    }
+    println!("{homes} homes: {beds} beds for {wanted} wanted, {tables} tables, {seats} seats, {tops} things set on {surfaces} tables and cupboards, {stairs} stairs; bare: {bare:?}");
+    assert!(stairs > 0, "no stairs to walk to");
+    assert!(homes >= 20, "only {homes} homes near spawn");
+    assert!(beds * 10 >= wanted * 9, "{beds} beds for {wanted} residents");
+    assert!(tables * 20 >= homes * 17, "{tables} tables in {homes} homes");
+    // Tops' chance is about a half (leaning): a quarter at least of tables and cupboards.
+    assert!(tops * 4 >= surfaces && surfaces > 0, "{tops} things set on {surfaces} tables and cupboards");
+    assert!(bare.len() * 50 <= homes, "homes with nobody's bed: {bare:?}");
+}
+
+/// Loading refuses a trade piece for someone who never lives in a settlement, and a bed
+/// that is not a furnishing (which would be anyone's to sleep in).
+#[test]
+fn interiors_load_checks_refuse_strangers_and_unclaimed_beds() {
+    use super::interior::Role;
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+    let content = voxmar_engine::content::Content::load(&dir).unwrap();
+    let world = crate::content::WorldContent::load(&content).unwrap();
+    let s = &world.settlements;
+    let (species, works) = (s.people.species(), s.works());
+    assert!(s.interiors.check_who(&species, &works).is_ok());
+    let mut stranger = s.interiors.clone();
+    stranger.pieces.iter_mut().find(|p| p.role == Role::Trade).unwrap().who = vec!["nobody_at_all".into()];
+    assert!(stranger.check_who(&species, &works).is_err(), "a trade piece for nobody was let through");
+    let mut bag = s.interiors.clone();
+    bag.pieces.iter_mut().find(|p| p.role == Role::Bed).unwrap().block = "base:sleeping_bag".into();
+    assert!(bag.check(&content.blocks).is_err(), "a bed that is no furnishing was let through");
+}
+
+/// Trails come into a walled place through its gates: none runs over a column of its wall.
+#[test]
+fn trails_never_cross_a_wall() {
+    let (mut places, mut trails) = (0, 0);
+    let mut over = Vec::new();
+    for seed in [0x5eedu64, 7] {
+        let world = shared_world(seed);
+        let spawn = world.spawn_point();
+        for s in world.settlements_near(IVec2::new(spawn.x, spawn.z), 9000).into_iter().filter(|s| !s.walls.is_empty()) {
+            places += 1;
+            let walls: rustc_hash::FxHashSet<IVec2> = s.walls.iter().map(|w| w.0).collect();
+            let (lo, hi) = (walls.iter().fold(IVec2::MAX, |a, &b| a.min(b)), walls.iter().fold(IVec2::MIN, |a, &b| a.max(b)));
+            let (lines, _) = world.trails_in(lo - 8, hi + 8);
+            trails += lines.len();
+            for &(p, _) in lines.iter().flatten() {
+                if walls.contains(&p.round().as_ivec2()) {
+                    let c = p.round().as_ivec2();
+                    let gate = s.gates.iter().map(|g| (*g - c).abs().max_element()).min().unwrap_or(-1);
+                    over.push(format!("{} at {c}, {gate} from a gate", s.name.0));
+                }
+            }
+        }
+    }
+    assert!(places >= 6 && trails >= 20, "only {places} walled places and {trails} trails by them to judge");
+    assert!(over.is_empty(), "{} trail points on a wall: {:?}", over.len(), &over);
 }
