@@ -3252,12 +3252,12 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 let net = world.resource::<Net>();
                 for line in [
                     format!("fill {} {} air", at(-1, 0, -1), at(1, 1, 1)),
-                    format!("fill {} {} kiln_bricks", at(-1, 0, -1), at(1, 0, 1)),
+                    format!("fill {} {} tempered_kiln_bricks", at(-1, 0, -1), at(1, 0, 1)),
                     format!("setblock {} crucible", at(0, 0, 0)),
-                    format!("setblock {} kiln_bricks", at(-1, 1, -1)),
-                    format!("setblock {} kiln_bricks", at(1, 1, -1)),
-                    format!("setblock {} kiln_bricks", at(-1, 1, 1)),
-                    format!("setblock {} kiln_bricks", at(1, 1, 1)),
+                    format!("setblock {} tempered_kiln_bricks", at(-1, 1, -1)),
+                    format!("setblock {} tempered_kiln_bricks", at(1, 1, -1)),
+                    format!("setblock {} tempered_kiln_bricks", at(-1, 1, 1)),
+                    format!("setblock {} tempered_kiln_bricks", at(1, 1, 1)),
                     "clear".to_owned(),
                     "give coal_ore 24".to_owned(),
                 ] {
@@ -4499,14 +4499,61 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if made >= count {
                 let result = if made == count { Ok(format!("{clay} fired clay made {made} kiln bricks")) } else { Err(format!("{clay} fired clay made {made} kiln bricks, not the recipe's {count}")) };
                 gate.check("craft: kiln bricks", result);
-                gate.next(Step::Weather, now);
+                // Straw from the field and fired clay for the bricks the Crucible Kiln is
+                // built of.
+                let (level, clay, straw, _) = tempered_bricks(world);
+                let net = world.resource::<Net>();
+                net.command(&format!("skill crafting {level}"));
+                net.command(&format!("give fired_clay {clay}"));
+                net.command(&format!("give straw {straw}"));
+                gate.advance(now);
             } else if gate.server_in_phase() > 5.0 {
                 gate.check("craft: kiln bricks", Err(format!("{clay} fired clay made {made} kiln bricks, not the recipe's {count}")));
                 gate.next(Step::Weather, now);
             }
         }
+        // Fired clay with straw in the grid make tempered kiln bricks (the Crucible Kiln's),
+        // two for four as plain ones are.
+        12 => {
+            let (level, clay, straw, _) = tempered_bricks(world);
+            if clay == 0 || straw == 0 {
+                gate.check("craft: tempered kiln bricks", Err("no recipe makes tempered kiln bricks of fired clay and straw".to_owned()));
+                gate.next(Step::Weather, now);
+            } else if holding(world, "base:fired_clay").0 >= clay && holding(world, "base:straw").0 >= straw && skill_level(world, "core:crafting").0 >= level {
+                gate.count_before = holding(world, "base:tempered_kiln_bricks").0;
+                let items = std::iter::repeat_n("base:fired_clay", clay as usize).chain(std::iter::repeat_n("base:straw", straw as usize));
+                let cells: Vec<(usize, &str)> = [0, 1, 3, 4, 2, 5, 6, 7, 8].into_iter().zip(items).collect();
+                lay_and_craft(world, &cells);
+                gate.advance(now);
+            } else if gate.server_in_phase() > 5.0 {
+                gate.check("craft: tempered kiln bricks", Err(format!("{} of {clay} fired clay, {} of {straw} straw, or Crafting {level}, never arrived", holding(world, "base:fired_clay").0, holding(world, "base:straw").0)));
+                gate.next(Step::Weather, now);
+            }
+        }
+        13 => {
+            let (_, clay, straw, count) = tempered_bricks(world);
+            let made = holding(world, "base:tempered_kiln_bricks").0.saturating_sub(gate.count_before);
+            let said = |made: u32| format!("{clay} fired clay and {straw} straw made {made} tempered kiln bricks");
+            if made >= count {
+                gate.check("craft: tempered kiln bricks", if made == count { Ok(said(made)) } else { Err(format!("{}, not the recipe's {count}", said(made))) });
+                gate.next(Step::Weather, now);
+            } else if gate.server_in_phase() > 5.0 {
+                gate.check("craft: tempered kiln bricks", Err(format!("{}, not the recipe's {count}", said(made))));
+                gate.next(Step::Weather, now);
+            }
+        }
         _ => {}
     }
+}
+
+/// The tempered kiln bricks' recipe, from the loaded data: the Crafting level it asks, the
+/// fired clay and straw it takes and the bricks it makes.
+fn tempered_bricks(world: &World) -> (u8, u32, u32, u32) {
+    let content = &world.resource::<crate::session::Launch>().content;
+    let (bricks, clay, straw) = (content.blocks.id("base:tempered_kiln_bricks"), content.blocks.id("base:fired_clay"), content.blocks.id("base:straw"));
+    let recipe = content.recipes.iter().find(|r| Some(r.output) == bricks && r.cells().iter().flatten().all(|&c| Some(c) == clay || Some(c) == straw));
+    let takes = |recipe: &voxmar_engine::craft::Recipe, item| recipe.cells().iter().flatten().filter(|&&c| Some(c) == item).count() as u32;
+    recipe.map_or((0, 0, 0, 0), |r| (r.level, takes(r, clay), takes(r, straw), r.count as u32))
 }
 
 /// The kiln bricks' recipe, from the loaded data: the Crafting level it asks, the fired

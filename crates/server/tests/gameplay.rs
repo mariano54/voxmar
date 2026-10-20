@@ -728,12 +728,14 @@ fn crops_are_sown_at_their_level_grow_and_are_harvested_for_experience() {
     assert_eq!(client.world.block(other + IVec3::Y), Some(BlockId::AIR), "sown without the level");
     client.pump_until(|c| c.inventory.get(0).map(|s| s.count) == Some(4));
 
-    // Grown ripe, then broken: its harvest pops out and its experience is earned, the
-    // sowing's (2) with the harvest's (9), in tenths.
+    // Grown ripe, then broken: its harvest pops out, the straw the Crucible Kiln's bricks
+    // take among it, and its experience is earned, the sowing's (2) with the harvest's (9),
+    // in tenths.
     assert_eq!(client.ok("/grow ripe"), "Grew 1 plant.");
     client.pump_until(|c| c.world.block(ground + IVec3::Y) == Some(ripe));
     client.propose("core:mine", ActionTarget::Block { block: ground + IVec3::Y, face: Face::PosY });
-    client.pump_until(|c| c.earned == [110] && c.items.values().any(|i| i.stack.item == wheat));
+    let straw = client.content.blocks.expect("base:straw");
+    client.pump_until(|c| c.earned == [110] && c.items.values().any(|i| i.stack.item == wheat) && c.items.values().any(|i| i.stack.item == straw));
     client.pump_until(|c| c.skills.xp(voxmar_engine::skill::SkillId(0)) == 110);
 
     // Ripe fruit on a tree is picked by hand: the fruit pops out and the
@@ -8228,7 +8230,8 @@ const QUEST_BOOK_ORDER: &[&str] = &[
 impl Fresh {
     /// More of the plot for the Farm age, east and north of the first days' ground: two more
     /// ponds like the first (two blocks wide, clay two deep under a block of water, a bank
-    /// each side), fourteen more oak trunks for charcoal, and a copper vein's ten ores.
+    /// each side), fourteen more oak trunks for charcoal, a copper vein's ten ores, and wild
+    /// wheat for a field's seed.
     fn lay_out_the_farm(&mut self) {
         let (o, v) = (self.origin, IVec3::new);
         self.c.fill(o, v(21, 0, -11), v(30, 10, 13), "air");
@@ -8243,7 +8246,11 @@ impl Fresh {
             }
         }
         self.c.fill(o, v(18, 0, 7), v(19, 0, 11), "copper_ore");
-        let probes = [(v(27, -1, 11), "base:water"), (v(15, 3, -9), "base:oak_log"), (v(19, 0, 11), "base:copper_ore")];
+        // Six tufts of wild wheat beyond the east pond for the field's seeds, and a lone
+        // trunk by them for the hoe.
+        self.c.fill(o, v(29, 0, 8), v(30, 0, 10), "wild_wheat");
+        self.c.fill(o, v(30, 0, 12), v(30, 0, 12), "oak_log");
+        let probes = [(v(27, -1, 11), "base:water"), (v(15, 3, -9), "base:oak_log"), (v(19, 0, 11), "base:copper_ore"), (v(30, 0, 10), "base:wild_wheat"), (v(30, 0, 12), "base:oak_log")];
         self.c.pump_until(|c| probes.iter().all(|&(at, name)| c.world.block(o + at) == c.content.blocks.id(name)));
     }
 
@@ -8374,6 +8381,7 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     let o = f.origin;
     let (stick, log, charcoal) = ("base:stick", "base:oak_log", "base:charcoal");
     let (fired, bricks, ingot, copper) = ("base:fired_clay", "base:kiln_bricks", "base:copper_ingot", "base:copper_ore");
+    let (straw, tempered) = ("base:straw", "base:tempered_kiln_bricks");
 
     // Look It Up, pinned in a new book: the stone pickaxe looked up in the recipe viewer.
     let pickaxe = f.c.content.blocks.expect("base:stone_pickaxe");
@@ -8390,6 +8398,40 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
             site.banks.extend((2..=11).step_by(2).map(|z| Fresh::middle(o + IVec3::new(bank, 0, z))));
         }
     }
+
+    // The field, sown first of the Farm age so it ripens while the line goes on: six tufts
+    // of wild wheat beyond the east pond picked for their seeds, a wooden hoe of the lone
+    // trunk there, and six squares of dirt within the pond's reach tilled and sown. Its
+    // straw tempers the Crucible Kiln's bricks.
+    let planks = "base:oak_planks";
+    for tuft in (8..=10).flat_map(|z| [29, 30].map(|x| o + IVec3::new(x, 0, z))) {
+        f.walk_toward(Fresh::middle(tuft), 1.3);
+        f.propose("core:mine", ActionTarget::Block { block: tuft, face: Face::PosY });
+        f.wait(5.0, "picking the wild wheat", |c| c.world.block(tuft) == Some(BlockId::AIR));
+    }
+    f.collect("base:wheat_seeds", 6);
+    f.gather("base:stone_axe", vec![o + IVec3::new(30, 0, 12)], log, 1);
+    f.craft(&[(0, log, 1)], planks, 4);
+    if f.have(stick) < 2 {
+        f.craft(&[(0, planks, 1), (3, planks, 1)], stick, 4);
+    }
+    f.at_table(site.table);
+    f.craft(&[(0, planks, 1), (1, planks, 1), (4, stick, 1), (7, stick, 1)], "base:wooden_hoe", 1);
+    let field: Vec<IVec3> = (2..=4).flat_map(|z| [29, 30].map(|x| o + IVec3::new(x, -1, z))).collect();
+    let (farmland, sprout, ripe) = (f.c.content.blocks.expect("base:farmland"), f.c.content.blocks.expect("base:wheat_crop_0"), f.c.content.blocks.expect("base:wheat_crop"));
+    let by_the_field = Fresh::middle(o + IVec3::new(29, 0, 6));
+    f.walk_toward(by_the_field, 0.3);
+    f.hold("base:wooden_hoe");
+    for &ground in &field {
+        f.propose("base:till", ActionTarget::Block { block: ground, face: Face::PosY });
+    }
+    f.wait(5.0, "tilling the field", |c| field.iter().all(|&g| c.world.block(g) == Some(farmland)));
+    f.hold("base:wheat_seeds");
+    for &ground in &field {
+        f.propose("base:plant", ActionTarget::Block { block: ground, face: Face::PosY });
+    }
+    f.wait(5.0, "sowing the field", |c| field.iter().all(|&g| c.world.block(g + IVec3::Y) == Some(sprout)));
+    f.mark("sown");
 
     // The Potter: six clay pots at the table, five fired clay round an empty top middle
     // making two (Crafting 2).
@@ -8448,22 +8490,42 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     f.craft(&[(0, fired, k), (1, fired, k), (3, fired, k), (4, fired, k)], bricks, crafts * 2);
     f.mark("brick_by_brick");
 
+    // First Harvest: the field sown at the start of the age, waited on if it is not yet
+    // ripe, and cut: wheat, seed and the straw the kiln's bricks take, one or two a plant.
+    f.walk_toward(by_the_field, 0.3);
+    f.wait(1200.0, "the wheat ripening", |c| field.iter().all(|&g| c.world.block(g + IVec3::Y) == Some(ripe)));
+    f.hold("");
+    for &ground in &field {
+        let plant = ground + IVec3::Y;
+        f.propose("core:mine", ActionTarget::Block { block: plant, face: Face::PosY });
+        f.wait(5.0, "cutting the wheat", |c| c.world.block(plant) != Some(ripe));
+    }
+    f.collect(straw, 6);
+    f.mark("first_harvest");
+
+    // Twelve tempered kiln bricks for the kiln, two from four fired clay and a straw, at
+    // the table (five cells).
+    f.fire_clay(&site, 24);
+    f.at_table(site.table);
+    f.craft(&[(0, fired, 6), (1, fired, 6), (3, fired, 6), (4, fired, 6), (2, straw, 6)], tempered, 12);
+
     // The Crucible: seven kiln bricks round a clay pot at the table (Engineering 10).
     f.at_table(site.table);
     f.craft(&[(0, bricks, 1), (2, bricks, 1), (3, bricks, 1), (4, "base:clay_pot", 1), (5, bricks, 1), (6, bricks, 1), (7, bricks, 1), (8, bricks, 1)], "base:crucible", 1);
     f.mark("the_crucible");
 
-    // The Crucible Kiln: the crucible set down, ringed with eight kiln bricks, one more on
-    // each corner of the ring; thirty-two charcoal held and the crucible right-clicked.
+    // The Crucible Kiln: the crucible set down, ringed with eight tempered kiln bricks, one
+    // more on each corner of the ring; thirty-two charcoal held and the crucible
+    // right-clicked.
     f.burn_charcoal(&site, 32);
     let centre = f.rel(13, 0, 9);
     f.walk_toward(Fresh::middle(f.rel(13, 0, 6)), 0.05);
     let core = f.place("base:crucible", centre - IVec3::Y);
     for (dx, dz) in [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)] {
-        f.place(bricks, centre + IVec3::new(dx, -1, dz));
+        f.place(tempered, centre + IVec3::new(dx, -1, dz));
     }
     for (dx, dz) in [(-1, -1), (1, -1), (-1, 1), (1, 1)] {
-        f.place(bricks, centre + IVec3::new(dx, 0, dz));
+        f.place(tempered, centre + IVec3::new(dx, 0, dz));
     }
     f.hold(charcoal);
     f.propose("base:light", ActionTarget::Block { block: core, face: Face::PosY });
@@ -8519,6 +8581,7 @@ const FRESH_QUESTS: &[(&str, &str)] = &[
     ("charcoal", "charcoal"),
     ("red_metal", "red_metal"),
     ("brick_by_brick", "brick_by_brick"),
+    ("first_harvest", "first_harvest"),
     ("the_crucible", "the_crucible"),
     ("crucible_kiln", "crucible_kiln"),
 ];

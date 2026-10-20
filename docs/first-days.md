@@ -41,7 +41,9 @@ paying Farming, Mining and Fishing experience and two bread.
 (Hens in a Row, Fresh Eggs), cook (Camp Cook, level 5), a flock (A Woolly Flock). The main line
 is clay work: Clay Banks, A Pit Kiln, Fire the Clay (twelve fired clay), The Potter, Brick by
 Brick (nineteen kiln bricks, about 40 fired clay: four make two), and Red Metal for the copper the crucible
-needs. The Crucible then The Crucible Kiln: **lighting it ends Farm**. Everything else
+needs. The Crucible then The Crucible Kiln, whose ring is tempered kiln bricks: four fired
+clay and a straw, and straw only comes of a grain harvest, so the field sown at the start of
+the age (First Harvest) is on the way. **Lighting it ends Farm**. Everything else
 (husbandry, hunting, mail, home furnishings, ores, exploring) is optional breadth with its
 own rewards, so a player can always see two or three things worth doing.
 

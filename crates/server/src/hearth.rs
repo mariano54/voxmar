@@ -451,7 +451,7 @@ mod tests {
         let column = ColumnPos::of_block(server.spawn.floor().as_ivec3());
         let core = column.origin() + IVec3::new(31, server.spawn.y as i32 + 4, 8);
         server.load_area(core - IVec3::splat(2), core + IVec3::splat(2));
-        let (brick, crucible, coal) = (server.content.blocks.expect("base:kiln_bricks"), server.content.blocks.expect("base:crucible"), server.content.blocks.expect("base:coal_ore"));
+        let (brick, crucible, coal) = (server.content.blocks.expect("base:tempered_kiln_bricks"), server.content.blocks.expect("base:crucible"), server.content.blocks.expect("base:coal_ore"));
         for x in -1..=1 { for z in -1..=1 {
             server.set_block(core + IVec3::new(x, 0, z), brick);
         }}
