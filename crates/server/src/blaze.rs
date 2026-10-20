@@ -739,6 +739,28 @@ mod tests {
         }
     }
 
+    /// A chimney piece lines the flue as stone does: set on the hearthstone with thatch all
+    /// round it a block up, a stone flue or a brick hood keeps the fire from the thatch,
+    /// where an open flue (air) lets it catch.
+    #[test]
+    fn a_chimney_piece_lines_the_flue_as_stone_does() {
+        for piece in ["base:stone_flue", "base:chimney_hood", "air"] {
+            let mut server = crate::test_server();
+            let (core, _client) = hearth(&mut server);
+            let thatch = server.content.blocks.expect("base:thatch_roof");
+            for (x, z) in [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1)] {
+                server.set_block(core + IVec3::new(x, 1, z), thatch);
+            }
+            let flue = if piece == "air" { BlockId::AIR } else { server.content.blocks.expect(piece) };
+            server.set_block(core + IVec3::Y, flue);
+            server.light(1, core);
+            let rules = server.content.fire.rules.clone();
+            run(&mut server, rules.catch_seconds);
+            let caught = !server.blazes.is_empty() || (-1..=1).any(|x| (-1..=1).any(|z| at(&server, core + IVec3::new(x, 1, z)) == "base:blaze"));
+            assert_eq!(caught, piece == "air", "with {piece} over the fire the thatch caught: {caught}");
+        }
+    }
+
     /// Fire.ron's `homes_catch_only_from_owner`: player 2's torch set beside the wattle in
     /// player 1's home (the box round the home hearth 1 lit) never sets it smouldering, nor
     /// does it catch; player 1's own torch in the same place does. Turned off, anyone's does.
