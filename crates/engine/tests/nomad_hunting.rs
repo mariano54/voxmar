@@ -76,6 +76,9 @@ fn shy(creature: &Creature) -> Option<f32> {
 
 /// One hunt of `creature` with `item`, from `seed`.
 fn hunt(content: &Content, creature: &Creature, item: &str, seed: u64) -> (bool, f32, f32, u32, u32, bool) {
+    // Keyed by the item's name (FNV-1a), not its id: a block added anywhere renumbers the
+    // ids after it, and would draw every hunt's rolls afresh.
+    let key = item.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3));
     let combat = &content.combat;
     let feel = combat.feel;
     let item = content.blocks.id(item).unwrap_or_else(|| panic!("no {item}"));
@@ -89,7 +92,7 @@ fn hunt(content: &Content, creature: &Creature, item: &str, seed: u64) -> (bool,
     let hitpoints = content.skills.get(content.skills.id("core:hitpoints").expect("hitpoints"));
     let health = 2.0 * f32::from(hitpoints.start);
     let ours = hit_chance_with(LEVEL, weapon.accuracy, defence_against(def.defence, def.weak, weapon.style), 0, feel.beat_accuracy);
-    let mut rolls = Rolls(seed.wrapping_mul(0x2545_f491_4f6c_dd1d) ^ u64::from(item.0));
+    let mut rolls = Rolls(seed.wrapping_mul(0x2545_f491_4f6c_dd1d) ^ key);
     let (mut gap, mut life, mut taken) = (START, f32::from(def.health), 0.0f32);
     let (mut fear, mut angry) = (0.0f32, false);
     let (mut ready, mut lands, mut blow_at) = (0.0f32, None::<f32>, 0.0f32);
