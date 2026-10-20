@@ -1151,8 +1151,11 @@ fn jettied(pen: &mut Pen, spec: &Spec, mats: &Mats, lift: i32, top: i32, beams: 
                         pen.canvas.absolute.remove(&to);
                     }
                 }
+                // Where the front wall stood, each storey's floor runs on to the wall's
+                // new line; the rest is room.
+                let storey_floor = (y - lift) % (spec.wall + 1) == 0 && (y - lift) / (spec.wall + 1) < spec.storeys;
                 if z == 0 && x > 0 && x < w - 1 {
-                    if y == floor { pen.set(x, y, 0, mats.floor) } else { pen.clear(x, y, 0) }
+                    if storey_floor { pen.set(x, y, 0, mats.floor) } else { pen.clear(x, y, 0) }
                 } else if z == 0 && (x < 0 || x >= w) {
                     pen.canvas.absolute.remove(&from);
                 }
@@ -1160,8 +1163,12 @@ fn jettied(pen: &mut Pen, spec: &Spec, mats: &Mats, lift: i32, top: i32, beams: 
         }
     }
     let out = super::roofs::facing_of(turned(pen.frame.facing, IVec2::new(0, -1)));
+    // Under the overhang, but never over what already hangs there (a sign board at the
+    // top of walls of three).
     for x in 0..w {
-        pen.set(x, floor - 1, -1, beams[out]);
+        if !pen.canvas.absolute.contains_key(&pen.frame.at(x, floor - 1, -1)) {
+            pen.set(x, floor - 1, -1, beams[out]);
+        }
     }
 }
 

@@ -3533,3 +3533,65 @@ fn a_bed_belongs_to_the_settlement_of_its_square() {
     assert_eq!(holding.id, town.id, "the bed at {bed} ({far:.0} blocks out) is {}'s, not {}'s", town.name.0, holding.name.0);
     assert!(holding.buildings.iter().any(|b| b.beds.contains(&bed)));
 }
+
+/// A jettied house of three storeys keeps a floor along its old front line on every storey
+/// over the ground, and a sign board at the top of walls of three is not laid over by the
+/// row of beams under the overhang.
+#[test]
+fn jettied_houses_keep_their_floors_and_their_sign() {
+    use super::def::{Extra, Form, Roof};
+    use super::house::{self, Kind, Mats, Spec};
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+    let content = voxmar_engine::content::Content::load(&dir).unwrap();
+    let world_content = crate::content::WorldContent::load(&content).unwrap();
+    let registry = content.blocks.clone();
+    let def = &world_content.settlements;
+    let fixed = super::fixed(&registry, def).unwrap();
+    let id = |n: &str| registry.id(&format!("base:{n}")).unwrap();
+    let palette = |n: &str| super::canvas::Palette(vec![(id(n), 1.0)]);
+    let (floor, beam) = (id("spruce_planks"), id("stone_bricks"));
+    let mats = Mats {
+        foundation: palette("cobblestone"),
+        floor,
+        wall: id("polished_calcite"),
+        frame: id("dark_oak_log"),
+        roof: id("dark_oak_planks"),
+        trim: id("spruce_planks"),
+        window: Some(id("old_glass")),
+        weathered: palette("mossy_cobblestone"),
+        hedge: palette("oak_leaves"),
+        log: id("oak_log"),
+        chimney: id("cobbled_granite"),
+        crops: Vec::new(),
+        fruit: palette("apple_leaves_2"), roof_pieces: Vec::new(), pieced: 0.0, jetty: Some(([beam; 4], 1.0)),
+    };
+    let (w, d, wall, storeys) = (7, 7, 3, 3);
+    let mut drawn = 0;
+    for seed in 0..12u64 {
+        let spec = Spec {
+            kind: Kind::House, w, d, wall, storeys, roof: Roof::Gable, pitch: 1, ridge_x: true, door: w / 2, shed: 0, wing: None, stilts: 0,
+            extras: vec![Extra::SignBoard], regular: true, window_chance: 0.0, form: Form::Box, inside: Vec::new(), centre: None, seed,
+        };
+        let (low, high) = spec.envelope();
+        let frame = super::canvas::Frame::fit(low, high, super::canvas::Facing::North, low, 0);
+        let mut canvas = super::canvas::Canvas::default();
+        house::draw(&spec, &frame, &mats, &fixed, &mut canvas);
+        let set = |x: i32, y: i32, z: i32| match canvas.absolute.get(&frame.at(x, y, z)) {
+            Some(super::canvas::Put::Set(b)) => Some(*b),
+            _ => None,
+        };
+        // Jettied: the beams under the first storey's front.
+        if !(0..w).any(|x| set(x, wall, -1) == Some(beam)) {
+            continue;
+        }
+        drawn += 1;
+        for storey in 1..storeys {
+            for x in 1..w - 1 {
+                assert!(set(x, storey * (wall + 1), 0).is_some_and(|b| registry.info(b).solid), "seed {seed}: no floor at {x} on storey {storey} where the front wall stood");
+            }
+        }
+        let sign = if w / 2 + 1 < w - 1 { w / 2 + 1 } else { w / 2 - 1 };
+        assert!(set(sign, 3, -1).is_some_and(|b| b != beam), "seed {seed}: the sign board by the door was laid over by a beam");
+    }
+    assert!(drawn > 0, "no house of the twelve was jettied");
+}
