@@ -45,10 +45,11 @@ pub use voxmar_engine::weather::Weather;
 // 48: ServerMessage::Smoulders, the blocks about to catch fire, for their smoke.
 // 49: a seventh worn slot, the charm (inventory::WORN_SLOTS), moving an open store's slots one
 // on.
-// 50: kept for the light ladder, which landed after 51 and took 52 (unused).
+// 50: kept for the light ladder, which landed after 54 and took 55 (unused).
 // 51: how another player looks up or down and what is in their hand (PlayerView::pitch, held).
-// 52: tools wear (ItemStack::wear) and ServerMessage::ToolWore.
-pub const PROTOCOL_VERSION: u32 = 52;
+// 55: tools wear (ItemStack::wear) and ServerMessage::ToolWore (52 and 53 unused; 54 is
+// another lane's).
+pub const PROTOCOL_VERSION: u32 = 55;
 
 /// A creature's `tell` while it rears into a new phase of its fight.
 pub const REARING: u8 = u8::MAX;
