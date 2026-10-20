@@ -737,10 +737,10 @@ fn crops_are_sown_at_their_level_grow_and_are_harvested_for_experience() {
     let feet = client.position.floor().as_ivec3();
     let (ground, other) = (feet + IVec3::new(0, -1, 2), feet + IVec3::new(1, -1, 2));
     client.clear();
-    for line in ["/fill ~ ~-1 ~2 ~1 ~-1 ~2 dirt", "/fill ~ ~ ~2 ~1 ~1 ~2 air", "/give wheat_seeds 5", "/give saffron_seeds 5", "/give wooden_hoe 1"] {
+    for line in ["/fill ~ ~-1 ~2 ~1 ~-1 ~2 dirt", "/fill ~ ~ ~2 ~1 ~1 ~2 air", "/give wheat_seeds 5", "/give saffron_seeds 5", "/give stone_hoe 1"] {
         client.ok(line);
     }
-    client.pump_until(|c| c.world.block(ground).is_some_and(|b| b != BlockId::AIR) && c.inventory.get(2).is_some_and(|s| s.item == c.content.blocks.expect("base:wooden_hoe")));
+    client.pump_until(|c| c.world.block(ground).is_some_and(|b| b != BlockId::AIR) && c.inventory.get(2).is_some_and(|s| s.item == c.content.blocks.expect("base:stone_hoe")));
     let blocks = &client.content.blocks;
     let (sprout, ripe, wheat) = (blocks.expect("base:wheat_crop_0"), blocks.expect("base:wheat_crop"), blocks.expect("base:wheat"));
     let farmland = blocks.expect("base:farmland");
@@ -1747,7 +1747,7 @@ fn ores_ask_for_a_mining_level_and_a_pickaxe_and_teach_mining() {
 fn a_crafting_table_makes_what_the_two_by_two_grid_cannot() {
     let mut client = Client::join();
     let table = client.position.floor().as_ivec3() + IVec3::new(1, 0, 1);
-    for line in ["/clear", "/give cobblestone 3", "/give stick 2", "/fill ~1 ~ ~1 ~1 ~ ~1 crafting_table"] {
+    for line in ["/clear", "/give stone_head 3", "/give stick 2", "/fill ~1 ~ ~1 ~1 ~ ~1 crafting_table"] {
         client.ok(line);
     }
     client.pump_until(|c| c.world.block(table) == c.content.blocks.id("base:crafting_table"));
@@ -3412,7 +3412,7 @@ fn a_knife_cuts_twine_from_tall_grass() {
 }
 
 /// A stone hoe cutting a ripe wheat in a patch of nine reaps all nine, each giving its
-/// harvest; a wooden hoe cuts only the one.
+/// harvest; a knife cuts only the one.
 #[test]
 fn a_stone_hoe_reaps_the_ripe_crops_about_one() {
     let mut client = Client::join();
@@ -3423,7 +3423,7 @@ fn a_stone_hoe_reaps_the_ripe_crops_about_one() {
         let lying: u32 = c.items.values().filter(|i| i.stack.item == wheat || i.stack.item == seeds).map(|i| i.stack.count as u32).sum();
         lying + c.inventory.slots.iter().flatten().filter(|s| s.item == wheat || s.item == seeds).map(|s| s.count as u32).sum::<u32>()
     };
-    for (hoe, reaped) in [("wooden_hoe", 1), ("stone_hoe", 9)] {
+    for (hoe, reaped) in [("flint_knife", 1), ("stone_hoe", 9)] {
         client.ok("/clear");
         client.ok(&format!("/give {hoe} 1"));
         let item = client.content.blocks.expect(&format!("base:{hoe}"));
@@ -3479,6 +3479,52 @@ fn a_bare_hand_fells_no_tree_and_a_flint_axe_does() {
     client.propose("core:mine", target);
     client.pump_until(|c| c.world.block(below) == Some(BlockId::AIR));
     client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == log));
+}
+
+/// Plain stone breaks under a flint pickaxe at Mining 1 into two loose stones and no
+/// cobblestone (no level bonus, and flint finds no extra); four loose stones in the hand's
+/// grid knock together into two cobblestone, and a cobblestone breaks back to one.
+#[test]
+fn stone_breaks_into_two_loose_stones_and_four_make_two_cobblestone() {
+    let mut client = Client::join();
+    let below = client.position.floor().as_ivec3() - IVec3::Y;
+    for line in ["/clear", "/skill mining 1", "/give flint_pickaxe 1"] {
+        client.ok(line);
+    }
+    let id = |c: &Client, name: &str| c.content.blocks.expect(name);
+    let (stone, loose, cobble, pick) = (id(&client, "base:stone"), id(&client, "base:loose_stone"), id(&client, "base:cobblestone"), id(&client, "base:flint_pickaxe"));
+    // Carried, or lying loose on the way to the pack.
+    let has = |c: &Client, item: BlockId| -> u32 { c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>() + c.items.values().filter(|i| i.stack.item == item).map(|i| i.stack.count as u32).sum::<u32>() };
+    client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == pick));
+    client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    let target = ActionTarget::Block { block: below, face: Face::PosY };
+    client.ok("/setblock ~ ~-1 ~ stone");
+    client.pump_until(|c| c.world.block(below) == Some(stone));
+    client.propose("core:mine", target);
+    client.pump_until(|c| c.world.block(below) == Some(BlockId::AIR) && (has(c, loose) >= 2 || has(c, cobble) >= 1));
+    client.after_server_ticks(4);
+    assert_eq!((has(&client, loose), has(&client, cobble)), (2, 0), "plain stone breaks to two loose stones, no cobblestone");
+    client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == loose && s.count == 2));
+
+    // Two more, and four laid one to a cell of the two by two grid.
+    client.ok("/give loose_stone 2");
+    client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == loose && s.count == 4));
+    let from = (0..voxmar_engine::inventory::SLOTS).find(|&s| client.inventory.get(s).is_some_and(|x| x.item == loose)).unwrap();
+    for cell in [0, 1, 3, 4] {
+        client.propose("core:transfer", ActionTarget::Slots { from: from as u8, to: (voxmar_engine::inventory::CRAFT + cell) as u8, count: 1 });
+    }
+    client.pump_until(|c| c.inventory.craft.iter().flatten().count() == 4);
+    client.propose("core:craft", ActionTarget::Slot(0));
+    client.pump_until(|c| has(c, cobble) == 2);
+    assert_eq!(has(&client, loose), 0, "all four went into the two cobblestone");
+
+    // A cobblestone set down breaks back to itself, one.
+    client.ok("/setblock ~ ~-1 ~ cobblestone");
+    client.pump_until(|c| c.world.block(below) == Some(cobble));
+    client.propose("core:mine", target);
+    client.pump_until(|c| c.world.block(below) == Some(BlockId::AIR) && has(c, cobble) >= 3);
+    client.after_server_ticks(4);
+    assert_eq!((has(&client, cobble), has(&client, loose)), (3, 0), "a cobblestone breaks to one cobblestone");
 }
 
 // Seed 3 has a village at (368, 135, 784), 421 blocks from spawn (432, 134, 368).
@@ -8202,6 +8248,18 @@ impl Fresh {
         }
     }
 
+    /// Cobblestone, as a player makes it: plain stone broken into loose stones (two a block),
+    /// knocked four at a time into two cobblestone in the grid, until `need` are in hand.
+    fn cobble(&mut self, tool: &str, targets: Vec<IVec3>, need: u32) {
+        let (cobble, loose_stone) = ("base:cobblestone", "base:loose_stone");
+        let crafts = need.saturating_sub(self.have(cobble)).div_ceil(2);
+        if crafts == 0 {
+            return;
+        }
+        self.gather(tool, targets, loose_stone, 4 * crafts);
+        self.craft(&[0, 1, 3, 4].map(|cell| (cell, loose_stone, crafts as u8)), cobble, 2 * crafts);
+    }
+
     /// As [`Fresh::gather_from`] over open ground: the player walks up to the nearest block
     /// that is out of the pull and goes on.
     fn gather(&mut self, tool: &str, mut targets: Vec<IVec3>, item: &str, need: u32) {
@@ -8563,13 +8621,20 @@ impl Fresh {
         c.fill(origin, v(11, 0, 12), v(11, 2, 12), "dead_log");
         c.fill(origin, v(9, 0, 14), v(25, 10, 17), "air");
         c.fill(origin, v(9, -4, 14), v(25, -1, 17), "dirt");
-        // Ninety gravel: at one flint in eight, a key whose draws run short still finds four.
+        // A hundred and twenty gravel for the six flint the bot needs: at one flint in eight a
+        // key finds fifteen on average, and about 1 key in 580 finds fewer than six (ninety
+        // left about 1 in 40 short).
         for z in [14, 17] {
-            c.fill(origin, v(10, 0, z), v(24, 2, z), "gravel");
+            c.fill(origin, v(10, 0, z), v(24, 3, z), "gravel");
         }
         // A patch of natural stone one block high, with two coal ores on its near edge.
         c.fill(origin, v(9, 0, -3), v(17, 0, 4), "stone");
         c.fill(origin, v(9, 0, 3), v(9, 0, 4), "coal_ore");
+        // Granite, the hard rock stone heads are ground from, in a far corner: nine blocks
+        // one high, so what is left over stands out of the way. And a block of sand, for the
+        // grindstone's dressing.
+        c.fill(origin, v(18, 0, -10), v(20, 0, -8), "granite");
+        c.fill(origin, v(3, 0, 1), v(3, 0, 1), "sand");
         // A pond two blocks wide, one block of water over two of clay.
         c.fill(origin, v(-2, -3, 2), v(-1, -2, 11), "clay");
         c.fill(origin, v(-2, -1, 2), v(-1, -1, 11), "water");
@@ -8582,7 +8647,7 @@ impl Fresh {
         // A low bank of dirt, eight blocks, for the earth clamp: the only dirt above the
         // ground, so the bot finds it by looking (`Fresh::raised_dirt`).
         c.fill(origin, v(-7, 0, 8), v(-4, 0, 9), "dirt");
-        let probes = [(v(7, 3, -5), "base:oak_log"), (v(17, 0, 4), "base:stone"), (v(-2, -1, 11), "base:water"), (v(-8, 1, 0), "base:stone"), (v(-7, 0, 2), "base:wild_wheat"), (v(-4, 0, 9), "base:dirt"), (v(9, 3, 12), "base:oak_leaves"), (v(11, 2, 12), "base:dead_log"), (v(24, 2, 17), "base:gravel")];
+        let probes = [(v(7, 3, -5), "base:oak_log"), (v(17, 0, 4), "base:stone"), (v(-2, -1, 11), "base:water"), (v(-8, 1, 0), "base:stone"), (v(-7, 0, 2), "base:wild_wheat"), (v(-4, 0, 9), "base:dirt"), (v(9, 3, 12), "base:oak_leaves"), (v(11, 2, 12), "base:dead_log"), (v(24, 2, 17), "base:gravel"), (v(20, 0, -8), "base:granite"), (v(3, 0, 1), "base:sand")];
         c.pump_until(|c| probes.iter().all(|&(at, name)| c.world.block(origin + at) == c.content.blocks.id(name)) && c.world.block(origin + v(-9, 1, 0)) == Some(BlockId::AIR));
         let (at, t0) = (c.position, c.ticks());
         let epoch = (t0, Instant::now());
@@ -8820,13 +8885,13 @@ fn the_first_days(f: &mut Fresh) -> Site {
     let (cobble, clay, stick, log) = ("base:cobblestone", "base:clay", "base:stick", "base:oak_log");
 
     // Flint tools, with bare hands (a new player starts with nothing, and a bare hand fells
-    // no tree and breaks no stone): sticks pulled from leaves and a snag, flint from gravel,
-    // a flint axe and pickaxe made in the hand's grid.
+    // no tree and breaks no stone): sticks pulled from leaves and a snag, flint from gravel
+    // (two kept for An Axe to It's spare), a flint axe and pickaxe made in the hand's grid.
     let leaves = (-12..=9).step_by(3).flat_map(|x| (0..=3).map(move |y| v(x, y, 12)));
     let (flint, sticks) = ("base:flint", rel(f, leaves.chain((0..=2).map(|y| v(11, y, 12))).collect()));
     f.gather_chance("", sticks, stick, 3);
-    let gravel = rel(f, (10..=24).flat_map(|x| (0..=2).flat_map(move |y| [14, 17].map(move |z| v(x, y, z)))).collect());
-    f.gather_chance("", gravel, flint, 4);
+    let gravel = rel(f, (10..=24).flat_map(|x| (0..=3).flat_map(move |y| [14, 17].map(move |z| v(x, y, z)))).collect());
+    f.gather_chance("", gravel, flint, 6);
     f.craft(&[(0, flint, 1), (1, flint, 1), (3, stick, 1)], "base:flint_axe", 1);
     f.craft(&[(0, flint, 1), (1, flint, 1), (3, stick, 1), (4, stick, 1)], "base:flint_pickaxe", 1);
     f.mark("flint_tools");
@@ -8848,18 +8913,28 @@ fn the_first_days(f: &mut Fresh) -> Site {
     f.craft(&[(0, "base:oak_planks", 3), (3, "base:oak_planks", 3)], stick, 12);
     f.at_table(table);
 
-    // An Axe to It: a wooden axe, and the twelve logs the campfires and later planks want
-    // chopped with it, in half the time a fist takes.
-    f.craft(&[(0, "base:oak_planks", 1), (1, "base:oak_planks", 1), (3, "base:oak_planks", 1), (4, stick, 1), (7, stick, 1)], "base:wooden_axe", 1);
-    f.gather("base:wooden_axe", trunks, log, 12);
+    // An Axe to It: a spare flint axe, and the twelve logs the campfires and later planks
+    // want chopped with it.
+    f.craft(&[(0, flint, 1), (1, flint, 1), (3, stick, 1)], "base:flint_axe", 1);
+    f.gather("base:flint_axe", trunks, log, 12);
     f.mark("an_axe_to_it");
 
-    // Stone in Hand: cobblestone with the flint pickaxe, then a stone pickaxe and axe.
+    // Stone in Hand: cobblestone with the flint pickaxe (loose stones knocked together); sand by hand, and a grindstone (a
+    // wheel of cobble dressed with sand, on two sticks) set down by the table; granite, the
+    // hard rock, ground on it to seven stone heads: a stone pickaxe and axe hafted from six,
+    // the seventh kept for the shovel.
     let stone = rel(f, (9..=17).flat_map(|x| (-3..=4).map(move |z| v(x, 0, z))).filter(|p| !(p.x == 9 && p.z >= 3)).collect());
-    f.gather("base:flint_pickaxe", stone.clone(), cobble, 9);
+    f.cobble("base:flint_pickaxe", stone.clone(), 3);
+    let (sand, granite, head) = ("base:sand", "base:cobbled_granite", "base:stone_head");
+    f.gather("base:flint_pickaxe", vec![f.rel(3, 0, 1)], sand, 1);
+    f.craft(&[(0, sand, 1), (1, cobble, 1), (3, stick, 1), (4, stick, 1)], "base:grindstone", 1);
+    f.walk_toward(Fresh::middle(table), 3.0);
+    f.place("base:grindstone", f.rel(7, -1, -1));
+    f.gather("base:flint_pickaxe", rel(f, (18..=20).flat_map(|x| (-10..=-8).map(move |z| v(x, 0, z))).collect()), granite, 7);
     f.at_table(table);
-    f.craft(&[(0, cobble, 1), (1, cobble, 1), (2, cobble, 1), (4, stick, 1), (7, stick, 1)], "base:stone_pickaxe", 1);
-    f.craft(&[(0, cobble, 1), (1, cobble, 1), (3, cobble, 1), (4, stick, 1), (7, stick, 1)], "base:stone_axe", 1);
+    f.craft(&[(0, granite, 7)], head, 7);
+    f.craft(&[(0, head, 1), (1, head, 1), (2, head, 1), (4, stick, 1), (7, stick, 1)], "base:stone_pickaxe", 1);
+    f.craft(&[(0, head, 1), (1, head, 1), (3, head, 1), (4, stick, 1), (7, stick, 1)], "base:stone_axe", 1);
     f.mark("stone_in_hand");
 
     // First Night: a campfire (two logs over two cobblestones), set down; three animals
@@ -8959,9 +9034,9 @@ fn the_first_days(f: &mut Fresh) -> Site {
     let bed = rel(f, (2..=11).flat_map(|z| [-2, -1].into_iter().flat_map(move |x| [-2, -3].into_iter().map(move |y| v(x, y, z)))).collect());
     let banks: Vec<Vec3> = (2..=11).step_by(2).map(|z| Fresh::middle(f.rel(0, 0, z))).collect();
     f.at_table(table);
-    f.craft(&[(0, cobble, 1), (3, stick, 1), (6, stick, 1)], "base:stone_shovel", 1);
+    f.craft(&[(0, "base:stone_head", 1), (3, stick, 1), (6, stick, 1)], "base:stone_shovel", 1);
     f.gather_from("base:stone_shovel", &banks, bed.clone(), clay, 4);
-    f.gather("base:stone_pickaxe", stone.clone(), cobble, 28);
+    f.cobble("base:stone_pickaxe", stone.clone(), 28);
     f.mark("hearth_materials");
     f.at_table(table);
     f.craft(&[0, 1, 2, 3, 5, 6, 7, 8].map(|cell| (cell, cobble, 1)), "base:hearthstone", 1);
@@ -8988,7 +9063,7 @@ fn the_first_days(f: &mut Fresh) -> Site {
     // The Farm age's first fire: a campfire and five cobblestones make a pit kiln, set down;
     // clay from the pond fired in it (a fair share cracks at Crafting 1) until twelve fired
     // clay are in hand.
-    f.gather("base:stone_pickaxe", stone, cobble, 7u32.max(f.have(cobble)));
+    f.cobble("base:stone_pickaxe", stone, 7);
     f.craft(&[(0, log, 1), (1, log, 1), (3, cobble, 1), (4, cobble, 1)], "base:campfire", 1);
     f.at_table(table);
     f.craft(&[(0, cobble, 1), (2, cobble, 1), (3, cobble, 1), (4, "base:campfire", 1), (5, cobble, 1)], "base:pit_kiln", 1);

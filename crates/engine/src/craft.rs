@@ -95,13 +95,39 @@ pub struct Recipe {
     pub near: Option<String>,
     /// The age it opens in, if not the first (`RecipeDef::age`).
     pub age: Option<String>,
+    /// What its cells accept that no player holds (sorted): natural blocks that break into
+    /// something else, as deepslate breaks to its cobbles. Shown and asked for last.
+    unheld: Vec<BlockId>,
 }
 
 impl Recipe {
-    /// The grid laid out as the recipe asks, with the first item each cell accepts: a
-    /// pattern from the top left corner, or the ingredients cell by cell.
+    /// The grid laid out as the recipe asks, with the first item each cell accepts that a
+    /// player can hold: a pattern from the top left corner, or the ingredients cell by cell.
     pub fn cells(&self) -> [Option<BlockId>; GRID] {
-        self.alternatives().map(|cell| cell.and_then(|accepts| accepts.first().copied()))
+        self.alternatives().map(|cell| cell.map(|accepts| self.shown(accepts)))
+    }
+
+    /// The first of `accepts` a player can hold, else the first.
+    fn shown(&self, accepts: &[BlockId]) -> BlockId {
+        *accepts.iter().find(|item| self.unheld.binary_search(item).is_err()).unwrap_or(&accepts[0])
+    }
+
+    /// The grid as the recipe book shows it, a layout for each item a cell may take: the
+    /// `k`th layout puts each cell's `k`th item a player can hold (going round a cell that
+    /// holds fewer). One layout when every cell takes one item.
+    pub fn layouts(&self) -> Vec<[Option<BlockId>; GRID]> {
+        let held: Vec<Option<Vec<BlockId>>> = self
+            .alternatives()
+            .iter()
+            .map(|cell| {
+                cell.map(|accepts| {
+                    let held: Vec<BlockId> = accepts.iter().copied().filter(|item| self.unheld.binary_search(item).is_err()).collect();
+                    if held.is_empty() { accepts.to_vec() } else { held }
+                })
+            })
+            .collect();
+        let ways = held.iter().flatten().map(Vec::len).max().unwrap_or(1);
+        (0..ways).map(|k| std::array::from_fn(|cell| held[cell].as_ref().map(|items| items[k % items.len()]))).collect()
     }
 
     /// The grid laid out as the recipe asks, with everything each cell accepts.
@@ -176,16 +202,16 @@ impl Recipe {
 
     /// What `have` (counts by item) lacks for one set, by item and how many: each cell takes
     /// one of the first of its alternatives there is any left of, and a cell that finds
-    /// none counts its first alternative short. Empty when one set is there to lay.
+    /// none counts its first alternative a player can hold short. Empty when one set is there to lay.
     pub fn short(&self, have: &FxHashMap<BlockId, u32>) -> Vec<(BlockId, u32)> {
         let mut needed: Vec<(BlockId, u32)> = Vec::new();
         let mut left = have.clone();
         for accepts in self.alternatives().into_iter().flatten() {
             match accepts.iter().find(|item| left.get(item).copied().unwrap_or(0) > 0) {
                 Some(item) => *left.get_mut(item).expect("found with some left") -= 1,
-                None => match needed.iter_mut().find(|(item, _)| *item == accepts[0]) {
+                None => match needed.iter_mut().find(|(item, _)| *item == self.shown(accepts)) {
                     Some((_, n)) => *n += 1,
-                    None => needed.push((accepts[0], 1)),
+                    None => needed.push((self.shown(accepts), 1)),
                 },
             }
         }
@@ -381,7 +407,20 @@ impl RecipeRegistry {
                 };
                 let ingredients: Vec<Accepts> = def.ingredients.iter().map(resolve).collect::<Result<Vec<_>, _>>()?.into_iter().flatten().collect();
                 let output = item(&def.output)?;
-                recipes.push(Recipe { pattern, ingredients, output, count: def.count.max(1), skill, level: def.level, xp: def.xp, firm: def.firm, near: def.near.clone(), age: def.age.clone() });
+                // A natural block that breaks into something else is never in hand.
+                let mut unheld: Vec<BlockId> = pattern
+                    .iter()
+                    .flatten()
+                    .flatten()
+                    .flatten()
+                    .chain(&ingredients)
+                    .flatten()
+                    .copied()
+                    .filter(|&id| blocks.def(id).has_tag("natural") && blocks.info(id).drops != id)
+                    .collect();
+                unheld.sort();
+                unheld.dedup();
+                recipes.push(Recipe { pattern, ingredients, output, count: def.count.max(1), skill, level: def.level, xp: def.xp, firm: def.firm, near: def.near.clone(), age: def.age.clone(), unheld });
             }
         }
         Self::mirrors_collide(&recipes, blocks)?;

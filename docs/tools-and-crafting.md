@@ -8,8 +8,11 @@ grow faster. Everything is content a mod adds the same way.
 
 A tool is an item (`base/blocks_tools.ron`) tagged `tool`, its kind (`pickaxe`, `axe`,
 `shovel`, `hoe`, `knife`, `shears`), a `tier:N`, a `speed:X` and maybe a `yield:Y`. Five
-kinds come in four tiers: wooden (1), stone (2), copper (3) and iron (4), speed 2, 4, 7
-and 14, yield 0 to 0.15. The tooltip says it ("Works 7× as fast as a bare hand").
+kinds come in four tiers: flint (1), stone (2), copper (3) and iron (4), speed 2, 4, 7
+and 14, yield 0 to 0.15. The tooltip says it ("Works 7× as fast as a bare hand"). Tier 1
+has a flint pickaxe, axe and knife and a digging stick (a shovel), but no hoe: tilling waits for a stone edge. There are no wooden tools (Oct 15:
+a plank's edge cuts nothing); an older save's come back as the flint tool, the digging
+stick or the stone hoe that does their work now (`renamed` in `blocks_tools.ron`).
 
 **Why those speeds** (Oct 14 tier audit). A block takes its hardness over the speed, and
 after each break the hand waits a quarter second before the next (`mine_cooldown`,
@@ -19,10 +22,10 @@ With 2, 4, 6, 8 the copper and iron steps were near that floor: on a log (hardne
 1.4x a step needs to be felt. Copper 7 and iron 14 make each step about 1.4x on what tools
 are for (log, cobblestone, ore; stone 1.35x and 1.30x):
 
-| Seconds a block (with the 0.25 s wait) | Hand | Wooden | Stone | Copper | Iron |
+| Seconds a block (with the 0.25 s wait) | Hand | Flint | Stone | Copper | Iron |
 | --- | --- | --- | --- | --- | --- |
-| Log, cobblestone (2.0) | 2.25 | 1.25 | 0.75 | 0.54 | 0.39 |
-| Stone (1.5) | 1.75 | 1.00 | 0.63 | 0.46 | 0.36 |
+| Log (needs an axe), cobblestone (2.0) | 2.25 (cobblestone) | 1.25 | 0.75 | 0.54 | 0.39 |
+| Stone (1.5, needs a pickaxe) | | 1.00 | 0.63 | 0.46 | 0.36 |
 | Ore (3.0, needs a pickaxe) | | 1.75 | 1.00 | 0.68 | 0.46 |
 | Clay, gravel (0.6) | 0.85 | 0.55 | 0.40 | 0.34 | 0.29 |
 | Dirt (0.5) | 0.75 | 0.50 | 0.38 | 0.32 | 0.29 |
@@ -41,10 +44,23 @@ by the spawn, the **spawn kit** (`base/spawn_kit.ron`, server/src/spawn_kit.rs) 
 to six loose flint and a three-block snag 2 to 6 blocks from it, once per world (new worlds
 and older saves alike, `WorldMeta::spawn_kit`), into air on natural ground no player
 placed; it is wild, so picked flint grows back (`regrowth.ron`'s `loose`). A flint axe is two flint over a stick, a flint pickaxe two flint over
-two sticks, both tier 1 like wood. A click on stone or a log by hand says "Needs a Flint
+two sticks, a flint knife a flint over a stick, and a digging stick two sticks end to end. A click on stone or a log by hand says "Needs a Flint
 Pickaxe or better": a refusal names the least tool that would do, the lowest tier and then
 the cheapest (`Content::least_tool`). Cobblestone, mossy or not, still breaks by hand; a log
 set down as a wall wants an axe like a standing one (whoever has logs has felled them).
+
+Stone tools want hard rock. Their heads are **stone heads**, ground at a **grindstone**
+(sand over any cobble, on two sticks, in the hand's grid) from **toolstone**: granite,
+diorite, andesite and basalt, which only some rock provinces bare (`rocks.ron`), and the
+deepslate under every province, so a player in limestone or sandstone country walks to find
+it or mines down. Plain stone and cobblestone will not take an edge. A stone pickaxe or axe
+takes three heads, a hoe two, a shovel or knife one.
+
+Cobblestone is made too. Plain stone breaks into two **loose stones** (`drops` and
+`drop_count` in `blocks.ron`), and four loose stones knock together into two cobblestone in
+the hand's grid, so a block mined is still a cobblestone, one craft later. Hard rock
+(granite and the other rock families) breaks straight to its own cobbles, which the
+grindstone takes whole; cobblestone set down and broken again gives itself back.
 
 `base/tools.ron` (engine/src/tool.rs) says what each kind is made for, by block tags (a
 pickaxe for stone and ore, an axe for logs and planks, a shovel for soil, sand, gravel,

@@ -1624,6 +1624,10 @@ mod tests {
         assert_eq!(blocks.item_named("base:cooked_shrimp"), Some(blocks.expect("base:cooked_minnow")), "shrimp are minnows now");
         assert_eq!(blocks.item_named("base:raw_frog"), Some(blocks.expect("base:raw_small_game")), "frog is small game now");
         assert_eq!(blocks.item_named("base:bronze_blend"), Some(blocks.expect("base:bronze_ingot")), "a blend is the bronze it smelted into");
+        // The wooden tools, gone: each is the tool that does its work now.
+        for (old, new) in [("wooden_pickaxe", "flint_pickaxe"), ("wooden_axe", "flint_axe"), ("wooden_knife", "flint_knife"), ("wooden_shovel", "digging_stick"), ("wooden_hoe", "stone_hoe")] {
+            assert_eq!(blocks.item_named(&format!("base:{old}")), Some(blocks.expect(&format!("base:{new}"))), "an older save's {old} is a {new}");
+        }
         // What quests counted under the old names counts under the new one.
         let tallies = vec![("cooked:base:cooked_rabbit".into(), 2), ("cooked:base:cooked_chicken".into(), 1), ("cooked_at:campfire:base:cooked_rabbit".into(), 3), ("lit:base:crucible_kiln".into(), 1)];
         let mut tallies = renamed_tallies(tallies, &blocks);

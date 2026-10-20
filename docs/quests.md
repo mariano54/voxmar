@@ -197,9 +197,9 @@ so that what the game already does is something the book points to:
 ## Quick upgrades
 
 Oct 13 (docs/first-days.md, "Quick upgrades on common resources"): Timber asks for four logs
-by hand, the planks for the table, sticks and both wooden tools, and An Axe to It (after
-Crafting Table) asks for the wooden axe and eight logs chopped with it, so the first tool
-upgrade comes in the first minute. First Night tells the player the stone axe hits three
+with a flint axe, the planks for the table and sticks, and An Axe to It (after Crafting
+Table) asks for a spare flint axe and eight logs chopped with it (Oct 15: there are no
+wooden tools). First Night tells the player the stone axe hits three
 times as hard as a fist.
 
 ## Structure (Oct 13)

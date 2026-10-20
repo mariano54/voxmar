@@ -260,7 +260,7 @@ mod tests {
             block("stone", &["stone", "natural"]),
             block("iron_ore", &["ore", "metal:iron", "natural"]),
             block("log", &["log", "wood"]),
-            block("wooden_pickaxe", &["pickaxe", "tool", "tier:1", "speed:2"]),
+            block("flint_pickaxe", &["pickaxe", "tool", "tier:1", "speed:2"]),
             block("stone_pickaxe", &["pickaxe", "tool", "tier:2", "speed:4", "yield:0.05"]),
             block("stone_axe", &["axe", "tool", "tier:2", "speed:4"]),
         ])
@@ -297,7 +297,7 @@ mod tests {
         let iron = tools.rule(id("iron_ore")).unwrap();
         assert_eq!((iron.skill, iron.level, iron.tier, iron.xp), (skills.id("core:mining"), 15, 2, 35.0));
         assert!(!tools.good_enough(None, id("iron_ore")));
-        assert!(!tools.good_enough(Some(id("wooden_pickaxe")), id("iron_ore")));
+        assert!(!tools.good_enough(Some(id("flint_pickaxe")), id("iron_ore")));
         assert!(tools.good_enough(Some(id("stone_pickaxe")), id("iron_ore")));
         assert!(tools.good_enough(None, id("stone")), "stone needs no tool");
         assert!(tools.rule(id("log")).is_none());
@@ -379,7 +379,7 @@ mod tests {
         for grass in [id("tall_grass"), id("tall_grass_top")] {
             assert_eq!(content.tools.instead(None, grass), None, "by hand");
             assert_eq!(content.tools.instead(Some(id("stone_axe")), grass), None, "with an axe");
-            let chances: Vec<f32> = ["wooden_knife", "stone_knife", "copper_knife", "iron_knife"]
+            let chances: Vec<f32> = ["flint_knife", "stone_knife", "copper_knife", "iron_knife"]
                 .iter()
                 .map(|knife| content.tools.instead(Some(id(knife)), grass).filter(|&(given, _)| given == twine).expect("twine with a knife").1)
                 .collect();
@@ -400,14 +400,14 @@ mod tests {
     }
 
     /// A stone or better hoe reaps the ripe crops about the one it cuts, an iron one a
-    /// wider patch; a wooden hoe, a bare hand and other tools reap only the one.
+    /// wider patch; a bare hand and other tools (a knife) reap only the one.
     #[test]
     fn better_hoes_reap_round_a_crop() {
         let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
         let content = crate::content::Content::load(&assets).unwrap();
         let id = |n: &str| content.blocks.expect(&format!("base:{n}"));
         let wheat = id("wheat_crop");
-        let reaps: Vec<u8> = ["wooden_hoe", "stone_hoe", "copper_hoe", "iron_hoe"].iter().map(|hoe| content.tools.reap(Some(id(hoe)), wheat)).collect();
+        let reaps: Vec<u8> = ["flint_knife", "stone_hoe", "copper_hoe", "iron_hoe"].iter().map(|hoe| content.tools.reap(Some(id(hoe)), wheat)).collect();
         assert_eq!(reaps, [0, 1, 1, 2]);
         assert_eq!(content.tools.reap(None, wheat), 0, "by hand");
         assert_eq!(content.tools.reap(Some(id("iron_hoe")), id("stone")), 0, "a hoe reaps only what it is made for");
@@ -425,10 +425,43 @@ mod tests {
         }
     }
 
+    /// Stone tools want hard rock (Mariano, Oct 15: stone should take searching): every
+    /// recipe of a tier-2 tool asks for something made only near a workshop block from
+    /// toolstone, never plain cobble; that block is made in the hand's grid; and toolstone is
+    /// found as natural rock, deepslate among it so mining down reaches it anywhere, while the
+    /// commonest stone is not.
+    #[test]
+    fn stone_tools_take_toolstone_ground_at_a_workshop() {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        let content = crate::content::Content::load(&assets).unwrap();
+        let blocks = &content.blocks;
+        let toolstone = |item: BlockId| blocks.def(item).has_tag("toolstone");
+        let natural: Vec<&str> = blocks.tagged("toolstone").filter(|&b| blocks.def(b).has_tag("natural")).map(|b| blocks.def(b).name.as_str()).collect();
+        assert!(natural.contains(&"base:deepslate"), "deepslate, under every province, is no toolstone: {natural:?}");
+        assert!(!toolstone(blocks.expect("base:stone")) && !toolstone(blocks.expect("base:cobblestone")), "plain stone takes an edge");
+        let tools: Vec<BlockId> = blocks.tagged("tool").filter(|&t| blocks.def(t).has_tag("tier:2")).collect();
+        assert!(!tools.is_empty(), "no tier-2 tools");
+        for tool in tools {
+            let name = &blocks.def(tool).name;
+            let recipes: Vec<&crate::craft::Recipe> = content.recipes.iter().filter(|r| r.output == tool).collect();
+            assert!(!recipes.is_empty(), "{name} has no recipe");
+            for recipe in recipes {
+                let ground: Vec<BlockId> = recipe.alternatives().into_iter().flatten().flatten().copied().filter(|&i| {
+                    let makes: Vec<&crate::craft::Recipe> = content.recipes.iter().filter(|r| r.output == i).collect();
+                    !makes.is_empty() && makes.iter().all(|r| r.near.is_some() && r.alternatives().into_iter().flatten().all(|cell| cell.iter().all(|&c| toolstone(c))))
+                }).collect();
+                let head = ground.first().unwrap_or_else(|| panic!("{name} is made without a head ground from toolstone"));
+                let near = content.recipes.iter().find(|r| r.output == *head).and_then(|r| r.near.clone()).unwrap();
+                let workshop = blocks.tagged(&near).find(|&b| content.recipes.iter().any(|r| r.output == b && !r.needs_table()));
+                assert!(workshop.is_some(), "no block tagged {near} is made in the hand's grid, for {name}");
+            }
+        }
+    }
+
     /// Each tier of each kind is felt (Oct 14 tier audit, docs/tools-and-crafting.md): on
     /// the blocks tools are for (a log, cobblestone, an ore), a block with the next tier
     /// takes at most 1/1.35 of the time with the one before, counting the quarter second the
-    /// hand waits after each break (the client's `mine_cooldown`). Bare hands to wood, wood to
+    /// hand waits after each break (the client's `mine_cooldown`). Bare hands to flint, flint to
     /// stone, stone to copper, copper to iron.
     #[test]
     fn every_tool_tier_is_felt() {
@@ -439,7 +472,7 @@ mod tests {
         for (kind, blocks) in [("axe", ["oak_log"].as_slice()), ("pickaxe", ["cobblestone", "coal_ore"].as_slice())] {
             for block in blocks {
                 let hardness = content.blocks.info(id(block)).hardness;
-                let held: Vec<Option<BlockId>> = std::iter::once(None).chain(["wooden", "stone", "copper", "iron"].iter().map(|tier| Some(id(&format!("{tier}_{kind}"))))).collect();
+                let held: Vec<Option<BlockId>> = std::iter::once(None).chain(["flint", "stone", "copper", "iron"].iter().map(|tier| Some(id(&format!("{tier}_{kind}"))))).collect();
                 let seconds: Vec<f32> = held.iter().map(|&item| hardness / content.tools.speed(item, id(block)) + BREAK_WAIT).collect();
                 for (step, pair) in seconds.windows(2).enumerate() {
                     assert!(pair[0] / pair[1] >= 1.35, "{block}: tier {step} to {} with a {kind} is only {:.2}x ({seconds:?})", step + 1, pair[0] / pair[1]);

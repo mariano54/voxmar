@@ -26,13 +26,13 @@
         ),
         (
             name: "first_night", age: "nomad", branch: "main", title: "First Night",
-            why: "Make a campfire: put two logs or Wood blocks above two Cobblestones in the 2×2 crafting grid. No stripped wood is needed; cobblestone comes from stone, a few blocks under the dirt or bare on hillsides, and a flint pickaxe breaks it. Place the fire, select raw small game or an egg in your hotbar, and right-click the fire. Rabbits and junglefowl roam open grassland; both give small game, and a junglefowl sometimes an egg. Fists are slow at the hunt too: swing an axe instead; a stone one hits three times as hard as a fist (a stone sword, two cobblestone over a stick, does as well). Wait two seconds; the cooked food goes into your inventory. If it burns, try again. Cooked food heals more than raw food.",
+            why: "Make a campfire: put two logs or Wood blocks above two Cobblestones in the 2×2 crafting grid. No stripped wood is needed. Stone lies a few blocks under the dirt or bare on hillsides; a flint pickaxe breaks it into two loose stones, and four loose stones knock together into two cobblestone in the grid. Place the fire, select raw small game or an egg in your hotbar, and right-click the fire. Rabbits and junglefowl roam open grassland; both give small game, and a junglefowl sometimes an egg. Fists are slow at the hunt too: swing an axe instead; a stone one hits three times as hard as a fist (a stone sword, two cobblestone over a stick, does as well). Wait two seconds; the cooked food goes into your inventory. If it burns, try again. Cooked food heals more than raw food.",
             tasks: [[Craft("campfire", 1), CookAt("tag:edible", "campfire", 1)]],
             rewards: [Xp("cooking", 93.0), Item("torch", 4)],
         ),
         (
             name: "stone_in_hand", age: "nomad", branch: "main", title: "Stone in Hand",
-            why: "Bare hands are slow. At the crafting table, three planks over two sticks make a wooden pickaxe: dig a few blocks under the dirt, or into a bare hillside, and break stone for cobblestone. Three cobblestone over two sticks make a stone pickaxe, and a stone axe is shaped like the wooden one. Stone tools mine twice as fast and reach coal for torches.",
+            why: "Soft stone will not take an edge. Find hard rock (granite, diorite, andesite or basalt near the surface, deepslate deep down) and break it with your flint pickaxe. Sand beside cobblestone over two sticks makes a grindstone in the 2×2 grid: set it down, and beside it one hard rock in the grid becomes a stone head. At the crafting table, three heads over two sticks make a stone pickaxe, and three heads with two sticks a stone axe (the recipe viewer shows the shape). Stone tools mine twice as fast and reach coal for torches.",
             tasks: [[Craft("stone_pickaxe", 1), Craft("stone_axe", 1)]],
             after: ["crafting_table"],
             rewards: [Xp("engineering", 51.0), Xp("mining", 31.0)],
@@ -113,7 +113,7 @@
         ),
         (
             name: "torchlight", age: "nomad", branch: "main", title: "Torchlight",
-            why: "Light keeps monsters off and lets you work at night. A coal (or a charcoal) over a stick makes four torches; coal shows as black flecks in the rock, and a black-flecked stone lying on the ground marks a seam below it. Any pickaxe breaks it, even a wooden one. Make eight. A night is a third of the day and cannot be slept away: spend it underground by torchlight digging coal, or at home cooking (Meat on the Fire) and crafting.",
+            why: "Light keeps monsters off and lets you work at night. A coal (or a charcoal) over a stick makes four torches; coal shows as black flecks in the rock, and a black-flecked stone lying on the ground marks a seam below it. Any pickaxe breaks it, even a flint one. Make eight. A night is a third of the day and cannot be slept away: spend it underground by torchlight digging coal, or at home cooking (Meat on the Fire) and crafting.",
             tasks: [[Craft("torch", 8)]],
             after: ["a_bed_of_your_own"],
             rewards: [Xp("engineering", 21.0)],
@@ -126,8 +126,8 @@
         ),
         (
             name: "an_axe_to_it", age: "nomad", branch: "start", title: "An Axe to It",
-            why: "A second axe, of wood: at the crafting table, three planks and two sticks make one (the recipe viewer shows the shape). Make it and chop eight logs; the campfire, planks and sticks ahead all want them. A stone axe, later, chops twice as fast.",
-            tasks: [[Craft("wooden_axe", 1), Have("tag:log", 8)]],
+            why: "A spare axe: two flint over a stick in the 2×2 grid make another flint axe, so one lost to a fall or a fight never leaves you unable to fell a tree. Make it and chop eight logs; the campfire, planks and sticks ahead all want them. A stone axe, hafted from heads ground at a grindstone, chops twice as fast.",
+            tasks: [[Craft("flint_axe", 2), Have("tag:log", 8)]],
             after: ["crafting_table"],
             rewards: [Xp("engineering", 20.0), Item("stick", 4)],
         ),
@@ -154,7 +154,7 @@
         ),
         (
             name: "a_pile_of_stone", age: "nomad", branch: "mining", title: "A Pile of Stone",
-            why: "Stone is the next step up from wood. It lies a few blocks under the dirt almost everywhere, and bare on cliffs, hillsides and mountains. Break twenty stone with your pickaxe: it drops cobblestone, which makes stone tools, a campfire and, later, your hearth.",
+            why: "Stone comes after flint. It lies a few blocks under the dirt almost everywhere, and bare on cliffs, hillsides and mountains. Break twenty stone with your pickaxe: each breaks into two loose stones, and four loose stones in the 2×2 grid make two cobblestone, which makes a grindstone, a campfire and, later, your hearth. Other rock, hard or soft, breaks straight to its own cobbles.",
             tasks: [[Mine("tag:stone", 20)]],
             after: ["stone_in_hand"],
             rewards: [Xp("mining", 30.0)],
@@ -239,8 +239,8 @@
         ),
         (
             name: "break_ground", age: "nomad", branch: "farming", title: "Break Ground",
-            why: "A hoe tills grass or dirt into farmland, where seeds can be sown. Make a hoe at the crafting table: two cobblestone over two sticks. Right-click soil with it to till.",
-            tasks: [[Craft("stone_hoe", 1)], [Craft("wooden_hoe", 1)], [Craft("copper_hoe", 1)]],
+            why: "A hoe tills grass or dirt into farmland, where seeds can be sown. A hoe needs a stone edge: two stone heads, ground from hard rock at a grindstone, over two sticks at the crafting table. Right-click soil with it to till.",
+            tasks: [[Craft("stone_hoe", 1)], [Craft("copper_hoe", 1)]],
             after: ["daily_bread", "crafting_table"],
             rewards: [Xp("engineering", 40.0), Item("wheat_seeds", 4)],
         ),
@@ -318,15 +318,15 @@
         ),
         (
             name: "a_sharp_edge", age: "nomad", branch: "crafting", title: "A Sharp Edge",
-            why: "A knife is the hunter's tool: it makes a kill drop hide more often, cuts plants cleanly, and cuts twine from tall grass. A stone knife is a cobblestone over a stick; it fits the inventory grid.",
-            tasks: [[Craft("stone_knife", 1)], [Craft("wooden_knife", 1)]],
+            why: "A knife is the hunter's tool: it makes a kill drop hide more often, cuts plants cleanly, and cuts twine from tall grass. A flint knife is a flint over a stick, a stone knife a stone head over a stick; both fit the inventory grid.",
+            tasks: [[Craft("stone_knife", 1)], [Craft("flint_knife", 1)]],
             after: ["stone_in_hand"],
             rewards: [Xp("engineering", 30.0)],
         ),
         (
             name: "full_stone_kit", age: "nomad", branch: "crafting", title: "A Full Stone Kit",
+            why: "A stone tool works twice as fast as a flint one and finds a little more. Carry the whole kit: pickaxe, axe, shovel (one stone head over two sticks), hoe and knife.",
             capstone: true,
-            why: "A stone tool works twice as fast as a wooden one and finds a little more. Carry the whole kit: pickaxe, axe, shovel (one cobblestone over two sticks), hoe and knife.",
             tasks: [[Have("stone_pickaxe", 1), Have("stone_axe", 1), Have("stone_shovel", 1), Have("stone_hoe", 1), Have("stone_knife", 1)]],
             after: ["a_sharp_edge", "break_ground"],
             rewards: [Xp("engineering", 30.0), Item("torch", 8)],
@@ -447,7 +447,7 @@
         ),
         (
             name: "clay_banks", age: "farm", branch: "pottery", title: "Clay Banks",
-            why: "Pots, vials and kiln bricks are all clay. It lies in patches on the bottom of ponds, lakes and rivers: wade in and dig it with a shovel (one cobblestone over two sticks). Carry out twenty-four.",
+            why: "Pots, vials and kiln bricks are all clay. It lies in patches on the bottom of ponds, lakes and rivers: wade in and dig it with a shovel (one stone head over two sticks). Carry out twenty-four.",
             tasks: [[Have("clay", 24)]],
             after: ["the_farm_age"],
             rewards: [Xp("crafting", 60.0)],

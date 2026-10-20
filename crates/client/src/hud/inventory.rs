@@ -1372,7 +1372,7 @@ mod tests {
             let locale = Locale::load(&assets.join("content"), code);
             let line = |name: &str| tool_line(&locale, &content, content.blocks.id(name).unwrap()).map(|(line, _)| line);
             assert_eq!(line("base:copper_pickaxe"), Some(locale.format("item.tool_speed", &[("speed", &"7")])), "{code}");
-            assert_eq!(line("base:wooden_axe"), Some(locale.format("item.tool_speed", &[("speed", &"2")])), "{code}");
+            assert_eq!(line("base:flint_axe"), Some(locale.format("item.tool_speed", &[("speed", &"2")])), "{code}");
             assert_eq!(line("base:oak_log"), None, "{code}: a log is no tool");
             assert_eq!(line("base:fishing_rod"), None, "{code}: a rod mines nothing, so claims no speed");
         }
