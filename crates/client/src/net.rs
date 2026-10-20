@@ -42,6 +42,7 @@ impl Plugin for NetPlugin {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Proposed {
     pub action: ActionId,
+    pub target: ActionTarget,
     pub with: Vec<BlockId>,
 }
 
@@ -107,7 +108,7 @@ impl Net {
     pub fn propose_with(&self, action: ActionId, target: ActionTarget, with: Vec<BlockId>) {
         self.connection.send(ClientMessage::Propose { action, target });
         self.proposals.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        self.proposed.lock().unwrap_or_else(|e| e.into_inner()).push(Proposed { action, with });
+        self.proposed.lock().unwrap_or_else(|e| e.into_inner()).push(Proposed { action, target, with });
         self.shown.lock().unwrap_or_else(|e| e.into_inner()).push((action, target));
     }
 
@@ -395,7 +396,7 @@ pub(crate) fn receive(
                         && crate::sfx::bees_taken(&launch.content.bees, old, block)
                         && let Some(action) = launch.content.actions.id("base:tend_bees")
                     {
-                        done.write(crate::sfx::Done { at: pos.as_vec3() + Vec3::splat(0.5), action, with: old });
+                        done.write(crate::sfx::Done { at: pos, action, with: old });
                     }
                     // Thatch or wattle catching fire, nearby.
                     if crate::sfx::catches(&launch.content.fire, old, block) && pos.as_vec3().distance(player.position) < SHOWN_WITHIN {

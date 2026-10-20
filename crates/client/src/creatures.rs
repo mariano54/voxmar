@@ -930,6 +930,12 @@ impl Tended {
         Tended { id, watched, had: count(watched), answer, until: now + TEND_ANSWER_WITHIN, proposals: 0, tends: 0 }
     }
 
+    /// Whether the player has proposed something other than a tend since this one, as of
+    /// `proposals` proposed and `tends` tended (counts that only grow within a session).
+    fn something_else_since(&self, proposals: u64, tends: u64) -> bool {
+        proposals.saturating_sub(self.proposals) > tends.saturating_sub(self.tends)
+    }
+
     /// Whether the pack now holding `count` of what is watched says it was done.
     fn done(&self, count: u32) -> bool {
         match self.answer {
@@ -1885,7 +1891,12 @@ pub fn aim(
     // An animal tended answers once the server has done it (its product in the pack, the
     // food gone from hand), never on the click alone.
     let now = time.elapsed_secs();
-    let meanwhile = |t: &Tended| net.proposals() - t.proposals > *tends - t.tends;
+    // A new session's count starts again: nothing from the last one waits on.
+    if net.is_added() {
+        tended.clear();
+        *tends = 0;
+    }
+    let meanwhile = |t: &Tended| t.something_else_since(net.proposals(), *tends);
     for answered in answer_tended(&mut tended, now, meanwhile, |item| player.inventory.count(item)) {
         if let Some(shown) = creatures.shown.get(&answered.id) {
             sounds.push(CreatureSound { answering: true, ..sound(answered.answer, answered.id, &shown.view, shown.position, 0.0) });
@@ -2071,6 +2082,10 @@ mod tests {
         let mut sown = vec![fed];
         assert_eq!(super::answer_tended(&mut sown, 0.5, |t| t.proposals < 2, |_| 4), [], "something else done meanwhile");
         assert!(sown.is_empty());
+        // Counted since: two more tends is nothing else; a sowing among them is. Counts from
+        // before a rejoin (larger than now) never underflow.
+        assert!(!fed.something_else_since(3, 3) && fed.something_else_since(4, 3));
+        assert!(!fed.something_else_since(0, 0), "a new session's counts");
     }
 
     /// A roaming boss nicked once is in a fight, and out of it once it has gone back to

@@ -82,7 +82,7 @@ impl Plugin for SfxPlugin {
             .init_resource::<MaterialsAsked>()
             .configure_sets(Update, Audible.run_if(sound_on))
             .add_systems(Startup, synthesize)
-            .add_systems(Update, ((footsteps, (play_cues.in_set(Audible), ask_materials)).chain(), thunder.in_set(Audible), play_catches.in_set(Audible), play_done.in_set(Audible), (play_actions, play_brought).chain()));
+            .add_systems(Update, ((footsteps, (play_cues.in_set(Audible), ask_materials)).chain(), thunder.in_set(Audible), play_catches.in_set(Audible), action_sounds()));
     }
 }
 
@@ -189,10 +189,10 @@ pub fn station_cue(stations: &Stations, registry: &BlockRegistry, old: BlockId, 
 
 /// An action the client sees done ([`SEEN_DONE`]): the server changed the block it works,
 /// `with` (a full skep's honey taken). Heard by the way done `with`, else the action's own,
-/// from the block.
+/// from the block, at `at`.
 #[derive(Message, Clone, Copy, Debug)]
 pub struct Done {
-    pub at: Vec3,
+    pub at: IVec3,
     pub action: voxmar_engine::action::ActionId,
     pub with: BlockId,
 }
@@ -253,8 +253,8 @@ struct Sfx {
     /// How long each action that brings something waits for it, if not [`BROUGHT_WITHIN`].
     brought_within: FxHashMap<voxmar_engine::action::ActionId, f32>,
     /// Clicks of actions heard when done, with what they were done with, until when: a
-    /// [`Done`] is heard only for one the player clicked.
-    clicked: Vec<(voxmar_engine::action::ActionId, Vec<BlockId>, f32)>,
+    /// [`Done`] is heard only for the block the player clicked.
+    clicked: Vec<(voxmar_engine::action::ActionId, IVec3, f32)>,
     /// The ways of doing them that sound their own, in order, by what each is done with.
     ways: FxHashMap<voxmar_engine::action::ActionId, Vec<(FxHashSet<BlockId>, Vec<Clip>)>>,
     counter: u64,
@@ -1128,6 +1128,13 @@ fn play_catches(
     }
 }
 
+/// The player's own actions heard: on the click, as what they bring lands, and as the
+/// server does them; the click first, so an integrated server's answer in the same frame
+/// finds it.
+fn action_sounds() -> bevy::ecs::schedule::ScheduleConfigs<bevy::ecs::system::ScheduleSystem> {
+    (play_actions, play_brought, play_done.in_set(Audible)).chain().into_configs()
+}
+
 /// Plays an action the client sees done, from where it is done, as the server does it for
 /// a click of the player's.
 fn play_done(
@@ -1143,11 +1150,12 @@ fn play_done(
     sfx.clicked.retain(|&(_, _, until)| until >= now);
     let master = MASTER * settings.sound_volume as f32 / 100.0;
     let listener = listener.single().map(|t| t.translation()).ok();
-    for &Done { at, action, with } in done.read() {
-        // Only what the player clicked, and only once: a bear's raid on a skep is not
-        // the player's cut.
-        let Some(click) = sfx.clicked.iter().position(|(a, done_with, _)| *a == action && done_with.contains(&with)) else { continue };
+    for &Done { at: cell, action, with } in done.read() {
+        // Only the block the player clicked, and only once: a bear's raid on a skep, or
+        // another's cut of the next one, is not the player's.
+        let Some(click) = sfx.clicked.iter().position(|&(a, clicked, _)| a == action && clicked == cell) else { continue };
         sfx.clicked.remove(click);
+        let at = cell.as_vec3() + Vec3::splat(0.5);
         let gain = falloff(listener.map_or(0.0, |ear| at.distance(ear)), HEARD_WITHIN);
         let (pick, jitter) = (sfx.random(), sfx.random());
         let way = sfx.ways.get(&action).and_then(|ways| way_of(ways, &[with]));
@@ -1213,7 +1221,9 @@ fn play_actions(
         }
         // Heard when the server does it (`play_done`), never on the click.
         if sfx.when_done.contains(&action) {
-            sfx.clicked.push((action, proposed.with, now + DONE_WITHIN));
+            if let voxmar_engine::action::ActionTarget::Block { block, .. } = proposed.target {
+                sfx.clicked.push((action, block, now + DONE_WITHIN));
+            }
             continue;
         }
         let (pick, jitter) = (sfx.random(), sfx.random());
@@ -2300,7 +2310,8 @@ mod tests {
     }
 
     /// A full skep's honey is silent on the click and heard as the server cuts it, once;
-    /// a skep emptied with no click of the player's (a bear's raid) is not heard.
+    /// a skep emptied with no click of the player's on it (a bear's raid, another's cut of
+    /// the one beside it) is not heard.
     #[test]
     fn honey_is_heard_as_cut_never_on_the_click() {
         let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
@@ -2315,22 +2326,35 @@ mod tests {
             .insert_resource(Settings::default())
             .insert_resource(Sfx { clips: FxHashMap::default(), materials: Vec::new(), material: Vec::new(), thunder: Default::default(), actions, brings: FxHashMap::default(), ways: FxHashMap::default(), awaiting: Vec::new(), when_done: [tend_bees].into_iter().collect(), brought_within: FxHashMap::default(), clicked: Vec::new(), catch: Vec::new(), counter: 0 })
             .insert_resource(net)
+            .insert_resource(Time::<()>::default())
+            .insert_resource(LocalPlayer::default())
             .add_message::<Done>()
-            .add_systems(Update, (play_actions, play_done).chain());
+            .add_systems(Update, action_sounds());
         let playing = |app: &mut App| app.world_mut().query::<&AudioPlayer>().iter(app.world()).count();
-        let cut = Done { at: Vec3::ZERO, action: tend_bees, with: skep };
+        let cut = Done { at: IVec3::new(4, 64, 2), action: tend_bees, with: skep };
+        let next_skep = Done { at: IVec3::new(5, 64, 2), ..cut };
         app.world_mut().write_message(cut);
         app.update();
         assert_eq!(playing(&mut app), 0, "no click: a bear's raid");
-        app.world().resource::<crate::net::Net>().propose_with(tend_bees, voxmar_engine::action::ActionTarget::None, vec![skep]);
+        let target = voxmar_engine::action::ActionTarget::Block { block: cut.at, face: voxmar_engine::coords::Face::PosY };
+        app.world().resource::<crate::net::Net>().propose_with(tend_bees, target, vec![skep]);
         app.update();
         assert_eq!(playing(&mut app), 0, "the click is silent");
+        app.world_mut().write_message(next_skep);
+        app.update();
+        assert_eq!(playing(&mut app), 0, "the skep beside it, cut by someone else");
         app.world_mut().write_message(cut);
         app.update();
         assert_eq!(playing(&mut app), 1, "the cut is heard");
         app.world_mut().write_message(cut);
         app.update();
         assert_eq!(playing(&mut app), 1, "once for the click");
+        // The click and the server's cut in one frame (an integrated server answering at
+        // once) are heard: the click is taken first.
+        app.world().resource::<crate::net::Net>().propose_with(tend_bees, target, vec![skep]);
+        app.world_mut().write_message(cut);
+        app.update();
+        assert_eq!(playing(&mut app), 2, "the click and its cut in one frame");
     }
 
     /// `cargo test -p voxmar_client minecraft_sounds_decode -- --ignored` checks that every
