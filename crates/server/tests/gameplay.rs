@@ -2583,7 +2583,7 @@ const TEST_QUESTS: &str = r#"(quests: [
     (name: "laden", age: "nomad", branch: "main", title: "Laden", why: "", tasks: [[Have("base:cobblestone", 2304)]], rewards: [Item("base:apple", 3)]),
     (name: "walk", age: "nomad", branch: "main", title: "Free Walk", why: "", tasks: [[Level("mining", 3)]]),
     (name: "dig", age: "nomad", branch: "main", title: "A Gravel Pit", why: "", tasks: [[Have("gravel", 1)]], rewards: [Item("clay", 4)]),
-    (name: "potter", age: "nomad", branch: "main", title: "Potter", why: "", tasks: [[Have("clay", 4)]], rewards: [Item("base:apple", 1)]),
+    (name: "potter", age: "nomad", branch: "main", title: "Potter", why: "", tasks: [[Have("clay", 5)]], rewards: [Item("base:apple", 1)]),
 ])"#;
 
 /// Quests are checked once a second by the server's clock: one a goal short is still open
@@ -2728,8 +2728,9 @@ fn a_quest_reward_that_does_not_fit_stays_claimable() {
     std::fs::remove_dir_all(&assets).unwrap();
 }
 
-/// A reward that finishes another quest (A Gravel Pit's clay, which Potter asks to carry)
-/// finishes it as it is claimed, so that quest can be claimed at once, in the same moment,
+/// A reward that finishes another quest (A Gravel Pit's four clay, the last of the five Potter
+/// asks to carry: a reward never holds a goal alone, the load check refuses that) finishes it
+/// as it is claimed, so that quest can be claimed at once, in the same moment,
 /// not only after the next second's check.
 #[test]
 fn a_claimed_reward_finishes_the_quests_it_holds_at_once() {
@@ -2738,6 +2739,7 @@ fn a_claimed_reward_finishes_the_quests_it_holds_at_once() {
     let apple = client.content.blocks.expect("base:apple");
     client.pump_until(|c| !c.quests.is_empty());
     client.ok("/clear");
+    client.ok("/give clay 1");
     client.ok("/give gravel 1");
     client.pump_until(|c| c.quests.iter().any(|q| q.name == "zz_test:dig" && q.done));
     assert!(!client.quests.iter().any(|q| q.name == "zz_test:potter" && q.done));
