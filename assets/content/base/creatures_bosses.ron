@@ -55,6 +55,7 @@
                 (item: "bone", count: (2, 3)),
                 (item: "gold_coin", count: (2, 5)),
                 (item: "flint_spear", chance: 0.11, rarity: Uncommon),
+                (item: "charge_charm", chance: 0.0154, rarity: VeryRare),
             ],
         ),
         (
