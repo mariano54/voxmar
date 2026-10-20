@@ -81,6 +81,11 @@
                 name: "{name}_fence_gate_open", render: Model, shape: "fence_gate_open", facing: true, solid: false, sound: Wood, textures: All("furniture_grain"),
                 swaps: "{name}_fence_gate", drops: "{name}_fence_gate", hardness: 1.0, color: (160, 120, 70), tags: ["timber", "fence", "gate", "wood", "building", "fuel"],
             ),
+            // A ladder, set against a wall facing whoever sets it: with your feet in its cell,
+            // pressing against it or holding jump climbs it, letting go slides you down
+            // slowly (`climbable`; engine movement.rs). One over another climbs a shaft to a
+            // loft or up onto a roof.
+            (name: "{name}_ladder", render: Model, shape: "ladder", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 0.8, color: (160, 120, 70), tags: ["timber", "climbable", "ladder", "wood", "building", "fuel"]),
             // A newel post: a stout post with a cap, at the foot or the turn of a stair.
             (name: "{name}_newel_post", render: Model, shape: "newel_post", sound: Wood, textures: All("furniture_grain"), hardness: 2.0, color: (160, 120, 70), tags: ["timber", "newel", "wood", "building", "fuel", "shelter:sound"]),
             // A landing: boards on two joists, its top level with a stair's, for the turn of a

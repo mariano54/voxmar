@@ -94,7 +94,7 @@ Built now (`engine::creature::brain::modules`):
 | herd | social | closes on its group when it drifts well apart (its spacing past it), to its companion's near side, the same companion until there; spacing by sociability |
 | sentinel | social | stands watch while kin graze |
 | tempted | drive | follows a player holding its favourite food, hurrying as they draw ahead, keeping after them to 1.5 times the radius it noticed them at, and stepping back when too close; its home goes with it, so it stays where it was led; a grudge outweighs the food |
-| hunt | danger | chases and strikes, by RuneScape's rules; stalkers creep crouched, then pounce; gives up past its leash (unless struck there in the last 3 s: it fights back), or after balking twice running (a search finding no way to its target brings a balk on sooner), then lopes home and leaves players be for 45 s (strolling the side away from them) unless struck again; back at a chase within a minute, it gives up at its first balk |
+| hunt | danger | chases and strikes, by RuneScape's rules; strikes up to its height and 1.5 blocks over its feet and down at a head 1.5 under them, from a pit's rim (`strike: (above, below)` on the creature), and only along a way through the air from its body to the player's head or middle (`blow_open`: never through a roof or a wall, and standing at a target it has no such way to, it gives up at once); stalkers creep crouched, then pounce; gives up past its leash (unless struck there in the last 3 s: it fights back), or after balking twice running (a search finding no way to its target brings a balk on sooner; standing over or under its target out of that reach, a player down a hole too deep, it has no way at once), then lopes home and leaves players be for 45 s (strolling the side away from them) unless struck again; back at a chase within a minute, it gives up at its first balk |
 | defend | danger | fights back when hurt (the boar, the bull, the bear); gives up as hunt does |
 | curious | social | comes to look from a distance, backs off if you come closer |
 | return_home | drive | every creature: goes home when past its leash, until well inside; having given up a chase, lopes all the way home |
@@ -185,8 +185,16 @@ the wing, drifters and swimmers do not steer.
 
 A way open to steer by is also one it can stand on: it looks a body's length ahead along
 the slide, and a step down further than `SAFE_DROP` (3 blocks), or into water two deep
-for a land animal not already out of its depth, is as shut as a wall (wading in the
-shallows too). So prey runs along a cliff
+for a land animal not already out of its depth, or into lava at any depth (amphibians
+too; one already standing in lava may walk on through it to get out, no deeper in), is
+as shut as a wall (wading in the shallows too). Unless it is hunting, defending or led by
+food a player holds (into a sunken pen), a drop deeper than
+it climbs back (a block if it jumps, else none) is shut too, at any pace, unless the ground
+below is open: a fill over the squares it could go to down there (`path::way_out`, kept
+per landing square for the search, 256 squares of fills a search at most) reaches one it
+climbs back up from, or more than 64 of them. That is judged along the way it goes, never
+under its own middle: one on a pit's lip walks back off it. So nothing wanders or flees into a hole a player dug two or three deep; a chaser
+still drops in. So prey runs along a cliff
 edge or a lake shore rather than off it, and a boxed-in creature stands rather than press.
 Anything that jumps gets up a single block, however low its jump (the hop is lifted to
 clear it), and no higher. A land animal out of its depth (water under its feet and below)
@@ -195,7 +203,8 @@ the shallows, and hauls itself up the bank.
 
 When steering is going round (or already following one), a short A* (`path::find`) looks
 for a way over the cells the body fits in: eight directions, no corner cut, up one block
-if it jumps, down no further than `SAFE_DROP`, at most 1500 cells within 24 blocks, again
+if it jumps, down no further than `SAFE_DROP` in a chase and otherwise no further than
+it climbs back unless onto open ground (`Walker::drop`, `way_out`), at most 1500 cells within 24 blocks, again
 at most once a second and only when its goal has moved. It walks the cells' centres, still
 steering, so a wolf finds the doorway in a wall (a shut door is a wall) and a sheep after
 wheat follows the player through it. A creature is made facing open air, so none starts

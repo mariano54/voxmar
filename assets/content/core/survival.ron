@@ -51,9 +51,9 @@
     // What stands in a room rather than walls it in: the survey of a home's walls looks past a
     // block with one of these tags and no shelter tag to the wall behind it, so a chest or a
     // table by the wall never counts as a draughty face, and a barrel in a doorway is no door.
-    // A railing on a gallery or a balcony walls nothing either. A shelter tag always wins:
+    // A railing on a gallery or a balcony walls nothing either, nor a ladder up to a loft. A shelter tag always wins:
     // cloth hung for a wall, a hay bale or a column is a wall.
-    home_furniture: ["machine", "station", "furnishing", "storage", "decor", "multiblock_core", "farm", "waters", "railing"],
+    home_furniture: ["machine", "station", "furnishing", "storage", "decor", "multiblock_core", "farm", "waters", "railing", "ladder"],
     // The most a home's meal effects together (a pantry, a larder, a kitchen garden, home
     // cooking, a seat at the table: effects.ron's meal_heal and meal_time, which multiply)
     // make of a meal's heal, and of how long its good lasts.
