@@ -642,6 +642,9 @@ struct Gate {
     /// Progress through a step's own stages, and when the current one began.
     phase: u32,
     phase_since: f32,
+    /// Where a stage last walked the player to pick something up (`walk_to_lying`), so the
+    /// step is asked once.
+    walked_to: Option<Vec3>,
     /// Frames in this stage that what a shot is about has been on screen: it shows a frame
     /// or two after the change.
     settled: u32,
@@ -1021,6 +1024,7 @@ impl Gate {
             land_told: false,
             phase: 0,
             phase_since: 0.0,
+            walked_to: None,
             settled: 0,
             feet: IVec3::ZERO,
             entered: vec![Step::Load],
@@ -1352,6 +1356,7 @@ impl Gate {
         info!("gate: {:?} stage {} at {now:.1}s, server {:.1}s", self.step, self.phase + 1, self.server_now);
         self.phase += 1;
         self.phase_since = now;
+        self.walked_to = None;
         self.settled = 0;
         self.phase_server = self.server_now;
         self.taps = 0;
@@ -2795,20 +2800,22 @@ fn lay_and_craft(world: &mut World, cells: &[(usize, &str)]) -> bool {
     true
 }
 
-/// Walks the player onto the nearest `item` lying about, as a player goes to pick up what
-/// fell out of reach: whether one lies about at all.
-fn walk_to_lying(world: &mut World, item: BlockId) -> bool {
+/// Walks the player onto the nearest `item` lying within `within` of `from` (what one break
+/// threw, not strays from before), as a player goes to pick up what fell out of reach:
+/// whether one lies there at all. Each step is asked once.
+fn walk_to_lying(world: &mut World, gate: &mut Gate, item: BlockId, from: Vec3, within: f32) -> bool {
     let at = world.resource::<LocalPlayer>().position;
     let nearest = world
         .resource::<crate::drops::Drops>()
         .lying()
-        .filter(|(_, stack, _)| stack.item == item)
+        .filter(|(_, stack, lies)| stack.item == item && lies.distance(from) <= within)
         .map(|(_, _, lies)| lies)
         .min_by(|a, b| a.distance_squared(at).total_cmp(&b.distance_squared(at)));
     let Some(lies) = nearest else { return false };
-    // Once there, it is drawn in; until then, stepped onto (a step not yet taken is asked again).
-    if Vec2::new(lies.x - at.x, lies.z - at.z).length() > 0.5 {
-        world.resource::<Net>().command(&format!("tp {:.2} {:.2} {:.2}", lies.x, lies.y.floor(), lies.z));
+    let onto = Vec3::new(lies.x, lies.y.floor(), lies.z);
+    if Vec2::new(onto.x - at.x, onto.z - at.z).length() > 0.5 && gate.walked_to.is_none_or(|was| was.distance(onto) > 0.25) {
+        gate.walked_to = Some(onto);
+        world.resource::<Net>().command(&format!("tp {:.2} {:.2} {:.2}", onto.x, onto.y, onto.z));
     }
     true
 }
@@ -5492,7 +5499,10 @@ fn rubble_of(content: &voxmar_engine::content::Content) -> Option<(BlockId, Bloc
 /// stones, which come to hand; four laid in the hand's grid knock together into cobblestone.
 fn rubble(world: &mut World, gate: &mut Gate, now: f32) {
     let block = gate.feet + IVec3::new(0, 0, 14) + CHOP_FROM_FIRE;
-    let stand = Vec3::new(block.x as f32 + 0.5, block.y as f32, block.z as f32 - 2.0);
+    // In the middle of a cell, one cell short of the stone: within reach of most of its pops.
+    let stand = Vec3::new(block.x as f32 + 0.5, block.y as f32, block.z as f32 - 1.5);
+    // What one break throws lies within this of the stone's middle.
+    let (middle, thrown) = (block.as_vec3() + Vec3::splat(0.5), voxmar_engine::dropped::pop_reach() + 1.0);
     let waited = gate.server_in_phase() > RUBBLE_WAIT;
     let content = world.resource::<Launch>().content.clone();
     let Some((stone, loose, pickaxe, count, recipe)) = rubble_of(&content) else {
@@ -5525,11 +5535,20 @@ fn rubble(world: &mut World, gate: &mut Gate, now: f32) {
             net.command(&format!("setblock {} {} {} {}", block.x, block.y, block.z, short(stone)));
             gate.advance(now);
         }
+        // The stone seen standing: the cell was air before it (the grind step leaves it so).
+        1 => {
+            if world.resource::<ClientWorld>().block(block) == Some(stone) {
+                gate.advance(now);
+            } else if waited {
+                gate.check("rubble: broken", Err(format!("the {} set at {block} never stood there", name(stone))));
+                end(world, gate);
+            }
+        }
         // Struck until it breaks. Each drop pops out a block or so whichever way the server's
         // tick throws it, which can be past where a player before it draws things in: the
         // player steps onto where it stood, which every pop is in reach of
         // (`dropped::pop_reach`), so they come to hand.
-        1 => {
+        2 => {
             if world.resource::<ClientWorld>().block(block).is_some_and(|b| b.is_air()) {
                 mouse(world, MouseButton::Left, false);
                 let onto = Vec3::new(block.x as f32 + 0.5, block.y as f32, block.z as f32 + 0.5);
@@ -5544,7 +5563,7 @@ fn rubble(world: &mut World, gate: &mut Gate, now: f32) {
             }
         }
         // The loose stones come to hand, and nothing else.
-        2 => {
+        3 => {
             let got = holding(world, &name(loose)).0;
             if got >= u32::from(count) {
                 let made = holding(world, &name(recipe.output)).0;
@@ -5557,7 +5576,7 @@ fn rubble(world: &mut World, gate: &mut Gate, now: f32) {
                 // The rest of the four the recipe takes.
                 world.resource::<Net>().command(&format!("give {} {}", short(loose), 4u32.saturating_sub(got)));
                 gate.advance(now);
-            } else if !waited && gate.server_in_phase() > 2.0 && walk_to_lying(world, loose) {
+            } else if !waited && gate.server_in_phase() > 2.0 && walk_to_lying(world, gate, loose, middle, thrown) {
                 // Popped out of reach: the player goes to them, as one would.
             } else if waited {
                 // Where each loose stone lies, and how far from the player's middle against
@@ -5576,14 +5595,14 @@ fn rubble(world: &mut World, gate: &mut Gate, now: f32) {
             }
         }
         // Four laid in the hand's grid and crafted.
-        3 => {
+        4 => {
             if holding(world, &name(loose)).0 >= 4 {
                 let cells: Vec<(usize, String)> = recipe.cells().iter().enumerate().filter_map(|(cell, item)| item.map(|item| (cell, name(item)))).collect();
                 let laid: Vec<(usize, &str)> = cells.iter().map(|(cell, item)| (*cell, item.as_str())).collect();
                 if lay_and_craft(world, &laid) {
                     gate.advance(now);
                 }
-            } else if !waited && gate.server_in_phase() > 2.0 && walk_to_lying(world, loose) {
+            } else if !waited && gate.server_in_phase() > 2.0 && walk_to_lying(world, gate, loose, middle, thrown) {
                 // Any still lying about out of reach: the player goes to them.
             } else if waited {
                 let free = world.resource::<LocalPlayer>().inventory.slots.iter().filter(|s| s.is_none()).count();
