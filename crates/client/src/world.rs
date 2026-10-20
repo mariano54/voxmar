@@ -223,6 +223,23 @@ impl ClientWorld {
         self.visibility_dirty = true;
     }
 
+    /// How many columns straight ahead of `eye` along `forward` (on the ground plane) are
+    /// meshed before the first that is not, a strip three columns wide, up to the view
+    /// distance: the land a flight has in front of it, which falls short when streaming
+    /// falls behind (the capture's `ahead:` line).
+    pub fn meshed_ahead(&self, eye: Vec3, forward: Vec2) -> i32 {
+        let forward = forward.normalize_or_zero();
+        let side = forward.perp();
+        let column = |at: Vec2| ColumnPos((at / CHUNK_SIZE as f32).floor().as_ivec2());
+        let start = eye.xz();
+        (1..=self.view_distance)
+            .find(|&d| {
+                let at = start + forward * (d * CHUNK_SIZE) as f32;
+                [-1.0, 0.0, 1.0].iter().any(|&s| !self.details.contains_key(&column(at + side * (s * CHUNK_SIZE as f32))))
+            })
+            .map_or(self.view_distance, |d| d - 1)
+    }
+
     pub fn insert_column(&mut self, pos: ColumnPos, column: Arc<Column>) {
         self.terrain.upload_column(pos, column.colors.clone());
         self.voxels.insert(pos, column);
@@ -661,6 +678,24 @@ mod tests {
         assert_stats(&app, 10, 5);
         app.world_mut().resource_mut::<ClientWorld>().reset(3);
         assert_stats(&app, 0, 0);
+    }
+
+    #[test]
+    fn meshed_ahead_stops_at_the_first_hole() {
+        let mut world = test_world();
+        world.view_distance = 8;
+        // Meshed out to five columns east of the origin, three wide; a hole at the sixth.
+        for x in 0..=5 {
+            for z in -1..=1 {
+                world.details.insert(ColumnPos::new(x, z), 1);
+            }
+        }
+        world.details.remove(&ColumnPos::new(4, 1));
+        let eye = Vec3::new(8.0, 100.0, 8.0);
+        assert_eq!(world.meshed_ahead(eye, Vec2::X), 3, "the hole beside the path at four");
+        world.details.insert(ColumnPos::new(4, 1), 1);
+        assert_eq!(world.meshed_ahead(eye, Vec2::X), 5);
+        assert_eq!(world.meshed_ahead(eye, -Vec2::X), 0, "nothing west");
     }
 
     #[test]

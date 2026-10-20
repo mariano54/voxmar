@@ -321,10 +321,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // (priority.rs). Cores, not hardware threads: on a machine with two threads a core (the
     // Linux box's 16-core EPYC), workers on every thread slowed every frame system about
     // threefold while the world streamed in, whatever their priority, and took flightfast's
-    // p99 frame from 11 to 25 ms. `VOXMAR_WORKERS=n` sets their number instead, for timing how
-    // many a busy machine's frames can take (tools/perf/play_frames).
+    // p99 frame from 11 to 25 ms. And no more than `WORKERS`: on the 18-core Mac, busy with
+    // other work as it usually is, a 40 s flight's p99 frame was 24 ms with 16 workers (and
+    // with 12), 10-15 ms with 8 and 6 ms with 4, at the same frame median. `VOXMAR_WORKERS=n`
+    // sets their number instead, for timing how many a busy machine's frames can take and
+    // whether streaming keeps up (tools/perf/play_frames, its `ahead:` lines).
+    const WORKERS: usize = 6;
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
-    let mut workers = physical_cores().unwrap_or(threads).min(threads).saturating_sub(2).max(2);
+    let mut workers = physical_cores().unwrap_or(threads).min(threads).saturating_sub(2).clamp(2, WORKERS);
     if let Ok(given) = std::env::var("VOXMAR_WORKERS")
         && !given.is_empty()
     {
