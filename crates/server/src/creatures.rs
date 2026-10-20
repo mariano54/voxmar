@@ -446,7 +446,9 @@ impl motion::Surroundings for Ground<'_> {
     }
 
     fn boxes(&self, cell: IVec3) -> &[voxmar_engine::physics::Aabb] {
-        if self.over_railing(cell) {
+        // A railing is a whole block to a creature, as to its ways (`Surroundings::solid`):
+        // nothing small walks in on its bottom rail and out between its balusters.
+        if self.over_railing(cell) || self.railing(cell) {
             return &voxmar_engine::physics::CUBE;
         }
         self.block(cell).map_or(&voxmar_engine::physics::CUBE, |b| self.server.content.blocks.collision(b))

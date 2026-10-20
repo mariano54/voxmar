@@ -561,7 +561,8 @@ pub fn step(body: &mut Body, world: &impl Surroundings, movement: &Movement, wat
         // Ground under its front, as for any hop up: a block across a gap is no step.
         let front = body.position + way * (body.size.0 * 0.5 - 0.01);
         let footed = inside(world, Vec3::new(front.x, body.position.y - 0.01, front.z));
-        let step = footed && before.overlaps(|p| world.boxes(p)) && !over.overlaps(|p| world.boxes(p)) && !over.intersects(|p| world.solid(p));
+        // All of what it meets is footing, as for any hop up: the wall over a railing is no step.
+        let step = footed && before.overlaps(|p| world.boxes(p)) && !before.intersects(|p| world.solid(p) && !world.footing(p)) && !over.overlaps(|p| world.boxes(p)) && !over.intersects(|p| world.solid(p));
         body.velocity = target.with_y(if step && movement.jump > 0.0 { hop_speed(movement, dt) } else { movement.jump.min(6.0) * 0.75 });
     }
 
