@@ -40,7 +40,9 @@ pub use voxmar_engine::weather::Weather;
 // 42: a staggered creature's tell (STAGGERED).
 // 43: the seat a player sits on (Vitals::seated), for the lower eye.
 // 44: what the home's stores hold (Vitals::home_stores), for what can be made there.
-pub const PROTOCOL_VERSION: u32 = 44;
+// 47: ServerMessage::Bark, a settlement person's wordless greeting, alarm or sigh (45 and
+// 46 are other lanes').
+pub const PROTOCOL_VERSION: u32 = 47;
 
 /// A creature's `tell` while it rears into a new phase of its fight.
 pub const REARING: u8 = u8::MAX;
@@ -218,6 +220,9 @@ pub enum ServerMessage {
     /// kiln), sent on joining and whenever one is lit, breaks or burns out: they crackle
     /// and their chimneys smoke, an unlit one is cold and quiet.
     Fires { lit: Vec<IVec3> },
+    /// A creature the player sees made a short, wordless sound: one of a settlement's people
+    /// greeting, raising the alarm or sighing, content (`Server::bark`).
+    Bark { creature: u32, bark: voxmar_engine::creature::Bark },
 }
 
 /// A creature as players see it. Its velocity lets clients carry it on smoothly between
