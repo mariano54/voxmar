@@ -537,7 +537,7 @@ impl Server {
             self.load_area(cell, cell);
             let Some(spot) = self.standing_spot(cell.x, cell.z, cell.y) else { continue };
             // Each one's looks and mind by the world's count of rolls, never the tick.
-            let [a, b] = self.meta.next_roll(crate::save::ROLL_SUMMON);
+            let [a, b] = self.meta.next_cast(crate::save::ROLL_SUMMON);
             let salt = u64::from(a.to_bits()) << 32 | u64::from(b.to_bits());
             if let Some(id) = self.spawn_creature(species, spot.as_vec3() + Vec3::new(0.5, 0.0, 0.5), salt) {
                 if held && let Some(creature) = self.creatures.live.get_mut(&id) {
