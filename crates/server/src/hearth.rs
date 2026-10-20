@@ -18,8 +18,10 @@ pub struct Lit {
     pub position: [i32; 3],
     pub structure: String,
     pub until: u64,
-    /// Who lit it, by key (`player_key`): a home hearth's owner, whose home it is for fire
-    /// (fire.ron's `homes_catch_only_from_owner`). None for a fire lit before this was kept.
+    /// Whose it is, by key (`player_key`): a home hearth's kept owner (`hearth_owners`, the one
+    /// who first lit it, whoever relit it), whose home it is for fire (fire.ron's
+    /// `homes_catch_only_from_owner`); for any other fire, who lit it. None for a fire lit
+    /// before this was kept.
     #[serde(default, deserialize_with = "crate::blaze::keyed")]
     pub owner: Option<String>,
 }

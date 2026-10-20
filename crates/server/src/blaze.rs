@@ -641,6 +641,45 @@ mod tests {
         assert_eq!(server.hearth_owners.get(&core), Some(&Some("ada".to_owned())), "her fire burning there forgot whose the hearth is");
     }
 
+    /// Ada mining her own hearthstone forgets whose the hearth is, also when the mining
+    /// falls due in the run loop rather than as a message of hers arrives; Bo mining it the
+    /// same way does not.
+    #[test]
+    fn mining_your_own_hearthstone_forgets_it_however_late_it_completes() {
+        use voxmar_engine::action::ActionTarget;
+        use voxmar_engine::coords::Face;
+        for (who, forgets) in [(1, true), (2, false)] {
+            let mut server = crate::test_server();
+            let (core, _client) = hearth(&mut server);
+            server.players.remove(&1);
+            let _ada = join(&mut server, 1, "Ada");
+            server.light(1, core);
+            let _bo = join(&mut server, 2, "Bo");
+            server.players.get_mut(&who).unwrap().position = core.as_vec3() + voxmar_engine::glam::Vec3::new(2.5, 0.0, 0.5);
+            let (now, mine) = (std::time::Instant::now(), server.content.actions.expect("core:mine"));
+            server.propose(who, mine, ActionTarget::Block { block: core, face: Face::PosX }, now);
+            server.complete_actions(now + std::time::Duration::from_secs(30));
+            assert_eq!(at(&server, core), "core:air", "the hearthstone was not mined");
+            assert_eq!(server.hearth_owners.contains_key(&core), !forgets, "mined by player {who}");
+        }
+    }
+
+    /// Ada, an admin, setting her own lit hearth's hearthstone to air by command: a command
+    /// is no one's doing, so the hearth is still hers.
+    #[test]
+    fn a_command_over_your_hearthstone_forgets_nothing() {
+        let mut server = crate::test_server();
+        let (core, _client) = hearth(&mut server);
+        server.players.remove(&1);
+        let _ada = join(&mut server, 1, "Ada");
+        server.players.get_mut(&1).unwrap().admin = true;
+        server.light(1, core);
+        let line = format!("setblock {} {} {} core:air", core.x, core.y, core.z);
+        server.handle_message(1, voxmar_protocol::ClientMessage::Command { line }, std::time::Instant::now());
+        assert_eq!(at(&server, core), "core:air", "the command set nothing");
+        assert_eq!(server.hearth_owners.get(&core), Some(&Some("ada".to_owned())), "a command forgot Ada's hearth");
+    }
+
     /// Whose each home hearth is comes back with the world: an unlit one kept through the
     /// world's own save, and from a world saved before owners were kept (no
     /// `hearth_owners`), each lit home hearth's owner. (An older world's cold home hearth
