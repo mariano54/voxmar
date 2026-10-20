@@ -597,6 +597,19 @@
             ".kwwdwwwk.",
             ".kkkkkkkk.",
         ])]),
+        // A crescent moon over a little fire on its logs: an evening in.
+        "ui/effect/evening_in": (size: (10, 10), layers: [Grid(legend: {'m': "#f0e6a0", 'r': "#d04018", 'o': "#f08a20", 'y': "#ffd850", 'w': "#7a4a22", 'k': "#3a2410"}, rows: [
+            "......mm..",
+            ".....m....",
+            ".....m....",
+            "......mm..",
+            "....r.....",
+            "...ror....",
+            "..royor...",
+            "..royyr...",
+            ".wwkwwkww.",
+            ".kwwkwwkk.",
+        ])]),
         // A shelf with its jars in a row.
         "ui/effect/everything_in_its_place": (size: (10, 10), layers: [Grid(legend: {'k': "#1a1008", 'w': "#a0703a", 'b': "#4a80c0", 'r': "#c04030", 'g': "#40a040"}, rows: [
             "..........",

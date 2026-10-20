@@ -29,6 +29,11 @@ weather; base's: what food does), read by `crates/engine/src/effect.rs`.
   your head; wind reaches you anywhere. `replaces` hides milder effects while a stronger
   one is on (freezing hides chilly, drenched hides soaked).
 
+**After dark.** `Night` holds from sunset to sunrise (the sun below the horizon,
+`calendar::night`); base's `evening_in` (Evening in: heal x1.2, 2° warmer) asks for it
+indoors at home by a fire, and a sleep rule marked `night: true` gives its rest only after
+dark (docs/home.md "Nights").
+
 Biomes give their own (base effects.ron): waterside (sea, river and marsh: casts land a
 fifth more often), forest calm (heal a fifth faster), rich rock (mountains: mine a tenth
 faster), aether-touched (fantastical biomes: a twentieth more experience) and mired
