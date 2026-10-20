@@ -9,6 +9,7 @@ mod condition;
 /// The weather in words, for the debug overlay as for `/weather`.
 pub use barks::BARK_COMMAND_REACH;
 pub use commands::{weather_name, weather_numbers};
+pub use creatures::NEAR_THINK_LONGEST;
 mod cooking;
 mod creatures;
 mod fight;
@@ -308,6 +309,20 @@ fn heal_most_below_food(content: &Content, heal_most: f32) -> Result<(), String>
 
 /// Loads every content package under `assets/content`, and checks the world
 /// generator's definitions in them, so a broken package fails at startup.
+/// How each block (by id) shelters as a wall of a home's room, as `Server::room_walls`
+/// judges it (survival.ron's furniture looked past), for the client to hear a home's walls
+/// as the server judges them.
+pub fn wall_shelters(content: &Content) -> Vec<Option<voxmar_engine::effect::Shelter>> {
+    let Ok(rules) = rules::SurvivalRules::load(&content.files, &content.blocks, &mut Vec::new()) else { return vec![None; content.blocks.len()] };
+    (0..content.blocks.len())
+        .map(|id| {
+            let id = voxmar_engine::block::BlockId(id as u16);
+            let tags = &content.blocks.def(id).tags;
+            voxmar_engine::effect::Shelter::of_wall(tags, content.blocks.info(id).solid, rules.furniture(tags))
+        })
+        .collect()
+}
+
 pub fn load_content(assets: &Path) -> Result<Content, Box<dyn std::error::Error>> {
     let mut content = Content::load(&assets.join("content"))?;
     if let Some(missing) = NAMED_ACTIONS.iter().find(|name| content.actions.id(name).is_none()) {
@@ -686,6 +701,9 @@ pub(crate) struct Server {
     /// once it has landed by then (`fight`).
     /// None until messages are first taken in (unit tests tick without them).
     heard: Option<Instant>,
+    /// How many players were told of others last tick: alone, a player is told once that
+    /// nobody else is there (`broadcast_players`).
+    shown_players: usize,
     /// Animals and monsters about.
     creatures: creatures::Creatures,
     /// The people of settlements near players.
@@ -829,6 +847,7 @@ impl Server {
             catches,
             arrival: Instant::now(),
             heard: None,
+            shown_players: 0,
             creatures: creatures::Creatures::default(),
             villagers: villagers::Villagers::restore(state.villagers),
             wandering: Default::default(),
@@ -1232,8 +1251,11 @@ impl Server {
         }
     }
 
-    fn broadcast_players(&self) {
-        if self.players.len() < 2 {
+    fn broadcast_players(&mut self) {
+        // Alone, a player is told others are gone once (none left to draw), then nothing.
+        let joined = self.players.values().filter(|p| p.joined).count();
+        let was = std::mem::replace(&mut self.shown_players, joined);
+        if joined < 2 && was < 2 {
             return;
         }
         let views: Vec<_> = self.players.values().filter(|p| p.joined).map(Player::view).collect();

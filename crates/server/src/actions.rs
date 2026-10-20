@@ -443,7 +443,11 @@ impl Server {
                 (Effect::Swap, ActionTarget::Block { block, .. }) => {
                     // Opened or shut here first: the clients follow what the server holds.
                     let changes = voxmar_engine::action::swapping(&Context { server: self, agent, held: None }, block);
+                    // A swap is the same thing in another state: a player's door or curtain
+                    // stays theirs (it gives itself back when broken), a wild one stays wild.
+                    let placed: Vec<IVec3> = changes.iter().map(|&(pos, _)| pos).filter(|pos| self.placed.contains(pos)).collect();
                     self.set_blocks(&changes);
+                    self.placed.extend(placed);
                 }
                 (Effect::Coat, ActionTarget::Block { block, .. }) => self.coat(agent, block),
                 (Effect::Till, ActionTarget::Block { block, .. }) => {
@@ -568,7 +572,7 @@ impl Server {
     fn planned_bed(&self, bed: IVec3) -> bool {
         let Some(now) = self.block(bed) else { return false };
         self.content.blocks.def(now).has_tag("bed")
-            && self.overworld.settlements_near(IVec2::new(bed.x, bed.z), 64).iter().any(|s| s.buildings.iter().any(|b| b.beds.contains(&bed)))
+            && self.overworld.settlement_holding(IVec2::new(bed.x, bed.z)).is_some_and(|s| s.buildings.iter().any(|b| b.beds.contains(&bed)))
             && voxmar_worldgen::Generator::generate(&*self.overworld, voxmar_engine::coords::ColumnPos::of_block(bed)).block(bed) == now
     }
 
