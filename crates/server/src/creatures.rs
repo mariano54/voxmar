@@ -882,9 +882,9 @@ impl Server {
                 // Its way is of squares as wide as it is, and it makes for each one's middle.
                 let span = path::Walker::span_of(body.size.0);
                 // Down a drop deeper than it climbs back only in a chase, or onto open ground.
-                let climbs = movement.jump > 0.0;
-                let drop = if body.bold { motion::SAFE_DROP } else { climbs as i32 };
-                let walker = path::Walker { height: body.size.1.ceil() as i32, climbs, wary: water == Water::Land, span, drop };
+                let jumps = movement.jump > 0.0;
+                let drop = if body.bold { motion::SAFE_DROP } else { jumps as i32 };
+                let walker = path::Walker { height: body.size.1.ceil() as i32, climbs: jumps, wary: water == Water::Land, span, drop };
                 if (going_round || !cells.is_empty()) && stale && self.tick >= creature.way_at + TICKS_PER_SECOND as u64 {
                     let found = path::find(&Ground::climbing(self, climbs), &walker, walker.corner(body.position + Vec3::Y * 0.01), walker.corner(goal));
                     #[cfg(test)]
@@ -5241,6 +5241,29 @@ mod fight_tests {
                 assert!(inside, "{what} got out of the ring of railings {t} ticks on: at {off:.2} from its middle cell");
             }
         }
+    }
+
+    /// A mouflon led by wheat toward a player beyond a railing seven long, open at its ends,
+    /// goes round it to them: to it the railing is a wall two high, in its search and as it
+    /// steers as in its step. Before: its search and its steering took the railing for a
+    /// block-high step it would hop, and it pressed into it.
+    #[test]
+    fn one_led_by_food_goes_round_a_railing() {
+        let mut server = crate::test_server();
+        let c = pen(&mut server, 9);
+        set(&mut server, "base:oak_railing", (-3..=3).map(|z| c + IVec3::new(0, 0, z)).collect::<Vec<_>>());
+        let player = join(&mut server, c.as_vec3() + Vec3::new(3.5, 0.0, 0.5));
+        let wheat = server.content.blocks.expect("base:wheat");
+        let held = server.players.get_mut(&player).unwrap();
+        held.inventory.add(wheat, 1);
+        held.selected = (0..36).find(|&slot| held.inventory.get(slot).is_some_and(|s| s.item == wheat)).expect("the wheat is held");
+        let sheep = put(&mut server, "base:mouflon", c.as_vec3() + Vec3::new(-3.5, 0.0, 0.5), Vec3::X);
+        let came = (0..20 * TICKS_PER_SECOND as u64).any(|_| {
+            server.tick += 1;
+            server.think_and_move();
+            server.creatures.live[&sheep].body.position.x > c.x as f32 + 1.5
+        });
+        assert!(came, "the mouflon never came round the railing: at {:.2}", server.creatures.live[&sheep].body.position - c.as_vec3());
     }
 
     /// Prints the table (`cargo test -p voxmar_server --lib fight_table -- --ignored --nocapture`).
