@@ -615,6 +615,8 @@ struct Gate {
     /// Since when (game seconds) the lit chimney has been watched, while the hearth and
     /// stove cook (`chimney_watch`).
     chimney_since: Option<f32>,
+    /// When the Cook step began counting its campfire's particles (with its first cook).
+    fire_since: Option<f32>,
     /// What the dry step's pot water replaced, put back after.
     pot_ground: Option<String>,
     /// Raw small game carried, slots and pouch, as the dry step hangs the rack, so its
@@ -907,6 +909,7 @@ impl Gate {
             home_style: None,
             chimney_owed: 0.0,
             chimney_since: None,
+            fire_since: None,
             pot_ground: None,
             rack_rabbits: 0,
             dry_clearing: None,
@@ -12987,6 +12990,11 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let chimney = [hearth + IVec3::new(1, 1, 1), hearth + IVec3::new(1, 2, 1)];
     // A cottage stove the other side of the fire, cooked at after the hearth.
     let stove = fire + IVec3::new(-2, 0, 0);
+    // The campfire's count ends `FIRE_WATCH` after it began, in whichever phase that falls.
+    if gate.fire_since.is_some_and(|since| now - since > FIRE_WATCH) && world.resource::<crate::emitters::Emitters>().watch == Some(fire) {
+        world.resource_mut::<crate::emitters::Emitters>().watch = None;
+        gate.shot(world, "fire_later");
+    }
     match gate.phase {
         0 => {
             let net = world.resource::<Net>();
@@ -13047,6 +13055,10 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 (true, Some(slot)) => {
                     world.resource_mut::<LocalPlayer>().selected = slot;
                     gate.count_before = item_count(world, "base:cooked_small_game") + item_count(world, "base:burnt_food");
+                    // Its particles are counted while it cooks: what the fire gives off does
+                    // not hang on what is cooked on it, nor on where the player looks.
+                    world.resource_mut::<crate::emitters::Emitters>().watch(fire);
+                    gate.fire_since = Some(now);
                     gate.advance(now);
                 }
                 _ if gate.server_in_phase() > 10.0 => {
@@ -13079,33 +13091,38 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     format!("right clicks on the campfire cooked nothing in 15 server seconds ({in_phase:.1} game s), the hand holding {held}")
                 };
                 gate.check("cook", Err(reason));
+                world.resource_mut::<crate::emitters::Emitters>().watch = None;
+                gate.fire_since = None;
                 gate.next(Step::Ore, now);
             } else {
+                // The fire as the count begins, for the record.
+                gate.shot(world, "fire");
                 gate.tap(world, true, now);
             }
         }
-        // The fire's particles, counted for a while: smoke, embers and sparks rising from
-        // it. Counting is the same at any frame rate; a picture of the air over it, taken
-        // twice, is kept for the record (a few faint puffs sit near any threshold).
+        // The fire's particles, counted from the cook on: smoke, embers and sparks rising
+        // from it. Counting is the same at any frame rate; a picture of the fire, taken as
+        // the count began and again as it ends, is kept for the record (a few faint puffs sit
+        // near any threshold).
         5 => {
-            aim_at(world, fire.as_vec3() + Vec3::new(0.5, 1.6, 0.5));
-            if in_phase > 0.5 && gate.shot(world, "fire").is_some() {
-                world.resource_mut::<crate::emitters::Emitters>().watch(fire);
+            aim_at(world, fire.as_vec3() + Vec3::new(0.5, 0.3, 0.5));
+            let counted = world.resource::<crate::emitters::Emitters>().watch != Some(fire);
+            if counted && gate.shot(world, "fire").is_some() {
                 gate.advance(now);
             }
         }
-        6 if in_phase > FIRE_WATCH => {
+        6 => {
             let Some(later) = gate.shot(world, "fire_later") else { return };
+            gate.fire_since = None;
             let change = gate.earlier_shot("fire").map_or(0.0, |earlier| change(&earlier, &later, 0.4));
             let amount = world.resource::<crate::render::particles::Particles>().amount;
             let is_fire = {
                 let client = world.resource::<ClientWorld>();
                 client.registry.id("base:campfire").is_some_and(|c| client.block(fire) == Some(c))
             };
-            let mut emitters = world.resource_mut::<crate::emitters::Emitters>();
+            let emitters = world.resource::<crate::emitters::Emitters>();
             let count = emitters.watched;
             let why = emitters.why_quiet(fire, amount);
-            emitters.watch = None;
             let result = if count >= FIRE_PARTICLES {
                 Ok(format!("{count} particles rose from it in {FIRE_WATCH} s (the view over it changed by {change:.2} levels)"))
             } else {
