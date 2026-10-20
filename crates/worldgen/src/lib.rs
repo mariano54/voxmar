@@ -1924,6 +1924,41 @@ mod tests {
         assert_eq!(water::drainage_loops_ended(), 0, "water ran round in a circle across region borders");
     }
 
+    /// A new player finds flint lying loose near where they start, whatever the seed
+    /// (Mariano, Oct 15: bare hands take only loose things; gravel, the other flint, lay
+    /// hundreds of blocks off on some seeds): within 64 blocks of spawn, at least the four
+    /// nodules a flint axe and pickaxe take. Prints each seed's count.
+    #[test]
+    fn flint_lies_near_every_spawn() {
+        use rayon::prelude::*;
+        let registry = registry();
+        let flint = registry.expect("base:loose_flint");
+        let seeds = [1u64, 2, 3, 4, 8, 12, 16, 42, 100, 777, 0x5eed];
+        let found: Vec<(u64, u32)> = seeds
+            .par_iter()
+            .map(|&seed| {
+                let world = shared_world(seed);
+                let spawn = world.spawn_point();
+                let first = ColumnPos::of_block(spawn).offset(-2, -2);
+                let mut near = 0;
+                for (i, column) in generate_area(&world, first, 5).iter().enumerate() {
+                    let origin = first.offset(i as i32 % 5, i as i32 / 5).origin();
+                    for (x, z) in (0..CHUNK_SIZE).flat_map(|x| (0..CHUNK_SIZE).map(move |z| (x, z))) {
+                        let (dx, dz) = (origin.x + x - spawn.x, origin.z + z - spawn.z);
+                        if dx * dx + dz * dz > 64 * 64 {
+                            continue;
+                        }
+                        near += (1..WORLD_HEIGHT_FOR_TESTS).filter(|&y| column.block(IVec3::new(x, y, z)) == flint).count() as u32;
+                    }
+                }
+                (seed, near)
+            })
+            .collect();
+        println!("loose flint within 64 blocks of spawn: {found:?}");
+        let short: Vec<&(u64, u32)> = found.iter().filter(|&&(_, n)| n < 4).collect();
+        assert!(short.is_empty(), "seeds with fewer than four loose flint within 64 blocks of spawn: {short:?} (all: {found:?})");
+    }
+
     /// Features reaching across column borders (trees, logs, rocks) come out the same
     /// whichever column is generated first, on whichever thread.
     #[test]

@@ -673,7 +673,7 @@ fn refusal(context: &ClientContext, locale: &Locale, block: Option<IVec3>, need:
         }
         Requirement::ToolGood => {
             let rule = content.tools.rule(world.block(block?)?)?;
-            let tool = content.tools.first_of(rule.tool?, rule.tier)?;
+            let tool = content.least_tool(rule.tool?, rule.tier)?;
             Some(locale.format(key, &[("tool", &locale.block(world.registry.def(tool)))]))
         }
         // The held seed's crop.
