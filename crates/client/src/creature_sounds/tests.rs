@@ -154,3 +154,31 @@ fn creature_voices_are_heard_within_their_band() {
         .collect();
     crate::mix::tests::all([crate::mix::tests::within(Category::Creatures, heard)]);
 }
+
+/// Every one of a settlement's people barks in their own voice (a greeting, an alarm, a
+/// content sigh), as the launch requires; a package that revoices them without barks fails.
+#[test]
+fn settlement_people_bark_in_their_own_voice() {
+    let content = content();
+    let bank = Bank::load(&content.files, &content.creatures).unwrap();
+    assert_eq!(bank.unbarked(&content.creatures), Vec::<String>::new());
+    let villager = content.creatures.id("base:villager").unwrap();
+    let voice = bank.voice(villager).unwrap();
+    for kind in [Kind::Greet, Kind::Alarm, Kind::Content] {
+        let own = voice.events[kind as usize].as_ref().unwrap_or_else(|| panic!("no {kind:?}"));
+        if let Some(fallback) = voice.event(kind.fallback().unwrap()) {
+            assert_ne!(own.clips, fallback.clips, "{kind:?} is the sound it falls back to");
+        }
+    }
+    // An alarm carries farther than a greeting, and a sigh only close by.
+    assert!(voice.event(Kind::Alarm).unwrap().range > voice.event(Kind::Greet).unwrap().range);
+    assert!(voice.event(Kind::Content).unwrap().range < voice.event(Kind::Greet).unwrap().range);
+    let mut files = content.files.to_vec();
+    files.push(voxmar_engine::content::ContentFile {
+        package: "zmod".into(),
+        name: defs::FILE.into(),
+        source: r#"(voices: {"mute": (hurt: (clips: ["h.ogg"]))}, species: {"base:villager": (voice: "mute")})"#.into(),
+    });
+    let mute = Bank::load(&files, &content.creatures).unwrap();
+    assert_eq!(mute.unbarked(&content.creatures), ["base:villager"]);
+}

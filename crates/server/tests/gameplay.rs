@@ -574,6 +574,18 @@ impl Client {
         self.pump_until(|c| c.server_tick >= from + ticks);
     }
 
+    /// Waits until at least `ticks` server ticks have passed from now, and little longer:
+    /// it asks the server's clock (`/time add 0` tells it at once and moves nothing) rather
+    /// than waiting on its once-a-second tell, which made a one-second wait one to two.
+    #[track_caller]
+    fn after_ticks_asked(&mut self, ticks: u64) {
+        self.ok("/time add 0");
+        let from = self.server_tick;
+        while self.server_tick < from + ticks {
+            self.ok("/time add 0");
+        }
+    }
+
     /// Waits until `count` holds still across 20 server ticks after everything sent was
     /// handled (drops still landing, pick-ups on the way), and returns it.
     #[track_caller]
@@ -989,9 +1001,9 @@ fn a_world_whose_worldgen_data_changed_says_so_once_and_still_opens() {
     copy_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content"), &assets.join("content"));
     let blocks = assets.join("content/base/blocks.ron");
     let source = std::fs::read_to_string(&blocks).unwrap();
-    let mossy = r#"tags: ["stone", "bricks", "building", "mossy", "wet"]"#;
+    let mossy = r#"tags: ["stone", "bricks", "building", "mossy", "wet", "shelter:sound"]"#;
     assert!(source.contains(mossy));
-    std::fs::write(&blocks, source.replace(mossy, r#"tags: ["stone", "bricks", "building", "mossy", "wet", "tagged"]"#)).unwrap();
+    std::fs::write(&blocks, source.replace(mossy, r#"tags: ["stone", "bricks", "building", "mossy", "wet", "shelter:sound", "tagged"]"#)).unwrap();
     let tagged = load_content(&assets).expect("content loads");
     assert!(warned(tagged), "a block's tags changed");
     std::fs::remove_dir_all(&dir).unwrap();
@@ -2695,12 +2707,19 @@ fn a_furnished_home_heals_faster_and_sleeping_in_it_rests_you_once() {
     client.propose("base:sleep", ActionTarget::Block { block: bag, face: Face::PosY });
     client.pump_until(|c| told(c, "rested already"));
     assert!(!has(&client, "base:well_rested"));
-    // Light a hearth with a chimney (a lit one is home), a second light and a roof: snug.
+    // Light a hearth with a chimney (a lit one is home), a second light, and walls and a
+    // roof on a floor: snug.
     let core = feet + IVec3::new(4, 0, 0);
+    let (low, high) = (feet + IVec3::new(-3, 0, -4), feet + IVec3::new(7, 3, 4));
     for line in [
         format!("/setblock {} {} {} hearthstone", core.x, core.y, core.z),
         format!("/setblock {} {} {} torch", feet.x + 3, feet.y + 1, feet.z),
         format!("/fill {} {} {} {} {} {} stone", feet.x - 2, feet.y + 4, feet.z - 3, feet.x + 6, feet.y + 4, feet.z + 3),
+        format!("/fill {} {} {} {} {} {} stone", low.x, low.y - 1, low.z, high.x, low.y - 1, high.z),
+        format!("/fill {} {} {} {} {} {} oak_planks", low.x, low.y, low.z, low.x, high.y, high.z),
+        format!("/fill {} {} {} {} {} {} oak_planks", high.x, low.y, low.z, high.x, high.y, high.z),
+        format!("/fill {} {} {} {} {} {} oak_planks", low.x, low.y, low.z, high.x, high.y, low.z),
+        format!("/fill {} {} {} {} {} {} oak_planks", low.x, low.y, high.z, high.x, high.y, high.z),
     ] {
         client.ok(&line);
     }
@@ -2905,14 +2924,15 @@ fn home_says_where_home_is_and_what_the_next_step_needs() {
     let said = client.ok("/home");
     assert!(said.contains(&format!("Your home is at {}, {}, {}", bag.x, bag.y + 1, bag.z)), "{said}");
     assert!(said.contains("Camp reached. Next, Hearthside: it needs hearth 0/1"), "{said}");
-    // A hearthstone lights it: the ladder moves on and the next step names a roof and the rest.
+    // A hearthstone lights it: the ladder moves on and the next step names a roof, walls and the rest.
     let hearth = feet + IVec3::new(4, 0, 0);
     client.ok(&format!("/setblock {} {} {} hearthstone", hearth.x, hearth.y, hearth.z));
     client.pump_until(|c| c.world.block(hearth) == c.content.blocks.id("base:hearthstone"));
     client.chat.clear();
     client.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("Hearthside:")));
     let said = client.ok("/home");
-    assert!(said.contains("Hearthside reached. Next, Snug: it needs a roof overhead, light 1/2"), "{said}");
+    assert!(said.contains("Hearthside reached. Next, Snug: it needs a roof overhead, draughty or better walls and roof all about "), "{said}");
+    assert!(said.contains("%/90%, light 1/2"), "{said}");
 }
 
 #[test]
@@ -3892,9 +3912,10 @@ fn gaps_between_shapes_smaller_than_the_player_are_no_way_through() {
     client.send_position(start + Vec3::X, false);
     client.send_position(on, false);
     assert!(client.all_accepted(), "a jump onto a headstone was put back to {:?}", client.teleported);
-    // ...but not under a slab in the upper half of the cell above the next, 1.75 over its top.
-    client.fill(at, IVec3::new(2, 2, 0), IVec3::new(2, 2, 0), "oak_slab_top");
+    // ...but not under a slab in the upper half of the cell above the next, 1.75 over its top
+    // (set once they are off it: no fill shuts a player in).
     client.tp(start + Vec3::X);
+    client.fill(at, IVec3::new(2, 2, 0), IVec3::new(2, 2, 0), "oak_slab_top");
     client.send_position(on, false);
     client.pump_until(|c| c.teleported.is_some());
     assert_eq!(client.teleported.take(), Some(start + Vec3::X), "stood on a headstone with 1.75 blocks of headroom");
@@ -4749,7 +4770,9 @@ fn carried_of(client: &Client, item: voxmar_engine::block::BlockId) -> u32 {
 #[test]
 fn a_sling_shoots_a_stone_a_clear_line_away_and_trains_ranged() {
     real_time("combat is judged on the clock: blows by when they arrived, wind-ups and rhythm in seconds, not in ticks");
-    let mut client = Client::join();
+    // Draws by a key whose first shot hits: by chance, the shots it took to hit were four
+    // on most keys, each a server second apart, and now and then none of sixteen hit.
+    let mut client = Client::join_with(ServerConfig { view_distance: 2, draw_key: Some(5), ..Default::default() });
     let (sling, stone) = (client.content.blocks.expect("base:sling"), client.content.blocks.expect("base:cobblestone"));
     let ranged = client.content.skills.id("core:ranged").expect("a ranged skill");
     let bear = client.content.creatures.find("brown_bear").expect("a brown bear in the content");
@@ -4776,12 +4799,12 @@ fn a_sling_shoots_a_stone_a_clear_line_away_and_trains_ranged() {
     };
     client.ok(&format!("/tp {} {} {}", at.x + 8.0, at.y, at.z));
     aim(&mut client);
-    client.wait_server(1);
+    client.settle();
     // Nothing to shoot: no swing, and the player is told what the sling needs.
     client.chat.clear();
     client.propose("core:attack", ActionTarget::Creature(id));
     client.pump_until(|c| c.chat.iter().any(|(_, line)| line.contains("Nothing to shoot")));
-    client.wait_server(1);
+    client.after_ticks_asked(TICKS_PER_SECOND as u64);
     assert_eq!(client.blows, 0, "a sling with no stone still swung");
     // With stones: each shot takes one, hit or miss, and a hit trains Ranged.
     client.ok("/give cobblestone 16");
@@ -4790,17 +4813,19 @@ fn a_sling_shoots_a_stone_a_clear_line_away_and_trains_ranged() {
     let mut shots = 0;
     while client.damage.iter().all(|&d| d == 0) {
         assert!(shots < 16, "sixteen sling shots from eight blocks never hit: {:?}", client.damage);
+        if shots > 0 {
+            client.wait_server(1);
+        }
         client.propose("core:attack", ActionTarget::Creature(id));
         shots += 1;
         client.pump_until(|c| c.blows == shots);
         client.pump_until(|c| carried_of(c, stone) == 16 - shots);
-        client.wait_server(1);
     }
     client.pump_until(|c| c.skills.xp(ranged) > xp);
     // A wall between is a miss, and the stone is still spent.
     let x = at.x + 4.0;
     client.ok(&format!("/fill {} {} {} {} {} {} stone", x.floor(), at.y.floor(), at.z.floor() - 3.0, x.floor(), at.y.floor() + 4.0, at.z.floor() + 3.0));
-    client.wait_server(1);
+    client.after_ticks_asked(TICKS_PER_SECOND as u64);
     // Two shots, the second on the sling's beat (0.53 s): both are at the air, so off the
     // beat, and earn no pip.
     let (blows, left, pips) = (client.blows, carried_of(&client, stone), client.pips.last().copied().unwrap_or(0));
@@ -4814,6 +4839,8 @@ fn a_sling_shoots_a_stone_a_clear_line_away_and_trains_ranged() {
     assert_eq!(kinds, [voxmar_engine::combat::Blow::Plain; 2], "shots into a wall counted as {kinds:?}");
     assert!(client.pips.last().copied().unwrap_or(0) <= pips, "shots into a wall earned a pip: {:?}", client.pips);
     client.pump_until(|c| carried_of(c, stone) == left - 2);
+    // The wall down again: with a clear line, only the stone gone makes the next shot miss.
+    client.ok(&format!("/fill {} {} {} {} {} {} air", x.floor(), at.y.floor(), at.z.floor() - 3.0, x.floor(), at.y.floor() + 4.0, at.z.floor() + 3.0));
     // The last stone gone while a shot winds up: still answered, as a miss at the air, and
     // the player told why.
     let slots: Vec<(usize, u8)> = (0..voxmar_engine::inventory::SLOTS).filter_map(|s| client.inventory.get(s).filter(|k| k.item == stone).map(|k| (s, k.count))).collect();
@@ -4825,7 +4852,7 @@ fn a_sling_shoots_a_stone_a_clear_line_away_and_trains_ranged() {
         client.propose("core:drop", ActionTarget::Stack { slot: last as u8, count: count - 1 });
     }
     client.pump_until(|c| carried_of(c, stone) == 1);
-    client.wait_server(1);
+    client.after_ticks_asked(TICKS_PER_SECOND as u64);
     client.chat.clear();
     let blows = client.blows;
     client.propose("core:attack", ActionTarget::Creature(id));
@@ -4838,7 +4865,9 @@ fn a_sling_shoots_a_stone_a_clear_line_away_and_trains_ranged() {
 #[test]
 fn an_arrow_that_hits_may_be_left_by_the_target_to_pick_up_again() {
     real_time("combat is judged on the clock: blows by when they arrived, wind-ups and rhythm in seconds, not in ticks");
-    let mut client = Client::join();
+    // Draws by a key whose first shot hits and leaves its arrow: by chance, it took from two
+    // shots to twenty-six, each a server second apart.
+    let mut client = Client::join_with(ServerConfig { view_distance: 2, draw_key: Some(10), ..Default::default() });
     let (bow, arrow) = (client.content.blocks.expect("base:short_bow"), client.content.blocks.expect("base:arrow"));
     let bear = client.content.creatures.find("brown_bear").expect("a brown bear in the content");
     let recover = client.content.combat.recover(&client.content.combat.wielded(Some(bow), |_| 10));
@@ -4861,7 +4890,7 @@ fn an_arrow_that_hits_may_be_left_by_the_target_to_pick_up_again() {
     client.ok(&format!("/tp {} {} {}", at.x + 10.0, at.y, at.z));
     let yaw = yaw_toward(client.position, at);
     client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw, pitch: 0.0, selected_slot: slot as u8, flying: true }));
-    client.wait_server(1);
+    client.settle();
     // Shot until an arrow lies by the bear: a hit leaves one half the time, so a forty-health
     // bear dies only after a dozen or more hits, by which one has all but surely been left.
     let lying = |c: &Client| c.items.values().any(|v| v.stack.item == arrow && v.position.distance(at) < 3.0);
@@ -8118,7 +8147,8 @@ fn the_first_days(f: &mut Fresh) -> Site {
 
     // A Bed of Your Own: two feathers (junglefowl) and two hides (rabbits) for a sleeping
     // bag, crafted in the two by two grid.
-    let (feather, hide) = ("base:feather", "base:hide");
+    // Rabbits give raw hide; the first bag takes it as it is.
+    let (feather, hide) = ("base:feather", "base:raw_hide");
     let (feathers, hides) = (|c: &Client| holding(c, feather) + loose(c, feather), |c: &Client| holding(c, hide) + loose(c, hide));
     f.hunt(|c| if hides(c) < 2 { "rabbit" } else { "junglefowl" }, |c| feathers(c) >= 2 && hides(c) >= 2);
     f.collect(feather, 2);
