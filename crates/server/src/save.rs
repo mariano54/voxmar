@@ -123,6 +123,10 @@ pub struct WorldMeta {
     /// open cold; completed quests stay completed in the player's own file.
     #[serde(default)]
     pub lit: Vec<crate::hearth::Lit>,
+    /// Structures smouldering (a charcoal clamp), by the world's day ticks. Older worlds
+    /// have none.
+    #[serde(default)]
+    pub smoulders: Vec<crate::smoulder::Smouldering>,
     /// Whose each home hearth is, lit or cold, until its hearthstone is broken
     /// (`hearth::HearthOwner`). Older worlds have none: their lit hearths keep the owner
     /// saved with the fire.
@@ -275,6 +279,7 @@ impl WorldMeta {
             stations: Vec::new(),
             catches: Vec::new(),
             lit: Vec::new(),
+            smoulders: Vec::new(),
             hearth_owners: Vec::new(),
             generation: 0,
             worldgen_content: None,

@@ -597,6 +597,19 @@
             ".kwwdwwwk.",
             ".kkkkkkkk.",
         ])]),
+        // A four-paned window with the sun in its corner.
+        "ui/effect/bright_room": (size: (10, 10), layers: [Grid(legend: {'k': "#3a2410", 'w': "#a0703a", 's': "#ffe070", 'b': "#9ad0f0", 'c': "#d8f0ff"}, rows: [
+            "s.s.......",
+            ".sss......",
+            "ssswwwwww.",
+            ".sswbbwbbw",
+            "s.swcbwcbw",
+            "...wbbwbbw",
+            "...wwwwwww",
+            "...wbbwbbw",
+            "...wcbwcbw",
+            "...wwwwwww",
+        ])]),
         // A crescent moon over a little fire on its logs: an evening in.
         "ui/effect/evening_in": (size: (10, 10), layers: [Grid(legend: {'m': "#f0e6a0", 'r': "#d04018", 'o': "#f08a20", 'y': "#ffd850", 'w': "#7a4a22", 'k': "#3a2410"}, rows: [
             "......mm..",
