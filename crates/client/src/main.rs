@@ -732,11 +732,14 @@ fn setup(
     for id in 0..registry.len() {
         let block = voxmar_engine::block::BlockId(id as u16);
         let info = registry.info(block);
-        let variety = registry.def(block).texture_variety;
-        for layer in info.layers {
-            let layer = &mut layers[layer as usize];
+        let def = registry.def(block);
+        let variety = def.texture_variety;
+        for face in Face::ALL {
+            let layer = &mut layers[info.layers[face as usize] as usize];
             layer.glow = layer.glow.max(info.emission as f32 / 15.0);
-            layer.through |= registry.def(block).lit_through;
+            // Only a face drawn its own way glows by the light through it (one without a
+            // drawing takes the first layer), as the registry's load check counts them.
+            layer.through |= def.lit_through && def.textures.face(face).is_some();
             if info.render == RenderKind::Opaque {
                 layer.variety.turn |= variety.turn;
                 layer.variety.mirror |= variety.mirror;
