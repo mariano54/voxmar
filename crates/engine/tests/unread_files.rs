@@ -32,13 +32,18 @@ fn the_games_packages_hold_no_file_nothing_reads() {
 #[test]
 fn a_file_nothing_reads_is_noted_with_what_was_meant() {
     let quests = r#"(quests: [(name: "a", age: "nomad", branch: "main", title: "A", why: "", tasks: [[Home]])])"#;
-    let dir = with_mod("unread-files", &[("quest.ron", quests), ("my_notes.ron", "()")]);
+    let dir = with_mod("unread-files", &[("quest.ron", quests), ("my_notes.ron", "()"), ("fish.ron", "()")]);
+    std::fs::create_dir_all(dir.join("zz_mod").join("old.ron")).unwrap();
     let content = Content::load(&dir).unwrap();
     let unread: Vec<&str> = content.notes.iter().map(String::as_str).filter(|n| n.contains(UNREAD)).collect();
     assert_eq!(
         unread,
-        ["zz_mod/my_notes.ron is read by nothing: no part of the game reads a file of that name", "zz_mod/quest.ron is read by nothing (meant quests.ron?)"],
-        "files in name order, the misspelt one naming its likeliest"
+        [
+            "zz_mod/fish.ron is read by nothing: no part of the game reads a file of that name",
+            "zz_mod/my_notes.ron is read by nothing: no part of the game reads a file of that name",
+            "zz_mod/quest.ron is read by nothing (meant quests.ron?)",
+        ],
+        "files in name order, the misspelt one naming its likeliest, a short name (fish, not fire) only a letter off; a folder named old.ron is no file"
     );
     assert!(!content.quests.iter().any(|q| q.name == "zz_mod:a"), "a misspelt quest file's quests are not loaded");
     std::fs::remove_dir_all(&dir).unwrap();

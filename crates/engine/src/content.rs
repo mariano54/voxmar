@@ -200,16 +200,17 @@ pub struct ContentFile {
     pub source: String,
 }
 
-/// The files of a package another crate reads from `Content::files`, by name: worldgen's
-/// (the land, its biomes, settlements and ores), the server's (survival, the spawn kit,
-/// wear) and the client's (sounds, music, the look of the HUD). With the engine's own, these
-/// are every name a package's `.ron` may have; any other is read by nothing, which the load
-/// notes (a misspelt `quest.ron` would otherwise be dropped without a word).
+/// The files of a package read from `Content::files`, by name, once the load has passed
+/// them by: worldgen's (the land, its biomes, settlements and ores), the server's (survival,
+/// the spawn kit, wear), the client's (sounds, music, the look of the HUD) and the engine's
+/// own `refusals.ron`. With those the load reads itself, these are every name a package's
+/// `.ron` may have; any other is read by nothing, which the load warns of (a misspelt
+/// `quest.ron` would otherwise be dropped without a word).
 pub const READ_ELSEWHERE: &[&str] = &[
     "action_fx.ron", "ambience.ron", "ambient.ron", "biomes.ron", "cave_biomes.ron", "celebrations.ron", "climate.ron", "combat_fx.ron",
     "combat_hud.ron", "creature_motion.ron", "creature_sounds.ron", "cultures.ron", "decorations.ron", "hoards.ron",
     "interface.ron", "lairs.ron", "land.ron", "look.ron", "music.ron", "night_light.ron", "ores.ron", "plants.ron",
-    "quest_paths.ron", "refusals.ron", "rocks.ron", "settlements.ron", "sounds.ron", "spawn_kit.ron", "surfaces.ron",
+    "refusals.ron", "rocks.ron", "settlements.ron", "sounds.ron", "spawn_kit.ron", "surfaces.ron",
     "survival.ron", "terrain.ron", "trails.ron", "trees.ron", "wear.ron",
 ];
 
@@ -297,6 +298,8 @@ impl Content {
             let mut names: Vec<String> = std::fs::read_dir(&path)
                 .map_err(|e| read_error(&path, e))?
                 .flatten()
+                // Files only: a folder named `x.ron` is no definition file.
+                .filter(|entry| entry.file_type().is_ok_and(|kind| !kind.is_dir()))
                 .filter_map(|entry| entry.file_name().into_string().ok())
                 .filter(|name| name.ends_with(".ron"))
                 .collect();
@@ -465,12 +468,17 @@ impl Content {
             }
         }
         for file in unread {
-            let name = file.rsplit('/').next().unwrap_or_default();
-            let meant = read.iter().map(|known| (letters_apart(name, known), known)).filter(|&(apart, _)| apart <= 2).min();
-            notes.push(match meant {
+            // Names compared without `.ron`, a short one (`fish`) only a letter from another.
+            let stem = |name: &str| name.strip_suffix(".ron").unwrap_or(name).to_owned();
+            let name = stem(file.rsplit('/').next().unwrap_or_default());
+            let near = if name.chars().count() <= 5 { 1 } else { 2 };
+            let meant = read.iter().map(|known| (letters_apart(&name, &stem(known)), known)).filter(|&(apart, _)| apart <= near).min();
+            let note = match meant {
                 Some((_, known)) => format!("{file} is read by nothing (meant {known}?)"),
                 None => format!("{file} is read by nothing: no part of the game reads a file of that name"),
-            });
+            };
+            tracing::warn!("{note}");
+            notes.push(note);
         }
         let renames = BlockRegistry::renames(&blocks);
         let blocks = BlockRegistry::expand(blocks)?;
