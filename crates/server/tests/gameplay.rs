@@ -50,6 +50,8 @@ struct Client {
     quick: bool,
     /// Console lines received.
     chat: Vec<(ChatKind, String)>,
+    /// The same, as the server's words before any language renders them.
+    said: Vec<voxmar_engine::lang::Words>,
     /// Refusals received, in English.
     refused: Vec<String>,
     /// The time of day and how fast it runs, as last told.
@@ -258,6 +260,7 @@ impl Client {
             weather: None,
             quick: false,
             chat: Vec::new(),
+            said: Vec::new(),
             refused: Vec::new(),
             day: None,
             server_tick: 0,
@@ -409,7 +412,10 @@ impl Client {
                 self.weather = Some(weather);
                 self.quick = quick;
             }
-            ServerMessage::Chat { kind, text } => self.chat.push((kind, self.content.english.render(&text, &self.content.blocks))),
+            ServerMessage::Chat { kind, text } => {
+                self.chat.push((kind, self.content.english.render(&text, &self.content.blocks)));
+                self.said.push(text);
+            }
             ServerMessage::Refused { why } => self.refused.push(self.content.english.render(&why, &self.content.blocks)),
             ServerMessage::Time { tick, day, day_speed } => {
                 self.day = Some((day, day_speed));
@@ -543,6 +549,7 @@ impl Client {
     #[track_caller]
     fn command(&mut self, line: &str) -> Vec<(ChatKind, String)> {
         self.chat.clear();
+        self.said.clear();
         self.connection.send(ClientMessage::Command { line: line.into() });
         self.pump_until(|c| !c.chat.is_empty());
         std::mem::take(&mut self.chat)
@@ -3766,20 +3773,32 @@ fn a_dead_villager_stays_dead_across_a_restart_until_a_newcomer_comes() {
     client.ok(&format!("/tp {} {} {}", bed.x, bed.y, bed.z));
     // Everyone of their kind in sight, once all have come out: a person comes out only onto
     // land the server holds, and as its search allows, so the look waits until the server
-    // says everyone due out near the player is (`/creatures people`), and a moment more for
-    // word of them to come.
+    // says everyone due out near the player is (`/creatures people`), then until the
+    // client holds every one of them the server tells it of.
     let kind = |c: &Client| -> std::collections::BTreeSet<u32> { villagers(c).into_iter().filter(|v| species_name(c, v) == name).map(|v| v.seed).collect() };
     let settle = |client: &mut Client| -> std::collections::BTreeSet<u32> {
+        use voxmar_engine::lang::Words;
         client.land_within(SETTLEMENT_VIEW);
         let mut said = String::new();
         for _ in 0..60 {
             said = client.ok("/creatures people");
-            let n: Vec<usize> = said.split_whitespace().filter_map(|w| w.parse().ok()).collect();
-            if let [out, due] = n[..]
+            // Read from the server's words, not from any language's rendering of them.
+            let Some(Words::Key(_, args)) = client.said.first().cloned() else { panic!("/creatures people: {said}") };
+            let arg = |name: &str| args.iter().find(|(n, _)| n == name).map(|(_, w)| w.clone());
+            let number = |name: &str| match arg(name) {
+                Some(Words::Text(n)) => n.parse::<usize>().ok(),
+                _ => None,
+            };
+            let seen: Vec<u32> = match arg("seen") {
+                Some(Words::List(ids)) => ids.iter().filter_map(|w| if let Words::Text(id) = w { id.parse().ok() } else { None }).collect(),
+                _ => panic!("/creatures people named no one in sight: {said}"),
+            };
+            if let (Some(out), Some(due)) = (number("out"), number("due"))
                 && out == due
                 && due > 0
             {
-                client.pump_ticks(TICKS_PER_SECOND as u64, |_| false);
+                client.pump_ticks(10 * TICKS_PER_SECOND as u64, |c| seen.iter().all(|id| c.creatures.contains_key(id)));
+                assert!(seen.iter().all(|id| client.creatures.contains_key(id)), "the server told of people in sight the client never heard of: {said}");
                 return kind(client);
             }
             client.pump_ticks(TICKS_PER_SECOND as u64 / 2, |_| false);

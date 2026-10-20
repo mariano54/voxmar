@@ -18817,7 +18817,8 @@ fn judge_roofs(world: &World, gate: &Gate, at: IVec3) -> Result<String, String> 
     // The flames the town's plan sets (by the settlements' own table), each standing where
     // planned, then only the blocks within their reach: never a look at every block of the
     // town in one frame.
-    let planned_flames: Vec<(IVec3, BlockId)> = generator.settlement_planned(at.xz(), &|b| generator.settlement_flame(b)).into_iter().filter(|r| within(r.0)).collect();
+    let all_flames = generator.settlement_planned(at.xz(), &|b| generator.settlement_flame(b));
+    let planned_flames: Vec<(IVec3, BlockId)> = all_flames.iter().copied().filter(|r| within(r.0)).collect();
     let missing: Vec<String> = planned_flames.iter().filter(|&&(p, b)| observer.world.block(p) != Some(b)).map(|&(p, b)| format!("{} at {p} is {}", block(Some(b)), block(observer.world.block(p)))).collect();
     if !missing.is_empty() {
         return Err(format!("{name}: {} of its {} flames within {TOWN_REACH} are not as planned: {}", missing.len(), planned_flames.len(), missing.into_iter().take(4).collect::<Vec<_>>().join("; ")));
@@ -18826,8 +18827,8 @@ fn judge_roofs(world: &World, gate: &Gate, at: IVec3) -> Result<String, String> 
     let mut blocks: FxHashMap<IVec3, BlockId> = FxHashMap::default();
     let reach = generator.settlement_fire_reach() + 1;
     // No flame the plan never set within a fire's reach of its roofs: a look about each
-    // roof piece, each cell once.
-    let planned_at: rustc_hash::FxHashSet<IVec3> = flames.iter().copied().collect();
+    // roof piece, each cell once, knowing the planned flames as far out as that look goes.
+    let planned_at: rustc_hash::FxHashSet<IVec3> = all_flames.iter().map(|r| r.0).filter(|p| (p.xz() - at.xz()).abs().max_element() <= TOWN_REACH + reach).collect();
     let mut looked: rustc_hash::FxHashSet<IVec3> = rustc_hash::FxHashSet::default();
     let mut unplanned: Vec<String> = Vec::new();
     for &(r, _) in &planned {

@@ -1358,7 +1358,7 @@
     "command.core.creatures.help.summary": "64ブロック以内の生き物を一覧表示します。",
     "command.creatures.admins_only": "コマンドで生き物を手なずけたり、繁殖できる状態にしたり、成長を早めたり、じっとさせたり、倒したり、取り除いたりできるのは管理者だけです。",
     "command.creatures.populated": "自然に現れた{count}体が1分間じっとします。",
-    "command.creatures.people": "プレイヤーの近くに出てくるはずの集落の人{due}人のうち、{out}人が出ています。",
+    "command.creatures.people": "プレイヤーの近くに出てくるはずの集落の人{due}人のうち、{out}人が出ています。見える範囲にいるのは {seen} です。",
     "command.creatures.dispersed": "64ブロック以内の野生の生き物を{count}体取り除きました。",
     "command.creatures.what": "tame、ready、hasten、hold、release、kill、remove、populate、disperse、people、bark のどれですか？",
     "command.creatures.bark_what": "bark は greet、alarm、content のどれですか？",

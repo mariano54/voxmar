@@ -951,7 +951,7 @@
     "command.creatures.line": "{count} × {creature}, nearest {distance} blocks away ({doing})",
     "command.creatures.admins_only": "Only admins may change creatures with a command.",
     "command.creatures.populated": "{count} creatures arrived naturally and will stand still for a minute.",
-    "command.creatures.people": "{out} of the {due} settlement people due out near players are out.",
+    "command.creatures.people": "{out} of the {due} settlement people due out near players are out; within sight of you: {seen}.",
     "command.creatures.dispersed": "Removed {count} wild creatures within 64 blocks.",
     "command.creatures.what": "Tame, ready, hasten, hold, release, kill, remove, populate, disperse, people or bark?",
     "command.creatures.bark_what": "Bark greet, alarm or content?",

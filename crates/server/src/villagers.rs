@@ -374,26 +374,31 @@ impl Server {
     }
 
     /// Of the people of every living settlement near players, how many are out and how
-    /// many are due out: those who live and are not dead, where the land under them is held
-    /// (`/creatures people`, for a test to wait on rather than guess).
-    pub(crate) fn people_out(&self) -> (usize, usize) {
+    /// many are due out (those who live and are not dead, where the land under them is
+    /// held), and which of those out a player at `at` is told of (`/creatures people`, for a
+    /// test to wait on rather than guess).
+    pub(crate) fn people_out(&self, at: Vec3) -> (usize, usize, Vec<u32>) {
         let live = self.live();
         let players: Vec<Vec3> = self.players.values().filter(|p| p.joined).map(|p| p.position).collect();
         let today = days(self.day);
-        let (mut out, mut due) = (0, 0);
+        let (mut out, mut due, mut seen) = (0, 0, Vec::new());
         for (&id, town) in self.villagers.towns.iter().filter(|(_, t)| t.alive) {
             for i in self.nearby(id, &players, &live) {
                 if self.villagers.dead.get(&(id, i)).is_some_and(|d| d.away_until > today) {
                     continue;
                 }
-                if town.people[i].creature.is_some() {
+                if let Some(creature) = town.people[i].creature {
                     (out, due) = (out + 1, due + 1);
+                    if self.creatures.live.get(&creature).is_some_and(|c| c.body.position.distance(at) < crate::creatures::SEEN_WITHIN) {
+                        seen.push(creature);
+                    }
                 } else if self.spot_for(id, i, mix(town.info.people[i].seed, self.villagers.generation(id, i))).is_some_and(|(spot, _)| self.world.contains(ColumnPos::of_block(spot))) {
                     due += 1;
                 }
             }
         }
-        (out, due)
+        seen.sort_unstable();
+        (out, due, seen)
     }
 
     /// A disappearance without `creature_dies` releases a resident, never starts the
