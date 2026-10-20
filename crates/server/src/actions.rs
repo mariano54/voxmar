@@ -368,10 +368,7 @@ impl Server {
                     if let Some(upper) = self.content.blocks.upper(placed) {
                         self.set_block(cell + IVec3::Y, upper);
                     }
-                    // Marked as the player's: an ore teaches nothing broken again, and a
-                    // furnishing gives itself back (where the world placed one, it does not).
-                    // (By the block placed: a held item may place as another, as a torch does.)
-                    if self.content.tools.rule(item).is_some_and(|rule| rule.xp > 0.0) || self.content.blocks.def(placed).has_tag("furnishing") {
+                    if self.marks_placed(item, placed) {
                         self.placed.insert(cell);
                     }
                     self.placed_plant(item, cell);
@@ -613,6 +610,14 @@ impl Server {
         }
     }
 
+    /// Whether a cell a player set `item` down in, as `placed`, is marked as theirs: an ore
+    /// teaches nothing broken again, leaves give no stick (`instead`) again, and a furnishing
+    /// gives itself back (where the world placed one, it does not). (By the block placed: a
+    /// held item may place as another, as a torch does.)
+    pub(crate) fn marks_placed(&self, item: BlockId, placed: BlockId) -> bool {
+        self.content.tools.rule(item).is_some_and(|rule| rule.xp > 0.0 || rule.instead.is_some()) || self.content.blocks.def(placed).has_tag("furnishing")
+    }
+
     /// What breaking the block at `pos` teaches (`tools.ron`), and sometimes an extra drop:
     /// more often with the skill's level above what the block asks and a better tool. A
     /// block a player placed teaches nothing and gives nothing extra.
@@ -758,5 +763,30 @@ mod tests {
         assert!((1..64).contains(&flint), "flint {flint} times in 64 breaks of gravel");
         assert!((1..64).contains(&first.3), "a bonus drop {} times in 64 breaks with finds", first.3);
         assert_eq!(broken(1_377), first, "the same breaks later gave otherwise");
+    }
+
+    /// Leaves a player set down are marked as theirs, so breaking them gives no stick: forty
+    /// times placed and broken, never one, where a tree's leaves give one in five.
+    #[test]
+    fn placed_leaves_give_no_sticks() {
+        let mut server = crate::test_server();
+        let (_client, connection) = voxmar_protocol::local_pair();
+        let mut player = crate::player::Player::new(1, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
+        player.joined = true;
+        server.players.insert(1, player);
+        let leaves = server.content.blocks.expect("base:oak_leaves");
+        assert!(server.content.tools.rule(leaves).and_then(|r| r.instead).is_some(), "a tree's leaves give sticks");
+        let pos = server.spawn.floor().as_ivec3() + IVec3::new(2, 0, 0);
+        let sticks = (0..40)
+            .filter(|_| {
+                server.set_block(pos, leaves);
+                if server.marks_placed(leaves, leaves) {
+                    server.placed.insert(pos);
+                }
+                server.reward_break(1, pos)
+            })
+            .count();
+        assert_eq!(sticks, 0, "placed leaves gave a stick");
+        assert!(!server.placed.contains(&pos), "the mark goes with the break");
     }
 }
