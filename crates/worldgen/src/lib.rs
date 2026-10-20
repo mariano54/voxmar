@@ -601,6 +601,12 @@ impl Overworld {
         RiverLand { rivers: &self.rivers, stages: self.stages(), world: self }
     }
 
+    /// The middle of the vein a sample of ore (`block`) lying at `pos` marks, telling one
+    /// vein from another: none for a sample no vein laid there (one a player set down).
+    pub fn vein_of_sample(&self, pos: IVec3, block: BlockId) -> Option<IVec3> {
+        self.terrain.ores.vein_of_sample(self, pos.x, pos.z, block)
+    }
+
     /// The lairs within `radius` blocks of `centre`, nearest first (`lairs.ron`).
     pub fn lairs_near(&self, centre: IVec2, radius: i32) -> Vec<LairSite> {
         self.lairs.near(self, centre, radius)

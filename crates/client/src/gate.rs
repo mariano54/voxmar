@@ -420,7 +420,9 @@ steps! {
     /// sends them away.
     Party,
     /// `/locate ore` finds a sample of ore on the ground, and the server's world there has
-    /// it, with its vein's ore below it.
+    /// it, with its vein's ore below it. Broken, it teaches its prospecting experience as
+    /// well as its own; coal ore set in its place refuses a first-tier pickaxe, naming the
+    /// stone one.
     Ore,
     /// `/locate gorge` finds a river deep between walls, and the server's world there has
     /// them.
@@ -709,6 +711,12 @@ struct Gate {
     tarn: Option<TarnVisit>,
     /// Where `/locate ore` found a sample of ore.
     ore: IVec3,
+    /// The Mining level before the ore step raised it, to put back.
+    ore_mining: Option<u8>,
+    /// The sample `ore` found, kept once it is broken.
+    ore_sample: Option<BlockId>,
+    /// The tools the ore step gave that the player had none of, to clear after.
+    ore_given: Vec<String>,
     /// Where `/locate settlement` sent the player: the middle of its square.
     settlement: IVec3,
     /// What `/locate settlement` answered, English, for the culture it names.
@@ -958,6 +966,9 @@ impl Gate {
             settlement: IVec3::ZERO,
             settlement_reply: String::new(),
             ore: IVec3::ZERO,
+            ore_mining: None,
+            ore_sample: None,
+            ore_given: Vec::new(),
             quarry: Vec3::ZERO,
             quarry_id: None,
             fallen_watched: false,
@@ -15162,11 +15173,144 @@ fn ore(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     }
                 }
             };
+            gate.ore_sample = sample;
+            let found = result.is_ok();
             gate.check("ore", result);
-            gate.next(Step::Gorge, now);
+            let Some(sample) = gate.ore_sample.filter(|_| found) else {
+                gate.next(Step::Gorge, now);
+                return;
+            };
+            // The sample broken next, with the least tool its rule asks and Mining enough.
+            let content = world.resource::<Launch>().content.clone();
+            let rule = content.tools.rule(sample);
+            let tool = rule.and_then(|rule| content.least_tool(rule.tool?, rule.tier));
+            let (Some(rule), Some(tool)) = (rule, tool) else {
+                gate.check("ore: prospect", Err(format!("no tool breaks the {}", registry.def(sample).name)));
+                gate.next(Step::Gorge, now);
+                return;
+            };
+            let level = skill_level(world, "core:mining").0;
+            gate.ore_mining = Some(level);
+            give_for_ore(world, gate, &content.blocks.def(tool).name);
+            world.resource::<Net>().command(&format!("skill mining {}", level.max(rule.level)));
+            gate.mining_before = None;
+            gate.advance(now);
+        }
+        // Broken, the first sample over its vein teaches its rule's `prospect` besides its
+        // own experience (tools.ron).
+        4 => {
+            let content = world.resource::<Launch>().content.clone();
+            let at = gate.ore;
+            let rule = gate.ore_sample.and_then(|sample| content.tools.rule(sample).cloned());
+            let tool = rule.as_ref().and_then(|r| content.least_tool(r.tool?, r.tier));
+            let (Some(rule), Some(tool)) = (rule, tool) else {
+                end_ore(world, gate, now, "ore: prospect", Err(format!("the sample at {at} is gone, or no tool breaks it")));
+                return;
+            };
+            let tool_name = content.blocks.def(tool).name.clone();
+            if skill_level(world, "core:mining").0 < rule.level || !select(world, &tool_name) {
+                if gate.server_in_phase() > ORE_WAIT {
+                    end_ore(world, gate, now, "ore: prospect", Err(format!("Mining {} and the {tool_name} never came to hand", rule.level)));
+                }
+                return;
+            }
+            let xp = skill_level(world, "core:mining").1;
+            let before = *gate.mining_before.get_or_insert(xp);
+            aim(world, at);
+            mouse(world, MouseButton::Left, true);
+            let gone = gate.observer.as_ref().is_some_and(|o| o.world.block(at).is_some_and(|b| b.is_air()));
+            let learnt = xp.saturating_sub(before);
+            let wanted = ((rule.xp + rule.prospect) * 10.0) as u32;
+            if gone && learnt >= wanted && rule.prospect > 0.0 {
+                mouse(world, MouseButton::Left, false);
+                gate.check("ore: prospect", Ok(format!("the first sample broken over its vein taught {:.1} Mining ({} for the break, {} for prospecting)", learnt as f32 / 10.0, rule.xp, rule.prospect)));
+                // Coal, set where the sample lay, for a pickaxe of the first tier.
+                let pickaxe = content.tools.rule(content.blocks.expect("base:coal_ore")).and_then(|r| r.tool).and_then(|kind| content.least_tool(kind, 1));
+                world.resource::<Net>().command(&format!("setblock {} {} {} coal_ore", at.x, at.y, at.z));
+                if let Some(pickaxe) = pickaxe {
+                    give_for_ore(world, gate, &content.blocks.def(pickaxe).name);
+                }
+                gate.advance(now);
+            } else if gate.server_in_phase() > ORE_WAIT {
+                mouse(world, MouseButton::Left, false);
+                end_ore(world, gate, now, "ore: prospect", Err(format!("breaking the sample at {at} with the {tool_name}: {} and taught {learnt} tenths, not {wanted} (prospect {})", if gone { "broke" } else { "stayed" }, rule.prospect)));
+            }
+        }
+        // Coal refuses a first-tier pickaxe, naming a better one: the stone pickaxe.
+        5 => {
+            let content = world.resource::<Launch>().content.clone();
+            let (at, coal) = (gate.ore, content.blocks.expect("base:coal_ore"));
+            let rule = content.tools.rule(coal).cloned();
+            let first = rule.as_ref().and_then(|r| content.least_tool(r.tool?, 1));
+            let (Some(rule), Some(first)) = (rule, first) else {
+                end_ore(world, gate, now, "ore: coal wants stone", Err("no rule or no first-tier tool for coal ore".into()));
+                return;
+            };
+            let first_name = content.blocks.def(first).name.clone();
+            let stood = gate.observer.as_ref().is_some_and(|o| o.world.block(at) == Some(coal)) && world.resource::<ClientWorld>().block(at) == Some(coal);
+            if !stood || !select(world, &first_name) {
+                if gate.server_in_phase() > ORE_WAIT {
+                    end_ore(world, gate, now, "ore: coal wants stone", Err(format!("the coal ore at {at} or the {first_name} never came (coal there {stood})")));
+                }
+                return;
+            }
+            aim(world, at);
+            let wanted = why_by_hand(world, coal).unwrap_or_default();
+            let better = content.least_tool(rule.tool.unwrap_or_default(), rule.tier).map(|t| world.resource::<Locale>().block(content.blocks.def(t))).unwrap_or_default();
+            if !wanted.is_empty() && world.resource::<crate::hud::skills::SkillToasts>().shows_refusal(&wanted) {
+                mouse(world, MouseButton::Left, false);
+                let still = world.resource::<ClientWorld>().block(at) == Some(coal);
+                let result = match (rule.tier >= 2, wanted.contains(&better), still) {
+                    (false, ..) => Err(format!("coal ore asks for tier {} only", rule.tier)),
+                    (_, false, _) => Err(format!("the refusal \"{wanted}\" does not name the {better}")),
+                    (.., false) => Err(format!("coal ore said \"{wanted}\" but broke for the {first_name} all the same")),
+                    _ => Ok(format!("coal ore refused the {first_name}: \"{wanted}\"")),
+                };
+                end_ore(world, gate, now, "ore: coal wants stone", result);
+            } else if gate.server_in_phase() > ORE_WAIT {
+                mouse(world, MouseButton::Left, false);
+                end_ore(world, gate, now, "ore: coal wants stone", Err(format!("coal ore struck with the {first_name} never showed \"{wanted}\"")));
+            } else {
+                // A fresh press each time: a held button mines on, it does not ask again.
+                mouse(world, MouseButton::Left, gate.frames.is_multiple_of(2));
+            }
         }
         _ => {}
     }
+}
+
+/// Longest an ore stage after the sample's check waits for the server.
+const ORE_WAIT: f32 = 8.0;
+
+/// Ends the ore step with `check`: the cell the sample lay in emptied, the tools given
+/// cleared, and Mining put back.
+fn end_ore(world: &mut World, gate: &mut Gate, now: f32, check: &str, result: Result<String, String>) {
+    gate.check(check, result);
+    mouse(world, MouseButton::Left, false);
+    let at = gate.ore;
+    let net = world.resource::<Net>();
+    net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
+    for name in gate.ore_given.drain(..) {
+        net.command(&format!("clear {name}"));
+    }
+    if let Some(level) = gate.ore_mining.take() {
+        net.command(&format!("skill mining {level}"));
+    }
+    gate.next(Step::Gorge, now);
+}
+
+/// Gives the player one `name` for the ore step, to clear after if they had none.
+fn give_for_ore(world: &mut World, gate: &mut Gate, name: &str) {
+    let short = short_name(name);
+    if holding(world, name).0 == 0 && !gate.ore_given.contains(&short) {
+        gate.ore_given.push(short.clone());
+    }
+    world.resource::<Net>().command(&format!("give {short} 1"));
+}
+
+/// A block's name without the base package's prefix, for a command.
+fn short_name(name: &str) -> String {
+    name.strip_prefix("base:").unwrap_or(name).to_owned()
 }
 
 /// The direction to the light of the moment: the sun by day, the moon by night.

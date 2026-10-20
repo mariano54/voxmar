@@ -572,6 +572,13 @@ impl Ores {
             .collect()
     }
 
+    /// The middle of the vein a sample of `block` at (x, z) lies over: what tells one vein
+    /// from another for prospecting. None where no vein's sample of it lies there.
+    pub(crate) fn vein_of_sample(&self, world: &Overworld, x: i32, z: i32, block: BlockId) -> Option<IVec3> {
+        let at = IVec2::new(x, z);
+        self.veins_near(world, at, at).into_iter().find(|vein| self.samples_of(vein).iter().any(|s| s.x == x && s.z == z && s.block == block)).map(|vein| vein.centre)
+    }
+
     /// The samples lying in a column, if the ground there allows.
     pub(crate) fn samples(&self, world: &Overworld, pos: ColumnPos) -> Vec<Sample> {
         let origin = pos.origin();
@@ -871,6 +878,33 @@ mod tests {
             let inside = (p.xz() - min).min_element() >= 7 && (max - p.xz()).min_element() >= 7;
             assert!(below > 0 || !inside, "no {wanted} below the {} at {p}", registry.def(b).name);
         }
+    }
+
+    /// A sample tells which vein it lies over: every sample of a vein names the same one,
+    /// samples of different veins different ones, and a cell with no sample none.
+    #[test]
+    fn a_sample_names_its_vein() {
+        let registry = registry();
+        let world = Overworld::new(42, registry.clone());
+        let first = ColumnPos::of_block(world.spawn_point()).offset(-4, -4);
+        let (min, max) = (first.origin().xz(), first.origin().xz() + 8 * CHUNK_SIZE - 1);
+        let ores = &world.terrain.ores;
+        let veins: Vec<Vein> = ores.veins_near(&world, min, max).into_iter().filter(|v| ores.kinds[v.kind].sample.is_some()).collect();
+        assert!(veins.len() >= 2, "only {} veins with samples near spawn", veins.len());
+        let mut told = 0;
+        for vein in &veins {
+            for sample in ores.samples_of(vein) {
+                let at = IVec3::new(sample.x, 0, sample.z);
+                let named = world.vein_of_sample(at, sample.block).expect("a vein for its own sample");
+                // Two veins' samples may share a cell; the first vein found answers for both.
+                let shared = veins.iter().any(|other| other.centre != vein.centre && ores.samples_of(other).iter().any(|s| s.x == sample.x && s.z == sample.z && s.block == sample.block));
+                assert!(named == vein.centre || shared, "the sample at {at} names the vein at {named}, not its own at {}", vein.centre);
+                told += 1;
+            }
+        }
+        assert!(told >= 4, "only {told} samples");
+        let sample = ores.samples_of(&veins[0])[0];
+        assert_eq!(world.vein_of_sample(IVec3::new(sample.x, 0, sample.z), BlockId::AIR), None, "a vein for a sample of nothing");
     }
 
     /// `/locate ore` finds a sample lying where it says, of the ore asked for.

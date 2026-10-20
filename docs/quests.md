@@ -256,7 +256,7 @@ Twine and Thong and the rest beside the first three), so a newcomer met a wall b
 their first tool. Now four quests open at the start, the three pinned ones (Look It Up,
 Timber, First Night) and the Crafting Table, and every other path starts from a step the
 main line reaches: the crafting table, the stone tools, the first night or the bed. Each path runs as a chain:
-mining runs A Pile of Stone, Dig In, Coal and Cinders, First Ore, Stockpile; fighting runs
+mining runs A Pile of Stone and Dig In, and Black Flecks (a coal sample lifted with flint, from the Crafting Table), Coal and Cinders (twelve coal, after it and Stone in Hand; Torchlight waits on it), First Ore, Stockpile; fighting runs
 Something to Swing, Sharpening Up, Something Hostile, A Stone's Throw; the camp runs Make
 Camp, Company at Camp, Pantry Shelves, From the Shelves, with A Lit Corner and A Bench to
 Work At beside it; grain runs A Handful of Grain, Daily Bread, Wild Harvest, Herb Lore.
@@ -324,7 +324,7 @@ and `Trapped(creature, n)` (a catch taken from a sprung trap: `trapped`; whoever
 the snare gets the credit and the catch, as with a shared lit fire, until traps have
 owners). Loading refuses a `Stocked` store that is not a store, a `CraftNear` tag no
 recipe is made near, and a `Trapped` creature no trap catches. A tally goal naming one
-full name reads its one key; only `any` and `tag:` look across a kind's keys. Nomad has 63 quests, Farm 98.
+full name reads its one key; only `any` and `tag:` look across a kind's keys. Nomad has 64 quests, Farm 98.
 
 ## Readable to a newcomer (Oct 13)
 

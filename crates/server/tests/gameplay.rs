@@ -7676,9 +7676,15 @@ impl Fresh {
         for z in [14, 17] {
             c.fill(origin, v(10, 0, z), v(24, 2, z), "gravel");
         }
-        // A patch of natural stone one block high, with two coal ores on its near edge.
+        // A patch of natural stone one block high, with two coal ores on its near edge; beyond
+        // it nine more standing apart in two rows, with room to walk between, and a sample of
+        // coal lying on the grass.
         c.fill(origin, v(9, 0, -3), v(17, 0, 4), "stone");
         c.fill(origin, v(9, 0, 3), v(9, 0, 4), "coal_ore");
+        for (x, z) in FRESH_COAL {
+            c.fill(origin, v(x, 0, z), v(x, 0, z), "coal_ore");
+        }
+        c.fill(origin, v(14, 0, 8), v(14, 0, 8), "coal_ore_sample");
         // Granite, the hard rock stone heads are ground from, in a far corner: nine blocks
         // one high, so what is left over stands out of the way. And a block of sand, for the
         // grindstone's dressing.
@@ -7946,6 +7952,16 @@ fn the_first_days(f: &mut Fresh) -> Site {
     f.gather("base:wooden_axe", trunks, log, 12);
     f.mark("an_axe_to_it");
 
+    // Black Flecks: the sample of coal on the grass, lifted with the flint pickaxe (the seam
+    // it marks wants a stone one).
+    let sample = f.rel(14, 0, 8);
+    f.walk_toward(Fresh::middle(f.rel(14, 0, 9)), 0.3);
+    f.hold("base:flint_pickaxe");
+    f.propose("core:mine", ActionTarget::Block { block: sample, face: Face::PosY });
+    f.spend(Act::Mine, |me| me.wait(30.0, "lifting the sample of coal", |c| c.world.block(sample) == Some(BlockId::AIR)));
+    f.collect("base:coal_ore", 1);
+    f.mark("black_flecks");
+
     // Stone in Hand: cobblestone with the flint pickaxe; sand by hand, and a grindstone (a
     // wheel of cobble dressed with sand, on two sticks) set down by the table; granite, the
     // hard rock, ground on it to seven stone heads: a stone pickaxe and axe hafted from six,
@@ -8046,9 +8062,10 @@ fn the_first_days(f: &mut Fresh) -> Site {
     f.craft(&[(0, feather, 1), (1, feather, 1), (3, hide, 1), (4, hide, 1)], "base:sleeping_bag", 1);
     f.mark("a_bed_of_your_own");
 
-    // Torchlight: two coal ores, each with a stick making four torches.
-    let coal = rel(f, vec![v(9, 0, 3), v(9, 0, 4)]);
-    f.gather_from("base:stone_pickaxe", &[Fresh::middle(f.rel(7, 0, 3))], coal, "base:coal_ore", 2);
+    // Coal and Cinders: eleven coal ores with the stone pickaxe, twelve with the sample. Torchlight: two of them, each with a stick making four torches.
+    let coal = rel(f, [v(9, 0, 3), v(9, 0, 4)].into_iter().chain(FRESH_COAL.map(|(x, z)| v(x, 0, z))).collect());
+    f.gather("base:stone_pickaxe", coal, "base:coal_ore", 12);
+    f.mark("coal_and_cinders");
     f.at_table(table);
     f.craft(&[(0, "base:coal_ore", 2), (3, stick, 2)], "base:torch", 8);
     f.mark("torchlight");
@@ -8119,6 +8136,9 @@ fn the_first_days(f: &mut Fresh) -> Site {
     Site { table, fire, kiln, bed, banks, clamp: Some(clamp) }
 }
 
+/// The coal ores standing apart on the fresh plot, beyond the stone patch (x, z).
+const FRESH_COAL: [(i32, i32); 9] = [(9, 6), (11, 6), (13, 6), (15, 6), (17, 6), (10, 10), (12, 10), (14, 10), (16, 10)];
+
 /// The quests a new player follows from nothing to the lit Crucible Kiln, in the order the
 /// book opens them: the Nomad main line to the lit Homestead Hearth, then the Farm main line.
 const QUEST_BOOK_ORDER: &[&str] = &[
@@ -8128,6 +8148,8 @@ const QUEST_BOOK_ORDER: &[&str] = &[
     "stone_in_hand",
     "first_night",
     "a_bed_of_your_own",
+    "black_flecks",
+    "coal_and_cinders",
     "torchlight",
     "homestead_hearth",
     "a_pit_kiln",
@@ -8429,6 +8451,8 @@ const FRESH_QUESTS: &[(&str, &str)] = &[
     ("first_night", "first_night"),
     ("a_tempting_bite", "a_tempting_bite"),
     ("a_bed_of_your_own", "a_bed_of_your_own"),
+    ("black_flecks", "black_flecks"),
+    ("coal_and_cinders", "coal_and_cinders"),
     ("torchlight", "torchlight"),
     ("hearth_lit", "homestead_hearth"),
     ("pit_kiln", "a_pit_kiln"),

@@ -46,6 +46,10 @@ pub struct RuleDef {
     /// better one of the kind finds it more often (its `yield` adds to the chance).
     #[serde(default)]
     pub by: Option<String>,
+    /// For a sample of ore the world laid (`ore_sample`): experience, in the skill, the
+    /// first one a player breaks over each vein teaches besides `xp` (prospecting).
+    #[serde(default)]
+    pub prospect: f32,
 }
 
 /// The farthest a tool reaps round a crop (`reap:N`): 2 is a five by five patch.
@@ -77,6 +81,8 @@ pub struct Rule {
     pub instead: Option<(BlockId, f32)>,
     /// The kind of tool `instead` waits on, by index.
     pub by: Option<usize>,
+    /// Prospecting experience, for the first sample broken over each vein.
+    pub prospect: f32,
 }
 
 /// What a held item is as a tool.
@@ -140,7 +146,10 @@ impl ToolRegistry {
                     Some(name) => Some(kind_of(name).ok_or_else(|| RegistryError(format!("tools.ron: no kind of tool `{name}`")))?),
                     None => None,
                 };
-                Ok(Rule { tags: def.tags, skill, level: def.level, tool, tier: def.tier, xp: def.xp, instead, by })
+                if !(def.prospect.is_finite() && def.prospect >= 0.0) || (def.prospect > 0.0 && skill.is_none()) {
+                    return Err(RegistryError(format!("tools.ron: {:?} prospects for {} experience: it must be a finite amount, not below nothing, in a skill", def.tags, def.prospect)));
+                }
+                Ok(Rule { tags: def.tags, skill, level: def.level, tool, tier: def.tier, xp: def.xp, instead, by, prospect: def.prospect })
             })
             .collect::<Result<Vec<_>, RegistryError>>()?;
         let number = |tags: &[String], prefix: &str| tags.iter().find_map(|t| t.strip_prefix(prefix)?.parse::<f32>().ok());
@@ -407,6 +416,26 @@ mod tests {
                 assert!(workshop.is_some(), "no block tagged {near} is made in the hand's grid, for {name}");
             }
         }
+    }
+
+    /// Coal wants a stone pickaxe, deep coal too, while its sample on the ground lifts with
+    /// a flint one: the seam is found before it can be dug. Every sample of ore that teaches
+    /// prospecting is tagged as one, so the experience goes only with a find.
+    #[test]
+    fn coal_wants_stone_and_its_sample_flint() {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        let content = crate::content::Content::load(&assets).unwrap();
+        let (blocks, tools) = (&content.blocks, &content.tools);
+        let id = |n: &str| blocks.expect(&format!("base:{n}"));
+        let (flint, stone) = (Some(id("flint_pickaxe")), Some(id("stone_pickaxe")));
+        for seam in ["coal_ore", "deepslate_coal_ore"] {
+            assert!(!tools.good_enough(flint, id(seam)), "a flint pickaxe digs {seam}");
+            assert!(tools.good_enough(stone, id(seam)), "a stone pickaxe does not dig {seam}");
+        }
+        assert!(tools.good_enough(flint, id("coal_ore_sample")), "a flint pickaxe cannot lift a coal sample");
+        assert!(tools.rule(id("coal_ore_sample")).is_some_and(|r| r.prospect > 0.0), "a coal sample teaches no prospecting");
+        let samples: Vec<&str> = blocks.tagged("ore_sample").filter(|&b| tools.rule(b).is_none_or(|r| r.prospect <= 0.0)).map(|b| blocks.def(b).name.as_str()).collect();
+        assert!(samples.is_empty(), "samples that teach no prospecting: {samples:?}");
     }
 
     /// Tall grass gives twine only to a knife, and a better knife finds it more often; by

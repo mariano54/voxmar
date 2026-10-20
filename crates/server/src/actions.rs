@@ -581,6 +581,7 @@ impl Server {
         let placed: Vec<IVec3> = std::iter::once(block).chain(plants.iter().copied()).filter(|p| self.placed.contains(p)).collect();
         if let Some(broken) = self.block(block).filter(|_| !placed.contains(&block)) {
             self.discover_broken(agent, broken);
+            self.prospect(agent, block, broken);
         }
         self.picked(agent, block);
         let instead = self.reward_break(agent, block);
