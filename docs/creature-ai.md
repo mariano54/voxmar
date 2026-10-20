@@ -186,12 +186,14 @@ the wing, drifters and swimmers do not steer.
 A way open to steer by is also one it can stand on: it looks a body's length ahead along
 the slide, and a step down further than `SAFE_DROP` (3 blocks), or into water two deep
 for a land animal not already out of its depth, or into lava at any depth (amphibians
-too; one already standing in lava may walk on through it to get out), is as shut as
-a wall (wading in the shallows too). Unless it is hunting or defending, a drop deeper than
+too; one already standing in lava may walk on through it to get out, no deeper in), is
+as shut as a wall (wading in the shallows too). Unless it is hunting, defending or led by
+food a player holds (into a sunken pen), a drop deeper than
 it climbs back (a block if it jumps, else none) is shut too, at any pace, unless the ground
 below is open: a fill over the squares it could go to down there (`path::way_out`, kept
-per landing square for the search) reaches one it climbs back up from, or more than 64
-of them. So nothing wanders or flees into a hole a player dug two or three deep; a chaser
+per landing square for the search, 256 squares of fills a search at most) reaches one it
+climbs back up from, or more than 64 of them. That is judged along the way it goes, never
+under its own middle: one on a pit's lip walks back off it. So nothing wanders or flees into a hole a player dug two or three deep; a chaser
 still drops in. So prey runs along a cliff
 edge or a lake shore rather than off it, and a boxed-in creature stands rather than press.
 Anything that jumps gets up a single block, however low its jump (the hop is lifted to
