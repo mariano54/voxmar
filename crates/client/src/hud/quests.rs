@@ -1752,10 +1752,11 @@ fn drag_web(
 /// The ways a goal's item is got, from the recipe book: every way of making what a goal
 /// makes, carries or looks up; for a plant to pick or a rock to mine, breaking or
 /// harvesting that very block (with the tool it takes), else the wild ways its item comes;
-/// a catch, the ways it is caught, found or dropped. A block the book has no way to (one
-/// found in the world that drops itself, as clay) is broken where it lies.
+/// a catch, the ways it is caught, trapped, found or dropped. A block the book has no way to (one
+/// found in the world that drops itself, as clay) is broken where it lies. A quest's
+/// reward is left out.
 pub(crate) fn goal_ways(content: &Content, book: &RecipeBook, goal: &Goal, item: BlockId) -> Vec<Entry> {
-    let wild = |entry: &&Entry| matches!(entry.method, Method::Harvest { .. } | Method::Break { .. } | Method::Catch { .. } | Method::Drop { .. } | Method::Product { .. });
+    let wild = |entry: &&Entry| matches!(entry.method, Method::Harvest { .. } | Method::Break { .. } | Method::Catch { .. } | Method::Drop { .. } | Method::Product { .. } | Method::Trap { .. } | Method::Bees { .. } | Method::Chest { .. });
     let plant = content.blocks.item_of(item);
     let ways: Vec<&Entry> = match goal {
         Goal::Pick(..) | Goal::Mine(..) => {
@@ -1767,6 +1768,8 @@ pub(crate) fn goal_ways(content: &Content, book: &RecipeBook, goal: &Goal, item:
         Goal::Craft(..) | Goal::Cook(..) | Goal::CookAt(..) | Goal::CraftNear(..) | Goal::Placed(..) | Goal::Have(..) | Goal::LookUp(..) => book.making(item),
         _ => return Vec::new(),
     };
+    // A quest's reward is no way to do a quest: the goal teaches the work itself.
+    let ways: Vec<&Entry> = ways.into_iter().filter(|e| !matches!(e.method, Method::Reward { .. })).collect();
     let info = content.blocks.info(item);
     if ways.is_empty() && !matches!(goal, Goal::Catch(..)) && info.drop_count > 0 && content.blocks.item_of(info.drops) == plant {
         let rule = content.tools.rule(item);

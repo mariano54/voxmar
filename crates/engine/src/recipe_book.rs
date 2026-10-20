@@ -53,7 +53,8 @@ pub enum Method {
     /// Caught on a line, from `level` in `skill`.
     Catch { skill: Option<crate::skill::SkillId>, level: u8 },
     /// Taken from a sprung `trap` (its set block) that caught `creature`: that creature's
-    /// loot, `chance` of the time, from `level` in `skill`.
+    /// loot, `chance` of the times one steps in (the trap's own chance of holding it, by
+    /// the loot's), from `level` in `skill`.
     Trap { trap: BlockId, creature: CreatureId, chance: f32, skill: crate::skill::SkillId, level: u8 },
     /// Taken from bees in `block` (a wild nest, a full skep), with `holding` in hand if the
     /// take asks for it, `chance` of the time, from `level` in `skill`.
@@ -283,7 +284,7 @@ impl RecipeBook {
         for trap in &content.traps.traps {
             for &creature in &trap.catches {
                 for drop in &content.creatures.get(creature).loot {
-                    let method = Method::Trap { trap: trap.set, creature, chance: drop.loot.chance, skill: trap.skill, level: trap.level };
+                    let method = Method::Trap { trap: trap.set, creature, chance: trap.chance(creature) * drop.loot.chance, skill: trap.skill, level: trap.level };
                     let uses = method.stations(blocks);
                     book.add(blocks, Entry { method, output: drop.item, count: drop.loot.count }, uses);
                 }
@@ -622,6 +623,13 @@ mod tests {
         let rabbit = content.creatures.id("base:rabbit").unwrap();
         let caught: Vec<BlockId> = book.using(snare).iter().filter(|e| matches!(e.method, Method::Trap { creature, .. } if creature == rabbit)).map(|e| e.output).collect();
         assert_eq!(caught.len(), content.creatures.get(rabbit).loot.len(), "{caught:?}");
+        // A hare is held by its own chance, not the snare's: what it leaves comes that much
+        // less often.
+        let hare = content.creatures.id("base:hare").unwrap();
+        let trap = content.traps.traps.iter().find(|t| t.set == snare).unwrap();
+        let held = book.using(snare).into_iter().filter_map(|e| match e.method { Method::Trap { creature, chance, .. } if creature == hare => Some(chance), _ => None });
+        let loot = content.creatures.get(hare).loot.iter().map(|d| trap.chance(hare) * d.loot.chance);
+        assert!(trap.chance(hare) < 0.6 && held.eq(loot), "the hare's own chance");
         // Bees: honey from a full skep, and a skep of bees from a nest with a skep in hand.
         assert!(ways("base:honey").iter().any(|m| matches!(m, Method::Bees { block, holding: None, .. } if *block == id("base:honey_skep"))));
         assert!(ways("base:bee_skep").iter().any(|m| matches!(m, Method::Bees { block, holding: Some(skep), .. } if *block == id("base:bee_nest") && *skep == id("base:skep"))));
