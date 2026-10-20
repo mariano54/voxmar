@@ -414,11 +414,11 @@
         ),
         (
             name: "still_water_perch", age: "farm", branch: "fishing", title: "Still Water Perch",
-            why: "Perch keep to fresh water, rivers, lakes and ponds, and bite from Fishing 10. Reach Fishing 10 and land three. A cream rug from the fishers is yours for your trouble: lay it by the hearth.",
+            why: "Perch keep to fresh water, rivers, lakes and ponds, and bite from Fishing 10. Reach Fishing 10 and land three. The fishers send bread home with you for your trouble.",
             tasks: [[Level("fishing", 10), Catch("raw_perch", 3)]],
             after: ["patient_angler"],
             side: true,
-            rewards: [Xp("cooking", 60.0), Item("cream_rug", 1)],
+            rewards: [Xp("cooking", 60.0), Item("bread", 2)],
         ),
         (
             name: "cold_water_trout", age: "farm", branch: "fishing", title: "Cold Water Trout",
@@ -430,11 +430,11 @@
         ),
         (
             name: "three_waters", age: "farm", branch: "fishing", title: "Three Waters",
-            why: "Minnows bite anywhere, sardines in the sea, perch in lakes and rivers. Land all three kinds and you know the water near home: what bites where, and what is worth the walk. A red cushion from the fishers softens your seat.",
-            tasks: [[Catch("Kinds", 3)]],
+            why: "Minnows bite anywhere, sardines in the sea, perch in lakes and rivers. Those three you know by now; land a fourth kind, a trout from cold fresh water or a cod from the cold sea, and you know what bites where, and what is worth the walk.",
+            tasks: [[Catch("Kinds", 4)]],
             after: ["salt_and_sardines", "still_water_perch"],
             side: true,
-            rewards: [Xp("fishing", 150.0), Item("red_cushion", 1)],
+            rewards: [Xp("fishing", 150.0), Item("bread", 4)],
         ),
         (
             name: "fish_on_the_table", age: "farm", branch: "fishing", title: "Fish on the Table",
