@@ -546,6 +546,8 @@
     "multiblock.base.processing_array.hint": ("The processing array needs a cube of HV casing three on a side, hollow in the middle, with the processing array in the middle of one face.", "加工アレイには、一辺3の高圧外装の立方体が必要です。中央は空洞にし、一つの面の中央に加工アレイを置きます。"),
     "effect.base.bedside": ("Bedside", "枕辺"),
     "effect.base.bedside.description": ("A seat and two lights by your bed: 2° warmer here, and a night's sleep is well rested.", "寝床のそばに椅子と明かりが2つ。ここでは2°暖かく、夜に眠ればぐっすり休める。"),
+    "effect.base.soft_furnishings": ("Soft furnishings", "柔らかな調度"),
+    "effect.base.soft_furnishings.description": ("A rug underfoot and cloth hung on the wall keep the draught off: 1° warmer here.", "足もとにラグ、壁に掛けた布。すきま風が入らず、ここでは1°暖かい。"),
     "effect.base.herb_nook": ("Herb nook", "薬草の隅"),
     "effect.base.bright_room": ("Bright room", "明るい部屋"),
     "effect.base.bright_room.description": ("Daylight through two windows: you learn a twentieth more here, and heal a twentieth faster.", "2つの窓から日が差す。ここでは経験が20分の1増え、回復が20分の1速い。"),
