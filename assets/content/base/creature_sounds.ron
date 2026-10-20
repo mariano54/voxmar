@@ -136,6 +136,13 @@
             hurt: (clips: ["sounds/creatures/wolf/hurt_1.ogg", "sounds/creatures/wolf/hurt_2.ogg", "sounds/creatures/wolf/hurt_3.ogg"]),
             death: (clips: ["sounds/creatures/wolf/death_1.ogg", "sounds/creatures/wolf/death_2.ogg"]),
         ),
+        // A settlement's hound: a wolf's voice, but barking as it wanders and only now and
+        // then howling, by night least of all, so a hound by a home lets it sleep.
+        "hound": (
+            like: "wolf",
+            calls: (dawn: 0.05, day: 0.05, dusk: 0.05, night: 0.02),
+            idle: (clips: ["sounds/creatures/wolf/alert_1.ogg", "sounds/creatures/wolf/alert_2.ogg", "sounds/creatures/wolf/alert_3.ogg", "sounds/creatures/wolf/alert_4.ogg"], gain: 0.4),
+        ),
         // Yips, barks and the vixen's scream.
         "fox": (
             size: 0.6,
@@ -519,6 +526,6 @@
         "hunter": (voice: "person", pitch: 0.92),
         "poacher": (voice: "person", pitch: 0.84),
         "captive": (voice: "person", pitch: 1.05),
-        "hound": (voice: "wolf", pitch: 1.35),
+        "hound": (voice: "hound", pitch: 1.35),
     },
 )

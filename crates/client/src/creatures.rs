@@ -908,6 +908,9 @@ pub struct Tended {
     watched: voxmar_engine::block::BlockId,
     had: u32,
     answer: Sound,
+    /// The most of its product one animal gives at once (1 for food eaten), so that a
+    /// count rising by more than that says more than one animal gave.
+    most: u32,
     until: f32,
     /// The player's actions proposed, and the harmless among them (tending, looking at
     /// or letting go of an animal: [`Tending::harmless`]), as of its own: one proposed
@@ -925,6 +928,16 @@ pub struct Tending {
     harmless: u64,
 }
 
+impl Tending {
+    /// Proposes `action` at creature `id` with `held`: tending, looking closely or letting
+    /// go, which change nothing in the pack but what a tend gives or takes, so none of them
+    /// is something else done meanwhile for an animal waiting.
+    fn propose(&mut self, net: &Net, player: &LocalPlayer, action: voxmar_engine::action::ActionId, id: u32, held: Option<voxmar_engine::block::BlockId>) {
+        net.propose_from_with(player, action, ActionTarget::Creature(id), held.into_iter().collect());
+        self.harmless += 1;
+    }
+}
+
 /// A new session counts its proposals afresh: nothing tended in the last one waits on.
 pub fn forget_tending_on_rejoin(net: Option<Res<Net>>, mut tending: ResMut<Tending>) {
     if net.is_some_and(|net| net.is_added()) {
@@ -939,11 +952,11 @@ impl Tended {
     /// Tending `species` with `held`, of which (or of whose product) the pack has
     /// `count(item)`.
     fn new(id: u32, species: &creature::Creature, held: voxmar_engine::block::BlockId, blocks: &voxmar_engine::block::BlockRegistry, count: impl Fn(voxmar_engine::block::BlockId) -> u32, now: f32) -> Self {
-        let (watched, answer) = match product_taken_by(species, held, blocks) {
-            Some(product) => (species.products[product], Sound::Idle),
-            None => (held, Sound::Graze),
+        let (watched, answer, most) = match product_taken_by(species, held, blocks) {
+            Some(product) => (species.products[product], Sound::Idle, species.def.products[product].count.1.max(1) as u32),
+            None => (held, Sound::Graze, 1),
         };
-        Tended { id, watched, had: count(watched), answer, until: now + TEND_ANSWER_WITHIN, proposals: 0, harmless: 0 }
+        Tended { id, watched, had: count(watched), answer, most, until: now + TEND_ANSWER_WITHIN, proposals: 0, harmless: 0 }
     }
 
     /// Whether the player has proposed something not harmless since this one, as of
@@ -963,7 +976,8 @@ impl Tended {
 
 /// The animals among `waiting` the server has now done, in the order they were tended: as
 /// the server takes them in turn, a watched item's count rising answers the earliest still
-/// waiting on it (a product's count says nothing of how many gave it), and falling by `n`
+/// waiting on it, as many as must have given (one for each `most` it rose by, rounded up:
+/// more could have, giving less each, but never fewer), and falling by `n`
 /// answers the `n` earliest (each meal is one of the food); those after wait on from the
 /// new count. Ones past their time, or with something else done `meanwhile`, are dropped
 /// unanswered.
@@ -981,7 +995,7 @@ fn answer_tended(waiting: &mut Vec<Tended>, now: f32, meanwhile: impl Fn(&Tended
         seen.push(watched);
         let (held, had) = (count(watched), waiting[i].had);
         let answers = match waiting[i].answer {
-            Sound::Idle if held > had => 1,
+            Sound::Idle if held > had => (held - had).div_ceil(waiting[i].most) as usize,
             Sound::Idle => 0,
             _ => had.saturating_sub(held) as usize,
         };
@@ -1009,7 +1023,7 @@ fn answer_tended(waiting: &mut Vec<Tended>, now: f32, meanwhile: impl Fn(&Tended
 
 /// A sound a creature makes now.
 fn sound(kind: Sound, id: u32, view: &CreatureView, position: Vec3, speed: f32) -> CreatureSound {
-    CreatureSound { kind, id, species: view.species, position, speed, scale: view.scale, young: view.young, answering: false, chatter: false }
+    CreatureSound { kind, id, species: view.species, position, speed, scale: view.scale, young: view.young, answering: false, chatter: None }
 }
 
 /// Applies what the server sent, then moves and animates every creature, and handles
@@ -1428,11 +1442,12 @@ fn show(
             sounds.push(sound(Sound::Step, id, &shown.view, shown.position, speed));
         }
         // Now and then, at its own pace, a contented noise, or a call to its kind (by the
-        // hour, as its voice says).
+        // hour, as its voice says): the lower the roll, the likelier a call and the sooner
+        // the next.
         shown.quiet -= dt;
         if shown.quiet <= 0.0 && shown.dying.is_none() {
             let roll = creature::unit_from(creature::mix(shown.view.seed as u64, (now * 10.0) as u64));
-            sounds.push(CreatureSound { chatter: true, ..sound(Sound::Idle, id, &shown.view, shown.position, speed) });
+            sounds.push(CreatureSound { chatter: Some(roll), ..sound(Sound::Idle, id, &shown.view, shown.position, speed) });
             shown.quiet = 6.0 + roll * 18.0;
         }
         shown.flash = (shown.flash - dt).max(0.0);
@@ -1995,11 +2010,8 @@ pub fn aim(
         if let Some(action) = action.and_then(|a| actions.0.id(a)) {
             // Tending is heard by what is in hand: shears, a pail, food (`sounds.ron`'s ways
             // and what it brings).
-            net.propose_from_with(&player, action, ActionTarget::Creature(id), held.into_iter().collect());
+            tending.propose(&net, &player, action, id, held);
             target.used_right = true;
-            // Tending, looking closely or letting go change nothing in the pack but what a
-            // tend gives or takes.
-            tending.harmless += 1;
             // The animal answers the hand once the server does it: it munches what it is
             // fed, and bleats or lows as it is shorn or milked.
             if Some(action) == actions.0.id("base:tend")
@@ -2087,7 +2099,7 @@ mod tests {
         let item = |name: &str| blocks.id(name).unwrap_or_else(|| panic!("{name}"));
         let tend = |who: &str, held: &str| Tended::new(7, species(who), item(held), blocks, |_| 4, 10.0);
         let shorn = tend("base:mouflon", "base:shears");
-        assert_eq!((shorn.watched, shorn.answer, shorn.had), (item("base:wool"), Sound::Idle, 4));
+        assert_eq!((shorn.watched, shorn.answer, shorn.had, shorn.most), (item("base:wool"), Sound::Idle, 4, 3));
         assert!(shorn.done(5) && !shorn.done(4), "the wool came, or not yet");
         let milked = tend("base:aurochs", "base:pail");
         assert_eq!((milked.watched, milked.answer), (item("base:milk"), Sound::Idle));
@@ -2107,7 +2119,7 @@ mod tests {
             let (connection, _server_side) = voxmar_protocol::local_pair();
             Net::new(connection, None, "tester".into(), content.fingerprint(), None)
         };
-        let stale = Tended { id: 1, watched: voxmar_engine::block::BlockId(5), had: 0, answer: Sound::Idle, until: 9.0, proposals: 40, harmless: 12 };
+        let stale = Tended { id: 1, watched: voxmar_engine::block::BlockId(5), had: 0, answer: Sound::Idle, most: 1, until: 9.0, proposals: 40, harmless: 12 };
         let mut app = App::new();
         app.insert_resource(Tending { waiting: vec![stale], harmless: 12 }).insert_resource(net()).add_systems(Update, forget_tending_on_rejoin);
         app.update();
@@ -2123,12 +2135,31 @@ mod tests {
         assert!(app.world().resource::<Tending>().waiting.is_empty(), "rejoined");
     }
 
+    /// An animal waits on through a look at another or one let go (proposed at a
+    /// creature, so harmless), but not through anything else proposed, such as seeds sown.
+    #[test]
+    fn a_look_at_another_animal_keeps_the_wait() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let (connection, _server_side) = voxmar_protocol::local_pair();
+        let net = Net::new(connection, None, "tester".into(), content.fingerprint(), None);
+        let player = LocalPlayer::default();
+        let [tend, inspect, release, plant] = ["base:tend", "base:inspect", "base:release", "base:plant"].map(|name| content.actions.id(name).unwrap());
+        let mut tending = Tending::default();
+        tending.propose(&net, &player, tend, 1, None);
+        let fed = Tended { proposals: net.proposals(), harmless: tending.harmless, ..Tended::new(1, content.creatures.get(content.creatures.id("base:mouflon").unwrap()), content.blocks.expect("base:wheat"), &content.blocks, |_| 4, 0.0) };
+        tending.propose(&net, &player, inspect, 2, None);
+        tending.propose(&net, &player, release, 3, None);
+        assert!(!fed.something_else_since(net.proposals(), tending.harmless), "looked at and let go");
+        net.propose_from(&player, plant, ActionTarget::Block { block: IVec3::ZERO, face: voxmar_engine::coords::Face::PosY });
+        assert!(fed.something_else_since(net.proposals(), tending.harmless), "seeds sown");
+    }
+
     /// Two ewes shorn in turn answer in turn, each as its own wool comes; one waiting past
     /// its time never does.
     #[test]
     fn a_flock_tended_answers_in_turn() {
         let wool = voxmar_engine::block::BlockId(5);
-        let ewe = |id: u32, had: u32| Tended { id, watched: wool, had, answer: Sound::Idle, until: 3.0, proposals: 0, harmless: 0 };
+        let ewe = |id: u32, had: u32| Tended { id, watched: wool, had, answer: Sound::Idle, most: 3, until: 3.0, proposals: 0, harmless: 0 };
         let answer_tended = |waiting: &mut Vec<Tended>, now: f32, count: fn(voxmar_engine::block::BlockId) -> u32| answer_tended(waiting, now, |_| false, count);
         let mut waiting = vec![ewe(1, 0), ewe(2, 0)];
         assert_eq!(answer_tended(&mut waiting, 0.5, |_| 0), []);
@@ -2142,7 +2173,7 @@ mod tests {
         assert!(late.is_empty());
         // Fed, then seeds of the same sown before the server's word: the food's count may
         // fall by the sowing, so it answers nothing.
-        let fed = Tended { id: 4, watched: wool, had: 5, answer: Sound::Graze, until: 3.0, proposals: 1, harmless: 1 };
+        let fed = Tended { id: 4, watched: wool, had: 5, answer: Sound::Graze, most: 1, until: 3.0, proposals: 1, harmless: 1 };
         let mut sown = vec![fed];
         assert_eq!(super::answer_tended(&mut sown, 0.5, |t| t.proposals < 2, |_| 4), [], "something else done meanwhile");
         assert!(sown.is_empty());
@@ -2151,6 +2182,14 @@ mod tests {
         let mut flock = vec![ewe_fed(5), ewe_fed(6), ewe_fed(7)];
         assert_eq!(answer_tended(&mut flock, 0.5, |_| 4).iter().map(|t| t.id).collect::<Vec<_>>(), [5, 6]);
         assert_eq!(flock, [Tended { had: 4, ..ewe_fed(7) }], "the third waits from the new count");
+        // Two cows milked in one tick (a pail each): the milk rises by two, both low. Wool
+        // rising by four is more than one ewe's most (three): two were shorn, the third waits.
+        let cow = |id: u32| Tended { id, most: 1, ..ewe(id, 0) };
+        let mut herd = vec![cow(8), cow(9)];
+        assert_eq!(answer_tended(&mut herd, 0.5, |_| 2).iter().map(|t| t.id).collect::<Vec<_>>(), [8, 9]);
+        let mut shorn = vec![ewe(10, 0), ewe(11, 0), ewe(12, 0)];
+        assert_eq!(answer_tended(&mut shorn, 0.5, |_| 4).iter().map(|t| t.id).collect::<Vec<_>>(), [10, 11]);
+        assert_eq!(shorn, [ewe(12, 4)]);
         // Counted since: two more harmless (tends, a look) is nothing else; a sowing among them is. Counts from
         // before a rejoin (larger than now) never underflow.
         assert!(!fed.something_else_since(3, 3) && fed.something_else_since(4, 3));
