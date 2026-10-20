@@ -27,6 +27,11 @@
     // An item picked up off the ground: a soft pop, when the player's Minecraft sounds are
     // off.
     pickup: ["sounds/pickup_1.ogg", "sounds/pickup_2.ogg", "sounds/pickup_3.ogg", "sounds/pickup_4.ogg"],
+    // Fire in the thatch (fire.ron): a block catching, a soft whoomph from it as the server
+    // sets it burning. Our own (tools/generate_sfx.py). The smoulder before and the burning
+    // after are ambience (ambience.ron's `smoulder` and `blaze`). While fire.ron can set a
+    // block burning there must be one, or the game does not start.
+    fire: (catch: ["sounds/fire_catch_1.ogg", "sounds/fire_catch_2.ogg"], volume: 0.9),
     // What building materials sound like: a step on one, a piece set down, a piece broken.
     // Every block carrying all of a material's tags sounds as it (of several, the one with
     // the most tags); mining taps and landings use the steps. A cue a material lists nothing
