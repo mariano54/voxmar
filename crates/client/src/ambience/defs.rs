@@ -294,6 +294,9 @@ pub struct Group {
     /// Whether a structure's core (a hearthstone, a crucible) counts only while its fire
     /// burns (`ClientWorld::fires`); the group's other blocks always count.
     pub lit: bool,
+    /// Whether its blocks count only while they smoulder (`ClientWorld::smoulders`): thatch
+    /// about to catch, heard crackling before it does.
+    pub smouldering: bool,
 }
 
 /// What a bed plays: a synthesized sound, or recorded segments shipped in its package.
@@ -448,6 +451,9 @@ struct GroupDef {
     #[serde(default)]
     falling: bool,
     range: (f32, f32),
+    /// Its blocks count only while they smoulder.
+    #[serde(default)]
+    smouldering: bool,
     /// A structure's core counts only while lit.
     #[serde(default)]
     lit: bool,
@@ -541,7 +547,7 @@ impl Ambience {
                 if ambience.groups.iter().any(|g| g.name == group.name) || Fixed::ALL.iter().any(|a| a.name() == group.name) {
                     return Err(format!("{package}/{FILE}: group {} is defined twice", group.name));
                 }
-                ambience.groups.push(Group { name: group.name, range: group.range, lit: group.lit });
+                ambience.groups.push(Group { name: group.name, range: group.range, lit: group.lit, smouldering: group.smouldering });
                 ambience.selectors.push((group.tags, group.materials, group.falling));
             }
         }

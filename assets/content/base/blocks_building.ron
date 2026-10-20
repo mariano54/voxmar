@@ -17,11 +17,11 @@
     templates: {
         // Timber in one wood (`{name}`).
         "timber": [
-            (name: "{name}_post", render: Model, shape: "post", sound: Wood, textures: All("furniture_grain"), hardness: 2.0, color: (160, 120, 70), tags: ["timber", "post", "wood", "building", "fuel"]),
-            (name: "{name}_beam", render: Model, shape: "beam", facing: true, flips: true, sound: Wood, textures: All("furniture_grain"), hardness: 2.0, color: (160, 120, 70), tags: ["timber", "beam", "wood", "building", "fuel"]),
-            (name: "{name}_lattice_window", render: Model, shape: "lattice_window", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 1.0, color: (160, 120, 70), tags: ["timber", "lattice", "wood", "building"]),
-            (name: "{name}_shingles", render: Model, shape: "roof", facing: true, light_filter: 14, sound: Wood, textures: All("shingles_grey"), hardness: 1.5, color: (160, 120, 70), tags: ["roof", "shingle", "wood", "building", "fuel"]),
-            (name: "{name}_shingle_ridge", render: Model, shape: "roof_ridge", facing: true, light_filter: 14, sound: Wood, textures: All("shingles_grey"), hardness: 1.5, color: (160, 120, 70), tags: ["roof", "ridge", "shingle", "wood", "building", "fuel"]),
+            (name: "{name}_post", render: Model, shape: "post", sound: Wood, textures: All("furniture_grain"), hardness: 2.0, color: (160, 120, 70), tags: ["timber", "post", "wood", "building", "fuel", "shelter:sound"]),
+            (name: "{name}_beam", render: Model, shape: "beam", facing: true, flips: true, sound: Wood, textures: All("furniture_grain"), hardness: 2.0, color: (160, 120, 70), tags: ["timber", "beam", "wood", "building", "fuel", "shelter:sound"]),
+            (name: "{name}_lattice_window", render: Model, shape: "lattice_window", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 1.0, color: (160, 120, 70), tags: ["timber", "lattice", "wood", "building", "shelter:draughty"]),
+            (name: "{name}_shingles", render: Model, shape: "roof", facing: true, light_filter: 14, sound: Wood, textures: All("shingles_grey"), hardness: 1.5, color: (160, 120, 70), tags: ["roof", "shingle", "wood", "building", "fuel", "shelter:sound"]),
+            (name: "{name}_shingle_ridge", render: Model, shape: "roof_ridge", facing: true, light_filter: 14, sound: Wood, textures: All("shingles_grey"), hardness: 1.5, color: (160, 120, 70), tags: ["roof", "ridge", "shingle", "wood", "building", "fuel", "shelter:sound"]),
         ],
         // Slabs and stairs of one cut stone (`{name}`, by default the full block's name and
         // texture too).
@@ -38,8 +38,8 @@
         // Cut cobblestone is stone but not `cobbled`: recipes and the sling take that tag as a
         // whole cobblestone, and six slabs from three blocks must not stand in for six. It
         // still sounds like cobblestone (`material`, read only by sounds).
-        (template: "cut_stone", name: "cobblestone", all: (material: "cobblestone", color: (110, 110, 110))),
-        (template: "cut_stone", name: "stone_brick", tags: ["bricks"], all: (material: "stone_brick", textures: All("stone_bricks"), color: (120, 120, 120))),
+        (template: "cut_stone", name: "cobblestone", tags: ["shelter:sound"], all: (material: "cobblestone", color: (110, 110, 110))),
+        (template: "cut_stone", name: "stone_brick", tags: ["bricks", "shelter:fine"], all: (material: "stone_brick", textures: All("stone_bricks"), color: (120, 120, 120))),
     ],
     blocks: [
         // The home's ladder (design: a hide lean-to, then wattle and daub, then timber, then
@@ -63,7 +63,7 @@
         ),
         (
             name: "wooden_shutters_open", render: Model, shape: "shutters_open", facing: true, solid: false, sound: Wood, textures: All("oak_planks"),
-            swaps: "wooden_shutters", drops: "wooden_shutters", hardness: 1.0, color: (150, 110, 65), tags: ["shutters", "shutters_open", "wood", "building", "fuel", "shelter:sound"],
+            swaps: "wooden_shutters", drops: "wooden_shutters", hardness: 1.0, color: (150, 110, 65), tags: ["shutters", "shutters_open", "wood", "building", "fuel"],
         ),
         // Chimney pieces, to carry a hearth's chimney up through a roof: a flue of brick
         // narrower than a block, so roof courses meet it, and a clay pot to top it.
@@ -71,7 +71,7 @@
         (name: "chimney_pot", render: Model, shape: "chimney_pot", sound: Stone, textures: All("terracotta"), hardness: 1.25, color: (152, 94, 67), tags: ["chimney_piece", "terracotta", "building", "shelter:fine"]),
         // Thatch: straw laid in courses on a roof, the first roof anyone can make (grass
         // twine or wheat). It stops rain and light as shingles do, and feeds a fire as straw does.
-        (name: "thatch_roof", render: Model, shape: "roof", facing: true, light_filter: 14, sound: Grass, textures: All("thatch"), hardness: 0.8, color: (196, 166, 82), tags: ["roof", "thatch", "building", "fuel"]),
-        (name: "thatch_ridge", render: Model, shape: "roof_ridge", facing: true, light_filter: 14, sound: Grass, textures: All("thatch"), hardness: 0.8, color: (196, 166, 82), tags: ["roof", "ridge", "thatch", "building", "fuel"]),
+        (name: "thatch_roof", render: Model, shape: "roof", facing: true, light_filter: 14, sound: Grass, textures: All("thatch"), hardness: 0.8, color: (196, 166, 82), tags: ["roof", "thatch", "building", "fuel", "shelter:sound"]),
+        (name: "thatch_ridge", render: Model, shape: "roof_ridge", facing: true, light_filter: 14, sound: Grass, textures: All("thatch"), hardness: 0.8, color: (196, 166, 82), tags: ["roof", "ridge", "thatch", "building", "fuel", "shelter:sound"]),
     ],
 )
