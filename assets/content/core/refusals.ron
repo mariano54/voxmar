@@ -26,6 +26,7 @@
         "Locked": (silent: true),
         "Store": (silent: true),
         "SprungTrap": (silent: true),
+        "Coats": (silent: true),
         // A tool, a level: what to get or train.
         "ToolGood": (say: "tools.needs"),
         "BlockLevel": (say: "skills.needs"),
