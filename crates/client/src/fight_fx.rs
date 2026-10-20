@@ -529,10 +529,13 @@ fn tell(
 
 /// A tell's ground ring and disc compile as the world loads (`render::warm`), not the first
 /// time a boss winds up a blow that reaches past its body: drawn as `tell` draws them, see-
-/// through, unlit and two-sided.
+/// through, unlit and two-sided. So does a loosed shot's missile, drawn as `shot` draws
+/// one (a box, unlit and solid), not the first time a stone or an arrow flies.
 fn warm_markers(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>) {
     let material = materials.add(StandardMaterial { base_color: Color::WHITE.with_alpha(0.0), unlit: true, alpha_mode: AlphaMode::Blend, cull_mode: None, ..default() });
     crate::render::warm::warm(&mut commands, meshes.add(annulus(1.0, 0.5)), material, false, DespawnOnExit(Screen::InGame));
+    let (mesh, material) = shot::missile(&mut meshes, &mut materials, 1.0, 1.0, Color::WHITE);
+    crate::render::warm::warm(&mut commands, mesh, material, false, DespawnOnExit(Screen::InGame));
 }
 
 /// A flat ring on the ground, `outer` blocks across from its middle to its edge and open
