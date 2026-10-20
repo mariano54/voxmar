@@ -14,7 +14,7 @@ the server's side in `crates/server/src/stations.rs`.
   item, `tag:TAG`, tags that must all hold (`tag:raw+meat`), with `!` for one that must not
   (`tag:grain+!vegetable`), or several of these joined by `|`.
 - The load is done `minutes` later on the world's clock (`due` is a server tick, saved with
-  the world), near or far, loaded column or not. A look every 5 s (`base:stations`, Low tier)
+  the world), near or far, loaded column or not. A look every second (`base:stations`, Low tier)
   turns done stations in loaded columns to their ready block; one far away shows it when used.
 - Right-click a done station (ready, or still showing working because nobody was near) to take
   `gives` of the output for each `takes` loaded, and `xp` per output in the skill. What does not

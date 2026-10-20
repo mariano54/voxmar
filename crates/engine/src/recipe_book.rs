@@ -250,6 +250,9 @@ mod tests {
                 assert!(content.blocks.tagged(station).next().is_some(), "the book cooks {:?} at `{station}`, which no block carries", content.blocks.def(entry.output).name);
             }
         }
+        // Fired clay is still in the book, as the pit kiln's work.
+        let (kiln, fired) = (content.blocks.id("base:pit_kiln").unwrap(), content.blocks.id("base:fired_clay").unwrap());
+        assert!(book.entries().iter().any(|e| e.output == fired && matches!(e.method, Method::Work { station, .. } if station == kiln)), "the pit kiln fires clay in the book");
     }
 
     #[test]

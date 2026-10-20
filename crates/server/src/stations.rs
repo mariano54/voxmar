@@ -472,7 +472,7 @@ mod tests {
         assert_eq!(at(&server, AT), "base:pit_kiln_firing");
         // Said in seconds, not "about 1 min".
         let told: Vec<String> = std::iter::from_fn(|| client.try_recv().ok().flatten()).filter_map(|m| match m { ServerMessage::Chat { text, .. } => Some(format!("{text:?}")), _ => None }).collect();
-        assert!(told.iter().any(|t| t.contains("station.loaded_seconds") && t.contains("\"12\"")), "{told:?}");
+        assert!(told.iter().any(|t| t.contains("station.loaded_seconds") && t.contains("(\"seconds\", Text(\"12\"))")), "{told:?}");
         assert_eq!(carried(&server, "base:clay"), 4, "twelve go in, four stay in hand");
         server.tick += MINUTE / 5 - 1;
         server.show_done_stations();
