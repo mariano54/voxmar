@@ -155,7 +155,7 @@ so that what the game already does is something the book points to:
   wandering kind with what the player does next anyway, so meeting them is a side step,
   never a wait. Nomad: Coal by Road (the coal carters or the benighted miners, and sixteen
   torches; pays four coal). Farm: Fired Whole (the clay diggers fire your clay, and
-  twenty-four fired in all; pays twelve clay), The Last Sheaf (the harvest home procession,
+  twenty-four fired in all; pays six gold coins), The Last Sheaf (the harvest home procession,
   and twelve wheat brought in; pays eight wheat seed) and Mice in the Stores (follow the
   piper to the end of his tune, and a pantry or larder at home; pays four seed mix).
 - **Wanderers that come back** (the Nomad thread's hooks, Oct 13): quests that ask for a
@@ -311,7 +311,7 @@ Each new feature has a quest that teaches it, in two parts the book counts one b
 
 | Quest | Age, path, after | Parts |
 |---|---|---|
-| A Chopping Block | Nomad, start; An Axe to It and A Bed of Your Own (Crafting 2 by then) | one set down; twelve planks split by it |
+| A Chopping Block | Nomad, start; An Axe to It, A Bed of Your Own (Crafting 2 by then) and Timber | one set down; twelve planks split by it |
 | Set a Snare | Nomad, hunter; Twine and Thong | one set down; a catch taken from a trap |
 | Old Tusk | Nomad, hunter; Hide and Seek and Raise Your Guard | a flint spear made; Old Tusk killed |
 | Light in the Window | Farm, home; A Homely Home | two hide windows made; two set down |
@@ -392,8 +392,9 @@ Copper is smelted only in the lit kiln: Red Metal, the copper kit and the ore ru
 it (Hammer and Anvil, from the kiln-age PR, goes before The Crucible when it lands). Crucible
 Kiln waits on all three of its parts: the crucible, the ring of bricks and the charge. The
 Bronze Age rite is unchanged (30 Farm quests, 4 Farm capstones). Rewards that handed out
-what the route asks for (kiln bricks, charcoal) are gone, so the bricks and the charge are
-earned; Brick by Brick pays the Engineering The Crucible asks for until Hammer and Anvil
+what the route asks for (charcoal, clay) are gone, so the charge and the clay are earned; A
+Kiln Load's four kiln bricks stay, by an explicit call, and the rest of the bricks are
+shaped (Brick by Brick counts only those); Brick by Brick pays the Engineering The Crucible asks for until Hammer and Anvil
 does.
 
 Every Farm path's capstone comes after all of its path's quests, directly or through what
@@ -407,6 +408,25 @@ Saves (pre-release, accepted): a quest's finished state is kept by name, but que
 tasks changed count from what a save already tallied: Brick by Brick now counts bricks
 crafted rather than held, The Crucible and A Pit Kiln also want theirs set down, and A
 Kiln Yard is gone. A save part way along may have a step to do again.
+
+## Fishing in the Farm book (Oct 20)
+
+Fishing was the Farm book's thinnest path (Patient Angler and Many Kinds of Fish). Five
+side quests (`side: true`) now run along it. Each one teaches where or how a fish bites,
+or what a catch is for, and each pays in bread: no reward hands over an item that a home
+quest's lesson teaches (a rug or a cushion would meet A Rug Underfoot, A Cosy Home or Heart
+of the Home before the player made one). `Ate("tag:fish")` counts raw fish too, as no tag
+names cooked fish alone:
+
+| Quest | After | Teaches | Pays |
+|---|---|---|---|
+| Salt and Sardines | Patient Angler | Sardines bite only in the sea: four caught and cooked | Fishing 80, 2 bread |
+| Still Water Perch | Patient Angler | Perch bite in fresh water from Fishing 10: three caught | Cooking 60, 2 bread |
+| Cold Water Trout | Still Water Perch | The water's climate matters: two trout from cold fresh water (Fishing 15), cooked | Fishing 120, 4 bread |
+| Three Waters | Salt and Sardines, Still Water Perch | A fourth kind past minnow, sardine and perch: a trout or a cod | Fishing 150, 4 bread |
+| Fish on the Table | Salt and Sardines | A lit hearth, eight fish cooked and six eaten | Cooking 120, 4 bread |
+
+None of them is in a capstone's `after`, so Many Kinds of Fish still closes the path.
 
 ## Readable to a newcomer (Oct 13)
 

@@ -454,7 +454,7 @@ impl Client {
                     self.connection.send(ClientMessage::Pong { id });
                 }
             }
-            ServerMessage::Hurt { creature, damage, defended } => {
+            ServerMessage::Hurt { creature, damage, defended, .. } => {
                 self.hurt.push((damage, defended));
                 self.hurt_by.push((creature, damage));
                 self.hurt_at.push(Instant::now());
@@ -2660,7 +2660,7 @@ const TEST_QUESTS: &str = r#"(quests: [
     (name: "laden", age: "nomad", branch: "main", title: "Laden", why: "", tasks: [[Have("base:cobblestone", 2304)]], rewards: [Item("base:apple", 3)]),
     (name: "walk", age: "nomad", branch: "main", title: "Free Walk", why: "", tasks: [[Level("mining", 3)]]),
     (name: "dig", age: "nomad", branch: "main", title: "A Gravel Pit", why: "", tasks: [[Have("gravel", 1)]], rewards: [Item("clay", 4)]),
-    (name: "potter", age: "nomad", branch: "main", title: "Potter", why: "", tasks: [[Have("clay", 4)]], rewards: [Item("base:apple", 1)]),
+    (name: "potter", age: "nomad", branch: "main", title: "Potter", why: "", tasks: [[Have("clay", 5)]], rewards: [Item("base:apple", 1)]),
 ])"#;
 
 /// Quests are checked once a second by the server's clock: one a goal short is still open
@@ -2805,8 +2805,9 @@ fn a_quest_reward_that_does_not_fit_stays_claimable() {
     std::fs::remove_dir_all(&assets).unwrap();
 }
 
-/// A reward that finishes another quest (A Gravel Pit's clay, which Potter asks to carry)
-/// finishes it as it is claimed, so that quest can be claimed at once, in the same moment,
+/// A reward that finishes another quest (A Gravel Pit's four clay, the last of the five Potter
+/// asks to carry: a reward never holds a goal alone, the load check refuses that) finishes it
+/// as it is claimed, so that quest can be claimed at once, in the same moment,
 /// not only after the next second's check.
 #[test]
 fn a_claimed_reward_finishes_the_quests_it_holds_at_once() {
@@ -2815,6 +2816,7 @@ fn a_claimed_reward_finishes_the_quests_it_holds_at_once() {
     let apple = client.content.blocks.expect("base:apple");
     client.pump_until(|c| !c.quests.is_empty());
     client.ok("/clear");
+    client.ok("/give clay 1");
     client.ok("/give gravel 1");
     client.pump_until(|c| c.quests.iter().any(|q| q.name == "zz_test:dig" && q.done));
     assert!(!client.quests.iter().any(|q| q.name == "zz_test:potter" && q.done));
@@ -3531,17 +3533,39 @@ fn a_stone_hoe_reaps_the_ripe_crops_about_one() {
     for (hoe, reaped) in [("bare hand", 1), ("flint_knife", 1), ("stone_hoe", 9)] {
         client.ok("/clear");
         client.pump_until(|c| c.inventory.slots.iter().all(Option::is_none));
-        if hoe != "bare hand" {
-            client.ok(&format!("/give {hoe} 1"));
+        // The tool in whatever slot it lands in, and a bare hand on an empty slot: the last
+        // round's harvest lying about may be picked up into slot 0 after the clear. The give
+        // is sent again until the server's word of it comes.
+        let slot = if hoe == "bare hand" {
+            client.pump_ticks(TICKS_PER_SECOND as u64, |_| false);
+            client.inventory.slots.iter().position(Option::is_none).expect("an empty slot for a bare hand")
+        } else {
             let item = client.content.blocks.expect(&format!("base:{hoe}"));
-            client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == item));
-        }
-        client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+            let at = |c: &Client| c.inventory.slots.iter().position(|s| s.as_ref().is_some_and(|s| s.item == item));
+            for _ in 0..10 {
+                client.ok(&format!("/give {hoe} 1"));
+                client.pump_ticks(5 * TICKS_PER_SECOND as u64, |c| at(c).is_some());
+                if at(&client).is_some() {
+                    break;
+                }
+            }
+            at(&client).unwrap_or_else(|| panic!("ten gives of a {hoe} never reached the pack"))
+        };
+        client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: slot as u8, flying: false }));
         client.ok(&format!("/fill {} {} {} {} {} {} farmland", centre.x - 1, centre.y - 1, centre.z - 1, centre.x + 1, centre.y - 1, centre.z + 1));
         client.ok(&format!("/fill {} {} {} {} {} {} wheat_crop", centre.x - 1, centre.y, centre.z - 1, centre.x + 1, centre.y, centre.z + 1));
         client.pump_until(|c| cells.iter().all(|&cell| c.world.block(cell) == Some(ripe)));
-        client.propose("core:mine", ActionTarget::Block { block: centre, face: Face::PosY });
-        client.pump_until(|c| c.world.block(centre) == Some(BlockId::AIR));
+        // Cut again until it lands, by the server's clock: on a loaded machine the first
+        // cut was once never answered (the Input choosing the tool racing the /give). A cut
+        // at the air a landed one left does nothing.
+        for _ in 0..10 {
+            client.propose("core:mine", ActionTarget::Block { block: centre, face: Face::PosY });
+            client.pump_ticks(2 * TICKS_PER_SECOND as u64, |c| c.world.block(centre) == Some(BlockId::AIR));
+            if client.world.block(centre) == Some(BlockId::AIR) {
+                break;
+            }
+        }
+        assert_eq!(client.world.block(centre), Some(BlockId::AIR), "ten cuts with a {hoe} never took the middle wheat");
         // The rest go in the same tick as the one cut.
         client.after_server_ticks(2);
         let gone = cells.iter().filter(|&&cell| client.world.block(cell) == Some(BlockId::AIR)).count();
@@ -3554,8 +3578,14 @@ fn a_stone_hoe_reaps_the_ripe_crops_about_one() {
     let apple = client.content.blocks.expect("base:apple_leaves");
     client.ok(&format!("/fill {} {} {} {} {} {} apple_leaves", centre.x - 1, centre.y, centre.z - 1, centre.x + 1, centre.y, centre.z + 1));
     client.pump_until(|c| cells.iter().all(|&cell| c.world.block(cell) == Some(apple)));
-    client.propose("core:mine", ActionTarget::Block { block: centre, face: Face::PosY });
-    client.pump_until(|c| c.world.block(centre) != Some(apple));
+    for _ in 0..10 {
+        client.propose("core:mine", ActionTarget::Block { block: centre, face: Face::PosY });
+        client.pump_ticks(2 * TICKS_PER_SECOND as u64, |c| c.world.block(centre) != Some(apple));
+        if client.world.block(centre) != Some(apple) {
+            break;
+        }
+    }
+    assert_ne!(client.world.block(centre), Some(apple), "ten cuts with a stone hoe never took the ripe apple leaf");
     client.after_server_ticks(2);
     let left = cells.iter().filter(|&&cell| client.world.block(cell) == Some(apple)).count();
     assert_eq!(left, 8, "a stone hoe on one ripe apple leaf took {} of the leaves about it", 8 - left);
@@ -9561,8 +9591,10 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     f.craft(&[(0, fired, 2), (1, fired, 2), (3, fired, 2), (4, fired, 2)], bricks, 4);
     f.wait(5.0, "the server counting the bricks and the fired clay kept", |c| quest_status(c, "first_bricks").0);
     f.mark("first_bricks");
-    // Brick by Brick: nineteen kiln bricks shaped in all.
-    let crafts = 19u32.saturating_sub(f.have(bricks)).div_ceil(2);
+    // Brick by Brick: nineteen kiln bricks shaped in all, as the book counts them: A Kiln
+    // Load's four were given, not shaped.
+    let shaped = f.c.quests.iter().find(|q| q.name == "base:brick_by_brick").and_then(|q| q.tasks.first()?.first().map(|&(have, _)| have)).unwrap_or(0);
+    let crafts = 19u32.saturating_sub(shaped).div_ceil(2);
     f.fire_clay(&site, crafts * 4);
     let k = crafts as u8;
     f.craft(&[(0, fired, k), (1, fired, k), (3, fired, k), (4, fired, k)], bricks, crafts * 2);

@@ -22,8 +22,8 @@
 //!   coast, larger inland;
 //! - world dials as constants: `tectonic` (activity), `young` (1 − the land's age).
 //!
-//! Fields are evaluated for four positions side by side (one per lane of `crate::noise`),
-//! lazily and each only once per position: a spline evaluates only the knots beside its
+//! Fields are evaluated for eight positions side by side (two groups of the four lanes of
+//! `crate::noise`), lazily and each only once per position: a spline evaluates only the knots beside its
 //! coordinate, in the lanes that need them, and a product stops at its first zero factor,
 //! so a gate in front spares the work behind it.
 
@@ -43,6 +43,27 @@ const MAX_KNOTS: usize = 64;
 const CONTINENT_SIZE: f32 = 2300.0;
 
 type NodeId = u32;
+
+/// Positions evaluated side by side: two groups of `crate::noise`'s four lanes, so each
+/// step of the program is worked out once for eight positions.
+pub(crate) const LANES: usize = 8;
+/// A value in each lane.
+type Wide = [f32; LANES];
+
+/// Lanes `4 g..4 g + 4` of `v`.
+fn quarter(v: &Wide, g: usize) -> [f32; 4] {
+    std::array::from_fn(|k| v[4 * g + k])
+}
+
+/// The groups of four lanes that `mask` has any lane of.
+fn groups(mask: u8) -> impl Iterator<Item = usize> {
+    (0..LANES / 4).filter(move |g| mask & (0xf << (4 * g)) != 0)
+}
+
+/// The lanes of the groups of four that `mask` has any lane of.
+fn whole_groups(mask: u8) -> u8 {
+    groups(mask).fold(0, |m, g| m | 0xf << (4 * g))
+}
 
 #[derive(Clone, Copy, Debug)]
 enum Node {
@@ -378,16 +399,23 @@ pub struct Router {
     pub outputs: Outputs,
 }
 
-/// Up to four positions being evaluated, and what is known about them so far.
+/// Up to `LANES` positions being evaluated, and what is known about them so far.
 pub struct Lanes {
-    x: [f32; 4],
-    z: [f32; 4],
+    x: Wide,
+    z: Wide,
     n: usize,
-    values: Vec<[f32; 4]>,
+    values: Vec<Wide>,
     /// A bit per lane, for each slot, once its value is known.
     known: Vec<u8>,
-    /// Warped positions, once known.
-    warped: Vec<Option<([f32; 4], [f32; 4])>>,
+    /// Warped positions, once known, by group of four lanes.
+    warped: Vec<[Option<([f32; 4], [f32; 4])>; 2]>,
+}
+
+impl Lanes {
+    /// A bit for each lane started.
+    fn all(&self) -> u8 {
+        ((1u16 << self.n) - 1) as u8
+    }
 }
 
 /// Standard deviation of one octave of FastNoiseLite's 2D OpenSimplex2, measured once.
@@ -497,7 +525,7 @@ impl Router {
     /// Fresh state for evaluating positions, to be reused across calls.
     pub fn lanes(&self) -> Lanes {
         let slots = INPUTS.len() + self.noises.len() + self.program.fields.len();
-        Lanes { x: [0.0; 4], z: [0.0; 4], n: 0, values: vec![[0.0; 4]; slots], known: vec![0; slots], warped: vec![None; self.warps.len()] }
+        Lanes { x: [0.0; LANES], z: [0.0; LANES], n: 0, values: vec![[0.0; LANES]; slots], known: vec![0; slots], warped: vec![[None; 2]; self.warps.len()] }
     }
 
     /// A field by name, for benchmarks.
@@ -506,22 +534,22 @@ impl Router {
         self.program.fields.iter().position(|(n, _, _)| n == name).map(|i| Field(self.program.field_slot(i)))
     }
 
-    /// Starts evaluating one to four positions.
+    /// Starts evaluating one to `LANES` positions.
     pub fn start(&self, lanes: &mut Lanes, points: &[(f32, f32)]) {
         let n = points.len();
-        debug_assert!((1..=4).contains(&n));
+        debug_assert!((1..=LANES).contains(&n));
         lanes.n = n;
         lanes.x = std::array::from_fn(|k| points[k.min(n - 1)].0);
         lanes.z = std::array::from_fn(|k| points[k.min(n - 1)].1);
         lanes.known.fill(0);
-        lanes.warped.fill(None);
+        lanes.warped.fill([None; 2]);
     }
 
     /// The value of `field` at position `lane` of those started.
     #[inline]
     pub fn get(&self, lanes: &mut Lanes, inputs: &dyn Inputs, field: Field, lane: usize) -> f32 {
         if lanes.known[field.0 as usize] & (1 << lane) == 0 {
-            let all = (1u8 << lanes.n) - 1;
+            let all = lanes.all();
             self.slot(lanes, inputs, field.0, all);
         }
         lanes.values[field.0 as usize][lane]
@@ -547,29 +575,40 @@ impl Router {
     }
 
     /// The values of a slot in the lanes of `mask`, working out those not known yet.
-    fn slot(&self, lanes: &mut Lanes, inputs: &dyn Inputs, slot: u16, mask: u8) -> [f32; 4] {
+    fn slot(&self, lanes: &mut Lanes, inputs: &dyn Inputs, slot: u16, mask: u8) -> Wide {
         let s = slot as usize;
         let missing = mask & !lanes.known[s];
         if missing == 0 {
             return lanes.values[s];
         }
         let first_field = INPUTS.len() + self.noises.len();
-        let all = (1u8 << lanes.n) - 1;
+        // The climate and noises are worked out a group of four lanes at a time, in every
+        // lane of the groups asked for: four cost about as much as one.
+        let whole = whole_groups(missing) & lanes.all();
         if slot == T || slot == H {
-            let (t, h) = inputs.climate(lanes.x, lanes.z, lanes.n);
-            (lanes.values[T as usize], lanes.values[H as usize]) = (t, h);
-            lanes.known[T as usize] = all;
-            lanes.known[H as usize] = all;
+            for g in groups(missing) {
+                let (x, z) = (quarter(&lanes.x, g), quarter(&lanes.z, g));
+                let (t, h) = inputs.climate(x, z, (lanes.n - 4 * g).min(4));
+                lanes.values[T as usize][4 * g..4 * g + 4].copy_from_slice(&t);
+                lanes.values[H as usize][4 * g..4 * g + 4].copy_from_slice(&h);
+            }
+            lanes.known[T as usize] |= whole;
+            lanes.known[H as usize] |= whole;
         } else if slot == FOLD {
-            let continents = self.slot(lanes, inputs, (INPUTS.len() + self.continents) as u16, all);
-            lanes.values[s] = continents.map(|v| v.abs() / self.coast);
-            lanes.known[s] = all;
+            let continents = self.slot(lanes, inputs, (INPUTS.len() + self.continents) as u16, whole);
+            for k in 0..LANES {
+                if whole & (1 << k) != 0 {
+                    lanes.values[s][k] = continents[k].abs() / self.coast;
+                }
+            }
+            lanes.known[s] |= whole;
         } else if s < first_field {
-            // Noises are sampled in every lane at once: four cost about as much as one.
             let noise = &self.noises[s - INPUTS.len()];
-            let (x, z) = self.position(lanes, noise.warp);
-            lanes.values[s] = noise.at4(x, z);
-            lanes.known[s] = all;
+            for g in groups(missing) {
+                let (x, z) = self.position(lanes, noise.warp, g);
+                lanes.values[s][4 * g..4 * g + 4].copy_from_slice(&noise.at4(x, z));
+            }
+            lanes.known[s] |= whole;
         } else {
             let root = self.program.fields[s - first_field].1;
             let v = self.eval(lanes, inputs, root, missing);
@@ -583,33 +622,34 @@ impl Router {
         lanes.values[s]
     }
 
-    /// The positions, bent by a warp if any.
-    fn position(&self, lanes: &mut Lanes, warp: Option<usize>) -> ([f32; 4], [f32; 4]) {
-        let Some(w) = warp else { return (lanes.x, lanes.z) };
-        if let Some(p) = lanes.warped[w] {
+    /// The positions of group `g` of four lanes, bent by a warp if any.
+    fn position(&self, lanes: &mut Lanes, warp: Option<usize>, g: usize) -> ([f32; 4], [f32; 4]) {
+        let (x, z) = (quarter(&lanes.x, g), quarter(&lanes.z, g));
+        let Some(w) = warp else { return (x, z) };
+        if let Some(p) = lanes.warped[w][g] {
             return p;
         }
-        let p = crate::noise::warp_2d_x4(&self.warps[w], lanes.x, lanes.z);
-        lanes.warped[w] = Some(p);
+        let p = crate::noise::warp_2d_x4(&self.warps[w], x, z);
+        lanes.warped[w][g] = Some(p);
         p
     }
 
-    /// The values of a node in the lanes of `mask` (the others mean nothing), all four lanes
+    /// The values of a node in the lanes of `mask` (the others mean nothing), all lanes
     /// worked out side by side.
     #[inline]
-    fn eval(&self, lanes: &mut Lanes, inputs: &dyn Inputs, node: NodeId, mask: u8) -> [f32; 4] {
+    fn eval(&self, lanes: &mut Lanes, inputs: &dyn Inputs, node: NodeId, mask: u8) -> Wide {
         // Most nodes name a field or noise, already known in the lanes asked for.
         match self.nodes[node as usize] {
             Node::Slot(slot) if mask & !lanes.known[slot as usize] == 0 => lanes.values[slot as usize],
-            Node::Const(v) => [v; 4],
+            Node::Const(v) => [v; LANES],
             _ => self.eval_node(lanes, inputs, node, mask),
         }
     }
 
-    fn eval_node(&self, lanes: &mut Lanes, inputs: &dyn Inputs, node: NodeId, mask: u8) -> [f32; 4] {
+    fn eval_node(&self, lanes: &mut Lanes, inputs: &dyn Inputs, node: NodeId, mask: u8) -> Wide {
         let args = |first: u32, n: u32| &self.program.args[first as usize..(first + n) as usize];
         match self.nodes[node as usize] {
-            Node::Const(v) => [v; 4],
+            Node::Const(v) => [v; LANES],
             Node::Slot(slot) => self.slot(lanes, inputs, slot, mask),
             Node::Spline { on, first, count, leaf } => {
                 let x = self.eval(lanes, inputs, on, mask);
@@ -618,10 +658,10 @@ impl Router {
                 if leaf { leaf_spline(knots, x, mask, segments) } else { self.spline(lanes, inputs, knots, x, mask, segments) }
             }
             Node::Add(a, n) => {
-                let mut sum = [0.0; 4];
+                let mut sum = [0.0; LANES];
                 for &arg in args(a, n) {
                     let v = self.eval(lanes, inputs, arg, mask);
-                    for k in 0..4 {
+                    for k in 0..LANES {
                         sum[k] += v[k];
                     }
                 }
@@ -629,10 +669,10 @@ impl Router {
             }
             Node::Mul(a, n) => {
                 // Lanes whose product is already zero need none of the factors after.
-                let (mut product, mut live) = ([1.0; 4], mask);
+                let (mut product, mut live) = ([1.0; LANES], mask);
                 for &arg in args(a, n) {
                     let v = self.eval(lanes, inputs, arg, live);
-                    for k in 0..4 {
+                    for k in 0..LANES {
                         if live & (1 << k) != 0 {
                             product[k] *= v[k];
                             if product[k] == 0.0 {
@@ -648,10 +688,10 @@ impl Router {
             }
             Node::Min(a, n) | Node::Max(a, n) => {
                 let max = matches!(self.nodes[node as usize], Node::Max(..));
-                let mut out = [if max { f32::NEG_INFINITY } else { f32::INFINITY }; 4];
+                let mut out = [if max { f32::NEG_INFINITY } else { f32::INFINITY }; LANES];
                 for &arg in args(a, n) {
                     let v = self.eval(lanes, inputs, arg, mask);
-                    for k in 0..4 {
+                    for k in 0..LANES {
                         out[k] = if max { out[k].max(v[k]) } else { out[k].min(v[k]) };
                     }
                 }
@@ -663,11 +703,15 @@ impl Router {
             Node::Shifted { noise, dx, dz } => {
                 let (dx, dz) = (self.eval(lanes, inputs, dx, mask), self.eval(lanes, inputs, dz, mask));
                 let noise = &self.noises[noise as usize];
-                let (x, z) = self.position(lanes, noise.warp);
-                // Four lanes cost about as much as one; those outside the mask stay put, as
-                // their shifts mean nothing.
-                let shift = |p: [f32; 4], d: [f32; 4]| std::array::from_fn(|k| if mask & (1 << k) != 0 { p[k] + d[k] } else { p[k] });
-                noise.at4(shift(x, dx), shift(z, dz))
+                let mut out = [0.0; LANES];
+                for g in groups(mask) {
+                    let (x, z) = self.position(lanes, noise.warp, g);
+                    // Four lanes cost about as much as one; those outside the mask stay put, as
+                    // their shifts mean nothing.
+                    let shift = |p: [f32; 4], d: Wide| std::array::from_fn(|k| if mask & (1 << (4 * g + k)) != 0 { p[k] + d[4 * g + k] } else { p[k] });
+                    out[4 * g..4 * g + 4].copy_from_slice(&noise.at4(shift(x, dx), shift(z, dz)));
+                }
+                out
             }
         }
     }
@@ -676,13 +720,13 @@ impl Router {
     /// evaluates its terrain splines: linear past the ends along their slopes. Each knot's
     /// value is worked out once, in the lanes that lie beside it; a lane exactly on a knot
     /// needs only that knot, as banded inputs such as the climate indices mostly are.
-    fn spline(&self, lanes: &mut Lanes, inputs: &dyn Inputs, knots: &[Knot], x: [f32; 4], mask: u8, (segment, common): ([usize; 4], Option<usize>)) -> [f32; 4] {
+    fn spline(&self, lanes: &mut Lanes, inputs: &dyn Inputs, knots: &[Knot], x: Wide, mask: u8, (segment, common): ([usize; LANES], Option<usize>)) -> Wide {
         let value = |j: usize, lanes: &mut Lanes, mask: u8| match knots[j].constant {
-            Some(v) => [v; 4],
+            Some(v) => [v; LANES],
             None => self.eval(lanes, inputs, knots[j].value, mask),
         };
         let mut on_knot = 0u8;
-        for k in 0..4 {
+        for k in 0..LANES {
             let i = segment[k];
             if mask & (1 << k) != 0 && i > 0 && knots[i - 1].at == x[k] {
                 on_knot |= 1 << k;
@@ -692,7 +736,7 @@ impl Router {
         if let Some(i) = common
             && mask != 0
         {
-            let end = |j: usize, v: [f32; 4]| std::array::from_fn(|k| v[k] + knots[j].slope * (x[k] - knots[j].at));
+            let end = |j: usize, v: Wide| std::array::from_fn(|k| v[k] + knots[j].slope * (x[k] - knots[j].at));
             if i == 0 {
                 return end(0, value(0, lanes, mask));
             }
@@ -706,10 +750,12 @@ impl Router {
             }
             let y1 = value(i, lanes, between);
             let (a, b) = (knots[i - 1], knots[i]);
-            return std::array::from_fn(|k| if on_knot & (1 << k) != 0 { y0[k] } else { hermite(a.at, y0[k], a.slope, b.at, y1[k], b.slope, x[k]) });
+            // Every lane on the curve side by side, then those on the knot take its value.
+            let curve: Wide = std::array::from_fn(|k| hermite(a.at, y0[k], a.slope, b.at, y1[k], b.slope, x[k]));
+            return std::array::from_fn(|k| if on_knot & (1 << k) != 0 { y0[k] } else { curve[k] });
         }
-        // Otherwise the knots beside each lane: at most two per lane, so at most eight.
-        let mut used: [(usize, u8); 8] = [(0, 0); 8];
+        // Otherwise the knots beside each lane: at most two per lane.
+        let mut used: [(usize, u8); 2 * LANES] = [(0, 0); 2 * LANES];
         let mut count = 0;
         let mut need = |j: usize, k: usize| match used[..count].iter_mut().find(|u| u.0 == j) {
             Some(u) => u.1 |= 1 << k,
@@ -726,7 +772,7 @@ impl Router {
                 }
             }
         }
-        let mut values = [[0.0f32; 4]; 8];
+        let mut values = [[0.0f32; LANES]; 2 * LANES];
         for (u, v) in used[..count].iter().zip(&mut values) {
             *v = value(u.0, lanes, u.1);
         }
@@ -752,22 +798,31 @@ impl Router {
 /// The segment of the knots at `ats` each lane lies in (the index of the first knot past
 /// it), and the one every lane of `mask` lies in, if they share one. Counted rather than
 /// searched for: splines have few knots, and a count has no branches to mispredict.
-fn segments(ats: &[f32], x: [f32; 4], mask: u8) -> ([usize; 4], Option<usize>) {
-    let mut count = [0u32; 4];
+fn segments(ats: &[f32], x: Wide, mask: u8) -> ([usize; LANES], Option<usize>) {
+    // Usually every lane lies in the first one's segment: counted for that lane alone, and
+    // the others checked against the segment's ends. The knots are in order, so a lane lies
+    // in it exactly when the knot before is at or below it and the knot after is not.
+    let lead = x[(mask.trailing_zeros() as usize).min(LANES - 1)];
+    let first = ats.iter().map(|&at| usize::from(at <= lead)).sum::<usize>();
+    let inside = |x: f32| (first == 0 || ats[first - 1] <= x) && (first == ats.len() || !(ats[first] <= x));
+    if (0..LANES).all(|k| mask & (1 << k) == 0 || inside(x[k])) {
+        return ([first; LANES], Some(first));
+    }
+    let mut count = [0u32; LANES];
     for &at in ats {
-        for k in 0..4 {
+        for k in 0..LANES {
             count[k] += u32::from(at <= x[k]);
         }
     }
-    let first = count[(mask.trailing_zeros() as usize).min(3)];
-    let same = (0..4).all(|k| mask & (1 << k) == 0 || count[k] == first);
+    let first = count[(mask.trailing_zeros() as usize).min(LANES - 1)];
+    let same = (0..LANES).all(|k| mask & (1 << k) == 0 || count[k] == first);
     (count.map(|c| c as usize), same.then_some(first as usize))
 }
 
 /// A spline whose knots are all numbers, in the lanes of `mask`: no bookkeeping of what to
 /// work out, which most splines need not. When every lane lies in one segment, as usual,
-/// the four are worked out side by side on the same curve.
-fn leaf_spline(knots: &[Knot], x: [f32; 4], mask: u8, (segment, common): ([usize; 4], Option<usize>)) -> [f32; 4] {
+/// all lanes are worked out side by side on the same curve.
+fn leaf_spline(knots: &[Knot], x: Wide, mask: u8, (segment, common): ([usize; LANES], Option<usize>)) -> Wide {
     let value = |j: usize| knots[j].constant.unwrap_or_default();
     let end = |j: usize, x: f32| value(j) + knots[j].slope * (x - knots[j].at);
     if let Some(i) = common {
@@ -956,7 +1011,7 @@ mod tests {
         }
     }
 
-    /// The base package's land, worked out four positions at a time with every shortcut,
+    /// The base package's land, worked out `LANES` positions at a time with every shortcut,
     /// is exactly its plain meaning at each position.
     #[test]
     fn lanes_match_the_plain_meaning() {
@@ -970,10 +1025,10 @@ mod tests {
         let mut points: Vec<(f32, f32)> = (0..2000).map(|i| ((i % 50 * 8) as f32 + 3000.0, (i / 50 * 8) as f32 - 2000.0)).collect();
         points.extend((0..2000).map(|_| (rng.range(-30_000, 30_000) as f32, rng.range(-30_000, 30_000) as f32)));
         let fields: Vec<Field> = (0..program.fields.len()).map(|i| Field(program.field_slot(i))).collect();
-        for four in points.chunks(4) {
-            router.start(&mut lanes, four);
+        for some in points.chunks(LANES) {
+            router.start(&mut lanes, some);
             for &field in &fields {
-                for (k, &(x, z)) in four.iter().enumerate() {
+                for (k, &(x, z)) in some.iter().enumerate() {
                     let fast = router.get(&mut lanes, &Smooth, field, k);
                     let first_field = INPUTS.len() + router.noises.len();
                     let plain = reference(&router, &Smooth, program.fields[field.0 as usize - first_field].1, x, z);
