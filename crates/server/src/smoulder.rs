@@ -17,7 +17,8 @@ use crate::Server;
 const HOUR: f64 = TICKS_PER_DAY as f64 / 24.0;
 
 /// A structure smouldering: which, turned how, and by the world's day ticks when it was lit,
-/// when it is done, when it was last looked at, and for how long rain fell on its flue.
+/// when it is done, when it was last looked at, and for how long rain fell on its flue;
+/// and whether its flue was roofed over when last seen loaded, for while it is not.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Smouldering {
     pub position: [i32; 3],
@@ -28,6 +29,8 @@ pub struct Smouldering {
     pub seen: u64,
     #[serde(default)]
     pub wet: u64,
+    #[serde(default)]
+    pub roofed: bool,
 }
 
 /// How a smoulder ended.
@@ -58,7 +61,7 @@ impl Server {
         let Some(turn) = structure.turn(core, |p| self.block(p)) else { return };
         let now = self.day.floor() as u64;
         let done = now + (smoulder.hours as f64 * HOUR).round() as u64;
-        self.smoulders.insert(core, Smouldering { position: core.to_array(), structure: structure.name.clone(), turn, lit: now, done, seen: now, wet: 0 });
+        self.smoulders.insert(core, Smouldering { position: core.to_array(), structure: structure.name.clone(), turn, lit: now, done, seen: now, wet: 0, roofed: false });
         self.set_block(core, smoulder.burning);
         self.tally(agent, "lit", &structure.name, 1);
         self.tell_smoulder(agent, Words::key("multiblock.smoulders").with("structure", title).with("hours", format!("{:.0}", smoulder.hours.ceil())));
@@ -92,8 +95,9 @@ impl Server {
         }
     }
 
-    /// Looks over each smouldering structure loaded: rain on its open flue is counted, and
-    /// one whose time is up is done. Those in columns not loaded wait.
+    /// Looks over each smouldering structure: rain on its open flue is counted as it falls,
+    /// loaded or not (one not loaded is open as it was when last seen), and one whose time
+    /// is up is done once all of it is loaded; until then it waits.
     pub(crate) fn tend_smoulders(&mut self) {
         if self.smoulders.is_empty() {
             return;
@@ -102,10 +106,14 @@ impl Server {
         let cores: Vec<IVec3> = self.smoulders.keys().copied().collect();
         let mut done = Vec::new();
         for core in cores {
-            if self.block(core).is_none() {
-                continue;
+            let s = &self.smoulders[&core];
+            let cells: Vec<IVec3> = self.content.multiblocks.get(&s.structure).and_then(|m| m.smoulder.as_ref()).map_or_else(Vec::new, |sm| sm.wood.iter().map(|&o| core + turned(o, s.turn)).collect());
+            let loaded = self.block(core).is_some() && cells.iter().all(|&p| self.block(p).is_some());
+            if self.block(core).is_some() {
+                let roofed = !self.open_sky(core + IVec3::Y);
+                self.smoulders.get_mut(&core).expect("listed above").roofed = roofed;
             }
-            let open = self.open_sky(core + IVec3::Y);
+            let open = !self.smoulders[&core].roofed;
             let raining = open && {
                 let report = self.weather.local(&mut self.temperature, Vec2::new(core.x as f32, core.z as f32), tick, day);
                 report.weather.precipitation * (1.0 - report.weather.snow) >= wet
@@ -116,7 +124,7 @@ impl Server {
                 s.wet += until.saturating_sub(s.seen);
             }
             s.seen = s.seen.max(until);
-            if now >= s.done {
+            if now >= s.done && loaded {
                 done.push(core);
             }
         }
@@ -339,6 +347,37 @@ mod tests {
         };
         assert_eq!(burn(false), [("base:ash_heap".to_owned(), 5), ("base:charcoal_heap".to_owned(), 4)], "rained on for half of it (rounded up)");
         assert_eq!(burn(true), [("base:charcoal_heap".to_owned(), 9)]);
+    }
+
+    /// Rain is counted while nobody has the clamp loaded too, open as it was last seen: a
+    /// player away through the rain comes back to the same ash as one who stood by, and a
+    /// roofed one stays dry. Done while not loaded, it waits to char until all of it is.
+    #[test]
+    fn rain_while_the_clamp_is_not_loaded_counts_as_it_fell() {
+        let hours = TICKS_PER_DAY as f64 / 24.0;
+        let burn = |roofed: bool| {
+            let mut server = fixture("base:torch");
+            sky(&mut server, "clear");
+            build(&mut server);
+            if roofed {
+                server.set_block(FLUE + IVec3::new(0, 3, 0), id(&server, "base:stone"));
+            }
+            light(&mut server);
+            server.day += 4.0 * hours;
+            server.tend_smoulders();
+            let column = server.world.remove(ColumnPos::new(0, 0)).unwrap();
+            sky(&mut server, "rain");
+            server.day += 4.0 * hours;
+            server.tend_smoulders();
+            assert_eq!(server.smoulders.len(), 1, "done, but waiting to be loaded");
+            sky(&mut server, "clear");
+            server.world.insert(ColumnPos::new(0, 0), column);
+            server.tend_smoulders();
+            assert!(server.smoulders.is_empty());
+            charred(&server)
+        };
+        assert_eq!(burn(false), [("base:ash_heap".to_owned(), 5), ("base:charcoal_heap".to_owned(), 4)], "the rain while away counted, the clear sky on return not");
+        assert_eq!(burn(true), [("base:charcoal_heap".to_owned(), 9)], "roofed when last seen");
     }
 
     /// What smoulders is saved with the world, and comes back while its structure does.
