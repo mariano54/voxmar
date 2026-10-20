@@ -45,9 +45,8 @@ pub use voxmar_engine::weather::Weather;
 // 48: ServerMessage::Smoulders, the blocks about to catch fire, for their smoke.
 // 49: a seventh worn slot, the charm (inventory::WORN_SLOTS), moving an open store's slots one
 // on.
-// 52 (a placeholder, numbered at its last main merge): tools wear (ItemStack::wear) and
-// ServerMessage::ToolWore.
-pub const PROTOCOL_VERSION: u32 = 52;
+// 50: tools wear (ItemStack::wear) and ServerMessage::ToolWore.
+pub const PROTOCOL_VERSION: u32 = 50;
 
 /// A creature's `tell` while it rears into a new phase of its fight.
 pub const REARING: u8 = u8::MAX;
