@@ -18518,9 +18518,13 @@ fn ore(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let wanted = ((rule.xp + rule.prospect) * 10.0) as u32;
             if gone && learnt >= wanted && rule.prospect > 0.0 {
                 gate.check("ore: prospect", Ok(format!("the first sample broken over its vein taught {:.1} Mining ({} for the break, {} for prospecting)", learnt as f32 / 10.0, rule.xp, rule.prospect)));
-                // Coal, set where the sample lay, for a pickaxe of the first tier.
+                // Coal, set where the sample lay, for a pickaxe of the first tier. The player
+                // was set down in the sample's cell, and a solid block is never set over a
+                // player (`would_trap_a_player`), so they stand on top of it first.
                 let pickaxe = content.tools.rule(content.blocks.expect("base:coal_ore")).and_then(|r| r.tool).and_then(|kind| content.least_tool(kind, 1));
-                world.resource::<Net>().command(&format!("setblock {} {} {} coal_ore", at.x, at.y, at.z));
+                let net = world.resource::<Net>();
+                net.command(&format!("tp {} {} {}", at.x as f32 + 0.5, at.y + 1, at.z as f32 + 0.5));
+                net.command(&format!("setblock {} {} {} coal_ore", at.x, at.y, at.z));
                 if let Some(pickaxe) = pickaxe {
                     give_for_ore(world, gate, &content.blocks.def(pickaxe).name);
                 }
@@ -18544,7 +18548,9 @@ fn ore(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let stood = gate.observer.as_ref().is_some_and(|o| o.world.block(at) == Some(coal)) && world.resource::<ClientWorld>().block(at) == Some(coal);
             if !stood || !select(world, &first_name) {
                 if gate.server_in_phase() > ORE_WAIT {
-                    end_ore(world, gate, now, "ore: coal wants stone", Err(format!("the coal ore at {at} or the {first_name} never came (coal there {stood})")));
+                    let held = gate.observer.as_ref().and_then(|o| o.world.block(at)).map_or("nothing loaded".to_owned(), |b| content.blocks.def(b).name.clone());
+                    let feet = world.resource::<LocalPlayer>().position;
+                    end_ore(world, gate, now, "ore: coal wants stone", Err(format!("the coal ore at {at} or the {first_name} never came (coal there {stood}: the server holds {held} there, the player stands at {feet:.1})")));
                 }
                 return;
             }
