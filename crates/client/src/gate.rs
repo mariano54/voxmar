@@ -15343,10 +15343,11 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     }
 }
 
-/// Where the quern step sets its quern stones, from the test ground's middle: west of the
-/// Cook step's fire and stove, clear of both, and where it stands, south of the quern.
-const QUERN_AT: IVec3 = IVec3::new(-6, 0, 14);
-const QUERN_STAND: Vec3 = Vec3::new(-5.5, 0.0, 12.0);
+/// Where the quern step sets its quern stones, from the test ground's middle: inside the
+/// creatures pad (stone underfoot, air above, walled at x -6), west of the Cook step's fire,
+/// stove and chimney, clear of them all; and where it stands, south of the quern.
+const QUERN_AT: IVec3 = IVec3::new(-4, 0, 14);
+const QUERN_STAND: Vec3 = Vec3::new(-3.5, 0.0, 12.0);
 
 /// Quern stones set down, a wheat in hand and right clicks on them, as on a fire: the
 /// wheat comes back as flour. The player is put back where the Cook step left them, for
@@ -15410,9 +15411,8 @@ fn end_quern(world: &mut World, gate: &mut Gate, now: f32) {
     mouse(world, MouseButton::Right, false);
     let (at, back) = (gate.feet + QUERN_AT, gate.quern_from);
     let net = world.resource::<Net>();
-    // The quern goes, and its stone floor back to the test ground's dirt.
+    // The quern goes. Its floor and the air over it are the pad's own stone and air.
     net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
-    net.command(&format!("fill {} {} {} {} {} {} dirt", at.x, at.y - 1, at.z - 2, at.x + 1, at.y - 1, at.z));
     net.command("clear wheat");
     net.command("clear flour");
     net.command(&format!("tp {} {} {}", back.x, back.y, back.z));
