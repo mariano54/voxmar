@@ -2254,14 +2254,35 @@ fn the_quern_spindle_and_loom_grind_spin_and_weave() {
     work(&mut client, "spindle_stand", &[("wool", 1)], ("twine", 3), ("wool", 0));
     work(&mut client, "loom_frame", &[("wool", 2)], ("white_cloth", 1), ("wool", 1));
     work(&mut client, "loom_frame", &[("poppy", 1), ("wool", 1)], ("red_cloth", 2), ("wool", 0));
-    // Wheat at the spindle makes nothing: each station works only its own.
-    client.clear();
-    client.ok("/setblock ~2 ~ ~ spindle_stand");
-    client.ok("/give wheat 1");
-    client.pump_until(|c| count(c, "base:wheat") == 1);
-    client.propose("base:cook", ActionTarget::Block { block: at, face: Face::PosY });
-    client.settle();
-    assert_eq!(count(&client, "base:wheat"), 1, "wheat was worked at a spindle");
+    assert_eq!(count(&client, "base:poppy"), 0, "the loom kept the dye flower");
+    // Each refuses and keeps the wheat: the spindle works only its own, a village's quern
+    // (its old_ twin) works nothing, and a quern below Cooking 3 nothing.
+    let refuses = |client: &mut Client, station: &str, why: &str| {
+        client.clear();
+        client.ok(&format!("/setblock ~2 ~ ~ {station}"));
+        client.ok("/give wheat 1");
+        let block = client.content.blocks.expect(&format!("base:{station}"));
+        client.pump_until(|c| c.world.block(at) == Some(block) && count(c, "base:wheat") == 1);
+        client.propose("base:cook", ActionTarget::Block { block: at, face: Face::PosY });
+        client.after_server_ticks(3 * TICKS_PER_SECOND as u64);
+        client.settle();
+        assert_eq!((count(client, "base:wheat"), count(client, "base:flour")), (1, 0), "{why}");
+    };
+    refuses(&mut client, "spindle_stand", "wheat was worked at a spindle");
+    refuses(&mut client, "old_quern_stones", "a village's quern ground flour");
+    client.ok("/skill cooking 2");
+    refuses(&mut client, "quern_stones", "a quern ground flour at Cooking 2");
+    // Broken, a station drops itself.
+    for station in ["quern_stones", "spindle_stand", "loom_frame"] {
+        client.clear();
+        client.ok(&format!("/setblock ~2 ~ ~ {station}"));
+        let block = client.content.blocks.expect(&format!("base:{station}"));
+        client.pump_until(|c| c.world.block(at) == Some(block) && c.inventory.slots.iter().all(Option::is_none));
+        client.propose("core:mine", ActionTarget::Block { block: at, face: Face::PosY });
+        client.pump_until(|c| c.world.block(at) == Some(BlockId::AIR));
+        let loose = |c: &Client| count(c, &format!("base:{station}")) as usize + c.items.values().filter(|i| i.stack.item == block).map(|i| i.stack.count as usize).sum::<usize>();
+        assert_eq!(client.quiet(loose), 1, "a broken {station} did not drop itself");
+    }
 }
 
 /// The First Night contract uses real grid and cooking events, and both kinds of

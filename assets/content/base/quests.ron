@@ -81,7 +81,7 @@
         (
             name: "twine_and_thong", age: "nomad", branch: "crafting", title: "Twine and Thong",
             why: "Twine goes into fishing rods, pouches, candles and baskets. Three wheat twist into two twine. Wild wheat grows as lone golden tufts on open grassland, a tuft every twenty blocks or so on plains, steppe and meadows, and a village's fields grow it too. Make ten.",
-            tasks: [[Craft("twine", 10)]],
+            tasks: [[Craft("twine", 10)], [Cook("twine", 10)]],
             after: ["a_handful_of_grain"],
             rewards: [Xp("crafting", 67.0)],
         ),
@@ -198,7 +198,7 @@
         (
             name: "daily_bread", age: "nomad", branch: "cooking", title: "Daily Bread",
             why: "Two ears of wheat side by side in the crafting grid bake into bread, which heals more than the grain. Bake four loaves.",
-            tasks: [[Craft("bread", 4)]],
+            tasks: [[Craft("bread", 4)], [Cook("bread", 4)]],
             after: ["a_handful_of_grain"],
             rewards: [Xp("cooking", 60.0)],
         ),
@@ -670,7 +670,7 @@
         (
             name: "a_rug_underfoot", age: "farm", branch: "home", title: "A Rug Underfoot",
             why: "A cloth is a wool and a flower of the colour you want, side by side in the grid (Crafting 2): white from a daisy, yellow from a dandelion, red from a poppy. Daisies grow on plains, dandelions in flower meadows, poppies on the steppe. Make two. Two cloths side by side make three rugs (Crafting 3). Lay them on the floor; curtains, cushions and banners are made from cloth too.",
-            tasks: [[Craft("tag:cloth", 2), Craft("tag:rug", 1)]],
+            tasks: [[Craft("tag:cloth", 2), Craft("tag:rug", 1)], [Cook("tag:cloth", 2), Craft("tag:rug", 1)]],
             after: ["wool_gathering"],
             rewards: [Xp("crafting", 180.0)],
         ),
@@ -833,7 +833,7 @@
         (
             name: "a_varied_table", age: "nomad", branch: "cooking", title: "A Varied Table",
             why: "One food grows dull and heals little. Cook twelve meat at a fire, cook eight fish, and bake six bread: every kind comes from a different part of the land, and together they keep you going.",
-            tasks: [[Cook("tag:meat", 12), Cook("tag:fish", 8), Craft("bread", 6)]],
+            tasks: [[Cook("tag:meat", 12), Cook("tag:fish", 8), Craft("bread", 6)], [Cook("tag:meat", 12), Cook("tag:fish", 8), Cook("bread", 6)]],
             after: ["a_fish_supper", "daily_bread", "trail_rations"],
             rewards: [Xp("cooking", 180.0), Xp("hitpoints", 40.0)],
         ),

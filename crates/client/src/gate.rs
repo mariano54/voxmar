@@ -15350,6 +15350,7 @@ const QUERN_STAND: Vec3 = Vec3::new(-5.5, 0.0, 12.0);
 fn quern(world: &mut World, gate: &mut Gate, now: f32) {
     let at = gate.feet + QUERN_AT;
     let flour = item_count(world, "base:flour");
+    let wheat_left = item_count(world, "base:wheat");
     match gate.phase {
         0 => {
             gate.quern_from = world.resource::<LocalPlayer>().position;
@@ -15361,7 +15362,6 @@ fn quern(world: &mut World, gate: &mut Gate, now: f32) {
                 format!("setblock {} {} {} quern_stones", at.x, at.y, at.z),
                 "clear wheat".to_owned(),
                 "clear flour".to_owned(),
-                "skill cooking 99".to_owned(),
                 "give wheat 1".to_owned(),
                 format!("tp {} {} {}", stand.x, stand.y, stand.z),
             ] {
@@ -15387,13 +15387,13 @@ fn quern(world: &mut World, gate: &mut Gate, now: f32) {
         }
         _ => {
             aim_at(world, at.as_vec3() + Vec3::new(0.5, 0.6, 0.5));
-            if flour > 0 {
+            if flour > 0 && wheat_left == 0 {
                 mouse(world, MouseButton::Right, false);
                 gate.check("quern grinds", Ok(format!("a right click on the quern stones with a wheat in hand ground it into {flour} flour")));
                 end_quern(world, gate, now);
             } else if gate.waited_out(15.0) {
                 mouse(world, MouseButton::Right, false);
-                gate.check("quern grinds", Err(format!("right clicks on the quern stones at {at} with a wheat in hand ground nothing in 15 server seconds")));
+                gate.check("quern grinds", Err(format!("right clicks on the quern stones at {at} with a wheat in hand made {flour} flour and left {wheat_left} wheat in 15 server seconds")));
                 end_quern(world, gate, now);
             } else {
                 gate.tap(world, true, now);
@@ -15406,7 +15406,9 @@ fn end_quern(world: &mut World, gate: &mut Gate, now: f32) {
     mouse(world, MouseButton::Right, false);
     let (at, back) = (gate.feet + QUERN_AT, gate.quern_from);
     let net = world.resource::<Net>();
+    // The quern goes, and its stone floor back to the test ground's dirt.
     net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
+    net.command(&format!("fill {} {} {} {} {} {} dirt", at.x, at.y - 1, at.z - 2, at.x + 1, at.y - 1, at.z));
     net.command("clear wheat");
     net.command("clear flour");
     net.command(&format!("tp {} {} {}", back.x, back.y, back.z));
