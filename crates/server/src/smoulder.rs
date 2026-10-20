@@ -322,6 +322,25 @@ mod tests {
         assert!(server.smoulders.is_empty());
     }
 
+    /// Its earth clicked from the floor beside it, as a player there sees it: lit from a
+    /// torch in hand as from its flue, the earth and the torch kept; from a stick, not.
+    #[test]
+    fn a_clamp_is_lit_from_its_earth() {
+        let mut server = fixture("base:stick");
+        sky(&mut server, "clear");
+        build(&mut server);
+        let action = server.content.actions.expect("base:light");
+        let side = ActionTarget::Block { block: FLUE - IVec3::Z, face: Face::NegZ };
+        server.propose(1, action, side, Instant::now());
+        assert!(server.smoulders.is_empty(), "a stick does not light it");
+        server.players.get_mut(&1).unwrap().inventory.slots[0] = Some(stack(id(&server, "base:torch"), 1));
+        server.propose(1, action, side, Instant::now());
+        assert_eq!(server.block(FLUE), Some(id(&server, "base:clamp_flue")), "lit");
+        assert!(server.smoulders.contains_key(&FLUE), "its core smoulders");
+        assert_eq!(server.block(FLUE - IVec3::Z), Some(id(&server, "base:dirt")), "its earth kept");
+        assert_eq!(server.players[&1].inventory.slots[0].map(|s| s.count), Some(1), "the torch kept");
+    }
+
     /// A piece of it broken before its time opens it: what it holds is part-burnt.
     #[test]
     fn a_clamp_opened_early_leaves_part_burnt_wood() {

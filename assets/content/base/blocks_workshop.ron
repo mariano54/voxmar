@@ -1,14 +1,21 @@
 // Workshop blocks: things a recipe is made near (`near` in recipes.ron, docs/crafting.md).
 // A chopping block is a log end stood up with a flint wedge left in it: logs split by it
-// give two more planks each than the crafting grid's. Held to it with an axe about you, a
-// log splits into firewood (cooking.ron), which burns hotter than a log; stacked under
-// earth with kindling on top it is a charcoal clamp (multiblocks.ron).
+// give two more planks each than the crafting grid's. A grindstone is a wheel of cobble
+// dressed with sand, hung between two posts: toolstone ground on it makes a stone head.
+// Held to it with an axe about you, a log splits into firewood (cooking.ron), which burns
+// hotter than a log; stacked under earth with kindling on top it is a charcoal clamp
+// (multiblocks.ron).
 (
     blocks: [
         (
             name: "chopping_block", render: Model, shape: "chopping_block", solid: true, sound: Wood,
             textures: Sides(top: "chopping_block_top", bottom: "chopping_block_top", side: "chopping_block_side"),
             drops: "chopping_block", hardness: 1.5, color: (120, 92, 58), tags: ["chopping_block", "decor"],
+        ),
+        (
+            name: "grindstone", render: Model, shape: "grindstone", solid: true, sound: Wood,
+            textures: All("grindstone_frame"),
+            drops: "grindstone", hardness: 1.5, color: (128, 124, 118), tags: ["grindstone", "decor"],
         ),
         // Split firewood, stacked: good fuel (machines.ron), and what a clamp chars.
         (

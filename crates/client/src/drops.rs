@@ -171,6 +171,7 @@ pub(crate) fn show(
     world: Res<ClientWorld>,
     player: Res<LocalPlayer>,
     remote: Res<RemotePlayers>,
+    creatures: Res<crate::creatures::Creatures>,
     pieces: Option<Res<TexturePieces>>,
     mut drops: ResMut<Drops>,
     mut models: ResMut<ItemModels>,
@@ -178,21 +179,25 @@ pub(crate) fn show(
 ) {
     let (now, dt) = (time.elapsed_secs(), time.delta_secs());
     let eye = player.eye();
-    // Where an item flies to: the middle of whoever picked it up.
-    let collector_at = |id: Option<PlayerId>| {
-        id.and_then(|id| remote.position(id)).map_or(eye - Vec3::Y * 0.6, |feet| feet + Vec3::Y * 1.0)
+    // Where an item flies to: the middle of whoever picked it up. None for another player
+    // too far off to be told of (`Limits::players_seen`): it fades where it was.
+    let collector_at = |id: Option<PlayerId>| match id {
+        Some(id) if Some(id) != creatures.me => remote.position(id).map(|feet| feet + Vec3::Y * 1.0),
+        _ => Some(eye - Vec3::Y * 0.6),
     };
     drops.items.retain(|_, item| item.collected.is_none_or(|(_, at, _)| now - at < PICKUP_FLIGHT));
     models.0.clear();
     for item in drops.items.values_mut() {
+        let mut scale = 1.0;
         let position = match item.collected {
             Some((collector, at, from)) => {
                 if !item.popped {
                     item.popped = true;
                     cues.write(SoundCue::new(Sound::Stone, Cue::Pickup).at(from));
                 }
-                let t = ((now - at) / PICKUP_FLIGHT).clamp(0.0, 1.0);
-                from.lerp(collector_at(collector), t * t)
+                let flown;
+                (flown, scale) = pickup_flight(from, collector_at(collector), (now - at) / PICKUP_FLIGHT);
+                flown
             }
             None => {
                 let ahead = (now - item.told_at).min(AHEAD);
@@ -211,7 +216,7 @@ pub(crate) fn show(
             item.lit_cell = Some(cell);
             item.light = [sky_light(&world, cell), block_light(&world, cell)];
         }
-        push_models(&mut models.0, &world, pieces.as_deref(), item);
+        push_models(&mut models.0, &world, pieces.as_deref(), item, scale);
     }
     // Too many to draw: the nearest go first.
     if models.0.len() > CAPACITY {
@@ -277,8 +282,19 @@ pub(crate) fn look_of(world: &ClientWorld, pieces: Option<&TexturePieces>, item:
 }
 
 /// The models showing `item`: its copies, turning and bobbing together.
-fn push_models(models: &mut Vec<ItemModel>, world: &ClientWorld, pieces: Option<&TexturePieces>, item: &Shown) {
+/// Where a picked-up item is drawn `t` of the way through its flight from `from`, and at
+/// what size: flown to `to`, the collector, or, with none known, shrunk away where it was.
+fn pickup_flight(from: Vec3, to: Option<Vec3>, t: f32) -> (Vec3, f32) {
+    let t = t.clamp(0.0, 1.0);
+    match to {
+        Some(to) => (from.lerp(to, t * t), 1.0),
+        None => (from, 1.0 - t),
+    }
+}
+
+fn push_models(models: &mut Vec<ItemModel>, world: &ClientWorld, pieces: Option<&TexturePieces>, item: &Shown, scale: f32) {
     let Look { shape, size, layers, tinted, tint } = look_of(world, pieces, item.stack.item, item.position.floor().as_ivec3());
+    let size = size * scale;
     let sprite = shape == Shape::Sprite;
     // Lifted off the ground by the bob, as Minecraft's are.
     let center = item.position + Vec3::Y * (BOB + size / 2.0);
@@ -342,6 +358,16 @@ mod tests {
         // Gone without a collector (merged, despawned, out of sight): at once.
         drops.receive(vec![ItemView { id: 4, ..view }], vec![ItemGone { id: 4, collector: None }], 1.0);
         assert!(!drops.items.contains_key(&4));
+    }
+
+    /// A picked-up item flies to its collector; one picked up by a player too far off to
+    /// be told of stays where it was and shrinks away, never flying to our eye.
+    #[test]
+    fn a_pickup_by_someone_unseen_fades_where_it_lay() {
+        let from = Vec3::new(4.0, 0.0, 0.0);
+        assert_eq!(pickup_flight(from, Some(Vec3::ZERO), 1.0), (Vec3::ZERO, 1.0));
+        assert_eq!(pickup_flight(from, None, 0.5), (from, 0.5));
+        assert_eq!(pickup_flight(from, None, 2.0), (from, 0.0));
     }
 
     #[test]

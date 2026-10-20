@@ -189,9 +189,9 @@ mod tests {
     /// out it breaks to nothing (or a head a pack names) and the player hears it.
     #[test]
     fn a_tool_wears_by_use_and_breaks() {
-        let (mut server, client) = holding("base:wooden_pickaxe", 0);
-        let uses = server.content.tools.uses(server.content.blocks.expect("base:wooden_pickaxe"));
-        assert!(uses >= 10, "a wooden pickaxe lasts {uses} uses");
+        let (mut server, client) = holding("base:flint_pickaxe", 0);
+        let uses = server.content.tools.uses(server.content.blocks.expect("base:flint_pickaxe"));
+        assert!(uses >= 10, "a flint pickaxe lasts {uses} uses");
         let wear = |server: &Server| server.players[&1].inventory.slots[0].map(|s| s.wear);
         let stone = put(&mut server, "base:stone");
         server.wear_on_block(1, stone, false, server.tool_in_hand(1));
@@ -351,7 +351,7 @@ mod tests {
     /// wears (a stick) and a bare hand are untouched.
     #[test]
     fn tilling_wears_and_creative_does_not() {
-        let (mut server, _client) = holding("base:wooden_hoe", 0);
+        let (mut server, _client) = holding("base:stone_hoe", 0);
         let soil = put(&mut server, "base:dirt");
         server.wear_on_block(1, soil, true, server.tool_in_hand(1));
         assert_eq!(server.players[&1].inventory.slots[0].unwrap().wear, server.content.tools.wear().till);

@@ -38,7 +38,7 @@ use crate::dials::WorldDials;
 use fastnoise_lite::{FastNoiseLite, FractalType};
 
 use crate::density::Crag;
-use crate::geology::{Corners, GeoSample, Geology, Landform, noise, smoothstep};
+use crate::geology::{self, Corners, GeoSample, Geology, Landform, noise, smoothstep};
 use crate::content::WorldContent;
 use crate::shapes::{Gate, region_share};
 use crate::stage::{self, Stage};
@@ -105,8 +105,10 @@ fn record_query(work: [usize; 8]) {
 pub(crate) fn freshwater(g: &GeoSample) -> bool {
     (g.submerged() || g.river > 0.5) && g.body != Body::Sea
 }
-/// Spacing of the climate samples rivers read rainfall from, in blocks.
+/// Spacing of the climate samples rivers read rainfall from, in blocks: every other point
+/// of the regional climate's lattice, whose tiles are a region a side.
 const RAIN_CELL: i32 = 128;
+const _: () = assert!(REGION == geology::TILE * climate::CELL && RAIN_CELL % climate::CELL == 0);
 const MB: usize = 1 << 20;
 const MAX_RIVER_WIDTH: f32 = 28.0;
 /// Area that counts as one unit of flow, in square blocks, at a runoff of 1.
@@ -120,7 +122,6 @@ pub struct Rivers {
     stream_style: Style,
     coarse: Cache<IVec2, Arc<Tile>>,
     fine: Cache<IVec2, Arc<Tile>>,
-    rain: Cache<IVec2, Arc<[Regional]>>,
     trunk_channels: Cache<IVec2, Arc<Channels>>,
     stream_channels: Cache<IVec2, Arc<Channels>>,
     /// Flow from which a creek is drawn, and from which a trunk river is.
@@ -362,7 +363,6 @@ impl Rivers {
             },
             coarse: Cache::new(16 * MB),
             fine: Cache::new(64 * MB),
-            rain: Cache::new(4 * MB),
             trunk_channels: Cache::new(32 * MB),
             stream_channels: Cache::new(96 * MB),
             creek,
@@ -421,20 +421,11 @@ impl Rivers {
     }
 
     /// The regional climate over the region holding (x, z), sampled every `RAIN_CELL`
-    /// blocks, for [`Rain::at`].
+    /// blocks, for [`Rain::at`]: every other point of the region's tile of the regional
+    /// climate lattice, which the land under the region reads anyway.
     fn rain(&self, land: Stages, x: i32, z: i32) -> Rain {
-        let per = REGION / RAIN_CELL;
         let region = IVec2::new(x, z).div_euclid(IVec2::splat(REGION));
-        let samples = self.rain.get(region, || {
-            let points: Vec<(f32, f32)> = (0..(per + 1) * (per + 1))
-                .map(|i| {
-                    let p = region * REGION + IVec2::new(i % (per + 1), i / (per + 1)) * RAIN_CELL;
-                    (p.x as f32, p.y as f32)
-                })
-                .collect();
-            land.climate.regionals(land.geology, &points).into()
-        });
-        Rain { region, samples }
+        Rain { region, samples: land.geology.regional_tile(region) }
     }
 
     /// Precipitation over evaporation at a position whose ground is `height` high.
@@ -1215,12 +1206,12 @@ struct Rain {
 impl Rain {
     /// The regional climate at a position in the region, interpolated.
     fn at(&self, x: i32, z: i32) -> Regional {
-        let per = REGION / RAIN_CELL;
+        let (step, side) = (RAIN_CELL / climate::CELL, geology::TILE + 1);
         let local = IVec2::new(x, z) - self.region * REGION;
         debug_assert!(local.cmpge(IVec2::ZERO).all() && local.cmplt(IVec2::splat(REGION)).all(), "({x}, {z}) outside region {}", self.region);
         let cell = local / RAIN_CELL;
         let f = (local - cell * RAIN_CELL).as_vec2() / RAIN_CELL as f32;
-        let at = |i: i32, j: i32| self.samples[((cell.y + j) * (per + 1) + cell.x + i) as usize];
+        let at = |i: i32, j: i32| self.samples[((cell.y + j) * step * side + (cell.x + i) * step) as usize];
         at(0, 0).lerp(at(1, 0), f.x).lerp(at(0, 1).lerp(at(1, 1), f.x), f.y)
     }
 

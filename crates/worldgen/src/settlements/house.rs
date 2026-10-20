@@ -187,9 +187,27 @@ pub struct Spec {
     /// What a centrepiece is, when the code draws it.
     pub centre: Option<Centre>,
     pub seed: u64,
+    /// A house of a row (a terrace), built on against its neighbours: none of its eaves or
+    /// side windows on a side another stands against.
+    pub row: Option<Row>,
+}
+
+/// A house's place in a row of houses built wall to wall along a street, each with its own
+/// side walls (`left` at x 0, `right` at x `w - 1`) against the next one's. The row's
+/// `seed` decides what all its houses share, jettied or not and the pieces of their roofs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Row {
+    pub seed: u64,
+    pub left: bool,
+    pub right: bool,
 }
 
 impl Spec {
+    /// The seed for what all the houses of its row share.
+    pub fn shared_seed(&self) -> u64 {
+        self.row.map_or(self.seed, |r| r.seed)
+    }
+
     pub fn has(&self, extra: Extra) -> bool {
         self.extras.contains(&extra)
     }
@@ -244,7 +262,12 @@ impl Spec {
                 };
                 let right = self.w + if self.shed > 0 { 3 } else { 0 };
                 let back = self.d + self.wing.map_or(0, |(_, wd)| wd);
-                (IVec2::new(-1, front), IVec2::new(right, back))
+                // No eave over a side another house of its row stands against.
+                let (left, right) = match self.row {
+                    Some(row) => (if row.left { 0 } else { -1 }, if row.right { right - 1 } else { right }),
+                    None => (-1, right),
+                };
+                (IVec2::new(left, front), IVec2::new(right, back))
             }
         }
     }
@@ -443,8 +466,12 @@ fn roof(spec: &Spec, pen: &mut Pen, mats: &Mats, top: i32, foot: &Foot, ridge_x:
     let flat = shape == Roof::Flat;
     // Eaves one column out, but an A-frame's timber ends stand flush with its roof.
     let a_frame = foot.form == Form::AFrame;
+    // A row's house has no eave over a side its neighbour stands against: their roofs run on.
+    let (open_left, open_right) = spec.row.map_or((true, true), |r| (!r.left, !r.right));
     let roofed = |x: i32, z: i32| {
-        if flat {
+        if (x < x0 && !open_left) || (x >= x0 + w && !open_right) {
+            false
+        } else if flat {
             foot.inside(x, z)
         } else if a_frame {
             let (along, across) = if ridge_x { (x - x0, z) } else { (z - z0, x) };
@@ -504,7 +531,7 @@ fn roof(spec: &Spec, pen: &mut Pen, mats: &Mats, top: i32, foot: &Foot, ridge_x:
     let gabled = matches!(shape, Roof::Gable | Roof::HalfHip | Roof::Saltbox | Roof::Gambrel);
     // A pitched gable over four walls may be laid in shaped pieces: each column's top a
     // slope whose low edge faces its eave, and a ridge cap along the peak.
-    let pieces = if shape == Roof::Gable && pitch == 1 && matches!(foot.form, Form::Box | Form::ShopFront) { mats.pieces(spec.seed) } else { None };
+    let pieces = if shape == Roof::Gable && pitch == 1 && matches!(foot.form, Form::Box | Form::ShopFront) { mats.pieces(spec.shared_seed()) } else { None };
     let facing = pen.frame.facing;
     let piece = |x: i32, z: i32| -> Option<BlockId> {
         let p = pieces?;
@@ -540,7 +567,8 @@ fn roof(spec: &Spec, pen: &mut Pen, mats: &Mats, top: i32, foot: &Foot, ridge_x:
             let wall = foot.wall(x, z);
             let (s, r) = if ridge_x { (z - z0, x - x0) } else { (x - x0, z - z0) };
             let gable = gabled && (r == 0 || r == run - 1);
-            let end = gable && s == span / 2 && blind != Some((x, z));
+            let joined = ridge_x && ((r == 0 && !open_left) || (r == run - 1 && !open_right));
+            let end = gable && !joined && s == span / 2 && blind != Some((x, z));
             // An A-frame's ends are timber, boards in a frame of logs under the roof, so
             // it never reads as a bank of earth whatever its roof.
             let timber = gable && foot.form == Form::AFrame;
@@ -558,7 +586,9 @@ fn roof(spec: &Spec, pen: &mut Pen, mats: &Mats, top: i32, foot: &Foot, ridge_x:
                     pen.set(x, y, z, mats.wall);
                 }
             }
-            if flat && wall && pen.roll(x, top + 2, z, 0x9a2) < 0.85 {
+            // A flat roof's low parapet, but not on a side a neighbour's roof runs on from.
+            let against = (x == x0 && !open_left) || (x == x0 + w - 1 && !open_right);
+            if flat && wall && !against && pen.roll(x, top + 2, z, 0x9a2) < 0.85 {
                 pen.set(x, top + 2, z, mats.trim);
             }
         }
@@ -716,11 +746,14 @@ fn house(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Ca
     let gable_windows = if spec.form == Form::AFrame { 3 } else { 1 };
     // A jettied house: its storeys over the ground stand a block out over the street (moved
     // out once the front is drawn), so its roof covers a block more at the front. Not over
-    // a porch, an awning or a balcony, nor with a dormer in the roof's front.
+    // a porch, an awning or a balcony, nor with a dormer in the roof's front. A house of a
+    // row rolls its own, unless its roof slopes down to the street: a jetty moves that eave
+    // out, so the whole row shares the roll and the roof runs on at one height.
+    let sloped_to_street = spec.ridge_x && spec.roof != Roof::Flat;
     let jetty = (spec.form == Form::Box
         && spec.storeys >= 2
         && ![Extra::Porch, Extra::Awning, Extra::Balcony, Extra::Dormer].iter().any(|&e| spec.has(e)))
-    .then(|| mats.jetty(spec.seed))
+    .then(|| mats.jetty(if sloped_to_street { spec.shared_seed() } else { spec.seed }))
     .flatten();
     let covered = if jetty.is_some() { Foot { z0: -1, d: d + 1, ..foot } } else { foot };
     let heights = roof(spec, &mut pen, mats, top, &covered, spec.ridge_x, spec.roof, mats.roof, gable_windows, chimney.map(|c| c.1));
@@ -1141,9 +1174,11 @@ fn house(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Ca
 fn jettied(pen: &mut Pen, spec: &Spec, mats: &Mats, lift: i32, top: i32, beams: [BlockId; 4]) {
     let w = spec.w;
     let floor = lift + spec.wall + 1;
+    // Not a neighbour's in its row: its own front moves out with it.
+    let (from_x, to_x) = spec.row.map_or((-1, w), |r| (if r.left { 0 } else { -1 }, if r.right { w - 1 } else { w }));
     for y in floor..=top {
         for z in [-1, 0] {
-            for x in -1..=w {
+            for x in from_x..=to_x {
                 let (from, to) = (pen.frame.at(x, y, z), pen.frame.at(x, y, z - 1));
                 match pen.canvas.absolute.get(&from).copied() {
                     Some(put) => pen.canvas.put(to, put),
@@ -1419,9 +1454,12 @@ fn windows(spec: &Spec, pen: &mut Pen, mats: &Mats, base: i32, storey: i32, rng:
             place(pen, x, d - 1, x, rng);
         }
     }
+    let (left, right) = spec.row.map_or((false, false), |r| (r.left, r.right));
     for z in 1..d - 1 {
-        place(pen, 0, z, z, rng);
-        if !(spec.shed > 0 && storey == 0) {
+        if !left {
+            place(pen, 0, z, z, rng);
+        }
+        if !(spec.shed > 0 && storey == 0) && !right {
             place(pen, w - 1, z, z, rng);
         }
     }

@@ -23,6 +23,10 @@ impl Server {
         // One pass over what changed, every per-cell hook in it.
         for &(pos, block) in &changes {
             self.dirty.insert(ColumnPos::of_block(pos));
+            // Water washes a snare (or a planted flower) away as surely as a hand breaks
+            // it: what grows there after is the world's, not the player's.
+            self.forget_placed(pos);
+            self.unplaced(pos, block);
             // A flood can wash a bag away: no ghost home where it lay.
             self.home_changed(pos, block);
             // Water over burning thatch puts it out; over a flame, ends what it lit.

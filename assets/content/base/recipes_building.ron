@@ -63,6 +63,8 @@
         (pattern: [["{name}_fence", "{name}_slab", "{name}_fence"]], output: "{name}_fence_gate", skill: "core:construction", level: 2, xp: 2.0),
         // A ladder of posts for its rails and sticks for its rungs, taller than a fence's.
         (pattern: [["{name}_post", "stick", "{name}_post"], ["{name}_post", "stick", "{name}_post"], ["{name}_post", "stick", "{name}_post"]], output: "{name}_ladder", count: 4, skill: "core:construction", level: 2, xp: 3.0),
+        // A stair with a cupboard in its riser: a stair, a plank for its doors and a stick.
+        (ingredients: ["{name}_stairs", "{name}_planks", "stick"], output: "{name}_stair_cupboard", skill: "core:construction", level: 5, xp: 4.0),
         // A loft hatch of two slabs on two sticks.
         (pattern: [["{name}_slab", "{name}_slab"], ["stick", "stick"]], output: "{name}_hatch", count: 2, skill: "core:construction", level: 2, xp: 2.0),
         (pattern: [["{name}_slab"], ["{name}_post"]], output: "{name}_newel_post", skill: "core:construction", level: 3, xp: 2.0),

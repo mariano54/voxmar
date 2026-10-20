@@ -601,6 +601,12 @@ impl Overworld {
         RiverLand { rivers: &self.rivers, stages: self.stages(), world: self }
     }
 
+    /// The middle of the vein a sample of ore (`block`) lying at `pos` marks, telling one
+    /// vein from another: none for a sample no vein laid there (one a player set down).
+    pub fn vein_of_sample(&self, pos: IVec3, block: BlockId) -> Option<IVec3> {
+        self.terrain.ores.vein_of_sample(self, pos.x, pos.z, block)
+    }
+
     /// The lairs within `radius` blocks of `centre`, nearest first (`lairs.ron`).
     pub fn lairs_near(&self, centre: IVec2, radius: i32) -> Vec<LairSite> {
         self.lairs.near(self, centre, radius)
@@ -676,6 +682,16 @@ impl Overworld {
     /// sets, each where it goes.
     pub fn settlement_planned(&self, centre: IVec2, keep: &dyn Fn(voxmar_engine::block::BlockId) -> bool) -> Vec<(IVec3, voxmar_engine::block::BlockId)> {
         self.settlements.planned(self, centre, keep).unwrap_or_default()
+    }
+
+    /// Whether `block` is one of settlements' own flames (`rules.fire.flames`).
+    pub fn settlement_flame(&self, block: voxmar_engine::block::BlockId) -> bool {
+        self.settlements.fire().is_some_and(|f| f.flame(block))
+    }
+
+    /// How many steps settlements' fire reaches from a flame (`rules.fire.reach`).
+    pub fn settlement_fire_reach(&self) -> i32 {
+        self.settlements.fire().map_or(0, |f| f.reach)
     }
 
     /// Every block that catches fire (thatch, wattle) a flame among `blocks` reaches, as
@@ -945,10 +961,19 @@ impl Sampler<'_> {
         let cell = p.div_euclid(IVec2::splat(biome::CELL));
         let f = (p - cell * biome::CELL).as_vec2() / biome::CELL as f32;
         let mut sum = [[0.0f32; 3]; 3];
+        // Corners of the same biomes at the same share have the same colours (all four,
+        // inside a biome), worked out once.
+        let mut last: Option<((BiomeId, BiomeId, u32), [[f32; 3]; 3])> = None;
         for (dx, dz, w) in [(0, 0, (1.0 - f.x) * (1.0 - f.y)), (1, 0, f.x * (1.0 - f.y)), (0, 1, (1.0 - f.x) * f.y), (1, 1, f.x * f.y)] {
             let at = (cell + IVec2::new(dx, dz)) * biome::CELL;
             let pick = self.pick(at.x, at.y);
-            let colors = self.biome_colors(climate, n, &pick, Biomes::blend(pick.edge, site.fertility));
+            let share = Biomes::blend(pick.edge, site.fertility);
+            let key = (pick.home, pick.neighbour, share.to_bits());
+            let colors = match last {
+                Some((k, colors)) if k == key => colors,
+                _ => self.biome_colors(climate, n, &pick, share),
+            };
+            last = Some((key, colors));
             for (total, c) in sum.iter_mut().zip(colors) {
                 for k in 0..3 {
                     total[k] += w * c[k];
@@ -2844,8 +2869,10 @@ mod tests {
         // it (`waterfalls_pour`, 7 s alone, took 198 s beside it). What it counts does not
         // depend on the threads: the places are counted in order. Only where the tests'
         // pool is held to part of the machine (`RAYON_NUM_THREADS`, half the cores in the
-        // gate); on a pool of every core, a second would double the threads.
-        let pool = std::env::var_os("RAYON_NUM_THREADS").map(|_| rayon::ThreadPoolBuilder::new().num_threads(rayon::current_num_threads()).build().unwrap());
+        // gate); on a pool of every core (no `RAYON_NUM_THREADS`, or 0), a second would
+        // double the threads.
+        let capped = std::env::var("RAYON_NUM_THREADS").ok().and_then(|n| n.parse::<usize>().ok()).is_some_and(|n| n > 0);
+        let pool = capped.then(|| rayon::ThreadPoolBuilder::new().num_threads(rayon::current_num_threads()).build().unwrap());
         fn on_pool<R: Send>(pool: &Option<rayon::ThreadPool>, f: impl FnOnce() -> R + Send) -> R {
             match pool {
                 Some(pool) => pool.install(f),

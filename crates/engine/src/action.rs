@@ -464,6 +464,10 @@ pub trait ActionContext {
     fn machines(&self) -> Option<&crate::machine::MachineRegistry> {
         None
     }
+    /// The multiblocks, where the context knows them.
+    fn multiblocks(&self) -> Option<&crate::multiblock::MultiblockRegistry> {
+        None
+    }
     /// What bees give, where the context knows.
     fn bees(&self) -> Option<&crate::bees::Bees> {
         None
@@ -770,7 +774,14 @@ impl ActionDef {
             }
             Requirement::MultiblockCore => {
                 let (block, _) = block_target()?;
-                let Some(core) = ctx.block(block).filter(|&b| ctx.blocks().def(b).has_tag("multiblock_core")) else { return Ok(false) };
+                // Any cell of a standing clamp, with what lights it in hand, is as its core:
+                // the firelighter lights it, never laid on its earth.
+                let smoulders = || {
+                    let (_, structure) = ctx.multiblocks()?.smoulder_round(block, |p| ctx.block(p))?;
+                    let lit_by = structure.lit_by.as_deref()?;
+                    Some(ctx.actor_held().is_some_and(|item| ctx.blocks().def(item).has_tag(lit_by)))
+                };
+                let Some(core) = ctx.block(block).filter(|&b| ctx.blocks().def(b).has_tag("multiblock_core")) else { return Ok(smoulders() == Some(true)) };
                 // A machine's core with a block in hand that it does not take (use_machine
                 // takes what it does) has that block built against it, as any machine does.
                 let machine = ctx.machines().is_some_and(|machines| machines.get(core).is_some());
@@ -1122,6 +1133,66 @@ mod tests {
         assert_eq!(lights("base:bloomery", None), Ok(()));
         assert_eq!(lights("base:bloomery", Some("base:iron_pickaxe")), Ok(()));
         assert_eq!(lights("base:crucible", Some("base:kiln_bricks")), Ok(()));
+    }
+
+    /// A clamp's earth, clicked from the floor beside it with what lights it in hand, is
+    /// lit as its flue is, so the firelighter is never laid on it; with earth or nothing in
+    /// hand it is not (earth is built on it), nor once a piece of it is gone.
+    #[test]
+    fn a_firelighter_lights_a_clamp_from_its_earth() {
+        struct Clamp<'a> {
+            content: &'a crate::content::Content,
+            cells: std::collections::HashMap<IVec3, BlockId>,
+            held: Option<BlockId>,
+        }
+        impl ActionContext for Clamp<'_> {
+            fn block(&self, pos: IVec3) -> Option<BlockId> {
+                Some(self.cells.get(&pos).copied().unwrap_or(BlockId::AIR))
+            }
+            fn info(&self, block: BlockId) -> &BlockInfo {
+                self.content.blocks.info(block)
+            }
+            fn blocks(&self) -> &BlockRegistry {
+                &self.content.blocks
+            }
+            fn crops(&self) -> &CropRegistry {
+                &self.content.crops
+            }
+            fn actor_level(&self, _: SkillId) -> u8 {
+                1
+            }
+            fn actor_eye(&self) -> Vec3 {
+                Vec3::new(0.5, 1.62, -3.5)
+            }
+            fn actor_alive(&self) -> bool {
+                true
+            }
+            fn actor_held(&self) -> Option<BlockId> {
+                self.held
+            }
+            fn occupied(&self, _: IVec3) -> bool {
+                false
+            }
+            fn multiblocks(&self) -> Option<&crate::multiblock::MultiblockRegistry> {
+                Some(self.content.multiblocks.as_ref())
+            }
+        }
+        let content = crate::content::Content::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).expect("the game's content loads");
+        let clamp = content.multiblocks.iter().find(|m| m.smoulder.is_some()).expect("a clamp");
+        let cells: std::collections::HashMap<IVec3, BlockId> = clamp.example().into_iter().collect();
+        let light = content.actions.get(content.actions.id("base:light").unwrap()).unwrap();
+        let side = ActionTarget::Block { block: IVec3::NEG_Z, face: Face::NegZ };
+        let lights = |cells: &std::collections::HashMap<IVec3, BlockId>, held: Option<&str>| light.validate(&Clamp { content: &content, cells: cells.clone(), held: held.map(|n| content.blocks.expect(n)) }, side);
+        for firelighter in content.blocks.tagged(clamp.lit_by.as_deref().expect("lit by something")) {
+            let name = content.blocks.def(firelighter).name.as_str();
+            assert_eq!(lights(&cells, Some(name)), Ok(()), "lit from its earth with {name}");
+        }
+        let earth = cells[&IVec3::NEG_Z];
+        assert_eq!(lights(&cells, Some(content.blocks.def(earth).name.as_str())), Err(Rejection::Unmet(Requirement::MultiblockCore)));
+        assert_eq!(lights(&cells, None), Err(Rejection::Unmet(Requirement::MultiblockCore)));
+        let mut opened = cells.clone();
+        opened.insert(IVec3::Z, BlockId::AIR);
+        assert_eq!(lights(&opened, Some("base:torch")), Err(Rejection::Unmet(Requirement::MultiblockCore)), "not standing");
     }
 
     #[test]

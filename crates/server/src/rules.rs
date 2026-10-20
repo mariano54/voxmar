@@ -289,13 +289,13 @@ mod tests {
         let inventory = rules.new_inventory(true).unwrap();
         assert_eq!(inventory.slots.iter().flatten().collect::<Vec<_>>(), [&ItemStack::new(id("base:coin_purse"), 1)], "nothing but the purse");
         assert_eq!(inventory.slots[SLOTS - 1].map(|s| s.item), Some(id("base:coin_purse")), "the purse is in the last slot");
-        let kit = file("mod", r#"(starter_kit: [("base:wooden_pickaxe", 1), ("base:wooden_axe", 1), ("base:bread", 4), ("base:torch", 8), ("base:oak_planks", 16)])"#);
+        let kit = file("mod", r#"(starter_kit: [("base:flint_pickaxe", 1), ("base:flint_axe", 1), ("base:bread", 4), ("base:torch", 8), ("base:oak_planks", 16)])"#);
         let rules = SurvivalRules::load(&[file("core", SHIPPED), kit], &blocks, &mut Vec::new()).unwrap();
         let inventory = rules.new_inventory(true).unwrap();
         let carried = |item| inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
         assert_eq!([carried(id("base:bread")), carried(id("base:torch")), carried(id("base:oak_planks"))], [4, 8, 16]);
         assert_eq!(inventory.slots[SLOTS - 1], Some(ItemStack::new(id("base:coin_purse"), 1)), "the purse is in the last slot");
-        assert_eq!(inventory.slots[..2].iter().flatten().map(|s| s.item).collect::<Vec<_>>(), [id("base:wooden_pickaxe"), id("base:wooden_axe")], "the tools come first, in the hotbar");
+        assert_eq!(inventory.slots[..2].iter().flatten().map(|s| s.item).collect::<Vec<_>>(), [id("base:flint_pickaxe"), id("base:flint_axe")], "the tools come first, in the hotbar");
         assert_eq!(inventory.slots.iter().flatten().count(), 9, "a slot for each tool and loaf, the torches, the planks and the purse");
         assert_eq!(rules.new_inventory(false).unwrap().slots.iter().flatten().count(), 1, "no kit: the purse alone");
     }

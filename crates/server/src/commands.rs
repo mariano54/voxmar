@@ -206,6 +206,7 @@ impl Server {
                 Some(what) => self.creatures_command(id, what, args.get(1).map(String::as_str)),
             },
             Run::Skill => self.skill_command(id, args),
+            Run::Quest => self.quest_command(id, args),
             Run::Machine => self.machine_command(id, args),
             Run::Wander => self.wander_command(id, args),
             Run::Home => self.home_command(id),
@@ -682,6 +683,23 @@ impl Server {
         }
         p.changed(voxmar_engine::traits::SKILLS);
         Ok(Words::key("command.skill.done").with("level", Words::text(level)))
+    }
+
+    /// `/quest <quest>`: marks a quest done for the player, by its full name or its own
+    /// (`the_farm_age`); what it pays waits to be claimed.
+    fn quest_command(&mut self, id: Source, args: &[String]) -> Reply {
+        let player = Self::me(id)?;
+        let [name] = args else { return Err(Words::key("command.quest.what")) };
+        let quests = self.content.quests.clone();
+        let quest = quests.iter().find(|q| q.name == *name || q.name.rsplit(':').next() == Some(name.as_str())).ok_or_else(|| Words::key("command.quest.unknown").with("name", name.as_str()))?;
+        let title = Words::Own(voxmar_engine::lang::def_key("quest", &quest.name), quest.title.clone());
+        if self.players[&player].quests_done.contains(&quest.name) {
+            return Err(Words::key("command.quest.already").with("quest", title));
+        }
+        self.finish_quest(player, &quest.name);
+        // Told at once, as a claim is: the stations its rite opens show open straight away.
+        self.update_quests(player);
+        Ok(Words::key("command.quest.done").with("quest", title))
     }
 
     /// `/creatures`: the creatures within 64 blocks.

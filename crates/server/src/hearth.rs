@@ -66,11 +66,13 @@ fn fuel_words(structure: &Multiblock, blocks: &voxmar_engine::block::BlockRegist
 impl Server {
     /// Light a standing core. A cold kiln takes a complete fuel charge from the hand;
     /// using an already burning kiln consumes nothing and earns no further lighting tally.
-    pub(crate) fn light(&mut self, agent: PlayerId, core: IVec3) {
-        let Some(block) = self.block(core) else { return };
+    pub(crate) fn light(&mut self, agent: PlayerId, at: IVec3) {
+        let Some(block) = self.block(at) else { return };
         let multiblocks = self.content.multiblocks.clone();
-        let Some(structure) = multiblocks.with_core(block).find(|m| m.stands(core, |p| self.block(p))) else {
-            self.station_hint(agent, core);
+        // Its core, or any cell of a clamp standing round it (`Requirement::MultiblockCore`).
+        let found = multiblocks.with_core(block).find(|m| m.stands(at, |p| self.block(p))).map(|m| (at, m));
+        let Some((core, structure)) = found.or_else(|| multiblocks.smoulder_round(at, |p| self.block(p))) else {
+            self.station_hint(agent, at);
             return;
         };
         self.tally(agent, "built", &structure.name, 1);

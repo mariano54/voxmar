@@ -169,6 +169,13 @@
             run: Skill,
         ),
         (
+            name: "quest",
+            usage: "<quest>",
+            help: "Marks a quest done for you (an age's rite opens its stations), its rewards waiting to be claimed.",
+            permission: Admin,
+            run: Quest,
+        ),
+        (
             name: "machine",
             usage: "<x> <y> <z>",
             help: "Tells how the machine at a block is doing (~ is where you are): what it makes, its power, or what it lacks.",
