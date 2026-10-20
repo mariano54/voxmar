@@ -290,7 +290,7 @@ pub(crate) fn receive(
     mut weather: ResMut<ClientWeather>,
     (time, mut clock, mut console, mut air, mut cues): (Res<Time>, ResMut<Clock>, ResMut<Console>, ResMut<ClientAtmosphere>, MessageWriter<SoundCue>),
     (mut drops, mut toasts, launch, locale, mut creatures): (ResMut<Drops>, ResMut<SkillToasts>, Res<Launch>, Res<Locale>, ResMut<crate::creatures::Creatures>),
-    (mut broken, mut catches): (MessageWriter<BlockBroken>, MessageWriter<crate::sfx::Catches>),
+    (mut broken, mut catches, mut done): (MessageWriter<BlockBroken>, MessageWriter<crate::sfx::Catches>, MessageWriter<crate::sfx::Done>),
     mut fighting: ResMut<crate::fight::Fighting>,
     mut stations: ResMut<crate::hud::target::StationSeen>,
 ) {
@@ -355,6 +355,14 @@ pub(crate) fn receive(
                         && let Some(cue) = station_cue(&launch.content.stations, &world.registry, old, block)
                     {
                         cues.write(cue.at(pos.as_vec3() + Vec3::splat(0.5)));
+                    }
+                    // Bees taken nearby, by anyone: the swarm smoked into a skep, the honey cut.
+                    if let Some(old) = old
+                        && pos.as_vec3().distance(player.position) < SHOWN_WITHIN
+                        && crate::sfx::bees_taken(&launch.content.bees, old, block)
+                        && let Some(action) = launch.content.actions.id("base:tend_bees")
+                    {
+                        done.write(crate::sfx::Done { at: pos.as_vec3() + Vec3::splat(0.5), action, with: old });
                     }
                     // Thatch or wattle catching fire, nearby.
                     if crate::sfx::catches(&launch.content.fire, old, block) && pos.as_vec3().distance(player.position) < SHOWN_WITHIN {

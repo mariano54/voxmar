@@ -213,14 +213,19 @@
             sounds: ["sounds/cast_1.ogg", "sounds/cast_2.ogg"], volume: 0.7,
             brings: [(tags: ["fish", "raw"], sounds: ["sounds/catch_1.ogg", "sounds/catch_2.ogg"], volume: 0.8)],
         ),
-        // A handful of grain shaken out to an animal, and a pat. Done with what is in hand:
+        // A handful of grain shaken out to an animal, and a pat. Done with shears or a pail,
+        // it is heard only by what it brings, as the server gives it.
         "base:tend": (
             sounds: ["sounds/tend_1.ogg", "sounds/tend_2.ogg"], volume: 0.7,
             ways: [
+                (name: "shear", with: ["tag:shears"], silent: true),
+                (name: "milk", with: ["tag:pail"], silent: true),
+            ],
+            brings: [
                 // A fleece shorn: iron blades snipping, the wool rustling as it parts.
-                (name: "shear", with: ["tag:shears"], sounds: ["sounds/work/shear_1.ogg", "sounds/work/shear_2.ogg"], volume: 0.7),
+                (tags: ["wool"], sounds: ["sounds/work/shear_1.ogg", "sounds/work/shear_2.ogg"], volume: 0.7),
                 // Milk drawn: squirts hissing into the pail, ringing on its wood.
-                (name: "milk", with: ["tag:pail"], sounds: ["sounds/work/milk_1.ogg", "sounds/work/milk_2.ogg"], volume: 0.6),
+                (tags: ["dairy"], sounds: ["sounds/work/milk_1.ogg", "sounds/work/milk_2.ogg"], volume: 0.6),
             ],
         ),
         // A pouch tipped out: cloth and a few small things clinking.
@@ -231,12 +236,15 @@
         "base:use_machine": (sounds: ["sounds/machine_1.ogg", "sounds/machine_2.ogg"], volume: 0.9),
         // Metal ticks in the lock, then the bolt giving.
         "base:pick_lock": (sounds: ["sounds/lock_1.ogg", "sounds/lock_2.ogg"], volume: 0.7),
-        // Bees calmed with smoke as a swarm is taken: two puffs, the hum swelling and settling.
+        // A full skep's comb cut: a sticky tearing and honey dripping, heard as the server
+        // takes it, from the skep (`when_done`).
         "base:tend_bees": (
-            sounds: ["sounds/work/hive_1.ogg", "sounds/work/hive_2.ogg"], volume: 0.6,
-            ways: [
-                // A full skep's comb cut: a sticky tearing and honey dripping.
-                (name: "honey", with: ["honey_skep"], sounds: ["sounds/work/honey_1.ogg", "sounds/work/honey_2.ogg"], volume: 0.7),
+            sounds: ["sounds/work/honey_1.ogg", "sounds/work/honey_2.ogg"], volume: 0.7, when_done: true,
+            brings: [
+                // A swarm smoked into the skep: two puffs, the hum swelling and settling. Heard
+                // as the skep of bees comes to hand; one that stays put for want of smoke is
+                // silent.
+                (tags: ["bees"], sounds: ["sounds/work/hive_1.ogg", "sounds/work/hive_2.ogg"], volume: 0.6),
             ],
         ),
         // A soft bell swelling at the altar.
