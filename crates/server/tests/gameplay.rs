@@ -2294,7 +2294,7 @@ fn kiln_fuel_and_lighting_progress_survive_reload_without_free_refuelling() {
         c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>()
     };
     client.clear();
-    for line in ["/fill ~3 ~ ~-1 ~5 ~1 ~1 kiln_bricks", "/setblock ~4 ~ ~ crucible", "/give coal_ore 23", "/skill engineering 20"] { client.ok(line); }
+    for line in ["/fill ~3 ~ ~-1 ~5 ~1 ~1 tempered_kiln_bricks", "/setblock ~4 ~ ~ crucible", "/give coal_ore 23", "/skill engineering 20"] { client.ok(line); }
     client.pump_until(|c| c.world.block(core) == c.content.blocks.id("base:crucible") && count(c, "base:coal_ore") == 23 && !c.quests.is_empty());
     client.send_position(client.position, false);
     light(&client);
@@ -2334,7 +2334,7 @@ fn kiln_fuel_and_lighting_progress_survive_reload_without_free_refuelling() {
     cook(&mut client);
     client.pump_until(|c| count(c, "base:copper_ingot") == 1);
     // Two consecutive edits must quench it even before any cooking or quest check.
-    for line in ["/setblock ~3 ~1 ~-1 air", "/setblock ~3 ~1 ~-1 kiln_bricks"] { client.ok(line); }
+    for line in ["/setblock ~3 ~1 ~-1 air", "/setblock ~3 ~1 ~-1 tempered_kiln_bricks"] { client.ok(line); }
     client.clear();
     client.ok("/give copper_ore 1");
     client.pump_until(|c| count(c, "base:copper_ore") == 1);
@@ -2631,10 +2631,10 @@ fn a_crucible_smelts_only_in_its_lit_kiln_and_makes_bronze() {
     client.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("kiln needs")));
     assert_eq!(count(&client, ore), 2);
     // Ringed with kiln bricks and a pillar on each corner, it smelts.
-    for line in ["/fill ~3 ~ ~-1 ~5 ~ ~1 kiln_bricks", "/setblock ~4 ~ ~ crucible", "/setblock ~3 ~1 ~-1 kiln_bricks", "/setblock ~5 ~1 ~-1 kiln_bricks", "/setblock ~3 ~1 ~1 kiln_bricks", "/setblock ~5 ~1 ~1 kiln_bricks"] {
+    for line in ["/fill ~3 ~ ~-1 ~5 ~ ~1 tempered_kiln_bricks", "/setblock ~4 ~ ~ crucible", "/setblock ~3 ~1 ~-1 tempered_kiln_bricks", "/setblock ~5 ~1 ~-1 tempered_kiln_bricks", "/setblock ~3 ~1 ~1 tempered_kiln_bricks", "/setblock ~5 ~1 ~1 tempered_kiln_bricks"] {
         client.ok(line);
     }
-    client.pump_until(|c| c.world.block(core) == Some(crucible) && c.world.block(core + IVec3::new(1, 1, 1)) == c.content.blocks.id("base:kiln_bricks"));
+    client.pump_until(|c| c.world.block(core) == Some(crucible) && c.world.block(core + IVec3::new(1, 1, 1)) == c.content.blocks.id("base:tempered_kiln_bricks"));
     smelt(&mut client);
     client.pump_until(|c| c.refused.iter().any(|t| t.contains("is cold")));
     assert_eq!(count(&client, ore), 2, "a standing but cold kiln consumed ore");
@@ -2962,12 +2962,12 @@ fn crushed_dust_smelts_in_the_crucible_kiln_like_its_ore() {
     for line in [
         "/clear",
         "/fill ~3 ~ ~-1 ~5 ~2 ~1 air",
-        "/fill ~3 ~ ~-1 ~5 ~ ~1 kiln_bricks",
+        "/fill ~3 ~ ~-1 ~5 ~ ~1 tempered_kiln_bricks",
         "/setblock ~4 ~ ~ crucible",
-        "/setblock ~3 ~1 ~-1 kiln_bricks",
-        "/setblock ~5 ~1 ~-1 kiln_bricks",
-        "/setblock ~3 ~1 ~1 kiln_bricks",
-        "/setblock ~5 ~1 ~1 kiln_bricks",
+        "/setblock ~3 ~1 ~-1 tempered_kiln_bricks",
+        "/setblock ~5 ~1 ~-1 tempered_kiln_bricks",
+        "/setblock ~3 ~1 ~1 tempered_kiln_bricks",
+        "/setblock ~5 ~1 ~1 tempered_kiln_bricks",
         "/give copper_dust 2",
         "/skill engineering 20",
     ] {
@@ -2976,7 +2976,7 @@ fn crushed_dust_smelts_in_the_crucible_kiln_like_its_ore() {
     let blocks = client.content.blocks.clone();
     let (crucible, dust, ingot) = (blocks.expect("base:crucible"), blocks.expect("base:copper_dust"), blocks.expect("base:copper_ingot"));
     let count = |c: &Client, item| c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
-    client.pump_until(|c| c.world.block(core) == Some(crucible) && c.world.block(core + IVec3::new(1, 1, 1)) == c.content.blocks.id("base:kiln_bricks") && count(c, dust) == 2);
+    client.pump_until(|c| c.world.block(core) == Some(crucible) && c.world.block(core + IVec3::new(1, 1, 1)) == c.content.blocks.id("base:tempered_kiln_bricks") && count(c, dust) == 2);
     client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
     client.clear();
     client.ok("/give charcoal 32");
