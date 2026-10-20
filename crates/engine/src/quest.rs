@@ -705,12 +705,12 @@ impl QuestRegistry {
             Some(tag) => blocks.item_named(item).is_some_and(|id| blocks.def(id).has_tag(tag)),
             None => want == item,
         };
-        // The goals that have the player pick, mine, make or catch the item, which teach it as
-        // a stack in hand does not; a block picked or mined teaches what it drops too, and one
+        // The goals that have the player pick, mine, make (at a station too) or catch the item,
+        // which teach it as a stack in hand does not; a block picked or mined teaches what it drops too, and one
         // picked what its harvest gives (a ripe crop's grain, a wild plant's forage).
         fn teaches(goal: &Goal) -> Option<&str> {
             match goal {
-                Goal::Pick(w, _) | Goal::Mine(w, _) | Goal::Craft(w, _) | Goal::Cook(w, _) | Goal::CookAt(w, _, _) | Goal::Catch(w, _) => Some(w),
+                Goal::Pick(w, _) | Goal::Mine(w, _) | Goal::Craft(w, _) | Goal::CraftNear(w, _, _) | Goal::Cook(w, _) | Goal::CookAt(w, _, _) | Goal::Catch(w, _) => Some(w),
                 _ => None,
             }
         }
@@ -743,7 +743,15 @@ impl QuestRegistry {
                         if paid.iter().map(|(_, n)| n).sum::<u32>() < *need {
                             continue;
                         }
-                        let taught = task.iter().any(|g| teaches(g).is_some_and(|w| w == want || paid.iter().any(|(item, _)| holds(w, item) || dropped(g, w, item))));
+                        // Taught when another goal of the task has the player make or gather any
+                        // item the stack takes, not only the one given.
+                        let takes: Vec<&str> = match want.strip_prefix("tag:") {
+                            Some(tag) => blocks.tagged(tag).map(|id| blocks.def(id).name.as_str()).collect(),
+                            None => vec![want.as_str()],
+                        };
+                        let taught = task.iter().any(|g| {
+                            teaches(g).is_some_and(|w| w == want || holds(want, w) || paid.iter().map(|(item, _)| *item).chain(takes.iter().copied()).any(|item| holds(w, item) || dropped(g, w, item)))
+                        });
                         if !taught {
                             let gifts = paid.iter().map(|(item, n)| format!("{n} {item}")).collect::<Vec<_>>().join(" and ");
                             return Err(RegistryError(format!(
@@ -1363,6 +1371,11 @@ mod tests {
         assert!(with_drop(Some("base:carrot"), false).is_ok(), "picking the crop that drops the carrots teaches them");
         assert!(with_drop(None, true).is_ok(), "picking the crop whose harvest gives the carrots teaches them");
         assert!(with_drop(None, false).is_err(), "a crop that drops and harvests itself teaches no carrots");
+        let felled = quest("felled", "nomad", "", r#"Craft("oak_log", 1), Have("tag:log", 4)"#, r#"Xp("mining", 1.0)"#);
+        let birch = quest("gift", "nomad", "", "Home", r#"Item("birch_log", 4)"#);
+        assert!(resolved_with("base", &format!("{felled}, {birch}"), &[("base:birch_log", &["log"])]).is_ok(), "making one log the stack takes teaches it, whatever log is given");
+        let near = quest("near", "nomad", "", r#"CraftNear("torch", "chopping_block", 4), Have("torch", 4)"#, r#"Xp("mining", 1.0)"#);
+        assert!(resolved("base", &format!("{near}, {}", quest("gift", "nomad", "", "Home", r#"Item("torch", 4)"#))).is_ok(), "making the item at a station teaches it");
         let looked = quest("looked", "nomad", "", r#"LookUp("poppy"), Have("poppy", 4)"#, r#"Xp("mining", 1.0)"#);
         assert!(resolved("base", &format!("{looked}, {}", quest("gift", "nomad", "", "Home", r#"Item("poppy", 4)"#))).is_err(), "looking the item up teaches no stack");
         // A later age read first: the book's file order is no age order.
