@@ -2,7 +2,7 @@
 //! it, and sleeping at a bed in a better home gives a better rest.
 
 use voxmar_engine::content::Content;
-use voxmar_engine::effect::{Condition, HomeSurvey, Situation};
+use voxmar_engine::effect::{Condition, HomeSurvey, Shelter, Situation, Walls};
 use voxmar_engine::weather::Weather;
 
 /// A sleeping bag's tags: the plainest bed.
@@ -12,6 +12,20 @@ fn bag() -> Vec<String> {
 
 fn content() -> Content {
     Content::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).unwrap()
+}
+
+/// What a step asks of a home's walls, as its `HomeWalls` say.
+fn walls_asked(when: &Condition) -> Vec<(Shelter, f32)> {
+    match when {
+        Condition::All(list) => list.iter().flat_map(walls_asked).collect(),
+        Condition::HomeWalls(shelter, share) => vec![(*shelter, *share)],
+        _ => Vec::new(),
+    }
+}
+
+/// The walls a step asks for, met all about: the best shelter it asks, every face of it.
+fn walls_for(when: &Condition) -> Walls {
+    walls_asked(when).into_iter().map(|(shelter, _)| shelter).max().map_or_else(Walls::default, |best| Walls::all(best, 60))
 }
 
 /// What a step asks of a home, as its `HomeHas`es say (a step is an `All` of them).
@@ -38,6 +52,11 @@ fn each_step_of_the_home_ladder_asks_for_the_one_below_and_hides_it() {
             assert!(step.iter().any(|(t, m)| t == tag && m >= n), "{} asks for {n} {tag}, which {} must too", pair[0], pair[1]);
         }
         assert!(step.len() > below.len() || step.iter().zip(&below).any(|(a, b)| a.1 > b.1), "{} asks for more than {}", pair[1], pair[0]);
+        // And walls at least as good: each the step below asks, this one asks as well or better.
+        let (below, step) = (walls_asked(effects.get(id(pair[0])).when.as_ref().unwrap()), walls_asked(effects.get(id(pair[1])).when.as_ref().unwrap()));
+        for (shelter, share) in &below {
+            assert!(step.iter().any(|(s, n)| s >= shelter && n >= share), "{} asks {share} of {shelter:?} walls, which {} must too", pair[0], pair[1]);
+        }
     }
     for (i, name) in LADDER.iter().enumerate() {
         let def = effects.get(id(name));
@@ -55,7 +74,8 @@ fn a_home_shows_the_highest_step_it_has_and_a_rest_to_match() {
     let calm = Weather::NONE;
     let survey_of = |step: &str| {
         let wanted = asks(effects.get(effects.id(&format!("base:{step}")).unwrap()).when.as_ref().unwrap());
-        HomeSurvey { counts: effects.home_tags().iter().map(|tag| (tag.clone(), wanted.iter().find(|(t, _)| t == tag).map_or(0, |&(_, n)| n))).collect() }
+        let walls = walls_for(effects.get(effects.id(&format!("base:{step}")).unwrap()).when.as_ref().unwrap());
+        HomeSurvey { counts: effects.home_tags().iter().map(|tag| (tag.clone(), wanted.iter().find(|(t, _)| t == tag).map_or(0, |&(_, n)| n))).collect(), walls }
     };
     let top = |survey: &HomeSurvey, outdoors: bool| {
         let situation = Situation { felt: 15.0, warmed: false, outdoors, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(survey), done: &[], held: &[], near: &[], worn: &[], seated: false };
@@ -68,6 +88,25 @@ fn a_home_shows_the_highest_step_it_has_and_a_rest_to_match() {
     };
     for step in LADDER {
         assert_eq!(top(&survey_of(step), false), [format!("base:{step}")], "a home furnished for {step} shows {step} alone");
+    }
+    // Furnished for a step but walled for the one below, it is the one below: each better
+    // wall is a step up, and a warmer one.
+    let walled = |step: &str, walls: Walls| top(&HomeSurvey { walls, ..survey_of(step) }, false);
+    let mostly_sound = {
+        let mut walls = Walls::all(Shelter::Sound, 48);
+        (0..12).for_each(|_| walls.add(Some(Shelter::Draughty)));
+        walls
+    };
+    let mut gappy = Walls::all(Shelter::Fine, 50);
+    (0..10).for_each(|_| gappy.add(None));
+    assert_eq!(walled("snug", Walls::default()), ["base:hearthside"], "no walls, no snug");
+    assert_eq!(walled("snug", gappy), ["base:hearthside"], "a sixth of the room open to the outside is not walled in");
+    assert_eq!(walled("homely", Walls::all(Shelter::Draughty, 60)), ["base:snug"], "hide and wattle walls are snug, not homely");
+    assert_eq!(walled("cosy", mostly_sound), ["base:homely"], "mostly sound walls are homely, not cosy");
+    assert_eq!(walled("heart_of_the_home", Walls::all(Shelter::Sound, 60)), ["base:cosy"], "sound walls are cosy; the heart wants fine ones");
+    let warmth = |step: &str| effects.get(effects.id(&format!("base:{step}")).unwrap()).modifiers.warmth;
+    for pair in LADDER[2..].windows(2) {
+        assert!(warmth(pair[1]) > warmth(pair[0]), "{} is warmer than {}", pair[1], pair[0]);
     }
     // Out in the open nothing past the hearth holds.
     assert_eq!(top(&survey_of("heart_of_the_home"), true), ["base:hearthside"]);
@@ -84,7 +123,7 @@ fn a_lit_corner_by_the_bed_rests_well_before_any_roof() {
     let content = content();
     let effects = &content.effects;
     let calm = Weather::NONE;
-    let survey = |counts: &[(&str, u32)]| HomeSurvey { counts: effects.home_tags().iter().map(|tag| (tag.clone(), counts.iter().find(|(t, _)| t == tag).map_or(0, |&(_, n)| n))).collect() };
+    let survey = |counts: &[(&str, u32)]| HomeSurvey { counts: effects.home_tags().iter().map(|tag| (tag.clone(), counts.iter().find(|(t, _)| t == tag).map_or(0, |&(_, n)| n))).collect(), ..Default::default() };
     let rest = |survey: &HomeSurvey| {
         let situation = Situation { felt: 15.0, warmed: false, outdoors: true, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(survey), done: &[], held: &[], near: &[], worn: &[], seated: false };
         effects.given_by_sleep(&situation, &bag()).iter().map(|&(id, seconds)| (effects.get(id).name.clone(), seconds)).collect::<Vec<_>>()
@@ -96,7 +135,7 @@ fn a_lit_corner_by_the_bed_rests_well_before_any_roof() {
     assert_eq!(rooms_in(&[("bed", 1), ("seat", 1), ("light", 2)], &calm, true), ["base:bedside"]);
     assert_eq!(effects.get(effects.id("base:bedside").unwrap()).modifiers.warmth, 2.0);
     // Snug and a lit corner too: the one rest, once.
-    let snug_corner = survey(&[("bed", 1), ("seat", 1), ("light", 2), ("hearth", 1)]);
+    let snug_corner = HomeSurvey { walls: Walls::all(Shelter::Draughty, 60), ..survey(&[("bed", 1), ("seat", 1), ("light", 2), ("hearth", 1)]) };
     let situation = Situation { felt: 15.0, warmed: false, outdoors: false, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(&snug_corner), done: &[], held: &[], near: &[], worn: &[], seated: false };
     let given = effects.given_by_sleep(&situation, &bag());
     assert_eq!(given.iter().filter(|(id, _)| effects.get(*id).name == "base:well_rested").count(), 1, "two ways to one rest give it once");
@@ -122,7 +161,7 @@ fn herbs_drying_at_home_make_a_nook_for_the_garden_and_the_brew() {
 fn rooms_in(counts: &[(&str, u32)], weather: &Weather, outdoors: bool) -> Vec<String> {
     let content = content();
     let effects = &content.effects;
-    let survey = HomeSurvey { counts: effects.home_tags().iter().map(|tag| (tag.clone(), counts.iter().find(|(t, _)| t == tag).map_or(0, |&(_, n)| n))).collect() };
+    let survey = HomeSurvey { counts: effects.home_tags().iter().map(|tag| (tag.clone(), counts.iter().find(|(t, _)| t == tag).map_or(0, |&(_, n)| n))).collect(), ..Default::default() };
     let situation = Situation { felt: 15.0, warmed: false, outdoors, weather, biome: "base:plains", biome_tags: &[], home: Some(&survey), done: &[], held: &[], near: &[], worn: &[], seated: false };
     effects.active(&situation, &[]).iter().map(|a| effects.get(a.effect).name.clone()).filter(|name| !LADDER.iter().any(|step| *name == format!("base:{step}"))).collect()
 }
@@ -164,7 +203,7 @@ fn a_workshop_boosts_the_levels_recipes_are_checked_against() {
     let content = content();
     let effects = &content.effects;
     let calm = Weather::NONE;
-    let survey = HomeSurvey { counts: effects.home_tags().iter().map(|tag| (tag.clone(), 4)).collect() };
+    let survey = HomeSurvey { counts: effects.home_tags().iter().map(|tag| (tag.clone(), 4)).collect(), ..Default::default() };
     let at_home = Situation { felt: 15.0, warmed: false, outdoors: false, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(&survey), done: &[], held: &[], near: &[], worn: &[], seated: false };
     let active = effects.active(&at_home, &[]);
     assert_eq!((effects.boost(&active, "core:crafting"), effects.boost(&active, "core:engineering")), (2, 1));
@@ -216,7 +255,7 @@ fn crops_by_the_door_are_a_kitchen_garden_that_makes_meals_heal_more() {
 fn perks(counts: &[(&str, u32)], weather: &Weather, outdoors: bool, done: &[String]) -> Vec<String> {
     let content = content();
     let effects = &content.effects;
-    let survey = HomeSurvey { counts: effects.home_tags().iter().map(|tag| (tag.clone(), counts.iter().find(|(t, _)| t == tag).map_or(0, |&(_, n)| n))).collect() };
+    let survey = HomeSurvey { counts: effects.home_tags().iter().map(|tag| (tag.clone(), counts.iter().find(|(t, _)| t == tag).map_or(0, |&(_, n)| n))).collect(), ..Default::default() };
     let situation = Situation { felt: 15.0, warmed: false, outdoors, weather, biome: "base:plains", biome_tags: &[], home: Some(&survey), done, held: &[], near: &[], worn: &[], seated: false };
     effects.active(&situation, &[]).iter().map(|a| effects.get(a.effect).name.clone()).filter(|name| effects.get(effects.id(name).unwrap()).ladder == "homecraft").collect()
 }
@@ -264,7 +303,7 @@ fn home_perks_are_countable_by_quests_and_stay_out_of_the_homes_steps() {
     // `/home` tells the ladder and the rooms, never the perks.
     let calm = Weather::NONE;
     let done = finished(&["make_camp", "heart_of_the_home"]);
-    let survey = HomeSurvey { counts: effects.home_tags().iter().map(|tag| (tag.clone(), 0)).collect() };
+    let survey = HomeSurvey { counts: effects.home_tags().iter().map(|tag| (tag.clone(), 0)).collect(), ..Default::default() };
     let situation = Situation { felt: 15.0, warmed: false, outdoors: false, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(&survey), done: &done, held: &[], near: &[], worn: &[], seated: false };
     for chain in effects.home_progress(&situation) {
         for id in chain.reached.into_iter().chain(chain.next.map(|(id, _)| id)) {
@@ -280,7 +319,7 @@ fn the_next_step_is_above_the_highest_reached_not_one_skipped_below() {
     let content = content();
     let effects = &content.effects;
     let calm = Weather::NONE;
-    let survey = HomeSurvey { counts: effects.home_tags().iter().map(|tag| (tag.clone(), u32::from(tag == "hearth"))).collect() };
+    let survey = HomeSurvey { counts: effects.home_tags().iter().map(|tag| (tag.clone(), u32::from(tag == "hearth"))).collect(), ..Default::default() };
     let situation = Situation { felt: 15.0, warmed: false, outdoors: true, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(&survey), done: &[], held: &[], near: &[], worn: &[], seated: false };
     let id = |name: &str| effects.id(&format!("base:{name}")).unwrap();
     let ladder = effects.home_progress(&situation).into_iter().find(|chain| chain.reached == Some(id("hearthside"))).expect("the ladder stands at Hearthside");
@@ -295,7 +334,7 @@ fn a_proper_bed_rests_well_and_every_sleep_mends_slower_than_food() {
     let content = content();
     let effects = &content.effects;
     let calm = Weather::NONE;
-    let survey = |counts: &[(&str, u32)]| HomeSurvey { counts: effects.home_tags().iter().map(|tag| (tag.clone(), counts.iter().find(|(t, _)| t == tag).map_or(0, |&(_, n)| n))).collect() };
+    let survey = |counts: &[(&str, u32)]| HomeSurvey { counts: effects.home_tags().iter().map(|tag| (tag.clone(), counts.iter().find(|(t, _)| t == tag).map_or(0, |&(_, n)| n))).collect(), ..Default::default() };
     let camp = survey(&[("bed", 1), ("light", 1)]);
     let situation = Situation { felt: 15.0, warmed: false, outdoors: true, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(&camp), done: &[], held: &[], near: &[], worn: &[], seated: false };
     let bed = content.blocks.def(content.blocks.expect("base:oak_bed")).tags.clone();

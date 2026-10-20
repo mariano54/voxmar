@@ -408,8 +408,10 @@ struct Seen {
     /// The rhythm's seconds into its swing last frame, and what was held.
     since: f32,
     held: Option<voxmar_engine::block::BlockId>,
-    /// The player's cancelled swings (`Fighting::cancels`).
+    /// The player's cancelled swings (`Fighting::cancels`), and swings at the air
+    /// (`Fighting::whiffs`).
     cancels: u32,
+    whiffs: u32,
     dashing: bool,
     guarding: bool,
 }
@@ -691,7 +693,7 @@ fn react(
     };
     // The fight so far is not news on joining.
     if !seen.started {
-        (seen.started, seen.struck, seen.hurt, seen.cancels) = (true, fighting.struck_count, fighting.hurt_count, fighting.cancels);
+        (seen.started, seen.struck, seen.hurt, seen.cancels, seen.whiffs) = (true, fighting.struck_count, fighting.hurt_count, fighting.cancels, fighting.whiffs);
     }
     let combat = &launch.content.combat;
     let held = player.inventory.get(player.selected).map(|s| s.item);
@@ -704,6 +706,11 @@ fn react(
     let shooting = look.shots.get(class);
     let cancelled = fighting.cancels != seen.cancels;
     seen.cancels = fighting.cancels;
+    // A swing at the air whooshes, its class's whiff (`whiff`, or `whiff.<class>`).
+    if fighting.whiffs != seen.whiffs {
+        seen.whiffs = fighting.whiffs;
+        say(&format!("whiff.{class}"), 1.0, 1.0, &mut heard);
+    }
     if held == seen.held && since < seen.since - 1e-3 && !cancelled {
         say(&format!("swing.{class}"), 1.0, 1.0, &mut heard);
         // Its shot, if it draws one, is the one a cancel takes back.
