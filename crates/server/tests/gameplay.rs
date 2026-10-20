@@ -9501,6 +9501,13 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     while !bricks_done(&f) {
         brick_work(&mut f);
     }
+    // A quest the server counted only after the work's own look is marked (and claimed)
+    // now, before the crucible needs its Engineering.
+    for quest in ["a_kiln_load", "brick_by_brick"] {
+        if !f.marks.iter().any(|m| m.name == quest) {
+            f.mark(quest);
+        }
+    }
 
     // The Crucible: seven kiln bricks round a clay pot at the table (Engineering 10), done
     // once it is set down in the kiln's middle.
