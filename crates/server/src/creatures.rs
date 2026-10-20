@@ -3105,7 +3105,7 @@ mod way_tests {
             for t in 1..=first + chase + every + windup + 20 {
                 server.tick();
                 let live = &server.creatures.live[&id];
-                if in_reach.is_none() && species.reaches(0, species.edge(live.body.position.with_y(0.0).distance(back.with_y(0.0)), scale)) {
+                if in_reach.is_none() && species.reaches(0, species.edge(live.body.position.with_y(0.0).distance(back.with_y(0.0)), scale), species.level(live.body.position.y, back.y, scale)) {
                     in_reach = Some(t);
                 }
                 if decided.is_none() && live.winding {
