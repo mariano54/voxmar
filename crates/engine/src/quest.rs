@@ -14,7 +14,7 @@
 //! Finishing a quest does not pay it: the rewards wait for the player to claim them in the
 //! quest screen (`QuestState::claimed`), unless the quest pays nothing.
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use serde::{Deserialize, Serialize};
 
 use crate::block::{BlockId, BlockRegistry, RegistryError};
@@ -146,6 +146,10 @@ pub struct QuestDef {
     /// rite asks for some of these (`Capstones`).
     #[serde(default)]
     pub capstone: bool,
+    /// A side quest of its path, which its capstone need not wait on: every other quest of
+    /// the path (but the age's rite) is in the capstone's `after` chain, load-checked.
+    #[serde(default)]
+    pub side: bool,
     /// The age this quest, done, opens: its rite. Recipes that name the age (`age` in
     /// recipes.ron) are refused until it is done. One rite to an age, load-checked.
     #[serde(default)]
@@ -314,6 +318,19 @@ impl QuestDef {
     }
 }
 
+/// Every quest `quest` waits on, directly or through what those wait on, any of an
+/// either-or counted.
+fn waited_on<'a>(quests: &'a [QuestDef], quest: &QuestDef) -> FxHashSet<&'a str> {
+    let mut seen = FxHashSet::default();
+    let mut todo: Vec<&str> = quest.after.iter().flat_map(|a| a.split('|')).collect();
+    while let Some(name) = todo.pop() {
+        if let Some(q) = quests.iter().find(|q| q.name == name).filter(|q| seen.insert(q.name.as_str())) {
+            todo.extend(q.after.iter().flat_map(|a| a.split('|')));
+        }
+    }
+    seen
+}
+
 impl QuestRegistry {
     pub fn read(namespace: &str, source: &str) -> Result<QuestFile, RegistryError> {
         Self::read_named(namespace, "quests.ron", source)
@@ -417,6 +434,25 @@ impl QuestRegistry {
             }
         }
         let quests: Vec<QuestDef> = written.into_iter().map(|(q, _)| q).collect();
+        // A capstone closes its path: it waits, directly or through what it waits on, on
+        // every quest of its age and branch that is not a side quest or the age's rite.
+        for capstone in quests.iter().filter(|q| q.capstone) {
+            let before = waited_on(&quests, capstone);
+            let missing: Vec<&str> = quests
+                .iter()
+                .filter(|q| q.age == capstone.age && q.branch == capstone.branch && q.name != capstone.name && !q.side && q.opens.is_none() && !before.contains(q.name.as_str()))
+                .map(|q| q.name.as_str())
+                .collect();
+            if !missing.is_empty() {
+                return Err(RegistryError(format!(
+                    "the capstone {} does not wait on {} of its path ({} / {}): put them in its `after` chain, or mark them `side: true`",
+                    capstone.name,
+                    missing.join(", "),
+                    capstone.age,
+                    capstone.branch
+                )));
+            }
+        }
         // Every quest of an age a rite opens follows that rite on every route: one done
         // shows the age reached (`behind`), so none may be finished before it.
         for rite in quests.iter().filter(|q| q.opens.is_some()) {
@@ -1166,6 +1202,20 @@ mod tests {
     fn a_quest_after_one_that_does_not_exist_is_refused() {
         let source = r#"(quests: [(name: "a", age: "nomad", branch: "main", title: "", why: "", tasks: [[Home]], after: ["nope"])])"#;
         assert!(QuestRegistry::new(vec![QuestRegistry::read("base", source).unwrap()]).is_err());
+    }
+
+    /// A capstone waits on every quest of its path, through its `after` chain: one left out
+    /// is refused by name, unless it is a side quest; the age's rite, after the capstone,
+    /// is not waited on.
+    #[test]
+    fn a_capstone_waits_on_its_whole_path_but_side_quests() {
+        let book = |quests: &str| QuestRegistry::new(vec![QuestRegistry::read("t", &format!("(quests: [{quests}])")).unwrap()]).err().map(|e| e.0);
+        let quest = |name: &str, more: &str| format!(r#"(name: "{name}", age: "nomad", branch: "main", title: "", why: "", tasks: [[Home]], {more}),"#);
+        let path = |b: &str| [quest("a", ""), quest("b", r#"after: ["a"]"#), quest("c", b), quest("cap", r#"capstone: true, after: ["b"]"#), quest("rite", r#"after: ["cap"], opens: "farm""#)].concat();
+        assert_eq!(book(&path("")), Some("the capstone t:cap does not wait on t:c of its path (nomad / main): put them in its `after` chain, or mark them `side: true`".into()));
+        assert_eq!(book(&path("side: true")), None, "a side quest stands outside");
+        let chained = [quest("a", ""), quest("b", r#"after: ["a|c"]"#), quest("c", ""), quest("cap", r#"capstone: true, after: ["b"]"#)].concat();
+        assert_eq!(book(&chained), None, "either of an either-or is waited on");
     }
 
     #[test]

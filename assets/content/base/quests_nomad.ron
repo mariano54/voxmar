@@ -1,6 +1,8 @@
 // The Nomad age's quest book (engine/src/quest.rs; the goals are listed in quests.ron): eight
 // paths, each four to seven quests deep and ending in a capstone (`capstone: true`), with
 // The Farm Age, the rite that opens the next age's stations, at the end of The Hearth.
+// A capstone waits, through its `after` chain, on every quest of its path but the side
+// quests (`side: true`: chance meetings, conveniences) and the rite, load-checked.
 // Names are the base package's (`base:timber`), as when they were in quests.ron.
 (
     quests: [
@@ -15,6 +17,7 @@
             name: "crafting_table", age: "nomad", branch: "start", title: "Crafting Table",
             why: "Four planks in the 2×2 grid of your inventory make a crafting table: a log splits into four planks there. Hold it and right-click the ground to set it down, then right-click the table; its three-by-three grid makes every tool and weapon.",
             tasks: [[Craft("crafting_table", 1)]],
+            after: ["timber"],
             rewards: [Xp("engineering", 18.0)],
         ),
         (
@@ -50,7 +53,7 @@
             capstone: true,
             why: "A stone tool works twice as fast as a flint one and finds a little more. Carry the whole kit: pickaxe, axe, shovel (one stone head over two sticks), hoe and knife.",
             tasks: [[Have("stone_pickaxe", 1), Have("stone_axe", 1), Have("stone_shovel", 1), Have("stone_hoe", 1), Have("stone_knife", 1)]],
-            after: ["a_sharp_edge", "a_chopping_block", "break_ground"],
+            after: ["a_sharp_edge", "a_chopping_block", "break_ground", "twine_and_thong"],
             rewards: [Xp("engineering", 30.0), Item("torch", 8)],
         ),
         // The Hearth: the main line, from the first night to the lit Homestead Hearth and the rite.
@@ -58,6 +61,7 @@
             name: "look_it_up", age: "nomad", branch: "main", title: "Look It Up",
             why: "Forgotten a recipe? Open the inventory, type part of a name in its search box, and click the item to see how it is made; a right-click shows what it goes into. Look up the stone pickaxe.",
             tasks: [[LookUp("stone_pickaxe")]],
+            side: true,
             rewards: [Xp("crafting", 40.0)],
         ),
         (
@@ -130,6 +134,7 @@
             why: "Herbs and seeds eat slots; a pouch holds a thousand of a kind in one. A hide and a twine side by side make a herb pouch, a twine over a hide a seed pouch (Crafting 3).",
             tasks: [[Craft("herb_pouch", 1)], [Craft("seed_pouch", 1)]],
             after: ["twine_and_thong"],
+            side: true,
             rewards: [Xp("crafting", 40.0)],
         ),
         (
@@ -151,7 +156,7 @@
             capstone: true,
             why: "No need to carry it all: at home, open your pack, look a recipe up (U or R over an item) and press Lay. The grid fills from your pack and from every store in your home, nearest first, so a crate stack of planks by the bed is a woodshed to craft from. Shift lays as many as will go. Put planks in a store and lay three recipes from it.",
             tasks: [[Laid("any", 3)]],
-            after: ["pantry_shelves"],
+            after: ["pantry_shelves", "a_bench_to_work_at"],
             rewards: [Xp("crafting", 40.0), Xp("construction", 20.0)],
         ),
         // Food: cooking, grain and the first fields.
@@ -188,6 +193,7 @@
             why: "Alchemy is knowing what each herb carries. Brewing comes in a later age, but folk on the road teach the first of it now: an old herb gatherer shares lore for a herb, a wandering healer makes a salve of three, and a travelling alchemist wants two each of six kinds. Carry herbs on your rounds and deal with one of them.",
             tasks: [[Met("herb_gatherer", 1)], [Met("travelling_alchemist", 1)], [Met("wandering_healer", 1)]],
             after: ["wild_harvest"],
+            side: true,
             rewards: [Xp("alchemy", 30.0), Xp("farming", 40.0)],
         ),
         (
@@ -202,6 +208,7 @@
             why: "Shears take wool from a tamed mouflon, and a pail takes milk from a tamed mountain goat, reindeer or aurochs. Two cobblestones crossed make shears; two planks crossed make a pail.",
             tasks: [[Craft("shears", 1), Craft("pail", 1)]],
             after: ["break_ground"],
+            side: true,
             rewards: [Xp("engineering", 40.0)],
         ),
         (
@@ -223,7 +230,7 @@
             capstone: true,
             why: "One food grows dull and heals little. Cook six meat at a fire, cook four fish, and bake three bread: every kind comes from a different part of the land, and together they keep you going.",
             tasks: [[Cook("tag:meat", 6), Cook("tag:fish", 4), Craft("bread", 3)]],
-            after: ["a_fish_supper", "daily_bread", "trail_rations"],
+            after: ["a_fish_supper", "daily_bread", "trail_rations", "wild_harvest", "break_ground"],
             rewards: [Xp("cooking", 180.0), Xp("hitpoints", 40.0)],
         ),
         // Hunting and fishing: lures, traps, the rod and Old Tusk.
@@ -239,6 +246,7 @@
             why: "Hold wheat seeds (break wild wheat for them; or, for a rabbit, a wild carrot: a white-flowered plant of meadows and plains, picked by hand), walk up slowly without sprinting or hitting, and right-click a junglefowl. Junglefowl keep to warm grassland and jungle; rabbits to grassland and heath. A tamed hen lays eggs at home: your first step to a farm, and to pets.",
             tasks: [[Tame("junglefowl", 1)], [Tame("rabbit", 1)]],
             after: ["a_tempting_bite"],
+            side: true,
             rewards: [Xp("hunter", 180.0), Item("seed_mix", 5)],
         ),
         (
@@ -288,7 +296,7 @@
             capstone: true,
             why: "A great boar roams the woods and the sagebrush steppe by day, alone among the boar: Old Tusk. He grazes until struck, then fights to the end, and his charge crushes. A flint spear (a flint and two sticks, Crafting 2) braces: with no shield in your off hand, right-click to raise it as he crouches, and he runs onto its point and stands dazed. A tree or a wall at your back does the same. Make a spear, then bring him down.",
             tasks: [[Craft("flint_spear", 1), Kill("old_tusk", 1)]],
-            after: ["hide_and_seek", "raise_your_guard"],
+            after: ["hide_and_seek", "raise_your_guard", "set_a_snare", "a_fish_supper"],
             rewards: [Xp("hunter", 150.0), Xp("attack", 100.0)],
         ),
         // Combat: a weapon, a guard and the first monsters.
@@ -339,7 +347,7 @@
             capstone: true,
             why: "Two skills grow only in a fight. Defence trains on the blows you turn aside while you fight back against something your match, and Hitpoints, twice your level in health, on every blow you land. Rabbits and fowl cannot hurt you, so wear your hide wraps against boar and wolves in the woods, or the monsters that come out at night. Reach Defence 3 and Hitpoints 11.",
             tasks: [[Level("defence", 3), Level("hitpoints", 11)]],
-            after: ["raise_your_guard"],
+            after: ["raise_your_guard", "a_stones_throw"],
             rewards: [Xp("defence", 60.0), Xp("hitpoints", 40.0)],
         ),
         // Mining: stone, the coal seam and the first mine.
@@ -366,7 +374,7 @@
         ),
         (
             name: "reading_the_ground", age: "nomad", branch: "mining", title: "Reading the Ground",
-            why: "Every ore shows on the ground above its vein, as coal does: copper as a small copper-coloured stone, and the other ores in their own colours. Coal and copper samples lift with a flint pickaxe; the rest want a better pickaxe and more Mining. Break three ore samples of any kind: the first you break over each vein teaches you Mining.",
+            why: "Every ore shows on the ground above its vein, as coal does: copper as a small copper-coloured stone, and the other ores in their own colours. Coal samples lift with a flint pickaxe, and copper ones too once you reach Mining 5; the rest want a better pickaxe and more Mining. Break three ore samples of any kind: the first you break over each vein teaches you Mining.",
             tasks: [[Mine("tag:ore_sample", 3)]],
             after: ["black_flecks"],
             rewards: [Xp("mining", 40.0)],
@@ -404,7 +412,7 @@
             capstone: true,
             why: "A mine is a seam worked for good: coal for fires and torches, and copper for the age of metal to come. Mine forty-eight coal ore and twelve copper ore, and reach Mining 12.",
             tasks: [[Mine("coal_ore", 48), Mine("copper_ore", 12), Level("mining", 12)]],
-            after: ["following_the_seam", "stockpile"],
+            after: ["following_the_seam", "stockpile", "reading_the_ground", "dig_in"],
             rewards: [Xp("mining", 150.0), Item("coal_ore", 8)],
         ),
         // The Wilds: the land about and the folk on its roads.
@@ -441,6 +449,7 @@
             why: "Not everyone on the road is well. A child who followed a butterfly wanders one spot, lost; a hunter sits hurt by the path. Food in your hand is what both need: right-click them holding it. The child then follows you to the nearest settlement, where the family thanks you; the hunter shows you a trick of the hunt.",
             tasks: [[Met("lost_child", 1)], [Met("wounded_hunter", 1)]],
             after: ["folk_of_the_road"],
+            side: true,
             rewards: [Xp("hitpoints", 80.0), Xp("hunter", 60.0)],
         ),
         (
@@ -448,6 +457,7 @@
             why: "A child lost far from home wanders one spot. Food in your hand and they follow you to the nearest settlement. Days later the parents come looking for you near your home, with coins and bread for your trouble. Bring the child home, then meet the parents.",
             tasks: [[Met("lost_child", 1), Met("grateful_parents", 1)]],
             after: ["a_kind_turn"],
+            side: true,
             rewards: [Xp("hitpoints", 100.0)],
         ),
         (
@@ -476,7 +486,7 @@
             capstone: true,
             why: "Coal carters walk sacks of coal to the nearest town, and miners caught by the dark far from home sit waiting for a light. Keep with the carters to the town, or give the miners a lump of coal or charcoal to light their lamp again; both say where coal shows at the surface. Then make sixteen torches: coal or charcoal over a stick makes four.",
             tasks: [[Met("coal_carters", 1), Craft("torch", 16)], [Met("benighted_miners", 1), Craft("torch", 16)]],
-            after: ["caught_in_the_rain"],
+            after: ["caught_in_the_rain", "lay_of_the_land"],
             rewards: [Xp("mining", 80.0), Item("coal_ore", 4)],
         ),
         (
@@ -484,6 +494,7 @@
             why: "Locked chests lie where the land hides them: on the floor of a shallow cave, or on a ledge under an overhang of rock, never out in the open or under water. Those near where you began are Nomad chests. A bone lockpick opens one: a bone on a twine grip, Crafting 5. Make one, find a chest and pick its lock.",
             tasks: [[Craft("bone_lockpick", 1), Opened("nomad_treasure_chest", 1)]],
             after: ["twine_and_thong", "small_game"],
+            side: true,
             rewards: [Xp("crafting", 40.0), Item("bone_lockpick", 2)],
         ),
         (
@@ -491,6 +502,7 @@
             why: "What sleeps beside a chest under rock may wake as its lock gives: four Nomad chests in ten wake two to four cave bats. Have a weapon to hand before you pick the lock. Open two Nomad chests in all and bring down two cave bats.",
             tasks: [[Opened("nomad_treasure_chest", 2), Kill("cave_bat", 2)]],
             after: ["under_lock_and_key"],
+            side: true,
             rewards: [Xp("attack", 60.0), Item("bone_lockpick", 1)],
         ),
     ],

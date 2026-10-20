@@ -1176,7 +1176,7 @@
     "quest.base.black_flecks": "Black Flecks",
     "quest.base.black_flecks.why": "Coal shows on the surface before you dig. A small black-flecked stone lying on open ground, a coal ore sample, marks a coal seam below it; they lie most often over limestone, sandstone and chalk, around sea level. Break one with your flint pickaxe: the first sample you find over each seam teaches you Mining, and any ore's sample does the same for its vein. The seam itself wants a stone pickaxe (Stone in Hand); coal ore mined from a cliff or a shaft counts here too.",
     "quest.base.reading_the_ground": "Reading the Ground",
-    "quest.base.reading_the_ground.why": "Every ore shows on the ground above its vein, as coal does: copper as a small copper-coloured stone, and the other ores in their own colours. Coal and copper samples lift with a flint pickaxe; the rest want a better pickaxe and more Mining. Break three ore samples of any kind: the first you break over each vein teaches you Mining.",
+    "quest.base.reading_the_ground.why": "Every ore shows on the ground above its vein, as coal does: copper as a small copper-coloured stone, and the other ores in their own colours. Coal samples lift with a flint pickaxe, and copper ones too once you reach Mining 5; the rest want a better pickaxe and more Mining. Break three ore samples of any kind: the first you break over each vein teaches you Mining.",
     "quest.base.following_the_seam": "Following the Seam",
     "quest.base.following_the_seam.why": "A seam runs on through the rock past what you can see. Dig along it with your stone pickaxe, lighting the way with torches as you go, until you have mined thirty-two coal ore and reached Mining 8.",
     "quest.base.the_first_mine": "The First Mine",

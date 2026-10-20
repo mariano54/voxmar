@@ -363,6 +363,10 @@ The Farm quests that followed Homestead Hearth follow The Farm Age.
 - **Capstones are marked.** A quest with `capstone: true` has a gold corner on its cell in the
   book and a line in its detail ("A path's capstone, gold at its corner"); the rites' texts
   point to the mark. The gate's `quests: capstones` checks each one drawn carries it.
+- **A capstone closes its whole path.** It waits, through its `after` chain, on every quest
+  of its age and branch but the age's rite and the side quests (`side: true`: chance meetings,
+  conveniences such as pouches); loading refuses one that does not, naming the quests left
+  out. The Farm book's side marks are placeholders until its own pass (piece 13) chains it.
 - `/quest <name>` (admin) marks a quest done, its rewards left to claim. The kiln bot uses
   it for The Farm Age until piece 12 has it earn the rite.
 
