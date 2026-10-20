@@ -163,8 +163,8 @@ pub(crate) struct AtHome {
 }
 
 /// What the settlement motif knows, as [`AtHome`]: whether the player was within a
-/// settlement's bounds when last looked, the game day it last played, and how many times
-/// it has started; and the surveys of the surroundings started before the player last
+/// settlement's bounds when last looked, the game day it last played, how many times it
+/// has started and which track (by index) it last started; and the surveys of the surroundings started before the player last
 /// joined or came back to life (`Surroundings::started`), which tell nothing of where they
 /// are now.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -172,6 +172,7 @@ pub(crate) struct AtSettlement {
     pub inside: Option<bool>,
     pub day: Option<u64>,
     pub starts: u32,
+    pub track: Option<usize>,
     pub stale: u64,
 }
 
@@ -731,6 +732,7 @@ fn settlement_motif(
     let handle = handle.clone();
     music.settlement.day = Some(day);
     music.settlement.starts += 1;
+    music.settlement.track = Some(index);
     music.fade_out(&mut commands);
     music.start(&mut commands, &time, &settings, index, handle);
 }
@@ -756,17 +758,17 @@ pub(crate) fn home_heard(world: &World) -> Option<HomeHeard> {
     Some(HomeHeard { at: music.home, tonight: music.rules.home.night(ticks), playing: track.map(|track| track.name.clone()) })
 }
 
-/// What the gate sees of the settlement motif: what it knows, and the track playing if it is
-/// the motif's.
+/// What the gate sees of the settlement motif: what it knows, and the name of the track it
+/// last started (kept, as a muted run drops a track the frame it starts).
 pub(crate) struct SettlementHeard {
     pub at: AtSettlement,
-    pub playing: Option<String>,
+    pub started: Option<String>,
 }
 
 pub(crate) fn settlement_motif_heard(world: &World) -> Option<SettlementHeard> {
     let music = world.get_resource::<Music>()?;
-    let track = music.current.map(|index| &music.tracks[index]).filter(|track| track.contexts.contains(&Context::Settlement));
-    Some(SettlementHeard { at: music.settlement, playing: track.map(|track| track.name.clone()) })
+    let started = music.settlement.track.map(|index| music.tracks[index].name.clone());
+    Some(SettlementHeard { at: music.settlement, started })
 }
 
 /// Plays a borrowed track once it has been read.

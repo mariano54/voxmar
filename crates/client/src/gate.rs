@@ -14764,9 +14764,9 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
 fn settlement_motif_started(world: &World, before: Option<u32>) -> Result<String, String> {
     let Some(heard) = crate::music::settlement_motif_heard(world) else { return Err("no music running to hear it (music::Rehearse)".into()) };
     let Some(before) = before else { return Err(format!("the music never saw the player outside a settlement before the step in: {:?}", heard.at)) };
-    match &heard.playing {
+    match &heard.started {
         Some(track) if heard.at.starts == before + 1 => Ok(format!("stepping into the settlement at noon started {track}")),
-        _ => Err(format!("stepping in started no settlement motif: {} starts before, now {:?}, playing {:?}", before, heard.at, heard.playing)),
+        _ => Err(format!("stepping in started no settlement motif: {} starts before, now {:?}, last started {:?}", before, heard.at, heard.started)),
     }
 }
 
