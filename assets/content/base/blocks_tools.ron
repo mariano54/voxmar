@@ -38,7 +38,7 @@
         ),
         (
             name: "tempered_kiln_bricks", sound: Stone, textures: All("tempered_kiln_bricks"),
-            hardness: 2.0, color: (176, 112, 70), tags: ["kiln_bricks", "tempered", "bricks", "building"],
+            hardness: 2.0, color: (176, 112, 70), tags: ["kiln_bricks", "tempered", "bricks", "building", "shelter:fine"],
         ),
         (
             name: "crucible", sound: Stone, textures: Sides(top: "crucible_top", bottom: "kiln_bricks", side: "crucible_side"),
