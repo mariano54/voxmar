@@ -282,6 +282,10 @@ steps! {
     /// Swimming against the pool's bank and holding jump climbs out onto the block on it.
     Swim,
     /// Esc opens and closes the menu, E the inventory.
+    /// The same stone broken with a wooden pickaxe, then a copper one, from the breaks'
+    /// stand: each tooltip says how fast it works, and the copper takes the wooden one's
+    /// time over 3.5, as their speeds (2 and 7) say.
+    Tiers,
     Screens,
     /// A storm and a snowfall come, drawn with their particles, then clear again.
     Weather,
@@ -611,6 +615,8 @@ struct Gate {
     /// Since when (game seconds) the lit chimney has been watched, while the hearth and
     /// stove cook (`chimney_watch`).
     chimney_since: Option<f32>,
+    /// When the Cook step began counting its campfire's particles (with its first cook).
+    fire_since: Option<f32>,
     /// What the dry step's pot water replaced, put back after.
     pot_ground: Option<String>,
     /// Raw small game carried, slots and pouch, as the dry step hangs the rack, so its
@@ -780,6 +786,10 @@ struct Gate {
     /// for from then on.
     party_given: f32,
     breaks: Breaks,
+    /// Where the tiers step found the player, to put them back, and the seconds each
+    /// pickaxe's break was to take.
+    tiers_from: Vec3,
+    tiers: Vec<f32>,
     /// Mining experience before the workshop's ore was broken.
     mining_before: Option<u32>,
     /// The lowest and highest the struck creature stood while struck: no knockback lifts it.
@@ -899,6 +909,7 @@ impl Gate {
             home_style: None,
             chimney_owed: 0.0,
             chimney_since: None,
+            fire_since: None,
             pot_ground: None,
             rack_rabbits: 0,
             dry_clearing: None,
@@ -982,6 +993,8 @@ impl Gate {
             party_sent: false,
             party_given: 0.0,
             breaks: Breaks::default(),
+            tiers_from: Vec3::ZERO,
+            tiers: Vec::new(),
             mining_before: None,
             struck_heights: (f32::MAX, f32::MIN),
             failures: Vec::new(),
@@ -1514,6 +1527,8 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         // this is the backstop for a server that stopped.
         Step::Feel => FEEL_LIMIT + 2.0 * UNANSWERED + STEP_LIMIT,
         Step::Breaks => BREAKS_LIMIT + 15.0,
+        // Two tools to hand and two breaks, each answer waited on.
+        Step::Tiers => 8.0 * TIERS_WAIT + STEP_LIMIT,
         // Crafting, mining, tilling and fishing until something bites.
         // In the full gate, with time for its full-only machine phases.
         Step::Workshop => 250.0 + full_allowance(),
@@ -1803,6 +1818,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Workshop => workshop(world, gate, now, in_phase),
         Step::HvAge => hv_age(world, gate, now),
         Step::Swim => swim(world, gate, now, in_phase),
+        Step::Tiers => tiers(world, gate, now),
         Step::Screens => screens(world, gate, now, in_phase),
         Step::Music => music(world, gate, now, in_phase),
         Step::Overlay => overlay(world, gate, now, in_phase),
@@ -2331,6 +2347,172 @@ fn end_breaks(world: &mut World, gate: &mut Gate, now: f32) {
         net.command(&format!("clear {}", registry.def(tool).name));
     }
     gate.next(Step::Music, now);
+}
+
+/// Where the tiers step sets its stone, from the test ground's middle: a cell of the broken
+/// row beside the breaks' stand.
+const TIERS_AT: IVec3 = IVec3::new(-2, 0, -1);
+/// Longest the tiers step waits on one answer, in seconds of the server's clock and the game's.
+const TIERS_WAIT: f32 = 8.0;
+/// The two pickaxes the tiers step compares, slowest first.
+const TIERS: [&str; 2] = ["wooden_pickaxe", "copper_pickaxe"];
+
+/// The same stone broken with each pickaxe of `TIERS` in turn: the client works out how
+/// long each takes when it starts (as the server does), and the better one takes the other's
+/// time over the ratio of their speeds, the tooltip naming each speed; then the better
+/// one's tooltip, hovered in the inventory, shows its speed line fitting in English and in
+/// Japanese.
+fn tiers(world: &mut World, gate: &mut Gate, now: f32) {
+    let cell = gate.feet + TIERS_AT;
+    let stand = gate.feet + BREAK_STAND;
+    // Given up on only once the server's seconds and the game's have both passed.
+    let waited = gate.server_in_phase() > TIERS_WAIT && now - gate.phase_since > TIERS_WAIT;
+    let content = world.resource::<Launch>().content.clone();
+    let stone = content.blocks.id("base:stone");
+    let picks: Vec<BlockId> = TIERS.iter().filter_map(|name| content.blocks.id(&format!("base:{name}"))).collect();
+    let end = |world: &mut World, gate: &mut Gate| {
+        mouse(world, MouseButton::Left, false);
+        let net = world.resource::<Net>();
+        net.command(&format!("setblock {} {} {} air", cell.x, cell.y, cell.z));
+        for name in TIERS {
+            net.command(&format!("clear {name}"));
+        }
+        let from = gate.tiers_from;
+        net.command(&format!("tp {} {} {}", from.x, from.y, from.z));
+        gate.next(Step::Screens, now);
+    };
+    let (Some(stone), &[slow, fast]) = (stone, picks.as_slice()) else {
+        gate.check("tiers", Err("no stone, wooden pickaxe or copper pickaxe in the content".into()));
+        end(world, gate);
+        return;
+    };
+    // Which pickaxe this round uses: phases 1 to 3 the slow one, 4 to 6 the fast one.
+    let pick = if gate.phase <= 3 { slow } else { fast };
+    match gate.phase {
+        0 => {
+            gate.tiers_from = world.resource::<LocalPlayer>().position;
+            gate.tiers.clear();
+            let net = world.resource::<Net>();
+            for name in TIERS {
+                net.command(&format!("clear {name}"));
+                net.command(&format!("give {name} 1"));
+            }
+            net.command(&format!("tp {} {} {}", stand.x as f32 + 0.5, stand.y, stand.z as f32 + 0.5));
+            gate.advance(now);
+        }
+        1 | 4 => {
+            world.resource::<Net>().command(&format!("setblock {} {} {} stone", cell.x, cell.y, cell.z));
+            gate.advance(now);
+        }
+        2 | 5 => {
+            // The stone standing on both sides, the pickaxe in hand.
+            let client = world.resource::<ClientWorld>().block(cell) == Some(stone);
+            let server = gate.observer.as_ref().is_none_or(|o| o.world.block(cell) == Some(stone));
+            let has = world.resource::<LocalPlayer>().inventory.slots.iter().flatten().any(|s| s.item == pick);
+            if has {
+                hold(world, Holder::Tool(pick));
+            }
+            let player = world.resource::<LocalPlayer>();
+            let held = player.inventory.get(player.selected).map(|s| s.item) == Some(pick);
+            if client && server && held {
+                gate.advance(now);
+            } else if waited {
+                let name = content.blocks.def(pick).name.clone();
+                gate.check("tiers", Err(format!("the stone (client {client}, server {server}) or the {name} in hand ({has}, {held}) never came in {TIERS_WAIT} seconds")));
+                end(world, gate);
+            }
+        }
+        3 | 6 => {
+            aim_at(world, cell.as_vec3() + Vec3::splat(0.5));
+            let target = world.resource::<crate::interact::Target>();
+            let taking = target.breaking.is_some_and(|(at, _)| at == cell).then(|| target.mining_seconds()).flatten();
+            let round = (gate.phase / 3) as usize;
+            if let Some(seconds) = taking
+                && gate.tiers.len() < round
+            {
+                gate.tiers.push(seconds);
+            }
+            if world.resource::<ClientWorld>().block(cell).is_some_and(|b| b.is_air()) {
+                mouse(world, MouseButton::Left, false);
+                if gate.tiers.len() < round {
+                    gate.check("tiers", Err(format!("the stone broke with the {} before the client said how long it would take", content.blocks.def(pick).name)));
+                    end(world, gate);
+                } else if gate.phase == 3 {
+                    gate.advance(now);
+                } else {
+                    let (slow_s, fast_s) = (gate.tiers[0], gate.tiers[1]);
+                    let tools = &content.tools;
+                    let wanted = tools.speed(Some(fast), stone) / tools.speed(Some(slow), stone);
+                    let ratio = slow_s / fast_s.max(f32::EPSILON);
+                    let locale = world.resource::<Locale>();
+                    let said: Vec<Option<String>> = [slow, fast].iter().map(|&p| crate::hud::inventory::tool_line(locale, &content, p).map(|(line, _)| line)).collect();
+                    let speeds = [slow, fast].map(|p| format!("{}", tools.tool(Some(p)).speed));
+                    let told = [0, 1].iter().all(|&i| said[i].as_deref() == Some(locale.format("item.tool_speed", &[("speed", &speeds[i])]).as_str()));
+                    let result = if (ratio - wanted).abs() > 0.01 * wanted {
+                        Err(format!("stone took {slow_s:.3} s with the wooden pickaxe and {fast_s:.3} s with the copper, {ratio:.2}x, not {wanted:.2}x"))
+                    } else if !told {
+                        Err(format!("the pickaxes' tooltips say {said:?}, not their speeds {speeds:?}"))
+                    } else {
+                        Ok(format!("stone broke in {slow_s:.3} s with a wooden pickaxe and {fast_s:.3} s with a copper one, {ratio:.2}x as their speeds say; each tooltip names its speed"))
+                    };
+                    gate.check("tiers", result);
+                    // The fast pickaxe's tooltip, drawn in the inventory, in each language.
+                    let slot = world.resource::<LocalPlayer>().inventory.slots.iter().position(|s| s.is_some_and(|s| s.item == fast));
+                    let Some(slot) = slot else {
+                        gate.check("tiers: speed fits", Err(format!("the {} left the inventory before its tooltip could be read", content.blocks.def(fast).name)));
+                        end(world, gate);
+                        return;
+                    };
+                    world.resource_mut::<UiState>().inventory_open = true;
+                    world.insert_resource(crate::hud::inventory::HoverSlot(slot));
+                    gate.advance(now);
+                }
+            } else if waited {
+                gate.check("tiers", Err(format!("the stone at {cell} never broke with the {} in {TIERS_WAIT} seconds", content.blocks.def(pick).name)));
+                end(world, gate);
+            } else {
+                mouse(world, MouseButton::Left, true);
+            }
+        }
+        // The speed line, drawn in the hovered tooltip, fits: English (7), then Japanese (8).
+        7 | 8 => {
+            let language = if gate.phase == 7 { "en" } else { "ja" };
+            if world.resource::<Locale>().code() != language {
+                set_language(world, language);
+            }
+            let line = crate::hud::inventory::tool_line(world.resource::<Locale>(), &content, fast).map(|(line, _)| line);
+            let drawn = line.as_ref().is_some_and(|line| text_drawn(world, line));
+            if drawn && let Some(line) = line {
+                let spills: Vec<String> = crate::ui::fit::find(world).into_iter().filter(|spill| spill.text == line).map(|spill| spill.to_string()).collect();
+                let result = if spills.is_empty() { Ok(format!("{language}: \"{line}\" fits in the tooltip")) } else { Err(format!("{language}: \"{line}\" does not fit: {}", spills.join("; "))) };
+                gate.check("tiers: speed fits", result);
+                if gate.phase == 7 {
+                    gate.advance(now);
+                } else {
+                    end_tooltip(world);
+                    end(world, gate);
+                }
+            } else if waited {
+                let open = world.resource::<UiState>().inventory_open;
+                gate.check("tiers: speed fits", Err(format!("{language}: the tooltip's speed line {line:?} was never drawn (inventory open {open}, screens {:?})", covering_screens(world))));
+                end_tooltip(world);
+                end(world, gate);
+            }
+        }
+        _ => end(world, gate),
+    }
+}
+
+/// Closes the inventory a tooltip was read in, back in English.
+fn end_tooltip(world: &mut World) {
+    set_language(world, "en");
+    world.remove_resource::<crate::hud::inventory::HoverSlot>();
+    world.resource_mut::<UiState>().inventory_open = false;
+}
+
+/// Whether `line` is drawn on screen as a text of its own, shown.
+fn text_drawn(world: &mut World, line: &str) -> bool {
+    world.query::<(&Text, &InheritedVisibility)>().iter(world).any(|(text, shown)| shown.get() && text.0 == line)
 }
 
 /// Where the workshop puts the crafting table, the ore, and the soil it tills, from the
@@ -3795,7 +3977,7 @@ fn swim(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 let client = world.resource::<ClientWorld>();
                 let support = (client.block(cell), client.block(cell - IVec3::Y));
                 gate.check("swim", Err(format!("did not land on the step: highest {reached:+.2}, position {}, velocity {velocity}, grounded {on_ground}, water {in_water}, flying {flying}, over bank {over_bank}, support {support:?}, teleport {teleport}; {in_phase:.1} client s, {:.1} server s", position - feet.as_vec3(), gate.server_in_phase())));
-                gate.next(Step::Screens, now);
+                gate.next(Step::Tiers, now);
             }
         }
         2 => {
@@ -3809,7 +3991,7 @@ fn swim(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 None => Err("the server told the observer of no player".into()),
             };
             gate.check("swim: server", result);
-            gate.next(Step::Screens, now);
+            gate.next(Step::Tiers, now);
         }
         _ => {}
     }
@@ -4115,14 +4297,58 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let count: u32 = inventory.slots.iter().flatten().filter(|s| Some(s.item) == planks).map(|s| s.count as u32).sum();
             if count >= 4 {
                 gate.check("craft", Ok(format!("the crafting grid turned a log into {count} planks")));
-                gate.next(Step::Weather, now);
+                // Fired clay to make kiln bricks of, and the Crafting their recipe asks.
+                let (level, clay, _) = kiln_bricks(world);
+                let net = world.resource::<Net>();
+                net.command(&format!("skill crafting {level}"));
+                net.command(&format!("give fired_clay {clay}"));
+                gate.advance(now);
             } else if gate.server_in_phase() > 5.0 {
                 gate.check("craft", Err(format!("after crafting a log there are {count} planks and the grid holds {:?}", inventory.grid())));
                 gate.next(Step::Weather, now);
             }
         }
+        // Fired clay in the grid make kiln bricks, as many as their recipe says (the Farm
+        // age's pacing audit: two for four, so nineteen bricks are 40 fired clay to fire,
+        // not 76).
+        10 => {
+            let (level, clay, _) = kiln_bricks(world);
+            if clay == 0 {
+                gate.check("craft: kiln bricks", Err("no recipe makes kiln bricks of fired clay alone".to_owned()));
+                gate.next(Step::Weather, now);
+            } else if holding(world, "base:fired_clay").0 >= clay && skill_level(world, "core:crafting").0 >= level {
+                gate.count_before = holding(world, "base:kiln_bricks").0;
+                let cells: Vec<(usize, &str)> = [0, 1, 3, 4, 2, 5, 6, 7, 8].into_iter().take(clay as usize).map(|cell| (cell, "base:fired_clay")).collect();
+                lay_and_craft(world, &cells);
+                gate.advance(now);
+            } else if gate.server_in_phase() > 5.0 {
+                gate.check("craft: kiln bricks", Err(format!("{} of {clay} fired clay, or Crafting {level}, never arrived", holding(world, "base:fired_clay").0)));
+                gate.next(Step::Weather, now);
+            }
+        }
+        11 => {
+            let (_, clay, count) = kiln_bricks(world);
+            let made = holding(world, "base:kiln_bricks").0.saturating_sub(gate.count_before);
+            if made >= count {
+                let result = if made == count { Ok(format!("{clay} fired clay made {made} kiln bricks")) } else { Err(format!("{clay} fired clay made {made} kiln bricks, not the recipe's {count}")) };
+                gate.check("craft: kiln bricks", result);
+                gate.next(Step::Weather, now);
+            } else if gate.server_in_phase() > 5.0 {
+                gate.check("craft: kiln bricks", Err(format!("{clay} fired clay made {made} kiln bricks, not the recipe's {count}")));
+                gate.next(Step::Weather, now);
+            }
+        }
         _ => {}
     }
+}
+
+/// The kiln bricks' recipe, from the loaded data: the Crafting level it asks, the fired
+/// clay it takes and the bricks it makes.
+fn kiln_bricks(world: &World) -> (u8, u32, u32) {
+    let content = &world.resource::<crate::session::Launch>().content;
+    let (bricks, clay) = (content.blocks.id("base:kiln_bricks"), content.blocks.id("base:fired_clay"));
+    let recipe = content.recipes.iter().find(|r| Some(r.output) == bricks && r.cells().iter().flatten().all(|&c| Some(c) == clay));
+    recipe.map_or((0, 0, 0), |r| (r.level, r.cells().iter().flatten().count() as u32, r.count as u32))
 }
 
 /// The menu's audio page shows a switch for each category of music there is to hear (its
@@ -9841,9 +10067,9 @@ fn sweep_bears(world: &mut World, gate: &mut Gate, species: voxmar_engine::creat
     mouse(world, MouseButton::Right, false);
     key(world, KeyCode::KeyW, false);
     if let Some(since) = gate.sweep.asked {
-        // Only a line after the frame the kill went out: the last kill's answer may have
-        // come in that same frame.
-        match counted_in(world, "command.creatures.done", world.resource::<crate::hud::console::Console>().after(since)) {
+        // Only a line after the frame the kill went out (`Console::since`): the last kill's
+        // answer may have come in that same frame.
+        match counted(world, "command.creatures.done", since) {
             Some(killed) => (gate.sweep.asked, gate.sweep.answered) = (None, Some(killed)),
             None if gate.server_now - gate.sweep.killed < SWEEP_REPLY => return false,
             None => {
@@ -12765,6 +12991,11 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let chimney = [hearth + IVec3::new(1, 1, 1), hearth + IVec3::new(1, 2, 1)];
     // A cottage stove the other side of the fire, cooked at after the hearth.
     let stove = fire + IVec3::new(-2, 0, 0);
+    // The campfire's count ends `FIRE_WATCH` after it began, in whichever phase that falls.
+    if gate.fire_since.is_some_and(|since| now - since > FIRE_WATCH) && world.resource::<crate::emitters::Emitters>().watch == Some(fire) {
+        world.resource_mut::<crate::emitters::Emitters>().watch = None;
+        gate.shot(world, "fire_later");
+    }
     match gate.phase {
         0 => {
             let net = world.resource::<Net>();
@@ -12825,6 +13056,10 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 (true, Some(slot)) => {
                     world.resource_mut::<LocalPlayer>().selected = slot;
                     gate.count_before = item_count(world, "base:cooked_small_game") + item_count(world, "base:burnt_food");
+                    // Its particles are counted while it cooks: what the fire gives off does
+                    // not hang on what is cooked on it, nor on where the player looks.
+                    world.resource_mut::<crate::emitters::Emitters>().watch(fire);
+                    gate.fire_since = Some(now);
                     gate.advance(now);
                 }
                 _ if gate.server_in_phase() > 10.0 => {
@@ -12857,33 +13092,38 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     format!("right clicks on the campfire cooked nothing in 15 server seconds ({in_phase:.1} game s), the hand holding {held}")
                 };
                 gate.check("cook", Err(reason));
+                world.resource_mut::<crate::emitters::Emitters>().watch = None;
+                gate.fire_since = None;
                 gate.next(Step::Ore, now);
             } else {
+                // The fire as the count begins, for the record.
+                gate.shot(world, "fire");
                 gate.tap(world, true, now);
             }
         }
-        // The fire's particles, counted for a while: smoke, embers and sparks rising from
-        // it. Counting is the same at any frame rate; a picture of the air over it, taken
-        // twice, is kept for the record (a few faint puffs sit near any threshold).
+        // The fire's particles, counted from the cook on: smoke, embers and sparks rising
+        // from it. Counting is the same at any frame rate; a picture of the fire, taken as
+        // the count began and again as it ends, is kept for the record (a few faint puffs sit
+        // near any threshold).
         5 => {
-            aim_at(world, fire.as_vec3() + Vec3::new(0.5, 1.6, 0.5));
-            if in_phase > 0.5 && gate.shot(world, "fire").is_some() {
-                world.resource_mut::<crate::emitters::Emitters>().watch(fire);
+            aim_at(world, fire.as_vec3() + Vec3::new(0.5, 0.3, 0.5));
+            let counted = world.resource::<crate::emitters::Emitters>().watch != Some(fire);
+            if counted && gate.shot(world, "fire").is_some() {
                 gate.advance(now);
             }
         }
-        6 if in_phase > FIRE_WATCH => {
+        6 => {
             let Some(later) = gate.shot(world, "fire_later") else { return };
+            gate.fire_since = None;
             let change = gate.earlier_shot("fire").map_or(0.0, |earlier| change(&earlier, &later, 0.4));
             let amount = world.resource::<crate::render::particles::Particles>().amount;
             let is_fire = {
                 let client = world.resource::<ClientWorld>();
                 client.registry.id("base:campfire").is_some_and(|c| client.block(fire) == Some(c))
             };
-            let mut emitters = world.resource_mut::<crate::emitters::Emitters>();
+            let emitters = world.resource::<crate::emitters::Emitters>();
             let count = emitters.watched;
             let why = emitters.why_quiet(fire, amount);
-            emitters.watch = None;
             let result = if count >= FIRE_PARTICLES {
                 Ok(format!("{count} particles rose from it in {FIRE_WATCH} s (the view over it changed by {change:.2} levels)"))
             } else {
@@ -13206,7 +13446,7 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
             // The word that the fire near makes it quicker: the tail of `station.loaded_faster`,
             // which nothing before this step says.
             let faster = world.resource::<crate::lang::Locale>().get("station.loaded_faster").replace("{words}", "").trim().to_owned();
-            let said = world.resource::<crate::hud::console::Console>().since(0.0).any(|line| line.contains(faster.as_str()));
+            let said = world.resource::<crate::hud::console::Console>().all().any(|line| line.contains(faster.as_str()));
             if !(said && drawn(world, rack)) && !waited {
                 return;
             }
@@ -15313,11 +15553,34 @@ mod tests {
                 assert_eq!(super::counted(&world, "command.creatures.done", 2.5), None, "{code}: told before the kill");
                 // A sweep's next kill sent in the frame the last answer came reads only what
                 // comes after it, never that same answer again.
-                let console = world.resource::<crate::hud::console::Console>();
-                assert_eq!(super::counted_in(&world, "command.creatures.done", console.after(2.0)), None, "{code}: the last kill's answer read again");
-                assert_eq!(super::counted_in(&world, "command.creatures.done", console.after(1.5)), Some(killed as usize), "{code}: {reply}");
+                assert_eq!(super::counted(&world, "command.creatures.done", 2.0), None, "{code}: the last kill's answer read again");
             }
         }
+    }
+
+    /// Two kills asked in the same game moment, each once the last is answered, read each its
+    /// own answer: the first's answer, come in the frame the second went out, is never the
+    /// second's, which is the one that comes after it.
+    #[test]
+    fn two_asks_in_the_same_moment_each_read_their_own_reply() {
+        use bevy::prelude::World;
+        let content = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        let mut world = World::new();
+        let locale = crate::lang::Locale::load(&content, "en");
+        let (first, second) = (locale.count("command.creatures.done", 3, &[]), locale.count("command.creatures.done", 0, &[]));
+        world.insert_resource(locale);
+        world.insert_resource(crate::hud::console::Console::default());
+        // The first kill goes out at 2.0; its answer comes in the frame at 2.5.
+        let asked = 2.0;
+        assert_eq!(super::counted(&world, "command.creatures.done", asked), None, "not yet told");
+        world.resource_mut::<crate::hud::console::Console>().push(voxmar_protocol::ChatKind::Info, &first, 2.5);
+        assert_eq!(super::counted(&world, "command.creatures.done", asked), Some(3), "the first kill's own answer");
+        // Read in that frame, the second kill goes out at the same moment: the first's answer
+        // is not its own, nor is anything until its answer comes.
+        let asked = 2.5;
+        assert_eq!(super::counted(&world, "command.creatures.done", asked), None, "the first kill's answer read as the second's");
+        world.resource_mut::<crate::hud::console::Console>().push(voxmar_protocol::ChatKind::Info, &second, 2.6);
+        assert_eq!(super::counted(&world, "command.creatures.done", asked), Some(0), "the second kill's own answer");
     }
 
     /// At the sling step's Ranged level, against its bear, every stone missing is a broken
