@@ -9,7 +9,10 @@
 //! over without reading its blocks, so away from fires the search costs next to nothing.
 //! An emission `over` a tag is given off only with such a block below and open air above
 //! (a chimney smokes over a hearth, from its top), and over a structure's core only while
-//! its fire burns (`ClientWorld::fires`): a cold hearth's chimney does not smoke. Thatch
+//! its fire burns (`ClientWorld::fires`): a cold hearth's chimney does not smoke. Chimney
+//! pieces (`chimney_piece`: a flue, a hood, a pot) stacked straight over an emitting block
+//! carry what it gives off up to their top, so a chimney carried up through a roof smokes
+//! from its pot, not under the roof. Thatch
 //! smouldering by a flame (`ClientWorld::smoulders`) gives off fire.ron's smoke. Every frame those emitters spawn
 //! particles into the shared ring (`render::particles`), which moves, grows, cools and
 //! fades them on the GPU, so the CPU only writes each particle once. Nothing here allocates
@@ -18,7 +21,7 @@
 use std::sync::Arc;
 
 use bevy::prelude::*;
-use voxmar_engine::block::{BlockId, BlockRegistry, Emission, ParticleBlend, ParticleStyle};
+use voxmar_engine::block::{BlockId, BlockRegistry, CHIMNEY_PIECE_TAG, Emission, ParticleBlend, ParticleStyle};
 use voxmar_engine::coords::{CHUNK_BITS, CHUNK_SIZE, ColumnPos, WORLD_HEIGHT, local_index};
 
 use crate::breaking::sky_light;
@@ -58,8 +61,11 @@ impl Plugin for EmittersPlugin {
 /// A block near the camera giving off particles, and what it needs to light and bound them.
 #[derive(Clone, Copy, Debug)]
 struct Emitter {
+    /// Where its particles come out: the block's cell, or the top of the flue over it.
     pos: IVec3,
     block: BlockId,
+    /// The emitting block's own cell.
+    from: IVec3,
     /// Sky light just above it.
     sky: u8,
     /// Open air above it, in blocks, up to `HEADROOM`.
@@ -70,6 +76,14 @@ struct Emitter {
     /// Which of its emissions it gives off now, a bit each (the first eight): those seen
     /// from this far, and with what they need below them.
     giving: u8,
+}
+
+impl Emitter {
+    /// Whether its block still stands where it was found (not broken or put out since the
+    /// last search), judged at the block, not at the top of a flue over it.
+    fn standing(&self, world: &ClientWorld) -> bool {
+        world.block(self.from) == Some(self.block)
+    }
 }
 
 #[derive(Resource, Default)]
@@ -151,14 +165,20 @@ impl Emitters {
             }
             let far = ((scaled as f32).sqrt() - NEAR) / (RANGE as f32 - NEAR);
             let share = 1.0 - (1.0 - FAR_SHARE) * far.clamp(0.0, 1.0);
-            let above = pos + IVec3::Y;
-            let headroom = (1..=HEADROOM)
-                .find(|&dy| world.block(pos + IVec3::Y * dy).is_none_or(|b| world.registry.info(b).solid))
-                .unwrap_or(HEADROOM + 1)
-                - 1;
-            let giving = giving(world, &self.cores, pos, block, distance, headroom);
-            if giving != 0 {
-                self.near.push(Emitter { pos, block, sky: sky_light(world, above), headroom: headroom as f32 + 0.5, share, giving });
+            // A block's smoke comes out of the top of the flue over it, its flames, embers and
+            // sparks where it stands (what it is `over` is judged from there either way).
+            let top = flue_top(world, pos);
+            let smoke = world.registry.def(block).particles.iter().take(8).enumerate().filter(|(_, e)| e.style == ParticleStyle::Smoke).fold(0u8, |bits, (i, _)| bits | 1 << i);
+            let places = if top == pos { [(pos, u8::MAX), (pos, 0)] } else { [(pos, !smoke), (top, smoke)] };
+            for (at, emissions) in places {
+                if emissions == 0 || self.near.len() == MAX_EMITTERS {
+                    continue;
+                }
+                let headroom = (1..=HEADROOM).find(|&dy| world.block(at + IVec3::Y * dy).is_none_or(|b| world.registry.info(b).solid)).unwrap_or(HEADROOM + 1) - 1;
+                let giving = giving(world, &self.cores, pos, block, distance, headroom) & emissions;
+                if giving != 0 {
+                    self.near.push(Emitter { pos: at, block, from: pos, sky: sky_light(world, at + IVec3::Y), headroom: headroom as f32 + 0.5, share, giving });
+                }
             }
         }
     }
@@ -226,8 +246,7 @@ fn emit(
     let amount = particles.amount;
     for i in 0..emitters.near.len() {
         let emitter = emitters.near[i];
-        // Gone since the last search: broken, or put out.
-        if world.block(emitter.pos) != Some(emitter.block) {
+        if !emitter.standing(&world) {
             continue;
         }
         let def = world.registry.def(emitter.block);
@@ -267,7 +286,7 @@ fn emit(
             .find(|&dy| world.block(pos + IVec3::Y * dy).is_none_or(|b| world.registry.info(b).solid))
             .unwrap_or(HEADROOM + 1)
             - 1;
-        let emitter = Emitter { pos, block, sky: sky_light(&world, pos + IVec3::Y), headroom: headroom as f32 + 0.5, share, giving: u8::MAX };
+        let emitter = Emitter { pos, block, from: pos, sky: sky_light(&world, pos + IVec3::Y), headroom: headroom as f32 + 0.5, share, giving: u8::MAX };
         for emission in smoke {
             let owed = emission.rate.max(0.0) * dt * amount * share + emitters.roll();
             for _ in 0..owed as u32 {
@@ -281,6 +300,13 @@ fn emit(
             }
         }
     }
+}
+
+/// The top of the chimney pieces stacked straight over `pos`, however tall (an unloaded
+/// cell ends it), or `pos` itself with none over it: where its smoke comes out.
+fn flue_top(world: &ClientWorld, pos: IVec3) -> IVec3 {
+    let piece = |at: IVec3| world.block(at).is_some_and(|b| world.registry.def(b).has_tag(CHIMNEY_PIECE_TAG));
+    (1..).take_while(|&dy| piece(pos + IVec3::Y * dy)).last().map_or(pos, |dy| pos + IVec3::Y * dy)
 }
 
 /// Per block id, whether some structure has it as its core.
@@ -471,10 +497,80 @@ mod tests {
         assert!(found(&mut emitters, &world).is_empty(), "no hearth, no smoke");
     }
 
+    /// A brick flue and a pot carried up over a lit hearth's chimney take its smoke to the
+    /// pot's top, and only there; with the pot gone it comes out of the flue, and with a
+    /// gap between chimney and pieces, out of the chimney under them. Cold, none smokes.
+    #[test]
+    fn a_flue_over_a_chimney_carries_its_smoke_up_to_the_pot() {
+        use voxmar_engine::world::Column;
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let block = |name: &str| content.blocks.expect(name);
+        let mut world = ClientWorld::new(content.blocks.clone(), 2, crate::render::terrain::Terrain::detached());
+        world.insert_column(ColumnPos::of_block(IVec3::ZERO), Arc::new(Column::default()));
+        let hearth = IVec3::new(5, 100, 5);
+        let (top, flue, pot) = (IVec3::new(4, 102, 4), IVec3::new(4, 103, 4), IVec3::new(4, 104, 4));
+        world.set_block(hearth, block("base:hearthstone"));
+        world.set_block(top - IVec3::Y, block("base:chimney"));
+        world.set_block(top, block("base:chimney"));
+        world.set_block(flue, block("base:chimney_stack"));
+        world.set_block(pot, block("base:chimney_pot"));
+        let mut emitters = Emitters::default();
+        emitters.emits = (0..world.registry.len()).map(|id| world.registry.def(BlockId(id as u16)).particles.iter().map(reach).max().unwrap_or(0)).collect();
+        emitters.far = emitters.emits.iter().copied().max().unwrap_or(0);
+        emitters.cores = cores(&world.registry, &content.multiblocks);
+        // Where each found emitter's particles come out, once it is seen to stand (as the
+        // frame's emitting asks).
+        let found = |emitters: &mut Emitters, world: &ClientWorld| {
+            emitters.search(world, IVec3::new(40, 102, 4));
+            emitters.near.iter().filter(|e| e.standing(world)).map(|e| e.pos).collect::<Vec<_>>()
+        };
+        assert!(found(&mut emitters, &world).is_empty(), "a cold hearth's flue smokes");
+        world.fires.insert(hearth);
+        assert_eq!(found(&mut emitters, &world), vec![pot], "the smoke does not come out of the pot");
+        world.set_block(pot, BlockId::AIR);
+        assert_eq!(found(&mut emitters, &world), vec![flue], "a flue without its pot smokes from its top");
+        world.set_block(flue, BlockId::AIR);
+        world.set_block(pot, block("base:chimney_pot"));
+        assert_eq!(found(&mut emitters, &world), vec![top], "a pot a block over the chimney carried its smoke");
+        // Nine flues over the chimney: the smoke comes out of the ninth, the real top.
+        world.set_block(pot, BlockId::AIR);
+        for dy in 1..=9 {
+            world.set_block(top + IVec3::Y * dy, block("base:chimney_stack"));
+        }
+        assert_eq!(found(&mut emitters, &world), vec![top + IVec3::Y * 9], "a nine-piece flue gave no smoke at its top");
+    }
+
+    /// Under a hood only a campfire's smoke goes up the flue: its flames, embers and sparks
+    /// stay at the fire.
+    #[test]
+    fn only_smoke_goes_up_a_flue() {
+        use voxmar_engine::world::Column;
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let block = |name: &str| content.blocks.expect(name);
+        let mut world = ClientWorld::new(content.blocks.clone(), 2, crate::render::terrain::Terrain::detached());
+        world.insert_column(ColumnPos::of_block(IVec3::ZERO), Arc::new(Column::default()));
+        let (fire, hood) = (IVec3::new(5, 100, 5), IVec3::new(5, 101, 5));
+        world.set_block(fire, block("base:campfire"));
+        world.set_block(hood, block("base:chimney_hood"));
+        let mut emitters = Emitters::default();
+        emitters.emits = (0..world.registry.len()).map(|id| world.registry.def(BlockId(id as u16)).particles.iter().map(reach).max().unwrap_or(0)).collect();
+        emitters.far = emitters.emits.iter().copied().max().unwrap_or(0);
+        emitters.cores = cores(&world.registry, &content.multiblocks);
+        emitters.search(&world, IVec3::new(8, 100, 8));
+        let styles = |at: IVec3| -> Vec<ParticleStyle> {
+            let emitter = emitters.near.iter().find(|e| e.pos == at && e.standing(&world));
+            let def = world.registry.def(block("base:campfire"));
+            emitter.map_or(Vec::new(), |e| def.particles.iter().take(8).enumerate().filter(|&(i, _)| e.giving & 1 << i != 0).map(|(_, p)| p.style).collect())
+        };
+        let (at_fire, at_hood) = (styles(fire), styles(hood));
+        assert!(!at_fire.is_empty() && at_fire.iter().all(|&s| s != ParticleStyle::Smoke), "the fire gives off {at_fire:?}");
+        assert!(!at_hood.is_empty() && at_hood.iter().all(|&s| s == ParticleStyle::Smoke), "the hood gives off {at_hood:?}");
+    }
+
     #[test]
     fn smoke_fades_under_a_ceiling() {
         let mut dice = Emitters::default();
-        let emitter = Emitter { pos: IVec3::new(3, 60, -2), block: BlockId(1), sky: 15, headroom: 1.5, share: 1.0, giving: 1 };
+        let emitter = Emitter { pos: IVec3::new(3, 60, -2), block: BlockId(1), from: IVec3::new(3, 60, -2), sky: 15, headroom: 1.5, share: 1.0, giving: 1 };
         for _ in 0..50 {
             let smoke = particle(&emission(ParticleStyle::Smoke), &emitter, 13, Vec3::ZERO, &mut dice);
             // It rises at most about its speed times its life.
@@ -486,7 +582,7 @@ mod tests {
     #[test]
     fn particles_start_where_the_emission_says() {
         let mut dice = Emitters::default();
-        let emitter = Emitter { pos: IVec3::new(10, 70, 10), block: BlockId(1), sky: 0, headroom: 9.0, share: 1.0, giving: 1 };
+        let emitter = Emitter { pos: IVec3::new(10, 70, 10), block: BlockId(1), from: IVec3::new(10, 70, 10), sky: 0, headroom: 9.0, share: 1.0, giving: 1 };
         let spark = Emission { style: ParticleStyle::Spark, at: [0.5, 0.25, 0.5], spread: 0.2, color: Some([1, 2, 3]), ..default() };
         for _ in 0..50 {
             let p = particle(&spark, &emitter, 13, Vec3::ZERO, &mut dice);
@@ -500,7 +596,7 @@ mod tests {
     #[test]
     fn taller_flames_rise_further() {
         let mut dice = Emitters::default();
-        let emitter = Emitter { pos: IVec3::ZERO, block: BlockId(1), sky: 0, headroom: 9.0, share: 1.0, giving: 1 };
+        let emitter = Emitter { pos: IVec3::ZERO, block: BlockId(1), from: IVec3::ZERO, sky: 0, headroom: 9.0, share: 1.0, giving: 1 };
         let reach = |emission: &Emission, dice: &mut Emitters| {
             (0..200).map(|_| particle(emission, &emitter, 13, Vec3::ZERO, dice)).map(|p| p.velocity.y * p.life).sum::<f32>() / 200.0
         };

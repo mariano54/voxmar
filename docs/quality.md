@@ -315,6 +315,33 @@ and the play binary is built fresh from that commit in `~/Projects/voxmar-wt/pla
 `assets/` always match. Build it with `VOXMAR_FOREGROUND=1` before memcap: he is waiting
 for it, and at memcap's background priority the last crate alone once took half an hour.
 
+## Disk: `tools/tidy`
+
+Every worktree keeps its own target dir (cargo trusts the first tree's fingerprints, so a
+shared one silently reuses another tree's binaries), and a built one holds about 30 GB:
+on 2026-10-20 the voxmar worktrees held over 900 GB, nearly all of it build output. Most
+of a busy tree's is rustc's incremental cache for crate versions that have since changed
+(15 of the landing tree's 25 GB had not been touched for a day).
+
+`tools/tidy` frees it, every hour on Mariano's Mac (`tools/tidy --install`, a launchd
+agent running the copy on main; `--dry-run` says what it would do and changes nothing). It
+looks only at the trees directly in `~/Projects/voxmar-wt`. A tree goes, its branch kept,
+once it is clean (nothing modified, untracked, or ignored but precious such as saves,
+worlds or `.env`), every worktree inside it (bench baselines) is clean and on origin too,
+and its commit has landed on origin/main and it has been idle for 6 hours, or is on another
+origin branch and idle for 7 days; unpushed work never goes. Otherwise its target dir goes
+after 2 days without a build, a profile dir (`target/debug`, ...) the same, and an
+incremental crate cache after a day untouched.
+
+It never touches `play` or `landing` at all, build output included, nor the checkout of
+main, locked worktrees (`git worktree lock` keeps one), or a tree git fails in. Right
+before every delete it checks again that PLAYING and QUIET are down and that no running
+process works in the tree or names it, and when it cannot tell, it keeps the tree; git's
+refusals are logged, never forced. Every removal is logged, with its size, to
+`~/Projects/voxmar-wt/tidy.log`. `tools/tidy --self-check` runs it against scratch repos
+covering each of those cases; the gate runs it whenever `tools/tidy` changes, since what
+lands on main runs on the Mac within the hour.
+
 ## Staying out of his way, and quiet windows
 
 Every heavy command goes through `memcap`, which gets out of the way. The copy every thread

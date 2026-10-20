@@ -571,6 +571,19 @@
             "..kkkkkk..",
             "..........",
         ])]),
+        // A hanging on the wall over a rug: soft furnishings.
+        "ui/effect/soft_furnishings": (size: (10, 10), layers: [Grid(legend: {'k': "#3a2410", 'r': "#b03a30", 'y': "#e8c060", 'b': "#3a6a9a", 'c': "#f0e6d0"}, rows: [
+            ".kkkkkkkk.",
+            "..rrrrrr..",
+            "..ryyyyr..",
+            "..ryrryr..",
+            "..ryyyyr..",
+            "..rrrrrr..",
+            "..........",
+            "bbbbbbbbbb",
+            "bcbcbcbcbc",
+            "bbbbbbbbbb",
+        ])]),
         // A stone split clean.
         "ui/effect/stonewise": (size: (10, 10), layers: [Grid(legend: {'k': "#1a1612", 'g': "#7a7672", 'G': "#b0aca6"}, rows: [
             "..........",
@@ -856,6 +869,19 @@
             "...kisk...",
             "....kik...",
             ".....kk...",
+        ])]),
+        // A striped awning over a door, a bench beside it: a dooryard.
+        "ui/effect/dooryard": (size: (10, 10), layers: [Grid(legend: {'r': "#c03828", 'c': "#f0e0c0", 'k': "#3a2410", 'd': "#8a5a2a", 'w': "#a0703a", 'g': "#5a9a3a"}, rows: [
+            "rcrcrcrcr.",
+            "rcrcrcrcrc",
+            ".k.....k..",
+            ".k.dddd.k.",
+            ".k.dddd.k.",
+            "...ddwd...",
+            "...dddd...",
+            "wwwwdddd..",
+            "w..wdddd..",
+            "gggggggggg",
         ])]),
     },
 )

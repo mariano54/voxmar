@@ -389,7 +389,7 @@ fn break_and_place(
                 let cooks = actions.0.id("base:cook").and_then(|cook| actions.0.get(cook)).is_some_and(|def| def.validate(&context, action_target).is_ok());
                 match actions.0.get(action).map(|def| def.validate(&context, action_target)) {
                     Some(Ok(())) if !cooks => {
-                        net.propose_from(&player, action, action_target);
+                        net.propose_from_with(&player, action, action_target, worked(&context, hit.block));
                         target.used_right = true;
                         // A lock picked opens the chest's slots.
                         player.store_asked |= name == "base:pick_lock";
@@ -429,7 +429,7 @@ fn break_and_place(
                 Some(Ok(())) if time.elapsed_secs() < target.cooking_until => return,
                 Some(Ok(())) => {
                     let seconds = actions.0.get(cook).map_or(0.0, |def| def.seconds(&context, action_target));
-                    net.propose_from(&player, cook, action_target);
+                    net.propose_from_with(&player, cook, action_target, worked(&context, hit.block));
                     target.used_right = true;
                     target.place_cooldown = 0.4;
                     target.cooking_until = time.elapsed_secs() + seconds + 0.2;
@@ -635,6 +635,13 @@ fn predict_use(world: &mut ClientWorld, player: &mut LocalPlayer, content: &Cont
 /// The water block at `pos`, for its splash.
 fn water_block(world: &ClientWorld, pos: IVec3) -> BlockId {
     world.block(pos).unwrap_or(BlockId::AIR)
+}
+
+/// What an action at `block` is done with, to be heard by (`sounds.ron`'s `ways`): the block
+/// worked (a hearthstone lit, a drying rack loaded, a pit kiln fed), not what is in hand,
+/// so holding a station's item never sounds as loading one.
+fn worked(context: &ClientContext, block: IVec3) -> Vec<BlockId> {
+    context.world.block(block).into_iter().collect()
 }
 
 /// What to tell a player whose click was refused because `need` failed, at `block` if it
