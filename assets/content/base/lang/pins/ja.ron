@@ -238,7 +238,7 @@
     "quest.base.fuel_to_hand": ("Fuel to Hand", "燃料の備え"),
     "quest.base.fuel_to_hand.why": ("Every fire of this age eats fuel: the kilns, the clamps, the copper and at last the Crucible Kiln's charge. Take either way. Fell trees and carry thirty-two logs, to char later; or dig to a coal seam (a small black-flecked stone lying on the ground marks one below) and mine twelve coal ore. Both ways go on to Charcoal.", "この時代の火はどれも燃料を食う。窯も伏せ窯も、銅も、最後にはるつぼ窯の燃料も。どちらの道でもよい。木を伐って、あとで炭にする丸太を32本持つか、石炭の層まで掘って（地面に転がる黒い粒の混じった小石が、その真下にある印）石炭鉱石を12個掘ろう。どちらの道も「木炭」に続く。"),
     "quest.base.kiln_plans": ("Plans for the Kiln", "窯の段取り"),
-    "quest.base.kiln_plans.why": ("With fuel coming, plan the kiln it is for: open the recipe viewer and look up the crucible, seven kiln bricks round a clay pot, then look up kiln bricks to see what they take.", "燃料の目処が立ったら、それを焚く窯の段取りを立てよう。レシピビューアでるつぼを調べると、壺を7個の窯レンガが囲んでいる。続けて窯レンガを調べ、材料を確かめよう。"),
+    "quest.base.kiln_plans.why": ("With charcoal made, plan the kiln it burns in: open the recipe viewer and look up the crucible, seven kiln bricks round a clay pot, then look up kiln bricks to see what they take.", "炭ができたら、それを焚く窯の段取りを立てよう。レシピビューアでるつぼを調べると、壺を7個の窯レンガが囲んでいる。続けて窯レンガを調べ、材料を確かめよう。"),
     "quest.base.the_kiln_charge": ("A Full Charge", "窯一杯の燃料"),
     "quest.base.the_kiln_charge.why": ("The Crucible Kiln burns a whole charge when it is lit: thirty-two charcoal, or twenty-four coal ore. Keep a clamp charring logs while you fire clay, or bring coal up from the seam, and hold a full charge in your pack.", "るつぼ窯は火を入れるとき、燃料をひと揃いまるごと燃やす。木炭32個か、石炭鉱石24個だ。粘土を焼くあいだも炭窯で丸太を炭にし続けるか、石炭の層から石炭を運び上げ、ひと揃いを袋に持とう。"),
     "quest.base.a_clay_store": ("Clay in Store", "粘土の蓄え"),
