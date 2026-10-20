@@ -491,7 +491,11 @@ while its fire is out, while a piece of it is broken and whoever relights it, un
 breaks its hearthstone or lights a home hearth elsewhere; its box keeps out others' fire all that
 while. Breaking and mending a stranger's hearth, its hearthstone too, never opens their home to
 your fire nor makes the hearth yours. (A world saved before this kept no owner for a cold home
-hearth: it comes back as no one's.) Another player's torch beside your wattle wall fizzles, and a neighbour's burning shed
+hearth: it comes back as no one's.) A hearth no one owns is never forgotten, so its spot keeps out
+every fire for good; that is the safe way round. Only the owner's own hand breaking the hearthstone
+forgets a hearth, not a fire of theirs spreading over it. Lit by someone else, a hearth's fire is
+the lighter's as it catches what is near, so relighting a stranger's hearth never sets their home
+alight. Another player's torch beside your wattle wall fizzles, and a neighbour's burning shed
 stops at your home's edge; your own careless torch still burns your own roof. A fire a command
 or the world started belongs to no one, so it never takes a home either.
 

@@ -200,12 +200,12 @@ impl Server {
         }
     }
 
-    /// A hearth or kiln was lit at `core`: what catches near it starts waiting to catch, as
-    /// its owner's fire.
-    pub(crate) fn hearth_blaze(&mut self, core: IVec3) {
+    /// A hearth or kiln was lit at `core` by `lighter`: what catches near it starts waiting
+    /// to catch, as the lighter's fire (not its owner's, so a stranger relighting someone's
+    /// hearth never sets their home alight).
+    pub(crate) fn hearth_blaze(&mut self, core: IVec3, lighter: Option<String>) {
         if self.content.fire.on() && self.content.fire.rules.hearth_reach > 0 {
-            let owner = self.lit.get(&core).and_then(|lit| lit.owner.clone());
-            let set_by = std::mem::replace(&mut self.fire_origin, owner);
+            let set_by = std::mem::replace(&mut self.fire_origin, lighter);
             self.light_about(core, self.content.fire.rules.hearth_reach);
             self.fire_origin = set_by;
         }
@@ -383,7 +383,7 @@ mod tests {
         // owns keeps every fire out, its own too).
         let core = base + IVec3::new(rules.hearth_reach + 1, 0, 0);
         server.lit.insert(core, crate::hearth::Lit { position: core.to_array(), structure: "base:homestead_hearth".into(), until: u64::MAX, owner: Some("Ada".into()) });
-        server.hearth_blaze(core);
+        server.hearth_blaze(core, Some("ada".into()));
         run(&mut server, rules.catch_seconds);
         assert_eq!(at(&server, base + IVec3::X), "base:blaze", "the hearth's fire reached it");
     }
@@ -421,6 +421,15 @@ mod tests {
         server.players.insert(id, player);
         server.hello(id, name.into(), voxmar_protocol::PROTOCOL_VERSION, server.content.fingerprint(), None);
         client
+    }
+
+    /// What `who`'s own message sets before their change at `at` lands (`handle_message`).
+    fn by_player(server: &mut Server, who: &str, at: IVec3, block: BlockId) {
+        server.fire_origin = Some(crate::player_key(who));
+        server.changed_by = server.fire_origin.clone();
+        server.set_block(at, block);
+        server.fire_origin = None;
+        server.changed_by = None;
     }
 
     /// Whether `who`'s torch set at `beside` sets `wall` smouldering.
@@ -549,11 +558,7 @@ mod tests {
         let wall = core + IVec3::new(4, 0, 0);
         server.set_block(wall, server.content.blocks.expect("base:wattle_panel"));
         // What Bo's message sets before his change lands (`handle_message`).
-        let by = |server: &mut Server, who: &str, at: IVec3, block: BlockId| {
-            server.fire_origin = Some(crate::player_key(who));
-            server.set_block(at, block);
-            server.fire_origin = None;
-        };
+        let by = by_player;
         let (ring, stone) = (core + IVec3::new(1, 0, 1), server.content.blocks.expect("base:cobblestone"));
         by(&mut server, "Bo", ring, BlockId::AIR);
         assert!(!server.lit.contains_key(&core), "the broken ring left the fire burning");
@@ -580,6 +585,60 @@ mod tests {
         build_hearth(&mut server, elsewhere);
         server.light(2, elsewhere);
         assert_eq!(crate::hearth::HearthOwner::saved(&server.hearth_owners), [crate::hearth::HearthOwner { position: elsewhere.to_array(), owner: Some("bo".into()) }], "one home hearth a player");
+    }
+
+    /// Ada lights her home hearth and leaves; Bo lays thatch by it, breaks and mends a stone
+    /// of its ring and lights it again: the fire is his as it is lit, so nothing of hers
+    /// smoulders, however close.
+    #[test]
+    fn relighting_someone_elses_hearth_never_sets_their_home_alight() {
+        let mut server = crate::test_server();
+        let (core, _client) = hearth(&mut server);
+        server.players.remove(&1);
+        let _ada = join(&mut server, 1, "Ada");
+        server.light(1, core);
+        server.leave(1);
+        let _bo = join(&mut server, 2, "Bo");
+        let (thatch, stone) = (server.content.blocks.expect("base:thatch_roof"), server.content.blocks.expect("base:cobblestone"));
+        let laid = core + IVec3::Y * 2;
+        by_player(&mut server, "Bo", laid, thatch);
+        assert!(server.blazes.is_empty(), "Bo's thatch by Ada's burning hearth smoulders");
+        let ring = core + IVec3::new(1, 0, 1);
+        by_player(&mut server, "Bo", ring, BlockId::AIR);
+        by_player(&mut server, "Bo", ring, stone);
+        server.fire_origin = Some("bo".into());
+        server.light(2, core);
+        server.fire_origin = None;
+        assert_eq!(server.lit[&core].owner.as_deref(), Some("ada"));
+        assert!(server.blazes.is_empty(), "Bo's relighting set Ada's home smouldering: {:?}", server.blazes.keys().collect::<Vec<_>>());
+        let catch = server.content.fire.rules.catch_seconds;
+        run(&mut server, catch + 1.0);
+        assert_eq!(at(&server, laid), "base:thatch_roof", "the thatch caught");
+    }
+
+    /// Ada's own fire spreading over where her hearthstone was (Bo broke it and laid thatch
+    /// there) burns it, but her hearth stays hers: only her own hand breaking the hearthstone
+    /// forgets whose it is, not her fire's.
+    #[test]
+    fn a_fire_spreading_never_forgets_whose_a_hearth_is() {
+        let mut server = crate::test_server();
+        let (core, _client) = hearth(&mut server);
+        server.players.remove(&1);
+        let _ada = join(&mut server, 1, "Ada");
+        server.light(1, core);
+        server.leave(1);
+        let _bo = join(&mut server, 2, "Bo");
+        by_player(&mut server, "Bo", core, BlockId::AIR);
+        let (thatch, torch) = (server.content.blocks.expect("base:thatch_roof"), server.content.blocks.expect("base:torch"));
+        by_player(&mut server, "Bo", core, thatch);
+        // Ada's torch by it: her fire, in her own home.
+        let beside = core + IVec3::Y;
+        by_player(&mut server, "Ada", beside, torch);
+        assert!(server.blazes.contains_key(&core), "Ada's own torch kept from the thatch in her home");
+        let catch = server.content.fire.rules.catch_seconds;
+        run(&mut server, catch + 1.0);
+        assert_eq!(at(&server, core), "base:blaze", "the thatch caught");
+        assert_eq!(server.hearth_owners.get(&core), Some(&Some("ada".to_owned())), "her fire burning there forgot whose the hearth is");
     }
 
     /// Whose each home hearth is comes back with the world: an unlit one kept through the

@@ -660,6 +660,10 @@ pub(crate) struct Server {
     /// message is being handled, a hearth's owner as it is lit, a burning block's own fire as
     /// it spreads; none for a flood or a command. Homes catch only from their owner (fire.ron).
     fire_origin: Option<String>,
+    /// The player whose own message is changing blocks now (their key), and no one while a
+    /// fire spreads, a flood runs or a command works: only their own breaking of their home
+    /// hearth's hearthstone forgets whose it is (`home_changed`).
+    changed_by: Option<String>,
     planter_grown: FxHashSet<IVec3>,
     /// Kept hives with bees, and how far each is toward its honey (`apiary`).
     apiary: apiary::Apiary,
@@ -811,6 +815,7 @@ impl Server {
             blaze_risked: Vec::new(),
             smoulders_sent: Vec::new(),
             fire_origin: None,
+            changed_by: None,
             planter_grown,
             apiary,
             stations,
