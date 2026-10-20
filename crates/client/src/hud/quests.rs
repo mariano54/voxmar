@@ -1814,8 +1814,11 @@ mod tests {
         // A full tracker takes none.
         let full: Vec<String> = (0..room).map(|i| format!("base:pinned_{i}")).collect();
         assert!(follow_ons(&content, &full, std::slice::from_ref(&first), &done).is_empty());
-        // Opening nothing new: the age's next open quest, only with nothing else pinned.
-        let last = content.quests.iter().find(|q| content.quests.iter().all(|other| !before(&content, other).iter().any(|b| b.name == q.name))).expect("a quest nothing follows");
+        // Opening nothing new: the age's next open quest, only with nothing else pinned. The
+        // quest is of an age a new player has quests open in (in name order the Farm book
+        // may load first, and none of it opens before its rite).
+        let starts = |age: &str| content.quests.iter().any(|q| q.age == age && content.quests.open(q, &|_: &str| false));
+        let last = content.quests.iter().find(|q| starts(&q.age) && content.quests.iter().all(|other| !before(&content, other).iter().any(|b| b.name == q.name))).expect("a quest nothing follows");
         let none = |name: &str| name == last.name;
         let fallback = follow_ons(&content, &[], std::slice::from_ref(&last.name), &none);
         assert_eq!(fallback.len(), 1, "{fallback:?}");
