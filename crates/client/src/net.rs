@@ -416,6 +416,8 @@ pub(crate) fn receive(
             }
             ServerMessage::Prayers { points, most, on } => fighting.prayers = crate::fight::Prayers { points, most, on },
             ServerMessage::Fires { lit } => world.fires = lit.into_iter().collect(),
+            ServerMessage::Bark { creature, bark } => creatures.bark(creature, bark),
+            ServerMessage::Smoulders { at } => world.smoulders = at.into_iter().collect(),
             ServerMessage::Xp { skill, tenths } => toasts.gained(skill, tenths, time.elapsed_secs()),
             ServerMessage::Station { block, load, fire } => stations.tell(block, load, fire, time.elapsed_secs_f64()),
         }

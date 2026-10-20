@@ -568,15 +568,28 @@ impl Recordings {
         Ok(())
     }
 
-    /// Which material `block` sounds as, if any (see [`MaterialSound`]).
+    /// Which material `block` sounds as, if any (see [`MaterialSound`]): the one its def
+    /// names (`material`), else the closest fit by tags.
     pub(crate) fn material_of(&self, blocks: &BlockRegistry, block: BlockId) -> Option<usize> {
         let def = blocks.def(block);
+        if let Some(named) = &def.material {
+            return self.materials.iter().position(|m| &m.name == named);
+        }
         self.materials.iter().enumerate().filter(|(_, m)| m.fits(def)).max_by_key(|(_, m)| m.tags.len()).map(|(i, _)| i)
     }
 
     /// Whether every material is named, says which blocks it is by, has clips for some cue,
-    /// and is the sound of some block: one that fits none is a mistyped tag.
+    /// and is the sound of some block: one that fits none is a mistyped tag. And whether
+    /// every block naming a material (`material`) names one there is.
     pub(crate) fn check_materials(&self, blocks: &BlockRegistry) -> Result<(), String> {
+        for id in blocks.ids() {
+            let def = blocks.def(id);
+            if let Some(named) = &def.material
+                && !self.materials.iter().any(|m| &m.name == named)
+            {
+                return Err(format!("block `{}` sounds as material `{named}`, which {RECORDINGS} does not have", def.name));
+            }
+        }
         for material in &self.materials {
             let name = &material.name;
             if name.is_empty() {
@@ -588,7 +601,7 @@ impl Recordings {
             if Cue::ALL.into_iter().all(|cue| material.clips(cue).is_none()) {
                 return Err(format!("{RECORDINGS}: material `{name}` has no step, place or break clips"));
             }
-            if !blocks.ids().any(|id| material.fits(blocks.def(id))) {
+            if !blocks.ids().map(|id| blocks.def(id)).any(|def| material.fits(def) || def.material.as_ref() == Some(name)) {
                 return Err(format!("{RECORDINGS}: no block has all of material `{name}`'s tags {:?}", material.tags));
             }
         }
@@ -1316,25 +1329,30 @@ mod tests {
     }
 
     /// A later package replaces a material by its name and adds others; a block sounds as
-    /// the material whose tags it all carries, the one naming the most of them if several
-    /// fit; taps and landings take the steps. A material that is unnamed, has no tags or
-    /// clips, or fits no block fails the launch check.
+    /// the material its def names, else the one whose tags it all carries, the one naming
+    /// the most of them if several fit; taps and landings take the steps. A material that is
+    /// unnamed, has no tags or clips, or fits no block fails the launch check, and so does a
+    /// block naming a material there is not.
     #[test]
     fn materials_are_checked_and_the_closest_fit_sounds() {
         let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
         let blocks = &content.blocks;
         let file = |package: &str, source: &str| ContentFile { package: package.into(), name: RECORDINGS.into(), source: source.into() };
-        let base = file("base", r#"(materials: [(name: "rough", tags: ["stone"], step: ["s.ogg"], break: ["b.ogg"]), (name: "cobble", tags: ["cobbled"], place: ["p.ogg"])])"#);
-        let recorded = Recordings::load(&[base, file("mod", r#"(materials: [(name: "cobble", tags: ["stone", "cobbled"], step: ["x.ogg"]), (name: "mossy", tags: ["stone", "cobbled", "mossy"], break: ["m.ogg"])])"#)]).unwrap();
-        assert_eq!(recorded.materials.iter().map(|m| m.name.as_str()).collect::<Vec<_>>(), ["rough", "cobble", "mossy"]);
+        let base = file("base", r#"(materials: [(name: "rough", tags: ["stone"], step: ["s.ogg"], break: ["b.ogg"]), (name: "cobblestone", tags: ["cobbled"], place: ["p.ogg"]), (name: "stone_brick", tags: ["bricks"], step: ["t.ogg"])])"#);
+        let recorded = Recordings::load(&[base.clone(), file("mod", r#"(materials: [(name: "cobblestone", tags: ["stone", "cobbled"], step: ["x.ogg"]), (name: "mossy", tags: ["stone", "cobbled", "mossy"], break: ["m.ogg"])])"#)]).unwrap();
+        assert_eq!(recorded.materials.iter().map(|m| m.name.as_str()).collect::<Vec<_>>(), ["rough", "cobblestone", "stone_brick", "mossy"]);
         let cobble = &recorded.materials[1];
         assert_eq!((cobble.step.as_slice(), cobble.place.is_empty()), (&["content/mod/x.ogg".to_owned()][..], true));
         assert_eq!(recorded.check_materials(blocks), Ok(()));
         let named = |name: &str| recorded.material_of(blocks, blocks.id(name).unwrap()).map(|m| recorded.materials[m].name.as_str());
         assert_eq!(named("base:stone"), Some("rough"));
-        assert_eq!(named("base:cobblestone"), Some("cobble"));
+        assert_eq!(named("base:cobblestone"), Some("cobblestone"));
         assert_eq!(named("base:mossy_cobblestone"), Some("mossy"));
         assert_eq!(named("base:oak_planks"), None);
+        // Cut cobblestone carries only `stone` (it fits "rough"), but its def names cobblestone.
+        let slab = blocks.def(blocks.id("base:cobblestone_slab").unwrap());
+        assert!(recorded.materials[0].fits(slab) && !cobble.fits(slab));
+        assert_eq!(named("base:cobblestone_slab"), Some("cobblestone"));
         assert_eq!(cobble.clips(Cue::Hit), Some((&cobble.step[..], 1.0)));
         assert_eq!(cobble.clips(Cue::Land), Some((&cobble.step[..], LANDING_PITCH)));
         assert_eq!((cobble.clips(Cue::Place), cobble.clips(Cue::Break), cobble.clips(Cue::Pickup)), (None, None, None));
@@ -1344,8 +1362,12 @@ mod tests {
             r#"(materials: [(name: "mute", tags: ["stone"])])"#,
             r#"(materials: [(name: "typo", tags: ["stoen"], step: ["s.ogg"])])"#,
         ] {
-            assert!(Recordings::load(&[file("mod", wrong)]).unwrap().check_materials(blocks).is_err(), "{wrong}");
+            let result = Recordings::load(&[base.clone(), file("mod", wrong)]).unwrap().check_materials(blocks);
+            assert!(result.is_err(), "{wrong}");
         }
+        // Without the stone_brick material, the cut stone bricks name one there is not.
+        let unnamed = Recordings::load(&[file("base", r#"(materials: [(name: "cobblestone", tags: ["cobbled"], place: ["p.ogg"])])"#)]).unwrap().check_materials(blocks);
+        assert!(unnamed.as_ref().is_err_and(|e| e.contains("stone_brick")), "{unnamed:?}");
     }
 
     /// The building materials we ship pass the launch check, sound for the blocks they are
@@ -1357,7 +1379,24 @@ mod tests {
         let blocks = &content.blocks;
         let recorded = Recordings::load(&content.files).unwrap();
         recorded.check_materials(blocks).unwrap();
-        for (block, material) in [("base:cobblestone", "cobblestone"), ("base:mossy_cobblestone", "cobblestone"), ("base:stone_bricks", "stone_brick"), ("base:cracked_stone_bricks", "stone_brick")] {
+        for (block, material) in [("base:cobblestone", "cobblestone"), ("base:mossy_cobblestone", "cobblestone"), ("base:stone_bricks", "stone_brick"), ("base:cracked_stone_bricks", "stone_brick"),
+            ("base:cobblestone_slab", "cobblestone"),
+            ("base:cobblestone_stairs_top_east", "cobblestone"),
+            ("base:stone_brick_stairs", "stone_brick"),
+            ("base:oak_post", "timber"),
+            ("base:birch_beam", "timber"),
+            ("base:dark_oak_lattice_window", "timber"),
+            ("base:thatch_roof", "thatch"),
+            ("base:thatch_ridge", "thatch"),
+            ("base:oak_shingles", "shingle"),
+            ("base:dark_oak_shingle_ridge", "shingle"),
+            ("base:wattle_panel", "wattle"),
+            ("base:daub", "daub"),
+            ("base:hide_lean_to", "hide"),
+            ("base:half_timber", "timber"),
+            ("base:chimney_stack", "stone_brick"),
+            ("base:chimney_pot", "terracotta"),
+        ] {
             let found = recorded.material_of(blocks, blocks.id(block).unwrap()).map(|m| recorded.materials[m].name.as_str());
             assert_eq!(found, Some(material), "{block}");
         }
@@ -1373,6 +1412,37 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A building piece cut or shaped from a block that sounds as a building material
+    /// sounds as it too: every `building` block drawn with the side texture of a material's
+    /// block sounds as that material, so a slab never sounds unlike the wall it was cut from.
+    /// (Stations made of the stuff, a quern of cobbles, keep their own sound.)
+    #[test]
+    fn pieces_sound_as_what_they_look_like() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let blocks = &content.blocks;
+        let recorded = Recordings::load(&content.files).unwrap();
+        let side = |id: BlockId| blocks.def(id).textures.face(voxmar_engine::coords::Face::PosX).map(str::to_owned);
+        let mut by_look: FxHashMap<String, (usize, &str)> = FxHashMap::default();
+        for id in blocks.ids().filter(|&id| blocks.def(id).render == voxmar_engine::block::RenderKind::Opaque) {
+            if let (Some(look), Some(material)) = (side(id), recorded.material_of(blocks, id)) {
+                by_look.entry(look).or_insert((material, &blocks.def(id).name));
+            }
+        }
+        assert!(by_look.len() >= 4, "{by_look:?}");
+        let mut checked = 0;
+        let mut unlike = Vec::new();
+        for id in blocks.ids().filter(|&id| blocks.def(id).has_tag("building")) {
+            let Some((material, whole)) = side(id).and_then(|look| by_look.get(&look)) else { continue };
+            let found = recorded.material_of(blocks, id).map(|m| recorded.materials[m].name.as_str());
+            if found != Some(recorded.materials[*material].name.as_str()) {
+                unlike.push(format!("{} sounds as {found:?} but looks like {whole}", blocks.def(id).name));
+            }
+            checked += 1;
+        }
+        assert!(unlike.is_empty(), "{unlike:#?}");
+        assert!(checked > by_look.len(), "no pieces share a material block's look");
     }
 
     /// The everyday actions of the first days are heard, from clips we ship, each made at
