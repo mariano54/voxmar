@@ -2854,6 +2854,34 @@ fn a_furnished_home_heals_faster_and_sleeping_in_it_rests_you_once() {
     client.pump_until(|c| !has(c, "base:snug") && has(c, "base:well_rested"));
 }
 
+/// Windows count at home (docs/home.md "Light in the windows"): two hide windows set in a
+/// roofed home's wall make a Bright room, announced; one taken out, it goes.
+#[test]
+fn windows_at_home_make_a_bright_room() {
+    let mut client = on_a_test_floor();
+    let feet = client.position.floor().as_ivec3();
+    let has = |c: &Client, name: &str| c.vitals.effects.iter().any(|a| c.content.effects.get(a.effect).name == name);
+    let told = |c: &Client, text: &str| c.chat.iter().any(|(_, t)| t.contains(text));
+    let bag = feet + IVec3::new(2, 0, 0);
+    let (one, two) = (feet + IVec3::new(1, 1, -3), feet + IVec3::new(3, 1, -3));
+    for line in [
+        format!("/setblock {} {} {} sleeping_bag", bag.x, bag.y, bag.z),
+        format!("/fill {} {} {} {} {} {} stone", feet.x - 2, feet.y + 3, feet.z - 3, feet.x + 6, feet.y + 3, feet.z + 3),
+        format!("/setblock {} {} {} hide_window", one.x, one.y, one.z),
+    ] {
+        client.ok(&line);
+    }
+    client.pump_until(|c| c.world.block(bag) == c.content.blocks.id("base:sleeping_bag") && c.world.block(one) == c.content.blocks.id("base:hide_window"));
+    client.propose("base:sleep", ActionTarget::Block { block: bag, face: Face::PosY });
+    client.pump_until(|c| has(c, "base:rested"));
+    assert!(!has(&client, "base:bright_room"), "one window is not a bright room");
+    client.chat.clear();
+    client.ok(&format!("/setblock {} {} {} hide_window", two.x, two.y, two.z));
+    client.pump_until(|c| has(c, "base:bright_room") && told(c, "Bright room:"));
+    client.ok(&format!("/setblock {} {} {} air", one.x, one.y, one.z));
+    client.pump_until(|c| !has(c, "base:bright_room"));
+}
+
 /// A proper bed rests better than a bag (A Proper Bed: "something better than the ground"),
 /// out under the sky with nothing around it: well rested, and a longer mend.
 #[test]
