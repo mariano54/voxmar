@@ -617,6 +617,55 @@ impl Settlements {
         cells.into_iter().map(|c| self.slot(world, c)).filter(|slot| slot.0.is_some()).collect()
     }
 
+    /// The settlement nearest `from` by its middle, within `radius` of it, that `keep`
+    /// takes. Squares are planned nearest first, a few side by side at a time, and the
+    /// search stops once no square left could hold a nearer one: a settlement never
+    /// reaches past its square, so the nearest point of a square bounds how near any of
+    /// its places can be. Only the squares nearer than the answer are planned, where
+    /// `near` would plan every one within `radius`.
+    pub fn nearest(&self, world: &Overworld, from: IVec2, radius: i32, keep: impl Fn(&Plan) -> bool) -> Option<Arc<Slot>> {
+        let spacing = self.def.grid.spacing;
+        let reach = i64::from(radius) * i64::from(radius);
+        let away = |p: IVec2| (p - from).as_i64vec2().length_squared();
+        let (first, last) = (self.cell_of(from.x - radius, from.y - radius), self.cell_of(from.x + radius, from.y + radius));
+        let mut cells: Vec<(i64, IVec2)> = (first.y..=last.y)
+            .flat_map(|cz| (first.x..=last.x).map(move |cx| IVec2::new(cx, cz)))
+            .map(|c| (away(from.clamp(c * spacing, (c + 1) * spacing - 1)), c))
+            .filter(|&(bound, _)| bound <= reach)
+            .collect();
+        cells.sort_unstable_by_key(|&(bound, c)| (bound, c.x, c.y));
+        let batch = std::thread::available_parallelism().map_or(1, |n| n.get()).clamp(1, 8);
+        // Ties go to the lower x, then z, of the middle, as a sorted scan would give.
+        let mut best: Option<((i64, i32, i32), Arc<Slot>)> = None;
+        for group in cells.chunks(batch) {
+            if best.as_ref().is_some_and(|(d, _)| group[0].0 > d.0) {
+                break;
+            }
+            let missing: Vec<IVec2> = group.iter().map(|&(_, c)| c).filter(|&c| !self.plans.has(c)).collect();
+            if missing.len() > 1 {
+                crate::parallel::for_each(&missing, |&c| {
+                    self.slot(world, c);
+                });
+            }
+            for &(_, c) in group {
+                let slot = self.slot(world, c);
+                let Some(plan) = slot.0.as_ref() else { continue };
+                let d = (away(plan.centre), plan.centre.x, plan.centre.y);
+                // The cheap checks before `keep`, which may look the plan over.
+                if d.0 <= reach && best.as_ref().is_none_or(|(b, _)| d < *b) && keep(plan) {
+                    best = Some((d, slot.clone()));
+                }
+            }
+        }
+        best.map(|(_, slot)| slot)
+    }
+
+    /// The settlement of the square holding (x, z), planning that square alone: the only
+    /// one any block there can belong to.
+    pub fn holding(&self, world: &Overworld, x: i32, z: i32) -> Option<Arc<Slot>> {
+        Some(self.slot(world, self.cell_of(x, z))).filter(|slot| slot.0.is_some())
+    }
+
     /// Plans square `cell`, settled near `spawn` if it is the spawn's.
     fn plan(&self, world: &Overworld, fixed: &Fixed, cell: IVec2, spawn: Option<IVec2>) -> Option<Plan> {
         #[cfg(test)]

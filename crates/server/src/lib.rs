@@ -667,6 +667,10 @@ pub(crate) struct Server {
     /// don't regrow by themselves; and furnishings, which give themselves back only from
     /// these cells (see `WorldMeta::placed`).
     placed: FxHashSet<IVec3>,
+    /// Blocks set down that an unfinished quest's `Placed` counts, by cell: whose (their
+    /// name in lower case) and what item. Each counts on their tally while the block in the
+    /// cell still drops that item (`WorldMeta::quest_placed`).
+    quest_placed: FxHashMap<IVec3, (String, String)>,
     /// Picked wild plants waiting to grow back (see `regrow`), and plants a herb planter
     /// grew back, whose picking pays the planter's experience.
     regrowing: FxHashMap<IVec3, regrow::Regrowing>,
@@ -701,6 +705,9 @@ pub(crate) struct Server {
     /// once it has landed by then (`fight`).
     /// None until messages are first taken in (unit tests tick without them).
     heard: Option<Instant>,
+    /// How many players were told of others last tick: alone, a player is told once that
+    /// nobody else is there (`broadcast_players`).
+    shown_players: usize,
     /// Animals and monsters about.
     creatures: creatures::Creatures,
     /// The people of settlements near players.
@@ -802,6 +809,7 @@ impl Server {
             crops.iter().find(|(_, c)| c.def.name == name).map(|(id, c)| (id, c.stages.len() as u8))
         });
         let placed = meta.placed.iter().map(|&p| IVec3::from_array(p)).collect();
+        let quest_placed = quests::restore_placed(&meta.quest_placed, &content.blocks, &content.quests);
         let regrowing = regrow::restore(&meta.regrowing, |name| content.blocks.id(name));
         let blazes = blaze::restore(&meta.blazes);
         let lairs = lairs::Lairs::restore(&meta.lairs);
@@ -832,6 +840,7 @@ impl Server {
             hearth_owners,
             fires_sent: Vec::new(),
             placed,
+            quest_placed,
             regrowing,
             blazes,
             blaze_risked: Vec::new(),
@@ -844,6 +853,7 @@ impl Server {
             catches,
             arrival: Instant::now(),
             heard: None,
+            shown_players: 0,
             creatures: creatures::Creatures::default(),
             villagers: villagers::Villagers::restore(state.villagers),
             wandering: Default::default(),
@@ -1207,6 +1217,9 @@ impl Server {
         let mut meta = self.meta.clone();
         meta.time = self.tick;
         meta.placed = self.placed.iter().map(|p| p.to_array()).collect();
+        let mut quest_placed: Vec<([i32; 3], String, String)> = self.quest_placed.iter().map(|(cell, (owner, item))| (cell.to_array(), owner.clone(), item.clone())).collect();
+        quest_placed.sort();
+        meta.quest_placed = quest_placed;
         meta.regrowing = self.saved_regrowing();
         meta.blazes = self.saved_blazes();
         let mut grown: Vec<[i32; 3]> = self.planter_grown.iter().map(|p| p.to_array()).collect();
@@ -1247,8 +1260,11 @@ impl Server {
         }
     }
 
-    fn broadcast_players(&self) {
-        if self.players.len() < 2 {
+    fn broadcast_players(&mut self) {
+        // Alone, a player is told others are gone once (none left to draw), then nothing.
+        let joined = self.players.values().filter(|p| p.joined).count();
+        let was = std::mem::replace(&mut self.shown_players, joined);
+        if joined < 2 && was < 2 {
             return;
         }
         let views: Vec<_> = self.players.values().filter(|p| p.joined).map(Player::view).collect();
@@ -1356,6 +1372,7 @@ impl Server {
             if let Some(old) = self.world.set_block(pos, block) {
                 self.dirty.insert(ColumnPos::of_block(pos));
                 self.forget_placed(pos);
+                self.unplaced(pos, block);
                 done.push((pos, block));
                 self.machine_changed(pos, old, block);
                 self.hive_changed(pos, old, block);
@@ -1396,6 +1413,7 @@ impl Server {
         if let Some(old) = self.world.set_block(pos, block) {
             self.dirty.insert(column);
             self.forget_placed(pos);
+            self.unplaced(pos, block);
             self.machine_changed(pos, old, block);
             self.hive_changed(pos, old, block);
             self.station_changed(pos, old, block);
@@ -1462,14 +1480,18 @@ pub(crate) fn test_server() -> Server {
 #[cfg(test)]
 pub(crate) const TEST_DRAW_KEY: u64 = 0x0d1a;
 
-/// The game's own content, as `test_server` loads it.
+/// The game's own content, as `test_server` loads it: loaded once for the run (0.14 s a
+/// load, and some 300 tests ask for it) and handed out as copies, which share its tables.
+/// A test that changes a table of its copy changes its own (`Arc::make_mut`), never the
+/// one the others are handed.
 #[cfg(test)]
 pub(crate) fn test_content() -> Content {
-    load_content(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).expect("content loads")
+    static CONTENT: std::sync::OnceLock<Content> = std::sync::OnceLock::new();
+    CONTENT.get_or_init(|| load_content(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).expect("content loads")).clone()
 }
 
 /// As `test_server`, on `content` already loaded: a test that makes many servers loads it
-/// once (a copy shares its tables, so one changed through `Arc::get_mut` must be its own).
+/// once (a copy shares its tables, so one is changed through `Arc::make_mut`).
 #[cfg(test)]
 pub(crate) fn test_server_on(content: Content) -> Server {
     // One draw key for every test server, as a world's own is random: wandering, grazing

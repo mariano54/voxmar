@@ -342,6 +342,9 @@ impl Bed {
 pub enum Placement {
     /// At a block of this group the scan found.
     Block(usize),
+    /// At a block of this group with nothing over it but the sky (rain falls on it); none
+    /// such, not heard.
+    OpenBlock(usize),
     /// In a random direction this far away (blocks) and this high above the player.
     Around { distance: (f32, f32), height: (f32, f32) },
     /// At the player, from no direction.
@@ -546,6 +549,7 @@ fn default_fade() -> f32 {
 #[serde(deny_unknown_fields)]
 enum PlacementDef {
     Block(String),
+    OpenBlock(String),
     Around { distance: (f32, f32), height: (f32, f32) },
     Listener,
     Building {
@@ -685,6 +689,9 @@ impl Ambience {
                 }
                 let at = match sound.at {
                     PlacementDef::Block(group) => Placement::Block(
+                        ambience.groups.iter().position(|g| g.name == group).ok_or_else(|| format!("{}: no group {group}", context(&sound.name)))?,
+                    ),
+                    PlacementDef::OpenBlock(group) => Placement::OpenBlock(
                         ambience.groups.iter().position(|g| g.name == group).ok_or_else(|| format!("{}: no group {group}", context(&sound.name)))?,
                     ),
                     PlacementDef::Around { distance, height } => Placement::Around { distance, height },
@@ -854,6 +861,19 @@ impl Ambience {
                     .map(|g| g as u8)
             })
             .collect()
+    }
+
+    /// Whether every recorded bed's files are there under `assets`, so a mistyped path
+    /// fails at launch rather than leaving the bed silent.
+    pub fn check_recordings(&self, assets: &std::path::Path) -> Result<(), String> {
+        for bed in &self.beds {
+            if let BedSound::Recorded(paths) = &bed.sound
+                && let Some(missing) = paths.iter().find(|path| !assets.join(path).is_file())
+            {
+                return Err(format!("{FILE}: bed `{}` is recorded in `{missing}`, which is not there", bed.name));
+            }
+        }
+        Ok(())
     }
 
     /// Whether every building a one-shot sounds from is one settlements have (`known`:

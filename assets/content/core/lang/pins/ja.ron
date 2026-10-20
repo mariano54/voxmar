@@ -9,7 +9,7 @@
     "command.core.biome.help.summary": ("Names the biome you stand in, and its climate.", "今いるバイオームを教えます。"),
     "command.core.clear.help": ("Empties your inventory, or takes every one of an item out of it.", "持ち物を空にするか、指定したアイテムをすべて取り除きます。"),
     "command.core.clear.help.summary": ("Empties your inventory, or takes every one of an item out of it.", "持ち物を空にします。"),
-    "command.core.creatures.help": ("Lists the creatures within 64 blocks of you: how many of each, and what the nearest is doing. Admins may tame those within 8 blocks, ready the kept ones there to breed, hasten them (products due and young grown at once), hold them still for a minute, kill them, or take away the ones they keep; only of one species, if they name it. Populate tries natural spawning nearby and holds arrivals for a minute; disperse removes nearby wild creatures.", "64ブロック以内の生き物を一覧表示します: 種類ごとの数と、いちばん近い個体が何をしているか。管理者は8ブロック以内の生き物を手なずけたり、飼っている生き物を繁殖できる状態にしたり、成長を早めたり (産物がすぐに出て、子供がすぐに育つ)、1分間じっとさせたり、倒したり、飼っている生き物を取り除いたりできます。種類を指定すれば、その種類だけに行います。populateは周囲で自然な出現を試し、現れた個体を1分間じっとさせます。disperseは周囲の野生の生き物を取り除きます。"),
+    "command.core.creatures.help": ("Lists the creatures within 64 blocks of you: how many of each, and what the nearest is doing. Admins may tame those within 8 blocks, ready the kept ones there to breed, hasten them (products due and young grown at once), hold them still for a minute or let a hold go (release), kill them, or take away the ones they keep; only of one species, if they name it. Populate tries natural spawning nearby and holds arrivals for a minute; disperse removes nearby wild creatures.", "64ブロック以内の生き物を一覧表示します: 種類ごとの数と、いちばん近い個体が何をしているか。管理者は8ブロック以内の生き物を手なずけたり、飼っている生き物を繁殖できる状態にしたり、成長を早めたり (産物がすぐに出て、子供がすぐに育つ)、1分間じっとさせたり、その足止めを解いたり (release)、倒したり、飼っている生き物を取り除いたりできます。種類を指定すれば、その種類だけに行います。populateは周囲で自然な出現を試し、現れた個体を1分間じっとさせます。disperseは周囲の野生の生き物を取り除きます。"),
     "command.core.creatures.help.summary": ("Lists the creatures within 64 blocks of you: how many of each, and what the nearest is doing.", "64ブロック以内の生き物を一覧表示します。"),
     "command.core.day.help": ("Sets the time to morning: /time set day.", "時刻を朝にします: /time set day。"),
     "command.core.day.help.summary": ("Sets the time to morning: /time set day.", "時刻を朝にします。"),
@@ -374,4 +374,6 @@
     "command.core.machine.help.summary": ("Tells how the machine at a block is doing (~ is where you are): what it makes, its power, or what it lacks.", "ブロックにある機械の様子を伝えます。"),
     "command.core.home.help": ("Tells where your home is, how far its furnishing has come, and what the next step needs.", "家の場所と、家具が整ってきた度合い、次の段階に必要なものを伝えます。"),
     "command.core.home.help.summary": ("Tells where your home is, how far its furnishing has come, and what the next step needs.", "家の場所と次の段階に必要なものを伝えます。"),
+    "command.core.quest.help": ("Marks a quest done for you (an age's rite opens its stations), its rewards waiting to be claimed.", "クエストを達成済みにします (時代の儀式を済ませると、その時代の作業台が使えるようになります)。報酬は受け取りを待ちます。"),
+    "command.core.quest.help.summary": ("Marks a quest done for you (an age's rite opens its stations), its rewards waiting to be claimed.", "クエストを達成済みにします。"),
 }

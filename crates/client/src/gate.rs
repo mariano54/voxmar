@@ -262,6 +262,10 @@ steps! {
     /// tool, under load: client and server agree on every one, and none comes back. Those
     /// of a building material (the cobblestone) sound as it.
     Breaks,
+    /// The breaks' stand again, a stone knife in hand: the recipe book says twine is cut
+    /// from tall grass with a knife, and tall grass set beside the player and cut until
+    /// twine drops and is picked up.
+    Twine,
     /// On the menu's audio page, a switch for each category of music the player can hear;
     /// clicking one turns that category off, and again on. A track starting is named, with
     /// its category, at the top right, and the line fades: while the workshop and swim
@@ -273,7 +277,7 @@ steps! {
     /// A shaped recipe of the hand's grid laid mirrored left to right makes what it makes.
     Mirror,
     /// Sticks and a crafting table from planks; the table placed and right clicked opens a
-    /// three-by-three grid, where cobblestone and sticks make a stone pickaxe. An iron ore
+    /// three-by-three grid, where stone heads and sticks make a stone pickaxe. An iron ore
     /// refuses the hand and a low Mining level, and breaks for the pickaxe at level 15,
     /// teaching Mining; a hoe tills dirt into farmland; cooked food takes a slot each; a rod
     /// cast into the pool catches a fish. Then the player dies: three items stay in hand,
@@ -284,8 +288,8 @@ steps! {
     /// Swimming against the pool's bank and holding jump climbs out onto the block on it.
     Swim,
     /// Esc opens and closes the menu, E the inventory.
-    /// The same stone broken with a wooden pickaxe, then a copper one, from the breaks'
-    /// stand: each tooltip says how fast it works, and the copper takes the wooden one's
+    /// The same stone broken with a flint pickaxe, then a copper one, from the breaks'
+    /// stand: each tooltip says how fast it works, and the copper takes the flint one's
     /// time over 3.5, as their speeds (2 and 7) say.
     Tiers,
     Screens,
@@ -417,6 +421,14 @@ steps! {
     /// reach of what is held (within touch), is clicked: the hand swings at the air with a
     /// whoosh (`Fighting::whiff`) and no blow is asked of the server.
     ShotCancel,
+    /// Another player, a stand-in no client plays (`RemotePlayers::puppet`), drawn as a
+    /// person (`figures`): painted with every box of `player_look.ron`, they walk past at
+    /// most of the pace their arms and legs swing full at, their legs swing with the ground
+    /// they cover and the body shown trails them no further than its easing allows; stopped,
+    /// it settles where they stand, and what is in their hand (a weapon, found by its class)
+    /// is held in their right fist, the arm held forward as `carry` says. Each frame a fixed
+    /// step (`Figures::step`). Shot with them facing the eye.
+    Others,
     /// Raw rabbit used on a campfire comes back cooked (or burnt) into the inventory, and
     /// smoke and embers rise from the fire.
     Cook,
@@ -456,8 +468,8 @@ steps! {
     /// its people come, and one greets the player in its own voice; the ambience hears it
     /// at work by day, not by night; then `/locate settlement town` finds a town, and the
     /// wall of the walled town nearest it stands where planned, its shaped roofs as planned
-    /// with none of its flames in reach of its thatch, and its jettied houses stand out on
-    /// their beams.
+    /// with none of its flames in reach of its thatch, its jettied houses stand out on
+    /// their beams, and its row houses stand wall to wall under one roof.
     Settlements,
     /// Over a log in the inventory, the uses key shows what it goes into (planks, a
     /// campfire); clicking planks shows their recipe, and Back returns.
@@ -470,6 +482,14 @@ steps! {
     /// made in the hand's grid from its recipe (flint and sticks in the base game) fells it,
     /// and the log comes to hand.
     Flint,
+    /// The workshop block a stone tool's head is made near (a grindstone in the base game)
+    /// draws by the fire; with the inventory open the client finds it within reach, and the
+    /// toolstone laid in the grid there is ground to a head.
+    Grind,
+    /// A pickaxe of the first tier breaks a plain stone into loose stones (what its `drops`
+    /// say), and four of those in the hand's grid knock together into what their recipe makes
+    /// (cobblestone in the base game).
+    Rubble,
     /// A survival player's inventory search finds the stone pickaxe by "pick"; its recipe
     /// opened in the viewer finishes the "Look It Up" quest; the quest book's page for the
     /// pickaxe shows its recipe inline, an item clicked there opens the viewer, and Back
@@ -482,6 +502,9 @@ steps! {
     /// at level 1) mined by hand says under the crosshair which tool it wants, in words that fit;
     /// an empty drying rack there, right clicked with nothing in hand, says it cannot work that.
     Refusal,
+    /// Nine ripe wheat on farmland, a stone hoe in hand: its tooltip says what it reaps, and
+    /// cutting the middle one takes all nine, on both sides.
+    Reap,
     /// A wild plant whose item merged (oregano into kitchen herbs) is given as the merged
     /// item, and the catalogues (creative, journal, recipe book) list the item, not the plant.
     Merged,
@@ -564,9 +587,10 @@ steps! {
     /// Every journal page, in English and Japanese: no text reaches past the element it
     /// sits in. Each page has the time a step has, to be drawn and read.
     FitJournal,
-    /// The screens with keys under them in a window of `SMALL` (the interface at 75%), in
-    /// English and Japanese: no text reaches past the element it sits in, and the keys under
-    /// each screen are clear of it and of the HUD along the bottom.
+    /// The screens under the bar of keys, and the recipe viewer on each of `FIT_LOOKUPS`, in a
+    /// window of `SMALL` (the interface at 75%), in English and Japanese: no text reaches past
+    /// the element it sits in, and the bar of keys is clear of each screen and of the HUD
+    /// along the bottom.
     FitSmall,
     /// Leaving the world for the title screen.
     Leave,
@@ -628,6 +652,12 @@ struct Gate {
     /// Progress through a step's own stages, and when the current one began.
     phase: u32,
     phase_since: f32,
+    /// Where a stage last walked the player to pick something up (`walk_to_lying`), so the
+    /// step is asked once.
+    walked_to: Option<Vec3>,
+    /// Where the observer floated before a step moved it over its own ground (`reap`), to
+    /// be put back when the step ends.
+    observer_home: Option<Vec3>,
     /// Frames in this stage that what a shot is about has been on screen: it shows a frame
     /// or two after the change.
     settled: u32,
@@ -704,6 +734,10 @@ struct Gate {
     web_head: Option<String>,
     /// A quest pinned only for the tracker-behind-book check, to let go after it.
     pinned_for_check: Option<String>,
+    /// Which of [`way_kinds`] the recipe step is looking up.
+    way_at: usize,
+    /// The quest the recipe step clicked in the viewer.
+    linked_quest: Option<String>,
     /// Whether the tracker showed in the game before leaving it.
     tracker_in_game: bool,
     /// A quest's cell on the web across, and the point of the canvas at the middle of the
@@ -776,6 +810,9 @@ struct Gate {
     /// The walled town nearest the one `/locate settlement town` found, where the observer
     /// judges walls, roofs and jetties: the middle of its square.
     town: IVec3,
+    /// The look for the walled town nearest the town `/locate` found, off the frame: it
+    /// plans every square nearer than the answer, seconds of work.
+    town_search: Option<std::thread::JoinHandle<Option<IVec3>>>,
     /// Where the struck creature was last seen, for walking over its loot.
     quarry: Vec3,
     /// The snail struck, so a fallen mark on another creature cannot end its watch.
@@ -837,7 +874,7 @@ struct Gate {
     cover_checked: bool,
     /// Texts found not to fit, each once per language: what, and where it was first seen.
     spills: Vec<(String, String)>,
-    /// What the keys under a screen ran into on the views of a text-fit step, each once.
+    /// What the bar of the screens' keys ran into on the views of a text-fit step, each once.
     keys_blocked: Vec<String>,
     /// Views of the text-fit tour on which a tool's tooltip showed, whole, on screen.
     fit_tips: usize,
@@ -881,6 +918,8 @@ struct Gate {
     /// for from then on.
     party_given: f32,
     breaks: Breaks,
+    /// Tall grass cut so far in the twine step.
+    cuts: u32,
     /// Where the tiers step found the player, to put them back, and the seconds each
     /// pickaxe's break was to take.
     tiers_from: Vec3,
@@ -980,6 +1019,8 @@ struct Gate {
     markers_before: u32,
     /// Before the RangedFeel step's shot: shots loosed, trail specks and arrivals.
     shots_before: (u32, u32, u32),
+    /// The Others step's stand-in: the furthest its legs swung (radians) as it walked.
+    other_swung: f32,
     /// Before the ShotCancel step's click out of reach: swings at the air and swings sent;
     /// whether the hand has swung since.
     whiff_from: (u32, u32, bool),
@@ -1000,6 +1041,8 @@ impl Gate {
             land_told: false,
             phase: 0,
             phase_since: 0.0,
+            walked_to: None,
+            observer_home: None,
             settled: 0,
             feet: IVec3::ZERO,
             entered: vec![Step::Load],
@@ -1040,6 +1083,8 @@ impl Gate {
             web_canvas: Vec2::ZERO,
             web_head: None,
             pinned_for_check: None,
+            way_at: 0,
+            linked_quest: None,
             tracker_in_game: false,
             web_cell: 0.0,
             web_middle: Vec2::ZERO,
@@ -1072,6 +1117,7 @@ impl Gate {
             settlement: IVec3::ZERO,
             settlement_reply: String::new(),
             town: IVec3::ZERO,
+            town_search: None,
             ore: IVec3::ZERO,
             quarry: Vec3::ZERO,
             quarry_id: None,
@@ -1124,6 +1170,7 @@ impl Gate {
             party_sent: false,
             party_given: 0.0,
             breaks: Breaks::default(),
+            cuts: 0,
             tiers_from: Vec3::ZERO,
             tiers: Vec::new(),
             mining_before: None,
@@ -1171,6 +1218,7 @@ impl Gate {
             puppet: (Vec3::ZERO, 0, false),
             markers_before: 0,
             shots_before: (0, 0, 0),
+            other_swung: 0.0,
             whiff_from: (0, 0, false),
         }
     }
@@ -1328,6 +1376,7 @@ impl Gate {
         info!("gate: {:?} stage {} at {now:.1}s, server {:.1}s", self.step, self.phase + 1, self.server_now);
         self.phase += 1;
         self.phase_since = now;
+        self.walked_to = None;
         self.settled = 0;
         self.phase_server = self.server_now;
         self.taps = 0;
@@ -1686,6 +1735,8 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         // this is the backstop for a server that stopped.
         Step::Feel => FEEL_LIMIT + 2.0 * UNANSWERED + STEP_LIMIT,
         Step::Breaks => BREAKS_LIMIT + 15.0,
+        // Grass set and cut, a cut a round: each waited on in the server's seconds.
+        Step::Twine => TWINE_CUTS as f32 * 2.0 * TWINE_WAIT,
         // Two tools to hand and two breaks, each answer waited on.
         Step::Tiers => 8.0 * TIERS_WAIT + STEP_LIMIT,
         // Crafting, mining, tilling and fishing until something bites.
@@ -1702,7 +1753,9 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         Step::Party => 60.0,
         // The effects are judged once a second by the server, and a rest is a sleep away.
         Step::Home => 75.0,
-        // Two answers waited on, each up to `WALLS_WAIT` server seconds.
+        // Four answers waited on (Hearthside, Snug with its rooms, the curtain drawn back with
+        // the evening in, the dooryard), each up to `WALLS_WAIT` server seconds only while it
+        // does not come.
         Step::HomeWalls => STEP_LIMIT + 10.0,
         // A smoulder waited on up to fire.ron's catching time and 4 s (a panel daubed in
         // that wait); then the catch and the burning out, up to their times and 4 s each from
@@ -1722,6 +1775,8 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         Step::Refusal => UNANSWERED + 4.0 * REFUSAL_WAIT + STEP_LIMIT,
         // Taming, then a feed trough opened, waited on up to `TROUGH_WAIT`.
         Step::Tame => STEP_LIMIT + TROUGH_WAIT,
+        // The patch set, the hoe in hand, the cut and the reaped patch, each waited on.
+        Step::Reap => 4.0 * REAP_WAIT + STEP_LIMIT,
         // A fresh area around the settlement to generate: up to `SETTLEMENT_LOAD` of the
         // server's seconds.
         Step::Settlements => 2.0 * SETTLEMENT_LOAD + SETTLEMENT_PEOPLE + SETTLEMENT_BARK + STEP_LIMIT,
@@ -2006,6 +2061,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
             }
         }
         Step::Breaks => breaks(world, gate, now, in_phase),
+        Step::Twine => twine(world, gate, now),
         Step::Mirror => mirror(world, gate, now),
         Step::Workshop => workshop(world, gate, now, in_phase),
         Step::HvAge => hv_age(world, gate, now),
@@ -2043,6 +2099,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::RangedFeel => ranged_feel(world, gate),
         Step::FirstFights => first_fights(world, gate),
         Step::ShotCancel => shot_cancel(world, gate),
+        Step::Others => others(world, gate),
         Step::Cook => cook(world, gate, now, in_phase),
         Step::Quern => quern(world, gate, now),
         Step::HomeMotif => home_motif(world, gate, now, in_phase),
@@ -2057,8 +2114,11 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Recipes => recipes(world, gate, now, in_phase),
         Step::Chop => chop(world, gate, now),
         Step::Flint => flint(world, gate, now),
+        Step::Grind => grind(world, gate, now),
+        Step::Rubble => rubble(world, gate, now),
         Step::LookUp => look_up(world, gate, now, in_phase),
         Step::Refusal => refusal(world, gate, now, in_phase),
+        Step::Reap => reap(world, gate, now),
         Step::Merged => merged(world, gate, now, in_phase),
         Step::Identity => identity(world, gate, now),
         Step::Effects => effects(world, gate, now, in_phase),
@@ -2556,7 +2616,126 @@ fn end_breaks(world: &mut World, gate: &mut Gate, now: f32) {
     for &tool in gate.breaks.given.iter().filter(|&&tool| held.slots.iter().flatten().any(|s| s.item == tool)) {
         net.command(&format!("clear {}", registry.def(tool).name));
     }
-    gate.next(Step::Music, now);
+    gate.next(Step::Twine, now);
+}
+
+/// Where the twine step sets its tall grass, from the test ground's middle: a cell of the
+/// broken row beside the breaks' stand, on the ground.
+const TWINE_AT: IVec3 = IVec3::new(-2, 0, -1);
+/// Longest the twine step waits on one answer, in seconds of the server's clock and the game's.
+const TWINE_WAIT: f32 = 8.0;
+/// Most tall grass cut for a twine: a stone knife finds one a quarter of the time, so
+/// sixty go without one about once in thirty million.
+const TWINE_CUTS: u32 = 60;
+
+/// Tall grass cut with a stone knife until it gives twine (`tools.ron`'s `by`), which is
+/// picked up; first the recipe book is asked where twine comes from.
+fn twine(world: &mut World, gate: &mut Gate, now: f32) {
+    let cell = gate.feet + TWINE_AT;
+    let stand = gate.feet + BREAK_STAND;
+    // Given up on only once the server's seconds and the game's have both passed.
+    let waited = gate.server_in_phase() > TWINE_WAIT && now - gate.phase_since > TWINE_WAIT;
+    let content = world.resource::<Launch>().content.clone();
+    let id = |name: &str| content.blocks.id(name);
+    let (grass, twine, knife) = (id("base:tall_grass"), id("base:twine"), id("base:stone_knife"));
+    let carried = |world: &World| world.resource::<LocalPlayer>().inventory.slots.iter().flatten().filter(|s| Some(s.item) == twine).map(|s| s.count as u32).sum::<u32>();
+    let end = |world: &mut World, gate: &mut Gate| {
+        mouse(world, MouseButton::Left, false);
+        let net = world.resource::<Net>();
+        net.command(&format!("setblock {} {} {} air", cell.x, cell.y, cell.z));
+        net.command("clear stone_knife");
+        net.command("clear twine");
+        gate.next(Step::Music, now);
+    };
+    let (Some(grass), Some(twine), Some(knife)) = (grass, twine, knife) else {
+        gate.check("twine", Err("no tall grass, twine or stone knife in the content".into()));
+        end(world, gate);
+        return;
+    };
+    match gate.phase {
+        0 => {
+            let net = world.resource::<Net>();
+            net.command("clear twine");
+            net.command("give stone_knife 1");
+            net.command(&format!("tp {} {} {}", stand.x as f32 + 0.5, stand.y, stand.z as f32 + 0.5));
+            gate.cuts = 0;
+            gate.advance(now);
+        }
+        1 => {
+            // The book says where twine comes from: tall grass, with a knife.
+            let from_grass = world.resource::<crate::hud::recipes::RecipeViewer>().book().is_some_and(|book| {
+                book.making(twine).iter().any(|e| matches!(e.method, voxmar_engine::recipe_book::Method::Break { block, tool: Some(tool), .. } if block == grass && content.blocks.def(tool).has_tag("knife")))
+            });
+            if !from_grass {
+                gate.check("twine", Err("the recipe book does not say twine is cut from tall grass with a knife".into()));
+                end(world, gate);
+                return;
+            }
+            let has = world.resource::<LocalPlayer>().inventory.slots.iter().flatten().any(|s| s.item == knife);
+            if has {
+                hold(world, Holder::Tool(knife));
+            }
+            let player = world.resource::<LocalPlayer>();
+            if player.inventory.get(player.selected).map(|s| s.item) == Some(knife) {
+                gate.advance(now);
+            } else if waited {
+                gate.check("twine", Err(format!("the stone knife never came to hand ({has}) in {TWINE_WAIT} seconds")));
+                end(world, gate);
+            }
+        }
+        2 => {
+            let net = world.resource::<Net>();
+            net.command(&format!("setblock {} {} {} tall_grass", cell.x, cell.y, cell.z));
+            gate.advance(now);
+        }
+        3 => {
+            // Standing on both sides, then cut.
+            let client = world.resource::<ClientWorld>().block(cell) == Some(grass);
+            let server = gate.observer.as_ref().is_none_or(|o| o.world.block(cell) == Some(grass));
+            if client && server {
+                aim_at(world, cell.as_vec3() + Vec3::splat(0.5));
+                mouse(world, MouseButton::Left, true);
+                gate.advance(now);
+            } else if waited {
+                gate.check("twine", Err(format!("tall grass set at {cell} never stood (client {client}, server {server}) in {TWINE_WAIT} seconds")));
+                end(world, gate);
+            }
+        }
+        4 => {
+            aim_at(world, cell.as_vec3() + Vec3::splat(0.5));
+            if world.resource::<ClientWorld>().block(cell).is_some_and(|b| b.is_air()) {
+                mouse(world, MouseButton::Left, false);
+                gate.cuts += 1;
+                gate.advance(now);
+            } else if waited {
+                gate.check("twine", Err(format!("tall grass at {cell} never broke with a stone knife in hand in {TWINE_WAIT} seconds (cut {})", gate.cuts)));
+                end(world, gate);
+            } else {
+                mouse(world, MouseButton::Left, true);
+            }
+        }
+        _ => {
+            // A second of the server's past the cut, whatever it gave has been told; twine
+            // lying is waited on until it is picked up.
+            let lying = world.resource::<crate::drops::Drops>().lying().any(|(_, stack, _)| stack.item == twine);
+            if carried(world) > 0 {
+                let cuts = gate.cuts;
+                gate.check("twine", Ok(format!("the recipe book names tall grass and a knife; a stone knife cut twine from tall grass in {cuts} cuts, and it was picked up")));
+                end(world, gate);
+            } else if lying && waited {
+                gate.check("twine", Err(format!("twine dropped from tall grass but was not picked up in {TWINE_WAIT} seconds")));
+                end(world, gate);
+            } else if !lying && gate.server_in_phase() > 1.0 {
+                if gate.cuts >= TWINE_CUTS {
+                    gate.check("twine", Err(format!("{TWINE_CUTS} tall grasses cut with a stone knife gave no twine")));
+                    end(world, gate);
+                } else {
+                    gate.phase = 1;
+                    gate.advance(now);
+                }
+            }
+        }
+    }
 }
 
 /// Where the tiers step sets its stone, from the test ground's middle: a cell of the broken
@@ -2565,7 +2744,7 @@ const TIERS_AT: IVec3 = IVec3::new(-2, 0, -1);
 /// Longest the tiers step waits on one answer, in seconds of the server's clock and the game's.
 const TIERS_WAIT: f32 = 8.0;
 /// The two pickaxes the tiers step compares, slowest first.
-const TIERS: [&str; 2] = ["wooden_pickaxe", "copper_pickaxe"];
+const TIERS: [&str; 2] = ["flint_pickaxe", "copper_pickaxe"];
 
 /// The same stone broken with each pickaxe of `TIERS` in turn: the client works out how
 /// long each takes when it starts (as the server does), and the better one takes the other's
@@ -2592,7 +2771,7 @@ fn tiers(world: &mut World, gate: &mut Gate, now: f32) {
         gate.next(Step::Screens, now);
     };
     let (Some(stone), &[slow, fast]) = (stone, picks.as_slice()) else {
-        gate.check("tiers", Err("no stone, wooden pickaxe or copper pickaxe in the content".into()));
+        gate.check("tiers", Err("no stone, flint pickaxe or copper pickaxe in the content".into()));
         end(world, gate);
         return;
     };
@@ -2659,11 +2838,11 @@ fn tiers(world: &mut World, gate: &mut Gate, now: f32) {
                     let speeds = [slow, fast].map(|p| format!("{}", tools.tool(Some(p)).speed));
                     let told = [0, 1].iter().all(|&i| said[i].as_deref() == Some(locale.format("item.tool_speed", &[("speed", &speeds[i])]).as_str()));
                     let result = if (ratio - wanted).abs() > 0.01 * wanted {
-                        Err(format!("stone took {slow_s:.3} s with the wooden pickaxe and {fast_s:.3} s with the copper, {ratio:.2}x, not {wanted:.2}x"))
+                        Err(format!("stone took {slow_s:.3} s with the flint pickaxe and {fast_s:.3} s with the copper, {ratio:.2}x, not {wanted:.2}x"))
                     } else if !told {
                         Err(format!("the pickaxes' tooltips say {said:?}, not their speeds {speeds:?}"))
                     } else {
-                        Ok(format!("stone broke in {slow_s:.3} s with a wooden pickaxe and {fast_s:.3} s with a copper one, {ratio:.2}x as their speeds say; each tooltip names its speed"))
+                        Ok(format!("stone broke in {slow_s:.3} s with a flint pickaxe and {fast_s:.3} s with a copper one, {ratio:.2}x as their speeds say; each tooltip names its speed"))
                     };
                     gate.check("tiers", result);
                     // The fast pickaxe's tooltip, drawn in the inventory, in each language.
@@ -2765,6 +2944,26 @@ fn lay_and_craft(world: &mut World, cells: &[(usize, &str)]) -> bool {
         net.propose(actions.expect("core:transfer"), target);
     }
     net.propose(actions.expect("core:craft"), voxmar_engine::action::ActionTarget::Slot(0));
+    true
+}
+
+/// Walks the player onto the nearest `item` lying within `within` of `from` (what one break
+/// threw, not strays from before), as a player goes to pick up what fell out of reach:
+/// whether one lies there at all. Each step is asked once.
+fn walk_to_lying(world: &mut World, gate: &mut Gate, item: BlockId, from: Vec3, within: f32) -> bool {
+    let at = world.resource::<LocalPlayer>().position;
+    let nearest = world
+        .resource::<crate::drops::Drops>()
+        .lying()
+        .filter(|(_, stack, lies)| stack.item == item && lies.distance(from) <= within)
+        .map(|(_, _, lies)| lies)
+        .min_by(|a, b| a.distance_squared(at).total_cmp(&b.distance_squared(at)));
+    let Some(lies) = nearest else { return false };
+    let onto = Vec3::new(lies.x, lies.y.floor(), lies.z);
+    if Vec2::new(onto.x - at.x, onto.z - at.z).length() > 0.5 && gate.walked_to.is_none_or(|was| was.distance(onto) > 0.25) {
+        gate.walked_to = Some(onto);
+        world.resource::<Net>().command(&format!("tp {:.2} {:.2} {:.2}", onto.x, onto.y, onto.z));
+    }
     true
 }
 
@@ -3064,6 +3263,8 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 let learnt = xp.saturating_sub(gate.count_before);
                 let result = if learnt > 0 { Ok(format!("four planks made a crafting table, {:.1} Engineering experience", learnt as f32 / 10.0)) } else { Err("a crafting table was made but taught no Engineering".into()) };
                 gate.check("workshop: table", result);
+                // Three stone heads for the pickaxe (the Grind step grinds them; here they are given).
+                world.resource::<Net>().command("give stone_head 3");
                 select(world, "base:crafting_table");
                 aim(world, table - IVec3::Y);
                 gate.advance(now);
@@ -3087,7 +3288,7 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
         }
         // Right clicking the table opens the inventory with a three-by-three grid, where
-        // three cobblestone over two sticks make a stone pickaxe.
+        // three stone heads over two sticks make a stone pickaxe.
         4 => {
             let open = world.resource::<UiState>().inventory_open && world.resource::<LocalPlayer>().station == Some(table);
             if !open {
@@ -3110,11 +3311,11 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
             gate.check("workshop: table: open", Ok(format!("a right click opened the table's grid of {shown} cells")));
             gate.count_before = skill_level(world, "core:engineering").1;
-            let laid = lay_and_craft(world, &[(0, "base:cobblestone"), (1, "base:cobblestone"), (2, "base:cobblestone"), (4, "base:stick"), (7, "base:stick")]);
+            let laid = lay_and_craft(world, &[(0, "base:stone_head"), (1, "base:stone_head"), (2, "base:stone_head"), (4, "base:stick"), (7, "base:stick")]);
             if laid {
                 gate.advance(now);
             } else {
-                fail(world, gate, "pickaxe", "no cobblestone or sticks for a pickaxe".into());
+                fail(world, gate, "pickaxe", "no stone heads or sticks for a pickaxe".into());
             }
         }
         5 => {
@@ -3123,7 +3324,7 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 if gate.shot(world, "table-grid").is_none() {
                     return;
                 }
-                gate.check("workshop: pickaxe", Ok("three cobblestone over two sticks made a stone pickaxe at the table".into()));
+                gate.check("workshop: pickaxe", Ok("three stone heads over two sticks made a stone pickaxe at the table".into()));
                 // Leaving the screen leaves the table.
                 world.resource_mut::<UiState>().inventory_open = false;
                 let net = world.resource::<Net>();
@@ -3179,7 +3380,7 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if gone && learnt > 0 {
                 mouse(world, MouseButton::Left, false);
                 gate.check("workshop: ore", Ok(format!("at Mining 15 the stone pickaxe broke the iron ore on both sides, {:.1} Mining experience", learnt as f32 / 10.0)));
-                world.resource::<Net>().command("give wooden_hoe 1");
+                world.resource::<Net>().command("give stone_hoe 1");
                 gate.advance(now);
             } else if gate.server_in_phase() > WORKSHOP_WAIT {
                 mouse(world, MouseButton::Left, false);
@@ -3188,7 +3389,7 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         }
         // A hoe tills dirt into farmland with a right click.
         8 => {
-            if !select(world, "base:wooden_hoe") {
+            if !select(world, "base:stone_hoe") {
                 if gate.server_in_phase() > WORKSHOP_WAIT {
                     fail(world, gate, "till", "the hoe never came".into());
                 }
@@ -4212,7 +4413,7 @@ fn end_workshop(world: &mut World, gate: &mut Gate, now: f32) {
     mouse(world, MouseButton::Right, false);
     world.resource_mut::<UiState>().inventory_open = false;
     let net = world.resource::<Net>();
-    for tool in ["stone_pickaxe", "wooden_hoe", "crafting_table", "stick", "bread", "fine_rod"] {
+    for tool in ["stone_pickaxe", "stone_hoe", "crafting_table", "stick", "bread", "fine_rod"] {
         net.command(&format!("clear {tool}"));
     }
     machines_down(world, gate);
@@ -4851,7 +5052,7 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.advance(now);
             }
         }
-        _ => {
+        5 => {
             let viewer = world.resource::<RecipeViewer>();
             let back = viewer.trail.last().is_some_and(|lookup| lookup.item == log && lookup.uses);
             gate.check("recipes: back", if back { Ok("Back returns to the log's uses".into()) } else { Err(format!("after Back the viewer shows {:?}", viewer.trail.last())) });
@@ -4870,13 +5071,182 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 },
             );
             world.resource_mut::<RecipeViewer>().trail.clear();
+            gate.way_at = 0;
+            gate.advance(now);
+        }
+        // Each kind of way the book knows, looked up on an item made that way (picked from
+        // the book by kind, the first by name): the viewer draws the way, its words as the
+        // book has them, and the item's cell.
+        6 => {
+            let kinds = way_kinds(world);
+            let Some(&(kind, item, ref method)) = kinds.get(gate.way_at) else {
+                let found: Vec<&str> = kinds.iter().map(|(kind, ..)| *kind).collect();
+                gate.check("recipes: every way", if found.len() == WAY_KINDS.len() { Ok(format!("R over an item made each way drew that way's cells and words: {}", found.join(", "))) } else { Err(format!("the book has items made only {found:?} of {WAY_KINDS:?}")) });
+                gate.phase += 1;
+                gate.phase_since = now;
+                return;
+            };
+            let method = method.clone();
+            let mut viewer = world.resource_mut::<RecipeViewer>();
+            if viewer.trail.last().map(|look| look.item) != Some(item) {
+                viewer.trail.clear();
+                viewer.open(item, false);
+                world.resource_mut::<UiState>().recipes_open = true;
+                gate.phase_since = now;
+                return;
+            }
+            // The way is on its page; the page it is on shows.
+            let page = world.resource::<RecipeViewer>().found().iter().position(|entry| entry.method == method).unwrap_or(0) / crate::hud::recipes::PER_PAGE;
+            if let Some(look) = world.resource_mut::<RecipeViewer>().trail.last_mut()
+                && look.page != page
+            {
+                look.page = page;
+                return;
+            }
+            let wanted: Vec<String> = {
+                let (locale, launch) = (world.resource::<Locale>(), world.resource::<Launch>());
+                crate::hud::recipes::describe(locale, launch, &method).into_iter().map(|(line, _)| line).collect()
+            };
+            let drawn = viewer_words(world);
+            let cell = world.query::<(&crate::hud::recipes::ViewerItem, &InheritedVisibility)>().iter(world).any(|(cell, shown)| cell.0 == item && shown.get());
+            let missing: Vec<&String> = wanted.iter().filter(|line| !drawn.contains(line)).collect();
+            if missing.is_empty() && cell {
+                gate.way_at += 1;
+                gate.phase_since = now;
+            } else if in_phase > 2.0 {
+                let name = world.resource::<Launch>().content.blocks.def(item).name.clone();
+                gate.check("recipes: every way", Err(format!("R over {name} ({kind}): its cell drawn {cell}, its words {wanted:?} missing {missing:?} from {drawn:?}")));
+                gate.phase += 1;
+                gate.phase_since = now;
+            }
+        }
+        // The quests asking for a log are listed under it; the first one clicked opens the
+        // quest book on it.
+        7 => {
+            let expected: Vec<String> = {
+                let content = &world.resource::<Launch>().content;
+                voxmar_engine::quest::asking(&content.quests, &content.blocks, log).into_iter().take(crate::hud::recipes::QUESTS_SHOWN).map(|q| q.name.clone()).collect()
+            };
+            let mut viewer = world.resource_mut::<RecipeViewer>();
+            if viewer.trail.last().map(|look| look.item) != Some(log) {
+                viewer.trail.clear();
+                viewer.open(log, false);
+                world.resource_mut::<UiState>().recipes_open = true;
+                return;
+            }
+            let links: Vec<(Entity, String)> = world.query::<(Entity, &crate::hud::recipes::QuestLink, &InheritedVisibility)>().iter(world).filter(|(_, _, shown)| shown.get()).map(|(entity, link, _)| (entity, link.0.clone())).collect();
+            let mut names: Vec<String> = links.iter().map(|(_, name)| name.clone()).collect();
+            names.sort();
+            let mut sorted = expected.clone();
+            sorted.sort();
+            if let Some((first, _)) = links.iter().find(|(_, name)| Some(name) == expected.first())
+                && names == sorted
+            {
+                gate.check("recipes: quests", Ok(format!("an oak log lists the quests that ask for it: {}", expected.join(", "))));
+                world.resource_mut::<UiClicks>().next = Some((*first, MouseButton::Left));
+                gate.linked_quest = expected.first().cloned();
+                gate.advance(now);
+            } else if in_phase > 2.0 {
+                gate.check("recipes: quests", Err(format!("an oak log lists quests {names:?}, the content asks for it in {expected:?}")));
+                gate.phase = 9;
+                gate.phase_since = now;
+            }
+        }
+        8 => {
+            let (open, viewing) = (world.resource::<UiState>().quests_open, world.resource::<UiState>().recipes_open);
+            let picked = world.resource::<crate::hud::quests::QuestView>().picked.clone();
+            let wanted = gate.linked_quest.clone();
+            if open && !viewing && picked == wanted {
+                gate.check("recipes: quest link", Ok(format!("clicking {} opened the quest book on it, the viewer put away", wanted.unwrap_or_default())));
+                gate.linked_quest = None;
+                gate.advance(now);
+            } else if in_phase > 2.0 {
+                gate.check("recipes: quest link", Err(format!("2 s after the quest was clicked: book open {open}, viewer open {viewing}, picked {picked:?} (wanted {wanted:?})")));
+                gate.linked_quest = None;
+                gate.advance(now);
+            }
+        }
+        // Under the inventory, the keys that look an item up are named.
+        9 => {
             let mut ui = world.resource_mut::<UiState>();
-            (ui.recipes_open, ui.inventory_open) = (false, false);
+            (ui.quests_open, ui.recipes_open, ui.inventory_open) = (false, false, true);
+            let names: Vec<String> = {
+                let (settings, locale) = (world.resource::<crate::settings::Settings>(), world.resource::<Locale>());
+                [settings.recipes_key.name(locale), settings.uses_key.name(locale)].into()
+            };
+            let shown: Vec<String> = world
+                .query_filtered::<(Entity, &InheritedVisibility), With<crate::hud::screens::LookKey>>()
+                .iter(world)
+                .filter(|(_, visible)| visible.get())
+                .map(|(entity, _)| entity)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .flat_map(|key| texts_under(world, key))
+                .collect();
+            let all = names.iter().all(|name| shown.contains(name));
+            if all || in_phase > 2.0 {
+                gate.check("recipes: keys shown", if all { Ok(format!("the inventory's key row names {} for recipes and {} for uses", names[0], names[1])) } else { Err(format!("the inventory's key row shows {shown:?}, not {names:?}")) });
+                gate.advance(now);
+            }
+        }
+        _ => {
+            world.resource_mut::<RecipeViewer>().trail.clear();
+            let mut ui = world.resource_mut::<UiState>();
+            (ui.recipes_open, ui.inventory_open, ui.quests_open) = (false, false, false);
             world.resource_mut::<HoveredItem>().0 = None;
             gate.next(Step::Chop, now);
         }
     }
 }
+
+/// The kinds of way the recipe step looks up, as `way_kinds` names them.
+const WAY_KINDS: [&str; 6] = ["craft at a level", "machine", "home station", "harvest", "breaking", "fishing"];
+
+/// For each of [`WAY_KINDS`] the book has, an item made that way (the first by name) and
+/// the way.
+fn way_kinds(world: &World) -> Vec<(&'static str, BlockId, voxmar_engine::recipe_book::Method)> {
+    use voxmar_engine::recipe_book::Method;
+    let Some(book) = world.resource::<crate::hud::recipes::RecipeViewer>().book() else { return Vec::new() };
+    let blocks = &world.resource::<Launch>().content.blocks;
+    let kind = |method: &Method| match method {
+        Method::Craft { skill: Some(_), level, .. } if *level > 1 => Some("craft at a level"),
+        Method::Process { .. } => Some("machine"),
+        Method::Work { .. } => Some("home station"),
+        Method::Harvest { .. } => Some("harvest"),
+        Method::Break { .. } => Some("breaking"),
+        Method::Catch { .. } => Some("fishing"),
+        _ => None,
+    };
+    WAY_KINDS
+        .iter()
+        .filter_map(|wanted| {
+            book.entries().iter().filter(|entry| kind(&entry.method) == Some(*wanted) && blocks.listed(entry.output)).min_by(|a, b| blocks.def(a.output).name.cmp(&blocks.def(b.output).name)).map(|entry| (*wanted, entry.output, entry.method.clone()))
+        })
+        .collect()
+}
+
+/// Every word drawn in the recipe viewer's ways.
+fn viewer_words(world: &mut World) -> Vec<String> {
+    let Some(body) = world.query_filtered::<Entity, With<crate::hud::recipes::ViewerBody>>().iter(world).next() else { return Vec::new() };
+    texts_under(world, body)
+}
+
+/// The words drawn under `root`, each text once.
+fn texts_under(world: &mut World, root: Entity) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut stack = vec![root];
+    while let Some(entity) = stack.pop() {
+        if let Some(text) = world.get::<Text>(entity) {
+            found.push(text.0.clone());
+        }
+        if let Some(children) = world.get::<Children>(entity) {
+            stack.extend(children.iter());
+        }
+    }
+    found
+}
+
+
 
 /// Where the chop step sets its chopping block: across the campfire from the drying rack.
 const CHOP_FROM_FIRE: IVec3 = IVec3::new(-2, 0, 0);
@@ -4997,14 +5367,14 @@ fn felled_by(content: &voxmar_engine::content::Content) -> Option<(BlockId, Bloc
 /// crafted in the hand's grid from what its recipe asks, fells it and the log comes to hand.
 fn flint(world: &mut World, gate: &mut Gate, now: f32) {
     let block = gate.feet + IVec3::new(0, 0, 14) + CHOP_FROM_FIRE;
-    // In the middle of a cell, one cell short of the log, so the felled log's drop comes
-    // to rest within `MAGNET`: a stand on a cell's edge was never judged reached.
+    // In the middle of a cell, one cell short of the log: a stand on a cell's edge was
+    // never judged reached.
     let stand = Vec3::new(block.x as f32 + 0.5, block.y as f32, block.z as f32 - 1.5);
     let waited = gate.server_in_phase() > FLINT_WAIT;
     let content = world.resource::<Launch>().content.clone();
     let Some((log, tool, recipe)) = felled_by(&content) else {
         gate.check("flint", Err("no log in the loaded tools.ron asks for a tool at level 1 that the hand's grid can make".into()));
-        gate.next(Step::LookUp, now);
+        gate.next(Step::Grind, now);
         return;
     };
     let name = |b: BlockId| content.blocks.def(b).name.clone();
@@ -5013,11 +5383,13 @@ fn flint(world: &mut World, gate: &mut Gate, now: f32) {
     let end = |world: &mut World, gate: &mut Gate| {
         mouse(world, MouseButton::Left, false);
         let net = world.resource::<Net>();
+        // Back off the log's cell, where the pickup left them: later steps set blocks there.
+        net.command(&format!("tp {} {} {}", stand.x, stand.y, stand.z));
         net.command(&format!("setblock {} {} {} air", block.x, block.y, block.z));
         for item in [log, tool].into_iter().chain(recipe.cells().into_iter().flatten()) {
             net.command(&format!("clear {}", short(&name(item))));
         }
-        gate.next(Step::LookUp, now);
+        gate.next(Step::Grind, now);
     };
     match gate.phase {
         // An empty hand by a standing log: whatever the earlier steps left of the log, the
@@ -5115,20 +5487,288 @@ fn flint(world: &mut World, gate: &mut Gate, now: f32) {
                 end(world, gate);
             }
         }
-        // Held, it fells the log, and the log comes to hand.
-        _ => {
-            let felled = world.resource::<ClientWorld>().block(block) != Some(log);
-            let got = holding(world, &name(log)).0;
-            if felled && got >= 1 {
+        // Held, it fells the log. Its drop pops out a block or so whichever way the server's
+        // tick throws it: the player steps onto where it stood, which every pop is in reach
+        // of (`dropped::pop_reach`).
+        4 => {
+            if world.resource::<ClientWorld>().block(block) != Some(log) {
                 mouse(world, MouseButton::Left, false);
-                gate.check("flint: felled", Ok(format!("held, the {} felled the {} and its log came to hand", name(tool), name(log))));
-                end(world, gate);
+                let onto = Vec3::new(block.x as f32 + 0.5, block.y as f32, block.z as f32 + 0.5);
+                world.resource::<Net>().command(&format!("tp {:.2} {:.2} {:.2}", onto.x, onto.y, onto.z));
+                gate.advance(now);
             } else if waited {
-                gate.check("flint: felled", Err(format!("holding {:?}, the {} at {block} felled {felled}, {got} logs carried; the crosshair was on {}, screens open {:?}", holding_any(world), name(log), crosshair_on(world), covering_screens(world))));
+                gate.check("flint: felled", Err(format!("holding {:?}, the {} at {block} still stands; the crosshair was on {}, screens open {:?}", holding_any(world), name(log), crosshair_on(world), covering_screens(world))));
                 end(world, gate);
             } else {
                 aim_at(world, block.as_vec3() + Vec3::splat(0.5));
                 mouse(world, MouseButton::Left, true);
+            }
+        }
+        // And the log comes to hand.
+        _ => {
+            let got = holding(world, &name(log)).0;
+            if got >= 1 {
+                gate.check("flint: felled", Ok(format!("held, the {} felled the {} and its log came to hand", name(tool), name(log))));
+                end(world, gate);
+            } else if waited {
+                let player = world.resource::<LocalPlayer>();
+                let middle = player.position + Vec3::Y * voxmar_engine::physics::player::HEIGHT / 2.0;
+                let lying: Vec<String> = world
+                    .resource::<crate::drops::Drops>()
+                    .lying()
+                    .filter(|(_, stack, _)| stack.item == log)
+                    .map(|(_, _, at)| format!("one lies at ({:.2}, {:.2}, {:.2}), {:.2} blocks from the player's middle (drawn in within {})", at.x, at.y, at.z, (at + Vec3::Y * voxmar_engine::dropped::SIZE / 2.0).distance(middle), voxmar_engine::dropped::MAGNET))
+                    .collect();
+                let lying = if lying.is_empty() { "none lies about".to_owned() } else { lying.join(", ") };
+                gate.check("flint: felled", Err(format!("the {} at {block} felled, no log carried, the player at ({:.2}, {:.2}, {:.2}); {lying}", name(log), player.position.x, player.position.y, player.position.z)));
+                end(world, gate);
+            }
+        }
+    }
+}
+
+/// Longest a grind stage may wait for the server.
+const GRIND_WAIT: f32 = 10.0;
+
+/// What a stone tool's head is ground from: the first recipe of something a tier-2 tool
+/// asks for that is made only `near` a block and only from toolstone, the toolstone it
+/// takes, and the block (with the tag) it is made near.
+fn ground_at(content: &voxmar_engine::content::Content) -> Option<(voxmar_engine::craft::Recipe, BlockId, BlockId, String)> {
+    let blocks = &content.blocks;
+    let tier_two = |b: BlockId| blocks.def(b).has_tag("tool") && blocks.def(b).has_tag("tier:2");
+    let wanted: Vec<BlockId> = content.recipes.iter().filter(|r| tier_two(r.output)).flat_map(|r| r.cells().into_iter().flatten()).collect();
+    let recipe = content.recipes.iter().find(|r| {
+        r.near.is_some() && wanted.contains(&r.output) && r.alternatives().into_iter().flatten().all(|cell| cell.iter().all(|&i| blocks.def(i).has_tag("toolstone")))
+    })?;
+    let tag = recipe.near.clone()?;
+    // What a player holds: the cobbles some natural toolstone breaks into.
+    let dropped = |item: BlockId| blocks.ids().any(|b| blocks.def(b).has_tag("natural") && blocks.def(b).has_tag("toolstone") && blocks.info(b).drops == item);
+    let stone = recipe.alternatives().into_iter().flatten().flatten().copied().find(|&item| dropped(item))?;
+    let workshop = blocks.tagged(&tag).find(|&b| !blocks.def(b).item)?;
+    Some((recipe.clone(), stone, workshop, tag))
+}
+
+/// The grind step: a grindstone set by the fire draws; the inventory open, the client finds
+/// it within reach, and a toolstone laid in the grid is ground there to a stone head.
+fn grind(world: &mut World, gate: &mut Gate, now: f32) {
+    let block = gate.feet + IVec3::new(0, 0, 14) + CHOP_FROM_FIRE;
+    let stand = Vec3::new(block.x as f32 + 0.5, block.y as f32, block.z as f32 - 2.5);
+    let waited = gate.server_in_phase() > GRIND_WAIT;
+    // As in the chop step: the client's own work is given up only once its seconds pass too.
+    let outwaited = waited && now - gate.phase_since > GRIND_WAIT;
+    let content = world.resource::<Launch>().content.clone();
+    let Some((recipe, stone, workshop, tag)) = ground_at(&content) else {
+        gate.check("grind", Err("no tier-2 tool in the loaded recipes asks for something ground near a block from toolstone".into()));
+        gate.next(Step::Rubble, now);
+        return;
+    };
+    let name = |b: BlockId| content.blocks.def(b).name.clone();
+    let short = |b: BlockId| name(b).strip_prefix("base:").unwrap_or(&name(b)).to_owned();
+    let end = |world: &mut World, gate: &mut Gate| {
+        world.resource_mut::<UiState>().inventory_open = false;
+        let net = world.resource::<Net>();
+        net.command(&format!("setblock {} {} {} air", block.x, block.y, block.z));
+        net.command(&format!("clear {}", short(stone)));
+        net.command(&format!("clear {}", short(recipe.output)));
+        gate.next(Step::Rubble, now);
+    };
+    match gate.phase {
+        // One toolstone in hand's reach and the workshop block set by the fire.
+        0 => {
+            let net = world.resource::<Net>();
+            net.command(&format!("clear {}", short(stone)));
+            net.command(&format!("clear {}", short(recipe.output)));
+            net.command(&format!("give {} 1", short(stone)));
+            // Stood off the cell first: the flint step ends with the player on it, and no block
+            // is set where a player stands.
+            net.command(&format!("tp {} {} {}", stand.x, stand.y, stand.z));
+            net.command(&format!("setblock {} {} {} {}", block.x, block.y, block.z, short(workshop)));
+            gate.advance(now);
+        }
+        1 => {
+            aim_at(world, block.as_vec3() + Vec3::splat(0.5));
+            let stood = world.resource::<ClientWorld>().block(block) == Some(workshop);
+            let there = world.resource::<LocalPlayer>().position.distance(stand) < 0.5;
+            let carried = holding(world, &name(stone)).0;
+            if stood && there && carried == 1 && drawn(world, block) && gate.shot(world, "grindstone").is_some() {
+                world.resource_mut::<UiState>().inventory_open = true;
+                gate.advance(now);
+            } else if outwaited {
+                let told: Vec<&str> = world.resource::<crate::hud::console::Console>().since(gate.phase_since).collect();
+                gate.check("grind", Err(format!("the {} ({stood}), the spot ({there}) or one {} (carried {carried}) never came, or it never drew, in {GRIND_WAIT} seconds; the server said {told:?}", name(workshop), name(stone))));
+                end(world, gate);
+            }
+        }
+        // Within reach by the client's own look, the toolstone is laid and crafted.
+        2 => {
+            if world.resource::<crate::hud::inventory::NearTags>().has(&tag) {
+                if lay_and_craft(world, &[(0, &name(stone))]) {
+                    gate.advance(now);
+                }
+            } else if outwaited {
+                gate.check("grind", Err(format!("with the inventory open the client never found the {} within reach in {GRIND_WAIT} seconds", name(workshop))));
+                end(world, gate);
+            }
+        }
+        _ => {
+            let made = holding(world, &name(recipe.output)).0;
+            let left = holding(world, &name(stone)).0;
+            let empty = world.resource::<LocalPlayer>().inventory.grid().iter().all(Option::is_none);
+            if made == recipe.count as u32 && left == 0 && empty {
+                gate.check("grind", Ok(format!("a {} by the fire draws; the client found it within reach, and a {} ground there gave {made} {}", name(workshop), name(stone), name(recipe.output))));
+                end(world, gate);
+            } else if waited {
+                gate.check("grind", Err(format!("a {} ground by the {} gave {made} {} (wanted {}; {left} left, grid emptied {empty}) in {GRIND_WAIT} server seconds", name(stone), name(workshop), name(recipe.output), recipe.count)));
+                end(world, gate);
+            }
+        }
+    }
+}
+
+/// Longest a rubble stage may wait for the server.
+const RUBBLE_WAIT: f32 = 10.0;
+
+/// What the rubble step breaks and knocks together: plain stone, which breaks into several
+/// of an item, a first-tier pickaxe, and a recipe of four of that item.
+fn rubble_of(content: &voxmar_engine::content::Content) -> Option<(BlockId, BlockId, BlockId, u8, voxmar_engine::craft::Recipe)> {
+    let blocks = &content.blocks;
+    let stone = blocks.id("base:stone")?;
+    let (loose, count) = (blocks.info(stone).drops, blocks.info(stone).drop_count);
+    let pickaxe = blocks.tagged("pickaxe").find(|&b| blocks.def(b).has_tag("tier:1"))?;
+    let recipe = content.recipes.iter().find(|r| {
+        let cells: Vec<BlockId> = r.cells().into_iter().flatten().collect();
+        cells.len() == 4 && cells.iter().all(|&c| c == loose)
+    })?;
+    (loose != stone && count > 1).then(|| (stone, loose, pickaxe, count, recipe.clone()))
+}
+
+/// The rubble step: at Mining 1 a first-tier pickaxe breaks a plain stone into its loose
+/// stones, which come to hand; four laid in the hand's grid knock together into cobblestone.
+fn rubble(world: &mut World, gate: &mut Gate, now: f32) {
+    let block = gate.feet + IVec3::new(0, 0, 14) + CHOP_FROM_FIRE;
+    // In the middle of a cell, one cell short of the stone: within reach of most of its pops.
+    let stand = Vec3::new(block.x as f32 + 0.5, block.y as f32, block.z as f32 - 1.5);
+    // What one break throws lies within this of the stone's middle.
+    let (middle, thrown) = (block.as_vec3() + Vec3::splat(0.5), voxmar_engine::dropped::pop_reach() + 1.0);
+    let waited = gate.server_in_phase() > RUBBLE_WAIT;
+    let content = world.resource::<Launch>().content.clone();
+    let Some((stone, loose, pickaxe, count, recipe)) = rubble_of(&content) else {
+        gate.check("rubble", Err("plain stone in the loaded blocks breaks into no several of an item four of which make something, or no pickaxe is of the first tier".into()));
+        gate.next(Step::LookUp, now);
+        return;
+    };
+    let name = |b: BlockId| content.blocks.def(b).name.clone();
+    let short = |b: BlockId| name(b).strip_prefix("base:").unwrap_or(&name(b)).to_owned();
+    let end = |world: &mut World, gate: &mut Gate| {
+        mouse(world, MouseButton::Left, false);
+        world.resource_mut::<UiState>().inventory_open = false;
+        let net = world.resource::<Net>();
+        net.command(&format!("setblock {} {} {} air", block.x, block.y, block.z));
+        for item in [loose, pickaxe, recipe.output] {
+            net.command(&format!("clear {}", short(item)));
+        }
+        gate.next(Step::LookUp, now);
+    };
+    match gate.phase {
+        // The pickaxe given at Mining 1, a plain stone set and the player stood before it.
+        0 => {
+            let net = world.resource::<Net>();
+            for item in [loose, pickaxe, recipe.output] {
+                net.command(&format!("clear {}", short(item)));
+            }
+            net.command(&format!("give {} 1", short(pickaxe)));
+            net.command("skill mining 1");
+            net.command(&format!("tp {} {} {}", stand.x, stand.y, stand.z));
+            net.command(&format!("setblock {} {} {} {}", block.x, block.y, block.z, short(stone)));
+            gate.advance(now);
+        }
+        // The stone seen standing: the cell was air before it (the grind step leaves it so).
+        1 => {
+            if world.resource::<ClientWorld>().block(block) == Some(stone) {
+                gate.advance(now);
+            } else if waited {
+                gate.check("rubble: broken", Err(format!("the {} set at {block} never stood there", name(stone))));
+                end(world, gate);
+            }
+        }
+        // Struck until it breaks. Each drop pops out a block or so whichever way the server's
+        // tick throws it, which can be past where a player before it draws things in: the
+        // player steps onto where it stood, which every pop is in reach of
+        // (`dropped::pop_reach`), so they come to hand.
+        2 => {
+            if world.resource::<ClientWorld>().block(block).is_some_and(|b| b.is_air()) {
+                mouse(world, MouseButton::Left, false);
+                let onto = Vec3::new(block.x as f32 + 0.5, block.y as f32, block.z as f32 + 0.5);
+                world.resource::<Net>().command(&format!("tp {:.2} {:.2} {:.2}", onto.x, onto.y, onto.z));
+                gate.advance(now);
+            } else if waited {
+                gate.check("rubble: broken", Err(format!("holding {:?}, the {} at {block} still stands", holding_any(world), name(stone))));
+                end(world, gate);
+            } else if world.resource::<ClientWorld>().block(block) == Some(stone) && select(world, &name(pickaxe)) {
+                aim_at(world, block.as_vec3() + Vec3::splat(0.5));
+                mouse(world, MouseButton::Left, true);
+            }
+        }
+        // The loose stones come to hand, and nothing else.
+        3 => {
+            let got = holding(world, &name(loose)).0;
+            if got >= u32::from(count) {
+                let made = holding(world, &name(recipe.output)).0;
+                let judged = if got == u32::from(count) && made == 0 {
+                    Ok(format!("the {} broke the {} into {got} {}", name(pickaxe), name(stone), name(loose)))
+                } else {
+                    Err(format!("the {} gave {got} {} and {made} {}, not {count} and none", name(stone), name(loose), name(recipe.output)))
+                };
+                gate.check("rubble: broken", judged);
+                // The rest of the four the recipe takes.
+                world.resource::<Net>().command(&format!("give {} {}", short(loose), 4u32.saturating_sub(got)));
+                gate.advance(now);
+            } else if !waited && gate.server_in_phase() > 2.0 && walk_to_lying(world, gate, loose, middle, thrown) {
+                // Popped out of reach: the player goes to them, as one would.
+            } else if waited {
+                // Where each loose stone lies, and how far from the player's middle against
+                // how near it must be to be drawn in.
+                let player = world.resource::<LocalPlayer>();
+                let middle = player.position + Vec3::Y * voxmar_engine::physics::player::HEIGHT / 2.0;
+                let lying: Vec<String> = world
+                    .resource::<crate::drops::Drops>()
+                    .lying()
+                    .filter(|(_, stack, _)| stack.item == loose)
+                    .map(|(_, stack, at)| format!("{} lie at ({:.2}, {:.2}, {:.2}), {:.2} blocks from the player's middle (drawn in within {})", stack.count, at.x, at.y, at.z, (at + Vec3::Y * voxmar_engine::dropped::SIZE / 2.0).distance(middle), voxmar_engine::dropped::MAGNET))
+                    .collect();
+                let lying = if lying.is_empty() { format!("no {} lies about", name(loose)) } else { lying.join(", ") };
+                gate.check("rubble: broken", Err(format!("the {} at {block} broke, {got} {} carried, the player at ({:.2}, {:.2}, {:.2}); {lying}", name(stone), name(loose), player.position.x, player.position.y, player.position.z)));
+                end(world, gate);
+            }
+        }
+        // Four laid in the hand's grid and crafted.
+        4 => {
+            if holding(world, &name(loose)).0 >= 4 {
+                let cells: Vec<(usize, String)> = recipe.cells().iter().enumerate().filter_map(|(cell, item)| item.map(|item| (cell, name(item)))).collect();
+                let laid: Vec<(usize, &str)> = cells.iter().map(|(cell, item)| (*cell, item.as_str())).collect();
+                if lay_and_craft(world, &laid) {
+                    gate.advance(now);
+                }
+            } else if !waited && gate.server_in_phase() > 2.0 && walk_to_lying(world, gate, loose, middle, thrown) {
+                // Any still lying about out of reach: the player goes to them.
+            } else if waited {
+                let free = world.resource::<LocalPlayer>().inventory.slots.iter().filter(|s| s.is_none()).count();
+                let lying: u32 = world.resource::<crate::drops::Drops>().lying().filter(|(_, stack, _)| stack.item == loose).map(|(_, stack, _)| u32::from(stack.count)).sum();
+                let told: Vec<&str> = world.resource::<crate::hud::console::Console>().since(gate.phase_since).collect();
+                gate.check("rubble: knocked together", Err(format!("four {} never came to hand: carried {}, {lying} lying about, {free} slots free; the server said {told:?}", name(loose), holding(world, &name(loose)).0)));
+                end(world, gate);
+            }
+        }
+        _ => {
+            let made = holding(world, &name(recipe.output)).0;
+            let left = holding(world, &name(loose)).0;
+            let grid = world.resource::<LocalPlayer>().inventory.grid().iter().all(Option::is_none);
+            if made == u32::from(recipe.count) && left == 0 && grid {
+                gate.check("rubble: knocked together", Ok(format!("four {} in the hand's grid made {made} {}", name(loose), name(recipe.output))));
+                end(world, gate);
+            } else if waited {
+                gate.check("rubble: knocked together", Err(format!("four {} in the grid gave {made} {} (wanted {}; {left} left, grid emptied {grid})", name(loose), name(recipe.output), recipe.count)));
+                end(world, gate);
             }
         }
     }
@@ -5319,7 +5959,7 @@ fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
     let rice = world.resource::<ClientWorld>().registry.id("base:rice");
     let Some(rice) = rice else {
         gate.check("refusal", Err("no rice in the content".into()));
-        gate.next(Step::Merged, now);
+        gate.next(Step::Reap, now);
         return;
     };
     match gate.phase {
@@ -5356,7 +5996,7 @@ fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 _ if gate.server_in_phase() > UNANSWERED => {
                     let at = if posed { "stood at the feet".to_owned() } else { unsettled(world, gate) };
                     gate.check("refusal", Err(format!("the farmland ({tilled}), Farming 10 ({level}) or rice in the hotbar never came, or {at}")));
-                    gate.next(Step::Merged, now);
+                    gate.next(Step::Reap, now);
                 }
                 (ready, slot) => {
                     if gate.frames % 120 == 0 {
@@ -5564,7 +6204,130 @@ fn refusal(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             net.command("clear well");
             net.command(&format!("setblock {} {} {} air", well.x, well.y, well.z));
             net.command(&format!("setblock {} {} {} dirt", plot.x, plot.y, plot.z));
-            gate.next(Step::Merged, now);
+            gate.next(Step::Reap, now);
+        }
+    }
+}
+
+/// The middle of the patch `reap` cuts, from the test ground's middle: nine wheat on the
+/// dirt `refusal` laid, two blocks ahead of where the player stands to cut, so the look
+/// down to the middle passes over the near row.
+const REAP_AT: IVec3 = IVec3::new(-2, 0, 3);
+const REAP_STAND: IVec3 = IVec3::new(-2, 0, 1);
+/// Longest the reap step waits on one answer, in seconds of the server's clock and the game's.
+const REAP_WAIT: f32 = 8.0;
+
+/// A patch of nine ripe wheat cut in the middle with a stone hoe: the hoe's tooltip line
+/// says it reaps a three by three patch, and the cut takes all nine on the client and the
+/// server alike (`reap:1` in blocks_tools.ron).
+fn reap(world: &mut World, gate: &mut Gate, now: f32) {
+    let (centre, stand) = (gate.feet + REAP_AT, gate.feet + REAP_STAND);
+    let cells: Vec<IVec3> = (-1..=1).flat_map(|dx| (-1..=1).map(move |dz| centre + IVec3::new(dx, 0, dz))).collect();
+    // Given up on only once the server's seconds and the game's have both passed.
+    let waited = gate.server_in_phase() > REAP_WAIT && now - gate.phase_since > REAP_WAIT;
+    let content = world.resource::<Launch>().content.clone();
+    let (ripe, hoe) = (content.blocks.id("base:wheat_crop"), content.blocks.id("base:stone_hoe"));
+    let end = |world: &mut World, gate: &mut Gate| {
+        mouse(world, MouseButton::Left, false);
+        let net = world.resource::<Net>();
+        let (low, high) = (centre - IVec3::new(1, 1, 1), centre + IVec3::new(1, 0, 1));
+        net.command(&format!("fill {} {} {} {} {} {} air", low.x, centre.y, low.z, high.x, high.y, high.z));
+        net.command(&format!("fill {} {} {} {} {} {} dirt", low.x, low.y, low.z, high.x, low.y, high.z));
+        for item in ["stone_hoe", "wheat", "wheat_seeds"] {
+            net.command(&format!("clear {item}"));
+        }
+        if let (Some(home), Some(observer)) = (gate.observer_home.take(), gate.observer.as_mut()) {
+            observer.connection.send(ClientMessage::Command { line: format!("tp {} {} {}", home.x, home.y, home.z) });
+        }
+        gate.next(Step::Merged, now);
+    };
+    let (Some(ripe), Some(hoe)) = (ripe, hoe) else {
+        gate.check("reap", Err("no ripe wheat or stone hoe in the content".into()));
+        end(world, gate);
+        return;
+    };
+    let standing = |side: &dyn Fn(IVec3) -> Option<BlockId>| cells.iter().filter(|&&cell| side(cell) == Some(ripe)).count();
+    match gate.phase {
+        0 => {
+            let net = world.resource::<Net>();
+            let (low, high) = (centre - IVec3::new(2, 1, 3), centre + IVec3::new(2, 3, 2));
+            for line in [
+                format!("fill {} {} {} {} {} {} dirt", low.x, low.y, low.z, high.x, low.y, high.z),
+                format!("fill {} {} {} {} {} {} air", low.x, centre.y, low.z, high.x, high.y, high.z),
+                format!("fill {} {} {} {} {} {} farmland", centre.x - 1, centre.y - 1, centre.z - 1, centre.x + 1, centre.y - 1, centre.z + 1),
+                format!("fill {} {} {} {} {} {} wheat_crop", centre.x - 1, centre.y, centre.z - 1, centre.x + 1, centre.y, centre.z + 1),
+                "clear stone_hoe".to_owned(),
+                "give stone_hoe 1".to_owned(),
+                format!("tp {} {} {}", stand.x as f32 + 0.5, stand.y, stand.z as f32 + 0.5),
+            ] {
+                net.command(&line);
+            }
+            // The observer over the patch, high up: floating over its own spawn, the patch's
+            // column may be beyond what is streamed to it (on the Mac's world it saw none of
+            // the nine the client did). Put back when the step ends.
+            if let Some(observer) = gate.observer.as_mut() {
+                gate.observer_home = observer.position;
+                observer.connection.send(ClientMessage::Command { line: format!("tp {} {} {}", centre.x as f32 + 0.5, centre.y + 40, centre.z as f32 + 0.5) });
+            }
+            gate.advance(now);
+        }
+        1 => {
+            let client = standing(&|p| world.resource::<ClientWorld>().block(p));
+            let server = gate.observer.as_ref().map_or(9, |o| standing(&|p| o.world.block(p)));
+            let there = world.resource::<LocalPlayer>().position.distance(stand.as_vec3() + Vec3::new(0.5, 0.0, 0.5)) < 0.5;
+            let has = world.resource::<LocalPlayer>().inventory.slots.iter().flatten().any(|s| s.item == hoe);
+            if has {
+                hold(world, Holder::Tool(hoe));
+            }
+            let player = world.resource::<LocalPlayer>();
+            let held = player.inventory.get(player.selected).map(|s| s.item) == Some(hoe);
+            if client == 9 && server == 9 && there && held {
+                let said = crate::hud::inventory::reap_line(world.resource::<Locale>(), &content, hoe).map(|(line, _)| line);
+                let wanted = world.resource::<Locale>().format("item.reaps", &[("side", &3)]);
+                if said.as_deref() != Some(wanted.as_str()) {
+                    gate.check("reap", Err(format!("the stone hoe's tooltip says {said:?}, not \"{wanted}\"")));
+                    end(world, gate);
+                    return;
+                }
+                gate.advance(now);
+            } else if waited {
+                let loaded = gate.observer.as_ref().map_or(9, |o| cells.iter().filter(|&&p| o.world.block(p).is_some()).count());
+                gate.check("reap", Err(format!("of nine ripe wheat {client} stood on the client and {server} on the server ({loaded} of the nine cells streamed to the observer), the spot ({there}) or the stone hoe in hand ({has}, {held}) never came in {REAP_WAIT} seconds")));
+                end(world, gate);
+            }
+        }
+        2 => {
+            // Into the middle crop's top, past the near row: a crop is hit as its whole cell,
+            // and from the eye (1.62 up, 1.5 cells back of the near row's far side) a ray to
+            // the middle's y 0.6 crossed that side at y 0.86, inside the near crop's cell.
+            // Aimed at y 0.95, 0.8 into the middle cell, it crosses there at 1.18 and comes
+            // down into the middle crop's top 0.63 in.
+            aim_at(world, centre.as_vec3() + Vec3::new(0.5, 0.95, 0.8));
+            let aimed = world.resource::<crate::interact::Target>().hit.as_ref().map(|hit| hit.block);
+            if world.resource::<ClientWorld>().block(centre).is_some_and(|b| b.is_air()) {
+                mouse(world, MouseButton::Left, false);
+                gate.advance(now);
+            } else if waited {
+                gate.check("reap", Err(format!("the middle wheat at {centre} never broke with a stone hoe in hand in {REAP_WAIT} seconds (aimed at {aimed:?})")));
+                end(world, gate);
+            } else {
+                mouse(world, MouseButton::Left, aimed == Some(centre));
+            }
+        }
+        _ => {
+            mouse(world, MouseButton::Left, false);
+            let server = gate.observer.as_ref().map_or(0, |o| cells.iter().filter(|&&cell| !o.world.block(cell).is_some_and(|b| b.is_air())).count());
+            let client_left = cells.iter().filter(|&&cell| !world.resource::<ClientWorld>().block(cell).is_some_and(|b| b.is_air())).count();
+            if client_left == 0 && server == 0 {
+                if gate.shot(world, "reaped").is_none() {
+                    return;
+                }
+                gate.check("reap", Ok("the stone hoe says it reaps a 3×3 patch, and one cut in the middle of nine ripe wheat took all nine on both sides (shot `reaped`)".into()));
+                end(world, gate);
+            } else if waited {
+                gate.check("reap", Err(format!("one cut with a stone hoe left {client_left} of nine ripe wheat on the client and {server} on the server in {REAP_WAIT} seconds")));
+                end(world, gate);
+            }
         }
     }
 }
@@ -6626,9 +7389,11 @@ const WALLS_WAIT: f32 = 8.0;
 /// Walls make the home. About the camp the Home step left (the bag home, a torch beside it),
 /// a hearthstone and a second torch, and a plank roof over the room: open to the outside it
 /// is Hearthside, and `/home` names the walls it lacks; walled in with planks (sound), two
-/// of them hide windows, it turns Snug and is a bright room. Then, set to midnight (`/time`,
-/// no waiting for dark), indoors by the hearth it is an evening in, and noon again after.
-/// All of it goes again after, the camp left for the way home.
+/// of them hide windows, a rug and a hanging within, it turns Snug, a bright room and soft
+/// furnishings. Then a curtain hung inside a pane is drawn back by a right click; set to
+/// midnight (`/time`, no waiting for dark), indoors by the hearth it is an evening in, and
+/// noon again after; with the roof off, an awning, a bench and a hay bale set out about it, a
+/// dooryard. All of it goes again after, the camp left for the way home.
 fn home_walls(world: &mut World, gate: &mut Gate, now: f32) {
     let waited = gate.server_in_phase();
     let Some(bag) = world.resource::<LocalPlayer>().vitals.home else {
@@ -6641,6 +7406,13 @@ fn home_walls(world: &mut World, gate: &mut Gate, now: f32) {
     let (low, high) = (bag + IVec3::new(-5, 0, -3), bag + IVec3::new(3, 3, 3));
     let (hearth, light) = (bag + IVec3::new(0, 0, 2), bag + IVec3::new(-3, 0, -2));
     let panes = [IVec3::new(bag.x - 1, bag.y + 1, low.z), IVec3::new(bag.x + 1, bag.y + 1, low.z)];
+    // A rug by the hearth and a hanging inside the west wall: soft furnishings.
+    let soft = [(bag + IVec3::new(-1, 0, 1), "red_rug"), (bag + IVec3::new(-4, 1, 0), "red_wall_hanging")];
+    // A curtain hung inside the first pane, drawn across, then drawn back by a right click.
+    let curtain = panes[0] + IVec3::Z;
+    // The yard, set out in the room once its roof is off: an awning over the stand's corner,
+    // a bench and a hay bale under the open sky.
+    let yard = [(bag + IVec3::new(-2, 2, -2), "red_awning"), (bag + IVec3::new(1, 0, -2), "oak_bench"), (bag + IVec3::new(2, 0, 1), "hay_bale")];
     let walls = |net: &Net, block: &str| {
         for (a, b) in [
             (low, IVec3::new(low.x, high.y, high.z)),
@@ -6656,11 +7428,20 @@ fn home_walls(world: &mut World, gate: &mut Gate, now: f32) {
         let net = world.resource::<Net>();
         walls(net, "air");
         roof(net, "air");
-        for at in [hearth, light] {
+        for at in [hearth, light, curtain].into_iter().chain(soft.map(|(at, _)| at)).chain(yard.map(|(at, _)| at)) {
             net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
         }
         net.command("effect clear");
         gate.next(Step::WayHome, now);
+    };
+    // Midnight, and the curtain hung drawn across the pane with a right click to draw it
+    // back: the server swaps it, as a door.
+    let to_midnight = |world: &mut World| {
+        world.resource::<Net>().command("time set midnight");
+        world.resource::<Net>().command(&format!("setblock {} {} {} red_curtain", curtain.x, curtain.y, curtain.z));
+        aim_at(world, curtain.as_vec3() + Vec3::splat(0.5));
+        let actions = world.resource::<crate::Actions>().0.clone();
+        world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("base:open"), voxmar_engine::action::ActionTarget::Block { block: curtain, face: voxmar_engine::coords::Face::PosZ });
     };
     let has = |world: &World, name: &str| {
         let (player, launch) = (world.resource::<LocalPlayer>(), world.resource::<Launch>());
@@ -6697,37 +7478,66 @@ fn home_walls(world: &mut World, gate: &mut Gate, now: f32) {
                 for pane in panes {
                     net.command(&format!("setblock {} {} {} hide_window", pane.x, pane.y, pane.z));
                 }
+                for (at, block) in soft {
+                    net.command(&format!("setblock {} {} {} {block}", at.x, at.y, at.z));
+                }
                 gate.advance(now);
             } else if gate.waited_out(WALLS_WAIT) {
                 gate.check("home: walls", Err(format!("{waited:.1} server s on, roofed but open to the outside: Hearthside {hearthside}, Snug {snug} (want Hearthside alone), /home asked for \"{wanted}\" walls {asked}; lines since: {lines:?}")));
                 leave(world, gate);
             }
         }
-        // Walled in with planks, two of them hide windows: Snug, and a bright room.
+        // Walled in with planks, two of them hide windows, a rug and a hanging within: Snug, a
+        // bright room and soft furnishings.
         2 => {
-            let (snug, bright) = (has(world, "base:snug"), has(world, "base:bright_room"));
-            if snug && bright {
+            let (snug, bright, cushioned) = (has(world, "base:snug"), has(world, "base:bright_room"), has(world, "base:soft_furnishings"));
+            if snug && bright && cushioned {
                 gate.check("home: walls", Ok("roofed but open, the camp with its hearth stayed Hearthside and /home asked for walls; walled in with planks it turned Snug".into()));
                 gate.check("home: bright room", Ok("two hide windows in the planked walls under the roof showed the Bright room chip".into()));
-                world.resource::<Net>().command("time set midnight");
+                gate.check("home: soft furnishings", Ok("a rug and a wall hanging in the walled room showed the Soft furnishings chip".into()));
+                to_midnight(world);
                 gate.advance(now);
             } else if gate.waited_out(WALLS_WAIT) {
                 gate.check("home: walls", if snug { Ok("roofed but open, the camp with its hearth stayed Hearthside and /home asked for walls; walled in with planks it turned Snug".into()) } else { Err(format!("{waited:.1} server s after walling the room in with planks ({low} to {high}), no Snug: Hearthside {}", has(world, "base:hearthside"))) });
-                gate.check("home: bright room", Err(format!("{waited:.1} server s after two hide windows at {panes:?} in the walled room: Bright room chip {bright}")));
-                leave(world, gate);
+                gate.check("home: bright room", if bright { Ok("two hide windows in the planked walls under the roof showed the Bright room chip".into()) } else { Err(format!("{waited:.1} server s after two hide windows at {panes:?} in the walled room: Bright room chip {bright}")) });
+                gate.check("home: soft furnishings", if cushioned { Ok("a rug and a wall hanging in the walled room showed the Soft furnishings chip".into()) } else { Err(format!("{waited:.1} server s after a rug and a hanging at {soft:?} in the walled room: Soft furnishings chip {cushioned}")) });
+                if snug {
+                    // The rest still judged: on to the curtain, midnight and the evening in.
+                    to_midnight(world);
+                    gate.advance(now);
+                } else {
+                    leave(world, gate);
+                }
             }
         }
-        // At midnight, indoors at home by the hearth: an evening in, its chip, and its line
-        // (told once a session, so seen at any point in the run).
-        _ => {
+        // The curtain drawn back, as the server turned it, and at midnight, indoors at home
+        // by the hearth, an evening in, its chip, and its line (told once a session, so seen
+        // at any point in the run): one wait for both, so the step keeps its headroom. Then
+        // noon, the roof off, and the yard set out.
+        3 => {
+            let client = world.resource::<ClientWorld>();
+            let shown = client.block(curtain).map(|b| client.registry.def(b).name.clone());
+            let drawn = shown.as_deref() == Some("base:red_curtain_open");
             let (evening, told) = (has(world, "base:evening_in"), gate.evening_told);
-            if evening && told {
-                gate.check("home: evening in", Ok("set to midnight, indoors at home by the hearth showed the Evening in chip, and the chat has named it".into()));
-                world.resource::<Net>().command("time set noon");
+            if (drawn && evening && told) || gate.waited_out(WALLS_WAIT) {
+                gate.check("home: curtain", if drawn { Ok("a curtain hung drawn across a window inside the room was drawn back by a right click, as the server turned it".into()) } else { Err(format!("{waited:.1} server s after hanging a curtain at {curtain} and a right click on it, the client shows {shown:?}")) });
+                gate.check("home: evening in", if evening && told { Ok("set to midnight, indoors at home by the hearth showed the Evening in chip, and the chat has named it".into()) } else { Err(format!("{waited:.1} server s after /time set midnight in the walled room by the hearth: Evening in chip {evening}, line told this run {told}")) });
+                let net = world.resource::<Net>();
+                net.command("time set noon");
+                roof(net, "air");
+                for (at, block) in yard {
+                    net.command(&format!("setblock {} {} {} {block}", at.x, at.y, at.z));
+                }
+                gate.advance(now);
+            }
+        }
+        // Under the sky again, an awning, a bench and a bale about the home: a dooryard.
+        _ => {
+            if has(world, "base:dooryard") {
+                gate.check("home: dooryard", Ok("the roof off, an awning, a bench and a hay bale set out about the home showed the Dooryard chip".into()));
                 leave(world, gate);
             } else if gate.waited_out(WALLS_WAIT) {
-                gate.check("home: evening in", Err(format!("{waited:.1} server s after /time set midnight in the walled room by the hearth: Evening in chip {evening}, line told this run {told}")));
-                world.resource::<Net>().command("time set noon");
+                gate.check("home: dooryard", Err(format!("{waited:.1} server s after taking the roof off and setting out {yard:?}: Dooryard chip false, Evening in {}", has(world, "base:evening_in"))));
                 leave(world, gate);
             }
         }
@@ -7363,7 +8173,8 @@ fn step_up(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 
 /// The Can Make list under the inventory's slots, played: a log shows planks ready, ready
 /// ones first; clicking them lays the log in the grid (the server's `core:lay`); pointed at,
-/// the stone pickaxe's line says what stands in its way, in the list's own words.
+/// the stone pickaxe's line says what stands in its way, in the list's own words; with all a
+/// pit kiln wants, its line says it opens in the Farm age.
 fn makeable(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     use crate::hud::makeable::{Drawn, MakeCell, Reach};
     let waited = gate.server_in_phase();
@@ -7390,8 +8201,8 @@ fn makeable(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     match gate.phase {
         0 => {
             let net = world.resource::<Net>();
-            // Its own pack: one log and three cobblestone, whatever earlier steps left.
-            for line in ["clear oak_log", "give oak_log 1", "clear cobblestone", "give cobblestone 3"] {
+            // Its own pack: one log and three stone heads, whatever earlier steps left.
+            for line in ["clear oak_log", "give oak_log 1", "clear stone_head", "give stone_head 3"] {
                 net.command(line);
             }
             // As many as one go of the alloy holds, and none of what goes with it.
@@ -7455,10 +8266,10 @@ fn makeable(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             }
         }
         // Pointed at, the stone pickaxe says what it still wants.
-        _ => {
+        3 => {
             let Some(cell) = cell_of(world, pickaxe) else {
                 if in_phase > 2.0 {
-                    gate.check("make: wants", Err(format!("{in_phase:.1} s on, with three cobblestone the stone pickaxe is not on the list")));
+                    gate.check("make: wants", Err(format!("{in_phase:.1} s on, with three stone heads the stone pickaxe is not on the list")));
                     leave(world, gate);
                 }
                 return;
@@ -7481,7 +8292,43 @@ fn makeable(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 return;
             }
             gate.check("make: wants", Ok(format!("pointed at, the stone pickaxe reads {line:?}")));
-            leave(world, gate);
+            // A pit kiln's all: four cobblestone round a campfire.
+            let net = world.resource::<Net>();
+            // Its own four, whatever earlier steps left: stone breaks to loose stone now, so
+            // none may be held.
+            for line in ["clear cobblestone", "give cobblestone 4", "clear campfire", "give campfire 1"] {
+                net.command(line);
+            }
+            gate.advance(now);
+        }
+        // With all a pit kiln wants, its line says it opens in the Farm age, before the
+        // Farm age's rite: the server refuses it there too.
+        _ => {
+            let finish = |world: &mut World, gate: &mut Gate| {
+                world.resource::<Net>().command("clear campfire");
+                leave(world, gate);
+            };
+            let kiln = world.resource::<ClientWorld>().registry.id("base:pit_kiln");
+            let cell = kiln.and_then(|kiln| cell_of(world, kiln));
+            let reach = kiln.and_then(|kiln| world.resource::<Drawn>().0.iter().find(|m| m.output == kiln).map(|m| m.reach.clone()));
+            let (Some(kiln), Some(cell), Some(reach @ Reach::Age(_))) = (kiln, cell, reach.clone()) else {
+                if waited > QUEST_WAIT && in_phase > QUEST_WAIT {
+                    let campfires = holding(world, "base:campfire").0;
+                    gate.check("make: age", Err(format!("{waited:.1} server s on, holding {} cobblestone and {campfires} campfire, the pit kiln shows {reach:?}, a cell for it {}", holding(world, "base:cobblestone").0, cell.is_some())));
+                    finish(world, gate);
+                }
+                return;
+            };
+            world.resource_mut::<UiClicks>().hover = Some(cell);
+            let wanted = crate::hud::makeable::words(world.resource::<Locale>(), &world.resource::<Launch>().content, kiln, &reach);
+            let line = world.query_filtered::<&Text, With<crate::hud::makeable::MakeLine>>().iter(world).next().map(|t| t.0.clone()).unwrap_or_default();
+            if line == wanted && in_phase >= 0.3 {
+                gate.check("make: age", Ok(format!("all a pit kiln wants held, it reads {line:?}")));
+                finish(world, gate);
+            } else if waited > QUEST_WAIT && in_phase > QUEST_WAIT {
+                gate.check("make: age", Err(format!("pointed at, the pit kiln's line reads {line:?}, not {wanted:?}")));
+                finish(world, gate);
+            }
         }
     }
 }
@@ -7678,7 +8525,17 @@ fn nest(world: &mut World, gate: &mut Gate, now: f32) {
                 gate.advance(now);
             } else if waited > 15.0 {
                 let open = world.resource::<LocalPlayer>().inventory.store.is_some();
-                gate.check("home: nest", Err(format!("{waited:.1} server s after the hen's egg was made due: {laid} eggs in the barrel (open {open}), told {told}")));
+                // Where else an egg went: laid on the ground, or into the pack.
+                let egg = world.resource::<ClientWorld>().registry.id("base:egg");
+                let lying: Vec<String> = world
+                    .resource::<crate::drops::Drops>()
+                    .lying()
+                    .filter(|(_, stack, _)| Some(stack.item) == egg)
+                    .map(|(_, stack, at)| format!("{} lie at ({:.1}, {:.1}, {:.1})", stack.count, at.x, at.y, at.z))
+                    .collect();
+                let carried = holding(world, "base:egg").0;
+                let lying = if lying.is_empty() { "no egg lies about".to_owned() } else { lying.join(", ") };
+                gate.check("home: nest", Err(format!("{waited:.1} server s after the hen's egg was made due: {laid} eggs in the barrel (open {open}), told {told}; {lying}, {carried} carried; the home at {bag}, the barrel at {barrel}")));
                 gate.check("home: storage", if pantry { Ok("a chest and a barrel by a campfire made a Pantry".into()) } else { Err(format!("{waited:.1} server s on, a chest and a barrel by a campfire at home made no Pantry: the chest did not count as storage")) });
                 leave(world, gate);
             }
@@ -8171,6 +9028,71 @@ fn lay_done(world: &mut World, barrel: IVec3) {
     net.command("give oak_planks 64");
 }
 
+/// The quests a newcomer meets first: the Nomad's way to its lit hearth, and the Farm's
+/// opening ones after it.
+const NEWCOMER_GOAL: &str = "base:homestead_hearth";
+
+/// What a newcomer following only the quest book could not find on the way to the lit
+/// hearth and through the Farm's first quests: an item a goal asks for that has no recipe
+/// in the book and that neither its quest's words nor those of a quest before it name, or a
+/// creature none of them name. Each as "quest: thing".
+pub fn newcomer_misses(content: &voxmar_engine::content::Content, locale: &Locale) -> Vec<String> {
+    let quests = &content.quests;
+    // The way to the hearth, every quest before it, then the Farm quests that open with it.
+    let mut opening: Vec<&str> = Vec::new();
+    let mut todo = vec![NEWCOMER_GOAL];
+    while let Some(name) = todo.pop() {
+        if opening.contains(&name) {
+            continue;
+        }
+        opening.push(name);
+        todo.extend(quests.get(name).iter().flat_map(|q| q.after.iter().map(String::as_str)));
+    }
+    opening.extend(quests.iter().filter(|q| q.after.iter().any(|a| a == NEWCOMER_GOAL)).map(|q| q.name.as_str()));
+    unexplained(content, locale, &opening)
+}
+
+/// Of `names`, what a quest asks for that the book cannot make and its words, or those of a
+/// quest before it, do not name (`newcomer_misses`).
+pub fn unexplained(content: &voxmar_engine::content::Content, locale: &Locale, names: &[&str]) -> Vec<String> {
+    use voxmar_engine::quest::Goal;
+    let quests = &content.quests;
+    let book = voxmar_engine::recipe_book::RecipeBook::new(content);
+    let opening = names;
+    let words = |name: &str| quests.get(name).map(|q| locale.get_or(&format!("{}.why", voxmar_engine::lang::def_key("quest", &q.name)), &q.why).to_lowercase()).unwrap_or_default();
+    let mut misses = Vec::new();
+    for &name in opening {
+        let Some(quest) = quests.get(name) else { continue };
+        // Its own words and those of every quest it waits on.
+        let mut told = words(name);
+        let mut before: Vec<&str> = quest.after.iter().map(String::as_str).collect();
+        while let Some(earlier) = before.pop() {
+            told.push_str(&words(earlier));
+            before.extend(quests.get(earlier).iter().flat_map(|q| q.after.iter().map(String::as_str)));
+        }
+        for goal in quest.tasks.iter().flatten() {
+            let (thing, made) = match goal {
+                Goal::Craft(item, _) | Goal::Cook(item, _) | Goal::CookAt(item, _, _) | Goal::Have(item, _) | Goal::Pick(item, _) | Goal::Mine(item, _) | Goal::Placed(item, _) | Goal::CraftNear(item, _, _) | Goal::LookUp(item) => {
+                    let Some(id) = content.blocks.id(item) else { continue };
+                    // A crop or plant picked is found by what it gives (wheat for wheat crop).
+                    let gives = content.blocks.info(id).drops;
+                    let named = matches!(goal, Goal::Pick(..)) && !gives.is_air() && told.contains(&locale.block(content.blocks.def(gives)).to_lowercase());
+                    (locale.block(content.blocks.def(id)), named || !book.making(id).is_empty())
+                }
+                Goal::Kill(creature, _) | Goal::Tame(creature, _) | Goal::Lured(creature, _) | Goal::Trapped(creature, _) => {
+                    let Some(id) = content.creatures.find(creature) else { continue };
+                    (locale.creature(&content.creatures.get(id).def), false)
+                }
+                _ => continue,
+            };
+            if !made && !told.contains(&thing.to_lowercase()) {
+                misses.push(format!("{name}: {thing}"));
+            }
+        }
+    }
+    misses
+}
+
 /// The torch quest the tracker follows, and the quest it sees done.
 const TRACKED: &str = "base:torchlight";
 const DONE_QUEST: &str = "base:crafting_table";
@@ -8324,6 +9246,10 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         // Ten twine, from fifteen wheat in three stacks of five, to finish Twine and Thong, so
         // the book shows a quest done and the line out of it gold.
         0 => {
+            // The way to the lit hearth and the Farm's opening quests, followed by their words
+            // and the recipe book alone: nothing they ask for is left unexplained.
+            let misses = newcomer_misses(&world.resource::<Launch>().content, world.resource::<Locale>());
+            gate.check("quests: a newcomer's way", if misses.is_empty() { Ok("every item and creature the opening quests ask for has a recipe or is named in their words".into()) } else { Err(format!("not found from the quest words or the book: {}", misses.join(", "))) });
             world.resource_mut::<crate::settings::Settings>().pinned_quests.clear();
             let net = world.resource::<Net>();
             net.command("clear wheat");
@@ -8373,6 +9299,11 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             };
             let nodes = world.query_filtered::<(), With<Button>>().iter(world).count();
             gate.check("quests: book", Ok(format!("L opened the quest book on {picked} ({nodes} buttons drawn)")));
+            // Each capstone drawn carries the gold mark the rites point to, and no other quest.
+            let shown: Vec<String> = world.query::<&crate::hud::quests::QuestNode>().iter(world).map(|n| n.0.clone()).collect();
+            let capstones = shown.iter().filter(|name| world.resource::<Launch>().content.quests.get(name).is_some_and(|q| q.capstone)).count();
+            let marks = world.query_filtered::<(), With<crate::hud::quests::CapstoneMark>>().iter(world).count();
+            gate.check("quests: capstones", if capstones > 0 && marks == capstones { Ok(format!("{marks} capstones of {} quests drawn carry the gold mark", shown.len())) } else { Err(format!("{marks} gold marks for {capstones} capstones among {} quests drawn", shown.len())) });
             let words = road_words(world);
             gate.check("quests: road words", words);
             gate.advance(now);
@@ -8551,8 +9482,8 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 return;
             };
             // The book as it stands with a reward waiting: the web filling most of the
-            // window, the picked quest's page in the sidebar at the right with its Claim
-            // button and its rewards.
+            // window, the picked quest's card over its right side with its Claim button and
+            // its rewards.
             if in_phase < 0.5 || gate.shot(world, "quests-claim").is_none() {
                 return;
             }
@@ -8989,8 +9920,20 @@ enum View {
 }
 
 /// What the text-fit tour looks up in the recipe viewer, and whether its uses: a crafted
-/// item, an ingredient, and a creature's product with a range of amounts.
-const FIT_LOOKUPS: [(&str, bool); 4] = [("base:campfire", false), ("base:oak_log", true), ("base:wool", false), ("base:cooked_small_game", false)];
+/// item, an ingredient (with the quests asking for it), a creature's product with a range
+/// of amounts, a cooked dish, a machine's, a home station's, what breaking gravel gives now
+/// and then, a harvest and a catch.
+const FIT_LOOKUPS: [(&str, bool); 9] = [
+    ("base:campfire", false),
+    ("base:oak_log", true),
+    ("base:wool", false),
+    ("base:cooked_small_game", false),
+    ("base:iron_dust", false),
+    ("base:jerky", false),
+    ("base:flint", false),
+    ("base:wheat", false),
+    ("base:raw_perch", false),
+];
 
 /// The languages the text-fit tour checks, and how long it leaves each view to lay out.
 const FIT_LANGUAGES: [&str; 2] = ["en", "ja"];
@@ -9034,12 +9977,18 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let views: Vec<View> = if gate.step == Step::FitJournal {
         (0..voxmar_engine::journal::Page::ALL.len()).map(View::Journal).collect()
     } else if gate.step == Step::FitSmall {
-        vec![View::Inventory, View::Character, View::Prayers, View::Journal(0), View::Quests, View::FirstNight, View::Menu(0)]
+        [View::Inventory]
+            .into_iter()
+            .chain((0..FIT_LOOKUPS.len()).map(View::Recipes))
+            .chain([View::Character, View::Prayers, View::Journal(0), View::Quests, View::FirstNight, View::Menu(0)])
+            .collect()
     } else if gate.step == Step::FitMenus {
         [View::Title, View::Worlds, View::Create, View::Join].into_iter().chain((0..crate::settings::TABS).map(View::Settings)).collect()
     } else {
-        [View::Hud, View::Debug, View::Tracker, View::Dead, View::Console, View::Inventory, View::Recipes(0), View::Recipes(1), View::Recipes(2), View::Recipes(3), View::Character, View::Prayers]
+        [View::Hud, View::Debug, View::Tracker, View::Dead, View::Console, View::Inventory]
             .into_iter()
+            .chain((0..FIT_LOOKUPS.len()).map(View::Recipes))
+            .chain([View::Character, View::Prayers])
             .chain((0..skills).map(View::Guide))
             .chain([View::Quests, View::FirstNight])
             .chain((0..crate::settings::TABS).map(View::Menu))
@@ -9071,9 +10020,9 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         if !menus {
             let blocked = std::mem::take(&mut gate.keys_blocked);
             let result = if blocked.is_empty() {
-                Ok(format!("the keys under every screen are clear of it and of the HUD on {} views in {}", views.len(), FIT_LANGUAGES.join(" and ")))
+                Ok(format!("the bar of keys is clear of every screen and of the HUD on {} views in {}", views.len(), FIT_LANGUAGES.join(" and ")))
             } else {
-                Err(format!("{} times the keys under a screen run into something: {}", blocked.len(), blocked.join("; ")))
+                Err(format!("{} times the bar of keys runs into something: {}", blocked.len(), blocked.join("; ")))
             };
             gate.check(if journal { "keys clear: journal" } else if small { "keys clear: 1280x720" } else { "keys clear" }, result);
         }
@@ -9185,20 +10134,21 @@ fn retarget(world: &mut World, gate: &mut Gate, size: UVec2) {
     state.apply(world);
 }
 
-/// What the keys under the screen shown run into: a panel of the screen beside them, or
-/// anything drawn along the bottom by the HUD, which stays in sight with a screen open.
+/// What the bar of the screens' keys runs into: a panel of the screen shown, or anything
+/// drawn along the bottom by the HUD, which stays in sight with a screen open.
 fn keys_blocked(world: &mut World) -> Vec<String> {
-    use crate::hud::screens::HotkeyBar;
+    use crate::hud::screens::{HotkeyBar, ScreenRoot};
     let rect = |node: &ComputedNode, at: &bevy::ui::UiGlobalTransform| Rect::from_center_size(at.translation, node.size());
     let meets = |a: Rect, b: Rect| {
         let both = a.intersect(b);
         both.width() > 0.5 && both.height() > 0.5
     };
-    let bars: Vec<(Entity, Rect, Entity)> = world
-        .query_filtered::<(Entity, &ComputedNode, &bevy::ui::UiGlobalTransform, &InheritedVisibility, &ChildOf), With<HotkeyBar>>()
+    let roots: Vec<Entity> = world.query_filtered::<(Entity, &InheritedVisibility), With<ScreenRoot>>().iter(world).filter(|(_, shown)| shown.get()).map(|(root, _)| root).collect();
+    let bars: Vec<(Entity, Rect)> = world
+        .query_filtered::<(Entity, &ComputedNode, &bevy::ui::UiGlobalTransform, &InheritedVisibility), With<HotkeyBar>>()
         .iter(world)
-        .filter(|(_, node, _, shown, _)| shown.get() && node.size().min_element() > 0.0)
-        .map(|(bar, node, at, _, root)| (bar, rect(node, at), root.parent()))
+        .filter(|(_, node, _, shown)| shown.get() && node.size().min_element() > 0.0)
+        .map(|(bar, node, at, _)| (bar, rect(node, at)))
         .collect();
     let Some(bottom) = world.query_filtered::<Entity, With<crate::hud::Bottom>>().iter(world).next() else { return Vec::new() };
     // Everything drawn of the HUD along the bottom: its pictures and words, wherever shown.
@@ -9220,20 +10170,21 @@ fn keys_blocked(world: &mut World) -> Vec<String> {
         }
     };
     let mut found = Vec::new();
-    for (bar, keys, root) in bars {
-        let panels: Vec<Entity> = world.get::<Children>(root).map_or_else(Vec::new, |children| children.iter().filter(|&child| child != bar).collect());
+    for (_, keys) in bars {
+        let mut panels: Vec<Entity> = roots.iter().flat_map(|&root| world.get::<Children>(root).map_or_else(Vec::new, |children| children.iter().collect())).collect();
+        panels.extend(world.query_filtered::<Entity, With<crate::hud::screens::UnderBar>>().iter(world));
         for panel in panels {
             let (Some(node), Some(at)) = (world.get::<ComputedNode>(panel), world.get::<bevy::ui::UiGlobalTransform>(panel)) else { continue };
             let shown = world.get::<InheritedVisibility>(panel).is_some_and(|v| v.get());
             if shown && node.size().min_element() > 0.0 && meets(keys, rect(node, at)) {
-                found.push("the keys run into the screen's panel".to_owned());
+                found.push("the bar of keys runs into the screen's panel".to_owned());
             }
         }
         for (entity, at, words) in &hud {
             if under(world, *entity, bottom) && meets(keys, *at) {
                 found.push(match words {
-                    Some(words) => format!("the keys run into {words:?} along the bottom"),
-                    None => "the keys run into a picture along the bottom".to_owned(),
+                    Some(words) => format!("the bar of keys runs into {words:?} along the bottom"),
+                    None => "the bar of keys runs into a picture along the bottom".to_owned(),
                 });
             }
         }
@@ -9244,7 +10195,7 @@ fn keys_blocked(world: &mut World) -> Vec<String> {
 }
 
 /// What is wrong with the tooltip [`fit_tool`] shows: not showing or past the screen's edge,
-/// then over the keys under the screen.
+/// then over the bar of the screens' keys.
 fn tip_wrong(world: &mut World) -> (Vec<String>, Vec<String>) {
     use crate::hud::screens::HotkeyBar;
     let rect = |node: &ComputedNode, at: &bevy::ui::UiGlobalTransform| Rect::from_center_size(at.translation, node.size());
@@ -10210,11 +11161,15 @@ fn shapes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     }
 }
 
-/// The building pieces the pieces step sets (blocks_building.ron), in a facing or two.
-const PIECES: [&str; 23] = [
+/// The building pieces the pieces step sets (blocks_building.ron) and the built-in
+/// furnishings (blocks_furnishings.ron), in a facing or two. A piece that is not solid (a
+/// window seat, sat in as every seat is) passes stopping nothing.
+const PIECES: [&str; 35] = [
     "oak_post", "birch_beam_east", "dark_oak_lattice_window", "thatch_roof", "thatch_ridge", "oak_shingles_south", "birch_shingle_ridge", "cobblestone_stairs_west", "stone_brick_slab",
     "hide_lean_to", "wattle_panel_east", "wooden_shutters", "chimney_stack", "chimney_pot", "oak_jetty_beam_south", "stone_flue", "chimney_hood", "birch_shuttered_window",
-    "stone_arrow_slit", "oak_railing", "oak_railing_corner", "birch_newel_post", "dark_oak_landing",
+    "stone_arrow_slit", "oak_railing", "oak_railing_corner", "birch_newel_post", "dark_oak_landing", "thatch_corner_east", "birch_shingles_inner_corner", "oak_fence",
+    "birch_fence_corner_east", "dark_oak_fence_gate", "oak_ladder", "birch_hatch",
+    "oak_hatch_open_east", "birch_stair_cupboard_east", "oak_window_seat", "dark_oak_sill_west", "oak_pantry_shelf",
 ];
 /// How many pieces the player judges from one spot before the middle one: three, so the
 /// crosshair turned to a piece beside it reaches it before crossing a neighbour.
@@ -10327,6 +11282,7 @@ fn pieces(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let client = world.resource::<ClientWorld>();
             let boxes = client.block(cell).map(|b| client.registry.collision(b).to_vec()).unwrap_or_default();
             let filled: f32 = boxes.iter().map(|b| (b.max - b.min).element_product()).sum();
+            let solid = client.block(cell).is_some_and(|b| client.registry.info(b).solid);
             let shaped = i < PIECES.len();
             let way = i >= PIECES.len() + WALLS.len();
             let result = if !stood(world, spot(i)) {
@@ -10337,6 +11293,8 @@ fn pieces(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 Err(format!("{name}, a frame round a way through, stops movement with {} boxes filling {:.0}% of its cell", boxes.len(), filled * 100.0))
             } else if way {
                 Ok("under the crosshair, on client and server, stopping nothing: the way through it is open".to_owned())
+            } else if shaped && !solid && boxes.is_empty() {
+                Ok("under the crosshair, on client and server, not solid and stopping nothing, as a seat".to_owned())
             } else if shaped && (boxes.is_empty() || filled >= 0.999) {
                 Err(format!("{name} stops movement with {} boxes filling {:.0}% of its cell: not its shape", boxes.len(), filled * 100.0))
             } else if !shaped && boxes != voxmar_engine::physics::CUBE {
@@ -13125,9 +14083,9 @@ const WOLF: &str = "base:wolf";
 const CLIMB_AT: IVec3 = IVec3::new(0, 0, 36);
 /// Blocks back along the step's top the player stands once the wolf is struck.
 const CLIMB_BACK: f32 = 3.0;
-/// What the climb allows past the wolf's recovery, thoughts, run over the way and wind-up:
-/// the client's frames. Without a client the wolf strikes within those alone
-/// (`creatures::way_tests`, `a_wolf_bitten_from_a_step_comes_up_and_strikes_within_the_climb_allowance`
+/// What the climb allows past the wolf's thoughts, chase and wind-up: the client's frames.
+/// Without a client the wolf comes in reach within its chase and strikes at its next thought
+/// (`creatures::way_tests`, `a_wolf_let_go_below_a_step_comes_up_it_and_strikes_within_its_chase`
 /// in the server).
 const CLIMB_SPARE: f32 = 0.5;
 
@@ -13140,30 +14098,29 @@ struct ClimbRun {
     /// The blows each way the server had answered as the phase began.
     struck: u32,
     hurts: u32,
-    /// The wolf's blows at the player before the timing began: the count taken of them; the
-    /// latest, at the server seconds taken in by the frame before it was seen (it came
-    /// after them); and the server seconds of the last frame.
-    told: u32,
-    bitten: Option<f32>,
-    taken_before: f32,
-    /// Server seconds the wolf is allowed, from the player standing back to its blow, and
-    /// what they were made of.
+    /// Server seconds the wolf is allowed, from its being let go to its blow, and what they
+    /// were made of.
     allowed: f32,
     allowance: String,
-    /// The wolf at its highest, and where it was when the player stood back.
+    /// The wolf at its highest; where it stood held as it was let go, and where it was first
+    /// seen to move from there.
     highest: f32,
+    held_at: Option<Vec3>,
     from: Vec3,
     /// `Gate::frames` as the phase began.
     frames_at: u32,
 }
 
-/// A wolf on level ground below a step a block high: struck from the step's edge, then,
-/// with the player three blocks back along the top, it comes up the step and strikes.
-/// What is judged derives from the setup: its blow lands with its feet up on the step,
-/// within the server seconds of what is left of its recovery from a blow it struck at the
-/// edge, a thought to start the chase and one to strike in reach (`NEAR_THINK_LONGEST`
-/// each), its own run over the way from where it was to its reach of the player, its
-/// wind-up and `CLIMB_SPARE`. Before the fix to heads meeting
+/// A wolf held at the foot of a step a block high (`/summon ... held`): struck from the
+/// step's edge, then let go (`/creatures release`) with the player three blocks back along
+/// the top, it comes up the step and strikes. What is judged derives from the setup: timed
+/// from its first move (its first thought once let go), its blow lands with its feet up on
+/// the step within the server seconds of its chase up the step to its reach of the player by
+/// its own physics (`motion::chase_with_hop`: its way at its run, the hop's time in the air,
+/// its gathering speed), a thought to strike once in reach (`NEAR_THINK_LONGEST`), its
+/// wind-up and `CLIMB_SPARE`.
+/// Held, it is below the step when let go, so the step is climbed every run: let loose at
+/// the edge, it had come up while it fought there. Before the fix to heads meeting
 /// steps (`motion::step`) a wolf coming straight at a step met it with its head first and
 /// was turned along it.
 fn climb(world: &mut World, gate: &mut Gate, now: f32) {
@@ -13197,27 +14154,14 @@ fn climb(world: &mut World, gate: &mut Gate, now: f32) {
         gate.climb.frames_at = gate.frames;
         gate.advance(now);
     };
-    // A blow the wolf strikes at the edge holds it its recovery, and it may come on to the
-    // end: so the latest before the timing begins, at the earliest it could have been.
-    if gate.phase > 0 && gate.climb.allowed == 0.0 {
-        let fighting = world.resource::<crate::fight::Fighting>();
-        let new = fighting.hurt_count.saturating_sub(gate.climb.told) as usize;
-        if fighting.hurt.iter().rev().take(new).any(|h| Some(h.0) == gate.climb.wolf) {
-            gate.climb.bitten = Some(gate.climb.taken_before);
-        }
-        gate.climb.told = fighting.hurt_count;
-    }
-    gate.climb.taken_before = gate.server_now;
     match gate.phase {
         0 => {
             // In creative while it is built: level ground, the step across it a block high
             // from the edge on, the wild creatures about it sent away, and the wolf summoned
-            // below it, two blocks out.
+            // below it, two blocks out, and held there.
             gate.climb = ClimbRun {
                 before: world.resource::<crate::creatures::Creatures>().views().filter(|v| v.species == species).map(|v| v.id).collect(),
-                told: world.resource::<crate::fight::Fighting>().hurt_count,
                 highest: f32::MIN,
-                taken_before: gate.server_now,
                 ..default()
             };
             let net = world.resource::<Net>();
@@ -13231,7 +14175,7 @@ fn climb(world: &mut World, gate: &mut Gate, now: f32) {
             net.command("creatures disperse");
             // /summon sets the first one 1.8 blocks west of the cell's middle (`summon`):
             // asked two east, it lands about on the edge's line.
-            net.command(&format!("summon {} 1 {} {} {}", WOLF.trim_start_matches("base:"), at.x + 2, at.y, at.z - 2));
+            net.command(&format!("summon {} 1 {} {} {} held", WOLF.trim_start_matches("base:"), at.x + 2, at.y, at.z - 2));
             advance(gate);
         }
         1 => {
@@ -13289,38 +14233,57 @@ fn climb(world: &mut World, gate: &mut Gate, now: f32) {
                 fail(world, gate, format!("the wolf went out of view (its feet {:.2} up at most)", gate.climb.highest));
                 return;
             };
-            // Timed from this client's player standing back, within a quarter block.
+            // Let go once this client's player stands back, within a quarter block; timed from
+            // its first move seen, which its first thought made.
             if gate.climb.allowed == 0.0 {
-                // A blow before it stands back was struck at the edge: not counted.
+                // A blow before it moves was struck at the edge: not counted.
                 gate.climb.hurts = world.resource::<crate::fight::Fighting>().hurt_count;
-                if me.xz().distance(back.xz()) > 0.25 {
+                let Some(held_at) = gate.climb.held_at else {
+                    if me.xz().distance(back.xz()) > 0.25 {
+                        if waited(gate, NARROW_WAIT) {
+                            fail(world, gate, format!("the player never came to stand back along the step: at {me:.2}, sent to {back:.2}"));
+                        }
+                        return;
+                    }
+                    world.resource::<Net>().command("creatures release");
+                    gate.climb.held_at = Some(view.position);
+                    to_phase(gate, 3, now);
+                    gate.climb.frames_at = gate.frames;
+                    return;
+                };
+                if view.position.distance(held_at) < 0.05 {
                     if waited(gate, NARROW_WAIT) {
-                        fail(world, gate, format!("the player never came to stand back along the step: at {me:.2}, sent to {back:.2}"));
+                        fail(world, gate, format!("the wolf never moved from {held_at:.2} once let go"));
                     }
                     return;
                 }
-                // What is left of its recovery from its last blow at the edge, a thought to
-                // set off and one to strike once in reach; its way, from its body's front to
-                // its reach of the player, at its run; and its wind-up before the blow lands.
+                // Held where it stood, its chase is from there: its first move is seen a frame
+                // late at most, which `CLIMB_SPARE` is for.
+                let up = held_at.y - at.y as f32;
+                if up > 0.5 {
+                    fail(world, gate, format!("the wolf was held {up:.2} up the step, not at its foot: at {held_at:.2}"));
+                    return;
+                }
+                // A thought to strike once in reach; its chase, from its body's edge where it
+                // stood to its reach of the player, by its own physics; and its wind-up before
+                // the blow lands.
                 let content = &world.resource::<Launch>().content;
-                let def = &content.creatures.get(species).def;
-                let run = def.movement.run.max(0.1);
-                let attack = def.attack;
-                let reach = attack.map_or(1.0, |a| a.reach);
-                let windup = attack.and_then(|a| a.windup).unwrap_or(content.combat.feel.creature_windup);
-                let recovery = attack.and_then(|a| a.recovery).unwrap_or(content.combat.feel.creature_recovery).max(0.0);
-                let held = gate.climb.bitten.map_or(0.0, |at| (at + recovery - gate.server_now).clamp(0.0, recovery));
-                let thoughts = 2.0 * voxmar_server::NEAR_THINK_LONGEST as f32 / voxmar_protocol::TICKS_PER_SECOND as f32;
-                let half = def.body.size.0 * view.scale / 2.0;
-                let way = (view.position.xz().distance(me.xz()) - half - reach).max(0.0);
-                gate.climb.allowed = held + thoughts + way / run + windup + CLIMB_SPARE;
+                let creature = content.creatures.get(species);
+                let movement = &creature.def.movement;
+                let windup = creature.def.attack.and_then(|a| a.windup).unwrap_or(content.combat.feel.creature_windup);
+                let second = voxmar_protocol::TICKS_PER_SECOND as f32;
+                let thought = voxmar_server::NEAR_THINK_LONGEST as f32 / second;
+                let way = (creature.edge(held_at.xz().distance(me.xz()), view.scale) - creature.longest_reach(0)).max(0.0);
+                let chase = voxmar_engine::creature::motion::chase_with_hop(movement, way, movement.run, 1.0 / second);
+                gate.climb.allowed = chase + thought + windup + CLIMB_SPARE;
                 gate.climb.allowance = format!(
-                    "{held:.2} s left of its {recovery:.2} s recovery, {thoughts:.2} s for two thoughts, {way:.2} blocks at its run of {run:.2} a second, a wind-up of {windup:.2} s and {CLIMB_SPARE:.1} s to spare"
+                    "a chase of {chase:.2} s ({way:.2} blocks at its run of {:.2} a second, the hop up and its gathering speed), {thought:.2} s for a thought in reach, a wind-up of {windup:.2} s and {CLIMB_SPARE:.1} s to spare",
+                    movement.run
                 );
-                gate.climb.from = view.position;
+                gate.climb.from = held_at;
                 to_phase(gate, 3, now);
                 gate.climb.frames_at = gate.frames;
-                info!("gate: climb: the player stands back at {me:.2}, the wolf at {:.2}; allowed {:.2} server s ({})", view.position, gate.climb.allowed, gate.climb.allowance);
+                info!("gate: climb: let go at {held_at:.2} with the player back at {me:.2}, the wolf first seen moving at {:.2}; allowed {:.2} server s ({})", view.position, gate.climb.allowed, gate.climb.allowance);
                 return;
             }
             let up = view.position.y - at.y as f32;
@@ -14817,7 +15780,7 @@ fn shot_cancel(world: &mut World, gate: &mut Gate) {
     let launch = world.resource::<Launch>();
     let (Some(species), Some(shot)) = (launch.content.creatures.find(PUPPET_SPECIES), world.resource::<crate::fight_fx::FightLook>().shots.get(MARK_CLASS).cloned()) else {
         gate.check("shot cancel", Err(format!("no {PUPPET_SPECIES} in the content, or no shot for the {MARK_CLASS}")));
-        gate.next(Step::Cook, now);
+        gate.next(Step::Others, now);
         return;
     };
     let (health, (width, height)) = (launch.content.creatures.get(species).def.health, launch.content.creatures.get(species).def.body.size);
@@ -14852,7 +15815,7 @@ fn shot_cancel(world: &mut World, gate: &mut Gate) {
         creatures.receive(vec![], vec![voxmar_protocol::CreatureGone { id: SPARED, died: false }]);
         (creatures.watch, creatures.watch_step) = (None, None);
         world.resource_mut::<Shots>().step = None;
-        gate.next(Step::Cook, now);
+        gate.next(Step::Others, now);
     };
     let deer = |position: Vec3| voxmar_protocol::CreatureView {
         id: SPARED,
@@ -15031,6 +15994,137 @@ fn shot_cancel(world: &mut World, gate: &mut Gate) {
     }
 }
 
+/// The Others step's stand-in player, an id no client is given; frames it walks; and frames
+/// each of its stages may take.
+const OTHER: voxmar_protocol::PlayerId = u32::MAX - 3;
+const OTHER_WALK: u32 = 60;
+const OTHER_FRAMES: u32 = 240;
+/// The share of the pace their limbs swing full at that the stand-in walks.
+const OTHER_PACE: f32 = 0.7;
+/// How far the stand-in looks up (radians; down, below 0).
+const OTHER_PITCH: f32 = -0.2;
+
+/// The Others step (see [`Step::Others`]).
+fn others(world: &mut World, gate: &mut Gate) {
+    use crate::figures::{Figures, PlayerLook};
+    use crate::net::RemotePlayers;
+    let now = world.resource::<Time>().elapsed_secs();
+    let look = world.resource::<PlayerLook>().clone();
+    let launch = world.resource::<Launch>();
+    // A weapon: the first item wielded as another class than the bare fist.
+    let combat = &launch.content.combat;
+    let fists = combat.wielded(None, |_| 1);
+    let weapon = launch.content.blocks.ids().find(|&id| combat.wielded(Some(id), |_| 99).class != fists.class);
+    let Some(weapon) = weapon else {
+        gate.check("others", Err("no item is wielded as a weapon".into()));
+        gate.next(Step::Cook, now);
+        return;
+    };
+    let start = gate.feet.as_vec3() + Vec3::new(-1.5, 0.0, 6.0);
+    let pace = look.full_pace * OTHER_PACE;
+    // Facing the eye, so its front and its right fist show.
+    let view = |at: Vec3| voxmar_protocol::PlayerView { id: OTHER, name: "Gate".into(), position: at, yaw: 0.0, pitch: OTHER_PITCH, held: Some(weapon) };
+    let walked = |frames: u32| start + Vec3::X * pace * PUPPET_STEP * frames as f32;
+    let done = |world: &mut World, gate: &mut Gate, result: Result<String, String>| {
+        gate.check("others", result);
+        world.resource_mut::<RemotePlayers>().forget(OTHER);
+        world.resource_mut::<Figures>().step = None;
+        gate.next(Step::Cook, now);
+    };
+    let frames = gate.puppet.1;
+    let read = world.resource::<Figures>().read(OTHER);
+    match gate.phase {
+        0 => {
+            aim_at(world, walked(OTHER_WALK) + Vec3::Y * 1.2);
+            world.resource_mut::<RemotePlayers>().puppet(view(start));
+            world.resource_mut::<Figures>().step = Some(PUPPET_STEP);
+            (gate.puppet.1, gate.other_swung) = (0, 0.0);
+            gate.advance(now);
+        }
+        // Built and painted, with every box.
+        1 => {
+            gate.puppet.1 = frames + 1;
+            let boxes = look.parts().len();
+            match read {
+                Some(read) if read.painted && read.joints == boxes => {
+                    gate.puppet.1 = 0;
+                    gate.advance(now);
+                }
+                _ if frames >= OTHER_FRAMES => done(world, gate, Err(format!("the stand-in was not drawn painted with its {boxes} boxes in {OTHER_FRAMES} frames: {read:?}"))),
+                _ => {}
+            }
+        }
+        // Walking past: its legs swing, and the body shown trails it no further than easing
+        // at `follow` a second allows at its pace.
+        2 => {
+            gate.puppet.1 = frames + 1;
+            if let Some(read) = read {
+                gate.other_swung = gate.other_swung.max(read.leg.abs());
+            }
+            if frames < OTHER_WALK {
+                world.resource_mut::<RemotePlayers>().puppet(view(walked(frames + 1)));
+                return;
+            }
+            let Some(read) = read else { return done(world, gate, Err("the stand-in was gone as it walked".into())) };
+            let lag = read.position.distance(walked(OTHER_WALK));
+            let most_lag = pace / look.follow * 1.3 + 0.05;
+            let least_swing = look.swing.to_radians() * OTHER_PACE * 0.6;
+            if lag > most_lag || gate.other_swung < least_swing {
+                return done(world, gate, Err(format!("walking {pace:.2} blocks a second, the body shown trailed {lag:.2} blocks ({most_lag:.2} at most) and its legs swung {:.2} radians at most ({least_swing:.2} wanted)", gate.other_swung)));
+            }
+            info!("gate: others: walking {pace:.2} blocks a second the body trailed {lag:.2} blocks and its legs swung {:.2} radians", gate.other_swung);
+            gate.puppet.1 = 0;
+            gate.advance(now);
+        }
+        // Stopped: it settles where they stand, legs hanging, the weapon in its right fist.
+        3 => {
+            gate.puppet.1 = frames + 1;
+            let at = walked(OTHER_WALK);
+            let Some(read) = read else { return done(world, gate, Err("the stand-in was gone as it stopped".into())) };
+            let settled = read.position.distance(at) < 0.02 && read.leg.abs() < 0.05;
+            if !settled {
+                if frames >= OTHER_FRAMES {
+                    done(world, gate, Err(format!("stopped at {at:.2}, the body shown was at {:.2} with its legs swung {:.2} radians {OTHER_FRAMES} frames on", read.position, read.leg)));
+                }
+                return;
+            }
+            let shoulder = look.parts().iter().find(|p| p.role == voxmar_engine::creature::Role::Arm && p.pivot.x > 0.0).map(|p| p.pivot).unwrap_or_default();
+            let shoulder = read.position + Quat::from_rotation_y(read.yaw) * shoulder;
+            let reach = Vec3::new(look.hand.at.0, look.hand.at.1, look.hand.at.2).length() + 0.05;
+            let drawn = world.resource::<crate::render::items::ItemModels>().0.iter().any(|m| m.posed.is_some() && read.held_at.is_some_and(|h| m.center.distance(h) < 1e-3));
+            let carried = look.carry.to_radians();
+            // Looking down as told (`OTHER_PITCH`): the head tilted `look` of it.
+            let tilt = (OTHER_PITCH.to_degrees() * look.look).clamp(-look.look_most, look.look_most).to_radians();
+            let result = match read.held_at {
+                _ if (read.arm - carried).abs() > 0.05 => Err(format!("the arm holding the weapon was swung {:.2} radians standing, {carried:.2} (`carry`) wanted", read.arm)),
+                _ if (read.head - tilt).abs() > 0.02 => Err(format!("told they look {OTHER_PITCH:.2} radians up, its head was tilted {:.2} radians, {tilt:.2} (`look`) wanted", read.head)),
+                Some(held) if held.distance(shoulder) <= reach && drawn => Ok(format!(
+                    "painted with its {} boxes, walking {pace:.2} blocks a second it trailed by the easing and its legs swung {:.2} radians; stopped, it settled in {frames} frames with the weapon {:.2} blocks from its right shoulder and its head tilted {:.2} radians as it looks",
+                    read.joints,
+                    gate.other_swung,
+                    held.distance(shoulder),
+                    read.head
+                )),
+                Some(held) => Err(format!("the weapon was drawn {} at {held:.2}, {:.2} blocks from the right shoulder ({reach:.2} at most)", if drawn { "held" } else { "not" }, held.distance(shoulder))),
+                None => Err("nothing was drawn in the stand-in's hand".into()),
+            };
+            if result.is_err() {
+                return done(world, gate, result);
+            }
+            gate.check("others", result);
+            gate.advance(now);
+        }
+        4 => {
+            if gate.shot(world, "other-player").is_some() {
+                world.resource_mut::<RemotePlayers>().forget(OTHER);
+                world.resource_mut::<Figures>().step = None;
+                gate.next(Step::Cook, now);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// The ShotCancel step's phase that clicks at the deer out of reach.
 const WHIFF_PHASE: u32 = 6;
 /// Seconds of the server's clock for the deer to be brought under the crosshair out of
@@ -15086,6 +16180,8 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     // At the corner away from the fire, so it stands behind the hearthstone as the player
     // by the fire sees it: at the near corner it is in the way of a click on its top.
     let chimney = [hearth + IVec3::new(1, 1, 1), hearth + IVec3::new(1, 2, 1)];
+    // Carried up a brick flue to a pot, which smokes in the chimney's place.
+    let (flue, pot) = (chimney[1] + IVec3::Y, chimney[1] + IVec3::Y * 2);
     // A cottage stove the other side of the fire, cooked at after the hearth.
     let stove = fire + IVec3::new(-2, 0, 0);
     // The campfire's count ends `FIRE_WATCH` after it began, in whichever phase that falls.
@@ -15231,27 +16327,27 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             for at in hearth_ring(hearth) {
                 net.command(&format!("setblock {} {} {} cobblestone", at.x, at.y, at.z));
             }
-            for (at, block) in [(hearth, "hearthstone"), (chimney[0], "chimney"), (chimney[1], "chimney")] {
+            for (at, block) in [(hearth, "hearthstone"), (chimney[0], "chimney"), (chimney[1], "chimney"), (flue, "chimney_stack"), (pot, "chimney_pot")] {
                 net.command(&format!("setblock {} {} {} {block}", at.x, at.y, at.z));
             }
             gate.advance(now);
         }
         // A Homestead Hearth beside it, a hearthstone in a ring of stone with a chimney two
-        // tall at its corner: cold, the chimney does not smoke; lit, its top smokes (`over`
-        // the hearth), as home does from across a valley.
+        // tall at its corner, carried up a flue to a pot: cold, nothing smokes; lit, the pot
+        // smokes (the chimney's smoke, `over` the hearth), as home does from across a valley.
         7 => {
             let (placed, lit) = {
                 let client = world.resource::<ClientWorld>();
-                (client.registry.id("base:chimney").is_some_and(|c| client.block(chimney[1]) == Some(c)), client.fires.contains(&hearth))
+                (client.registry.id("base:chimney_pot").is_some_and(|c| client.block(pot) == Some(c)), client.fires.contains(&hearth))
             };
             if placed && lit {
-                world.resource_mut::<crate::emitters::Emitters>().watch(chimney[1]);
+                world.resource_mut::<crate::emitters::Emitters>().watch(pot);
                 gate.chimney_since = Some(now);
                 hearth_lit(world, gate, now, stove);
             } else if placed {
                 // A cold hearth's chimney gives nothing off.
                 let amount = world.resource::<crate::render::particles::Particles>().amount;
-                let cold = world.resource::<crate::emitters::Emitters>().rate_of(chimney[1], world.resource::<ClientWorld>(), amount);
+                let cold = world.resource::<crate::emitters::Emitters>().rate_of(pot, world.resource::<ClientWorld>(), amount);
                 if cold > 0.0 {
                     gate.check("chimney smoke", Err(format!("the chimney of a cold hearth smokes ({cold:.2} a second)")));
                     hearth_lit(world, gate, now, stove);
@@ -15276,7 +16372,7 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         // Raw small game in hand, right clicks on the standing hearth, then on the stove, each
         // cook one as the campfire did, while the lit chimney is watched.
         8 | 9 => {
-            chimney_watch(world, gate, now, chimney[1]);
+            chimney_watch(world, gate, now, pot);
             let (at, name, check) = if gate.phase == 8 { (hearth, "base:hearthstone", "hearth: cooks") } else { (stove, "base:cottage_stove", "stove: cooks") };
             let (placed, raw) = {
                 let client = world.resource::<ClientWorld>();
@@ -15334,7 +16430,7 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         }
         // The chimney's watch, if still open, decides before the hearth comes down.
         10 => {
-            chimney_watch(world, gate, now, chimney[1]);
+            chimney_watch(world, gate, now, pot);
             if gate.chimney_since.is_none() {
                 gate.next(Step::Quern, now);
             }
@@ -15419,11 +16515,12 @@ fn end_quern(world: &mut World, gate: &mut Gate, now: f32) {
     gate.next(Step::HomeMotif, now);
 }
 
-/// The Cook step's hearth, its stove and chimney, from where that step stood.
-fn cook_hearth(gate: &Gate) -> (IVec3, [IVec3; 2], IVec3) {
+/// The Cook step's hearth, its stove and chimney (with its flue and pot), from where that
+/// step stood.
+fn cook_hearth(gate: &Gate) -> (IVec3, [IVec3; 4], IVec3) {
     let fire = gate.feet + IVec3::new(0, 0, 14);
     let hearth = fire + IVec3::new(3, 0, 0);
-    (hearth, [hearth + IVec3::new(1, 1, 1), hearth + IVec3::new(1, 2, 1)], fire + IVec3::new(-2, 0, 0))
+    (hearth, [1, 2, 3, 4].map(|y| hearth + IVec3::new(1, y, 1)), fire + IVec3::new(-2, 0, 0))
 }
 
 /// The home motif, at the Cook step's Homestead Hearth, lit and so home: a roof of planks
@@ -15561,9 +16658,9 @@ fn chimney_watch(world: &mut World, gate: &mut Gate, now: f32, top: IVec3) {
     gate.chimney_owed = 0.0;
     gate.chimney_since = None;
     gate.check("chimney smoke", if done {
-        Ok(format!("no smoke while the hearth was cold; lit, {count} puffs rose from the chimney's top in {watched:.1} s ({owed:.1} owed)"))
+        Ok(format!("no smoke while the hearth was cold; lit, {count} puffs rose from the pot atop the chimney's flue in {watched:.1} s ({owed:.1} owed)"))
     } else {
-        Err(format!("only {count} puffs rose from the chimney's top over a hearthstone in {watched:.1} s, under {CHIMNEY_PARTICLES} with {owed:.1} owed ({why})"))
+        Err(format!("only {count} puffs rose from the pot atop a chimney's flue over a hearthstone in {watched:.1} s, under {CHIMNEY_PARTICLES} with {owed:.1} owed ({why})"))
     });
 }
 
@@ -15573,10 +16670,10 @@ fn hearth_ring(hearth: IVec3) -> impl Iterator<Item = IVec3> {
 }
 
 /// Takes the Cook step's hearth, its ring and chimney, and the stove down, and goes on.
-fn hearth_done(world: &mut World, gate: &mut Gate, now: f32, hearth: IVec3, chimney: [IVec3; 2], stove: IVec3) {
+fn hearth_done(world: &mut World, gate: &mut Gate, now: f32, hearth: IVec3, chimney: [IVec3; 4], stove: IVec3) {
     let net = world.resource::<Net>();
     net.command(&format!("fill {} {} {} {} {} {} air", hearth.x - 1, hearth.y, hearth.z - 1, hearth.x + 1, hearth.y, hearth.z + 1));
-    for at in [chimney[0], chimney[1], stove] {
+    for at in chimney.into_iter().chain([stove]) {
         net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
     }
     gate.next(Step::Dry, now);
@@ -16692,6 +17789,7 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                     gate.check("town walls", Err(format!("no answer to /locate settlement town {TOWN_RADIUS}")));
                     gate.check("settlement roofs", Err("no town to judge the roofs of".into()));
                     gate.check("settlement jetties", Err("no town to judge the jetties of".into()));
+                    gate.check("settlement rows", Err("no town to judge the row houses of".into()));
                     gate.phase = 6;
                     gate.advance(now);
                 }
@@ -16705,26 +17803,44 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 gate.check("town walls", Err(format!("/locate settlement town: {reply}")));
                 gate.check("settlement roofs", Err("no town to judge the roofs of".into()));
                 gate.check("settlement jetties", Err("no town to judge the jetties of".into()));
+                gate.check("settlement rows", Err("no town to judge the row houses of".into()));
                 gate.phase = 6;
                 gate.advance(now);
                 return;
             };
             // Not every town is walled (a size's `walls` chance): the walls are judged at
-            // the walled town nearest the one found.
-            let walled = world
-                .resource::<crate::render::lod::WorldGenerator>()
-                .get()
-                .cloned()
-                .and_then(|g| g.settlements_near(at.xz(), TOWN_RADIUS).into_iter().filter(|s| s.size == "town" && s.wall_block.is_some()).min_by_key(|s| (s.centre.xz() - at.xz()).length_squared()));
+            // the walled town nearest the one found, looked for on a thread of its own, as
+            // planning the squares on the way held a frame for seconds.
+            let Some(search) = gate.town_search.take_if(|search| search.is_finished()) else {
+                if gate.town_search.is_none() {
+                    let generator = world.resource::<crate::render::lod::WorldGenerator>().get().cloned();
+                    gate.town_search = Some(std::thread::spawn(move || generator?.nearest_settlement(at.xz(), TOWN_RADIUS, |s| s.size == "town" && s.wall_block.is_some()).map(|s| s.centre)));
+                }
+                return;
+            };
+            let walled = match search.join() {
+                Ok(walled) => walled,
+                Err(panic) => {
+                    let why = panic.downcast_ref::<&str>().map(|s| s.to_string()).or_else(|| panic.downcast_ref::<String>().cloned()).unwrap_or_else(|| "no message".into());
+                    gate.check("town walls", Err(format!("the look for a walled town panicked: {why}")));
+                    gate.check("settlement roofs", Err("no town to judge the roofs of".into()));
+                    gate.check("settlement jetties", Err("no town to judge the jetties of".into()));
+                    gate.check("settlement rows", Err("no town to judge the row houses of".into()));
+                    gate.phase = 6;
+                    gate.advance(now);
+                    return;
+                }
+            };
             let Some(walled) = walled else {
                 gate.check("town walls", Err(format!("no walled town within {TOWN_RADIUS} of the town /locate found at {at}")));
                 gate.check("settlement roofs", Err("no town to judge the roofs of".into()));
                 gate.check("settlement jetties", Err("no town to judge the jetties of".into()));
+                gate.check("settlement rows", Err("no town to judge the row houses of".into()));
                 gate.phase = 6;
                 gate.advance(now);
                 return;
             };
-            let at = walled.centre;
+            let at = walled;
             gate.town = at;
             if let Some(observer) = gate.observer.as_mut() {
                 observer.connection.send(ClientMessage::Command { line: format!("tp {} {} {}", at.x, at.y + 60, at.z) });
@@ -16743,6 +17859,7 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                     gate.check("town walls", Err(format!("the world around the town at {at} did not load: the server sent {held} of its {n} columns in {SETTLEMENT_LOAD} server seconds")));
                     gate.check("settlement roofs", Err("no town to judge the roofs of".into()));
                     gate.check("settlement jetties", Err("no town to judge the jetties of".into()));
+                    gate.check("settlement rows", Err("no town to judge the row houses of".into()));
                     gate.phase = 6;
                     gate.advance(now);
                 }
@@ -16754,6 +17871,8 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             gate.check("settlement roofs", roofs);
             let jetties = judge_jetties(world, gate, at);
             gate.check("settlement jetties", jetties);
+            let rows = judge_rows(world, gate, at);
+            gate.check("settlement rows", rows);
             gate.advance(now);
         }
         // Back on the test ground.
@@ -17042,6 +18161,66 @@ fn judge_jetties(world: &World, gate: &Gate, at: IVec3) -> Result<String, String
     Ok(format!("{name}: {} jetty beams within {TOWN_REACH} stand as planned, each under its overhanging floor", planned.len()))
 }
 
+/// The town's row houses as the server built them: wherever two of its homes planned within
+/// `TOWN_REACH` of its square stand wall to wall (two walls between their rooms), both walls
+/// stand solid and windowless, and the roof runs on over the join at one height.
+fn judge_rows(world: &World, gate: &Gate, at: IVec3) -> Result<String, String> {
+    let Some(generator) = world.resource::<crate::render::lod::WorldGenerator>().get().cloned() else {
+        return Err("no world generator on the client to read the town's plan from".into());
+    };
+    let Some(observer) = gate.observer.as_ref() else { return Err("no observer".into()) };
+    let client = world.resource::<ClientWorld>();
+    let plans = generator.settlements_near(at.xz(), 64);
+    let Some(plan) = plans.iter().find(|s| s.centre.xz() == at.xz()) else {
+        return Err(format!("worldgen plans no settlement with its middle at {at} ({} near)", plans.len()));
+    };
+    let name = &plan.name.0;
+    let block = |p: IVec3| observer.world.block(p);
+    let named = |p: IVec3| block(p).map_or("unloaded".to_owned(), |b| client.registry.def(b).name.clone());
+    let wall = |p: IVec3| block(p).is_some_and(|b| {
+        let def = client.registry.def(b);
+        def.solid && !def.name.contains("glass") && !def.name.contains("window")
+    });
+    let top = |w: IVec2, floor: i32| (floor..floor + 24).rev().find(|&y| block(IVec3::new(w.x, y, w.y)).is_some_and(|b| client.registry.def(b).solid));
+    let within = |p: IVec2| (p - at.xz()).abs().max_element() <= TOWN_REACH;
+    let homes: Vec<_> = plan.buildings.iter().filter(|b| !b.room.is_empty() && b.door.is_some()).collect();
+    let (mut joins, mut wrong) = (0, Vec::new());
+    for a in &homes {
+        let along = a.facing.turn(1, 0);
+        let edge = a.room.iter().map(|p| p.dot(along)).max().unwrap_or(0);
+        let side: Vec<IVec2> = a.room.iter().copied().filter(|p| p.dot(along) == edge).collect();
+        let Some(b) = homes.iter().find(|b| b.facing == a.facing && b.floor == a.floor && b.room.iter().any(|&p| side.contains(&(p - along * 3)))) else { continue };
+        // Where both have room beside the join, inside the ground judged.
+        let shared: Vec<IVec2> = side.iter().copied().filter(|&p| b.room.contains(&(p + along * 3)) && within(p + along * 2)).collect();
+        if shared.is_empty() {
+            continue;
+        }
+        joins += 1;
+        for p in shared {
+            let (wa, wb) = (p + along, p + along * 2);
+            for y in a.floor + 1..=a.floor + 2 {
+                for w in [wa, wb] {
+                    let at = IVec3::new(w.x, y, w.y);
+                    if !wall(at) && wrong.len() < 4 {
+                        wrong.push(format!("the wall between the rooms at {at} is {}", named(at)));
+                    }
+                }
+            }
+            let (ta, tb) = (top(wa, a.floor), top(wb, a.floor));
+            if ta != tb && wrong.len() < 4 {
+                wrong.push(format!("the roofs over the join at {wa} and {wb} stand at {ta:?} and {tb:?}"));
+            }
+        }
+    }
+    if joins == 0 {
+        return Err(format!("{name}: no homes planned wall to wall within {TOWN_REACH} of its square at {at}"));
+    }
+    if !wrong.is_empty() {
+        return Err(format!("{name}: of {joins} joins between row houses within {TOWN_REACH}: {}", wrong.join("; ")));
+    }
+    Ok(format!("{name}: {joins} joins between row houses within {TOWN_REACH} stand wall to wall under one roof"))
+}
+
 /// The town's shaped roofs as the server built them: every roof piece its plan lays within
 /// `TOWN_REACH` of its square stands there, in the facing planned, and no flame of the town
 /// reaches its thatch (or anything else that catches) as fire catches in a home.
@@ -17066,18 +18245,34 @@ fn judge_roofs(world: &World, gate: &Gate, at: IVec3) -> Result<String, String> 
     if !wrong.is_empty() {
         return Err(format!("{name}: {} of its {} roof pieces within {TOWN_REACH} are not as planned: {}", wrong.len(), planned.len(), wrong.into_iter().take(4).collect::<Vec<_>>().join("; ")));
     }
-    let mut blocks: FxHashMap<IVec3, BlockId> = FxHashMap::default();
+    // The town's flames first (by the settlements' own table, not a tag looked up per
+    // block over the whole town), then only the blocks within their reach.
+    let mut flames: Vec<IVec3> = Vec::new();
     for z in at.z - TOWN_REACH..=at.z + TOWN_REACH {
         for x in at.x - TOWN_REACH..=at.x + TOWN_REACH {
             for y in at.y - 24..=at.y + 40 {
                 let p = IVec3::new(x, y, z);
-                if let Some(b) = observer.world.block(p).filter(|b| !b.is_air()) {
-                    blocks.insert(p, b);
+                if observer.world.block(p).is_some_and(|b| generator.settlement_flame(b)) {
+                    flames.push(p);
                 }
             }
         }
     }
-    let flames = blocks.values().filter(|&&b| client.registry.def(b).has_tag("fire")).count();
+    let mut blocks: FxHashMap<IVec3, BlockId> = FxHashMap::default();
+    let reach = generator.settlement_fire_reach() + 1;
+    for &f in &flames {
+        for z in -reach..=reach {
+            for y in -reach..=reach {
+                for x in -reach..=reach {
+                    let p = f + IVec3::new(x, y, z);
+                    if let Some(b) = observer.world.block(p).filter(|b| !b.is_air()) {
+                        blocks.insert(p, b);
+                    }
+                }
+            }
+        }
+    }
+    let flames = flames.len();
     let thatch = planned.iter().filter(|r| client.registry.def(r.1).has_tag("thatch")).count();
     let reached = generator.flames_reaching(&blocks);
     if !reached.is_empty() {
@@ -18128,6 +19323,30 @@ fn finish(world: &mut World, gate: &Gate, now: f32) {
 
 #[cfg(test)]
 mod tests {
+    /// Every item and creature the opening quests ask for has a recipe in the book or is
+    /// named in the quest's words or an earlier one's, in English and Japanese.
+    #[test]
+    fn a_newcomer_finds_what_the_opening_quests_ask_for() {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        let content = voxmar_engine::content::Content::load(&assets).unwrap();
+        for code in ["en", "ja"] {
+            let misses = super::newcomer_misses(&content, &Locale::load(&assets, code));
+            assert!(misses.is_empty(), "{code}: {misses:?}");
+        }
+    }
+
+    /// The same through the whole Farm age, to the lit Crucible Kiln.
+    #[test]
+    fn every_farm_quest_names_what_it_asks_for() {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        let content = voxmar_engine::content::Content::load(&assets).unwrap();
+        let farm: Vec<&str> = content.quests.iter().filter(|q| q.age == "farm").map(|q| q.name.as_str()).collect();
+        for code in ["en", "ja"] {
+            let misses = super::unexplained(&content, &Locale::load(&assets, code), &farm);
+            assert!(misses.is_empty(), "{code}: {} {misses:?}", misses.len());
+        }
+    }
+
     use super::{sling_next, warm_window, SlingNext, BEAR, SLING, SLING_LEVEL, SLING_STONES, UNANSWERED};
 
     /// The Home step lays the crafting table from oak planks in the home barrel: the

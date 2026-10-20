@@ -619,27 +619,41 @@ impl Overworld {
     /// The settlements whose squares lie within `radius` blocks of `centre`: their names
     /// (English and Japanese), sizes, middles and buildings.
     pub fn settlements_near(&self, centre: IVec2, radius: i32) -> Vec<SettlementInfo> {
-        self.settlements
-            .near(self, centre, radius)
-            .iter()
-            .filter_map(|slot| slot.0.as_ref())
-            .map(|p| SettlementInfo {
-                id: p.id,
-                name: p.name.clone(),
-                size: p.size.clone(),
-                style: p.style.clone(),
-                layout: p.layout.clone(),
-                centre: IVec3::new(p.centre.x, p.height, p.centre.y),
-                buildings: p.buildings.clone(),
-                gates: p.gates.clone(),
-                lanes: p.lanes.clone(),
-                levers: p.levers,
-                culture: self.settlements.culture_info(p),
-                people: p.people.clone(),
-                walls: p.walls.clone(),
-                wall_block: p.wall_block,
-            })
-            .collect()
+        self.settlements.near(self, centre, radius).iter().filter_map(|slot| slot.0.as_ref()).map(|p| self.settlement_info(p)).collect()
+    }
+
+    /// The settlement nearest `from` by its middle, within `radius`, that `keep` takes:
+    /// what `settlements_near` would find nearest, planning only the squares nearer than
+    /// it (`/locate settlement`).
+    pub fn nearest_settlement(&self, from: IVec2, radius: i32, keep: impl Fn(&SettlementInfo) -> bool) -> Option<SettlementInfo> {
+        let slot = self.settlements.nearest(self, from, radius, |p| keep(&self.settlement_info(p)))?;
+        slot.0.as_ref().map(|p| self.settlement_info(p))
+    }
+
+    /// The settlement whose square holds (x, z), if that square is settled: the only one a
+    /// block there can be part of, planning that square alone.
+    pub fn settlement_holding(&self, at: IVec2) -> Option<SettlementInfo> {
+        let slot = self.settlements.holding(self, at.x, at.y)?;
+        slot.0.as_ref().map(|p| self.settlement_info(p))
+    }
+
+    fn settlement_info(&self, p: &settlements::Plan) -> SettlementInfo {
+        SettlementInfo {
+            id: p.id,
+            name: p.name.clone(),
+            size: p.size.clone(),
+            style: p.style.clone(),
+            layout: p.layout.clone(),
+            centre: IVec3::new(p.centre.x, p.height, p.centre.y),
+            buildings: p.buildings.clone(),
+            gates: p.gates.clone(),
+            lanes: p.lanes.clone(),
+            levers: p.levers,
+            culture: self.settlements.culture_info(p),
+            people: p.people.clone(),
+            walls: p.walls.clone(),
+            wall_block: p.wall_block,
+        }
     }
 
     /// The shaped roof pieces the settlement whose square's middle is at `centre` lays,
@@ -652,6 +666,16 @@ impl Overworld {
     /// sets, each where it goes.
     pub fn settlement_planned(&self, centre: IVec2, keep: &dyn Fn(voxmar_engine::block::BlockId) -> bool) -> Vec<(IVec3, voxmar_engine::block::BlockId)> {
         self.settlements.planned(self, centre, keep).unwrap_or_default()
+    }
+
+    /// Whether `block` is one of settlements' own flames (`rules.fire.flames`).
+    pub fn settlement_flame(&self, block: voxmar_engine::block::BlockId) -> bool {
+        self.settlements.fire().is_some_and(|f| f.flame(block))
+    }
+
+    /// How many steps settlements' fire reaches from a flame (`rules.fire.reach`).
+    pub fn settlement_fire_reach(&self) -> i32 {
+        self.settlements.fire().map_or(0, |f| f.reach)
     }
 
     /// Every block that catches fire (thatch, wattle) a flame among `blocks` reaches, as
@@ -1147,6 +1171,53 @@ pub(crate) fn spiral(ring: i32, step: i32) -> (i32, i32) {
     }
 }
 
+/// Every package's content, as a server loads it, loaded once for the run and read by the
+/// tests that only read it.
+#[cfg(test)]
+pub(crate) fn full_content() -> &'static (voxmar_engine::content::Content, WorldContent) {
+    static FULL: std::sync::OnceLock<(voxmar_engine::content::Content, WorldContent)> = std::sync::OnceLock::new();
+    FULL.get_or_init(|| {
+        let content = voxmar_engine::content::Content::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).unwrap();
+        let world = WorldContent::load(&content).unwrap();
+        (content, world)
+    })
+}
+
+/// The seeds more than one test reads on every package's content (`shared_full_world`):
+/// the water tests (`generated_water`), and the village thatch and jettied storeys tests.
+#[cfg(test)]
+const HELD_FULL_SEEDS: [u64; 5] = [1, 2, 3, 7, 42];
+
+/// The world of `seed` on every package's content (`full_content`), for tests that only read
+/// what it generates. A seed of `HELD_FULL_SEEDS` is held for the rest of the run: what a
+/// world generates depends on neither which test asks first nor on what its caches hold,
+/// and the next test on the seed finds its rivers and settlements already planned rather
+/// than planning them again. Any other seed gets a world of its own, let go with its test,
+/// as a held world keeps all it planned. Kept apart from `Overworld::shared`, whose letting
+/// go is tested. Tests that count what a world plans, or compare a fresh world with another,
+/// make their own.
+#[cfg(test)]
+pub(crate) fn shared_full_world(seed: u64) -> Arc<Overworld> {
+    let (content, world) = full_content();
+    let make = || Arc::new(Overworld::with_content(seed, content.blocks.clone(), world));
+    if !HELD_FULL_SEEDS.contains(&seed) {
+        return make();
+    }
+    static WORLDS: std::sync::Mutex<Vec<(u64, Arc<std::sync::OnceLock<Arc<Overworld>>>)>> = std::sync::Mutex::new(Vec::new());
+    let slot = {
+        let mut worlds = WORLDS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        match worlds.iter().find(|(s, _)| *s == seed) {
+            Some((_, slot)) => slot.clone(),
+            None => {
+                let slot = Arc::new(std::sync::OnceLock::new());
+                worlds.push((seed, slot.clone()));
+                slot
+            }
+        }
+    };
+    slot.get_or_init(make).clone()
+}
+
 /// All base block files, in the same order as the game loader. Partial registries
 /// omit furnishings and tag members, which can change generation and census results.
 #[cfg(test)]
@@ -1182,19 +1253,26 @@ mod tests {
     }
 
     /// The world of `seed` on the test registry, one for every test that only reads what it
-    /// generates: each new world would trace its rivers, trails and caches from nothing
-    /// again. What a world generates depends on neither which column nor which test asks
-    /// first, nor on what its caches hold (`rivers_never_depend_on_generation_order`,
-    /// `decorations_never_depend_on_generation_order`), and those tests, the timing ones
-    /// and the golden hashes still make worlds of their own.
-    fn shared_world(seed: u64) -> Arc<Overworld> {
-        static WORLDS: std::sync::OnceLock<std::sync::Mutex<rustc_hash::FxHashMap<u64, Arc<Overworld>>>> = std::sync::OnceLock::new();
-        let worlds = WORLDS.get_or_init(Default::default);
-        if let Some(world) = worlds.lock().unwrap().get(&seed) {
-            return world.clone();
-        }
-        let world = Arc::new(Overworld::new(seed, registry()));
-        worlds.lock().unwrap().entry(seed).or_insert(world).clone()
+    /// generates, here and in the settlements' tests: each new world would trace its rivers,
+    /// trails and settlements from nothing again. What a world generates depends on neither
+    /// which column nor which test asks first, nor on what its caches hold
+    /// (`rivers_never_depend_on_generation_order`, `decorations_never_depend_on_generation_order`),
+    /// and those tests, the timing ones and the golden hashes still make worlds of their
+    /// own. Made once however many tests ask for it at once.
+    pub(crate) fn shared_world(seed: u64) -> Arc<Overworld> {
+        static WORLDS: std::sync::Mutex<Vec<(u64, Arc<std::sync::OnceLock<Arc<Overworld>>>)>> = std::sync::Mutex::new(Vec::new());
+        let slot = {
+            let mut worlds = WORLDS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            match worlds.iter().find(|(s, _)| *s == seed) {
+                Some((_, slot)) => slot.clone(),
+                None => {
+                    let slot = Arc::new(std::sync::OnceLock::new());
+                    worlds.push((seed, slot.clone()));
+                    slot
+                }
+            }
+        };
+        slot.get_or_init(|| Arc::new(Overworld::new(seed, registry()))).clone()
     }
 
     #[test]
@@ -2761,6 +2839,19 @@ mod tests {
         };
         // HERB_SEEDS=a,b,... counts other worlds instead, to check the rates hold beyond these.
         let order: Vec<u64> = std::env::var("HERB_SEEDS").map(|s| s.split(',').map(|n| n.trim().parse().expect("HERB_SEEDS must be seeds")).collect()).unwrap_or_else(|_| HERB_SEEDS.to_vec());
+        // The census on a pool of its own, as many threads as the tests' own: its generation
+        // would otherwise fill that pool for minutes, every other test's work queued behind
+        // it (`waterfalls_pour`, 7 s alone, took 198 s beside it). What it counts does not
+        // depend on the threads: the places are counted in order. Only where the tests'
+        // pool is held to part of the machine (`RAYON_NUM_THREADS`, half the cores in the
+        // gate); on a pool of every core, a second would double the threads.
+        let pool = std::env::var_os("RAYON_NUM_THREADS").map(|_| rayon::ThreadPoolBuilder::new().num_threads(rayon::current_num_threads()).build().unwrap());
+        fn on_pool<R: Send>(pool: &Option<rayon::ThreadPool>, f: impl FnOnce() -> R + Send) -> R {
+            match pool {
+                Some(pool) => pool.install(f),
+                None => f(),
+            }
+        }
         let mut seeds = 0;
         while seeds < order.len().min(16) && (0..biomes.len()).any(|b| !counted(&tally, b)) {
             let seed = order[seeds];
@@ -2771,7 +2862,7 @@ mod tests {
             // Every place of every open biome side by side, counted in order.
             use rayon::prelude::*;
             let wanted: Vec<(usize, IVec2)> = open.iter().flat_map(|&b| PLACES.map(|from| (b, from))).collect();
-            let areas: Vec<_> = wanted.par_iter().map(|&(b, from)| (b, biome_area(&world, &biomes[b], from, 16, &looks, herbs.len()))).collect();
+            let areas: Vec<_> = on_pool(&pool, || wanted.par_iter().map(|&(b, from)| (b, biome_area(&world, &biomes[b], from, 16, &looks, herbs.len()))).collect());
             for (b, area) in areas {
                 let Some((columns, bank, placed, away)) = area else { continue };
                 tally[b].0 += 1;

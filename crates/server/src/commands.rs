@@ -205,6 +205,7 @@ impl Server {
                 Some(what) => self.creatures_command(id, what, args.get(1).map(String::as_str)),
             },
             Run::Skill => self.skill_command(id, args),
+            Run::Quest => self.quest_command(id, args),
             Run::Machine => self.machine_command(id, args),
             Run::Wander => self.wander_command(id, args),
             Run::Home => self.home_command(id),
@@ -643,6 +644,9 @@ impl Server {
                     }
                     creature.body.velocity = voxmar_engine::glam::Vec3::ZERO;
                 }
+                // Let go of a hold now (`hold`, `/summon ... held`): the gate's Climb step lets
+                // its wolf go at the foot of the step.
+                "release" => creature.held_until = tick,
                 "hasten" => {
                     creature.products_due.iter_mut().for_each(|due| *due = tick);
                     if creature.grows_up.is_some() {
@@ -678,6 +682,23 @@ impl Server {
         }
         p.changed(voxmar_engine::traits::SKILLS);
         Ok(Words::key("command.skill.done").with("level", Words::text(level)))
+    }
+
+    /// `/quest <quest>`: marks a quest done for the player, by its full name or its own
+    /// (`the_farm_age`); what it pays waits to be claimed.
+    fn quest_command(&mut self, id: Source, args: &[String]) -> Reply {
+        let player = Self::me(id)?;
+        let [name] = args else { return Err(Words::key("command.quest.what")) };
+        let quests = self.content.quests.clone();
+        let quest = quests.iter().find(|q| q.name == *name || q.name.rsplit(':').next() == Some(name.as_str())).ok_or_else(|| Words::key("command.quest.unknown").with("name", name.as_str()))?;
+        let title = Words::Own(voxmar_engine::lang::def_key("quest", &quest.name), quest.title.clone());
+        if self.players[&player].quests_done.contains(&quest.name) {
+            return Err(Words::key("command.quest.already").with("quest", title));
+        }
+        self.finish_quest(player, &quest.name);
+        // Told at once, as a claim is: the stations its rite opens show open straight away.
+        self.update_quests(player);
+        Ok(Words::key("command.quest.done").with("quest", title))
     }
 
     /// `/creatures`: the creatures within 64 blocks.
@@ -830,13 +851,9 @@ impl Server {
         }
         let position = self.position_of(id);
         let from = IVec2::new(position.x.floor() as i32, position.z.floor() as i32);
-        let nearest = self
-            .overworld
-            .settlements_near(from, radius)
-            .into_iter()
-            .map(|s| (IVec2::new(s.centre.x, s.centre.z) - from, s))
-            .filter(|(offset, s)| offset.as_vec2().length() <= radius as f32 && size.is_none_or(|size| *size == s.size))
-            .min_by_key(|(offset, _)| offset.length_squared());
+        // Nearest first, planning only the squares nearer than the answer: every square
+        // within a radius of thousands planned at once held the server's tick for seconds.
+        let nearest = self.overworld.nearest_settlement(from, radius, |s| size.is_none_or(|size| *size == s.size)).map(|s| (IVec2::new(s.centre.x, s.centre.z) - from, s));
         match nearest {
             Some((offset, s)) => Ok(Words::key("command.locate.settlement")
                 .with("name", Words::Name(vec![("en".into(), s.name.0.clone()), ("ja".into(), s.name.1.clone())]))
@@ -1397,6 +1414,7 @@ fn home_needs(lacks: &[voxmar_engine::effect::Lack]) -> Words {
             .iter()
             .map(|lack| match lack {
                 Lack::Roof => Words::key("home.lack.roof"),
+                Lack::Sky => Words::key("home.lack.sky"),
                 Lack::Away => Words::key("home.lack.away"),
                 Lack::Tag { tag, have, need } => Words::key("home.lack.tag").with("tag", Words::Own(format!("home.tag.{tag}"), tag.replace('_', " "))).with("have", Words::text(have)).with("need", Words::text(need)),
                 Lack::Walls { shelter, have, need } => Words::key("home.lack.walls").with("shelter", Words::key(&format!("home.shelter.{}", shelter.name()))).with("have", Words::text(have)).with("need", Words::text(need)),

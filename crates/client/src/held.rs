@@ -821,6 +821,7 @@ fn show(
             tint: [255; 3],
             light,
             held: Some(Held { at, turn: turned }),
+            posed: None,
         });
         models.0.splice(0..0, arm);
         motion.drawn = handling.bare_layers.len().min(bare.pieces.len());
@@ -838,6 +839,7 @@ fn show(
         tint: look.tint,
         light,
         held: Some(Held { at, turn: turn_vector(turn) }),
+        posed: None,
     });
 }
 
@@ -1389,7 +1391,7 @@ mod tests {
             ("stone_pickaxe", "pickaxe", vec![("rest", weights()), ("dig", Weights { dig: 1.0, ..weights() })]),
             ("fang_dagger", "dagger", vec![("rest", weights()), ("attack", Weights { attack: 1.0, ..weights() })]),
             ("bronze_spear", "spear", vec![("rest", weights()), ("attack", Weights { attack: 1.0, ..weights() })]),
-            ("wooden_hoe", "hoe", vec![("rest", weights())]),
+            ("stone_hoe", "hoe", vec![("rest", weights())]),
             ("fishing_rod", "rod", vec![("rest", weights())]),
             ("torch_lit", "light", vec![("rest", weights())]),
             ("cooked_small_game", "edible", vec![("rest", weights()), ("eat", Weights { eat: 1.0, ..weights() })]),

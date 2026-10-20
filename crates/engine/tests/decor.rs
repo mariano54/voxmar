@@ -12,24 +12,47 @@ fn content() -> Content {
 }
 
 /// The decor blocks the templates made with a baked colour, not the facings they are
-/// placed in, and not the singles and the metal lanterns (see [`the_singles_load_and_can_be_made`]).
+/// placed in, nor the state one swaps into and comes back as (a curtain drawn back), and not
+/// the singles and the metal lanterns (see [`the_singles_load_and_can_be_made`]).
 fn made(content: &Content) -> Vec<BlockId> {
     content
         .blocks
         .ids()
         .filter(|&id| {
             let def = content.blocks.def(id);
-            def.has_tag("decor") && def.family.is_some() && def.form_of().is_none() && !def.has_tag("metal") && matches!(def.tint, BlockTint::Fixed(..))
+            let state = def.swaps.is_some() && def.drops == def.swaps;
+            def.has_tag("decor") && def.family.is_some() && def.form_of().is_none() && !state && !def.has_tag("metal") && matches!(def.tint, BlockTint::Fixed(..))
         })
         .collect()
+}
+
+/// A state one swaps into and comes back as (a curtain drawn back) is the same piece: its
+/// partner's colour, family and furnishing tags, and it gives the partner back.
+#[test]
+fn a_swap_state_keeps_its_partners_colour_and_tags() {
+    let content = content();
+    let mut states = 0;
+    for id in content.blocks.ids() {
+        let def = content.blocks.def(id);
+        if !(def.has_tag("decor") && def.form_of().is_none() && def.swaps.is_some() && def.drops == def.swaps) {
+            continue;
+        }
+        let partner = content.blocks.def(content.blocks.id(def.swaps.as_deref().unwrap()).expect("its partner loads"));
+        assert_eq!(partner.swaps.as_deref(), Some(def.name.as_str()), "{} and {} swap both ways", def.name, partner.name);
+        assert_eq!(def.tint, partner.tint, "{}'s colour", def.name);
+        assert_eq!(def.family, partner.family, "{}'s family", def.name);
+        assert_eq!(def.tags, partner.tags, "{}'s tags", def.name);
+        states += 1;
+    }
+    assert!(states >= 12, "the twelve dyes' drawn-back curtains, at least: {states}");
 }
 
 #[test]
 fn the_templates_make_every_family_in_full() {
     let content = content();
     let names: BTreeSet<String> = made(&content).into_iter().map(|id| content.blocks.def(id).name.clone()).collect();
-    let furniture = ["stool", "chair", "bench", "table", "bed", "shelf", "bookshelf", "cupboard", "wardrobe", "desk", "counter", "barrel_rack", "crate_stack", "pot_shelf"];
-    let cloth = ["cloth", "rug", "banner", "curtain", "paper_lantern", "cushion", "bunting", "awning"];
+    let furniture = ["stool", "chair", "bench", "table", "bed", "shelf", "bookshelf", "cupboard", "wardrobe", "desk", "counter", "barrel_rack", "crate_stack", "pot_shelf", "window_seat", "sill", "pantry_shelf"];
+    let cloth = ["cloth", "rug", "banner", "wall_hanging", "curtain", "paper_lantern", "cushion", "bunting", "awning"];
     let crockery = ["plate", "bowl", "jar", "jug", "basket"];
     let woods = ["birch", "oak", "dark_oak"];
     let dyes = ["white", "cream", "ochre", "amber", "red", "rust", "rose", "mulberry", "indigo", "sky", "teal", "green"];
@@ -42,7 +65,7 @@ fn the_templates_make_every_family_in_full() {
             }
         }
     }
-    assert_eq!(expected.len(), 3 * 14 + 12 * 8 + 3 * 5);
+    assert_eq!(expected.len(), 3 * 17 + 12 * 9 + 3 * 5);
     let missing: Vec<_> = expected.difference(&names).collect();
     let extra: Vec<_> = names.difference(&expected).collect();
     assert!(missing.is_empty() && extra.is_empty(), "missing {missing:?}, unexpected {extra:?}");

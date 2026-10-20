@@ -7,6 +7,7 @@
 
 use glam::{IVec3, Vec3};
 
+use super::path::{self, Walker};
 use super::{Movement, Style, Water};
 use crate::physics::{Aabb, move_and_slide};
 
@@ -48,11 +49,15 @@ pub struct Body {
     /// again rather than spin round.
     pub turn_way: f32,
     pub turn_to: f32,
+    /// Whether it goes down where it could not climb back of its own accord: in a chase
+    /// (the server's say), after what it chases. Otherwise it walks into no pit it could
+    /// not get out of (`path::way_out`), however lively its pace.
+    pub bold: bool,
 }
 
 impl Body {
     pub fn new(position: Vec3, yaw: f32, size: (f32, f32)) -> Self {
-        Self { position, velocity: Vec3::ZERO, yaw, on_ground: false, in_water: false, size, against_wall: false, reach: 0.0, head: 0.0, turn_way: 0.0, turn_to: 0.0 }
+        Self { position, velocity: Vec3::ZERO, yaw, on_ground: false, in_water: false, size, against_wall: false, reach: 0.0, head: 0.0, turn_way: 0.0, turn_to: 0.0, bold: false }
     }
 
     pub fn aabb(&self) -> Aabb {
@@ -151,6 +156,12 @@ pub struct Drive {
 pub trait Surroundings {
     fn solid(&self, cell: IVec3) -> bool;
     fn water(&self, cell: IVec3) -> bool;
+    /// Whether a cell is lava (or another fluid that burns): a wall to a land animal at any
+    /// depth, as water two deep is. None by default.
+    fn lava(&self, _cell: IVec3) -> bool {
+        false
+    }
+
     /// Whether `cell` is something to stand on, as well as solid: a cell that is only a
     /// wall (over a railing, which stands two high to a creature) or a railing's own narrow
     /// top is no floor, no step to hop onto and no landing.
@@ -220,6 +231,22 @@ pub fn hop_speed(movement: &Movement, dt: f32) -> f32 {
     movement.jump.min(rise_speed(movement.step_rise, dt)).max(climb_speed(dt))
 }
 
+/// How quickly a body on the ground (or in water, or flying) takes up the speed it wants:
+/// the share of the difference made up in a second.
+pub const GROUND_CONTROL: f32 = 10.0;
+
+/// Seconds a chase from a standstill over `way` blocks at `speed` takes with a hop up a
+/// block on the way, by the body's own physics: the way at its speed; the hop's time in the
+/// air at its own jump (`hop_speed`), counted as making no way; and its gathering speed from
+/// a standstill before and after the hop (`GROUND_CONTROL`, made up a share a step).
+pub fn chase_with_hop(movement: &Movement, way: f32, speed: f32, dt: f32) -> f32 {
+    let rise = hop_speed(movement, dt);
+    let airborne = (rise + (rise * rise - 2.0 * GRAVITY).max(0.0).sqrt()) / GRAVITY;
+    let share = (GROUND_CONTROL * dt).min(1.0);
+    let gathering = dt * (1.0 - share) / share;
+    way / speed.max(0.1) + airborne + 2.0 * gathering
+}
+
 /// Whether the body can go a little way along `heading` (horizontal, unit length): sliding
 /// along a wall counts, and so does a single step up for anything that jumps; its head must
 /// not meet rock there, and on the ground it must not step off a drop deeper than
@@ -254,10 +281,10 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
     // against what it stands on now: the drop between them, and water there, judged the
     // same on the ground or in the air. A wall along the way is ground to no one.
     let reach = SAFE_DROP + 4;
-    let ground = |from: IVec3| (0..=reach).map(|k| from - IVec3::Y * k).find(|&c| world.water(c) || world.solid(c - IVec3::Y));
+    let ground = |from: IVec3| (0..=reach).map(|k| from - IVec3::Y * k).find(|&c| world.water(c) || world.lava(c) || world.solid(c - IVec3::Y));
     // Ahead, a railing's top, or the wall over it, is no landing: what comes down there is
     // off the way, as over a drop too deep.
-    let landing = |from: IVec3| ground(from).filter(|&c| world.water(c) || world.footing(c - IVec3::Y));
+    let landing = |from: IVec3| ground(from).filter(|&c| world.water(c) || world.lava(c) || world.footing(c - IVec3::Y));
     // What it stands on is the highest ground under any part of its box (at an edge, its
     // middle may already be over the drop), whatever it is: one already up on a railing,
     // or on the wall over it, still judges the drop beyond from there.
@@ -276,24 +303,60 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
     // wading in the shallows, it does not walk on into the deep.
     let feet = body.position.floor().as_ivec3();
     let wary = water == Water::Land && !(body.in_water && world.water(feet - IVec3::Y));
+    // Lava is a wall to anything that walks, unless it is already in it: then it walks out,
+    // and no deeper in.
+    let lava_kind = matches!(water, Water::Land | Water::Amphibious);
+    let in_lava = lava_kind && (world.lava(feet) || world.lava(feet - IVec3::Y));
+    let burns = lava_kind && !in_lava;
+    // In lava a block deep, it goes no deeper: lava two deep is shut to it, as deep water is.
+    let lava_deep = |c: IVec3| world.lava(c) && world.lava(c - IVec3::Y);
+    let shallow = in_lava && !lava_deep(feet) && !lava_deep(feet + IVec3::Y);
     // Along the way it really goes, sliding along a wall as its box would, a step at a
     // time; ahead of its middle by half its width.
     // Down into a space it would hang in (a trench too short for a long head to come down
     // into with its head clear): no way at a walk, or it walks in and stands stuck there.
     // Judged once, at the first place its way goes down, over all of that space along its
-    // way it fits in: a pit with room to land short of its far wall is open. Running or chasing, a creature drops in (a hop carries
-    // it, and its brain gives a held way up); into water it swims, its head up.
+    // way it fits in: a pit with room to land short of its far wall is open. Running or
+    // chasing, a creature drops in (a hop carries it, and its brain gives a held way up);
+    // into water it swims, its head up.
     // Down is below where its feet are: at a lip its box's corners may all be over the drop
     // (`now`) while its edge still stands on it.
     let feet = (body.position.y + 0.01).floor() as i32;
-    let held = |middle: Vec3, then: IVec3| {
-        if then.y >= feet || pace > movement.walk || world.water(then) {
+    // `pit`: judged for a pit too (below); never from under its own middle, or one whose
+    // middle is over a pit's lip would find no way at all, back onto the bank either.
+    // The first landing deeper than its climb is judged for a pit, once: a dip it would
+    // step back up from, or a crack too narrow to come down in, leaves the next for it.
+    let pit_judged = std::cell::Cell::new(false);
+    let held = |middle: Vec3, then: IVec3, trench: bool, pit: bool| {
+        if then.y >= feet {
             return false;
         }
         let at = |k: i32| Vec3::new(middle.x, then.y as f32, middle.z) + heading * (0.1 * k as f32);
-        // Too narrow along its way for its box (a crack): it never comes down in it.
+        // Too narrow along its way for its box (a crack, a ditch it straddles): it never
+        // comes down in it.
         let open = (-4..=4).filter(|&k| !world.solid((at(k * 5) + Vec3::Y * 0.01).floor().as_ivec3())).count() as f32 * 0.5;
         if open < body.size.0 {
+            return false;
+        }
+        // Deeper than it could climb back, unless in a chase (`Body::bold`), only onto open
+        // ground: never into a pit it would not get out of (a hole a player dug two or three
+        // deep), at any pace; a pit with water in its floor too, as a pool it would swim up
+        // out of only if its top is in reach.
+        let climb = (movement.jump > 0.0) as i32;
+        if pit && !body.bold && feet - then.y > climb {
+            pit_judged.set(true);
+            let walker = Walker {
+                height: body.size.1.ceil() as i32,
+                climbs: climb > 0,
+                wary: water == Water::Land,
+                span: Walker::span_of(body.size.0),
+                drop: climb,
+            };
+            if !path::way_out(world, &walker, walker.corner(Vec3::new(middle.x, then.y as f32 + 0.01, middle.z)), feet) {
+                return true;
+            }
+        }
+        if !trench || pace > movement.walk || world.water(then) {
             return false;
         }
         let landed = |k: i32| Body { position: at(k), yaw: yaw_of(heading), ..*body };
@@ -316,7 +379,7 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
         && then.y < feet
     {
         judged = true;
-        if held(body.position, then) {
+        if held(body.position, then, true, false) {
             return false;
         }
     }
@@ -336,7 +399,13 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
             None => false,
             Some(then) => {
                 let first_down = then.y < feet && !std::mem::replace(&mut judged, true);
-                now - then.y <= SAFE_DROP && !(wary && world.water(then) && world.water(then - IVec3::Y)) && !(first_down && held(middle, then))
+                let first_pit = then.y < feet && !pit_judged.get();
+                now - then.y <= SAFE_DROP
+                    && !(wary && world.water(then) && world.water(then - IVec3::Y))
+                    && !(burns && world.lava(then))
+                    && !(in_lava && world.lava(then) && then.y < now)
+                    && !(shallow && lava_deep(then))
+                    && !((first_down || first_pit) && held(middle, then, first_down, first_pit))
             }
         }
     })
@@ -422,7 +491,7 @@ pub fn step(body: &mut Body, world: &impl Surroundings, movement: &Movement, wat
     let along = drive.wish.with_y(0.0).normalize_or_zero();
     let aligned = along.dot(facing).max(0.0);
     let target = along * drive.speed * (0.3 + 0.7 * aligned);
-    let control = if body.on_ground || body.in_water || floating || flying { 10.0 } else if flier { 6.0 } else { 2.0 };
+    let control = if body.on_ground || body.in_water || floating || flying { GROUND_CONTROL } else if flier { 6.0 } else { 2.0 };
     let horizontal = body.velocity.with_y(0.0).lerp(target.with_y(0.0), (control * dt).min(1.0));
     body.velocity = horizontal.with_y(body.velocity.y);
 
@@ -993,6 +1062,24 @@ mod tests {
         let mut swimming = Body::new(Vec3::new(3.5, -2.0, 0.5), yaw_of(Vec3::X), (0.6, 0.8));
         swimming.in_water = true;
         assert!(open_way(&swimming, &Shelf, &movement, Water::Land, Vec3::X, 3.0, 0.05), "out of its depth, deeper water was a wall");
+        // A step down a block, then a pit three deep and walled all round, both within its look ahead:
+        // the step it would climb back up leaves the pit still judged, and shut.
+        struct Dip;
+        impl Surroundings for Dip {
+            fn solid(&self, cell: IVec3) -> bool {
+                match (cell.x, cell.z) {
+                    (1, _) => cell.y < -1,
+                    (2..=3, -1..=1) => cell.y < -3,
+                    _ => cell.y < 0,
+                }
+            }
+            fn water(&self, _: IVec3) -> bool {
+                false
+            }
+        }
+        let mut walker = Body::new(Vec3::new(1.2, 0.0, 0.5), yaw_of(Vec3::X), (0.6, 0.8));
+        walker.on_ground = true;
+        assert!(!open_way(&walker, &Dip, &movement, Water::Land, Vec3::X, 3.0, 0.05), "a step down a block left the pit past it open");
         // Steered at the edge, it goes along it; boxed in by cliffs, it stands.
         let cliff = Edge { drop: 8, wet: 0 };
         let (heading, side) = steer(&body, &cliff, &movement, Water::Land, Vec3::X, 0.0, 2.0, 0.05);
