@@ -74,6 +74,9 @@ impl Server {
             return;
         };
         self.tally(agent, "built", &structure.name, 1);
+        if structure.smoulder.is_some() {
+            return self.light_smoulder(agent, core, structure);
+        }
         // What catches by it as it is lit is the lighter's fire, whoever's home it is: lit by a
         // stranger, it never catches their thatch in its owner's home.
         let lighter = self.players.get(&agent).map(|p| crate::player_key(&p.name));
@@ -242,6 +245,8 @@ impl Server {
             if bed_lost || hearth_lost {
                 player.vitals.home = player.home_block(&self.lit);
                 player.changed(traits::VITALS);
+                // What the old home met is nothing to the new one: noted afresh there.
+                (player.home_steps, player.home_anchor) = (Vec::new(), None);
             }
         }
     }
@@ -322,7 +327,7 @@ mod tests {
         let core = ColumnPos::of_block(server.spawn.floor().as_ivec3()).origin() + IVec3::new(8, server.spawn.y as i32 + 4, 8);
         let coal = server.content.blocks.expect("base:coal_ore");
         server.set_block(core, server.content.blocks.expect("base:crucible"));
-        server.players.get_mut(&1).unwrap().inventory.slots[0] = Some(ItemStack { item: coal, count: 24 });
+        server.players.get_mut(&1).unwrap().inventory.slots[0] = Some(ItemStack::new(coal, 24));
         server.light(1, core);
         assert!(!server.lit.contains_key(&core), "a loose core was lit");
         assert_eq!(server.players[&1].inventory.get(0).unwrap().count, 24, "a loose core consumed fuel");
@@ -346,7 +351,7 @@ mod tests {
         server.light(1, core);
         assert!(!server.station_lit(core), "an empty hand relit an expired fire");
         assert_eq!(server.players[&1].tallies["lit:base:crucible_kiln"], 1);
-        server.players.get_mut(&1).unwrap().inventory.slots[0] = Some(ItemStack { item: coal, count: 24 });
+        server.players.get_mut(&1).unwrap().inventory.slots[0] = Some(ItemStack::new(coal, 24));
         server.light(1, core);
         assert!(server.station_lit(core));
         assert_eq!(server.players[&1].tallies["lit:base:crucible_kiln"], 2);
@@ -526,7 +531,7 @@ mod tests {
         }}
         for x in [-1, 1] { for z in [-1, 1] { server.set_block(core + IVec3::new(x, 1, z), brick); }}
         server.set_block(core, crucible);
-        server.players.get_mut(&1).unwrap().inventory.slots[0] = Some(ItemStack { item: coal, count: 24 });
+        server.players.get_mut(&1).unwrap().inventory.slots[0] = Some(ItemStack::new(coal, 24));
         let east = column.offset(1, 0);
         let held = server.world.remove(east).expect("loaded");
         server.light(1, core);
@@ -587,7 +592,7 @@ mod tests {
         server.players.get_mut(&1).unwrap().draws.cooks = cooks;
         let cook = |server: &mut Server, at: IVec3| {
             server.players.get_mut(&1).unwrap().inventory.slots.iter_mut().for_each(|slot| *slot = None);
-            server.players.get_mut(&1).unwrap().inventory.slots[0] = Some(ItemStack { item: raw, count: 1 });
+            server.players.get_mut(&1).unwrap().inventory.slots[0] = Some(ItemStack::new(raw, 1));
             server.cook(1, at);
             server.players[&1].inventory.get(0).map(|s| s.item)
         };
@@ -626,17 +631,17 @@ mod tests {
         for x in [-1, 1] { for z in [-1, 1] { server.set_block(core + IVec3::new(x, 1, z), brick); }}
         server.set_block(core, blocks.expect("base:crucible"));
         let (coal, copper, tin, bronze) = (blocks.expect("base:coal_ore"), blocks.expect("base:copper_ingot"), blocks.expect("base:tin_ore"), blocks.expect("base:bronze_ingot"));
-        server.players.get_mut(&1).unwrap().inventory.slots[0] = Some(ItemStack { item: coal, count: 24 });
+        server.players.get_mut(&1).unwrap().inventory.slots[0] = Some(ItemStack::new(coal, 24));
         server.light(1, core);
         assert!(server.station_lit(core));
         let engineering = server.content.skills.id("core:engineering").unwrap();
         let player = server.players.get_mut(&1).unwrap();
         player.skills.grant(engineering, server.content.skills.xp_for(12));
-        player.inventory.slots[0] = Some(ItemStack { item: copper, count: 4 });
+        player.inventory.slots[0] = Some(ItemStack::new(copper, 4));
         player.selected = 0;
         server.cook(1, core);
         assert_eq!(server.players[&1].inventory.count(copper), 4, "no tin, nothing taken");
-        server.players.get_mut(&1).unwrap().inventory.slots[5] = Some(ItemStack { item: tin, count: 1 });
+        server.players.get_mut(&1).unwrap().inventory.slots[5] = Some(ItemStack::new(tin, 1));
         let before = server.players[&1].skills.xp(engineering);
         server.cook(1, core);
         let player = &server.players[&1];
@@ -658,7 +663,7 @@ mod tests {
         let key = server.players[&1].draw_key;
         let cooks = (0..1000).find(|&n| crate::save::numbered_draws(key, Draw::Cook.salt(), n)[0] < burn).expect("a real burnt roll");
         server.players.get_mut(&1).unwrap().draws.cooks = cooks;
-        server.players.get_mut(&1).unwrap().inventory.slots[0] = Some(ItemStack { item: raw, count: 1 });
+        server.players.get_mut(&1).unwrap().inventory.slots[0] = Some(ItemStack::new(raw, 1));
         server.cook(1, fire);
         assert_eq!(server.players[&1].inventory.get(0).unwrap().item, burnt);
         assert!(!server.players[&1].tallies.keys().any(|key| key.starts_with("cooked")), "a burnt output counted");
@@ -682,10 +687,10 @@ mod tests {
             server.players.get_mut(&1).unwrap().draws.cooks = cooks;
             let inventory = &mut server.players.get_mut(&1).unwrap().inventory;
             for slot in inventory.slots.iter_mut() {
-                *slot = Some(ItemStack { item: stone, count: 64 });
+                *slot = Some(ItemStack::new(stone, 64));
             }
-            inventory.slots[0] = Some(ItemStack { item: clay, count: 64 });
-            inventory.slots[1] = Some(ItemStack { item: fired, count: 10 });
+            inventory.slots[0] = Some(ItemStack::new(clay, 64));
+            inventory.slots[1] = Some(ItemStack::new(fired, 10));
             server.players.get_mut(&1).unwrap().selected = 0;
             server.cook(1, kiln);
             let inventory = &server.players[&1].inventory;

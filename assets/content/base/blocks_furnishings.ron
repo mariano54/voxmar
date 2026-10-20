@@ -161,11 +161,30 @@
             drops: "core:air", hardness: 0.0, color: (110, 140, 70), tags: ["hanging", "drying", "decor"],
         ),
 
-        // Singles. A candle (tallow until bees make wax), and the fire a hearth has.
+        // Singles. A candle (tallow until bees make wax), and the fire a hearth has. A candle
+        // set down burns three game days to its end, a stub of wax never lit again (flame.rs);
+        // picked up, it keeps what it has burnt.
         (
             name: "candle", render: Model, shape: "candle", solid: false, light: 8, sound: Wood, textures: All("candle_grey"), tint: Fixed(240, 228, 196),
-            hardness: 0.0, color: (240, 228, 196), tags: ["candle", "light", "decor", "furnishing"],
+            hardness: 0.0, color: (240, 228, 196), tags: ["candle", "light", "decor", "furnishing", "burns_days:3", "burns_out_to:candle_end", "tended"],
             particles: [(style: Flame, rate: 8.0, at: (0.5, 0.45, 0.5), spread: 0.01, size: 0.7, height: 0.2, color: Some((240, 150, 40)))],
+        ),
+        (
+            name: "candle_end", render: Model, shape: "candle_end", solid: false, sound: Wood, textures: All("candle_grey"), tint: Fixed(240, 228, 196),
+            drops: "core:air", hardness: 0.0, color: (240, 228, 196), tags: ["decor"],
+        ),
+        // A clay oil lamp: a brighter light than a candle, burning five game days on a fill of
+        // fat. Burnt dry it keeps its clay; right clicked with fat (`relight_with:fat`) it is
+        // filled and lit again, the fat used up. Made empty; picked up lit, it keeps what fat it
+        // has left (flame.rs), and set down again burns on.
+        (
+            name: "clay_oil_lamp", render: Model, shape: "oil_lamp", solid: false, light: 10, sound: Stone, textures: All("crockery_grey"), tint: Fixed(176, 100, 62),
+            hardness: 0.1, color: (176, 100, 62), tags: ["lamp", "light", "decor", "furnishing", "burns_days:5", "burns_out_to:clay_oil_lamp_empty", "tended"],
+            particles: [(style: Flame, rate: 8.0, at: (0.5, 0.26, 0.84), spread: 0.01, size: 0.8, height: 0.2, color: Some((240, 150, 40)))],
+        ),
+        (
+            name: "clay_oil_lamp_empty", render: Model, shape: "oil_lamp", solid: false, sound: Stone, textures: All("crockery_grey"), tint: Fixed(176, 100, 62),
+            hardness: 0.1, color: (176, 100, 62), tags: ["lamp", "decor", "relights_to:clay_oil_lamp", "relight_with:fat"],
         ),
         (
             name: "brazier", render: Model, shape: "brazier", light: 14, sound: Stone, textures: All("brazier_iron"),

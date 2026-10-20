@@ -14,6 +14,7 @@ mod cooking;
 mod creatures;
 mod fight;
 mod fishing;
+mod flames;
 mod death;
 #[cfg(test)]
 mod doors;
@@ -37,6 +38,7 @@ mod prayers;
 mod process;
 mod rules;
 mod laying;
+mod smoulder;
 mod stations;
 mod traps;
 mod stores;
@@ -47,6 +49,7 @@ mod spawn_kit;
 mod villagers;
 mod wandering;
 mod weather;
+mod tool_wear;
 mod wear;
 
 use std::collections::VecDeque;
@@ -655,6 +658,8 @@ pub(crate) struct Server {
     /// Lit multiblocks, by core cell: a kiln burning its fuel charge, a hearth (which needs
     /// none) until it breaks.
     lit: FxHashMap<IVec3, hearth::Lit>,
+    /// Structures smouldering, by core cell: a charcoal clamp charring (smoulder.rs).
+    smoulders: FxHashMap<IVec3, smoulder::Smouldering>,
     /// Whose each home hearth is (a player's key, or no one's for one lit before fires were
     /// kept by owner), by core cell: set when it is first lit, kept while its fire is out or
     /// a piece of it is broken, forgotten only when its owner breaks its hearthstone or lights
@@ -674,6 +679,8 @@ pub(crate) struct Server {
     /// Picked wild plants waiting to grow back (see `regrow`), and plants a herb planter
     /// grew back, whose picking pays the planter's experience.
     regrowing: FxHashMap<IVec3, regrow::Regrowing>,
+    /// Lights set down and burning, by where they stand (`flames`).
+    flames: FxHashMap<IVec3, flames::Flame>,
     /// Blocks waiting to catch fire or to burn out (see `blaze`).
     blazes: FxHashMap<IVec3, blaze::Blaze>,
     /// Blocks set smouldering this tick, for telling whoever's change did it (`blaze_hint`).
@@ -811,6 +818,7 @@ impl Server {
         let placed = meta.placed.iter().map(|&p| IVec3::from_array(p)).collect();
         let quest_placed = quests::restore_placed(&meta.quest_placed, &content.blocks, &content.quests);
         let regrowing = regrow::restore(&meta.regrowing, |name| content.blocks.id(name));
+        let flames = flames::restore(&meta.flames, |name| content.blocks.id(name), |block| content.flames.burn_life(block) > 0);
         let blazes = blaze::restore(&meta.blazes);
         let lairs = lairs::Lairs::restore(&meta.lairs);
         let planter_grown = meta.planter_grown.iter().map(|&p| IVec3::from_array(p)).collect();
@@ -820,6 +828,7 @@ impl Server {
         let lit = meta.lit.iter().filter(|fire| fire.until > tick && content.multiblocks.get(&fire.structure).is_some())
             .map(|fire| (IVec3::from_array(fire.position), fire.clone())).collect::<FxHashMap<_, _>>();
         let hearth_owners = hearth::HearthOwner::restore(&meta.hearth_owners, &lit, |name| content.multiblocks.get(name).is_some_and(|m| m.home));
+        let smoulders = smoulder::restore(&meta.smoulders, |name| content.multiblocks.get(name).is_some_and(|m| m.smoulder.is_some()));
         let survival = Arc::new(rules::SurvivalRules::load(&content.files, &content.blocks, &mut Vec::new()).expect("checked by load_content"));
         let mut server = Self {
             config,
@@ -837,11 +846,13 @@ impl Server {
             farm,
             factory: voxmar_engine::factory::Factory::default(),
             lit,
+            smoulders,
             hearth_owners,
             fires_sent: Vec::new(),
             placed,
             quest_placed,
             regrowing,
+            flames,
             blazes,
             blaze_risked: Vec::new(),
             smoulders_sent: Vec::new(),
@@ -1026,6 +1037,7 @@ impl Server {
         self.fluids.column_loaded(&self.content.blocks, &self.world, pos, self.tick, loaded.saved);
         self.show_grown_crops(pos);
         self.reconcile_machines(pos, loaded.saved);
+        self.flames_loaded(pos);
     }
 
     fn handle_messages(&mut self) {
@@ -1089,6 +1101,7 @@ impl Server {
             age: 0.0,
             owner: None,
             lifetime: None,
+            wear: stack.wear,
         }));
         saved
     }
@@ -1221,6 +1234,7 @@ impl Server {
         quest_placed.sort();
         meta.quest_placed = quest_placed;
         meta.regrowing = self.saved_regrowing();
+        meta.flames = self.saved_flames();
         meta.blazes = self.saved_blazes();
         let mut grown: Vec<[i32; 3]> = self.planter_grown.iter().map(|p| p.to_array()).collect();
         grown.sort();
@@ -1231,6 +1245,7 @@ impl Server {
         meta.catches = self.catches.saved(|species| self.content.creatures.get(species).def.name.clone());
         meta.lit = self.lit.values().filter(|fire| fire.until > self.tick).cloned().collect();
         meta.lit.sort_by_key(|fire| fire.position);
+        meta.smoulders = self.saved_smoulders();
         meta.hearth_owners = hearth::HearthOwner::saved(&self.hearth_owners);
         meta.day = Some(self.day as u64);
         meta.day_speed = self.day_speed;
@@ -1344,6 +1359,11 @@ impl Server {
         self.players.values().any(|p| p.joined && p.health.alive() && p.aabb().intersects(|c| c == cell))
     }
 
+    /// Whether a live creature's body is in `cell`.
+    pub(crate) fn creature_in(&self, cell: IVec3) -> bool {
+        self.creatures.live.values().any(|c| c.health > 0 && c.body.aabb().intersects(|at| at == cell))
+    }
+
     /// Whether putting `block` at `cell` would shut a player inside it: a solid block where
     /// a player stands, which no hand may place. Admin fills leave such a cell as it is
     /// (`/fill`, `/setblock`); regrowth brings back only plants that are not solid.
@@ -1379,7 +1399,9 @@ impl Server {
                 self.station_changed(pos, old, block);
                 self.trap_changed(pos, block);
                 self.fire_changed(pos);
+                self.smoulder_changed(pos);
                 self.home_changed(pos, block);
+                self.flame_changed(pos, block);
                 self.blaze_changed(pos, block);
             }
         }
@@ -1419,7 +1441,9 @@ impl Server {
             self.station_changed(pos, old, block);
             self.trap_changed(pos, block);
             self.fire_changed(pos);
+            self.smoulder_changed(pos);
             self.home_changed(pos, block);
+            self.flame_changed(pos, block);
             self.blaze_changed(pos, block);
             for player in self.players.values().filter(|p| p.joined && p.sent.contains(&column)) {
                 player.connection.send(ServerMessage::BlockChanged { pos, block });
@@ -1668,7 +1692,7 @@ mod tests {
         let mut server = Server::new(config, meta, Some(save), save::WorldState::default(), content.clone(), incoming, console);
         let slime = content.blocks.expect("base:lumen_slime");
         let at = Vec3::new(3.5, 70.0, -2.5);
-        server.creatures.falling_loot.push((server.tick + 100, voxmar_engine::inventory::ItemStack { item: slime, count: 2 }, voxmar_engine::dropped::Loose::new(at, Vec3::Y)));
+        server.creatures.falling_loot.push((server.tick + 100, voxmar_engine::inventory::ItemStack::new(slime, 2), voxmar_engine::dropped::Loose::new(at, Vec3::Y)));
         server.save();
         let saved = WorldSave::new(&dir).read_items().unwrap();
         assert_eq!(saved.len(), 1, "{saved:?}");

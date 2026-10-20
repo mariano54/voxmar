@@ -753,6 +753,12 @@ impl Settlements {
         self.slot(world, self.cell_of(x, z)).0.as_ref().is_some_and(|plan| p.cmpge(plan.min - 4).all() && p.cmple(plan.max + 4).all())
     }
 
+    /// The height of the settlement whose plan covers (x, z), if one does (as `covers`).
+    pub fn height_covering(&self, world: &Overworld, x: i32, z: i32) -> Option<i32> {
+        let p = IVec2::new(x, z);
+        self.slot(world, self.cell_of(x, z)).0.as_ref().filter(|plan| p.cmpge(plan.min - 4).all() && p.cmple(plan.max + 4).all()).map(|plan| plan.height)
+    }
+
     /// Whether any settlement's gate lies within `reach` blocks of the box from `min` to
     /// `max`.
     pub fn any_near(&self, world: &Overworld, min: IVec2, max: IVec2, reach: i32) -> bool {

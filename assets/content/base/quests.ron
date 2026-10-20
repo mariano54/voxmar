@@ -402,8 +402,8 @@
         // drafts 100 and 102: the nomad path alone left both short of 5).
         (
             name: "charcoal", age: "farm", branch: "fuel", title: "Charcoal",
-            why: "Fuel before metal: coal or charcoal smelts copper and makes torches. Burn logs down at a campfire (hold a log and right-click the fire), or mine coal ore from a seam: a small black-flecked stone on the ground marks one below. Char sixteen logs, or mine twenty-four coal ore. An earth clamp chars sixteen logs at a time with nobody by it (An Earth Clamp).",
-            tasks: [[Cook("charcoal", 16)], [Mine("coal_ore", 24)]],
+            why: "Fuel before metal: coal or charcoal smelts copper and makes torches, and only they burn hot enough for the Crucible Kiln. Charcoal comes from a clamp. Hold a log and right-click a chopping block (a flint over a log, Crafting 2) with an axe in your pack: two firewood. Lay nine firewood three by three on the ground, wall them round and roof them over with earth, and put kindling (three sticks) on the roof's middle for a flue. Light the kindling from a torch: two hours on, nobody by it, the clamp leaves thirty-six charcoal. Rain down the open flue spoils some to ash, so roof it over. Or dig out a coal seam: a small black-flecked stone on the ground marks one below. Light a clamp and have sixteen charcoal, or mine twenty-four coal.",
+            tasks: [[Lit("charcoal_clamp", 1), Have("charcoal", 16)], [Mine("coal_ore", 24)]],
             after: ["fuel_to_hand", "a_pit_kiln"],
             rewards: [Xp("engineering", 325.0), Xp("mining", 300.0)],
         ),
@@ -474,15 +474,15 @@
             rewards: [Xp("construction", 80.0)],
         ),
         (
-            name: "an_earth_clamp", age: "farm", branch: "pottery", title: "An Earth Clamp",
-            why: "A kiln wants you standing by it; a clamp does not. Heap eight dirt over a log at the crafting table (Construction 3) for an earth clamp, then right-click it with up to sixteen clay or logs in hand. It smoulders for a minute while you dig, chop or mine, and gives back fired clay that never cracks, or charcoal. It is slower than firing by hand, but your hands are free, so keep both going. While it smoulders it is a fire: it smokes bees calm and dries a rack beside it faster. Make a clamp and fire sixteen clay or char sixteen logs.",
-            tasks: [[Craft("earth_clamp", 1), CookAt("fired_clay", "earth_clamp", 16)], [Craft("earth_clamp", 1), CookAt("charcoal", "earth_clamp", 16)]],
-            after: ["a_pit_kiln"],
+            name: "an_earth_clamp", age: "farm", branch: "pottery", title: "A Second Clamp",
+            why: "The Crucible Kiln burns thirty-two charcoal at a lighting, and every melt after wants more. A clamp takes two hours, so build the next while the last one smoulders, and roof each flue against rain. While it smoulders the flue is a fire: a drying rack beside it dries twice as fast. Light two clamps.",
+            tasks: [[Lit("charcoal_clamp", 2)]],
+            after: ["charcoal"],
             rewards: [Xp("construction", 60.0), Xp("crafting", 40.0)],
         ),
         (
             name: "fire_the_clay", age: "farm", branch: "main", title: "Fire the Clay",
-            why: "Hold clay and right-click the pit kiln: after a moment it comes out as fired clay. Low Crafting levels crack some, so bring spare (a cracked one is clay again). Waiting at the kiln? Heap eight dirt over a log for an earth clamp (An Earth Clamp): it fires sixteen at once, none cracked, while you dig. Fire twelve.",
+            why: "Hold clay and right-click the pit kiln: after a moment it comes out as fired clay. Low Crafting levels crack some, so bring spare (a cracked one is clay again). Fire twelve.",
             tasks: [[Cook("fired_clay", 12)]],
             after: ["a_pit_kiln"],
             rewards: [Xp("crafting", 100.0)],

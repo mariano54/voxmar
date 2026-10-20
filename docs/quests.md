@@ -492,8 +492,8 @@ that quest needs.
 | Milk | 5 min | The Milk Pail | A Full Pen |
 | A herb growing back | Its regrowth | Herb Garden | A Kitchen Garden (opens with it) |
 | Night, which cannot be slept away | A third of each 20-minute day | Torchlight | Digging coal by torchlight; Meat on the Fire and crafting at home |
-| Long clay firing | 17 + 55 s of firing for the bot (was 68 + 80) | A Kiln Load | Earthenware, A Place to Pray (its stone fires in the same kiln), Fired Whole; An Earth Clamp smoulders beside it |
-| An earth clamp smouldering | 1 min a load | An Earth Clamp | Firing clay by hand at the pit kiln, digging the next load, Red Metal |
+| Long clay firing | 17 + 55 s of firing for the bot (was 68 + 80) | A Kiln Load | Earthenware, A Place to Pray (its stone fires in the same kiln), Fired Whole |
+| A charcoal clamp smouldering | 2 game hours (about 150 s of the quest-book bot's time, which runs about 75 s a game hour) | Charcoal | Brick by Brick: firing clay at the pit kiln to A Kiln Load's forty and crafting kiln bricks; A Second Clamp |
 | A drying rack drying | 10 min (5 by a fire) | Hung to Dry | Hunting for the next load; Trail Rations |
 | A compost heap rotting | 15 min (10 by water) | A Compost Heap | Sowing and tending the field it will feed, the compost's next part |
 

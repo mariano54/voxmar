@@ -18,7 +18,7 @@
         // A `furnishing`: a village's gives nothing, one a player placed gives itself back.
         (
             name: "campfire", render: Plant, solid: false, sound: Wood, textures: All("campfire"),
-            light: 13, hardness: 0.6, color: (230, 120, 40), tags: ["campfire", "station", "heat", "fire", "hob", "furnishing"],
+            light: 13, hardness: 0.6, color: (230, 120, 40), tags: ["campfire", "station", "heat", "fire", "firelighter", "hob", "furnishing"],
             // Flames licking a block and more above the logs, a deep yellow core among them,
             // smoke thick over the fire and thinning as it rises a few blocks, embers
             // floating up as high, and now and then a crackle of sparks (`particles`:
@@ -36,7 +36,8 @@
         // the odd ember and wisp of smoke rise from it.
         (
             name: "torch", render: Plant, solid: false, sound: Wood, textures: All("torch_lit"),
-            light: 14, hardness: 0.0, color: (250, 180, 60), tags: ["light", "fire"], wall: "wall_torch",
+            light: 14, hardness: 0.0, color: (250, 180, 60), wall: "wall_torch",
+            tags: ["light", "fire", "firelighter", "kindles", "burns_days:1", "burns_out_to:torch_stub", "rain_douses", "gutters_to:torch_guttering", "tended"],
             particles: [
                 (style: Flame, rate: 26.0, at: (0.5, 0.78, 0.5), spread: 0.04, size: 1.6, height: 0.35, color: Some((240, 128, 20))),
                 (style: Ember, rate: 0.5, at: (0.5, 0.75, 0.5), spread: 0.04, size: 0.7, height: 2.0, color: Some((226, 84, 16))),
@@ -48,13 +49,52 @@
         // `wall_torch_east`, `_south`, `_west`), so settlements can place them directly.
         (
             name: "wall_torch", render: Plant, solid: false, sound: Wood, textures: All("torch_lit"),
-            light: 14, hardness: 0.0, color: (250, 180, 60), tags: ["light", "fire"], drops: "torch",
+            light: 14, hardness: 0.0, color: (250, 180, 60), drops: "torch",
+            tags: ["light", "fire", "burns_days:1", "burns_out_to:wall_torch_stub", "rain_douses", "gutters_to:wall_torch_guttering", "tended"],
             facing: true, support: Wall, model: Wall,
             particles: [
                 (style: Flame, rate: 26.0, at: (0.5, 0.84, 0.67), spread: 0.04, size: 1.6, height: 0.35),
                 (style: Ember, rate: 0.5, at: (0.5, 0.81, 0.68), spread: 0.04, size: 0.7, height: 2.0),
                 (style: Smoke, rate: 0.8, at: (0.5, 0.96, 0.63), spread: 0.02, size: 0.45),
             ],
+        ),
+        // A torch near its end (survival.ron's `gutter_share` of its burn left): its flame
+        // low and sputtering, smoking more, the cue to light it again before it goes out:
+        // anything that kindles lights it again a whole torch. Left, it burns on to the same
+        // end; picked up, it is a torch with what it has left.
+        (
+            name: "torch_guttering", render: Plant, solid: false, sound: Wood, textures: All("torch_lit"),
+            light: 11, hardness: 0.0, color: (220, 140, 50), drops: "torch",
+            tags: ["light", "fire", "burns_days:1", "burns_out_to:torch_stub", "rain_douses", "relights_to:torch", "tended"],
+            particles: [
+                (style: Flame, rate: 9.0, at: (0.5, 0.74, 0.5), spread: 0.06, size: 1.1, height: 0.2, color: Some((220, 100, 20))),
+                (style: Ember, rate: 2.0, at: (0.5, 0.74, 0.5), spread: 0.06, size: 0.6, height: 1.2, color: Some((226, 84, 16))),
+                (style: Smoke, rate: 2.4, at: (0.5, 0.86, 0.5), spread: 0.03, size: 0.5, color: Some((96, 96, 96))),
+            ],
+        ),
+        (
+            name: "wall_torch_guttering", render: Plant, solid: false, sound: Wood, textures: All("torch_lit"),
+            light: 11, hardness: 0.0, color: (220, 140, 50), drops: "torch",
+            tags: ["light", "fire", "burns_days:1", "burns_out_to:wall_torch_stub", "rain_douses", "relights_to:wall_torch", "tended"],
+            facing: true, support: Wall, model: Wall,
+            particles: [
+                (style: Flame, rate: 9.0, at: (0.5, 0.8, 0.67), spread: 0.06, size: 1.1, height: 0.2),
+                (style: Ember, rate: 2.0, at: (0.5, 0.8, 0.68), spread: 0.06, size: 0.6, height: 1.2),
+                (style: Smoke, rate: 2.4, at: (0.5, 0.92, 0.63), spread: 0.03, size: 0.5),
+            ],
+        ),
+        // A torch burnt down (`burns_days:` above, or rain under open sky): a charred stub
+        // with no flame. Anything that kindles (a firebrand, a lit torch) lights it again
+        // where it stands, for nothing. Broken, it gives the stub, which sets down as a stub
+        // (lit again where it stands) or is held in any fire to catch (cooking.ron).
+        (
+            name: "torch_stub", render: Plant, solid: false, sound: Wood, textures: All("torch_stub"),
+            hardness: 0.0, color: (70, 52, 40), tags: ["relights_to:torch"], wall: "wall_torch_stub",
+        ),
+        (
+            name: "wall_torch_stub", render: Plant, solid: false, sound: Wood, textures: All("torch_stub"),
+            hardness: 0.0, color: (70, 52, 40), tags: ["relights_to:wall_torch"], drops: "torch_stub",
+            facing: true, support: Wall, model: Wall,
         ),
     ],
     families: [
@@ -105,8 +145,8 @@
         (template: "drop", name: "raw_glimmer_koi", tags: ["fish", "raw", "edible", "seafood"], all: (color: (150, 170, 190), rarity: VeryRare)),
         (template: "drop", name: "cooked_glimmer_koi", tags: ["fish", "cooked", "edible", "heal:30", "seafood", "flavour:savoury"], all: (color: (200, 150, 100), rarity: VeryRare)),
         // Tools for what kept animals give.
-        (template: "drop", name: "shears", tags: ["shears", "tool"], all: (color: (150, 150, 155))),
-        (template: "drop", name: "pail", tags: ["pail", "tool"], all: (color: (150, 110, 70))),
+        (template: "drop", name: "shears", tags: ["uses:200", "mend:cobblestone", "shears", "tool"], all: (color: (150, 150, 155))),
+        (template: "drop", name: "pail", tags: ["pail", "tool", "never_wears"], all: (color: (150, 110, 70))),
         (template: "drop", name: "burnt_food", tags: ["burnt", "compost", "bait"], all: (color: (40, 34, 30))),
     ],
     // Rabbit, chicken and frog were one meat in all but name (Cooking 1, healing 4; frog
