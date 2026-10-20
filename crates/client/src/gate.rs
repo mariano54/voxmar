@@ -5455,6 +5455,11 @@ fn tool_wear(world: &mut World, gate: &mut Gate, now: f32) {
                 end(world, gate);
             } else if waited {
                 fail(world, gate, "tool wear: mends", format!("crafted, the {} came back at wear {mended:?} (wanted {after}), grid emptied {empty}, in {WEAR_WAIT} server seconds", name(plan.tool)));
+            }
+        }
+    }
+}
+
 /// Longest a flint stage may wait for the server.
 const FLINT_WAIT: f32 = 10.0;
 
@@ -9829,7 +9834,7 @@ fn fit_tool(world: &mut World, full: bool) {
     else {
         return;
     };
-    let shown = voxmar_engine::inventory::ItemStack { item: tool, count: 1 };
+    let shown = voxmar_engine::inventory::ItemStack::new(tool, 1);
     let mut player = world.resource_mut::<LocalPlayer>();
     let kept = std::mem::replace(&mut player.inventory.slots[FIT_TOOL_SLOT], Some(shown));
     world.insert_resource(KeptSlot(kept, shown));
