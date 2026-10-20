@@ -327,6 +327,12 @@ fn ease_angle(from: f32, to: f32, rate: f32, dt: f32) -> f32 {
     from + gap * (1.0 - (-rate * dt).exp())
 }
 
+/// Eases a look up or down (`pitch`, clamped, never round the circle) from `from` toward
+/// `to` at `rate` a second: straight through the level, never over the top.
+fn ease_pitch(from: f32, to: f32, rate: f32, dt: f32) -> f32 {
+    from + (to - from) * (1.0 - (-rate * dt).exp())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn show(
     mut commands: Commands,
@@ -433,7 +439,7 @@ fn show(
         let before = figure.position;
         figure.position = if before.distance(view.position) > SNAP { view.position } else { before.lerp(view.position, 1.0 - (-look.follow * dt).exp()) };
         figure.yaw = ease_angle(figure.yaw, view.yaw, look.turn, dt);
-        figure.pitch = ease_angle(figure.pitch, view.pitch, look.turn, dt);
+        figure.pitch = ease_pitch(figure.pitch, view.pitch, look.turn, dt);
         let moved = (figure.position - before).with_y(0.0).length();
         if dt > 0.0 {
             figure.pace += (moved / dt - figure.pace) * (1.0 - (-10.0 * dt).exp());
@@ -511,7 +517,9 @@ fn show(
         let looks = crate::drops::look_of(&world, pieces.as_deref(), item, center.floor().as_ivec3());
         let size = if looks.shape == Shape::Sprite { hand.flat } else { hand.block };
         figure.held_at = Some(center);
-        models.0.push(ItemModel {
+        // At the front: the drops before it are cut to what is drawn (`drops::show`, nearest
+        // first), and what a player holds is never the one left out.
+        models.0.insert(0, ItemModel {
             center,
             phase: 0.0,
             offset: Vec3::ZERO,
@@ -586,6 +594,20 @@ mod tests {
     fn shipped() -> PlayerLook {
         let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/content/base/", "player_look.ron")).unwrap();
         PlayerLook::load(&[ContentFile { package: "base".into(), name: FILE.into(), source }]).unwrap()
+    }
+
+    /// A look from all but straight down to all but straight up passes the level, never
+    /// over the top, though that is more than half a turn.
+    #[test]
+    fn a_look_up_from_down_passes_the_level() {
+        let (mut pitch, mut passed) = (-1.55_f32, false);
+        for _ in 0..120 {
+            let next = ease_pitch(pitch, 1.55, 12.0, 1.0 / 60.0);
+            assert!(next >= pitch && next <= 1.55, "{pitch} to {next}");
+            passed |= next.abs() < 0.2;
+            pitch = next;
+        }
+        assert!(passed && pitch > 1.5, "the look ended at {pitch}");
     }
 
     #[test]
