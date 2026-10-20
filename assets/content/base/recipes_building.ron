@@ -1,0 +1,40 @@
+// Recipes for the building pieces (blocks_building.ron) and the slabs and stairs of every
+// wood, at a crafting table. They are Construction's, from its first levels: thatch and
+// slabs from the start, shingles once a home has a hearth's worth of skill. Cut down from
+// a block, a piece always gives more than one, so building with pieces costs no more than
+// building with blocks, and nothing here can be run backwards for profit.
+(
+    recipes: [
+        // Slabs and stairs, in every wood and the cut stones.
+        (pattern: [["{name}_planks", "{name}_planks", "{name}_planks"]], output: "{name}_slab", count: 6, skill: "core:construction", level: 1, xp: 2.0),
+        (pattern: [["{name}_planks", "", ""], ["{name}_planks", "{name}_planks", ""], ["{name}_planks", "{name}_planks", "{name}_planks"]], output: "{name}_stairs", count: 4, skill: "core:construction", level: 2, xp: 3.0),
+        (pattern: [["cobblestone", "cobblestone", "cobblestone"]], output: "cobblestone_slab", count: 6, skill: "core:construction", level: 2, xp: 2.0),
+        (pattern: [["cobblestone", "", ""], ["cobblestone", "cobblestone", ""], ["cobblestone", "cobblestone", "cobblestone"]], output: "cobblestone_stairs", count: 4, skill: "core:construction", level: 3, xp: 3.0),
+        (pattern: [["stone_bricks", "stone_bricks", "stone_bricks"]], output: "stone_brick_slab", count: 6, skill: "core:construction", level: 6, xp: 3.0),
+        (pattern: [["stone_bricks", "", ""], ["stone_bricks", "stone_bricks", ""], ["stone_bricks", "stone_bricks", "stone_bricks"]], output: "stone_brick_stairs", count: 4, skill: "core:construction", level: 7, xp: 4.0),
+        // Thatch: fibre (grass twine or wheat) laid in two rows makes four courses of roof;
+        // a row of three makes two ridges.
+        (pattern: [["tag:fibre", "tag:fibre", "tag:fibre"], ["tag:fibre", "tag:fibre", "tag:fibre"]], output: "thatch_roof", count: 4, skill: "core:construction", level: 1, xp: 3.0),
+        (pattern: [["tag:fibre", "", "tag:fibre"], ["", "tag:fibre", ""]], output: "thatch_ridge", count: 2, skill: "core:construction", level: 1, xp: 2.0),
+        // Timber, in whichever of birch, oak and dark oak the logs are: three logs in a
+        // column make posts, in a row beams.
+        (pattern: [["{name}_log"], ["{name}_log"], ["{name}_log"]], output: "{name}_post", count: 6, skill: "core:construction", level: 2, xp: 3.0),
+        (pattern: [["{name}_log", "{name}_log", "{name}_log"]], output: "{name}_beam", count: 6, skill: "core:construction", level: 2, xp: 3.0),
+        // Laths of sticks in a plank frame.
+        (pattern: [["{name}_planks", "stick", "{name}_planks"], ["stick", "stick", "stick"], ["{name}_planks", "stick", "{name}_planks"]], output: "{name}_lattice_window", count: 4, skill: "core:construction", level: 3, xp: 4.0),
+        // Shingles split from slabs, two rows of them; a ridge caps two slabs with a third.
+        (pattern: [["{name}_slab", "{name}_slab", "{name}_slab"], ["{name}_slab", "{name}_slab", "{name}_slab"]], output: "{name}_shingles", count: 4, skill: "core:construction", level: 5, xp: 4.0),
+        (pattern: [["", "{name}_slab", ""], ["{name}_slab", "", "{name}_slab"]], output: "{name}_shingle_ridge", count: 2, skill: "core:construction", level: 5, xp: 3.0),
+        // The home's ladder, from what has been worked first (sticks, twine, cured hide,
+        // fired clay, bricks, beams), never straight from the ground.
+        (pattern: [["hide", "hide", "hide"], ["stick", "", "stick"]], output: "hide_lean_to", count: 2, skill: "core:construction", level: 1, xp: 3.0),
+        (pattern: [["stick", "stick", "stick"], ["stick", "twine", "stick"], ["stick", "stick", "stick"]], output: "wattle_panel", count: 4, skill: "core:construction", level: 1, xp: 3.0),
+        (pattern: [["clay", "twine", "clay"], ["", "wattle_panel", ""]], output: "daub", count: 2, skill: "core:construction", level: 2, xp: 3.0),
+        // Half-timber: two beams of one wood (a beam asked for by name, so no other piece
+        // answers it) framing two daub.
+        (pattern: [["{name}_beam", "daub"], ["daub", "{name}_beam"]], output: "half_timber", count: 4, skill: "core:construction", level: 4, xp: 4.0),
+        (pattern: [["{name}_planks", "stick", "{name}_planks"], ["{name}_planks", "stick", "{name}_planks"]], output: "wooden_shutters", count: 2, skill: "core:construction", level: 2, xp: 3.0),
+        (pattern: [["stone_bricks", "", "stone_bricks"], ["stone_bricks", "", "stone_bricks"]], output: "chimney_stack", count: 2, skill: "core:construction", level: 6, xp: 4.0),
+        (pattern: [["fired_clay", "", "fired_clay"], ["fired_clay", "", "fired_clay"]], output: "chimney_pot", count: 2, skill: "core:construction", level: 3, xp: 3.0),
+    ],
+)
