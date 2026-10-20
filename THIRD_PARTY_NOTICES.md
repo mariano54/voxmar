@@ -433,6 +433,33 @@ Kenney anyway. Licence checked in the pack's License.txt on 5 October 2026. Unch
 | `assets/ui/sounds/micro_switch_click.ogg` | `switch13.ogg` |
 | `assets/ui/sounds/micro_switch_item.ogg` | `switch14.ogg` |
 
+## FluidR3 GM sound font (the quest and level fanfares, the home motif)
+
+The quest-finished, level-up and tenth-level fanfares (`assets/content/base/sounds/quest_done_1.ogg`,
+`level_up_1.ogg`, `level_milestone_1.ogg`) are our own tunes, written as notes in
+`tools/generate_jingles.py` and played offline by FluidSynth from the FluidR3 General MIDI
+sound font, Copyright (c) 2000-2002, 2008 Frank Wen and (c) 2008 Toby Smithe, released under
+the MIT licence (the font's README and COPYING; checked in the Ubuntu fluid-soundfont-gm
+package on 14 October 2026). The font itself is not shipped. The home motif
+(`assets/music/home/hearth_welcome.ogg`) is our own lullaby, written in
+`tools/generate_home_motif.py` and played the same way.
+
+> Permission is hereby granted, free of charge, to any person obtaining a copy of this
+> software and associated documentation files (the "Software"), to deal in the Software
+> without restriction, including without limitation the rights to use, copy, modify, merge,
+> publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons
+> to whom the Software is furnished to do so, subject to the following conditions:
+>
+> The above copyright notice and this permission notice shall be included in all copies or
+> substantial portions of the Software.
+>
+> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+> INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR
+> PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE
+> FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+> OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+> DEALINGS IN THE SOFTWARE.
+
 ## Fusion Pixel Font (Japanese text)
 
 - Source: https://github.com/TakWolf/fusion-pixel-font (release 2026.09.25, 12 px monospaced, `ja` variant)

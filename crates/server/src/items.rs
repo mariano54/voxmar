@@ -11,7 +11,7 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 use voxmar_engine::block::BlockId;
 use voxmar_engine::coords::ColumnPos;
-use voxmar_engine::dropped::{self, LIFETIME, Loose};
+use voxmar_engine::dropped::{self, LIFETIME, Loose, MAGNET};
 use voxmar_engine::glam::{IVec3, Vec2, Vec3};
 use voxmar_engine::inventory::{ItemStack, MAX_STACK, max_stack};
 use voxmar_engine::movement::{self, Surroundings};
@@ -25,9 +25,6 @@ use crate::save::SavedItem;
 /// Players see dropped items this many blocks away (Minecraft draws them to 64 at most,
 /// and ours are tinier still).
 const SEEN_WITHIN: f32 = 48.0;
-/// Items within this many blocks of a player's middle, and free to be picked up, drift
-/// towards them.
-const MAGNET: f32 = 2.5;
 /// How fast a drawn-in item flies at the player, in blocks per second.
 const MAGNET_SPEED: f32 = 7.0;
 /// How far a player's box reaches for items, across and up and down (Minecraft's 1 and
@@ -83,6 +80,12 @@ pub struct Items {
 }
 
 impl Items {
+    /// Every drop lying in the world, taken out of it, for tests to look over.
+    #[cfg(test)]
+    pub(crate) fn take_all(&mut self) -> impl Iterator<Item = Dropped> + '_ {
+        self.all.drain().map(|(_, d)| d)
+    }
+
     /// Older saves may record several spellings of one keeper. Only hashes of known names
     /// are migrated; a hash with no surviving spelling must remain protected.
     pub(crate) fn canonical_owner(&mut self, aliases: &[u64], canonical: u64) {
@@ -138,17 +141,18 @@ impl Surroundings for Around<'_> {
     }
 }
 
-/// Whether a crop nobody sowed gives anything when taken at `tick` (see `unsown_gives`).
-pub(crate) fn unsown_roll(def: &voxmar_engine::crop::CropDef, tick: u64, cell: IVec3, salt: u32) -> bool {
-    def.fruit || random3(tick, cell, salt ^ 0x5eed)[0] < def.unsown.unwrap_or(1.0)
+/// Whether a crop nobody sowed gives anything for a draw of `roll` (see `unsown_gives`).
+pub(crate) fn unsown_roll(def: &voxmar_engine::crop::CropDef, roll: f32) -> bool {
+    def.fruit || roll < def.unsown.unwrap_or(1.0)
 }
 
 /// A small, fast hash for the spread of popped drops and for chances: deterministic for a
-/// given tick and place, like everything else the server does. Each value goes through
+/// given key (a count-derived one, `WorldMeta::next_pop`, or a tick) and place, like
+/// everything else the server does. Each value goes through
 /// the whole of MurmurHash3's finaliser: with half of it, ticks in a row gave values in a
 /// slow drift, so a one-in-eight chance tried on sixty ticks running could miss them all.
-pub(crate) fn random3(tick: u64, cell: IVec3, salt: u32) -> [f32; 3] {
-    let mut h = tick.wrapping_mul(0xd6e8_feb8_6659_fd93)
+pub(crate) fn random3(key: u64, cell: IVec3, salt: u32) -> [f32; 3] {
+    let mut h = key.wrapping_mul(0xd6e8_feb8_6659_fd93)
         ^ (cell.x as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15)
         ^ (cell.y as u64).wrapping_mul(0xc2b2_ae3d_27d4_eb4f)
         ^ (cell.z as u64).wrapping_mul(0x1656_67b1_9e37_79f9)
@@ -194,8 +198,8 @@ impl Server {
                 }
                 continue;
             }
-            let info = self.content.blocks.info(block);
-            if info.drops.is_air() || info.drop_count == 0 {
+            let (drops, drop_count) = (self.content.blocks.info(block).drops, self.content.blocks.info(block).drop_count);
+            if drops.is_air() || drop_count == 0 {
                 continue;
             }
             // A furnishing the world placed (a village's altar) gives nothing.
@@ -208,20 +212,35 @@ impl Server {
             if wild
                 && !sown
                 && let Some((crop, _)) = self.content.crops.stage_of(block)
-                && !self.unsown_gives(crop, cell, i as u32)
+                && !self.unsown_gives(agent, crop)
             {
                 continue;
             }
-            let stack = ItemStack { item: info.drops, count: info.drop_count };
-            let body = dropped::popped(cell, random3(self.tick, cell, i as u32));
+            let stack = ItemStack { item: drops, count: drop_count };
+            // Scattered by the world's count of drops popped, not the tick it breaks on.
+            let body = dropped::popped(cell, self.meta.next_pop(cell, i as u32));
             self.items.spawn(stack, body, dropped::PICKUP_DELAY);
         }
     }
 
-    /// Whether a crop nobody sowed, at `cell`, gives anything this time (`unsown` in
-    /// crops.ron); fruit on trees always does.
-    pub(crate) fn unsown_gives(&self, crop: voxmar_engine::crop::CropId, cell: IVec3, salt: u32) -> bool {
-        unsown_roll(&self.content.crops.get(crop).def, self.tick, cell, salt)
+    /// Whether a crop nobody sowed gives anything this time (`unsown` in crops.ron), by
+    /// the player's count of wild crops taken; fruit on trees always does.
+    pub(crate) fn unsown_gives(&mut self, agent: PlayerId, crop: voxmar_engine::crop::CropId) -> bool {
+        // Tree fruit always gives: only a crop that may give nothing spends a draw.
+        if self.content.crops.get(crop).def.fruit {
+            return true;
+        }
+        let [roll, _] = self.draw_for(agent, crate::save::Draw::Forage);
+        unsown_roll(&self.content.crops.get(crop).def, roll)
+    }
+
+    /// The next two draws of `kind` by the player's own count of it (`Player::draw`); for
+    /// a player not here, the world's own rolls of that kind.
+    pub(crate) fn draw_for(&mut self, agent: PlayerId, kind: crate::save::Draw) -> [f32; 2] {
+        match self.players.get_mut(&agent) {
+            Some(player) => player.draw(kind),
+            None => self.meta.next_roll(kind.salt()),
+        }
     }
 
     /// A ripe crop nobody sowed: one the world grew wild forages like its wild form (its
@@ -230,7 +249,7 @@ impl Server {
     pub(crate) fn unsown_ripe(&mut self, agent: PlayerId, crop: voxmar_engine::crop::CropId, cell: IVec3, salt: u32) {
         if !self.content.crops.get(crop).forage.is_empty() {
             self.forage(agent, crop, cell, salt);
-        } else if self.unsown_gives(crop, cell, salt) {
+        } else if self.unsown_gives(agent, crop) {
             let loot = self.content.crops.get(crop).harvest.clone();
             self.yield_loot(agent, crop, &loot, cell, salt);
         }
@@ -464,13 +483,39 @@ mod tests {
         let def = |name: &str| content.crops.iter().find(|(_, c)| c.def.name == name).unwrap().1.def.clone();
         let tomato = def("base:tomato");
         let chance = tomato.unsown.unwrap();
-        // 10,000 cells at one tick: the share's spread is 0.0036, so this is about three
-        // spreads either side.
-        let cells = (0..100).flat_map(|z| (0..100).map(move |x| IVec3::new(x, 70, z)));
-        let gave = cells.filter(|&cell| unsown_roll(&tomato, 12_345, cell, 0)).count() as f32 / 10_000.0;
+        // A player's first 10,000 forage draws, as `unsown_gives` draws them: the share's
+        // spread is 0.0036, so this is about three spreads either side.
+        use crate::save::{Draw, numbered_draws};
+        let key = crate::player::player_draw_key(0x0d1a, "ada");
+        let forage = |n: u64| numbered_draws(key, Draw::Forage.salt(), n)[0];
+        let gave = (0..10_000).filter(|&n| unsown_roll(&tomato, forage(n))).count() as f32 / 10_000.0;
         assert!((chance - 0.01..=chance + 0.01).contains(&gave), "{gave} of tomatoes nobody sowed gave, for a chance of {chance}");
         let apple = def("base:apple");
-        assert!((0..1000).all(|x| unsown_roll(&apple, 12_345, IVec3::new(x, 70, 0), 0)), "tree fruit held back");
+        assert!((0..1000).all(|n| unsown_roll(&apple, forage(n))), "tree fruit held back");
+    }
+
+    /// Where a broken block's drop pops to is drawn by the world's count of drops popped,
+    /// not the tick it breaks on, and each drop counts on.
+    #[test]
+    fn a_drop_pops_by_the_count_of_drops_not_the_tick() {
+        let popped = |tick: u64| {
+            let mut server = crate::test_server();
+            server.meta.draw_key = 0x0d1a;
+            let cells = [2, 3].map(|x| server.spawn.floor().as_ivec3() + IVec3::new(x, 0, 0));
+            let stone = server.content.blocks.expect("base:cobblestone");
+            for cell in cells {
+                server.set_block(cell, stone);
+            }
+            server.tick = tick;
+            server.drop_loot(1, &cells, &cells);
+            let mut bodies: Vec<_> = server.items.all.values().map(|d| (d.body.position.to_array(), d.body.velocity.to_array())).collect();
+            bodies.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            (bodies, server.meta.drops)
+        };
+        let (first, count) = popped(1_000);
+        assert_eq!((first.len(), count), (2, 2), "two drops, counted");
+        assert_eq!(popped(1_377).0, first, "the same drops broken later popped otherwise");
+        assert_ne!(first[0].1, first[1].1, "two drops popped alike");
     }
 
     fn item(count: u8, x: f32, age: u32) -> Dropped {
@@ -523,5 +568,30 @@ mod tests {
         assert!(a.iter().all(|v| (0.0..1.0).contains(v)));
         assert_ne!(a, random3(1, IVec3::X, 0));
         assert_ne!(a, random3(1, IVec3::ZERO, 1));
+    }
+
+    /// Whether a crop nobody sowed gives anything is drawn by the player's count of wild
+    /// crops taken, not the tick it is taken on, and each counts on.
+    #[test]
+    fn an_unsown_crop_gives_by_the_players_count_not_the_tick() {
+        let taken = |tick: u64| {
+            let mut server = crate::test_server();
+            let (client, connection) = voxmar_protocol::local_pair();
+            std::mem::forget(client);
+            let mut player = crate::player::Player::new(1, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
+            (player.joined, player.draw_key) = (true, crate::player::player_draw_key(0x0d1a, "ada"));
+            server.players.insert(1, player);
+            let (tomato, _) = server.content.crops.iter().find(|(_, c)| c.def.name == "base:tomato").unwrap();
+            server.tick = tick;
+            let gave: Vec<bool> = (0..40).map(|_| server.unsown_gives(1, tomato)).collect();
+            // Tree fruit always gives, and spends no draw.
+            let (apple, _) = server.content.crops.iter().find(|(_, c)| c.def.name == "base:apple").unwrap();
+            assert!((0..5).all(|_| server.unsown_gives(1, apple)), "tree fruit held back");
+            (gave, server.players[&1].draws.forages)
+        };
+        let (first, count) = taken(1_000);
+        assert_eq!(count, 40, "each crop that may give nothing taken counted on, and no fruit");
+        assert!(first.contains(&true) && first.contains(&false), "forty tomatoes nobody sowed all gave alike: {first:?}");
+        assert_eq!(taken(1_377), (first, count), "the same crops taken later gave otherwise");
     }
 }

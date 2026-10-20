@@ -153,8 +153,23 @@ impl Module for Wander {
                     reach = if ctx.random(6) < 0.3 * (0.5 + ctx.mind.personality.energy) { (ctx.creature.def.leash * (0.4 + 0.5 * ctx.random(7))).max(FLIES_PAST * 1.5) } else { reach.min(3.0) };
                 }
                 // About home, drifting back toward it (a kept one more so).
-                let base = at.position.lerp(at.home, if at.kept { 0.6 } else { 0.3 });
-                mind.goal = Some(base + Vec3::new(angle.cos(), 0.0, angle.sin()) * reach);
+                let mut base = at.position.lerp(at.home, if at.kept { 0.6 } else { 0.3 });
+                // And toward its kin, as much as it cares for company: strolling off from the
+                // herd only to herd back to it is a herd swapping places to and fro.
+                if !at.kin.is_empty() {
+                    let middle = at.kin.iter().copied().sum::<Vec3>() / at.kin.len() as f32;
+                    base = base.lerp(middle.with_y(base.y), 0.7 * ctx.mind.personality.sociability);
+                    reach *= 1.0 - 0.6 * ctx.mind.personality.sociability;
+                }
+                let mut way = Vec3::new(angle.cos(), 0.0, angle.sin());
+                // Having given up a chase, it leaves players be: it strolls the far side.
+                if ctx.mind.recalls(Memory::GaveUp)
+                    && let Some(p) = ctx.nearest()
+                {
+                    let toward = (p.position - base).with_y(0.0).normalize_or_zero();
+                    way -= toward * 2.0 * way.dot(toward).max(0.0);
+                }
+                mind.goal = Some(base + way * reach);
             }
         }
         if mind.pause > 0.0 {
@@ -271,6 +286,11 @@ impl Flee {
             .or_else(|| ctx.nearest().filter(|p| !p.tempting && ctx.distance(p.position) < radius))
             .copied()
     }
+
+    /// A player in sight holds its favourite food, and never hurt it.
+    fn calmed(&self, ctx: &Ctx) -> bool {
+        ctx.at.players.iter().any(|p| p.tempting && ctx.distance(p.position) < ctx.sight && ctx.mind.attacker() != Some(p.id))
+    }
 }
 
 impl Module for Flee {
@@ -291,8 +311,10 @@ impl Module for Flee {
                 let closeness = 1.0 - (ctx.distance(threat.position) / (self.radius * 1.5)).min(1.0);
                 Want::at(3.0 * ctx.mind.fear.max(closeness * ctx.mind.personality.fear()), threat)
             }
-            // Alarmed by kin, it runs from wherever it is toward home.
-            None if ctx.mind.fear > 0.3 && ctx.mind.recalls(Memory::Alarm) => Want::new(ctx.mind.fear),
+            // Alarmed by kin, it runs from wherever it is toward home; but a player in
+            // sight holding its favourite food (and who never hurt it) settles it, so kin
+            // that were scared off come to the food rather than run into wherever home is.
+            None if ctx.mind.fear > 0.3 && ctx.mind.recalls(Memory::Alarm) && !self.calmed(ctx) => Want::new(ctx.mind.fear),
             None => None,
         }
     }
@@ -406,21 +428,43 @@ impl Module for Herd {
         let friend = herd_friend(ctx);
         let spacing = self.spacing * (1.5 - ctx.mind.personality.sociability);
         let apart = ((flat(friend, ctx.at.position) - spacing) / (spacing * 2.0)).clamp(0.0, 1.5);
-        Want::new(0.8 * ctx.mind.personality.sociability * apart * (0.5 + ctx.random(91)))
+        // Once on its way it goes on until it is beside its companion, at a steady will: a
+        // will drawn afresh each tick dips under its others' and back, and the animal turns
+        // to and fro between herding and wandering, twitching in place.
+        let going = ctx.mind.doing.is_some_and(|i| ctx.creature.modules[i].0.name() == self.name());
+        if going {
+            return (flat(beside(ctx, spacing), ctx.at.position) > 0.6).then(|| Want::new(0.8 * ctx.mind.personality.sociability * apart.max(0.25))).flatten();
+        }
+        // And it sets off only once well apart (its spacing past it), so a companion
+        // shifting a step does not start it each time.
+        (apart > 0.5).then(|| Want::new(0.8 * ctx.mind.personality.sociability * apart * (0.5 + ctx.random(91)))).flatten()
     }
 
-    fn act(&self, ctx: &Ctx, _: &mut Mind, _: Option<Seen>, _: bool) -> Decision {
-        let friend = herd_friend(ctx);
-        // To beside it, not onto it.
-        let side = (ctx.mind.seed % 360) as f32 * std::f32::consts::TAU / 360.0;
-        let beside = friend + Vec3::new(side.cos(), 0.0, side.sin()) * self.spacing * 0.6;
-        Decision { goal: Some(beside), speed: walk(ctx), ..Default::default() }
+    fn act(&self, ctx: &Ctx, mind: &mut Mind, _: Option<Seen>, _: bool) -> Decision {
+        // It keeps to the same companion while it goes (`herd_friend`).
+        mind.goal = Some(herd_friend(ctx));
+        let spacing = self.spacing * (1.5 - ctx.mind.personality.sociability);
+        Decision { goal: Some(beside(ctx, spacing)), speed: walk(ctx), ..Default::default() }
     }
 }
 
-/// The kin an individual keeps near: one of its own choosing among those about.
+/// Where a herd animal goes: beside its companion on its own side of it, not onto it, nor
+/// round to the far side: two that keep near each other would otherwise swap places, to
+/// and fro.
+fn beside(ctx: &Ctx, spacing: f32) -> Vec3 {
+    let friend = herd_friend(ctx);
+    friend + (ctx.at.position - friend).with_y(0.0).normalize_or(Vec3::X) * spacing * 0.6
+}
+
+/// The kin an individual keeps near: one of its own choosing among those about, and once it
+/// is going to one, the same one (the nearest to where that one last was), not whichever
+/// the list of those about now puts in its place.
 fn herd_friend(ctx: &Ctx) -> Vec3 {
     let kin = &ctx.at.kin;
+    let going = ctx.mind.doing.is_some_and(|i| ctx.creature.modules[i].0.name() == "herd");
+    if let Some(last) = ctx.mind.goal.filter(|_| going) {
+        return kin.iter().copied().min_by(|a, b| a.distance(last).total_cmp(&b.distance(last))).unwrap_or(last);
+    }
     kin[(ctx.mind.seed % kin.len().max(1) as u64) as usize % kin.len().max(1)]
 }
 
@@ -466,7 +510,11 @@ impl Module for Tempted {
     }
 
     fn want(&self, ctx: &Ctx) -> Option<Want> {
-        let p = ctx.at.players.iter().find(|p| p.tempting && ctx.distance(p.position) < self.radius)?;
+        // Once following, it keeps after the food a while further than it first noticed it,
+        // so a player walking on does not lose it at the edge.
+        let following = ctx.mind.doing.is_some_and(|i| ctx.creature.modules[i].0.name() == self.name());
+        let radius = if following { self.radius * 1.5 } else { self.radius };
+        let p = ctx.at.players.iter().find(|p| p.tempting && ctx.distance(p.position) < radius)?;
         // A grudge outweighs a carrot.
         if ctx.mind.attacker() == Some(p.id) {
             return None;
@@ -478,8 +526,16 @@ impl Module for Tempted {
         let Some(p) = target else { return Decision::default() };
         mind.remember(Memory::FedBy(p.id), 20.0);
         let keep = 1.6 + ctx.creature.def.body.size.0;
-        let goal = (ctx.distance(p.position) > keep).then_some(p.position);
-        Decision { goal, speed: walk(ctx) * 1.2, face: Some(p.position), pose: Pose::Alert, ..Default::default() }
+        let d = ctx.distance(p.position);
+        // Too close (carried in by a hop, or pushed by those behind): a step back, so a
+        // crowd after the food does not pile onto the player.
+        let back = ctx.at.position + (ctx.at.position - p.position).with_y(0.0).normalize_or(Vec3::X) * keep;
+        let goal = if d > keep { Some(p.position) } else if d < keep * 0.6 { Some(back) } else { None };
+        // It walks up to the food, and hurries after it as the player draws ahead (up to a
+        // run four blocks behind its place), so it keeps up with one walking on.
+        let behind = ((d - keep - 1.0) / 3.0).clamp(0.0, 1.0);
+        let speed = walk(ctx) * 1.2 + (run(ctx) - walk(ctx) * 1.2).max(0.0) * behind;
+        Decision { goal, speed, face: Some(p.position), pose: Pose::Alert, ..Default::default() }
     }
 }
 
@@ -503,6 +559,9 @@ impl Module for Hunt {
     fn want(&self, ctx: &Ctx) -> Option<Want> {
         let def = &ctx.creature.def;
         let personality = &ctx.mind.personality;
+        if ctx.mind.recalls(Memory::GaveUp) {
+            return None;
+        }
         if let Some(p) = ctx.attacker().filter(|_| ctx.mind.anger > 0.0) {
             return Want::at(2.5 * ctx.mind.anger.max(personality.aggression), *p);
         }
@@ -548,6 +607,15 @@ impl Module for Defend {
 fn strike(ctx: &Ctx, mind: &mut Mind, target: Option<Seen>, stalks: bool) -> Decision {
     let Some(p) = target else { return Decision::default() };
     let def = &ctx.creature.def;
+    // Past its leash it gives the chase up and goes home: a wolf does not follow a player
+    // across the land. A boss fights to the end, and those the server sends after someone
+    // (guards) go where it says. Struck there within the last few seconds, it fights back:
+    // a player who led it past its leash and stands to fight is fought.
+    let leash = if ctx.at.kept { def.leash.min(super::super::husbandry::KEPT_LEASH) } else { def.leash };
+    if !mind.recalls(Memory::Struck) && !def.boss && ctx.at.errand.is_none() && flat(ctx.at.position, ctx.at.home) > leash {
+        mind.give_up();
+        return Decision::default();
+    }
     // Close when an attack of the phase it has reached fits, measured as its wind-up
     // measures it (from its body's edge, at its own size): a boss with a volley strikes
     // from afar, and closes in where none of its moves fits (`moves::Creature::reaches`).
@@ -646,7 +714,10 @@ impl Module for Routine {
     }
 }
 
-/// Goes back toward home when it has strayed past its leash.
+/// How near home a creature that gave up a chase goes, in blocks.
+const GAVE_UP_HOME: f32 = 3.0;
+
+/// Goes back toward home when it has strayed past its leash, or gave up a chase.
 #[derive(Debug)]
 struct ReturnHome;
 
@@ -668,12 +739,22 @@ impl Module for ReturnHome {
         let from_home = flat(ctx.at.position, ctx.at.home);
         // Once going, it keeps on until well inside.
         let going = ctx.mind.doing.is_some_and(|i| ctx.creature.modules[i].0.name() == self.name());
-        let limit = if going { leash * 0.5 } else { leash };
+        // Having given up a chase, it goes all the way home rather than hang about where
+        // it gave up (at a fence, round a box it could not get into).
+        let limit = if ctx.mind.recalls(Memory::Homeward) {
+            GAVE_UP_HOME
+        } else if going {
+            leash * 0.5
+        } else {
+            leash
+        };
         (from_home > limit).then(|| Want::new(1.0 + 2.0 * ((from_home - leash) / leash).clamp(0.0, 1.0))).flatten()
     }
 
     fn act(&self, ctx: &Ctx, _: &mut Mind, _: Option<Seen>, _: bool) -> Decision {
-        Decision { goal: Some(ctx.at.home), speed: walk(ctx), ..Default::default() }
+        // Having given up a chase, it lopes off rather than amble about where it gave up.
+        let speed = if ctx.mind.recalls(Memory::Homeward) { walk(ctx) + (run(ctx) - walk(ctx)) * 0.3 } else { walk(ctx) };
+        Decision { goal: Some(ctx.at.home), speed, ..Default::default() }
     }
 }
 

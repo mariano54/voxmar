@@ -30,7 +30,9 @@ pub struct UiSoundPlugin;
 impl Plugin for UiSoundPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<UiSound>()
+            .init_resource::<JinglesAsked>()
             .add_systems(Startup, (synthesize, jingle_clips))
+            .add_systems(Update, ask_jingles)
             .add_systems(Update, ((click_buttons, hover_buttons, hear_screens, hear_refusals), play.in_set(Audible)).chain())
             .add_systems(Update, play_jingles.in_set(Audible));
     }
@@ -377,6 +379,20 @@ fn jingle_clips(mut commands: Commands, assets: Res<AssetServer>, launch: Res<La
         level: load(&recorded.level_up),
         milestone: load(&recorded.level_milestone),
     });
+}
+
+/// The jingles asked for since the game started, in order, each with the clips it takes
+/// turns among (their asset paths): for the gate, which hears nothing in a silent run.
+#[derive(Resource, Default, Debug)]
+pub struct JinglesAsked(pub Vec<(UiSound, Vec<String>)>);
+
+fn ask_jingles(mut sounds: MessageReader<UiSound>, jingles: Option<Res<Jingles>>, assets: Res<AssetServer>, mut asked: ResMut<JinglesAsked>) {
+    let Some(jingles) = jingles else { return };
+    for &sound in sounds.read() {
+        if let Some((list, _)) = jingles.of(sound) {
+            asked.0.push((sound, list.iter().filter_map(|clip| assets.get_path(clip)).map(|path| path.to_string()).collect()));
+        }
+    }
 }
 
 /// Plays the jingles asked for, each once a frame, taking turns among a package's clips

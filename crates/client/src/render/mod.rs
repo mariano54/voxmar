@@ -43,6 +43,7 @@ pub mod in_flight;
 pub mod items;
 pub mod lod;
 pub mod night;
+pub mod night_light;
 pub mod pack;
 pub mod particles;
 pub mod post;
@@ -96,6 +97,7 @@ impl Plugin for RenderPlugin {
             .insert_resource(DirectionalLightShadowMap { size: ShadowQuality::default().map_size() })
             .init_resource::<DayCycle>()
             .init_resource::<SceneLight>()
+            .init_resource::<night_light::NightLight>()
             .init_resource::<Quality>()
             .init_resource::<pack::ActivePack>()
             .add_systems(Startup, cluster_lights_on_the_cpu)
@@ -462,6 +464,9 @@ pub struct LayerInfo {
     pub overlay: Option<(u16, Tint)>,
     /// How brightly it glows by itself, 0..1.
     pub glow: f32,
+    /// It glows by the block light passing through it, a lit room's window
+    /// (`BlockDef::lit_through`).
+    pub through: bool,
     /// How it varies from block to block (see `voxmar_engine::block::TextureVariety`).
     pub variety: voxmar_engine::block::TextureVariety,
     /// Its animation, if its texture is a strip of frames.
@@ -491,11 +496,14 @@ pub struct Animation {
 const ANIMATED: u8 = 32;
 /// The tint byte's bit for a layer with other drawings.
 const VARIED: u8 = 16;
+/// The glow byte's bit for a layer that glows by the block light through it.
+const THROUGH: u8 = 128;
 
 /// Each block texture layer's `LayerInfo`, a column of two texels per layer. The first:
 /// red and green the overlay's layer plus one (0 for none), blue its tint in the low four
 /// bits, whether it has other drawings (16), whether it animates (32), and whether the
-/// layer turns (64) and mirrors (128) from block to block, alpha the glow. The terrain
+/// layer turns (64) and mirrors (128) from block to block, alpha the glow in its low seven
+/// bits and whether it glows by the light through it (`THROUGH`). The terrain
 /// shader adds the glow to the texels bright enough to be the glowing part (see
 /// voxel.wgsl). The second, read only for a layer that animates or has other drawings:
 /// red and green its second frame's (or first other drawing's) layer, blue how many frames
@@ -510,7 +518,8 @@ fn layer_table(layers: &[LayerInfo]) -> Image {
             (None, Some(_)) => VARIED,
             (None, None) => 0,
         };
-        [low, high, tint | animated | variety, (layer.glow.clamp(0.0, 1.0) * 255.0).round() as u8]
+        let glow = (layer.glow.clamp(0.0, 1.0) * 127.0).round() as u8 | if layer.through { THROUGH } else { 0 };
+        [low, high, tint | animated | variety, glow]
     });
     let second = layers.iter().flat_map(|layer| {
         let (first, count, ticks) = match (layer.animation, layer.variants) {
@@ -667,23 +676,14 @@ struct Environment {
 // Noon and midnight. A sunlit top face gets about 1.0 in all, so textures keep their own
 // colours in daylight; shade is lit by the cooler sky alone. Night is a dozen or two times
 // darker than day: a faint blue full moon and sky, which torches and glowstone easily
-// outshine, and darker as the moon wanes (`MOONLESS`), but never so dark that the ground
-// turns black: on a moonless night under rain it was (Mariano's playtest, 2026-10-06).
+// outshine, and darker as the moon wanes, but never so dark that the ground turns black:
+// on a moonless night under rain it was (Mariano's playtest, 2026-10-06). The night's
+// colours are data (`night_light::NightLight`, `night_light.ron`).
 const SUN: Vec3 = Vec3::new(0.72, 0.68, 0.62);
 const LOW_SUN: Vec3 = Vec3::new(0.72, 0.45, 0.25);
-const MOON: Vec3 = Vec3::new(0.0072, 0.0097, 0.0172);
-/// The night's sky and skylight without a moon, against a full moon's.
-const MOONLESS: f32 = 0.65;
 const DAY_AMBIENT: Vec3 = Vec3::new(0.40, 0.45, 0.55);
-/// Night's skylight under a full moon, high for how dark it looks: the display's contrast
-/// and a pack's dimmer ambient (Verdant's half) crush it. Mariano's bounds (2026-10-06/07):
-/// at a sixth of this a moonless night's ground averaged 3 of 255, black; at twice this,
-/// nights still had far too much light; torches, fire and the moon are what light a night.
-const NIGHT_AMBIENT: Vec3 = Vec3::new(0.05, 0.066, 0.115);
 const DAY_ZENITH: Vec3 = Vec3::new(0.22, 0.45, 0.95);
-const NIGHT_ZENITH: Vec3 = Vec3::new(0.0012, 0.0018, 0.0045);
 const DAY_HORIZON: Vec3 = Vec3::new(0.62, 0.78, 0.98);
-const NIGHT_HORIZON: Vec3 = Vec3::new(0.005, 0.007, 0.014);
 /// Warm hues of the horizon and the skylight around sunrise and sunset, of unit luminance.
 const DUSK_HORIZON: Vec3 = Vec3::new(1.9, 0.78, 0.32);
 const DUSK_AMBIENT: Vec3 = Vec3::new(1.3, 0.95, 0.75);
@@ -716,8 +716,8 @@ fn light_time(day_fraction: f32) -> f32 {
 }
 
 impl Environment {
-    /// The light `days` days after the world began.
-    fn at(days: f64) -> Self {
+    /// The light `days` days after the world began, its nights as `night` gives.
+    fn at(days: f64, night: &night_light::NightLight) -> Self {
         let day_fraction = days.fract() as f32;
         let to_sun = sun_path(day_fraction);
         let daylight = smoothstep(-0.2, 0.15, to_sun.y);
@@ -734,14 +734,14 @@ impl Environment {
         } else {
             let stepped = night::moon(days.floor() + light_time(day_fraction) as f64, sun_path).0;
             let up = smoothstep(0.0, 0.2, to_moon.y) * smoothstep(0.0, 0.15, -to_sun.y);
-            (stepped, MOON * lit.powf(1.5) * up)
+            (stepped, night.moon * lit.powf(1.5) * up)
         };
         // A moonlit night's sky is brighter than a moonless one's.
-        let moonlit = MOONLESS + (1.0 - MOONLESS) * lit * smoothstep(-0.1, 0.3, to_moon.y);
+        let moonlit = night.moonless + (1.0 - night.moonless) * lit * smoothstep(-0.1, 0.3, to_moon.y);
 
-        let zenith = fade(NIGHT_ZENITH * moonlit, DAY_ZENITH, daylight);
-        let horizon = tint(fade(NIGHT_HORIZON * moonlit, DAY_HORIZON, daylight), DUSK_HORIZON, dusk * 0.9);
-        let ambient = tint(fade(NIGHT_AMBIENT * moonlit, DAY_AMBIENT, daylight), DUSK_AMBIENT, dusk * 0.5);
+        let zenith = fade(night.zenith * moonlit, DAY_ZENITH, daylight);
+        let horizon = tint(fade(night.horizon * moonlit, DAY_HORIZON, daylight), DUSK_HORIZON, dusk * 0.9);
+        let ambient = tint(fade(night.ambient * moonlit, DAY_AMBIENT, daylight), DUSK_AMBIENT, dusk * 0.5);
         Self { to_sun, to_moon: to_moon.extend(lit), daylight, dusk, light_direction, light_color, ambient, zenith, horizon }
     }
 
@@ -839,6 +839,7 @@ pub(crate) fn update_environment(
     (generator, mut water_column, mut hail_lying): (Option<Res<lod::WorldGenerator>>, Local<Option<(IVec2, Vec3)>>, Local<f32>),
     (player, mut sky_of, mut scene_light): (Option<Res<crate::player::LocalPlayer>>, Local<Option<u64>>, ResMut<SceneLight>),
     sky_open: Res<exposure::SkyOpen>,
+    night: Res<night_light::NightLight>,
 ) {
     let Some(sky_handle) = sky_handle else { return };
     // The camera's own transform (it has no parent), as this frame moved it: the global one
@@ -848,7 +849,7 @@ pub(crate) fn update_environment(
     let days = cycle.ticks / TICKS_PER_DAY as f64;
     let shown = &weather.current;
     let flash = weather.flash();
-    let mut env = Environment::at(days).under(shown, flash);
+    let mut env = Environment::at(days, &night).under(shown, flash);
     env.light_color *= pack.sun * pack.sun_tint;
     env.ambient *= pack.ambient * pack.shade_tint;
     scene_light.set_if_neq(SceneLight { sky: env.ambient + env.light_color * env.light_direction.y.max(0.0) * DIRECT_SHARE, falloff: pack.sky_falloff });
@@ -990,14 +991,16 @@ mod tests {
                 variety: TextureVariety { turn: false, mirror: true },
                 animation: Some(Animation { first: 700, frames: 4, ticks: 3 }),
                 variants: None,
+                through: false,
             },
-            LayerInfo { variants: Some(Variants { first: 900, count: 2 }), ..default() },
+            LayerInfo { variants: Some(Variants { first: 900, count: 2 }), through: true, ..default() },
         ];
         let table = layer_table(&layers);
         let data = table.data.unwrap();
-        assert_eq!(data[..4], [45, 1, Tint::Water as u8 | 64, 255]);
+        assert_eq!(data[..4], [45, 1, Tint::Water as u8 | 64, 127]);
         assert_eq!(data[4..8], [0, 0, 128 | ANIMATED, 0]);
-        assert_eq!(data[8..12], [0, 0, VARIED, 0]);
+        // A window: no glow of its own, but by the light through it.
+        assert_eq!(data[8..12], [0, 0, VARIED, THROUGH]);
         // The second row: where the frames or drawings are, how many, and for how long.
         assert_eq!(data[12..16], [0, 0, 0, 1]);
         assert_eq!(data[16..20], [188, 2, 4, 3]);

@@ -2,7 +2,11 @@
 // tools too, in blocks_tools.ron.
 (
     families: [
-        (template: "drop", name: "bone_club", tags: ["weapon", "stack:1", "bone"], all: (color: (225, 215, 190))),
+        (template: "drop", name: "bone_club", tags: ["weapon", "stack:1", "bone", "mace"], all: (color: (225, 215, 190))),
+        // A flint point on a long haft: the Nomad's spear, which braces against a charge.
+        (template: "drop", name: "flint_spear", tags: ["weapon", "stack:1", "spear"], all: (color: (70, 70, 76))),
+        // Old Tusk's great tusk on a haft (combat.ron): Attack 5, a mace's daze.
+        (template: "drop", name: "tusk_club", tags: ["weapon", "stack:1", "bone", "mace"], all: (color: (236, 226, 200))),
         (template: "drop", name: "stone_sword", tags: ["weapon", "stack:1", "sword"], all: (color: (120, 120, 125))),
         // Ranged: a sling shoots cobbled stone, a short bow arrows (combat.ron).
         (template: "drop", name: "sling", tags: ["weapon", "stack:1", "sling"], all: (color: (150, 110, 75))),

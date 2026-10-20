@@ -21,16 +21,19 @@ use std::time::Instant;
 use rustc_hash::FxHashMap;
 use voxmar_engine::block::BlockId;
 use voxmar_engine::combat::{Blow, Click, Defended, Effect, Guarding, Pace, Rhythm, Stroke, Swing, Weapon};
-use voxmar_engine::creature::{brain, mix, unit_from};
+use voxmar_engine::creature::brain;
 use voxmar_engine::glam::Vec3;
 use voxmar_engine::physics::Aabb;
 use voxmar_engine::skill::SkillId;
 use voxmar_protocol::{PlayerId, ServerMessage, TICKS_PER_SECOND};
 
 use crate::Server;
+use crate::save::Draw;
 
 /// Half a player's width: how close a creature's lunge comes to them.
 const PLAYER_HALF: f32 = 0.3;
+/// Ticks a charge may make no way against something before it counts as a wall.
+const CHARGE_STALL: u8 = 6;
 /// The step a lunge is tried in, so it stops at a wall.
 const LUNGE_STEP: f32 = 0.1;
 
@@ -65,6 +68,35 @@ struct Windup {
     creature: u32,
     player: PlayerId,
     lands: f64,
+    /// A charge that came to the player (`Charging`): judged where it stands, with no
+    /// lunge and no new charge.
+    contact: bool,
+}
+
+/// A creature running a charge it wound up (`creature::moves::Charge`): the way it runs,
+/// the blocks left and how fast, how long a wall or a braced point dazes it, the player it
+/// was wound up at, and the highest its feet have been since it last stood, for falls.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Charging {
+    pub player: PlayerId,
+    pub along: Vec3,
+    pub left: f32,
+    pub speed: f32,
+    pub stun: f32,
+    pub top: f32,
+    /// Ticks in a row it has made no way against something: a wall it cannot hop, even
+    /// where its head met it first.
+    pub stalled: u8,
+    /// The tick its run is over by, however little way it made: hopping at a stair it
+    /// cannot climb, or swimming.
+    pub until: u64,
+}
+
+impl Charging {
+    /// Where it goes this tick: straight on, facing the way it runs.
+    pub(crate) fn drive(&self, scale: f32) -> voxmar_engine::creature::motion::Drive {
+        voxmar_engine::creature::motion::Drive { wish: self.along, speed: self.speed * scale.max(0.5), face: Some(self.along) }
+    }
 }
 
 /// Bleeding from a flourish: so much more, a point at a time, a second apart, training the
@@ -87,8 +119,6 @@ pub(crate) struct Fights {
     /// lower by the share, until when).
     pinned: FxHashMap<u32, (f32, f64)>,
     sundered: FxHashMap<u32, (f32, f64)>,
-    /// Draws for what rounds by chance (`combat::by_chance`).
-    draws: u64,
 }
 
 impl Default for Fights {
@@ -100,7 +130,6 @@ impl Default for Fights {
             bleeds: Vec::new(),
             pinned: FxHashMap::default(),
             sundered: FxHashMap::default(),
-            draws: 0,
         }
     }
 }
@@ -130,12 +159,6 @@ impl Fights {
     pub(crate) fn pips(&self, player: PlayerId, feel: &voxmar_engine::combat::Feel) -> u8 {
         let now = self.now();
         self.fighters.get(&player).map_or(0, |f| f.rhythm.pips(now, feel))
-    }
-
-    /// A draw in 0..1 for rounding by chance, different each time.
-    fn draw(&mut self, salt: u64) -> f32 {
-        self.draws += 1;
-        unit_from(mix(self.draws, salt))
     }
 }
 
@@ -300,7 +323,7 @@ impl Server {
         // left it no longer than the grace ago.
         let mut below = p.aabb();
         below.translate(voxmar_engine::glam::Vec3::new(0.0, -0.05, 0.0));
-        let grounded = below.intersects(|cell| self.is_solid(cell)) || self.tick <= p.grounded + ticks(feel.dodge_grace);
+        let grounded = below.overlaps(|cell| self.boxes(cell)) || self.tick <= p.grounded + ticks(feel.dodge_grace);
         let may = p.health.alive() && !p.flying && grounded && !self.eating(player);
         let timing = self.content.combat.timing(&weapon);
         let now = self.fight_arrival();
@@ -323,6 +346,9 @@ impl Server {
     /// Undoes a creature's blow on its way, if any (a boss rearing into a new phase).
     pub(crate) fn fights_forget(&mut self, creature: u32) {
         self.fights.windups.retain(|w| w.creature != creature);
+        if let Some(live) = self.creatures.live.get_mut(&creature) {
+            live.charging = None;
+        }
     }
 
     /// A creature decided to strike a player: it winds up first, showing it, following them
@@ -352,11 +378,13 @@ impl Server {
             live.body.yaw = voxmar_engine::creature::motion::yaw_of(to);
         }
         live.winding = true;
+        // A new wind-up is past any stagger.
+        live.staggered = false;
         live.attack = index;
         live.held_until = live.held_until.max(tick + ticks(windup));
         live.tracking = Some((player, tick + ticks(windup * feel.creature_tracking.clamp(0.0, 1.0))));
         live.changed = true;
-        self.fights.windups.push(Windup { creature, player, lands });
+        self.fights.windups.push(Windup { creature, player, lands, contact: false });
     }
 
     /// Where a creature winding up at a player goes this tick, while it still follows them:
@@ -446,7 +474,7 @@ impl Server {
         let (due, waiting): (Vec<Windup>, Vec<Windup>) = windups.into_iter().partition(|w| w.lands + self.lag_allowance(w.player) <= heard);
         self.fights.windups = waiting;
         for windup in due {
-            self.creature_blow(windup.creature, windup.player, windup.lands);
+            self.creature_blow(windup.creature, windup.player, windup.lands, windup.contact);
         }
         // Bleeding.
         let (due, waiting): (Vec<Bleed>, Vec<Bleed>) = std::mem::take(&mut self.fights.bleeds).into_iter().partition(|b| b.next <= now);
@@ -508,7 +536,7 @@ impl Server {
         let Some(damage) = self.land_blow(player, aim.creature, &weapon, stroke) else { return };
         // A shot that hit may be left lying by the target, to be picked up again.
         if let (Some(item), Some(at), true) = (shot, at, damage > 0)
-            && unit_from(mix(mix(self.tick, aim.creature as u64), 0xa770)) < self.content.combat.recover(&weapon)
+            && self.players.get_mut(&player).is_some_and(|p| p.draw(Draw::Recover)[0] < self.content.combat.recover(&weapon))
         {
             let body = voxmar_engine::dropped::Loose::new(at + Vec3::Y * 0.25, Vec3::ZERO);
             self.items.spawn(voxmar_engine::inventory::ItemStack { item, count: 1 }, body, voxmar_engine::dropped::PICKUP_DELAY);
@@ -531,7 +559,7 @@ impl Server {
         let now = self.fights.now();
         let feel = self.content.combat.feel;
         let Some(flourish) = self.content.combat.flourish(weapon) else { return };
-        let roll = self.fights.draw(0xf10u64 ^ creature as u64);
+        let Some([roll, _]) = self.players.get_mut(&player).map(|p| p.draw(Draw::Flourish)) else { return };
         match flourish.effect(damage, roll) {
             Some(Effect::Bleed { points, every }) => {
                 let every = every as f64;
@@ -567,26 +595,34 @@ impl Server {
         if let Some(live) = self.creatures.live.get_mut(&creature) {
             live.held_until = if live.winding { tick + ticks(seconds) } else { live.held_until.max(tick + ticks(seconds)) };
             live.winding = false;
+            live.staggered = true;
             live.tracking = None;
+            live.charging = None;
             live.decision.pose = brain::Pose::Idle;
             live.changed = true;
         }
     }
 
     /// A creature's wound-up blow comes down on a player at `lands`: it lunges at them, then
-    /// recovers; what came of it is judged by that moment.
-    fn creature_blow(&mut self, creature: u32, player: PlayerId, lands: f64) {
+    /// recovers; what came of it is judged by that moment. A charge instead sets off at the
+    /// end of its wind-up (`start_charge`), and its blow is judged when it reaches someone
+    /// (`contact`).
+    fn creature_blow(&mut self, creature: u32, player: PlayerId, lands: f64, contact: bool) {
         let feel = self.content.combat.feel;
         let Some(live) = self.creatures.live.get(&creature) else { return };
         let species = live.species;
         let creature_def = self.content.creatures.get(species);
         let def = &creature_def.def;
         let Some(attack) = creature_def.attack_at(live.attack) else { return };
+        if let Some(charge) = attack.charge.filter(|_| !contact) {
+            self.start_charge(creature, player, charge);
+            return;
+        }
         // It stands to recover: the moment for the player's blows. Its next attack waits
         // out the rest of its `every`, as the brain counts it.
         let recovery = attack.recovery.unwrap_or(feel.creature_recovery).max(0.0);
         let windup = attack.windup.unwrap_or(feel.creature_windup).max(0.0);
-        let lunge = attack.lunge.unwrap_or(feel.creature_lunge).max(0.0);
+        let lunge = if contact { 0.0 } else { attack.lunge.unwrap_or(feel.creature_lunge).max(0.0) };
         let tick = self.tick;
         if let Some(p) = self.players.get_mut(&player) {
             p.last_blow = tick;
@@ -613,6 +649,18 @@ impl Server {
         let reach = attack.reach + size.0 * scale * 0.5 + 0.3 + feel.reach_slack;
         let flat = (to - at).with_y(0.0).length();
         let tall = (to.y - at.y).abs() < size.1 * scale + 1.5;
+        // A charge that runs onto a braced point is stopped on it, heavy or not.
+        if let Some(charge) = attack.charge.filter(|_| contact) {
+            let bracing = self.guard_of(player).filter(|g| g.braces(look, at - to));
+            let fighter = self.fights.fighters.entry(player).or_default();
+            if let Some(brace) = bracing
+                && matches!(fighter.guarding.meets(lands, Some(&brace)), Defended::Blocked | Defended::Perfect)
+            {
+                fighter.counter_until = lands + feel.counter as f64;
+                self.braced(creature, player, charge.stun);
+                return;
+            }
+        }
         let guard = self.guard_of(player).and_then(|g| g.takes(attack.style, attack.heavy, look, at - to, &feel));
         let fighter = self.fights.fighters.entry(player).or_default();
         let defended = if flat > reach || !tall { Defended::Evaded } else { fighter.guarding.meets(lands, guard.as_ref()) };
@@ -649,6 +697,121 @@ impl Server {
         }
     }
 
+    /// A creature's charge sets off, the way it faces, its wind-up done.
+    fn start_charge(&mut self, creature: u32, player: PlayerId, charge: voxmar_engine::creature::moves::Charge) {
+        let tick = self.tick;
+        let Some(live) = self.creatures.live.get_mut(&creature) else { return };
+        live.winding = false;
+        live.tracking = None;
+        live.decision.pose = brain::Pose::Idle;
+        live.charging = Some(Charging { player, along: live.body.forward(), left: charge.distance, speed: charge.speed, stun: charge.stun, top: live.body.position.y, stalled: 0, until: tick + ticks(charge.seconds() + 0.5) });
+        // Held from thinking for the run, and a little over; `charge_ran` ends it sooner.
+        live.held_until = live.held_until.max(tick + ticks(charge.seconds() + 0.5));
+        live.changed = true;
+    }
+
+    /// A charging creature has moved this tick from `before`: it strikes a player it came
+    /// to, is dazed by a wall it ran into, is hurt by a fall it ran off, or runs out.
+    pub(crate) fn charge_ran(&mut self, creature: u32, before: Vec3) {
+        let feel = self.content.combat.feel;
+        let safe_fall = self.survival.safe_fall;
+        let dt = 1.0 / TICKS_PER_SECOND as f32;
+        let Some(live) = self.creatures.live.get_mut(&creature) else { return };
+        let Some(mut charge) = live.charging else { return };
+        let body = live.body;
+        let species = self.content.creatures.get(live.species);
+        let (size, scale, most) = (species.def.body.size, live.scale, species.def.health);
+        let moved = (body.position - before).with_y(0.0).dot(charge.along).max(0.0);
+        charge.left -= moved;
+        // Stuck only on its feet: in the air between hops up a stair its snout meets the
+        // next riser and it falls back onto the step, which is no wall.
+        let stuck = body.on_ground && body.against_wall && moved < charge.speed * dt * 0.25;
+        charge.stalled = if stuck { charge.stalled.saturating_add(1) } else { 0 };
+        // A fall: counted from the highest its feet were since it last stood.
+        let mut fell = 0.0;
+        if body.on_ground {
+            fell = charge.top - body.position.y;
+            charge.top = body.position.y;
+        } else {
+            charge.top = charge.top.max(body.position.y);
+        }
+        live.charging = Some(charge);
+        let fall = fell - safe_fall;
+        if fall > 0.0 {
+            let damage = ((fall.ceil() * feel.charge_fall * most as f32).round() as u16).max(1);
+            self.fall_hurt_creature(creature, damage);
+            if !self.creatures.live.get(&creature).is_some_and(|c| c.charging.is_some()) {
+                return;
+            }
+        }
+        // The first player in its way: the nearest it has come to.
+        let touching = size.0 * scale * 0.5 + PLAYER_HALF + feel.creature_clearance + 0.2;
+        let struck = self
+            .players
+            .values()
+            .filter(|p| p.joined && p.health.alive() && !p.allow_flight)
+            .filter(|p| {
+                let to = (p.position - body.position).with_y(0.0);
+                to.length() <= touching && to.dot(charge.along) >= 0.0 && (p.position.y - body.position.y).abs() < size.1 * scale + 1.0
+            })
+            .min_by(|a, b| (a.position - body.position).with_y(0.0).length_squared().total_cmp(&(b.position - body.position).with_y(0.0).length_squared()))
+            .map(|p| p.id);
+        if let Some(player) = struck {
+            self.end_charge(creature, None);
+            let lands = self.fights.now();
+            self.fights.windups.push(Windup { creature, player, lands, contact: true });
+            return;
+        }
+        // A wall: what it ran into is too high to hop, or it has made no way for a while
+        // (a hop takes a tick or two).
+        let rammed = stuck
+            && (charge.stalled >= CHARGE_STALL || {
+                let mut raised = body.aabb();
+                raised.translate(Vec3::Y * 1.05 + charge.along * 0.3);
+                raised.intersects(|p| self.is_solid(p))
+            });
+        if rammed {
+            self.end_charge(creature, Some(charge.stun));
+        } else if (charge.left <= 0.0 || self.tick >= charge.until) && (body.on_ground || body.in_water) {
+            // Run out, or out of time: once on its feet, so a fall it ran off still counts
+            // when it lands, or swimming, which has no feet to come down on.
+            self.end_charge(creature, None);
+        }
+    }
+
+    /// A charge is over: it stands to recover from its blow, or dazed for `stun` seconds.
+    fn end_charge(&mut self, creature: u32, stun: Option<f32>) {
+        let feel = self.content.combat.feel;
+        let tick = self.tick;
+        let Some(live) = self.creatures.live.get_mut(&creature) else { return };
+        let attack = self.content.creatures.get(live.species).attack_at(live.attack);
+        live.charging = None;
+        live.body.velocity = live.body.velocity.with_x(0.0).with_z(0.0);
+        let recovery = attack.and_then(|a| a.recovery).unwrap_or(feel.creature_recovery).max(0.0);
+        let windup = attack.and_then(|a| a.windup).unwrap_or(feel.creature_windup).max(0.0);
+        live.held_until = tick + ticks(recovery + stun.unwrap_or(0.0));
+        // Dazed by a wall or a braced point, it reels as from any stagger (`STAGGERED`).
+        live.staggered = stun.is_some();
+        // The rest of its `every` after the wind-up and recovery, as a blow that lands
+        // leaves it: a miss, a wall or a braced point costs no more than a hit.
+        live.mind.cooldown = attack.map_or(1.0, |a| (a.every - windup - recovery).max(0.0));
+        live.changed = true;
+    }
+
+    /// A charge ran onto a braced point: the bracer's max hit, sure to land, and the
+    /// charger stands dazed `stun` seconds.
+    fn braced(&mut self, creature: u32, player: PlayerId, stun: f32) {
+        let feel = self.content.combat.feel;
+        let Some(weapon) = self.wielded_by(player) else { return };
+        let level = self.level(player, weapon.skill);
+        let damage = ((weapon.max_hit(level) as f32 * (1.0 + feel.counter_max_hit)).round() as u16).max(1);
+        self.end_charge(creature, Some(stun));
+        if let Some(p) = self.players.get(&player) {
+            p.connection.send(ServerMessage::Hurt { creature, damage: 0, defended: Defended::Perfect });
+        }
+        self.hurt_creature(player, creature, damage, weapon.skill, Blow::Counter);
+    }
+
     /// A creature lunges up to `lunge` blocks the way it faces (its aim locked), stopping
     /// where it would touch the player at `to`, or at a wall. Returns where it ends.
     fn lunge(&mut self, creature: u32, to: Vec3, lunge: f32) -> Vec3 {
@@ -680,6 +843,9 @@ impl Server {
 }
 
 #[cfg(test)]
+mod charges;
+
+#[cfg(test)]
 mod tests {
     use std::time::Duration;
 
@@ -687,6 +853,61 @@ mod tests {
     use voxmar_protocol::ClientMessage;
 
     use super::*;
+
+    /// Whether a shot that hit is left lying to pick up again is drawn by the player's count
+    /// of shots that hit, not the tick, and only a hit counts on.
+    #[test]
+    fn a_shot_is_left_lying_by_the_count_of_hits_not_the_tick() {
+        let shot = |tick: u64| {
+            let mut server = crate::test_server();
+            let (_client, connection) = voxmar_protocol::local_pair();
+            let player = 1;
+            let mut joined = crate::player::Player::new(player, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
+            (joined.joined, joined.draw_key) = (true, crate::player::player_draw_key(0x0d1a, "ada"));
+            let (sling, stone) = (server.content.blocks.expect("base:sling"), server.content.blocks.expect("base:cobblestone"));
+            joined.inventory.add(sling, 1);
+            joined.inventory.add(stone, 64);
+            server.players.insert(player, joined);
+            assert_eq!(server.players[&player].held(), Some(sling));
+            let weapon = server.content.combat.wielded(Some(sling), |_| 1);
+            let wolf = server.content.creatures.id("base:wolf").unwrap();
+            let creature = server.spawn_creature(wolf, server.spawn + Vec3::X * 4.0, 1).expect("room");
+            server.tick = tick;
+            for _ in 0..40 {
+                let full = server.content.creatures.get(wolf).def.health;
+                server.creatures.live.get_mut(&creature).unwrap().health = full;
+                let aim = Aim { creature, counter: false, riposte: false, weapon, held: Some(sling) };
+                server.land_swing(player, aim, 1.0, false, Blow::Plain, true);
+            }
+            let lying: u32 = server.items.saved(|item| format!("{item:?}")).iter().map(|d| d.count as u32).sum();
+            (lying, server.players[&player].draws.recovers, server.players[&player].draws.strikes)
+        };
+        let first = shot(1_000);
+        let (lying, hits, strikes) = first;
+        assert_eq!(strikes, 40, "each shot drew to strike");
+        assert!(hits > 0 && hits < strikes, "{hits} of {strikes} shots hit, every one or none");
+        assert!(lying > 0 && (lying as u64) < hits, "{lying} of {hits} shots that hit left lying");
+        assert_eq!(shot(1_377), first, "the same shots later were left otherwise");
+    }
+
+    /// A flourish's roll is the player's next flourish draw: each counts on.
+    #[test]
+    fn a_flourish_counts_on_the_players_flourish_draws() {
+        let mut server = crate::test_server();
+        let (_client, connection) = voxmar_protocol::local_pair();
+        let player = 1;
+        let joined = crate::player::Player::new(player, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
+        server.players.insert(player, joined);
+        let sword = server.content.blocks.expect("base:stone_sword");
+        let weapon = server.content.combat.wielded(Some(sword), |_| 1);
+        assert!(server.content.combat.flourish(&weapon).is_some(), "a sword flourishes");
+        let wolf = server.content.creatures.id("base:wolf").unwrap();
+        let creature = server.spawn_creature(wolf, server.spawn + Vec3::X * 2.0, 1).expect("room");
+        for _ in 0..3 {
+            server.flourish(player, creature, &weapon, 4);
+        }
+        assert_eq!(server.players[&player].draws.flourishes, 3, "each flourish drew once");
+    }
 
     /// Even a wind-up with no tracking ticks starts aimed at its target, whatever the
     /// creature faced before it chose to attack. Its locked lunge follows that same yaw.
@@ -759,7 +980,7 @@ mod tests {
         // The guard goes up, and the blow lands just after it, inside the perfect window...
         client.send(ClientMessage::Guard { up: true });
         let raised = server.fights.now();
-        server.fights.windups.push(Windup { creature: bear, player, lands: raised + 0.05 });
+        server.fights.windups.push(Windup { creature: bear, player, lands: raised + 0.05, contact: false });
         std::thread::sleep(Duration::from_millis(100));
         // ...but the server ticks before it takes the raise in: the blow waits for it.
         server.tick_fights();
@@ -832,7 +1053,7 @@ mod tests {
             } else {
                 self.server.raise_guard(player, true);
             }
-            self.server.creature_blow(self.bear, player, lands);
+            self.server.creature_blow(self.bear, player, lands, false);
             std::iter::from_fn(|| self.client.try_recv().ok().flatten()).find_map(|message| match message {
                 ServerMessage::Hurt { defended, .. } => Some(defended),
                 _ => None,
@@ -872,6 +1093,46 @@ mod tests {
         for (after, dash, defended) in on_time {
             assert_ne!(rig.answered(0.15, Some(0.0), after, dash), defended, "the 150 ms answer needed no allowance");
         }
+    }
+
+    /// A perfect block staggers the bear, and players are shown it (`STAGGERED`, its pose at
+    /// rest) for as long as it is held; once the hold ends and it thinks again the tell
+    /// goes. A daze interrupting a wind-up shows the same, the move it wound up gone.
+    #[test]
+    fn a_staggered_creature_shows_it_while_held_and_not_after() {
+        let mut rig = Rig::new();
+        let bear = rig.bear;
+        let perfect = rig.server.guard_of(1).expect("a sword guards").perfect;
+        let windup = rig.windup();
+        assert_eq!(rig.answered(0.0, None, windup - perfect / 2.0, false), Defended::Perfect);
+        let server = &mut rig.server;
+        let view = server.creatures.live[&bear].view(bear);
+        assert!(server.creatures.live[&bear].held_until > server.tick, "the perfect block holds it");
+        assert_eq!((view.tell, view.pose), (voxmar_protocol::STAGGERED, brain::Pose::Idle), "and shows it staggered");
+        // It thinks only where its ground is loaded.
+        let cell = server.creatures.live[&bear].body.position.floor().as_ivec3();
+        server.load_area(cell - voxmar_engine::glam::IVec3::new(16, 0, 16), cell + voxmar_engine::glam::IVec3::new(16, 0, 16));
+        let held_until = server.creatures.live[&bear].held_until;
+        let over = (0..held_until - server.tick + 10 * TICKS_PER_SECOND as u64)
+            .find(|_| {
+                server.tick += 1;
+                server.tick_creatures();
+                server.creatures.live[&bear].view(bear).tell != voxmar_protocol::STAGGERED
+            })
+            .expect("the stagger ends");
+        assert!(server.tick >= held_until, "the stagger stopped showing {} ticks before its hold ended", held_until - server.tick);
+        // It is asked again at its next thought, at most a far one's beat on.
+        assert!(server.tick <= held_until + crate::creatures::FAR_THINK + 2, "the stagger showed {over} ticks, long past its hold");
+        assert!(!server.creatures.live[&bear].staggered);
+        // A daze cuts a wind-up short: the move is no longer shown, the stagger is.
+        server.fights.windups.clear();
+        server.creatures.live.get_mut(&bear).unwrap().held_until = 0;
+        server.wind_up(bear, 1);
+        assert!(server.creatures.live[&bear].winding);
+        assert_ne!(server.creatures.live[&bear].tell(), voxmar_protocol::STAGGERED);
+        server.stagger(bear, 1.0);
+        let view = server.creatures.live[&bear].view(bear);
+        assert_eq!((view.tell, view.pose), (voxmar_protocol::STAGGERED, brain::Pose::Idle));
     }
 
     /// The round trip the allowance is made of: a ping answered later by the connection's

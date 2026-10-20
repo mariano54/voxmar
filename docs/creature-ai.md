@@ -84,20 +84,20 @@ Built now (`engine::creature::brain::modules`):
 
 | Module | Band | What it does |
 | --- | --- | --- |
-| wander | idle | strolls about home; pause length by style and energy (cats and bears pause long, snails barely) |
+| wander | idle | strolls about home, and with kin about, shorter and toward them by sociability; pause length by style and energy (cats and bears pause long, snails barely) |
 | look_around | idle | stands and turns its head; tires of it |
 | stand_to_look | social | rears up or lifts its head to watch a player; nervous ones more |
 | graze | drive | goes to its food and eats, head down; now and then a tuft is gone for good |
-| flee | danger | runs from a threat; hoppers zigzag; raises the alarm for kin |
+| flee | danger | runs from a threat; hoppers zigzag; raises the alarm for kin (an alarmed one runs home, unless a player in sight who never hurt it holds its favourite food) |
 | freeze | danger | holds still and watches a threat just beyond fleeing distance, for as long as its nerve holds |
 | blink | reflex | supernatural: vanishes a few blocks away from a threat that comes too close |
-| herd | social | closes on its group when it drifts apart; spacing by sociability |
+| herd | social | closes on its group when it drifts well apart (its spacing past it), to its companion's near side, the same companion until there; spacing by sociability |
 | sentinel | social | stands watch while kin graze |
-| tempted | drive | follows a player holding its favourite food; a grudge outweighs the food |
-| hunt | danger | chases and strikes, by RuneScape's rules; stalkers creep crouched, then pounce |
-| defend | danger | fights back when hurt (the boar, the bull, the bear) |
+| tempted | drive | follows a player holding its favourite food, hurrying as they draw ahead, keeping after them to 1.5 times the radius it noticed them at, and stepping back when too close; its home goes with it, so it stays where it was led; a grudge outweighs the food |
+| hunt | danger | chases and strikes, by RuneScape's rules; stalkers creep crouched, then pounce; gives up past its leash (unless struck there in the last 3 s: it fights back), or after balking twice running (a search finding no way to its target brings a balk on sooner), then lopes home and leaves players be for 45 s (strolling the side away from them) unless struck again; back at a chase within a minute, it gives up at its first balk |
+| defend | danger | fights back when hurt (the boar, the bull, the bear); gives up as hunt does |
 | curious | social | comes to look from a distance, backs off if you come closer |
-| return_home | drive | every creature: goes home when past its leash, until well inside |
+| return_home | drive | every creature: goes home when past its leash, until well inside; having given up a chase, lopes all the way home |
 
 Planned (from the deep dive's library): cache food, drink, sleep, bask, seek shade, huddle,
 hibernate, migrate, school, flock, ambush, pack hunt, scavenge, play dead, burrow, defend
@@ -164,11 +164,45 @@ stalking, the head down for grazing and up when alert, tails swaying.
 
 ## Pathfinding
 
-Now: steering straight at goals with box collision, stepping up single blocks, giving up a
-goal after two stuck seconds. Next, from the deep dive:
+Now: steering at goals with box collision (`motion::steer`). A walker heads straight
+while that way is open (sliding along a wall counts, and so does a single block its jump
+really clears); when it is shut, it takes the nearest turn that is open, 40, 80, 120 or
+160 degrees off, and keeps to the side it took until it is round, so a creature struck
+with its back to a wall runs along it, one in a corner runs out past the player, and one
+before a tree runs round the trunk. Its head stops at what its box does not: a turn that
+would put it into a wall goes the other way round (only while it still wants that way, and,
+standing, only to a heading its head fits at, so it never spins to face a player through a
+wall), a step that would is undone, and a head already in a block (one built before its
+face) may turn and walk out rather than stand frozen. What its head meets is a step it gets up,
+not a wall, when it is judged so at its feet (`Body::head_step`): the first cell its head
+comes to at its feet's level is solid, with room above it for its whole body, and its body
+raised a block clears it. Then it hops up it, springing on toward it, rather than turn
+along it, and its head is let over the step's edge only on that hop. A wall two high (which
+a head carried high meets in its upper block), a lintel at head height, or a step under a
+low ceiling is no step. It gives up a goal after two stuck
+seconds, or four going round, or about one once a search finds no way there. Fliers on
+the wing, drifters and swimmers do not steer.
 
-- A* over standable cells with a per-species movement profile (step, jump, safe fall,
-  media) and sparse overrides of one block-cost table (water, fire, powder snow, berry
+A way open to steer by is also one it can stand on: it looks a body's length ahead along
+the slide, and a step down further than `SAFE_DROP` (3 blocks), or into water two deep
+for a land animal not already out of its depth, is as shut as a wall (wading in the
+shallows too). So prey runs along a cliff
+edge or a lake shore rather than off it, and a boxed-in creature stands rather than press.
+Anything that jumps gets up a single block, however low its jump (the hop is lifted to
+clear it), and no higher. A land animal out of its depth (water under its feet and below)
+makes for the nearest dry cell within 12 blocks, whatever it had in mind, keeps on through
+the shallows, and hauls itself up the bank.
+
+When steering is going round (or already following one), a short A* (`path::find`) looks
+for a way over the cells the body fits in: eight directions, no corner cut, up one block
+if it jumps, down no further than `SAFE_DROP`, at most 1500 cells within 24 blocks, again
+at most once a second and only when its goal has moved. It walks the cells' centres, still
+steering, so a wolf finds the doorway in a wall (a shut door is a wall) and a sheep after
+wheat follows the player through it. A creature is made facing open air, so none starts
+with its head in a trunk. Next, from the deep dive:
+
+- A per-species movement profile for that search (step, jump, safe fall, media) and sparse
+  overrides of one block-cost table (water, fire, powder snow, berry
   bushes), capped per search and per tick.
 - A per-chunk connectivity layer so "no path" is answered at once (Factorio).
 - Herds share their leader's path; large groups heading one way share a flow field.

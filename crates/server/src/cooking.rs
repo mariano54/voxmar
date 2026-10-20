@@ -5,10 +5,11 @@
 
 use voxmar_engine::glam::IVec3;
 use voxmar_engine::traits;
-use voxmar_protocol::PlayerId;
+use voxmar_engine::lang::Words;
+use voxmar_protocol::{ChatKind, PlayerId, ServerMessage};
 
 use crate::Server;
-use crate::items::random3;
+use crate::save::Draw;
 
 impl Server {
     /// Cooks one of what `agent` holds at the station at `block`.
@@ -30,23 +31,33 @@ impl Server {
         let tags = self.content.blocks.def(station).tags.clone();
         let cooking = self.content.cooking.clone();
         let skills = self.content.skills.clone();
-        let tick = self.tick;
         let Some(player) = self.players.get_mut(&agent) else { return };
         let selected = player.selected;
         let Some(item) = player.held() else { return };
         let Some(recipe) = cooking.for_item(item, &tags) else { return };
         let level = recipe.skill.map_or(1, |skill| skills.level(player.skills.xp(skill)));
-        // Room for what comes out, or nothing is cooked. What comes out as the held item
-        // itself (a cracked clay is clay) fits where the one cooked is taken from.
-        let room = [Some(recipe.output), recipe.burnt].into_iter().flatten().all(|food| food == item || player.inventory.room_for(food, 1) > 0);
-        if !room || player.inventory.take_one(selected).is_none() {
+        // Everything one go takes, from the held stack first, or nothing is cooked: a
+        // crucible's bronze wants three copper ingots and a tin ore.
+        let wants = recipe.ingredients(item);
+        let mut after = player.inventory.clone();
+        if !after.take_all(&wants, selected) {
+            let names = wants.iter().map(|&(item, n)| Words::key("multiblock.fuel_stack").with("count", n.to_string()).with("item", Words::Block(self.content.blocks.def(item).name.clone()))).collect();
+            player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: Words::key("cooking.needs").with("items", Words::List(names)) });
             return;
         }
-        let [roll, ..] = random3(tick, block, agent ^ 0xc00c);
+        // Room for what comes out, once that is taken (a cracked clay is clay, back where it
+        // was), or nothing is cooked.
+        let room = [Some((recipe.output, recipe.def.count)), recipe.burnt.map(|b| (b, 1))].into_iter().flatten().all(|(made, n)| after.room_for(made, n) == n);
+        if !room {
+            return;
+        }
+        player.inventory = after;
+        // By the count of goes they have cooked, not the tick it comes out on.
+        let [roll, _] = player.draw(Draw::Cook);
         let burnt = roll < recipe.burn_chance(level);
-        let result = if burnt { recipe.burnt } else { Some(recipe.output) };
-        if let Some(food) = result {
-            player.inventory.add(food, 1);
+        let result = if burnt { recipe.burnt.map(|b| (b, 1)) } else { Some((recipe.output, recipe.def.count)) };
+        if let Some((made, n)) = result {
+            player.inventory.add(made, n);
         }
         player.changed(traits::INVENTORY);
         if let (false, Some(skill)) = (burnt, recipe.skill) {
@@ -55,8 +66,9 @@ impl Server {
         }
         if !burnt {
             let name = self.content.blocks.def(recipe.output).name.clone();
-            self.tally(agent, "cooked", &name, 1);
-            self.tally(agent, &format!("cooked_at:{}", recipe.def.station), &name, 1);
+            let made = recipe.def.count as u32;
+            self.tally(agent, "cooked", &name, made);
+            self.tally(agent, &format!("cooked_at:{}", recipe.def.station), &name, made);
         }
     }
 }

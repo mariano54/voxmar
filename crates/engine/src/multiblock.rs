@@ -148,7 +148,8 @@ impl MultiblockRegistry {
             let mut key: FxHashMap<char, Cell> = FxHashMap::default();
             for (&c, name) in &def.key {
                 let mut accepts: Vec<BlockId> = match name.strip_prefix("tag:") {
-                    Some(tag) => (0..blocks.len() as u16).map(BlockId).filter(|&id| blocks.def(id).has_tag(tag)).collect(),
+                    // A ring of stone is of whole blocks: no cut stone stands in for one.
+                    Some(tag) => blocks.answers_whole(tag),
                     None => name.split('|').map(|n| blocks.id(n).ok_or_else(|| bad(format!("no block `{n}`")))).collect::<Result<_, _>>()?,
                 };
                 if accepts.is_empty() {
@@ -209,6 +210,12 @@ impl MultiblockRegistry {
 
     pub fn iter(&self) -> impl Iterator<Item = &Multiblock> {
         self.multiblocks.iter()
+    }
+
+    /// How far from its core any structure's farthest cell lies, on any one axis: a change
+    /// farther than this from a core can break nothing built round it.
+    pub fn reach(&self) -> i32 {
+        self.multiblocks.iter().flat_map(|m| m.cells.iter()).map(|(at, _)| at.abs().max_element()).max().unwrap_or(0)
     }
 
     /// The multiblocks a block can be the core of.

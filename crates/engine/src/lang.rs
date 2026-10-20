@@ -118,6 +118,13 @@ impl Lang {
         self.find(key).unwrap_or(default)
     }
 
+    /// Whether this language itself has words for `key`, without falling back to English:
+    /// the key's own, or its counted form (`key.other`, which every language has).
+    pub fn defines(&self, key: &str) -> bool {
+        let table = if self.code == ENGLISH { &self.english } else { &self.strings };
+        table.contains_key(key) || table.contains_key(&format!("{key}.other"))
+    }
+
     /// The text for `key` in this language or English, if either has it.
     pub fn find(&self, key: &str) -> Option<&str> {
         self.strings.get(key).or_else(|| self.english.get(key)).map(String::as_str)

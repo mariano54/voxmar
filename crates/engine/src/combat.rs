@@ -180,6 +180,11 @@ pub struct GuardDef {
     /// Whether it stops arrows and thrown things too, as shields do.
     #[serde(default)]
     pub missiles: bool,
+    /// Whether, held up facing it, it braces against a charge: the charger runs onto the
+    /// point, heavy or not, and is stopped (a spear's, the wiki's "stops a charge when
+    /// braced"; `creature::moves::Charge`).
+    #[serde(default)]
+    pub brace: bool,
 }
 
 fn guard_speed() -> f32 {
@@ -187,6 +192,11 @@ fn guard_speed() -> f32 {
 }
 
 impl GuardDef {
+    /// Whether, facing `facing`, it braces against a charge coming from `from`.
+    pub fn braces(&self, facing: glam::Vec3, from: glam::Vec3) -> bool {
+        self.brace && self.covers(facing, from)
+    }
+
     /// Whether a blow from `from` falls in the arc of a guard facing `facing` (both flat
     /// directions, any length).
     pub fn covers(&self, facing: glam::Vec3, from: glam::Vec3) -> bool {
@@ -357,6 +367,10 @@ feel! {
     creature_accuracy: f32 = 0.8,
     /// How far, past touching, a dashing player stops short of a creature's body.
     creature_clearance: f32 = 0.2,
+    /// The share of its most health a charging creature loses for each block it falls past
+    /// survival's `safe_fall` (`creature::moves::Charge`): a charge does not look where it
+    /// goes, so a cliff hurts it as the player would want.
+    charge_fall: f32 = 0.1,
     /// Seconds after a creature and the player last traded blows that a right click at it
     /// still guards (with something that guards) rather than looks closely.
     engaged: f32 = 6.0,
@@ -1075,6 +1089,9 @@ impl CombatRegistry {
         if dodges.is_empty() {
             dodges.push(DodgeDef::default());
         }
+        if !(0.0..=1.0).contains(&feel.charge_fall) {
+            return Err(RegistryError("combat.ron: `feel.charge_fall` must be from 0 to 1".into()));
+        }
         if let Some(class) = classes.iter().find(|c| c.windup < 0.0 || c.windup >= c.cooldown || c.buffer < 0.0 || c.beat < 0.0) {
             return Err(RegistryError(format!("combat.ron: class `{}`: its wind-up must be under its cooldown, and no time may be negative", class.name)));
         }
@@ -1292,6 +1309,11 @@ impl CombatRegistry {
         &self.classes[index]
     }
 
+    /// Every weapon class.
+    pub fn classes(&self) -> &[ClassDef] {
+        &self.classes
+    }
+
     /// Every item that is a weapon, with its weapon, in registry order.
     pub fn weapons(&self) -> impl Iterator<Item = (BlockId, &Weapon)> + '_ {
         self.weapons.iter().enumerate().filter_map(|(i, w)| Some((BlockId(i as u16), w.as_ref()?)))
@@ -1344,7 +1366,7 @@ mod tests {
     fn a_blow_is_judged_by_when_it_lands() {
         use glam::Vec3;
         let feel = Feel::default();
-        let sword = GuardDef { stop: 0.35, arc: 90.0, perfect: 0.15, speed: 0.5, missiles: false };
+        let sword = GuardDef { stop: 0.35, arc: 90.0, perfect: 0.15, speed: 0.5, missiles: false, brace: false };
         let dodge = DodgeDef::default();
         // Raised 0.1 s before it lands: perfect; 0.2 s before: a block; after: nothing.
         for (raised, lands, want) in [(10.0, 10.1, Defended::Perfect), (10.0, 10.2, Defended::Blocked), (10.2, 10.1, Defended::Hit)] {
@@ -1669,7 +1691,7 @@ mod tests {
     fn guards_stop_melee_in_their_arc_and_crush_breaks_through() {
         use glam::Vec3;
         let feel = Feel::default();
-        let sword = GuardDef { stop: 0.35, arc: 90.0, perfect: 0.15, speed: 0.5, missiles: false };
+        let sword = GuardDef { stop: 0.35, arc: 90.0, perfect: 0.15, speed: 0.5, missiles: false, brace: false };
         assert!(sword.covers(Vec3::Z, Vec3::new(0.9, 0.0, 1.0)));
         assert!(!sword.covers(Vec3::Z, Vec3::new(1.0, 0.0, 0.2)), "beside is open");
         assert_eq!(sword.stops(Style::Slash, &feel), 0.35);

@@ -28,6 +28,13 @@ first reached in a session (with a **Next:** line). Reaching one counts as
 `Built("home_NAME", 1)` for quests (`home_camp`, `home_hearthside`, `home_snug`, `home_homely`,
 `home_cosy`, `home_heart_of_the_home`).
 
+Each step's chip has its own icon, so the HUD shows the home climbing at a glance: a tent
+(Camp), a hearth fire (Hearthside), a quilt (Snug), a house (Homely), its window lit and its
+chimney smoking (Cosy), a heart at its middle (Heart of the Home); and a moon for Rested, a
+moon and star for Well Rested, a full moon for Deep Rest (default pack
+`recipes/effects.ron`, `ui/effect/<name>`; test `the_homes_steps_and_rest_have_their_own_icons`;
+the gate's Home step, "home: icons", shot `home-chips`).
+
 | Step | Age | Needs (tags) | Gives while at home |
 | --- | --- | --- | --- |
 | Camp | Nomad | a bed (sleeping bag) slept in, 1 light | heal x1.2 |
@@ -38,7 +45,11 @@ first reached in a session (with a **Next:** line). Reaching one counts as
 | Heart of the Home | Farm end | + books, cooking, workshop, banner | heal x2, xp x1.125 |
 
 Seats are stools, chairs, benches and cushions; tables include desks and counters; storage is
-barrels, crates, barrel racks, jars and baskets; cooking is the cottage stove and cauldron;
+whatever a home keeps things in or on: chests, cupboards and wardrobes, shelves (pot shelves
+and bookshelves too), crate stacks, barrel racks, jars and baskets, and a village's barrels
+and crates (every store a player opens counts but the feed trough, which is the pen's: test
+`every_store_shelf_and_cupboard_counts_as_storage`; the gate's Nest step finds a Pantry made
+of a chest and a barrel by a campfire, "home: storage"); cooking is the cottage stove and cauldron;
 workshop is the loom frame, spindle stand and quern. All are craftable in the first two ages
 (Construction 1 to 8, Crafting 2 to 8), so each step is a few minutes of gathering and
 crafting, not a grind.
@@ -93,7 +104,7 @@ position is inside the home box (`survey_around(anchor, keeper)`); a mod can ask
 `HomeHas("kept", n)` like any other tag, and content load accepts it. `crop` is the block tag
 every crop stage carries, so a garden needs no new tag. Other players' animals never count.
 
-Ideas left: species rules (`kept:hen` for eggs, a cat for fewer mice).
+Ideas left: a cat for fewer mice. Hens lay into the home's stores (below, "Eggs in the stores").
 
 ## Callers (wandering parties that come to a home)
 
@@ -146,12 +157,51 @@ It is a console command, so it needs no protocol change.
 Away from home (the lit hearth, else the bed last slept in), a small hearth mark at the top
 of the screen sits over where home lies, with how far it is ("Home 140 m"). Turned away from
 it, the mark waits at the screen's edge on the side to turn to, so a player lost at night
-turns until it is in the middle and walks. Within `home_hidden_within` blocks (core
-`interface.ron`, 24) nothing shows; the mark's icon is the item a package names as
+turns until it is in the middle and walks. The mark's icon is the item a package names as
 `home_icon` (base: the hearthstone). The server sends home in the player's vitals
-(`Vitals::home`, protocol 38) once a second when it changes. With no hearth lit and no bed
-slept in, there is no mark. The gate's Home step checks it after the camp: the bag named as
-home and the mark showing its distance.
+(`Vitals::home`, protocol 38) once a second when it changes, so the way home needs no new
+protocol. With no hearth lit and no bed slept in, there is no mark.
+
+**When it shows (Oct 14, thirteenth pass).** The first nights are where a player gets lost.
+They wander off at dusk, the hearth is a dot of light among dark trees, and nights stay dark
+with no torches before coal. More light is not the answer; the mark is. It used to show
+whenever the player was over 24 blocks from home, all day long. Now:
+
+- **Never inside the home.** Within `home_hidden_within` (8) blocks either way (a square, as
+  the home's own box is, `home_reach` 7, and a step), nothing shows, corners included.
+- **From dusk to dawn** (`home_dusk` 16500 to `home_dawn` 23500 ticks after sunrise, the
+  times `/time set dusk` and `dawn` name) it shows everywhere past that. A night can wrap
+  past midnight (a dusk later than its dawn).
+- **By day** it shows only farther than `home_shown_beyond` (48) blocks. A day spent working
+  round the home is not cluttered, and a long trip still has its way back.
+- It **fades** in and out over `home_fade` (0.5) seconds instead of popping.
+- The **"Way Home Marker"** setting (Interface tab, on by default, en+ja) turns it off.
+
+All five numbers live in core `interface.ron`, where a later package changes what it gives.
+They are checked as they load: the distances are 0 or more and the day distance is not under
+the inside one; both times are under a day and differ; the fade is 0 to 5 s. The rule is
+`hud::home::wanted`, with its own test (`the_way_home_shows_at_night_or_far_off`).
+
+**Gate.** The Home step checks the mark itself after the camp: named home, its distance, the
+edge, and gone near home. It does this with the distances set to 0 so it shows at any hour.
+The **WayHome** step then plays the rule at dusk. It sets `/time set dusk` and stands on a
+pad 20 blocks out, past the box and short of the day distance. It waits, in server and game
+seconds both, for the mark to fade in. It turns home 20° to one side and reads back the
+bearing the mark draws from where it sits, which must be within 3° of home's
+("way home: dusk"). Back at the camp it waits for the mark to fade out ("way home:
+inside"). It then sets the time back and leaves the camp to the Nest step, which takes it down.
+
+**No ghost home.** A home used to be only ever set: break the hearth or the bed and you woke
+at the hole, the mark pointing there. Now every block change asks `Server::home_changed`:
+a player whose bed stood where the new block is no bed forgets the bed ("Your bed is gone:
+you will not wake there again."), and one whose home hearth's core it was forgets the hearth
+("Your hearth is gone: it is your home no more."), en+ja. They wake at what is left (the
+hearth, the bed, else the world's spawn) and `Vitals::home` changes at once, so the mark
+moves or goes. A bed set down where the bed was (a bag swapped for a proper bed) is still
+the bed. Test: `hearth::tests::a_broken_bed_or_hearth_is_forgotten`. Gate: the Nest step's
+last phase breaks the bag that was home and waits for no home, no mark and the chat line
+("home: no ghost"). A bed broken while its sleeper is offline is not seen (their save keeps it
+until they sleep elsewhere).
 
 ## Sleeping
 
@@ -161,6 +211,58 @@ Deep rest (20) in a Cosy one (a game day is 20 minutes). Rest gives a little hea
 mining and speed wherever you go, and a bed always works as a bed (it sets where you wake and your home) but gives no new rest
 while one lasts, so the buff is a once-a-day habit, not a button to hold. Timed effects count down
 online only.
+
+A proper bed rests better than a bag on the ground: a sleep rule can name a `bed` tag the bed
+slept in must carry, and a bed of furniture (`bed: "furniture"`) is Well rested anywhere,
+where a sleeping bag needs a Snug home or a lit corner. Every sleep also mends: Healing
+Sleep (heal x4) for a minute, two in a proper bed, so coming home hurt and sleeping heals.
+It is no way to heal in a fight: a bed refuses sleep with a creature that hunts players
+(wild, or kept by another player) within `sleep_threat_reach` blocks (12), or within
+`sleep_after_hurt` seconds (15) of a wound (a blow, a fall, a sting; not the cold or heat
+wearing at one) (`core/survival.ron`). A refused sleep still claims the bed. And it stays slower than eating, since food is the heal (design
+draft 63): however many heal buffs and prayers are on, healing by itself is held at
+`heal_most` (1 a second, `survival.ron`), which loading checks is below what the slowest
+food heals a second, a 0.6 s bite at a time; time past a point is never banked to pay out
+after. No night skipping. Loading refuses a sleep rule whose `bed` tag no bed carries.
+Tests: the engine's `a_proper_bed_rests_well_and_every_sleep_mends_slower_than_food` and
+`a_sleep_rule_for_a_bed_nobody_made_is_refused_at_load`, the server's
+`a_proper_bed_rests_well_and_mends_longer_than_a_bag` and
+`no_sleep_with_a_hunter_near_or_wounds_fresh`; the gate's Home step clicks the bag with a
+shambler near and expects the refusal, then waits on every chip the engine says the bag
+gives there.
+
+## Drying off
+
+Rain soaks you (Soaked, Drenched in a downpour), and a roof alone no longer dries you: wet
+through, you stay so for two minutes under cover (three if drenched), colder and, drenched,
+slower to heal, unless you dry off within three blocks of a fire or a hearth (or warmed on a
+cold day). So coming in from the rain, you dry by your own hearth. It is data: an effect
+that `lingers` can name what `ends` it early (core effects.ron's `ends: Some(Any([Warmed,
+Near("fire", 3), Near("hearth", 3)]))`), and loading refuses `ends` on one that does not
+linger. Tests: the engine's `wet_through_you_dry_off_by_a_fire_and_not_before`, the
+server's `health_is_twice_hitpoints_and_a_downpour_drenches_those_out_in_it`; the gate's
+Weather step dries the player by a campfire after its storm ("weather: dries by a fire").
+
+## Sitting by the fire
+
+Seats were only props the ladder counted. Now a right click on one (a stool, chair, bench or
+cushion: anything tagged `seat`), with no block to place in hand and room above it, sits the
+player on it (`base:sit`, `Requirement::Seat`, `Effect::Sit`): the server sets them in it
+(base's seats are not solid, so one under a roof two blocks up is sat on; a mod's solid seat
+sets them on top, and wants two free cells over it), and their eye drops to
+`vitals::SEATED_EYE` (1.3) over their feet, on the server and the client alike (`vitals::eye`; `Vitals::seated`, protocol
+40). They sit until they move off it or it goes (`vitals::still_seated`, checked once a
+second). Effects can ask `Seated`; base's **By the Fire** (`fireside`: heal x1.5, 4° warmer)
+holds sat with a fire or the hearth within 3, so a Nomad's stool at the campfire and a chair
+at home both rest the player after a day out. Tests: server `seats.rs`. The gate's Seat step
+sits on a stool under a block two up, by a campfire (shot `seat-fire`), and steps off it.
+
+Sat with a table within 2, the player is **At the Table** (`at_table`): a meal eaten there
+heals a quarter more and its good lasts a quarter longer (`meal_heal`, `meal_time`, as the
+pantry and larder rooms give; they multiply, up to core `survival.ron`'s `meal_most`, 2: with
+every meal effect on, the heal is 1.82 times and the good's length 2.27, held to 2). A supper at the kitchen table is worth sitting
+down for. Test: `a_meal_at_the_table_does_more`. The gate's Seat step sets a table by the
+stool ("seat: at the table").
 
 ## Numbers and tuning
 
@@ -204,6 +306,68 @@ step puts four planks in a barrel beside the bag, shoots the table's recipe with
 button ("home-lay-recipe"), presses it, and shoots the grid laid from the barrel
 ("home-lay"; check "home: lay").
 
+**Stores count everywhere a home crafts (Oct 14).** The eleventh pass carries the same rule
+to the rest of the home, so the barrel is a larder from the first night:
+
+- **Always on, not a tier perk.** The rule holds wherever the player stands in their own home,
+  at any home step from a bed and a torch up. Tying it to a tier would hide it until the
+  home is Homely, when the first days are already over; the tiers instead grow how much the
+  stores hold. Only the player's own home counts, and only the stores they placed (or that
+  nobody did, as a village's): a guest sleeping in a friend's bed crafts from their own pack
+  and their own barrels, since a friend's barrel is not theirs to empty.
+- **The home bounds** are the box `/home` counts: `home_reach` across, `home_up` and
+  `home_down`, around the lit hearth, else the bed last slept in. The player must stand
+  in it, and a station must stand in it too.
+- **Which stations count.** Crafting (the 2×2 grid and the crafting table) already lays from
+  the stores. Home stations (stations.ron) now count too: loading one tops the load up to
+  what it `holds`, with more of what is in hand. It takes from the hand first, then the
+  rest of the pack, then the stores, nearest the hearth or bed first. Unlike Lay, a station
+  never reaches into a pouch. This is data per station, `from_stores` (true unless said
+  otherwise). The drying rack and the cooking pot take from the stores. The compost heap
+  does not, because grain and seed kept in a barrel are for eating and sowing, and a heap
+  that ate them would punish keeping a larder. Nor does the earth clamp: logs and clay in
+  the stores are for building, and one log in hand would draw the woodshed in. The chat line says how many came from the stores
+  (`station.loaded_from_stores`, en and ja). Cooking at a fire (cooking.ron) and machines
+  are left out. A fire cooks the one item in hand and a machine takes items into its own
+  slots, so there is no load to top up.
+- **What the player sees.** The Can Make list under the inventory, and what the recipe
+  viewer says a recipe still wants, count the home's stores while the player stands in
+  their home. The server sends the tally with the vitals (`Vitals::home_stores`, protocol
+  44). It is recounted on the once-a-second survival pass, which already surveys the same
+  box, and resent only when it changes. With four planks in the barrel and none in the
+  pack, the crafting table shows as ready. What a fire cooks counts the pack alone, since a
+  fire cooks what is in hand: raw meat only in the barrel is not shown cooked.
+- **Tests.** In server/src/laying.rs: `at_home_a_rack_tops_its_load_up_from_the_stores`,
+  `at_home_with_no_store_a_rack_tops_up_from_the_pack`,
+  `a_compost_heap_leaves_the_stores_alone`, `a_guest_draws_on_no_one_elses_stores`,
+  `a_station_and_its_loader_must_both_be_in_the_home` and
+  `the_home_stores_are_counted_only_at_home`. In client/src/hud/makeable.rs:
+  `the_home_stores_count_toward_what_can_be_made`, which also checks a cooked thing is not
+  shown from the stores alone. In the gate's Home step, before Lay, the check
+  "home: can make" asks that the server counted the barrel's planks (as many as the crafting
+  table's recipe takes) and that the Can Make plan, drawn under the open barrel, has the
+  crafting table ready from them alone.
+
+## Eggs in the stores
+
+A kept hen (any bird whose product `nests`) that lays inside its keeper's home box lays into
+the home's stores instead of onto the ground: the nearest store that takes an egg and has
+room (a barrel, a crate, a jar; not a basket, which keeps only what is foraged). What finds
+no room, or is laid away from home, falls on the ground as before, where it lasts 30
+minutes. So a pen by the house fills the larder while the keeper is out: no egg hunt round
+the yard, nothing rotting while you travel, and the eggs are there for **Lay**, stations and
+Put Away to draw on like anything else stored.
+
+The keeper is told once home ("Your animals laid into your home's stores: 3 Egg."), so the
+first egg in a barrel is never a mystery; it is told once, then the tally starts again. It
+is data: `nests: true` on a product in creatures.ron (base sets it on every egg), refused at
+launch on a product taken with a tool (wool, milk). The home box is the survival rules' own
+(`home_reach`, `home_up`, `home_down`). Server side in server/src/husbandry.rs (the laying
+pass) with `Server::stores_around`; the keeper must be in the world (logged out, it falls). The
+gate's Nest step keeps a junglefowl at the Home step's bag, opens a barrel, makes an egg
+due, and checks the egg in the barrel and the chat line (shot `home-nest`, check
+"home: nest").
+
 ## A well by the field
 
 Crops grow best with water within four blocks, and rice not at all without it, so a home
@@ -214,11 +378,27 @@ sunk level with it, keeps its ground moist (farm.rs `crop_conditions`), and a st
 `Water` spot counts it too, so a compost heap beside a well rots as fast as one by a stream.
 A mod's rain barrel or cistern is the same tag. Tests: `a_well_waters_the_field_about_it`,
 `a_heap_rots_greens_four_to_one`. The gate's Refusal step sets one down from the hand by its
-dry plot ("well", shot "well").
+dry plot ("well", shot "well"). The Farm quest A Well by the Field (after A Field of Gold)
+asks for one made and set down where it keeps tilled ground moist (`Watering`).
+
+## The hearth is a fire
+
+Lit, the Homestead Hearth cooks what a campfire cooks: raw meat, fish or an egg in hand, a right
+click on the standing hearth (its ring and chimney whole, `station_stands`) cooks one, with an
+empty hand still lighting it. The Cottage Stove (Farm, five cobblestone round a campfire) is
+the campfire built in: it cooks the same, holds a cooking pot (`hob`), and warms and lights the
+room as a fire does (`heat`, `fire`, light 12, which survival.ron's `heat_emission` counts),
+smoking from its flue. So the home's own fire is where supper is made, and nobody keeps a
+campfire on the floor. Data only: the `campfire` tag the cooking recipes ask for, on the
+hearthstone and the stove (blocks_tools.ron, blocks_furnishings.ron); a loose hearthstone
+does not cook, and says what the hearth lacks. Cooking at either counts as campfire cooking
+for quests (First Night). Test `the_hearth_and_the_stove_cook_as_a_campfire_does`; the gate's
+Cook step rings its hearthstone with stone and cooks small game at it ("hearth: cooks"), then at a
+stove ("stove: cooks").
 
 ## Smoke over home
 
-The Homestead Hearth's chimney smokes from its top while the hearthstone stands below it, a
+The Homestead Hearth's chimney smokes from its top while the hearth below it is lit, a
 thick column seen from 96 blocks, so a player out at dusk sees where home is from across a
 valley. It is data on the chimney block (blocks_tools.ron): a smoke emission with
 `range: Some(96.0)` (how far off it is seen, up to 128, against the 24 every other block's
@@ -227,8 +407,70 @@ particles keep) and `over: Some(("hearth", 3))` (given off only with a `hearth` 
 stove pipe or a forge's flue can do the same. The client searches farther only for chunks
 whose palette holds such a block, and counts nearness as a share of each emission's range,
 so a far chimney takes its place among the nearest torches
-(`a_chimney_smokes_over_a_hearth_from_afar`). The gate's Cook step sets a hearthstone and a
-chimney beside its campfire and counts the chimney's puffs ("chimney smoke").
+(`a_chimney_smokes_over_a_hearth_from_afar`). The gate's Cook step builds a hearth beside
+its campfire, checks its chimney gives nothing off cold, lights it and counts the puffs
+("chimney smoke").
+
+A cold hearth is quiet. Lighting a hearth keeps its fire until a piece of it is taken away
+(server/src/hearth.rs; a kiln's burns for its fuel charge), and the server tells every
+player which fires burn when that changes (`ServerMessage::Fires`, protocol 41). Over a
+structure's core (a hearthstone) an emission is `over` it only while it burns, and the
+ambience's `fire` group (`lit: true`) hears a hearth or a Crucible Kiln crackle and snap only
+then; a campfire or a pit kiln always. A home hearth lit in a world saved before this is lit
+again when its player joins.
+
+## Light in the windows
+
+A home shows its lit rooms at night: a window glows warm by the light of the room behind it.
+Before glass there is the Hide Window (Farm, Construction 3: a hide in a frame of eight sticks,
+two windows), oiled hide in a stick frame. Every block tagged `window` (the hide window, glass,
+settlements' old glass) passes block light as air does (a `Cutout` cube), so a candle or the
+hearth behind it lights the ground outside, and is `lit_through` (a block field, any mod's
+window can say it): its bright texels glow by the block light reaching its face, which came
+through it, as a lantern's glow by its own light (client `render/mod.rs` `layer_table`, the
+glow byte's `THROUGH` bit; `voxel.wgsl`). It shows at any hour, as a lantern's glow does, and
+stands out after dark. A dark room's window stays dark; a wall keeps the light in
+(`a_window_lets_a_lit_rooms_light_out`, engine tests/windows.rs). The gate's Door step then
+sets a hide window in a candle-lit stone nook at midnight and judges the shot: the pane warm
+and bright against the night ("window: glows", shot `window-night`).
+
+## A trough for the pen
+
+Kept animals graze within their leash of home (7 blocks), and grazing wears the land: now and
+then a tuft goes for good, so a full pen strips its grass and goes hungry, and a hungry animal
+loses condition and gives less. A Feed Trough (Farm, Construction 4: five planks in a low U) is
+a store of nine (machines.ron, opened like a barrel) tagged `trough`. A kept animal that grazes,
+unfed past a day (`creatures.ron`'s condition `fed`) with nothing to graze near, walks to a
+trough within its leash of home holding one of its foods (what it grazes, its favourites, what
+tames or readies it, any `breeding_feed`) and eats one, head down, as it grazes; it is fed
+for the day. So the trough feeds the pen while the keeper is away, an item an animal a day,
+and wheat from the field has a use at home. Hunters (a kept fox) still take meals by hand.
+Server `troughs.rs` (`trough_for`, `eat_from_trough`; the brain's food is a trough when it has
+no grazing); tests `a_hungry_kept_animal_eats_its_food_from_a_trough`,
+`a_kept_grazer_left_alone_feeds_itself_at_the_trough`. The gate's Tame step sets a trough
+and opens it ("trough: opens", shot `trough`).
+
+A kept animal also needs water within its leash of home, and that need reads one tag:
+any block tagged `drinking_water` (water itself, a well, a feed trough) meets it (server
+`condition.rs` `water_near`; the engine's `condition::DRINK`). So a pen away from the river
+is watered by the trough that feeds it, a Construction 4 piece any age can make, and a mod's
+water station is a tag on its block. Loading refuses creatures when no block carries
+`drinking_water` (`check_drink`). Test: `a_pen_drinks_from_water_a_well_or_a_trough`.
+
+## Moving the furniture
+
+A home is rearranged, not rebuilt: whatever a player placed to furnish it (the wood
+furniture, the dyed cloth, the crockery, a candle) comes back whole when broken, so a bed
+moved to the other wall, or a whole home moved to a better spot, costs nothing. It is one
+tag: a block tagged `furnishing` gives its drop only from a cell a player set
+(`Server::placed`, kept in the save), and one a village placed gives nothing, as its props
+do (design draft 80), so a settlement is still no free store of goods. Since a piece drops
+itself, breaking one is no way to make planks or dye, and a placed cell teaches no skill
+when broken. Loading refuses a `furnishing` that drops nothing. Tests: the engine's
+`a_placed_piece_gives_itself_back_and_a_village_one_nothing`, the server's
+`a_village_rug_gives_nothing_but_a_players_comes_back_whole_across_restarts` (and the crate
+stack's). The gate's Nest step places a rug and a stool, breaks them and finds both back in
+the pack ("furnishings: come back").
 
 ## Quest hooks (written, in base/quests.ron)
 

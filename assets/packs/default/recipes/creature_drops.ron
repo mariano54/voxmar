@@ -12,8 +12,7 @@
         'W': "#fbf8ee", 'D': "#2a2220",
     },
     palettes: {
-        "meat_rabbit": ["#8e3a3a", "#c8605a", "#e88c80"],
-        "meat_chicken": ["#b06a58", "#e0a08a", "#f4c8b4"],
+        "meat_small_game": ["#8e3a3a", "#c8605a", "#e88c80"],
         "meat_duck": ["#7a2e2e", "#b0504a", "#d07c70"],
         "meat_mutton": ["#7a1e1e", "#b03a34", "#d8665c"],
         "meat_pork": ["#b05a5a", "#e48c8c", "#f8b8b0"],
@@ -21,7 +20,6 @@
         "meat_venison": ["#5a0e0e", "#8e1e1e", "#b83a32"],
         "meat_bear": ["#4a0c0c", "#7a1a18", "#a8342c"],
         "meat_rotten": ["#4a5a2a", "#6e7e3c", "#98a456"],
-        "meat_frog": ["#b07a70", "#e4b0a4", "#f8d4ca"],
         "meat_crab": ["#a83c18", "#e46a30", "#f8a070"],
         "snow_white": ["#c8ccd4", "#eceef2", "#ffffff"],
         "lynx_tawny": ["#7a5e3e", "#b0926c", "#dccaa8"],
@@ -69,22 +67,20 @@
     },
     textures: {
         // A cut of meat: a rounded slab with a rim of fat and a bone end.
-        "block/raw_rabbit": (base: "shape/plant", palettes: {"fruit": "meat_rabbit", "wood": "fat_rim"}, layers: [Grid(rows: [
+        "block/raw_small_game": (base: "shape/plant", palettes: {"fruit": "meat_small_game", "wood": "fat_rim"}, layers: [Grid(rows: [
             "................", "................", "................", ".....kkkk.......",
             "...kkhhhhkk.....", "..khhjjhhhhk....", "..khjjhhhhhhk...", ".khhjhhhfhhhhk..",
             ".khhhhhffhhhhk..", ".khhhhhhhhhhfk..", "..khhhhhhhffk.ll", "...kkhhhhfkk.lml",
             ".....kkkkk...ll.", "................", "................", "................",
         ])]),
-        "block/raw_chicken": (base: "block/raw_rabbit", palettes: {"fruit": "meat_chicken", "wood": "bone_pale"}),
-        "block/raw_duck": (base: "block/raw_rabbit", palettes: {"fruit": "meat_duck", "wood": "fat_rim"}),
-        "block/raw_mutton": (base: "block/raw_rabbit", palettes: {"fruit": "meat_mutton", "wood": "fat_rim"}),
-        "block/raw_pork": (base: "block/raw_rabbit", palettes: {"fruit": "meat_pork", "wood": "fat_rim"}),
-        "block/raw_beef": (base: "block/raw_rabbit", palettes: {"fruit": "meat_beef", "wood": "fat_rim"}),
-        "block/raw_venison": (base: "block/raw_rabbit", palettes: {"fruit": "meat_venison", "wood": "fat_rim"}),
-        "block/raw_bear": (base: "block/raw_rabbit", palettes: {"fruit": "meat_bear", "wood": "fat_rim"}),
-        "block/raw_frog": (base: "block/raw_rabbit", palettes: {"fruit": "meat_frog", "wood": "bone_pale"}),
-        "block/raw_crab": (base: "block/raw_rabbit", palettes: {"fruit": "meat_crab", "wood": "fat_rim"}),
-        "block/rotten_flesh": (base: "block/raw_rabbit", palettes: {"fruit": "meat_rotten", "wood": "meat_rotten"}),
+        "block/raw_duck": (base: "block/raw_small_game", palettes: {"fruit": "meat_duck", "wood": "fat_rim"}),
+        "block/raw_mutton": (base: "block/raw_small_game", palettes: {"fruit": "meat_mutton", "wood": "fat_rim"}),
+        "block/raw_pork": (base: "block/raw_small_game", palettes: {"fruit": "meat_pork", "wood": "fat_rim"}),
+        "block/raw_beef": (base: "block/raw_small_game", palettes: {"fruit": "meat_beef", "wood": "fat_rim"}),
+        "block/raw_venison": (base: "block/raw_small_game", palettes: {"fruit": "meat_venison", "wood": "fat_rim"}),
+        "block/raw_bear": (base: "block/raw_small_game", palettes: {"fruit": "meat_bear", "wood": "fat_rim"}),
+        "block/raw_crab": (base: "block/raw_small_game", palettes: {"fruit": "meat_crab", "wood": "fat_rim"}),
+        "block/rotten_flesh": (base: "block/raw_small_game", palettes: {"fruit": "meat_rotten", "wood": "meat_rotten"}),
         // A hide stretched out: four legs and a neck.
         "block/hide": (base: "shape/plant", palettes: {"fruit": "leather"}, layers: [Grid(rows: [
             "................", "...h........h...", "...hh..jj..hh...", "....hhhjjhhh....",
@@ -133,6 +129,13 @@
             "................", "................", "................", "................",
         ])]),
         "block/horn": (base: "block/fang", palettes: {"fruit": "horn_dark"}),
+        // A great tusk: a long ivory curve, thick at the root.
+        "block/great_tusk": (base: "shape/plant", palettes: {"fruit": "bone_pale"}, layers: [Grid(rows: [
+            "................", "..........jj....", ".........jhhf...", "........jhhhf...",
+            "........hhhf....", ".......hhhf.....", "......hhhf......", ".....hhhf.......",
+            "....hhhhf.......", "...jhhhf........", "...hhhhf........", "..jhhhf.........",
+            "..hhhhf.........", "..jhhf..........", "...ff...........", "................",
+        ])]),
         "block/ember_scale": (base: "block/fang", palettes: {"fruit": "ember_glow"}),
         "block/quill": (base: "block/feather", palettes: {"fruit": "quill_ash", "wood": "quill_ash"}),
         "block/squirrel_tail": (base: "block/rabbit_foot", palettes: {"fruit": "squirrel_red", "wood": "fur_light"}),

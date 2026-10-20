@@ -9,6 +9,11 @@
 //! - `sounds`: one-shots, played at random at a rate per minute while their conditions
 //!   hold, at a block of a group (birds in actual trees), around the player, or at the
 //!   player.
+//! - `roofs`: what rain sounds like on the roof overhead. Each roof material (a building
+//!   material of `sounds.ron`, else the block's family sound) names a patter, or silence;
+//!   each patter is an axis of its own (the rain falling, while under a roof of it), which
+//!   beds play on. Under any roof the `sheltered` axis rises, by how well it shelters, for
+//!   the open rain to duck under.
 //!
 //! Conditions are soft ranges on environment axes (AmbientSounds' approach): a layer fades
 //! in over `fade` above `min` and out over `fade` above `max`, so nothing switches
@@ -87,10 +92,18 @@ pub enum Fixed {
     Shelter,
     /// A roof close overhead that the sky falls on, 0..1, walls or not: rain drums on it.
     Roof,
+    /// How far the middle of the nearest settlement (its square or green) is, across the
+    /// ground, in blocks; [`NO_SETTLEMENT`] with none near.
+    Settlement,
+    /// How much a roof overhead muffles the open rain, 0 (none overhead) to 1 (`roofs`).
+    Sheltered,
 }
 
+/// The `settlement` axis with no settlement near.
+pub const NO_SETTLEMENT: f32 = 10_000.0;
+
 impl Fixed {
-    pub const ALL: [Fixed; 29] = [
+    pub const ALL: [Fixed; 31] = [
         Fixed::Air,
         Fixed::Sky,
         Fixed::Canopy,
@@ -120,6 +133,8 @@ impl Fixed {
         Fixed::Underwater,
         Fixed::Shelter,
         Fixed::Roof,
+        Fixed::Settlement,
+        Fixed::Sheltered,
     ];
 
     fn name(self) -> &'static str {
@@ -153,12 +168,15 @@ impl Fixed {
             Fixed::Underwater => "underwater",
             Fixed::Shelter => "shelter",
             Fixed::Roof => "roof",
+            Fixed::Settlement => "settlement",
+            Fixed::Sheltered => "sheltered",
         }
     }
 }
 
 /// Where the player is, as numbers the layers' conditions test: the fixed axes, then one
-/// per block group (0..1, how present it is around the player), and the biome's tags.
+/// per block group (0..1, how present it is around the player), then one per roof patter
+/// (the rain falling on a roof of it overhead), and the biome's tags.
 #[derive(Clone, Debug, Default)]
 pub struct Environment {
     pub values: Vec<f32>,
@@ -170,8 +188,11 @@ pub struct Environment {
 }
 
 impl Environment {
-    pub fn new(groups: usize) -> Self {
-        Self { values: vec![0.0; Fixed::ALL.len() + groups], home: 1.0, ..Self::default() }
+    /// With `axes` axes after the fixed ones: the groups', then the roof patters'.
+    pub fn new(axes: usize) -> Self {
+        let mut values = vec![0.0; Fixed::ALL.len() + axes];
+        values[Fixed::Settlement as usize] = NO_SETTLEMENT;
+        Self { values, home: 1.0, ..Self::default() }
     }
 
     pub fn get(&self, axis: Fixed) -> f32 {
@@ -240,6 +261,16 @@ pub struct Conditions {
 }
 
 impl Conditions {
+    /// Whether they hold a range on `axis`.
+    pub fn uses(&self, axis: Fixed) -> bool {
+        self.uses_axis(axis as usize)
+    }
+
+    /// Whether they hold a range on the axis numbered `axis` (a group's or a patter's too).
+    pub fn uses_axis(&self, axis: usize) -> bool {
+        self.ranges.iter().any(|&(a, _)| a == axis)
+    }
+
     /// How fully the conditions hold, 0..1.
     pub fn weight(&self, env: &Environment) -> f32 {
         let mut weight = self.ranges.iter().map(|&(axis, range)| range.weight(env.values[axis])).product::<f32>();
@@ -259,6 +290,9 @@ pub struct Group {
     pub name: String,
     /// Weighted count where the group starts to be present, and where it is fully present.
     pub range: (f32, f32),
+    /// Whether a structure's core (a hearthstone, a crucible) counts only while its fire
+    /// burns (`ClientWorld::fires`); the group's other blocks always count.
+    pub lit: bool,
 }
 
 /// What a bed plays: a synthesized sound, or recorded segments shipped in its package.
@@ -342,6 +376,37 @@ impl Default for Shelter {
 /// A cutoff that leaves a sound as it is.
 pub const OPEN_AIR_HZ: f32 = 20_000.0;
 
+/// What rain sounds like on a roof (`roofs`).
+#[derive(Clone, Debug, Default)]
+pub struct Roofs {
+    /// Blocks above the player's head within which a roof is looked for.
+    pub height: i32,
+    /// How much any roof overhead muffles the open rain (the `sheltered` axis), 0..1.
+    pub muffle: f32,
+    /// How much more a roof block with each shelter tag muffles it, of what is left.
+    pub shelter: Vec<(String, f32)>,
+    /// How much more a roof of each patter muffles it, of what is left (by `patters`'
+    /// index): thatch hushes, stone and brick shut it out. None for a roof with one of the
+    /// `draughty` tags (a lean-to open at its sides).
+    pub patter_shelter: Vec<f32>,
+    pub draughty: Vec<String>,
+    /// Each roof material's patter (an index into `patters`), or silence.
+    pub patter: Vec<(String, Option<usize>)>,
+    /// The patters, each an axis.
+    pub patters: Vec<String>,
+}
+
+impl Roofs {
+    /// The `sheltered` axis under a roof block with `tags` that patters `patter`: the
+    /// muffle, more for its shelter tags, and more for what it is made of unless draughty.
+    pub fn sheltered(&self, has_tag: impl Fn(&str) -> bool, patter: Option<usize>) -> f32 {
+        let left = self.shelter.iter().filter(|(tag, _)| has_tag(tag)).fold(1.0 - self.muffle, |left, (_, more)| left * (1.0 - more));
+        let draughty = self.draughty.iter().any(|tag| has_tag(tag));
+        let made = patter.filter(|_| !draughty).and_then(|p| self.patter_shelter.get(p)).copied().unwrap_or(0.0);
+        (1.0 - left * (1.0 - made)).clamp(0.0, 1.0)
+    }
+}
+
 /// Every package's ambience.
 #[derive(Clone, Debug, Default)]
 pub struct Ambience {
@@ -352,6 +417,7 @@ pub struct Ambience {
     selectors: Vec<(Vec<String>, Vec<Material>, bool)>,
     pub beds: Vec<Bed>,
     pub sounds: Vec<OneShot>,
+    pub roofs: Roofs,
 }
 
 #[derive(Deserialize)]
@@ -365,6 +431,27 @@ struct FileDef {
     beds: Vec<BedDef>,
     #[serde(default)]
     sounds: Vec<SoundDef>,
+    #[serde(default)]
+    roofs: Option<RoofsDef>,
+}
+
+/// `roofs`: a later package's height and muffle replace an earlier one's; its shelter and
+/// patter entries replace those of the same name and add to the rest.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RoofsDef {
+    #[serde(default)]
+    height: Option<i32>,
+    #[serde(default)]
+    muffle: Option<f32>,
+    #[serde(default)]
+    shelter: BTreeMap<String, f32>,
+    #[serde(default)]
+    patter: BTreeMap<String, Option<String>>,
+    #[serde(default)]
+    patter_shelter: BTreeMap<String, f32>,
+    #[serde(default)]
+    draughty: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]
@@ -379,6 +466,9 @@ struct GroupDef {
     #[serde(default)]
     falling: bool,
     range: (f32, f32),
+    /// A structure's core counts only while lit.
+    #[serde(default)]
+    lit: bool,
 }
 
 #[derive(Deserialize)]
@@ -473,10 +563,45 @@ impl Ambience {
                 if ambience.groups.iter().any(|g| g.name == group.name) || Fixed::ALL.iter().any(|a| a.name() == group.name) {
                     return Err(format!("{package}/{FILE}: group {} is defined twice", group.name));
                 }
-                ambience.groups.push(Group { name: group.name, range: group.range });
+                ambience.groups.push(Group { name: group.name, range: group.range, lit: group.lit });
                 ambience.selectors.push((group.tags, group.materials, group.falling));
             }
         }
+        // Roofs next, as each patter is an axis.
+        let (mut shelter, mut patter, mut patter_shelter) = (BTreeMap::new(), BTreeMap::new(), BTreeMap::new());
+        for (package, def) in &mut parsed {
+            let Some(roofs) = def.roofs.take() else { continue };
+            if let Some(height) = roofs.height {
+                if !(1..=64).contains(&height) {
+                    return Err(format!("{package}/{FILE}: roofs: height {height} is not 1 to 64 blocks"));
+                }
+                ambience.roofs.height = height;
+            }
+            if let Some(muffle) = roofs.muffle {
+                ambience.roofs.muffle = muffle.clamp(0.0, 1.0);
+            }
+            shelter.extend(roofs.shelter.into_iter().map(|(tag, more)| (tag, more.clamp(0.0, 1.0))));
+            patter.extend(roofs.patter);
+            patter_shelter.extend(roofs.patter_shelter.into_iter().map(|(kind, more)| (kind, more.clamp(0.0, 1.0))));
+            if let Some(draughty) = roofs.draughty {
+                ambience.roofs.draughty = draughty;
+            }
+        }
+        let mut patters: Vec<String> = patter.values().flatten().cloned().collect();
+        patters.sort();
+        patters.dedup();
+        for name in &patters {
+            if ambience.axis(name).is_some() {
+                return Err(format!("{FILE}: roof patter {name} is already an axis"));
+            }
+        }
+        ambience.roofs.patter = patter.into_iter().map(|(material, kind)| (material, kind.map(|k| patters.iter().position(|p| *p == k).expect("listed")))).collect();
+        if let Some(kind) = patter_shelter.keys().find(|kind| !patters.contains(kind)) {
+            return Err(format!("{FILE}: roofs: patter_shelter names {kind}, which no roof material patters"));
+        }
+        ambience.roofs.patter_shelter = patters.iter().map(|p| patter_shelter.get(p).copied().unwrap_or(0.0)).collect();
+        ambience.roofs.patters = patters;
+        ambience.roofs.shelter = shelter.into_iter().collect();
         // Beds next, so sounds and beds can be ducked by any bed.
         let bed_names: Vec<String> =
             parsed.iter().flat_map(|(package, def)| def.beds.iter().map(move |b| format!("{package}:{}", b.name))).collect();
@@ -531,9 +656,54 @@ impl Ambience {
         Ok(ambience)
     }
 
-    /// The axis called `name`: a fixed one or a group.
+    /// The axis called `name`: a fixed one, a group or a roof patter.
     fn axis(&self, name: &str) -> Option<usize> {
-        Fixed::ALL.iter().position(|a| a.name() == name).or_else(|| self.groups.iter().position(|g| g.name == name).map(|g| Fixed::ALL.len() + g))
+        Fixed::ALL
+            .iter()
+            .position(|a| a.name() == name)
+            .or_else(|| self.groups.iter().position(|g| g.name == name).map(|g| Fixed::ALL.len() + g))
+            .or_else(|| self.roofs.patters.iter().position(|p| p == name).map(|p| self.patter_axis(p)))
+    }
+
+    /// The axes after the fixed ones: the groups' and the roof patters'.
+    pub fn axes(&self) -> usize {
+        self.groups.len() + self.roofs.patters.len()
+    }
+
+    /// The axis of roof patter `patter`.
+    pub fn patter_axis(&self, patter: usize) -> usize {
+        Fixed::ALL.len() + self.groups.len() + patter
+    }
+
+    /// Each block's roof patter, by block id: none for a block that is no roof (one sound
+    /// and rain pass through: air, plants, leaves) or whose material is silent. `material`
+    /// names a block's roof material: its building material, else its family sound
+    /// (`stone`). Fails, for the launch, on a roof whose material has no patter entry, an
+    /// entry naming no material there is, or a patter no bed plays on.
+    pub fn roof_patters(&self, registry: &BlockRegistry, materials: &[&str], material: impl Fn(voxmar_engine::block::BlockId) -> String) -> Result<Vec<Option<u8>>, String> {
+        let known = |name: &str| materials.contains(&name) || Material::ALL.iter().any(|m| family(*m) == name);
+        if let Some((name, _)) = self.roofs.patter.iter().find(|(name, _)| !known(name)) {
+            return Err(format!("{FILE}: roofs: patter for {name}, which is no material"));
+        }
+        for (p, name) in self.roofs.patters.iter().enumerate() {
+            let axis = self.patter_axis(p);
+            if !self.beds.iter().any(|bed| bed.when.ranges.iter().any(|&(a, _)| a == axis)) {
+                return Err(format!("{FILE}: roofs: no bed plays on the {name} patter"));
+            }
+        }
+        (0..registry.len())
+            .map(|id| {
+                let id = voxmar_engine::block::BlockId(id as u16);
+                if !is_roof(registry, id) {
+                    return Ok(None);
+                }
+                let name = material(id);
+                match self.roofs.patter.iter().find(|(m, _)| *m == name) {
+                    Some((_, patter)) => Ok(patter.map(|p| p as u8)),
+                    None => Err(format!("{FILE}: roofs: no patter (or None, for silence) for {name}, the material of {}", registry.def(id).name)),
+                }
+            })
+            .collect()
     }
 
     fn conditions(&self, when: BTreeMap<String, Range>, biome: Vec<String>, not_biome: Vec<String>) -> Result<Conditions, String> {
@@ -582,6 +752,18 @@ impl Ambience {
         let (low, high) = self.groups[group].range;
         ((count - low) / (high - low).max(1e-3)).clamp(0.0, 1.0)
     }
+}
+
+/// A family sound's name as roofs name it: `stone`, `wood`.
+pub fn family(sound: Material) -> String {
+    format!("{sound:?}").to_lowercase()
+}
+
+/// Whether rain on `id` overhead is rain on a roof: it is solid and not leaves (rain falls
+/// through leaves, and the canopy has its own sound).
+pub fn is_roof(registry: &BlockRegistry, id: voxmar_engine::block::BlockId) -> bool {
+    let info = registry.info(id);
+    info.solid && info.render != voxmar_engine::block::RenderKind::Leaves
 }
 
 #[cfg(test)]
@@ -643,5 +825,46 @@ mod tests {
         assert!(error(r#"(shelter: (muffle: 5))"#).contains("shelter"));
         assert!(error(r#"(shelter: (walls: 0))"#).contains("shelter"));
         assert!(error(r#"(shelter: (thunder: 1.5))"#).contains("shelter"));
+    }
+
+    /// Roof patters are axes beds play on; a later package's entries replace an earlier
+    /// one's; a roof material with no entry, an entry naming no material, or a patter no
+    /// bed plays on fails the launch check.
+    #[test]
+    fn roof_patters_resolve_and_are_checked() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let blocks = &content.blocks;
+        let files = |extra: &str| {
+            let mut all = file(
+                r#"(
+                    roofs: (height: 10, muffle: 0.4, shelter: {"shelter:fine": 0.5}, patter: {"stone": "dull", "wood": "tap", "glass": "tap"}, patter_shelter: {"dull": 0.5}, draughty: ["open"]),
+                    beds: [(name: "drum", sound: Hail, volume: 0.3, when: {"dull": (min: 0.3)}), (name: "tick", sound: Sleet, volume: 0.3, when: {"tap": (min: 0.3)})],
+                )"#,
+            );
+            all.push(ContentFile { package: "mod".into(), name: FILE.into(), source: extra.into() });
+            all
+        };
+        let ambience = Ambience::load(&files(r#"(roofs: (patter: {"wood": "dull"}))"#)).unwrap();
+        assert_eq!(ambience.roofs.patters, ["dull", "tap"]);
+        assert_eq!((ambience.roofs.height, ambience.roofs.muffle), (10, 0.4));
+        assert!(ambience.beds[0].when.uses_axis(ambience.patter_axis(0)));
+        assert!((ambience.roofs.sheltered(|t| t == "shelter:fine", None) - 0.7).abs() < 1e-6 && (ambience.roofs.sheltered(|_| false, None) - 0.4).abs() < 1e-6);
+        // What the roof is made of muffles too: a dull (stone) roof more, unless draughty.
+        assert!((ambience.roofs.sheltered(|_| false, Some(0)) - 0.7).abs() < 1e-6, "{}", ambience.roofs.sheltered(|_| false, Some(0)));
+        assert!((ambience.roofs.sheltered(|t| t == "open", Some(0)) - 0.4).abs() < 1e-6 && (ambience.roofs.sheltered(|_| false, Some(1)) - 0.4).abs() < 1e-6);
+        assert!(Ambience::load(&files(r#"(roofs: (patter_shelter: {"thud": 0.2}))"#)).unwrap_err().contains("thud"));
+        let family = |id| family(blocks.info(id).sound);
+        let listed: Vec<String> = ambience.roofs.patter.iter().map(|(m, _)| m.clone()).collect();
+        // Every other family a roof can be made of silent, for this test.
+        let quiet: String = Material::ALL.iter().map(|m| super::family(*m)).filter(|m| !listed.contains(m)).map(|m| format!("\"{m}\": None, ")).collect();
+        let ambience = Ambience::load(&files(&format!(r#"(roofs: (patter: {{"wood": "dull", {quiet}}}))"#))).unwrap();
+        let patters = ambience.roof_patters(blocks, &[], family).unwrap();
+        let of = |name: &str| patters[blocks.id(name).unwrap().0 as usize];
+        assert_eq!((of("base:stone"), of("base:oak_planks"), of("base:glass"), of("core:air")), (Some(0), Some(0), Some(1), None));
+        let error = |extra: &str| Ambience::load(&files(extra)).unwrap().roof_patters(blocks, &[], family).unwrap_err();
+        assert!(error("()").contains("no patter"), "a roof material with no entry");
+        assert!(error(&format!(r#"(roofs: (patter: {{"stoen": "dull", {quiet}}}))"#)).contains("stoen"));
+        assert!(error(&format!(r#"(roofs: (patter: {{{quiet}"sand": "hiss"}}))"#)).contains("hiss"), "a patter no bed plays on");
+        assert!(Ambience::load(&files(r#"(roofs: (patter: {"sand": "rain"}))"#)).unwrap_err().contains("already an axis"));
     }
 }

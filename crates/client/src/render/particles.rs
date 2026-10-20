@@ -279,6 +279,9 @@ pub struct Particles {
     /// How many particles effects should spawn, as a share of their full amount: the
     /// player's particle setting times the shader pack's.
     pub amount: f32,
+    /// Particles go on being spawned and living but are not drawn: the gate's shots of
+    /// a light's ground, which judge the light, not the random flames over it.
+    pub hidden: bool,
 }
 
 impl Particles {
@@ -366,7 +369,7 @@ struct ParticleInbox {
 
 fn extract(mut main: ResMut<MainWorld>, mut inbox: ResMut<ParticleInbox>) {
     let Some(mut particles) = main.get_resource_mut::<Particles>() else { return };
-    inbox.alive = particles.elapsed < particles.alive_until;
+    inbox.alive = !particles.hidden && particles.elapsed < particles.alive_until;
     // Moved across, so both lists keep what they have grown to.
     inbox.spawned.append(&mut particles.spawned);
 }

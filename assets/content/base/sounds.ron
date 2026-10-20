@@ -15,11 +15,11 @@
     splash: ["sounds/splash_1.mp3", "sounds/splash_2.mp3", "sounds/splash_3.mp3"],
     // Jingles for events, our own (tools/generate_jingles.py). A package that lists any for
     // an event replaces these; several listed take turns.
-    // A quest finished: a plucked "amen" close, settling home under bells.
+    // A quest finished: a short brass call landing home (IV - V - I), held under a harp.
     quest_done: ["sounds/quest_done_1.ogg"],
     // A finished quest's rewards claimed: coins into the purse and a glint.
     quest_claim: ["sounds/quest_claim_1.ogg", "sounds/quest_claim_2.ogg", "sounds/quest_claim_3.ogg"],
-    // A skill's level reached: a harp run up onto a bright chord.
+    // A skill's level reached: a quick trumpet run up to a bright held chord.
     level_up: ["sounds/level_up_1.ogg"],
     // A milestone level (every tenth, as celebrations.ron says): the grander one, instead.
     level_milestone: ["sounds/level_milestone_1.ogg"],
@@ -27,6 +27,78 @@
     // An item picked up off the ground: a soft pop, when the player's Minecraft sounds are
     // off.
     pickup: ["sounds/pickup_1.ogg", "sounds/pickup_2.ogg", "sounds/pickup_3.ogg", "sounds/pickup_4.ogg"],
+    // What building materials sound like: a step on one, a piece set down, a piece broken.
+    // Every block carrying all of a material's tags sounds as it (of several, the one with
+    // the most tags); mining taps and landings use the steps. A cue a material lists nothing
+    // for is the block's family's (its `sound`). A block whose def names a `material`
+    // sounds as that one whatever its tags (cut cobblestone keeps the rough stone's sound),
+    // and the name must be one listed here. A package that names a material replaces it;
+    // each must be some block's, or the game does not start.
+    materials: [
+        // Rough stone on stone: gritty taps, a heavy knock set down, stones tumbling loose.
+        (
+            name: "cobblestone", tags: ["stone", "cobbled"],
+            step: ["sounds/materials/cobble_step_1.ogg", "sounds/materials/cobble_step_2.ogg", "sounds/materials/cobble_step_3.ogg", "sounds/materials/cobble_step_4.ogg"],
+            place: ["sounds/materials/cobble_place_1.ogg", "sounds/materials/cobble_place_2.ogg", "sounds/materials/cobble_place_3.ogg"],
+            break: ["sounds/materials/cobble_break_1.ogg", "sounds/materials/cobble_break_2.ogg", "sounds/materials/cobble_break_3.ogg"],
+        ),
+        // Dressed stone: a cleaner tap, a brick set with a scrape of mortar, a sharp split.
+        (
+            name: "stone_brick", tags: ["stone", "bricks"],
+            step: ["sounds/materials/brick_step_1.ogg", "sounds/materials/brick_step_2.ogg", "sounds/materials/brick_step_3.ogg", "sounds/materials/brick_step_4.ogg"],
+            place: ["sounds/materials/brick_place_1.ogg", "sounds/materials/brick_place_2.ogg", "sounds/materials/brick_place_3.ogg"],
+            break: ["sounds/materials/brick_break_1.ogg", "sounds/materials/brick_break_2.ogg", "sounds/materials/brick_break_3.ogg"],
+        ),
+        // Posts, beams and lattice: a hollow knock underfoot, a firm knock set in place, splintering.
+        (
+            name: "timber", tags: ["timber"],
+            step: ["sounds/materials/timber_step_1.ogg", "sounds/materials/timber_step_2.ogg", "sounds/materials/timber_step_3.ogg", "sounds/materials/timber_step_4.ogg"],
+            place: ["sounds/materials/timber_place_1.ogg", "sounds/materials/timber_place_2.ogg", "sounds/materials/timber_place_3.ogg"],
+            break: ["sounds/materials/timber_break_1.ogg", "sounds/materials/timber_break_2.ogg", "sounds/materials/timber_break_3.ogg"],
+        ),
+        // Thatch: a dry crush of straw, a soft rustle laid down, stalks pattering as it comes apart.
+        (
+            name: "thatch", tags: ["thatch"],
+            step: ["sounds/materials/thatch_step_1.ogg", "sounds/materials/thatch_step_2.ogg", "sounds/materials/thatch_step_3.ogg", "sounds/materials/thatch_step_4.ogg"],
+            place: ["sounds/materials/thatch_place_1.ogg", "sounds/materials/thatch_place_2.ogg", "sounds/materials/thatch_place_3.ogg"],
+            break: ["sounds/materials/thatch_break_1.ogg", "sounds/materials/thatch_break_2.ogg", "sounds/materials/thatch_break_3.ogg"],
+        ),
+        // Shingles: tiles knocking underfoot, a slide and a clack laid, a clatter prised off.
+        (
+            name: "shingle", tags: ["shingle"],
+            step: ["sounds/materials/shingle_step_1.ogg", "sounds/materials/shingle_step_2.ogg", "sounds/materials/shingle_step_3.ogg", "sounds/materials/shingle_step_4.ogg"],
+            place: ["sounds/materials/shingle_place_1.ogg", "sounds/materials/shingle_place_2.ogg", "sounds/materials/shingle_place_3.ogg"],
+            break: ["sounds/materials/shingle_break_1.ogg", "sounds/materials/shingle_break_2.ogg", "sounds/materials/shingle_break_3.ogg"],
+        ),
+        // Wattle: woven withies creaking underfoot, a springy rattle set in, twigs snapping.
+        (
+            name: "wattle", tags: ["wattle"],
+            step: ["sounds/materials/wattle_step_1.ogg", "sounds/materials/wattle_step_2.ogg", "sounds/materials/wattle_step_3.ogg", "sounds/materials/wattle_step_4.ogg"],
+            place: ["sounds/materials/wattle_place_1.ogg", "sounds/materials/wattle_place_2.ogg", "sounds/materials/wattle_place_3.ogg"],
+            break: ["sounds/materials/wattle_break_1.ogg", "sounds/materials/wattle_break_2.ogg", "sounds/materials/wattle_break_3.ogg"],
+        ),
+        // Daub: a dull pat of dried mud, a wet slap set on, crumbling clods.
+        (
+            name: "daub", tags: ["daub"],
+            step: ["sounds/materials/daub_step_1.ogg", "sounds/materials/daub_step_2.ogg", "sounds/materials/daub_step_3.ogg", "sounds/materials/daub_step_4.ogg"],
+            place: ["sounds/materials/daub_place_1.ogg", "sounds/materials/daub_place_2.ogg", "sounds/materials/daub_place_3.ogg"],
+            break: ["sounds/materials/daub_break_1.ogg", "sounds/materials/daub_break_2.ogg", "sounds/materials/daub_break_3.ogg"],
+        ),
+        // Hide: a taut, drum-like give, a flap laid over poles, leather tearing loose.
+        (
+            name: "hide", tags: ["hide"],
+            step: ["sounds/materials/hide_step_1.ogg", "sounds/materials/hide_step_2.ogg", "sounds/materials/hide_step_3.ogg", "sounds/materials/hide_step_4.ogg"],
+            place: ["sounds/materials/hide_place_1.ogg", "sounds/materials/hide_place_2.ogg", "sounds/materials/hide_place_3.ogg"],
+            break: ["sounds/materials/hide_break_1.ogg", "sounds/materials/hide_break_2.ogg", "sounds/materials/hide_break_3.ogg"],
+        ),
+        // Fired clay: a ringing clink, a pot set down with a knock, shards shattering.
+        (
+            name: "terracotta", tags: ["terracotta"],
+            step: ["sounds/materials/terracotta_step_1.ogg", "sounds/materials/terracotta_step_2.ogg", "sounds/materials/terracotta_step_3.ogg", "sounds/materials/terracotta_step_4.ogg"],
+            place: ["sounds/materials/terracotta_place_1.ogg", "sounds/materials/terracotta_place_2.ogg", "sounds/materials/terracotta_place_3.ogg"],
+            break: ["sounds/materials/terracotta_break_1.ogg", "sounds/materials/terracotta_break_2.ogg", "sounds/materials/terracotta_break_3.ogg"],
+        ),
+    ],
     // What the player does, heard as they do it, by action: about as loud as placing a
     // block, times `volume`. A package that names an action replaces its sound. Every
     // action says how it sounds, or the game does not start: its `sounds`, `silent: true`,
@@ -40,6 +112,8 @@
         "core:craft": (sounds: ["sounds/craft_1.ogg", "sounds/craft_2.ogg", "sounds/craft_3.ogg"], volume: 0.8),
         // Loading or emptying a home station (a drying rack, a compost bin) sounds the same.
         "base:use_station": (sounds: ["sounds/craft_1.ogg", "sounds/craft_2.ogg", "sounds/craft_3.ogg"], volume: 0.6),
+        // Taking a catch from a sprung trap (traps.ron): a pouch drawn open and shut.
+        "base:take_from_trap": (sounds: ["sounds/pouch_1.ogg", "sounds/pouch_2.ogg"], volume: 0.6),
         // Flint struck, sparks, and the tinder catching: a fire or a kiln lit.
         "base:light": (sounds: ["sounds/light_1.ogg", "sounds/light_2.ogg"]),
         // A lid lifted: a short creak and the lid knocking back.
@@ -59,6 +133,8 @@
         ),
         // Lying down: rustles of cloth and straw.
         "base:sleep": (sounds: ["sounds/sleep_1.ogg"], volume: 0.7),
+        // Settling onto a seat: the same rustle, softer.
+        "base:sit": (sounds: ["sounds/sleep_1.ogg"], volume: 0.6),
         // A line whipped out over the water (the plop is the water's own).
         // A line cast, and what it lands: a fish breaking the water and flapping on the bank.
         "base:fish": (

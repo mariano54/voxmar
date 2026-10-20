@@ -30,7 +30,7 @@ use voxmar_protocol::{PlayerId, ServerMessage, TICKS_PER_SECOND};
 use crate::Server;
 use crate::items::random3;
 use crate::process::Process;
-use crate::save::SavedCrop;
+use crate::save::{Draw, SavedCrop};
 
 /// Ticks a crop that cannot grow waits before looking again.
 const RETRY: u64 = 60 * TICKS_PER_SECOND as u64;
@@ -161,6 +161,24 @@ impl Server {
     /// (`pollination`).
     fn crop_rate(&self, crop: CropId, pos: IVec3) -> f32 {
         crop::rate(&self.content.crops.get(crop).def, self.crop_conditions(pos)) * self.pollination(pos)
+    }
+
+    /// A block that waters crops (`waters`: a well) set down by `agent` from `item` where it
+    /// keeps some tilled ground moist counts for the quests that ask a field watered
+    /// (`Watering`), by the item: a well set facing east is still a well.
+    pub(crate) fn placed_by_field(&mut self, agent: PlayerId, item: BlockId, cell: IVec3) {
+        let blocks = &self.content.blocks;
+        if !self.block(cell).is_some_and(|b| blocks.def(b).has_tag("waters")) {
+            return;
+        }
+        // The ground a crop is sown on, a level below to a level above it (crop_conditions).
+        let tilled = (-1..=1).any(|dy| {
+            (-WATER_REACH..=WATER_REACH).any(|dz| (-WATER_REACH..=WATER_REACH).any(|dx| self.block(cell + IVec3::new(dx, dy, dz)).is_some_and(|b| blocks.def(b).has_tag("tilled"))))
+        });
+        if tilled {
+            let name = blocks.def(item).name.clone();
+            self.tally(agent, "watering", &name, 1);
+        }
     }
 
     /// The climate, light, ground and water a crop at `pos` grows in.
@@ -310,7 +328,7 @@ impl Server {
     }
 
     /// What a ripe crop at `pos` yields for `agent`, popped out into the world, and the
-    /// experience it earns. `salt` tells apart several harvests in one tick.
+    /// experience it earns. `salt` is mixed into where its drops pop.
     /// `sown` adds the sowing's experience (a crop broken at harvest, not one picked to
     /// fruit again).
     pub(crate) fn harvest(&mut self, agent: PlayerId, id: CropId, pos: IVec3, salt: u32, sown: bool) {
@@ -339,10 +357,15 @@ impl Server {
         let crop = self.content.crops.get(id);
         let level = self.players.get(&agent).map_or(1, |p| self.content.skills.level(p.skills.xp(crop.skill)));
         let bonus = crop::level_bonus(level, crop.def.level, self.content.skills.max_level());
-        let mut draws = (0u32..).map(|i| random3(self.tick, pos, salt.wrapping_mul(97).wrapping_add(i))[0]);
-        let found = crop::roll(loot, bonus, || draws.next().expect("endless"));
+        // Each draw numbered by the player's count of harvest draws, and where a drop pops
+        // by the world's count of drops, never by the tick it is taken on.
+        let (players, meta) = (&mut self.players, &mut self.meta);
+        let found = crop::roll(loot, bonus, || match players.get_mut(&agent) {
+            Some(player) => player.draw(Draw::Harvest)[0],
+            None => meta.next_roll(Draw::Harvest.salt())[0],
+        });
         for (i, (item, count)) in found.into_iter().enumerate() {
-            let body = dropped::popped(pos, random3(self.tick, pos, salt.wrapping_mul(131).wrapping_add(i as u32 + 1000)));
+            let body = dropped::popped(pos, self.meta.next_pop(pos, salt.wrapping_mul(131).wrapping_add(i as u32 + 1000)));
             self.items.spawn(ItemStack { item, count }, body, dropped::PICKUP_DELAY);
         }
     }
@@ -430,6 +453,42 @@ mod tests {
         }
     }
 
+    /// Set down by tilled ground, a well counts for the quests that ask a field watered;
+    /// set down where it keeps nothing moist, it does not.
+    #[test]
+    fn a_well_set_by_tilled_ground_counts_as_watering_it() {
+        let mut server = crate::test_server();
+        server.world = Default::default();
+        const FLOOR: i32 = 199;
+        let (stone, farmland, well) = (server.content.blocks.expect("base:stone"), server.content.blocks.expect("base:farmland"), server.content.blocks.expect("base:well"));
+        let mut column = voxmar_engine::world::Column::default();
+        for x in 0..32 {
+            for z in 0..32 {
+                column.set_block(IVec3::new(x, FLOOR, z), stone);
+            }
+        }
+        server.world.insert(ColumnPos::new(0, 0), std::sync::Arc::new(column));
+        let (client, connection) = voxmar_protocol::local_pair();
+        std::mem::forget(client);
+        let at = voxmar_engine::glam::Vec3::new(8.5, (FLOOR + 1) as f32, 8.5);
+        let mut player = crate::player::Player::new(1, connection, at, 2, server.tick, server.survival.max_health, &server.config.limits);
+        player.joined = true;
+        player.inventory.slots[0] = Some(ItemStack { item: well, count: 2 });
+        player.selected = 0;
+        server.players.insert(1, player);
+        let place = server.content.actions.expect("core:place");
+        let watering = |server: &Server| server.players[&1].tallies.get("watering:base:well").copied().unwrap_or(0);
+        let waters = |server: &Server, at: IVec3| server.block(at).map(|b| server.content.blocks.def(b).name.clone());
+        server.propose(1, place, voxmar_engine::action::ActionTarget::Block { block: IVec3::new(10, FLOOR, 8), face: Face::PosY }, std::time::Instant::now());
+        assert_eq!(waters(&server, IVec3::new(10, FLOOR + 1, 8)).as_deref(), Some("base:well_west"), "set facing the player");
+        assert_eq!(watering(&server), 0, "no tilled ground near");
+        // Farmland four blocks off, level with the floor the next well stands on.
+        server.set_block(IVec3::new(10, FLOOR, 14), farmland);
+        server.propose(1, place, voxmar_engine::action::ActionTarget::Block { block: IVec3::new(10, FLOOR, 10), face: Face::PosY }, std::time::Instant::now());
+        assert!(server.block(IVec3::new(10, FLOOR + 1, 10)).is_some_and(|b| server.content.blocks.def(b).has_tag("waters")));
+        assert_eq!(watering(&server), 1, "a well by the field, whichever way it faces");
+    }
+
     #[test]
     fn saved_crops_round_trip_by_name_and_show_when_their_column_loads() {
         let mut farm = Farm::default();
@@ -447,5 +506,36 @@ mod tests {
         assert_eq!(back.unseen.values().map(Vec::len).sum::<usize>(), 2);
         // Crops that no longer exist are left out.
         assert!(Farm::restore(farm.saved(|_| "gone".into()), |_| None).planted.is_empty());
+    }
+
+    /// A harvest is rolled by the player's count of harvest draws, and pops by the world's
+    /// count of drops, not the tick it is taken on, and each counts on.
+    #[test]
+    fn a_harvest_rolls_by_the_players_count_not_the_tick() {
+        let harvested = |tick: u64| {
+            let mut server = crate::test_server();
+            server.meta.draw_key = 0x0d1a;
+            let (client, connection) = voxmar_protocol::local_pair();
+            std::mem::forget(client);
+            let mut player = crate::player::Player::new(1, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
+            (player.joined, player.draw_key) = (true, crate::player::player_draw_key(0x0d1a, "ada"));
+            server.players.insert(1, player);
+            let (wheat, crop) = server.content.crops.iter().find(|(_, c)| c.def.name == "base:wheat").unwrap();
+            let loot = crop.harvest.clone();
+            let pos = server.spawn.floor().as_ivec3();
+            server.tick = tick;
+            let mut found = Vec::new();
+            for salt in 0..12 {
+                server.yield_loot(1, wheat, &loot, pos, salt);
+                let mut lying: Vec<_> = server.items.take_all().map(|d| (d.stack.item, d.stack.count, d.body.position.to_array(), d.body.velocity.to_array())).collect();
+                lying.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                found.push(lying);
+            }
+            (found, server.players[&1].draws.harvests, server.meta.drops)
+        };
+        let first = harvested(1_000);
+        assert!(first.1 > 0 && first.0.iter().all(|f| !f.is_empty()), "twelve harvests drew {} times for {:?}", first.1, first.0);
+        assert!(first.0.windows(2).any(|w| w[0].iter().map(|f| f.1).ne(w[1].iter().map(|f| f.1))), "twelve harvests all gave alike: {:?}", first.0);
+        assert_eq!(harvested(1_377), first, "the same harvests later gave otherwise");
     }
 }

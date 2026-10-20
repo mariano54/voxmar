@@ -32,6 +32,18 @@ use super::{Creature, Temperament, mix, unit_from};
 const HUNGER_RATE: f32 = 1.0 / 240.0;
 /// Fear and anger fade per second.
 const FEAR_FADE: f32 = 0.12;
+/// How long a creature that gave up a chase leaves players be (`Mind::give_up`).
+pub const GAVE_UP: f32 = 45.0;
+/// How long a creature that found no way to its attacker runs from their blows rather
+/// than fight back (`Memory::NoWay`).
+pub const NO_WAY: f32 = 30.0;
+/// How long a blow counts as just landed (`Memory::Struck`): a hunter past its leash
+/// struck within it fights back rather than go home.
+pub const STRUCK_LATELY: f32 = 3.0;
+/// How long a creature that gave up a chase makes for home (`Memory::Homeward`).
+pub const HOMEWARD: f32 = 20.0;
+/// Seconds a creature remembers the player who hurt it (`Memory::HurtBy`).
+pub const HURT_REMEMBERED: f32 = 45.0;
 const ANGER_FADE: f32 = 1.0 / 45.0;
 /// Within a band, modules within this share of the best score are all in the draw, and
 /// the running one keeps going while it is.
@@ -211,6 +223,16 @@ pub enum Memory {
     FedBy(u32),
     /// Kin nearby raised the alarm.
     Alarm,
+    /// It gave up a chase it could not win (out past its leash, or no way to its target):
+    /// it neither hunts nor fights back for a while, unless struck again.
+    GaveUp,
+    /// Having given up a chase, it makes for home.
+    Homeward,
+    /// It gave up a chase for want of any way to its target (a player behind a fence or
+    /// up a ledge): struck again while it remembers, it runs rather than fight back.
+    NoWay,
+    /// A player's blow (not a bleed) landed on it within `STRUCK_LATELY` seconds.
+    Struck,
 }
 
 /// A creature's state of mind, kept between decisions.
@@ -287,15 +309,38 @@ impl Mind {
     /// lasts longer, and bravery decides fight or flight).
     pub fn hurt(&mut self, creature: &Creature, by: Option<u32>, health: f32) {
         // A boss never runs: it fights to the end.
-        let fights = creature.fights() && (creature.def.boss || health > 0.5 - 0.35 * self.personality.bravery);
+        // Nor does one that has just found no way to its attacker: it takes itself off.
+        let fights = creature.fights() && (creature.def.boss || (!self.recalls(Memory::NoWay) && health > 0.5 - 0.35 * self.personality.bravery));
         if fights {
             self.anger = 1.0;
         } else {
             self.fear = 1.0;
         }
         if let Some(id) = by {
-            self.remember(Memory::HurtBy(id), 45.0);
+            self.remember(Memory::HurtBy(id), HURT_REMEMBERED);
         }
+        // Struck again, it takes up the fight it gave up: unless it gave up for want of any
+        // way to them, when it runs and, its fright gone, still leaves them be.
+        if creature.def.boss || !self.recalls(Memory::NoWay) {
+            self.memories.retain(|(m, _)| !matches!(m, Memory::GaveUp | Memory::Homeward));
+        }
+    }
+
+    /// Gives up the chase: its anger and grudges go, for `GAVE_UP` seconds it hunts no one
+    /// (`Memory::GaveUp`), and it goes home (`Memory::Homeward`) rather than hang at a
+    /// fence or follow a player across the land.
+    pub fn give_up(&mut self) {
+        self.anger = 0.0;
+        self.memories.retain(|(m, _)| !matches!(m, Memory::HurtBy(_)));
+        self.remember(Memory::GaveUp, GAVE_UP);
+        self.remember(Memory::Homeward, HOMEWARD);
+    }
+
+    /// Gives up a chase it found no way to win (`give_up`), and remembers it for `NO_WAY`
+    /// seconds (`Memory::NoWay`).
+    pub fn find_no_way(&mut self) {
+        self.give_up();
+        self.remember(Memory::NoWay, NO_WAY);
     }
 
     /// Lets go of every grudge and fright: it was hurt by no one.
@@ -556,6 +601,30 @@ pub(super) mod tests {
             let _ = think(&boss, &mut mind, &situation(&[seen]));
             assert_eq!(doing(&boss, &mind), "hunt");
         }
+    }
+
+    /// A hunter that gave up for want of any way to a player, struck again, runs and then
+    /// leaves them be. Before: the blow dropped its giving up, so once its fright faded it
+    /// hunted them again, back to the wall it found no way through.
+    #[test]
+    fn a_hunter_with_no_way_struck_again_does_not_hunt_again() {
+        let wolf = species(&format!(
+            "(creatures: [(name: \"wolf\", health: 10, level: 5, {BODY}, attack: (damage: (1, 3)), temperament: (aggression: 0.9), behaviours: [(do: Hunt(radius: 16.0))])])"
+        ));
+        let near = [player(Vec3::new(1.0, 0.0, 0.0))];
+        let mut mind = Mind::new(&wolf.def.temperament, 2);
+        mind.find_no_way();
+        mind.hurt(&wolf, Some(1), 1.0);
+        assert_eq!((mind.fear, mind.anger), (1.0, 0.0), "struck with no way, it fought back rather than ran");
+        mind.fear = 0.0;
+        let _ = think(&wolf, &mut mind, &situation(&near));
+        assert_ne!(doing(&wolf, &mind), "hunt");
+        // Given up past its leash instead, struck again it takes the fight up.
+        let mut mind = Mind::new(&wolf.def.temperament, 2);
+        mind.give_up();
+        mind.hurt(&wolf, Some(1), 1.0);
+        let _ = think(&wolf, &mut mind, &situation(&near));
+        assert_eq!(doing(&wolf, &mind), "hunt");
     }
 
     #[test]

@@ -25,12 +25,47 @@ pub struct Vitals {
     /// player has one: what the interface points the way back to.
     #[serde(default)]
     pub home: Option<glam::IVec3>,
+    /// The seat the player sits on, if they sit: the eye is lower (`eye`).
+    #[serde(default)]
+    pub seated: Option<glam::IVec3>,
+    /// What the stores in the player's home hold, by item, while they stand in it (empty
+    /// elsewhere): what they can make there counts it, as laying a recipe takes from it.
+    #[serde(default)]
+    pub home_stores: Vec<(BlockId, u32)>,
 }
 
 impl Default for Vitals {
     fn default() -> Self {
-        Self { felt: 15.0, effects: Vec::new(), home: None }
+        Self { felt: 15.0, effects: Vec::new(), home: None, seated: None, home_stores: Vec::new() }
     }
+}
+
+/// How high a seated player's eye is over their feet: a stool's top and a body sat on it,
+/// a third of a block under a standing eye.
+pub const SEATED_EYE: f32 = 1.3;
+/// How far across from their seat's middle a player may be and still sit on it.
+pub const SEATED_WITHIN: f32 = 0.45;
+
+/// Where a player sitting on the seat at `seat` stands: in one that is not solid (base's
+/// stools, chairs, benches and cushions), on top of a solid one (a mod's), in its middle.
+pub fn seated_feet(seat: glam::IVec3, solid: bool) -> glam::Vec3 {
+    seat.as_vec3() + glam::Vec3::new(0.5, if solid { 1.0 } else { 0.0 }, 0.5)
+}
+
+/// Where the eye is of a player whose feet are at `feet`, standing at `standing` above
+/// them: lower while they sit on `seated` and are still on it.
+pub fn eye(feet: glam::Vec3, standing: f32, seated: Option<glam::IVec3>) -> glam::Vec3 {
+    match seated.filter(|&seat| still_seated(feet, seat)) {
+        Some(_) => feet + glam::Vec3::Y * SEATED_EYE,
+        None => feet + glam::Vec3::Y * standing,
+    }
+}
+
+/// Whether a player whose feet are at `feet` is still on the seat at `seat`: over its
+/// middle and on it, not stepped off.
+pub fn still_seated(feet: glam::Vec3, seat: glam::IVec3) -> bool {
+    let middle = seat.as_vec3() + glam::Vec3::splat(0.5);
+    (feet.x - middle.x).abs() <= SEATED_WITHIN && (feet.z - middle.z).abs() <= SEATED_WITHIN && (seat.y as f32 - 0.1..=seat.y as f32 + 1.2).contains(&feet.y)
 }
 
 /// Felt temperature (°C) below which a fire nearby counts as warming you.
@@ -48,10 +83,13 @@ pub struct Rates {
 /// Seconds between healing a point by itself: slow, as RuneScape's, so food matters.
 const HEAL_EVERY: f32 = 10.0;
 
-/// How fast things happen under some effects' combined modifiers.
-pub fn rates(modifiers: &Modifiers) -> Rates {
-    let heal = (modifiers.heal > 0.0).then(|| HEAL_EVERY / modifiers.heal);
-    Rates { heal_every: heal, hurt_every: modifiers.hurt_every }
+/// How fast things happen under some effects' combined modifiers, and `boost` on healing
+/// besides (a prayer's): healing by itself comes no faster than `heal_most` points a second
+/// (`survival.ron`), however many buffs stack, as `skill::MAX_XP_BOOST` caps experience.
+pub fn rates(modifiers: &Modifiers, boost: f32, heal_most: f32) -> Rates {
+    let heal = modifiers.heal * boost;
+    let heal_every = (heal > 0.0).then(|| (HEAL_EVERY / heal).max(1.0 / heal_most));
+    Rates { heal_every, hurt_every: modifiers.hurt_every }
 }
 
 /// How much eating an item heals, from its tags: `heal:N` says it outright (cooked food,
@@ -125,12 +163,18 @@ mod tests {
 
     #[test]
     fn rates_follow_modifiers() {
-        let calm = rates(&Modifiers::default());
+        let calm = rates(&Modifiers::default(), 1.0, 1.0);
         assert_eq!((calm.heal_every, calm.hurt_every), (Some(HEAL_EVERY), None));
-        let soothed = rates(&Modifiers { heal: 2.0, ..Default::default() });
+        let soothed = rates(&Modifiers { heal: 2.0, ..Default::default() }, 1.0, 1.0);
         assert_eq!(soothed.heal_every, Some(HEAL_EVERY / 2.0));
-        let worst = rates(&Modifiers { heal: 0.0, hurt_every: Some(8.0), ..Default::default() });
+        let prayed = rates(&Modifiers { heal: 2.0, ..Default::default() }, 2.0, 1.0);
+        assert_eq!(prayed.heal_every, Some(HEAL_EVERY / 4.0));
+        let worst = rates(&Modifiers { heal: 0.0, hurt_every: Some(8.0), ..Default::default() }, 2.0, 1.0);
         assert_eq!((worst.heal_every, worst.hurt_every), (None, Some(8.0)));
+        // However much stacks, no faster than `heal_most` a second.
+        let stacked = rates(&Modifiers { heal: 40.0, ..Default::default() }, 2.0, 1.0);
+        assert_eq!(stacked.heal_every, Some(1.0));
+        assert_eq!(rates(&Modifiers { heal: 40.0, ..Default::default() }, 1.0, 0.5).heal_every, Some(2.0));
     }
 
     #[test]

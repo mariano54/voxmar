@@ -35,7 +35,7 @@ struct Scene {
 }
 
 fn scene(ambience: &Ambience, name: &'static str, tags: &[&str], set: &[(&str, f32)]) -> Scene {
-    let mut env = Environment::new(ambience.groups.len());
+    let mut env = Environment::new(ambience.axes());
     // A mild, still, cloudy-bright day on open land unless the scene says otherwise.
     for (axis, value) in [(Fixed::Air, 1.0), (Fixed::Sky, 1.0), (Fixed::Sun, 0.8), (Fixed::Temperature, 15.0), (Fixed::Moisture, 1.0)] {
         env.set(axis, value);
@@ -46,6 +46,8 @@ fn scene(ambience: &Ambience, name: &'static str, tags: &[&str], set: &[(&str, f
     for &(name, value) in set {
         if let Some(axis) = Fixed::ALL.iter().find(|a| format!("{a:?}").to_lowercase() == name) {
             env.set(*axis, value);
+        } else if let Some(patter) = ambience.roofs.patters.iter().position(|p| p == name) {
+            env.values[ambience.patter_axis(patter)] = value;
         } else {
             let group = ambience.groups.iter().position(|g| g.name == name).unwrap_or_else(|| panic!("no axis {name}"));
             env.set_group(group, value);
@@ -97,7 +99,10 @@ fn scenes(ambience: &Ambience) -> Vec<Scene> {
         scene(ambience, "sleet", &["grassland", "temperate", "open"], &[("grass", 1.0), ("sleet", 0.5), ("rain", 0.3), ("temperature", 1.0), ("cover", 1.0)]),
         scene(ambience, "lake", &["lake", "water"], &[("water", 0.8), ("grass", 0.4), ("river", 1.0), ("still", 1.0)]),
         scene(ambience, "light_rain", &["grassland", "temperate", "open"], &[("grass", 1.0), ("rain", 0.3), ("raining", 0.3), ("cover", 0.9)]),
-        scene(ambience, "porch_in_rain", &["forest", "temperate"], &[("air", 0.6), ("sky", 0.0), ("roof", 1.0), ("rain", 0.2), ("raining", 0.7), ("cover", 1.0)]),
+        scene(ambience, "porch_in_rain", &["forest", "temperate"], &[("air", 0.6), ("sky", 0.0), ("roof", 1.0), ("rain", 0.2), ("raining", 0.7), ("roof_tap", 0.7), ("sheltered", 0.45), ("cover", 1.0)]),
+        // In a thatched hut with its door open in a downpour: the straw's hush, the open
+        // rain muffled under the sound roof.
+        scene(ambience, "thatch_in_rain", &["grassland", "temperate"], &[("air", 0.4), ("sky", 0.3), ("rain", 0.9), ("raining", 0.9), ("roof_soft", 0.9), ("sheltered", 1.0), ("cover", 1.0)]),
         scene(ambience, "forest_after_rain", &forest_tags, &[&forest[..], &[("wetness", 0.9), ("cover", 0.6)]].concat()),
         scene(ambience, "lava_cave", &["mountain"], &[("rock", 1.0), ("lava", 0.8), ("sky", 0.0), ("air", 0.3), ("reverb", 0.7), ("depth", 30.0)]),
         scene(ambience, "waterfall", &["river", "water"], &[("water", 0.6), ("falls", 0.9), ("flowing", 1.0), ("rock", 0.4)]),
@@ -124,6 +129,21 @@ fn run(ambience: &Ambience, scene: &Scene, seconds: f32) -> (Vec<(f32, Cue)>, Ve
     (timeline, levels)
 }
 
+/// A hearth or a Crucible Kiln is heard as a fire only while it burns; a campfire or a pit
+/// kiln, always a fire, always.
+#[test]
+fn structures_are_heard_as_fires_only_while_lit() {
+    let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+    let ambience = base();
+    let kinds = super::kinds(&ambience, &content.blocks, &content.multiblocks);
+    let fire = ambience.groups.iter().position(|g| g.name == "fire").unwrap() as u8;
+    for (name, lit_only) in [("base:hearthstone", true), ("base:crucible", true), ("base:campfire", false), ("base:pit_kiln", false)] {
+        let id = content.blocks.expect(name).0 as usize;
+        assert_eq!(kinds.group[id], Some(fire), "{name} is not heard as a fire");
+        assert_eq!(kinds.lit_only[id], lit_only, "{name}");
+    }
+}
+
 #[test]
 fn each_place_has_its_own_sound() {
     let ambience = base();
@@ -148,7 +168,8 @@ fn each_place_has_its_own_sound() {
             "coast" => (&["surf"], &["stream", "lake", "frog"]),
             "lake" => (&["lake"], &["stream", "surf"]),
             "light_rain" => (&["rain"], &["downpour", "rain_on_roof"]),
-            "porch_in_rain" => (&["rain_on_roof"], &["downpour"]),
+            "porch_in_rain" => (&["rain_on_roof"], &["downpour", "rain_on_thatch"]),
+            "thatch_in_rain" => (&["rain_on_thatch"], &["rain_on_roof", "rain_on_stone", "rain_on_glass", "downpour"]),
             "forest_after_rain" => (&["dripping_trees"], &["rain", "downpour"]),
             "lava_cave" => (&["lava", "lava_pop", "cave", "far_drip"], &["stream", "lake", "waterfall", "fire", "fire_snap"]),
             // A fire is heard by the fire, crackling and snapping, under the night outdoors.
@@ -441,7 +462,7 @@ fn ambience_survey() {
     let content = voxmar_server::load_content(&assets).unwrap();
     let generator = Overworld::with_content(seed, content.blocks.clone(), &WorldContent::load(&content).unwrap());
     let ambience = Ambience::load(&content.files).unwrap();
-    let kinds = super::kinds(&ambience, &content.blocks);
+    let kinds = super::kinds(&ambience, &content.blocks, &content.multiblocks);
     let around = |x: i32, z: i32| {
         let center = ColumnPos::of_block(IVec3::new(x, 0, z));
         let mut world = VoxelWorld::default();
@@ -453,7 +474,7 @@ fn ambience_survey() {
         world
     };
     let report = |name: &str, world: &VoxelWorld, eye: IVec3| {
-        let found = super::enclosure::scan(eye, |p| world.block(p), &kinds, 1);
+        let found = super::enclosure::scan(eye, |p| world.block(p), |_| true, &kinds, 1);
         let place = super::place(&generator, eye);
         let groups: Vec<String> = ambience
             .groups
@@ -541,4 +562,123 @@ fn the_ambience_is_heard_within_its_band() {
         }
     }
     all([within(Category::Ambience, heard)]);
+}
+
+/// The roof look sees a roof over any part of the body, not just the middle (standing
+/// half under an eave), and over the way walked since the last look (under a beam and out
+/// again between two looks); the lowest roof wins, and nothing above `height` counts.
+#[test]
+fn the_roof_look_misses_no_edge_and_no_pass() {
+    use voxmar_engine::block::BlockId;
+    let (roof, beam, high) = (BlockId(5), BlockId(6), BlockId(7));
+    let world = |p: IVec3| {
+        Some(match (p.x, p.y, p.z) {
+            // An eave over x 0..=3 at y 3, a beam over x 10 at y 4, a high ledge over x 20.
+            (0..=3, 3, _) => roof,
+            (10, 4, _) => beam,
+            (20, 30, _) => high,
+            _ => BlockId::AIR,
+        })
+    };
+    let look = |from: Vec3, to: Vec3| super::roof_over(world, from, to, 12, |b| b != BlockId::AIR);
+    let feet = |x: f32| Vec3::new(x, 1.0, 0.5);
+    assert_eq!(look(feet(1.5), feet(1.5)), Some(roof));
+    // The body's edge just under the eave, its middle out from under it.
+    assert_eq!(look(feet(4.2), feet(4.2)), Some(roof));
+    assert_eq!(look(feet(4.4), feet(4.4)), None);
+    // Under the beam and out again between two looks.
+    assert_eq!(look(feet(8.0), feet(12.5)), Some(beam));
+    // The lowest roof over the way.
+    assert_eq!(look(feet(2.0), feet(10.5)), Some(roof));
+    assert_eq!(look(feet(20.5), feet(20.5)), None, "a ledge 29 above the feet is no roof");
+}
+
+/// Every roof in the base game patters or is silent, by its building material or else its
+/// family sound, and the home's roofs patter as they are made: thatch soft, shingles and
+/// timber a tap, stone and brick dull, glass bright.
+#[test]
+fn shipped_roofs_patter_by_their_material() {
+    let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+    let blocks = &content.blocks;
+    let ambience = Ambience::load(&content.files).unwrap();
+    let recorded = sfx::Recordings::load(&content.files).unwrap();
+    let materials: Vec<&str> = recorded.materials.iter().map(|m| m.name.as_str()).collect();
+    let material = |id| recorded.material_of(blocks, id).map_or_else(|| super::defs::family(blocks.info(id).sound), |m| recorded.materials[m].name.clone());
+    let patters = ambience.roof_patters(blocks, &materials, material).unwrap();
+    let of = |name: &str| patters[blocks.id(name).unwrap_or_else(|| panic!("{name}")).0 as usize].map(|p| ambience.roofs.patters[p as usize].as_str());
+    for (block, patter) in [
+        ("base:thatch_roof", Some("roof_soft")),
+        ("base:hide_lean_to", Some("roof_soft")),
+        ("base:oak_shingles", Some("roof_tap")),
+        ("base:oak_beam", Some("roof_tap")),
+        ("base:oak_planks", Some("roof_tap")),
+        ("base:cobblestone_slab", Some("roof_dull")),
+        ("base:stone_bricks", Some("roof_dull")),
+        ("base:stone", Some("roof_dull")),
+        ("base:glass", Some("roof_bright")),
+        ("base:oak_leaves", None),
+        ("core:air", None),
+    ] {
+        assert_eq!(of(block), patter, "{block}");
+    }
+}
+
+/// Inside a home the weather outside is muffled: in a doorway under a thatched roof in a gale
+/// and a blizzard, the wind and the snow are turned well down from out in the open, by the
+/// `sheltered` axis the roof overhead raises.
+#[test]
+fn a_home_muffles_the_weather_outside() {
+    let ambience = base();
+    let weather = [("air", 0.5), ("sky", 0.4), ("wind", 16.0), ("snow", 0.8), ("storm", 0.8), ("temperature", -5.0), ("cover", 1.0)];
+    let open = scene(&ambience, "open", &["taiga", "cold"], &weather);
+    // Under thatch, the commonest roof of a home, which carries no shelter tag of its own:
+    // what it is made of muffles it, as a lean-to of hide, open at its sides, does not.
+    let soft = ambience.roofs.patters.iter().position(|p| p == "roof_soft");
+    let thatch = ambience.roofs.sheltered(|_| false, soft);
+    assert!(thatch > ambience.roofs.sheltered(|t| t == "shelter:draughty", soft) + 0.1, "thatch muffles no more than a hide lean-to");
+    let inside = scene(&ambience, "doorway", &["taiga", "cold"], &[weather.as_slice(), &[("sheltered", thatch)]].concat());
+    let (open, inside) = (run(&ambience, &open, 30.0).1, run(&ambience, &inside, 30.0).1);
+    for name in ["storm_wind", "blizzard"] {
+        let bed = ambience.beds.iter().position(|b| b.name == format!("base:{name}")).unwrap();
+        assert!(open[bed] > 0.3 * ambience.beds[bed].volume, "{name} is not heard in the open: {}", open[bed]);
+        assert!(inside[bed] < 0.5 * open[bed], "{name} is {} inside, {} in the open", inside[bed], open[bed]);
+    }
+}
+
+/// The `settlement` axis is how far it is to the nearest settlement's middle, across the
+/// ground, and [`NO_SETTLEMENT`](super::defs::NO_SETTLEMENT) where none is in hearing.
+#[test]
+fn the_settlement_axis_is_the_way_to_the_nearest_middle() {
+    use bevy::math::Vec3Swizzles;
+    use voxmar_worldgen::{Generator, Overworld, WorldContent};
+
+    let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+    let content = voxmar_server::load_content(&assets).unwrap();
+    let generator = Overworld::with_content(7, content.blocks.clone(), &WorldContent::load(&content).unwrap());
+    let spawn = generator.spawn_point();
+    let found = generator.settlements_near(spawn.xz(), 1500);
+    let near = found.iter().min_by_key(|s| (s.centre - spawn).xz().length_squared()).expect("a settlement near spawn");
+    let place = super::place(&generator, near.centre + IVec3::new(3, 2, 4));
+    let expected = bevy::math::Vec2::new(3.5, 4.5).length();
+    assert!((place.settlement - expected).abs() < 1e-3, "{} blocks off, not {expected}", place.settlement);
+    let alone = [IVec2::new(1, 0), IVec2::new(0, 1), IVec2::new(-1, 0), IVec2::new(0, -1)]
+        .into_iter()
+        .map(|way| near.centre.xz() + way * 700)
+        .find(|&at| generator.settlements_near(at, super::SETTLEMENTS_HEARD).is_empty())
+        .expect("somewhere 700 blocks off with no settlement in hearing");
+    let place = super::place(&generator, IVec3::new(alone.x, near.centre.y, alone.y));
+    assert_eq!(place.settlement, super::defs::NO_SETTLEMENT);
+    // Past hearing of every settlement, though the search still gives some from the regions
+    // it touches: none, not the nearest of those.
+    let heard = super::SETTLEMENTS_HEARD as f32;
+    let beyond = [IVec2::new(1, 0), IVec2::new(0, 1), IVec2::new(-1, 0), IVec2::new(0, -1)]
+        .into_iter()
+        .map(|way| near.centre.xz() + way * 260)
+        .find(|&at| {
+            let found = generator.settlements_near(at, super::SETTLEMENTS_HEARD);
+            !found.is_empty() && found.iter().all(|s| s.centre.xz().as_vec2().distance(at.as_vec2() + 0.5) > heard)
+        })
+        .expect("somewhere 260 blocks off where the search gives only settlements out of hearing");
+    let place = super::place(&generator, IVec3::new(beyond.x, near.centre.y, beyond.y));
+    assert_eq!(place.settlement, super::defs::NO_SETTLEMENT, "a settlement out of hearing counted");
 }

@@ -48,9 +48,16 @@ pub struct Fighting {
     /// How many blows this side has asked the server to strike, ever (`core:attack`): a click
     /// at nothing in reach, or one held for the beat, asks nothing.
     pub strikes: u32,
+    /// How many swings the player has cancelled before their blow, ever (raising the guard,
+    /// dodging, or changing what is held): the server judges no blow for them (`fight_fx`'s shots).
+    pub cancels: u32,
     /// How many of the server's pings (`ServerMessage::Ping`), which time the round trip
     /// guards and dodges are judged by, have been answered, ever.
     pub pings: u32,
+    /// How many clicks at a creature out of reach have swung at the air, ever (`whiff`),
+    /// and when the last did (app seconds).
+    pub whiffs: u32,
+    whiffed: f64,
     /// The item last swung, to lose the pips on a switch as the server does.
     held: Option<voxmar_engine::block::BlockId>,
     /// When the player and each creature last traded blows, either way (app seconds).
@@ -106,12 +113,39 @@ impl Fighting {
         matches!(self.rhythm.click(now, timing, feel), Click::Swing(_))
     }
 
+    /// Whether a click out of reach at `now` would swing at the air (`whiff`): the meter
+    /// full, no swing under way, no guard up, and a cooldown since the last whiff.
+    pub fn can_whiff(&self, now: f64, timing: &Timing) -> bool {
+        let rested = self.rhythm.pending().is_none() && self.rhythm.meter(now, timing) >= 1.0;
+        self.guard.is_none() && rested && now - self.whiffed >= timing.cooldown as f64
+    }
+
+    /// A click at a creature out of the weapon's reach at `now`: the hand swings at the air,
+    /// asking nothing of the server and leaving the rhythm as it is. Only with the meter
+    /// full and no swing under way, at most once a cooldown, and not while guarding.
+    pub fn whiff(&mut self, now: f64, timing: &Timing) -> bool {
+        if !self.can_whiff(now, timing) {
+            return false;
+        }
+        self.whiffed = now;
+        self.whiffs += 1;
+        true
+    }
+
+    /// Guarding, dodging or switching what is held cancels a swing not yet landed
+    /// (`Rhythm::cancel`), counted in `cancels`.
+    pub fn cancel(&mut self, now: f64, timing: &Timing, feel: &voxmar_engine::combat::Feel) {
+        if self.rhythm.cancel(now, timing, feel) {
+            self.cancels += 1;
+        }
+    }
+
     /// What is in hand at `now`: switching it drops the swing under way and the pips, as the
     /// server does. `timing` is the rhythm of what was held.
     pub fn holding(&mut self, now: f64, timing: &Timing, held: Option<voxmar_engine::block::BlockId>, feel: &voxmar_engine::combat::Feel) {
         if held != self.held {
             if self.rhythm.pending().is_some() {
-                self.rhythm.cancel(now, timing, feel);
+                self.cancel(now, timing, feel);
             }
             self.rhythm.lose_pips();
             self.held = held;
@@ -160,7 +194,7 @@ pub fn guard(
         fighting.guard = up.then_some(now);
         if up {
             let timing = combat.timing(&weapon);
-            fighting.rhythm.cancel(now, &timing, &combat.feel);
+            fighting.cancel(now, &timing, &combat.feel);
         }
         net.guard(up);
     }
@@ -178,5 +212,52 @@ pub fn quick_prayers(keys: Res<ButtonInput<KeyCode>>, settings: Res<crate::setti
         {
             net.pray(prayer, !fighting.prayers.on.contains(&prayer));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every way a swing is cancelled (the guard, a dodge, a switch of what is held) goes
+    /// through `Fighting::cancel`, which counts it only when a swing was under way.
+    #[test]
+    fn a_cancelled_swing_is_counted_once() {
+        let (timing, feel) = (Timing { cooldown: 1.0, windup: 0.4, buffer: 0.2, beat: 0.1 }, voxmar_engine::combat::Feel::default());
+        let mut fighting = Fighting::default();
+        fighting.cancel(0.0, &timing, &feel);
+        assert_eq!(fighting.cancels, 0, "nothing under way to cancel");
+        assert!(matches!(fighting.rhythm.click(0.0, &timing, &feel), Click::Swing(_)));
+        fighting.cancel(0.1, &timing, &feel);
+        assert_eq!(fighting.cancels, 1);
+        fighting.cancel(0.2, &timing, &feel);
+        assert_eq!(fighting.cancels, 1, "the swing is already cancelled");
+        // A switch of what is held cancels the swing under way the same way.
+        let later = 5.0;
+        assert!(matches!(fighting.rhythm.click(later, &timing, &feel), Click::Swing(_)));
+        fighting.holding(later + 0.1, &timing, Some(voxmar_engine::block::BlockId(3)), &feel);
+        assert_eq!(fighting.cancels, 2);
+    }
+
+    /// A click at a creature out of reach swings at the air: once a cooldown, only from
+    /// rest (no swing under way, the meter full), never while guarding, and the rhythm is
+    /// left as it was, so the next real swing is timed as if it never happened.
+    #[test]
+    fn a_click_out_of_reach_whiffs_from_rest_and_leaves_the_rhythm() {
+        let (timing, feel) = (Timing { cooldown: 1.0, windup: 0.4, buffer: 0.2, beat: 0.1 }, voxmar_engine::combat::Feel::default());
+        let mut fighting = Fighting::default();
+        assert!(fighting.whiff(10.0, &timing));
+        assert_eq!((fighting.whiffs, fighting.rhythm.pending().is_none(), fighting.rhythm.meter(10.0, &timing)), (1, true, 1.0), "a whiff touched the rhythm");
+        assert!(!fighting.whiff(10.5, &timing), "two whiffs within a cooldown");
+        assert!(fighting.whiff(11.0, &timing));
+        // Not mid-swing: a real swing winding up, or its meter not yet full.
+        assert!(matches!(fighting.rhythm.click(20.0, &timing, &feel), Click::Swing(_)));
+        assert!(!fighting.whiff(20.1, &timing), "a whiff over a swing winding up");
+        let _ = fighting.rhythm.landed(20.5);
+        assert!(!fighting.whiff(20.6, &timing), "a whiff before the meter was full");
+        assert!(fighting.whiff(21.0, &timing));
+        fighting.guard = Some(30.0);
+        assert!(!fighting.whiff(30.0, &timing), "a whiff while guarding");
+        assert_eq!(fighting.whiffs, 3);
     }
 }

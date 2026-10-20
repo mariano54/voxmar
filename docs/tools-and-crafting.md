@@ -8,8 +8,28 @@ grow faster. Everything is content a mod adds the same way.
 
 A tool is an item (`base/blocks_tools.ron`) tagged `tool`, its kind (`pickaxe`, `axe`,
 `shovel`, `hoe`, `knife`, `shears`), a `tier:N`, a `speed:X` and maybe a `yield:Y`. Five
-kinds come in four tiers: wooden (1), stone (2), copper (3) and iron (4), speed 2, 4, 6
-and 8, yield 0 to 0.15.
+kinds come in four tiers: wooden (1), stone (2), copper (3) and iron (4), speed 2, 4, 7
+and 14, yield 0 to 0.15. The tooltip says it ("Works 7× as fast as a bare hand").
+
+**Why those speeds** (Oct 14 tier audit). A block takes its hardness over the speed, and
+after each break the hand waits a quarter second before the next (`mine_cooldown`,
+Minecraft's five ticks), so what a player feels sweeping a wall is hardness / speed + 0.25 s.
+With 2, 4, 6, 8 the copper and iron steps were near that floor: on a log (hardness 2)
+0.75 to 0.58 to 0.50 s a block, 1.29x then 1.17x, and on stone 1.25x then 1.14x, under the
+1.4x a step needs to be felt. Copper 7 and iron 14 make each step about 1.4x on what tools
+are for (log, cobblestone, ore; stone 1.35x and 1.30x):
+
+| Seconds a block (with the 0.25 s wait) | Hand | Wooden | Stone | Copper | Iron |
+| --- | --- | --- | --- | --- | --- |
+| Log, cobblestone (2.0) | 2.25 | 1.25 | 0.75 | 0.54 | 0.39 |
+| Stone (1.5) | 1.75 | 1.00 | 0.63 | 0.46 | 0.36 |
+| Ore (3.0, needs a pickaxe) | | 1.75 | 1.00 | 0.68 | 0.46 |
+| Clay, gravel (0.6) | 0.85 | 0.55 | 0.40 | 0.34 | 0.29 |
+| Dirt (0.5) | 0.75 | 0.50 | 0.38 | 0.32 | 0.29 |
+
+Soft ground stays near the quarter-second floor whatever the tool (1.2x a step past
+stone): it was already quick, and only the wait could change that, which is not a tier's
+to change.
 
 `base/tools.ron` (engine/src/tool.rs) says what each kind is made for, by block tags (a
 pickaxe for stone and ore, an axe for logs and planks, a shovel for soil, sand, gravel,
@@ -34,11 +54,22 @@ player's effects' `mining`; client and server work it out the same way.
 ## Crafting
 
 Recipes (`base/recipes.ron`, engine/src/craft.rs) are shaped (up to three rows of three)
-or shapeless (up to nine ingredients). The inventory's grid is two by two; a **crafting
+or shapeless (up to nine ingredients). A shape may sit anywhere in the grid and is also
+made mirrored left to right (an axe's head on either side), so the load refuses a recipe
+whose mirror image is another recipe's pattern that makes something else. The inventory's grid is two by two; a **crafting
 table** (four planks) gives three by three: right click one and the inventory opens with
 the bigger grid, for as long as you are within reach of it and the screen is open.
 Anything bigger than two by two, or with more than four ingredients, needs a table; the
 server checks.
+
+A recipe may be made only `near` a block with a tag, within a player's reach
+(`craft::tags_near`, the same for the server and the client's prediction): where the grid
+holds both that recipe and one made anywhere, the one near the block is made, and away from
+it the plain one. The **chopping block** (`blocks_workshop.ron`; flint over any log,
+Crafting 2) is the first: a log split by it gives six planks, not the grid's four, so it
+pays back the log it took after two. The recipe viewer shows the block beside the grid and
+"Near a Chopping Block". A mod adds a workshop block by giving a block a tag and a recipe
+`near: "<tag>"`; the load refuses a tag no block has.
 
 A cell or ingredient can accept several items: `tag:log` takes any log, `coal_ore|charcoal`
 either (`Recipe::alternatives`; the viewer shows the first). Torches use it.
@@ -123,8 +154,9 @@ you wake after dying until a hearth gives you a home: right click it to sleep
 vials and kiln bricks are made of at the grid. The Crucible Kiln, the Farm age's gate, is a multiblock:
 a crucible (kiln bricks round a clay pot) ringed with kiln bricks, with a pillar on each
 corner. A crucible smelts only in a standing kiln with an unexpired paid fire:
-copper ore into ingots, and a bronze blend (three copper ingots and a tin ore) into
-bronze, all Engineering, never burnt (`stop_burning: 0`). To light a cold kiln,
+copper ore into ingots, and three copper ingots held with a tin ore carried into four
+bronze (a station recipe may take several of what is held, `uses`, and other items
+besides, `with`, and make several, `count`), all Engineering, never burnt (`stop_burning: 0`). To light a cold kiln,
 hold 32 charcoal or 24 coal and right-click the crucible. Lighting consumes the charge
 and quests count it (`Lit("crucible_kiln", 1)`). Its fire uses the fuel times in
 `machines.ron`, survives reload, and goes out when it expires or a required piece is
@@ -142,8 +174,17 @@ Mariano, 2026-10-07: one item per material or part, each with several ways to ge
 thing. Every warm pelt is fur (a bear gives two), rabbit hide is hide, duck eggs are eggs,
 bear fat is lard, bright feathers are feathers, claws are fangs, glimmer dust is moon dust;
 fired clay replaces unfired pots, unfired vials and fired bricks, and tin ore goes straight
-into the bronze blend. Flint comes from gravel, one break in eight (tools.ron's `instead`;
+into bronze at the crucible (Oct 14: the bronze blend between them is gone). Flint comes from gravel, one break in eight (tools.ron's `instead`;
 gravel a player placed gives none).
+
+Raw and cooked rabbit and chicken were the same meat (Cooking 1, the same experience and
+healing) and are **small game** now (Oct 14). A package's blocks file lists what it renamed
+or merged, old name to new (`renamed: {"raw_rabbit": "raw_small_game"}`), and an older save
+loads those items, in slots, pouches, on the ground and on stations, as the new one. Load
+refuses a rename to a block that does not exist, or of a name a block still has. Shrimp, which
+were minnows in all but name (level, experience, healing, weight), are minnows too, and
+minnows bite in any water. Frog, also Cooking 1 and healing 4 but teaching less, is small
+game too: a frog drops it and a heron still favours it.
 
 ## Dying
 

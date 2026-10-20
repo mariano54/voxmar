@@ -40,7 +40,7 @@ paying Farming, Mining and Fishing experience and two bread.
 **Days 3 to 5, Farm: sustain yourself, then fire.** Plant wheat (First Harvest), keep hens
 (Hens in a Row, Fresh Eggs), cook (Camp Cook, level 5), a flock (A Woolly Flock). The main line
 is clay work: Clay Banks, A Pit Kiln, Fire the Clay (twelve fired clay), The Potter, Brick by
-Brick (nineteen kiln bricks, about 76 fired clay), and Red Metal for the copper the crucible
+Brick (nineteen kiln bricks, about 40 fired clay: four make two), and Red Metal for the copper the crucible
 needs. The Crucible then The Crucible Kiln: **lighting it ends Farm**. Everything else
 (husbandry, hunting, mail, home furnishings, ores, exploring) is optional breadth with its
 own rewards, so a player can always see two or three things worth doing.
@@ -214,10 +214,10 @@ Mining time is the block's hardness over the tool's speed (tools.ron), so a tool
 | Resource | Bare | First upgrade (bot reaches it) | Cost | Faster by | Next |
 |---|---|---|---|---|---|
 | Wood (log 2.0) | 2.0 s | Wooden axe (32 s, was never made) | 3 planks, 2 sticks | x2 | Stone axe at 44 s, x4 |
-| Stone (1.5) | 1.5 s | Wooden pickaxe (13 s) | 3 planks, 2 sticks | x2 | Stone pickaxe at 44 s, x4; copper at 233 s, x6 |
-| Clay (0.6) | 0.6 s | Stone shovel (Dig In, about 100 s) | 1 cobblestone, 2 sticks | x4 | Copper shovel, x6 |
+| Stone (1.5) | 1.5 s | Wooden pickaxe (13 s) | 3 planks, 2 sticks | x2 | Stone pickaxe at 44 s, x4; copper at 233 s, x7 |
+| Clay (0.6) | 0.6 s | Stone shovel (Dig In, about 100 s) | 1 cobblestone, 2 sticks | x4 | Copper shovel, x7 |
 | Coal ore (3.0) | none | Wooden pickaxe (13 s) | as above | needs a pickaxe | Stone pickaxe, x2 more |
-| Fibre (wild wheat, grass) | instant | none needed | | | Sown wheat in the Farm age |
+| Fibre (wild wheat, grass) | instant | none needed | | | Sown wheat in the Farm age; wild wheat gives an ear 6 in 10 |
 | Meat (hunting) | max hit 1 | Stone axe or sword (44 s) | 3 or 2 cobblestone, sticks | x3 max hit | Copper sword, max hit 5 |
 | Charcoal (a log in the fire) | 2 s each | none: coal ore instead (Charcoal's other route) | | | The Crucible pays 16 |
 
@@ -254,6 +254,79 @@ The bot's timeline after this (three runs, Oct 13), against the one above:
 | Brick by Brick | 478 | 439 to 449 |
 | Crucible Kiln lit | 489 | 450 to 459 |
 
+### Pacing pass with everything landed (Oct 14)
+
+On main cc0ccf78 (storage, stations, chests, bees, the Rootmother, ranged, the teaching
+quests all landed), the bot's line was unchanged by any of them: none of them sits on the
+main line, so they are side content a player picks up in the waits. Medians of five runs
+on main, then twelve with the earth clamp (docs/stations.md); "at fire" is the server
+seconds the bot stood at a fire or kiln in that phase.
+
+| Milestone | Main | At fire | With the clamp | At fire |
+|---|---|---|---|---|
+| Homestead Hearth lit | 107 | 0 | 109 | 0 |
+| Fire the Clay | 167 | 35 | 171 | 35 |
+| The Potter | 176 | 6 | 185 | 6 |
+| An Earth Clamp made | | | 206 (196 to 219) | 0 |
+| Charcoal | 226 | 35 | 272 | 48 |
+| Red Metal | 236 | 0 | 283 | 0 |
+| A Kiln Load | 341 | 68 | 317 | 17 |
+| Brick by Brick | 440 | 80 | 397 | 55 |
+| Crucible Kiln lit | 450 (430 to 478) | 230 in all | 408 (396 to 438) | 167 in all |
+
+The stall: from Fire the Clay to Brick by Brick, half the line (230 of 450 s) was standing
+at a fire with one clay or log in hand, and from Red Metal to Brick by Brick (204 s) nothing
+new came but the brick recipe. Nothing in it was a quick upgrade or a new thing to learn.
+
+What filled it: the earth clamp, a home station of eight dirt round a log (Construction 3),
+named by a new quest, An Earth Clamp (after The Potter), and by Charcoal's and Brick by
+Brick's text. It fires sixteen clay (never cracked) or chars sixteen logs in a minute with
+nobody by it, and quests count what it gives as cooked. It is slower than the hand, so it
+is no replacement: the player keeps it smouldering while they fire by hand, dig and mine.
+The line is 42 s shorter, 63 s less of it is spent at a fire, and the longest stretch with
+nothing new (Red Metal to Brick by Brick) is 114 s instead of 204. Charcoal comes later (the
+clamp's minute is spent firing clay toward A Kiln Load, which then comes sooner).
+
+Still long, and left: Fire the Clay (about 60 s, 35 of it firing, before the clamp is known)
+and punching the first logs. The clamp could open with A Pit Kiln to cover Fire the Clay
+too; that is the next step if the first Farm minutes read as slow in play.
+
+### Fire the Clay and the Nomad pass (Oct 14)
+
+Medians of twelve bot runs each, before lockstep (game seconds; the earlier columns are the
+clamp after The Potter, the later ones the clamp after A Pit Kiln, then A Tempting Bite too).
+
+| Milestone | Clamp after Potter | After A Pit Kiln | And A Tempting Bite |
+|---|---|---|---|
+| First Night | 61.5 | 61.8 | 62.1 |
+| A Tempting Bite | | | 71.3 |
+| A Bed of Your Own | 68.7 | 67.6 | 78.8 |
+| Homestead Hearth lit | 104.2 | 104.4 | 116.8 |
+| An Earth Clamp made | 198.9 | 121.4 | 133.5 |
+| Fire the Clay | 166.9 (56.1 in it, 34 firing) | 175.1 (53.8) | 187.4 (57.2) |
+| A Kiln Load | 318.8 (32.5 in it) | 285.6 (0.8) | 297.9 (0.8) |
+| Crucible Kiln lit | 410.8 | 376.0 | 388.6 |
+
+Fire the Clay: the player stood at the pit kiln for most of a minute with nothing to learn.
+The clamp now opens with A Pit Kiln, and Fire the Clay's text sends the player to heap one
+while they wait. The stretch is no shorter (the clamp is built inside it), but it now
+teaches a station, and the line to the Crucible Kiln is 35 s shorter because A Kiln Load's
+wait is gone.
+
+Nomad: the bot's longest stretch with nothing new is the Hearth's 28 cobblestone (about 25
+s), which A Pile of Stone and Dig In already fill. For a real player the stall is the hunt
+for A Bed of Your Own: rabbits run at 7 blocks a second, and the bot's stocked lane hides
+that. A Tempting Bite (hunter, after First Night) teaches bait: hold the favourite food (a
+carrot from wild carrot for rabbits, wheat seeds from wild wheat for junglefowl) and they
+walk up instead of running. A new `Lured` goal counts each wild creature drawn within three
+blocks once. It costs the bot about 9 s, since its lane needs no chase, and saves a player
+the chase.
+
+In lockstep (twelve runs, against the clamp after The Potter in lockstep): Homestead Hearth
+lit 98.6 (was 89.8), An Earth Clamp made 112.2 (177.7), Fire the Clay 158.5 (148.2), A Kiln
+Load 266.4 (269.9), Crucible Kiln lit 351.7 (341 to 357; was 361.2), and 145 s at a fire or
+kiln in all (167).
+
 In lockstep (Oct 14) the bot loses no ticks to its own turns, which a server ticking at 60
 times the clock's pace ran on through, about a tenth of each step even on a calm machine
 (Timber 13 to 12, An Axe to It 34 to 30). Five runs: Timber 11 to 12, An Axe to It 29 to 30,
@@ -261,6 +334,31 @@ Stone in Hand 39 to 40 (the same each run, as the rest would be but for the hunt
 firing's cracks), First Night 52 to 60, Homestead Hearth lit 82 to 95, Fire the Clay 137 to
 148, Charcoal 196 to 207, Red Metal 205 to 216, A Kiln Load 292 to 316, Brick by Brick 381 to
 408, Crucible Kiln lit 392 to 418.
+
+### First-hour pacing (Oct 14)
+
+A pass over every Nomad quest for stretches of more than about three minutes of the same
+gathering, from the bot's main line (lit hearth at 81 s of action, nothing near three
+minutes) and, for side quests, drop chances, tool speeds and a census of the land around
+five spawns (the table is in the project's design/first-hour-pacing.md). Wild wheat is the
+one that was long: lone tufts some 25 blocks apart on grassland, none in most woods, and
+three ears in ten made Daily Bread's eight wheat about 27 tufts. Foraging now gives an ear
+six times in ten (`crops.ron`), about 13 tufts; sown wheat stays the bulk source
+(`wild_wheat_bakes_bread_in_a_short_walk`). A Varied Table (12 meat, 8 fish, 6 bread,
+about 11 minutes) and Trail Rations (12 jerky) were long by their counts, which the quest
+book's owners set.
+
+### Farm pacing (Oct 14)
+
+The same pass over the Farm age, from the lit hearth to the lit Crucible Kiln (the table is
+in the project's design/farm-pacing.md). Firing clay for the kiln was the one long stretch
+of a single action: Brick by Brick's nineteen bricks were 76 fired clay, 91 s of the
+quest-book bot's 394. Four fired clay now make two bricks (`recipes.ron`, the same
+Crafting experience a brick), and Brick by Brick takes 16 s; the kiln is lit at 319 s.
+`hunt_pace_probe` (crates/server/src/creatures.rs) measures a kill in the wild at 5 to 9 s
+on level ground, and a cast lands two times in five, about 12.5 s a fish. Crops take 12
+minutes of growth (wheat; carrots 14) day and night, and while they grow the main line,
+husbandry and the home quests are open.
 
 ## Measured pacing
 

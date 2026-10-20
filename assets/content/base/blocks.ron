@@ -20,6 +20,8 @@
 // What it is
 //   stone, soil, sand, gravel, clay, terracotta, snow, ice, ore, metal:<name>, gem
 //   log, stripped, wood, planks, leaves, sapling, fuel
+//   tree (part of a tree or giant mushroom as it grows: trunk, bark, roots, leaves, cap;
+//   a new player never wakes on one)
 //   plant, flower, herb, grass, fern, reed, bush, fungus, groundcover
 //   natural, cobbled, polished, bricks, building, light (gives light), glass
 //   mossy, ruined (weathered building blocks), volcanic, dripstone, stalagmite,
@@ -49,19 +51,20 @@
 // Fantasy: wonder (fantastical; more common where the aether field is high), supernatural
 //   (a plant tied to a creature or dish: docs/systems-web.md)
 // Creatures and buffs: feed:<creature> (what it eats or is lured by), bait, taming,
-//   nectar (bees), salt; alchemy also: night_sight, quiet_steps, mutation, hearty,
-//   invisibility, steady_hand, cleansing
+//   nectar (bees), salt, drinking_water (kept animals drink from it: water, a well, a trough),
+//   waters (waters crops and stations as water does: a well); alchemy also: night_sight,
+//   quiet_steps, mutation, hearty, invisibility, steady_hand, cleansing
 (
     templates: {
         // A wood: bark, the stripped log, bark on every side, planks, leaves and a sapling.
         "wood": [
-            (name: "{name}_log", sound: Wood, textures: Column(end: "{name}_log_top", side: "{name}_log"), hardness: 2.0, color: (109, 85, 50), tags: ["log", "wood", "fuel", "natural"]),
+            (name: "{name}_log", sound: Wood, textures: Column(end: "{name}_log_top", side: "{name}_log"), hardness: 2.0, color: (109, 85, 50), tags: ["log", "wood", "fuel", "natural", "tree"]),
             (
                 name: "stripped_{name}_log", sound: Wood,
                 textures: Column(end: "stripped_{name}_log_top", side: "stripped_{name}_log"),
                 hardness: 2.0, color: (176, 140, 90), tags: ["log", "stripped", "wood", "fuel"],
             ),
-            (name: "{name}_wood", sound: Wood, textures: All("{name}_log"), hardness: 2.0, color: (109, 85, 50), tags: ["wood", "fuel", "building"]),
+            (name: "{name}_wood", sound: Wood, textures: All("{name}_log"), hardness: 2.0, color: (109, 85, 50), tags: ["wood", "fuel", "building", "tree"]),
             (name: "{name}_planks", sound: Wood, textures: All("{name}_planks"), hardness: 2.0, color: (162, 130, 78), tags: ["planks", "wood", "fuel", "building"]),
             (
                 name: "{name}_slab", render: Model, shape: "slab", flips: true, sound: Wood, textures: All("{name}_planks"),
@@ -73,7 +76,7 @@
             ),
             (
                 name: "{name}_leaves", sound: Leaves, textures: All("{name}_leaves"), render: Leaves, tint: Foliage,
-                light_filter: 1, hardness: 0.3, color: (60, 120, 40), tags: ["leaves", "natural"],
+                light_filter: 1, hardness: 0.3, color: (60, 120, 40), tags: ["leaves", "natural", "tree"],
             ),
             (
                 name: "{name}_sapling", render: Plant, solid: false, sound: Grass, textures: All("{name}_sapling"),
@@ -127,10 +130,10 @@
         // tint, shading and wind), its fruit drawn over the leaves untinted; picking a ripe
         // one takes it back to bare to fruit again (crops.ron).
         "fruit_leaves": [
-            (name: "{name}_leaves_0", render: Leaves, tint: Foliage, sound: Leaves, textures: All("{name}_leaves_0"), light_filter: 1, hardness: 0.3, drops: "core:air", color: (60, 120, 40), tags: ["leaves", "natural", "fruit_leaves"]),
-            (name: "{name}_leaves_1", render: Leaves, tint: Foliage, sound: Leaves, textures: All("{name}_leaves_1"), light_filter: 1, hardness: 0.3, drops: "core:air", color: (60, 120, 40), tags: ["leaves", "natural", "fruit_leaves"]),
-            (name: "{name}_leaves_2", render: Leaves, tint: Foliage, sound: Leaves, textures: All("{name}_leaves_2"), light_filter: 1, hardness: 0.3, drops: "core:air", color: (60, 120, 40), tags: ["leaves", "natural", "fruit_leaves"]),
-            (name: "{name}_leaves", render: Leaves, tint: Foliage, sound: Leaves, textures: All("{name}_leaves"), light_filter: 1, hardness: 0.3, drops: "core:air", color: (60, 120, 40), tags: ["leaves", "natural", "fruit_leaves", "ripe"]),
+            (name: "{name}_leaves_0", render: Leaves, tint: Foliage, sound: Leaves, textures: All("{name}_leaves_0"), light_filter: 1, hardness: 0.3, drops: "core:air", color: (60, 120, 40), tags: ["leaves", "natural", "fruit_leaves", "tree"]),
+            (name: "{name}_leaves_1", render: Leaves, tint: Foliage, sound: Leaves, textures: All("{name}_leaves_1"), light_filter: 1, hardness: 0.3, drops: "core:air", color: (60, 120, 40), tags: ["leaves", "natural", "fruit_leaves", "tree"]),
+            (name: "{name}_leaves_2", render: Leaves, tint: Foliage, sound: Leaves, textures: All("{name}_leaves_2"), light_filter: 1, hardness: 0.3, drops: "core:air", color: (60, 120, 40), tags: ["leaves", "natural", "fruit_leaves", "tree"]),
+            (name: "{name}_leaves", render: Leaves, tint: Foliage, sound: Leaves, textures: All("{name}_leaves"), light_filter: 1, hardness: 0.3, drops: "core:air", color: (60, 120, 40), tags: ["leaves", "natural", "fruit_leaves", "ripe", "tree"]),
             (name: "{name}", render: Plant, solid: false, item: true, textures: All("{name}"), hardness: 0.0, color: (200, 60, 40), tags: ["produce", "fruit", "edible"]),
         ],
         // Fired clay in one colour.
@@ -212,7 +215,7 @@
         // instead (tools.ron), and no region's timber turns up where its trees do not grow.
         (
             name: "dead_log", sound: Wood, textures: All("dead_log"),
-            hardness: 1.6, drops: "core:air", color: (128, 124, 116), tags: ["log", "natural", "snag"],
+            hardness: 1.6, drops: "core:air", color: (128, 124, 116), tags: ["log", "natural", "snag", "tree"],
         ),
         (name: "powder_snow", texture_variety: (turn: true, mirror: true), sound: Snow, textures: All("powder_snow"), hardness: 0.25, color: (248, 253, 253), tags: ["snow", "cold", "natural", "surface"]),
         (name: "ice", sound: Glass, textures: All("ice"), render: Translucent, light_filter: 2, hardness: 0.5, color: (150, 190, 250), tags: ["ice", "cold", "natural"]),
@@ -232,6 +235,8 @@
         (
             name: "water", sound: Water,
             textures: All("water_still"),
+            // Kept animals drink from it (as from a well or a trough).
+            tags: ["drinking_water"],
             render: Translucent,
             solid: false,
             tint: Water,
@@ -266,7 +271,7 @@
             light_filter: 1,
             hardness: 0.7,
             color: (74, 59, 38),
-            tags: ["wood", "natural", "wetland"],
+            tags: ["wood", "natural", "wetland", "tree"],
         ),
         // Caves: dripstone, glowing growth, crystals, magma, the deep dark's gloomvein,
         // giant mushroom blocks and roots hanging from the roof.
@@ -281,22 +286,22 @@
         (name: "crystal_cluster", render: Plant, solid: false, sound: Glass, textures: All("crystal_cluster"), light: 4, hardness: 1.0, color: (170, 150, 220), rarity: Uncommon, tags: ["gem", "cave", "glowing", "alchemy:clarity", "alchemy:aether"]),
         (name: "magma_block", texture_variety: (turn: true, mirror: true), textures: All("magma"), light: 3, hardness: 0.5, color: (140, 50, 20), tags: ["stone", "igneous", "natural", "cave", "deep", "hot", "volcanic", "glowing"]),
         (name: "gloomvein", texture_variety: (turn: true, mirror: true), sound: Soil, textures: All("gloomvein"), light: 1, hardness: 0.6, color: (20, 40, 46), rarity: Rare, tags: ["natural", "cave", "deep", "wonder", "glowing", "alchemy:night_sight", "alchemy:aether"]),
-        (name: "brown_mushroom_block", texture_variety: (turn: true, mirror: true), sound: Wood, textures: All("brown_mushroom_block"), hardness: 0.2, drops: "mushroom", color: (150, 110, 80), tags: ["fungus", "natural", "cave", "forest_floor"]),
-        (name: "red_mushroom_block", texture_variety: (turn: true, mirror: true), sound: Wood, textures: All("red_mushroom_block"), hardness: 0.2, drops: "red_mushroom", color: (200, 40, 40), tags: ["fungus", "natural", "cave", "forest_floor"]),
-        (name: "mushroom_stem", texture_variety: (turn: false, mirror: true), sound: Wood, textures: All("mushroom_stem"), hardness: 0.2, color: (205, 198, 182), tags: ["fungus", "natural", "cave", "forest_floor"]),
+        (name: "brown_mushroom_block", texture_variety: (turn: true, mirror: true), sound: Wood, textures: All("brown_mushroom_block"), hardness: 0.2, drops: "mushroom", color: (150, 110, 80), tags: ["fungus", "natural", "cave", "forest_floor", "tree"]),
+        (name: "red_mushroom_block", texture_variety: (turn: true, mirror: true), sound: Wood, textures: All("red_mushroom_block"), hardness: 0.2, drops: "red_mushroom", color: (200, 40, 40), tags: ["fungus", "natural", "cave", "forest_floor", "tree"]),
+        (name: "mushroom_stem", texture_variety: (turn: false, mirror: true), sound: Wood, textures: All("mushroom_stem"), hardness: 0.2, color: (205, 198, 182), tags: ["fungus", "natural", "cave", "forest_floor", "tree"]),
         // Leaves turned for autumn, for groves that biomes want in colour.
-        (name: "golden_birch_leaves", sound: Leaves, textures: All("golden_birch_leaves"), render: Leaves, light_filter: 1, hardness: 0.3, color: (220, 180, 40), family: "birch", tags: ["leaves", "natural", "broadleaf", "autumn", "dye:yellow"]),
+        (name: "golden_birch_leaves", sound: Leaves, textures: All("golden_birch_leaves"), render: Leaves, light_filter: 1, hardness: 0.3, color: (220, 180, 40), family: "birch", tags: ["leaves", "natural", "broadleaf", "autumn", "dye:yellow", "tree"]),
         // Leaves of their own, on borrowed wood: an olive's grey-green, untinted, and a
         // larch's soft needles, a fresher green than a spruce's.
-        (name: "olive_leaves", sound: Leaves, textures: All("olive_leaves"), render: Leaves, light_filter: 1, hardness: 0.3, color: (150, 160, 120), family: "acacia", tags: ["leaves", "natural", "broadleaf", "evergreen", "dry"]),
-        (name: "larch_leaves", sound: Leaves, textures: All("larch_leaves"), render: Leaves, light_filter: 1, hardness: 0.3, color: (100, 140, 60), family: "spruce", tags: ["leaves", "natural", "conifer", "cold"]),
-        (name: "russet_oak_leaves", sound: Leaves, textures: All("russet_oak_leaves"), render: Leaves, light_filter: 1, hardness: 0.3, color: (170, 90, 40), family: "oak", tags: ["leaves", "natural", "broadleaf", "autumn", "dye:orange"]),
-        (name: "amber_maple_leaves", sound: Leaves, textures: All("amber_maple_leaves"), render: Leaves, light_filter: 1, hardness: 0.3, color: (230, 150, 40), family: "maple", tags: ["leaves", "natural", "broadleaf", "autumn", "dye:orange"]),
-        (name: "azalea_leaves", sound: Leaves, textures: All("azalea_leaves"), render: Leaves, light_filter: 1, hardness: 0.3, color: (90, 115, 45), tags: ["leaves", "natural", "broadleaf"]),
-        (name: "flowering_azalea_leaves", sound: Leaves, textures: All("flowering_azalea_leaves"), render: Leaves, light_filter: 1, hardness: 0.3, color: (110, 110, 70), tags: ["leaves", "natural", "broadleaf", "flower"]),
+        (name: "olive_leaves", sound: Leaves, textures: All("olive_leaves"), render: Leaves, light_filter: 1, hardness: 0.3, color: (150, 160, 120), family: "acacia", tags: ["leaves", "natural", "broadleaf", "evergreen", "dry", "tree"]),
+        (name: "larch_leaves", sound: Leaves, textures: All("larch_leaves"), render: Leaves, light_filter: 1, hardness: 0.3, color: (100, 140, 60), family: "spruce", tags: ["leaves", "natural", "conifer", "cold", "tree"]),
+        (name: "russet_oak_leaves", sound: Leaves, textures: All("russet_oak_leaves"), render: Leaves, light_filter: 1, hardness: 0.3, color: (170, 90, 40), family: "oak", tags: ["leaves", "natural", "broadleaf", "autumn", "dye:orange", "tree"]),
+        (name: "amber_maple_leaves", sound: Leaves, textures: All("amber_maple_leaves"), render: Leaves, light_filter: 1, hardness: 0.3, color: (230, 150, 40), family: "maple", tags: ["leaves", "natural", "broadleaf", "autumn", "dye:orange", "tree"]),
+        (name: "azalea_leaves", sound: Leaves, textures: All("azalea_leaves"), render: Leaves, light_filter: 1, hardness: 0.3, color: (90, 115, 45), tags: ["leaves", "natural", "broadleaf", "tree"]),
+        (name: "flowering_azalea_leaves", sound: Leaves, textures: All("flowering_azalea_leaves"), render: Leaves, light_filter: 1, hardness: 0.3, color: (110, 110, 70), tags: ["leaves", "natural", "broadleaf", "flower", "tree"]),
         // Glowcaps: giant glowing mushrooms of fungal caves and forests.
-        (name: "glowcap_stem", sound: Wood, textures: Column(end: "glowcap_stem_top", side: "glowcap_stem"), hardness: 1.5, color: (210, 205, 190), rarity: Rare, family: "glowcap", tags: ["fungus", "wood", "natural", "wonder", "cave"]),
-        (name: "glowcap_cap", sound: Wood, textures: All("glowcap_cap"), light: 12, hardness: 0.8, color: (60, 220, 210), rarity: Rare, family: "glowcap", tags: ["fungus", "natural", "wonder", "glowing", "light", "alchemy:luminous"]),
+        (name: "glowcap_stem", sound: Wood, textures: Column(end: "glowcap_stem_top", side: "glowcap_stem"), hardness: 1.5, color: (210, 205, 190), rarity: Rare, family: "glowcap", tags: ["fungus", "wood", "natural", "wonder", "cave", "tree"]),
+        (name: "glowcap_cap", sound: Wood, textures: All("glowcap_cap"), light: 12, hardness: 0.8, color: (60, 220, 210), rarity: Rare, family: "glowcap", tags: ["fungus", "natural", "wonder", "glowing", "light", "alchemy:luminous", "tree"]),
         (name: "glowcap_planks", sound: Wood, textures: All("glowcap_planks"), hardness: 1.5, color: (200, 195, 175), family: "glowcap", tags: ["planks", "building", "wonder"]),
         (name: "cactus", sound: Wood, textures: Sides(top: "cactus_top", bottom: "cactus_bottom", side: "cactus_side"), hardness: 0.4, color: (80, 130, 40), tags: ["plant", "desert", "hot", "dry", "natural", "thorny"]),
         // Plants
@@ -374,10 +379,14 @@
         (name: "sapphire_ore_sample", render: Plant, model: Rock, solid: false, sound: Stone, textures: All("sapphire_ore"), host: "stone", hardness: 0.5, drops: "sapphire_ore", color: (50, 90, 210), tags: ["ore_sample", "ore", "gem", "gem:sapphire", "natural"]),
         (name: "emerald_ore_sample", render: Plant, model: Rock, solid: false, sound: Stone, textures: All("emerald_ore"), host: "stone", hardness: 0.5, drops: "emerald_ore", color: (40, 170, 100), tags: ["ore_sample", "ore", "gem", "gem:emerald", "natural"]),
         // Building
-        (name: "glass", sound: Glass, textures: All("glass"), render: Cutout, hardness: 0.3, color: (200, 230, 240), tags: ["glass", "building"]),
+        // Windows glow by the light of a lit room behind them (`lit_through`).
+        (name: "glass", sound: Glass, textures: All("glass"), render: Cutout, hardness: 0.3, color: (200, 230, 240), tags: ["glass", "window", "building"], lit_through: true),
         // Settlements' windows: old panes that break to nothing, so a village is no free
         // glass while glass has no recipe (settlements.ron `window`).
-        (name: "old_glass", sound: Glass, textures: All("old_glass"), render: Cutout, hardness: 0.3, drops: "core:air", color: (200, 230, 240), tags: ["building"]),
+        (name: "old_glass", sound: Glass, textures: All("old_glass"), render: Cutout, hardness: 0.3, drops: "core:air", color: (200, 230, 240), tags: ["window", "building"], lit_through: true),
+        // A window before glass (Farm, Construction 3): oiled hide in a frame of sticks. Light
+        // passes it as it does glass, and a lit room behind it shows warm through it at night.
+        (name: "hide_window", sound: Wood, textures: All("hide_window"), render: Cutout, hardness: 0.4, color: (200, 150, 90), tags: ["window", "building"], lit_through: true),
         (name: "glowstone", sound: Glass, textures: All("glowstone"), light: 15, hardness: 0.3, color: (250, 210, 120), tags: ["light", "building"]),
         (name: "sea_lantern", sound: Glass, textures: All("sea_lantern"), light: 15, hardness: 0.3, color: (200, 225, 220), tags: ["light", "building"]),
         // Food made in the crafting grid (recipes.ron).

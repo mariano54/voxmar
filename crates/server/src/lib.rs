@@ -14,6 +14,8 @@ mod fishing;
 mod death;
 #[cfg(test)]
 mod doors;
+#[cfg(test)]
+mod seats;
 mod hearth;
 mod journal;
 mod lairs;
@@ -31,8 +33,10 @@ mod process;
 mod rules;
 mod laying;
 mod stations;
+mod traps;
 mod stores;
 mod treasure;
+mod troughs;
 pub mod save;
 mod villagers;
 mod wandering;
@@ -106,6 +110,9 @@ pub struct ServerConfig {
     /// the clock. What the server judges by arrival stamps (a break, a blow) keeps the
     /// clock's pace, since players' messages carry theirs.
     pub tick_speedup: u32,
+    /// The key a new world's draws hash (`WorldMeta::draw_key`), else a random one. The gate
+    /// sets one, as it sets the seed, so its world draws the same every run.
+    pub draw_key: Option<u64>,
     /// Whether the server ticks only as far as its test's player allows
     /// (`ServerHandle::allow_tick`): one tick past the last the player has taken in, so a
     /// player starved of the cores on a busy machine is never left behind by a quick
@@ -230,6 +237,7 @@ impl Default for ServerConfig {
             lag: Lag::default(),
             cut_saves: false,
             tick_speedup: 1,
+            draw_key: None,
             lockstep: false,
             wandering_starts: true,
         }
@@ -278,6 +286,21 @@ pub fn assets_dir() -> PathBuf {
 const NAMED_ACTIONS: &[&str] =
     &["core:mine", "core:place", "core:transfer", "core:quick_move", "core:craft", "core:stow", "core:drop", "core:attack", "core:eat", "core:respawn"];
 
+/// Healing by itself, however many buffs and prayers are on, is held under `heal_most` a
+/// second (`survival.ron`), which must be below what the slowest food heals a second eaten
+/// bite after bite (`core:eat`'s time): food stays the way to heal in a hurry.
+fn heal_most_below_food(content: &Content, heal_most: f32) -> Result<(), String> {
+    let eat = content.actions.get(content.actions.expect("core:eat")).expect("named");
+    let voxmar_engine::action::Duration::Seconds(bite) = eat.duration else {
+        return Err("core:eat must take a time (Seconds), the bite that heal_most is held under".into());
+    };
+    let slowest = content.blocks.ids().map(|id| voxmar_engine::vitals::food_value(&content.blocks.def(id).tags)).filter(|&heal| heal > 0).min();
+    match slowest.map(|heal| heal as f32 / bite.max(f32::EPSILON)) {
+        Some(per_second) if heal_most >= per_second => Err(format!("survival.ron's heal_most ({heal_most} a second) must be below what the slowest food heals a second, a bite each {bite} s ({per_second:.2})")),
+        _ => Ok(()),
+    }
+}
+
 /// Loads every content package under `assets/content`, and checks the world
 /// generator's definitions in them, so a broken package fails at startup.
 pub fn load_content(assets: &Path) -> Result<Content, Box<dyn std::error::Error>> {
@@ -288,7 +311,8 @@ pub fn load_content(assets: &Path) -> Result<Content, Box<dyn std::error::Error>
     WorldContent::load(&content)?;
     wear::WearRules::load(&content.files, &content.blocks, 0)?;
     let mut notes = Vec::new();
-    rules::SurvivalRules::load(&content.files, &content.blocks, &mut notes)?;
+    let survival = rules::SurvivalRules::load(&content.files, &content.blocks, &mut notes)?;
+    heal_most_below_food(&content, survival.heal_most)?;
     std::sync::Arc::make_mut(&mut content.notes).extend(notes);
     for fluid in content.blocks.fluids().iter().filter(|fluid| !swum_or_burns(&content.blocks, fluid)) {
         tracing::warn!("the fluid {} is neither swum in (swim: true) nor burns (tagged \"lava\"): players wade through it unharmed", fluid.name);
@@ -331,6 +355,44 @@ struct Leash {
     ticked: std::sync::Condvar,
 }
 
+#[cfg(target_os = "linux")]
+fn thread_cpu_time(thread: &JoinHandle<()>) -> Option<Duration> {
+    use std::os::unix::thread::JoinHandleExt;
+    let mut clock: libc::clockid_t = 0;
+    let mut time = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    // SAFETY: the thread is not joined (the handle holds it), so its pthread_t is valid; the
+    // calls write only the clock id and the time they are given.
+    unsafe {
+        if libc::pthread_getcpuclockid(thread.as_pthread_t(), &mut clock) != 0 || libc::clock_gettime(clock, &mut time) != 0 {
+            return None;
+        }
+    }
+    Some(Duration::new(time.tv_sec as u64, time.tv_nsec as u32))
+}
+
+#[cfg(target_os = "macos")]
+fn thread_cpu_time(thread: &JoinHandle<()>) -> Option<Duration> {
+    use std::os::unix::thread::JoinHandleExt;
+    let mut info = std::mem::MaybeUninit::<libc::thread_basic_info>::zeroed();
+    let mut count = libc::THREAD_BASIC_INFO_COUNT;
+    // SAFETY: the thread is not joined, so its pthread_t is valid; thread_info writes at
+    // most `count` integers into the buffer, read only when it says it succeeded.
+    let info = unsafe {
+        let port = libc::pthread_mach_thread_np(thread.as_pthread_t());
+        if libc::thread_info(port, libc::THREAD_BASIC_INFO as libc::thread_flavor_t, info.as_mut_ptr().cast(), &mut count) != libc::KERN_SUCCESS {
+            return None;
+        }
+        info.assume_init()
+    };
+    let time = |t: libc::time_value_t| Duration::new(t.seconds as u64, t.microseconds as u32 * 1000);
+    Some(time(info.user_time) + time(info.system_time))
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn thread_cpu_time(_: &JoinHandle<()>) -> Option<Duration> {
+    None
+}
+
 /// Ticks whose times a server keeps, for `ServerHandle::tick_times`: the last minute.
 const TICK_TIMES: usize = 60 * TICKS_PER_SECOND as usize;
 
@@ -341,10 +403,20 @@ impl ServerHandle {
         self.tick_times.lock().map(|t| t.iter().copied().collect()).unwrap_or_default()
     }
 
+    /// How much CPU time the server's thread has had: work it has done, whether or not it has
+    /// a tick or a message to show for it yet (opening the world, generating the spawn
+    /// column). A test's wait on a silent server tells by it a server at work on a busy
+    /// machine from a stuck one. `None` once the thread has ended, or where the system does
+    /// not say.
+    pub fn cpu_time(&self) -> Option<Duration> {
+        let thread = self.thread.as_ref().filter(|t| !t.is_finished())?;
+        thread_cpu_time(thread)
+    }
+
     /// How many ticks the server has simulated: its own clock, which a server running behind
     /// on a busy machine keeps, where wall-clock seconds do not.
     pub fn ticks(&self) -> u64 {
-        self.ticks.load(Ordering::Relaxed)
+        self.ticks.load(Ordering::Acquire)
     }
 
     /// Whether a server made to run behind (`ServerConfig::lag`) does so from now on: it
@@ -456,15 +528,25 @@ pub fn spawn(mut config: ServerConfig, content: Content) -> std::io::Result<Serv
 /// an unsaved one.
 fn open_world(config: &mut ServerConfig) -> std::io::Result<(Option<WorldSave>, WorldMeta)> {
     let new_mode = if config.allow_flight { GameMode::Creative } else { GameMode::Survival };
-    let Some(dir) = &config.world else { return Ok((None, WorldMeta::new("world", config.seed, new_mode))) };
+    let keyed = |mut meta: WorldMeta| {
+        if let Some(key) = config.draw_key {
+            meta.draw_key = key;
+        }
+        meta
+    };
+    let Some(dir) = &config.world else { return Ok((None, keyed(WorldMeta::new("world", config.seed, new_mode)))) };
     let save = WorldSave::new(dir);
     let mut meta = if save.exists() {
-        let meta = save.read_meta()?;
+        let mut meta = save.read_meta()?;
         save.recover(&meta);
+        // A world from before its draws had a key gets one now, kept from its next save.
+        if meta.draw_key == 0 {
+            meta.draw_key = config.draw_key.unwrap_or_else(save::random_key);
+        }
         meta
     } else {
         let name = dir.file_name().map_or_else(|| "world".into(), |name| name.to_string_lossy().into_owned());
-        let meta = WorldMeta::new(name, config.seed, new_mode);
+        let meta = keyed(WorldMeta::new(name, config.seed, new_mode));
         save.create(&meta)?;
         tracing::info!("created world {}", dir.display());
         meta
@@ -548,8 +630,11 @@ pub(crate) struct Server {
     farm: farm::Farm,
     /// Machines players built, and the power between them.
     factory: voxmar_engine::factory::Factory,
-    /// Multiblocks burning their initial fuel charge, by core cell.
+    /// Lit multiblocks, by core cell: a kiln burning its fuel charge, a hearth (which needs
+    /// none) until it breaks.
     lit: FxHashMap<IVec3, hearth::Lit>,
+    /// The burning fires players were last told of (`ServerMessage::Fires`).
+    fires_sent: Vec<IVec3>,
     /// Cells whose block a player placed: ores, which then teach nothing; plants, which
     /// don't regrow by themselves; and furnishings, which give themselves back only from
     /// these cells (see `WorldMeta::placed`).
@@ -562,6 +647,8 @@ pub(crate) struct Server {
     apiary: apiary::Apiary,
     /// What is on each loaded home station, and when it is done (`stations`).
     stations: stations::Loads,
+    /// What each sprung trap caught (`traps`).
+    catches: traps::Catches,
     /// When the player message being handled arrived (see `actions`).
     arrival: Instant,
     /// The moment before which every player message has been handled: the last time all
@@ -650,8 +737,8 @@ impl Server {
         let weather = WeatherState::new(meta.seed, overworld.dials().wind.into(), land, content.weather.clone(), chances);
         let processes = process::core_processes();
         let generator: Arc<dyn Generator> = overworld.clone();
-        // Load the spawn column up front and stand on its highest solid block, so
-        // features like trees never bury the player.
+        // Load the spawn column up front and stand on its highest ground under any tree,
+        // so trees never bury the player or hold them up on a crown (`find_ground`).
         let mut world = VoxelWorld::default();
         let spawn_block = generator.spawn_point();
         let spawn_column = ColumnPos::of_block(spawn_block);
@@ -675,7 +762,8 @@ impl Server {
         let lairs = lairs::Lairs::restore(&meta.lairs);
         let planter_grown = meta.planter_grown.iter().map(|&p| IVec3::from_array(p)).collect();
         let apiary = apiary::Apiary::restore(&meta.hives);
-        let stations = stations::Loads::restore(&meta.stations, |name| content.blocks.id(name));
+        let stations = stations::Loads::restore(&meta.stations, |name| content.blocks.item_named(name));
+        let catches = traps::Catches::restore(&meta.catches, |name| content.creatures.id(name));
         let lit = meta.lit.iter().filter(|fire| fire.until > tick && content.multiblocks.get(&fire.structure).is_some())
             .map(|fire| (IVec3::from_array(fire.position), fire.clone())).collect();
         let survival = Arc::new(rules::SurvivalRules::load(&content.files, &content.blocks, &mut Vec::new()).expect("checked by load_content"));
@@ -695,11 +783,13 @@ impl Server {
             farm,
             factory: voxmar_engine::factory::Factory::default(),
             lit,
+            fires_sent: Vec::new(),
             placed,
             regrowing,
             planter_grown,
             apiary,
             stations,
+            catches,
             arrival: Instant::now(),
             heard: None,
             creatures: creatures::Creatures::default(),
@@ -766,7 +856,9 @@ impl Server {
             }
             if now >= next_tick {
                 self.tick();
-                ticks.fetch_add(1, Ordering::Relaxed);
+                // Released after the tick's messages are sent: whoever reads this count
+                // finds them waiting (`ServerHandle::ticks`).
+                ticks.fetch_add(1, Ordering::Release);
                 if let Some(leash) = &self.leash {
                     *leash.made.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = ticks.load(Ordering::Relaxed);
                     leash.ticked.notify_all();
@@ -928,6 +1020,10 @@ impl Server {
         self.broadcast_players();
         if self.tick.is_multiple_of(TICKS_PER_SECOND as u64) {
             self.broadcast(self.time_message());
+            for id in self.players.iter().filter(|(_, p)| !p.kindled).map(|(&id, _)| id).collect::<Vec<_>>() {
+                self.kindle_home(id);
+            }
+            self.send_fires();
         }
         if self.tick.is_multiple_of(SAVE_INTERVAL) {
             self.save();
@@ -1027,6 +1123,7 @@ impl Server {
         meta.lairs = self.lairs.saved();
         meta.hives = self.apiary.saved();
         meta.stations = self.stations.saved(|item| self.content.blocks.def(item).name.clone());
+        meta.catches = self.catches.saved(|species| self.content.creatures.get(species).def.name.clone());
         meta.lit = self.lit.values().filter(|fire| fire.until > self.tick).cloned().collect();
         meta.lit.sort_by_key(|fire| fire.position);
         meta.day = Some(self.day as u64);
@@ -1137,6 +1234,12 @@ impl Server {
         self.block(pos).is_some_and(|b| self.content.blocks.info(b).solid)
     }
 
+    /// What a cell stops a player with, in blocks from its lower corner (see
+    /// `BlockRegistry::collision`): the boxes the client moves its player against.
+    pub(crate) fn boxes(&self, pos: IVec3) -> &[voxmar_engine::physics::Aabb] {
+        self.block(pos).map_or(&[], |b| self.content.blocks.collision(b))
+    }
+
     /// Changes many blocks at once (a command's), telling each player about those in columns
     /// they have in one message, and waking any fluid they let flow.
     pub(crate) fn set_blocks(&mut self, changes: &[(IVec3, BlockId)]) {
@@ -1149,7 +1252,9 @@ impl Server {
                 self.machine_changed(pos, old, block);
                 self.hive_changed(pos, old, block);
                 self.station_changed(pos, old, block);
+                self.trap_changed(pos, block);
                 self.fire_changed(pos);
+                self.home_changed(pos, block);
             }
         }
         for &(pos, _) in &done {
@@ -1185,7 +1290,9 @@ impl Server {
             self.machine_changed(pos, old, block);
             self.hive_changed(pos, old, block);
             self.station_changed(pos, old, block);
+            self.trap_changed(pos, block);
             self.fire_changed(pos);
+            self.home_changed(pos, block);
             for player in self.players.values().filter(|p| p.joined && p.sent.contains(&column)) {
                 player.connection.send(ServerMessage::BlockChanged { pos, block });
             }
@@ -1194,16 +1301,19 @@ impl Server {
     }
 }
 
-/// The spot nearest `start` within its column whose top block is opaque ground with two
-/// free blocks above it (so the player never spawns in a tree).
+/// The spot nearest `start` within its column whose highest ground, under any tree (blocks
+/// tagged `tree`: trunks, bark, roots, leaves, giant mushroom caps), is opaque with two
+/// free blocks above it: the player wakes on the land under or beside a tree, never on its
+/// crown or in it.
 fn find_ground(world: &VoxelWorld, registry: &BlockRegistry, start: IVec3) -> Vec3 {
     let origin = ColumnPos::of_block(start).origin();
     let mut candidates: Vec<IVec3> =
         (0..CHUNK_SIZE).flat_map(|z| (0..CHUNK_SIZE).map(move |x| origin + IVec3::new(x, 0, z))).collect();
     candidates.sort_by_key(|p| (p.x - start.x).abs() + (p.z - start.z).abs());
     let info = |p: IVec3| world.block(p).map(|b| registry.info(b));
+    let tree = |p: IVec3| world.block(p).is_some_and(|b| registry.def(b).has_tag("tree"));
     for column in candidates {
-        let Some(ground) = (0..WORLD_HEIGHT).rev().map(|y| column.with_y(y)).find(|&p| info(p).is_some_and(|i| i.solid))
+        let Some(ground) = (0..WORLD_HEIGHT).rev().map(|y| column.with_y(y)).find(|&p| info(p).is_some_and(|i| i.solid) && !tree(p))
         else {
             continue;
         };
@@ -1238,6 +1348,10 @@ pub(crate) fn test_server() -> Server {
     test_server_on(test_content())
 }
 
+/// The draw key of every test server's world (`test_server_on`).
+#[cfg(test)]
+pub(crate) const TEST_DRAW_KEY: u64 = 0x0d1a;
+
 /// The game's own content, as `test_server` loads it.
 #[cfg(test)]
 pub(crate) fn test_content() -> Content {
@@ -1248,7 +1362,10 @@ pub(crate) fn test_content() -> Content {
 /// once (a copy shares its tables, so one changed through `Arc::get_mut` must be its own).
 #[cfg(test)]
 pub(crate) fn test_server_on(content: Content) -> Server {
-    let mut config = ServerConfig::default();
+    // One draw key for every test server, as a world's own is random: wandering, grazing
+    // and the world's other keyed rolls draw the same in every run, so a test's outcome
+    // depends on its inputs alone.
+    let mut config = ServerConfig { draw_key: Some(TEST_DRAW_KEY), ..ServerConfig::default() };
     let (save, meta) = open_world(&mut config).expect("no save to open");
     // Every test server is on the one seed: its world, held for the whole run, is the one
     // each shares (`Overworld::shared`), with the land round spawn planned once rather than
@@ -1263,6 +1380,66 @@ pub(crate) fn test_server_on(content: Content) -> Server {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Where a new world of `seed` wakes its first player, from the spawn column alone as
+    /// `Server::new` loads it, and the block they stand on.
+    fn spawn_on(seed: u64, content: &Content, world_content: &WorldContent) -> (Vec3, Option<BlockId>) {
+        let generator = Overworld::shared(seed, content, world_content);
+        let start = generator.spawn_point();
+        let mut world = VoxelWorld::default();
+        world.insert(ColumnPos::of_block(start), Arc::new(generator.generate(ColumnPos::of_block(start))));
+        let spawn = find_ground(&world, &content.blocks, start);
+        (spawn, world.block((spawn - Vec3::Y * 0.5).floor().as_ivec3()))
+    }
+
+    /// A new player never wakes on a tree (a block tagged `tree`): with seed 157 they woke
+    /// on an oak's crown of bark, its top the highest solid block in the column; now they
+    /// stand on the land under or beside it. And over a run of seeds, none does.
+    #[test]
+    fn a_new_player_never_wakes_on_a_tree() {
+        let content = test_content();
+        let world_content = WorldContent::load(&content).expect("checked by load_content");
+        let tree = |b: Option<BlockId>| b.is_some_and(|b| content.blocks.def(b).has_tag("tree"));
+        // Each seed plans its land round spawn (about 1.6 s), so they plan side by side.
+        let woke: Vec<_> = std::thread::scope(|scope| {
+            let (content, world_content) = (&content, &world_content);
+            let runs: Vec<_> = [157, 1, 2, 3, 4, 5].map(|seed| scope.spawn(move || (seed, spawn_on(seed, content, world_content)))).into_iter().collect();
+            runs.into_iter().map(|run| run.join().unwrap()).collect()
+        });
+        for (seed, (spawn, under)) in woke {
+            let name = under.map(|b| content.blocks.def(b).name.clone());
+            assert!(under.is_some_and(|b| content.blocks.info(b).solid) && !tree(under), "seed {seed}: the player wakes at {spawn} on {name:?}");
+        }
+    }
+
+    /// A world's draw key is made with it (the config's, else a random one) and kept in its
+    /// meta; an older world, saved without one, is given one when it opens.
+    #[test]
+    fn a_world_keeps_its_draw_key_and_an_older_one_is_given_one() {
+        let dir = std::env::temp_dir().join(format!("voxmar-draw-key-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let config = |key| ServerConfig { world: Some(dir.clone()), draw_key: key, ..Default::default() };
+        let (save, meta) = open_world(&mut config(Some(42))).unwrap();
+        assert_eq!(meta.draw_key, 42, "made with the config's key");
+        assert_eq!(open_world(&mut config(None)).unwrap().1.draw_key, 42, "kept");
+        save.as_ref().unwrap().write_meta(&WorldMeta { drops: 5, loot: 7, rolls: 11, ..meta.clone() }).unwrap();
+        let kept = open_world(&mut config(None)).unwrap().1;
+        assert_eq!((kept.drops, kept.loot, kept.rolls), (5, 7, 11), "the counts of drops popped, loot rolled and world rolls kept");
+        save.unwrap().write_meta(&WorldMeta { draw_key: 0, ..meta }).unwrap();
+        assert_ne!(open_world(&mut config(None)).unwrap().1.draw_key, 0, "an older world given one");
+        assert_ne!(WorldMeta::new("a", 1, GameMode::Survival).draw_key, WorldMeta::new("a", 1, GameMode::Survival).draw_key, "random without one asked");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Test servers draw by one key, so wandering and the world's other rolls come out the
+    /// same in every run (a random one left a density test failing one run in eight).
+    #[test]
+    fn test_servers_draw_the_same_every_run() {
+        let content = test_content();
+        let (mut a, mut b) = (test_server_on(content.clone()), test_server_on(content));
+        assert_eq!((a.meta.draw_key, b.meta.draw_key), (TEST_DRAW_KEY, TEST_DRAW_KEY));
+        assert_eq!(a.meta.next_roll(crate::save::ROLL_WANDER), b.meta.next_roll(crate::save::ROLL_WANDER));
+    }
 
     /// A drop and its rejoin are queued together before one reading loop: the old
     /// connection must leave before the new hello is answered, without scheduler luck.
@@ -1296,6 +1473,31 @@ mod tests {
             bob = join(&mut server);
             answer(&bob).unwrap_or_else(|reason| panic!("round {round}: same-loop rejoin rejected: {reason:?}"));
         }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn a_threads_cpu_time_counts_its_work_and_not_its_sleep() {
+        let (go, wait) = std::sync::mpsc::channel::<()>();
+        let (done, spun) = std::sync::mpsc::channel::<()>();
+        let worker = std::thread::spawn(move || {
+            // A fixed amount of work, however long a busy machine takes to give it.
+            let mut spin = 0u64;
+            for _ in 0..20_000_000 {
+                spin = std::hint::black_box(spin.wrapping_add(1));
+            }
+            done.send(()).unwrap();
+            let _ = wait.recv();
+        });
+        // Asleep on the channel after its spin, it does no more work.
+        spun.recv().unwrap();
+        let worked = thread_cpu_time(&worker).expect("the system tells a thread's CPU time");
+        assert!(worked > Duration::ZERO, "no CPU time for its spin");
+        std::thread::sleep(Duration::from_millis(50));
+        let later = thread_cpu_time(&worker).unwrap();
+        assert!(later - worked < Duration::from_millis(10), "{worked:?} then {later:?} while it slept");
+        go.send(()).unwrap();
+        worker.join().unwrap();
     }
 
     /// Preparation can happen before connecting; an accepted peer still has to say

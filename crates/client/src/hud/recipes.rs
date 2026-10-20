@@ -74,7 +74,7 @@ pub struct RecipeViewer {
     pub trail: Vec<Lookup>,
     book: Option<Arc<RecipeBook>>,
     /// What was drawn last, to draw again only on a change.
-    drawn: Option<(Lookup, String, u32, bool)>,
+    drawn: Option<(Lookup, String, u32, bool, Vec<String>)>,
     /// Items reported in this game, bounded by the content registry, cleared on leaving.
     reported: HashSet<BlockId>,
 }
@@ -314,6 +314,7 @@ fn draw(
     font: Res<UiFont>,
     images: Res<HudImages>,
     mut viewer: ResMut<RecipeViewer>,
+    player: Res<crate::player::LocalPlayer>,
     mut root: Query<&mut Visibility, With<ViewerRoot>>,
     mut title: Query<&mut Text, (With<ViewerTitle>, Without<ViewerPage>)>,
     mut page_text: Query<&mut Text, (With<ViewerPage>, Without<ViewerTitle>)>,
@@ -329,12 +330,28 @@ fn draw(
     // Families of recipes show each of their variants in turn, a second each.
     let cycles = viewer.found().iter().skip(lookup.page * PER_PAGE).take(PER_PAGE).any(|e| matches!(&e.method, Method::Craft { variants, .. } if variants.len() > 1));
     let tick = time.elapsed_secs() as u32;
-    let key = (lookup, locale.code().to_owned(), if cycles { tick } else { 0 }, ui.inventory_open);
+    // What each crafting way on the page still wants, from what the pack holds (and the
+    // home's stores, standing in it).
+    let content = &launch.content;
+    let lacks = super::makeable::lacks(content, &player);
+    let have = super::makeable::within_reach(&player);
+    let wants: Vec<Option<(String, Color)>> = viewer
+        .found()
+        .iter()
+        .skip(lookup.page * PER_PAGE)
+        .take(PER_PAGE)
+        .map(|entry| {
+            let Method::Craft { variants, first, .. } = &entry.method else { return None };
+            let near = content.recipes.iter().skip(*first).take(variants.len()).map(|recipe| super::makeable::reach(recipe, &have, player.station.is_some(), &lacks).unwrap_or_else(|| super::makeable::Reach::Short(recipe.short(&have)))).min_by_key(super::makeable::Reach::rank)?;
+            let colour = if near == super::makeable::Reach::Ready { GOLD } else { SOFT };
+            Some((super::makeable::words(&locale, content, entry.output, &near), colour))
+        })
+        .collect();
+    let key = (lookup, locale.code().to_owned(), if cycles { tick } else { 0 }, ui.inventory_open, wants.iter().flatten().map(|(w, _)| w.clone()).collect::<Vec<_>>());
     if viewer.drawn.as_ref() == Some(&key) {
         return;
     }
     viewer.drawn = Some(key);
-    let content = &launch.content;
     let name = |item: BlockId| locale.block(content.blocks.def(item));
     let found = viewer.found();
     let pages = found.len().div_ceil(PER_PAGE).max(1);
@@ -352,7 +369,7 @@ fn draw(
             let key = if lookup.uses { "recipes.none.uses" } else { "recipes.none.recipes" };
             body.spawn(text(font, locale.format(key, &[("item", &name(lookup.item))]), BODY, MUTED));
         }
-        for entry in &entries {
+        for (entry, wants) in entries.iter().zip(wants.iter().cloned().chain(std::iter::repeat(None))) {
             let card = Node { align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), padding: UiRect::all(Val::Px(space::GAP)), ..default() };
             body.spawn((card, Piece::Well.image())).with_children(|card| {
                 // What goes in, as it is laid out in the game.
@@ -368,7 +385,7 @@ fn draw(
                 let words = Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(space::HAIR), flex_grow: 1.0, min_width: Val::ZERO, ..default() };
                 card.spawn(words).with_children(|words| {
                     words.spawn(shadowed(font, title, BODY, TEXT));
-                    for (line, colour) in describe(&locale, &launch, &entry.method) {
+                    for (line, colour) in describe(&locale, &launch, &entry.method).into_iter().chain(wants) {
                         words.spawn(text(font, line, BODY, colour));
                     }
                 });
@@ -377,8 +394,14 @@ fn draw(
                     && let Method::Craft { variants, first, .. } = &entry.method
                 {
                     let lay = LayButton { output: entry.output, first: *first as u16, ways: variants.len().min(u8::MAX as usize) as u8 };
-                    card.spawn(Node { width: Val::Px(36.0 * PX), ..default() }).with_children(|cell| {
-                        spawn_button(cell, font, "recipes.lay", ButtonStyle::Secondary, lay);
+                    // As wide as its word needs in every language, never squeezed by the
+                    // words beside it.
+                    card.spawn(Node { min_width: Val::Px(36.0 * PX), flex_shrink: 0.0, ..default() }).with_children(|cell| {
+                        let button = spawn_button(cell, font, "recipes.lay", ButtonStyle::Secondary, lay);
+                        cell.commands().entity(button).entry::<Node>().and_modify(|mut node| {
+                            node.flex_basis = Val::Auto;
+                            node.padding = UiRect::horizontal(Val::Px(space::INNER));
+                        });
                     });
                 }
             });
@@ -387,12 +410,13 @@ fn draw(
 }
 
 /// What goes into a way, as it is laid out in the game: the crafting grid (two by two, or
-/// three by three for what takes a crafting table), a cooked item and its station, or the
+/// three by three for what takes a crafting table) and any block it is made near, a cooked
+/// item and its station, or the
 /// tool that takes a creature's product. A family of recipes shows the variant with `using`
 /// if it has one, else each in turn by `tick`.
 pub(super) fn way_inputs(card: &mut ChildSpawnerCommands, font: &Handle<Font>, images: &HudImages, content: &voxmar_engine::content::Content, method: &Method, using: Option<BlockId>, tick: u32) {
     match method {
-        Method::Craft { variants, .. } => {
+        Method::Craft { variants, near, .. } => {
             let wanted = |cells: &&[Option<BlockId>; GRID]| using.is_some_and(|item| cells.contains(&Some(item)));
             let cells = variants.iter().find(wanted).unwrap_or(&variants[tick as usize % variants.len()]);
             let side = if variants.iter().any(|v| (0..GRID).any(|i| v[i].is_some() && (i % SIDE == 2 || i / SIDE == 2))) { SIDE } else { 2 };
@@ -402,9 +426,20 @@ pub(super) fn way_inputs(card: &mut ChildSpawnerCommands, font: &Handle<Font>, i
                     item_cell(grid, font, images, cells[i], None);
                 }
             });
+            // Made near a block: that block beside the grid, as a cooking station is.
+            if let Some(block) = near.as_deref().and_then(|tag| content.blocks.tagged(tag).next()) {
+                card.spawn(text(font, "+", BODY, MUTED));
+                item_cell(card, font, images, Some(block), None);
+            }
         }
-        Method::Cook { input, station, .. } => {
-            item_cell(card, font, images, Some(*input), None);
+        Method::Cook { input, uses, with, station, .. } => {
+            // What is held, then what else it takes, each with how many if more than one.
+            let count = |n: u8| (n > 1).then(|| n.to_string());
+            item_cell(card, font, images, Some(*input), count(*uses));
+            for &(item, n) in with {
+                card.spawn(text(font, "+", BODY, MUTED));
+                item_cell(card, font, images, Some(item), count(n));
+            }
             if let Some(fire) = content.blocks.tagged(station).next() {
                 card.spawn(text(font, "+", BODY, MUTED));
                 item_cell(card, font, images, Some(fire), None);
@@ -424,7 +459,14 @@ fn describe(locale: &Locale, launch: &Launch, method: &Method) -> Vec<(String, C
     let content = &launch.content;
     let creature = |id| locale.creature(&content.creatures.get(id).def);
     match method {
-        Method::Craft { shapeless, .. } => vec![(locale.get(if *shapeless { "recipes.shapeless" } else { "recipes.craft" }).to_owned(), MUTED)],
+        Method::Craft { shapeless, near, .. } => {
+            let mut lines = vec![(locale.get(if *shapeless { "recipes.shapeless" } else { "recipes.craft" }).to_owned(), MUTED)];
+            if let Some(tag) = near {
+                let block = content.blocks.tagged(tag).next().map_or_else(|| tag.clone(), |block| locale.block(content.blocks.def(block)));
+                lines.push((locale.format("recipes.near", &[("block", &block)]), SOFT));
+            }
+            lines
+        }
         Method::Cook { station, skill, level, burnt, .. } => {
             let station = content.blocks.tagged(station).next().map_or_else(|| station.clone(), |block| locale.block(content.blocks.def(block)));
             let mut lines = vec![(locale.format("recipes.cook", &[("station", &station)]), MUTED)];

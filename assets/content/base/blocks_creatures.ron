@@ -13,18 +13,18 @@
     },
     families: [
         // Meat: heals a little raw, more once cooked.
-        (template: "drop", name: "raw_rabbit", tags: ["meat", "raw", "edible", "flavour:savoury"], all: (color: (220, 120, 120))),
-        (template: "drop", name: "raw_chicken", tags: ["meat", "raw", "edible", "flavour:savoury"], all: (color: (235, 170, 150))),
+        (template: "drop", name: "raw_small_game", tags: ["meat", "raw", "edible", "flavour:savoury"], all: (color: (220, 120, 120))),
         (template: "drop", name: "raw_duck", tags: ["meat", "raw", "edible", "flavour:savoury", "fat"], all: (color: (200, 110, 100), rarity: Uncommon)),
         (template: "drop", name: "raw_mutton", tags: ["meat", "raw", "edible", "flavour:savoury"], all: (color: (200, 80, 80))),
         (template: "drop", name: "raw_pork", tags: ["meat", "raw", "edible", "flavour:savoury", "fat"], all: (color: (240, 150, 150))),
         (template: "drop", name: "raw_beef", tags: ["meat", "raw", "edible", "flavour:savoury"], all: (color: (190, 50, 50))),
         (template: "drop", name: "raw_venison", tags: ["meat", "raw", "edible", "flavour:savoury", "game"], all: (color: (150, 40, 40))),
         (template: "drop", name: "raw_bear", tags: ["meat", "raw", "edible", "flavour:savoury", "game", "fat"], all: (color: (130, 40, 40), rarity: Uncommon)),
-        (template: "drop", name: "raw_frog", tags: ["meat", "raw", "edible", "flavour:savoury"], all: (color: (230, 180, 170))),
         (template: "drop", name: "raw_crab", tags: ["meat", "raw", "edible", "flavour:savoury", "seafood"], all: (color: (220, 120, 80))),
         // The Rootmother's heart of root (lairs.ron): eaten raw it heals and leaves the
         // Heartwood buff; it stacks, being a root and not a meal.
+        // Old Tusk's great tusk (creatures_bosses.ron): one a kill, the head of a tusk club.
+        (template: "drop", name: "great_tusk", tags: ["trophy", "bone"], all: (color: (236, 226, 200), rarity: Uncommon)),
         (template: "drop", name: "heartroot", tags: ["root", "edible", "effect:heartwood:600", "flavour:bitter", "alchemy:healing", "alchemy:hearty"], all: (color: (150, 60, 50), rarity: Uncommon)),
         // Skins and fur.
         // Every warm pelt is fur (P27, 2026-10-07: fewer items, many ways to get each).

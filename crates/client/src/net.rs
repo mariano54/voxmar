@@ -51,6 +51,9 @@ pub struct Net {
     proposed: std::sync::Mutex<Vec<ActionId>>,
     /// Actions proposed since `fx` last took them, with what they aim at, to be seen.
     shown: std::sync::Mutex<Vec<(ActionId, ActionTarget)>>,
+    /// The integrated server's ticks as `receive` began: every message of those ticks had
+    /// been sent, and was taken in (`taken_ticks`).
+    taken: std::sync::atomic::AtomicU64,
 }
 
 impl Net {
@@ -60,13 +63,20 @@ impl Net {
         let tokens = std::env::var("VOXMAR_ADMIN_TOKENS").unwrap_or_default();
         let admin_token = address.and_then(|address| admin_token_for(address, &tokens));
         connection.send(ClientMessage::Hello { name, protocol: voxmar_protocol::PROTOCOL_VERSION, content, admin_token });
-        Self { connection, server, input_timer: 0.0, proposed: Default::default(), shown: Default::default() }
+        Self { connection, server, input_timer: 0.0, proposed: Default::default(), shown: Default::default(), taken: Default::default() }
     }
 
     /// The next message from the server, for tests that play without the app.
     #[cfg(test)]
     pub fn try_recv(&self) -> Result<Option<voxmar_protocol::ServerMessage>, voxmar_protocol::Disconnected> {
         self.connection.try_recv()
+    }
+
+    /// How many of the integrated server's ticks this client has taken in: every message
+    /// they sent has been read (`receive`). Unlike `ServerHandle::ticks`, which runs on while
+    /// a long frame draws, it never counts a tick whose news is still waiting to be read.
+    pub fn taken_ticks(&self) -> Option<u64> {
+        self.server.as_ref().map(|_| self.taken.load(std::sync::atomic::Ordering::Relaxed))
     }
 
     /// Whether this is a remote server rather than singleplayer's own.
@@ -156,6 +166,11 @@ impl Net {
         self.connection.send(ClientMessage::ClaimQuest { name: name.into() });
     }
 
+    /// Asks what is on the station at `block`, looked at (see `ClientMessage::LookAtStation`).
+    pub fn look_at_station(&self, block: IVec3) {
+        self.connection.send(ClientMessage::LookAtStation { block });
+    }
+
     /// Says something to everyone.
     pub fn chat(&self, text: &str) {
         self.connection.send(ClientMessage::Chat { text: text.into() });
@@ -224,8 +239,14 @@ pub(crate) fn receive(
     (mut drops, mut toasts, launch, locale, mut creatures): (ResMut<Drops>, ResMut<SkillToasts>, Res<Launch>, Res<Locale>, ResMut<crate::creatures::Creatures>),
     mut broken: MessageWriter<BlockBroken>,
     mut fighting: ResMut<crate::fight::Fighting>,
+    mut stations: ResMut<crate::hud::target::StationSeen>,
 ) {
     let menu = if net.is_remote() { Screen::Join } else { Screen::Title };
+    // Counted before reading: a tick's messages are all sent before it counts, so this many
+    // ticks' are all read below.
+    if let Some(server) = &net.server {
+        net.taken.store(server.ticks(), std::sync::atomic::Ordering::Relaxed);
+    }
     loop {
         let message = match net.connection.try_recv() {
             Ok(Some(message)) => message,
@@ -373,7 +394,7 @@ pub(crate) fn receive(
             ServerMessage::Items { changed, gone } => drops.receive(changed, gone, time.elapsed_secs()),
             ServerMessage::Creatures { changed, gone } => creatures.receive(changed, gone),
             ServerMessage::Struck { creature, damage, killed, blow, pips } => {
-                creatures.struck(creature, damage, killed, time.elapsed_secs());
+                creatures.struck(creature, damage, blow, killed, time.elapsed_secs());
                 fighting.struck(creature, damage, blow, pips, killed, time.elapsed_secs_f64());
             }
             ServerMessage::Hurt { creature, damage, defended } => fighting.hurt(creature, damage, defended, time.elapsed_secs_f64()),
@@ -382,7 +403,9 @@ pub(crate) fn receive(
                 fighting.pings += 1;
             }
             ServerMessage::Prayers { points, most, on } => fighting.prayers = crate::fight::Prayers { points, most, on },
+            ServerMessage::Fires { lit } => world.fires = lit.into_iter().collect(),
             ServerMessage::Xp { skill, tenths } => toasts.gained(skill, tenths, time.elapsed_secs()),
+            ServerMessage::Station { block, load, fire } => stations.tell(block, load, fire, time.elapsed_secs_f64()),
         }
     }
 }

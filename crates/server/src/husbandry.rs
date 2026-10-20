@@ -9,7 +9,7 @@ use voxmar_engine::coords::ColumnPos;
 use voxmar_engine::creature::husbandry::{self, IN_LOVE_SECONDS, MATE_RANGE, YOUNG_SCALE};
 use voxmar_engine::creature::brain::Mind;
 use voxmar_engine::creature::condition::{self, Met};
-use voxmar_engine::creature::{CreatureId, mix, unit_from};
+use voxmar_engine::creature::CreatureId;
 use voxmar_engine::crop::level_bonus;
 use voxmar_engine::dropped;
 use voxmar_engine::genes;
@@ -20,11 +20,11 @@ use voxmar_engine::traits;
 use voxmar_engine::lang::Words;
 use voxmar_protocol::{ChatKind, PlayerId, TICKS_PER_DAY, TICKS_PER_SECOND};
 
+use crate::save::Draw;
 use crate::commands::Source;
 use crate::Server;
 use crate::condition::RECKON_EVERY;
 use crate::creatures::product_ticks;
-use crate::items::random3;
 
 /// How close two ready adults come before they breed, in blocks.
 const MEET: f32 = 1.6;
@@ -130,8 +130,11 @@ impl Server {
                 return;
             }
             let (item, (low, high), every, xp) = (species.products[index], product.count, product.every, product.xp);
-            let [roll, ..] = random3(self.tick, creature.body.position.floor().as_ivec3(), id);
-            let count = yielded(low + ((roll * (high - low + 1) as f32) as u8).min(high - low), creature.traits.yield_, roll);
+            // By the player's count of products taken, never by the tick.
+            // One draw for how many, the other for the yield gene's fraction.
+            let Some([roll, fraction]) = self.players.get_mut(&player).map(|p| p.draw(crate::save::Draw::Yield)) else { return };
+            let creature = &self.creatures.live[&id];
+            let count = yielded(low + ((roll * (high - low + 1) as f32) as u8).min(high - low), creature.traits.yield_, fraction);
             // Condition sets how soon the next is due (0.5 to 1.2 as often), its yield gene
             // how many come.
             let (seed, often) = (creature.seed, self.content.creatures.condition().output(creature.condition).max(0.05));
@@ -204,10 +207,10 @@ impl Server {
         let name = self.player_name(player);
         let (day, tamed) = (self.day, self.content.creatures.condition().tamed);
         self.creatures.live.get_mut(&id).expect("checked").fed = day;
-        let creature = &self.creatures.live[&id];
         let Some(taming) = species.def.taming.clone() else { return };
         let kind = species.def.name.clone();
-        let u = unit_from(mix(creature.seed, self.tick ^ 0x7a3e));
+        // By the count of feeds the player has given, not the tick it is eaten on.
+        let Some([u, _]) = self.players.get_mut(&player).map(|p| p.draw(Draw::Feed)) else { return };
         let creature = self.creatures.live.get_mut(&id).expect("checked");
         if creature.trusting != name {
             creature.trusting = name.clone();
@@ -292,6 +295,9 @@ impl Server {
         creature.home = creature.body.position;
         creature.was_kept = true;
         creature.changed = true;
+        // Wild from here: the traps' next look follows it from where it was let go.
+        let at = creature.body.position;
+        self.catches.arrived(id, at);
         self.tell(Source::Player(player), ChatKind::Info, Words::key("husbandry.released").with("creature", what));
     }
 
@@ -304,9 +310,7 @@ impl Server {
         }
         let at = creature.body.position;
         neighbours
-            .around(at)
-            .into_iter()
-            .filter(|&other| other != id)
+            .kind_around(at, creature.species, id)
             .filter_map(|other| self.creatures.live.get(&other))
             .filter(|c| c.species == creature.species && c.owner.is_some() && c.ready_until > 0 && c.body.position.distance(at) < MATE_RANGE)
             .map(|c| c.body.position)
@@ -367,15 +371,40 @@ impl Server {
             for (index, product) in species.def.products.iter().enumerate() {
                 if product.tool.is_none() && tick >= creature.products_due[index] {
                     creature.products_due[index] = tick + product_ticks(product.every / often, creature.seed ^ tick, index);
-                    laid.push((creature.body.position, species.products[index], product.count, creature.traits.yield_, id));
+                    let keeper = creature.owner_id.filter(|_| product.nests);
+                    laid.push((creature.body.position, species.products[index], product.count, creature.traits.yield_, id, keeper));
                 }
             }
         }
-        for (position, item, (low, high), yield_, id) in laid {
+        for (position, item, (low, high), yield_, id, keeper) in laid {
             let cell = position.floor().as_ivec3();
-            let [a, b, c] = random3(tick, cell, id);
+            // Numbered by the world's count of rolls, never by the tick it is laid on.
+            let [a, c] = self.meta.next_roll(crate::save::ROLL_PRODUCT);
             let count = yielded(low + ((a * (high - low + 1) as f32) as u8).min(high - low), yield_, c);
-            self.items.spawn(ItemStack { item, count }, dropped::popped(cell, [b, c, a]), dropped::PICKUP_DELAY);
+            // Laid in its keeper's home, it goes into the stores there that take it, nearest
+            // first; what finds no room falls as ever.
+            let mut left = Some(ItemStack { item, count });
+            if let Some(keeper) = keeper
+                && let Some(anchor) = self.home_holding(keeper, position)
+            {
+                for store in self.stores_around(anchor) {
+                    let Some(stack) = left else { break };
+                    left = self.factory.put(store, stack, &self.content.machines);
+                }
+                let nested = count as u32 - left.map_or(0, |s| s.count as u32);
+                if nested > 0
+                    && let Some(player) = self.players.get_mut(&keeper)
+                {
+                    let name = self.content.blocks.def(item).name.clone();
+                    match player.nested.iter_mut().find(|(n, _)| *n == name) {
+                        Some((_, n)) => *n += nested,
+                        None => player.nested.push((name, nested)),
+                    }
+                }
+            }
+            if let Some(stack) = left {
+                self.items.spawn(stack, dropped::popped(cell, self.meta.next_pop(cell, id)), dropped::PICKUP_DELAY);
+            }
         }
         // Ready pairs that have met.
         let ready: Vec<(u32, CreatureId, Vec3)> =
@@ -422,7 +451,7 @@ impl Server {
         // Parents in better condition have bigger litters, never more than there is room for.
         let rules = *self.content.creatures.condition();
         let fitness = (self.creatures.live[&a].condition + self.creatures.live[&b].condition) / 2.0;
-        let odds = (unit_from(mix(seed, self.tick)) * rules.output(fitness)).min(0.9999);
+        let odds = (self.meta.next_roll(crate::save::ROLL_LITTER)[0] * rules.output(fitness)).min(0.9999);
         let count = (low + ((odds * (high - low + 1) as f32) as u8).min(high - low)).max(1).min(room.min(u8::MAX as usize) as u8);
         let grows = self.tick + (breeding.growth * 60.0 * TICKS_PER_SECOND as f32) as u64;
         let (mother, father) = (self.creatures.live[&a].genome.clone(), self.creatures.live[&b].genome.clone());
@@ -431,7 +460,11 @@ impl Server {
         let mutation = genes::MUTATION * (1.0 + 4.0 * aether.clamp(0.0, 1.0));
         let mut born = 0;
         for i in 0..count {
-            let Some(id) = self.spawn_creature(species, at + Vec3::new(0.3 * i as f32, 0.0, 0.3), seed ^ self.tick ^ i as u64) else { continue };
+            // Each young's genes, looks and mind by the world's count of rolls, never by the
+            // tick it is born on.
+            let [g, h] = self.meta.next_roll(crate::save::ROLL_YOUNG);
+            let salt = seed ^ (u64::from(g.to_bits()) << 32 | u64::from(h.to_bits()));
+            let Some(id) = self.spawn_creature(species, at + Vec3::new(0.3 * i as f32, 0.0, 0.3), salt) else { continue };
             born += 1;
             let def = &self.content.creatures.get(species).def;
             let young = self.creatures.live.get_mut(&id).expect("just made");
@@ -774,6 +807,72 @@ mod tests {
         keys
     }
 
+    /// How much a kept animal yields is drawn by the keeper's count of products taken, not
+    /// the tick it is taken on, and each counts on.
+    #[test]
+    fn a_yield_draws_by_the_keepers_count_not_the_tick() {
+        let taken = |tick: u64| {
+            let mut server = test_server();
+            let (player, _client) = keeper(&mut server);
+            server.players.get_mut(&player).unwrap().draw_key = crate::player::player_draw_key(0x0d1a, "test");
+            let (species, index) = server.content.creatures.iter().find_map(|(id, c)| c.def.products.iter().position(|p| p.tool.as_deref() == Some("shears")).map(|i| (id, i))).expect("one sheared");
+            let shears = server.content.blocks.expect("base:shears");
+            server.players.get_mut(&player).unwrap().inventory.add(shears, 1);
+            let id = server.spawn_creature(species, server.spawn, 2).expect("room");
+            let kept = server.creatures.live.get_mut(&id).unwrap();
+            (kept.owner, kept.owner_id) = (Some("test".into()), Some(player));
+            let product = server.content.creatures.get(species).products[index];
+            server.tick = tick;
+            (0..12)
+                .map(|_| {
+                    server.creatures.live.get_mut(&id).unwrap().products_due[index] = 0;
+                    let before = server.players[&player].inventory.count(product);
+                    server.tend(player, id);
+                    server.players[&player].inventory.count(product) - before
+                })
+                .collect::<Vec<_>>()
+                .into_iter()
+                .chain([server.players[&player].draws.yields as u32])
+                .collect::<Vec<_>>()
+        };
+        let first = taken(1_000);
+        assert_eq!(first.last(), Some(&12), "each product taken counted on");
+        assert!(first[..12].iter().all(|&n| n > 0), "a product taken gave nothing: {first:?}");
+        assert!(first[..12].windows(2).any(|w| w[0] != w[1]), "twelve products taken all yielded alike: {first:?}");
+        assert_eq!(taken(1_377), first, "the same products taken later yielded otherwise");
+    }
+
+    /// How many a product yields and how its yield gene's share rounds are two draws, not
+    /// one: with one for both, a low count never rounded the same way a high one did.
+    #[test]
+    fn a_yields_rounding_is_its_own_draw() {
+        let mut server = test_server();
+        let (player, _client) = keeper(&mut server);
+        server.players.get_mut(&player).unwrap().draw_key = crate::player::player_draw_key(0x0d1a, "test");
+        let (species, index) = server.content.creatures.iter().find_map(|(id, c)| c.def.products.iter().position(|p| p.tool.as_deref() == Some("shears")).map(|i| (id, i))).expect("one sheared");
+        let shears = server.content.blocks.expect("base:shears");
+        server.players.get_mut(&player).unwrap().inventory.add(shears, 1);
+        let id = server.spawn_creature(species, server.spawn, 2).expect("room");
+        let kept = server.creatures.live.get_mut(&id).unwrap();
+        (kept.owner, kept.owner_id) = (Some("test".into()), Some(player));
+        // A share past a whole one, so every count rounds one way or the other.
+        kept.traits.yield_ = 1.3;
+        let (product, (low, high)) = (server.content.creatures.get(species).products[index], server.content.creatures.get(species).def.products[index].count);
+        let mut apart = 0;
+        for _ in 0..24 {
+            let p = &server.players[&player];
+            let [roll, fraction] = crate::save::numbered_draws(p.draw_key, crate::save::Draw::Yield.salt(), p.draws.yields);
+            let count = low + ((roll * (high - low + 1) as f32) as u8).min(high - low);
+            server.creatures.live.get_mut(&id).unwrap().products_due[index] = 0;
+            let before = server.players[&player].inventory.count(product);
+            server.tend(player, id);
+            let got = server.players[&player].inventory.count(product) - before;
+            assert_eq!(got, u32::from(yielded(count, 1.3, fraction)), "{count} at a share of 1.3, rounded by the second draw {fraction:.2}");
+            apart += usize::from(yielded(count, 1.3, fraction) != yielded(count, 1.3, roll));
+        }
+        assert!(apart > 0, "in 24 takes the second draw never rounded otherwise than the first would have");
+    }
+
     #[test]
     fn taming_and_breeding_food_wait_for_room_under_the_keepers_cap() {
         let mut server = test_server();
@@ -1030,6 +1129,68 @@ mod tests {
         assert_eq!(paid(&server), (xp_tamed, tally_tamed), "taming a let-go animal again paid");
     }
 
+    /// A kept hen laying in its keeper's home lays into the nearest store there that takes
+    /// an egg (a basket, which keeps only what is foraged, does not), and the keeper is told
+    /// once home; with no room in the stores, or away from home, the egg falls as ever.
+    #[test]
+    fn eggs_laid_at_home_go_into_its_stores() {
+        use crate::process::Process;
+        let mut server = test_server();
+        let (player, client) = keeper(&mut server);
+        let at = server.spawn.floor().as_ivec3();
+        let machines = server.content.machines.clone();
+        let (basket, barrel) = (at + IVec3::X, at + IVec3::new(3, 0, 0));
+        for (pos, name) in [(basket, "base:earthen_basket"), (barrel, "base:barrel")] {
+            let block = server.content.blocks.expect(name);
+            server.set_block(pos, block);
+            if server.factory.get(pos).is_none() {
+                server.factory.insert(pos, block, &machines);
+            }
+        }
+        let egg = server.content.blocks.expect("base:egg");
+        let on_ground = |server: &Server| server.items.saved(|b| server.content.blocks.def(b).name.clone()).iter().filter(|i| i.item == "base:egg").count();
+        let held = |server: &Server, pos: IVec3| server.factory.get(pos).map_or(0, |(_, state)| state.bin.iter().flatten().filter(|s| s.item == egg).map(|s| s.count as u32).sum::<u32>());
+        let pass = |server: &mut Server| {
+            server.tick = server.tick.next_multiple_of(EVERY);
+            server.tick_husbandry();
+            server.tick += 1;
+        };
+        // Base's every egg nests, whichever bird lays it.
+        let unnested: Vec<String> = server.content.creatures.iter().flat_map(|(_, c)| c.def.products.iter().filter(|p| p.item == "base:egg" && !p.nests).map(|_| c.def.name.clone())).collect();
+        assert!(unnested.is_empty(), "eggs that do not nest: {unnested:?}");
+        let hen = kept(&mut server, "base:junglefowl", 1);
+        let due = |server: &mut Server| server.creatures.live.get_mut(&hen).unwrap().products_due.iter_mut().for_each(|due| *due = 0);
+        // No home yet: it falls.
+        pass(&mut server);
+        assert_eq!((on_ground(&server), held(&server, barrel)), (1, 0), "laid with no home");
+        // Slept here, it is home: the barrel takes it, the nearer basket does not.
+        server.players.get_mut(&player).unwrap().bed = Some(server.spawn);
+        due(&mut server);
+        pass(&mut server);
+        let laid = held(&server, barrel);
+        assert!(laid > 0 && on_ground(&server) == 1 && held(&server, basket) == 0, "{laid} in the barrel, {} on the ground", on_ground(&server));
+        assert_eq!(server.players[&player].nested, vec![("base:egg".to_owned(), laid)]);
+        // Home, they are told, once.
+        while client.try_recv().is_ok_and(|m| m.is_some()) {}
+        crate::process::Survival.run(&mut server);
+        assert!(told(&client).contains(&"home.nested".to_owned()));
+        assert!(server.players[&player].nested.is_empty());
+        crate::process::Survival.run(&mut server);
+        assert!(!told(&client).contains(&"home.nested".to_owned()), "told twice");
+        // The barrel full: it falls.
+        let stone = server.content.blocks.expect("base:cobblestone");
+        server.factory.state_mut(barrel).unwrap().bin.iter_mut().for_each(|slot| *slot = Some(ItemStack { item: stone, count: 64 }));
+        due(&mut server);
+        pass(&mut server);
+        assert_eq!(on_ground(&server), 2, "laid into a full store");
+        // Emptied, but home is elsewhere now: it falls.
+        server.factory.state_mut(barrel).unwrap().bin.iter_mut().for_each(|slot| *slot = None);
+        server.players.get_mut(&player).unwrap().bed = Some(server.spawn + Vec3::new(40.0, 0.0, 0.0));
+        due(&mut server);
+        pass(&mut server);
+        assert_eq!((on_ground(&server), held(&server, barrel)), (3, 0), "laid away from home");
+    }
+
     #[test]
     fn a_let_go_animal_in_a_pen_gives_nothing_and_never_breeds() {
         let mut server = test_server();
@@ -1270,5 +1431,52 @@ mod tests {
         let back = server.creatures.live.values().next().expect("restored");
         assert_eq!(back.condition, rules.tamed);
         assert!(server.days_since(back.fed).abs() < 1e-3);
+    }
+
+    /// What a kept animal lays by itself, and how many young a pair has, are drawn by the
+    /// world's count of rolls, and what is laid pops by its count of drops, not the tick
+    /// they fall on, and each counts on.
+    #[test]
+    fn a_lay_and_a_litter_draw_by_the_worlds_count_not_the_tick() {
+        let kept_at = |tick: u64| {
+            let mut server = test_server();
+            server.meta.draw_key = 0x0d1a;
+            let (_player, client) = keeper(&mut server);
+            std::mem::forget(client);
+            let hen = kept(&mut server, "base:junglefowl", 1);
+            server.tick = tick.next_multiple_of(EVERY);
+            let mut laid = Vec::new();
+            for _ in 0..12 {
+                server.creatures.live.get_mut(&hen).unwrap().products_due[0] = 0;
+                server.tick_husbandry();
+                server.tick += EVERY;
+                let mut lying: Vec<_> = server.items.take_all().map(|d| (d.stack.item, d.stack.count, d.body.position.to_array(), d.body.velocity.to_array())).collect();
+                lying.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                laid.push(lying);
+            }
+            server.creatures.live.clear();
+            let (a, b) = (kept_rabbit(&mut server, 1), kept_rabbit(&mut server, 2));
+            let mut litters = Vec::new();
+            for _ in 0..16 {
+                for id in [a, b] {
+                    let parent = server.creatures.live.get_mut(&id).unwrap();
+                    (parent.ready_until, parent.breeds_again) = (server.tick + 100, 0);
+                }
+                server.breed(a, b);
+                let mut young: Vec<_> = server.creatures.live.iter().filter(|&(&id, _)| id != a && id != b).map(|(&id, c)| (id, c.genome.clone(), c.seed)).collect();
+                young.sort_by_key(|y| y.0);
+                litters.push(young);
+                server.creatures.live.retain(|&id, _| id == a || id == b);
+            }
+            (laid, litters, server.meta.rolls)
+        };
+        let first = kept_at(1_000);
+        assert!(first.0.iter().all(|l| !l.is_empty()), "a hen due to lay laid nothing: {:?}", first.0);
+        let born: usize = first.1.iter().map(Vec::len).sum();
+        assert_eq!(first.2, (12 + 16 + born) as u64, "each lay, litter and young counted on");
+        assert!(first.1.windows(2).any(|w| w[0].len() != w[1].len()), "sixteen litters all one size: {:?}", first.1.iter().map(Vec::len).collect::<Vec<_>>());
+        let genomes: Vec<_> = first.1.iter().flatten().map(|y| &y.1).collect();
+        assert!(genomes.windows(2).any(|w| w[0] != w[1]), "every young born with the same genes");
+        assert_eq!(kept_at(1_377), first, "the same lays and litters later went otherwise");
     }
 }
