@@ -893,9 +893,50 @@ fn eye_inside(parts: &[Part], eye: Vec3, position: Vec3, yaw: f32, scale: f32, h
     })
 }
 
+/// Whether `item` is a tool that takes one of `species`' products (shears, a pail): which.
+fn product_taken_by(species: &creature::Creature, item: voxmar_engine::block::BlockId, blocks: &voxmar_engine::block::BlockRegistry) -> Option<usize> {
+    let tags = &blocks.def(item).tags;
+    species.def.products.iter().position(|p| p.tool.as_ref().is_some_and(|t| tags.contains(t)))
+}
+
+/// An animal just tended, waiting on the server's word to answer: until `until`, it calls
+/// (a bleat, a low) once `watched` grows in the pack (its product taken), or munches once
+/// it shrinks (the food in hand eaten). Refused, nothing changes and it is silent.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Tended {
+    id: u32,
+    watched: voxmar_engine::block::BlockId,
+    had: u32,
+    answer: Sound,
+    until: f32,
+}
+
+/// Seconds a tended animal waits on the server's word to answer.
+const TEND_ANSWER_WITHIN: f32 = 3.0;
+
+impl Tended {
+    /// Tending `species` with `held`, of which (or of whose product) the pack has
+    /// `count(item)`.
+    fn new(id: u32, species: &creature::Creature, held: voxmar_engine::block::BlockId, blocks: &voxmar_engine::block::BlockRegistry, count: impl Fn(voxmar_engine::block::BlockId) -> u32, now: f32) -> Self {
+        let (watched, answer) = match product_taken_by(species, held, blocks) {
+            Some(product) => (species.products[product], Sound::Idle),
+            None => (held, Sound::Graze),
+        };
+        Tended { id, watched, had: count(watched), answer, until: now + TEND_ANSWER_WITHIN }
+    }
+
+    /// Whether the pack now holding `count` of what is watched says it was done.
+    fn done(&self, count: u32) -> bool {
+        match self.answer {
+            Sound::Idle => count > self.had,
+            _ => count < self.had,
+        }
+    }
+}
+
 /// A sound a creature makes now.
 fn sound(kind: Sound, id: u32, view: &CreatureView, position: Vec3, speed: f32) -> CreatureSound {
-    CreatureSound { kind, id, species: view.species, position, speed, scale: view.scale, young: view.young }
+    CreatureSound { kind, id, species: view.species, position, speed, scale: view.scale, young: view.young, answering: false }
 }
 
 /// Applies what the server sent, then moves and animates every creature, and handles
@@ -1809,10 +1850,25 @@ pub fn aim(
     creatures: Res<Creatures>,
     mut target: ResMut<Target>,
     mut fighting: ResMut<crate::fight::Fighting>,
+    mut sounds: ResMut<CreatureSounds>,
+    mut tended: Local<Option<Tended>>,
 ) {
     // What the right button did this frame, if anything, is said afresh: here, then in
     // `interact::break_and_place`; `fight::guard` raises no guard if it did something.
     target.used_right = false;
+    // An animal tended answers once the server has done it (its product in the pack, the
+    // food gone from hand), never on the click alone.
+    let now = time.elapsed_secs();
+    if let Some(waiting) = *tended {
+        if now > waiting.until {
+            *tended = None;
+        } else if waiting.done(player.inventory.count(waiting.watched)) {
+            *tended = None;
+            if let Some(shown) = creatures.shown.get(&waiting.id) {
+                sounds.push(CreatureSound { answering: true, ..sound(waiting.answer, waiting.id, &shown.view, shown.position, 0.0) });
+            }
+        }
+    }
     let eye = player.eye();
     let look = player.look_direction().normalize_or_zero();
     let block = target.hit.map_or(f32::MAX, |hit| hit.distance);
@@ -1849,7 +1905,7 @@ pub fn aim(
         let mine = view.kept && view.owner.is_some() && view.owner == creatures.me;
         let accepts = held.is_some_and(|item| {
             let tags = &launch.content.blocks.def(item).tags;
-            let tool = species.def.products.iter().any(|p| p.tool.as_ref().is_some_and(|t| tags.contains(t)));
+            let tool = product_taken_by(species, item, &launch.content.blocks).is_some();
             // One of yours takes its food as a meal or to breed (the server judges which).
             let food = species.tame_food.contains(&item) || species.breed_food.contains(&item) || tags.iter().any(|t| t == "breeding_feed");
             (!view.kept && species.tame_food.contains(&item)) || (mine && (food || tool))
@@ -1867,8 +1923,17 @@ pub fn aim(
             None
         };
         if let Some(action) = action.and_then(|a| actions.0.id(a)) {
-            net.propose_from(&player, action, ActionTarget::Creature(id));
+            // Tending is heard by what is in hand: shears, a pail, food (`sounds.ron`'s ways
+            // and what it brings).
+            net.propose_from_with(&player, action, ActionTarget::Creature(id), held.into_iter().collect());
             target.used_right = true;
+            // The animal answers the hand once the server does it: it munches what it is
+            // fed, and bleats or lows as it is shorn or milked.
+            if Some(action) == actions.0.id("base:tend")
+                && let Some(item) = held
+            {
+                *tended = Some(Tended::new(id, species, item, &launch.content.blocks, |item| player.inventory.count(item), now));
+            }
         }
     }
     // A left click swings: at once, or held for the beat (the server keeps the same
@@ -1937,6 +2002,27 @@ fn in_fight(view: &CreatureView, fought_at: Option<f32>, now: f32, calm_after: f
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A ewe shorn and a cow milked call out once their wool or milk is in the pack; fed,
+    /// they munch once the food has left the hand. Refused, nothing changes: silent.
+    #[test]
+    fn a_tended_animal_answers_what_the_server_did() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let (blocks, creatures) = (&content.blocks, &content.creatures);
+        let species = |name: &str| creatures.get(creatures.id(name).unwrap_or_else(|| panic!("{name}")));
+        let item = |name: &str| blocks.id(name).unwrap_or_else(|| panic!("{name}"));
+        let tend = |who: &str, held: &str| Tended::new(7, species(who), item(held), blocks, |_| 4, 10.0);
+        let shorn = tend("base:mouflon", "base:shears");
+        assert_eq!((shorn.watched, shorn.answer, shorn.had), (item("base:wool"), Sound::Idle, 4));
+        assert!(shorn.done(5) && !shorn.done(4), "the wool came, or not yet");
+        let milked = tend("base:aurochs", "base:pail");
+        assert_eq!((milked.watched, milked.answer), (item("base:milk"), Sound::Idle));
+        let fed = tend("base:mouflon", "base:wheat");
+        assert_eq!((fed.watched, fed.answer), (item("base:wheat"), Sound::Graze));
+        assert!(fed.done(3) && !fed.done(4), "eaten, or refused and still in hand");
+        assert_eq!(tend("base:aurochs", "base:shears").answer, Sound::Graze, "an aurochs gives no wool");
+        assert_eq!(product_taken_by(species("base:mouflon"), item("base:pail"), blocks), None);
+    }
 
     /// A roaming boss nicked once is in a fight, and out of it once it has gone back to
     /// grazing for `calm_after`, though it never mends: its fight music ends.

@@ -799,15 +799,24 @@ impl Settlements {
     }
 }
 
+/// Whether a settlement furnishes itself with block `b` picked by tag: a plain common
+/// sort, no wonder, nothing supernatural, no pair or clump.
+fn plain(registry: &BlockRegistry, b: BlockId) -> bool {
+    let def = registry.def(b);
+    !def.has_tag("wonder") && !def.has_tag("supernatural") && !def.name.ends_with("_pair") && !def.name.ends_with("_clump") && def.rarity == voxmar_engine::block::Rarity::Common
+}
+
+/// Whether a settlement's flowers and bushes, picked by tag, take block `b`: a plain small
+/// plant.
+pub(crate) fn small_plant(registry: &BlockRegistry, b: BlockId) -> bool {
+    plain(registry, b) && registry.def(b).render == RenderKind::Plant
+}
+
 /// The blocks settlements furnish themselves with (`furnishings` in settlements.ron):
 /// none without water and dirt, and only the plain common sorts of flowers and bushes.
 fn fixed(registry: &BlockRegistry, def: &SettlementsDef) -> Option<Fixed> {
     let f: &FurnishingsDef = &def.furnishings;
     let id = |name: &Option<String>| name.as_deref().and_then(|n| registry.id(n));
-    let plain = |b: BlockId| {
-        let def = registry.def(b);
-        !def.has_tag("wonder") && !def.has_tag("supernatural") && !def.name.ends_with("_pair") && !def.name.ends_with("_clump") && def.rarity == voxmar_engine::block::Rarity::Common
-    };
     let palette = |list: &[Select], filter: &dyn Fn(BlockId) -> bool| {
         Palette(
             list.iter()
@@ -821,7 +830,7 @@ fn fixed(registry: &BlockRegistry, def: &SettlementsDef) -> Option<Fixed> {
                 .collect(),
         )
     };
-    let small_plant = |b: BlockId| plain(b) && registry.def(b).render == RenderKind::Plant;
+    let small_plant = |b: BlockId| small_plant(registry, b);
     let any = |_: BlockId| true;
     let dirt = id(&f.dirt)?;
     Some(Fixed {
