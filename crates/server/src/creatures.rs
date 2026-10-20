@@ -264,6 +264,8 @@ pub struct Creatures {
     pub(crate) release_asked: FxHashMap<PlayerId, (u32, u64)>,
     /// Which blocks are water a creature swims in or drinks, by id, worked out once.
     water: std::sync::OnceLock<Vec<bool>>,
+    /// Which blocks are railings (`RAILING_TAG`), by id, worked out once.
+    railings: std::sync::OnceLock<Vec<bool>>,
 }
 
 /// Every live creature by where it stood when a pass began, in square cells `CELL` blocks
@@ -319,6 +321,12 @@ impl Creatures {
     /// Which blocks are water (a fluid named for it), by id.
     fn water_blocks(&self, blocks: &voxmar_engine::block::BlockRegistry) -> &[bool] {
         self.water.get_or_init(|| blocks.ids().map(|b| blocks.info(b).fluid.is_some() && blocks.def(b).name.contains("water")).collect())
+    }
+
+    /// Which blocks are railings, by id: to a creature a railing stands two high, as a
+    /// fence does, so nothing hops onto it and over the edge it guards.
+    fn railing_blocks(&self, blocks: &voxmar_engine::block::BlockRegistry) -> &[bool] {
+        self.railings.get_or_init(|| blocks.ids().map(|b| blocks.def(b).has_tag(voxmar_engine::block::RAILING_TAG)).collect())
     }
 
     /// Takes a creature out of the world without a death (`/creatures remove`).
@@ -377,8 +385,11 @@ impl<'a> Ground<'a> {
 
 impl motion::Surroundings for Ground<'_> {
     fn solid(&self, cell: IVec3) -> bool {
-        // Unloaded columns are walls, so nothing walks off the edge of the world.
-        self.block(cell).is_none_or(|b| self.server.content.blocks.info(b).solid)
+        // Unloaded columns are walls, so nothing walks off the edge of the world. Over a
+        // railing is a wall too: it stands two high to a creature.
+        let blocks = &self.server.content.blocks;
+        self.block(cell).is_none_or(|b| blocks.info(b).solid)
+            || self.block(cell - IVec3::Y).is_some_and(|below| self.server.creatures.railing_blocks(blocks)[below.0 as usize])
     }
 
     fn water(&self, cell: IVec3) -> bool {
@@ -4046,6 +4057,43 @@ mod fight_tests {
                     }
                     tried += 1;
                 }
+            }
+        }
+        assert!(tried > 0);
+    }
+
+    /// A balcony four blocks up, railed along its east edge: no creature that walks,
+    /// walking, running or (Old Tusk) charging at the railing, goes over it or off the
+    /// balcony.
+    #[test]
+    fn a_railing_keeps_creatures_on_a_balcony() {
+        let mut server = crate::test_server();
+        let c = pen(&mut server, 9);
+        // The balcony: stone four high from the pen's west wall to x 2, the railing on its
+        // edge; beyond it the pen's floor, four down.
+        for x in -8..=2 {
+            wall(&mut server, (-8..=8).map(|z| c + IVec3::new(x, 0, z)), 4);
+        }
+        set(&mut server, "base:oak_railing_west", (-8..=8).map(|z| c + IVec3::new(2, 4, z)));
+        let ground = Ground::of(&server);
+        let tusk = server.content.creatures.find("old_tusk");
+        let mut tried = 0;
+        for (id, species) in server.content.creatures.iter() {
+            let movement = species.def.movement;
+            let size = species.def.body.size;
+            if movement.jump <= 0.0 || species.def.movement.style == voxmar_engine::creature::Style::Flier || size.1 > 3.0 {
+                continue;
+            }
+            let charge = if Some(id) == tusk { Some(9.0) } else { None };
+            for (pace, speed) in [("walk", movement.walk), ("run", movement.run)].into_iter().chain(charge.map(|c| ("charge", c))) {
+                let mut body = Body::new(c.as_vec3() + Vec3::new(-1.5, 4.0, 0.5), motion::yaw_of(Vec3::X), size);
+                (body.reach, body.head, body.on_ground) = (species.reach, species.head, true);
+                for _ in 0..(4 * TICKS_PER_SECOND) {
+                    motion::step(&mut body, &ground, &movement, Water::Land, Drive { wish: Vec3::X, speed, face: None }, 1.0 / TICKS_PER_SECOND as f32);
+                    let at = body.position - c.as_vec3();
+                    assert!(at.y >= 3.99 && at.x < 3.0, "{} ({pace}) got over the railing or off the balcony: at {at:.2}", species.def.name);
+                }
+                tried += 1;
             }
         }
         assert!(tried > 0);

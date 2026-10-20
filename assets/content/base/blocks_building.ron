@@ -54,6 +54,20 @@
                 name: "{name}_shuttered_window_shut", render: Model, shape: "lattice_shutters_shut", facing: true, light_filter: 14, sound: Wood, textures: All("furniture_grain"),
                 swaps: "{name}_shuttered_window", drops: "{name}_shuttered_window", hardness: 1.0, color: (160, 120, 70), tags: ["timber", "shutters", "shutters_shut", "wood", "building", "fuel", "shelter:sound"],
             ),
+            // Stairs and upper floors. A railing: a handrail and a bottom rail along the back
+            // of its cell with balusters between, set on the edge of a balcony, a gallery or a
+            // landing so nobody walks off it; the corner turns along its east side too. Both
+            // stand a block high, too high to step onto (and two high to a creature). A
+            // railing walls no room: a home's survey looks past it (survival.ron's
+            // home_furniture), so a gallery round a hall leaves the hall as walled as it was
+            // and a railed balcony is open air.
+            (name: "{name}_railing", render: Model, shape: "railing", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 1.0, color: (160, 120, 70), tags: ["timber", "railing", "wood", "building", "fuel"]),
+            (name: "{name}_railing_corner", render: Model, shape: "railing_corner", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 1.0, color: (160, 120, 70), tags: ["timber", "railing", "wood", "building", "fuel"]),
+            // A newel post: a stout post with a cap, at the foot or the turn of a stair.
+            (name: "{name}_newel_post", render: Model, shape: "newel_post", sound: Wood, textures: All("furniture_grain"), hardness: 2.0, color: (160, 120, 70), tags: ["timber", "newel", "wood", "building", "fuel", "shelter:sound"]),
+            // A landing: boards on two joists, its top level with a stair's, for the turn of a
+            // stair, a gallery round a hall or a balcony on jetty beams.
+            (name: "{name}_landing", render: Model, shape: "landing", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 2.0, color: (160, 120, 70), tags: ["timber", "landing", "floor", "wood", "building", "fuel", "shelter:sound"]),
             (name: "{name}_shingle_ridge", render: Model, shape: "roof_ridge", facing: true, light_filter: 14, sound: Wood, textures: All("shingles_grey"), hardness: 1.5, color: (160, 120, 70), tags: ["roof", "ridge", "shingle", "wood", "building", "fuel", "shelter:sound"]),
         ],
         // Slabs and stairs of one cut stone (`{name}`, by default the full block's name and
@@ -96,6 +110,25 @@
         (
             name: "wooden_shutters_open", render: Model, shape: "shutters_open", facing: true, solid: false, sound: Wood, textures: All("oak_planks"),
             swaps: "wooden_shutters", drops: "wooden_shutters", hardness: 1.0, color: (150, 110, 65), tags: ["shutters", "shutters_open", "wood", "building", "fuel"],
+        ),
+        // A balcony door: a plank door whose upper half is a lattice, out onto a balcony.
+        // Shut, its lower half is a sound wall and its lattice a draughty one that lets the
+        // light in; open, it is a way through as any open door is, and walls nothing.
+        (
+            name: "balcony_door", render: Model, shape: "door", facing: true, sound: Wood, textures: All("oak_planks"),
+            upper: "balcony_door_top", swaps: "balcony_door_open", hardness: 1.5, color: (150, 110, 65), tags: ["door", "door_shut", "wood", "building", "shelter:sound"],
+        ),
+        (
+            name: "balcony_door_top", render: Model, shape: "door_lattice", facing: true, support: Below, sound: Wood, textures: All("oak_planks"),
+            swaps: "balcony_door_open_top", drops: "core:air", hardness: 1.5, color: (150, 110, 65), tags: ["door", "door_shut", "lattice", "wood", "building", "shelter:draughty", "draught"],
+        ),
+        (
+            name: "balcony_door_open", render: Model, shape: "door_open", facing: true, solid: false, sound: Wood, textures: All("oak_planks"),
+            upper: "balcony_door_open_top", swaps: "balcony_door", drops: "balcony_door", hardness: 1.5, color: (150, 110, 65), tags: ["door", "door_open", "wood", "building"],
+        ),
+        (
+            name: "balcony_door_open_top", render: Model, shape: "door_open", facing: true, solid: false, support: Below, sound: Wood, textures: All("oak_planks"),
+            swaps: "balcony_door_top", drops: "core:air", hardness: 1.5, color: (150, 110, 65), tags: ["door", "door_open", "wood", "building"],
         ),
         // A stone arrow slit: a block of dressed stone with a narrow upright slit through
         // it, the window of a stone wall. Light and a draught come through it, nobody does.
