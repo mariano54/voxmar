@@ -231,8 +231,17 @@ What changed, in `combat.ron`:
 
 Prey reacts as it already did, through its behaviour data: a deer or rabbit that is shot
 at is frightened and bolts out of reach (Flee, fear fading at 0.12 a second), and an
-aurochs charges (Defend). A wild boar flees for now; with PR 302 it fights back to about
-40% of its health, which makes the bow safer still against it.
+aurochs charges (Defend).
+
+**The boar since it fights back** (Oct 20). With PR 302 a wild boar fights back to 40% of
+its health. Struck from afar, it charges the shooter, who gets free shots as it comes: the
+bow took it in 9.4 s and the sling in 13.3 s against a spear's 15.7 s, which broke the
+first pin. A boar's hide and the gristle over its shoulders now turn most blows and shots
+(defence 4 to 11), but a spear's point goes in under them (`weak: Some(Stab)`, the boar
+spear). The model now decides fight or flight as the server does (`Creature::holds`, so
+`flees_below`). After: spear 16.2 s at 13% hurt, club 23.0 s at 20%, bow 16.5 s at 14% and
+4.3 arrows spent, sling 19.8 s at 23%. Raising the bow's cooldown instead slowed it on
+every creature and left it costing more health than melee against an aurochs.
 
 The test pins, so a later change cannot make a shot strictly better than melee:
 
