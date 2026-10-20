@@ -1173,14 +1173,26 @@ pub(crate) fn full_content() -> &'static (voxmar_engine::content::Content, World
     })
 }
 
-/// The world of `seed` on every package's content (`full_content`), one for every test that
-/// only reads what it generates, held for the rest of the run: what a world generates
-/// depends on neither which test asks first nor on what its caches hold, and the next test
-/// on the seed finds its rivers and settlements already planned rather than planning them
-/// again. Kept apart from `Overworld::shared`, whose letting go is tested. Tests that count
-/// what a world plans, or compare a fresh world with another, make their own.
+/// The seeds more than one test reads on every package's content (`shared_full_world`):
+/// the water tests (`generated_water`), and the village thatch and jettied storeys tests.
+#[cfg(test)]
+const HELD_FULL_SEEDS: [u64; 5] = [1, 2, 3, 7, 42];
+
+/// The world of `seed` on every package's content (`full_content`), for tests that only read
+/// what it generates. A seed of `HELD_FULL_SEEDS` is held for the rest of the run: what a
+/// world generates depends on neither which test asks first nor on what its caches hold,
+/// and the next test on the seed finds its rivers and settlements already planned rather
+/// than planning them again. Any other seed gets a world of its own, let go with its test,
+/// as a held world keeps all it planned. Kept apart from `Overworld::shared`, whose letting
+/// go is tested. Tests that count what a world plans, or compare a fresh world with another,
+/// make their own.
 #[cfg(test)]
 pub(crate) fn shared_full_world(seed: u64) -> Arc<Overworld> {
+    let (content, world) = full_content();
+    let make = || Arc::new(Overworld::with_content(seed, content.blocks.clone(), world));
+    if !HELD_FULL_SEEDS.contains(&seed) {
+        return make();
+    }
     static WORLDS: std::sync::Mutex<Vec<(u64, Arc<std::sync::OnceLock<Arc<Overworld>>>)>> = std::sync::Mutex::new(Vec::new());
     let slot = {
         let mut worlds = WORLDS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -1193,8 +1205,7 @@ pub(crate) fn shared_full_world(seed: u64) -> Arc<Overworld> {
             }
         }
     };
-    let (content, world) = full_content();
-    slot.get_or_init(|| Arc::new(Overworld::with_content(seed, content.blocks.clone(), world))).clone()
+    slot.get_or_init(make).clone()
 }
 
 /// All base block files, in the same order as the game loader. Partial registries
@@ -2811,6 +2822,11 @@ mod tests {
         };
         // HERB_SEEDS=a,b,... counts other worlds instead, to check the rates hold beyond these.
         let order: Vec<u64> = std::env::var("HERB_SEEDS").map(|s| s.split(',').map(|n| n.trim().parse().expect("HERB_SEEDS must be seeds")).collect()).unwrap_or_else(|_| HERB_SEEDS.to_vec());
+        // The census on a pool of its own, as many threads as the tests' own: its generation
+        // would otherwise fill that pool for minutes, every other test's work queued behind
+        // it (`waterfalls_pour`, 7 s alone, took 198 s beside it). What it counts does not
+        // depend on the threads: the places are counted in order.
+        let pool = rayon::ThreadPoolBuilder::new().num_threads(rayon::current_num_threads()).build().unwrap();
         let mut seeds = 0;
         while seeds < order.len().min(16) && (0..biomes.len()).any(|b| !counted(&tally, b)) {
             let seed = order[seeds];
@@ -2821,7 +2837,7 @@ mod tests {
             // Every place of every open biome side by side, counted in order.
             use rayon::prelude::*;
             let wanted: Vec<(usize, IVec2)> = open.iter().flat_map(|&b| PLACES.map(|from| (b, from))).collect();
-            let areas: Vec<_> = wanted.par_iter().map(|&(b, from)| (b, biome_area(&world, &biomes[b], from, 16, &looks, herbs.len()))).collect();
+            let areas: Vec<_> = pool.install(|| wanted.par_iter().map(|&(b, from)| (b, biome_area(&world, &biomes[b], from, 16, &looks, herbs.len()))).collect());
             for (b, area) in areas {
                 let Some((columns, bank, placed, away)) = area else { continue };
                 tally[b].0 += 1;
