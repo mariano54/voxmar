@@ -409,6 +409,10 @@ pub const RAILING_TAG: &str = "railing";
 /// smokes, the client brings its smoke out of the top of the stack, and a piece lines a
 /// hearth's flue against its fire as stone does, so it is refused at load unless solid.
 pub const CHIMNEY_PIECE_TAG: &str = "chimney_piece";
+/// The tag of a ladder (`BlockInfo::climbable`): a player whose feet are in its cell climbs
+/// it, pressing against it or holding jump (`movement::step`), and is refused at load unless
+/// solid, so there is something to press against.
+pub const CLIMBABLE_TAG: &str = "climbable";
 /// The tag of a landing, refused at load unless it is solid across the whole top of its
 /// cell (level with a stair's top).
 pub const LANDING_TAG: &str = "landing";
@@ -876,6 +880,8 @@ pub struct BlockInfo {
     /// Its shape, made ready for its facing (see [`BlockRegistry::shape`]), for a block
     /// drawn as one.
     pub shape: Option<u16>,
+    /// A ladder, climbed by a player whose feet are in its cell (`CLIMBABLE_TAG`).
+    pub climbable: bool,
 }
 
 /// A texture referenced by block definitions; its index is the texture array layer.
@@ -1276,6 +1282,7 @@ impl BlockRegistry {
                     None => None,
                 },
                 shape,
+                climbable: def.has_tag(CLIMBABLE_TAG),
             });
         }
         if textures.len() > 4096 {
@@ -1368,6 +1375,9 @@ impl BlockRegistry {
             }
             if def.has_tag(CHIMNEY_PIECE_TAG) && !block.solid {
                 return Err(RegistryError(format!("`{}` is a chimney piece (`{CHIMNEY_PIECE_TAG}`) but not solid: a flue keeps a hearth's fire in", def.name)));
+            }
+            if def.has_tag(CLIMBABLE_TAG) && !block.solid {
+                return Err(RegistryError(format!("`{}` is climbable (`{CLIMBABLE_TAG}`) but not solid: a ladder is climbed by pressing against it", def.name)));
             }
             if def.has_tag(LANDING_TAG) && !full_top {
                 return Err(RegistryError(format!("`{}` is a landing (`{LANDING_TAG}`) but no floor level with a stair's top: a landing is solid across the whole top of its cell", def.name)));
@@ -1916,8 +1926,9 @@ mod tests {
         assert_eq!(load(&format!(r#"(name: "stone"), {window}"#)), Ok(()));
     }
 
-    /// A railing that is not solid or not a block high, or a landing with no floor across
-    /// the top of its cell, is refused; a whole block passes as either.
+    /// A railing that is not solid or not a block high, a landing with no floor across the
+    /// top of its cell, or a chimney piece or ladder that is not solid, is refused; a whole
+    /// block passes as any.
     #[test]
     fn a_railing_or_landing_that_would_let_someone_fall_is_refused() {
         let load = |blocks: &str| {
@@ -1935,6 +1946,9 @@ mod tests {
         assert_eq!(load(r#"(name: "flue", render: Model, shape: "slab", tags: ["chimney_piece"])"#), Ok(()));
         let open = load(r#"(name: "flue", render: Model, shape: "slab", solid: false, tags: ["chimney_piece"])"#).unwrap_err();
         assert!(open.contains("`base:flue` is a chimney piece"), "{open}");
+        assert_eq!(load(r#"(name: "ladder", render: Model, shape: "slab", tags: ["climbable"])"#), Ok(()));
+        let loose = load(r#"(name: "ladder", render: Model, shape: "slab", solid: false, tags: ["climbable"])"#).unwrap_err();
+        assert!(loose.contains("`base:ladder` is climbable"), "{loose}");
     }
 
     #[test]
