@@ -111,7 +111,7 @@
             name: "a_kiln_load", age: "farm", branch: "pottery", title: "A Kiln Load",
             why: "Brick by Brick takes seventy-six fired clay, so keep the yard busy. Fire forty clay in all, counting what you have fired before, and a dozen clay comes back for the next load. Between loads, turn spare fired clay into crockery (Earthenware), fire cobblestone into stone for an altar (A Place to Pray), or hand clay to potters on the road (Fired Whole).",
             tasks: [[Cook("fired_clay", 40)]],
-            after: ["the_potter", "a_kiln_yard|a_clay_store"],
+            after: ["the_potter"],
             rewards: [Xp("crafting", 120.0), Item("clay", 12)],
         ),
         (
@@ -139,7 +139,7 @@
             name: "first_bricks", age: "farm", branch: "main", title: "First Bricks",
             why: "Kiln bricks are fired clay pressed hard: four fired clay in the crafting grid make one (Crafting 5). Shape four, and keep sixteen more fired clay in your pack for the next four. The kiln and its crucible want nineteen bricks in all.",
             tasks: [[Craft("kiln_bricks", 4), Have("fired_clay", 16)]],
-            after: ["the_potter"],
+            after: ["the_potter", "a_kiln_yard"],
             rewards: [Xp("crafting", 150.0)],
         ),
         (

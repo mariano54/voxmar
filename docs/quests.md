@@ -371,7 +371,7 @@ step is something done in the world (gathered, fired, stored, set down), not onl
 |---|---|---|
 | Main | A Pit Kiln, A Kiln Yard (two pit kilns and an earth clamp set down), First Bricks, Brick by Brick, The Kiln Ring (twelve bricks set down), The Crucible, Crucible Kiln | |
 | Fuel (new) | Fuel to Hand, Charcoal, A Full Charge (capstone) | logs carried or coal mined; charcoal burnt or coal mined; the charge in charcoal or coal |
-| Pottery | Clay in Store (new), A Kiln Load, Fired Whole (capstone) | A Kiln Load after the kiln yard or the clay store |
+| Pottery | A Kiln Load, Fired Whole (capstone); Clay in Store (new) beside them | |
 | Mining | Red Metal (moved here from main), then on to An Ore Run (capstone) | |
 
 Crucible Kiln waits on all three of its parts: the crucible, the ring of bricks and the
