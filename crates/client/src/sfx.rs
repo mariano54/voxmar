@@ -686,6 +686,14 @@ impl WaySound {
     }
 }
 
+/// Whether an action done with `with` awaits what it brings: always, unless some of its
+/// `ways` are heard only by what they bring (silent: no clips), and then only when done
+/// one of those (shears, not food; a swarm, not honey).
+pub(crate) fn awaits<T>(ways: &[(FxHashSet<BlockId>, Vec<T>)], with: &[BlockId]) -> bool {
+    let by_brings = ways.iter().any(|(_, clips)| clips.is_empty());
+    !by_brings || way_of(ways, with).is_some_and(|clips| clips.is_empty())
+}
+
 /// The first of `ways` done with any of `with`.
 pub(crate) fn way_of<'a, T>(ways: &'a [(FxHashSet<BlockId>, T)], with: &[BlockId]) -> Option<&'a T> {
     ways.iter().find(|(items, _)| with.iter().any(|item| items.contains(item))).map(|(_, way)| way)
@@ -1172,7 +1180,7 @@ fn play_actions(
     let now = time.map_or(0.0, |time| time.elapsed_secs());
     for proposed in proposed {
         let action = proposed.action;
-        if sfx.brings.contains_key(&action) {
+        if sfx.brings.contains_key(&action) && awaits(sfx.ways.get(&action).map_or(&[], Vec::as_slice), &proposed.with) {
             sfx.awaiting.push((action, now + BROUGHT_WITHIN));
         }
         if sfx.when_done.contains(&action) {
@@ -2181,6 +2189,19 @@ mod tests {
             .flat_map(|(paths, distance)| paths.iter().map(move |path| (path.clone(), measure(path)[0] * thunder_gain(distance))));
         let weather = within(crate::mix::Category::Weather, thunder);
         crate::mix::tests::all([everyday, weather]);
+    }
+
+    /// An action with ways heard only by what they bring awaits it only when done one of
+    /// those; one without (fishing) always does.
+    #[test]
+    fn only_a_way_heard_by_its_result_awaits_it() {
+        let set = |ids: &[u16]| ids.iter().map(|&id| BlockId(id)).collect::<FxHashSet<_>>();
+        let tend = [(set(&[1]), Vec::<u8>::new()), (set(&[2]), vec![7])];
+        assert!(awaits(&tend, &[BlockId(1)]), "shears");
+        assert!(!awaits(&tend, &[BlockId(2)]), "a way with its own clips");
+        assert!(!awaits(&tend, &[BlockId(3)]), "food");
+        assert!(awaits::<u8>(&[], &[BlockId(3)]), "no ways: fishing");
+        assert!(awaits(&[(set(&[2]), vec![7u8])], &[BlockId(3)]), "ways all with clips");
     }
 
     /// What lands in the pack answers the action awaiting it, by the first rule whose tag it

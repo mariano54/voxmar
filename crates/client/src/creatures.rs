@@ -934,6 +934,26 @@ impl Tended {
     }
 }
 
+/// The animals among `waiting` the server has now done, in the order they were tended: as
+/// the server takes them in turn, each change of a watched item's count answers the
+/// earliest still waiting on it, and those after it wait on from the new count. Ones past
+/// their time are dropped unanswered.
+fn answer_tended(waiting: &mut Vec<Tended>, now: f32, count: impl Fn(voxmar_engine::block::BlockId) -> u32) -> Vec<Tended> {
+    waiting.retain(|t| now <= t.until);
+    let mut answered = Vec::new();
+    let mut i = 0;
+    while i < waiting.len() {
+        let (watched, held) = (waiting[i].watched, count(waiting[i].watched));
+        if waiting[i].done(held) && !answered.iter().any(|a: &Tended| a.watched == watched) {
+            answered.push(waiting.remove(i));
+            waiting.iter_mut().filter(|t| t.watched == watched).for_each(|t| t.had = held);
+        } else {
+            i += 1;
+        }
+    }
+    answered
+}
+
 /// A sound a creature makes now.
 fn sound(kind: Sound, id: u32, view: &CreatureView, position: Vec3, speed: f32) -> CreatureSound {
     CreatureSound { kind, id, species: view.species, position, speed, scale: view.scale, young: view.young, answering: false }
@@ -1851,7 +1871,7 @@ pub fn aim(
     mut target: ResMut<Target>,
     mut fighting: ResMut<crate::fight::Fighting>,
     mut sounds: ResMut<CreatureSounds>,
-    mut tended: Local<Option<Tended>>,
+    mut tended: Local<Vec<Tended>>,
 ) {
     // What the right button did this frame, if anything, is said afresh: here, then in
     // `interact::break_and_place`; `fight::guard` raises no guard if it did something.
@@ -1859,14 +1879,9 @@ pub fn aim(
     // An animal tended answers once the server has done it (its product in the pack, the
     // food gone from hand), never on the click alone.
     let now = time.elapsed_secs();
-    if let Some(waiting) = *tended {
-        if now > waiting.until {
-            *tended = None;
-        } else if waiting.done(player.inventory.count(waiting.watched)) {
-            *tended = None;
-            if let Some(shown) = creatures.shown.get(&waiting.id) {
-                sounds.push(CreatureSound { answering: true, ..sound(waiting.answer, waiting.id, &shown.view, shown.position, 0.0) });
-            }
+    for answered in answer_tended(&mut tended, now, |item| player.inventory.count(item)) {
+        if let Some(shown) = creatures.shown.get(&answered.id) {
+            sounds.push(CreatureSound { answering: true, ..sound(answered.answer, answered.id, &shown.view, shown.position, 0.0) });
         }
     }
     let eye = player.eye();
@@ -1932,7 +1947,7 @@ pub fn aim(
             if Some(action) == actions.0.id("base:tend")
                 && let Some(item) = held
             {
-                *tended = Some(Tended::new(id, species, item, &launch.content.blocks, |item| player.inventory.count(item), now));
+                tended.push(Tended::new(id, species, item, &launch.content.blocks, |item| player.inventory.count(item), now));
             }
         }
     }
@@ -2022,6 +2037,24 @@ mod tests {
         assert!(fed.done(3) && !fed.done(4), "eaten, or refused and still in hand");
         assert_eq!(tend("base:aurochs", "base:shears").answer, Sound::Graze, "an aurochs gives no wool");
         assert_eq!(product_taken_by(species("base:mouflon"), item("base:pail"), blocks), None);
+    }
+
+    /// Two ewes shorn in turn answer in turn, each as its own wool comes; one waiting past
+    /// its time never does.
+    #[test]
+    fn a_flock_tended_answers_in_turn() {
+        let wool = voxmar_engine::block::BlockId(5);
+        let ewe = |id: u32, had: u32| Tended { id, watched: wool, had, answer: Sound::Idle, until: 3.0 };
+        let mut waiting = vec![ewe(1, 0), ewe(2, 0)];
+        assert_eq!(answer_tended(&mut waiting, 0.5, |_| 0), []);
+        let first = answer_tended(&mut waiting, 0.6, |_| 2);
+        assert_eq!(first.iter().map(|t| t.id).collect::<Vec<_>>(), [1], "the first ewe's wool");
+        assert_eq!(waiting, [ewe(2, 2)], "the second waits from the new count");
+        assert_eq!(answer_tended(&mut waiting, 0.7, |_| 2), []);
+        assert_eq!(answer_tended(&mut waiting, 0.8, |_| 3).iter().map(|t| t.id).collect::<Vec<_>>(), [2]);
+        let mut late = vec![ewe(3, 0)];
+        assert_eq!(answer_tended(&mut late, 3.5, |_| 1), [], "past its time");
+        assert!(late.is_empty());
     }
 
     /// A roaming boss nicked once is in a fight, and out of it once it has gone back to
