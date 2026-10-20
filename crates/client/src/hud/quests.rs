@@ -245,6 +245,13 @@ pub fn claimable(player: &LocalPlayer, name: &str) -> bool {
     state(player, name).is_some_and(|s| s.done && !s.claimed)
 }
 
+/// What the player can do now, in every chapter: the quests with rewards waiting first,
+/// then those open, each in the book's order.
+pub(crate) fn open_now<'a>(content: &'a Content, player: &LocalPlayer) -> Vec<&'a QuestDef> {
+    let waiting = content.quests.iter().filter(|q| claimable(player, &q.name));
+    waiting.chain(content.quests.iter().filter(|q| standing(content, player, q) == Standing::Open)).collect()
+}
+
 pub fn standing(content: &Content, player: &LocalPlayer, quest: &QuestDef) -> Standing {
     let done = |name: &str| state(player, name).is_some_and(|s| s.done);
     if done(&quest.name) {
@@ -558,6 +565,9 @@ struct QuestScreen;
 struct ChapterButton(usize);
 #[derive(Component)]
 struct Chapters;
+/// A quest in the chapters' column's list of those open now: pressed, the book turns to it.
+#[derive(Component)]
+struct OpenQuest(String);
 #[derive(Component)]
 pub(crate) struct Web;
 /// The web's quests and lines, inside the well, at its margins (which centre a web smaller
@@ -771,11 +781,23 @@ fn pick(
     launch: Res<Launch>,
     chapters_pressed: Query<(&ChapterButton, &Interaction), Changed<Interaction>>,
     nodes: Query<(&QuestNode, &Interaction), Changed<Interaction>>,
+    listed: Query<(&OpenQuest, &Interaction), Changed<Interaction>>,
     pins: Query<&Interaction, (Changed<Interaction>, With<PinButton>)>,
     mut view: ResMut<QuestView>,
     mut settings: ResMut<Settings>,
+    mut recentre: ResMut<Recentre>,
 ) {
     let content = &launch.content;
+    // One from the list of those open now, wherever it is: brought to the middle too.
+    for (open, interaction) in &listed {
+        if *interaction == Interaction::Pressed
+            && let Some(quest) = content.quests.get(&open.0)
+        {
+            view.chapter = chapters(content).iter().position(|age| *age == quest.age).unwrap_or(view.chapter);
+            view.picked = Some(quest.name.clone());
+            recentre.0 = true;
+        }
+    }
     for (chapter, interaction) in &chapters_pressed {
         if *interaction == Interaction::Pressed && view.chapter != chapter.0 {
             view.chapter = chapter.0;
@@ -951,6 +973,24 @@ fn draw(
                         });
                     });
                 });
+            }
+            // Under the chapters, what can be done now, from any of them: a reward waiting
+            // marked with a gold "!".
+            let open = open_now(content, &player);
+            if !open.is_empty() {
+                let heading = Node { flex_shrink: 0.0, margin: UiRect::top(Val::Px(space::INNER)), ..default() };
+                column.spawn((heading, shadowed(font, locale.get("quest.open_now").to_owned(), BODY, ACCENT), TightLine));
+            }
+            for quest in open {
+                let waiting = claimable(&player, &quest.name);
+                let node = Node { flex_shrink: 0.0, padding: UiRect::axes(Val::Px(space::HAIR), Val::Px(PX)), ..default() };
+                let style = ButtonStyle::Secondary;
+                let mut row = column.spawn((Button, style, node, style.pieces()[0].image(), OpenQuest(quest.name.clone())));
+                if view.picked.as_deref() == Some(quest.name.as_str()) {
+                    row.insert(crate::ui::widgets::Selected);
+                }
+                let words = if waiting { format!("! {}", title(&locale, quest)) } else { title(&locale, quest) };
+                row.with_child((text(font, words, BODY, if waiting { GOLD } else { TEXT }), TightLine));
             }
         });
     }
@@ -2287,6 +2327,22 @@ pub(crate) mod tests {
     }
 
     /// Each chapter has a name in Japanese, and the tracker's numbers come from the data.
+    /// The list of what can be done now: rewards waiting first, then the quests open, in
+    /// the book's order; none done or still waiting on another.
+    #[test]
+    fn open_now_lists_rewards_waiting_then_open_quests() {
+        let content = content();
+        let mut player = LocalPlayer::default();
+        let fresh: Vec<String> = open_now(&content, &player).iter().map(|q| q.name.clone()).collect();
+        assert!(!fresh.is_empty() && fresh.iter().all(|n| content.quests.get(n).unwrap().after.is_empty()), "{fresh:?}");
+        let first = fresh[0].clone();
+        player.quests.push(QuestState { name: first.clone(), done: true, claimed: false, tasks: Vec::new() });
+        let then: Vec<String> = open_now(&content, &player).iter().map(|q| q.name.clone()).collect();
+        assert_eq!(then[0], first, "its reward waits: first");
+        assert_eq!(then.iter().filter(|n| **n == first).count(), 1, "{then:?}");
+        assert!(then.len() > fresh.len() - 1, "what it opened joins: {then:?}");
+    }
+
     #[test]
     fn chapters_are_named_and_the_tracker_is_data() {
         let content = content();
