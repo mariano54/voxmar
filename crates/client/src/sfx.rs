@@ -810,14 +810,31 @@ impl Recordings {
         Ok(())
     }
 
-    /// Whether every way's clips are files under `assets`, so none is silent for a path
-    /// mistyped.
-    pub(crate) fn check_way_files(&self, assets: &std::path::Path) -> Result<(), String> {
+    /// Whether every clip named is there under `assets`: a mistyped path fails at launch,
+    /// not silently the first time it would play.
+    pub(crate) fn check_files(&self, assets: &std::path::Path) -> Result<(), String> {
+        let t = &self.thunder;
+        let mut named: Vec<(String, &[String])> = vec![
+            ("thunder".into(), &t.near), ("thunder".into(), &t.middle), ("thunder".into(), &t.far),
+            ("swim".into(), &self.swim), ("splash".into(), &self.splash), ("pickup".into(), &self.pickup),
+            ("quest_done".into(), &self.quest_done), ("quest_claim".into(), &self.quest_claim),
+            ("level_up".into(), &self.level_up), ("level_milestone".into(), &self.level_milestone),
+            ("fire".into(), &self.fire.catch),
+        ];
         for (action, sound) in &self.actions {
-            for way in &sound.ways {
-                if let Some(missing) = way.sounds.iter().find(|path| !assets.join(path).is_file()) {
-                    return Err(format!("{RECORDINGS}: `{action}`'s way `{}` sounds `{missing}`, which is not there", way.name));
-                }
+            named.push((format!("`{action}`"), &sound.sounds));
+            named.extend(sound.ways.iter().map(|way| (format!("`{action}`'s way `{}`", way.name), way.sounds.as_slice())));
+            named.extend(sound.brings.iter().map(|brought| (format!("`{action}`'s brings {:?}", brought.tags), brought.sounds.as_slice())));
+        }
+        named.extend(self.interface.iter().map(|(event, sound)| (format!("interface `{event}`"), sound.sounds.as_slice())));
+        for material in &self.materials {
+            for clips in [&material.step, &material.place, &material.breaks] {
+                named.push((format!("material `{}`", material.name), clips));
+            }
+        }
+        for (what, clips) in named {
+            if let Some(missing) = clips.iter().find(|path| !assets.join(path).is_file()) {
+                return Err(format!("{RECORDINGS}: {what} sounds `{missing}`, which is not there"));
             }
         }
         Ok(())
@@ -1773,8 +1790,16 @@ mod tests {
         assert!(Recordings::load(&[file(bare)]).unwrap().check_ways(blocks).is_err());
         // Every shipped way's clips are there; one a mod mistyped is not, and fails the check.
         let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
-        assert_eq!(recorded.check_way_files(&assets), Ok(()));
-        assert!(fine.check_way_files(&assets).is_err(), "content/mod/k.ogg is not there");
+        assert_eq!(recorded.check_files(&assets), Ok(()));
+        assert!(fine.check_files(&assets).is_err(), "content/mod/k.ogg is not there");
+        // So are an action's own clips, what it brings and a material's.
+        for missing in [
+            r#"(actions: {"core:craft": (sounds: ["c.ogg"])})"#,
+            r#"(actions: {"core:craft": (silent: true, brings: [(tags: ["fish"], sounds: ["f.ogg"])])})"#,
+            r#"(materials: [(name: "rough", tags: ["stone"], break: ["b.ogg"])])"#,
+        ] {
+            assert!(Recordings::load(&[file(missing)]).unwrap().check_files(&assets).is_err(), "{missing}");
+        }
         for wrong in [
             r#"(actions: {"core:craft": (sounds: ["c.ogg"], ways: [(with: ["base:flint"], sounds: ["k.ogg"])])})"#,
             r#"(actions: {"core:craft": (sounds: ["c.ogg"], ways: [(name: "a", with: ["base:flint"], sounds: ["k.ogg"]), (name: "a", with: ["base:clay"], sounds: ["k.ogg"])])})"#,
