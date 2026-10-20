@@ -15390,11 +15390,20 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
 const SNARE_PAST_SHY: i32 = 2;
 
 /// Where the snare step sets its snare: along from the cook step's campfire, past the
-/// snare's `shy_reach` (`traps.ron`).
+/// snare's `shy_reach` (`traps.ron`). That is past the creatures pad's wall, on whatever
+/// the world has there (a hole, a hill), so the step lays its own ground first
+/// (`snare_ground`).
 fn snare_cell(world: &World, gate: &Gate) -> IVec3 {
     let content = &world.resource::<Launch>().content;
     let reach = content.blocks.id("base:snare").and_then(|s| content.traps.set(s)).map_or(0.0, |t| t.shy_reach);
     gate.feet + IVec3::new(0, 0, 14) + IVec3::X * (reach.ceil() as i32 + SNARE_PAST_SHY)
+}
+
+/// The snare step's own ground, as two corners: stone under the snare and the spot the
+/// player watches it from (two and a half blocks short of it), and three high of air over
+/// both, room for a deer.
+fn snare_ground(snare: IVec3) -> [(IVec3, IVec3, &'static str); 2] {
+    [(snare + IVec3::new(-1, -1, -3), snare + IVec3::new(1, -1, 1), "stone"), (snare + IVec3::new(-1, 0, -3), snare + IVec3::new(1, 2, 1), "air")]
 }
 
 /// Server seconds a rabbit put in the snare is given (the traps look every 4 ticks) before
@@ -15429,6 +15438,9 @@ fn snare(world: &mut World, gate: &mut Gate, now: f32) {
         0 => {
             let net = world.resource::<Net>();
             net.command("clear raw_small_game");
+            for (a, b, block) in snare_ground(snare) {
+                net.command(&format!("fill {} {} {} {} {} {} {block}", a.x, a.y, a.z, b.x, b.y, b.z));
+            }
             net.command(&format!("setblock {} {} {} snare", snare.x, snare.y, snare.z));
             net.command(&format!("tp {} {} {}", snare.x as f32 + 0.5, snare.y, snare.z as f32 - 2.5));
             gate.advance(now);
