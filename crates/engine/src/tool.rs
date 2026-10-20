@@ -968,7 +968,7 @@ mod tests {
         // Wider than MAX_REAP, or a fraction, is refused at load.
         let (_, skills, _) = setup();
         for tag in ["reap:3", "reap:1.5"] {
-            let hoe = BlockDef { name: "t:hoe".into(), tags: ["hoe", "tool", "uses:50", tag].iter().map(|t| t.to_string()).collect(), ..Default::default() };
+            let hoe = BlockDef { name: "t:hoe".into(), tags: ["hoe", "tool", "never_wears", tag].iter().map(|t| t.to_string()).collect(), ..Default::default() };
             let blocks = BlockRegistry::new(vec![BlockDef { name: "t:air".into(), ..Default::default() }, hoe]).unwrap();
             let file = ToolRegistry::read("t", r#"(kinds: [(name: "hoe", mines: ["crop"])])"#).unwrap();
             let err = ToolRegistry::new(vec![file], &blocks, &skills).unwrap_err();

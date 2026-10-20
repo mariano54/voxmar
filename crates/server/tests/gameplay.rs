@@ -9407,12 +9407,40 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     f.propose("core:stow", ActionTarget::None);
     f.wait(5.0, "the server counting the clay put by", |c| quest_status(c, "a_clay_store").0);
     f.mark("a_clay_store");
-    while !spent(&f.c) {
-        if quest_status(&f.c, "a_kiln_load").0 {
-            f.wait(500.0, "the clamp charring", spent);
-        } else {
+    // While it smoulders, as Brick by Brick says, the pit kiln kept going: clay fired by
+    // hand to A Kiln Load's forty, then First Bricks and the rest of the nineteen shaped
+    // between firings (Crafting 5). What is left when it is spent waits for the charcoal.
+    let brick_work = |f: &mut Fresh| {
+        if !quest_status(&f.c, "a_kiln_load").0 {
             let more = f.have(fired) + 1;
             f.fire_clay(&site, more);
+            if quest_status(&f.c, "a_kiln_load").0 {
+                f.mark("a_kiln_load");
+            }
+        } else if !quest_status(&f.c, "first_bricks").0 {
+            // First Bricks: four kiln bricks, two from four fired clay in the grid, with
+            // sixteen more fired clay kept for the next.
+            f.fire_clay(&site, 24);
+            f.craft(&[(0, fired, 2), (1, fired, 2), (3, fired, 2), (4, fired, 2)], bricks, 4);
+            f.wait(5.0, "the server counting the bricks and the fired clay kept", |c| quest_status(c, "first_bricks").0);
+            f.mark("first_bricks");
+        } else if f.have(fired) < 4 {
+            let more = f.have(fired) + 1;
+            f.fire_clay(&site, more);
+        } else {
+            // Brick by Brick: nineteen kiln bricks shaped in all, two a craft.
+            f.craft(&[(0, fired, 1), (1, fired, 1), (3, fired, 1), (4, fired, 1)], bricks, 2);
+            if quest_status(&f.c, "brick_by_brick").0 {
+                f.mark("brick_by_brick");
+            }
+        }
+    };
+    let bricks_done = |f: &Fresh| quest_status(&f.c, "brick_by_brick").0;
+    while !spent(&f.c) {
+        if bricks_done(&f) {
+            f.wait(500.0, "the clamp charring", spent);
+        } else {
+            brick_work(&mut f);
         }
     }
     // Opened (roof and walls dug away), its charcoal heaps broken: four charcoal a heap.
@@ -9435,24 +9463,10 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     f.wait(5.0, "the server counting the plans looked up", |c| quest_status(c, "kiln_plans").0);
     f.mark("kiln_plans");
 
-    // A Kiln Load: forty clay fired in all.
-    while !quest_status(&f.c, "a_kiln_load").0 {
-        let more = f.have(fired) + 1;
-        f.fire_clay(&site, more);
+    // A Kiln Load, First Bricks and Brick by Brick finished, if the clamp was spent first.
+    while !bricks_done(&f) {
+        brick_work(&mut f);
     }
-    f.mark("a_kiln_load");
-    // First Bricks: four kiln bricks, two from four fired clay in the grid (Crafting 5),
-    // with sixteen more fired clay kept for the next.
-    f.fire_clay(&site, 24);
-    f.craft(&[(0, fired, 2), (1, fired, 2), (3, fired, 2), (4, fired, 2)], bricks, 4);
-    f.wait(5.0, "the server counting the bricks and the fired clay kept", |c| quest_status(c, "first_bricks").0);
-    f.mark("first_bricks");
-    // Brick by Brick: nineteen kiln bricks shaped in all.
-    let crafts = 19u32.saturating_sub(f.have(bricks)).div_ceil(2);
-    f.fire_clay(&site, crafts * 4);
-    let k = crafts as u8;
-    f.craft(&[(0, fired, k), (1, fired, k), (3, fired, k), (4, fired, k)], bricks, crafts * 2);
-    f.mark("brick_by_brick");
 
     // The Crucible: seven kiln bricks round a clay pot at the table (Engineering 10), done
     // once it is set down in the kiln's middle.
