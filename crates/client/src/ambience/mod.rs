@@ -170,6 +170,42 @@ struct Survey {
     place: Option<Place>,
 }
 
+/// The surveys out on workers and their answers: whether one is out, and the last begun
+/// before the player left a game (`Surroundings::started` then), whose answers, still on
+/// their way back, are of the world left and are dropped.
+struct Surveys {
+    tx: Sender<Survey>,
+    rx: Receiver<Survey>,
+    out: bool,
+    left: u64,
+}
+
+impl Surveys {
+    fn new() -> Self {
+        let (tx, rx) = unbounded();
+        Self { tx, rx, out: false, left: 0 }
+    }
+
+    /// The answers come back since last asked, of surveys begun in this game, in order.
+    fn answers(&mut self) -> Vec<Survey> {
+        let mut answers = Vec::new();
+        while let Ok(survey) = self.rx.try_recv() {
+            if survey.number > self.left {
+                self.out = false;
+                answers.push(survey);
+            }
+        }
+        answers
+    }
+
+    /// The player left the game, with `started` surveys begun: any still out are of the
+    /// world left, so the next game's first is not kept waiting on them.
+    fn leave(&mut self, started: u64) {
+        self.left = started;
+        self.out = false;
+    }
+}
+
 /// The ambience as the launch checks loaded it, and each block's roof patter they worked
 /// out (see [`Ambience::roof_patters`]), handed on so neither is made twice.
 #[derive(Resource)]
@@ -196,8 +232,7 @@ struct Ambient {
     content: Content,
     clips: Option<Clips>,
     clips_rx: Receiver<Synthesized>,
-    surveys: (Sender<Survey>, Receiver<Survey>),
-    surveying: bool,
+    surveys: Surveys,
     since_survey: f32,
     /// The generator of the world being played, made on first use.
     generator: Option<(u64, Arc<OnceLock<Option<Arc<Overworld>>>>)>,
@@ -317,8 +352,7 @@ fn start(mut commands: Commands, launch: Res<Launch>, world: Res<ClientWorld>, c
         content: launch.content.clone(),
         clips: None,
         clips_rx,
-        surveys: unbounded(),
-        surveying: false,
+        surveys: Surveys::new(),
         since_survey: SURVEY_INTERVAL,
         generator: None,
         enclosure: Enclosure::default(),
@@ -396,8 +430,7 @@ fn survey(
     mut surroundings: ResMut<Surroundings>,
 ) {
     let ambient = &mut *ambient;
-    while let Ok(survey) = ambient.surveys.1.try_recv() {
-        ambient.surveying = false;
+    for survey in ambient.surveys.answers() {
         ambient.enclosure = survey.enclosure;
         if survey.place.is_some() {
             ambient.place = survey.place;
@@ -435,7 +468,7 @@ fn survey(
 
     ambient.since_survey += dt;
     // None is taken of where a dead player lay: the next is of where they come back.
-    if !player.joined || player.dead || ambient.surveying || ambient.since_survey < SURVEY_INTERVAL {
+    if !player.joined || player.dead || ambient.surveys.out || ambient.since_survey < SURVEY_INTERVAL {
         return;
     }
     surroundings.started += 1;
@@ -455,11 +488,11 @@ fn survey(
         ambient.generator = Some((player.seed, Arc::new(OnceLock::new())));
     }
     let (seed, generator) = ambient.generator.clone().expect("set above");
-    let (kinds, content, tx, ambience) = (ambient.kinds.clone(), ambient.content.clone(), ambient.surveys.0.clone(), ambient.ambience.clone());
+    let (kinds, content, tx, ambience) = (ambient.kinds.clone(), ambient.content.clone(), ambient.surveys.tx.clone(), ambient.ambience.clone());
     let fires = world.fires.clone();
     let smoulders = world.smoulders.clone();
     let random = mix(time.elapsed().as_nanos() as u64);
-    ambient.surveying = true;
+    ambient.surveys.out = true;
     rayon::spawn(move || {
         let enclosure = enclosure::scan(eye, |p| snapshot.block(p), |p| fires.contains(&p) || smoulders.contains(&p), &kinds, random);
         let generator = generator.get_or_init(|| match WorldContent::load(&content) {
@@ -847,7 +880,8 @@ fn leave(
         commands.entity(entity).despawn();
     }
     // The next world starts from nothing found, not deep under the last one; the count of
-    // surveys runs on, so one still out from this world is never taken for the next's.
+    // surveys runs on, so one still out from this world is never taken for the next's (by
+    // the music, or here: `Surveys::leave`).
     *surroundings = Surroundings { started: surroundings.started, ..default() };
     let Some(mut ambient) = ambient else { return };
     let axes = ambient.ambience.axes();
@@ -857,6 +891,7 @@ fn leave(
     ambient.smooth = Enclosure::default();
     ambient.place = None;
     ambient.place_survey = 0;
+    ambient.surveys.leave(surroundings.started);
     ambient.env = Environment::new(axes);
     ambient.since_survey = SURVEY_INTERVAL;
 }
