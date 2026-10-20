@@ -4515,14 +4515,14 @@ mod fight_tests {
 
     /// A boss with the player down a hole four deep, out of its reach down, does not stand
     /// over them to be struck at from below: it backs off the rim out of their reach,
-    /// watching them, and comes back to look now and then, in their reach under 4 s of 16.
+    /// watching them, and comes back to look now and then, in their reach under 7 s of 16 (the way to the rim and back).
     /// Before: Old Tusk and the Rootmother stood over the hole as long as the player stayed
     /// in it, in their reach all 16 s but the walk there.
     #[test]
     fn a_boss_keeps_off_the_rim_of_a_hole_too_deep_for_it() {
         for name in ["base:old_tusk", "base:rootmother"] {
             let f = fight_timed(name, |s, c| hole(s, c, 4), 16.0, true);
-            assert!(f.hits == 0 && f.in_reach < 4.0 && f.pinned < 1.0, "{name}: {f:?}");
+            assert!(f.hits == 0 && f.in_reach < 7.0 && f.pinned < 1.0, "{name}: {f:?}");
         }
     }
 

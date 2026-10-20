@@ -659,7 +659,7 @@ fn strike(ctx: &Ctx, mind: &mut Mind, target: Option<Seen>, stalks: bool) -> Dec
         if ctx.creature.edge(d, ctx.at.scale) < reach - 0.5 {
             let keep = reach + ctx.creature.edge(0.0, ctx.at.scale).abs();
             decision.goal = Some(p.position.with_y(ctx.at.position.y) + away * keep);
-            decision.speed = run(ctx) * 0.5;
+            decision.speed = run(ctx);
         }
     } else if !close {
         // Those with a way found after the target (guards going after someone) follow it
