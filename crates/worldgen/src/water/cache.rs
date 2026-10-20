@@ -7,11 +7,14 @@
 //! identically, when next needed, because everything cached here is a pure function of
 //! its key.
 //!
-//! The exception to computing once: a thread of a class above the default (the server's
-//! tick, see `parallel::urgent`) asking for a value another thread is making makes its own
-//! copy rather than wait. The maker is usually a streaming worker at a background class,
-//! which on a busy machine the scheduler serves last, so waiting on it held the tick (and
-//! the world's creatures) for as long as the build took at that class.
+//! The exception to computing once, in a cache made with `Cache::copying`: a thread of a
+//! class above the default (the server's tick, see `parallel::urgent`) asking for a value
+//! another thread is making makes its own copy rather than wait. The maker is usually a
+//! streaming worker at a background class, which on a busy machine the scheduler serves
+//! last, so waiting on it held the tick (and the world's creatures) for as long as the build
+//! took at that class. Only caches whose `make` does nothing but compute take it: one whose
+//! `make` also takes something out of shared state (settlement plans take their early
+//! spawns) would see that done twice.
 
 use std::hash::Hash;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -39,6 +42,8 @@ impl<T> Weigh for [T] {
 
 pub struct Cache<K, V> {
     budget: usize,
+    /// Whether an urgent thread makes its own value rather than wait on another's.
+    copying: bool,
     inner: Mutex<Inner<K, V>>,
 }
 
@@ -67,7 +72,14 @@ const OVERHEAD: usize = 64;
 impl<K: Copy + Eq + Hash, V: Clone + Weigh> Cache<K, V> {
     /// A cache holding up to about `budget` bytes.
     pub fn new(budget: usize) -> Self {
-        Self { budget, inner: Mutex::new(Inner { clock: 0, bytes: 0, slots: FxHashMap::default() }) }
+        Self { budget, copying: false, inner: Mutex::new(Inner { clock: 0, bytes: 0, slots: FxHashMap::default() }) }
+    }
+
+    /// A cache holding up to about `budget` bytes, of which an urgent thread makes its own
+    /// copy of a value being made rather than wait (see the module's doc): for values whose
+    /// `make` only computes.
+    pub fn copying(budget: usize) -> Self {
+        Self { copying: true, ..Self::new(budget) }
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Inner<K, V>> {
@@ -100,7 +112,7 @@ impl<K: Copy + Eq + Hash, V: Clone + Weigh> Cache<K, V> {
         if let Some(value) = cell.value.get() {
             return value.clone();
         }
-        if cell.making.load(Ordering::Acquire) && crate::parallel::urgent() {
+        if self.copying && cell.making.load(Ordering::Acquire) && crate::parallel::urgent() {
             return make();
         }
         let mut made = false;
@@ -186,12 +198,12 @@ mod tests {
         assert_eq!(made, 7);
     }
 
-    /// The server's tick, asking for a value a background worker is still making, makes its
-    /// own: here the maker holds off until the urgent thread has its answer.
+    /// The server's tick, asking a copying cache for a value a background worker is still
+    /// making, makes its own: here the maker holds off until the urgent thread has its answer.
     #[cfg(target_os = "macos")]
     #[test]
     fn an_urgent_thread_makes_its_own_rather_than_wait() {
-        let cache: Cache<u32, Arc<u8>> = Cache::new(1 << 20);
+        let cache: Cache<u32, Arc<u8>> = Cache::copying(1 << 20);
         let (started_tx, started) = std::sync::mpsc::channel();
         let (answered_tx, answered) = std::sync::mpsc::channel::<()>();
         std::thread::scope(|scope| {
