@@ -174,6 +174,9 @@ pub struct CreatureSound {
     /// Its size against its species', from its genes.
     pub scale: f32,
     pub young: bool,
+    /// An answer to the player's own hand (a fed ewe's munch): always heard, as an event's
+    /// `chance` thins only what a creature does unbidden.
+    pub answering: bool,
 }
 
 /// What creatures did this frame that may be heard; drained each frame.
@@ -345,6 +348,12 @@ fn listen(mut commands: Commands, cameras: Query<Entity, With<Camera3d>>, listen
     }
 }
 
+/// Whether a sound is dropped by its event's `chance` (`roll` drawn only if it may be): an
+/// answer to the player's hand never is.
+fn thinned(chance: f32, answering: bool, roll: impl FnOnce() -> f32) -> bool {
+    !answering && chance < 1.0 && roll() > chance
+}
+
 /// A sound about to be played.
 struct Voiced {
     clip: Handle<AudioSource>,
@@ -412,7 +421,7 @@ fn play(
             }
         }
         let Some(event) = voice.event(sound.kind) else { continue };
-        if event.chance < 1.0 && random(counter) > event.chance {
+        if thinned(event.chance, sound.answering, || random(counter)) {
             continue;
         }
         let fall = falloff(distance, event.range);
