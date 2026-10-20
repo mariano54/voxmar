@@ -1261,9 +1261,12 @@ impl Server {
     }
 
     /// What a cell stops a player with, in blocks from its lower corner (see
-    /// `BlockRegistry::collision`): the boxes the client moves its player against.
+    /// `BlockRegistry::collision`): the boxes the client moves its player against. Space
+    /// not loaded (or under the world) is a whole cube, as the client judges it, so the two
+    /// agree at the edge of the loaded world: a player waits there rather than walk or fall
+    /// into land not loaded yet.
     pub(crate) fn boxes(&self, pos: IVec3) -> &[voxmar_engine::physics::Aabb] {
-        self.block(pos).map_or(&[], |b| self.content.blocks.collision(b))
+        self.block(pos).map_or(&voxmar_engine::physics::CUBE, |b| self.content.blocks.collision(b))
     }
 
     /// Changes many blocks at once (a command's), telling each player about those in columns

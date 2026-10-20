@@ -52,8 +52,10 @@
         (item: "tusk_club", class: "mace", level: 5, max_hit: 5),
         // Ranged 1: a sling throws any cobbled stone, softer than a stone sword but from afar.
         (item: "sling", class: "sling", level: 1, max_hit: 2),
-        // Ranged 5, the Farm age: a short bow and arrows, a step under a copper sword.
-        (item: "short_bow", class: "bow", level: 5, max_hit: 4),
+        // Ranged 3, late in the Nomad age: a short bow and arrows, a step under a copper sword.
+        // It ends the stone sword's chase (twenty blocks of reach) well before copper, which
+        // waits on Engineering and the Farm's pottery (the gathering-upgrades audit, Oct 14).
+        (item: "short_bow", class: "bow", level: 3, max_hit: 4),
         // Copper, Attack 5.
         (item: "copper_sword", class: "sword", level: 5, max_hit: 5),
         (item: "copper_axe", class: "axe", level: 5, max_hit: 6),

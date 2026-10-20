@@ -1847,6 +1847,8 @@ mod tests {
         let mut accepted = 0;
         for seed in [1, 2, 3, 4] {
             let world = crate::Overworld::new(seed, registry.clone());
+            // The same world with every trickle a stream, made once for the seed's tarns.
+            let blocked = std::sync::OnceLock::new();
             let meadow = world.locate_biome("alpine_meadow", IVec2::ZERO, 60000).unwrap();
             let centre = meadow.div_euclid(IVec2::splat(REGION));
             let ground = StreamGround { rivers: &world.rivers, land: world.stages() };
@@ -1865,8 +1867,11 @@ mod tests {
                 for lake in final_basin.lakes.iter().filter(|l| l.tarn && l.pit.div_euclid(IVec2::splat(side)) == region) {
                     accepted += 1;
                     assert!(world.rivers.tarn_isolated(&ground, &lake.cells));
-                    let mut blocked = crate::Overworld::new(seed, registry.clone());
-                    blocked.rivers.creek = 0.000_001;
+                    let blocked = blocked.get_or_init(|| {
+                        let mut blocked = crate::Overworld::new(seed, registry.clone());
+                        blocked.rivers.creek = 0.000_001;
+                        blocked
+                    });
                     let ground = StreamGround { rivers: &blocked.rivers, land: blocked.stages() };
                     assert!(!blocked.rivers.tarn_isolated(&ground, &lake.cells), "an active stream failed to veto seed {seed}, pit {}", lake.pit);
                     assert!(ground.tarn_cells(lake.pit, lake.level, world.rivers.streams.tier.tarns.as_ref().unwrap().size).is_none(), "production admitted a stream through seed {seed}, pit {}", lake.pit);
