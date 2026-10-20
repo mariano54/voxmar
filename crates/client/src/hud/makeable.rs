@@ -1,4 +1,5 @@
-//! What the player can make, under the inventory's slots: from what is in the pack, the
+//! What the player can make, under the inventory's slots: from what is in the pack (and,
+//! standing in their home, its stores, as laying a recipe takes from them too), the
 //! recipes ready to make now first, then those that want a crafting table, a level or a
 //! station, then those nearly there (half or more of what they take is in the pack). A
 //! click on one ready to make lays it in the grid (`core:lay`, Shift for as many sets as a
@@ -88,6 +89,16 @@ pub(crate) fn held(inventory: &voxmar_engine::inventory::Inventory) -> FxHashMap
     have
 }
 
+/// What laying a recipe can take from: the pack (`held`) and, while the player stands in
+/// their home, what its stores hold, as the server sends it (`Vitals::home_stores`).
+pub(crate) fn within_reach(player: &LocalPlayer) -> FxHashMap<BlockId, u32> {
+    let mut have = held(&player.inventory);
+    for &(item, n) in &player.vitals.home_stores {
+        *have.entry(item).or_default() += n;
+    }
+    have
+}
+
 /// How near one crafting recipe is, or None when too little of it is here to show.
 /// `lacks` says the level a recipe wants that the player does not have, if any.
 pub(crate) fn reach(recipe: &Recipe, have: &FxHashMap<BlockId, u32>, at_table: bool, lacks: &dyn Fn(&Recipe) -> Option<(SkillId, u8)>) -> Option<Reach> {
@@ -108,7 +119,15 @@ pub(crate) fn reach(recipe: &Recipe, have: &FxHashMap<BlockId, u32>, at_table: b
 
 /// Everything the player can make or nearly, from the book and what they hold, in the
 /// order it is shown; each thing once, by its nearest way.
+#[cfg(test)]
 pub(crate) fn plan(content: &Content, book: &RecipeBook, have: &FxHashMap<BlockId, u32>, at_table: bool, lacks: &dyn Fn(&Recipe) -> Option<(SkillId, u8)>) -> Vec<Makeable> {
+    plan_cooking_from(content, book, have, have, at_table, lacks)
+}
+
+/// As `plan`, with what a fire or stove cooks counted from `cooks` alone: a fire cooks
+/// what is in hand, never what lies in the home's stores, so raw meat only in the barrel is
+/// not shown as cooked at a campfire.
+pub(crate) fn plan_cooking_from(content: &Content, book: &RecipeBook, have: &FxHashMap<BlockId, u32>, cooks: &FxHashMap<BlockId, u32>, at_table: bool, lacks: &dyn Fn(&Recipe) -> Option<(SkillId, u8)>) -> Vec<Makeable> {
     let recipes: Vec<&Recipe> = content.recipes.iter().collect();
     let mut found: Vec<Makeable> = Vec::new();
     for entry in book.entries() {
@@ -120,7 +139,17 @@ pub(crate) fn plan(content: &Content, book: &RecipeBook, have: &FxHashMap<BlockI
                 .filter_map(|recipe| reach(recipe, have, at_table, lacks))
                 .min_by_key(Reach::rank)
                 .map(|reach| Makeable { output: entry.output, recipes: Some((*first, variants.len())), reach }),
-            Method::Cook { input, station, .. } if have.get(input).is_some_and(|&n| n > 0) => Some(Makeable { output: entry.output, recipes: None, reach: Reach::Station(station.clone()) }),
+            // Cooked: from what is in hand, as many as one go takes, with what else it takes
+            // (three copper ingots and a tin ore make bronze), or short of those.
+            Method::Cook { input, uses, with, station, .. } if cooks.get(input).is_some_and(|&n| n > 0) => {
+                let count = |item: &BlockId| cooks.get(item).copied().unwrap_or(0);
+                let short: Vec<(BlockId, u32)> = std::iter::once((*input, *uses))
+                    .chain(with.iter().copied())
+                    .filter_map(|(item, n)| (count(&item) < n as u32).then(|| (item, n as u32 - count(&item))))
+                    .collect();
+                let reach = if short.is_empty() { Reach::Station(station.clone()) } else { Reach::Short(short) };
+                Some(Makeable { output: entry.output, recipes: None, reach })
+            }
             _ => None,
         };
         let Some(near) = near else { continue };
@@ -234,7 +263,7 @@ fn draw(
     }
     let content = &launch.content;
     let lacks = lacks(content, &player);
-    let plan = plan(content, book, &held(&player.inventory), player.station.is_some(), &lacks);
+    let plan = plan_cooking_from(content, book, &within_reach(&player), &held(&player.inventory), player.station.is_some(), &lacks);
     if drawn.0 == plan {
         return;
     }
@@ -324,6 +353,25 @@ mod tests {
         plan.iter().find(|m| m.output == id)
     }
 
+    /// Standing in their home, what its stores hold counts as within reach, as the
+    /// server lays from it: four planks in the barrel and none in the pack make a table.
+    #[test]
+    fn the_home_stores_count_toward_what_can_be_made() {
+        let content = content();
+        let book = RecipeBook::new(&content);
+        let none = |_: &Recipe| None;
+        let mut player = LocalPlayer::default();
+        let planks = content.blocks.id("base:oak_planks").unwrap();
+        player.vitals.home_stores = vec![(planks, 4)];
+        player.inventory.slots[0] = Some(voxmar_engine::inventory::ItemStack { item: planks, count: 1 });
+        assert_eq!(within_reach(&player).get(&planks), Some(&5), "the pack's and the stores' together");
+        let made = plan(&content, &book, &within_reach(&player), false, &none);
+        assert_eq!(find(&made, &content, "base:crafting_table").map(|m| &m.reach), Some(&Reach::Ready));
+        player.vitals.home_stores.clear();
+        let away = plan(&content, &book, &within_reach(&player), false, &none);
+        assert_ne!(find(&away, &content, "base:crafting_table").map(|m| &m.reach), Some(&Reach::Ready), "one plank alone is not a table");
+    }
+
     /// A log in an empty pack makes planks at once; with planks, sticks and a crafting
     /// table are ready, ahead of anything wanting a table; what is too far off is not
     /// shown, and each thing shows once.
@@ -377,6 +425,20 @@ mod tests {
         let (input, cooked) = content.cooking.iter().next().map(|(input, recipe)| (input, recipe.output)).unwrap();
         let cook = plan(&content, &book, &[(content.blocks.item_of(input), 1)].into_iter().collect(), false, &none);
         let found = cook.iter().find(|m| m.output == cooked).expect("the cooked thing shows");
+        // What a crucible takes besides what is held counts: three copper ingots alone are
+        // a tin ore short of bronze, and with one carried, bronze is cooked.
+        let (bronze, tin) = (content.blocks.id("base:bronze_ingot").unwrap(), content.blocks.id("base:tin_ore").unwrap());
+        let copper = plan(&content, &book, &have(&content, &[("base:copper_ingot", 3)]), false, &none);
+        assert_eq!(find(&copper, &content, "base:bronze_ingot").map(|m| &m.reach), Some(&Reach::Short(vec![(tin, 1)])));
+        let alloy = plan(&content, &book, &have(&content, &[("base:copper_ingot", 3), ("base:tin_ore", 1)]), false, &none);
+        assert!(matches!(alloy.iter().find(|m| m.output == bronze).map(|m| &m.reach), Some(Reach::Station(_))), "{alloy:?}");
+        let one = plan(&content, &book, &have(&content, &[("base:copper_ingot", 1), ("base:tin_ore", 1)]), false, &none);
+        let copper_ingot = content.blocks.id("base:copper_ingot").unwrap();
+        assert_eq!(find(&one, &content, "base:bronze_ingot").map(|m| &m.reach), Some(&Reach::Short(vec![(copper_ingot, 2)])), "one go takes three");
+        // Only in the home's stores, it is not shown cooked: a fire cooks from the hand.
+        let stored: FxHashMap<BlockId, u32> = [(content.blocks.item_of(input), 1)].into_iter().collect();
+        let from_stores = plan_cooking_from(&content, &book, &stored, &FxHashMap::default(), false, &none);
+        assert!(from_stores.iter().all(|m| m.output != cooked), "what lies only in the stores is not cooked at a fire");
         let Reach::Station(station) = &found.reach else { panic!("{found:?}") };
         let line = words(&locale, &content, cooked, &found.reach);
         assert!(!line.contains(station.as_str()) || content.blocks.tagged(station).next().is_none(), "the station is named, not its tag: {line}");

@@ -10,6 +10,54 @@
 (
     creatures: [
         (
+            // Old Tusk (design wiki, Nomad age): a great old boar, the first big fight a new
+            // player can choose. Not in a lair: he roams the woods and the sage steppe by
+            // day, grazing, and ignores you until struck. Then he fights to the end. Up
+            // close he gores (block it); step away and he paws the ground and charges in a
+            // straight line (heavy: dodge aside, or brace a spear and he runs onto its
+            // point). A charge sees nothing ahead, so a tree, a wall, a pit or a cliff edge
+            // is your friend (`moves::Charge`). Below half he is maddened: his charge comes
+            // quicker and runs further. Weak to stab, as boars are to a spear. A truffle in
+            // hand tempts him, to lead him where you want him.
+            name: "old_tusk", title: "Old Tusk", kind: Animal, boss: true, music: ["forest"], rarity: Rare, level: 10, health: 60, weak: Some(Stab),
+            attack: (windup: 0.55, recovery: 0.6, damage: (1, 3), reach: 1.2, every: 1.6, lunge: 1.0, style: Stab, pace: Walk),
+            moves: [
+                (name: "gore", attack: (windup: 0.55, recovery: 0.6, damage: (1, 3), reach: 1.2, every: 1.6, lunge: 1.0, style: Stab, pace: Walk), tell: (nod: 0.8)),
+                (name: "charge", phases: [0], least: 3.0, attack: (windup: 1.0, recovery: 0.8, damage: (2, 5), reach: 12.0, every: 3.5, lunge: 0.0, style: Crush, heavy: true, pace: Walk, charge: (speed: 9.0, distance: 16.0, stun: 3.0)), tell: (crouch: 1.0, nod: 0.4)),
+                (name: "frenzy", phases: [1], least: 3.0, attack: (windup: 0.75, recovery: 0.7, damage: (2, 5), reach: 14.0, every: 3.0, lunge: 0.0, style: Crush, heavy: true, pace: Walk, charge: (speed: 11.0, distance: 20.0, stun: 2.5)), tell: (crouch: 1.0, rear: 0.3)),
+            ],
+            phases: [(below: 0.5, hold: 1.5)],
+            defence: 6,
+            body: (
+                size: (1.3, 1.3),
+                model: Quadruped(body: (0.98, 0.88, 1.5), head: (0.6, 0.58, 0.66), legs: 0.44, ears: (0.15, 0.18), ear_lean: 35.0, horns: (0.09, 0.34), horn_shape: Tusks, snout: (0.34, 0.25, 0.26), hump: 0.4, tail: (0.07, 0.07, 0.3), tail_droop: 60.0),
+                colours: [(64, 50, 40), (96, 80, 66), (238, 228, 204)],
+                skin: (fur: 0.3, belly: 0.15, feet: (32, 26, 22), markings: [Dorsal(colour: (150, 140, 128), width: 0.22), Muzzle(colour: (112, 92, 82))]),
+            ),
+            movement: (style: Lumberer, walk: 1.2, run: 5.0, turn: 160.0, jump: 7.5),
+            habitat: (
+                biomes: [("forest", 1.0), ("mixed_forest", 1.0), ("old_growth_forest", 1.0), ("sagebrush_steppe", 0.8)],
+                comfort: (temperature: (-8.0, 30.0), moisture: (0.2, 2.4)),
+                active: Day,
+            ),
+            group: (size: (1, 1)),
+            temperament: (aggression: 0.0, fear: 0.0, nervousness: 0.1, curiosity: 0.2, sociability: 0.2, territory: 0.2, energy: 0.4),
+            senses: (sight: 14.0, hearing: 18.0),
+            leash: 40.0,
+            diet: (eats: ["brown_mushroom", "red_mushroom", "short_grass"], favourite: ["truffle"]),
+            behaviours: [(do: Wander(radius: 16.0)), (do: LookAround), (do: Graze), (do: Defend, weight: 1.5), (do: StandToLook), (do: Tempted(radius: 10.0))],
+            xp: (kill: 60.0, skill: "hunter"),
+            loot: [
+                (item: "great_tusk"),
+                (item: "raw_pork", count: (3, 5)),
+                (item: "raw_hide", count: (2, 3)),
+                (item: "lard", count: (1, 2)),
+                (item: "bone", count: (2, 3)),
+                (item: "gold_coin", count: (2, 5)),
+                (item: "flint_spear", chance: 0.11, rarity: Uncommon),
+            ],
+        ),
+        (
             // The Rootmother (design wiki, Farm age): a hunched mass of old root under the
             // oldest woods. Phase one, her lash and her grasp take turns: block the lash,
             // dodge the grasp (heavy, it goes through any guard). Below half she rears and

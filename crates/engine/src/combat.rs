@@ -156,6 +156,21 @@ pub struct ClassDef {
     /// again (an arrow pulled from a kill, a stone in the grass): 0 to 1.
     #[serde(default)]
     pub recover: f32,
+    /// The chance a shot that misses lands where it flew, to be picked up again: 0 to 1.
+    #[serde(default)]
+    pub recover_miss: f32,
+    /// A hit taken while a shot is drawn spoils it, as raising a guard does
+    /// (`Rhythm::cancel`): the shot is not loosed, and the meter starts again from
+    /// [`Feel::cancel_to`].
+    #[serde(default)]
+    pub spoiled_by_hits: bool,
+    /// The speed on foot while a shot is drawn (its wind-up), as a share: 0.1 to 1.
+    #[serde(default = "one")]
+    pub drawing_speed: f32,
+}
+
+fn one() -> f32 {
+    1.0
 }
 
 fn buffer() -> f32 {
@@ -180,6 +195,11 @@ pub struct GuardDef {
     /// Whether it stops arrows and thrown things too, as shields do.
     #[serde(default)]
     pub missiles: bool,
+    /// Whether, held up facing it, it braces against a charge: the charger runs onto the
+    /// point, heavy or not, and is stopped (a spear's, the wiki's "stops a charge when
+    /// braced"; `creature::moves::Charge`).
+    #[serde(default)]
+    pub brace: bool,
 }
 
 fn guard_speed() -> f32 {
@@ -187,6 +207,11 @@ fn guard_speed() -> f32 {
 }
 
 impl GuardDef {
+    /// Whether, facing `facing`, it braces against a charge coming from `from`.
+    pub fn braces(&self, facing: glam::Vec3, from: glam::Vec3) -> bool {
+        self.brace && self.covers(facing, from)
+    }
+
     /// Whether a blow from `from` falls in the arc of a guard facing `facing` (both flat
     /// directions, any length).
     pub fn covers(&self, facing: glam::Vec3, from: glam::Vec3) -> bool {
@@ -357,6 +382,10 @@ feel! {
     creature_accuracy: f32 = 0.8,
     /// How far, past touching, a dashing player stops short of a creature's body.
     creature_clearance: f32 = 0.2,
+    /// The share of its most health a charging creature loses for each block it falls past
+    /// survival's `safe_fall` (`creature::moves::Charge`): a charge does not look where it
+    /// goes, so a cliff hurts it as the player would want.
+    charge_fall: f32 = 0.1,
     /// Seconds after a creature and the player last traded blows that a right click at it
     /// still guards (with something that guards) rather than looks closely.
     engaged: f32 = 6.0,
@@ -1075,6 +1104,9 @@ impl CombatRegistry {
         if dodges.is_empty() {
             dodges.push(DodgeDef::default());
         }
+        if !(0.0..=1.0).contains(&feel.charge_fall) {
+            return Err(RegistryError("combat.ron: `feel.charge_fall` must be from 0 to 1".into()));
+        }
         if let Some(class) = classes.iter().find(|c| c.windup < 0.0 || c.windup >= c.cooldown || c.buffer < 0.0 || c.beat < 0.0) {
             return Err(RegistryError(format!("combat.ron: class `{}`: its wind-up must be under its cooldown, and no time may be negative", class.name)));
         }
@@ -1133,6 +1165,15 @@ impl CombatRegistry {
             };
             if !(0.0..=1.0).contains(&class.recover) || (class.recover > 0.0 && class.ammo.is_none()) {
                 return Err(RegistryError(format!("combat.ron: class `{}` recovers {} of its shots: it must shoot something, and recover 0 to 1", class.name, class.recover)));
+            }
+            if !(0.0..=1.0).contains(&class.recover_miss) || (class.recover_miss > 0.0 && class.ammo.is_none()) {
+                return Err(RegistryError(format!("combat.ron: class `{}` recovers {} of its misses: it must shoot something, and recover_miss 0 to 1", class.name, class.recover_miss)));
+            }
+            if class.spoiled_by_hits && class.ammo.is_none() {
+                return Err(RegistryError(format!("combat.ron: class `{}` has its shots spoiled by hits, but shoots nothing", class.name)));
+            }
+            if !(0.1..=1.0).contains(&class.drawing_speed) || (class.drawing_speed < 1.0 && class.ammo.is_none()) {
+                return Err(RegistryError(format!("combat.ron: class `{}` moves at {} while drawing: it must shoot something, and drawing_speed 0.1 to 1", class.name, class.drawing_speed)));
             }
             if class.ammo.is_some() && items.is_empty() {
                 return Err(RegistryError(format!("combat.ron: class `{}` shoots {:?}, which no item is", class.name, class.ammo.as_deref().unwrap_or_default())));
@@ -1254,6 +1295,23 @@ impl CombatRegistry {
         self.class_of(weapon).map_or(0.0, |class| class.recover)
     }
 
+    /// The chance a miss by `weapon` lands to be picked up again (0 for a weapon that
+    /// strikes).
+    pub fn recover_miss(&self, weapon: &Weapon) -> f32 {
+        self.class_of(weapon).map_or(0.0, |class| class.recover_miss)
+    }
+
+    /// Whether a hit taken spoils `weapon`'s shot being drawn.
+    pub fn spoiled_by_hits(&self, weapon: &Weapon) -> bool {
+        self.class_of(weapon).is_some_and(|class| class.spoiled_by_hits)
+    }
+
+    /// The share of their speed a player keeps while drawing a shot with `weapon` (1 for
+    /// a weapon that strikes).
+    pub fn drawing_speed(&self, weapon: &Weapon) -> f32 {
+        self.class_of(weapon).map_or(1.0, |class| class.drawing_speed)
+    }
+
     /// `weapon`'s rhythm.
     pub fn timing(&self, weapon: &Weapon) -> Timing {
         match self.class_of(weapon) {
@@ -1349,7 +1407,7 @@ mod tests {
     fn a_blow_is_judged_by_when_it_lands() {
         use glam::Vec3;
         let feel = Feel::default();
-        let sword = GuardDef { stop: 0.35, arc: 90.0, perfect: 0.15, speed: 0.5, missiles: false };
+        let sword = GuardDef { stop: 0.35, arc: 90.0, perfect: 0.15, speed: 0.5, missiles: false, brace: false };
         let dodge = DodgeDef::default();
         // Raised 0.1 s before it lands: perfect; 0.2 s before: a block; after: nothing.
         for (raised, lands, want) in [(10.0, 10.1, Defended::Perfect), (10.0, 10.2, Defended::Blocked), (10.2, 10.1, Defended::Hit)] {
@@ -1530,6 +1588,17 @@ mod tests {
         assert!(registry(r#"(classes: [(name: "sling", style: Ranged, cooldown: 0.5, ammo: "nothing")])"#).is_err(), "ammo that is no item");
         assert!(registry(r#"(classes: [(name: "sling", style: Ranged, cooldown: 0.5, ammo: "stone", recover: 1.5)])"#).is_err(), "recover above 1");
         assert!(registry(r#"(classes: [(name: "sword", style: Slash, cooldown: 0.6, recover: 0.5)])"#).is_err(), "recovering with nothing to shoot");
+        let (combat, blocks) = registry(r#"(classes: [(name: "bow", style: Ranged, cooldown: 1.0, windup: 0.5, ammo: "stone", recover_miss: 0.8, spoiled_by_hits: true, drawing_speed: 0.4)], weapons: [(item: "stick", class: "bow", max_hit: 2)])"#).unwrap();
+        let bow = combat.wielded(blocks.id("t:stick"), |_| 1);
+        assert_eq!((combat.recover_miss(&bow), combat.spoiled_by_hits(&bow), combat.drawing_speed(&bow)), (0.8, true, 0.4));
+        let fists = combat.wielded(None, |_| 1);
+        assert_eq!((combat.recover_miss(&fists), combat.spoiled_by_hits(&fists), combat.drawing_speed(&fists)), (0.0, false, 1.0));
+        for bad in ["recover_miss: 1.5", "drawing_speed: 0.05", "drawing_speed: 1.2"] {
+            assert!(registry(&format!(r#"(classes: [(name: "bow", style: Ranged, cooldown: 1.0, ammo: "stone", {bad})])"#)).is_err(), "{bad} is accepted");
+        }
+        for bad in ["recover_miss: 0.5", "spoiled_by_hits: true", "drawing_speed: 0.5"] {
+            assert!(registry(&format!(r#"(classes: [(name: "sword", style: Slash, cooldown: 0.6, {bad})])"#)).is_err(), "{bad} with nothing to shoot is accepted");
+        }
     }
 
     #[test]
@@ -1674,7 +1743,7 @@ mod tests {
     fn guards_stop_melee_in_their_arc_and_crush_breaks_through() {
         use glam::Vec3;
         let feel = Feel::default();
-        let sword = GuardDef { stop: 0.35, arc: 90.0, perfect: 0.15, speed: 0.5, missiles: false };
+        let sword = GuardDef { stop: 0.35, arc: 90.0, perfect: 0.15, speed: 0.5, missiles: false, brace: false };
         assert!(sword.covers(Vec3::Z, Vec3::new(0.9, 0.0, 1.0)));
         assert!(!sword.covers(Vec3::Z, Vec3::new(1.0, 0.0, 0.2)), "beside is open");
         assert_eq!(sword.stops(Style::Slash, &feel), 0.35);

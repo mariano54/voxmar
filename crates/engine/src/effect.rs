@@ -390,6 +390,17 @@ impl Shelter {
     pub fn of(tags: &[String]) -> Option<Shelter> {
         Shelter::ALL.into_iter().rev().find(|s| tags.iter().any(|t| t == s.tag()))
     }
+
+    /// How a block shelters as a wall of a room: an explicit shelter tag always wins
+    /// (cloth hung, a hay bale, a column); a solid block with none (earth, gravel, sand) is
+    /// draughty; none for one that is no wall: open, or `furniture` (a furniture tag and no
+    /// shelter tag), looked past to the wall behind.
+    pub fn of_wall(tags: &[String], solid: bool, furniture: bool) -> Option<Shelter> {
+        match Shelter::of(tags) {
+            Some(shelter) => Some(shelter),
+            None => (solid && !furniture).then_some(Shelter::Draughty),
+        }
+    }
 }
 
 /// The faces about a home's room: its walls and roof as a scan from the home out over the
@@ -905,6 +916,18 @@ impl EffectRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A shelter tag always wins, furniture or not; a solid untagged block is draughty
+    /// unless it is furniture; anything else is no wall.
+    #[test]
+    fn a_shelter_tag_always_wins_a_wall() {
+        let tags = |list: &[&str]| list.iter().map(|t| t.to_string()).collect::<Vec<_>>();
+        assert_eq!(Shelter::of_wall(&tags(&["decor", "shelter:draughty"]), true, true), Some(Shelter::Draughty), "cloth");
+        assert_eq!(Shelter::of_wall(&tags(&["shelter:sound"]), false, false), Some(Shelter::Sound), "a shaped roof");
+        assert_eq!(Shelter::of_wall(&tags(&["soil"]), true, false), Some(Shelter::Draughty), "earth");
+        assert_eq!(Shelter::of_wall(&tags(&["storage"]), true, true), None, "a chest");
+        assert_eq!(Shelter::of_wall(&tags(&[]), false, false), None, "air");
+    }
 
     const EFFECTS: &str = r#"(effects: [
         (name: "by_the_fire", kind: Buff, title: "By the fire", description: "", when: Some(Warmed), modifiers: (heal: 2.0)),

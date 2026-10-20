@@ -7,129 +7,129 @@
         // The Bronze age: rotation. Wheels and windmills turn shafts; shafts turn machines.
         (
             name: "water_wheel", sound: Wood, textures: Sides(top: "water_wheel_top", bottom: "water_wheel_top", side: "water_wheel_side"),
-            hardness: 2.5, color: (120, 90, 60), tags: ["machine", "wood", "building", "shelter:sound"],
+            hardness: 2.5, color: (120, 90, 60), tags: ["machine", "wood", "building"],
         ),
         (
             name: "windmill", sound: Wood, textures: Sides(top: "windmill_top", bottom: "windmill_top", side: "windmill_side"),
-            hardness: 2.5, color: (200, 190, 170), tags: ["machine", "wood", "building", "shelter:sound"],
+            hardness: 2.5, color: (200, 190, 170), tags: ["machine", "wood", "building"],
         ),
         (
             name: "treadwheel", sound: Wood, textures: Sides(top: "treadwheel_top", bottom: "treadwheel_top", side: "treadwheel_side"),
-            hardness: 2.5, color: (140, 105, 70), tags: ["machine", "wood", "building", "shelter:sound"],
+            hardness: 2.5, color: (140, 105, 70), tags: ["machine", "wood", "building"],
         ),
         (
             name: "shaft", sound: Wood, textures: Column(end: "shaft_end", side: "shaft_side"),
-            hardness: 1.5, color: (150, 115, 70), tags: ["machine", "wood", "building", "shelter:sound"],
+            hardness: 1.5, color: (150, 115, 70), tags: ["machine", "wood", "building"],
         ),
         (
             name: "trip_hammer", sound: Stone, textures: Sides(top: "trip_hammer_top", bottom: "cobblestone", side: "trip_hammer_side"),
-            hardness: 3.0, color: (130, 110, 90), tags: ["machine", "building", "shelter:sound"],
+            hardness: 3.0, color: (130, 110, 90), tags: ["machine", "building"],
         ),
         // The Bronze age's gate: a bloomery at the foot of a kiln-brick shaft, blown by
         // powered bellows (multiblocks_machines.ron), smelts iron ore into blooms.
         (
             name: "bloomery", sound: Stone, textures: Sides(top: "kiln_bricks", bottom: "kiln_bricks", side: "bloomery_side"),
-            hardness: 3.0, color: (160, 80, 50), light: 10, tags: ["machine", "multiblock_core", "heat", "building", "shelter:sound"],
+            hardness: 3.0, color: (160, 80, 50), light: 10, tags: ["machine", "multiblock_core", "heat", "building"],
         ),
         (
             name: "bellows", sound: Wood, textures: Sides(top: "bellows_top", bottom: "bellows_top", side: "bellows_side"),
-            hardness: 1.5, color: (120, 85, 55), tags: ["machine", "wood", "building", "shelter:sound"],
+            hardness: 1.5, color: (120, 85, 55), tags: ["machine", "wood", "building"],
         ),
         // The Iron age: a coke oven bakes coal into coke in its sealed brick chamber; a blast
         // furnace, blown by bellows up a tall shaft, makes two iron ingots of every ore with
         // coke; a sawmill cuts more planks from a log than an axe.
         (
             name: "coke_oven", sound: Stone, textures: Sides(top: "kiln_bricks", bottom: "kiln_bricks", side: "coke_oven_side"),
-            hardness: 3.0, color: (110, 60, 45), light: 6, tags: ["machine", "multiblock_core", "heat", "building", "shelter:sound"],
+            hardness: 3.0, color: (110, 60, 45), light: 6, tags: ["machine", "multiblock_core", "heat", "building"],
         ),
         (
             name: "blast_furnace", sound: Stone, textures: Sides(top: "kiln_bricks", bottom: "kiln_bricks", side: "blast_furnace_side"),
-            hardness: 3.5, color: (150, 70, 45), light: 12, tags: ["machine", "multiblock_core", "heat", "building", "shelter:sound"],
+            hardness: 3.5, color: (150, 70, 45), light: 12, tags: ["machine", "multiblock_core", "heat", "building"],
         ),
         (
             name: "sawmill", sound: Wood, textures: Sides(top: "sawmill_top", bottom: "sawmill_bottom", side: "sawmill_side"),
-            hardness: 2.5, color: (140, 110, 80), tags: ["machine", "wood", "building", "shelter:sound"],
+            hardness: 2.5, color: (140, 110, 80), tags: ["machine", "wood", "building"],
         ),
         // Items between machines: a hopper feeds what is put in it along chutes to the
         // machines beside them, a chest collects what they made; a conveyor is a faster
         // chute (machines.ron says how fast).
         (
             name: "hopper", sound: Wood, textures: Sides(top: "hopper_top", bottom: "hopper_bottom", side: "hopper_side"),
-            hardness: 2.0, color: (130, 100, 65), tags: ["machine", "wood", "building", "shelter:sound"],
+            hardness: 2.0, color: (130, 100, 65), tags: ["machine", "wood", "building"],
         ),
         (
             name: "chest", sound: Wood, textures: Sides(top: "chest_top", bottom: "chest_top", side: "chest_side"),
-            hardness: 2.0, color: (150, 115, 75), tags: ["machine", "storage", "wood", "building", "shelter:sound"],
+            hardness: 2.0, color: (150, 115, 75), tags: ["machine", "storage", "wood", "building"],
         ),
         (
             name: "chute", sound: Wood, textures: Column(end: "chute_end", side: "chute_side"),
-            hardness: 1.0, color: (140, 105, 70), tags: ["machine", "wood", "building", "shelter:sound"],
+            hardness: 1.0, color: (140, 105, 70), tags: ["machine", "wood", "building"],
         ),
         (
             name: "conveyor", sound: Stone, textures: Column(end: "conveyor_end", side: "conveyor_side"),
-            hardness: 2.0, color: (70, 65, 60), tags: ["machine", "building", "shelter:sound"],
+            hardness: 2.0, color: (70, 65, 60), tags: ["machine", "building"],
         ),
         // The Iron and Steam ages: boilers make steam, pipes carry it, engines turn it back
         // into rotation and steam machines work with it directly.
         (
             name: "boiler", sound: Stone, textures: Sides(top: "boiler_top", bottom: "iron_casing", side: "boiler_side"),
-            hardness: 3.5, color: (90, 80, 75), light: 6, tags: ["machine", "heat", "building", "shelter:sound"],
+            hardness: 3.5, color: (90, 80, 75), light: 6, tags: ["machine", "heat", "building"],
         ),
         (
             name: "steam_pipe", sound: Stone, textures: Column(end: "steam_pipe_end", side: "steam_pipe_side"),
-            hardness: 2.0, color: (180, 110, 70), tags: ["machine", "building", "shelter:sound"],
+            hardness: 2.0, color: (180, 110, 70), tags: ["machine", "building"],
         ),
         (
             name: "beam_engine", sound: Stone, textures: Sides(top: "beam_engine_top", bottom: "iron_casing", side: "beam_engine_side"),
-            hardness: 3.5, color: (100, 100, 105), tags: ["machine", "building", "shelter:sound"],
+            hardness: 3.5, color: (100, 100, 105), tags: ["machine", "building"],
         ),
         (
             name: "steam_crusher", sound: Stone, textures: Sides(top: "steam_crusher_top", bottom: "iron_casing", side: "steam_crusher_side"),
-            hardness: 3.5, color: (110, 105, 100), tags: ["machine", "building", "shelter:sound"],
+            hardness: 3.5, color: (110, 105, 100), tags: ["machine", "building"],
         ),
         // The LV age: dynamos turn rotation into electricity, cables carry it, battery
         // banks keep it.
         (
             name: "dynamo", sound: Stone, textures: Sides(top: "dynamo_top", bottom: "iron_casing", side: "dynamo_side"),
-            hardness: 3.5, color: (120, 90, 70), tags: ["machine", "building", "shelter:sound"],
+            hardness: 3.5, color: (120, 90, 70), tags: ["machine", "building"],
         ),
         (
             name: "lv_cable", sound: Wood, textures: Column(end: "lv_cable_end", side: "lv_cable_side"),
-            hardness: 1.0, color: (60, 60, 60), tags: ["machine", "building", "shelter:sound"],
+            hardness: 1.0, color: (60, 60, 60), tags: ["machine", "building"],
         ),
         (
             name: "battery_bank", sound: Stone, textures: Sides(top: "battery_bank_top", bottom: "iron_casing", side: "battery_bank_side"),
-            hardness: 3.5, color: (90, 95, 110), tags: ["machine", "building", "shelter:sound"],
+            hardness: 3.5, color: (90, 95, 110), tags: ["machine", "building"],
         ),
         (
             name: "electric_furnace", sound: Stone, textures: Sides(top: "iron_casing", bottom: "iron_casing", side: "electric_furnace_side"),
-            hardness: 3.5, color: (110, 100, 100), light: 4, tags: ["machine", "building", "shelter:sound"],
+            hardness: 3.5, color: (110, 100, 100), light: 4, tags: ["machine", "building"],
         ),
         (
             name: "macerator", sound: Stone, textures: Sides(top: "macerator_top", bottom: "iron_casing", side: "macerator_side"),
-            hardness: 3.5, color: (100, 105, 110), tags: ["machine", "building", "shelter:sound"],
+            hardness: 3.5, color: (100, 105, 110), tags: ["machine", "building"],
         ),
         (
             name: "ore_washer", sound: Stone, textures: Sides(top: "ore_washer_top", bottom: "iron_casing", side: "ore_washer_side"),
-            hardness: 3.5, color: (90, 110, 130), tags: ["machine", "building", "shelter:sound"],
+            hardness: 3.5, color: (90, 110, 130), tags: ["machine", "building"],
         ),
         // The MV age: steam turbines give MV straight from steam; transformers step it down
         // for LV machines; MV cable and battery banks carry and keep it.
         (
             name: "steam_turbine", sound: Stone, textures: Sides(top: "steam_turbine_top", bottom: "iron_casing", side: "steam_turbine_side"),
-            hardness: 4.0, color: (110, 100, 90), tags: ["machine", "building", "shelter:sound"],
+            hardness: 4.0, color: (110, 100, 90), tags: ["machine", "building"],
         ),
         (
             name: "mv_cable", sound: Wood, textures: Column(end: "mv_cable_end", side: "mv_cable_side"),
-            hardness: 1.0, color: (70, 50, 50), tags: ["machine", "building", "shelter:sound"],
+            hardness: 1.0, color: (70, 50, 50), tags: ["machine", "building"],
         ),
         (
             name: "lv_transformer", sound: Stone, textures: Sides(top: "lv_transformer_top", bottom: "lv_transformer_bottom", side: "lv_transformer_side"),
-            hardness: 3.5, color: (90, 90, 80), tags: ["machine", "building", "shelter:sound"],
+            hardness: 3.5, color: (90, 90, 80), tags: ["machine", "building"],
         ),
         (
             name: "mv_battery_bank", sound: Stone, textures: Sides(top: "mv_battery_bank_top", bottom: "iron_casing", side: "mv_battery_bank_side"),
-            hardness: 4.0, color: (100, 80, 110), tags: ["machine", "building", "shelter:sound"],
+            hardness: 4.0, color: (100, 80, 110), tags: ["machine", "building"],
         ),
         // The HV age: a turbine hall (a multiblock of HV casing round its core) gives HV
         // from steam; HV cable and banks carry and keep it; MV transformers step it down.
@@ -139,29 +139,29 @@
         ),
         (
             name: "turbine_hall", sound: Stone, textures: Sides(top: "turbine_hall_top", bottom: "hv_casing", side: "turbine_hall_side"),
-            hardness: 4.5, color: (90, 105, 125), tags: ["machine", "multiblock_core", "building", "shelter:sound"],
+            hardness: 4.5, color: (90, 105, 125), tags: ["machine", "multiblock_core", "building"],
         ),
         (
             name: "hv_cable", sound: Wood, textures: Column(end: "hv_cable_end", side: "hv_cable_side"),
-            hardness: 1.0, color: (90, 80, 40), tags: ["machine", "building", "shelter:sound"],
+            hardness: 1.0, color: (90, 80, 40), tags: ["machine", "building"],
         ),
         (
             name: "mv_transformer", sound: Stone, textures: Sides(top: "mv_transformer_top", bottom: "mv_transformer_bottom", side: "mv_transformer_side"),
-            hardness: 4.0, color: (80, 90, 110), tags: ["machine", "building", "shelter:sound"],
+            hardness: 4.0, color: (80, 90, 110), tags: ["machine", "building"],
         ),
         (
             name: "hv_battery_bank", sound: Stone, textures: Sides(top: "hv_battery_bank_top", bottom: "iron_casing", side: "hv_battery_bank_side"),
-            hardness: 4.5, color: (110, 100, 70), tags: ["machine", "building", "shelter:sound"],
+            hardness: 4.5, color: (110, 100, 70), tags: ["machine", "building"],
         ),
         // HV processors: a processing array (a multiblock of HV casing round its core) and
         // an induction smelter.
         (
             name: "processing_array", sound: Stone, textures: Sides(top: "hv_casing", bottom: "hv_casing", side: "processing_array_side"),
-            hardness: 4.5, color: (95, 110, 120), tags: ["machine", "multiblock_core", "building", "shelter:sound"],
+            hardness: 4.5, color: (95, 110, 120), tags: ["machine", "multiblock_core", "building"],
         ),
         (
             name: "induction_smelter", sound: Stone, textures: Sides(top: "induction_smelter_top", bottom: "hv_casing", side: "induction_smelter_side"),
-            hardness: 4.5, color: (120, 90, 80), tags: ["machine", "building", "shelter:sound"],
+            hardness: 4.5, color: (120, 90, 80), tags: ["machine", "building"],
         ),
     ],
     families: [

@@ -142,7 +142,7 @@ impl ActionContext for Context<'_> {
     }
 
     fn occupied(&self, cell: IVec3) -> bool {
-        self.server.players.values().any(|p| p.joined && p.health.alive() && p.aabb().intersects(|c| c == cell))
+        self.server.player_in(cell)
     }
 
     fn creature_in(&self, cell: IVec3) -> bool {
@@ -289,8 +289,19 @@ impl Server {
         }
     }
 
-    /// Applies an action's effects. Validation already guaranteed they can all apply.
+    /// Applies an action's effects, as `agent`'s doing (`fire_origin`, `changed_by`) whenever
+    /// it commits: as their message arrives or later, when it falls due in the run loop.
     fn commit(&mut self, agent: PlayerId, def: &ActionDef, target: ActionTarget) {
+        let by = self.players.get(&agent).map(|p| crate::player_key(&p.name));
+        let fire_was = std::mem::replace(&mut self.fire_origin, by.clone());
+        let changed_was = std::mem::replace(&mut self.changed_by, by);
+        self.commit_effects(agent, def, target);
+        self.fire_origin = fire_was;
+        self.changed_by = changed_was;
+    }
+
+    /// Applies an action's effects. Validation already guaranteed they can all apply.
+    fn commit_effects(&mut self, agent: PlayerId, def: &ActionDef, target: ActionTarget) {
         for &effect in &def.effects {
             match (effect, target) {
                 (Effect::GiveDrop, ActionTarget::Block { block, .. }) => {
@@ -407,6 +418,7 @@ impl Server {
                     let changes = voxmar_engine::action::swapping(&Context { server: self, agent }, block);
                     self.set_blocks(&changes);
                 }
+                (Effect::Coat, ActionTarget::Block { block, .. }) => self.coat(agent, block),
                 (Effect::Till, ActionTarget::Block { block, .. }) => {
                     if let Some(farmland) = self.content.blocks.id("base:farmland") {
                         self.set_block(block, farmland);
@@ -585,10 +597,8 @@ impl Server {
         let level = rule.skill.map_or(1, |skill| self.content.skills.level(player.skills.xp(skill)));
         let bonus = voxmar_engine::crop::level_bonus(level, rule.level, self.content.skills.max_level()) + tools.yield_bonus(held, block) + player.modifiers.finds;
         let info = self.content.blocks.info(block);
-        let popped = self.meta.drops;
-        self.meta.drops += 1;
         // The pops show where each drop flies, so they draw nothing from the player's rolls.
-        let [a, b, c] = crate::items::random3(self.meta.draw_key ^ popped.wrapping_mul(0x9e37_79b9_7f4a_7c15), pos, agent ^ 0xd1ce);
+        let [a, b, c] = self.meta.next_pop(pos, agent ^ 0xd1ce);
         // Never a furnishing's: it gives itself back only where a player placed it.
         if roll < bonus && !info.drops.is_air() && info.drop_count > 0 && !self.content.blocks.def(block).has_tag("furnishing") {
             let stack = voxmar_engine::inventory::ItemStack { item: info.drops, count: 1 };

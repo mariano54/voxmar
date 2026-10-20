@@ -43,11 +43,18 @@ pub struct QuestsPlugin;
 impl Plugin for QuestsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<QuestView>()
+            .init_resource::<TrackerRoom>()
             .init_resource::<Recentre>()
             .init_resource::<ZoomAt>()
             .add_systems(PostStartup, (spawn, spawn_tracker))
             .add_systems(OnEnter(Screen::InGame), keep_known_pins)
-            .add_systems(Update, ((open_start, choose_on_open, show, pick, go_to_path, claim, turn_ways, keep_web_in_range, drag_web, zoom_web, go_to_current, draw, fit_lines.after(crate::ui::widgets::scroll_lists)).chain().after(ScreenSystems), (seed_pins, retire, track).chain(), hear_quests).run_if(in_state(Screen::InGame)));
+            // Out of a game the tracker is not kept up, so it goes with the game.
+            .add_systems(OnExit(Screen::InGame), |mut tracker: Query<&mut Visibility, With<Tracker>>| {
+                for mut shown in &mut tracker {
+                    shown.set_if_neq(Visibility::Hidden);
+                }
+            })
+            .add_systems(Update, ((open_start, choose_on_open, show, pick, go_to_path, claim, turn_ways, keep_web_in_range, drag_web, zoom_web, go_to_current, draw, fit_lines.after(crate::ui::widgets::scroll_lists)).chain().after(ScreenSystems), (seed_pins, retire, track, measure_room, squeeze).chain(), hear_quests).run_if(in_state(Screen::InGame)));
     }
 }
 
@@ -488,6 +495,18 @@ fn path_head(standings: &[Standing]) -> Option<usize> {
 fn goal_line(locale: &Locale, content: &Content, quest: &QuestDef, goal: &Goal, progress: (u32, u32), met: bool) -> String {
     let mark = locale.get(if met { "quest.mark.done" } else { "quest.mark.todo" });
     format!("{mark} {}", goal_words(locale, content, quest, goal, progress))
+}
+
+/// The quests whose tracker cards say the most in `locale`, as many as the tracker pins: the
+/// tracker at its tallest, for the gate's text-fit tour.
+pub fn wordiest(content: &Content, locale: &Locale) -> Vec<String> {
+    let words = |quest: &QuestDef| {
+        let goals: usize = best_task(quest, None).iter().map(|(goal, progress)| goal_line(locale, content, quest, goal, *progress, false).chars().count()).sum();
+        title(locale, quest).chars().count() + goals
+    };
+    let mut quests: Vec<&QuestDef> = content.quests.iter().collect();
+    quests.sort_by_key(|quest| std::cmp::Reverse(words(quest)));
+    quests.into_iter().take(content.quests.tracker().pins).map(|quest| quest.name.clone()).collect()
 }
 
 /// Each goal of the task nearest done, with its progress: (have, need).
@@ -1000,7 +1019,9 @@ fn draw(
                     }
                 });
             }
-            detail.spawn((Node { flex_shrink: 0.0, ..default() }, text(font, why(&locale, quest), BODY, SOFT)));
+            // A pixel in from the left: a Japanese line may begin on a glyph that reaches a
+            // pixel left of its start.
+            detail.spawn((Node { flex_shrink: 0.0, padding: UiRect::left(Val::Px(PX)), ..default() }, text(font, why(&locale, quest), BODY, SOFT)));
             // What it gives, one line each: an item with its count, or experience in a skill
             // with the skill's mark.
             if !quest.rewards.is_empty() {
@@ -1422,7 +1443,7 @@ fn track(
     tracker: Query<Entity, With<Tracker>>,
     mut visibility: Query<&mut Visibility, With<Tracker>>,
     unpins: Query<(&Unpin, &Interaction), Changed<Interaction>>,
-    mut drawn: Local<Option<(Vec<String>, u32)>>,
+    mut drawn: Local<Option<(Vec<String>, u32, String)>>,
 ) {
     let content = &launch.content;
     for (unpin, interaction) in &unpins {
@@ -1436,8 +1457,9 @@ fn track(
     if let Ok(mut shown) = visibility.single_mut() {
         shown.set_if_neq(if screen || settings.pinned_quests.is_empty() { Visibility::Hidden } else { Visibility::Inherited });
     }
-    let wanted = (settings.pinned_quests.clone(), player.quests_rev);
-    if drawn.as_ref() == Some(&wanted) && !locale.is_changed() {
+    // The language too: one changed in the menus, out of a game, is not seen changing here.
+    let wanted = (settings.pinned_quests.clone(), player.quests_rev, locale.code().to_owned());
+    if drawn.as_ref() == Some(&wanted) {
         return;
     }
     *drawn = Some(wanted);
@@ -1462,8 +1484,9 @@ fn track(
                 }
                 for (goal, progress) in best_task(quest, state) {
                     let met = progress.0 >= progress.1;
-                    card.spawn((shadowed(font, goal_line(&locale, content, quest, goal, progress, met), BODY, if met { GOLD } else { TEXT }), TrackerLine));
+                    card.spawn((shadowed(font, goal_line(&locale, content, quest, goal, progress, met), BODY, if met { GOLD } else { TEXT }), TrackerLine, TrackerGoal));
                 }
+                card.spawn((Node { display: Display::None, ..default() }, shadowed(font, "", BODY, MUTED), TrackerMore));
             });
         }
     });
@@ -1473,9 +1496,136 @@ fn track(
 #[derive(Component)]
 pub struct TrackerLine;
 
+/// A goal's line on a tracker card, which [`squeeze`] may fold away.
+#[derive(Component)]
+struct TrackerGoal;
+
+/// How many of a card's goals [`squeeze`] folded away, under the ones still shown.
+#[derive(Component)]
+struct TrackerMore;
+
+/// The room the tracker is laid out in: the size of the screen it is drawn on, in
+/// physical pixels, and the interface's scale.
+#[derive(Resource, Default, Clone, Copy, PartialEq, Debug)]
+pub(crate) struct TrackerRoom(pub UVec2, pub f32);
+
+/// Measures [`TrackerRoom`], for `squeeze`.
+fn measure_room(tracker: Query<&bevy::ui::ComputedUiRenderTargetInfo, With<Tracker>>, scale: Res<UiScale>, mut room: ResMut<TrackerRoom>) {
+    let Ok(target) = tracker.single() else { return };
+    room.set_if_neq(TrackerRoom(target.physical_size(), scale.0));
+}
+
+/// Folds goal lines away while the pinned cards run past the bottom of the tracker, which
+/// would cut a card off mid-line: the last card's last lines first, a card's first goal
+/// only once every other is folded, as many as the overrun's height at once (and more the next frame, should a card's
+/// note under them take more room than reckoned), each card then saying how many more it
+/// has. The cards are drawn whole again whenever the tracker is redrawn.
+fn squeeze(
+    locale: Res<Locale>,
+    (tracker, given): (Query<(&ComputedNode, &bevy::ui::UiGlobalTransform, &Children), With<Tracker>>, Res<TrackerRoom>),
+    cards: Query<(&ComputedNode, &bevy::ui::UiGlobalTransform, &Children)>,
+    mut goals: Query<(&mut Node, &ComputedNode), (With<TrackerGoal>, Without<TrackerMore>)>,
+    mut more: Query<(&mut Node, &mut Text), (With<TrackerMore>, Without<TrackerGoal>)>,
+    mut room: Local<TrackerRoom>,
+) {
+    let Ok((column, at, children)) = tracker.single() else { return };
+    // A tracker given more room or less (the window resized, the interface scaled) unfolds
+    // every card, to fold them again to the new room from the next frame's layout. (The
+    // tracker's own height follows its folding, so it is no measure of its room.)
+    let now = *given;
+    if now != *room {
+        *room = now;
+        for (mut node, _) in &mut goals {
+            node.display = Display::Flex;
+        }
+        for (mut node, _) in &mut more {
+            node.display = Display::None;
+        }
+        return;
+    }
+    let bottom = |node: &ComputedNode, at: &bevy::ui::UiGlobalTransform| at.translation.y + node.size().y / 2.0;
+    let Some(last) = children.iter().filter_map(|card| cards.get(card).ok()).filter(|(node, ..)| node.size().y > 0.0).last() else { return };
+    // Past the bottom by more than a pixel's rounding.
+    let mut over = bottom(last.0, last.1) - bottom(column, at);
+    if over <= 1.0 {
+        return;
+    }
+    // Each card keeps its first goal while folding the others will do; a card then shows
+    // its first goal only if there is room for it.
+    for keep in [1, 0] {
+        for card in children.iter().rev() {
+            let Ok((_, _, lines)) = cards.get(card) else { continue };
+            let shown: Vec<(Entity, f32)> = lines.iter().filter_map(|line| goals.get(line).ok().filter(|(node, _)| node.display != Display::None).map(|(_, size)| (line, size.size().y))).collect();
+            let Some(note) = lines.iter().find(|&line| more.contains(line)).filter(|_| shown.len() > keep) else { continue };
+            let Ok((note_node, _)) = more.get(note) else { continue };
+            // The note, once shown (this frame or before), takes a line of its own.
+            if note_node.display == Display::None {
+                over += shown.iter().map(|(_, height)| *height).fold(f32::MAX, f32::min);
+            }
+            let mut folded = 0;
+            for &(line, height) in shown.iter().skip(keep).rev() {
+                if over <= 1.0 {
+                    break;
+                }
+                goals.get_mut(line).expect("a goal line").0.display = Display::None;
+                over -= height;
+                folded += 1;
+            }
+            if folded == 0 {
+                continue;
+            }
+            let hidden = lines.iter().filter(|&line| goals.get(line).is_ok_and(|(node, _)| node.display == Display::None)).count();
+            if let Ok((mut node, mut text)) = more.get_mut(note) {
+                node.display = Display::Flex;
+                text.0 = locale.format("quest.tracker.more", &[("count", &hidden)]);
+            }
+            if over <= 1.0 {
+                return;
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Two pinned cards of three 20-pixel goals each run 45 pixels past the tracker's foot.
+    /// Folding from the last card up, each card's More note (shown, but not yet laid out)
+    /// is reckoned once: the last card folds all three goals, the first keeps its first.
+    /// Given a bigger window, every goal comes back and the notes go.
+    #[test]
+    fn the_tracker_folds_to_its_room_and_unfolds_when_it_grows() {
+        let mut app = App::new();
+        let content_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        app.insert_resource(Locale::load(&content_dir, "en")).insert_resource(TrackerRoom(UVec2::new(1280, 720), 1.0)).add_systems(Update, squeeze);
+        let sized = |height: f32| ComputedNode { size: Vec2::new(200.0, height), inverse_scale_factor: 1.0, ..Default::default() };
+        let at = |y: f32| bevy::ui::UiGlobalTransform::from(bevy::math::Affine2::from_translation(Vec2::new(100.0, y)));
+        let world = app.world_mut();
+        let card = |world: &mut World, middle: f32| {
+            let goals: Vec<Entity> = (0..3).map(|_| world.spawn((TrackerGoal, Node::default(), sized(20.0))).id()).collect();
+            let note = world.spawn((TrackerMore, Node { display: Display::None, ..default() }, Text::default(), sized(0.0))).id();
+            let card = world.spawn((sized(80.0), at(middle))).add_children(&goals).add_children(&[note]).id();
+            (card, goals, note)
+        };
+        let (first, first_goals, first_note) = card(world, 25.0);
+        let (last, last_goals, last_note) = card(world, 105.0);
+        // The tracker's foot at 100, the last card's at 145.
+        world.spawn((Tracker, sized(100.0), at(50.0))).add_children(&[first, last]);
+        let shown = |app: &App, line: Entity| app.world().get::<Node>(line).unwrap().display != Display::None;
+        // The first frame learns the room; the next folds.
+        app.update();
+        app.update();
+        assert_eq!(last_goals.iter().map(|&g| shown(&app, g)).collect::<Vec<_>>(), [false; 3], "the last card folds every goal");
+        assert_eq!(first_goals.iter().map(|&g| shown(&app, g)).collect::<Vec<_>>(), [true, false, false], "the first card keeps its first goal: its note counted once");
+        assert!(shown(&app, first_note) && shown(&app, last_note));
+        assert_eq!(app.world().get::<Text>(first_note).unwrap().0, "+2 More");
+        // A bigger window: everything unfolds, to be folded again to the new room.
+        app.world_mut().insert_resource(TrackerRoom(UVec2::new(2560, 1440), 1.0));
+        app.update();
+        assert!(first_goals.iter().chain(&last_goals).all(|&g| shown(&app, g)), "a bigger window unfolds every goal");
+        assert!(!shown(&app, first_note) && !shown(&app, last_note), "and puts the notes away");
+    }
 
     fn content() -> Content {
         voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap()
