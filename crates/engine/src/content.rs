@@ -234,7 +234,7 @@ impl Content {
     /// The cooking recipes a player can work: those whose station some block carries. A
     /// recipe at a station no block has (the potters' `village_kiln`, worked for the player by
     /// a wandering party) is left out of the recipe book, the makeable list and the guides.
-    pub fn player_cooking(&self) -> impl Iterator<Item = (BlockId, &crate::cooking::Recipe)> {
+    pub fn player_cooking(&self) -> impl Iterator<Item = (crate::block::BlockId, &crate::cooking::Recipe)> {
         self.cooking.iter().filter(|(_, recipe)| self.blocks.tagged(&recipe.def.station).next().is_some())
     }
 
