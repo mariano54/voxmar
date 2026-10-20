@@ -331,7 +331,7 @@ and `Trapped(creature, n)` (a catch taken from a sprung trap: `trapped`; whoever
 the snare gets the credit and the catch, as with a shared lit fire, until traps have
 owners). Loading refuses a `Stocked` store that is not a store, a `CraftNear` tag no
 recipe is made near, and a `Trapped` creature no trap catches. A tally goal naming one
-full name reads its one key; only `any` and `tag:` look across a kind's keys. Nomad has 65 quests, Farm 99, each counting its rite.
+full name reads its one key; only `any` and `tag:` look across a kind's keys. Nomad has 68 quests, Farm 99, each counting its rite.
 
 ## An age's rite (Oct 15)
 
@@ -495,3 +495,29 @@ Quests that teach it:
 - **A Stone's Throw** (Nomad, combat, after Twine and Thong): craft a sling, reach Ranged 2.
 - **Bow and Arrow** (Farm, combat, after Homestead Hearth): craft a short bow and eight
   arrows, reach Ranged 5.
+
+## The Nomad book in eight paths (Oct 20)
+
+The Nomad chapter is `base/quests_nomad.ron` (read after `quests.ron`, docs above), drawn
+as eight paths, each four to seven quests deep and ending in one capstone. Four of the old
+twelve paths folded into others: Crafting into First Steps, Comforts into Home, Farming into
+Food (was Cooking) and Fishing into Hunting and Fishing. Quest names, and so saves and
+language keys, are unchanged.
+
+| Path | Quests | Capstone |
+|---|---|---|
+| First Steps | Timber, Crafting Table, An Axe to It, A Chopping Block, A Sharp Edge, Twine and Thong | A Full Stone Kit |
+| The Hearth | Look It Up, First Night, Stone in Hand, A Bed of Your Own, Torchlight | Homestead Hearth (then the rite, The Farm Age) |
+| Home | Make Camp, A Lit Corner, A Bench to Work At, Pockets, Company at Camp, Pantry Shelves | From the Shelves |
+| Food | Meat on the Fire, A Handful of Grain, Daily Bread, Wild Harvest, Herb Lore, Break Ground, Tools for Animals, Hung to Dry, Trail Rations | A Varied Table |
+| Hunting and Fishing | A Tempting Bite, A Friend in the Wild, Small Game, Hide and Seek, Set a Snare, Rod and Line, First Catch, A Fish Supper | Old Tusk |
+| Combat | Something to Swing, Sharpening Up, Something Hostile, A Stone's Throw, Hide Wraps, Raise Your Guard | Hard to Put Down |
+| Mining | A Pile of Stone, Dig In, Black Flecks, Reading the Ground, Coal and Cinders, Following the Seam, Red Metal Underfoot, Stockpile | The First Mine |
+| The Wilds | Where to Settle, Wild Neighbours, Lay of the Land, Folk of the Road, A Kind Turn, Found and Thanked, Something for Something, The Market Road, Caught in the Rain, Under Lock and Key, Light Sleepers | Coal by Road |
+
+The Mining path gains three quests on the coal ladder (piece 7's second half): Reading the
+Ground (three ore samples of any kind, after Black Flecks: the first over each vein teaches
+prospecting), Following the Seam (32 coal ore and Mining 8, after Coal and Cinders) and The
+First Mine (48 coal ore, 12 copper ore and Mining 12, after Following the Seam and
+Stockpile). Stockpile moved from First Steps to Mining, where it already followed Red Metal
+Underfoot. Red Metal Underfoot now says copper wants a stone pickaxe.
