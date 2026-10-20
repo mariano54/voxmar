@@ -683,9 +683,10 @@ impl QuestRegistry {
     /// under a clamp, Oct 20). What a giver pays of every item the goal takes is added up. A
     /// quest whose `after` makes it done first is passed, and so is one of an earlier age,
     /// whose lesson is learnt by the time a later age pays, and a task that also asks to pick,
-    /// mine, make or catch the item (or a block that drops it), which still teaches it. An age is earlier than another when a
-    /// quest of the other comes after one of it. A package answers for its own book: a mod's
-    /// quest asking for sticks is not refused for a base reward of them.
+    /// mine, make or catch the item (or a block that gives it), which still teaches it. An age
+    /// is earlier than another when a quest of the other comes after one of it. A package
+    /// answers for its own book: a mod's quest asking for sticks is not refused for a base
+    /// reward of them.
     fn rewards_skip_no_lesson(&self, blocks: &BlockRegistry, harvests: &[(BlockId, BlockId)]) -> Result<(), RegistryError> {
         let firsts: FxHashMap<&str, rustc_hash::FxHashSet<&str>> = self.quests.iter().map(|q| (q.name.as_str(), self.done_before(q))).collect();
         let mut earlier: rustc_hash::FxHashSet<(&str, &str)> = rustc_hash::FxHashSet::default();

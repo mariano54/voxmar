@@ -105,7 +105,7 @@
             tasks: [[QuestsDone("nomad", 20), Capstones("nomad", 3)]],
             after: ["homestead_hearth"],
             opens: "farm",
-            rewards: [Xp("crafting", 120.0), Item("clay", 3)],
+            rewards: [Xp("crafting", 120.0)],
         ),
         // Home: the camp about the hearth, room by room.
         (
