@@ -744,11 +744,14 @@ fn house(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Ca
     let gable_windows = if spec.form == Form::AFrame { 3 } else { 1 };
     // A jettied house: its storeys over the ground stand a block out over the street (moved
     // out once the front is drawn), so its roof covers a block more at the front. Not over
-    // a porch, an awning or a balcony, nor with a dormer in the roof's front.
+    // a porch, an awning or a balcony, nor with a dormer in the roof's front. A house of a
+    // row rolls its own, unless its roof slopes down to the street: a jetty moves that eave
+    // out, so the whole row shares the roll and the roof runs on at one height.
+    let sloped_to_street = spec.ridge_x && spec.roof != Roof::Flat;
     let jetty = (spec.form == Form::Box
         && spec.storeys >= 2
         && ![Extra::Porch, Extra::Awning, Extra::Balcony, Extra::Dormer].iter().any(|&e| spec.has(e)))
-    .then(|| mats.jetty(spec.shared_seed()))
+    .then(|| mats.jetty(if sloped_to_street { spec.shared_seed() } else { spec.seed }))
     .flatten();
     let covered = if jetty.is_some() { Foot { z0: -1, d: d + 1, ..foot } } else { foot };
     let heights = roof(spec, &mut pen, mats, top, &covered, spec.ridge_x, spec.roof, mats.roof, gable_windows, chimney.map(|c| c.1));

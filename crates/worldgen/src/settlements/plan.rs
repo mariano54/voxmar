@@ -1189,18 +1189,19 @@ fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, rng: Rng, smalles
     #[cfg(test)]
     let failures = time.map(|_| (PLACE_FAILS.each_ref().map(|c| c.load(std::sync::atomic::Ordering::Relaxed)), GIVEN_UP.each_ref().map(|c| c.load(std::sync::atomic::Ordering::Relaxed))));
     // A size too big for the ground lays out as its `smaller` (a town as a village), with
-    // the same draws.
-    // Rows of houses may take up frontage a place needed for its homes: one that comes up
-    // short of them is laid out again, the same, with no rows.
+    // the same draws. Rows of houses change what else fits (frontage, plots, the homes
+    // left to place): a place given up on after building one is laid out again, the same,
+    // with no rows, so no place is lost to its rows.
     let mut drawn = None;
-    let mut short = false;
-    let mut result = layout(ctx, cell, centre, fresh, rng.clone(), smallest, None, &mut drawn, true, &mut short, ground);
-    if result.is_none() && short {
-        result = layout(ctx, cell, centre, fresh, rng.clone(), smallest, None, &mut drawn, false, &mut short, ground);
-    }
+    let with_rows = |ground: &mut Ground, smallest: bool, instead: Option<usize>, drawn: &mut Option<usize>| {
+        let mut rowed = false;
+        let result = layout(ctx, cell, centre, fresh, rng.clone(), smallest, instead, drawn, true, &mut rowed, ground);
+        if result.is_none() && rowed { layout(ctx, cell, centre, fresh, rng.clone(), smallest, instead, drawn, false, &mut rowed, ground) } else { result }
+    };
+    let result = with_rows(ground, smallest, None, &mut drawn);
     let smaller = drawn.and_then(|i| ctx.def.sizes[i].smaller.as_ref()).and_then(|name| ctx.def.sizes.iter().position(|s| s.name == *name));
     let result = match smaller {
-        Some(smaller) if result.is_none() && !smallest => layout(ctx, cell, centre, fresh, rng, false, Some(smaller), &mut drawn, true, &mut short, ground),
+        Some(smaller) if result.is_none() && !smallest => with_rows(ground, false, Some(smaller), &mut drawn),
         _ => result,
     };
     #[cfg(test)]
@@ -1225,7 +1226,7 @@ fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, rng: Rng, smalles
 }
 
 #[allow(clippy::too_many_arguments)]
-fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smallest: bool, instead: Option<usize>, drawn: &mut Option<usize>, rows: bool, short: &mut bool, mut ground: &mut Ground) -> Option<Plan> {
+fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smallest: bool, instead: Option<usize>, drawn: &mut Option<usize>, rows: bool, rowed: &mut bool, mut ground: &mut Ground) -> Option<Plan> {
     #[cfg(test)]
     let time = phase_start();
     let def = ctx.def;
@@ -1720,7 +1721,9 @@ fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smal
                         queue.remove(k);
                         placed = true;
                         if home {
+                            let first = lots.len();
                             row = grow_row(&mut town, &mut ground, &mut lots, &mut occupied, &mut queue, &lanes, dir);
+                            *rowed |= lots.len() > first;
                         }
                         break;
                     }
@@ -1748,7 +1751,6 @@ fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smal
         return give_up(5);
     }
     if homes - left_homes < size.houses.0 as i32 {
-        *short = true;
         return give_up(6);
     }
     // Out at the ends of the lanes, and a centrepiece that stands there.
@@ -2908,7 +2910,8 @@ fn rect_of(frame: &Frame, low: IVec2, high: IVec2) -> Rect {
 /// street, on the style's `row` chance (more where the place is crowded): homes wanted next,
 /// each the first's twin but for its seed, wall to wall to its right (then its left), on
 /// the same floor, while the street runs straight and the ground, the lanes and the lots
-/// round it allow. Only a four-walled home off stilts starts one. Returns how far along
+/// round it allow. Only a four-walled home off stilts starts one; the row is raised to the
+/// storeys it asks of its place's size, the first with it. Returns how far along
 /// the street the row runs past the first.
 #[allow(clippy::too_many_arguments)]
 fn grow_row(town: &mut Town, ground: &mut Ground, lots: &mut Vec<Lot>, occupied: &mut Vec<Rect>, queue: &mut Vec<Want>, lanes: &[Lane], dir: Vec2) -> f32 {
@@ -2927,6 +2930,8 @@ fn grow_row(town: &mut Town, ground: &mut Ground, lots: &mut Vec<Lot>, occupied:
     // over a join: along the street (gable ends against each other), gable fronts side by
     // side with their eaves meeting at one height, or flat. Any other is a gable.
     let mut base = spec.clone();
+    // As tall as its place's size asks (a town's terraces are of town houses).
+    base.storeys = base.storeys.max(row.storeys_at(town.size) as i32);
     base.extras.retain(|e| !matches!(e, Extra::Porch | Extra::OutsideStair | Extra::Woodpile | Extra::RainBarrel));
     base.shed = 0;
     let runs_on = matches!(base.roof, Roof::Gable | Roof::Gambrel | Roof::Flat) || (base.roof == Roof::Saltbox && base.ridge_x);

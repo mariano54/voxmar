@@ -16671,14 +16671,18 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 }
                 return;
             };
-            let Ok(walled) = search.join() else {
-                gate.check("town walls", Err("the look for a walled town panicked".into()));
-                gate.check("settlement roofs", Err("no town to judge the roofs of".into()));
-                gate.check("settlement jetties", Err("no town to judge the jetties of".into()));
-                gate.check("settlement rows", Err("no town to judge the row houses of".into()));
-                gate.phase = 6;
-                gate.advance(now);
-                return;
+            let walled = match search.join() {
+                Ok(walled) => walled,
+                Err(panic) => {
+                    let why = panic.downcast_ref::<&str>().map(|s| s.to_string()).or_else(|| panic.downcast_ref::<String>().cloned()).unwrap_or_else(|| "no message".into());
+                    gate.check("town walls", Err(format!("the look for a walled town panicked: {why}")));
+                    gate.check("settlement roofs", Err("no town to judge the roofs of".into()));
+                    gate.check("settlement jetties", Err("no town to judge the jetties of".into()));
+                    gate.check("settlement rows", Err("no town to judge the row houses of".into()));
+                    gate.phase = 6;
+                    gate.advance(now);
+                    return;
+                }
             };
             let Some(walled) = walled else {
                 gate.check("town walls", Err(format!("no walled town within {TOWN_RADIUS} of the town /locate found at {at}")));

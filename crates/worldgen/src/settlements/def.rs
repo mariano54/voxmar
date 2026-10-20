@@ -754,15 +754,26 @@ pub struct JettyDef {
 }
 
 /// Row houses (a terrace): homes built wall to wall along a straight stretch of street,
-/// `houses` of them (fewest, most), alike but for what is inside, under one run of roof.
-/// A home that could start one (two storeys or fewer over four walls, its ridge along the
-/// street or its roof flat, nothing out at its sides) does on `chance`, more where the
-/// place is crowded.
+/// alike but for what is inside, under one run of roof: a number drawn from `houses`, and
+/// fewer where the street, the ground or the homes wanted run out (as few as one beside
+/// the first). A home of four walls on the ground starts one on `chance` times the place's
+/// crowding; its row stands at least the `storeys` its place's size names (1 where it
+/// names none), the first raised with it, has nothing out at its sides nor a porch, and a
+/// gable roof where the first's would not run on over a join.
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct RowDef {
     pub chance: f32,
     pub houses: (u32, u32),
+    #[serde(default)]
+    pub storeys: Vec<(String, u32)>,
+}
+
+impl RowDef {
+    /// The least storeys of the houses of a row in a place of `size`.
+    pub fn storeys_at(&self, size: &str) -> u32 {
+        self.storeys.iter().find(|(s, _)| s == size).map_or(1, |&(_, n)| n)
+    }
 }
 
 /// What a village's own flames must not reach: none of its blocks that catch (`catch`, by
@@ -1862,6 +1873,11 @@ impl SettlementsDef {
         for style in &self.styles {
             if style.row.as_ref().is_some_and(|r| !(0.0..=1.0).contains(&r.chance) || r.houses.0 < 2 || r.houses.0 > r.houses.1 || r.houses.1 > 12) {
                 return fail(format!("style `{}`: a row's `chance` is a share (0 to 1) and its `houses` from 2 to at most 12", style.name));
+            }
+            if let Some(r) = &style.row
+                && let Some((size, n)) = r.storeys.iter().find(|(s, n)| !self.sizes.iter().any(|z| z.name == *s) || !(1..=3).contains(n))
+            {
+                return fail(format!("style `{}`: a row's storeys name a size there is one of, and 1 to 3 storeys, not `{size}` {n}", style.name));
             }
             if style.jetty.as_ref().is_some_and(|j| !(0.0..=1.0).contains(&j.chance)) {
                 return fail(format!("style `{}`: a jetty's `chance` is a share (0 to 1)", style.name));
