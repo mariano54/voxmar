@@ -8866,7 +8866,13 @@ fn a_village_bed_is_someones() {
     client.propose("base:sleep", ActionTarget::Block { block: bed, face: Face::PosY });
     client.pump_until(refused);
     assert!(!told(&client, "wake here"), "a village bed took as where the player wakes");
-    // One set where they stand works: the village never planned it.
+    // One set beside it works: the village never planned it. The player stands on the
+    // village bed meanwhile, as no block is set where someone stands.
+    let stand_on = |client: &mut Client, p: IVec3| {
+        client.ok(&format!("/tp {} {} {}", p.x as f32 + 0.5, p.y + 1, p.z as f32 + 0.5));
+        client.pump_until(|c| c.position.xz().distance(p.xz().as_vec2() + 0.5) < 0.5);
+    };
+    stand_on(&mut client, bed);
     client.ok(&format!("/setblock {} {} {} oak_bed", side.x, side.y, side.z));
     let oak = client.content.blocks.expect("base:oak_bed");
     client.pump_until(|c| c.world.block(side) == Some(oak));
@@ -8875,7 +8881,9 @@ fn a_village_bed_is_someones() {
     client.propose("base:sleep", ActionTarget::Block { block: side, face: Face::PosY });
     client.pump_until(|c| told(c, "wake here"));
     assert!(!refused(&client), "a bed set by command in the village was refused");
-    // So does one set in the village bed's own place: it is no longer the bed the village put there.
+    // So does one set in the village bed's own place: it is no longer the bed the village put
+    // there. The player stands on the new bed meanwhile.
+    stand_on(&mut client, side);
     client.ok(&format!("/setblock {} {} {} sleeping_bag", bed.x, bed.y, bed.z));
     let bag = client.content.blocks.expect("base:sleeping_bag");
     client.pump_until(|c| c.world.block(bed) == Some(bag));
