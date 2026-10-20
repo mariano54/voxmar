@@ -965,15 +965,17 @@ fn draw(
         // What the well shows with a quest picked: all but the strip its card covers.
         let seen = (room - Vec2::X * (SIDEBAR + 2.0 * space::HAIR)).max(Vec2::ZERO);
         // Scrolled so quest `i`, picked, stands in the middle of what the well shows between
-        // the headers and its card.
-        let brought = |i: usize| (centre(i) - Vec2::X * HEADER - (seen - Vec2::X * HEADER) / 2.0).clamp(Vec2::ZERO, (size + margin - seen).max(Vec2::ZERO));
+        // the headers and its card (the canvas from `scroll - margin`).
+        let brought = |i: usize| (centre(i) + margin - Vec2::X * HEADER - (seen - Vec2::X * HEADER) / 2.0).clamp(Vec2::ZERO, (size + margin - seen).max(Vec2::ZERO));
         if arrived {
             scroll.0 = view.picked.as_deref().and_then(|name| quests.iter().position(|q| q.name == name)).map_or(Vec2::ZERO, brought);
         } else if let Some((pointer, point)) = zoomed {
             // The point of the web that was under the pointer stays there: the well shows
             // the canvas from `scroll - margin`.
             let at = Vec2::new(HEADER + point.x * step.x, point.y * step.y);
-            scroll.0 = (at + margin - pointer).clamp(Vec2::ZERO, (size + margin - room).max(Vec2::ZERO));
+            // Held within what the well shows, beside the card while one is open.
+            let shown = if view.picked.is_some() { seen } else { room };
+            scroll.0 = (at + margin - pointer).clamp(Vec2::ZERO, (size + margin - shown).max(Vec2::ZERO));
         } else if let Some(i) = view.picked.as_deref().and_then(|name| quests.iter().position(|q| q.name == name))
             && refit
         {
@@ -1603,12 +1605,16 @@ fn go_to_path(heads: Query<(&LaneHead, &Interaction), Changed<Interaction>>, mut
 /// Holds the web's scroll within what its layout lets it move, as dragging, the wheel and
 /// `fit_lines` reckon it: the canvas centred on a quest by `draw` may ask a little past it
 /// (the well's padding), and a first drag from there would jump.
-fn keep_web_in_range(mut web: Query<(&ComputedNode, &mut ScrollPosition), With<Web>>) {
-    let Ok((computed, mut scroll)) = web.single_mut() else { return };
+fn keep_web_in_range(mut web: Query<(&ComputedNode, &Node, &mut ScrollPosition), With<Web>>, stage: Query<&ComputedNode, (With<Stage>, Without<Web>)>) {
+    let (Ok((computed, node, mut scroll)), Ok(stage)) = (web.single_mut(), stage.single()) else { return };
     if computed.content_size() == Vec2::ZERO {
         return;
     }
-    let max = (computed.content_size() - computed.size()).max(Vec2::ZERO) * computed.inverse_scale_factor();
+    // As wide as the card now leaves it, though the layout may not have narrowed or widened
+    // it yet: the stage, less the card's strip.
+    let right = if let Val::Px(right) = node.right { right } else { 0.0 };
+    let shown = stage.size() * stage.inverse_scale_factor() - Vec2::X * right;
+    let max = (computed.content_size() * computed.inverse_scale_factor() - shown).max(Vec2::ZERO);
     let held = scroll.0.clamp(Vec2::ZERO, max);
     if scroll.0 != held {
         scroll.0 = held;
