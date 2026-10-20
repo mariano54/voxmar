@@ -242,6 +242,8 @@
 
     // In game.
     "screen.inventory": "Inventory",
+    "screen.look.recipes": "Recipes",
+    "screen.look.uses": "Uses",
     "screen.character": "Character",
     "screen.menu": "Menu",
 
@@ -454,7 +456,7 @@
     "screen.quests": "Quests",
     "settings.key.quests": "Quests key",
     "settings.key.quests.hint": "Opens the quest book.",
-    "quest.hint": "Click a quest to read it. Drag the space between to look around, and turn the wheel to zoom. Pin a quest to follow it on screen. A glowing quest has its reward waiting.",
+    "quest.hint": "Click a quest to read it. Drag the space between to look around, and turn the wheel or press + and - to zoom. Pin a quest to follow it on screen. A glowing quest has its reward waiting.",
     "quest.current": "Current Quest",
     "quest.pick": "Pick a quest to read why it is worth doing.",
     "quest.empty": "No quests here yet.",
@@ -644,7 +646,6 @@
     "inventory.craft": "Craft",
     "inventory.craft.take": "Click to craft one, Shift-click for all",
     "inventory.craft.nothing": "Nothing to make",
-    "inventory.craft.lookup": "Press {key} over an item for its recipes",
     "skills.full": "You are at full health",
     // Why an action was refused (refusals.ron), said by the crosshair.
     "refusal.in_the_way": "Something is in the way",
