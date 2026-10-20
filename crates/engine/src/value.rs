@@ -208,14 +208,15 @@ pub fn worth_in(content: &crate::content::Content, item: BlockId, known: &mut Ha
     coins
 }
 
-/// Whether `item` is a raw material: worth no set price, and nothing makes (at the grid or a
-/// station), wears or wields it.
+/// Whether `item` is a raw material: worth no set price, and nothing makes (at the grid, a
+/// station or a smoulder: a clamp's charcoal is fired as a campfire's was), wears or wields it.
 fn raw(content: &crate::content::Content, item: BlockId) -> bool {
     !content.value.fixed.contains_key(&content.blocks.def(item).name)
         && content.combat.wear_level(item).is_none()
         && content.combat.weapon(item).is_none()
         && !content.recipes.iter().any(|r| r.output == item)
         && !content.cooking.iter().any(|(_, r)| r.output == item)
+        && !content.multiblocks.iter().any(|m| m.smoulder.as_ref().is_some_and(|s| content.blocks.info(s.done).drops == item))
 }
 
 /// The level of `item` for its worth: what `levels` sets, else the most of what wears or
