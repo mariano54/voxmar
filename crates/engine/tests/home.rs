@@ -498,3 +498,23 @@ fn a_sleep_rule_for_a_bed_nobody_made_is_refused_at_load() {
     assert!(error.contains("`feather`"), "{error}");
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// Soft things count at home: a rug and a drape under a roof make soft furnishings, 1°
+/// warmer; a rug alone or two do not, nor a drape alone, nor the pair out under the sky.
+/// Every wall hanging is a drape, made at the grid from cloth and sticks.
+#[test]
+fn a_rug_and_a_hanging_under_a_roof_are_soft_furnishings() {
+    let content = content();
+    let effects = &content.effects;
+    assert!(rooms(&[("rug", 2)]).is_empty(), "two rugs are not soft furnishings");
+    assert!(rooms(&[("drape", 1)]).is_empty(), "a drape alone is not soft furnishings");
+    assert_eq!(rooms(&[("rug", 1), ("drape", 1)]), ["base:soft_furnishings"]);
+    assert!(rooms_in(&[("rug", 1), ("drape", 1)], &Weather::NONE, true).is_empty(), "no roof, no room");
+    let soft = effects.get(effects.id("base:soft_furnishings").unwrap());
+    assert_eq!((soft.modifiers.warmth, soft.modifiers.heal, soft.modifiers.xp), (1.0, 1.0, 1.0), "one small modifier");
+    for name in ["base:red_wall_hanging", "base:white_wall_hanging"] {
+        assert!(content.blocks.def(content.blocks.expect(name)).has_tag("drape"), "{name} is a drape");
+    }
+    let hanging = content.blocks.expect("base:red_wall_hanging");
+    assert!(content.recipes.iter().any(|r| r.output == hanging), "no recipe makes a wall hanging");
+}
