@@ -708,6 +708,9 @@ pub(crate) struct Server {
     /// once it has landed by then (`fight`).
     /// None until messages are first taken in (unit tests tick without them).
     heard: Option<Instant>,
+    /// How many players were told of others last tick: alone, a player is told once that
+    /// nobody else is there (`broadcast_players`).
+    shown_players: usize,
     /// Animals and monsters about.
     creatures: creatures::Creatures,
     /// The people of settlements near players.
@@ -855,6 +858,7 @@ impl Server {
             catches,
             arrival: Instant::now(),
             heard: None,
+            shown_players: 0,
             creatures: creatures::Creatures::default(),
             villagers: villagers::Villagers::restore(state.villagers),
             wandering: Default::default(),
@@ -1262,8 +1266,11 @@ impl Server {
         }
     }
 
-    fn broadcast_players(&self) {
-        if self.players.len() < 2 {
+    fn broadcast_players(&mut self) {
+        // Alone, a player is told others are gone once (none left to draw), then nothing.
+        let joined = self.players.values().filter(|p| p.joined).count();
+        let was = std::mem::replace(&mut self.shown_players, joined);
+        if joined < 2 && was < 2 {
             return;
         }
         let views: Vec<_> = self.players.values().filter(|p| p.joined).map(Player::view).collect();

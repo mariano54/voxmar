@@ -417,6 +417,14 @@ steps! {
     /// reach of what is held (within touch), is clicked: the hand swings at the air with a
     /// whoosh (`Fighting::whiff`) and no blow is asked of the server.
     ShotCancel,
+    /// Another player, a stand-in no client plays (`RemotePlayers::puppet`), drawn as a
+    /// person (`figures`): painted with every box of `player_look.ron`, they walk past at
+    /// most of the pace their arms and legs swing full at, their legs swing with the ground
+    /// they cover and the body shown trails them no further than its easing allows; stopped,
+    /// it settles where they stand, and what is in their hand (a weapon, found by its class)
+    /// is held in their right fist, the arm held forward as `carry` says. Each frame a fixed
+    /// step (`Figures::step`). Shot with them facing the eye.
+    Others,
     /// Raw rabbit used on a campfire comes back cooked (or burnt) into the inventory, and
     /// smoke and embers rise from the fire.
     Cook,
@@ -1011,6 +1019,8 @@ struct Gate {
     markers_before: u32,
     /// Before the RangedFeel step's shot: shots loosed, trail specks and arrivals.
     shots_before: (u32, u32, u32),
+    /// The Others step's stand-in: the furthest its legs swung (radians) as it walked.
+    other_swung: f32,
     /// Before the ShotCancel step's click out of reach: swings at the air and swings sent;
     /// whether the hand has swung since.
     whiff_from: (u32, u32, bool),
@@ -1208,6 +1218,7 @@ impl Gate {
             puppet: (Vec3::ZERO, 0, false),
             markers_before: 0,
             shots_before: (0, 0, 0),
+            other_swung: 0.0,
             whiff_from: (0, 0, false),
         }
     }
@@ -2087,6 +2098,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::RangedFeel => ranged_feel(world, gate),
         Step::FirstFights => first_fights(world, gate),
         Step::ShotCancel => shot_cancel(world, gate),
+        Step::Others => others(world, gate),
         Step::Cook => cook(world, gate, now, in_phase),
         Step::HomeMotif => home_motif(world, gate, now, in_phase),
         Step::Dry => dry(world, gate, now),
@@ -16137,7 +16149,7 @@ fn shot_cancel(world: &mut World, gate: &mut Gate) {
     let launch = world.resource::<Launch>();
     let (Some(species), Some(shot)) = (launch.content.creatures.find(PUPPET_SPECIES), world.resource::<crate::fight_fx::FightLook>().shots.get(MARK_CLASS).cloned()) else {
         gate.check("shot cancel", Err(format!("no {PUPPET_SPECIES} in the content, or no shot for the {MARK_CLASS}")));
-        gate.next(Step::Cook, now);
+        gate.next(Step::Others, now);
         return;
     };
     let (health, (width, height)) = (launch.content.creatures.get(species).def.health, launch.content.creatures.get(species).def.body.size);
@@ -16172,7 +16184,7 @@ fn shot_cancel(world: &mut World, gate: &mut Gate) {
         creatures.receive(vec![], vec![voxmar_protocol::CreatureGone { id: SPARED, died: false }]);
         (creatures.watch, creatures.watch_step) = (None, None);
         world.resource_mut::<Shots>().step = None;
-        gate.next(Step::Cook, now);
+        gate.next(Step::Others, now);
     };
     let deer = |position: Vec3| voxmar_protocol::CreatureView {
         id: SPARED,
@@ -16348,6 +16360,137 @@ fn shot_cancel(world: &mut World, gate: &mut Gate) {
             gate.check("whiff", result);
             done(world, gate, now);
         }
+    }
+}
+
+/// The Others step's stand-in player, an id no client is given; frames it walks; and frames
+/// each of its stages may take.
+const OTHER: voxmar_protocol::PlayerId = u32::MAX - 3;
+const OTHER_WALK: u32 = 60;
+const OTHER_FRAMES: u32 = 240;
+/// The share of the pace their limbs swing full at that the stand-in walks.
+const OTHER_PACE: f32 = 0.7;
+/// How far the stand-in looks up (radians; down, below 0).
+const OTHER_PITCH: f32 = -0.2;
+
+/// The Others step (see [`Step::Others`]).
+fn others(world: &mut World, gate: &mut Gate) {
+    use crate::figures::{Figures, PlayerLook};
+    use crate::net::RemotePlayers;
+    let now = world.resource::<Time>().elapsed_secs();
+    let look = world.resource::<PlayerLook>().clone();
+    let launch = world.resource::<Launch>();
+    // A weapon: the first item wielded as another class than the bare fist.
+    let combat = &launch.content.combat;
+    let fists = combat.wielded(None, |_| 1);
+    let weapon = launch.content.blocks.ids().find(|&id| combat.wielded(Some(id), |_| 99).class != fists.class);
+    let Some(weapon) = weapon else {
+        gate.check("others", Err("no item is wielded as a weapon".into()));
+        gate.next(Step::Cook, now);
+        return;
+    };
+    let start = gate.feet.as_vec3() + Vec3::new(-1.5, 0.0, 6.0);
+    let pace = look.full_pace * OTHER_PACE;
+    // Facing the eye, so its front and its right fist show.
+    let view = |at: Vec3| voxmar_protocol::PlayerView { id: OTHER, name: "Gate".into(), position: at, yaw: 0.0, pitch: OTHER_PITCH, held: Some(weapon) };
+    let walked = |frames: u32| start + Vec3::X * pace * PUPPET_STEP * frames as f32;
+    let done = |world: &mut World, gate: &mut Gate, result: Result<String, String>| {
+        gate.check("others", result);
+        world.resource_mut::<RemotePlayers>().forget(OTHER);
+        world.resource_mut::<Figures>().step = None;
+        gate.next(Step::Cook, now);
+    };
+    let frames = gate.puppet.1;
+    let read = world.resource::<Figures>().read(OTHER);
+    match gate.phase {
+        0 => {
+            aim_at(world, walked(OTHER_WALK) + Vec3::Y * 1.2);
+            world.resource_mut::<RemotePlayers>().puppet(view(start));
+            world.resource_mut::<Figures>().step = Some(PUPPET_STEP);
+            (gate.puppet.1, gate.other_swung) = (0, 0.0);
+            gate.advance(now);
+        }
+        // Built and painted, with every box.
+        1 => {
+            gate.puppet.1 = frames + 1;
+            let boxes = look.parts().len();
+            match read {
+                Some(read) if read.painted && read.joints == boxes => {
+                    gate.puppet.1 = 0;
+                    gate.advance(now);
+                }
+                _ if frames >= OTHER_FRAMES => done(world, gate, Err(format!("the stand-in was not drawn painted with its {boxes} boxes in {OTHER_FRAMES} frames: {read:?}"))),
+                _ => {}
+            }
+        }
+        // Walking past: its legs swing, and the body shown trails it no further than easing
+        // at `follow` a second allows at its pace.
+        2 => {
+            gate.puppet.1 = frames + 1;
+            if let Some(read) = read {
+                gate.other_swung = gate.other_swung.max(read.leg.abs());
+            }
+            if frames < OTHER_WALK {
+                world.resource_mut::<RemotePlayers>().puppet(view(walked(frames + 1)));
+                return;
+            }
+            let Some(read) = read else { return done(world, gate, Err("the stand-in was gone as it walked".into())) };
+            let lag = read.position.distance(walked(OTHER_WALK));
+            let most_lag = pace / look.follow * 1.3 + 0.05;
+            let least_swing = look.swing.to_radians() * OTHER_PACE * 0.6;
+            if lag > most_lag || gate.other_swung < least_swing {
+                return done(world, gate, Err(format!("walking {pace:.2} blocks a second, the body shown trailed {lag:.2} blocks ({most_lag:.2} at most) and its legs swung {:.2} radians at most ({least_swing:.2} wanted)", gate.other_swung)));
+            }
+            info!("gate: others: walking {pace:.2} blocks a second the body trailed {lag:.2} blocks and its legs swung {:.2} radians", gate.other_swung);
+            gate.puppet.1 = 0;
+            gate.advance(now);
+        }
+        // Stopped: it settles where they stand, legs hanging, the weapon in its right fist.
+        3 => {
+            gate.puppet.1 = frames + 1;
+            let at = walked(OTHER_WALK);
+            let Some(read) = read else { return done(world, gate, Err("the stand-in was gone as it stopped".into())) };
+            let settled = read.position.distance(at) < 0.02 && read.leg.abs() < 0.05;
+            if !settled {
+                if frames >= OTHER_FRAMES {
+                    done(world, gate, Err(format!("stopped at {at:.2}, the body shown was at {:.2} with its legs swung {:.2} radians {OTHER_FRAMES} frames on", read.position, read.leg)));
+                }
+                return;
+            }
+            let shoulder = look.parts().iter().find(|p| p.role == voxmar_engine::creature::Role::Arm && p.pivot.x > 0.0).map(|p| p.pivot).unwrap_or_default();
+            let shoulder = read.position + Quat::from_rotation_y(read.yaw) * shoulder;
+            let reach = Vec3::new(look.hand.at.0, look.hand.at.1, look.hand.at.2).length() + 0.05;
+            let drawn = world.resource::<crate::render::items::ItemModels>().0.iter().any(|m| m.posed.is_some() && read.held_at.is_some_and(|h| m.center.distance(h) < 1e-3));
+            let carried = look.carry.to_radians();
+            // Looking down as told (`OTHER_PITCH`): the head tilted `look` of it.
+            let tilt = (OTHER_PITCH.to_degrees() * look.look).clamp(-look.look_most, look.look_most).to_radians();
+            let result = match read.held_at {
+                _ if (read.arm - carried).abs() > 0.05 => Err(format!("the arm holding the weapon was swung {:.2} radians standing, {carried:.2} (`carry`) wanted", read.arm)),
+                _ if (read.head - tilt).abs() > 0.02 => Err(format!("told they look {OTHER_PITCH:.2} radians up, its head was tilted {:.2} radians, {tilt:.2} (`look`) wanted", read.head)),
+                Some(held) if held.distance(shoulder) <= reach && drawn => Ok(format!(
+                    "painted with its {} boxes, walking {pace:.2} blocks a second it trailed by the easing and its legs swung {:.2} radians; stopped, it settled in {frames} frames with the weapon {:.2} blocks from its right shoulder and its head tilted {:.2} radians as it looks",
+                    read.joints,
+                    gate.other_swung,
+                    held.distance(shoulder),
+                    read.head
+                )),
+                Some(held) => Err(format!("the weapon was drawn {} at {held:.2}, {:.2} blocks from the right shoulder ({reach:.2} at most)", if drawn { "held" } else { "not" }, held.distance(shoulder))),
+                None => Err("nothing was drawn in the stand-in's hand".into()),
+            };
+            if result.is_err() {
+                return done(world, gate, result);
+            }
+            gate.check("others", result);
+            gate.advance(now);
+        }
+        4 => {
+            if gate.shot(world, "other-player").is_some() {
+                world.resource_mut::<RemotePlayers>().forget(OTHER);
+                world.resource_mut::<Figures>().step = None;
+                gate.next(Step::Cook, now);
+            }
+        }
+        _ => {}
     }
 }
 
