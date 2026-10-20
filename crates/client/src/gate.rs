@@ -14955,6 +14955,8 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     // At the corner away from the fire, so it stands behind the hearthstone as the player
     // by the fire sees it: at the near corner it is in the way of a click on its top.
     let chimney = [hearth + IVec3::new(1, 1, 1), hearth + IVec3::new(1, 2, 1)];
+    // Carried up a brick flue to a pot, which smokes in the chimney's place.
+    let (flue, pot) = (chimney[1] + IVec3::Y, chimney[1] + IVec3::Y * 2);
     // A cottage stove the other side of the fire, cooked at after the hearth.
     let stove = fire + IVec3::new(-2, 0, 0);
     // The campfire's count ends `FIRE_WATCH` after it began, in whichever phase that falls.
@@ -15100,27 +15102,27 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             for at in hearth_ring(hearth) {
                 net.command(&format!("setblock {} {} {} cobblestone", at.x, at.y, at.z));
             }
-            for (at, block) in [(hearth, "hearthstone"), (chimney[0], "chimney"), (chimney[1], "chimney")] {
+            for (at, block) in [(hearth, "hearthstone"), (chimney[0], "chimney"), (chimney[1], "chimney"), (flue, "chimney_stack"), (pot, "chimney_pot")] {
                 net.command(&format!("setblock {} {} {} {block}", at.x, at.y, at.z));
             }
             gate.advance(now);
         }
         // A Homestead Hearth beside it, a hearthstone in a ring of stone with a chimney two
-        // tall at its corner: cold, the chimney does not smoke; lit, its top smokes (`over`
-        // the hearth), as home does from across a valley.
+        // tall at its corner, carried up a flue to a pot: cold, nothing smokes; lit, the pot
+        // smokes (the chimney's smoke, `over` the hearth), as home does from across a valley.
         7 => {
             let (placed, lit) = {
                 let client = world.resource::<ClientWorld>();
-                (client.registry.id("base:chimney").is_some_and(|c| client.block(chimney[1]) == Some(c)), client.fires.contains(&hearth))
+                (client.registry.id("base:chimney_pot").is_some_and(|c| client.block(pot) == Some(c)), client.fires.contains(&hearth))
             };
             if placed && lit {
-                world.resource_mut::<crate::emitters::Emitters>().watch(chimney[1]);
+                world.resource_mut::<crate::emitters::Emitters>().watch(pot);
                 gate.chimney_since = Some(now);
                 hearth_lit(world, gate, now, stove);
             } else if placed {
                 // A cold hearth's chimney gives nothing off.
                 let amount = world.resource::<crate::render::particles::Particles>().amount;
-                let cold = world.resource::<crate::emitters::Emitters>().rate_of(chimney[1], world.resource::<ClientWorld>(), amount);
+                let cold = world.resource::<crate::emitters::Emitters>().rate_of(pot, world.resource::<ClientWorld>(), amount);
                 if cold > 0.0 {
                     gate.check("chimney smoke", Err(format!("the chimney of a cold hearth smokes ({cold:.2} a second)")));
                     hearth_lit(world, gate, now, stove);
@@ -15145,7 +15147,7 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         // Raw small game in hand, right clicks on the standing hearth, then on the stove, each
         // cook one as the campfire did, while the lit chimney is watched.
         8 | 9 => {
-            chimney_watch(world, gate, now, chimney[1]);
+            chimney_watch(world, gate, now, pot);
             let (at, name, check) = if gate.phase == 8 { (hearth, "base:hearthstone", "hearth: cooks") } else { (stove, "base:cottage_stove", "stove: cooks") };
             let (placed, raw) = {
                 let client = world.resource::<ClientWorld>();
@@ -15203,7 +15205,7 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         }
         // The chimney's watch, if still open, decides before the hearth comes down.
         10 => {
-            chimney_watch(world, gate, now, chimney[1]);
+            chimney_watch(world, gate, now, pot);
             if gate.chimney_since.is_none() {
                 gate.next(Step::HomeMotif, now);
             }
@@ -15212,11 +15214,12 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     }
 }
 
-/// The Cook step's hearth, its stove and chimney, from where that step stood.
-fn cook_hearth(gate: &Gate) -> (IVec3, [IVec3; 2], IVec3) {
+/// The Cook step's hearth, its stove and chimney (with its flue and pot), from where that
+/// step stood.
+fn cook_hearth(gate: &Gate) -> (IVec3, [IVec3; 4], IVec3) {
     let fire = gate.feet + IVec3::new(0, 0, 14);
     let hearth = fire + IVec3::new(3, 0, 0);
-    (hearth, [hearth + IVec3::new(1, 1, 1), hearth + IVec3::new(1, 2, 1)], fire + IVec3::new(-2, 0, 0))
+    (hearth, [1, 2, 3, 4].map(|y| hearth + IVec3::new(1, y, 1)), fire + IVec3::new(-2, 0, 0))
 }
 
 /// The home motif, at the Cook step's Homestead Hearth, lit and so home: a roof of planks
@@ -15354,9 +15357,9 @@ fn chimney_watch(world: &mut World, gate: &mut Gate, now: f32, top: IVec3) {
     gate.chimney_owed = 0.0;
     gate.chimney_since = None;
     gate.check("chimney smoke", if done {
-        Ok(format!("no smoke while the hearth was cold; lit, {count} puffs rose from the chimney's top in {watched:.1} s ({owed:.1} owed)"))
+        Ok(format!("no smoke while the hearth was cold; lit, {count} puffs rose from the pot atop the chimney's flue in {watched:.1} s ({owed:.1} owed)"))
     } else {
-        Err(format!("only {count} puffs rose from the chimney's top over a hearthstone in {watched:.1} s, under {CHIMNEY_PARTICLES} with {owed:.1} owed ({why})"))
+        Err(format!("only {count} puffs rose from the pot atop a chimney's flue over a hearthstone in {watched:.1} s, under {CHIMNEY_PARTICLES} with {owed:.1} owed ({why})"))
     });
 }
 
@@ -15366,10 +15369,10 @@ fn hearth_ring(hearth: IVec3) -> impl Iterator<Item = IVec3> {
 }
 
 /// Takes the Cook step's hearth, its ring and chimney, and the stove down, and goes on.
-fn hearth_done(world: &mut World, gate: &mut Gate, now: f32, hearth: IVec3, chimney: [IVec3; 2], stove: IVec3) {
+fn hearth_done(world: &mut World, gate: &mut Gate, now: f32, hearth: IVec3, chimney: [IVec3; 4], stove: IVec3) {
     let net = world.resource::<Net>();
     net.command(&format!("fill {} {} {} {} {} {} air", hearth.x - 1, hearth.y, hearth.z - 1, hearth.x + 1, hearth.y, hearth.z + 1));
-    for at in [chimney[0], chimney[1], stove] {
+    for at in chimney.into_iter().chain([stove]) {
         net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
     }
     gate.next(Step::Dry, now);

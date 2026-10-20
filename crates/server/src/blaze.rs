@@ -739,6 +739,22 @@ mod tests {
         }
     }
 
+    /// A chimney piece lines the flue as stone does: a stone flue or a brick hood in the
+    /// roof's opening over the fire keeps the fire from the thatch round it.
+    #[test]
+    fn a_chimney_piece_lines_the_flue_as_stone_does() {
+        for piece in ["base:stone_flue", "base:chimney_hood"] {
+            let mut server = crate::test_server();
+            let (core, _client) = hearth(&mut server);
+            roof(&mut server, core, true);
+            server.set_block(core + IVec3::Y * 2, server.content.blocks.expect(piece));
+            server.light(1, core);
+            let rules = server.content.fire.rules.clone();
+            run(&mut server, rules.catch_seconds);
+            assert!(server.blazes.is_empty(), "a {piece} let the fire at the roof");
+        }
+    }
+
     /// Fire.ron's `homes_catch_only_from_owner`: player 2's torch set beside the wattle in
     /// player 1's home (the box round the home hearth 1 lit) never sets it smouldering, nor
     /// does it catch; player 1's own torch in the same place does. Turned off, anyone's does.

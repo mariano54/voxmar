@@ -9,7 +9,10 @@
 //! over without reading its blocks, so away from fires the search costs next to nothing.
 //! An emission `over` a tag is given off only with such a block below and open air above
 //! (a chimney smokes over a hearth, from its top), and over a structure's core only while
-//! its fire burns (`ClientWorld::fires`): a cold hearth's chimney does not smoke. Thatch
+//! its fire burns (`ClientWorld::fires`): a cold hearth's chimney does not smoke. Chimney
+//! pieces (`chimney_piece`: a flue, a hood, a pot) stacked straight over an emitting block
+//! carry what it gives off up to their top, so a chimney carried up through a roof smokes
+//! from its pot, not under the roof. Thatch
 //! smouldering by a flame (`ClientWorld::smoulders`) gives off fire.ron's smoke. Every frame those emitters spawn
 //! particles into the shared ring (`render::particles`), which moves, grows, cools and
 //! fades them on the GPU, so the CPU only writes each particle once. Nothing here allocates
@@ -36,6 +39,8 @@ const RESEARCH: f32 = 0.5;
 const MOVED: i32 = 4;
 /// How far up smoke looks for a ceiling, which it fades out under rather than rising into.
 const HEADROOM: i32 = 8;
+/// The most chimney pieces a block's smoke is carried up through, to the top of the stack.
+const FLUE: i32 = 8;
 /// The fastest wind smoke and embers drift with, in blocks per second.
 const MAX_DRIFT: f32 = 6.0;
 /// Emitters nearer than this give off all their particles; beyond, fewer, down to
@@ -151,14 +156,17 @@ impl Emitters {
             }
             let far = ((scaled as f32).sqrt() - NEAR) / (RANGE as f32 - NEAR);
             let share = 1.0 - (1.0 - FAR_SHARE) * far.clamp(0.0, 1.0);
-            let above = pos + IVec3::Y;
+            // What a block gives off comes out of the top of the flue over it (judged, as
+            // to what it is `over`, from where the block stands).
+            let top = flue_top(world, pos);
+            let above = top + IVec3::Y;
             let headroom = (1..=HEADROOM)
-                .find(|&dy| world.block(pos + IVec3::Y * dy).is_none_or(|b| world.registry.info(b).solid))
+                .find(|&dy| world.block(top + IVec3::Y * dy).is_none_or(|b| world.registry.info(b).solid))
                 .unwrap_or(HEADROOM + 1)
                 - 1;
             let giving = giving(world, &self.cores, pos, block, distance, headroom);
             if giving != 0 {
-                self.near.push(Emitter { pos, block, sky: sky_light(world, above), headroom: headroom as f32 + 0.5, share, giving });
+                self.near.push(Emitter { pos: top, block, sky: sky_light(world, above), headroom: headroom as f32 + 0.5, share, giving });
             }
         }
     }
@@ -281,6 +289,13 @@ fn emit(
             }
         }
     }
+}
+
+/// The top of the chimney pieces stacked straight over `pos` (up to `FLUE` of them), or
+/// `pos` itself with none over it: where what it gives off comes out.
+fn flue_top(world: &ClientWorld, pos: IVec3) -> IVec3 {
+    let piece = |at: IVec3| world.block(at).is_some_and(|b| world.registry.def(b).has_tag("chimney_piece"));
+    (1..=FLUE).take_while(|&dy| piece(pos + IVec3::Y * dy)).last().map_or(pos, |dy| pos + IVec3::Y * dy)
 }
 
 /// Per block id, whether some structure has it as its core.
@@ -469,6 +484,41 @@ mod tests {
         assert_eq!(found(&mut emitters, &world), vec![top], "the top smokes, 76 blocks off; the torch is too far");
         world.set_block(hearth, BlockId::AIR);
         assert!(found(&mut emitters, &world).is_empty(), "no hearth, no smoke");
+    }
+
+    /// A brick flue and a pot carried up over a lit hearth's chimney take its smoke to the
+    /// pot's top, and only there; with the pot gone it comes out of the flue, and with a
+    /// gap between chimney and pieces, out of the chimney under them. Cold, none smokes.
+    #[test]
+    fn a_flue_over_a_chimney_carries_its_smoke_up_to_the_pot() {
+        use voxmar_engine::world::Column;
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let block = |name: &str| content.blocks.expect(name);
+        let mut world = ClientWorld::new(content.blocks.clone(), 2, crate::render::terrain::Terrain::detached());
+        world.insert_column(ColumnPos::of_block(IVec3::ZERO), Arc::new(Column::default()));
+        let hearth = IVec3::new(5, 100, 5);
+        let (top, flue, pot) = (IVec3::new(4, 102, 4), IVec3::new(4, 103, 4), IVec3::new(4, 104, 4));
+        world.set_block(hearth, block("base:hearthstone"));
+        world.set_block(top - IVec3::Y, block("base:chimney"));
+        world.set_block(top, block("base:chimney"));
+        world.set_block(flue, block("base:chimney_stack"));
+        world.set_block(pot, block("base:chimney_pot"));
+        let mut emitters = Emitters::default();
+        emitters.emits = (0..world.registry.len()).map(|id| world.registry.def(BlockId(id as u16)).particles.iter().map(reach).max().unwrap_or(0)).collect();
+        emitters.far = emitters.emits.iter().copied().max().unwrap_or(0);
+        emitters.cores = cores(&world.registry, &content.multiblocks);
+        let found = |emitters: &mut Emitters, world: &ClientWorld| {
+            emitters.search(world, IVec3::new(40, 102, 4));
+            emitters.near.iter().map(|e| e.pos).collect::<Vec<_>>()
+        };
+        assert!(found(&mut emitters, &world).is_empty(), "a cold hearth's flue smokes");
+        world.fires.insert(hearth);
+        assert_eq!(found(&mut emitters, &world), vec![pot], "the smoke does not come out of the pot");
+        world.set_block(pot, BlockId::AIR);
+        assert_eq!(found(&mut emitters, &world), vec![flue], "a flue without its pot smokes from its top");
+        world.set_block(flue, BlockId::AIR);
+        world.set_block(pot, block("base:chimney_pot"));
+        assert_eq!(found(&mut emitters, &world), vec![top], "a pot a block over the chimney carried its smoke");
     }
 
     #[test]
