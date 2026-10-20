@@ -29,9 +29,12 @@ pub(crate) fn core_processes() -> Vec<Box<dyn Process>> {
     vec![
         Box::new(Falling),
         Box::new(Survival),
+        Box::new(crate::tool_wear::Burning::default()),
+        Box::new(crate::flames::Flames),
         Box::new(Weather::default()),
         Box::new(crate::wear::Footsteps::default()),
         Box::new(crate::farm::Growth),
+        Box::new(crate::smoulder::Smoulders),
         Box::new(crate::machines::Machines),
         Box::new(crate::apiary::Bees::default()),
         Box::new(crate::stations::Stations),
@@ -76,6 +79,8 @@ impl Process for Falling {
             // flowing lava burns.
             let touching = |kind: &dyn Fn(FluidId) -> bool| aabb.intersects(|p| server.block(p).and_then(|b| blocks.fluid(b)).is_some_and(|f| kind(f.fluid)));
             let (in_water, in_lava) = (touching(&|f| blocks.fluid_def(f).def.swim), touching(&|f| is_lava(blocks, f)));
+            // Feet on a ladder, nobody is falling: sliding down it ends no fall.
+            let on_ladder = server.on_ladder(player.position);
 
             let player = server.players.get_mut(&id).unwrap();
             // Where a grave would go: never in lava, nor on anything below the void.
@@ -89,7 +94,7 @@ impl Process for Falling {
             if in_lava && burns {
                 damage += rules.burn as f32;
             }
-            if player.flying || in_water || in_lava || !column_loaded {
+            if player.flying || in_water || in_lava || on_ladder || !column_loaded {
                 player.fall_start = None;
             } else if on_ground {
                 if let Some(start) = player.fall_start.take() {
@@ -188,7 +193,14 @@ impl Survival {
                 && server.block(seat).is_some_and(|b| server.content.blocks.def(b).has_tag(voxmar_engine::action::SEAT_TAG))
         });
 
+        let anchor = server.at_home(id);
         let player = server.players.get_mut(&id).unwrap();
+        // What their home meets now, and where it stands, to tell on their return what
+        // lights burnt out while they were away cost; not before that is told
+        // (`flames::check_home_return`).
+        if let Some(home) = home.as_ref().filter(|_| !player.home_unchecked) {
+            (player.home_steps, player.home_anchor) = (effects.home_steps(home), anchor);
+        }
         let creative = player.allow_flight;
         let before = (player.vitals.clone(), player.health);
         // A minute of other things brings back what eating the same food over and over
@@ -509,6 +521,47 @@ impl Server {
 mod tests {
     use super::*;
 
+    /// Sliding down a ladder at its own pace, from ten blocks up or from six after jumping
+    /// onto it, ends no fall: no harm at the bottom, and never falling on the way (so no
+    /// falling blow, fight.rs). The same descent with no ladder hurts.
+    #[test]
+    fn sliding_down_a_ladder_is_no_fall() {
+        use voxmar_engine::block::BlockId;
+        let mut server = crate::test_server();
+        let at = voxmar_engine::coords::ColumnPos::of_block(server.spawn.floor().as_ivec3()).origin() + IVec3::new(8, server.spawn.y as i32 + 10, 8);
+        let (stone, planks, ladder) = (server.content.blocks.expect("base:stone"), server.content.blocks.expect("base:oak_planks"), server.content.blocks.expect("base:oak_ladder"));
+        server.set_block(at, stone);
+        for y in 1..=12 {
+            server.set_block(at + IVec3::new(0, y, 1), planks);
+        }
+        let id = crate::creatures::cornered_tests::join(&mut server, at.as_vec3() + Vec3::new(0.5, 11.0, 0.5));
+        let slide = |server: &mut Server, from: f32, rungs: bool| -> (u8, bool) {
+            for y in 1..=10 {
+                server.set_block(at + IVec3::Y * y, if rungs { ladder } else { BlockId::AIR });
+            }
+            let player = server.players.get_mut(&id).unwrap();
+            player.health.current = player.health.max;
+            player.position = at.as_vec3() + Vec3::new(0.5, 1.0 + from, 0.5);
+            // Jumped onto it from a little above.
+            player.fall_start = Some(player.position.y + 1.0);
+            let mut falling = false;
+            // Down at climb_speed, 3 blocks a second: 0.15 a tick.
+            for _ in 0..=(from / 0.15).ceil() as usize {
+                Falling.run(server);
+                let player = server.players.get_mut(&id).unwrap();
+                falling |= player.fall_start.is_some_and(|top| player.position.y < top - 0.3);
+                player.position.y = (player.position.y - 0.15).max(at.y as f32 + 1.0);
+            }
+            Falling.run(server);
+            (server.players[&id].health.current, falling)
+        };
+        let full = server.players[&id].health.max;
+        assert_eq!(slide(&mut server, 9.99, true), (full, false), "a slide down a ten-block ladder hurt or fell");
+        assert_eq!(slide(&mut server, 6.0, true), (full, false), "a slide down from six blocks up hurt or fell");
+        let (bare, falling) = slide(&mut server, 9.99, false);
+        assert!(bare < full && falling, "the same descent with no ladder did not hurt");
+    }
+
     /// A home's room is judged by its walls and roof: a closed plank room is sound all about,
     /// a brick in it is a fine face, a hole or an open door lets the outside in, and a closed
     /// door is a wall.
@@ -555,6 +608,11 @@ mod tests {
             server.set_block(at + IVec3::new(dx, 1, 2), block(&server, name));
         }
         assert_eq!(server.room_walls(home), before, "furniture made the room draughtier");
+        // A ladder up the wall to a loft is looked past as well.
+        for y in 1..=3 {
+            server.set_block(at + IVec3::new(0, y, 2), block(&server, "base:oak_ladder"));
+        }
+        assert_eq!(server.room_walls(home), before, "a ladder made the room draughtier");
         // A solid block where home stands (a hearthstone): the room is the open cell over it.
         assert_eq!(server.room_walls(at), server.room_walls(home));
     }

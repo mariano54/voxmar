@@ -1,0 +1,43 @@
+// How the quest book draws its web (crates/client/src/hud/quest_look.rs), read and checked
+// at launch. A later package changes what it gives: each shape and each quest's shape by
+// name, the rest whole.
+(
+    // The shapes a quest stands in, drawn at whatever size the book's zoom gives: a regular
+    // polygon of `sides` (none, a circle) turned `turn` degrees, its corners rounded by
+    // `round` of its radius (0 to 0.5), and with `teeth` (0 to 0.4 of its radius) a cog's
+    // teeth, one a side.
+    shapes: {
+        "square": (sides: 4, turn: 45),
+        "rounded": (sides: 4, turn: 45, round: 0.28),
+        "circle": (),
+        "diamond": (sides: 4),
+        "hexagon": (sides: 6, round: 0.08),
+        "octagon": (sides: 8, turn: 22.5, round: 0.05),
+        "cog": (sides: 10, teeth: 0.16),
+    },
+    // Which quest takes which: `start` for the first quest of each path, `hub` for one that
+    // `hub_after` or more quests come after, `shape` for every other; `quests` names a
+    // quest's own.
+    shape: "rounded",
+    start: "hexagon",
+    hub: "octagon",
+    hub_after: 3,
+    quests: {
+        "base:homestead_hearth": "cog",
+        "base:crucible_kiln": "cog",
+    },
+    // A quest's face (behind its icon) and rim, by how it stands: waiting on those before
+    // it, open, done, and done with its rewards waiting. Colours are (red, green, blue),
+    // 0 to 255.
+    waiting: (face: (24, 27, 40), rim: (78, 84, 108)),
+    open: (face: (16, 50, 54), rim: (95, 225, 208)),
+    done: (face: (22, 46, 30), rim: (118, 214, 120)),
+    ready: (face: (66, 50, 18), rim: (246, 205, 107)),
+    // The lines from a quest to those after it, `width` interface pixels thick: `done` once
+    // the first is done, `ahead` before. Into a quest that is open, a light of `light` runs
+    // along the line from the quest before it, `flow` lengths of the line a second, lit over
+    // `glow` of the line's length, as clear as the line it runs on.
+    lines: (width: 2, done: (118, 214, 120), ahead: (78, 84, 108), flow: 0.6, glow: 0.35, light: (255, 244, 200)),
+    // The web's ground: a dot every `spacing` interface pixels, of `dot` at `alpha`.
+    grid: (spacing: 12, dot: (120, 130, 170), alpha: 0.3),
+)

@@ -27,7 +27,7 @@
             needs: [OpenSky],
             faster: [(Near("fire", 3), 2.0)],
         ),
-        // A cooking pot (Nomad): over a hob (a campfire, or on the hearthstone) with water near,
+        // A cooking pot (a Farm age station, once its rite is done): over a hob (a campfire, or on the hearthstone) with water near,
         // two grain simmer to porridge (Cooking 3) and, in the Farm age, three meat, roots or
         // vegetables to a stew (Cooking 14), warm going down.
         (
@@ -51,8 +51,8 @@
             from_stores: false,
         ),
         // A pit kiln (Farm): up to twelve clay, or cobblestone, loaded into the fire and left to
-        // fire while the player digs, tends the clamp or the field; fired twelve seconds on,
-        // taken in one go. Quicker than the clamp, a smaller load, and nothing cracks.
+        // fire while the player digs, chars logs or tends the field; fired twelve seconds on,
+        // taken in one go, nothing cracked.
         (
             empty: "pit_kiln", working: "pit_kiln_firing", ready: "pit_kiln_fired", holds: 12,
             works: [
@@ -61,19 +61,6 @@
             ],
             // Clay and cobblestone in the stores are for building: the kiln takes only what is
             // in hand.
-            from_stores: false,
-        ),
-        // An earth clamp (Farm): clay or logs heaped under dirt over a smouldering log, left
-        // to fire or char by themselves, slower than a kiln or campfire by hand but with
-        // nothing cracked and nobody standing by. Quests count what comes out as cooked.
-        (
-            empty: "earth_clamp", working: "earth_clamp_lit", ready: "earth_clamp_cooled", holds: 16,
-            works: [
-                (input: "clay", output: "fired_clay", minutes: 1.0, skill: "core:crafting", xp: 4.0, counts: Some("cooked")),
-                (input: "tag:log", output: "charcoal", minutes: 1.0, skill: "core:cooking", xp: 3.0, counts: Some("cooked")),
-            ],
-            // Logs and clay in the stores are for building: the clamp takes only what is in
-            // hand, or one log would draw the woodshed in.
             from_stores: false,
         ),
     ],

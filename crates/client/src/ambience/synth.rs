@@ -138,11 +138,32 @@ pub enum Synth {
     Clatter,
     /// Bees about their hive: a warm drone of many wings, one or two passing close.
     Hum,
+    /// The smith at the anvil: a heavy blow and a light one or two, iron ringing bright
+    /// and long.
+    Anvil,
+    /// A small shrine bell rung two or three times, its hum lingering.
+    Bell,
+    /// A mill wheel turning: its paddles knocking round, the axle groaning, water
+    /// spilling off.
+    Mill,
+    /// Wood split at a woodyard: an axe biting a log two or three times, the last
+    /// splitting it and the halves knocking down.
+    Chop,
+    /// A log settling in the fire: a soft fall, a burst of sparks and a breath of
+    /// hiss.
+    Settle,
+    /// A pig rooting in its pen: a few low grunts, now and then a snort.
+    Grunt,
+    /// Wind over the chimney on a stormy night: a low hollow moan in the flue, rising and
+    /// falling with the gusts.
+    Flue,
+    /// Rain falling into a fire: drops hissing on the embers, a spit now and then.
+    Sizzle,
 }
 
 impl Synth {
     #[cfg(test)]
-    pub const ALL: [Synth; 47] = [
+    pub const ALL: [Synth; 55] = [
         Synth::Wind,
         Synth::Gale,
         Synth::Rustle,
@@ -190,6 +211,14 @@ impl Synth {
         Synth::Bleat,
         Synth::Clatter,
         Synth::Hum,
+        Synth::Anvil,
+        Synth::Bell,
+        Synth::Mill,
+        Synth::Chop,
+        Synth::Settle,
+        Synth::Grunt,
+        Synth::Flue,
+        Synth::Sizzle,
     ];
 
     /// Whether it makes a continuous bed rather than one-shots.
@@ -218,6 +247,7 @@ impl Synth {
                 | Synth::Blaze
                 | Synth::Murmur
                 | Synth::Hum
+                | Synth::Flue
         )
     }
 
@@ -278,6 +308,13 @@ pub fn one_shot(synth: Synth, variant: usize) -> (Vec<f32>, [Vec<f32>; 2]) {
         Synth::Bark => bark(&mut noise),
         Synth::Bleat => bleat(&mut noise),
         Synth::Clatter => clatter(&mut noise),
+        Synth::Anvil => anvil(&mut noise),
+        Synth::Bell => bell(&mut noise),
+        Synth::Mill => mill(&mut noise),
+        Synth::Chop => chop(&mut noise),
+        Synth::Settle => settle(&mut noise),
+        Synth::Grunt => grunt(&mut noise),
+        Synth::Sizzle => sizzle(&mut noise),
         bed => panic!("{bed:?} makes a bed, not one-shots"),
     };
     let scale = loudness(&dry, 0.14, 0.8);
@@ -302,6 +339,7 @@ fn render_bed(synth: Synth, noise: &mut Noise, len: usize) -> Vec<f32> {
         Synth::Sandstorm => sandstorm(noise, len),
         Synth::Lava => lava(noise, len),
         Synth::Hum => hum(noise, len),
+        Synth::Flue => flue(noise, len),
         Synth::Waterfall => waterfall(noise, len),
         Synth::Fire => fire(noise, len),
         Synth::ThatchPatter => thatch_patter(noise, len),
@@ -535,6 +573,58 @@ fn draught(noise: &mut Noise, len: usize) -> Vec<f32> {
             (whistle * g + hiss.band(noise.next()) * 0.06 * (0.3 + g)) * (0.15 + 0.85 * g)
         })
         .collect()
+}
+
+/// Wind over the chimney: the flue a pipe a few blocks long, so the gusts sound its low
+/// notes (two resonances near 90 and 180 Hz, wandering a little as the wind does) as a
+/// hollow moan that swells and dies away, over a soft rush of air at the top.
+fn flue(noise: &mut Noise, len: usize) -> Vec<f32> {
+    let gust = Drift::new(noise, 0.07);
+    let wander = Drift::new(noise, 0.11);
+    let (low, high) = (between(noise, 80.0, 100.0), between(noise, 170.0, 200.0));
+    let (mut a, mut b) = (Svf::new(low, 18.0), Svf::new(high, 14.0));
+    let mut rush = Svf::new(700.0, 0.6);
+    let mut out = Vec::with_capacity(len);
+    let mut g = 0.0;
+    for i in 0..len {
+        if i % 64 == 0 {
+            let t = i as f32 / SR;
+            let w = wander.at(t);
+            g = gust.unit(t).powi(2);
+            a.tune(low * (1.0 + 0.06 * w + 0.08 * g));
+            b.tune(high * (1.0 + 0.05 * w + 0.08 * g));
+        }
+        let white = noise.next();
+        out.push((a.band(white) + 0.6 * b.band(white)) * (0.1 + 0.9 * g) + rush.band(noise.next()) * 0.05 * (0.2 + g));
+    }
+    out
+}
+
+/// Rain falling into a fire: a run of short, bright hisses as drops find the embers, each
+/// a breath of high noise dying in a few tens of milliseconds, and now and then a spit.
+fn sizzle(noise: &mut Noise) -> Vec<f32> {
+    let mut out = vec![0.0f32; seconds(1.4)];
+    let mut hiss = Svf::new(between(noise, 3500.0, 5000.0), 1.0);
+    let mut t = between(noise, 0.01, 0.05);
+    let mut drops = Vec::new();
+    while t < 1.1 {
+        drops.push((seconds(t), seconds(between(noise, 0.03, 0.12)), between(noise, 0.3, 1.0)));
+        t += between(noise, 0.04, 0.2);
+    }
+    let mut envelope = vec![0.0f32; out.len()];
+    for (start, length, gain) in drops {
+        for (j, e) in envelope.iter_mut().skip(start).take(length).enumerate() {
+            *e += gain * (-(j as f32) / length as f32 * 4.0).exp();
+        }
+    }
+    for (sample, e) in out.iter_mut().zip(&envelope) {
+        *sample = 0.5 * e * hiss.band(noise.next());
+    }
+    if noise.unit() < 0.5 {
+        let at = between(noise, 0.2, 0.9);
+        crack(&mut out, noise, at, (0.001, 0.003), (2500.0, 4500.0), 0.4);
+    }
+    out
 }
 
 /// Thatch smouldering: a high, soft sizzle of band noise that swells and eases as the heat
@@ -1374,7 +1464,10 @@ fn well(noise: &mut Noise) -> Vec<f32> {
     out
 }
 
-/// Bees about their hive: a few dozen wings, each a buzz near 230 Hz (a wingbeat and its
+/// How many samples the hum's slow changes hold for (about 1.3 ms).
+const CONTROL: usize = 64;
+
+/// Bees about their hive: a score of wings, each a buzz near 230 Hz (a wingbeat and its
 /// overtones) wandering in pitch as the bee turns, and in loudness as it comes and goes, so
 /// the drone breathes; now and then one passes close, louder and bending down as it goes
 /// by. Kept under two kilohertz, as wings are heard through the air.
@@ -1386,17 +1479,26 @@ fn hum(noise: &mut Noise, len: usize) -> Vec<f32> {
         let (turn, near) = (Drift::new(noise, turning), Drift::new(noise, nearing));
         let mut phase = TAU * noise.unit();
         let (from, count) = (seconds(start.max(0.0)), seconds(length));
+        let (mut step, mut gain) = (0.0, 0.0);
         for j in 0..count.min(len.saturating_sub(from)) {
-            let (t, k) = ((from + j) as f32 / SR, j as f32 / count as f32);
-            // A bee going by bends down past the listener, its loudness swelling and gone.
-            let (bend, swell) = if passing { (1.04 - 0.08 * k, (PI * k).sin().powi(2)) } else { (1.0, 0.3 + 0.7 * near.unit(t)) };
-            phase += TAU * pitch * bend * (0.97 + 0.06 * turn.unit(t)) / SR;
-            let wing = phase.sin() + 0.5 * (2.0 * phase).sin() + 0.25 * (3.0 * phase).sin() + 0.12 * (4.0 * phase).sin();
-            out[from + j] += level * swell * wing;
+            // The turn and the coming and going are slow: worked out every few
+            // milliseconds, not every sample.
+            if j % CONTROL == 0 {
+                let (t, k) = ((from + j) as f32 / SR, j as f32 / count as f32);
+                // A bee going by bends down past the listener, its loudness swelling and gone.
+                let (bend, swell) = if passing { (1.04 - 0.08 * k, (PI * k).sin().powi(2)) } else { (1.0, 0.3 + 0.7 * near.unit(t)) };
+                (step, gain) = (TAU * pitch * bend * (0.97 + 0.06 * turn.unit(t)) / SR, level * swell);
+            }
+            phase = (phase + step) % TAU;
+            // The wingbeat and three overtones from one sine and cosine.
+            let (sin, cos) = phase.sin_cos();
+            let (sin2, cos2) = (2.0 * sin * cos, 1.0 - 2.0 * sin * sin);
+            let wing = sin + 0.5 * sin2 + 0.25 * sin * (3.0 - 4.0 * sin * sin) + 0.12 * 2.0 * sin2 * cos2;
+            out[from + j] += gain * wing;
         }
     };
-    for _ in 0..28 {
-        let (pitch, level) = (between(noise, 200.0, 260.0), between(noise, 0.02, 0.06));
+    for _ in 0..20 {
+        let (pitch, level) = (between(noise, 200.0, 260.0), between(noise, 0.025, 0.07));
         bee(&mut out, noise, 0.0, total, pitch, level, false);
     }
     let mut t = between(noise, 0.5, 3.0);
@@ -1518,6 +1620,152 @@ fn bleat(noise: &mut Noise) -> Vec<f32> {
     }
     let (mut nose, mut mouth) = (Svf::new(between(noise, 900.0, 1200.0), 3.0), Svf::new(between(noise, 2300.0, 2800.0), 4.0));
     out.iter_mut().for_each(|s| *s = nose.band(*s) + 0.5 * mouth.band(*s) + 0.1 * *s);
+    out
+}
+
+/// The smith at the anvil: two to four rounds of a heavy blow on the iron and one or two
+/// light taps on the anvil's face between, the smith's rhythm; each a sharp strike and a
+/// bright, inharmonic ring (a bar's partials) that carries far.
+fn anvil(noise: &mut Noise) -> Vec<f32> {
+    let rounds = 2 + (noise.unit() * 3.0) as usize;
+    let every = between(noise, 0.55, 0.75);
+    let mut out = vec![0.0f32; seconds(rounds as f32 * every + 2.4)];
+    let iron = between(noise, 950.0, 1250.0);
+    let bar = [(1.0, 1.0, 0.3), (2.76, 0.6, 0.16), (5.4, 0.35, 0.08), (8.93, 0.2, 0.04)];
+    let mut t = 0.02;
+    for _ in 0..rounds {
+        let gain = between(noise, 0.8, 1.0);
+        crack(&mut out, noise, t, (0.001, 0.003), (3000.0, 5000.0), 0.6 * gain);
+        ring(&mut out, t, iron * between(noise, 0.98, 1.02), &bar, 0.7 * gain);
+        let taps = 1 + (noise.unit() * 2.0) as usize;
+        for tap in 0..taps {
+            let at = t + every * (tap + 1) as f32 / (taps + 1) as f32;
+            ring(&mut out, at, iron * 1.12, &[(1.0, 1.0, 0.12), (2.76, 0.4, 0.06)], 0.25);
+        }
+        t += every * between(noise, 0.95, 1.05);
+    }
+    out
+}
+
+/// A small shrine bell rung two or three times: a struck bell's partials (a hum an
+/// octave down, the strike note, a minor third, a fifth, the octave and a high ring),
+/// the high ones dying first so each stroke mellows into its hum.
+fn bell(noise: &mut Noise) -> Vec<f32> {
+    let strokes = 2 + (noise.unit() * 2.0) as usize;
+    let every = between(noise, 1.2, 1.4);
+    let strike = between(noise, 560.0, 700.0);
+    let partials = [(0.5, 0.6, 0.75), (1.0, 1.0, 0.55), (1.19, 0.5, 0.4), (1.5, 0.35, 0.3), (2.0, 0.4, 0.22), (2.74, 0.2, 0.12)];
+    let mut out = vec![0.0f32; seconds((strokes - 1) as f32 * every + 0.75 * 6.0 + 0.1)];
+    for stroke in 0..strokes {
+        let at = 0.02 + stroke as f32 * every;
+        crack(&mut out, noise, at, (0.001, 0.002), (2500.0, 3500.0), 0.15);
+        ring(&mut out, at, strike, &partials, between(noise, 0.75, 1.0));
+    }
+    out
+}
+
+/// A mill wheel turning: a paddle knocking into the race every half second or so, deep
+/// and wooden, the axle groaning once round, and water spilling off the paddles between.
+fn mill(noise: &mut Noise) -> Vec<f32> {
+    let mut out = vec![0.0f32; seconds(4.0)];
+    let every = between(noise, 0.45, 0.6);
+    let board = between(noise, 110.0, 150.0);
+    let mut t = 0.03;
+    while t < 3.3 {
+        ring(&mut out, t, board * between(noise, 0.96, 1.04), &[(1.0, 1.0, 0.05), (2.3, 0.4, 0.025)], between(noise, 0.5, 0.8));
+        crack(&mut out, noise, t, (0.003, 0.006), (500.0, 900.0), 0.3);
+        t += every;
+    }
+    // The axle: a slow groan once round.
+    let groan = creak(noise);
+    let at = seconds(between(noise, 0.5, 1.5));
+    for (sample, g) in out.iter_mut().skip(at).zip(groan) {
+        *sample += 0.5 * g;
+    }
+    // Water spilling: soft bright splashes off each paddle as it rises.
+    let mut spill = Svf::new(1600.0, 0.8);
+    let total = out.len();
+    for (i, sample) in out.iter_mut().enumerate() {
+        let t = i as f32 / SR;
+        let pour = (PI * t / every).sin().abs().powi(4) * note_envelope(i as f32 / total as f32, 0.1);
+        *sample += 0.25 * pour * spill.band(noise.next());
+    }
+    out
+}
+
+/// Wood split at a woodyard: an axe biting into a log, a bright crack over a dull thunk,
+/// two to four times; the last splits it, the halves knocking down onto the block.
+fn chop(noise: &mut Noise) -> Vec<f32> {
+    let strokes = 2 + (noise.unit() * 3.0) as usize;
+    let every = between(noise, 0.9, 1.3);
+    let mut out = vec![0.0f32; seconds(strokes as f32 * every + 0.8)];
+    let log = between(noise, 280.0, 400.0);
+    let mut t = 0.02;
+    for _ in 0..strokes {
+        crack(&mut out, noise, t, (0.002, 0.004), (2500.0, 4000.0), 0.8);
+        ring(&mut out, t, log * between(noise, 0.95, 1.05), &[(1.0, 1.0, 0.025), (2.1, 0.4, 0.012)], 0.8);
+        crack(&mut out, noise, t + 0.002, (0.008, 0.015), (300.0, 600.0), 0.5);
+        t += every * between(noise, 0.95, 1.05);
+    }
+    // The split: a sharper crack, and the halves falling.
+    let split = t - every;
+    crack(&mut out, noise, split + 0.01, (0.003, 0.006), (1500.0, 2500.0), 0.6);
+    for (after, gain) in [(0.3, 0.5), (0.42, 0.35)] {
+        ring(&mut out, split + after + between(noise, 0.0, 0.05), log * 0.7, &[(1.0, 1.0, 0.02), (2.4, 0.3, 0.01)], gain);
+    }
+    out
+}
+
+/// A log settling in the fire: a soft, low fall into the embers, a burst of sparks
+/// crackling up, and a breath of hiss as the wood finds the heat.
+fn settle(noise: &mut Noise) -> Vec<f32> {
+    let mut out = vec![0.0f32; seconds(1.6)];
+    ring(&mut out, 0.02, between(noise, 90.0, 130.0), &[(1.0, 1.0, 0.04), (2.2, 0.3, 0.02)], 0.6);
+    crack(&mut out, noise, 0.02, (0.01, 0.02), (300.0, 600.0), 0.4);
+    let mut t = 0.05;
+    for _ in 0..8 + (noise.unit() * 8.0) as usize {
+        let gain = between(noise, 0.08, 0.3);
+        crack(&mut out, noise, t, (0.001, 0.003), (2000.0, 5000.0), gain);
+        t += between(noise, 0.01, 0.06);
+    }
+    let mut hiss = Svf::new(3200.0, 0.7);
+    let count = seconds(1.2);
+    for (j, sample) in out.iter_mut().skip(seconds(0.1)).take(count).enumerate() {
+        *sample += 0.12 * note_envelope(j as f32 / count as f32, 0.15) * hiss.band(noise.next());
+    }
+    out
+}
+
+/// A pig rooting in its pen: two to four short, low grunts, rough and nasal, and now
+/// and then a snort.
+fn grunt(noise: &mut Noise) -> Vec<f32> {
+    let grunts = 2 + (noise.unit() * 3.0) as usize;
+    let mut out = vec![0.0f32; seconds(grunts as f32 * 0.55 + 0.4)];
+    let mut t = 0.02;
+    for _ in 0..grunts {
+        let (length, pitch) = (between(noise, 0.12, 0.25), between(noise, 85.0, 130.0));
+        let count = seconds(length);
+        let (start, mut phase) = (seconds(t), 0.0f32);
+        let mut nose = Svf::new(between(noise, 500.0, 750.0), 2.5);
+        for j in 0..count {
+            let x = j as f32 / count as f32;
+            phase = (phase + pitch * (1.0 - 0.15 * x) / SR).fract();
+            // A buzzing pulse, roughened with breath.
+            let pulse = (1.0 - phase).powi(6) - 0.15 + 0.3 * noise.next();
+            if let Some(sample) = out.get_mut(start + j) {
+                *sample += note_envelope(x, 0.1) * (nose.band(pulse) + 0.2 * pulse);
+            }
+        }
+        t += length + between(noise, 0.12, 0.3);
+    }
+    if noise.unit() < 0.4 {
+        let mut snout = Svf::new(900.0, 1.2);
+        let count = seconds(0.15);
+        let start = seconds(t.min(out.len() as f32 / SR - 0.2));
+        for j in 0..count {
+            out[start + j] += 0.5 * note_envelope(j as f32 / count as f32, 0.05) * snout.band(noise.next());
+        }
+    }
     out
 }
 

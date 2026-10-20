@@ -8,7 +8,7 @@ use voxmar_engine::block::BlockId;
 use voxmar_engine::coords::ColumnPos;
 use voxmar_engine::effect::{EffectId, EffectRegistry, Modifiers};
 use voxmar_engine::glam::Vec3;
-use voxmar_engine::inventory::{HOTBAR_SLOTS, Inventory, ItemStack, MAX_STACK};
+use voxmar_engine::inventory::{HOTBAR_SLOTS, Inventory, ItemStack, max_stack};
 use voxmar_engine::lang::Words;
 use voxmar_engine::movement::Checks;
 use voxmar_engine::physics::{Aabb, CUBE, player as dims};
@@ -61,6 +61,13 @@ pub struct Player {
     /// The announced effects (`EffectDef::announce`) the player has been told of this
     /// session, so stepping out of a room and back in does not say it twice.
     pub announced: Vec<EffectId>,
+    /// The home steps their home met when last surveyed (`EffectRegistry::home_steps`),
+    /// where that home stood (its `home_spot`'s cell: a home moved since says nothing of
+    /// what was lost), and whether it is yet to be surveyed since they joined, to tell them
+    /// what lights burnt out while they were away cost.
+    pub home_steps: Vec<EffectId>,
+    pub home_anchor: Option<voxmar_engine::glam::IVec3>,
+    pub home_unchecked: bool,
     /// Healing and hurting under way, in seconds (`process::Survival`).
     pub heal_clock: f32,
     pub hurt_clock: f32,
@@ -106,6 +113,10 @@ pub struct Player {
     /// How many times the server has moved the player (`Player::teleport`); inputs that
     /// do not echo it are stale.
     pub teleports: u32,
+    /// The others as last told to this player (`Server::broadcast_players`), names and all.
+    pub told: rustc_hash::FxHashMap<PlayerId, PlayerView>,
+    /// The others' names as told to this player, near or far (`Server::broadcast_players`).
+    pub named: rustc_hash::FxHashMap<PlayerId, String>,
     pub support: Support,
     /// The last place they stood on ground out of lava: where a death in the void or in
     /// lava leaves their things (`Server::grave_site`).
@@ -201,6 +212,9 @@ impl Player {
             vitals: Vitals::default(),
             timed_effects: Vec::new(),
             announced: Vec::new(),
+            home_steps: Vec::new(),
+            home_anchor: None,
+            home_unchecked: false,
             modifiers: Modifiers::default(),
             recent_food: Default::default(),
             health_base: 0,
@@ -222,6 +236,8 @@ impl Player {
             budget_at: None,
             accepted: spawn,
             teleports: 0,
+            told: rustc_hash::FxHashMap::default(),
+            named: rustc_hash::FxHashMap::default(),
             support: Support { y: spawn.y, fluid: false, at: None },
             last_ground: None,
             connected_tick: tick,
@@ -248,7 +264,7 @@ impl Player {
     }
 
     pub fn view(&self) -> PlayerView {
-        PlayerView { id: self.id, name: self.name.clone(), position: self.position, yaw: self.yaw, pitch: self.pitch, held: self.held() }
+        PlayerView { id: self.id, name: Some(self.name.clone()), position: self.position, yaw: self.yaw, pitch: self.pitch, held: self.held(), fight: Default::default() }
     }
 
     pub fn aabb(&self) -> Aabb {
@@ -335,6 +351,9 @@ impl Player {
             prayer_points: Some(self.praying.points),
             casts: self.casts,
             draws: self.draws,
+            home_steps: self.home_steps.iter().map(|&id| effects.get(id).name.clone()).collect(),
+            home_anchor: self.home_anchor.map(|at| at.to_array()),
+            spilled: Vec::new(),
         }
     }
 }
@@ -408,11 +427,14 @@ impl Server {
         if !known || count == 0 || player.mode() != GameMode::Creative {
             return;
         }
-        let count = count.min(MAX_STACK);
+        // No more than a stack of it holds (a tool comes one at a time), and never onto a
+        // worn one: a new one is not a free mend.
+        let most = max_stack(item);
+        let count = count.min(most);
         if held {
             match &mut player.inventory.cursor {
-                None => player.inventory.cursor = Some(ItemStack { item, count }),
-                Some(stack) if stack.item == item => stack.count = stack.count.saturating_add(count).min(MAX_STACK),
+                None => player.inventory.cursor = Some(ItemStack::new(item, count)),
+                Some(stack) if stack.item == item && stack.wear == 0 => stack.count = stack.count.saturating_add(count).min(most),
                 Some(_) => return,
             }
         } else {
@@ -516,7 +538,7 @@ impl Server {
         // A save that is not a player file is moved aside rather than replaced by a new
         // player's at the next save. One that could not be read at all (no permission, a
         // failing disk), or cannot be moved, turns the player away.
-        let (saved, set_aside) = if let Some((held, _)) = carried {
+        let (mut saved, set_aside) = if let Some((held, _)) = carried {
             (Some(held), None)
         } else {
             match self.save.as_ref().map(|save| (save, save.read_player(&name, &blocks))) {
@@ -577,6 +599,7 @@ impl Server {
         player.casts = saved.as_ref().map_or(0, |saved| saved.casts);
         player.draws = saved.as_ref().map_or_else(Draws::default, |saved| saved.draws);
         player.draw_key = player_draw_key(self.meta.draw_key, &player.name);
+        let spilled = saved.as_mut().map(|saved| std::mem::take(&mut saved.spilled)).unwrap_or_default();
         match saved {
             Some(saved) if saved.health.alive() => {
                 player.position = saved.position;
@@ -593,6 +616,9 @@ impl Server {
                 player.quests_claimed = saved.quests_claimed;
                 player.tallies = saved.tallies.into_iter().collect();
                 player.timed_effects = saved.effects.iter().filter_map(|(name, left)| Some((effect_ids.id(name)?, *left))).collect();
+                player.home_steps = saved.home_steps.iter().filter_map(|name| effect_ids.id(name)).collect();
+                player.home_anchor = saved.home_anchor.map(voxmar_engine::glam::IVec3::from_array);
+                player.home_unchecked = !player.home_steps.is_empty();
             }
             // Players who left dead come back to life at home, or else the spawn point.
             Some(saved) => {
@@ -608,6 +634,9 @@ impl Server {
                 player.quests_done = saved.quests;
                 player.quests_claimed = saved.quests_claimed;
                 player.tallies = saved.tallies.into_iter().collect();
+                player.home_steps = saved.home_steps.iter().filter_map(|name| effect_ids.id(name)).collect();
+                player.home_anchor = saved.home_anchor.map(voxmar_engine::glam::IVec3::from_array);
+                player.home_unchecked = !player.home_steps.is_empty();
             }
             // The coin purse in the pack's last slot, out of the hotbar's way, and the kit
             // unless this address has had its share.
@@ -641,6 +670,16 @@ impl Server {
         let entries = self.players[&id].journal.entries().cloned().collect();
         self.players[&id].connection.send(ServerMessage::Journal { entries });
         self.kindle_home(id);
+        self.recount_placed(id);
+        // An older save's stacked tools with no slot left fall at their feet, theirs and
+        // lying as long as a grave does: the pack was full, so they wait for room.
+        let feet = self.players[&id].position.floor().as_ivec3();
+        let owner = crate::items::owner_of(&self.players[&id].name);
+        let lifetime = (self.content.value.death.grave * voxmar_protocol::TICKS_PER_SECOND as f32) as u32;
+        for (i, stack) in spilled.into_iter().enumerate() {
+            let random = self.meta.next_pop(feet, 0x5b1d ^ i as u32);
+            self.items.spawn_for(stack, voxmar_engine::dropped::popped(feet, random), voxmar_engine::dropped::PICKUP_DELAY, Some(owner), lifetime);
+        }
         self.players[&id].connection.send(ServerMessage::Fires { lit: self.fires() });
         // What smoulders now: the others were told as it began, and are told only of changes.
         self.players[&id].connection.send(ServerMessage::Smoulders { at: self.smouldering() });
@@ -762,11 +801,10 @@ impl Server {
                 fall: checks.speed_margin * fly.max(tuning.terminal_velocity),
             }
         } else {
-            Budgets {
-                across: checks.speed_margin * tuning.top_ground_speed(),
-                rise: checks.speed_margin * tuning.jump_velocity,
-                fall: checks.speed_margin * tuning.terminal_velocity,
-            }
+            // Feet on a ladder, nobody climbs it or slides down it faster than `climb_speed`
+            // (the client's `movement::step`, a jump on it included).
+            let (rise, fall) = if self.on_ladder(player.position) { (tuning.climb_speed, tuning.climb_speed) } else { (tuning.jump_velocity, tuning.terminal_velocity) };
+            Budgets { across: checks.speed_margin * tuning.top_ground_speed(), rise: checks.speed_margin * rise, fall: checks.speed_margin * fall }
         };
         let gap = player.budget_at.map_or(1.0 / TICKS_PER_SECOND as f32, |then| at.saturating_duration_since(then).as_secs_f32());
         let since = gap.min(checks.burst);
@@ -848,8 +886,9 @@ impl Server {
     }
 
     /// What a player standing at `feet` has under them: `Some(true)` a fluid they are in,
-    /// `Some(false)` ground, `None` nothing. What they may jump or swim up from. Where the
-    /// server has not loaded the land yet, it takes the player's word.
+    /// `Some(false)` ground (or a ladder their feet are in, `movement::on_ladder`), `None`
+    /// nothing. What they may jump or swim up from. Where the server has not loaded the land
+    /// yet, it takes the player's word.
     fn standing(&self, feet: Vec3) -> Option<bool> {
         let blocks = &self.content.blocks;
         if !self.world.contains(ColumnPos::of_block(feet.floor().as_ivec3())) {
@@ -861,11 +900,19 @@ impl Server {
         let (depth, _) = voxmar_engine::movement::water_around(blocks, |cell| self.block(cell), &Aabb::standing(feet, dims::WIDTH, dims::HEIGHT));
         if depth > 0.0 {
             Some(true)
-        } else if ground.overlaps(|cell| self.boxes(cell)) {
+        } else if ground.overlaps(|cell| self.boxes(cell)) || self.on_ladder(feet) {
             Some(false)
         } else {
             None
         }
+    }
+
+    /// Whether a player's feet at `feet` are in a ladder's cell, as the client climbs it
+    /// (`movement::on_ladder`).
+    pub(crate) fn on_ladder(&self, feet: Vec3) -> bool {
+        let half = dims::WIDTH / 2.0 - 1e-4;
+        let (lo, hi) = ((feet - Vec3::new(half, 0.0, half)).floor().as_ivec3(), (feet + Vec3::new(half, 0.0, half)).floor().as_ivec3());
+        (lo.x..=hi.x).any(|x| (lo.z..=hi.z).any(|z| self.block(voxmar_engine::glam::IVec3::new(x, lo.y, z)).is_some_and(|b| self.content.blocks.info(b).climbable)))
     }
 
     /// Whether there is ground within `Checks::near_ground` under a player at `feet`.
@@ -1168,6 +1215,54 @@ mod tests {
         assert_eq!(server.players[&1].position, far);
     }
 
+    /// Up a ladder thirty blocks high, or down it, a player sending where they are twenty
+    /// times a second is taken at the ladder's own pace (3 blocks a second), and put back
+    /// at more than twice that, though a jump goes faster and a fall faster still: on a
+    /// ladder nobody rises or sinks faster than `climb_speed` and the margin allow, once
+    /// the moves they have in hand run out.
+    #[test]
+    fn a_climb_or_slide_faster_than_a_ladder_allows_is_put_back() {
+        use voxmar_engine::glam::IVec3;
+        let mut server = crate::test_server();
+        let _connection = join(&mut server, 1, "Ada");
+        let at = server.spawn.floor().as_ivec3() + IVec3::new(0, 20, 0);
+        server.load_area(at - IVec3::splat(4), at + IVec3::new(4, 36, 4));
+        let blocks = &server.content.blocks;
+        let (stone, planks, ladder) = (blocks.expect("base:stone"), blocks.expect("base:oak_planks"), blocks.expect("base:oak_ladder"));
+        for y in 0..=32 {
+            for x in -1..=1 {
+                for z in -1..=1 {
+                    server.set_block(at + IVec3::new(x, y, z), voxmar_engine::block::BlockId::AIR);
+                }
+                server.set_block(at + IVec3::new(x, y, 1), planks);
+            }
+            server.set_block(at + IVec3::Y * y, ladder);
+        }
+        server.set_block(at - IVec3::Y, stone);
+        let bottom = at.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
+        // From `from`, `steps` inputs a twentieth of a second apart, each `by` further up;
+        // whether any was put back.
+        let mut clock = Instant::now();
+        let mut go = |server: &mut Server, from: Vec3, by: f32, steps: usize| -> bool {
+            let player = server.players.get_mut(&1).unwrap();
+            (player.position, player.accepted, player.budget_at) = (from, from, None);
+            let before = player.teleports;
+            for k in 1..=steps {
+                clock += std::time::Duration::from_millis(50);
+                server.arrival = clock;
+                let teleport = server.players[&1].teleports;
+                server.input(1, PlayerInput { position: from + Vec3::Y * by * k as f32, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false, teleport });
+            }
+            clock += std::time::Duration::from_secs(5);
+            server.players[&1].teleports != before
+        };
+        let top = bottom + Vec3::Y * 30.0;
+        assert!(!go(&mut server, bottom, 0.15, 200), "an honest climb was put back");
+        assert!(!go(&mut server, top, -0.15, 200), "an honest slide was put back");
+        assert!(go(&mut server, bottom, 0.4, 75), "a climb at 8 blocks a second was let through");
+        assert!(go(&mut server, top, -0.4, 75), "a slide at 8 blocks a second was let through");
+    }
+
     fn join(server: &mut Server, id: PlayerId, name: &str) -> ClientConnection {
         let (connection, server_side) = local_pair();
         let player = Player::new(id, server_side, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
@@ -1189,43 +1284,144 @@ mod tests {
         connection
     }
 
-    /// Drive the server directly: no tick race can hide an identity change or a cap bypass.
-    /// The last of the other players a client was told of, emptying what came before.
-    fn told_of_others(client: &ClientConnection) -> Option<Vec<PlayerView>> {
+    /// Every Players message a client was sent since last asked: (seen, gone) each.
+    fn told_of_others(client: &ClientConnection) -> Vec<(Vec<PlayerView>, Vec<PlayerId>)> {
+        told_of_others_and_names(client).into_iter().map(|(seen, gone, _)| (seen, gone)).collect()
+    }
+
+    /// Every Players message a client was sent since last asked, names out of sight and all.
+    #[allow(clippy::type_complexity)]
+    fn told_of_others_and_names(client: &ClientConnection) -> Vec<(Vec<PlayerView>, Vec<PlayerId>, Vec<(PlayerId, String)>)> {
         std::iter::from_fn(|| client.try_recv().ok().flatten())
             .filter_map(|message| match message {
-                ServerMessage::Players { players } => Some(players),
+                ServerMessage::Players { seen, gone, names } => Some((seen, gone, names)),
                 _ => None,
             })
-            .last()
+            .collect()
+    }
+
+    /// Two players joined, Bob holding an iron sword: Ada is told of him by name, with what
+    /// he holds.
+    fn ada_and_bob() -> (Server, ClientConnection, ClientConnection, BlockId) {
+        let mut server = crate::test_server();
+        let ada = join(&mut server, 1, "Ada");
+        let bob = join(&mut server, 2, "Bob");
+        let sword = server.content.blocks.id("base:iron_sword").expect("a sword");
+        let p = server.players.get_mut(&2).unwrap();
+        p.inventory.add(sword, 1);
+        p.selected = (0..voxmar_engine::inventory::SLOTS).find(|&s| p.inventory.get(s).is_some_and(|stack| stack.item == sword)).expect("the sword in a slot");
+        (server, ada, bob, sword)
+    }
+
+    /// Bob moved by his own input, looking `pitch` up.
+    fn bob_moves(server: &mut Server, bob: &ClientConnection, by: Vec3, pitch: f32) {
+        let p = &server.players[&2];
+        let input = PlayerInput { position: p.position + by, yaw: 0.3, pitch, selected_slot: p.selected as u8, flying: false, teleport: p.teleports };
+        bob.send(ClientMessage::Input(input));
+        server.handle_messages();
     }
 
     /// Others see what a player holds and how they look up or down (at most as far as the
     /// server lets them: 1.6 radians); the last one left is told the others are gone, once.
     #[test]
     fn others_are_told_what_a_player_holds_and_where_they_look_and_when_they_go() {
-        let mut server = crate::test_server();
-        let ada = join(&mut server, 1, "Ada");
-        let bo = join(&mut server, 2, "Bob");
-        let sword = server.content.blocks.id("base:iron_sword").expect("a sword");
-        let p = server.players.get_mut(&2).unwrap();
-        p.inventory.add(sword, 1);
-        let slot = (0..voxmar_engine::inventory::SLOTS).find(|&s| p.inventory.get(s).is_some_and(|stack| stack.item == sword)).expect("the sword in a slot");
-        let input = PlayerInput { position: p.position, yaw: 0.3, pitch: 3.0, selected_slot: slot as u8, flying: false, teleport: p.teleports };
-        bo.send(ClientMessage::Input(input));
-        server.handle_messages();
+        let (mut server, ada, bob, sword) = ada_and_bob();
+        bob_moves(&mut server, &bob, Vec3::ZERO, 3.0);
         server.broadcast_players();
-        let told = told_of_others(&ada).expect("Ada was told of Bob");
-        let bob = told.iter().find(|v| v.id == 2).expect("Bob among the others");
-        assert_eq!((bob.held, bob.pitch), (Some(sword), 1.6), "what Bob holds and how far up he looks");
-        assert!(told.iter().all(|v| v.id != 1), "Ada was told of herself");
+        let told = told_of_others(&ada);
+        let (seen, _) = told.last().expect("Ada was told of Bob");
+        let view = seen.iter().find(|v| v.id == 2).expect("Bob among the others");
+        assert_eq!((view.held, view.pitch, view.name.as_deref()), (Some(sword), 1.6, Some("Bob")), "what Bob holds, how far up he looks and his name");
+        assert!(seen.iter().all(|v| v.id != 1), "Ada was told of herself");
         server.leave(2);
         server.broadcast_players();
-        assert_eq!(told_of_others(&ada).map(|t| t.len()), Some(0), "Ada was not told Bob had gone");
+        let told = told_of_others_and_names(&ada);
+        assert!(
+            told.len() == 1 && told[0].0.is_empty() && told[0].1 == [2] && told[0].2 == [(2, String::new())],
+            "Ada was not told once that Bob had gone, his name to forget: {told:?}"
+        );
         server.broadcast_players();
-        assert!(told_of_others(&ada).is_none(), "alone, Ada was told of nobody again and again");
+        assert!(told_of_others(&ada).is_empty(), "alone, Ada was told of nobody again and again");
     }
 
+    /// A view unchanged since it was sent is not sent again, and a name only the first time.
+    #[test]
+    fn an_unchanged_player_is_not_told_again_and_a_name_is_told_once() {
+        let (mut server, ada, bob, _) = ada_and_bob();
+        server.broadcast_players();
+        assert_eq!(told_of_others(&ada).len(), 1, "Ada was not told of Bob");
+        for _ in 0..3 {
+            server.broadcast_players();
+        }
+        assert!(told_of_others(&ada).is_empty(), "Bob standing still was told again");
+        bob_moves(&mut server, &bob, Vec3::new(0.2, 0.0, 0.0), 0.0);
+        server.broadcast_players();
+        let told = told_of_others(&ada);
+        assert_eq!(told.len(), 1, "Bob moving was not told");
+        let view = &told[0].0[0];
+        assert!(view.id == 2 && view.name.is_none(), "Bob's name was told again: {view:?}");
+    }
+
+    /// A player further than `players_seen` is not told of, only named, once (for a
+    /// creature they keep); coming near, they are told of, the name not again.
+    #[test]
+    fn a_far_player_is_not_told_of() {
+        let (mut server, ada, _bob, _) = ada_and_bob();
+        let seen = server.config.limits.players_seen;
+        let far = server.players[&1].position + Vec3::new(seen + 10.0, 0.0, 0.0);
+        server.players.get_mut(&2).unwrap().position = far;
+        server.broadcast_players();
+        let told = told_of_others_and_names(&ada);
+        assert!(
+            told.len() == 1 && told[0].0.is_empty() && told[0].2 == [(2, "Bob".to_owned())],
+            "Ada was told of Bob {} blocks off, or not of his name: {told:?}",
+            seen + 10.0
+        );
+        server.broadcast_players();
+        assert!(told_of_others(&ada).is_empty(), "Bob's name was told again");
+        let near = server.players[&1].position + Vec3::new(seen - 10.0, 0.0, 0.0);
+        server.players.get_mut(&2).unwrap().position = near;
+        server.broadcast_players();
+        let told = told_of_others(&ada);
+        assert!(told.len() == 1 && told[0].0[0].id == 2 && told[0].0[0].name.is_none(), "Ada was not told of Bob as he came near, or his name again: {told:?}");
+        server.players.get_mut(&2).unwrap().position = far;
+        server.broadcast_players();
+        let told = told_of_others(&ada);
+        assert!(told.len() == 1 && told[0].1 == [2], "Ada was not told Bob went out of sight: {told:?}");
+    }
+
+    /// A player told of, hovering just past `players_seen`, stays told of until they go
+    /// past `players_seen_margin` more: never told of and gone again tick by tick.
+    #[test]
+    fn a_player_at_the_edge_of_sight_stays_told_of() {
+        let (mut server, ada, _bob, _) = ada_and_bob();
+        let (seen, margin) = (server.config.limits.players_seen, server.config.limits.players_seen_margin);
+        assert!(margin > 1.0, "the margin is some blocks");
+        let at = |server: &Server, x: f32| server.players[&1].position + Vec3::new(x, 0.0, 0.0);
+        let to = at(&server, seen - 0.5);
+        server.players.get_mut(&2).unwrap().position = to;
+        server.broadcast_players();
+        assert_eq!(told_of_others(&ada).len(), 1, "Ada was not told of Bob just inside sight");
+        for (tick, x) in [seen + 0.5, seen - 0.5, seen + margin - 0.5, seen - 0.25].into_iter().enumerate() {
+            let to = at(&server, x);
+            server.players.get_mut(&2).unwrap().position = to;
+            server.broadcast_players();
+            let told = told_of_others(&ada);
+            assert!(told.iter().all(|t| t.1.is_empty()), "Ada was told Bob went out of sight {x} blocks off (move {tick}): {told:?}");
+        }
+        let to = at(&server, seen + margin + 0.5);
+        server.players.get_mut(&2).unwrap().position = to;
+        server.broadcast_players();
+        let told = told_of_others(&ada);
+        assert!(told.len() == 1 && told[0].1 == [2], "Ada was not told Bob went out of sight past the margin: {told:?}");
+        // Gone, he is told of again only once back inside `players_seen`.
+        let to = at(&server, seen + margin - 0.5);
+        server.players.get_mut(&2).unwrap().position = to;
+        server.broadcast_players();
+        assert!(told_of_others(&ada).is_empty(), "Ada was told of Bob again inside the margin, not inside sight");
+    }
+
+    /// Drive the server directly: no tick race can hide an identity change or a cap bypass.
     #[test]
     fn the_saved_name_keeps_identity_herd_caps_births_and_death_drops() {
         check_saved_ownership(false);
@@ -1261,9 +1457,9 @@ mod tests {
         let waiting = server.saved_creatures()[0].clone();
         server.creatures.unplaced = vec![waiting; kept_each - parents.len()];
         let dirt = server.content.blocks.expect("base:dirt");
-        server.items.spawn_for(ItemStack { item: dirt, count: 7 }, Loose::new(server.spawn + Vec3::Y * 0.8, Vec3::ZERO), 0.0, Some(owner_of("Bob")), 10_000);
-        server.items.spawn_for(ItemStack { item: dirt, count: 2 }, Loose::new(server.spawn + Vec3::Y * 0.8, Vec3::ZERO), 0.0, Some(owner_of("bOb")), 10_000);
-        server.items.spawn_for(ItemStack { item: dirt, count: 3 }, Loose::new(server.spawn + Vec3::Y * 0.8, Vec3::ZERO), 0.0, Some(owner_of("someone-else")), 10_000);
+        server.items.spawn_for(ItemStack::new(dirt, 7), Loose::new(server.spawn + Vec3::Y * 0.8, Vec3::ZERO), 0.0, Some(owner_of("Bob")), 10_000);
+        server.items.spawn_for(ItemStack::new(dirt, 2), Loose::new(server.spawn + Vec3::Y * 0.8, Vec3::ZERO), 0.0, Some(owner_of("bOb")), 10_000);
+        server.items.spawn_for(ItemStack::new(dirt, 3), Loose::new(server.spawn + Vec3::Y * 0.8, Vec3::ZERO), 0.0, Some(owner_of("someone-else")), 10_000);
         server.leave(1);
         drop(original);
         if legacy {
@@ -1279,7 +1475,7 @@ mod tests {
         server.items = Items::restore(save.read_items().unwrap(), |name| server.content.blocks.item_named(name));
         let returning = join(&mut server, 2, "BOB");
         assert_eq!(server.players[&2].name, "Bob");
-        assert_eq!(server.players[&2].view().name, "Bob", "replicated identity uses the saved name");
+        assert_eq!(server.players[&2].view().name.as_deref(), Some("Bob"), "replicated identity uses the saved name");
         assert_eq!(server.factory.state_mut(wheel_pos).unwrap().owner.as_deref(), Some("Bob"));
         assert_eq!(server.kept_by(&server.players[&2].name), kept_each);
         assert_eq!(server.birth_room(&server.players[&2].name), 0, "case changes cannot evade the herd cap");

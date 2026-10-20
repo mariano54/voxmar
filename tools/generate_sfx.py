@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """Synthesizes the everyday action sounds: eating, crafting, lighting a fire, opening a
-chest or a door, cooking, lying down to sleep, casting a line, picking an item up, feeding
-an animal, emptying a pouch, loading a machine, picking a lock, praying at an altar,
+chest, a door, a gate, shutters, a hatch or a curtain, cooking, lying down to sleep,
+casting a line, picking an item up, feeding an animal, emptying a pouch, loading a machine, picking a lock, praying at an altar,
 spreading fertiliser, throwing an item down, a snare springing shut, a fish landed, food
-coming off the fire done or burnt; for the interface, a quest book's page turned and a
-soft "no" when something is refused; and the building materials' steps, placings and
-breakings (timber, thatch, shingle, cobblestone, stone brick, wattle, daub, hide,
-terracotta) under materials/;
+coming off the fire done or burnt, and a tool nearly worn out and breaking; for the
+interface, a quest book's page turned and a soft "no" when something is refused; and the
+building materials' steps, placings and breakings (timber, thatch, shingle, cobblestone,
+stone brick, wattle, daub, hide, terracotta) under materials/;
 and the work of the first two ages under work/: flint knapped,
 a hide scraped, clay shaped, pottery, stone dressed, cord twisted, wood whittled, the
-home stations loaded, a kiln fed, ore smelted, and a hearth or kiln kindled.
+home stations loaded, a kiln fed, ore smelted, a hearth or kiln kindled, a sheep shorn,
+a cow milked, bees smoked and honey taken.
 
 Our own work, built from noise, resonators and decaying modes (no samples). Run once
 offline; the clips are written to assets/content/base/sounds/ as Ogg Vorbis and listed in
@@ -366,6 +367,28 @@ def snare(rng):
     place(out, 0.02, twang, 0.8)
     place(out, 0.0, knock(rng, rng.uniform(600, 800)), 0.6)
     place(out, 0.0, crackles(rng, 0.04, 400, 1.0))
+    return out
+
+
+def tool_worn(rng):
+    """A tool nearly worn out: the haft giving a short dry creak, and a small tick as the
+    head shifts in its binding."""
+    out = np.zeros(int(0.3 * RATE))
+    place(out, 0.0, creak(rng, 0.12, 30, 60, rng.uniform(700, 900)), 0.5)
+    place(out, 0.1, knock(rng, rng.uniform(900, 1100)), 0.6)
+    return out
+
+
+def tool_break(rng):
+    """A tool breaking: the haft snapping with a sharp crack and splintering, then its
+    pieces falling."""
+    out = np.zeros(int(0.7 * RATE))
+    n = int(0.05 * RATE)
+    snap = rng.standard_normal(n) * envelope(n, 0.0002, 0.012)
+    place(out, 0.0, bandpass(snap, 2200, 0.8), 1.0)
+    place(out, 0.0, knock(rng, rng.uniform(380, 460)), 0.8)
+    place(out, 0.01, crackles(rng, 0.12, 300, 0.7))
+    place(out, 0.18, trickle(rng, 0.4, 2400, 40), 0.5)
     return out
 
 
@@ -875,16 +898,6 @@ def heap(rng):
     return out
 
 
-def clamp(rng):
-    """An earth clamp loaded: things laid in with a hollow knock, then soil shovelled over."""
-    out = np.zeros(int(0.7 * RATE))
-    place(out, 0.0, knock(rng, rng.uniform(200, 240)), 0.8)
-    place(out, 0.0, thud(rng, 0.1, 0.04, 0.03), 0.6)
-    place(out, 0.18, thud(rng, 0.15, 0.025, 0.05), 0.8)
-    place(out, 0.2, trickle(rng, 0.45, 1600, 260), 0.8)
-    return out
-
-
 def kiln_load(rng):
     """Clay set into a pit kiln: a pot knocked into the embers and a breath of flame."""
     out = np.zeros(int(0.8 * RATE))
@@ -938,6 +951,106 @@ def kindle_kiln(rng):
     return kindle(rng, 1.6)
 
 
+def shear(rng):
+    """Wool shorn: crisp snips of iron blades closing, the fleece rustling as it parts."""
+    out = np.zeros(int(0.75 * RATE))
+    place(out, 0.0, rustle(rng, 0.65, rng.uniform(1600, 2000)), 0.6)
+    for snip in range(3):
+        at = 0.05 + snip * rng.uniform(0.17, 0.21)
+        n = int(0.04 * RATE)
+        blades = bandpass(rng.standard_normal(n) * envelope(n, 0.0005, 0.014), rng.uniform(4600, 5600), 1.2)
+        place(out, at, blades, 0.6)
+        place(out, at + 0.004, modes(rng.uniform(2700, 3200), 0.12, [(1.0, 0.25, 0.03), (2.3, 0.12, 0.015)], attack=0.0002), 0.2)
+    return out
+
+
+def milk(rng):
+    """Milk drawn into a pail: hissing squirts, two hands in turn, ringing on the wood."""
+    out = np.zeros(int(0.9 * RATE))
+    for squirt in range(4):
+        n = int(rng.uniform(0.1, 0.13) * RATE)
+        t = np.arange(n) / n
+        jet = rng.standard_normal(n) * np.sin(np.pi * t ** 0.6) ** 1.5
+        body = bandpass(jet, rng.uniform(2600, 3200) - 600 * t, 1.1) + 0.5 * bandpass(jet, 700, 3.0)
+        at = squirt * rng.uniform(0.19, 0.23)
+        place(out, at, body, (0.8, 0.9, 0.85, 1.0)[squirt])
+        place(out, at + 0.02, modes(rng.uniform(320, 380), 0.25, [(1.0, 0.3, 0.06), (2.7, 0.1, 0.03)], attack=0.004), 0.25)
+    return out
+
+
+def hive(rng):
+    """Bees calmed with smoke: two breathy puffs, and the swarm's hum swelling and settling."""
+    out = np.zeros(int(1.0 * RATE))
+    for puff in range(2):
+        n = int(0.16 * RATE)
+        place(out, puff * 0.22, lowpass(rng.standard_normal(n), 0.09) * envelope(n, 0.02, 0.05) * 3, 0.7)
+    n = int(0.9 * RATE)
+    t = np.arange(n) / RATE
+    swell = np.minimum(t / 0.3, 1.0) * np.exp(-np.maximum(t - 0.4, 0) / 0.3)
+    hum = sum(np.sin(2 * np.pi * f * t + rng.uniform(0, 6.3)) for f in rng.uniform(205, 245, 6))
+    hum = hum * (1 + 0.4 * np.sin(2 * np.pi * rng.uniform(5, 9) * t))
+    place(out, 0.1, bandpass(hum + 0.3 * rng.standard_normal(n), 470, 0.9) * swell, 0.6)
+    return out
+
+
+def gate(rng):
+    """A field gate swung: a wooden latch bar lifted with a clack, a light, dry creak, and
+    the gate knocking against its post."""
+    out = np.zeros(int(0.9 * RATE))
+    place(out, 0.0, knock(rng, rng.uniform(520, 620)), 0.6)
+    swing = rng.uniform(0.38, 0.48)
+    place(out, 0.07, creak(rng, swing, 45, 110, rng.uniform(600, 760)), 0.6)
+    place(out, 0.07 + swing, knock(rng, rng.uniform(240, 290)), 0.7)
+    return out
+
+
+def shutters(rng):
+    """Shutters folded: two light leaves swinging on small hinges, each knocking home."""
+    out = np.zeros(int(0.6 * RATE))
+    for leaf in range(2):
+        at = leaf * rng.uniform(0.16, 0.21)
+        place(out, at, creak(rng, 0.12, 80, 160, rng.uniform(800, 950)), 0.35)
+        place(out, at + 0.11, knock(rng, rng.uniform(330, 400)), (0.75, 0.9)[leaf])
+    return out
+
+
+def hatch(rng):
+    """A loft hatch: a heavy board creaking on its hinges and dropping home with a thump."""
+    out = np.zeros(int(0.8 * RATE))
+    swing = rng.uniform(0.3, 0.38)
+    place(out, 0.0, creak(rng, swing, 30, 70, rng.uniform(300, 380)), 0.7)
+    place(out, swing - 0.02, knock(rng, rng.uniform(110, 140)), 1.0)
+    place(out, swing - 0.02, thud(rng, 0.12, 0.03, 0.03), 0.6)
+    return out
+
+
+def curtain(rng):
+    """A curtain drawn: cloth swishing along, its rings sliding and ticking on the pole."""
+    out = np.zeros(int(0.6 * RATE))
+    n = int(0.45 * RATE)
+    t = np.arange(n) / n
+    swish = bandpass(rng.standard_normal(n) * np.sin(np.pi * t) ** 1.4, 1500 + 900 * t, 0.9)
+    place(out, 0.02, swish, 0.8)
+    for ring in range(5):
+        place(out, 0.04 + ring * rng.uniform(0.06, 0.08), modes(rng.uniform(2400, 3000), 0.05, [(1.0, 0.3, 0.012), (2.4, 0.15, 0.006)], attack=0.0003), 0.18)
+    return out
+
+
+def honey(rng):
+    """Comb cut from a full skep: a sticky tearing, and honey dripping into the pot."""
+    out = np.zeros(int(0.9 * RATE))
+    n = int(0.3 * RATE)
+    t = np.arange(n) / n
+    tear = rng.standard_normal(n) * (rng.random(n) < 0.3) * np.sin(np.pi * t)
+    place(out, 0.0, bandpass(tear, 1300, 1.6) + 0.4 * lowpass(tear, 0.1), 0.8)
+    for drip in range(3):
+        m = int(0.07 * RATE)
+        u = np.arange(m) / RATE
+        plop = np.sin(2 * np.pi * (rng.uniform(380, 460) + 900 * u / u[-1]) * u) * envelope(m, 0.002, 0.018)
+        place(out, 0.36 + drip * rng.uniform(0.13, 0.17), plop, (0.6, 0.5, 0.45)[drip])
+    return out
+
+
 def finish(mono, rng, width=0.15):
     """The clip made stereo (a hair of width from a short delay), faded, and brought to
     its loudness."""
@@ -976,6 +1089,8 @@ SOUNDS = {
     "sprinkle": (sprinkle, 2),
     "toss": (toss, 2),
     "snare": (snare, 2),
+    "tool_worn": (tool_worn, 2),
+    "tool_break": (tool_break, 2),
     "catch": (catch, 2),
     "burnt": (burnt, 2),
     "cooked": (cooked, 2),
@@ -1018,11 +1133,18 @@ SOUNDS = {
     "work/hang": (hang, 2),
     "work/stir": (stir, 2),
     "work/heap": (heap, 2),
-    "work/clamp": (clamp, 2),
     "work/kiln_load": (kiln_load, 2),
     "work/smelt": (smelt, 2),
     "work/kindle_hearth": (kindle_hearth, 2),
     "work/kindle_kiln": (kindle_kiln, 2),
+    "work/shear": (shear, 2),
+    "work/milk": (milk, 2),
+    "work/hive": (hive, 2),
+    "work/honey": (honey, 2),
+    "gate": (gate, 2),
+    "shutters": (shutters, 2),
+    "hatch": (hatch, 2),
+    "curtain": (curtain, 2),
 }
 
 

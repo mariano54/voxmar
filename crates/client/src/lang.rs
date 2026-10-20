@@ -503,6 +503,8 @@ mod tests {
         keys.extend(FIRST_PARTY.iter().map(|package| format!("package.{package}")));
         // The quest book's chapters, one per age the first-party quests name.
         keys.extend(content.quests.iter().filter(|quest| first_party(&quest.name)).map(|quest| format!("quest.age.{}", quest.age)));
+        // And each age a rite opens, which a recipe greyed for it names.
+        keys.extend(content.quests.iter().filter(|quest| first_party(&quest.name)).filter_map(|quest| quest.opens.as_ref()).map(|age| format!("quest.age.{age}")));
         // The interface fonts and the shader packs the game ships, as the settings name them.
         keys.extend(crate::ui::skin::InterfaceFont::ALL.map(|font| font.key().to_owned()));
         keys.extend(crate::render::pack::ShaderPacks::load(&assets()).0.iter().filter(|pack| pack.shipped).map(crate::render::pack::ShaderPack::key));
@@ -705,6 +707,33 @@ mod tests {
             }
         }
         assert!(wrong.is_empty(), "{} names not in Title Case:\n{}", wrong.len(), wrong.join("\n"));
+    }
+
+    /// No first-party language file (strings, readings or pins) gives a key twice: the
+    /// game refuses such a file, and a key added again by mistake would otherwise hide the
+    /// first one's text.
+    #[test]
+    fn no_language_file_gives_a_key_twice() {
+        let mut files = Vec::new();
+        for package in FIRST_PARTY {
+            for sub in ["lang", "lang/readings", "lang/pins"] {
+                let dir = content().join(package).join(sub);
+                for entry in std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display())).flatten() {
+                    if entry.path().extension().is_some_and(|ext| ext == "ron") {
+                        files.push(entry.path());
+                    }
+                }
+            }
+        }
+        assert!(files.len() >= 8, "{files:?}");
+        let wrong: Vec<String> = files
+            .iter()
+            .filter_map(|path| {
+                let source = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+                voxmar_engine::lang::parse_map::<ron::Value>(&source).err().map(|e| format!("{}: {e}", path.display()))
+            })
+            .collect();
+        assert!(wrong.is_empty(), "{}", wrong.join("\n"));
     }
 
     /// Every translation of English that lives in a definition (guide lines, help, titles)

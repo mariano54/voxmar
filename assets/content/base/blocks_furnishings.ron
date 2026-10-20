@@ -47,6 +47,27 @@
             (name: "{name}_counter", render: Model, shape: "counter", sound: Wood, textures: All("furniture_wood"), hardness: 1.5, color: (160, 120, 70), tags: ["furniture", "table", "decor", "wood"]),
             (name: "{name}_barrel_rack", render: Model, shape: "barrel_rack", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.5, color: (160, 120, 70), tags: ["furniture", "storage", "decor", "wood"]),
             (name: "{name}_crate_stack", render: Model, shape: "crate_stack", sound: Wood, textures: All("furniture_crate"), hardness: 1.5, color: (160, 120, 70), tags: ["furniture", "storage", "decor", "wood"]),
+            // A window seat: a panelled box under a cushion, built in under a window to sit
+            // at (`seat`) with things kept in it (`storage`).
+            (name: "{name}_window_seat", render: Model, shape: "window_seat", facing: true, solid: false, sound: Wood, textures: All("furniture_wood"), hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "seat", "storage", "decor", "wood"]),
+            // A deep sill: a board on two brackets along the wall at the top of its cell, set
+            // under a window inside, for a pot or a candle.
+            (name: "{name}_sill", render: Model, shape: "deep_sill", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "sill", "decor", "wood"]),
+            // Pantry shelves: a shelf stood with crocks and a keg, a store for the home's food
+            // (`storage`, counted by a pantry and a larder).
+            (name: "{name}_pantry_shelf", render: Model, shape: "pantry_shelf", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "shelf", "storage", "pantry", "decor", "wood"]),
+            // The hearth corner (with the hearth, a `hearth_corner` room in effects.ron): a settle, a
+            // high-backed bench with arms that keeps the draught off a back turned to the room
+            // (`settle`, a seat like any); a woodpile, logs stacked to hand by the fire; a peg
+            // rail on the wall with a cloak and a pot hung on it.
+            (name: "{name}_settle", render: Model, shape: "settle", facing: true, solid: false, sound: Wood, textures: All("furniture_wood"), hardness: 1.5, color: (160, 120, 70), tags: ["furniture", "seat", "settle", "decor", "wood"]),
+            (name: "{name}_woodpile", render: Model, shape: "woodpile", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 1.5, color: (160, 120, 70), tags: ["furniture", "woodpile", "decor", "wood"]),
+            (name: "{name}_peg_rail", render: Model, shape: "peg_rail", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "pegs", "decor", "wood"]),
+            // The bedchamber (with the bed and a rug, a `bedchamber` room in effects.ron): a
+            // blanket chest to stand at the bed's foot, a lidded box of bedding (`storage`);
+            // a washstand, a little table with a basin and a jug on it.
+            (name: "{name}_blanket_chest", render: Model, shape: "blanket_chest", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.5, color: (160, 120, 70), tags: ["furniture", "blanket_chest", "storage", "decor", "wood"]),
+            (name: "{name}_washstand", render: Model, shape: "washstand", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "washstand", "decor", "wood"]),
             (name: "{name}_pot_shelf", render: Model, shape: "pot_shelf", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "shelf", "storage", "decor", "wood"]),
         ],
         // Cloth in one dye (`dyes: true` fills `{name}` and the tint): the greyscale drawings
@@ -128,32 +149,32 @@
         // A bale of straw, tied in two places.
         (
             name: "hay_bale", sound: Grass, textures: Column(end: "hay_bale_top", side: "hay_bale_side"),
-            drops: "core:air", hardness: 0.5, color: (200, 170, 70), tags: ["hay", "farm", "decor", "yard", "building", "shelter:draughty"],
+            drops: "core:air", hardness: 0.5, color: (200, 170, 70), tags: ["creative_only", "hay", "farm", "decor", "yard", "building", "shelter:draughty"],
         ),
         // A barrel of staves held by two iron hoops.
         (
             name: "barrel", render: Model, shape: "barrel", sound: Wood, textures: Column(end: "barrel_top", side: "barrel_side"),
-            drops: "core:air", hardness: 2.0, color: (130, 90, 55), tags: ["barrel", "wood", "storage", "building"],
+            drops: "core:air", hardness: 2.0, color: (130, 90, 55), tags: ["creative_only", "barrel", "wood", "storage", "building"],
         ),
         // A slatted crate: boards with gaps between them, braced at the corners.
         (
             name: "crate", render: Model, shape: "crate", sound: Wood, textures: Sides(top: "crate_top", bottom: "crate_top", side: "crate_side"),
-            drops: "core:air", hardness: 1.5, color: (160, 120, 70), tags: ["crate", "wood", "storage", "building"],
+            drops: "core:air", hardness: 1.5, color: (160, 120, 70), tags: ["creative_only", "crate", "wood", "storage", "building"],
         ),
         // A sack of grain, its neck tied off.
         (
             name: "sack", render: Model, shape: "sack", sound: Grass, textures: Sides(top: "sack_top", bottom: "sack_top", side: "sack_side"),
-            drops: "core:air", hardness: 0.4, color: (200, 180, 140), tags: ["sack", "cloth", "farm", "building"],
+            drops: "core:air", hardness: 0.4, color: (200, 180, 140), tags: ["creative_only", "sack", "cloth", "farm", "building"],
         ),
         // A bronze bell hanging from the beam above it.
         (
             name: "bell", render: Plant, solid: false, support: Above, sound: Stone, textures: All("bell"),
-            drops: "core:air", hardness: 1.5, color: (190, 140, 60), tags: ["bell", "metal", "building"],
+            drops: "core:air", hardness: 1.5, color: (190, 140, 60), tags: ["creative_only", "bell", "metal", "building"],
         ),
         // A fishing net hung to dry, with cork floats.
         (
             name: "fishing_net", render: Plant, solid: false, support: Above, sound: Grass, textures: All("fishing_net"),
-            drops: "core:air", hardness: 0.2, color: (170, 150, 110), tags: ["net", "decor", "building"],
+            drops: "core:air", hardness: 0.2, color: (170, 150, 110), tags: ["creative_only", "net", "decor", "building"],
         ),
         // Bunches of herbs hung upside down to dry: two make a home's herb nook (`drying`).
         (
@@ -161,11 +182,30 @@
             drops: "core:air", hardness: 0.0, color: (110, 140, 70), tags: ["hanging", "drying", "decor"],
         ),
 
-        // Singles. A candle (tallow until bees make wax), and the fire a hearth has.
+        // Singles. A candle (tallow until bees make wax), and the fire a hearth has. A candle
+        // set down burns three game days to its end, a stub of wax never lit again (flame.rs);
+        // picked up, it keeps what it has burnt.
         (
             name: "candle", render: Model, shape: "candle", solid: false, light: 8, sound: Wood, textures: All("candle_grey"), tint: Fixed(240, 228, 196),
-            hardness: 0.0, color: (240, 228, 196), tags: ["candle", "light", "decor", "furnishing"],
+            hardness: 0.0, color: (240, 228, 196), tags: ["candle", "light", "decor", "furnishing", "burns_days:3", "burns_out_to:candle_end", "tended"],
             particles: [(style: Flame, rate: 8.0, at: (0.5, 0.45, 0.5), spread: 0.01, size: 0.7, height: 0.2, color: Some((240, 150, 40)))],
+        ),
+        (
+            name: "candle_end", render: Model, shape: "candle_end", solid: false, sound: Wood, textures: All("candle_grey"), tint: Fixed(240, 228, 196),
+            drops: "core:air", hardness: 0.0, color: (240, 228, 196), tags: ["creative_only", "decor"],
+        ),
+        // A clay oil lamp: a brighter light than a candle, burning five game days on a fill of
+        // fat. Burnt dry it keeps its clay; right clicked with fat (`relight_with:fat`) it is
+        // filled and lit again, the fat used up. Made empty; picked up lit, it keeps what fat it
+        // has left (flame.rs), and set down again burns on.
+        (
+            name: "clay_oil_lamp", render: Model, shape: "oil_lamp", solid: false, light: 10, sound: Stone, textures: All("crockery_grey"), tint: Fixed(176, 100, 62),
+            hardness: 0.1, color: (176, 100, 62), tags: ["lamp", "light", "decor", "furnishing", "burns_days:5", "burns_out_to:clay_oil_lamp_empty", "tended"],
+            particles: [(style: Flame, rate: 8.0, at: (0.5, 0.26, 0.84), spread: 0.01, size: 0.8, height: 0.2, color: Some((240, 150, 40)))],
+        ),
+        (
+            name: "clay_oil_lamp_empty", render: Model, shape: "oil_lamp", solid: false, sound: Stone, textures: All("crockery_grey"), tint: Fixed(176, 100, 62),
+            hardness: 0.1, color: (176, 100, 62), tags: ["lamp", "decor", "relights_to:clay_oil_lamp", "relight_with:fat"],
         ),
         (
             name: "brazier", render: Model, shape: "brazier", light: 14, sound: Stone, textures: All("brazier_iron"),

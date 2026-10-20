@@ -4,9 +4,10 @@
     // Health a player starts with, before their Hitpoints level sets it (twice the level).
     max_health: 20,
     // What a new player starts with: item and count (in as many slots as it takes; baked
-    // food takes one each), after `pack_end`. Nothing: a new player punches a tree, makes
-    // planks, a crafting table and wooden tools (the first quests say how). A mod that wants
-    // a kit lists one here, for example `("base:bread", 4)`.
+    // food takes one each), after `pack_end`. Nothing: a new player picks up the flint lying
+    // near where they wake, breaks a dead snag for sticks and knaps flint tools, since bare
+    // hands cannot fell a tree (the first quests say how). A mod that wants a kit lists one
+    // here, for example `("base:bread", 4)`.
     starter_kit: [],
     // What a new player starts with in the pack's last slots (last first), out of the
     // hotbar's way: the empty coin purse.
@@ -32,6 +33,16 @@
     water_chill: 8.0,
     // How far up a roof is looked for, to tell whether a player is out in the weather.
     roof_scan: 48,
+    // Rain at least this heavy (0 to 1) puts out a light that rain douses (a torch) with
+    // open sky over it; it is lit again from any flame.
+    douse_rain: 0.2,
+    // A light that gutters (a torch, `gutters_to:`) does so in this last share of its burn:
+    // its flame low and sputtering, the sign it wants lighting again.
+    gutter_share: 0.1,
+    // A light that is `tended` (a torch, a candle, a lamp), set down inside a settlement no
+    // more than this many blocks above or below its height, is tended by its people and never
+    // burns out; one in a mine under it burns as anywhere.
+    tend_height: 12,
     // A home (the lit hearth, else the bed last slept in) reaches this many blocks out on each
     // side, up and down. Its furnishings are counted in that box and a player feels it
     // standing in it (effects.ron's AtHome and HomeHas).
@@ -41,9 +52,9 @@
     // What stands in a room rather than walls it in: the survey of a home's walls looks past a
     // block with one of these tags and no shelter tag to the wall behind it, so a chest or a
     // table by the wall never counts as a draughty face, and a barrel in a doorway is no door.
-    // A railing on a gallery or a balcony walls nothing either. A shelter tag always wins:
+    // A railing on a gallery or a balcony walls nothing either, nor a ladder up to a loft. A shelter tag always wins:
     // cloth hung for a wall, a hay bale or a column is a wall.
-    home_furniture: ["machine", "station", "furnishing", "storage", "decor", "multiblock_core", "farm", "waters", "railing"],
+    home_furniture: ["machine", "station", "furnishing", "storage", "decor", "multiblock_core", "farm", "waters", "railing", "ladder"],
     // The most a home's meal effects together (a pantry, a larder, a kitchen garden, home
     // cooking, a seat at the table: effects.ron's meal_heal and meal_time, which multiply)
     // make of a meal's heal, and of how long its good lasts.

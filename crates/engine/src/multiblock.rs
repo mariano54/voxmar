@@ -3,6 +3,12 @@
 //! characters; a key says what each character takes (an item name, `tag:TAG`, or `a|b`),
 //! `.` takes anything and ` ` only air. One character is the core, the block a player uses
 //! to bring the structure to life; the pattern may stand turned any of four ways.
+//!
+//! A structure is lit with a fuel charge from the hand (`fuels`, burning at least the
+//! `heat` it asks: a kiln wants charcoal), or with nothing used up but an item tagged
+//! `lit_by` in hand (a clamp, lit from a torch). One that `smoulder`s chars what its
+//! `wood` cells hold for some game hours, then turns them into what it made; opened early,
+//! or rained on through its open core, it makes worse.
 
 use rustc_hash::FxHashMap;
 use serde::Deserialize;
@@ -26,10 +32,50 @@ pub struct MultiblockDef {
     /// Alternative fuel stacks consumed to light it. Empty means it needs no fuel.
     #[serde(default)]
     pub fuels: Vec<(String, u8)>,
+    /// The heat (machines.ron's fuel `heat`) each of its fuels must give.
+    #[serde(default)]
+    pub heat: u8,
+    /// The tag of an item in hand that lights it, used up never (a torch lights a clamp).
+    #[serde(default)]
+    pub lit_by: Option<String>,
+    /// Lit, it smoulders, charring its `wood` cells.
+    #[serde(default)]
+    pub smoulder: Option<SmoulderDef>,
     /// Bottom layer first; in each, rows run north to south and characters west to east.
     pub layers: Vec<Vec<String>>,
     pub key: FxHashMap<char, String>,
     pub core: char,
+}
+
+/// How a structure smoulders: what it chars, for how long, and into what.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SmoulderDef {
+    /// Game hours from lighting until it is done.
+    pub hours: f32,
+    /// The pattern's character for the cells it chars (the stacked firewood).
+    pub wood: char,
+    /// What each of those becomes done well; done with the structure opened before its
+    /// time; and spoiled by rain (the share of it that the hours it was rained on are).
+    pub done: String,
+    pub early: String,
+    pub spoiled: String,
+    /// What its core is while it smoulders (taken by the core's key too), and once done.
+    pub burning: String,
+    pub spent: String,
+}
+
+/// A smoulder with its blocks resolved.
+#[derive(Clone, Debug)]
+pub struct Smoulder {
+    pub hours: f32,
+    /// Each cell it chars, as an offset from the core (unturned).
+    pub wood: Vec<IVec3>,
+    pub done: BlockId,
+    pub early: BlockId,
+    pub spoiled: BlockId,
+    pub burning: BlockId,
+    pub spent: BlockId,
 }
 
 #[derive(Deserialize, Default)]
@@ -56,6 +102,9 @@ pub struct Multiblock {
     pub hint: String,
     pub home: bool,
     pub fuels: Vec<(BlockId, u8)>,
+    pub heat: u8,
+    pub lit_by: Option<String>,
+    pub smoulder: Option<Smoulder>,
     /// What the core takes.
     pub core: Vec<BlockId>,
     /// Each cell's offset from the core (unturned) and what it takes.
@@ -90,29 +139,55 @@ impl Multiblock {
         pieces
     }
 
+    /// One way to build it, unturned: each cell's offset from the core and the first block
+    /// it takes (air where it must be empty). A gate step builds a structure so.
+    pub fn example(&self) -> Vec<(IVec3, BlockId)> {
+        self.cells
+            .iter()
+            .filter_map(|(at, cell)| match cell {
+                Cell::Any => None,
+                Cell::Air => Some((*at, BlockId::AIR)),
+                Cell::OneOf(accepts) => Some((*at, accepts[0])),
+            })
+            .collect()
+    }
+
     /// How far from its core, across, its farthest cell lies (any way it is turned).
     pub fn reach(&self) -> i32 {
         self.cells.iter().map(|(o, _)| o.x.abs().max(o.z.abs())).max().unwrap_or(0)
     }
 
+    /// Where each of its cells lies with its core at `core`, turned `turns` quarter turns.
+    pub fn cells_at(&self, core: IVec3, turns: u8) -> impl Iterator<Item = IVec3> + '_ {
+        self.cells.iter().map(move |(offset, _)| core + turned(*offset, turns))
+    }
+
     /// Whether the structure stands with its core at `core`, turned any way; `block` says
     /// what is where (none for a place not loaded, which never matches).
     pub fn stands(&self, core: IVec3, block: impl Fn(IVec3) -> Option<BlockId>) -> bool {
-        (0..4).any(|turns| {
-            self.cells.iter().all(|(offset, cell)| {
-                let mut o = *offset;
-                for _ in 0..turns {
-                    o = IVec3::new(-o.z, o.y, o.x);
-                }
-                match (cell, block(core + o)) {
-                    (_, None) => false,
-                    (Cell::Any, _) => true,
-                    (Cell::Air, Some(b)) => b.is_air(),
-                    (Cell::OneOf(accepts), Some(b)) => accepts.binary_search(&b).is_ok(),
-                }
+        self.turn(core, block).is_some()
+    }
+
+    /// The first turn (quarter turns) it stands at with its core at `core`, if any.
+    pub fn turn(&self, core: IVec3, block: impl Fn(IVec3) -> Option<BlockId>) -> Option<u8> {
+        (0..4).find(|&turns| {
+            self.cells.iter().all(|(offset, cell)| match (cell, block(core + turned(*offset, turns))) {
+                (_, None) => false,
+                (Cell::Any, _) => true,
+                (Cell::Air, Some(b)) => b.is_air(),
+                (Cell::OneOf(accepts), Some(b)) => accepts.binary_search(&b).is_ok(),
             })
         })
     }
+}
+
+/// `offset` turned a quarter `turns` times about the core.
+pub fn turned(offset: IVec3, turns: u8) -> IVec3 {
+    let mut o = offset;
+    for _ in 0..turns {
+        o = IVec3::new(-o.z, o.y, o.x);
+    }
+    o
 }
 
 #[derive(Debug, Default)]
@@ -199,7 +274,42 @@ impl MultiblockRegistry {
                 }
                 Ok((item, *count))
             }).collect::<Result<Vec<_>, RegistryError>>()?;
-            multiblocks.push(Multiblock { name: def.name, title: def.title, hint: def.hint, home: def.home, fuels, core: core_takes, cells });
+            if let Some(tag) = &def.lit_by
+                && !blocks.ids().any(|b| blocks.def(b).has_tag(tag))
+            {
+                return Err(bad(format!("`lit_by` `{tag}`, which no item is tagged")));
+            }
+            let smoulder = match &def.smoulder {
+                None => None,
+                Some(s) => {
+                    if !(s.hours.is_finite() && s.hours > 0.0) {
+                        return Err(bad("it smoulders a number of hours above 0".into()));
+                    }
+                    if !fuels.is_empty() || def.home || def.lit_by.is_none() {
+                        return Err(bad("what smoulders is lit by `lit_by` in hand, with no fuel charge, and is no home".into()));
+                    }
+                    let block = |name: &str| {
+                        let name = if name.contains(':') { name.to_owned() } else { format!("{}:{name}", def.name.split(':').next().unwrap_or("base")) };
+                        blocks.id(&name).ok_or_else(|| bad(format!("no block `{name}`")))
+                    };
+                    let (done, early, spoiled, burning, spent) = (block(&s.done)?, block(&s.early)?, block(&s.spoiled)?, block(&s.burning)?, block(&s.spent)?);
+                    if core_takes.binary_search(&burning).is_err() {
+                        return Err(bad(format!("its core's key does not take `{}`, what it is while it smoulders, so it would not stand lit", s.burning)));
+                    }
+                    let wood: Vec<IVec3> = def
+                        .layers
+                        .iter()
+                        .enumerate()
+                        .flat_map(|(y, layer)| layer.iter().enumerate().flat_map(move |(z, row)| row.chars().enumerate().filter(|&(_, c)| c == s.wood).map(move |(x, _)| IVec3::new(x as i32, y as i32, z as i32))))
+                        .map(|at| at - core)
+                        .collect();
+                    if wood.is_empty() || s.wood == def.core {
+                        return Err(bad(format!("no cell `{}` to char, besides the core", s.wood)));
+                    }
+                    Some(Smoulder { hours: s.hours, wood, done, early, spoiled, burning, spent })
+                }
+            };
+            multiblocks.push(Multiblock { name: def.name, title: def.title, hint: def.hint, home: def.home, fuels, heat: def.heat, lit_by: def.lit_by, smoulder, core: core_takes, cells });
         }
         Ok(Self { multiblocks })
     }
@@ -222,6 +332,17 @@ impl MultiblockRegistry {
     pub fn with_core(&self, block: BlockId) -> impl Iterator<Item = &Multiblock> {
         self.multiblocks.iter().filter(move |m| m.core.binary_search(&block).is_ok())
     }
+
+    /// A structure that smoulders standing with `at` among its built cells, and where its
+    /// core is: a clamp is lit from any of it, its earth as well as its flue, as a player
+    /// on the floor beside it sees only its earth. `block` says what is where.
+    pub fn smoulder_round(&self, at: IVec3, block: impl Fn(IVec3) -> Option<BlockId>) -> Option<(IVec3, &Multiblock)> {
+        self.multiblocks.iter().filter(|m| m.smoulder.is_some()).find_map(|m| {
+            let built = m.cells.iter().filter(|(_, cell)| matches!(cell, Cell::OneOf(_)));
+            let cores = built.flat_map(|(offset, _)| (0..4).map(move |turns| at - turned(*offset, turns)));
+            cores.filter(|&core| block(core).is_some_and(|b| m.core.binary_search(&b).is_ok())).find(|&core| m.stands(core, &block)).map(|core| (core, m))
+        })
+    }
 }
 
 #[cfg(test)]
@@ -242,6 +363,58 @@ mod tests {
         assert!(load("missing", 32).is_err());
         assert!(load("fuel", 0).is_err());
         assert!(load("fuel", crate::inventory::MAX_STACK + 1).is_err());
+    }
+
+    /// A smouldering structure is lit by a tagged item in hand, chars cells it names into
+    /// blocks that exist, keeps standing while its core burns, and finds its cells however
+    /// it is turned; load refuses one that does not hold together.
+    #[test]
+    fn what_smoulders_is_checked_on_load_and_found_turned() {
+        let def = |name: &str, tags: &[&str]| BlockDef { name: format!("t:{name}"), tags: tags.iter().map(|t| t.to_string()).collect(), ..Default::default() };
+        let blocks = BlockRegistry::new(vec![
+            def("air", &[]),
+            def("wood", &[]),
+            def("earth", &[]),
+            def("kindling", &["multiblock_core"]),
+            def("flue", &["multiblock_core"]),
+            def("coal", &[]),
+            def("torch", &["fire"]),
+        ])
+        .unwrap();
+        let load = |lit_by: &str, smoulder: &str, core_key: &str| {
+            let source = format!(
+                "(multiblocks: [(name: \"clamp\", lit_by: {lit_by}, smoulder: {smoulder}, layers: [[\"eWe\"], [\".K.\"]], key: {{'W': \"wood\", 'e': \"earth\", 'K': \"{core_key}\"}}, core: 'K')])"
+            );
+            MultiblockRegistry::new(vec![MultiblockRegistry::read("t", &source).unwrap()], &blocks)
+        };
+        let good = "Some((hours: 8.0, wood: 'W', done: \"coal\", early: \"wood\", spoiled: \"earth\", burning: \"flue\", spent: \"air\"))";
+        let registry = load("Some(\"fire\")", good, "kindling|flue").unwrap();
+        let clamp = registry.get("t:clamp").unwrap();
+        let smoulder = clamp.smoulder.as_ref().unwrap();
+        assert_eq!((smoulder.wood.as_slice(), smoulder.done), (&[IVec3::new(0, -1, 0)][..], blocks.id("t:coal").unwrap()));
+        // Built turned a quarter: its wood is found under the core all the same, east-west
+        // walls now north-south.
+        let core = IVec3::new(5, 1, 5);
+        let at = |p: IVec3| {
+            Some(match (p - core).to_array() {
+                [0, 0, 0] => blocks.id("t:kindling").unwrap(),
+                [0, -1, 0] => blocks.id("t:wood").unwrap(),
+                [0, -1, -1] | [0, -1, 1] => blocks.id("t:earth").unwrap(),
+                _ => BlockId::AIR,
+            })
+        };
+        let turn = clamp.turn(core, at).expect("stands turned");
+        assert_eq!(core + turned(smoulder.wood[0], turn), core - IVec3::Y);
+        for (lit_by, smoulder, core_key) in [
+            ("None", good, "kindling|flue"),
+            ("Some(\"nothing_has_it\")", good, "kindling|flue"),
+            ("Some(\"fire\")", good, "kindling"),
+            ("Some(\"fire\")", &good.replace("8.0", "0.0"), "kindling|flue"),
+            ("Some(\"fire\")", &good.replace("wood: 'W'", "wood: 'K'"), "kindling|flue"),
+            ("Some(\"fire\")", &good.replace("\"coal\"", "\"nothing\""), "kindling|flue"),
+        ] {
+            assert!(load(lit_by, smoulder, core_key).is_err(), "{lit_by} {smoulder} {core_key} loaded");
+        }
     }
 
     #[test]

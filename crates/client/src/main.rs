@@ -318,16 +318,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let headless = options.capture.is_some() || options.gate.is_some();
     // Leave two cores for the main and render threads; worldgen, lighting and meshing share
     // the rest, at background priority so bursts of streaming never delay a frame
-    // (priority.rs). Cores, not
-    // hardware threads: on a machine with two threads a core (the Linux box's 16-core EPYC),
-    // workers on every thread slowed every frame system about threefold while the world
-    // streamed in, whatever their priority, and took flightfast's p99 frame from 11 to 25 ms.
+    // (priority.rs). Cores, not hardware threads: on a machine with two threads a core (the
+    // Linux box's 16-core EPYC), workers on every thread slowed every frame system about
+    // threefold while the world streamed in, whatever their priority, and took flightfast's
+    // p99 frame from 11 to 25 ms. `VOXMAR_WORKERS=n` sets their number instead, for timing how
+    // many a busy machine's frames can take (tools/perf/play_frames).
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
-    let workers = physical_cores().unwrap_or(threads).min(threads).saturating_sub(2).max(2);
+    let mut workers = physical_cores().unwrap_or(threads).min(threads).saturating_sub(2).max(2);
+    if let Ok(given) = std::env::var("VOXMAR_WORKERS")
+        && !given.is_empty()
+    {
+        match given.parse::<usize>() {
+            Ok(n) if (1..=threads).contains(&n) => workers = n,
+            // Before logging starts, so on stderr, where tools/perf/play_frames shows it beside
+            // the numbers, which are then the default's.
+            _ => eprintln!("VOXMAR_WORKERS={given} is not from 1 to {threads}; {workers} workers"),
+        }
+    }
     rayon::ThreadPoolBuilder::new()
         .num_threads(workers)
         .thread_name(|i| format!("worker-{i}"))
-        .start_handler(|_| priority::background_thread())
+        .start_handler(|_| priority::streaming_worker())
         .build_global()?;
     // The generator's region builds borrow helper threads besides: no more than there are
     // workers.
@@ -337,6 +348,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let content = voxmar_server::load_content(&assets)?;
     let interface = hud::inventory::InterfaceStyle::load(&content.files)?;
     let combat_marks = hud::combat::CombatStyle::load(&content.files)?;
+    let quest_look = hud::quest_look::QuestLook::load(&content.files)?;
+    let menu_bar = hud::screens::MenuBar::load(&content.files)?;
+    if let Some(name) = quest_look.unknown_quests(|name| content.quests.get(name).is_some()).next() {
+        return Err(format!("{}: a shape for `{name}`, which is no quest", hud::quest_look::FILE).into());
+    }
     let fight_look = fight_fx::FightLook::load(&content.files)?;
     if let Some(blow) = fight_look.untold(&content.creatures).first() {
         return Err(format!("{}: no tell for the blow `{blow}`", fight_fx::style::FILE).into());
@@ -357,8 +373,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let celebrations = hud::celebrate::Celebrations::load(&content.files)?;
     let recorded = sfx::Recordings::load(&content.files)?;
     recorded.check(&content.actions)?;
+    recorded.check_wear()?;
     recorded.covers(&content.actions)?;
     let creature_bank = creature_sounds::Bank::load(&content.files, &content.creatures)?;
+    creature_bank.check_files(&assets)?;
     let unbarked = creature_bank.unbarked(&content.creatures);
     if !unbarked.is_empty() {
         return Err(format!("{}: settlement people with no greet, alarm or content of their own: {}", creature_sounds::defs::FILE, unbarked.join(", ")).into());
@@ -376,6 +394,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ambience.check_shelter_tags(&content.blocks)?;
     recorded.check_ways(&content.blocks)?;
     recorded.check_files(&assets)?;
+    ambience.check_recordings(&assets)?;
     recorded.mix.check().map_err(|e| format!("sounds.ron: {e}"))?;
     fx::ActionFx::load(&content.files)?.check(&content.actions)?;
     if let Some(effect) = textures::Source::bundled(&assets.join("packs")).unpictured(&content.effects).first() {
@@ -531,7 +550,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         Screen::Title
     };
-    app.insert_resource(FirstScreen(first)).insert_resource(launch).insert_resource(interface).insert_resource(combat_marks).insert_resource(fight_look).insert_resource(creature_motion).insert_resource(look).insert_resource(celebrations).insert_resource(night_light).insert_resource(player_look);
+    app.insert_resource(FirstScreen(first)).insert_resource(launch).insert_resource(interface).insert_resource(quest_look).insert_resource(menu_bar).insert_resource(combat_marks).insert_resource(fight_look).insert_resource(creature_motion).insert_resource(look).insert_resource(celebrations).insert_resource(night_light).insert_resource(player_look);
     app.insert_resource(creature_sounds::Checked(creature_bank));
     app.insert_resource(ambience::Checked(ambience, roof_patters));
     if options.loading {
@@ -727,11 +746,14 @@ fn setup(
     for id in 0..registry.len() {
         let block = voxmar_engine::block::BlockId(id as u16);
         let info = registry.info(block);
-        let variety = registry.def(block).texture_variety;
-        for layer in info.layers {
-            let layer = &mut layers[layer as usize];
+        let def = registry.def(block);
+        let variety = def.texture_variety;
+        for face in Face::ALL {
+            let layer = &mut layers[info.layers[face as usize] as usize];
             layer.glow = layer.glow.max(info.emission as f32 / 15.0);
-            layer.through |= registry.def(block).lit_through;
+            // Only a face drawn its own way glows by the light through it (one without a
+            // drawing takes the first layer), as the registry's load check counts them.
+            layer.through |= def.lit_through && def.textures.face(face).is_some();
             if info.render == RenderKind::Opaque {
                 layer.variety.turn |= variety.turn;
                 layer.variety.mirror |= variety.mirror;

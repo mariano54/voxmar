@@ -42,6 +42,7 @@ impl Plugin for NetPlugin {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Proposed {
     pub action: ActionId,
+    pub target: ActionTarget,
     pub with: Vec<BlockId>,
 }
 
@@ -57,9 +58,14 @@ pub struct Net {
     proposed: std::sync::Mutex<Vec<Proposed>>,
     /// Actions proposed since `fx` last took them, with what they aim at, to be seen.
     shown: std::sync::Mutex<Vec<(ActionId, ActionTarget)>>,
+    /// The last action proposed, with its target, for the gate to say what a click sent.
+    last: std::sync::Mutex<Option<(ActionId, ActionTarget)>>,
     /// The integrated server's ticks as `receive` began: every message of those ticks had
     /// been sent, and was taken in (`taken_ticks`).
     taken: std::sync::atomic::AtomicU64,
+    /// Actions proposed since startup: how a tended animal waiting on the server's word
+    /// knows something else was done meanwhile (`creatures::Tended`).
+    proposals: std::sync::atomic::AtomicU64,
 }
 
 impl Net {
@@ -69,7 +75,7 @@ impl Net {
         let tokens = std::env::var("VOXMAR_ADMIN_TOKENS").unwrap_or_default();
         let admin_token = address.and_then(|address| admin_token_for(address, &tokens));
         connection.send(ClientMessage::Hello { name, protocol: voxmar_protocol::PROTOCOL_VERSION, content, admin_token });
-        Self { connection, server, input_timer: 0.0, proposed: Default::default(), shown: Default::default(), taken: Default::default() }
+        Self { connection, server, input_timer: 0.0, proposed: Default::default(), shown: Default::default(), last: Default::default(), taken: Default::default(), proposals: Default::default() }
     }
 
     /// The next message from the server, for tests that play without the app.
@@ -103,8 +109,20 @@ impl Net {
     /// worked), which say how it sounds (`sounds.ron`'s `ways`).
     pub fn propose_with(&self, action: ActionId, target: ActionTarget, with: Vec<BlockId>) {
         self.connection.send(ClientMessage::Propose { action, target });
-        self.proposed.lock().unwrap_or_else(|e| e.into_inner()).push(Proposed { action, with });
+        self.proposals.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.proposed.lock().unwrap_or_else(|e| e.into_inner()).push(Proposed { action, target, with });
         self.shown.lock().unwrap_or_else(|e| e.into_inner()).push((action, target));
+        *self.last.lock().unwrap_or_else(|e| e.into_inner()) = Some((action, target));
+    }
+
+    /// The last action proposed and what it aimed at, kept after `take_shown`.
+    pub fn last_proposed(&self) -> Option<(ActionId, ActionTarget)> {
+        *self.last.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// How many actions have been proposed since startup.
+    pub fn proposals(&self) -> u64 {
+        self.proposals.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// The actions proposed since the last call: the client proposes only what it has
@@ -219,6 +237,9 @@ pub struct RemotePlayers {
     /// Shown as if told of (the gate's stand-in): the server's next list, which never has
     /// them, leaves them be.
     puppets: FxHashMap<PlayerId, PlayerView>,
+    /// Every other player's name as told, near or far, kept when they go out of sight: a
+    /// creature kept by one far off still shows who keeps it.
+    names: FxHashMap<PlayerId, String>,
 }
 
 impl RemotePlayers {
@@ -227,9 +248,29 @@ impl RemotePlayers {
         self.players.values().chain(self.puppets.values())
     }
 
-    /// The other players the server told of, in place of those it told of before.
-    fn told(&mut self, players: Vec<PlayerView>) {
-        self.players = players.into_iter().map(|view| (view.id, view)).collect();
+    /// What the server told of others: views changed or come into sight (a name, when
+    /// missing, is the one told before), players gone or out of sight, and the names of
+    /// those out of sight (an empty one: they left, and their name is forgotten).
+    pub fn told(&mut self, seen: Vec<PlayerView>, gone: Vec<PlayerId>, names: Vec<(PlayerId, String)>) {
+        for id in gone {
+            self.players.remove(&id);
+        }
+        for (id, name) in names {
+            if name.is_empty() {
+                self.names.remove(&id);
+            } else {
+                self.names.insert(id, name);
+            }
+        }
+        for mut view in seen {
+            match &view.name {
+                Some(name) => {
+                    self.names.insert(view.id, name.clone());
+                }
+                None => view.name = self.names.get(&view.id).cloned(),
+            }
+            self.players.insert(view.id, view);
+        }
     }
 
     /// Shows another player as if the server had told of them, or moves one shown so (the
@@ -249,9 +290,9 @@ impl RemotePlayers {
         self.puppets.get(&id).or_else(|| self.players.get(&id))
     }
 
-    /// What another player is called, while they are here.
+    /// What another player is called, near or far, once the server has told.
     pub fn name(&self, id: PlayerId) -> Option<&str> {
-        self.get(id).map(|view| view.name.as_str())
+        self.get(id).and_then(|view| view.name.as_deref()).or_else(|| self.names.get(&id).map(String::as_str))
     }
 
     /// The player nearest along the look ray within `within` blocks of the eye, and how far:
@@ -290,9 +331,9 @@ pub(crate) fn receive(
     mut weather: ResMut<ClientWeather>,
     (time, mut clock, mut console, mut air, mut cues): (Res<Time>, ResMut<Clock>, ResMut<Console>, ResMut<ClientAtmosphere>, MessageWriter<SoundCue>),
     (mut drops, mut toasts, launch, locale, mut creatures): (ResMut<Drops>, ResMut<SkillToasts>, Res<Launch>, Res<Locale>, ResMut<crate::creatures::Creatures>),
-    (mut broken, mut catches): (MessageWriter<BlockBroken>, MessageWriter<crate::sfx::Catches>),
+    (mut broken, mut catches, mut done): (MessageWriter<BlockBroken>, MessageWriter<crate::sfx::Catches>, MessageWriter<crate::sfx::Done>),
     mut fighting: ResMut<crate::fight::Fighting>,
-    mut stations: ResMut<crate::hud::target::StationSeen>,
+    (mut stations, mut wore): (ResMut<crate::hud::target::StationSeen>, MessageWriter<crate::breaking::ToolWore>),
 ) {
     let menu = if net.is_remote() { Screen::Join } else { Screen::Title };
     // Counted before reading: a tick's messages are all sent before it counts, so this many
@@ -356,6 +397,15 @@ pub(crate) fn receive(
                     {
                         cues.write(cue.at(pos.as_vec3() + Vec3::splat(0.5)));
                     }
+                    // A full skep's honey cut nearby: heard if the player cut it (`sfx::play_done`
+                    // matches it to their own click), not a bear's raid or another's cut.
+                    if let Some(old) = old
+                        && pos.as_vec3().distance(player.position) < SHOWN_WITHIN
+                        && crate::sfx::bees_taken(&launch.content.bees, old, block)
+                        && let Some(action) = launch.content.actions.id("base:tend_bees")
+                    {
+                        done.write(crate::sfx::Done { at: pos, action, with: old });
+                    }
                     // Thatch or wattle catching fire, nearby.
                     if crate::sfx::catches(&launch.content.fire, old, block) && pos.as_vec3().distance(player.position) < SHOWN_WITHIN {
                         catches.write(crate::sfx::Catches { at: pos.as_vec3() + Vec3::splat(0.5) });
@@ -409,9 +459,7 @@ pub(crate) fn receive(
                     fighting.dodge_ready = fighting.dodge_was;
                 }
             }
-            ServerMessage::Players { players } => {
-                remote.told(players);
-            }
+            ServerMessage::Players { seen, gone, names } => remote.told(seen, gone, names),
             ServerMessage::Time { tick, day, day_speed } => {
                 *clock = Clock { day: day as f64, day_speed, told_at: time.elapsed_secs_f64() };
                 weather.set_tick(tick, time.elapsed_secs_f64());
@@ -449,11 +497,14 @@ pub(crate) fn receive(
                 creatures.struck(creature, damage, blow, killed, time.elapsed_secs());
                 fighting.struck(creature, damage, blow, pips, killed, time.elapsed_secs_f64());
             }
-            ServerMessage::Hurt { creature, damage, defended } => {
+            ServerMessage::Hurt { creature, damage, defended, spoiled } => {
                 let combat = &launch.content.combat;
                 let held = player.inventory.get(player.selected).map(|s| s.item);
                 let weapon = combat.wielded(held, |skill| launch.content.skills.level(player.skills.xp(skill)));
-                let spoil = combat.spoiled_by_hits(&weapon).then(|| (combat.timing(&weapon), combat.feel));
+                // Told a round trip late: only a shot drawn with a weapon a hit spoils is let
+                // go, never a melee swing begun since (a draw's cooldown outlasts the trip, so no
+                // new draw can have begun).
+                let spoil = (spoiled && combat.spoiled_by_hits(&weapon)).then(|| (combat.timing(&weapon), combat.feel));
                 fighting.hurt(creature, damage, defended, time.elapsed_secs_f64(), spoil)
             }
             ServerMessage::Ping { id } => {
@@ -462,6 +513,9 @@ pub(crate) fn receive(
             }
             ServerMessage::Prayers { points, most, on } => fighting.prayers = crate::fight::Prayers { points, most, on },
             ServerMessage::Fires { lit } => world.fires = lit.into_iter().collect(),
+            ServerMessage::ToolWore { item, broke } => {
+                wore.write(crate::breaking::ToolWore { item, broke });
+            }
             ServerMessage::Bark { creature, bark } => creatures.bark(creature, bark),
             ServerMessage::Smoulders { at } => world.smoulders = at.into_iter().collect(),
             ServerMessage::Xp { skill, tenths } => toasts.gained(skill, tenths, time.elapsed_secs()),
@@ -533,21 +587,39 @@ mod tests {
         assert_eq!(admin_token_for("::1", "[::1]:25665=six").as_deref(), Some("six"));
     }
 
-    /// A stand-in shown with no server behind it (the gate's) stays through the server's
-    /// lists of the others, which never name it, until it is forgotten.
+    /// A view told without a name keeps the name told before; one gone is no longer shown,
+    /// though their name is kept, as is one told of only by name, far off.
+    #[test]
+    fn others_are_told_as_they_change() {
+        let mut players = RemotePlayers::default();
+        let view = |name: Option<&str>, x: f32| PlayerView { id: 9, name: name.map(str::to_owned), position: Vec3::new(x, 0.0, 0.0), yaw: 0.0, pitch: 0.0, held: None, fight: Default::default() };
+        players.told(vec![view(Some("Ada"), 0.0)], vec![], vec![]);
+        players.told(vec![view(None, 1.0)], vec![], vec![]);
+        assert_eq!((players.name(9), players.position(9)), (Some("Ada"), Some(Vec3::X)));
+        players.told(vec![], vec![9], vec![(4, "Bob".to_owned())]);
+        assert_eq!(players.views().count(), 0);
+        assert_eq!((players.name(9), players.name(4), players.position(4)), (Some("Ada"), Some("Bob"), None), "names kept out of sight");
+        players.told(vec![view(None, 2.0)], vec![], vec![]);
+        assert_eq!(players.get(9).and_then(|v| v.name.as_deref()), Some("Ada"), "back in sight, the view takes the name kept");
+        players.told(vec![], vec![], vec![(4, String::new())]);
+        assert_eq!(players.name(4), None, "one who left, named with no name, is forgotten");
+    }
+
+    /// A stand-in shown with no server behind it (the gate's) stays through what the server
+    /// tells of the others, which never names it, until it is forgotten.
     #[test]
     fn a_puppet_stays_through_the_servers_lists_until_forgotten() {
         let mut players = RemotePlayers::default();
-        let view = |id, name: &str| PlayerView { id, name: name.to_owned(), position: Vec3::ZERO, yaw: 0.0, pitch: 0.0, held: None };
+        let view = |id, name: &str| PlayerView { id, name: Some(name.to_owned()), position: Vec3::ZERO, yaw: 0.0, pitch: 0.0, held: None, fight: Default::default() };
         players.puppet(view(7, "Gate"));
-        players.told(vec![view(9, "Ada")]);
-        players.told(vec![view(9, "Ada")]);
+        players.told(vec![view(9, "Ada")], vec![], vec![]);
+        players.told(vec![view(9, "Ada")], vec![], vec![]);
         let mut here: Vec<_> = players.views().map(|v| v.id).collect();
         here.sort();
         assert_eq!(here, vec![7, 9], "the stand-in and the player the server told of");
         assert_eq!(players.name(7), Some("Gate"));
-        players.told(Vec::new());
-        assert_eq!(players.views().map(|v| v.id).collect::<Vec<_>>(), vec![7], "the server telling of no one leaves the stand-in");
+        players.told(Vec::new(), vec![9], Vec::new());
+        assert_eq!(players.views().map(|v| v.id).collect::<Vec<_>>(), vec![7], "the server telling the others gone leaves the stand-in");
         players.forget(7);
         assert_eq!(players.views().count(), 0);
     }
@@ -555,7 +627,7 @@ mod tests {
     #[test]
     fn a_player_is_looked_at_within_range_and_aim() {
         let mut players = RemotePlayers::default();
-        let view = PlayerView { id: 9, name: "Ada".to_owned(), position: Vec3::new(0.0, 0.0, -10.0), yaw: 0.0, pitch: 0.0, held: None };
+        let view = PlayerView { id: 9, name: Some("Ada".to_owned()), position: Vec3::new(0.0, 0.0, -10.0), yaw: 0.0, pitch: 0.0, held: None, fight: Default::default() };
         players.players.insert(9, view);
         let eye = Vec3::new(0.0, 1.62, 0.0);
         let (who, distance) = players.looked_at(eye, Vec3::NEG_Z, 24.0, |_| None).unwrap();

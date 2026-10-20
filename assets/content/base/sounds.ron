@@ -104,6 +104,10 @@
             break: ["sounds/materials/terracotta_break_1.ogg", "sounds/materials/terracotta_break_2.ogg", "sounds/materials/terracotta_break_3.ogg"],
         ),
     ],
+    // A tool in hand nearly worn out (tools.ron's `wear.warn`): a dry creak and a tick as the
+    // head shifts. Worn out: the haft snaps and its pieces fall.
+    tool_worn: ["sounds/tool_worn_1.ogg", "sounds/tool_worn_2.ogg"],
+    tool_break: ["sounds/tool_break_1.ogg", "sounds/tool_break_2.ogg"],
     // What the player does, heard as they do it, by action: about as loud as placing a
     // block, times `volume`. A package that names an action replaces its sound. Every
     // action says how it sounds, or the game does not start: its `sounds`, `silent: true`,
@@ -152,8 +156,6 @@
                 (name: "stir", with: ["cooking_pot"], sounds: ["sounds/work/stir_1.ogg", "sounds/work/stir_2.ogg"], volume: 0.7),
                 // Greens forked onto the heap: a wet flump and a damp rustle.
                 (name: "heap", with: ["compost_heap"], sounds: ["sounds/work/heap_1.ogg", "sounds/work/heap_2.ogg"], volume: 0.7),
-                // Clay or logs laid in the clamp and soil shovelled over.
-                (name: "clamp", with: ["earth_clamp"], sounds: ["sounds/work/clamp_1.ogg", "sounds/work/clamp_2.ogg"], volume: 0.7),
                 // Clay or cobble loaded into a pit kiln: a knock into the embers and a breath of
                 // flame.
                 (name: "fire_in_kiln", with: ["pit_kiln"], sounds: ["sounds/work/kiln_load_1.ogg", "sounds/work/kiln_load_2.ogg"], volume: 0.9),
@@ -167,15 +169,29 @@
             // A hearth or kiln catching: a strike, a whoomph, and the fire swelling into a
             // roar that settles into its bed (ambience.ron's fire); a kiln's deeper.
             ways: [
-                (name: "kindle_hearth", with: ["hearthstone"], sounds: ["sounds/work/kindle_hearth_1.ogg", "sounds/work/kindle_hearth_2.ogg"]),
+                (name: "kindle_hearth", with: ["hearthstone", "kindling"], sounds: ["sounds/work/kindle_hearth_1.ogg", "sounds/work/kindle_hearth_2.ogg"]),
                 (name: "kindle_kiln", with: ["crucible"], sounds: ["sounds/work/kindle_kiln_1.ogg", "sounds/work/kindle_kiln_2.ogg"]),
             ],
         ),
+        "base:relight": (sounds: ["sounds/light_1.ogg", "sounds/light_2.ogg"]),
         // A lid lifted: a short creak and the lid knocking back.
         "base:open_store": (sounds: ["sounds/store_open_1.ogg", "sounds/store_open_2.ogg"], volume: 0.8),
         // The latch, then a slow creak on the hinges; quieter than the rest at its loudest, so
         // played louder.
-        "base:open": (sounds: ["sounds/door_1.ogg", "sounds/door_2.ogg"], volume: 1.3),
+        "base:open": (
+            sounds: ["sounds/door_1.ogg", "sounds/door_2.ogg"], volume: 1.3,
+            // By what is swung, the block worked.
+            ways: [
+                // A field gate: the latch bar's clack, a dry creak, a knock on the post.
+                (name: "gate", with: ["tag:gate"], sounds: ["sounds/gate_1.ogg", "sounds/gate_2.ogg"], volume: 0.9),
+                // Two light leaves swinging, each knocking home.
+                (name: "shutters", with: ["tag:shutters"], sounds: ["sounds/shutters_1.ogg", "sounds/shutters_2.ogg"], volume: 0.8),
+                // A loft hatch: a heavy board creaking, dropping with a thump.
+                (name: "hatch", with: ["tag:hatch"], sounds: ["sounds/hatch_1.ogg", "sounds/hatch_2.ogg"], volume: 0.9),
+                // A curtain drawn: a cloth swish and its rings ticking along the pole.
+                (name: "curtain", with: ["tag:curtain"], sounds: ["sounds/curtain_1.ogg", "sounds/curtain_2.ogg"], volume: 0.6),
+            ],
+        ),
         // A hiss settling into a sizzle as food meets the fire.
         // Food on the fire, and as it comes off: done, with a tap on a board, or burnt, with a
         // dark hiss and a puff of smoke, so a burn is heard as it happens.
@@ -200,8 +216,23 @@
             sounds: ["sounds/cast_1.ogg", "sounds/cast_2.ogg"], volume: 0.7,
             brings: [(tags: ["fish", "raw"], sounds: ["sounds/catch_1.ogg", "sounds/catch_2.ogg"], volume: 0.8)],
         ),
-        // A handful of grain shaken out to an animal, and a pat.
-        "base:tend": (sounds: ["sounds/tend_1.ogg", "sounds/tend_2.ogg"], volume: 0.7),
+        // A handful of grain shaken out to an animal, and a pat. Done with shears or a pail,
+        // it is heard only by what it brings, as the server gives it (and only then awaits it).
+        "base:tend": (
+            sounds: ["sounds/tend_1.ogg", "sounds/tend_2.ogg"], volume: 0.7,
+            ways: [
+                (name: "shear", with: ["tag:shears"], silent: true),
+                (name: "milk", with: ["tag:pail"], silent: true),
+            ],
+            // The server answers at once: a fleece picked up a moment later is not taken for it.
+            brought_within: Some(2.0),
+            brings: [
+                // A fleece shorn: iron blades snipping, the wool rustling as it parts.
+                (tags: ["wool"], sounds: ["sounds/work/shear_1.ogg", "sounds/work/shear_2.ogg"], volume: 0.7),
+                // Milk drawn: squirts hissing into the pail, ringing on its wood.
+                (tags: ["dairy"], sounds: ["sounds/work/milk_1.ogg", "sounds/work/milk_2.ogg"], volume: 0.6),
+            ],
+        ),
         // A pouch tipped out: cloth and a few small things clinking.
         "base:empty_pouch": (sounds: ["sounds/pouch_1.ogg", "sounds/pouch_2.ogg"], volume: 0.6),
         // Stepping up to the crafting table: the same parts fitted, softer.
@@ -210,8 +241,20 @@
         "base:use_machine": (sounds: ["sounds/machine_1.ogg", "sounds/machine_2.ogg"], volume: 0.9),
         // Metal ticks in the lock, then the bolt giving.
         "base:pick_lock": (sounds: ["sounds/lock_1.ogg", "sounds/lock_2.ogg"], volume: 0.7),
-        // A skep's lid lifted, as a store's is.
-        "base:tend_bees": (sounds: ["sounds/store_open_1.ogg", "sounds/store_open_2.ogg"], volume: 0.7),
+        // A full skep's comb cut: a sticky tearing and honey dripping, heard as the server
+        // takes it, from the skep (`when_done`).
+        "base:tend_bees": (
+            sounds: ["sounds/work/honey_1.ogg", "sounds/work/honey_2.ogg"], volume: 0.7, when_done: true,
+            // A swarm is heard only by the skep of bees it brings; only it awaits one.
+            ways: [(name: "swarm", with: ["bee_nest"], silent: true)],
+            brought_within: Some(2.0),
+            brings: [
+                // A swarm smoked into the skep: two puffs, the hum swelling and settling. Heard
+                // as the skep of bees comes to hand; one that stays put for want of smoke is
+                // silent.
+                (tags: ["bees"], sounds: ["sounds/work/hive_1.ogg", "sounds/work/hive_2.ogg"], volume: 0.6),
+            ],
+        ),
         // A soft bell swelling at the altar.
         "base:pray": (sounds: ["sounds/pray_1.ogg"], volume: 0.8),
         // Fertiliser scattered over the soil.

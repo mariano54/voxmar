@@ -635,9 +635,10 @@ impl Settlements {
             .collect();
         cells.sort_unstable_by_key(|&(bound, c)| (bound, c.x, c.y));
         let batch = std::thread::available_parallelism().map_or(1, |n| n.get()).clamp(1, 8);
-        let mut best: Option<(i64, Arc<Slot>)> = None;
+        // Ties go to the lower x, then z, of the middle, as a sorted scan would give.
+        let mut best: Option<((i64, i32, i32), Arc<Slot>)> = None;
         for group in cells.chunks(batch) {
-            if best.as_ref().is_some_and(|(d, _)| group[0].0 > *d) {
+            if best.as_ref().is_some_and(|(d, _)| group[0].0 > d.0) {
                 break;
             }
             let missing: Vec<IVec2> = group.iter().map(|&(_, c)| c).filter(|&c| !self.plans.has(c)).collect();
@@ -649,8 +650,9 @@ impl Settlements {
             for &(_, c) in group {
                 let slot = self.slot(world, c);
                 let Some(plan) = slot.0.as_ref() else { continue };
-                let d = away(plan.centre);
-                if d <= reach && keep(plan) && best.as_ref().is_none_or(|(b, _)| d < *b) {
+                let d = (away(plan.centre), plan.centre.x, plan.centre.y);
+                // The cheap checks before `keep`, which may look the plan over.
+                if d.0 <= reach && best.as_ref().is_none_or(|(b, _)| d < *b) && keep(plan) {
                     best = Some((d, slot.clone()));
                 }
             }
@@ -753,6 +755,12 @@ impl Settlements {
         self.slot(world, self.cell_of(x, z)).0.as_ref().is_some_and(|plan| p.cmpge(plan.min - 4).all() && p.cmple(plan.max + 4).all())
     }
 
+    /// The height of the settlement whose plan covers (x, z), if one does (as `covers`).
+    pub fn height_covering(&self, world: &Overworld, x: i32, z: i32) -> Option<i32> {
+        let p = IVec2::new(x, z);
+        self.slot(world, self.cell_of(x, z)).0.as_ref().filter(|plan| p.cmpge(plan.min - 4).all() && p.cmple(plan.max + 4).all()).map(|plan| plan.height)
+    }
+
     /// Whether any settlement's gate lies within `reach` blocks of the box from `min` to
     /// `max`.
     pub fn any_near(&self, world: &Overworld, min: IVec2, max: IVec2, reach: i32) -> bool {
@@ -797,15 +805,24 @@ impl Settlements {
     }
 }
 
+/// Whether a settlement furnishes itself with block `b` picked by tag: a plain common
+/// sort, no wonder, nothing supernatural, no pair or clump.
+fn plain(registry: &BlockRegistry, b: BlockId) -> bool {
+    let def = registry.def(b);
+    !def.has_tag("wonder") && !def.has_tag("supernatural") && !def.name.ends_with("_pair") && !def.name.ends_with("_clump") && def.rarity == voxmar_engine::block::Rarity::Common
+}
+
+/// Whether a settlement's flowers and bushes, picked by tag, take block `b`: a plain small
+/// plant.
+pub(crate) fn small_plant(registry: &BlockRegistry, b: BlockId) -> bool {
+    plain(registry, b) && registry.def(b).render == RenderKind::Plant
+}
+
 /// The blocks settlements furnish themselves with (`furnishings` in settlements.ron):
 /// none without water and dirt, and only the plain common sorts of flowers and bushes.
 fn fixed(registry: &BlockRegistry, def: &SettlementsDef) -> Option<Fixed> {
     let f: &FurnishingsDef = &def.furnishings;
     let id = |name: &Option<String>| name.as_deref().and_then(|n| registry.id(n));
-    let plain = |b: BlockId| {
-        let def = registry.def(b);
-        !def.has_tag("wonder") && !def.has_tag("supernatural") && !def.name.ends_with("_pair") && !def.name.ends_with("_clump") && def.rarity == voxmar_engine::block::Rarity::Common
-    };
     let palette = |list: &[Select], filter: &dyn Fn(BlockId) -> bool| {
         Palette(
             list.iter()
@@ -819,7 +836,7 @@ fn fixed(registry: &BlockRegistry, def: &SettlementsDef) -> Option<Fixed> {
                 .collect(),
         )
     };
-    let small_plant = |b: BlockId| plain(b) && registry.def(b).render == RenderKind::Plant;
+    let small_plant = |b: BlockId| small_plant(registry, b);
     let any = |_: BlockId| true;
     let dirt = id(&f.dirt)?;
     Some(Fixed {

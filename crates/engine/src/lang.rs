@@ -493,7 +493,36 @@ pub fn arguments(text: &str) -> Vec<&str> {
 }
 
 fn parse(source: &str) -> Result<FxHashMap<String, String>, String> {
-    ron::from_str(source).map_err(|e| e.to_string())
+    parse_map(source)
+}
+
+/// A language file (its strings, readings or pins) as key to value. A key given twice is
+/// an error, not the later one quietly winning.
+pub fn parse_map<V: serde::de::DeserializeOwned>(source: &str) -> Result<FxHashMap<String, V>, String> {
+    struct Map<V>(FxHashMap<String, V>);
+    impl<'de, V: Deserialize<'de>> Deserialize<'de> for Map<V> {
+        fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            struct Visit<V>(std::marker::PhantomData<V>);
+            impl<'de, V: Deserialize<'de>> serde::de::Visitor<'de> for Visit<V> {
+                type Value = Map<V>;
+                fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                    f.write_str("a map of keys")
+                }
+                fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<Map<V>, A::Error> {
+                    let mut entries = FxHashMap::default();
+                    while let Some((key, value)) = map.next_entry::<String, V>()? {
+                        if entries.contains_key(&key) {
+                            return Err(serde::de::Error::custom(format!("`{key}` is given twice")));
+                        }
+                        entries.insert(key, value);
+                    }
+                    Ok(Map(entries))
+                }
+            }
+            deserializer.deserialize_map(Visit(std::marker::PhantomData))
+        }
+    }
+    ron::from_str::<Map<V>>(source).map(|m| m.0).map_err(|e| e.to_string())
 }
 
 /// `(package, language, source)` of every language file whose language `wanted` accepts,
@@ -595,6 +624,13 @@ mod tests {
         assert_eq!(problems.len(), 1);
         let (_, problems) = Lang::from_files("en", [("base", "en", "not ron")]);
         assert_eq!(problems.len(), 1);
+    }
+
+    #[test]
+    fn a_key_given_twice_in_one_file_is_refused() {
+        let error = parse(r#"{ "k": "first", "j": "other", "k": "second" }"#).unwrap_err();
+        assert!(error.contains("`k` is given twice"), "{error}");
+        assert_eq!(parse(r#"{ "k": "first", "j": "other" }"#).unwrap().len(), 2);
     }
 
     /// A family's block placed in another form (stairs turned east, upside down) is named

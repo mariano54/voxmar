@@ -85,13 +85,18 @@ const UPLOAD_BUDGET: usize = 32_000;
 /// around them.
 const NEAR_EDITS: i32 = 2;
 
-/// The threads near edits are relit and remeshed on, at the game's own priority. On the
+/// The threads near edits are relit and remeshed on, at the default class (priority.rs). On the
 /// shared workers such a job waited behind every column being generated (up to 64 at a
 /// time, by the server in this process) and meshed while the land streamed in, at a lower
 /// priority: early in a new world, and on a busy machine, a block broken at spawn stood
 /// there for many seconds after it broke. They are idle but for edits.
 static EDITS: LazyLock<rayon::ThreadPool> = LazyLock::new(|| {
-    rayon::ThreadPoolBuilder::new().num_threads(2).thread_name(|i| format!("edit-mesh-{i}")).build().expect("the edits' meshing threads start")
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(2)
+        .thread_name(|i| format!("edit-mesh-{i}"))
+        .start_handler(|_| crate::priority::default_thread())
+        .build()
+        .expect("the edits' meshing threads start")
 });
 
 /// The level of detail a column `distance` columns from the camera is meshed at: full
@@ -537,6 +542,10 @@ impl Culler {
         };
         // At the default class, not lowered with the streaming threads (priority.rs): chunks
         // that arrive show only once a walk has taken them in.
+        let walk = move || {
+            crate::priority::default_thread();
+            walk();
+        };
         std::thread::Builder::new().name("cave-culling".into()).spawn(walk).expect("the cave culling thread starts");
         Self { jobs, results, busy: false }
     }

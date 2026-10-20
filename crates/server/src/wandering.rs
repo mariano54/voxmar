@@ -320,6 +320,12 @@ impl Wandering {
         self.by_creature.contains_key(&id)
     }
 
+    /// Creature `id` is kept here, as if one of its own (a test's).
+    #[cfg(test)]
+    pub(crate) fn keep_for_test(&mut self, id: u32) {
+        self.by_creature.insert(id, (0, 0));
+    }
+
     /// The errand creature `id`'s event hands it now, if it is in one.
     pub(crate) fn errand(&self, id: u32) -> Option<Errand> {
         let &(instance, member) = self.by_creature.get(&id)?;
@@ -1279,7 +1285,7 @@ impl Server {
                     p.changed(traits::INVENTORY);
                     if left > 0 {
                         let body = voxmar_engine::dropped::thrown(p.eye(), p.look());
-                        self.items.spawn(voxmar_engine::inventory::ItemStack { item, count: left }, body, voxmar_engine::dropped::PICKUP_DELAY);
+                        self.items.spawn(voxmar_engine::inventory::ItemStack::new(item, left), body, voxmar_engine::dropped::PICKUP_DELAY);
                     }
                 }
                 ResolvedReward::Xp(skill, xp) => self.grant_xp(player, skill, xp),
@@ -3307,14 +3313,14 @@ mod tests {
         give_held(&mut server, "base:bone", 1);
         assert!(server.meet(1, captive));
         assert!(server.wandering.active[&id].members.iter().any(|m| m.creature == captive), "still bound");
-        give_held(&mut server, "base:wooden_knife", 1);
+        give_held(&mut server, "base:flint_knife", 1);
         assert!(server.meet(1, captive));
         assert!(server.wandering.active[&id].members.iter().all(|m| m.creature != captive), "free");
         assert_eq!(server.wandering.active[&id].provoked, Some(1), "and the jailers saw");
         assert!(matches!(server.wandering.active[&id].plan, Plan::Avenge { .. }));
         run(&mut server, 10);
         assert!(server.creatures.live[&jailer].mind.anger > 0.0);
-        assert_eq!(count_of(&server, "base:wooden_knife"), 1, "the knife is kept");
+        assert_eq!(count_of(&server, "base:flint_knife"), 1, "the knife is kept");
     }
 
     #[test]

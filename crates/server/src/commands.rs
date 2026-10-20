@@ -188,6 +188,7 @@ impl Server {
             Run::SetBlock => self.set_block_command(id, args),
             Run::Fill => self.fill(id, args),
             Run::Give => self.give(id, args),
+            Run::Wear => self.wear_command(id, args),
             Run::Clear => self.clear(id, args),
             Run::Effect => self.effect_command(id, args),
             Run::Kill => self.kill_command(id),
@@ -205,6 +206,7 @@ impl Server {
                 Some(what) => self.creatures_command(id, what, args.get(1).map(String::as_str)),
             },
             Run::Skill => self.skill_command(id, args),
+            Run::Quest => self.quest_command(id, args),
             Run::Machine => self.machine_command(id, args),
             Run::Wander => self.wander_command(id, args),
             Run::Home => self.home_command(id),
@@ -683,6 +685,23 @@ impl Server {
         Ok(Words::key("command.skill.done").with("level", Words::text(level)))
     }
 
+    /// `/quest <quest>`: marks a quest done for the player, by its full name or its own
+    /// (`the_farm_age`); what it pays waits to be claimed.
+    fn quest_command(&mut self, id: Source, args: &[String]) -> Reply {
+        let player = Self::me(id)?;
+        let [name] = args else { return Err(Words::key("command.quest.what")) };
+        let quests = self.content.quests.clone();
+        let quest = quests.iter().find(|q| q.name == *name || q.name.rsplit(':').next() == Some(name.as_str())).ok_or_else(|| Words::key("command.quest.unknown").with("name", name.as_str()))?;
+        let title = Words::Own(voxmar_engine::lang::def_key("quest", &quest.name), quest.title.clone());
+        if self.players[&player].quests_done.contains(&quest.name) {
+            return Err(Words::key("command.quest.already").with("quest", title));
+        }
+        self.finish_quest(player, &quest.name, std::slice::from_ref(&quest.name));
+        // Told at once, as a claim is: the stations its rite opens show open straight away.
+        self.update_quests(player);
+        Ok(Words::key("command.quest.done").with("quest", title))
+    }
+
     /// `/creatures`: the creatures within 64 blocks.
     fn creatures_about(&self, id: Source) -> Words {
         let at = self.position_of(id);
@@ -958,11 +977,44 @@ impl Server {
         while spilled > 0 {
             let count = spilled.min(MAX_STACK as u16) as u8;
             let body = voxmar_engine::dropped::Loose::new(feet, Vec3::ZERO);
-            self.items.spawn(ItemStack { item: block, count }, body, 0.0);
+            self.items.spawn(ItemStack::new(block, count), body, 0.0);
             spilled -= count as u16;
         }
         let gave = Words::key("command.give").with("count", Words::text(count)).with("block", Words::Block(self.content.blocks.def(block).name.clone()));
         if left > 0 { Ok(Words::key("command.give.spilled").with("gave", gave).with("left", Words::text(left))) } else { Ok(gave) }
+    }
+
+    /// `/wear <uses left> [hotbar slot]`: the tool in hand (or in that hotbar slot, counted
+    /// from 1) worn down (or mended) to that many uses left, or what burns there (a
+    /// firebrand) to that many seconds. Naming the slot needs no wait for the server to hear
+    /// which slot is in hand.
+    pub(crate) fn wear_command(&mut self, source: Source, args: &[String]) -> Reply {
+        let player = self.players.get_mut(&Self::me(source)?).ok_or_else(|| Words::key("command.error.nobody_to_give_to"))?;
+        let (left, slot) = match args {
+            [left] => (left, player.selected),
+            [left, slot] => {
+                let most = voxmar_engine::inventory::HOTBAR_SLOTS;
+                let slot = slot
+                    .parse::<usize>()
+                    .ok()
+                    .filter(|n| (1..=most).contains(n))
+                    .ok_or_else(|| Words::key("command.error.not_a_count").with("word", slot.as_str()).with("max", Words::text(most)))?;
+                (left, slot - 1)
+            }
+            _ => return Err(Words::key("command.error.wear_what")),
+        };
+        let held = player.inventory.get(slot);
+        let uses = held.map_or(0, |stack| self.content.tools.life(stack.item));
+        let (Some(mut stack), true) = (held, uses > 0) else { return Err(Words::key("command.error.wear_nothing")) };
+        let left = left
+            .parse::<u16>()
+            .ok()
+            .filter(|n| (1..=uses).contains(n))
+            .ok_or_else(|| Words::key("command.error.not_a_count").with("word", left.as_str()).with("max", Words::text(uses)))?;
+        stack.wear = uses - left;
+        player.inventory.slots[slot] = Some(stack);
+        player.changed(voxmar_engine::traits::INVENTORY);
+        Ok(Words::key("command.wear").with("block", Words::Block(self.content.blocks.def(stack.item).name.clone())).with("left", Words::text(left)).with("uses", Words::text(uses)))
     }
 
     fn clear(&mut self, source: Source, args: &[String]) -> Reply {
@@ -1072,7 +1124,7 @@ impl Server {
             None => self.position_of(source),
         };
         let body = voxmar_engine::dropped::Loose::new(position, Vec3::ZERO);
-        self.items.spawn(ItemStack { item: block, count }, body, voxmar_engine::dropped::PICKUP_DELAY);
+        self.items.spawn(ItemStack::new(block, count), body, voxmar_engine::dropped::PICKUP_DELAY);
         Ok(Words::key("command.drop")
             .with("count", Words::text(count))
             .with("block", Words::Block(self.content.blocks.def(block).name.clone()))

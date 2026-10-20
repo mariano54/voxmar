@@ -66,6 +66,13 @@
             run: Give,
         ),
         (
+            name: "wear",
+            usage: "<uses left> [hotbar slot]",
+            help: "Wears the tool in your hand (or in that hotbar slot, 1 to 9) down (or mends it) to that many uses left, or burns what is there down to that many seconds.",
+            permission: Admin,
+            run: Wear,
+        ),
+        (
             name: "effect",
             usage: "<effect> [seconds] | clear",
             help: "Gives you an effect for a while (60 seconds unless you say), as food would; clear takes them all away.",
@@ -160,6 +167,13 @@
             help: "Sets your level in a skill (farming, hunter, cooking, attack…), from 1 to the highest.",
             permission: Admin,
             run: Skill,
+        ),
+        (
+            name: "quest",
+            usage: "<quest>",
+            help: "Marks a quest done for you (an age's rite opens its stations), its rewards waiting to be claimed.",
+            permission: Admin,
+            run: Quest,
         ),
         (
             name: "machine",
