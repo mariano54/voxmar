@@ -234,6 +234,10 @@ impl ActionContext for ClientContext<'_> {
         Some(&self.content.machines)
     }
 
+    fn multiblocks(&self) -> Option<&voxmar_engine::multiblock::MultiblockRegistry> {
+        Some(self.content.multiblocks.as_ref())
+    }
+
     fn bees(&self) -> Option<&voxmar_engine::bees::Bees> {
         Some(&self.content.bees)
     }
@@ -820,6 +824,33 @@ mod tests {
         player.inventory.slots[0] = Some(voxmar_engine::inventory::ItemStack::new(content.blocks.expect("base:campfire"), 1));
         player.selected = 0;
         player.position = Vec3::new(10.5, 101.0, 8.5);
+        app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(std::time::Duration::from_millis(30)));
+        app.world_mut().resource_mut::<ButtonInput<MouseButton>>().press(MouseButton::Right);
+        app.update();
+        app.world_mut().resource_mut::<ButtonInput<MouseButton>>().clear();
+        for _ in 0..20 {
+            app.update();
+        }
+        let proposed: Vec<ActionId> = std::iter::from_fn(|| server_side.try_recv().ok().flatten()).filter_map(|m| match m { voxmar_protocol::ClientMessage::Propose { action, .. } => Some(action), _ => None }).collect();
+        assert_eq!(proposed, [content.actions.expect("base:light")], "lit, and the campfire kept in hand");
+    }
+
+    /// A clamp's earth right clicked from the floor beside it, a campfire in hand, the
+    /// button held on: lit, and the campfire never laid on its earth.
+    #[test]
+    fn a_clamp_clicked_on_its_earth_is_lit_not_built_on() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let (mut app, _, server_side) = app(content.actions.clone());
+        let clamp = content.multiblocks.iter().find(|m| m.smoulder.is_some()).expect("a clamp").clone();
+        let core = IVec3::new(10, 100, 10);
+        for (at, piece) in clamp.example() {
+            app.world_mut().resource_mut::<ClientWorld>().set_block(core + at, piece);
+        }
+        app.world_mut().resource_mut::<Target>().hit = Some(RayHit { block: core - IVec3::Z, face: voxmar_engine::coords::Face::NegZ, distance: 2.5 });
+        let mut player = app.world_mut().resource_mut::<LocalPlayer>();
+        player.inventory.slots[0] = Some(voxmar_engine::inventory::ItemStack::new(content.blocks.expect("base:campfire"), 1));
+        player.selected = 0;
+        player.position = Vec3::new(10.5, 99.0, 6.5);
         app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(std::time::Duration::from_millis(30)));
         app.world_mut().resource_mut::<ButtonInput<MouseButton>>().press(MouseButton::Right);
         app.update();

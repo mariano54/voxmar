@@ -193,6 +193,10 @@ impl ActionContext for Context<'_> {
         Some(&self.server.content.machines)
     }
 
+    fn multiblocks(&self) -> Option<&voxmar_engine::multiblock::MultiblockRegistry> {
+        Some(self.server.content.multiblocks.as_ref())
+    }
+
     fn bees(&self) -> Option<&voxmar_engine::bees::Bees> {
         Some(&self.server.content.bees)
     }

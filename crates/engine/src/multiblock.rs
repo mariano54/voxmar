@@ -332,6 +332,17 @@ impl MultiblockRegistry {
     pub fn with_core(&self, block: BlockId) -> impl Iterator<Item = &Multiblock> {
         self.multiblocks.iter().filter(move |m| m.core.binary_search(&block).is_ok())
     }
+
+    /// A structure that smoulders standing with `at` among its built cells, and where its
+    /// core is: a clamp is lit from any of it, its earth as well as its flue, as a player
+    /// on the floor beside it sees only its earth. `block` says what is where.
+    pub fn smoulder_round(&self, at: IVec3, block: impl Fn(IVec3) -> Option<BlockId>) -> Option<(IVec3, &Multiblock)> {
+        self.multiblocks.iter().filter(|m| m.smoulder.is_some()).find_map(|m| {
+            let built = m.cells.iter().filter(|(_, cell)| matches!(cell, Cell::OneOf(_)));
+            let cores = built.flat_map(|(offset, _)| (0..4).map(move |turns| at - turned(*offset, turns)));
+            cores.filter(|&core| block(core).is_some_and(|b| m.core.binary_search(&b).is_ok())).find(|&core| m.stands(core, &block)).map(|core| (core, m))
+        })
+    }
 }
 
 #[cfg(test)]

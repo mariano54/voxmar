@@ -6160,10 +6160,10 @@ impl ClampPlan {
 }
 
 /// Where the clamp step stands the player to light the clamp round `core`, and where it
-/// aims: on the clamp's earth, a cell and a half short of its flue, within reach and above
-/// its wall, which hides the flue from a player on the floor beside it.
+/// aims: on the floor beside it, as a player comes up to it, at the earth walling its flue
+/// in, which lights it as the flue does (`Requirement::MultiblockCore`).
 fn clamp_click(core: IVec3) -> (Vec3, Vec3) {
-    (core.as_vec3() + Vec3::new(0.5, 0.0, -1.5), core.as_vec3() + Vec3::new(0.5, 0.9, 0.5))
+    (core.as_vec3() + Vec3::new(0.5, -1.0, -3.5), core.as_vec3() + Vec3::new(0.5, 0.5, -1.0))
 }
 
 /// A log split on a chopping block with an axe about the player gives two firewood; a
@@ -6183,8 +6183,6 @@ fn clamp(world: &mut World, gate: &mut Gate, now: f32) {
         mouse(world, MouseButton::Right, false);
         let net = world.resource::<Net>();
         net.command("weather natural");
-        // Off the clamp's earth, cleared below: back to where the step began.
-        net.command(&format!("tp {} {} {}", station_at.x as f32 + 0.5, station_at.y, station_at.z as f32 - 2.0));
         net.command(&format!("fill {} {} {} {} {} {} air", station_at.x - 3, station_at.y, station_at.z - 3, station_at.x + 3, station_at.y + 3, station_at.z + 9));
         if let Ok((plan, _)) = &plan {
             for item in [plan.log, plan.tool, plan.split, plan.torch] {
@@ -6260,7 +6258,7 @@ fn clamp(world: &mut World, gate: &mut Gate, now: f32) {
                 fail(world, gate, "clamp: split", format!("holding a {} to the {} left {split} {} and {log} {} carried after {CLAMP_WAIT} server seconds (wanted 2 and 0)", name(plan.log), name(plan.station), name(plan.split), name(plan.log)));
             }
         }
-        // Built, a torch in hand and stood on its earth: right clicked at its flue.
+        // Built, a torch in hand and stood beside it: right clicked at its earth.
         3 => {
             let built = structure.stands(core, |at| block(world, at));
             let torch = in_hotbar(world, plan.torch);
@@ -6274,7 +6272,7 @@ fn clamp(world: &mut World, gate: &mut Gate, now: f32) {
                 gate.advance(now);
             } else if waited {
                 let at = world.resource::<LocalPlayer>().position;
-                fail(world, gate, "clamp: lit", format!("the {} built ({built}), a {} in the hotbar ({torch:?}) or the player stood by its flue (at {at}, wanted {stand}) never came in {CLAMP_WAIT} server seconds", structure.title, name(plan.torch)));
+                fail(world, gate, "clamp: lit", format!("the {} built ({built}), a {} in the hotbar ({torch:?}) or the player stood beside it (at {at}, wanted {stand}) never came in {CLAMP_WAIT} server seconds", structure.title, name(plan.torch)));
             }
         }
         4 => {
@@ -6289,7 +6287,7 @@ fn clamp(world: &mut World, gate: &mut Gate, now: f32) {
                 world.resource::<Net>().command(&format!("time add {}h", smoulder.hours.ceil()));
                 gate.advance(now);
             } else if waited {
-                fail(world, gate, "clamp: lit", format!("right clicking the flue with a {} left {:?} there after {CLAMP_WAIT} server seconds ({})", name(plan.torch), block(world, core).map(|b| name(b)), clicked(world, core)));
+                fail(world, gate, "clamp: lit", format!("right clicking its earth with a {} left {:?} there after {CLAMP_WAIT} server seconds ({})", name(plan.torch), block(world, core).map(|b| name(b)), clicked(world, core)));
             }
         }
         _ => {
@@ -19613,11 +19611,11 @@ mod tests {
         }
     }
 
-    /// The clamp step's player stands on the clamp's earth, clear of it, and its click
-    /// meets the flue's top within reach: from where the split left them, eight cells off,
-    /// it met nothing and the clamp was never lit.
+    /// The clamp step's player stands on the floor clear of the clamp, and its click meets
+    /// the clamp within reach, a cell that lights it: from where the split left them, eight
+    /// cells off, it met nothing and the clamp was never lit.
     #[test]
-    fn the_clamp_steps_click_meets_its_flue() {
+    fn the_clamp_steps_click_meets_the_clamp() {
         use bevy::math::{IVec3, Vec3};
         use voxmar_engine::{coords::Face, physics::{player, raycast}};
         let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
@@ -19626,11 +19624,13 @@ mod tests {
         let built: std::collections::HashMap<IVec3, _> = clamp.example().into_iter().map(|(at, b)| (core + at, b)).filter(|&(_, b)| !b.is_air()).collect();
         let (stand, aim) = super::clamp_click(core);
         let feet = stand.floor().as_ivec3();
-        assert!(built.contains_key(&(feet - IVec3::Y)), "stands on the clamp");
         assert!(!built.contains_key(&feet) && !built.contains_key(&(feet + IVec3::Y)), "stands clear of it");
+        assert_eq!(feet.y, core.y - 1, "on the floor it is built on");
         let eye = stand + Vec3::Y * player::EYE_HEIGHT;
         let hit = raycast(eye, aim - eye, player::REACH, |at| built.contains_key(&at)).expect("the click meets the clamp");
-        assert_eq!((hit.block, hit.face), (core, Face::PosY));
+        assert_eq!((hit.block, hit.face), (core - IVec3::Z, Face::NegZ));
+        let lit_at = content.multiblocks.smoulder_round(hit.block, |at| Some(built.get(&at).copied().unwrap_or(voxmar_engine::block::BlockId::AIR)));
+        assert_eq!(lit_at.map(|(at, _)| at), Some(core), "the cell met lights it");
     }
 
     /// Every step is listed once, in order from Load to Done, and only listed steps are left
