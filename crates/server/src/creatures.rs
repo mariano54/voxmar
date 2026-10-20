@@ -264,6 +264,8 @@ pub struct Creatures {
     pub(crate) release_asked: FxHashMap<PlayerId, (u32, u64)>,
     /// Which blocks are water a creature swims in or drinks, by id, worked out once.
     water: std::sync::OnceLock<Vec<bool>>,
+    /// Which blocks are lava (a fluid that burns), by id, worked out once.
+    lava: std::sync::OnceLock<Vec<bool>>,
 }
 
 /// Every live creature by where it stood when a pass began, in square cells `CELL` blocks
@@ -319,6 +321,11 @@ impl Creatures {
     /// Which blocks are water (a fluid named for it), by id.
     fn water_blocks(&self, blocks: &voxmar_engine::block::BlockRegistry) -> &[bool] {
         self.water.get_or_init(|| blocks.ids().map(|b| blocks.info(b).fluid.is_some() && blocks.def(b).name.contains("water")).collect())
+    }
+
+    /// Which blocks are lava (`process::is_lava`), by id.
+    fn lava_blocks(&self, blocks: &voxmar_engine::block::BlockRegistry) -> &[bool] {
+        self.lava.get_or_init(|| blocks.ids().map(|b| blocks.fluid(b).is_some_and(|f| crate::process::is_lava(blocks, f.fluid))).collect())
     }
 
     /// Takes a creature out of the world without a death (`/creatures remove`).
@@ -383,6 +390,10 @@ impl motion::Surroundings for Ground<'_> {
 
     fn water(&self, cell: IVec3) -> bool {
         self.block(cell).is_some_and(|b| self.server.creatures.water_blocks(&self.server.content.blocks)[b.0 as usize])
+    }
+
+    fn lava(&self, cell: IVec3) -> bool {
+        self.block(cell).is_some_and(|b| self.server.creatures.lava_blocks(&self.server.content.blocks)[b.0 as usize])
     }
 }
 
@@ -668,7 +679,7 @@ impl Server {
     /// where a body `height` blocks tall stands.
     fn shore_for(&self, at: Vec3, height: i32) -> Option<IVec3> {
         let ground = Ground::of(self);
-        let walker = path::Walker { height, climbs: true, wary: true, span: 1 };
+        let walker = path::Walker { height, climbs: true, wary: true, span: 1, drop: motion::SAFE_DROP };
         let feet = at.floor().as_ivec3();
         (1..=SHORE_RANGE).find_map(|r| {
             (-r..=r)
@@ -752,7 +763,11 @@ impl Server {
                 let going_round = creature.detour != 0.0 || creature.stuck > 0.5;
                 // Its way is of squares as wide as it is, and it makes for each one's middle.
                 let span = path::Walker::span_of(body.size.0);
-                let walker = path::Walker { height: body.size.1.ceil() as i32, climbs: movement.jump > 0.0, wary: water == Water::Land, span };
+                // Down a drop deeper than it climbs back only in a chase, or onto open ground.
+                let chasing = creature.mind.doing.is_some_and(|i| matches!(species.modules[i].0.name(), "hunt" | "defend"));
+                let climbs = movement.jump > 0.0;
+                let drop = if chasing { motion::SAFE_DROP } else { climbs as i32 };
+                let walker = path::Walker { height: body.size.1.ceil() as i32, climbs, wary: water == Water::Land, span, drop };
                 if (going_round || !cells.is_empty()) && stale && self.tick >= creature.way_at + TICKS_PER_SECOND as u64 {
                     let found = path::find(&Ground::of(self), &walker, walker.corner(body.position + Vec3::Y * 0.01), walker.corner(goal));
                     #[cfg(test)]
@@ -3549,7 +3564,7 @@ pub(crate) mod tick_cost_tests {
     #[test]
     #[ignore]
     fn search_cost_on_the_ground() {
-        let wolf = path::Walker { height: 1, climbs: true, wary: true, span: 1 };
+        let wolf = path::Walker { height: 1, climbs: true, wary: true, span: 1, drop: motion::SAFE_DROP };
         let bear = path::Walker { height: 2, span: 2, ..wolf };
         for door in [0, 1, 2] {
             let mut server = crate::test_server();
@@ -4166,6 +4181,89 @@ mod fight_tests {
                 tried += 1;
             }
             assert!(tried > 0);
+        }
+    }
+
+    /// Walks each land kind east across a pen at `pace` (its walk, or its run) for long
+    /// enough to cross it, turning as it steers; where its feet got to lowest, and whether
+    /// any of it was ever in a cell `bad` says.
+    fn walk_east(server: &Server, c: IVec3, species: &voxmar_engine::creature::Creature, run: bool, bad: impl Fn(IVec3) -> bool) -> (f32, bool) {
+        let dt = 1.0 / TICKS_PER_SECOND as f32;
+        let ground = Ground::of(server);
+        let movement = species.def.movement;
+        let pace = if run { movement.run.max(movement.walk) } else { movement.walk };
+        let mut body = Body::new(c.as_vec3() + Vec3::new(-4.5, 0.0, 0.5), motion::yaw_of(Vec3::X), species.def.body.size);
+        (body.reach, body.head, body.on_ground) = (species.reach, species.head, true);
+        let (mut side, mut lowest, mut touched) = (0.0, body.position.y, false);
+        for _ in 0..((12.0 / pace + 4.0) * TICKS_PER_SECOND as f32) as u32 {
+            let (heading, turned) = motion::steer(&body, &ground, &movement, Water::Land, Vec3::X, side, pace, dt);
+            side = turned;
+            motion::step(&mut body, &ground, &movement, Water::Land, Drive { wish: heading, speed: pace, face: None }, dt);
+            lowest = lowest.min(body.position.y);
+            touched |= body.aabb().intersects(&bad);
+        }
+        (lowest, touched)
+    }
+
+    /// The land kinds that walk (not fliers or drifters).
+    fn walkers(server: &Server) -> Vec<&voxmar_engine::creature::Creature> {
+        use voxmar_engine::creature::Style;
+        server.content.creatures.iter().map(|(_, s)| s).filter(|s| s.def.habitat.water == Water::Land && !matches!(s.def.movement.style, Style::Flier | Style::Drifter)).collect()
+    }
+
+    /// A closed pit four across and five along, `deep` blocks deep, dug in a pen's floor
+    /// from x = 1: what a player digs.
+    fn closed_pit(server: &mut Server, c: IVec3, deep: i32) {
+        set(server, "base:stone", (0..=5).flat_map(|x| (-3..=3).flat_map(move |z| (-deep - 1..=-1).map(move |y| c + IVec3::new(x, y, z)))));
+        for (x, z, y) in (1..=4).flat_map(|x| (-2..=2).flat_map(move |z| (-deep..=-1).map(move |y| (x, z, y)))) {
+            server.world.set_block(c + IVec3::new(x, y, z), BlockId::AIR);
+        }
+    }
+
+    /// A hole two or three deep that a player digs is a trap no kind gets out of: at a walk,
+    /// none goes down into it. Before: 73 of 73 walked in, villagers too, and stayed there.
+    #[test]
+    fn wanderers_never_walk_into_a_pit_they_cannot_climb_out_of() {
+        for deep in 2..=3 {
+            let mut server = crate::test_server();
+            let c = pen(&mut server, 9);
+            closed_pit(&mut server, c, deep);
+            let kinds = walkers(&server);
+            assert!(kinds.len() > 10, "too few kinds walk");
+            for species in kinds {
+                let (lowest, _) = walk_east(&server, c, species, false, |_| false);
+                assert!(lowest > c.y as f32 - 0.5, "{} walked into a pit {deep} deep: down to {:.2}", species.def.name, lowest - c.y as f32);
+            }
+        }
+    }
+
+    /// A chase above a walk still goes down into the pit after what it chases.
+    #[test]
+    fn a_chaser_still_drops_into_a_pit() {
+        let mut server = crate::test_server();
+        let c = pen(&mut server, 9);
+        closed_pit(&mut server, c, 2);
+        let wolf = server.content.creatures.get(server.content.creatures.id("base:wolf").expect("a wolf"));
+        assert!(wolf.def.movement.run > wolf.def.movement.walk);
+        let (lowest, _) = walk_east(&server, c, wolf, true, |_| false);
+        assert!(lowest < c.y as f32 - 1.5, "a running wolf kept out of the pit: down to {:.2}", lowest - c.y as f32);
+    }
+
+    /// Lava, even one deep, is a wall to a land animal, walking or running. Before: 71 of
+    /// 71 walked into it.
+    #[test]
+    fn land_animals_keep_out_of_lava() {
+        let mut server = crate::test_server();
+        let c = pen(&mut server, 9);
+        set(&mut server, "base:stone", (0..=5).flat_map(|x| (-3..=3).map(move |z| c + IVec3::new(x, -2, z))));
+        set(&mut server, "base:lava", (1..=4).flat_map(|x| (-2..=2).map(move |z| c + IVec3::new(x, -1, z))));
+        let lava = |cell: IVec3| (1..=4).contains(&(cell.x - c.x)) && (-2..=2).contains(&(cell.z - c.z)) && cell.y == c.y - 1;
+        let kinds = walkers(&server);
+        for species in kinds {
+            for run in [false, true] {
+                let (_, touched) = walk_east(&server, c, species, run, lava);
+                assert!(!touched, "{} went into lava ({})", species.def.name, if run { "running" } else { "walking" });
+            }
         }
     }
 

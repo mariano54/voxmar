@@ -7,6 +7,7 @@
 
 use glam::{IVec3, Vec3};
 
+use super::path::{self, Walker};
 use super::{Movement, Style, Water};
 use crate::physics::{Aabb, move_and_slide};
 
@@ -147,6 +148,11 @@ pub struct Drive {
 pub trait Surroundings {
     fn solid(&self, cell: IVec3) -> bool;
     fn water(&self, cell: IVec3) -> bool;
+    /// Whether a cell is lava (or another fluid that burns): a wall to a land animal at any
+    /// depth, as water two deep is. None by default.
+    fn lava(&self, _cell: IVec3) -> bool {
+        false
+    }
 }
 
 /// The yaw that faces along `direction`.
@@ -242,7 +248,7 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
     // against what it stands on now: the drop between them, and water there, judged the
     // same on the ground or in the air. A wall along the way is ground to no one.
     let reach = SAFE_DROP + 4;
-    let landing = |from: IVec3| (0..=reach).map(|k| from - IVec3::Y * k).find(|&c| world.water(c) || world.solid(c - IVec3::Y));
+    let landing = |from: IVec3| (0..=reach).map(|k| from - IVec3::Y * k).find(|&c| world.water(c) || world.lava(c) || world.solid(c - IVec3::Y));
     // What it stands on is the highest ground under any part of its box: at an edge, its
     // middle may already be over the drop.
     let half = body.size.0 * 0.5 - 0.05;
@@ -274,6 +280,21 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
     let held = |middle: Vec3, then: IVec3| {
         if then.y >= feet || pace > movement.walk || world.water(then) {
             return false;
+        }
+        // Deeper than it could climb back, at a walk, only onto open ground: never into a
+        // pit it would not get out of (a hole a player dug two or three deep).
+        let climb = (movement.jump > 0.0) as i32;
+        if feet - then.y > climb {
+            let walker = Walker {
+                height: body.size.1.ceil() as i32,
+                climbs: climb > 0,
+                wary: water == Water::Land,
+                span: Walker::span_of(body.size.0),
+                drop: climb,
+            };
+            if !path::way_out(world, &walker, walker.corner(Vec3::new(middle.x, then.y as f32 + 0.01, middle.z)), feet) {
+                return true;
+            }
         }
         let at = |k: i32| Vec3::new(middle.x, then.y as f32, middle.z) + heading * (0.1 * k as f32);
         // Too narrow along its way for its box (a crack): it never comes down in it.
@@ -321,7 +342,10 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
             None => false,
             Some(then) => {
                 let first_down = then.y < feet && !std::mem::replace(&mut judged, true);
-                now - then.y <= SAFE_DROP && !(wary && world.water(then) && world.water(then - IVec3::Y)) && !(first_down && held(middle, then))
+                now - then.y <= SAFE_DROP
+                    && !(wary && world.water(then) && world.water(then - IVec3::Y))
+                    && !(water == Water::Land && world.lava(then))
+                    && !(first_down && held(middle, then))
             }
         }
     })

@@ -8,7 +8,7 @@ use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
 use glam::{IVec3, Vec3};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::motion::{SAFE_DROP, Surroundings};
 
@@ -19,12 +19,16 @@ pub struct Walker {
     pub height: i32,
     /// Whether it gets up a single block.
     pub climbs: bool,
-    /// Whether water two deep is a wall to it (a land animal).
+    /// Whether water two deep, or lava, is a wall to it (a land animal).
     pub wary: bool,
     /// Blocks across its body takes up (`span_of` its width): a bear or an aurochs takes a
     /// square two across, the Rootmother three. A way for it is a way of such squares,
     /// each named by its corner cell (least x and z).
     pub span: i32,
+    /// How far down it goes in one step of its own accord: `SAFE_DROP` in a chase, else
+    /// only as far as it could climb back (`Walker::climb`). Further down only onto open
+    /// ground, never into a pit it could not get out of (`way_out`).
+    pub drop: i32,
 }
 
 /// The most cells a search looks at, and how far from where it starts it looks: a short way
@@ -33,6 +37,11 @@ pub const BUDGET: usize = 1500;
 pub const RANGE: i32 = 24;
 
 impl Walker {
+    /// How high it gets up in one step: a block if it jumps.
+    pub fn climb(&self) -> i32 {
+        self.climbs as i32
+    }
+
     /// Blocks across a body `width` wide takes up.
     pub fn span_of(width: f32) -> i32 {
         (width - 1e-3).ceil().max(1.0) as i32
@@ -56,6 +65,34 @@ impl Walker {
     }
 }
 
+/// Squares a fill out of a drop (`way_out`) looks at before it takes the ground down there
+/// for open.
+pub const OPEN_FLOOR: usize = 64;
+
+/// Whether a walker come down to the square with corner `from` gets back up to `top` (the
+/// level it came down from) or out onto open ground: a fill over the squares it can go to
+/// from there, going down no further than it climbs, reaching a square at `top` or above, or
+/// more than `OPEN_FLOOR` of them. Down into a pit it would never get out of, a walker does
+/// not go of its own accord.
+pub fn way_out(world: &impl Surroundings, walker: &Walker, from: IVec3, top: i32) -> bool {
+    let looker = Looker { deep: false, ..Looker::new(world, Walker { drop: walker.climb(), ..*walker }, None) };
+    let mut seen = FxHashSet::from_iter([from]);
+    let mut queue = vec![from];
+    while let Some(cell) = queue.pop() {
+        if cell.y >= top || seen.len() > OPEN_FLOOR {
+            return true;
+        }
+        for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)] {
+            if let Some(next) = looker.step(cell, dx, dz)
+                && seen.insert(next)
+            {
+                queue.push(next);
+            }
+        }
+    }
+    false
+}
+
 /// What a search has learnt of one cell, as bits: `OPEN_KNOWN` and `OPEN` (the column from
 /// it up is open as high as the walker stands), `GROUND_KNOWN` and the rest (what is in it
 /// and under it), and `STANDS_KNOWN` and `STANDS` (of the square it is the corner of).
@@ -67,7 +104,7 @@ const FLOOR: u8 = 8;
 /// Water in the cell.
 const WET: u8 = 16;
 /// Water in the cell and under or over it (two deep for a land animal, from its top or
-/// from its bed).
+/// from its bed), or lava in it.
 const DEEP: u8 = 32;
 /// Whether it stands in the square with its corner at the cell, once known.
 const STANDS_KNOWN: u8 = 64;
@@ -85,6 +122,9 @@ struct Looker<'a, W> {
     /// The grid's least corner, and what it holds of each cell.
     origin: IVec3,
     known: Vec<std::cell::Cell<u8>>,
+    /// Whether it goes down further than `Walker::drop` onto open ground (`way_out`): not
+    /// while it is itself looking for a way out.
+    deep: bool,
 }
 
 /// Cells across the grid a search keeps.
@@ -96,7 +136,7 @@ impl<'a, W: Surroundings> Looker<'a, W> {
         let span = walker.span.max(1);
         let origin = about.map_or(IVec3::ZERO, |at| at - IVec3::new(RANGE + 2, DEPTH, RANGE + 2));
         let size = about.map_or(0, |_| ((ACROSS + span) * (ACROSS + span) * 2 * DEPTH) as usize);
-        Self { world, walker, origin, known: vec![std::cell::Cell::new(0); size] }
+        Self { world, walker, origin, known: vec![std::cell::Cell::new(0); size], deep: true }
     }
 
     /// Where the grid keeps `cell`, if it does.
@@ -129,7 +169,7 @@ impl<'a, W: Surroundings> Looker<'a, W> {
             return bits;
         }
         let wet = self.world.water(cell);
-        let deep = wet && (self.world.water(cell - IVec3::Y) || self.world.water(cell + IVec3::Y));
+        let deep = wet && (self.world.water(cell - IVec3::Y) || self.world.water(cell + IVec3::Y)) || self.world.lava(cell);
         let bits = if self.world.solid(cell - IVec3::Y) { FLOOR } else { 0 } | if wet { WET } else { 0 } | if deep { DEEP } else { 0 };
         if let Some(slot) = slot {
             slot.set(slot.get() | GROUND_KNOWN | bits);
@@ -184,8 +224,10 @@ impl<'a, W: Surroundings> Looker<'a, W> {
             let headroom = || self.square(cell).all(|c| !self.world.solid(c + IVec3::Y * self.walker.height));
             return (self.walker.climbs && dx * dz == 0 && headroom() && self.stands(up)).then_some(up);
         }
-        // Over the edge: it drops while the square is clear, as far as a short drop.
-        (1..=SAFE_DROP).map(|d| flat - IVec3::Y * d).take_while(|&c| self.clear(c)).find(|&c| self.stands(c))
+        // Over the edge: it drops while the square is clear, as far as a short drop; further
+        // than it goes of its own accord only onto open ground.
+        let down = (1..=SAFE_DROP).map(|d| flat - IVec3::Y * d).take_while(|&c| self.clear(c)).find(|&c| self.stands(c))?;
+        (cell.y - down.y <= self.walker.drop || self.deep && way_out(self.world, &self.walker, down, cell.y)).then_some(down)
     }
 }
 
@@ -272,7 +314,7 @@ mod tests {
         }
     }
 
-    const WOLF: Walker = Walker { height: 1, climbs: true, wary: true, span: 1 };
+    const WOLF: Walker = Walker { height: 1, climbs: true, wary: true, span: 1, drop: SAFE_DROP };
 
     #[test]
     fn a_way_goes_through_the_door_and_up_the_step() {
@@ -293,6 +335,34 @@ mod tests {
         // One that cannot jump keeps off the step.
         let snail = Walker { climbs: false, ..WOLF };
         assert_eq!(find(&Yard { door: Some(0) }, &snail, IVec3::new(2, 0, 0), IVec3::new(6, 1, 0)), None);
+    }
+
+    /// Flat ground with, from x = 2 to 4 along z = -1..=1, a pit `deep` blocks deep, and,
+    /// with `open`, the land past x = 4 down at the pit's floor as far as one looks.
+    struct Hole {
+        deep: i32,
+        open: bool,
+    }
+
+    impl Surroundings for Hole {
+        fn solid(&self, c: IVec3) -> bool {
+            let in_pit = (2..=4).contains(&c.x) && (-1..=1).contains(&c.z) || self.open && c.x > 4;
+            c.y < if in_pit { -self.deep } else { 0 }
+        }
+        fn water(&self, _: IVec3) -> bool {
+            false
+        }
+    }
+
+    #[test]
+    fn a_wanderer_goes_down_no_further_than_it_climbs_but_onto_open_ground() {
+        let wanderer = Walker { drop: WOLF.climb(), ..WOLF };
+        let into = |hole: &Hole, walker: &Walker| find(hole, walker, IVec3::new(0, 0, 0), IVec3::new(3, -hole.deep, 0));
+        assert_eq!(into(&Hole { deep: 2, open: false }, &wanderer), None, "a wanderer went down into a pit it cannot get out of");
+        assert!(into(&Hole { deep: 1, open: false }, &wanderer).is_some(), "a wanderer kept out of a pit it climbs out of");
+        assert!(into(&Hole { deep: 2, open: true }, &wanderer).is_some(), "a wanderer kept off open ground two down");
+        assert!(into(&Hole { deep: 2, open: false }, &WOLF).is_some(), "a chaser kept out of the pit");
+        assert!(!way_out(&Hole { deep: 3, open: false }, &wanderer, IVec3::new(3, -3, 0), 0));
     }
 
     #[test]
@@ -470,7 +540,7 @@ mod cost {
     #[test]
     #[ignore]
     fn search_cost() {
-        let wolf = Walker { height: 1, climbs: true, wary: true, span: 1 };
+        let wolf = Walker { height: 1, climbs: true, wary: true, span: 1, drop: SAFE_DROP };
         let bear = Walker { height: 2, span: 2, ..wolf };
         for (name, walker) in [("wolf", wolf), ("bear", bear)] {
             for door in [0, 1, 2] {

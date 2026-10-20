@@ -185,8 +185,12 @@ the wing, drifters and swimmers do not steer.
 
 A way open to steer by is also one it can stand on: it looks a body's length ahead along
 the slide, and a step down further than `SAFE_DROP` (3 blocks), or into water two deep
-for a land animal not already out of its depth, is as shut as a wall (wading in the
-shallows too). So prey runs along a cliff
+for a land animal not already out of its depth, or into lava at any depth, is as shut as
+a wall (wading in the shallows too). At a walk, a drop deeper than it climbs back (a block
+if it jumps, else none) is shut too unless the ground below is open: a fill over the
+squares it could go to down there (`path::way_out`) reaches one it climbs back up from,
+or more than 64 of them. So nothing wanders into a hole a player dug two or three deep;
+a chase faster than a walk still drops in. So prey runs along a cliff
 edge or a lake shore rather than off it, and a boxed-in creature stands rather than press.
 Anything that jumps gets up a single block, however low its jump (the hop is lifted to
 clear it), and no higher. A land animal out of its depth (water under its feet and below)
@@ -195,7 +199,8 @@ the shallows, and hauls itself up the bank.
 
 When steering is going round (or already following one), a short A* (`path::find`) looks
 for a way over the cells the body fits in: eight directions, no corner cut, up one block
-if it jumps, down no further than `SAFE_DROP`, at most 1500 cells within 24 blocks, again
+if it jumps, down no further than `SAFE_DROP` in a chase and otherwise no further than
+it climbs back unless onto open ground (`Walker::drop`, `way_out`), at most 1500 cells within 24 blocks, again
 at most once a second and only when its goal has moved. It walks the cells' centres, still
 steering, so a wolf finds the doorway in a wall (a shut door is a wall) and a sheep after
 wheat follows the player through it. A creature is made facing open air, so none starts
