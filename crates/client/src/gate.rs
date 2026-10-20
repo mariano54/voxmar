@@ -581,9 +581,10 @@ steps! {
     /// Every journal page, in English and Japanese: no text reaches past the element it
     /// sits in. Each page has the time a step has, to be drawn and read.
     FitJournal,
-    /// The screens with keys under them in a window of `SMALL` (the interface at 75%), in
-    /// English and Japanese: no text reaches past the element it sits in, and the keys under
-    /// each screen are clear of it and of the HUD along the bottom.
+    /// The screens with keys under them, and the recipe viewer on each of `FIT_LOOKUPS`, in a
+    /// window of `SMALL` (the interface at 75%), in English and Japanese: no text reaches past
+    /// the element it sits in, and the keys under each screen are clear of it and of the HUD
+    /// along the bottom.
     FitSmall,
     /// Leaving the world for the title screen.
     Leave,
@@ -729,6 +730,10 @@ struct Gate {
     web_head: Option<String>,
     /// A quest pinned only for the tracker-behind-book check, to let go after it.
     pinned_for_check: Option<String>,
+    /// Which of [`way_kinds`] the recipe step is looking up.
+    way_at: usize,
+    /// The quest the recipe step clicked in the viewer.
+    linked_quest: Option<String>,
     /// Whether the tracker showed in the game before leaving it.
     tracker_in_game: bool,
     /// A quest's cell on the web across, and the point of the canvas at the middle of the
@@ -1070,6 +1075,8 @@ impl Gate {
             web_canvas: Vec2::ZERO,
             web_head: None,
             pinned_for_check: None,
+            way_at: 0,
+            linked_quest: None,
             tracker_in_game: false,
             web_cell: 0.0,
             web_middle: Vec2::ZERO,
@@ -4892,7 +4899,7 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.advance(now);
             }
         }
-        _ => {
+        5 => {
             let viewer = world.resource::<RecipeViewer>();
             let back = viewer.trail.last().is_some_and(|lookup| lookup.item == log && lookup.uses);
             gate.check("recipes: back", if back { Ok("Back returns to the log's uses".into()) } else { Err(format!("after Back the viewer shows {:?}", viewer.trail.last())) });
@@ -4911,13 +4918,182 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 },
             );
             world.resource_mut::<RecipeViewer>().trail.clear();
+            gate.way_at = 0;
+            gate.advance(now);
+        }
+        // Each kind of way the book knows, looked up on an item made that way (picked from
+        // the book by kind, the first by name): the viewer draws the way, its words as the
+        // book has them, and the item's cell.
+        6 => {
+            let kinds = way_kinds(world);
+            let Some(&(kind, item, ref method)) = kinds.get(gate.way_at) else {
+                let found: Vec<&str> = kinds.iter().map(|(kind, ..)| *kind).collect();
+                gate.check("recipes: every way", if found.len() == WAY_KINDS.len() { Ok(format!("R over an item made each way drew that way's cells and words: {}", found.join(", "))) } else { Err(format!("the book has items made only {found:?} of {WAY_KINDS:?}")) });
+                gate.phase += 1;
+                gate.phase_since = now;
+                return;
+            };
+            let method = method.clone();
+            let mut viewer = world.resource_mut::<RecipeViewer>();
+            if viewer.trail.last().map(|look| look.item) != Some(item) {
+                viewer.trail.clear();
+                viewer.open(item, false);
+                world.resource_mut::<UiState>().recipes_open = true;
+                gate.phase_since = now;
+                return;
+            }
+            // The way is on its page; the page it is on shows.
+            let page = world.resource::<RecipeViewer>().found().iter().position(|entry| entry.method == method).unwrap_or(0) / crate::hud::recipes::PER_PAGE;
+            if let Some(look) = world.resource_mut::<RecipeViewer>().trail.last_mut()
+                && look.page != page
+            {
+                look.page = page;
+                return;
+            }
+            let wanted: Vec<String> = {
+                let (locale, launch) = (world.resource::<Locale>(), world.resource::<Launch>());
+                crate::hud::recipes::describe(locale, launch, &method).into_iter().map(|(line, _)| line).collect()
+            };
+            let drawn = viewer_words(world);
+            let cell = world.query::<(&crate::hud::recipes::ViewerItem, &InheritedVisibility)>().iter(world).any(|(cell, shown)| cell.0 == item && shown.get());
+            let missing: Vec<&String> = wanted.iter().filter(|line| !drawn.contains(line)).collect();
+            if missing.is_empty() && cell {
+                gate.way_at += 1;
+                gate.phase_since = now;
+            } else if in_phase > 2.0 {
+                let name = world.resource::<Launch>().content.blocks.def(item).name.clone();
+                gate.check("recipes: every way", Err(format!("R over {name} ({kind}): its cell drawn {cell}, its words {wanted:?} missing {missing:?} from {drawn:?}")));
+                gate.phase += 1;
+                gate.phase_since = now;
+            }
+        }
+        // The quests asking for a log are listed under it; the first one clicked opens the
+        // quest book on it.
+        7 => {
+            let expected: Vec<String> = {
+                let content = &world.resource::<Launch>().content;
+                voxmar_engine::quest::asking(&content.quests, &content.blocks, log).into_iter().take(crate::hud::recipes::QUESTS_SHOWN).map(|q| q.name.clone()).collect()
+            };
+            let mut viewer = world.resource_mut::<RecipeViewer>();
+            if viewer.trail.last().map(|look| look.item) != Some(log) {
+                viewer.trail.clear();
+                viewer.open(log, false);
+                world.resource_mut::<UiState>().recipes_open = true;
+                return;
+            }
+            let links: Vec<(Entity, String)> = world.query::<(Entity, &crate::hud::recipes::QuestLink, &InheritedVisibility)>().iter(world).filter(|(_, _, shown)| shown.get()).map(|(entity, link, _)| (entity, link.0.clone())).collect();
+            let mut names: Vec<String> = links.iter().map(|(_, name)| name.clone()).collect();
+            names.sort();
+            let mut sorted = expected.clone();
+            sorted.sort();
+            if let Some((first, _)) = links.iter().find(|(_, name)| Some(name) == expected.first())
+                && names == sorted
+            {
+                gate.check("recipes: quests", Ok(format!("an oak log lists the quests that ask for it: {}", expected.join(", "))));
+                world.resource_mut::<UiClicks>().next = Some((*first, MouseButton::Left));
+                gate.linked_quest = expected.first().cloned();
+                gate.advance(now);
+            } else if in_phase > 2.0 {
+                gate.check("recipes: quests", Err(format!("an oak log lists quests {names:?}, the content asks for it in {expected:?}")));
+                gate.phase = 9;
+                gate.phase_since = now;
+            }
+        }
+        8 => {
+            let (open, viewing) = (world.resource::<UiState>().quests_open, world.resource::<UiState>().recipes_open);
+            let picked = world.resource::<crate::hud::quests::QuestView>().picked.clone();
+            let wanted = gate.linked_quest.clone();
+            if open && !viewing && picked == wanted {
+                gate.check("recipes: quest link", Ok(format!("clicking {} opened the quest book on it, the viewer put away", wanted.unwrap_or_default())));
+                gate.linked_quest = None;
+                gate.advance(now);
+            } else if in_phase > 2.0 {
+                gate.check("recipes: quest link", Err(format!("2 s after the quest was clicked: book open {open}, viewer open {viewing}, picked {picked:?} (wanted {wanted:?})")));
+                gate.linked_quest = None;
+                gate.advance(now);
+            }
+        }
+        // Under the inventory, the keys that look an item up are named.
+        9 => {
             let mut ui = world.resource_mut::<UiState>();
-            (ui.recipes_open, ui.inventory_open) = (false, false);
+            (ui.quests_open, ui.recipes_open, ui.inventory_open) = (false, false, true);
+            let names: Vec<String> = {
+                let (settings, locale) = (world.resource::<crate::settings::Settings>(), world.resource::<Locale>());
+                [settings.recipes_key.name(locale), settings.uses_key.name(locale)].into()
+            };
+            let shown: Vec<String> = world
+                .query_filtered::<(Entity, &InheritedVisibility), With<crate::hud::screens::LookKey>>()
+                .iter(world)
+                .filter(|(_, visible)| visible.get())
+                .map(|(entity, _)| entity)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .flat_map(|key| texts_under(world, key))
+                .collect();
+            let all = names.iter().all(|name| shown.contains(name));
+            if all || in_phase > 2.0 {
+                gate.check("recipes: keys shown", if all { Ok(format!("the inventory's key row names {} for recipes and {} for uses", names[0], names[1])) } else { Err(format!("the inventory's key row shows {shown:?}, not {names:?}")) });
+                gate.advance(now);
+            }
+        }
+        _ => {
+            world.resource_mut::<RecipeViewer>().trail.clear();
+            let mut ui = world.resource_mut::<UiState>();
+            (ui.recipes_open, ui.inventory_open, ui.quests_open) = (false, false, false);
             world.resource_mut::<HoveredItem>().0 = None;
             gate.next(Step::Chop, now);
         }
     }
 }
+
+/// The kinds of way the recipe step looks up, as `way_kinds` names them.
+const WAY_KINDS: [&str; 6] = ["craft at a level", "machine", "home station", "harvest", "breaking", "fishing"];
+
+/// For each of [`WAY_KINDS`] the book has, an item made that way (the first by name) and
+/// the way.
+fn way_kinds(world: &World) -> Vec<(&'static str, BlockId, voxmar_engine::recipe_book::Method)> {
+    use voxmar_engine::recipe_book::Method;
+    let Some(book) = world.resource::<crate::hud::recipes::RecipeViewer>().book() else { return Vec::new() };
+    let blocks = &world.resource::<Launch>().content.blocks;
+    let kind = |method: &Method| match method {
+        Method::Craft { skill: Some(_), level, .. } if *level > 1 => Some("craft at a level"),
+        Method::Process { .. } => Some("machine"),
+        Method::Work { .. } => Some("home station"),
+        Method::Harvest { .. } => Some("harvest"),
+        Method::Break { .. } => Some("breaking"),
+        Method::Catch { .. } => Some("fishing"),
+        _ => None,
+    };
+    WAY_KINDS
+        .iter()
+        .filter_map(|wanted| {
+            book.entries().iter().filter(|entry| kind(&entry.method) == Some(*wanted) && blocks.listed(entry.output)).min_by(|a, b| blocks.def(a.output).name.cmp(&blocks.def(b.output).name)).map(|entry| (*wanted, entry.output, entry.method.clone()))
+        })
+        .collect()
+}
+
+/// Every word drawn in the recipe viewer's ways.
+fn viewer_words(world: &mut World) -> Vec<String> {
+    let Some(body) = world.query_filtered::<Entity, With<crate::hud::recipes::ViewerBody>>().iter(world).next() else { return Vec::new() };
+    texts_under(world, body)
+}
+
+/// The words drawn under `root`, each text once.
+fn texts_under(world: &mut World, root: Entity) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut stack = vec![root];
+    while let Some(entity) = stack.pop() {
+        if let Some(text) = world.get::<Text>(entity) {
+            found.push(text.0.clone());
+        }
+        if let Some(children) = world.get::<Children>(entity) {
+            stack.extend(children.iter());
+        }
+    }
+    found
+}
+
+
 
 /// Where the chop step sets its chopping block: across the campfire from the drying rack.
 const CHOP_FROM_FIRE: IVec3 = IVec3::new(-2, 0, 0);
@@ -6074,8 +6250,8 @@ fn felled_by(content: &voxmar_engine::content::Content) -> Option<(BlockId, Bloc
 /// crafted in the hand's grid from what its recipe asks, fells it and the log comes to hand.
 fn flint(world: &mut World, gate: &mut Gate, now: f32) {
     let block = gate.feet + IVec3::new(0, 0, 14) + CHOP_FROM_FIRE;
-    // In the middle of a cell, one cell short of the log, so the felled log's drop comes
-    // to rest within `MAGNET`: a stand on a cell's edge was never judged reached.
+    // In the middle of a cell, one cell short of the log: a stand on a cell's edge was
+    // never judged reached.
     let stand = Vec3::new(block.x as f32 + 0.5, block.y as f32, block.z as f32 - 1.5);
     let waited = gate.server_in_phase() > FLINT_WAIT;
     let content = world.resource::<Launch>().content.clone();
@@ -6090,6 +6266,8 @@ fn flint(world: &mut World, gate: &mut Gate, now: f32) {
     let end = |world: &mut World, gate: &mut Gate| {
         mouse(world, MouseButton::Left, false);
         let net = world.resource::<Net>();
+        // Back off the log's cell, where the pickup left them: later steps set blocks there.
+        net.command(&format!("tp {} {} {}", stand.x, stand.y, stand.z));
         net.command(&format!("setblock {} {} {} air", block.x, block.y, block.z));
         for item in [log, tool].into_iter().chain(recipe.cells().into_iter().flatten()) {
             net.command(&format!("clear {}", short(&name(item))));
@@ -6192,20 +6370,41 @@ fn flint(world: &mut World, gate: &mut Gate, now: f32) {
                 end(world, gate);
             }
         }
-        // Held, it fells the log, and the log comes to hand.
-        _ => {
-            let felled = world.resource::<ClientWorld>().block(block) != Some(log);
-            let got = holding(world, &name(log)).0;
-            if felled && got >= 1 {
+        // Held, it fells the log. Its drop pops out a block or so whichever way the server's
+        // tick throws it: the player steps onto where it stood, which every pop is in reach
+        // of (`dropped::pop_reach`).
+        4 => {
+            if world.resource::<ClientWorld>().block(block) != Some(log) {
                 mouse(world, MouseButton::Left, false);
-                gate.check("flint: felled", Ok(format!("held, the {} felled the {} and its log came to hand", name(tool), name(log))));
-                end(world, gate);
+                let onto = Vec3::new(block.x as f32 + 0.5, block.y as f32, block.z as f32 + 0.5);
+                world.resource::<Net>().command(&format!("tp {:.2} {:.2} {:.2}", onto.x, onto.y, onto.z));
+                gate.advance(now);
             } else if waited {
-                gate.check("flint: felled", Err(format!("holding {:?}, the {} at {block} felled {felled}, {got} logs carried; the crosshair was on {}, screens open {:?}", holding_any(world), name(log), crosshair_on(world), covering_screens(world))));
+                gate.check("flint: felled", Err(format!("holding {:?}, the {} at {block} still stands; the crosshair was on {}, screens open {:?}", holding_any(world), name(log), crosshair_on(world), covering_screens(world))));
                 end(world, gate);
             } else {
                 aim_at(world, block.as_vec3() + Vec3::splat(0.5));
                 mouse(world, MouseButton::Left, true);
+            }
+        }
+        // And the log comes to hand.
+        _ => {
+            let got = holding(world, &name(log)).0;
+            if got >= 1 {
+                gate.check("flint: felled", Ok(format!("held, the {} felled the {} and its log came to hand", name(tool), name(log))));
+                end(world, gate);
+            } else if waited {
+                let player = world.resource::<LocalPlayer>();
+                let middle = player.position + Vec3::Y * voxmar_engine::physics::player::HEIGHT / 2.0;
+                let lying: Vec<String> = world
+                    .resource::<crate::drops::Drops>()
+                    .lying()
+                    .filter(|(_, stack, _)| stack.item == log)
+                    .map(|(_, _, at)| format!("one lies at ({:.2}, {:.2}, {:.2}), {:.2} blocks from the player's middle (drawn in within {})", at.x, at.y, at.z, (at + Vec3::Y * voxmar_engine::dropped::SIZE / 2.0).distance(middle), voxmar_engine::dropped::MAGNET))
+                    .collect();
+                let lying = if lying.is_empty() { "none lies about".to_owned() } else { lying.join(", ") };
+                gate.check("flint: felled", Err(format!("the {} at {block} felled, no log carried, the player at ({:.2}, {:.2}, {:.2}); {lying}", name(log), player.position.x, player.position.y, player.position.z)));
+                end(world, gate);
             }
         }
     }
@@ -10087,8 +10286,20 @@ enum View {
 }
 
 /// What the text-fit tour looks up in the recipe viewer, and whether its uses: a crafted
-/// item, an ingredient, and a creature's product with a range of amounts.
-const FIT_LOOKUPS: [(&str, bool); 4] = [("base:campfire", false), ("base:oak_log", true), ("base:wool", false), ("base:cooked_small_game", false)];
+/// item, an ingredient (with the quests asking for it), a creature's product with a range
+/// of amounts, a cooked dish, a machine's, a home station's, what breaking gravel gives now
+/// and then, a harvest and a catch.
+const FIT_LOOKUPS: [(&str, bool); 9] = [
+    ("base:campfire", false),
+    ("base:oak_log", true),
+    ("base:wool", false),
+    ("base:cooked_small_game", false),
+    ("base:iron_dust", false),
+    ("base:jerky", false),
+    ("base:flint", false),
+    ("base:wheat", false),
+    ("base:raw_perch", false),
+];
 
 /// The languages the text-fit tour checks, and how long it leaves each view to lay out.
 const FIT_LANGUAGES: [&str; 2] = ["en", "ja"];
@@ -10132,12 +10343,18 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let views: Vec<View> = if gate.step == Step::FitJournal {
         (0..voxmar_engine::journal::Page::ALL.len()).map(View::Journal).collect()
     } else if gate.step == Step::FitSmall {
-        vec![View::Inventory, View::Character, View::Prayers, View::Journal(0), View::Quests, View::FirstNight, View::Menu(0)]
+        [View::Inventory]
+            .into_iter()
+            .chain((0..FIT_LOOKUPS.len()).map(View::Recipes))
+            .chain([View::Character, View::Prayers, View::Journal(0), View::Quests, View::FirstNight, View::Menu(0)])
+            .collect()
     } else if gate.step == Step::FitMenus {
         [View::Title, View::Worlds, View::Create, View::Join].into_iter().chain((0..crate::settings::TABS).map(View::Settings)).collect()
     } else {
-        [View::Hud, View::Debug, View::Tracker, View::Dead, View::Console, View::Inventory, View::Recipes(0), View::Recipes(1), View::Recipes(2), View::Recipes(3), View::Character, View::Prayers]
+        [View::Hud, View::Debug, View::Tracker, View::Dead, View::Console, View::Inventory]
             .into_iter()
+            .chain((0..FIT_LOOKUPS.len()).map(View::Recipes))
+            .chain([View::Character, View::Prayers])
             .chain((0..skills).map(View::Guide))
             .chain([View::Quests, View::FirstNight])
             .chain((0..crate::settings::TABS).map(View::Menu))
