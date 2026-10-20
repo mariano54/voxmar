@@ -14,7 +14,8 @@
 //! Home is a condition too. A player's home (the lit Homestead Hearth, else the bed they last
 //! slept in) is surveyed for the tags of the blocks around it, and an effect may need the
 //! player to be there (`AtHome`), under a roof (`Indoors`) and to have so many blocks with a
-//! tag around it (`HomeHas("bed", 1)`). A ladder of such effects, each replacing the one
+//! tag around it (`HomeHas("bed", 1)`), and walls about the room it stands in of so good a
+//! shelter (`HomeWalls(Sound, 0.6)`: the walls' [`Shelter`] tags). A ladder of such effects, each replacing the one
 //! below, is a home that gets cosier as it is furnished (base/effects.ron). Sleeping at a
 //! bed gives the effects the file's `sleeps` rules name, those whose `needs` effect would
 //! hold where the player sleeps: a better rest for a better home.
@@ -181,6 +182,10 @@ pub enum Condition {
     /// At home, with at least this many blocks carrying the tag around it. Besides block
     /// tags, `kept` counts the animals the player keeps around the home.
     HomeHas(String, u32),
+    /// At home, with at least this share (above 0, at most 1) of the faces about the room
+    /// it stands in this good a shelter or better: its walls and roof, an opening out of the
+    /// home's reach counting against it (`HomeWalls(Sound, 0.6)`).
+    HomeWalls(Shelter, f32),
     /// Under a roof while the inner condition (the weather) holds out in the open: the
     /// storm outside, from indoors.
     Sheltered(Box<Condition>),
@@ -221,6 +226,16 @@ impl Condition {
         }
     }
 
+    /// The shares `HomeWalls` asks anywhere in this condition.
+    fn home_walls(&self, into: &mut Vec<f32>) {
+        match self {
+            Condition::HomeWalls(_, share) => into.push(*share),
+            Condition::All(list) | Condition::Any(list) => list.iter().for_each(|c| c.home_walls(into)),
+            Condition::Not(c) | Condition::Sheltered(c) => c.home_walls(into),
+            _ => {}
+        }
+    }
+
     /// The tags `HomeHas` asks of a home anywhere in this condition.
     fn home_tags<'a>(&'a self, into: &mut Vec<&'a str>) {
         match self {
@@ -253,6 +268,9 @@ pub enum Lack {
     Away,
     /// Blocks with a tag: how many there are and how many are wanted.
     Tag { tag: String, have: u32, need: u32 },
+    /// Walls of a shelter or better about the room: the share there is and the share
+    /// wanted, in hundredths.
+    Walls { shelter: Shelter, have: u32, need: u32 },
     /// Any one of these will do.
     OneOf(Vec<Vec<Lack>>),
 }
@@ -261,7 +279,7 @@ impl Condition {
     /// Whether the condition is about a home (`AtHome` or `HomeHas` anywhere in it).
     fn about_home(&self) -> bool {
         match self {
-            Condition::AtHome | Condition::HomeHas(..) => true,
+            Condition::AtHome | Condition::HomeHas(..) | Condition::HomeWalls(..) => true,
             Condition::All(list) | Condition::Any(list) => list.iter().any(Condition::about_home),
             Condition::Not(c) => c.about_home(),
             _ => false,
@@ -278,6 +296,11 @@ impl Condition {
             Condition::AtHome => vec![Lack::Away],
             Condition::Indoors => vec![Lack::Roof],
             Condition::HomeHas(tag, need) => vec![Lack::Tag { tag: tag.clone(), have: s.home.map_or(0, |h| h.count(tag)), need: *need }],
+            Condition::HomeWalls(shelter, need) => {
+                let have = s.home.map_or(0.0, |h| h.walls.share(*shelter));
+                // Rounded down, so a share short of the need never reads as meeting it.
+                vec![Lack::Walls { shelter: *shelter, have: (have * 100.0).floor() as u32, need: (need * 100.0).ceil() as u32 }]
+            }
             Condition::All(list) => list.iter().flat_map(|c| c.lacks(s)).collect(),
             Condition::Any(list) => vec![Lack::OneOf(list.iter().map(|c| c.lacks(s)).collect())],
             _ => Vec::new(),
@@ -320,15 +343,96 @@ pub struct Situation<'a> {
 }
 
 /// How many blocks with each tag lie around a home: the tags are those effects ask of it
-/// (`EffectRegistry::home_tags`).
+/// (`EffectRegistry::home_tags`). And the walls about the room it stands in, when effects
+/// ask after them (`EffectRegistry::home_walls`).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct HomeSurvey {
     pub counts: Vec<(String, u32)>,
+    pub walls: Walls,
 }
 
 impl HomeSurvey {
     pub fn count(&self, tag: &str) -> u32 {
         self.counts.iter().find(|(t, _)| t == tag).map_or(0, |&(_, n)| n)
+    }
+}
+
+/// How well a wall keeps the weather out, as a building block's tag says:
+/// `shelter:draughty` (hide, wattle, cloth: a solid block with no tag counts so too),
+/// `shelter:sound` (logs, planks, cobble, daub, a shut door) or `shelter:fine` (dressed
+/// stone, brick, glass). A better one counts for every
+/// worse: fine walls are sound walls too.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize)]
+pub enum Shelter {
+    Draughty,
+    Sound,
+    Fine,
+}
+
+impl Shelter {
+    pub const ALL: [Shelter; 3] = [Shelter::Draughty, Shelter::Sound, Shelter::Fine];
+
+    /// The block tag that marks it.
+    pub fn tag(self) -> &'static str {
+        match self {
+            Shelter::Draughty => "shelter:draughty",
+            Shelter::Sound => "shelter:sound",
+            Shelter::Fine => "shelter:fine",
+        }
+    }
+
+    /// Its name alone, for words (`home.shelter.<name>`).
+    pub fn name(self) -> &'static str {
+        self.tag().trim_start_matches("shelter:")
+    }
+
+    /// The best shelter among a block's tags, if it has one.
+    pub fn of(tags: &[String]) -> Option<Shelter> {
+        Shelter::ALL.into_iter().rev().find(|s| tags.iter().any(|t| t == s.tag()))
+    }
+
+    /// How a block shelters as a wall of a room: an explicit shelter tag always wins
+    /// (cloth hung, a hay bale, a column); a solid block with none (earth, gravel, sand) is
+    /// draughty; none for one that is no wall: open, or `furniture` (a furniture tag and no
+    /// shelter tag), looked past to the wall behind.
+    pub fn of_wall(tags: &[String], solid: bool, furniture: bool) -> Option<Shelter> {
+        match Shelter::of(tags) {
+            Some(shelter) => Some(shelter),
+            None => (solid && !furniture).then_some(Shelter::Draughty),
+        }
+    }
+}
+
+/// The faces about a home's room: its walls and roof as a scan from the home out over the
+/// open cells within its reach meets them, each one a face (its floor is not counted). A
+/// face that leads out of the reach is an opening, of no shelter.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Walls {
+    /// Every face, openings with them.
+    pub faces: u32,
+    /// The faces of each shelter or better, by `Shelter` (draughty, sound, fine).
+    pub at_least: [u32; 3],
+}
+
+impl Walls {
+    /// A face of `shelter`, or an opening (`None`).
+    pub fn add(&mut self, shelter: Option<Shelter>) {
+        self.faces += 1;
+        for s in Shelter::ALL.into_iter().filter(|&s| Some(s) <= shelter) {
+            self.at_least[s as usize] += 1;
+        }
+    }
+
+    /// The share of the faces this good a shelter or better: none for no room at all.
+    pub fn share(&self, shelter: Shelter) -> f32 {
+        if self.faces == 0 { 0.0 } else { self.at_least[shelter as usize] as f32 / self.faces as f32 }
+    }
+
+    /// A room walled all about in `shelter`, `faces` of it.
+    pub fn all(shelter: Shelter, faces: u32) -> Self {
+        let mut walls = Walls::default();
+        (0..faces).for_each(|_| walls.add(Some(shelter)));
+        walls
     }
 }
 
@@ -351,6 +455,7 @@ impl Condition {
             Condition::Indoors => !s.outdoors,
             Condition::Seated => s.seated,
             Condition::HomeHas(tag, n) => s.home.is_some_and(|h| h.count(tag) >= *n),
+            Condition::HomeWalls(shelter, share) => s.home.is_some_and(|h| h.walls.share(*shelter) >= *share),
             Condition::Sheltered(c) => !s.outdoors && c.holds(&Situation { outdoors: true, ..*s }),
             Condition::Done(quest) => s.done.iter().any(|d| d == quest),
             Condition::Holding(tag) => s.held.contains(tag),
@@ -417,6 +522,8 @@ pub struct EffectRegistry {
     sleeps: Vec<(EffectId, f32, Option<EffectId>, Option<String>)>,
     /// The tags effects ask of a home, each once.
     home_tags: Vec<String>,
+    /// Whether any effect asks after a home's walls (`HomeWalls`).
+    home_walls: bool,
     /// The quests effects wait on, each once.
     quests: Vec<String>,
     /// The tags and reaches `Near` asks about, each once, and the tags `Holding` asks of
@@ -511,6 +618,17 @@ impl EffectRegistry {
                 when.home_tags(&mut tags);
             }
         }
+        let (mut shares, mut home_walls) = (Vec::new(), false);
+        for def in &defs {
+            for when in def.when.iter().chain(&def.ends) {
+                shares.clear();
+                when.home_walls(&mut shares);
+                if let Some(share) = shares.iter().find(|s| !(**s > 0.0 && **s <= 1.0)) {
+                    return Err(RegistryError(format!("effect `{}` asks `HomeWalls` for a share of {share}: above 0, at most 1", def.name)));
+                }
+                home_walls |= !shares.is_empty();
+            }
+        }
         let mut home_tags: Vec<String> = Vec::new();
         for tag in tags {
             if !home_tags.iter().any(|t| t == tag) {
@@ -556,7 +674,7 @@ impl EffectRegistry {
                 held_tags.push(tag.to_owned());
             }
         }
-        Ok(Self { defs, by_name, replaces, foods, sleeps, home_tags, quests, near_asks, held_tags })
+        Ok(Self { defs, by_name, replaces, foods, sleeps, home_tags, home_walls, quests, near_asks, held_tags })
     }
 
     pub fn get(&self, id: EffectId) -> &EffectDef {
@@ -717,6 +835,11 @@ impl EffectRegistry {
         &self.home_tags
     }
 
+    /// Whether any effect asks after a home's walls: what surveying a home scans its room for.
+    pub fn home_walls(&self) -> bool {
+        self.home_walls
+    }
+
     /// The announced steps of every ladder, by the names `Built` goals and tallies use:
     /// the effect's package, then the ladder and the effect's own name (`base:home_snug`).
     pub fn steps(&self) -> Vec<String> {
@@ -793,6 +916,18 @@ impl EffectRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A shelter tag always wins, furniture or not; a solid untagged block is draughty
+    /// unless it is furniture; anything else is no wall.
+    #[test]
+    fn a_shelter_tag_always_wins_a_wall() {
+        let tags = |list: &[&str]| list.iter().map(|t| t.to_string()).collect::<Vec<_>>();
+        assert_eq!(Shelter::of_wall(&tags(&["decor", "shelter:draughty"]), true, true), Some(Shelter::Draughty), "cloth");
+        assert_eq!(Shelter::of_wall(&tags(&["shelter:sound"]), false, false), Some(Shelter::Sound), "a shaped roof");
+        assert_eq!(Shelter::of_wall(&tags(&["soil"]), true, false), Some(Shelter::Draughty), "earth");
+        assert_eq!(Shelter::of_wall(&tags(&["storage"]), true, true), None, "a chest");
+        assert_eq!(Shelter::of_wall(&tags(&[]), false, false), None, "air");
+    }
 
     const EFFECTS: &str = r#"(effects: [
         (name: "by_the_fire", kind: Buff, title: "By the fire", description: "", when: Some(Warmed), modifiers: (heal: 2.0)),
@@ -969,7 +1104,7 @@ mod tests {
     }
 
     fn survey(counts: &[(&str, u32)]) -> HomeSurvey {
-        HomeSurvey { counts: counts.iter().map(|&(t, n)| (t.to_owned(), n)).collect() }
+        HomeSurvey { counts: counts.iter().map(|&(t, n)| (t.to_owned(), n)).collect(), ..Default::default() }
     }
 
     #[test]

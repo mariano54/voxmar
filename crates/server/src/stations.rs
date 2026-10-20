@@ -452,6 +452,25 @@ mod tests {
         assert_eq!(server.stations.get(AT), None);
     }
 
+    /// A raw hide off a beast cures on the rack in ten minutes, and taking it pays Crafting.
+    #[test]
+    fn a_raw_hide_hung_on_a_rack_is_hide_ten_minutes_later() {
+        let mut server = fixture(1);
+        server.set_block(AT, block(&server, "base:drying_rack"));
+        hold(&mut server, "base:raw_hide", 3);
+        server.use_station(1, AT);
+        assert_eq!(at(&server, AT), "base:drying_rack_hung");
+        server.tick += 10 * MINUTE - 1;
+        server.show_done_stations();
+        assert_eq!(at(&server, AT), "base:drying_rack_hung", "not yet");
+        server.tick += 1;
+        server.show_done_stations();
+        let crafting = xp(&server, "core:crafting");
+        server.use_station(1, AT);
+        assert_eq!(carried(&server, "base:hide"), 3);
+        assert_eq!(xp(&server, "core:crafting") - crafting, 60, "taking pays Crafting, 2 a hide (in tenths)");
+    }
+
     /// Looked at, a rack at work says what is on it and the seconds left, an empty one
     /// nothing; one too far off, or a block that is no station, is not answered.
     #[test]
