@@ -61,7 +61,7 @@ for scene in spawn town flight; do
       [[ -e $settings ]] && cp "$settings" "$config/settings.ron"
       scene_args "$scene"
       log=$(cd "$(dirname "$binary")/../.." && VOXMAR_MUTE=1 VOXMAR_TIMING=1 VOXMAR_FOREGROUND=1 VOXMAR_CONFIG=$config \
-        "$binary" --capture "$out/$scene.png" --size 2268x1473 "${args[@]}" 2>&1 | sed 's/\x1b\[[0-9;]*m//g')
+        "$binary" --capture "$out/$scene.png" --size 2268x1473 "${args[@]}" 2>&1 </dev/null | sed 's/\x1b\[[0-9;]*m//g')
       stats=$(grep -oE '(steady|flight): [0-9]+ frames.*' <<<"$log" | tail -1)
       gpu=$(grep -m1 -oE 'AdapterInfo \{ name: "[^"]*"' <<<"$log" | sed 's/.*name: //')
       echo "$scene round $round, $binary: ${stats:-no frame statistics (see a run by hand)} [gpu $gpu, load $(sysctl -n vm.loadavg 2>/dev/null | awk '{ print $2 }')]"
