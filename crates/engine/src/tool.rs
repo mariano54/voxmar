@@ -622,9 +622,9 @@ mod tests {
             block("stone", &["stone", "natural"]),
             block("iron_ore", &["ore", "metal:iron", "natural"]),
             block("log", &["log", "wood"]),
-            block("wooden_pickaxe", &["pickaxe", "tool", "tier:1", "speed:2", "uses:50"]),
-            block("stone_pickaxe", &["pickaxe", "tool", "tier:2", "speed:4", "yield:0.05", "uses:100"]),
-            block("stone_axe", &["axe", "tool", "tier:2", "speed:4", "uses:100"]),
+            block("wooden_pickaxe", &["pickaxe", "tool", "tier:1", "speed:2", "uses:50", "mend:log"]),
+            block("stone_pickaxe", &["pickaxe", "tool", "tier:2", "speed:4", "yield:0.05", "uses:100", "mend:stone"]),
+            block("stone_axe", &["axe", "tool", "tier:2", "speed:4", "uses:100", "mend:stone"]),
         ])
         .unwrap();
         let mut skills = SkillRegistry::default();
