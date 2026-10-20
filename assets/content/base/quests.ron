@@ -26,7 +26,7 @@
             why: "Pots hold stews, and the pot is the heart of the kiln you are working toward. Shape six clay pots from fired clay at the crafting table: five fired clay in a cup shape make two (Crafting 2).",
             tasks: [[Craft("clay_pot", 6)]],
             after: ["the_farm_age", "fire_the_clay"],
-            rewards: [Xp("crafting", 305.0), Item("earthen_jar", 2)],
+            rewards: [Xp("crafting", 305.0), Item("earthen_jug", 1), Item("earthen_plate", 2)],
         ),
         (
             name: "a_pot_on_the_fire", age: "farm", branch: "cooking", title: "A Pot on the Fire",
@@ -117,7 +117,7 @@
             why: "Digging clay a trip at a time keeps the kilns waiting. Keep a store by the pit kiln: put thirty-two clay into a chest, a barrel or a crate and leave it there. Clay keeps for ever, and the next load is a step away.",
             tasks: [[Stocked("clay", "chest", 32)], [Stocked("clay", "barrel", 32)], [Stocked("clay", "crate", 32)]],
             after: ["clay_banks", "fire_the_clay"],
-            rewards: [Xp("crafting", 80.0), Item("chest", 1)],
+            rewards: [Xp("crafting", 80.0), Item("bread", 2)],
         ),
         (
             name: "a_kiln_load", age: "farm", branch: "pottery", title: "A Kiln Load",

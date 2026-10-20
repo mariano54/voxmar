@@ -392,8 +392,9 @@ Copper is smelted only in the lit kiln: Red Metal, the copper kit and the ore ru
 it (Hammer and Anvil, from the kiln-age PR, goes before The Crucible when it lands). Crucible
 Kiln waits on all three of its parts: the crucible, the ring of bricks and the charge. The
 Bronze Age rite is unchanged (30 Farm quests, 4 Farm capstones). Rewards that handed out
-what the route asks for (kiln bricks, charcoal) are gone, so the bricks and the charge are
-earned; Brick by Brick pays the Engineering The Crucible asks for until Hammer and Anvil
+what the route asks for (charcoal, clay) are gone, so the charge and the clay are earned; A
+Kiln Load's four kiln bricks stay, by an explicit call, and the rest of the bricks are
+shaped (Brick by Brick counts only those); Brick by Brick pays the Engineering The Crucible asks for until Hammer and Anvil
 does.
 
 Every Farm path's capstone comes after all of its path's quests, directly or through what
