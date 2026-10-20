@@ -135,6 +135,8 @@ fn a_lit_corner_by_the_bed_rests_well_before_any_roof() {
     assert_eq!(rest(&survey(&[("bed", 1), ("light", 1)])), [("base:healing_sleep".to_owned(), 60.0), ("base:rested".to_owned(), 600.0)]);
     let corner = survey(&[("bed", 1), ("seat", 1), ("light", 2)]);
     assert_eq!(rest(&corner), [("base:healing_sleep".to_owned(), 60.0), ("base:rested".to_owned(), 600.0), ("base:well_rested".to_owned(), 900.0)]);
+    let noon = Situation { felt: 15.0, warmed: false, outdoors: true, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(&corner), done: &[], held: &[], near: &[], seated: false, night: false };
+    assert_eq!(effects.given_by_sleep(&noon, &bag()).len(), 2, "a lit corner by day is a nap: the mend and Rested, not Well rested");
     assert_eq!(rooms_in(&[("bed", 1), ("seat", 1), ("light", 2)], &calm, true), ["base:bedside"]);
     assert_eq!(effects.get(effects.id("base:bedside").unwrap()).modifiers.warmth, 2.0);
     // Snug and a lit corner too: the one rest, once.
@@ -344,6 +346,10 @@ fn a_proper_bed_rests_well_and_every_sleep_mends_slower_than_food() {
     let rest = |tags: &[String]| effects.given_by_sleep(&situation, tags).iter().map(|&(id, seconds)| (effects.get(id).name.clone(), seconds)).collect::<Vec<_>>();
     assert_eq!(rest(&bag()), [("base:healing_sleep".to_owned(), 60.0), ("base:rested".to_owned(), 600.0)], "a bag under the sky");
     assert_eq!(rest(&bed), [("base:healing_sleep".to_owned(), 120.0), ("base:rested".to_owned(), 600.0), ("base:well_rested".to_owned(), 900.0)], "a proper bed under the sky");
+    // By day a proper bed is a nap: Rested and the longer mend, never Well rested.
+    let noon = Situation { night: false, ..situation };
+    let nap = effects.given_by_sleep(&noon, &bed).iter().map(|&(id, seconds)| (effects.get(id).name.clone(), seconds)).collect::<Vec<_>>();
+    assert_eq!(nap, [("base:healing_sleep".to_owned(), 120.0), ("base:rested".to_owned(), 600.0)], "a proper bed by day");
     // Every heal buff that can be on at once (the strongest of each chain of replaces, the
     // others hidden by it) and the strongest prayer, together, are held at survival.ron's
     // `heal_most`, which is below what the slowest food heals a second, a bite at a time:
