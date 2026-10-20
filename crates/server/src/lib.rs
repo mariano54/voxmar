@@ -337,8 +337,8 @@ pub fn load_content(assets: &Path) -> Result<Content, Box<dyn std::error::Error>
     if let Some(missing) = NAMED_ACTIONS.iter().find(|name| content.actions.id(name).is_none()) {
         return Err(format!("no package defines the action {missing}, which the game needs").into());
     }
-    WorldContent::load(&content)?;
-    sources_known(&content)?;
+    let world = WorldContent::load(&content)?;
+    sources_known(&content, &world)?;
     wear::WearRules::load(&content.files, &content.blocks, 0)?;
     spawn_kit::SpawnKit::load(&content.files, &content.blocks)?;
     let mut notes = Vec::new();
@@ -355,16 +355,21 @@ pub fn load_content(assets: &Path) -> Result<Content, Box<dyn std::error::Error>
 /// The recipe book: every way the content gives to get each item, what the world lays
 /// among them (found, broken loose).
 pub fn recipe_book(content: &Content) -> Result<voxmar_engine::recipe_book::RecipeBook, ContentError> {
+    Ok(recipe_book_of(content, &WorldContent::load(content)?))
+}
+
+/// As `recipe_book`, with `world` the world content `content` loads.
+fn recipe_book_of(content: &Content, world: &WorldContent) -> voxmar_engine::recipe_book::RecipeBook {
     let mut book = voxmar_engine::recipe_book::RecipeBook::new(content);
-    book.found(content, WorldContent::placed(content.files.iter(), &content.blocks)?);
-    Ok(book)
+    book.found(content, world.placed(content.files.iter(), &content.blocks));
+    book
 }
 
 /// Every item a player could hold has a way to get it in the recipe book, or is tagged
 /// `creative_only`: a package that adds an item nothing gives fails here, naming it and the
 /// package, rather than shipping a dead entry. A tag on an item that has a way is noted.
-fn sources_known(content: &Content) -> Result<(), String> {
-    let (dead, stale) = recipe_book(content).map_err(|e| e.to_string())?.unsourced(&content.blocks);
+fn sources_known(content: &Content, world: &WorldContent) -> Result<(), String> {
+    let (dead, stale) = recipe_book_of(content, world).unsourced(&content.blocks);
     let named = |ids: &[voxmar_engine::block::BlockId]| {
         ids.iter()
             .map(|&id| {
@@ -836,8 +841,7 @@ impl Server {
         incoming: Receiver<ServerConnection>,
         console: Receiver<String>,
     ) -> Self {
-        let world_content = WorldContent::load(&content).expect("checked by load_content");
-        let overworld = Overworld::shared(meta.seed, &content, &world_content);
+        let overworld = Overworld::shared_loading(meta.seed, &content).expect("checked by load_content");
         let climate = overworld.clone();
         let temperature = Field::new("core:temperature", move |x, z| climate.site(x, z).temperature);
         let land = Arc::new(weather::OverworldLand { overworld: overworld.clone(), blocks: content.blocks.clone() });
