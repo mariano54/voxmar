@@ -642,6 +642,25 @@ impl Overworld {
             .collect()
     }
 
+    /// The shaped roof pieces the settlement whose square's middle is at `centre` lays,
+    /// each where it goes (none where no settlement stands there).
+    pub fn settlement_roofs(&self, centre: IVec2) -> Vec<(IVec3, voxmar_engine::block::BlockId)> {
+        self.settlements.roofs_of(self, centre).unwrap_or_default()
+    }
+
+    /// The blocks `keep` picks that the settlement whose square's middle is at `centre`
+    /// sets, each where it goes.
+    pub fn settlement_planned(&self, centre: IVec2, keep: &dyn Fn(voxmar_engine::block::BlockId) -> bool) -> Vec<(IVec3, voxmar_engine::block::BlockId)> {
+        self.settlements.planned(self, centre, keep).unwrap_or_default()
+    }
+
+    /// Every block that catches fire (thatch, wattle) a flame among `blocks` reaches, as
+    /// settlements keep their own flames from it (`rules.fire`): each flame and what it
+    /// reaches.
+    pub fn flames_reaching(&self, blocks: &rustc_hash::FxHashMap<IVec3, voxmar_engine::block::BlockId>) -> Vec<(IVec3, IVec3)> {
+        self.settlements.fire().map_or_else(Vec::new, |f| f.exposed(blocks))
+    }
+
     /// The names of the sizes settlements come in, as written.
     pub fn settlement_sizes(&self) -> Vec<String> {
         self.settlements.sizes()
