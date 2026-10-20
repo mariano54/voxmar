@@ -808,10 +808,12 @@ pub enum Slot {
     Feet,
     /// The off-hand: a shield, which guards in place of the weapon.
     Shield,
+    /// One charm: a rare keepsake whose effect holds while it is worn (`effect::Condition::Wearing`).
+    Charm,
 }
 
 impl Slot {
-    pub const ALL: [Slot; 6] = [Slot::Head, Slot::Body, Slot::Legs, Slot::Hands, Slot::Feet, Slot::Shield];
+    pub const ALL: [Slot; 7] = [Slot::Head, Slot::Body, Slot::Legs, Slot::Hands, Slot::Feet, Slot::Shield, Slot::Charm];
 
     /// Its worn slot, counted from the first (`inventory::WORN`).
     pub fn index(self) -> usize {
@@ -827,6 +829,7 @@ impl Slot {
             Slot::Hands => "hands",
             Slot::Feet => "feet",
             Slot::Shield => "shield",
+            Slot::Charm => "charm",
         }
     }
 }
@@ -1116,6 +1119,9 @@ impl CombatRegistry {
             for (slot, name) in &set.pieces {
                 let error = |why: &str| RegistryError(format!("combat.ron: set `{}`: {name}: {why}", set.name));
                 let item = blocks.id(name).ok_or_else(|| error("no such item"))?;
+                if *slot == Slot::Charm {
+                    return Err(error("the charm slot holds a charm, never a piece of a set"));
+                }
                 if pieces[item.0 as usize].is_some() {
                     return Err(error("listed twice"));
                 }
