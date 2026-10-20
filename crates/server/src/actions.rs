@@ -359,10 +359,7 @@ impl Server {
                     if let Some(upper) = self.content.blocks.upper(placed) {
                         self.set_block(cell + IVec3::Y, upper);
                     }
-                    // Marked as the player's: an ore teaches nothing broken again, and a
-                    // furnishing gives itself back (where the world placed one, it does not).
-                    // (By the block placed: a held item may place as another, as a torch does.)
-                    if self.content.tools.rule(item).is_some_and(|rule| rule.xp > 0.0) || self.content.blocks.def(placed).has_tag("furnishing") {
+                    if self.marks_placed(item, placed) {
                         self.placed.insert(cell);
                     }
                     self.placed_plant(item, cell);
@@ -476,9 +473,11 @@ impl Server {
 
     /// `agent` sleeps at the bed at `bed`: it is where they wake after dying (their hearth
     /// first, once they have one), and they wake rested, as well as the home around the
-    /// bed allows (effects.ron's `sleeps`). A bed a village home was furnished with is its
-    /// resident's and turns them away, but in creative. A bed always works, as a bed; the rest is held back
-    /// while one is still on them, so the buff cannot be had again until it wears off.
+    /// bed allows (effects.ron's `sleeps`; the better rests only by night). A bed a village
+    /// home was furnished with is its resident's and turns them away, but in creative. A bed
+    /// always works, as a bed; the rest is held back while it or a better one is still on
+    /// them, or the last sleep's mend still runs (`EffectRegistry::rested`): a nap's lesser
+    /// rest does not keep a night's better one away, and a bed after a bed mends no more.
     fn sleep(&mut self, agent: PlayerId, bed: IVec3) {
         // A bed a village furnished a home with (its settlement's plan says so, and no player
         // has set one down there since) is its resident's; any other works, however it came
@@ -498,21 +497,25 @@ impl Server {
             return;
         }
         let effects = self.content.effects.clone();
-        if effects.rested(&self.players[&agent].timed_effects) {
-            let player = &self.players[&agent];
-            player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: Words::key("bed.not_tired") });
-            return;
-        }
         let home = self.home_survey(agent);
         let feet = self.players[&agent].position.floor().as_ivec3();
         let outdoors = self.open_sky(feet + IVec3::Y * 2);
         let calm = voxmar_engine::weather::Weather::NONE;
-        let situation = voxmar_engine::effect::Situation { felt: 0.0, warmed: false, outdoors, weather: &calm, biome: "", biome_tags: &[], home: home.as_ref(), done: &self.players[&agent].quests_done, held: &[], near: &[], seated: false };
+        let situation = voxmar_engine::effect::Situation { felt: 0.0, warmed: false, outdoors, weather: &calm, biome: "", biome_tags: &[], home: home.as_ref(), done: &self.players[&agent].quests_done, held: &[], near: &[], seated: false, night: self.night() };
         // A proper bed rests better than a bag on the ground (effects.ron's `bed` tags).
         let bed_tags = self.block(bed).map(|b| self.content.blocks.def(b).tags.clone()).unwrap_or_default();
         let given = effects.given_by_sleep(&situation, &bed_tags);
+        // The rest is held back while it, or a better one, is still on them; a nap's lesser
+        // rest does not keep a night's better one away.
+        if effects.rested(&self.players[&agent].timed_effects, &given) {
+            let player = &self.players[&agent];
+            player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: Words::key("bed.not_tired") });
+            return;
+        }
         // The best rest it gives (the one the others are hidden by) is the one it says.
-        let best = given.iter().map(|&(id, _)| id).filter(|&id| !given.iter().any(|&(other, _)| other != id && effects.hides(other, id))).next_back();
+        let best = effects.best_rest(&given);
+        // By day, the better rest a night's sleep here would give (effects.ron's `night`).
+        let at_night = if situation.night { None } else { effects.best_rest(&effects.given_by_sleep(&voxmar_engine::effect::Situation { night: true, ..situation }, &bed_tags)).filter(|&night| Some(night) != best) };
         let player = self.players.get_mut(&agent).unwrap();
         player.give_effects(&given);
         player.changed(traits::VITALS);
@@ -521,6 +524,11 @@ impl Server {
             let key = voxmar_engine::lang::def_key("effect", &def.name);
             let words = Words::key("bed.rested").with("name", Words::Own(key.clone(), def.title.clone())).with("what", Words::Own(format!("{key}.description"), def.description.clone()));
             player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: words });
+        }
+        if let Some(night) = at_night {
+            let def = effects.get(night);
+            let key = voxmar_engine::lang::def_key("effect", &def.name);
+            player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: Words::key("bed.night_rest").with("name", Words::Own(key, def.title.clone())) });
         }
     }
 
@@ -595,6 +603,14 @@ impl Server {
             let name = self.content.blocks.def(output).name.clone();
             self.tally(agent, "crafted", &name, made * count as u32);
         }
+    }
+
+    /// Whether a cell a player set `item` down in, as `placed`, is marked as theirs: an ore
+    /// teaches nothing broken again, leaves give no stick (`instead`) again, and a furnishing
+    /// gives itself back (where the world placed one, it does not). (By the block placed: a
+    /// held item may place as another, as a torch does.)
+    pub(crate) fn marks_placed(&self, item: BlockId, placed: BlockId) -> bool {
+        self.content.tools.rule(item).is_some_and(|rule| rule.xp > 0.0 || rule.instead.is_some()) || self.content.blocks.def(placed).has_tag("furnishing")
     }
 
     /// What breaking the block at `pos` teaches (`tools.ron`), and sometimes an extra drop:
@@ -742,5 +758,30 @@ mod tests {
         assert!((1..64).contains(&flint), "flint {flint} times in 64 breaks of gravel");
         assert!((1..64).contains(&first.3), "a bonus drop {} times in 64 breaks with finds", first.3);
         assert_eq!(broken(1_377), first, "the same breaks later gave otherwise");
+    }
+
+    /// Leaves a player set down are marked as theirs, so breaking them gives no stick: forty
+    /// times placed and broken, never one, where a tree's leaves give one in five.
+    #[test]
+    fn placed_leaves_give_no_sticks() {
+        let mut server = crate::test_server();
+        let (_client, connection) = voxmar_protocol::local_pair();
+        let mut player = crate::player::Player::new(1, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
+        player.joined = true;
+        server.players.insert(1, player);
+        let leaves = server.content.blocks.expect("base:oak_leaves");
+        assert!(server.content.tools.rule(leaves).and_then(|r| r.instead).is_some(), "a tree's leaves give sticks");
+        let pos = server.spawn.floor().as_ivec3() + IVec3::new(2, 0, 0);
+        let sticks = (0..40)
+            .filter(|_| {
+                server.set_block(pos, leaves);
+                if server.marks_placed(leaves, leaves) {
+                    server.placed.insert(pos);
+                }
+                server.reward_break(1, pos)
+            })
+            .count();
+        assert_eq!(sticks, 0, "placed leaves gave a stick");
+        assert!(!server.placed.contains(&pos), "the mark goes with the break");
     }
 }

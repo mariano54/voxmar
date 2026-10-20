@@ -448,6 +448,12 @@ impl Server {
         creature::daylight(self.day as u64)
     }
 
+    /// Whether the sun is down now (`Condition::Night`).
+    pub(crate) fn night(&self) -> bool {
+        let ticks = voxmar_protocol::TICKS_PER_DAY;
+        voxmar_engine::calendar::night((self.day as u64 % ticks) as f64 / ticks as f64)
+    }
+
     /// Ticks between spawn attempts around each player (`limits.spawn_every` seconds).
     fn spawn_every_ticks(&self) -> u64 {
         ((self.content.creatures.limits().spawn_every * TICKS_PER_SECOND as f32).round() as u64).max(1)
