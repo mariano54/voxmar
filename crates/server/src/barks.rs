@@ -8,7 +8,7 @@ use voxmar_protocol::ServerMessage;
 use crate::Server;
 
 /// Blocks within which `/creatures bark` finds one of a settlement's people to bark.
-pub(crate) const BARK_COMMAND_REACH: f32 = 32.0;
+pub const BARK_COMMAND_REACH: f32 = 32.0;
 
 impl Server {
     /// Creature `id` makes `bark`, heard by every player who sees it now. The one hook for
