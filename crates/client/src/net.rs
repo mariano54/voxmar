@@ -57,6 +57,8 @@ pub struct Net {
     proposed: std::sync::Mutex<Vec<Proposed>>,
     /// Actions proposed since `fx` last took them, with what they aim at, to be seen.
     shown: std::sync::Mutex<Vec<(ActionId, ActionTarget)>>,
+    /// The last action proposed, with its target, for the gate to say what a click sent.
+    last: std::sync::Mutex<Option<(ActionId, ActionTarget)>>,
     /// The integrated server's ticks as `receive` began: every message of those ticks had
     /// been sent, and was taken in (`taken_ticks`).
     taken: std::sync::atomic::AtomicU64,
@@ -69,7 +71,7 @@ impl Net {
         let tokens = std::env::var("VOXMAR_ADMIN_TOKENS").unwrap_or_default();
         let admin_token = address.and_then(|address| admin_token_for(address, &tokens));
         connection.send(ClientMessage::Hello { name, protocol: voxmar_protocol::PROTOCOL_VERSION, content, admin_token });
-        Self { connection, server, input_timer: 0.0, proposed: Default::default(), shown: Default::default(), taken: Default::default() }
+        Self { connection, server, input_timer: 0.0, proposed: Default::default(), shown: Default::default(), last: Default::default(), taken: Default::default() }
     }
 
     /// The next message from the server, for tests that play without the app.
@@ -105,6 +107,12 @@ impl Net {
         self.connection.send(ClientMessage::Propose { action, target });
         self.proposed.lock().unwrap_or_else(|e| e.into_inner()).push(Proposed { action, with });
         self.shown.lock().unwrap_or_else(|e| e.into_inner()).push((action, target));
+        *self.last.lock().unwrap_or_else(|e| e.into_inner()) = Some((action, target));
+    }
+
+    /// The last action proposed and what it aimed at, kept after `take_shown`.
+    pub fn last_proposed(&self) -> Option<(ActionId, ActionTarget)> {
+        *self.last.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// The actions proposed since the last call: the client proposes only what it has
