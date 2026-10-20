@@ -474,7 +474,10 @@ pub(crate) fn receive(
                 let combat = &launch.content.combat;
                 let held = player.inventory.get(player.selected).map(|s| s.item);
                 let weapon = combat.wielded(held, |skill| launch.content.skills.level(player.skills.xp(skill)));
-                let spoil = spoiled.then(|| (combat.timing(&weapon), combat.feel));
+                // Told a round trip late: only a shot drawn with a weapon a hit spoils is let
+                // go, never a melee swing begun since (a draw's cooldown outlasts the trip, so no
+                // new draw can have begun).
+                let spoil = (spoiled && combat.spoiled_by_hits(&weapon)).then(|| (combat.timing(&weapon), combat.feel));
                 fighting.hurt(creature, damage, defended, time.elapsed_secs_f64(), spoil)
             }
             ServerMessage::Ping { id } => {
