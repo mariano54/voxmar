@@ -177,7 +177,7 @@
         (
             name: "daily_bread", age: "nomad", branch: "cooking", title: "Daily Bread",
             why: "Two ears of wheat side by side in the crafting grid bake into bread, which heals more than the grain. Bake four loaves.",
-            tasks: [[Craft("bread", 4)]],
+            tasks: [[Craft("bread", 4)], [Cook("bread", 4)]],
             after: ["a_handful_of_grain"],
             rewards: [Xp("cooking", 60.0)],
         ),
@@ -229,7 +229,7 @@
             name: "a_varied_table", age: "nomad", branch: "cooking", title: "A Varied Table",
             capstone: true,
             why: "One food grows dull and heals little. Cook six meat at a fire, cook four fish, and bake three bread: every kind comes from a different part of the land, and together they keep you going.",
-            tasks: [[Cook("tag:meat", 6), Cook("tag:fish", 4), Craft("bread", 3)]],
+            tasks: [[Cook("tag:meat", 6), Cook("tag:fish", 4), Craft("bread", 3)], [Cook("tag:meat", 6), Cook("tag:fish", 4), Cook("bread", 3)]],
             after: ["a_fish_supper", "daily_bread", "trail_rations", "wild_harvest", "break_ground"],
             rewards: [Xp("cooking", 180.0), Xp("hitpoints", 40.0)],
         ),
