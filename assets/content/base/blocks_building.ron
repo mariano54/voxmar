@@ -100,7 +100,7 @@
         ),
         // A stone arrow slit: a block of dressed stone with a narrow upright slit through
         // it, the window of a stone wall. Light and a draught come through it, nobody does.
-        (name: "stone_arrow_slit", render: Model, shape: "arrow_slit", facing: true, sound: Stone, textures: All("stone_bricks"), hardness: 2.0, color: (120, 120, 120), tags: ["slit", "masonry", "building", "shelter:draughty", "draught"]),
+        (name: "stone_arrow_slit", render: Model, shape: "arrow_slit", facing: true, sound: Stone, material: "stone_brick", textures: All("stone_bricks"), hardness: 2.0, color: (120, 120, 120), tags: ["slit", "masonry", "building", "shelter:draughty", "draught"]),
         // Chimney pieces, to carry a hearth's chimney up through a roof: a flue of brick
         // narrower than a block, so roof courses meet it, and a clay pot to top it.
         (name: "chimney_stack", render: Model, shape: "chimney_stack", sound: Stone, textures: All("chimney_side"), hardness: 2.0, color: (130, 100, 90), tags: ["chimney_piece", "stone", "bricks", "building", "shelter:fine"]),
